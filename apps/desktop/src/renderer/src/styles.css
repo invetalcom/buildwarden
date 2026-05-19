@@ -1,0 +1,413 @@
+@import "tailwindcss";
+@import "react-diff-view/style/index.css";
+
+:root {
+  color-scheme: dark;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  background:
+    radial-gradient(circle at top, rgba(34, 211, 238, 0.12), transparent 32%),
+    linear-gradient(180deg, rgba(24, 24, 27, 0.98), rgba(9, 9, 11, 1));
+  color: #f4f4f5;
+  --app-scrollbar-track: rgba(24, 24, 27, 0.28);
+  --app-scrollbar-thumb-start: rgba(63, 63, 70, 0.95);
+  --app-scrollbar-thumb-end: rgba(39, 39, 42, 0.95);
+  --app-scrollbar-thumb-hover-start: rgba(82, 82, 91, 1);
+  --app-scrollbar-thumb-hover-end: rgba(63, 63, 70, 1);
+  --app-scrollbar-border: rgba(24, 24, 27, 0.4);
+
+  /* Marketing cards, insets — deep dark (near-black) */
+  --app-surface-hero-border: rgba(34, 211, 238, 0.2);
+  --app-surface-landing-hero:
+    radial-gradient(circle at top right, rgba(34, 211, 238, 0.12), transparent 30%),
+    linear-gradient(180deg, rgba(24, 24, 27, 0.96), rgba(9, 9, 11, 1));
+  --app-surface-chat-hero:
+    radial-gradient(circle at top right, rgba(34, 211, 238, 0.16), transparent 34%),
+    linear-gradient(180deg, rgba(24, 24, 27, 0.95), rgba(9, 9, 11, 1));
+  --app-surface-settings-hero:
+    radial-gradient(circle at top left, rgba(34, 211, 238, 0.18), transparent 24%),
+    linear-gradient(180deg, rgba(24, 24, 27, 0.98), rgba(9, 9, 11, 1));
+  --app-surface-inset-soft: rgba(0, 0, 0, 0.15);
+  --app-surface-stat-tile: rgba(0, 0, 0, 0.2);
+  --app-surface-inset-line: rgba(255, 255, 255, 0.08);
+  --app-surface-chat-stat-bg: rgba(9, 9, 11, 0.6);
+  --app-surface-chat-stat-border: rgba(63, 63, 70, 0.45);
+  --app-surface-sidebar-run: rgba(9, 9, 11, 0.7);
+  --app-surface-sidebar-run-hover: rgba(24, 24, 27, 1);
+  --app-input-surface-bg: rgba(9, 9, 11, 0.9);
+  --app-composer-dropdown-bg: rgba(9, 9, 11, 0.98);
+  --app-surface-list-well: rgba(9, 9, 11, 0.45);
+  /** Settings provider/model cards (linear header panels) */
+  --app-surface-settings-form-card: linear-gradient(180deg, rgba(24, 24, 27, 0.98), rgba(12, 12, 14, 0.98));
+  --app-settings-list-row: rgba(9, 9, 11, 0.7);
+  --app-settings-list-empty: rgba(9, 9, 11, 0.4);
+  --app-settings-hint-panel: rgba(9, 9, 11, 0.5);
+}
+
+:root[data-theme="dim"] {
+  color-scheme: dark;
+  --app-scrollbar-track: rgba(39, 39, 42, 0.35);
+  --app-scrollbar-thumb-start: rgba(113, 113, 122, 0.92);
+  --app-scrollbar-thumb-end: rgba(82, 82, 91, 0.92);
+  --app-scrollbar-thumb-hover-start: rgba(161, 161, 170, 1);
+  --app-scrollbar-thumb-hover-end: rgba(113, 113, 122, 1);
+  --app-scrollbar-border: rgba(39, 39, 42, 0.45);
+
+  --app-surface-landing-hero:
+    radial-gradient(circle at top right, rgba(34, 211, 238, 0.1), transparent 32%),
+    linear-gradient(180deg, rgba(63, 63, 70, 0.5), rgba(39, 39, 42, 0.94));
+  --app-surface-chat-hero:
+    radial-gradient(circle at top right, rgba(34, 211, 238, 0.12), transparent 36%),
+    linear-gradient(180deg, rgba(63, 63, 70, 0.48), rgba(39, 39, 42, 0.92));
+  --app-surface-settings-hero:
+    radial-gradient(circle at top left, rgba(34, 211, 238, 0.14), transparent 28%),
+    linear-gradient(180deg, rgba(52, 52, 58, 0.9), rgba(39, 39, 42, 0.96));
+  --app-surface-inset-soft: rgba(39, 39, 42, 0.55);
+  --app-surface-stat-tile: rgba(39, 39, 42, 0.62);
+  --app-surface-chat-stat-bg: rgba(39, 39, 42, 0.78);
+  --app-surface-chat-stat-border: rgba(82, 82, 91, 0.55);
+  --app-surface-sidebar-run: rgba(39, 39, 42, 0.88);
+  --app-surface-sidebar-run-hover: rgba(63, 63, 70, 0.92);
+  --app-input-surface-bg: rgba(39, 39, 42, 0.94);
+  --app-composer-dropdown-bg: rgba(39, 39, 42, 0.98);
+  --app-surface-list-well: rgba(39, 39, 42, 0.52);
+  --app-surface-settings-form-card: linear-gradient(180deg, rgba(52, 52, 58, 0.94), rgba(39, 39, 42, 0.99));
+  --app-settings-list-row: rgba(39, 39, 42, 0.82);
+  --app-settings-list-empty: rgba(39, 39, 42, 0.42);
+  --app-settings-hint-panel: rgba(39, 39, 42, 0.55);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-size: 15px;
+  background:
+    radial-gradient(ellipse 90% 55% at 50% -15%, rgba(34, 211, 238, 0.16), transparent 42%),
+    radial-gradient(ellipse 55% 45% at 100% 8%, rgba(148, 163, 184, 0.1), transparent 45%),
+    radial-gradient(ellipse 50% 50% at 0% 85%, rgba(59, 130, 246, 0.1), transparent 48%),
+    radial-gradient(ellipse 70% 40% at 80% 95%, rgba(244, 63, 94, 0.06), transparent 50%),
+    linear-gradient(165deg, #0c0c10 0%, #09090b 42%, #08080c 100%);
+}
+
+body[data-theme="light"] {
+  background:
+    radial-gradient(ellipse 85% 50% at 40% -10%, rgba(125, 211, 252, 0.35), transparent 45%),
+    radial-gradient(ellipse 55% 45% at 100% 15%, rgba(203, 213, 225, 0.24), transparent 48%),
+    radial-gradient(ellipse 50% 55% at 0% 90%, rgba(147, 197, 253, 0.22), transparent 50%),
+    linear-gradient(180deg, #c5d0dc, #8e9bab);
+}
+
+body[data-theme="dim"] {
+  background:
+    radial-gradient(ellipse 90% 55% at 50% -15%, rgba(34, 211, 238, 0.1), transparent 42%),
+    radial-gradient(ellipse 55% 45% at 100% 8%, rgba(161, 161, 170, 0.08), transparent 45%),
+    radial-gradient(ellipse 50% 50% at 0% 85%, rgba(59, 130, 246, 0.07), transparent 48%),
+    radial-gradient(ellipse 70% 40% at 80% 95%, rgba(244, 63, 94, 0.04), transparent 50%),
+    linear-gradient(165deg, #1f1f23 0%, #27272a 44%, #1c1c20 100%);
+}
+
+.app-shell.theme-dim .glass-island {
+  border-color: rgba(255, 255, 255, 0.11);
+  background: linear-gradient(155deg, rgba(82, 82, 91, 0.4) 0%, rgba(39, 39, 42, 0.34) 55%, rgba(24, 24, 27, 0.38) 100%);
+  box-shadow:
+    0 8px 36px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09);
+}
+
+[data-theme="dim"] .glass-titlebar {
+  border-bottom-color: rgba(255, 255, 255, 0.09);
+  background: linear-gradient(180deg, rgba(39, 39, 42, 0.78), rgba(24, 24, 27, 0.55));
+}
+
+/** Theme-aware surfaces (dark vs balanced gray); light theme inherits :root values pre-invert. */
+.app-surface-landing-hero {
+  background: var(--app-surface-landing-hero);
+  border-color: var(--app-surface-hero-border);
+}
+
+.app-surface-chat-hero {
+  background: var(--app-surface-chat-hero);
+  border-color: var(--app-surface-hero-border);
+}
+
+.app-surface-settings-hero {
+  background: var(--app-surface-settings-hero);
+  border-color: var(--app-surface-hero-border);
+}
+
+.app-surface-inset-soft {
+  border-color: var(--app-surface-inset-line);
+  background-color: var(--app-surface-inset-soft);
+}
+
+.app-surface-stat-tile {
+  border-color: var(--app-surface-inset-line);
+  background-color: var(--app-surface-stat-tile);
+}
+
+.app-surface-chat-stat {
+  border-color: var(--app-surface-chat-stat-border);
+  background-color: var(--app-surface-chat-stat-bg);
+}
+
+.app-surface-sidebar-run {
+  background-color: var(--app-surface-sidebar-run);
+}
+
+.app-surface-sidebar-run:hover {
+  background-color: var(--app-surface-sidebar-run-hover);
+}
+
+.app-input-surface {
+  background-color: var(--app-input-surface-bg);
+}
+
+.app-composer-dropdown-panel {
+  background-color: var(--app-composer-dropdown-bg);
+}
+
+.app-surface-list-well {
+  background-color: var(--app-surface-list-well);
+}
+
+.app-surface-settings-form-card {
+  background: var(--app-surface-settings-form-card);
+}
+
+.app-settings-list-row {
+  background-color: var(--app-settings-list-row);
+}
+
+.app-settings-list-empty {
+  background-color: var(--app-settings-list-empty);
+}
+
+.app-settings-hint-panel {
+  background-color: var(--app-settings-hint-panel);
+}
+
+.app-shell.theme-light {
+  filter: invert(1) hue-rotate(180deg) saturate(1.18) brightness(0.82) contrast(1.16);
+}
+
+/**
+ * Floating glass panels. Backdrop blur is disabled under .theme-light because the shell
+ * uses an invert filter, which breaks backdrop-filter sampling in Chromium.
+ */
+.glass-island {
+  border-radius: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(155deg, rgba(63, 63, 70, 0.38) 0%, rgba(24, 24, 27, 0.32) 55%, rgba(9, 9, 11, 0.36) 100%);
+  box-shadow:
+    0 8px 40px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(22px) saturate(165%);
+  -webkit-backdrop-filter: blur(22px) saturate(165%);
+}
+
+.app-shell.theme-light .glass-island {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: rgba(39, 39, 42, 0.58);
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: 0 6px 28px rgba(0, 0, 0, 0.18);
+}
+
+.app-shell.theme-light .nested-glass {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.glass-titlebar {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(180deg, rgba(24, 24, 27, 0.72), rgba(9, 9, 11, 0.52));
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+}
+
+.run-status-dot {
+  transition:
+    background-color 140ms ease,
+    box-shadow 140ms ease,
+    filter 140ms ease;
+}
+
+.app-shell.theme-light .run-status-dot {
+  filter: invert(1) hue-rotate(180deg) saturate(1.3) brightness(0.9) contrast(1.08);
+}
+
+.app-shell.theme-light .run-status-dot--completed {
+  background-color: #15803d !important;
+  box-shadow: 0 0 0 4px rgba(22, 101, 52, 0.22) !important;
+}
+
+.app-shell.theme-light .run-status-dot--running,
+.app-shell.theme-light .run-status-dot--preparing {
+  background-color: #0369a1 !important;
+  box-shadow: 0 0 0 4px rgba(3, 105, 161, 0.22) !important;
+}
+
+.app-shell.theme-light input[type="checkbox"] {
+  filter: invert(1) hue-rotate(180deg) saturate(0.8475) brightness(1.2195) contrast(0.8621);
+}
+
+* {
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--app-scrollbar-thumb-start) var(--app-scrollbar-track);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+pre {
+  font-family:
+    "JetBrains Mono",
+    "SFMono-Regular",
+    Consolas,
+    "Liberation Mono",
+    Menlo,
+    monospace;
+}
+
+*::-webkit-scrollbar,
+.app-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track,
+.app-scrollbar::-webkit-scrollbar-track {
+  background: var(--app-scrollbar-track);
+  border-radius: 9999px;
+}
+
+*::-webkit-scrollbar-thumb,
+.app-scrollbar::-webkit-scrollbar-thumb {
+  background:
+    linear-gradient(180deg, var(--app-scrollbar-thumb-start), var(--app-scrollbar-thumb-end));
+  border: 2px solid var(--app-scrollbar-border);
+  border-radius: 9999px;
+}
+
+*::-webkit-scrollbar-thumb:hover,
+.app-scrollbar::-webkit-scrollbar-thumb:hover {
+  background:
+    linear-gradient(180deg, var(--app-scrollbar-thumb-hover-start), var(--app-scrollbar-thumb-hover-end));
+}
+
+.diff-viewer {
+  --diff-background-color: transparent;
+  --diff-text-color: #e4e4e7;
+  --diff-font-family:
+    "JetBrains Mono",
+    "SFMono-Regular",
+    Consolas,
+    "Liberation Mono",
+    Menlo,
+    monospace;
+  --diff-selection-background-color: rgba(34, 211, 238, 0.25);
+  --diff-selection-text-color: #f4f4f5;
+  --diff-gutter-insert-background-color: rgba(34, 197, 94, 0.16);
+  --diff-gutter-insert-text-color: #d4d4d8;
+  --diff-gutter-delete-background-color: rgba(244, 63, 94, 0.16);
+  --diff-gutter-delete-text-color: #d4d4d8;
+  --diff-gutter-selected-background-color: rgba(250, 204, 21, 0.14);
+  --diff-gutter-selected-text-color: #f4f4f5;
+  --diff-code-insert-background-color: rgba(34, 197, 94, 0.12);
+  --diff-code-insert-text-color: #e4e4e7;
+  --diff-code-delete-background-color: rgba(244, 63, 94, 0.12);
+  --diff-code-delete-text-color: #e4e4e7;
+  --diff-code-insert-edit-background-color: rgba(34, 197, 94, 0.28);
+  --diff-code-insert-edit-text-color: #f4f4f5;
+  --diff-code-delete-edit-background-color: rgba(244, 63, 94, 0.28);
+  --diff-code-delete-edit-text-color: #f4f4f5;
+  --diff-code-selected-background-color: rgba(250, 204, 21, 0.14);
+  --diff-code-selected-text-color: #f4f4f5;
+  --diff-omit-gutter-line-color: rgba(161, 161, 170, 0.8);
+}
+
+.diff-viewer .diff {
+  min-width: 100%;
+}
+
+.diff-viewer .diff-line {
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.diff-viewer .diff-gutter {
+  min-width: 3.75rem;
+  color: #71717a;
+}
+
+.diff-viewer .diff-code {
+  padding-right: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.diff-viewer .diff-code-insert,
+.diff-viewer .diff-code-delete,
+.diff-viewer .diff-gutter-insert,
+.diff-viewer .diff-gutter-delete {
+  transition: background-color 120ms ease;
+}
+
+/* Stronger red/green for inline activity diffs (agent run chat) */
+.diff-viewer--activity {
+  --diff-gutter-insert-background-color: rgba(22, 163, 74, 0.35);
+  --diff-gutter-delete-background-color: rgba(220, 38, 38, 0.35);
+  --diff-code-insert-background-color: rgba(22, 163, 74, 0.28);
+  --diff-code-delete-background-color: rgba(220, 38, 38, 0.28);
+  --diff-code-insert-text-color: #ecfccb;
+  --diff-code-delete-text-color: #fecaca;
+}
+
+.diff-viewer--activity .diff-line {
+  font-size: 0.6875rem;
+  line-height: 1.4;
+}
+
+@keyframes run-activity-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.run-activity-loading-bar {
+  height: 2px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(34, 211, 238, 0.45),
+    rgba(34, 211, 238, 0.85),
+    rgba(34, 211, 238, 0.45),
+    transparent
+  );
+  background-size: 200% 100%;
+  animation: run-activity-shimmer 1.4s ease-in-out infinite;
+}

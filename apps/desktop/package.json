@@ -1,0 +1,142 @@
+{
+  "name": "@easycode/desktop",
+  "version": "0.4.9",
+  "releaseDate": "2026-05-14",
+  "private": true,
+  "type": "module",
+  "main": "out/main/index.js",
+  "description": "Desktop GUI for coding agents",
+  "homepage": "https://r-kellner.de",
+  "author": {
+    "name": "Rudolf Kellner",
+    "email": "ai-support@r-kellner.de"
+  },
+  "scripts": {
+    "build": "electron-vite build && electron-builder",
+    "build:win": "electron-vite build && electron-builder --win",
+    "build:win:portable": "electron-vite build && electron-builder --win portable",
+    "build:linux": "electron-vite build && electron-builder --linux",
+    "build:linux:appimage": "electron-vite build && electron-builder --linux AppImage",
+    "build:linux:deb": "electron-vite build && electron-builder --linux deb",
+    "build:mac": "electron-vite build && electron-builder --mac",
+    "build:all": "electron-vite build && electron-builder -mwl",
+    "dev": "electron-vite dev",
+    "lint": "eslint . --ext .ts,.tsx",
+    "pack": "electron-builder --dir",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@easycode/agent-runtime": "workspace:*",
+    "@easycode/db": "workspace:*",
+    "@easycode/git-service": "workspace:*",
+    "@easycode/provider-ai-sdk": "workspace:*",
+    "@easycode/provider-claude-code": "workspace:*",
+    "@easycode/provider-codex-cli": "workspace:*",
+    "@easycode/provider-azure-legacy": "workspace:*",
+    "@easycode/shared": "workspace:*",
+    "@tailwindcss/vite": "^4.1.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-web-links": "0.12.0",
+    "@xterm/xterm": "^6.0.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "dependency-cruiser": "^17.1.0",
+    "diff": "^8.0.3",
+    "electron-updater": "^6.8.3",
+    "gpt-tokenizer": "^3.4.0",
+    "lucide-react": "^0.511.0",
+    "mermaid": "^11.12.0",
+    "node-pty": "^1.1.0",
+    "openai": "^5.12.2",
+    "react": "^19.0.0",
+    "react-diff-view": "^3.3.2",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "simple-git": "^3.28.0",
+    "sql.js": "^1.13.0",
+    "tailwind-merge": "^3.3.0",
+    "tailwindcss": "^4.1.0",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.22.0",
+    "@swc/core": "^1.15.18",
+    "@types/node": "^22.13.10",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.4.1",
+    "electron": "^41.0.3",
+    "electron-builder": "^26.8.1",
+    "electron-vite": "^5.0.0",
+    "eslint": "^9.22.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.19",
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.26.1",
+    "vite": "^6.4.1",
+    "vitest": "^3.0.8"
+  },
+  "build": {
+    "npmRebuild": false,
+    "appId": "com.easycode.desktop",
+    "productName": "Easycode",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "dist/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/icon.png",
+        "to": "icons/icon.png"
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "icons/icon.ico"
+      }
+    ],
+    "asarUnpack": [
+      "**/*.wasm",
+      "**/node_modules/node-pty/**/*"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false,
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "executableName": "easycode",
+      "target": [
+        "tar.xz"
+      ],
+      "category": "Development"
+    },
+    "deb": {
+      "packageName": "easycode"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.developer-tools"
+    },
+    "nsis": {
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
