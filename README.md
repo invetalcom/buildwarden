@@ -1,4 +1,4 @@
-# buildwarden
+# Buildwarden
 
 BuildWarden is an Electron desktop app for running coding-agent workflows against local repositories. It combines a React renderer, Electron main-process orchestration, local persistence, secure secret storage, Git worktrees, chat and run history, and a provider layer that supports OpenAI, OpenAI-compatible backends, Codex CLI, and Claude Code.
 
