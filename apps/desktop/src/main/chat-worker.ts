@@ -1,5 +1,5 @@
 import { parentPort, workerData } from "node:worker_threads";
-import type { HarnessRunChunk, HarnessToolContext, RunExecutionRequest } from "@easycode/shared";
+import type { HarnessRunChunk, HarnessToolContext, RunExecutionRequest } from "@buildwarden/shared";
 import { createHarnessAdapter } from "./harness-adapters";
 import { logError, logInfo } from "./logger";
 

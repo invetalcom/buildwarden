@@ -1,4 +1,4 @@
-﻿import OpenAI from "openai";
+import OpenAI from "openai";
 import { ProxyAgent } from "undici";
 import type {
   ChatAttachmentPayload,
@@ -12,13 +12,13 @@ import type {
   RunResumeCheckpoint,
   RunTokenUsage,
   AzureLegacyResumeCheckpointMessage,
-} from "@easycode/shared";
+} from "@buildwarden/shared";
 import {
   PROVIDER_CONFIG_AZURE_API_VERSION_KEY,
   buildNetworkProxyUrl,
   runShellActivityStreamId,
   shouldBypassNetworkProxyForUrl,
-} from "@easycode/shared";
+} from "@buildwarden/shared";
 import { createDevLogger } from "./dev-logger";
 import {
   MODE_INSTRUCTIONS,

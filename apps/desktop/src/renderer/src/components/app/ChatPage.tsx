@@ -6,7 +6,7 @@ import {
   type ChatRecord,
   type ProviderType,
   type UnifiedProviderFamily,
-} from "@easycode/shared";
+} from "@buildwarden/shared";
 import { MessageSquare, Plus, Search, Trash2 } from "lucide-react";
 import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
 import { RunComposer } from "./RunComposer";
@@ -66,19 +66,19 @@ export const ChatPage = ({
   const [newChatPrompt, setNewChatPrompt] = useState("");
   const [newChatFiles, setNewChatFiles] = useState<File[]>([]);
   const [selectedModelId, setSelectedModelId] = useState(defaultModelId);
-  const easycode = window.easycode;
+  const buildwarden = window.buildwarden;
   const hasChatModels = modelOptions.length > 0;
 
   const loadChats = useCallback(async () => {
-    if (!easycode) return;
+    if (!buildwarden) return;
     setLoading(true);
     try {
-      const data = await easycode.listChatsWithSteps();
+      const data = await buildwarden.listChatsWithSteps();
       setChatDetails(data);
     } finally {
       setLoading(false);
     }
-  }, [easycode]);
+  }, [buildwarden]);
 
   useEffect(() => {
     void loadChats();
@@ -114,24 +114,24 @@ export const ChatPage = ({
   };
 
   return (
-    <div className="space-y-4">
-      <Card className="app-surface-chat-hero overflow-hidden border p-6">
-        <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-3">
+      <Card className="overflow-hidden">
+        <div className="flex min-h-[6.5rem] flex-col gap-3 p-4 xl:h-[6.5rem] xl:flex-row xl:items-end xl:justify-between">
           <div className="max-w-3xl">
-            <p className="text-xs uppercase tracking-[0.35em] text-cyan-400">Chat</p>
-            <h2 className="mt-3 text-3xl font-semibold text-zinc-50">Just ask</h2>
-            <p className="mt-3 text-base leading-7 text-zinc-300">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-[var(--ec-accent)]">Chat</p>
+            <h2 className="mt-1 text-2xl font-semibold text-[var(--ec-text)]">Conversation workspace</h2>
+            <p className="mt-1 text-sm leading-5 text-[var(--ec-muted)]">
               Chat with the AI without a Git repository. No file tools, no worktrees—pure conversation.
             </p>
             {!hasChatModels ? (
-              <p className="mt-3 text-sm text-amber-300">
+              <p className="mt-3 text-sm text-[var(--ec-warning)]">
                 No chat-compatible models are configured. CodexCLI models only work from a real workspace or run.
               </p>
             ) : null}
           </div>
-          <div className="app-surface-chat-stat rounded-xl border px-4 py-3">
-            <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">Chats</p>
-            <p className="mt-1 text-2xl font-semibold text-zinc-100">{chatDetails.length}</p>
+          <div className="min-w-20 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-2 text-right">
+            <p className="font-mono text-lg font-semibold text-[var(--ec-text)]">{chatDetails.length}</p>
+            <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--ec-faint)]">chats</p>
           </div>
         </div>
       </Card>
@@ -174,7 +174,7 @@ export const ChatPage = ({
 
       <Card className="p-4">
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+          <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--ec-muted)]" />
           <Input
             className="pl-10"
             placeholder="Search chats..."
@@ -185,8 +185,8 @@ export const ChatPage = ({
       </Card>
 
       <Card className="overflow-hidden p-0">
-        <div className="border-b border-zinc-800 px-4 py-3">
-          <p className="text-sm font-medium text-zinc-100">
+        <div className="border-b border-[var(--ec-border)] px-4 py-3">
+          <p className="text-sm font-medium text-[var(--ec-text)]">
             {filteredChats.length} {filteredChats.length === 1 ? "chat" : "chats"}
           </p>
         </div>
@@ -197,19 +197,19 @@ export const ChatPage = ({
             </div>
           ) : filteredChats.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-3 p-12 text-center">
-              <MessageSquare className="h-12 w-12 text-zinc-600" />
-              <p className="text-sm text-zinc-400">
+              <MessageSquare className="size-12 text-[var(--ec-muted)]" />
+              <p className="text-sm text-[var(--ec-muted)]">
                 {chatDetails.length === 0
                   ? "No chats yet. Start a new chat above."
                   : "No chats match your search."}
               </p>
             </div>
           ) : (
-            <div className="divide-y divide-zinc-800">
+            <div className="divide-y divide-[var(--ec-border)]">
               {filteredChats.map(({ chat }) => (
                 <div
                   key={chat.id}
-                  className="flex items-center justify-between gap-4 px-4 py-3 transition hover:bg-zinc-900/50"
+                  className="flex items-center justify-between gap-4 px-4 py-3 transition hover:bg-[var(--ec-hover)]"
                 >
                   <button
                     type="button"
@@ -218,12 +218,12 @@ export const ChatPage = ({
                     title="Open chat"
                   >
                     <div className="flex items-center gap-2">
-                      <Badge tone={chat.status}>{chat.status}</Badge>
-                      <span className="truncate text-xs text-zinc-500">
+                      <Badge dot tone={chat.status}>{chat.status}</Badge>
+                      <span className="truncate text-xs text-[var(--ec-muted)]">
                         {new Date(chat.updatedAt).toLocaleString()}
                       </span>
                     </div>
-                    <p className="mt-1 truncate text-sm font-medium text-zinc-200">{chat.prompt}</p>
+                    <p className="mt-1 truncate text-sm font-medium text-[var(--ec-text)]">{chat.prompt}</p>
                   </button>
                   <div className="flex shrink-0 items-center gap-2">
                     <Button

@@ -8,13 +8,33 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import type { RunMode, RunWorkspaceType, UnifiedProviderFamily, ProviderType } from "@easycode/shared";
-import { ArrowUp, Bot, BrainCircuit, Check, ChevronDown, GitBranch, ShieldOff, SlidersHorizontal } from "lucide-react";
+import {
+  parseLeadingComposerCommand,
+  type ComposerCommandDescriptor,
+  type ComposerCommandContext,
+  type RunMode,
+  type RunWorkspaceType,
+  type UnifiedProviderFamily,
+  type ProviderType,
+} from "@buildwarden/shared";
+import { ArrowUp, Bot, BrainCircuit, Check, ChevronDown, GitBranch, ShieldOff, SlidersHorizontal, WandSparkles } from "lucide-react";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { ContextWindowBadge } from "./ContextWindowBadge";
 
 const RUN_MODES: RunMode[] = ["code", "plan", "ask"];
+const MAX_VISIBLE_COMPOSER_COMMANDS = 5;
+const MAX_COMPOSER_COMMAND_SECONDARY_CHARS = 60;
+
+const truncateComposerCommandText = (value: string, maxChars = MAX_COMPOSER_COMMAND_SECONDARY_CHARS): string => {
+  if (value.length <= maxChars) {
+    return value;
+  }
+  return `${value.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+};
+
+const getComposerCommandSecondaryText = (command: ComposerCommandDescriptor): string =>
+  truncateComposerCommandText([command.argumentHint, command.description].filter(Boolean).join(" "));
 
 function collectFilesFromClipboardData(data: DataTransfer | null): File[] {
   if (!data) {
@@ -77,7 +97,7 @@ export const ComposerSelect = ({
   buttonClassName = "",
   menuClassName = "",
   menuSide = "top",
-  selectedIconClassName = "text-cyan-300",
+  selectedIconClassName = "text-[var(--ec-accent)]",
 }: ComposerSelectProps) => {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -102,17 +122,17 @@ export const ComposerSelect = ({
     <div ref={rootRef} className={`relative ${open ? "z-[80]" : "z-10"}`}>
       <button
         type="button"
-        className={`inline-flex h-7 items-center gap-1.5 rounded-full border border-transparent bg-transparent px-2 text-xs text-zinc-300 transition hover:border-white/10 hover:bg-white/5 disabled:pointer-events-none disabled:opacity-50 ${buttonClassName}`}
+        className={`inline-flex h-9 items-center gap-2 rounded-full border border-transparent bg-transparent px-3 text-sm text-[var(--ec-muted)] transition hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] disabled:pointer-events-none disabled:opacity-50 ${buttonClassName}`}
         onClick={() => setOpen((current) => !current)}
         disabled={disabled || options.length === 0}
       >
-        <Icon className={`h-3.5 w-3.5 ${iconClassName}`} />
-        <span className="max-w-[14rem] truncate text-zinc-200">{selectedOption?.displayLabel ?? selectedOption?.label ?? "Select"}</span>
-        <ChevronDown className={`h-3.5 w-3.5 text-zinc-500 transition ${open ? "rotate-180" : ""}`} />
+        <Icon className={`h-4 w-4 ${iconClassName}`} />
+        <span className="max-w-[16rem] truncate text-[var(--ec-text)]">{selectedOption?.displayLabel ?? selectedOption?.label ?? "Select"}</span>
+        <ChevronDown className={`h-4 w-4 text-[var(--ec-faint)] transition ${open ? "rotate-180" : ""}`} />
       </button>
       {open ? (
         <div
-          className={`app-composer-dropdown-panel app-scrollbar absolute left-0 z-[90] max-h-72 min-w-full overflow-auto rounded-xl border border-zinc-800 p-1.5 shadow-2xl shadow-black/40 backdrop-blur ${
+          className={`glass-popover app-scrollbar absolute left-0 z-[90] max-h-72 min-w-full overflow-auto p-1.5 ${
             menuSide === "top" ? "bottom-[calc(100%+0.5rem)]" : "top-[calc(100%+0.5rem)]"
           } ${menuClassName}`}
         >
@@ -124,7 +144,9 @@ export const ComposerSelect = ({
                 key={option.value}
                 type="button"
                 className={`flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
-                  isSelected ? "bg-zinc-800 text-zinc-100" : "text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100"
+                  isSelected
+                    ? "bg-[var(--ec-control)] text-[var(--ec-text)]"
+                    : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
                 }`}
                 onClick={() => {
                   onChange(option.value);
@@ -165,7 +187,7 @@ const ComposerMultiModelSelect = ({
   buttonClassName = "",
   menuClassName = "",
   menuSide = "top",
-  selectedIconClassName = "text-cyan-300",
+  selectedIconClassName = "text-[var(--ec-accent)]",
 }: ComposerMultiModelSelectProps) => {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -215,21 +237,21 @@ const ComposerMultiModelSelect = ({
     <div ref={rootRef} className={`relative ${open ? "z-[80]" : "z-10"}`}>
       <button
         type="button"
-        className={`inline-flex h-7 items-center gap-1.5 rounded-full border border-transparent bg-transparent px-2 text-xs text-zinc-300 transition hover:border-white/10 hover:bg-white/5 disabled:pointer-events-none disabled:opacity-50 ${buttonClassName}`}
+        className={`inline-flex h-9 items-center gap-2 rounded-full border border-transparent bg-transparent px-3 text-sm text-[var(--ec-muted)] transition hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] disabled:pointer-events-none disabled:opacity-50 ${buttonClassName}`}
         onClick={() => setOpen((current) => !current)}
         disabled={disabled || options.length === 0}
       >
-        <Icon className={`h-3.5 w-3.5 ${iconClassName}`} />
-        <span className="max-w-[14rem] truncate text-zinc-200">{summaryLabel}</span>
-        <ChevronDown className={`h-3.5 w-3.5 text-zinc-500 transition ${open ? "rotate-180" : ""}`} />
+        <Icon className={`h-4 w-4 ${iconClassName}`} />
+        <span className="max-w-[16rem] truncate text-[var(--ec-text)]">{summaryLabel}</span>
+        <ChevronDown className={`h-4 w-4 text-[var(--ec-faint)] transition ${open ? "rotate-180" : ""}`} />
       </button>
       {open ? (
         <div
-          className={`app-composer-dropdown-panel app-scrollbar absolute left-0 z-[90] max-h-72 min-w-full overflow-auto rounded-xl border border-zinc-800 p-1.5 shadow-2xl shadow-black/40 backdrop-blur ${
+          className={`glass-popover app-scrollbar absolute left-0 z-[90] max-h-72 min-w-full overflow-auto p-1.5 ${
             menuSide === "top" ? "bottom-[calc(100%+0.5rem)]" : "top-[calc(100%+0.5rem)]"
           } ${menuClassName}`}
         >
-          <p className="px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500">Select one or more</p>
+          <p className="px-2 pb-1 text-[11px] uppercase tracking-wide text-[var(--ec-faint)]">Select one or more</p>
           {options.map((option) => {
             const isSelected = selectedSet.has(option.value);
 
@@ -238,7 +260,9 @@ const ComposerMultiModelSelect = ({
                 key={option.value}
                 type="button"
                 className={`flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
-                  isSelected ? "bg-zinc-800/80 text-zinc-100" : "text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100"
+                  isSelected
+                    ? "bg-[var(--ec-control)] text-[var(--ec-text)]"
+                    : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
                 }`}
                 onClick={(e) => {
                   e.preventDefault();
@@ -317,23 +341,23 @@ const ComposerRunSettingsButton = ({
     <div ref={rootRef} className={`relative ${open ? "z-[80]" : "z-10"}`}>
       <button
         type="button"
-        className="inline-flex h-7 max-w-[20rem] items-center gap-1.5 rounded-full border border-transparent bg-transparent px-2 text-xs text-zinc-300 transition hover:border-white/10 hover:bg-white/5 disabled:pointer-events-none disabled:opacity-50"
+        className="inline-flex h-9 max-w-[22rem] items-center gap-2 rounded-full border border-transparent bg-transparent px-3 text-sm text-[var(--ec-muted)] transition hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] disabled:pointer-events-none disabled:opacity-50"
         onClick={() => setOpen((current) => !current)}
         disabled={disabled}
       >
-        <SlidersHorizontal className="h-3.5 w-3.5 text-zinc-400" />
-        <span className="truncate text-zinc-200">{summary || "Run settings"}</span>
-        <ChevronDown className={`h-3.5 w-3.5 text-zinc-500 transition ${open ? "rotate-180" : ""}`} />
+        <SlidersHorizontal className="h-4 w-4 text-[var(--ec-muted)]" />
+        <span className="truncate text-[var(--ec-text)]">{summary || "Run settings"}</span>
+        <ChevronDown className={`h-4 w-4 text-[var(--ec-faint)] transition ${open ? "rotate-180" : ""}`} />
       </button>
       {open ? (
         <div
-          className={`app-composer-dropdown-panel app-scrollbar absolute left-0 z-[90] w-72 max-h-80 overflow-auto rounded-xl border border-zinc-800 p-2 shadow-2xl shadow-black/40 backdrop-blur ${
+          className={`glass-popover app-scrollbar absolute left-0 z-[90] w-72 max-h-80 overflow-auto p-2 ${
             menuSide === "top" ? "bottom-[calc(100%+0.5rem)]" : "top-[calc(100%+0.5rem)]"
           }`}
         >
           <div className="space-y-2">
             <div>
-              <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500">Mode</p>
+              <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--ec-faint)]">Mode</p>
               <div className="grid grid-cols-3 gap-1">
                 {modeOptions.map((option) => {
                   const selected = option.value === selectedMode;
@@ -342,7 +366,9 @@ const ComposerRunSettingsButton = ({
                       key={option.value}
                       type="button"
                       className={`rounded-lg px-2 py-1.5 text-xs transition ${
-                        selected ? "bg-zinc-800 text-zinc-100" : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100"
+                        selected
+                          ? "bg-[var(--ec-control)] text-[var(--ec-text)]"
+                          : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
                       }`}
                       onClick={() => {
                         onModeChange(option.value as RunMode);
@@ -357,7 +383,7 @@ const ComposerRunSettingsButton = ({
 
             {selectedWorkspaceType && onWorkspaceTypeChange ? (
               <div>
-                <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500">Workspace</p>
+                <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--ec-faint)]">Workspace</p>
                 <div className="grid grid-cols-2 gap-1">
                   {workspaceOptions.map((option) => {
                     const selected = option.value === selectedWorkspaceType;
@@ -366,7 +392,9 @@ const ComposerRunSettingsButton = ({
                         key={option.value}
                         type="button"
                         className={`rounded-lg px-2 py-1.5 text-xs transition ${
-                          selected ? "bg-zinc-800 text-zinc-100" : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100"
+                          selected
+                            ? "bg-[var(--ec-control)] text-[var(--ec-text)]"
+                            : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
                         }`}
                         onClick={() => {
                           onWorkspaceTypeChange(option.value);
@@ -382,7 +410,7 @@ const ComposerRunSettingsButton = ({
 
             {selectedBranch != null && branchOptions?.length && onBranchChange ? (
               <div>
-                <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500">Branch</p>
+                <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--ec-faint)]">Branch</p>
                 <div className="max-h-36 overflow-auto pr-0.5">
                   {branchOptions.map((option) => {
                     const selected = option.value === selectedBranch;
@@ -391,7 +419,9 @@ const ComposerRunSettingsButton = ({
                         key={option.value}
                         type="button"
                         className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition ${
-                          selected ? "bg-zinc-800 text-zinc-100" : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100"
+                          selected
+                            ? "bg-[var(--ec-control)] text-[var(--ec-text)]"
+                            : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
                         } ${branchDisabled ? "pointer-events-none opacity-60" : ""}`}
                         onClick={() => {
                           onBranchChange(option.value);
@@ -399,7 +429,7 @@ const ComposerRunSettingsButton = ({
                         }}
                         disabled={branchDisabled}
                       >
-                        <GitBranch className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+                        <GitBranch className="h-3.5 w-3.5 shrink-0 text-[var(--ec-faint)]" />
                         <span className="truncate">{option.label}</span>
                       </button>
                     );
@@ -428,6 +458,8 @@ const eventToKeyString = (e: KeyboardEvent<HTMLTextAreaElement>): string => {
 interface RunComposerProps {
   /** `chat` hides mode / workspace / branch controls (model + submit only). */
   variant?: "default" | "chat";
+  commandContext?: ComposerCommandContext;
+  projectId?: string;
   /** Renders in the footer row to the left of Cancel / Send (e.g. file attachments). */
   attachments?: ReactNode;
   prompt: string;
@@ -461,7 +493,7 @@ interface RunComposerProps {
   dense?: boolean;
   submitShortcut?: string;
   onPromptKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
-  /** When set, pasting files into the prompt (e.g. copied from Explorer/Finder) adds them like Attach; parent should merge with `appendChatAttachmentFiles` from `@easycode/shared`. */
+  /** When set, pasting files into the prompt (e.g. copied from Explorer/Finder) adds them like Attach; parent should merge with `appendChatAttachmentFiles` from `@buildwarden/shared`. */
   onAddAttachmentFiles?: (files: File[]) => void;
   textareaClassName?: string;
   autoFocus?: boolean;
@@ -478,6 +510,8 @@ interface RunComposerProps {
 
 export const RunComposer = ({
   variant = "default",
+  commandContext = "run",
+  projectId,
   attachments,
   prompt,
   onPromptChange,
@@ -500,8 +534,8 @@ export const RunComposer = ({
   onCancel,
   onSubmit,
   submitLabel = "Send",
-  submitIcon = <ArrowUp className="ml-2 h-4 w-4" />,
-  placeholder = "Ask EasyCode to continue this run, refine the diff, fix a bug, or explain a change.",
+  submitIcon = <ArrowUp className="h-5 w-5" />,
+  placeholder = "Ask BuildWarden to continue this run, refine the diff, fix a bug, or explain a change.",
   dropdownSide = "top",
   submitDisabled,
   sticky = true,
@@ -552,6 +586,117 @@ export const RunComposer = ({
     );
     return uniform ? first : null;
   }, [modelSelectOptions, selectedModelId, selectedModelIds, useMultiModel]);
+  const effectiveCommandContext: ComposerCommandContext = isChat ? "chat" : commandContext;
+  const leadingComposerCommand = useMemo(() => parseLeadingComposerCommand(prompt), [prompt]);
+  const slashCommandQuery = useMemo(() => {
+    const trimmedStart = prompt.trimStart();
+    if (!trimmedStart.startsWith("/")) {
+      return null;
+    }
+    const token = trimmedStart.split(/\s/, 1)[0] ?? "/";
+    return token.toLowerCase();
+  }, [prompt]);
+  const commandModelId = useMemo(() => {
+    if (useMultiModel) {
+      return activeModelOption?.value ?? "";
+    }
+    return selectedModelId;
+  }, [activeModelOption?.value, selectedModelId, useMultiModel]);
+  const [availableComposerCommands, setAvailableComposerCommands] = useState<ComposerCommandDescriptor[]>([]);
+  const [composerCommandsLoading, setComposerCommandsLoading] = useState(false);
+  const [showAllComposerCommands, setShowAllComposerCommands] = useState(false);
+  const composerCommandRequestRef = useRef(0);
+  const composerCommandCacheRef = useRef(new Map<string, ComposerCommandDescriptor[]>());
+  const canLoadComposerCommands =
+    Boolean(slashCommandQuery) && !busy && !isRunActive && Boolean(commandModelId) && effectiveCommandContext !== "chat";
+
+  useEffect(() => {
+    setShowAllComposerCommands(false);
+  }, [commandModelId, effectiveCommandContext, slashCommandQuery]);
+
+  useEffect(() => {
+    if (!canLoadComposerCommands || !slashCommandQuery) {
+      composerCommandRequestRef.current += 1;
+      setAvailableComposerCommands([]);
+      setComposerCommandsLoading(false);
+      return;
+    }
+
+    const cacheKey = [commandModelId, projectId ?? "", effectiveCommandContext, slashCommandQuery].join("|");
+    const cached = composerCommandCacheRef.current.get(cacheKey);
+    if (cached) {
+      setAvailableComposerCommands(cached);
+      setComposerCommandsLoading(false);
+      return;
+    }
+
+    const requestId = composerCommandRequestRef.current + 1;
+    composerCommandRequestRef.current = requestId;
+    setComposerCommandsLoading(true);
+
+    const timerId = window.setTimeout(() => {
+      void window.buildwarden
+        .listComposerCommands({
+          modelId: commandModelId,
+          projectId,
+          context: effectiveCommandContext,
+          query: slashCommandQuery,
+        })
+        .then((commands) => {
+          composerCommandCacheRef.current.set(cacheKey, commands);
+          if (composerCommandRequestRef.current === requestId) {
+            setAvailableComposerCommands(commands);
+          }
+        })
+        .catch(() => {
+          if (composerCommandRequestRef.current === requestId) {
+            setAvailableComposerCommands([]);
+          }
+        })
+        .finally(() => {
+          if (composerCommandRequestRef.current === requestId) {
+            setComposerCommandsLoading(false);
+          }
+        });
+    }, 80);
+
+    return () => window.clearTimeout(timerId);
+  }, [canLoadComposerCommands, commandModelId, effectiveCommandContext, projectId, slashCommandQuery]);
+
+  const visibleComposerCommands = canLoadComposerCommands
+    ? showAllComposerCommands
+      ? availableComposerCommands
+      : availableComposerCommands.slice(0, MAX_VISIBLE_COMPOSER_COMMANDS)
+    : [];
+  const hasMoreComposerCommands =
+    canLoadComposerCommands && !showAllComposerCommands && availableComposerCommands.length > MAX_VISIBLE_COMPOSER_COMMANDS;
+  const hasSupportedLeadingCommand = Boolean(
+    leadingComposerCommand && availableComposerCommands.some((command) => command.command === leadingComposerCommand.command),
+  );
+  const showUnsupportedSlashCommand =
+    Boolean(slashCommandQuery && slashCommandQuery.length > 1) &&
+    visibleComposerCommands.length === 0 &&
+    !hasSupportedLeadingCommand &&
+    prompt.trimStart().startsWith("/") &&
+    !busy &&
+    !isRunActive &&
+    !composerCommandsLoading;
+  const selectComposerCommand = (command: ComposerCommandDescriptor) => {
+    const parsed = parseLeadingComposerCommand(prompt);
+    if (command.effect === "set-run-mode") {
+      if (command.runMode) {
+        onModeChange(command.runMode);
+      }
+      onPromptChange(parsed?.argument ?? "");
+      textareaRef.current?.focus();
+      return;
+    }
+
+    const argument = parsed?.argument ?? "";
+    onPromptChange(`${command.command}${argument ? ` ${argument}` : " "}`);
+    setShowAllComposerCommands(false);
+    textareaRef.current?.focus();
+  };
   const selectedModelOptions = useMemo(
     () =>
       useMultiModel
@@ -626,7 +771,7 @@ export const RunComposer = ({
     onAddAttachmentFiles(pasted);
   };
 
-  const textareaMinClass = isChat ? (dense ? "min-h-24 sm:min-h-32" : "min-h-28 sm:min-h-36") : dense ? "min-h-20" : "min-h-24";
+  const textareaMinClass = isChat ? (dense ? "min-h-28 sm:min-h-32" : "min-h-36 sm:min-h-44") : dense ? "min-h-24" : "min-h-32";
 
   useEffect(() => {
     if (!autoFocus || busy || isRunActive) {
@@ -648,10 +793,10 @@ export const RunComposer = ({
       }
     >
       <div className={dense ? "p-1" : "p-1.5"}>
-        <div className="app-input-surface rounded-2xl border border-zinc-800 transition focus-within:border-cyan-500/80">
+        <div className="app-input-surface rounded-[1.75rem] border border-[var(--ec-border)] bg-[var(--ec-input)] shadow-[0_18px_50px_rgba(0,0,0,0.18)] transition focus-within:border-[var(--ec-accent)] focus-within:shadow-[var(--ec-action-shadow)]">
           <Textarea
             ref={textareaRef}
-            className={`${textareaMinClass} !border-0 !bg-transparent resize-none rounded-2xl px-4 pb-1 pt-3 focus:!border-transparent ${textareaClassName}`.trim()}
+            className={`${textareaMinClass} !border-0 !bg-transparent resize-none rounded-[1.75rem] px-5 pb-2 pt-4 text-[15px] leading-relaxed placeholder:text-[15px] placeholder:font-normal focus:!border-transparent sm:placeholder:text-[15px] ${textareaClassName}`.trim()}
             placeholder={placeholder}
             value={prompt}
             autoFocus={autoFocus}
@@ -660,89 +805,46 @@ export const RunComposer = ({
             onPaste={handlePromptPaste}
             disabled={busy || isRunActive}
           />
-          <div className="flex flex-col gap-1 px-2 pb-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex min-w-0 flex-wrap items-center gap-0.5">
-              {useMultiModel ? (
-                <ComposerMultiModelSelect
-                  selectedIds={selectedModelIds}
-                  icon={Bot}
-                  iconClassName="text-zinc-400"
-                  options={modelSelectOptions}
-                  onChange={multiModelChange}
-                  disabled={busy}
-                  menuClassName="w-[22rem]"
-                  menuSide={dropdownSide}
-                  selectedIconClassName="text-zinc-200"
-                />
-              ) : (
-                <ComposerSelect
-                  value={selectedModelId}
-                  icon={Bot}
-                  iconClassName="text-zinc-400"
-                  options={modelSelectOptions}
-                  onChange={onModelChange}
-                  disabled={busy}
-                  menuClassName="w-[22rem]"
-                  menuSide={dropdownSide}
-                  selectedIconClassName="text-zinc-200"
-                />
-              )}
-              {showReasoningControl && onReasoningEffortChange ? (
-                <ComposerSelect
-                  value={reasoningEffort || "medium"}
-                  icon={BrainCircuit}
-                  iconClassName="text-zinc-400"
-                  options={reasoningSelectOptions}
-                  onChange={onReasoningEffortChange}
-                  disabled={busy}
-                  menuClassName="w-52"
-                  menuSide={dropdownSide}
-                  selectedIconClassName="text-zinc-200"
-                />
-              ) : null}
-              {showMultiReasoningControl ? (
-                <ComposerSelect
-                  value={normalizedMultiReasoning}
-                  icon={BrainCircuit}
-                  iconClassName="text-zinc-400"
-                  options={[
-                    { value: "low", label: "Reasoning: Low", displayLabel: "Low" },
-                    { value: "medium", label: "Reasoning: Medium", displayLabel: "Medium" },
-                    { value: "high", label: "Reasoning: High", displayLabel: "High" },
-                  ]}
-                  onChange={(value) => {
-                    onReasoningEffortChange?.(value);
-                    onAnthropicEffortChange?.(value);
+          {visibleComposerCommands.length > 0 ? (
+            <div className="mx-2 mb-1 flex flex-wrap gap-1 border-t border-[var(--ec-border)] px-1 pt-1.5">
+              {visibleComposerCommands.map((command) => {
+                const secondaryText = getComposerCommandSecondaryText(command);
+                return (
+                  <button
+                    key={command.id}
+                    type="button"
+                    className="inline-flex max-w-full min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-lg border border-[var(--ec-border)] bg-[var(--ec-control)] px-2 py-1 text-left text-xs text-[var(--ec-text)] transition hover:border-[var(--ec-accent)] hover:bg-[var(--ec-hover)]"
+                    onClick={() => selectComposerCommand(command)}
+                    title={[command.argumentHint, command.description].filter(Boolean).join(" ")}
+                  >
+                    <WandSparkles className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" />
+                    <span className="shrink-0 font-mono">{command.command}</span>
+                    {secondaryText ? <span className="min-w-0 truncate text-[var(--ec-muted)]">{secondaryText}</span> : null}
+                  </button>
+                );
+              })}
+              {hasMoreComposerCommands ? (
+                <button
+                  type="button"
+                  className="inline-flex items-center rounded-lg border border-[var(--ec-border)] bg-[var(--ec-control)] px-2 py-1 text-xs text-[var(--ec-muted)] transition hover:border-[var(--ec-accent)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+                  onClick={() => {
+                    setShowAllComposerCommands(true);
+                    textareaRef.current?.focus();
                   }}
-                  disabled={busy}
-                  menuClassName="w-48"
-                  menuSide={dropdownSide}
-                  selectedIconClassName="text-zinc-200"
-                />
+                  title="Show all slash commands"
+                >
+                  ...
+                </button>
               ) : null}
-              {showAnthropicControl && onAnthropicEffortChange ? (
-                <ComposerSelect
-                  value={anthropicEffort || "medium"}
-                  icon={BrainCircuit}
-                  iconClassName="text-zinc-400"
-                  options={[
-                    { value: "low", label: "Effort: Low", displayLabel: "Low" },
-                    { value: "medium", label: "Effort: Medium", displayLabel: "Medium" },
-                    { value: "high", label: "Effort: High", displayLabel: "High" },
-                    ...(activeModelOption?.providerType === "claude-code"
-                      ? [
-                          { value: "xhigh", label: "Effort: XHigh", displayLabel: "XHigh" },
-                          { value: "max", label: "Effort: Max", displayLabel: "Max" },
-                        ]
-                      : []),
-                  ]}
-                  onChange={onAnthropicEffortChange}
-                  disabled={busy}
-                  menuClassName="w-48"
-                  menuSide={dropdownSide}
-                  selectedIconClassName="text-zinc-200"
-                />
-              ) : null}
+            </div>
+          ) : showUnsupportedSlashCommand ? (
+            <div className="mx-2 mb-1 border-t border-[var(--ec-border)] px-1 pt-1.5 text-[11px] text-[var(--ec-danger)]">
+              Slash command is not available for the selected model provider.
+            </div>
+          ) : null}
+          <div className="flex flex-col gap-2 px-3 pb-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              {attachments}
               {!isChat ? (
                 <ComposerRunSettingsButton
                   selectedMode={selectedMode}
@@ -763,24 +865,104 @@ export const RunComposer = ({
                   aria-pressed={yoloMode}
                   title={
                     yoloMode
-                      ? "Full access on: Easycode will not ask before tools or shell commands."
-                      : "Full access off: Easycode will ask before untrusted tools or shell commands."
+                      ? "Full access on: BuildWarden will not ask before tools or shell commands."
+                      : "Full access off: BuildWarden will ask before untrusted tools or shell commands."
                   }
                   disabled={busy}
                   onClick={() => onYoloModeChange(!yoloMode)}
                   className={[
-                    "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-transparent bg-transparent px-2 text-xs font-medium transition hover:border-white/10 hover:bg-white/5",
-                    yoloMode ? "text-rose-200" : "text-zinc-300",
+                    "inline-flex h-9 shrink-0 items-center gap-2 rounded-full border border-transparent bg-transparent px-3 text-sm font-medium transition hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-hover)]",
+                    yoloMode ? "text-[var(--ec-danger)]" : "text-[var(--ec-muted)] hover:text-[var(--ec-text)]",
                     busy ? "cursor-not-allowed opacity-60" : "",
                   ].join(" ")}
                 >
-                  <ShieldOff className={["h-3.5 w-3.5", yoloMode ? "text-rose-300" : "text-zinc-400"].join(" ")} />
+                  <ShieldOff className={["h-4 w-4", yoloMode ? "text-[var(--ec-danger)]" : "text-[var(--ec-muted)]"].join(" ")} />
                   Full access
                 </button>
               ) : null}
             </div>
-            <div className="flex min-w-0 flex-wrap items-center justify-end gap-1">
-              {attachments}
+            <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+              {useMultiModel ? (
+                <ComposerMultiModelSelect
+                  selectedIds={selectedModelIds}
+                  icon={Bot}
+                  iconClassName="text-[var(--ec-muted)]"
+                  options={modelSelectOptions}
+                  onChange={multiModelChange}
+                  disabled={busy}
+                  menuClassName="w-[22rem]"
+                  menuSide={dropdownSide}
+                  selectedIconClassName="text-[var(--ec-accent)]"
+                />
+              ) : (
+                <ComposerSelect
+                  value={selectedModelId}
+                  icon={Bot}
+                  iconClassName="text-[var(--ec-muted)]"
+                  options={modelSelectOptions}
+                  onChange={onModelChange}
+                  disabled={busy}
+                  menuClassName="w-[22rem]"
+                  menuSide={dropdownSide}
+                  selectedIconClassName="text-[var(--ec-accent)]"
+                />
+              )}
+              {showReasoningControl && onReasoningEffortChange ? (
+                <ComposerSelect
+                  value={reasoningEffort || "medium"}
+                  icon={BrainCircuit}
+                  iconClassName="text-[var(--ec-muted)]"
+                  options={reasoningSelectOptions}
+                  onChange={onReasoningEffortChange}
+                  disabled={busy}
+                  menuClassName="w-52"
+                  menuSide={dropdownSide}
+                  selectedIconClassName="text-[var(--ec-accent)]"
+                />
+              ) : null}
+              {showMultiReasoningControl ? (
+                <ComposerSelect
+                  value={normalizedMultiReasoning}
+                  icon={BrainCircuit}
+                  iconClassName="text-[var(--ec-muted)]"
+                  options={[
+                    { value: "low", label: "Reasoning: Low", displayLabel: "Low" },
+                    { value: "medium", label: "Reasoning: Medium", displayLabel: "Medium" },
+                    { value: "high", label: "Reasoning: High", displayLabel: "High" },
+                  ]}
+                  onChange={(value) => {
+                    onReasoningEffortChange?.(value);
+                    onAnthropicEffortChange?.(value);
+                  }}
+                  disabled={busy}
+                  menuClassName="w-48"
+                  menuSide={dropdownSide}
+                  selectedIconClassName="text-[var(--ec-accent)]"
+                />
+              ) : null}
+              {showAnthropicControl && onAnthropicEffortChange ? (
+                <ComposerSelect
+                  value={anthropicEffort || "medium"}
+                  icon={BrainCircuit}
+                  iconClassName="text-[var(--ec-muted)]"
+                  options={[
+                    { value: "low", label: "Effort: Low", displayLabel: "Low" },
+                    { value: "medium", label: "Effort: Medium", displayLabel: "Medium" },
+                    { value: "high", label: "Effort: High", displayLabel: "High" },
+                    ...(activeModelOption?.providerType === "claude-code"
+                      ? [
+                          { value: "xhigh", label: "Effort: XHigh", displayLabel: "XHigh" },
+                          { value: "max", label: "Effort: Max", displayLabel: "Max" },
+                        ]
+                      : []),
+                  ]}
+                  onChange={onAnthropicEffortChange}
+                  disabled={busy}
+                  menuClassName="w-48"
+                  menuSide={dropdownSide}
+                  selectedIconClassName="text-[var(--ec-accent)]"
+                />
+              ) : null}
               {showContextBadge ? (
                 <ContextWindowBadge
                   modelIds={selectedContextModelIds}
@@ -791,17 +973,19 @@ export const RunComposer = ({
                 />
               ) : null}
               {isRunActive ? (
-                <Button variant="danger" size="sm" className="h-8 rounded-full px-3 text-xs" onClick={onCancel}>
+                <Button variant="danger" size="sm" className="h-9 rounded-full px-3 text-xs" onClick={onCancel}>
                   Cancel run
                 </Button>
               ) : null}
               <Button
                 size="sm"
-                className="h-8 shrink-0 rounded-full px-3 text-xs"
+                className="h-11 w-11 shrink-0 rounded-full p-0 text-sm shadow-[var(--ec-action-shadow)] [&_svg]:m-0 [&_svg]:h-5 [&_svg]:w-5"
                 disabled={isSubmitDisabled}
                 onClick={() => void onSubmit()}
+                title={submitLabel}
+                aria-label={submitLabel}
               >
-                {submitLabel}
+                <span className="sr-only">{submitLabel}</span>
                 {submitIcon}
               </Button>
             </div>

@@ -1,10 +1,10 @@
 import { useMemo, useRef, useState } from "react";
-import type { IntegratedSkillDefinition } from "@easycode/shared";
+import type { IntegratedSkillMetadata } from "@buildwarden/shared";
 import { Check, ChevronDown, X } from "lucide-react";
 import { AnchorDropdownPortal } from "./anchor-dropdown-portal";
 
 export type ProjectSkillSelectorProps = {
-  skills: IntegratedSkillDefinition[];
+  skills: IntegratedSkillMetadata[];
   selectedSkillIds: string[];
   disabled?: boolean;
   onChange: (skillIds: string[]) => void | Promise<void>;
@@ -38,17 +38,17 @@ export const ProjectSkillSelector = ({
   };
 
   return (
-    <div className="space-y-2">
+    <div className="flex min-w-0 flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative" ref={anchorRef}>
+        <div className="relative min-w-0 flex-1 sm:flex-none" ref={anchorRef}>
           <button
             type="button"
             disabled={disabled || skills.length === 0}
-            className="flex min-w-[18rem] items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-left text-sm text-zinc-200 transition hover:border-zinc-700 hover:bg-zinc-900/70 disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex w-full min-w-0 items-center justify-between gap-3 rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2 text-left text-sm text-[var(--ec-text)] transition hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-hover)] disabled:cursor-not-allowed disabled:opacity-60 sm:min-w-[18rem]"
             onClick={() => setMenuOpen((current) => !current)}
           >
             <span className="min-w-0 truncate">{skills.length === 0 ? "No enabled skills available" : summary}</span>
-            <ChevronDown className={`h-4 w-4 shrink-0 text-zinc-500 transition ${menuOpen ? "rotate-180" : ""}`} />
+            <ChevronDown className={`h-4 w-4 shrink-0 text-[var(--ec-faint)] transition ${menuOpen ? "rotate-180" : ""}`} />
           </button>
           <AnchorDropdownPortal
             open={menuOpen && skills.length > 0}
@@ -56,7 +56,7 @@ export const ProjectSkillSelector = ({
             onClose={() => setMenuOpen(false)}
             align="start"
             widthPx={440}
-            className="overflow-hidden rounded-xl border border-zinc-700/90 bg-zinc-950 py-1 shadow-xl shadow-black/40 ring-1 ring-cyan-500/10"
+            className="glass-popover overflow-hidden py-1"
           >
             <div className="app-scrollbar max-h-[24rem] overflow-y-auto p-1.5">
               {skills.map((skill) => {
@@ -66,21 +66,29 @@ export const ProjectSkillSelector = ({
                     key={skill.id}
                     type="button"
                     className={`flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left transition ${
-                      selected ? "bg-cyan-500/10 text-cyan-50" : "text-zinc-200 hover:bg-zinc-800/80"
+                      selected
+                        ? "bg-[var(--ec-accent-soft)] text-[var(--ec-text)]"
+                        : "text-[var(--ec-text)] hover:bg-[var(--ec-hover)]"
                     }`}
                     onClick={() => toggleSkill(skill.id)}
                   >
-                    <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${selected ? "border-cyan-400 bg-cyan-400/20" : "border-zinc-700 bg-zinc-900/80"}`}>
+                    <span
+                      className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                        selected
+                          ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]"
+                          : "border-[var(--ec-border)] bg-[var(--ec-panel)]"
+                      }`}
+                    >
                       {selected ? <Check className="h-3 w-3" /> : null}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="flex flex-wrap items-center gap-2">
                         <span className="text-sm font-medium">{skill.title}</span>
-                        <span className="rounded-full border border-zinc-700 bg-zinc-900/70 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-zinc-400">
+                        <span className="rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-[var(--ec-muted)]">
                           {skill.source}
                         </span>
                       </span>
-                      <span className="mt-1 block text-xs leading-relaxed text-zinc-400">{skill.description}</span>
+                      <span className="mt-1 block text-xs leading-relaxed text-[var(--ec-muted)]">{skill.description}</span>
                     </span>
                   </button>
                 );
@@ -92,7 +100,7 @@ export const ProjectSkillSelector = ({
         {selectedSkills.length > 0 ? (
           <button
             type="button"
-            className="inline-flex items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-950/60 px-2.5 py-2 text-xs text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-200"
+            className="inline-flex items-center gap-1 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 py-2 text-xs text-[var(--ec-muted)] transition hover:border-[var(--ec-border-strong)] hover:text-[var(--ec-text)]"
             onClick={() => void onChange([])}
           >
             <X className="h-3.5 w-3.5" />

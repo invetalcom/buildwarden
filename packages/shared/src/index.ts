@@ -1,5 +1,21 @@
 export * from "./provider-metadata";
-export * from "./integrated-skills-catalog";
+/**
+ * The full skills catalog (~3.7 MB of literals) is deliberately NOT re-exported
+ * here: a runtime re-export would pull it into the preload and renderer startup
+ * bundles. Main-process code imports `@buildwarden/shared/integrated-skills-catalog`
+ * directly; the renderer receives lightweight metadata over IPC and fetches a
+ * skill's body on demand.
+ */
+export type {
+  IntegratedSkillCategory,
+  IntegratedSkillDefinition,
+  IntegratedSkillReference,
+  IntegratedSkillSource,
+} from "./integrated-skills-catalog";
+import type { IntegratedSkillDefinition as IntegratedSkillDefinitionType } from "./integrated-skills-catalog";
+
+/** Renderer-facing skill descriptor without the heavy body/reference payloads. */
+export type IntegratedSkillMetadata = Omit<IntegratedSkillDefinitionType, "content" | "references">;
 
 export type ProviderType = "ai-sdk" | "azure-legacy" | "codex-cli" | "claude-code";
 
@@ -9,6 +25,208 @@ export type RunMode = "code" | "plan" | "ask";
 export type RunWorkspaceType = "worktree" | "local";
 export type RunListVisibility = "default" | "for-later";
 export type RunKind = "standard" | "lab-implementation";
+
+export type ComposerCommandContext = "run" | "follow-up" | "chat";
+export type ComposerCommandEffect = "set-run-mode" | "set-goal" | "native-prompt";
+
+export interface ComposerCommandDescriptor {
+  id: string;
+  command: `/${string}`;
+  label: string;
+  description: string;
+  providerType: ProviderType;
+  effect: ComposerCommandEffect;
+  runMode?: RunMode;
+  argumentHint?: string;
+  source?: "buildwarden" | "provider";
+  supportsRun: boolean;
+  supportsFollowUp: boolean;
+  supportsChat?: boolean;
+}
+
+export interface LeadingComposerCommand {
+  command: `/${string}`;
+  argument: string;
+}
+
+export interface ResolvedComposerCommandPrompt {
+  descriptor?: ComposerCommandDescriptor;
+  prompt: string;
+  mode?: RunMode;
+  goalText?: string | null;
+  unsupportedCommand?: `/${string}`;
+}
+
+export interface ListComposerCommandsInput {
+  modelId: string;
+  projectId?: string | null;
+  context: ComposerCommandContext;
+  query?: string | null;
+}
+
+export const PROVIDER_COMPOSER_COMMANDS = [
+  {
+    id: "codex-plan",
+    command: "/plan",
+    label: "Plan",
+    description: "Use Codex plan mode for this prompt.",
+    providerType: "codex-cli",
+    effect: "set-run-mode",
+    runMode: "plan",
+    supportsRun: true,
+    supportsFollowUp: true,
+  },
+  {
+    id: "codex-goal",
+    command: "/goal",
+    label: "Goal",
+    description: "Set or update the run goal.",
+    providerType: "codex-cli",
+    effect: "set-goal",
+    supportsRun: true,
+    supportsFollowUp: true,
+  },
+  {
+    id: "claude-plan",
+    command: "/plan",
+    label: "Plan",
+    description: "Use Claude Code plan mode for this prompt.",
+    providerType: "claude-code",
+    effect: "set-run-mode",
+    runMode: "plan",
+    supportsRun: true,
+    supportsFollowUp: true,
+  },
+] as const satisfies readonly ComposerCommandDescriptor[];
+
+const composerCommandSupportsContext = (command: ComposerCommandDescriptor, context: ComposerCommandContext): boolean => {
+  if (context === "run") {
+    return command.supportsRun;
+  }
+  if (context === "follow-up") {
+    return command.supportsFollowUp;
+  }
+  return command.supportsChat === true;
+};
+
+export const listComposerCommandsForProvider = (
+  providerType: ProviderType | undefined | null,
+  context: ComposerCommandContext,
+): ComposerCommandDescriptor[] => {
+  if (!providerType) {
+    return [];
+  }
+  return PROVIDER_COMPOSER_COMMANDS.filter(
+    (command) => command.providerType === providerType && composerCommandSupportsContext(command, context),
+  );
+};
+
+export const mergeComposerCommandDescriptors = (
+  commands: readonly ComposerCommandDescriptor[],
+  context: ComposerCommandContext,
+): ComposerCommandDescriptor[] => {
+  const byCommand = new Map<string, ComposerCommandDescriptor>();
+
+  for (const command of commands) {
+    if (!composerCommandSupportsContext(command, context)) {
+      continue;
+    }
+    const key = command.command.toLowerCase();
+    const existing = byCommand.get(key);
+    if (!existing || existing.effect === "native-prompt") {
+      byCommand.set(key, {
+        ...command,
+        command: key as `/${string}`,
+      });
+      continue;
+    }
+    if (!existing.argumentHint && command.argumentHint) {
+      byCommand.set(key, { ...existing, argumentHint: command.argumentHint });
+    }
+  }
+
+  return [...byCommand.values()].sort((left, right) => left.command.localeCompare(right.command));
+};
+
+export const filterComposerCommandDescriptors = (
+  commands: readonly ComposerCommandDescriptor[],
+  query: string | undefined | null,
+): ComposerCommandDescriptor[] => {
+  const normalized = query?.trim().toLowerCase() ?? "";
+  if (!normalized || normalized === "/") {
+    return [...commands];
+  }
+  const queryWithSlash = normalized.startsWith("/") ? normalized : `/${normalized}`;
+  const labelQuery = queryWithSlash.slice(1);
+  return commands.filter(
+    (command) =>
+      command.command.toLowerCase().startsWith(queryWithSlash) ||
+      command.label.toLowerCase().includes(labelQuery),
+  );
+};
+
+export const parseLeadingComposerCommand = (value: string): LeadingComposerCommand | null => {
+  const trimmedStart = value.trimStart();
+  const match = /^\/([A-Za-z][A-Za-z0-9_.:-]*)(?=$|\s)([\s\S]*)$/.exec(trimmedStart);
+  if (!match) {
+    return null;
+  }
+  return {
+    command: `/${match[1]!.toLowerCase()}`,
+    argument: (match[2] ?? "").trimStart(),
+  };
+};
+
+const splitGoalCommandArgument = (argument: string): { goalText: string | null; prompt: string } => {
+  const normalized = argument.trimStart();
+  const newlineMatch = /\r?\n/.exec(normalized);
+  if (!newlineMatch) {
+    const goalText = normalized.trim();
+    return { goalText: goalText || null, prompt: "" };
+  }
+
+  const goalText = normalized.slice(0, newlineMatch.index).trim();
+  const prompt = normalized.slice(newlineMatch.index + newlineMatch[0].length).trimStart();
+  return { goalText: goalText || null, prompt };
+};
+
+export const resolveComposerCommandPrompt = (
+  value: string,
+  providerType: ProviderType | undefined | null,
+  context: ComposerCommandContext,
+): ResolvedComposerCommandPrompt => {
+  const parsed = parseLeadingComposerCommand(value);
+  if (!parsed) {
+    return { prompt: value };
+  }
+
+  const descriptor = listComposerCommandsForProvider(providerType, context).find((command) => command.command === parsed.command);
+  if (!descriptor) {
+    return { prompt: value, unsupportedCommand: parsed.command };
+  }
+
+  if (descriptor.effect === "set-run-mode") {
+    return {
+      descriptor,
+      prompt: parsed.argument,
+      mode: descriptor.runMode,
+    };
+  }
+
+  if (descriptor.effect === "native-prompt") {
+    return {
+      descriptor,
+      prompt: value,
+    };
+  }
+
+  const goal = splitGoalCommandArgument(parsed.argument);
+  return {
+    descriptor,
+    prompt: goal.prompt,
+    goalText: goal.goalText,
+  };
+};
 
 export type RunStatus =
   | "queued"
@@ -109,6 +327,11 @@ export interface RunRecord {
   mode: RunMode;
   workspaceType: RunWorkspaceType;
   prompt: string;
+  goalText: string | null;
+  /** Derived at read time from initial/follow-up user prompts, run goal text, and submitted user-input answers. */
+  userInputSearchText?: string;
+  /** Derived at read time from the latest initial/follow-up prompt or submitted user-input answer. */
+  lastUserInputAt?: string;
   status: RunStatus;
   branchName: string;
   worktreePath: string;
@@ -118,6 +341,8 @@ export interface RunRecord {
   inputTokens: number;
   outputTokens: number;
   listVisibility: RunListVisibility;
+  /** Derived at read time from unresolved user-input request steps; not stored in the runs table. */
+  pendingUserInputRequest?: boolean | number;
   kind: RunKind;
   labThreadId: string | null;
   parentRunId: string | null;
@@ -129,6 +354,27 @@ export interface RunRecord {
   finishedAt: string | null;
 }
 
+export type RunNoteStatus = "open" | "closed";
+
+export interface RunNoteRecord {
+  id: string;
+  runId: string;
+  content: string;
+  status: RunNoteStatus;
+  createdAt: string;
+  updatedAt: string;
+  closedAt: string | null;
+}
+
+export interface RunNoteInput {
+  content: string;
+}
+
+export interface UpdateRunNoteInput {
+  content?: string;
+  status?: RunNoteStatus;
+}
+
 export interface ProjectTaskRecord {
   id: string;
   projectId: string;
@@ -138,40 +384,34 @@ export interface ProjectTaskRecord {
   updatedAt: string;
 }
 
-export type ProjectLabThreadKind = "idea" | "rfc" | "implementation";
+export interface ProjectTaskInput {
+  title: string;
+  prompt: string;
+}
+
+export interface UpdateProjectTaskInput {
+  title?: string;
+  prompt?: string;
+}
+
+export type ProjectLabThreadKind = "implementation" | "rfc";
 export type ProjectLabMode = "new-feature" | "bugfix" | "refactoring" | "rfc-only";
 export type ProjectLabThreadStatus =
-  | "discussing"
-  | "agreed"
-  | "running-implementation"
-  | "implemented"
-  | "parked"
-  | "rejected"
+  | "queued"
+  | "running"
+  | "reviewing"
+  | "cancelled"
+  | "completed"
   | "failed";
 export type ProjectLabOrigin = "manual" | "idle" | "task";
-export type ProjectLabPersonaId =
-  | "moderator"
-  | "architect"
-  | "security-coach"
-  | "clean-code"
-  | "implementer";
-export type ProjectLabMessageRole = "persona" | "moderator" | "system";
-
-export interface ProjectLabPersonaConfig {
-  personaId: ProjectLabPersonaId;
-  label: string;
-  colorToken: string;
-  modelId: string | null;
-  enabled: boolean;
-}
+export type ProjectLabEventRole = "system" | "implementation" | "review" | "rfc";
 
 export interface ProjectLabSettings {
   enabled: boolean;
-  autoImplementation: boolean;
-  discussionRoundCap: number;
   maxThreadsPerDay: number;
   maxConcurrentThreads: number;
-  personas: ProjectLabPersonaConfig[];
+  implementationModelId: string | null;
+  reviewModelId: string | null;
 }
 
 export interface ProjectLabThreadRecord {
@@ -187,25 +427,25 @@ export interface ProjectLabThreadRecord {
   seedPrompt: string | null;
   implementationPrompt: string | null;
   implementationRunId: string | null;
+  implementationModelId: string | null;
+  reviewModelId: string | null;
   baseBranch: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface ProjectLabMessageRecord {
+export interface ProjectLabEventRecord {
   id: string;
   threadId: string;
-  personaId: ProjectLabPersonaId | "system";
-  personaLabel: string;
-  role: ProjectLabMessageRole;
-  bubbleColor: string;
+  role: ProjectLabEventRole;
+  label: string;
   content: string;
   createdAt: string;
 }
 
 export interface ProjectLabThreadDetail {
   thread: ProjectLabThreadRecord;
-  messages: ProjectLabMessageRecord[];
+  events: ProjectLabEventRecord[];
   implementationRun: RunRecord | null;
 }
 
@@ -347,12 +587,26 @@ export interface GenerateProjectInsightInput {
 }
 
 export interface RunTokenUsage {
+  /** Processed input tokens used for persisted run/project totals. */
   inputTokens: number;
+  /** Processed output tokens used for persisted run/project totals. */
   outputTokens: number;
   reasoningTokens?: number;
   cachedInputTokens?: number;
   cacheCreationInputTokens?: number;
+  /** Processed total when reported by the provider. */
   totalTokens?: number;
+  /** Current context-window usage, when the provider exposes it. */
+  usedTokens?: number;
+  /** Cumulative tokens processed across provider calls, distinct from current context. */
+  totalProcessedTokens?: number;
+  /** Provider/model context window size, when known. */
+  maxTokens?: number;
+  lastUsedTokens?: number;
+  lastInputTokens?: number;
+  lastCachedInputTokens?: number;
+  lastOutputTokens?: number;
+  lastReasoningTokens?: number;
 }
 
 export interface RunStepRecord {
@@ -439,6 +693,7 @@ export interface RunInput {
   workspaceType: RunWorkspaceType;
   baseBranch?: string;
   prompt: string;
+  goalText?: string | null;
   attachments?: ChatAttachmentPayload[];
   reasoningEffort?: string;
   anthropicEffort?: string;
@@ -454,6 +709,7 @@ export interface ContinueRunInput {
   mode: RunMode;
   yoloMode?: boolean;
   prompt: string;
+  goalText?: string | null;
   includeWorkspaceChanges?: boolean;
   reasoningEffort?: string;
   anthropicEffort?: string;
@@ -463,6 +719,7 @@ export interface RunFollowUpOptions {
   modelId?: string;
   mode?: RunMode;
   yoloMode?: boolean;
+  goalText?: string | null;
   attachments?: ChatAttachmentPayload[];
   reasoningEffort?: string;
   anthropicEffort?: string;
@@ -473,6 +730,31 @@ export type ShellApprovalDecision = "allow-once" | "allow-for-run" | "allow-alwa
 /** Optional data when responding to a shell approval request (e.g. exact command for `allow-always`). */
 export interface ShellApprovalRespondOptions {
   command?: string;
+}
+
+export interface RunUserInputOption {
+  label: string;
+  description?: string;
+}
+
+export interface RunUserInputQuestion {
+  id: string;
+  header: string;
+  question: string;
+  options: RunUserInputOption[];
+  multiSelect?: boolean;
+  allowCustomAnswer?: boolean;
+}
+
+export type RunUserInputAnswerValue = string | string[];
+export type RunUserInputAnswers = Record<string, RunUserInputAnswerValue>;
+
+export interface RunUserInputRequest {
+  requestId?: string;
+  title?: string;
+  content?: string;
+  questions: RunUserInputQuestion[];
+  metadata?: Record<string, unknown>;
 }
 
 export interface RunEvent {
@@ -498,10 +780,11 @@ export interface ProjectSnapshot {
 export interface RunDetail {
   run: RunRecord;
   steps: RunStepRecord[];
+  notes: RunNoteRecord[];
   diff: string;
   /** Effective workspace path for this run detail. May point at the project repo if the worktree was promoted and removed. */
   workspacePath?: string;
-  /** True when this run's branch was promoted from an Easycode worktree back into the main project repository. */
+  /** True when this run's branch was promoted from a BuildWarden worktree back into the main project repository. */
   branchPromotedToProject?: boolean;
   /** True when the run's worktree no longer exists; diff will be empty and the UI should hide the diff panel. */
   worktreeUnavailable?: boolean;
@@ -549,6 +832,214 @@ export interface ProjectPrMrDiffResult {
   provider: "github" | "gitlab";
   number: number;
   baseRef: string;
+}
+
+export type ProjectForgeProvider = "github" | "gitlab";
+export type ProjectForgeRequestState = "open" | "closed" | "merged" | "all";
+export type ProjectForgeReviewEvent = "comment" | "approve";
+
+export interface ProjectForgeAuthStatus {
+  provider: ProjectForgeProvider;
+  webBaseUrl: string;
+  repoLabel: string;
+  hasToken: boolean;
+}
+
+export type ProjectGitBranchProvider = ProjectForgeProvider | "unknown";
+
+export interface ProjectGitBranchInfo {
+  name: string;
+  isCurrent: boolean;
+  isDefault: boolean;
+  hasLocal: boolean;
+  hasRemote: boolean;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  commitSha: string | null;
+  updatedAt: string | null;
+  subject: string | null;
+}
+
+export interface ProjectGitBranchOverview {
+  repoPath: string;
+  defaultBranch: string;
+  currentBranch: string;
+  provider: ProjectGitBranchProvider;
+  webBaseUrl: string | null;
+  branches: ProjectGitBranchInfo[];
+}
+
+export interface CreateProjectBranchInput {
+  branchName: string;
+  startPoint: string;
+  checkout?: boolean;
+}
+
+export interface RenameProjectBranchInput {
+  oldName: string;
+  newName: string;
+}
+
+export interface DeleteProjectBranchInput {
+  branchName: string;
+  force?: boolean;
+}
+
+export interface ProjectBranchLinkedRunSummary {
+  id: string;
+  prompt: string;
+  status: RunStatus;
+  workspaceType: RunWorkspaceType;
+  branchName: string;
+  worktreePath: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectBranchDeleteImpact {
+  branchName: string;
+  linkedRuns: ProjectBranchLinkedRunSummary[];
+}
+
+export interface PushProjectBranchInput {
+  branchName: string;
+  setUpstream?: boolean;
+}
+
+export interface ProjectForgePrMonitorSettings {
+  /** Minutes between background checks. `0` disables polling. */
+  intervalMinutes: number;
+}
+
+export interface ProjectForgePrMonitorSettingsInput {
+  intervalMinutes: number;
+}
+
+export interface ProjectForgePrMonitorConfig extends ProjectForgePrMonitorSettings {
+  projectId: string;
+  projectName: string;
+  provider: ProjectForgeProvider;
+  repoLabel: string;
+}
+
+export interface ProjectForgeRequestOpenPayload {
+  projectId: string;
+  prUrl: string;
+}
+
+export interface ProjectForgeRequestNotificationPayload extends ProjectForgeRequestOpenPayload {
+  projectName: string;
+  repoLabel: string;
+  providerLabel: "PR" | "MR";
+  title: string;
+  author: string | null;
+}
+
+export interface ListProjectForgeRequestsInput {
+  state?: ProjectForgeRequestState;
+}
+
+export interface ProjectForgeRequestSummary {
+  provider: ProjectForgeProvider;
+  number: number;
+  title: string;
+  url: string;
+  state: string;
+  draft: boolean;
+  author: string | null;
+  sourceBranch: string;
+  targetBranch: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface ProjectForgeUserSummary {
+  username: string;
+  name: string | null;
+  avatarUrl: string | null;
+  webUrl: string | null;
+}
+
+export interface ProjectForgeRequestDetails extends ProjectForgeRequestSummary {
+  description: string;
+  authorUser: ProjectForgeUserSummary | null;
+  labels: string[];
+  createdAt: string | null;
+  updatedAt: string | null;
+  additions: number | null;
+  deletions: number | null;
+  changedFiles: number | null;
+  commentCount: number | null;
+  reviewCommentCount: number | null;
+}
+
+export type ProjectForgeActivityKind = "comment" | "review" | "diff-comment" | "state" | "event";
+
+export interface ProjectForgeActivityItem {
+  id: string;
+  provider: ProjectForgeProvider;
+  kind: ProjectForgeActivityKind;
+  title: string;
+  body: string | null;
+  state: string | null;
+  path: string | null;
+  line: number | null;
+  url: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  author: ProjectForgeUserSummary | null;
+  resolved?: boolean;
+}
+
+export interface GetProjectForgeRequestDetailsInput {
+  prUrl: string;
+}
+
+export interface ProjectForgeRequestDetailsResult {
+  provider: ProjectForgeProvider;
+  webBaseUrl: string;
+  repoLabel: string;
+  request: ProjectForgeRequestDetails;
+  activity: ProjectForgeActivityItem[];
+  warnings: string[];
+}
+
+export interface ProjectForgeRequestsResult {
+  provider: ProjectForgeProvider;
+  webBaseUrl: string;
+  repoLabel: string;
+  items: ProjectForgeRequestSummary[];
+}
+
+export interface PostProjectPrMrReviewInput {
+  prUrl: string;
+  body: string;
+  event: ProjectForgeReviewEvent;
+}
+
+export interface ProjectForgeReviewActionResult {
+  message: string;
+  url?: string;
+}
+
+export type ProjectPrMrDiffCommentSide = "old" | "new";
+export type ProjectPrMrDiffCommentChangeType = "insert" | "delete" | "normal";
+
+export interface ProjectPrMrDiffComment {
+  oldPath: string;
+  newPath: string;
+  side: ProjectPrMrDiffCommentSide;
+  oldLineNumber: number | null;
+  newLineNumber: number | null;
+  changeType: ProjectPrMrDiffCommentChangeType;
+  body: string;
+}
+
+export interface SubmitProjectPrMrCommentsInput {
+  prUrl: string;
+  body?: string;
+  comments: ProjectPrMrDiffComment[];
 }
 
 export type RunDiffReviewPriority = "high" | "medium" | "low";
@@ -659,6 +1150,8 @@ export interface RunProjectLabInput {
   baseBranch?: string;
   topic?: string;
   origin?: ProjectLabOrigin;
+  implementationModelId?: string | null;
+  reviewModelId?: string | null;
 }
 
 export const NETWORK_PROXY_PROTOCOL_VALUES = ["http", "https"] as const;
@@ -1191,8 +1684,15 @@ export interface OpenPathInFileManagerResult {
   error?: string;
 }
 
+export interface AppLogDirectorySizeInfo {
+  totalBytes: number;
+  fileCount: number;
+  unreadableEntryCount: number;
+}
+
 export interface AppPathsInfo {
   logDirPath: string;
+  logDirectorySize: AppLogDirectorySizeInfo;
 }
 
 export interface AppWarning {
@@ -1229,18 +1729,28 @@ export interface RendererLogPayload {
 export interface DesktopApi {
   getSnapshot(): Promise<AppSnapshot>;
   getNetworkProxySettings(): Promise<NetworkProxySettingsSnapshot>;
+  selectProject(projectId: string): Promise<void>;
   reorderProjects(projectIds: string[]): Promise<void>;
   getProjectBranches(projectId: string): Promise<string[]>;
   getProjectCurrentBranch(projectId: string): Promise<string>;
+  getProjectBranchOverview(projectId: string): Promise<ProjectGitBranchOverview>;
   /** Check out a local branch on the project’s main repository (fixes detached HEAD). */
   checkoutProjectBranch(projectId: string, branchName: string): Promise<void>;
+  fetchProjectBranches(projectId: string): Promise<ProjectGitBranchOverview>;
+  createProjectBranch(projectId: string, input: CreateProjectBranchInput): Promise<ProjectGitBranchOverview>;
+  renameProjectBranch(projectId: string, input: RenameProjectBranchInput): Promise<ProjectGitBranchOverview>;
+  getProjectBranchDeleteImpact(projectId: string, input: DeleteProjectBranchInput): Promise<ProjectBranchDeleteImpact>;
+  deleteProjectBranch(projectId: string, input: DeleteProjectBranchInput): Promise<ProjectGitBranchOverview>;
+  pullProjectBranch(projectId: string): Promise<ProjectGitBranchOverview>;
+  pushProjectBranch(projectId: string, input: PushProjectBranchInput): Promise<ProjectGitBranchOverview>;
   addProject(input: ProjectInput): Promise<ProjectRecord>;
   addProviderAccount(input: ProviderAccountInput): Promise<ProviderAccountRecord>;
   addModel(input: ModelInput): Promise<ModelRecord>;
-  createProjectTask(projectId: string, input: { title: string; prompt: string }): Promise<ProjectTaskRecord>;
+  listComposerCommands(input: ListComposerCommandsInput): Promise<ComposerCommandDescriptor[]>;
+  createProjectTask(projectId: string, input: ProjectTaskInput): Promise<ProjectTaskRecord>;
+  updateProjectTask(taskId: string, input: UpdateProjectTaskInput): Promise<ProjectTaskRecord>;
   deleteProjectTask(taskId: string): Promise<void>;
   runProjectLab(input: RunProjectLabInput): Promise<ProjectLabThreadRecord[]>;
-  startProjectLabImplementation(threadId: string): Promise<ProjectLabThreadRecord>;
   deleteProjectLabThread(threadId: string): Promise<void>;
   generateProjectTaskRunPrompt(input: { projectId: string; title: string; notes: string; modelId: string }): Promise<string>;
   generateProjectInsight(input: GenerateProjectInsightInput): Promise<ProjectInsightRecord>;
@@ -1256,7 +1766,8 @@ export interface DesktopApi {
   /** Uses the run's model + provider to simulate reviewer feedback on the current diff before commit / PR. */
   analyzeRunDiff(runId: string, options?: RunDiffReviewOptions): Promise<RunDiffReviewResult>;
   /**
-   * Fetches PR/MR head from `origin` and returns the unified diff (merge-base vs head). Requires matching `origin` URL.
+   * Returns a unified PR/MR diff. With a saved hosting token, uses the GitHub/GitLab API snapshot; otherwise falls back
+   * to fetching the PR/MR head from `origin` and diffing merge-base vs head. Requires matching `origin` URL.
    * @see FetchProjectPrMrDiffInput
    */
   fetchProjectPrMrDiff(projectId: string, input: FetchProjectPrMrDiffInput): Promise<ProjectPrMrDiffResult>;
@@ -1265,6 +1776,15 @@ export interface DesktopApi {
     projectId: string,
     input: { prUrl: string; diff: string; modelId?: string },
   ): Promise<RunDiffReviewResult>;
+  getProjectForgeAuthStatus(projectId: string): Promise<ProjectForgeAuthStatus>;
+  saveProjectForgeAuthToken(projectId: string, token: string): Promise<ProjectForgeAuthStatus>;
+  deleteProjectForgeAuthToken(projectId: string): Promise<ProjectForgeAuthStatus>;
+  getProjectForgePrMonitorSettings(projectId: string): Promise<ProjectForgePrMonitorSettings>;
+  saveProjectForgePrMonitorSettings(projectId: string, input: ProjectForgePrMonitorSettingsInput): Promise<ProjectForgePrMonitorSettings>;
+  listProjectForgeRequests(projectId: string, input?: ListProjectForgeRequestsInput): Promise<ProjectForgeRequestsResult>;
+  getProjectForgeRequestDetails(projectId: string, input: GetProjectForgeRequestDetailsInput): Promise<ProjectForgeRequestDetailsResult>;
+  postProjectPrMrReview(projectId: string, input: PostProjectPrMrReviewInput): Promise<ProjectForgeReviewActionResult>;
+  submitProjectPrMrComments(projectId: string, input: SubmitProjectPrMrCommentsInput): Promise<ProjectForgeReviewActionResult>;
   followUpRun(runId: string, prompt: string, options?: RunFollowUpOptions): Promise<RunRecord>;
   getRunPublishOptions(runId: string): Promise<RunPublishOptions>;
   activateRun(runId: string): Promise<void>;
@@ -1276,6 +1796,9 @@ export interface DesktopApi {
   deleteRun(runId: string): Promise<void>;
   deleteModel(modelId: string): Promise<void>;
   getRunDetail(runId: string): Promise<RunDetail>;
+  addRunNote(runId: string, input: RunNoteInput): Promise<RunNoteRecord>;
+  updateRunNote(noteId: string, input: UpdateRunNoteInput): Promise<RunNoteRecord>;
+  deleteRunNote(noteId: string): Promise<void>;
   setRunListVisibility(runId: string, visibility: RunListVisibility): Promise<RunRecord>;
   /** Worktree git diff only; can be slow on large repos. Call after {@link getRunDetail} for progressive loading. */
   getRunWorktreeDiff(runId: string): Promise<RunWorktreeDiffResult>;
@@ -1288,6 +1811,7 @@ export interface DesktopApi {
     decision: ShellApprovalDecision,
     options?: ShellApprovalRespondOptions,
   ): Promise<void>;
+  respondToRunUserInput(runId: string, requestId: string, answers: RunUserInputAnswers): Promise<void>;
   cancelRunShell(runId: string, toolCallId: string): Promise<void>;
   cancelRun(runId: string): Promise<void>;
   refreshSnapshot(): Promise<AppSnapshot>;
@@ -1296,6 +1820,10 @@ export interface DesktopApi {
   getAppPaths(): Promise<AppPathsInfo>;
   getDetectedCodexInstallation(): Promise<DetectedCodexInstallation>;
   getDetectedClaudeInstallation(): Promise<DetectedClaudeInstallation>;
+  /** Lightweight skill descriptors (no bodies); deduped by source:name. */
+  listIntegratedSkills(): Promise<IntegratedSkillMetadata[]>;
+  /** Full markdown body of one skill, loaded on demand (e.g. settings preview). */
+  getIntegratedSkillContent(skillId: string): Promise<string | null>;
   /** Open http(s) or mailto URLs outside the Electron window (system browser / mail client). */
   openExternalUrl(url: string): Promise<OpenExternalUrlResult>;
   reportRendererLog(payload: RendererLogPayload): Promise<void>;
@@ -1337,6 +1865,8 @@ export interface DesktopApi {
   onAppWarning(listener: (warning: AppWarning) => void): () => void;
   /** Subscribe when the main process updates persisted app settings (e.g. appearance from the menu bar). */
   onAppSettingsChanged(listener: () => void): () => void;
+  onProjectForgeRequestOpen(listener: (payload: ProjectForgeRequestOpenPayload) => void): () => void;
+  onProjectForgeRequestNotification(listener: (payload: ProjectForgeRequestNotificationPayload) => void): () => void;
   showAppMenu(section: AppMenuSection, x: number, y: number): Promise<void>;
 }
 
@@ -1374,102 +1904,133 @@ export interface RunTerminalExitPayload {
 }
 
 export const IPC_CHANNELS = {
-  activateRun: "easycode:activate-run",
-  addModel: "easycode:add-model",
-  createProjectTask: "easycode:create-project-task",
-  deleteProjectTask: "easycode:delete-project-task",
-  runProjectLab: "easycode:run-project-lab",
-  startProjectLabImplementation: "easycode:start-project-lab-implementation",
-  deleteProjectLabThread: "easycode:delete-project-lab-thread",
-  generateProjectTaskRunPrompt: "easycode:generate-project-task-run-prompt",
-  generateProjectInsight: "easycode:generate-project-insight",
-  addProject: "easycode:add-project",
-  addProviderAccount: "easycode:add-provider-account",
-  cancelRunShell: "easycode:cancel-run-shell",
-  cancelRun: "easycode:cancel-run",
-  commitRun: "easycode:commit-run",
-  suggestCommitMessage: "easycode:suggest-commit-message",
-  analyzeRunDiff: "easycode:analyze-run-diff",
-  fetchProjectPrMrDiff: "easycode:fetch-project-pr-mr-diff",
-  analyzeProjectPrMrDiff: "easycode:analyze-project-pr-mr-diff",
-  createRunPullRequest: "easycode:create-run-pull-request",
-  suggestRunPullRequestDescription: "easycode:suggest-run-pull-request-description",
-  createRunLocalBranch: "easycode:create-run-local-branch",
-  createRun: "easycode:create-run",
-  continueRun: "easycode:continue-run",
-  publishRunBranch: "easycode:publish-run-branch",
-  followUpRun: "easycode:follow-up-run",
-  deleteProject: "easycode:delete-project",
-  deleteProviderAccount: "easycode:delete-provider-account",
-  deleteRun: "easycode:delete-run",
-  deleteModel: "easycode:delete-model",
-  getRunDetail: "easycode:get-run-detail",
-  setRunListVisibility: "easycode:set-run-list-visibility",
-  getRunWorktreeDiff: "easycode:get-run-worktree-diff",
-  resumeRunFromCheckpoint: "easycode:resume-run-from-checkpoint",
-  recoverInterruptedRun: "easycode:recover-interrupted-run",
-  undoRunToLastPrompt: "easycode:undo-run-to-last-prompt",
-  getRunPublishOptions: "easycode:get-run-publish-options",
-  getProjectBranches: "easycode:get-project-branches",
-  getProjectCurrentBranch: "easycode:get-project-current-branch",
-  checkoutProjectBranch: "easycode:checkout-project-branch",
-  getSnapshot: "easycode:get-snapshot",
-  getNetworkProxySettings: "easycode:get-network-proxy-settings",
-  reorderProjects: "easycode:reorder-projects",
-  pickProjectDirectory: "easycode:pick-project-directory",
-  openPathInFileManager: "easycode:open-path-in-file-manager",
-  getAppPaths: "easycode:get-app-paths",
-  getDetectedCodexInstallation: "easycode:get-detected-codex-installation",
-  getDetectedClaudeInstallation: "easycode:get-detected-claude-installation",
-  openExternalUrl: "easycode:open-external-url",
-  reportRendererLog: "easycode:report-renderer-log",
-  pickIdeExecutable: "easycode:pick-ide-executable",
-  openRunWorktreeInIde: "easycode:open-run-worktree-in-ide",
-  releaseRun: "easycode:release-run",
-  respondToShellApproval: "easycode:respond-to-shell-approval",
-  refreshSnapshot: "easycode:refresh-snapshot",
-  runEvent: "easycode:run-event",
-  setAppSetting: "easycode:set-app-setting",
-  saveNetworkProxySettings: "easycode:save-network-proxy-settings",
-  addBookmark: "easycode:add-bookmark",
-  removeBookmark: "easycode:remove-bookmark",
-  removeBookmarkById: "easycode:remove-bookmark-by-id",
-  isBookmarked: "easycode:is-bookmarked",
-  getBookmarksWithSteps: "easycode:get-bookmarks-with-steps",
-  addChatBookmark: "easycode:add-chat-bookmark",
-  removeChatBookmark: "easycode:remove-chat-bookmark",
-  removeChatBookmarkById: "easycode:remove-chat-bookmark-by-id",
-  isChatBookmarked: "easycode:is-chat-bookmarked",
-  getChatBookmarksWithSteps: "easycode:get-chat-bookmarks-with-steps",
-  resetDatabase: "easycode:reset-database",
-  createChat: "easycode:create-chat",
-  getChatDetail: "easycode:get-chat-detail",
-  followUpChat: "easycode:follow-up-chat",
-  listChats: "easycode:list-chats",
-  listChatsWithSteps: "easycode:list-chats-with-steps",
-  deleteChat: "easycode:delete-chat",
-  cancelChat: "easycode:cancel-chat",
-  chatEvent: "easycode:chat-event",
-  runTerminalStart: "easycode:run-terminal-start",
-  runTerminalWrite: "easycode:run-terminal-write",
-  runTerminalResize: "easycode:run-terminal-resize",
-  runTerminalKill: "easycode:run-terminal-kill",
-  runTerminalData: "easycode:run-terminal-data",
-  runTerminalExit: "easycode:run-terminal-exit",
-  openSystemTerminalAtPath: "easycode:open-system-terminal-at-path",
-  appMenuCommand: "easycode:app-menu-command",
-  appWarning: "easycode:app-warning",
+  activateRun: "buildwarden:activate-run",
+  addModel: "buildwarden:add-model",
+  createProjectTask: "buildwarden:create-project-task",
+  updateProjectTask: "buildwarden:update-project-task",
+  deleteProjectTask: "buildwarden:delete-project-task",
+  runProjectLab: "buildwarden:run-project-lab",
+  deleteProjectLabThread: "buildwarden:delete-project-lab-thread",
+  generateProjectTaskRunPrompt: "buildwarden:generate-project-task-run-prompt",
+  generateProjectInsight: "buildwarden:generate-project-insight",
+  addProject: "buildwarden:add-project",
+  addProviderAccount: "buildwarden:add-provider-account",
+  listComposerCommands: "buildwarden:list-composer-commands",
+  cancelRunShell: "buildwarden:cancel-run-shell",
+  cancelRun: "buildwarden:cancel-run",
+  commitRun: "buildwarden:commit-run",
+  suggestCommitMessage: "buildwarden:suggest-commit-message",
+  analyzeRunDiff: "buildwarden:analyze-run-diff",
+  fetchProjectPrMrDiff: "buildwarden:fetch-project-pr-mr-diff",
+  analyzeProjectPrMrDiff: "buildwarden:analyze-project-pr-mr-diff",
+  getProjectForgeAuthStatus: "buildwarden:get-project-forge-auth-status",
+  saveProjectForgeAuthToken: "buildwarden:save-project-forge-auth-token",
+  deleteProjectForgeAuthToken: "buildwarden:delete-project-forge-auth-token",
+  getProjectForgePrMonitorSettings: "buildwarden:get-project-forge-pr-monitor-settings",
+  saveProjectForgePrMonitorSettings: "buildwarden:save-project-forge-pr-monitor-settings",
+  listProjectForgeRequests: "buildwarden:list-project-forge-requests",
+  getProjectForgeRequestDetails: "buildwarden:get-project-forge-request-details",
+  postProjectPrMrReview: "buildwarden:post-project-pr-mr-review",
+  submitProjectPrMrComments: "buildwarden:submit-project-pr-mr-comments",
+  createRunPullRequest: "buildwarden:create-run-pull-request",
+  suggestRunPullRequestDescription: "buildwarden:suggest-run-pull-request-description",
+  createRunLocalBranch: "buildwarden:create-run-local-branch",
+  createRun: "buildwarden:create-run",
+  continueRun: "buildwarden:continue-run",
+  publishRunBranch: "buildwarden:publish-run-branch",
+  followUpRun: "buildwarden:follow-up-run",
+  deleteProject: "buildwarden:delete-project",
+  deleteProviderAccount: "buildwarden:delete-provider-account",
+  deleteRun: "buildwarden:delete-run",
+  deleteModel: "buildwarden:delete-model",
+  getRunDetail: "buildwarden:get-run-detail",
+  addRunNote: "buildwarden:add-run-note",
+  updateRunNote: "buildwarden:update-run-note",
+  deleteRunNote: "buildwarden:delete-run-note",
+  setRunListVisibility: "buildwarden:set-run-list-visibility",
+  getRunWorktreeDiff: "buildwarden:get-run-worktree-diff",
+  resumeRunFromCheckpoint: "buildwarden:resume-run-from-checkpoint",
+  recoverInterruptedRun: "buildwarden:recover-interrupted-run",
+  undoRunToLastPrompt: "buildwarden:undo-run-to-last-prompt",
+  getRunPublishOptions: "buildwarden:get-run-publish-options",
+  getProjectBranches: "buildwarden:get-project-branches",
+  getProjectCurrentBranch: "buildwarden:get-project-current-branch",
+  getProjectBranchOverview: "buildwarden:get-project-branch-overview",
+  checkoutProjectBranch: "buildwarden:checkout-project-branch",
+  fetchProjectBranches: "buildwarden:fetch-project-branches",
+  createProjectBranch: "buildwarden:create-project-branch",
+  renameProjectBranch: "buildwarden:rename-project-branch",
+  getProjectBranchDeleteImpact: "buildwarden:get-project-branch-delete-impact",
+  deleteProjectBranch: "buildwarden:delete-project-branch",
+  pullProjectBranch: "buildwarden:pull-project-branch",
+  pushProjectBranch: "buildwarden:push-project-branch",
+  getSnapshot: "buildwarden:get-snapshot",
+  getNetworkProxySettings: "buildwarden:get-network-proxy-settings",
+  selectProject: "buildwarden:select-project",
+  reorderProjects: "buildwarden:reorder-projects",
+  pickProjectDirectory: "buildwarden:pick-project-directory",
+  openPathInFileManager: "buildwarden:open-path-in-file-manager",
+  getAppPaths: "buildwarden:get-app-paths",
+  getDetectedCodexInstallation: "buildwarden:get-detected-codex-installation",
+  getDetectedClaudeInstallation: "buildwarden:get-detected-claude-installation",
+  listIntegratedSkills: "buildwarden:list-integrated-skills",
+  getIntegratedSkillContent: "buildwarden:get-integrated-skill-content",
+  openExternalUrl: "buildwarden:open-external-url",
+  reportRendererLog: "buildwarden:report-renderer-log",
+  pickIdeExecutable: "buildwarden:pick-ide-executable",
+  openRunWorktreeInIde: "buildwarden:open-run-worktree-in-ide",
+  releaseRun: "buildwarden:release-run",
+  respondToShellApproval: "buildwarden:respond-to-shell-approval",
+  respondToRunUserInput: "buildwarden:respond-to-run-user-input",
+  refreshSnapshot: "buildwarden:refresh-snapshot",
+  runEvent: "buildwarden:run-event",
+  setAppSetting: "buildwarden:set-app-setting",
+  saveNetworkProxySettings: "buildwarden:save-network-proxy-settings",
+  addBookmark: "buildwarden:add-bookmark",
+  removeBookmark: "buildwarden:remove-bookmark",
+  removeBookmarkById: "buildwarden:remove-bookmark-by-id",
+  isBookmarked: "buildwarden:is-bookmarked",
+  getBookmarksWithSteps: "buildwarden:get-bookmarks-with-steps",
+  addChatBookmark: "buildwarden:add-chat-bookmark",
+  removeChatBookmark: "buildwarden:remove-chat-bookmark",
+  removeChatBookmarkById: "buildwarden:remove-chat-bookmark-by-id",
+  isChatBookmarked: "buildwarden:is-chat-bookmarked",
+  getChatBookmarksWithSteps: "buildwarden:get-chat-bookmarks-with-steps",
+  resetDatabase: "buildwarden:reset-database",
+  createChat: "buildwarden:create-chat",
+  getChatDetail: "buildwarden:get-chat-detail",
+  followUpChat: "buildwarden:follow-up-chat",
+  listChats: "buildwarden:list-chats",
+  listChatsWithSteps: "buildwarden:list-chats-with-steps",
+  deleteChat: "buildwarden:delete-chat",
+  cancelChat: "buildwarden:cancel-chat",
+  chatEvent: "buildwarden:chat-event",
+  runTerminalStart: "buildwarden:run-terminal-start",
+  runTerminalWrite: "buildwarden:run-terminal-write",
+  runTerminalResize: "buildwarden:run-terminal-resize",
+  runTerminalKill: "buildwarden:run-terminal-kill",
+  runTerminalData: "buildwarden:run-terminal-data",
+  runTerminalExit: "buildwarden:run-terminal-exit",
+  openSystemTerminalAtPath: "buildwarden:open-system-terminal-at-path",
+  appMenuCommand: "buildwarden:app-menu-command",
+  appWarning: "buildwarden:app-warning",
   /** Main notifies renderer after settings changed outside the renderer (e.g. theme from the app menu). */
-  appSettingsChanged: "easycode:app-settings-changed",
-  showAppMenu: "easycode:show-app-menu",
+  appSettingsChanged: "buildwarden:app-settings-changed",
+  projectForgeRequestOpen: "buildwarden:project-forge-request-open",
+  projectForgeRequestNotification: "buildwarden:project-forge-request-notification",
+  showAppMenu: "buildwarden:show-app-menu",
 } as const;
 
 export const APP_SETTING_KEYS = {
   darkMode: "darkMode",
   /**
-   * `"dark"` | `"dim"` | `"light"`. When unset, {@link parseUiTheme} falls back to legacy {@link APP_SETTING_KEYS.darkMode}.
+   * `"dark"` | `"light"`. When unset, {@link parseUiTheme} falls back to legacy {@link APP_SETTING_KEYS.darkMode}.
    */
   uiTheme: "uiTheme",
+  /** Persisted app sidebar width in CSS pixels. */
+  sidebarWidth: "sidebarWidth",
+  /** Number of days shown in the sidebar Recent Runs section. */
+  recentRunDays: "recentRunDays",
   autoCheckoutRunBranchOnOpen: "autoCheckoutRunBranchOnOpen",
   autoReleaseRunBranchOnLeave: "autoReleaseRunBranchOnLeave",
   /** Optional absolute directory used as the parent root for app-managed worktrees. Blank = default sibling-folder logic. */
@@ -1483,41 +2044,104 @@ export const APP_SETTING_KEYS = {
   idePaths: "idePaths",
   /** JSON object keyed by run id for persisted run-detail tile visibility/order/size. */
   runWorkspaceLayouts: "runWorkspaceLayouts",
+  /** Preferred visual density for agent run timelines. */
+  runTimelineDensity: "runTimelineDensity",
   /** JSON string array of project ids representing the custom sidebar order. */
   projectOrder: "projectOrder",
   /** JSON string array of integrated skill ids disabled globally in Settings -> Skills. */
   integratedSkillsDisabled: "integratedSkillsDisabled",
   /** JSON object keyed by project id with string-array skill ids enabled for that project. */
   projectActiveSkills: "projectActiveSkills",
-  /** JSON object keyed by project id containing Project Lab settings and persona model assignments. */
+  /** JSON object keyed by project id containing Project Lab automation settings. */
   projectLabSettings: "projectLabSettings",
+  /** JSON object keyed by project id with PR/MR background polling intervals. */
+  projectForgePrMonitorSettings: "projectForgePrMonitorSettings",
   /** JSON object with app-wide outbound proxy host/port/user settings (password stored in secure storage). */
   networkProxyConfig: "networkProxyConfig",
 } as const;
 
-export const PROJECT_LAB_PERSONA_PRESETS: Record<ProjectLabPersonaId, { label: string; colorToken: string; enabledByDefault: boolean }> = {
-  moderator: { label: "Moderator", colorToken: "slate", enabledByDefault: true },
-  architect: { label: "Architect", colorToken: "cyan", enabledByDefault: true },
-  "security-coach": { label: "Security Coach", colorToken: "rose", enabledByDefault: true },
-  "clean-code": { label: "Clean Code", colorToken: "emerald", enabledByDefault: true },
-  implementer: { label: "Implementer", colorToken: "violet", enabledByDefault: true },
+export const DEFAULT_RECENT_RUN_DAYS = 2;
+export const MIN_RECENT_RUN_DAYS = 1;
+export const MAX_RECENT_RUN_DAYS = 365;
+
+export type RunTimelineDensity = "compact" | "comfortable" | "detailed";
+
+export const RUN_TIMELINE_DENSITIES = ["compact", "comfortable", "detailed"] as const satisfies readonly RunTimelineDensity[];
+
+export const parseRunTimelineDensitySetting = (raw: string | undefined): RunTimelineDensity => {
+  const normalized = raw?.trim().toLowerCase();
+  return normalized === "compact" || normalized === "detailed" ? normalized : "comfortable";
 };
+
+export const parseRecentRunDaysSetting = (raw: string | number | undefined | null): number => {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_RECENT_RUN_DAYS;
+  }
+  return Math.min(MAX_RECENT_RUN_DAYS, Math.max(MIN_RECENT_RUN_DAYS, Math.round(parsed)));
+};
+
+export const DEFAULT_PROJECT_FORGE_PR_MONITOR_INTERVAL_MINUTES = 0;
+export const MIN_PROJECT_FORGE_PR_MONITOR_INTERVAL_MINUTES = 0;
+export const MAX_PROJECT_FORGE_PR_MONITOR_INTERVAL_MINUTES = 24 * 60;
+
+export type ProjectForgePrMonitorSettingsByProjectId = Record<string, ProjectForgePrMonitorSettings>;
+
+export const parseProjectForgePrMonitorIntervalMinutes = (raw: string | number | undefined | null): number => {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_PROJECT_FORGE_PR_MONITOR_INTERVAL_MINUTES;
+  }
+  return Math.min(
+    MAX_PROJECT_FORGE_PR_MONITOR_INTERVAL_MINUTES,
+    Math.max(MIN_PROJECT_FORGE_PR_MONITOR_INTERVAL_MINUTES, Math.round(parsed)),
+  );
+};
+
+export const parseProjectForgePrMonitorSettingsSetting = (
+  raw: string | undefined | null,
+): ProjectForgePrMonitorSettingsByProjectId => {
+  if (!raw?.trim()) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    const result: ProjectForgePrMonitorSettingsByProjectId = {};
+    for (const [projectId, value] of Object.entries(parsed)) {
+      if (!projectId || !value || typeof value !== "object" || Array.isArray(value)) {
+        continue;
+      }
+      const intervalMinutes = parseProjectForgePrMonitorIntervalMinutes(
+        (value as Partial<ProjectForgePrMonitorSettings>).intervalMinutes,
+      );
+      if (intervalMinutes > 0) {
+        result[projectId] = { intervalMinutes };
+      }
+    }
+    return result;
+  } catch {
+    return {};
+  }
+};
+
+export const serializeProjectForgePrMonitorSettingsSetting = (value: ProjectForgePrMonitorSettingsByProjectId): string =>
+  JSON.stringify(
+    Object.fromEntries(
+      Object.entries(value)
+        .map(([projectId, settings]) => [projectId, { intervalMinutes: parseProjectForgePrMonitorIntervalMinutes(settings.intervalMinutes) }] as const)
+        .filter(([, settings]) => settings.intervalMinutes > 0),
+    ),
+  );
 
 export const buildDefaultProjectLabSettings = (): ProjectLabSettings => ({
   enabled: false,
-  autoImplementation: false,
-  discussionRoundCap: 2,
   maxThreadsPerDay: 3,
   maxConcurrentThreads: 1,
-  personas: (Object.entries(PROJECT_LAB_PERSONA_PRESETS) as Array<[ProjectLabPersonaId, (typeof PROJECT_LAB_PERSONA_PRESETS)[ProjectLabPersonaId]]>).map(
-    ([personaId, preset]) => ({
-      personaId,
-      label: preset.label,
-      colorToken: preset.colorToken,
-      modelId: null,
-      enabled: preset.enabledByDefault,
-    }),
-  ),
+  implementationModelId: null,
+  reviewModelId: null,
 });
 
 export type ProjectLabSettingsByProjectId = Record<string, ProjectLabSettings>;
@@ -1538,32 +2162,15 @@ export const parseProjectLabSettingsSetting = (raw: string | undefined | null): 
       }
       const record = value as Record<string, unknown>;
       const defaults = buildDefaultProjectLabSettings();
-      const personasById = new Map(defaults.personas.map((persona) => [persona.personaId, persona]));
-      const rawPersonas = Array.isArray(record.personas) ? record.personas : [];
-      const personas = defaults.personas.map((defaultPersona) => {
-        const rawPersona = rawPersonas.find(
-          (entry) =>
-            entry &&
-            typeof entry === "object" &&
-            !Array.isArray(entry) &&
-            (entry as { personaId?: unknown }).personaId === defaultPersona.personaId,
-        ) as Record<string, unknown> | undefined;
-        return {
-          personaId: defaultPersona.personaId,
-          label: typeof rawPersona?.label === "string" && rawPersona.label.trim() ? rawPersona.label.trim() : defaultPersona.label,
-          colorToken:
-            typeof rawPersona?.colorToken === "string" && rawPersona.colorToken.trim() ? rawPersona.colorToken.trim() : defaultPersona.colorToken,
-          modelId: typeof rawPersona?.modelId === "string" && rawPersona.modelId.trim() ? rawPersona.modelId.trim() : null,
-          enabled: typeof rawPersona?.enabled === "boolean" ? rawPersona.enabled : personasById.get(defaultPersona.personaId)?.enabled ?? true,
-        } satisfies ProjectLabPersonaConfig;
-      });
       result[projectId] = {
         enabled: record.enabled === true,
-        autoImplementation: record.autoImplementation === true,
-        discussionRoundCap: Math.min(6, Math.max(1, Number(record.discussionRoundCap ?? defaults.discussionRoundCap) || defaults.discussionRoundCap)),
         maxThreadsPerDay: Math.min(20, Math.max(1, Number(record.maxThreadsPerDay ?? defaults.maxThreadsPerDay) || defaults.maxThreadsPerDay)),
         maxConcurrentThreads: Math.min(6, Math.max(1, Number(record.maxConcurrentThreads ?? defaults.maxConcurrentThreads) || defaults.maxConcurrentThreads)),
-        personas,
+        implementationModelId:
+          typeof record.implementationModelId === "string" && record.implementationModelId.trim()
+            ? record.implementationModelId.trim()
+            : null,
+        reviewModelId: typeof record.reviewModelId === "string" && record.reviewModelId.trim() ? record.reviewModelId.trim() : null,
       };
     }
     return result;
@@ -1579,24 +2186,17 @@ export const serializeProjectLabSettingsSetting = (value: ProjectLabSettingsByPr
         projectId,
         {
           enabled: settings.enabled === true,
-          autoImplementation: settings.autoImplementation === true,
-          discussionRoundCap: Math.min(6, Math.max(1, settings.discussionRoundCap || 2)),
           maxThreadsPerDay: Math.min(20, Math.max(1, settings.maxThreadsPerDay || 3)),
           maxConcurrentThreads: Math.min(6, Math.max(1, settings.maxConcurrentThreads || 1)),
-          personas: settings.personas.map((persona) => ({
-            personaId: persona.personaId,
-            label: persona.label.trim() || PROJECT_LAB_PERSONA_PRESETS[persona.personaId].label,
-            colorToken: persona.colorToken.trim() || PROJECT_LAB_PERSONA_PRESETS[persona.personaId].colorToken,
-            modelId: persona.modelId?.trim() || null,
-            enabled: persona.enabled === true,
-          })),
+          implementationModelId: settings.implementationModelId?.trim() || null,
+          reviewModelId: settings.reviewModelId?.trim() || null,
         },
       ]),
     ),
   );
 
-/** Visual theme: deep dark, mid gray, or bright. */
-export const UI_THEME_VALUES = ["dark", "dim", "light"] as const;
+/** Visual theme: liquid-glass dark or liquid-glass light. */
+export const UI_THEME_VALUES = ["dark", "light"] as const;
 export type UiTheme = (typeof UI_THEME_VALUES)[number];
 
 export const isUiTheme = (value: unknown): value is UiTheme =>
@@ -1616,20 +2216,22 @@ export const parseUiTheme = (settings: Record<string, string | undefined>): UiTh
 /** Legacy key used by native chrome: only bright mode is “not dark”. */
 export const uiThemeToLegacyDarkMode = (theme: UiTheme): "true" | "false" => (theme === "light" ? "false" : "true");
 
-export const cycleUiTheme = (current: UiTheme): UiTheme =>
-  current === "dark" ? "dim" : current === "dim" ? "light" : "dark";
+export const cycleUiTheme = (current: UiTheme): UiTheme => (current === "dark" ? "light" : "dark");
 
 /**
- * Windows frameless windows: Electron `titleBarOverlay.color` fills the minimize/maximize/close region. Use the same hex for the
- * in-page title bar (`AppTitleBar` when `syncWindowsCaptionStrip`) so the strip does not look like a separate tile.
+ * Windows frameless windows: Electron `titleBarOverlay.color` fills the minimize/maximize/close region.
+ * Keep these in sync with the renderer's `--ec-titlebar` tokens so the native caption buttons blend into AppTitleBar.
+ * The overlay is one pixel shorter than the renderer title bar so AppTitleBar's bottom border stays visible beneath it.
  */
+export const WINDOWS_TITLEBAR_HEIGHT = 40;
+export const WINDOWS_TITLEBAR_OVERLAY_HEIGHT = WINDOWS_TITLEBAR_HEIGHT - 1;
+
 export const WINDOWS_TITLEBAR_OVERLAY_BACKGROUND: Record<UiTheme, string> = {
-  dark: "#18181b",
-  dim: "#3f3f46",
-  light: "#cfd2d6",
+  dark: "#101417",
+  light: "#e7eef6",
 };
 
-export type RunWorkspacePanelId = "activity" | "diff" | "terminal" | "browser";
+export type RunWorkspacePanelId = "activity" | "diff" | "terminal" | "browser" | "notes";
 
 export interface RunWorkspaceTileSize {
   colSpan: number;
@@ -1646,7 +2248,18 @@ export interface RunWorkspaceLayoutPreference {
 
 export type RunWorkspaceLayoutPreferencesByRunId = Record<string, RunWorkspaceLayoutPreference>;
 
-const RUN_WORKSPACE_PANEL_IDS: readonly RunWorkspacePanelId[] = ["activity", "diff", "terminal", "browser"];
+const RUN_WORKSPACE_PANEL_IDS: readonly RunWorkspacePanelId[] = ["activity", "diff", "terminal", "browser", "notes"];
+
+const RUN_WORKSPACE_PANEL_DEFAULTS: Record<
+  RunWorkspacePanelId,
+  { visible: boolean; size: RunWorkspaceTileSize }
+> = {
+  activity: { visible: true, size: { colSpan: 7, rowSpan: 4 } },
+  diff: { visible: false, size: { colSpan: 5, rowSpan: 4 } },
+  terminal: { visible: false, size: { colSpan: 5, rowSpan: 3 } },
+  browser: { visible: false, size: { colSpan: 7, rowSpan: 3 } },
+  notes: { visible: false, size: { colSpan: 5, rowSpan: 3 } },
+};
 
 const isRunWorkspacePanelId = (value: unknown): value is RunWorkspacePanelId =>
   typeof value === "string" && (RUN_WORKSPACE_PANEL_IDS as readonly string[]).includes(value);
@@ -1690,26 +2303,29 @@ export const parseRunWorkspaceLayoutsSetting = (raw: string | undefined | null):
       for (const panelId of RUN_WORKSPACE_PANEL_IDS) {
         const visibleValue = (visiblePanelsRaw as Record<string, unknown>)[panelId];
         const tileValue = (tileLayoutRaw as Record<string, unknown>)[panelId];
-        if (typeof visibleValue !== "boolean" || !tileValue || typeof tileValue !== "object" || Array.isArray(tileValue)) {
-          valid = false;
-          break;
+        visiblePanels[panelId] = typeof visibleValue === "boolean" ? visibleValue : RUN_WORKSPACE_PANEL_DEFAULTS[panelId].visible;
+
+        if (tileValue && typeof tileValue === "object" && !Array.isArray(tileValue)) {
+          const colSpan = (tileValue as Record<string, unknown>).colSpan;
+          const rowSpan = (tileValue as Record<string, unknown>).rowSpan;
+          if (typeof colSpan === "number" && typeof rowSpan === "number") {
+            tileLayout[panelId] = {
+              colSpan,
+              rowSpan,
+            };
+            continue;
+          }
         }
 
-        const colSpan = (tileValue as Record<string, unknown>).colSpan;
-        const rowSpan = (tileValue as Record<string, unknown>).rowSpan;
-        if (typeof colSpan !== "number" || typeof rowSpan !== "number") {
-          valid = false;
-          break;
-        }
-
-        visiblePanels[panelId] = visibleValue;
-        tileLayout[panelId] = {
-          colSpan,
-          rowSpan,
-        };
+        tileLayout[panelId] = { ...RUN_WORKSPACE_PANEL_DEFAULTS[panelId].size };
       }
 
       const normalizedOrder = tileOrderRaw.filter(isRunWorkspacePanelId);
+      for (const panelId of RUN_WORKSPACE_PANEL_IDS) {
+        if (!normalizedOrder.includes(panelId)) {
+          normalizedOrder.push(panelId);
+        }
+      }
       if (!valid || normalizedOrder.length !== RUN_WORKSPACE_PANEL_IDS.length) {
         continue;
       }
@@ -1900,6 +2516,7 @@ export const commandToExactShellPatternSource = (command: string): string => `^$
 export const KEYBOARD_SHORTCUT_IDS = [
   "goHome",
   "toggleSidebar",
+  "openCommandPalette",
   "submitComposer",
   "newAgentRun",
   "switchToRecentRun1",
@@ -1919,6 +2536,7 @@ export type KeyboardShortcutId = (typeof KEYBOARD_SHORTCUT_IDS)[number];
 export const DEFAULT_KEYBOARD_SHORTCUTS: Record<KeyboardShortcutId, string> = {
   goHome: "ctrl+h",
   toggleSidebar: "ctrl+m",
+  openCommandPalette: "ctrl+k",
   submitComposer: "ctrl+enter",
   newAgentRun: "ctrl+t",
   switchToRecentRun1: "ctrl+1",

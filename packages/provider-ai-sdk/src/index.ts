@@ -17,7 +17,7 @@ import type {
   RunExecutionRequest,
   RunTokenUsage,
   UnifiedProviderFamily,
-} from "@easycode/shared";
+} from "@buildwarden/shared";
 import {
   AI_SDK_RECOMMENDED_MODEL_IDS,
   MODEL_CONFIG_ANTHROPIC_EFFORT_KEY,
@@ -27,7 +27,7 @@ import {
   buildNetworkProxyUrl,
   runShellActivityStreamId,
   shouldBypassNetworkProxyForUrl,
-} from "@easycode/shared";
+} from "@buildwarden/shared";
 import pRetry, { AbortError } from "p-retry";
 import { createDevLogger } from "./dev-logger";
 
@@ -35,7 +35,7 @@ const CHAT_SYSTEM_PROMPT =
   "You are a helpful AI assistant. Answer the user's questions directly and concisely. You do not have access to any tools or files.";
 
 const SYSTEM_PROMPT = [
-  "You are Easycode, a desktop coding agent running inside a Git worktree.",
+  "You are BuildWarden, a desktop coding agent running inside a Git worktree.",
   "You are operating on a local codebase and can inspect and modify files via provided tools.",
   "Use the tools whenever repository context is needed and apply concrete changes when the task requires implementation.",
   "Do not claim to have changed files unless you used the file tools successfully.",
@@ -74,40 +74,79 @@ const describeToolCall = (name: string, args: Record<string, unknown>) => {
   return `${name}: ${String(interestingValue)}`;
 };
 
-const addUsage = (left: RunTokenUsage, right: RunTokenUsage): RunTokenUsage => ({
-  inputTokens: left.inputTokens + right.inputTokens,
-  outputTokens: left.outputTokens + right.outputTokens,
-  reasoningTokens: (left.reasoningTokens ?? 0) + (right.reasoningTokens ?? 0),
-  cachedInputTokens: (left.cachedInputTokens ?? 0) + (right.cachedInputTokens ?? 0),
-  cacheCreationInputTokens: (left.cacheCreationInputTokens ?? 0) + (right.cacheCreationInputTokens ?? 0),
-  totalTokens: (left.totalTokens ?? left.inputTokens + left.outputTokens) + (right.totalTokens ?? right.inputTokens + right.outputTokens),
-});
+const finiteNumber = (value: unknown): number => {
+  const number = Number(value ?? 0);
+  return Number.isFinite(number) ? number : 0;
+};
 
-const usageFromUnknown = (usage: unknown): RunTokenUsage => {
+const usageProcessedTotal = (usage: RunTokenUsage): number =>
+  usage.totalTokens ?? usage.totalProcessedTokens ?? usage.inputTokens + usage.outputTokens;
+
+const addUsage = (left: RunTokenUsage, right: RunTokenUsage): RunTokenUsage => {
+  const totalTokens = usageProcessedTotal(left) + usageProcessedTotal(right);
+  const reasoningTokens = (left.reasoningTokens ?? 0) + (right.reasoningTokens ?? 0);
+  const cachedInputTokens = (left.cachedInputTokens ?? 0) + (right.cachedInputTokens ?? 0);
+  const cacheCreationInputTokens = (left.cacheCreationInputTokens ?? 0) + (right.cacheCreationInputTokens ?? 0);
+  return {
+    inputTokens: left.inputTokens + right.inputTokens,
+    outputTokens: left.outputTokens + right.outputTokens,
+    ...(reasoningTokens > 0 ? { reasoningTokens } : {}),
+    ...(cachedInputTokens > 0 ? { cachedInputTokens } : {}),
+    ...(cacheCreationInputTokens > 0 ? { cacheCreationInputTokens } : {}),
+    ...(totalTokens > 0 ? { totalTokens, totalProcessedTokens: totalTokens } : {}),
+    ...(right.lastInputTokens !== undefined ? { lastInputTokens: right.lastInputTokens } : {}),
+    ...(right.lastCachedInputTokens !== undefined ? { lastCachedInputTokens: right.lastCachedInputTokens } : {}),
+    ...(right.lastOutputTokens !== undefined ? { lastOutputTokens: right.lastOutputTokens } : {}),
+    ...(right.lastReasoningTokens !== undefined ? { lastReasoningTokens: right.lastReasoningTokens } : {}),
+  };
+};
+
+export const normalizeAiSdkTokenUsage = (usage: unknown): RunTokenUsage => {
   const raw = (usage ?? {}) as {
     inputTokens?: number;
     outputTokens?: number;
     reasoningTokens?: number;
     totalTokens?: number;
     cachedInputTokens?: number;
+    inputTokenDetails?: {
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+    };
+    outputTokenDetails?: {
+      textTokens?: number;
+      reasoningTokens?: number;
+    };
   };
-  const inputTokens = Number(raw.inputTokens ?? 0);
-  const outputTokens = Number(raw.outputTokens ?? 0);
+  const inputTokens = finiteNumber(raw.inputTokens);
+  const outputTokens = finiteNumber(raw.outputTokens);
   const result: RunTokenUsage = {
-    inputTokens: Number(raw.inputTokens ?? 0),
-    outputTokens: Number(raw.outputTokens ?? 0),
+    inputTokens,
+    outputTokens,
   };
-  const reasoningTokens = Number(raw.reasoningTokens ?? 0);
-  const cachedInputTokens = Number(raw.cachedInputTokens ?? 0);
-  const totalTokens = Number(raw.totalTokens ?? inputTokens + outputTokens);
+  const reasoningTokens = finiteNumber(raw.outputTokenDetails?.reasoningTokens ?? raw.reasoningTokens);
+  const cachedInputTokens = finiteNumber(raw.inputTokenDetails?.cacheReadTokens ?? raw.cachedInputTokens);
+  const cacheCreationInputTokens = finiteNumber(raw.inputTokenDetails?.cacheWriteTokens);
+  const totalTokens = finiteNumber(raw.totalTokens ?? inputTokens + outputTokens);
   if (Number.isFinite(reasoningTokens) && reasoningTokens > 0) {
     result.reasoningTokens = reasoningTokens;
+    result.lastReasoningTokens = reasoningTokens;
   }
   if (Number.isFinite(cachedInputTokens) && cachedInputTokens > 0) {
     result.cachedInputTokens = cachedInputTokens;
+    result.lastCachedInputTokens = cachedInputTokens;
+  }
+  if (Number.isFinite(cacheCreationInputTokens) && cacheCreationInputTokens > 0) {
+    result.cacheCreationInputTokens = cacheCreationInputTokens;
   }
   if (Number.isFinite(totalTokens) && totalTokens > 0) {
     result.totalTokens = totalTokens;
+    result.totalProcessedTokens = totalTokens;
+  }
+  if (inputTokens > 0) {
+    result.lastInputTokens = inputTokens;
+  }
+  if (outputTokens > 0) {
+    result.lastOutputTokens = outputTokens;
   }
   return result;
 };
@@ -374,7 +413,7 @@ const createLanguageModel = (input: RunExecutionRequest, devLogger?: { createLog
       throw new Error("AI SDK providers configured as OpenAI-compatible require a base URL.");
     }
     const provider = createOpenAICompatible({
-      name: "easycode-compatible",
+      name: "buildwarden-compatible",
       baseURL: baseURL,
       apiKey: input.apiKey || "none",
       headers,
@@ -504,7 +543,7 @@ export const generateAskTextResultWithAiSdk = async (input: GenerateAskTextWithA
   });
   return {
     text: result.text.trim(),
-    usage: usageFromUnknown(result.usage),
+    usage: normalizeAiSdkTokenUsage(result.usage),
   };
 };
 
@@ -703,7 +742,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
         stopWhen: stepCountIs(isChat ? 1 : MODE_POLICIES[input.mode].maxToolRounds),
         abortSignal: signal,
         onStepFinish: async (stepResult) => {
-          accumulatedUsage = addUsage(accumulatedUsage, usageFromUnknown(stepResult.usage));
+          accumulatedUsage = addUsage(accumulatedUsage, normalizeAiSdkTokenUsage(stepResult.usage));
 
           if (!streamedReasoningSinceLastStep && stepResult.reasoningText?.trim()) {
             const novelReasoningText = trimCompletedReasoningPrefix(stepResult.reasoningText.trim());

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AI_SDK_RECOMMENDED_MODEL_IDS } from "@easycode/shared";
+import { AI_SDK_RECOMMENDED_MODEL_IDS } from "@buildwarden/shared";
 import { AiSdkProviderAdapter } from "../../../../packages/provider-ai-sdk/src";
 
 describe("AiSdkProviderAdapter", () => {

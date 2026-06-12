@@ -53,14 +53,16 @@ export const RunWorktreeTerminal = ({
     let startPromise: Promise<void> | null = null;
     setError(null);
 
+    const tokens = getComputedStyle(el);
+    const themeToken = (name: string, fallback: string): string => tokens.getPropertyValue(name).trim() || fallback;
     const term = new Terminal({
       cursorBlink: true,
       fontSize: 12,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace",
       theme: {
-        background: "#09090b",
-        foreground: "#e4e4e7",
-        cursor: "#a1a1aa",
+        background: themeToken("--ec-terminal-bg", "#0d1013"),
+        foreground: themeToken("--ec-terminal-fg", "#e7ebee"),
+        cursor: themeToken("--ec-terminal-cursor", "#9fb1bf"),
       },
     });
     const fit = new FitAddon();
@@ -70,7 +72,7 @@ export const RunWorktreeTerminal = ({
         onOpenUrlInApp(uri);
         return;
       }
-      void window.easycode.openExternalUrl(uri);
+      void window.buildwarden.openExternalUrl(uri);
     });
     term.loadAddon(webLinks);
     term.open(el);
@@ -113,17 +115,17 @@ export const RunWorktreeTerminal = ({
       if (!ptyStarted) {
         return;
       }
-      void window.easycode.runTerminalWrite({ sessionId, data });
+      void window.buildwarden.runTerminalWrite({ sessionId, data });
     });
 
-    const unsubData = window.easycode.onRunTerminalData((payload) => {
+    const unsubData = window.buildwarden.onRunTerminalData((payload) => {
       if (payload.sessionId !== sessionId) {
         return;
       }
       term.write(payload.data);
     });
 
-    const unsubExit = window.easycode.onRunTerminalExit((payload) => {
+    const unsubExit = window.buildwarden.onRunTerminalExit((payload) => {
       if (payload.sessionId !== sessionId) {
         return;
       }
@@ -141,7 +143,7 @@ export const RunWorktreeTerminal = ({
       const cols = Math.max(MIN_COLS, dims?.cols ?? 80);
       const rows = Math.max(MIN_ROWS, dims?.rows ?? 24);
       if (ptyStarted) {
-        void window.easycode.runTerminalResize({ sessionId, cols, rows });
+        void window.buildwarden.runTerminalResize({ sessionId, cols, rows });
       }
     };
 
@@ -157,7 +159,7 @@ export const RunWorktreeTerminal = ({
 
       startPromise = (async () => {
         pushSize();
-        const result = await window.easycode.runTerminalStart({ sessionId, cwd });
+        const result = await window.buildwarden.runTerminalStart({ sessionId, cwd });
         if (cancelled) {
           return;
         }
@@ -231,7 +233,7 @@ export const RunWorktreeTerminal = ({
         const dims = fit.proposeDimensions();
         const cols = Math.max(MIN_COLS, dims?.cols ?? 80);
         const rows = Math.max(MIN_ROWS, dims?.rows ?? 24);
-        void window.easycode.runTerminalResize({ sessionId: sid, cols, rows });
+        void window.buildwarden.runTerminalResize({ sessionId: sid, cols, rows });
         term.focus();
       } catch {
         /* ignore */
@@ -259,7 +261,7 @@ export const RunWorktreeTerminal = ({
   }
 
   return (
-    <div className={cn("flex min-h-0 flex-col overflow-hidden rounded-lg border border-zinc-800 bg-[#09090b]", className)}>
+    <div className={cn("flex min-h-0 flex-col overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-terminal-bg)]", className)}>
       {error ? (
         <div className="flex flex-col gap-2 border-b border-rose-500/20 bg-rose-500/5 px-3 py-2">
           <p className="text-xs text-rose-200">{error}</p>
@@ -268,7 +270,7 @@ export const RunWorktreeTerminal = ({
             variant="secondary"
             size="sm"
             className="self-start"
-            onClick={() => void window.easycode.openSystemTerminalAtPath(cwd)}
+            onClick={() => void window.buildwarden.openSystemTerminalAtPath(cwd)}
           >
             Open system terminal here
           </Button>

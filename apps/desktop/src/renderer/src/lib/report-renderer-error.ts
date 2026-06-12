@@ -1,4 +1,4 @@
-import type { RendererLogPayload } from "@easycode/shared";
+import type { RendererLogPayload } from "@buildwarden/shared";
 
 const toMessage = (error: unknown, fallback: string) => {
   if (error instanceof Error && error.message) {
@@ -15,7 +15,7 @@ const toStack = (error: unknown) => {
 };
 
 export const reportRendererLog = (payload: RendererLogPayload) => {
-  void window.easycode?.reportRendererLog(payload).catch(() => {
+  void window.buildwarden?.reportRendererLog(payload).catch(() => {
     // Avoid recursive renderer logging failures.
   });
 };

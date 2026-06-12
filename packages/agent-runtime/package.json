@@ -1,6 +1,6 @@
 {
-  "name": "@easycode/agent-runtime",
-  "version": "0.4.9",
+  "name": "@buildwarden/agent-runtime",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
@@ -10,6 +10,6 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@easycode/shared": "workspace:*"
+    "@buildwarden/shared": "workspace:*"
   }
 }

@@ -7,7 +7,7 @@ import { buildDependencyGraphSnapshotForProjectGraph, listDependencySourceFilesF
 const tempDirs: string[] = [];
 
 const makeTempDir = async () => {
-  const path = await mkdtemp(join(tmpdir(), "easycode-project-graph-"));
+  const path = await mkdtemp(join(tmpdir(), "buildwarden-project-graph-"));
   tempDirs.push(path);
   return path;
 };

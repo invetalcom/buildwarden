@@ -1,6 +1,6 @@
 {
-  "name": "@easycode/provider-azure-legacy",
-  "version": "0.4.9",
+  "name": "@buildwarden/provider-azure-legacy",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
@@ -10,7 +10,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@easycode/shared": "workspace:*",
+    "@buildwarden/shared": "workspace:*",
     "openai": "^5.12.2",
     "p-retry": "^6.2.1",
     "undici": "^7.16.0"

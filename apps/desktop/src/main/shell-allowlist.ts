@@ -1,4 +1,4 @@
-import { DEFAULT_SHELL_ALLOWLIST_PATTERN_SOURCES } from "@easycode/shared";
+import { DEFAULT_SHELL_ALLOWLIST_PATTERN_SOURCES } from "@buildwarden/shared";
 
 const safeCompile = (source: string): RegExp | null => {
   const t = source.trim();

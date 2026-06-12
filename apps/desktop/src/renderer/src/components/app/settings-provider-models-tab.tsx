@@ -1,4 +1,4 @@
-﻿import type { AppSnapshot, ProviderType, UnifiedModelPreset, UnifiedModelPresetGroup, UnifiedProviderFamily } from "@easycode/shared";
+import type { AppSnapshot, ProviderType, UnifiedModelPreset, UnifiedModelPresetGroup, UnifiedProviderFamily } from "@buildwarden/shared";
 import { useEffect, useState } from "react";
 import { ChevronDown, KeyRound, Loader2, Plus, Terminal, Trash2 } from "lucide-react";
 import {
@@ -14,6 +14,7 @@ import {
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
+import { Select } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { cn } from "../../lib/cn";
 
@@ -369,17 +370,18 @@ export const ProviderModelsSettingsTab = ({
               {providerType === "ai-sdk" ? (
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
                   <SettingsField label="Provider family" hint="Select which vendor backs this account.">
-                    <select
-                      className="app-input-surface h-11 w-full rounded-xl border border-zinc-800 px-3 text-sm text-zinc-100"
+                    <Select
                       value={providerFamily}
-                      onChange={(event) => onProviderFamilyChange(event.target.value as UnifiedProviderFamily)}
-                    >
-                      <option value="openai">OpenAI</option>
-                      <option value="anthropic">Anthropic</option>
-                      <option value="google">Google</option>
-                      <option value="xai">xAI</option>
-                      <option value="openai-compatible">OpenAI-compatible</option>
-                    </select>
+                      onValueChange={(value) => onProviderFamilyChange(value as UnifiedProviderFamily)}
+                      options={[
+                        { value: "openai", label: "OpenAI" },
+                        { value: "anthropic", label: "Anthropic" },
+                        { value: "google", label: "Google" },
+                        { value: "xai", label: "xAI" },
+                        { value: "openai-compatible", label: "OpenAI-compatible" },
+                      ]}
+                      triggerClassName="h-11 rounded-xl"
+                    />
                   </SettingsField>
                   <SettingsField
                     label="API key"
@@ -526,29 +528,30 @@ export const ProviderModelsSettingsTab = ({
           </div>
           <div className="space-y-4 px-5 py-4">
             <SettingsField label="Connection" hint="Model entries always belong to one account.">
-              <select
-                className="app-input-surface h-11 w-full rounded-xl border border-zinc-800 px-3 text-sm text-zinc-100"
+              <Select
                 value={selectedProviderId}
-                onChange={(event) => onSelectedProviderIdChange(event.target.value)}
-              >
-                <option value="">Select a connection</option>
-                {providerAccounts.map((provider) => (
-                  <option key={provider.id} value={provider.id}>
-                    {provider.label} ({PROVIDER_TYPE_LABELS[provider.providerType]})
-                  </option>
-                ))}
-              </select>
+                onValueChange={onSelectedProviderIdChange}
+                options={[
+                  { value: "", label: "Select a connection" },
+                  ...providerAccounts.map((provider) => ({
+                    value: provider.id,
+                    label: provider.label,
+                    description: PROVIDER_TYPE_LABELS[provider.providerType],
+                  })),
+                ]}
+                triggerClassName="h-11 rounded-xl"
+              />
             </SettingsField>
 
             {showOpenAiModelPresets ? (
               <div className="rounded-2xl border border-fuchsia-500/15 bg-fuchsia-500/[0.04] p-3">
                 <p className="text-sm font-medium text-fuchsia-100/95">Quick picks</p>
                 <p className="mt-0.5 text-xs text-zinc-500">Only models that apply to the selected account.</p>
-                <select
-                  className="app-input-surface mt-2 h-11 w-full rounded-xl border border-zinc-800 px-3 text-sm text-zinc-100"
+                <Select
+                  className="mt-2"
+                  triggerClassName="h-11 rounded-xl"
                   value={openAiPresetSelectValue}
-                  onChange={(event) => {
-                    const value = event.target.value;
+                  onValueChange={(value) => {
                     if (value === MODEL_PRESET_CUSTOM) {
                       onSetOpenAiPresetUserChoseCustom(true);
                       return;
@@ -560,18 +563,17 @@ export const ProviderModelsSettingsTab = ({
                       onModelDisplayNameChange(preset.displayName);
                     }
                   }}
-                >
-                  <option value={MODEL_PRESET_CUSTOM}>Custom</option>
-                  {groupOrderForSelect.map((group: UnifiedModelPresetGroup) => (
-                    <optgroup key={group} label={UNIFIED_MODEL_PRESET_GROUP_LABELS[group]}>
-                      {openAiPresetsGrouped[group].map((preset) => (
-                        <option key={`${group}-${preset.modelId}`} value={preset.modelId}>
-                          {preset.displayName} — {preset.modelId}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
+                  options={[
+                    { value: MODEL_PRESET_CUSTOM, label: "Custom" },
+                    ...groupOrderForSelect.flatMap((group: UnifiedModelPresetGroup) =>
+                      (openAiPresetsGrouped[group] ?? []).map((preset) => ({
+                        value: preset.modelId,
+                        label: `${preset.displayName} - ${preset.modelId}`,
+                        description: UNIFIED_MODEL_PRESET_GROUP_LABELS[group],
+                      })),
+                    ),
+                  ]}
+                />
               </div>
             ) : selectedProviderId ? (
               <p className="rounded-xl border border-zinc-800/90 px-3 py-2 text-xs text-zinc-500">

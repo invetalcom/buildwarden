@@ -38,7 +38,7 @@ export const ProjectInsightMermaid = ({ chart, emptyLabel = "No graph generated 
         if (!mermaidInitialized) {
           mermaid.initialize({
             startOnLoad: false,
-            theme: "dark",
+            theme: document.body.dataset.theme === "light" ? "default" : "dark",
             securityLevel: "loose",
           });
           mermaidInitialized = true;

@@ -53,7 +53,7 @@ const AI_SDK_FAMILY_CONFIG_KEY = "providerFamily" as const;
 
 /**
  * Read stored AI SDK provider family from a provider account's configJson.
- * Prefer this over re-parsing in the renderer; values match easycode's persisted provider form.
+ * Prefer this over re-parsing in the renderer; values match buildwarden's persisted provider form.
  */
 export function getAiSdkProviderFamilyFromConfigJson(configJson: string): UnifiedProviderFamily {
   try {

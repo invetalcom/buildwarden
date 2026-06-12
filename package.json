@@ -1,22 +1,22 @@
 {
-  "name": "easycode",
-  "version": "0.4.9",
+  "name": "buildwarden",
+  "version": "0.5.0",
   "private": true,
   "packageManager": "pnpm@10.32.1",
   "description": "Desktop GUI for coding agents",
   "scripts": {
-    "build": "pnpm --filter @easycode/desktop build",
-    "build:win": "pnpm --filter @easycode/desktop build:win",
-    "build:win:portable": "pnpm --filter @easycode/desktop build:win:portable",
-    "build:linux": "pnpm --filter @easycode/desktop build:linux",
-    "build:linux:appimage": "pnpm --filter @easycode/desktop build:linux:appimage",
-    "build:linux:deb": "pnpm --filter @easycode/desktop build:linux:deb",
-    "build:mac": "pnpm --filter @easycode/desktop build:mac",
-    "build:all": "pnpm --filter @easycode/desktop build:all",
-    "dev": "pnpm --filter @easycode/desktop dev",
-    "lint": "pnpm --filter @easycode/desktop lint && pnpm --filter @easycode/desktop test",
-    "test": "pnpm --filter @easycode/desktop test",
-    "typecheck": "pnpm --filter @easycode/desktop typecheck"
+    "build": "pnpm --filter @buildwarden/desktop build",
+    "build:win": "pnpm --filter @buildwarden/desktop build:win",
+    "build:win:portable": "pnpm --filter @buildwarden/desktop build:win:portable",
+    "build:linux": "pnpm --filter @buildwarden/desktop build:linux",
+    "build:linux:appimage": "pnpm --filter @buildwarden/desktop build:linux:appimage",
+    "build:linux:deb": "pnpm --filter @buildwarden/desktop build:linux:deb",
+    "build:mac": "pnpm --filter @buildwarden/desktop build:mac",
+    "build:all": "pnpm --filter @buildwarden/desktop build:all",
+    "dev": "pnpm --filter @buildwarden/desktop dev",
+    "lint": "pnpm --filter @buildwarden/desktop lint && pnpm --filter @buildwarden/desktop test",
+    "test": "pnpm --filter @buildwarden/desktop test",
+    "typecheck": "pnpm --filter @buildwarden/desktop typecheck"
   }
 }
 

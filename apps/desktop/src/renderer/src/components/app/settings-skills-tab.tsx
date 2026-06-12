@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { IntegratedSkillDefinition } from "@easycode/shared";
+import type { IntegratedSkillMetadata } from "@buildwarden/shared";
 import { Braces, CheckSquare, Layers3, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { Button } from "../ui/button";
@@ -7,16 +7,18 @@ import { Card } from "../ui/card";
 import { Input } from "../ui/input";
 
 export type SkillsSettingsTabProps = {
-  skills: IntegratedSkillDefinition[];
+  skills: IntegratedSkillMetadata[];
   globallyDisabledSkillIds: string[];
   onDisabledSkillIdsChange: (skillIds: string[]) => void | Promise<void>;
 };
 
 type ExpandedSkillState = {
-  skill: IntegratedSkillDefinition;
+  skill: IntegratedSkillMetadata;
+  /** Loaded lazily over IPC; null while the request is in flight. */
+  content: string | null;
 };
 
-const SOURCE_LABELS: Record<IntegratedSkillDefinition["source"], string> = {
+const SOURCE_LABELS: Record<IntegratedSkillMetadata["source"], string> = {
   openai: "OpenAI",
   angular: "Angular",
 };
@@ -48,7 +50,7 @@ export const SkillsSettingsTab = ({
         : skills,
     [normalizedSearch, skills],
   );
-  const groups = filteredSkills.reduce<Record<IntegratedSkillDefinition["source"], IntegratedSkillDefinition[]>>(
+  const groups = filteredSkills.reduce<Record<IntegratedSkillMetadata["source"], IntegratedSkillMetadata[]>>(
     (acc, skill) => {
       acc[skill.source] ??= [];
       acc[skill.source].push(skill);
@@ -80,8 +82,20 @@ export const SkillsSettingsTab = ({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [expandedSkill]);
 
-  const openSkillPopup = (skill: IntegratedSkillDefinition) => {
-    setExpandedSkill({ skill });
+  const openSkillPopup = (skill: IntegratedSkillMetadata) => {
+    setExpandedSkill({ skill, content: null });
+    void window.buildwarden
+      .getIntegratedSkillContent(skill.id)
+      .then((content) => {
+        setExpandedSkill((current) =>
+          current && current.skill.id === skill.id ? { ...current, content: content ?? "Skill body unavailable." } : current,
+        );
+      })
+      .catch(() => {
+        setExpandedSkill((current) =>
+          current && current.skill.id === skill.id ? { ...current, content: "Skill body unavailable." } : current,
+        );
+      });
   };
 
   return (
@@ -167,7 +181,7 @@ export const SkillsSettingsTab = ({
                   }`}
                 >
                   <input
-                    className="mt-1 h-4 w-4 accent-cyan-400"
+                    className="mt-1 h-4 w-4 accent-[var(--ec-accent)]"
                     type="checkbox"
                     checked={enabled}
                     onChange={(event) => toggleSkill(skill.id, event.target.checked)}
@@ -207,10 +221,10 @@ export const SkillsSettingsTab = ({
     </div>
     {expandedSkill ? createPortal(
       <>
-      <div className="fixed inset-0 z-[24999] bg-black/35 backdrop-blur-[1px]" onClick={() => setExpandedSkill(null)} />
+      <div className="fixed inset-0 z-[24999] bg-black/35 backdrop-blur-md" onClick={() => setExpandedSkill(null)} />
       <div className="fixed inset-0 z-[25000] flex items-center justify-center p-4" onClick={() => setExpandedSkill(null)}>
         <Card
-          className="app-scrollbar flex max-h-[min(78vh,720px)] w-full max-w-5xl flex-col overflow-y-auto p-0 shadow-2xl shadow-black/55"
+          className="app-scrollbar flex max-h-[min(78vh,720px)] w-full max-w-5xl flex-col overflow-y-auto p-0 shadow-[var(--ec-popover-shadow)]"
           onClick={(event) => event.stopPropagation()}
         >
           <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-zinc-800/90 bg-zinc-950/95 px-5 py-4 backdrop-blur">
@@ -238,7 +252,7 @@ export const SkillsSettingsTab = ({
             <div>
               <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Skill body</p>
               <pre className="app-scrollbar mt-2 overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-950/70 p-4 text-xs leading-6 text-zinc-300 whitespace-pre-wrap break-words">
-                {expandedSkill.skill.content}
+                {expandedSkill.content ?? "Loading skill body..."}
               </pre>
             </div>
           </div>

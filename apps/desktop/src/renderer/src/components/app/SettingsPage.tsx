@@ -1,19 +1,24 @@
 import { useEffect, useState } from "react";
 import type {
+  AppLogDirectorySizeInfo,
   AppSnapshot,
-  IntegratedSkillDefinition,
+  IntegratedSkillMetadata,
   NetworkProxySettingsInput,
   NetworkProxySettingsSnapshot,
   ProviderType,
   SupportedIdeKind,
   UiTheme,
   UnifiedProviderFamily,
-} from "@easycode/shared";
+} from "@buildwarden/shared";
 import {
+  DEFAULT_RECENT_RUN_DAYS,
+  MAX_RECENT_RUN_DAYS,
+  MIN_RECENT_RUN_DAYS,
+  parseRecentRunDaysSetting,
   parseIdePathConfig,
   serializeIdePathConfig,
   type KeyboardShortcutId,
-} from "@easycode/shared";
+} from "@buildwarden/shared";
 import { ArrowLeft, Cpu, Database, FolderGit2, Globe, Settings2 } from "lucide-react";
 import { APP_VERSION, APP_VERSION_DATE } from "../../lib/app-build-meta";
 import {
@@ -24,7 +29,6 @@ import {
   getModelPresetsForProvider,
 } from "../../lib/openai-model-presets";
 import { Button } from "../ui/button";
-import { Card } from "../ui/card";
 import { ProviderModelsSettingsTab } from "./settings-provider-models-tab";
 import { GitWorkspaceSettingsTab } from "./settings-git-workspace-tab";
 import { NetworkSettingsTab, type NetworkProxyDraft } from "./settings-network-tab";
@@ -57,10 +61,12 @@ interface SettingsPageProps {
   modelBaseUrl: string;
   autoCheckoutRunBranchOnOpen: boolean;
   autoReleaseRunBranchOnLeave: boolean;
+  recentRunDays: number;
   uiTheme: UiTheme;
   worktreeRootOverrideSettingValue: string;
   enableDevMode: boolean;
   appLogDirPath: string;
+  appLogDirectorySize: AppLogDirectorySizeInfo;
   networkProxySettings: NetworkProxySettingsSnapshot;
   providerAccounts: AppSnapshot["providerAccounts"];
   models: AppSnapshot["models"];
@@ -75,6 +81,7 @@ interface SettingsPageProps {
   onDeleteModel: (modelId: string) => void;
   onAutoCheckoutRunBranchOnOpenChange: (value: boolean) => void;
   onAutoReleaseRunBranchOnLeaveChange: (value: boolean) => void;
+  onRecentRunDaysChange: (value: number) => void | Promise<void>;
   onUiThemeChange: (theme: UiTheme) => void;
   onSaveWorktreeRootOverride: (value: string) => void | Promise<void>;
   onEnableDevModeChange: (value: boolean) => void;
@@ -106,14 +113,14 @@ interface SettingsPageProps {
   idePathsSettingValue: string;
   onSaveIdePaths: (serialized: string) => void | Promise<void>;
   onPickIdeExecutable: () => Promise<string | null>;
-  integratedSkills: IntegratedSkillDefinition[];
+  integratedSkills: IntegratedSkillMetadata[];
   globallyDisabledIntegratedSkillIds: string[];
   onGloballyDisabledIntegratedSkillIdsChange: (skillIds: string[]) => void | Promise<void>;
 }
 
 const TAB_CONFIG: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }> = [
   { id: "provider-models", label: "Provider & Models", icon: <Cpu className="h-4 w-4" /> },
-  { id: "git-workspace", label: "GIT & Workspace", icon: <FolderGit2 className="h-4 w-4" /> },
+  { id: "git-workspace", label: "Git & Workspace", icon: <FolderGit2 className="h-4 w-4" /> },
   { id: "skills", label: "Skills", icon: <Database className="h-4 w-4" /> },
   { id: "network", label: "Network", icon: <Globe className="h-4 w-4" /> },
   { id: "user", label: "User Settings", icon: <Settings2 className="h-4 w-4" /> },
@@ -121,29 +128,6 @@ const TAB_CONFIG: Array<{ id: SettingsTab; label: string; icon: React.ReactNode 
 
 const userShellLinesFromSavedText = (text: string): string[] =>
   text.split("\n").map((line) => line.trim()).filter(Boolean);
-
-const SettingsHeroMetric = ({
-  icon,
-  label,
-  value,
-  hint,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  hint: string;
-}) => (
-  <div className="app-surface-stat-tile rounded-2xl border px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
-    <div className="flex items-start justify-between gap-3">
-      <div>
-        <p className="text-[11px] uppercase tracking-[0.28em] text-zinc-500">{label}</p>
-        <p className="mt-2 text-lg font-semibold text-zinc-50">{value}</p>
-        <p className="mt-1 text-xs text-zinc-400">{hint}</p>
-      </div>
-      <span className="rounded-xl border border-cyan-400/15 bg-cyan-400/8 p-2 text-cyan-200">{icon}</span>
-    </div>
-  </div>
-);
 
 export const SettingsPage = ({
   busy,
@@ -169,10 +153,12 @@ export const SettingsPage = ({
   modelBaseUrl,
   autoCheckoutRunBranchOnOpen,
   autoReleaseRunBranchOnLeave,
+  recentRunDays,
   uiTheme,
   worktreeRootOverrideSettingValue,
   enableDevMode,
   appLogDirPath,
+  appLogDirectorySize,
   networkProxySettings,
   providerAccounts,
   models,
@@ -187,6 +173,7 @@ export const SettingsPage = ({
   onDeleteModel,
   onAutoCheckoutRunBranchOnOpenChange,
   onAutoReleaseRunBranchOnLeaveChange,
+  onRecentRunDaysChange,
   onUiThemeChange,
   onSaveWorktreeRootOverride,
   onEnableDevModeChange,
@@ -222,7 +209,7 @@ export const SettingsPage = ({
   globallyDisabledIntegratedSkillIds,
   onGloballyDisabledIntegratedSkillIdsChange,
 }: SettingsPageProps) => {
-  const [activeTab, setActiveTab] = useState<SettingsTab>("provider-models");
+  const [activeTab, setActiveTab] = useState<SettingsTab>("user");
   const [openAiPresetUserChoseCustom, setOpenAiPresetUserChoseCustom] = useState(false);
   const [userShellPatternsDraft, setUserShellPatternsDraft] = useState(() => userShellLinesFromSavedText(shellAllowlistExtraText));
   const [shellAllowlistSaving, setShellAllowlistSaving] = useState(false);
@@ -230,6 +217,7 @@ export const SettingsPage = ({
   const [idePathsSaving, setIdePathsSaving] = useState(false);
   const [worktreeRootDraft, setWorktreeRootDraft] = useState(worktreeRootOverrideSettingValue);
   const [worktreeRootSaving, setWorktreeRootSaving] = useState(false);
+  const [recentRunDaysDraft, setRecentRunDaysDraft] = useState(() => String(recentRunDays));
   const [networkProxyDraft, setNetworkProxyDraft] = useState<NetworkProxyDraft>({
     ...networkProxySettings,
     password: "",
@@ -298,6 +286,10 @@ export const SettingsPage = ({
   }, [worktreeRootOverrideSettingValue]);
 
   useEffect(() => {
+    setRecentRunDaysDraft(String(recentRunDays));
+  }, [recentRunDays]);
+
+  useEffect(() => {
     setNetworkProxyDraft({
       ...networkProxySettings,
       password: "",
@@ -311,6 +303,14 @@ export const SettingsPage = ({
   const normalizedSavedWorktreeRoot = worktreeRootOverrideSettingValue.trim();
   const normalizedWorktreeRootDraft = worktreeRootDraft.trim();
   const worktreeRootDirty = normalizedWorktreeRootDraft !== normalizedSavedWorktreeRoot;
+  const recentRunDaysDraftNumber = Number(recentRunDaysDraft);
+  const recentRunDaysInvalid =
+    !recentRunDaysDraft.trim() ||
+    !Number.isFinite(recentRunDaysDraftNumber) ||
+    !Number.isInteger(recentRunDaysDraftNumber) ||
+    recentRunDaysDraftNumber < MIN_RECENT_RUN_DAYS ||
+    recentRunDaysDraftNumber > MAX_RECENT_RUN_DAYS;
+  const normalizedRecentRunDaysDraft = recentRunDaysInvalid ? recentRunDays : parseRecentRunDaysSetting(recentRunDaysDraftNumber);
   const savedUserShellLines = userShellLinesFromSavedText(shellAllowlistExtraText);
   const shellAllowlistDirty = JSON.stringify(userShellPatternsDraft) !== JSON.stringify(savedUserShellLines);
   const networkProxyDirty =
@@ -344,75 +344,57 @@ export const SettingsPage = ({
     }
   };
 
+  useEffect(() => {
+    if (recentRunDaysInvalid || normalizedRecentRunDaysDraft === recentRunDays) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      void onRecentRunDaysChange(normalizedRecentRunDaysDraft);
+    }, 350);
+
+    return () => window.clearTimeout(timeout);
+  }, [normalizedRecentRunDaysDraft, onRecentRunDaysChange, recentRunDays, recentRunDaysInvalid]);
+
   return (
-    <div className="space-y-5">
-      <Card className="app-surface-settings-hero overflow-hidden border p-0">
-        <div className="border-b border-white/6 px-5 py-4 sm:px-6">
-          <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-            <div className="space-y-4">
-              <Button variant="ghost" size="sm" onClick={onBack} className="h-9 rounded-full px-3 text-zinc-300 hover:bg-white/5 hover:text-white">
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                Back
-              </Button>
-              <div className="space-y-2">
-                <p className="text-[11px] uppercase tracking-[0.32em] text-cyan-300/70">EasyCode Settings</p>
-                <div className="flex flex-wrap items-center gap-3">
-                  <h2 className="text-3xl font-semibold tracking-tight text-zinc-50">Current version</h2>
-                  <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-zinc-400">
-                    v{APP_VERSION} • {APP_VERSION_DATE}
-                  </span>
-                </div>
-                <p className="max-w-2xl text-sm leading-relaxed text-zinc-400">
-                  Configure providers, shape your model registry, and tune how Easycode manages repositories, terminals, and local
-                  developer workflows.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-3 xl:min-w-[34rem]">
-              <SettingsHeroMetric
-                icon={<Cpu className="h-4 w-4" />}
-                label="Providers"
-                value={String(providerAccounts.length)}
-                hint={providerAccounts.length === 1 ? "1 provider configured" : "Connected provider accounts"}
-              />
-              <SettingsHeroMetric
-                icon={<Database className="h-4 w-4" />}
-                label="Models"
-                value={String(models.length)}
-                hint={models.length === 1 ? "1 registered model" : "Models available in Easycode"}
-              />
-              <SettingsHeroMetric
-                icon={<Settings2 className="h-4 w-4" />}
-                label="Focus"
-                value={TAB_CONFIG.find((tab) => tab.id === activeTab)?.label ?? "Settings"}
-                hint="Switch sections below"
-              />
-            </div>
-          </div>
+    <div className="flex min-h-[calc(100vh-5.25rem)] overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)]">
+      <aside className="w-64 shrink-0 border-r border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-3">
+        <Button variant="ghost" size="sm" onClick={onBack} className="mb-4 h-8 px-2 text-xs">
+          <ArrowLeft data-icon="inline-start" />
+          Back
+        </Button>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--ec-accent)]">Workspace</p>
+        <h2 className="mt-1 text-xl font-semibold text-[var(--ec-text)]">Settings</h2>
+        <p className="mt-1 text-xs leading-5 text-[var(--ec-muted)]">Global app behavior, providers, models, network, and user preferences.</p>
+        <div className="mt-5 flex flex-col gap-1">
+          {TAB_CONFIG.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm transition ${
+                activeTab === tab.id
+                  ? "bg-[var(--ec-accent-soft)] text-[var(--ec-text)]"
+                  : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+              }`}
+            >
+              <span className={activeTab === tab.id ? "text-[var(--ec-accent)]" : "text-[var(--ec-faint)]"}>{tab.icon}</span>
+              <span className="min-w-0 truncate">{tab.label}</span>
+            </button>
+          ))}
         </div>
+      </aside>
 
-        <div className="px-3 py-3 sm:px-4">
-          <div className="flex flex-wrap gap-2">
-            {TAB_CONFIG.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition ${
-                  activeTab === tab.id
-                    ? "border-cyan-400/35 bg-cyan-400/12 text-cyan-200 shadow-[0_0_0_1px_rgba(34,211,238,0.14)]"
-                    : "border-transparent bg-white/[0.03] text-zinc-400 hover:border-white/10 hover:bg-white/[0.05] hover:text-zinc-200"
-                }`}
-              >
-                {tab.icon}
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </Card>
-
+      <div className="app-scrollbar min-w-0 flex-1 overflow-y-auto px-6 py-5">
+        <header className="mb-5 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-4">
+          <h1 className="text-2xl font-semibold tracking-tight text-[var(--ec-text)]">{TAB_CONFIG.find((tab) => tab.id === activeTab)?.label ?? "Settings"}</h1>
+          <p className="mt-1 text-sm text-[var(--ec-muted)]">
+            Configure providers, model registry, workspace behavior, skills, network access, and user preferences.
+          </p>
+          <p className="mt-2 font-mono text-[11px] text-[var(--ec-faint)]">
+            BuildWarden v{APP_VERSION} - {APP_VERSION_DATE}
+          </p>
+        </header>
       {activeTab === "provider-models" ? (
         <ProviderModelsSettingsTab
           busy={busy}
@@ -470,6 +452,11 @@ export const SettingsPage = ({
           projectPath={projectPath}
           autoCheckoutRunBranchOnOpen={autoCheckoutRunBranchOnOpen}
           autoReleaseRunBranchOnLeave={autoReleaseRunBranchOnLeave}
+          recentRunDaysDraft={recentRunDaysDraft}
+          recentRunDaysInvalid={recentRunDaysInvalid}
+          recentRunDaysMin={MIN_RECENT_RUN_DAYS}
+          recentRunDaysMax={MAX_RECENT_RUN_DAYS}
+          recentRunDaysDefault={DEFAULT_RECENT_RUN_DAYS}
           worktreeRootDraft={worktreeRootDraft}
           worktreeRootOverrideSettingValue={worktreeRootOverrideSettingValue}
           worktreeRootDirty={worktreeRootDirty}
@@ -484,6 +471,7 @@ export const SettingsPage = ({
           onDeleteProject={onDeleteProject}
           onAutoCheckoutRunBranchOnOpenChange={onAutoCheckoutRunBranchOnOpenChange}
           onAutoReleaseRunBranchOnLeaveChange={onAutoReleaseRunBranchOnLeaveChange}
+          onRecentRunDaysDraftChange={setRecentRunDaysDraft}
           onProjectNameChange={onProjectNameChange}
           onProjectPathChange={onProjectPathChange}
           onWorktreeRootDraftChange={setWorktreeRootDraft}
@@ -516,6 +504,7 @@ export const SettingsPage = ({
           uiTheme={uiTheme}
           enableDevMode={enableDevMode}
           appLogDirPath={appLogDirPath}
+          appLogDirectorySize={appLogDirectorySize}
           ideDraft={ideDraft}
           idePathsDirty={idePathsDirty}
           idePathsSaving={idePathsSaving}
@@ -584,28 +573,29 @@ export const SettingsPage = ({
         />
       ) : null}
 
-      <footer className="mt-8 overflow-x-auto border-t border-zinc-800/90 pt-4 pb-1 text-center text-[11px] text-zinc-500">
-        <p className="whitespace-nowrap text-zinc-400">
-          <span className="font-medium text-zinc-400">
-            Easycode <span className="tabular-nums">v{APP_VERSION}</span>
+      <footer className="mt-8 overflow-x-auto border-t border-[var(--ec-border)] pt-4 pb-1 text-center text-[11px] text-[var(--ec-muted)]">
+        <p className="whitespace-nowrap">
+          <span className="font-medium text-[var(--ec-muted)]">
+            BuildWarden <span className="tabular-nums">v{APP_VERSION}</span>
             {APP_VERSION_DATE && APP_VERSION_DATE !== "—" ? (
               <>
                 {" "}
-                · <span className="tabular-nums">{APP_VERSION_DATE}</span>
+                - <span className="tabular-nums">{APP_VERSION_DATE}</span>
               </>
             ) : null}
           </span>
-          <span className="text-zinc-600"> · </span>
-          <span className="text-zinc-500">invetalcom</span>
-          <span className="text-zinc-600"> · </span>
+          <span className="text-[var(--ec-faint)]"> - </span>
+          <span>invetalcom</span>
+          <span className="text-[var(--ec-faint)]"> - </span>
           <a
             href="mailto:ai-support@r-kellner.de"
-            className="text-cyan-500/85 underline decoration-cyan-500/30 underline-offset-2 transition hover:text-cyan-400"
+            className="text-[var(--ec-accent)] underline decoration-[var(--ec-accent-ring)] underline-offset-2 transition hover:text-[var(--ec-accent-strong)]"
           >
             ai-support@r-kellner.de
           </a>
         </p>
       </footer>
+      </div>
     </div>
   );
 };

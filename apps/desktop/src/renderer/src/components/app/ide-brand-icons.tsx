@@ -1,4 +1,4 @@
-import type { SupportedIdeKind } from "@easycode/shared";
+import type { SupportedIdeKind } from "@buildwarden/shared";
 
 const defaultIconClass = "h-8 w-8 shrink-0";
 

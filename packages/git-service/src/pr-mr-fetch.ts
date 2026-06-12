@@ -14,7 +14,7 @@ export interface ComputePrMrDiffResult {
   number: number;
   /** Remote-tracking ref used as the merge base (e.g. `origin/main`). */
   baseRef: string;
-  /** Local ref created for the PR/MR head (`refs/easycode/...`). */
+  /** Local ref created for the PR/MR head (`refs/buildwarden/...`). */
   headRef: string;
 }
 
@@ -166,7 +166,7 @@ export async function computePrMrDiffViaFetch(
     );
   }
 
-  const headRef = `refs/easycode/pr-mr-${parsed.provider}-${parsed.number}`;
+  const headRef = `refs/buildwarden/pr-mr-${parsed.provider}-${parsed.number}`;
   let baseRef = "";
 
   try {

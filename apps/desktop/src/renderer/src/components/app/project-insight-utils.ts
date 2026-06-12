@@ -9,7 +9,7 @@ import type {
   ProjectInsightRecord,
   ProjectSnapshot,
   RepoHistorianInsightData,
-} from "@easycode/shared";
+} from "@buildwarden/shared";
 import { reportRendererError } from "../../lib/report-renderer-error";
 
 export const getProjectInsight = (project: ProjectSnapshot, kind: ProjectInsightKind): ProjectInsightRecord | null =>
@@ -31,6 +31,8 @@ export const parseProjectInsightData = <T extends ProjectInsightData>(record: Pr
     return null;
   }
 };
+
+export const formatGeneratedAt = (value: string | undefined) => (value ? new Date(value).toLocaleString() : "Not generated yet");
 
 export type {
   ArchitectureGraphInsightData,

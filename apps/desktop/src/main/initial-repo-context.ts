@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { countTokens } from "gpt-tokenizer";
-import type { RunMode } from "@easycode/shared";
+import type { RunMode } from "@buildwarden/shared";
 import { createRunToolContext } from "./run-tools";
 
 /** Rough token estimate if `countTokens` fails (rare). */
@@ -17,11 +17,11 @@ const estimateContextTokens = (text: string): number => {
 };
 
 const logContextStats = (mode: RunMode, text: string): void => {
-  if (process.env.EASYCODE_LOG_REPO_CONTEXT !== "1") {
+  if (process.env.BUILDWARDEN_LOG_REPO_CONTEXT !== "1") {
     return;
   }
   const tokens = estimateContextTokens(text);
-  console.info(`[easycode] initial repo context (${mode}): ${String(text.length)} chars, ~${String(tokens)} tokens`);
+  console.info(`[buildwarden] initial repo context (${mode}): ${String(text.length)} chars, ~${String(tokens)} tokens`);
 };
 
 type KeyFileSpec = { relativePath: string; maxBodyTokens: number };

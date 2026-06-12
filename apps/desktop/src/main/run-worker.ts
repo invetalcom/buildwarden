@@ -1,5 +1,13 @@
 import { parentPort, workerData } from "node:worker_threads";
-import { type HarnessRunChunk, type RunExecutionRequest, type RunToolName, type ShellApprovalDecision, runShellActivityStreamId } from "@easycode/shared";
+import {
+  type HarnessRunChunk,
+  type RunExecutionRequest,
+  type RunToolName,
+  type RunUserInputAnswers,
+  type RunUserInputRequest,
+  type ShellApprovalDecision,
+  runShellActivityStreamId,
+} from "@buildwarden/shared";
 import { createHarnessAdapter } from "./harness-adapters";
 import { buildInitialRepoContext } from "./initial-repo-context";
 import { logError, logInfo } from "./logger";
@@ -18,6 +26,7 @@ if (!port) {
 const { request } = workerData as WorkerInput;
 const controller = new AbortController();
 const pendingShellApprovals = new Map<string, (decision: ShellApprovalDecision) => void>();
+const pendingUserInputs = new Map<string, { resolve: (answers: RunUserInputAnswers) => void; reject: (error: Error) => void }>();
 const approvedShellCommands = new Set<string>();
 const activeShellCommands = new Map<string, { cancel: (reason?: unknown) => void }>();
 
@@ -27,7 +36,8 @@ port.on(
     message:
       | { type: "cancel" }
       | { type: "cancel-shell"; callId: string }
-      | { type: "shell-approval-response"; requestId: string; decision: ShellApprovalDecision },
+      | { type: "shell-approval-response"; requestId: string; decision: ShellApprovalDecision }
+      | { type: "user-input-response"; requestId: string; answers: RunUserInputAnswers },
   ) => {
     if (message.type === "cancel") {
       for (const activeShell of activeShellCommands.values()) {
@@ -39,6 +49,10 @@ port.on(
         resolve("deny");
       }
       pendingShellApprovals.clear();
+      for (const pending of pendingUserInputs.values()) {
+        pending.reject(new Error("Run cancelled."));
+      }
+      pendingUserInputs.clear();
       return;
     }
 
@@ -47,10 +61,20 @@ port.on(
       return;
     }
 
-    const resolve = pendingShellApprovals.get(message.requestId);
-    if (resolve) {
-      pendingShellApprovals.delete(message.requestId);
-      resolve(message.decision);
+    if (message.type === "shell-approval-response") {
+      const resolve = pendingShellApprovals.get(message.requestId);
+      if (resolve) {
+        pendingShellApprovals.delete(message.requestId);
+        resolve(message.decision);
+      }
+    }
+
+    if (message.type === "user-input-response") {
+      const pending = pendingUserInputs.get(message.requestId);
+      if (pending) {
+        pendingUserInputs.delete(message.requestId);
+        pending.resolve(message.answers);
+      }
     }
   },
 );
@@ -85,6 +109,22 @@ const requestShellApproval = async (command: string): Promise<ShellApprovalDecis
   return decision;
 };
 
+const requestUserInput = async (request: RunUserInputRequest): Promise<RunUserInputAnswers> => {
+  const requestId = request.requestId?.trim() || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  port.postMessage({
+    type: "user-input-request",
+    requestId,
+    title: request.title,
+    content: request.content,
+    questions: request.questions,
+    metadata: request.metadata,
+  });
+
+  return new Promise<RunUserInputAnswers>((resolve, reject) => {
+    pendingUserInputs.set(requestId, { resolve, reject });
+  });
+};
+
 const run = async () => {
   try {
     logInfo("Run worker started.", {
@@ -93,7 +133,7 @@ const run = async () => {
       mode: request.mode,
       worktreePath: request.worktreePath,
     });
-    const harness = createHarnessAdapter(request.providerType, { requestShellApproval });
+    const harness = createHarnessAdapter(request.providerType, { requestShellApproval, requestUserInput });
     const azureLegacyToolOverride: readonly RunToolName[] | undefined =
       request.providerType === "azure-legacy"
         ? ["read_file", "write_file", "edit_file", "delete_file", "list_files", "search_repo", "run_shell"]

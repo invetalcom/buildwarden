@@ -1,9 +1,17 @@
 import { useMemo } from "react";
-import type { AppSnapshot } from "@easycode/shared";
+import type { AppSnapshot } from "@buildwarden/shared";
 import { Activity, Bot, FolderGit2, PlayCircle, Settings2, Sparkles, WalletCards } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Card } from "../ui/card";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "../ui/card";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 
 interface LandingPageProps {
   snapshot: AppSnapshot;
@@ -78,169 +86,187 @@ export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRu
     };
   }, [allRuns]);
 
+  const metrics = [
+    {
+      label: "Projects",
+      value: totals.projects,
+      detail: `${totals.providerAccounts} providers, ${totals.models} models`,
+      icon: FolderGit2,
+    },
+    {
+      label: "Runs",
+      value: totals.runs,
+      detail: `${totals.activeRuns} active, ${totals.completedRuns} completed`,
+      icon: PlayCircle,
+    },
+    {
+      label: "Tokens",
+      value: formatTokens(totals.totalTokens),
+      detail: `${formatTokens(totals.inputTokens)} in, ${formatTokens(totals.outputTokens)} out`,
+      icon: WalletCards,
+    },
+    {
+      label: "Workspace",
+      value: totals.activeRuns > 0 ? "Busy" : "Idle",
+      detail: totals.activeRuns > 0 ? `${totals.activeRuns} runs in progress` : "No runs currently active",
+      icon: Sparkles,
+    },
+  ];
+
   return (
-    <div className="space-y-3">
-      <Card className="app-surface-landing-hero overflow-hidden border p-4 sm:p-5">
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(20rem,0.95fr)] xl:items-stretch">
-          <div className="flex min-w-0 flex-col xl:h-full">
-            <p className="text-[11px] uppercase tracking-[0.32em] text-cyan-400/85">Boot message</p>
-            <div className="mt-2 flex min-h-[9.5rem] flex-1 flex-col xl:h-full">
-              <p className="max-w-2xl text-sm leading-6 text-zinc-300">{sessionJoke}</p>
-              <div className="mt-auto space-y-3 pt-3">
-                <div className="app-surface-inset-soft w-full max-w-[34rem] rounded-2xl border px-3 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">Today&apos;s activity</p>
-                      <p className="mt-1 text-sm text-zinc-300">
-                        {todayActivity.runsStarted} runs started, {todayActivity.completedRuns} completed, {todayActivity.activeRuns} active
-                      </p>
-                    </div>
-                    <p className="text-sm font-medium text-cyan-100">{formatTokens(todayActivity.tokensUsed)} tokens</p>
+    <div className="mx-auto flex w-full max-w-7xl flex-col gap-3">
+      <section className="grid gap-3">
+        <Card className="overflow-hidden">
+          <CardHeader className="p-5">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.32em] text-[var(--ec-accent)]">Boot Message</p>
+            <CardTitle className="text-lg leading-7">{sessionJoke}</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4 px-5 pb-5">
+            <div className="rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--ec-faint)]">Today's Activity</p>
+                  <p className="mt-1 text-sm text-[var(--ec-text)]">
+                    {todayActivity.runsStarted} runs started, {todayActivity.completedRuns} completed, {todayActivity.activeRuns} active
+                  </p>
+                </div>
+                <p className="font-mono text-sm font-semibold text-[var(--ec-accent)]">{formatTokens(todayActivity.tokensUsed)} tokens</p>
+              </div>
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-3">
+              {latestRun ? (
+                <Button variant="secondary" className="justify-center" onClick={() => onSelectRun(latestRun.projectId, latestRun.id)}>
+                  <PlayCircle data-icon="inline-start" />
+                  Open latest run
+                </Button>
+              ) : null}
+              <Button variant="secondary" className="justify-center" onClick={onOpenChats}>
+                <Bot data-icon="inline-start" />
+                Open chat
+              </Button>
+              <Button variant="secondary" className="justify-center" onClick={onOpenSettings}>
+                <Settings2 data-icon="inline-start" />
+                Settings
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {metrics.map((metric) => {
+            const Icon = metric.icon;
+            return (
+              <Card key={metric.label}>
+                <CardHeader className="p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <CardDescription className="font-semibold uppercase tracking-[0.22em]">{metric.label}</CardDescription>
+                    <Icon className="size-4 text-[var(--ec-accent)]" />
                   </div>
-                </div>
-
-                <div className="grid w-full max-w-[34rem] grid-cols-3 gap-2">
-                  {latestRun ? (
-                    <Button variant="secondary" className="w-full justify-center" onClick={() => onSelectRun(latestRun.projectId, latestRun.id)}>
-                      <PlayCircle className="mr-2 h-4 w-4" />
-                      Open latest run
-                    </Button>
-                  ) : null}
-                  <Button variant="secondary" className="w-full justify-center" onClick={onOpenChats}>
-                    <Bot className="mr-2 h-4 w-4" />
-                    Open chat
-                  </Button>
-                  <Button variant="secondary" className="w-full justify-center" onClick={onOpenSettings}>
-                    <Settings2 className="mr-2 h-4 w-4" />
-                    Settings
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid gap-2 sm:grid-cols-2">
-            <div className="app-surface-stat-tile rounded-2xl border px-3 py-3">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">Projects</p>
-                <FolderGit2 className="h-4 w-4 text-cyan-400" />
-              </div>
-              <p className="mt-2 text-2xl font-semibold text-zinc-50">{totals.projects}</p>
-              <p className="mt-1 text-xs text-zinc-400">
-                {totals.providerAccounts} providers, {totals.models} models
-              </p>
-            </div>
-            <div className="app-surface-stat-tile rounded-2xl border px-3 py-3">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">Runs</p>
-                <PlayCircle className="h-4 w-4 text-cyan-400" />
-              </div>
-              <p className="mt-2 text-2xl font-semibold text-zinc-50">{totals.runs}</p>
-              <p className="mt-1 text-xs text-zinc-400">
-                {totals.activeRuns} active, {totals.completedRuns} completed
-              </p>
-            </div>
-            <div className="app-surface-stat-tile rounded-2xl border px-3 py-3">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">Tokens</p>
-                <WalletCards className="h-4 w-4 text-cyan-400" />
-              </div>
-              <p className="mt-2 text-2xl font-semibold text-zinc-50">{formatTokens(totals.totalTokens)}</p>
-              <p className="mt-1 text-xs text-zinc-400">
-                {formatTokens(totals.inputTokens)} in, {formatTokens(totals.outputTokens)} out
-              </p>
-            </div>
-            <div className="app-surface-stat-tile rounded-2xl border px-3 py-3">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">Workspace</p>
-                <Sparkles className="h-4 w-4 text-cyan-400" />
-              </div>
-              <p className="mt-2 text-2xl font-semibold text-zinc-50">{totals.activeRuns > 0 ? "Busy" : "Idle"}</p>
-              <p className="mt-1 text-xs text-zinc-400">
-                {totals.activeRuns > 0 ? `${totals.activeRuns} runs in progress` : "No runs currently active"}
-              </p>
-            </div>
-          </div>
+                  <CardTitle className="text-2xl">{metric.value}</CardTitle>
+                  <CardDescription>{metric.detail}</CardDescription>
+                </CardHeader>
+              </Card>
+            );
+          })}
         </div>
-      </Card>
+      </section>
 
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
-        <Card className="p-4">
-          <div className="flex items-center justify-between gap-3">
+      <section className="grid gap-3 xl:grid-cols-2">
+        <Card>
+          <CardHeader className="flex-row items-center gap-3">
             <div>
-              <p className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">Recent projects</p>
-              <h3 className="mt-1 text-lg font-semibold text-zinc-100">Repositories</h3>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--ec-faint)]">Recent Projects</p>
+              <CardTitle className="mt-1 text-lg">Repositories</CardTitle>
             </div>
-            <Activity className="h-4 w-4 text-zinc-500" />
-          </div>
-
-          <div className="app-surface-list-well mt-3 divide-y divide-zinc-800/80 rounded-2xl border border-zinc-800/90">
+            <CardAction>
+              <Activity className="size-4 text-[var(--ec-muted)]" />
+            </CardAction>
+          </CardHeader>
+          <CardContent>
             {recentProjects.length > 0 ? (
-              recentProjects.map((entry) => {
-                const totalProjectTokens = entry.project.cumulativeInputTokens + entry.project.cumulativeOutputTokens;
+              <div className="overflow-hidden rounded-md border border-[var(--ec-border)]">
+                {recentProjects.map((entry) => {
+                  const totalProjectTokens = entry.project.cumulativeInputTokens + entry.project.cumulativeOutputTokens;
 
-                return (
+                  return (
+                    <button
+                      key={entry.project.id}
+                      type="button"
+                      className="flex w-full items-center justify-between gap-3 border-b border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-4 py-3 text-left transition last:border-b-0 hover:bg-[var(--ec-hover)]"
+                      onClick={() => onSelectProject(entry.project.id)}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-[var(--ec-text)]">{entry.project.name}</p>
+                        <p className="mt-1 truncate font-mono text-xs text-[var(--ec-muted)]">{entry.project.repoPath}</p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <Badge dot tone={entry.activeRuns[0]?.status ?? "neutral"}>
+                          {entry.activeRuns.length > 0 ? `${entry.activeRuns.length} active` : `${entry.runs.length} runs`}
+                        </Badge>
+                        <p className="mt-1 font-mono text-xs text-[var(--ec-muted)]">{formatTokens(totalProjectTokens)} tokens</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <Empty>
+                <EmptyHeader>
+                  <FolderGit2 className="size-8 text-[var(--ec-muted)]" />
+                  <EmptyTitle>No repositories yet</EmptyTitle>
+                  <EmptyDescription>Add your first project in Settings to start tracking work here.</EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex-row items-center gap-3">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--ec-faint)]">Recent Runs</p>
+              <CardTitle className="mt-1 text-lg">Agent activity</CardTitle>
+            </div>
+            <CardAction>
+              <Bot className="size-4 text-[var(--ec-muted)]" />
+            </CardAction>
+          </CardHeader>
+          <CardContent>
+            {recentRuns.length > 0 ? (
+              <div className="overflow-hidden rounded-md border border-[var(--ec-border)]">
+                {recentRuns.map((run) => (
                   <button
-                    key={entry.project.id}
+                    key={run.id}
                     type="button"
-                    className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-zinc-900/70"
-                    onClick={() => onSelectProject(entry.project.id)}
+                    className="flex w-full items-center justify-between gap-3 border-b border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-4 py-3 text-left transition last:border-b-0 hover:bg-[var(--ec-hover)]"
+                    onClick={() => onSelectRun(run.projectId, run.id)}
                   >
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-zinc-100">{entry.project.name}</p>
-                      <p className="mt-1 truncate text-xs text-zinc-500">{entry.project.repoPath}</p>
+                      <p className="truncate text-sm font-semibold text-[var(--ec-text)]">{run.prompt}</p>
+                      <p className="mt-1 truncate font-mono text-xs text-[var(--ec-muted)]">
+                        {run.projectName} - {formatRunDate(run.createdAt)}
+                      </p>
                     </div>
                     <div className="shrink-0 text-right">
-                      <Badge tone={entry.activeRuns[0]?.status ?? "completed"}>
-                        {entry.activeRuns.length > 0 ? `${entry.activeRuns.length} active` : `${entry.runs.length} runs`}
-                      </Badge>
-                      <p className="mt-1 text-xs text-zinc-500">{formatTokens(totalProjectTokens)} tokens</p>
+                      <Badge dot tone={run.status}>{run.status}</Badge>
+                      <p className="mt-1 font-mono text-xs text-[var(--ec-muted)]">{formatTokens(run.inputTokens + run.outputTokens)} tokens</p>
                     </div>
                   </button>
-                );
-              })
+                ))}
+              </div>
             ) : (
-              <div className="px-4 py-8 text-center text-sm text-zinc-500">Add your first project in Settings to start tracking work here.</div>
+              <Empty>
+                <EmptyHeader>
+                  <PlayCircle className="size-8 text-[var(--ec-muted)]" />
+                  <EmptyTitle>No runs yet</EmptyTitle>
+                  <EmptyDescription>Start one from a project page to populate activity here.</EmptyDescription>
+                </EmptyHeader>
+              </Empty>
             )}
-          </div>
+          </CardContent>
         </Card>
-
-        <Card className="p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">Recent runs</p>
-              <h3 className="mt-1 text-lg font-semibold text-zinc-100">Agent activity</h3>
-            </div>
-            <Bot className="h-4 w-4 text-zinc-500" />
-          </div>
-
-          <div className="app-surface-list-well mt-3 divide-y divide-zinc-800/80 rounded-2xl border border-zinc-800/90">
-            {recentRuns.length > 0 ? (
-              recentRuns.map((run) => (
-                <button
-                  key={run.id}
-                  type="button"
-                  className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-zinc-900/70"
-                  onClick={() => onSelectRun(run.projectId, run.id)}
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-zinc-100">{run.prompt}</p>
-                    <p className="mt-1 truncate text-xs text-zinc-500">
-                      {run.projectName} • {formatRunDate(run.createdAt)}
-                    </p>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <Badge tone={run.status}>{run.status}</Badge>
-                    <p className="mt-1 text-xs text-zinc-500">{formatTokens(run.inputTokens + run.outputTokens)} tokens</p>
-                  </div>
-                </button>
-              ))
-            ) : (
-              <div className="px-4 py-8 text-center text-sm text-zinc-500">No runs yet. Start one from a project page to populate activity here.</div>
-            )}
-          </div>
-        </Card>
-      </div>
+      </section>
     </div>
   );
 };

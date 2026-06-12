@@ -8,7 +8,7 @@ import {
   type RunTerminalStartInput,
   type RunTerminalStartResult,
   type RunTerminalWriteInput,
-} from "@easycode/shared";
+} from "@buildwarden/shared";
 import type { IPty } from "node-pty";
 import { logError, logInfo, logWarn } from "./logger";
 
@@ -30,7 +30,7 @@ type RunTerminalSession = { proc: IPty; wc: WebContents; cwd: string };
 const sessions = new Map<string, RunTerminalSession>();
 
 /** Session id format must match the renderer (`RunWorktreeTerminal`). */
-export const runTerminalSessionIdForRun = (runId: string): string => `easycode-run-terminal:${runId}`;
+export const runTerminalSessionIdForRun = (runId: string): string => `buildwarden-run-terminal:${runId}`;
 
 export const killRunTerminalForRunId = (runId: string): void => {
   const sessionId = runTerminalSessionIdForRun(runId);

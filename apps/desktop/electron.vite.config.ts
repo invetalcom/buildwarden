@@ -15,14 +15,14 @@ const appVersionDate =
     : new Date().toISOString().slice(0, 10);
 
 const internalPackages = [
-  "@easycode/shared",
-  "@easycode/db",
-  "@easycode/git-service",
-  "@easycode/agent-runtime",
-  "@easycode/provider-ai-sdk",
-  "@easycode/provider-claude-code",
-  "@easycode/provider-codex-cli",
-  "@easycode/provider-azure-legacy",
+  "@buildwarden/shared",
+  "@buildwarden/db",
+  "@buildwarden/git-service",
+  "@buildwarden/agent-runtime",
+  "@buildwarden/provider-ai-sdk",
+  "@buildwarden/provider-claude-code",
+  "@buildwarden/provider-codex-cli",
+  "@buildwarden/provider-azure-legacy",
   // Bundle simple-git so its transitive deps (@kwsites/file-exists, etc.) are included in the packaged app
   "simple-git",
 ];
@@ -30,6 +30,7 @@ const internalPackages = [
 export default defineConfig({
   main: {
     build: {
+      reportCompressedSize: false,
       externalizeDeps: {
         exclude: internalPackages,
       },
@@ -45,14 +46,14 @@ export default defineConfig({
     },
     resolve: {
       alias: {
-        "@easycode/shared": resolve(__dirname, "../../packages/shared/src"),
-        "@easycode/db": resolve(__dirname, "../../packages/db/src"),
-        "@easycode/git-service": resolve(__dirname, "../../packages/git-service/src"),
-        "@easycode/agent-runtime": resolve(__dirname, "../../packages/agent-runtime/src"),
-        "@easycode/provider-ai-sdk": resolve(__dirname, "../../packages/provider-ai-sdk/src"),
-        "@easycode/provider-claude-code": resolve(__dirname, "../../packages/provider-claude-code/src"),
-        "@easycode/provider-codex-cli": resolve(__dirname, "../../packages/provider-codex-cli/src"),
-        "@easycode/provider-azure-legacy": resolve(__dirname, "../../packages/provider-azure-legacy/src"),
+        "@buildwarden/shared": resolve(__dirname, "../../packages/shared/src"),
+        "@buildwarden/db": resolve(__dirname, "../../packages/db/src"),
+        "@buildwarden/git-service": resolve(__dirname, "../../packages/git-service/src"),
+        "@buildwarden/agent-runtime": resolve(__dirname, "../../packages/agent-runtime/src"),
+        "@buildwarden/provider-ai-sdk": resolve(__dirname, "../../packages/provider-ai-sdk/src"),
+        "@buildwarden/provider-claude-code": resolve(__dirname, "../../packages/provider-claude-code/src"),
+        "@buildwarden/provider-codex-cli": resolve(__dirname, "../../packages/provider-codex-cli/src"),
+        "@buildwarden/provider-azure-legacy": resolve(__dirname, "../../packages/provider-azure-legacy/src"),
       },
     },
   },
@@ -70,13 +71,23 @@ export default defineConfig({
     },
     resolve: {
       alias: {
-        "@easycode/shared": resolve(__dirname, "../../packages/shared/src"),
+        "@buildwarden/shared": resolve(__dirname, "../../packages/shared/src"),
       },
     },
   },
   renderer: {
     root: resolve(__dirname, "src/renderer"),
     plugins: [react(), tailwindcss()],
+    build: {
+      reportCompressedSize: false,
+    },
+    server: {
+      // Pre-transform the renderer module graph while the main process builds,
+      // so the first window load does not pay the on-demand transform cost.
+      warmup: {
+        clientFiles: [resolve(__dirname, "src/renderer/src/main.tsx")],
+      },
+    },
     define: {
       "import.meta.env.VITE_APP_VERSION": JSON.stringify(desktopPkg.version),
       "import.meta.env.VITE_APP_VERSION_DATE": JSON.stringify(appVersionDate),
@@ -84,7 +95,7 @@ export default defineConfig({
     resolve: {
       alias: {
         "@": resolve(__dirname, "src/renderer/src"),
-        "@easycode/shared": resolve(__dirname, "../../packages/shared/src"),
+        "@buildwarden/shared": resolve(__dirname, "../../packages/shared/src"),
       },
     },
   },

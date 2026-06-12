@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import initSqlJs, { type Database, type QueryExecResult, type SqlJsStatic } from "sql.js";
@@ -19,12 +20,13 @@ import type {
   ProjectInput,
   ProjectInsightKind,
   ProjectInsightRecord,
-  ProjectLabMessageRecord,
+  ProjectLabEventRecord,
   ProjectLabThreadDetail,
   ProjectLabThreadKind,
   ProjectLabMode,
   ProjectLabThreadRecord,
   ProjectLabThreadStatus,
+  ProjectTaskInput,
   ProjectTaskRecord,
   ProjectRecord,
   ProjectSnapshot,
@@ -34,25 +36,40 @@ import type {
   RunDetail,
   RunListVisibility,
   RunInput,
+  RunNoteRecord,
+  RunNoteStatus,
+  UpdateProjectTaskInput,
+  UpdateRunNoteInput,
   RunRecord,
   RunStatus,
   RunStepRecord,
   WorktreeRecord,
-} from "@easycode/shared";
+} from "@buildwarden/shared";
 
 const require = createRequire(import.meta.url);
 
-const DEFAULT_DB_NAME = "easycode.sqlite";
-const APP_SCHEMA_VERSION = "2026-04-ai-sdk-provider-reset-1";
+const DEFAULT_DB_NAME = "buildwarden.sqlite";
+const SQLITE_VARIABLE_BATCH_SIZE = 900;
 
 const nowIso = () => new Date().toISOString();
 const createId = () => crypto.randomUUID();
+const chunkValues = <T>(values: readonly T[], size = SQLITE_VARIABLE_BATCH_SIZE): T[][] => {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
+};
 
-export class EasycodeDatabase {
+export class BuildWardenDatabase {
   private sql: SqlJsStatic | null = null;
   private db: Database | null = null;
   /** Coalesces disk writes during streaming so the main process can still handle IPC (e.g. switching runs). */
   private persistFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Monotonic write id; an in-flight async write only renames into place while it is still the newest. */
+  private persistGeneration = 0;
+  private persistInFlightPromise: Promise<void> | null = null;
+  private persistDirty = false;
   private static readonly PERSIST_DEBOUNCE_MS = 400;
 
   constructor(private readonly filePath: string) {}
@@ -79,8 +96,7 @@ export class EasycodeDatabase {
       this.db = new this.sql.Database();
     }
 
-    this.migrate();
-    this.ensureExpectedSchemaVersion();
+    this.createInitialSchema();
     this.persist();
   }
 
@@ -90,8 +106,31 @@ export class EasycodeDatabase {
 
   async close(): Promise<void> {
     this.persist();
+    while (this.persistInFlightPromise) {
+      await this.persistInFlightPromise;
+    }
     this.db?.close();
     this.db = null;
+  }
+
+  /**
+   * Synchronous best-effort write for process shutdown, where async work can
+   * no longer be awaited. Clears any pending debounced write first.
+   */
+  flushToDiskSync(): void {
+    if (!this.db) {
+      return;
+    }
+    if (this.persistFlushTimer != null) {
+      clearTimeout(this.persistFlushTimer);
+      this.persistFlushTimer = null;
+    }
+    const generation = ++this.persistGeneration;
+    const bytes = this.db.export();
+    const tmpPath = `${this.filePath}.${generation}.tmp`;
+    mkdirSync(dirname(this.filePath), { recursive: true });
+    writeFileSync(tmpPath, Buffer.from(bytes));
+    renameSync(tmpPath, this.filePath);
   }
 
   /** Clears the database file and reinitializes with a fresh schema. Complete reset. */
@@ -374,7 +413,7 @@ export class EasycodeDatabase {
     return this.getChat(id);
   }
 
-  createProjectTask(projectId: string, input: { title: string; prompt: string }): ProjectTaskRecord {
+  createProjectTask(projectId: string, input: ProjectTaskInput): ProjectTaskRecord {
     const id = createId();
     const createdAt = nowIso();
     this.run(
@@ -386,6 +425,30 @@ export class EasycodeDatabase {
     );
     this.persist();
     return this.getProjectTask(id);
+  }
+
+  updateProjectTask(taskId: string, input: UpdateProjectTaskInput): ProjectTaskRecord {
+    const existing = this.getProjectTask(taskId);
+    const nextTitle = input.title === undefined ? existing.title : input.title.trim();
+    const nextPrompt = input.prompt === undefined ? existing.prompt : input.prompt.trim();
+    if (!nextTitle) {
+      throw new Error("Project task title cannot be empty.");
+    }
+    if (!nextPrompt) {
+      throw new Error("Project task prompt cannot be empty.");
+    }
+
+    const updatedAt = nowIso();
+    this.run(
+      `
+      update project_tasks
+      set title = ?, prompt = ?, updated_at = ?
+      where id = ?
+      `,
+      [nextTitle, nextPrompt, updatedAt, taskId],
+    );
+    this.persist();
+    return this.getProjectTask(taskId);
   }
 
   getProjectTask(taskId: string): ProjectTaskRecord {
@@ -522,6 +585,8 @@ export class EasycodeDatabase {
       seedPrompt?: string | null;
       implementationPrompt?: string | null;
       implementationRunId?: string | null;
+      implementationModelId?: string | null;
+      reviewModelId?: string | null;
       baseBranch?: string | null;
   }): ProjectLabThreadRecord {
     const id = createId();
@@ -529,8 +594,8 @@ export class EasycodeDatabase {
     this.run(
         `
         insert into project_lab_threads (
-            id, project_id, kind, lab_mode, status, origin, title, summary, outcome, seed_prompt, implementation_prompt, implementation_run_id, base_branch, created_at, updated_at
-          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, project_id, kind, lab_mode, status, origin, title, summary, outcome, seed_prompt, implementation_prompt, implementation_run_id, implementation_model_id, review_model_id, base_branch, created_at, updated_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
           [
             id,
@@ -545,6 +610,8 @@ export class EasycodeDatabase {
           input.seedPrompt ?? null,
           input.implementationPrompt ?? null,
           input.implementationRunId ?? null,
+          input.implementationModelId ?? null,
+          input.reviewModelId ?? null,
           input.baseBranch ?? null,
           timestamp,
           timestamp,
@@ -570,6 +637,8 @@ export class EasycodeDatabase {
           seed_prompt as seedPrompt,
           implementation_prompt as implementationPrompt,
           implementation_run_id as implementationRunId,
+          implementation_model_id as implementationModelId,
+          review_model_id as reviewModelId,
           base_branch as baseBranch,
           created_at as createdAt,
           updated_at as updatedAt
@@ -600,6 +669,8 @@ export class EasycodeDatabase {
           seed_prompt as seedPrompt,
           implementation_prompt as implementationPrompt,
           implementation_run_id as implementationRunId,
+          implementation_model_id as implementationModelId,
+          review_model_id as reviewModelId,
           base_branch as baseBranch,
           created_at as createdAt,
           updated_at as updatedAt
@@ -623,6 +694,8 @@ export class EasycodeDatabase {
         seedPrompt?: string | null;
         implementationPrompt?: string | null;
         implementationRunId?: string | null;
+        implementationModelId?: string | null;
+        reviewModelId?: string | null;
         baseBranch?: string | null;
       },
   ): ProjectLabThreadRecord {
@@ -630,7 +703,7 @@ export class EasycodeDatabase {
     this.run(
         `
         update project_lab_threads
-          set kind = ?, lab_mode = ?, status = ?, title = ?, summary = ?, outcome = ?, seed_prompt = ?, implementation_prompt = ?, implementation_run_id = ?, base_branch = ?, updated_at = ?
+          set kind = ?, lab_mode = ?, status = ?, title = ?, summary = ?, outcome = ?, seed_prompt = ?, implementation_prompt = ?, implementation_run_id = ?, implementation_model_id = ?, review_model_id = ?, base_branch = ?, updated_at = ?
           where id = ?
           `,
         [
@@ -643,6 +716,8 @@ export class EasycodeDatabase {
           fields.seedPrompt !== undefined ? fields.seedPrompt : existing.seedPrompt,
           fields.implementationPrompt !== undefined ? fields.implementationPrompt : existing.implementationPrompt,
           fields.implementationRunId !== undefined ? fields.implementationRunId : existing.implementationRunId,
+          fields.implementationModelId !== undefined ? fields.implementationModelId : existing.implementationModelId,
+          fields.reviewModelId !== undefined ? fields.reviewModelId : existing.reviewModelId,
           fields.baseBranch !== undefined ? fields.baseBranch : existing.baseBranch,
           nowIso(),
           threadId,
@@ -652,40 +727,36 @@ export class EasycodeDatabase {
     return this.getProjectLabThread(threadId);
   }
 
-  appendProjectLabMessage(input: {
+  appendProjectLabEvent(input: {
     threadId: string;
-    personaId: ProjectLabMessageRecord["personaId"];
-    personaLabel: string;
-    role: ProjectLabMessageRecord["role"];
-    bubbleColor: string;
+    role: ProjectLabEventRecord["role"];
+    label: string;
     content: string;
-  }): ProjectLabMessageRecord {
+  }): ProjectLabEventRecord {
     const id = createId();
     const createdAt = nowIso();
     this.run(
       `
-      insert into project_lab_messages (id, thread_id, persona_id, persona_label, role, bubble_color, content, created_at)
-      values (?, ?, ?, ?, ?, ?, ?, ?)
+      insert into project_lab_events (id, thread_id, role, label, content, created_at)
+      values (?, ?, ?, ?, ?, ?)
       `,
-      [id, input.threadId, input.personaId, input.personaLabel, input.role, input.bubbleColor, input.content, createdAt],
+      [id, input.threadId, input.role, input.label, input.content, createdAt],
     );
     this.persist();
-    return this.getProjectLabMessages(input.threadId).at(-1)!;
+    return this.getProjectLabEvents(input.threadId).at(-1)!;
   }
 
-  getProjectLabMessages(threadId: string): ProjectLabMessageRecord[] {
-    return this.all<ProjectLabMessageRecord>(
+  getProjectLabEvents(threadId: string): ProjectLabEventRecord[] {
+    return this.all<ProjectLabEventRecord>(
       `
       select
         id,
         thread_id as threadId,
-        persona_id as personaId,
-        persona_label as personaLabel,
         role,
-        bubble_color as bubbleColor,
+        label,
         content,
         created_at as createdAt
-      from project_lab_messages
+      from project_lab_events
       where thread_id = ?
       order by created_at asc
       `,
@@ -694,27 +765,54 @@ export class EasycodeDatabase {
   }
 
   listProjectLabThreadDetails(projectId: string): ProjectLabThreadDetail[] {
-    return this.listProjectLabThreads(projectId).map((thread) => {
-      let implementationRun: RunRecord | null = null;
+    const threads = this.listProjectLabThreads(projectId);
+    if (threads.length === 0) {
+      return [];
+    }
 
-      if (thread.implementationRunId) {
-        try {
-          implementationRun = this.getRun(thread.implementationRunId);
-        } catch {
-          implementationRun = null;
+    const eventsByThreadId = new Map<string, ProjectLabEventRecord[]>();
+    const threadIds = threads.map((thread) => thread.id);
+    for (const batch of chunkValues(threadIds)) {
+      const placeholders = batch.map(() => "?").join(", ");
+      const events = this.all<ProjectLabEventRecord>(
+        `
+        select
+          id,
+          thread_id as threadId,
+          role,
+          label,
+          content,
+          created_at as createdAt
+        from project_lab_events
+        where thread_id in (${placeholders})
+        order by created_at asc
+        `,
+        batch,
+      );
+      for (const event of events) {
+        const bucket = eventsByThreadId.get(event.threadId);
+        if (bucket) {
+          bucket.push(event);
+        } else {
+          eventsByThreadId.set(event.threadId, [event]);
         }
       }
+    }
 
+    const implementationRunIds = threads.flatMap((thread) => (thread.implementationRunId ? [thread.implementationRunId] : []));
+    const implementationRunsById = new Map(this.listRunsByIds(implementationRunIds).map((run) => [run.id, run]));
+
+    return threads.map((thread) => {
       return {
         thread,
-        messages: this.getProjectLabMessages(thread.id),
-        implementationRun,
+        events: eventsByThreadId.get(thread.id) ?? [],
+        implementationRun: thread.implementationRunId ? (implementationRunsById.get(thread.implementationRunId) ?? null) : null,
       };
     });
   }
 
   deleteProjectLabThread(threadId: string): void {
-    this.run("delete from project_lab_messages where thread_id = ?", [threadId]);
+    this.run("delete from project_lab_events where thread_id = ?", [threadId]);
     this.run("delete from project_lab_threads where id = ?", [threadId]);
     this.persist();
   }
@@ -956,6 +1054,13 @@ export class EasycodeDatabase {
   deleteProject(projectId: string): void {
     this.run(
       `
+      delete from run_notes
+      where run_id in (select id from runs where project_id = ?)
+      `,
+      [projectId],
+    );
+    this.run(
+      `
       delete from run_steps
       where run_id in (select id from runs where project_id = ?)
       `,
@@ -963,7 +1068,7 @@ export class EasycodeDatabase {
     );
     this.run("delete from worktrees where project_id = ?", [projectId]);
     this.run("delete from runs where project_id = ?", [projectId]);
-    this.run("delete from project_lab_messages where thread_id in (select id from project_lab_threads where project_id = ?)", [projectId]);
+    this.run("delete from project_lab_events where thread_id in (select id from project_lab_threads where project_id = ?)", [projectId]);
     this.run("delete from project_lab_threads where project_id = ?", [projectId]);
     this.run("delete from project_tasks where project_id = ?", [projectId]);
     this.run("delete from project_insights where project_id = ?", [projectId]);
@@ -1134,9 +1239,9 @@ export class EasycodeDatabase {
       `
       insert into runs (
         id, project_id, provider_account_id, model_id, harness_type, run_mode, workspace_type, prompt, status,
-        branch_name, worktree_path, summary, error_message, last_provider_response_id, input_tokens, output_tokens, list_visibility, run_kind, lab_thread_id,
+        goal_text, branch_name, worktree_path, summary, error_message, last_provider_response_id, input_tokens, output_tokens, list_visibility, run_kind, lab_thread_id,
         parent_run_id, root_run_id, lineage_title, created_at, updated_at, started_at, finished_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         id,
@@ -1148,6 +1253,7 @@ export class EasycodeDatabase {
         input.workspaceType,
         input.prompt,
         "queued",
+        input.goalText ?? null,
         input.branchName,
         input.worktreePath,
         null,
@@ -1171,6 +1277,94 @@ export class EasycodeDatabase {
     return this.getRun(id);
   }
 
+  private withDerivedRunStates(runs: RunRecord[]): RunRecord[] {
+    if (runs.length === 0) {
+      return [];
+    }
+
+    const derivedByRunId = new Map<
+      string,
+      {
+        parts: Set<string>;
+        lastUserInputAt: string;
+        pendingUserInputRequest: boolean;
+      }
+    >();
+    for (const run of runs) {
+      const parts = new Set<string>();
+      if (run.prompt.trim()) {
+        parts.add(run.prompt.trim());
+      }
+      if (run.goalText?.trim()) {
+        parts.add(run.goalText.trim());
+      }
+      derivedByRunId.set(run.id, {
+        parts,
+        lastUserInputAt: run.createdAt,
+        pendingUserInputRequest: false,
+      });
+    }
+
+    const runIds = runs.map((run) => run.id);
+    for (const batch of chunkValues(runIds)) {
+      const placeholders = batch.map(() => "?").join(", ");
+      const steps = this.all<{
+        runId: string;
+        eventType: string;
+        content: string;
+        metadataJson: string;
+        createdAt: string;
+      }>(
+        `
+        select
+          run_id as runId,
+          event_type as eventType,
+          content,
+          metadata_json as metadataJson,
+          created_at as createdAt
+        from run_steps
+        where run_id in (${placeholders}) and event_type in ('log', 'user-input-requested')
+        order by run_id asc, created_at asc
+        `,
+        batch,
+      );
+
+      for (const step of steps) {
+        const derived = derivedByRunId.get(step.runId);
+        if (!derived) {
+          continue;
+        }
+
+        const metadata = this.parseJsonObject(step.metadataJson);
+        const isUserInputRequest = metadata?.requestKind === "user-input";
+        if (step.eventType === "user-input-requested" && isUserInputRequest && metadata.requestStatus === "opened") {
+          derived.pendingUserInputRequest = true;
+        }
+
+        const isUserCommand = metadata?.source === "user";
+        const isSubmittedUserInput = isUserInputRequest && metadata.requestStatus === "resolved";
+        if ((isUserCommand || isSubmittedUserInput) && step.content.trim()) {
+          derived.parts.add(step.content.trim());
+          derived.lastUserInputAt = step.createdAt;
+        }
+      }
+    }
+
+    return runs.map((run) => {
+      const derived = derivedByRunId.get(run.id);
+      return {
+        ...run,
+        pendingUserInputRequest: derived?.pendingUserInputRequest ?? false,
+        userInputSearchText: derived ? [...derived.parts].join("\n") : "",
+        lastUserInputAt: derived?.lastUserInputAt ?? run.createdAt,
+      };
+    });
+  }
+
+  private withDerivedRunState(run: RunRecord): RunRecord {
+    return this.withDerivedRunStates([run])[0]!;
+  }
+
   getRun(id: string): RunRecord {
     const run = this.first<RunRecord>(
       `
@@ -1183,6 +1377,7 @@ export class EasycodeDatabase {
         run_mode as mode,
         workspace_type as workspaceType,
         prompt,
+        goal_text as goalText,
         status,
         branch_name as branchName,
         worktree_path as worktreePath,
@@ -1211,18 +1406,115 @@ export class EasycodeDatabase {
       throw new Error(`Run not found: ${id}`);
     }
 
-    return run;
+    return this.withDerivedRunState(run);
   }
 
   deleteRun(runId: string): void {
+    this.run("delete from run_notes where run_id = ?", [runId]);
     this.run("delete from run_steps where run_id = ?", [runId]);
     this.run("delete from worktrees where run_id = ?", [runId]);
     this.run("delete from runs where id = ?", [runId]);
     this.persist();
   }
 
+  listRunNotes(runId: string): RunNoteRecord[] {
+    return this.all<RunNoteRecord>(
+      `
+      select
+        id,
+        run_id as runId,
+        content,
+        status,
+        created_at as createdAt,
+        updated_at as updatedAt,
+        closed_at as closedAt
+      from run_notes
+      where run_id = ?
+      order by
+        case status when 'open' then 0 else 1 end,
+        updated_at desc
+      `,
+      [runId],
+    );
+  }
+
+  private getRunNote(noteId: string): RunNoteRecord {
+    const note = this.first<RunNoteRecord>(
+      `
+      select
+        id,
+        run_id as runId,
+        content,
+        status,
+        created_at as createdAt,
+        updated_at as updatedAt,
+        closed_at as closedAt
+      from run_notes
+      where id = ?
+      `,
+      [noteId],
+    );
+
+    if (!note) {
+      throw new Error(`Run note not found: ${noteId}`);
+    }
+
+    return note;
+  }
+
+  addRunNote(runId: string, content: string): RunNoteRecord {
+    const trimmed = content.trim();
+    if (!trimmed) {
+      throw new Error("Run note content cannot be empty.");
+    }
+
+    this.getRun(runId);
+    const id = createId();
+    const createdAt = nowIso();
+    this.run(
+      `
+      insert into run_notes (id, run_id, content, status, created_at, updated_at, closed_at)
+      values (?, ?, ?, ?, ?, ?, ?)
+      `,
+      [id, runId, trimmed, "open", createdAt, createdAt, null],
+    );
+    this.persist();
+    return this.getRunNote(id);
+  }
+
+  updateRunNote(noteId: string, input: UpdateRunNoteInput): RunNoteRecord {
+    const existing = this.getRunNote(noteId);
+    const nextContent = input.content === undefined ? existing.content : input.content.trim();
+    if (!nextContent) {
+      throw new Error("Run note content cannot be empty.");
+    }
+
+    const nextStatus: RunNoteStatus = input.status ?? existing.status;
+    if (nextStatus !== "open" && nextStatus !== "closed") {
+      throw new Error(`Unsupported run note status: ${String(nextStatus)}`);
+    }
+
+    const updatedAt = nowIso();
+    const closedAt = nextStatus === "closed" ? (existing.closedAt ?? updatedAt) : null;
+    this.run(
+      `
+      update run_notes
+      set content = ?, status = ?, updated_at = ?, closed_at = ?
+      where id = ?
+      `,
+      [nextContent, nextStatus, updatedAt, closedAt, noteId],
+    );
+    this.persist();
+    return this.getRunNote(noteId);
+  }
+
+  deleteRunNote(noteId: string): void {
+    this.run("delete from run_notes where id = ?", [noteId]);
+    this.persist();
+  }
+
   listRunsForProject(projectId: string): RunRecord[] {
-    return this.all<RunRecord>(
+    return this.withDerivedRunStates(this.all<RunRecord>(
       `
       select
         id,
@@ -1233,6 +1525,7 @@ export class EasycodeDatabase {
         run_mode as mode,
         workspace_type as workspaceType,
         prompt,
+        goal_text as goalText,
         status,
         branch_name as branchName,
         worktree_path as worktreePath,
@@ -1256,7 +1549,58 @@ export class EasycodeDatabase {
       order by created_at desc
       `,
       [projectId],
-    );
+    ));
+  }
+
+  private listRunsByIds(runIds: string[]): RunRecord[] {
+    const uniqueRunIds = [...new Set(runIds)];
+    if (uniqueRunIds.length === 0) {
+      return [];
+    }
+
+    const runs: RunRecord[] = [];
+    for (const batch of chunkValues(uniqueRunIds)) {
+      const placeholders = batch.map(() => "?").join(", ");
+      runs.push(
+        ...this.all<RunRecord>(
+          `
+          select
+            id,
+            project_id as projectId,
+            provider_account_id as providerAccountId,
+            model_id as modelId,
+            harness_type as harnessType,
+            run_mode as mode,
+            workspace_type as workspaceType,
+            prompt,
+            goal_text as goalText,
+            status,
+            branch_name as branchName,
+            worktree_path as worktreePath,
+            summary,
+            error_message as errorMessage,
+            last_provider_response_id as lastProviderResponseId,
+            input_tokens as inputTokens,
+            output_tokens as outputTokens,
+            list_visibility as listVisibility,
+            run_kind as kind,
+            lab_thread_id as labThreadId,
+            parent_run_id as parentRunId,
+            root_run_id as rootRunId,
+            lineage_title as lineageTitle,
+            created_at as createdAt,
+            updated_at as updatedAt,
+            started_at as startedAt,
+            finished_at as finishedAt
+          from runs
+          where id in (${placeholders})
+          `,
+          batch,
+        ),
+      );
+    }
+
+    return this.withDerivedRunStates(runs);
   }
 
   /** Used on app startup to find runs left in a non-terminal state after the process exited. */
@@ -1276,6 +1620,7 @@ export class EasycodeDatabase {
         run_mode as mode,
         workspace_type as workspaceType,
         prompt,
+        goal_text as goalText,
         status,
         branch_name as branchName,
         worktree_path as worktreePath,
@@ -1408,6 +1753,7 @@ export class EasycodeDatabase {
       providerAccountId?: string;
       modelId?: string;
       mode?: RunRecord["mode"];
+      goalText?: string | null;
     },
   ): RunRecord {
     const existing = this.getRun(runId);
@@ -1416,13 +1762,14 @@ export class EasycodeDatabase {
     this.run(
       `
       update runs
-      set provider_account_id = ?, model_id = ?, run_mode = ?, updated_at = ?
+      set provider_account_id = ?, model_id = ?, run_mode = ?, goal_text = ?, updated_at = ?
       where id = ?
       `,
       [
         fields.providerAccountId ?? existing.providerAccountId,
         fields.modelId ?? existing.modelId,
         fields.mode ?? existing.mode,
+        fields.goalText !== undefined ? fields.goalText : existing.goalText,
         timestamp,
         runId,
       ],
@@ -1806,11 +2153,12 @@ export class EasycodeDatabase {
     return {
       run: this.getRun(runId),
       steps: this.getRunSteps(runId),
+      notes: this.listRunNotes(runId),
       diff,
     };
   }
 
-  private migrate(): void {
+  private createInitialSchema(): void {
     this.exec(`
       create table if not exists projects (
         id text primary key,
@@ -1858,6 +2206,7 @@ export class EasycodeDatabase {
         run_mode text not null default 'code',
         workspace_type text not null default 'worktree',
         prompt text not null,
+        goal_text text,
         status text not null,
         branch_name text not null,
         worktree_path text not null,
@@ -1867,6 +2216,8 @@ export class EasycodeDatabase {
         input_tokens integer not null default 0,
         output_tokens integer not null default 0,
         list_visibility text not null default 'default',
+        run_kind text not null default 'standard',
+        lab_thread_id text,
         parent_run_id text,
         root_run_id text,
         lineage_title text,
@@ -1887,6 +2238,17 @@ export class EasycodeDatabase {
         content text not null,
         metadata_json text not null default '{}',
         created_at text not null,
+        foreign key(run_id) references runs(id)
+      );
+
+      create table if not exists run_notes (
+        id text primary key,
+        run_id text not null,
+        content text not null,
+        status text not null default 'open',
+        created_at text not null,
+        updated_at text not null,
+        closed_at text,
         foreign key(run_id) references runs(id)
       );
 
@@ -1917,6 +2279,7 @@ export class EasycodeDatabase {
         prompt text not null,
         status text not null,
         branch_name text not null,
+        model_id text,
         run_created_at text not null,
         bookmarked_at text not null
       );
@@ -1965,6 +2328,7 @@ export class EasycodeDatabase {
         original_chat_id text not null,
         prompt text not null,
         status text not null,
+        model_id text,
         chat_created_at text not null,
         bookmarked_at text not null
       );
@@ -2006,31 +2370,33 @@ export class EasycodeDatabase {
 
       create table if not exists project_lab_threads (
         id text primary key,
-          project_id text not null,
-          kind text not null,
-          lab_mode text not null default 'new-feature',
-          status text not null,
+        project_id text not null,
+        kind text not null,
+        lab_mode text not null default 'new-feature',
+        status text not null,
         origin text not null,
         title text not null,
         summary text not null,
-          outcome text,
-          seed_prompt text,
+        outcome text,
+        seed_prompt text,
         implementation_prompt text,
         implementation_run_id text,
+        implementation_model_id text,
+        review_model_id text,
         base_branch text,
         created_at text not null,
         updated_at text not null,
         foreign key(project_id) references projects(id),
-        foreign key(implementation_run_id) references runs(id)
+        foreign key(implementation_run_id) references runs(id),
+        foreign key(implementation_model_id) references models(id),
+        foreign key(review_model_id) references models(id)
       );
 
-      create table if not exists project_lab_messages (
+      create table if not exists project_lab_events (
         id text primary key,
         thread_id text not null,
-        persona_id text not null,
-        persona_label text not null,
         role text not null,
-        bubble_color text not null,
+        label text not null,
         content text not null,
         created_at text not null,
         foreign key(thread_id) references project_lab_threads(id)
@@ -2038,10 +2404,13 @@ export class EasycodeDatabase {
 
       create unique index if not exists idx_project_insights_project_kind on project_insights(project_id, kind);
       create index if not exists idx_project_lab_threads_project_id on project_lab_threads(project_id);
-      create index if not exists idx_project_lab_messages_thread_id on project_lab_messages(thread_id);
+      create index if not exists idx_project_lab_events_thread_id on project_lab_events(thread_id);
       create index if not exists idx_runs_project_created_at on runs(project_id, created_at desc);
       create index if not exists idx_runs_status on runs(status);
+      create index if not exists idx_runs_parent_run_id on runs(parent_run_id);
+      create index if not exists idx_runs_root_run_id on runs(root_run_id);
       create index if not exists idx_run_steps_run_created_at on run_steps(run_id, created_at);
+      create index if not exists idx_run_notes_run_status_updated on run_notes(run_id, status, updated_at desc);
       create index if not exists idx_chat_steps_chat_created_at on chat_steps(chat_id, created_at);
       create index if not exists idx_worktrees_run_id on worktrees(run_id);
       create index if not exists idx_bookmarks_original_run_id on bookmarks(original_run_id);
@@ -2066,88 +2435,6 @@ export class EasycodeDatabase {
       create index if not exists idx_provider_session_runtime_last_seen on provider_session_runtime(last_seen_at);
     `);
 
-    this.migrateBookmarksFromLegacy();
-    this.ensureColumnExists("bookmarks", "model_id", "text");
-    this.ensureColumnExists("chat_bookmarks", "model_id", "text");
-    this.ensureColumnExists("runs", "last_provider_response_id", "text");
-    this.ensureColumnExists("runs", "run_mode", "text not null default 'code'");
-    this.ensureColumnExists("runs", "workspace_type", "text not null default 'worktree'");
-    this.ensureColumnExists("runs", "input_tokens", "integer not null default 0");
-    this.ensureColumnExists("runs", "output_tokens", "integer not null default 0");
-    this.ensureColumnExists("runs", "list_visibility", "text not null default 'default'");
-    this.ensureColumnExists("runs", "run_kind", "text not null default 'standard'");
-    this.ensureColumnExists("runs", "lab_thread_id", "text");
-    this.ensureColumnExists("runs", "parent_run_id", "text");
-    this.ensureColumnExists("runs", "root_run_id", "text");
-    this.ensureColumnExists("runs", "lineage_title", "text");
-    this.ensureColumnExists("project_lab_threads", "implementation_prompt", "text");
-    this.ensureColumnExists("project_lab_threads", "lab_mode", "text not null default 'new-feature'");
-    this.ensureColumnExists("project_lab_threads", "base_branch", "text");
-    this.run("create index if not exists idx_runs_parent_run_id on runs(parent_run_id)");
-    this.run("create index if not exists idx_runs_root_run_id on runs(root_run_id)");
-    this.ensureColumnExists("models", "config_json", "text not null default '{}'");
-    this.ensureColumnExists("projects", "cumulative_input_tokens", "integer not null default 0");
-    this.ensureColumnExists("projects", "cumulative_output_tokens", "integer not null default 0");
-    const legacyAzureProviderType = "z" + "kb-openai";
-    this.run("update provider_accounts set provider_type = ? where provider_type = ?", ["azure-legacy", legacyAzureProviderType]);
-    this.run("update runs set harness_type = ? where harness_type = ?", ["azure-legacy", legacyAzureProviderType]);
-    this.run(
-      `
-      update projects
-      set cumulative_input_tokens = (
-        case
-          when cumulative_input_tokens > coalesce((select sum(input_tokens) from runs where project_id = projects.id), 0)
-            then cumulative_input_tokens
-          else coalesce((select sum(input_tokens) from runs where project_id = projects.id), 0)
-        end
-      )
-      `,
-    );
-    this.run(
-      `
-      update projects
-      set cumulative_output_tokens = (
-        case
-          when cumulative_output_tokens > coalesce((select sum(output_tokens) from runs where project_id = projects.id), 0)
-            then cumulative_output_tokens
-          else coalesce((select sum(output_tokens) from runs where project_id = projects.id), 0)
-        end
-      )
-      `,
-    );
-  }
-
-  private ensureExpectedSchemaVersion(): void {
-    const hasAppSettingsTable =
-      this.first<{ name: string }>("select name from sqlite_master where type = 'table' and name = 'app_settings'") != null;
-    if (!hasAppSettingsTable) {
-      return;
-    }
-
-    const versionRow = this.first<{ value: string }>("select value from app_settings where key = ?", ["schemaVersion"]);
-    if (versionRow?.value === APP_SCHEMA_VERSION) {
-      return;
-    }
-
-    this.exec(`
-      drop table if exists bookmark_steps;
-      drop table if exists bookmarks;
-      drop table if exists chat_bookmark_steps;
-      drop table if exists chat_bookmarks;
-      drop table if exists chat_steps;
-      drop table if exists chats;
-      drop table if exists run_steps;
-      drop table if exists worktrees;
-      drop table if exists provider_session_runtime;
-      drop table if exists runs;
-      drop table if exists models;
-      drop table if exists provider_accounts;
-      drop table if exists projects;
-      drop table if exists app_settings;
-    `);
-
-    this.migrate();
-    this.setSetting("schemaVersion", APP_SCHEMA_VERSION);
   }
 
   private all<T>(sql: string, params: unknown[] = []): T[] {
@@ -2177,15 +2464,6 @@ export class EasycodeDatabase {
     return this.database.exec(sql);
   }
 
-  private ensureColumnExists(table: string, column: string, definition: string): void {
-    const columns = this.all<{ name: string }>(`pragma table_info(${table})`);
-    if (columns.some((entry) => entry.name === column)) {
-      return;
-    }
-
-    this.exec(`alter table ${table} add column ${column} ${definition}`);
-  }
-
   private parseJsonObject(value: string | null): Record<string, unknown> | null {
     if (!value) {
       return null;
@@ -2198,104 +2476,9 @@ export class EasycodeDatabase {
     }
   }
 
-  private migrateBookmarksFromLegacy(): void {
-    const columns = this.all<{ name: string }>("pragma table_info(bookmarks)");
-    const hasRunId = columns.some((c) => c.name === "run_id");
-    if (!hasRunId) {
-      return;
-    }
-
-    const legacyRows = this.all<{ run_id: string; created_at: string }>(
-      "select run_id, created_at from bookmarks",
-    );
-    this.exec("drop table if exists bookmark_steps");
-    this.exec("alter table bookmarks rename to bookmarks_legacy");
-    this.exec(`
-      create table bookmarks (
-        id text primary key,
-        original_run_id text not null,
-        project_id text,
-        project_name text not null,
-        prompt text not null,
-        status text not null,
-        branch_name text not null,
-        run_created_at text not null,
-        bookmarked_at text not null
-      )
-    `);
-    this.exec(`
-      create table bookmark_steps (
-        id text primary key,
-        bookmark_id text not null,
-        event_type text not null,
-        title text not null,
-        content text not null,
-        metadata_json text not null default '{}',
-        created_at text not null,
-        foreign key (bookmark_id) references bookmarks(id)
-      )
-    `);
-
-    for (const row of legacyRows) {
-      try {
-        const run = this.getRun(row.run_id);
-        const project = this.getProject(run.projectId);
-        const steps = this.getRunSteps(row.run_id);
-        const bookmarkId = createId();
-        this.run(
-          `
-          insert into bookmarks (id, original_run_id, project_id, project_name, prompt, status, branch_name, run_created_at, bookmarked_at)
-          values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `,
-          [
-            bookmarkId,
-            row.run_id,
-            run.projectId,
-            project.name,
-            run.prompt,
-            run.status,
-            run.branchName,
-            run.createdAt,
-            row.created_at,
-          ],
-        );
-        for (const step of steps) {
-          const stepId = createId();
-          this.run(
-            `
-            insert into bookmark_steps (id, bookmark_id, event_type, title, content, metadata_json, created_at)
-            values (?, ?, ?, ?, ?, ?, ?)
-            `,
-            [stepId, bookmarkId, step.eventType, step.title, step.content, step.metadataJson, step.createdAt],
-          );
-        }
-      } catch {
-        this.run(
-          `
-          insert into bookmarks (id, original_run_id, project_id, project_name, prompt, status, branch_name, run_created_at, bookmarked_at)
-          values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `,
-          [
-            createId(),
-            row.run_id,
-            null,
-            "[deleted run]",
-            "[deleted]",
-            "cancelled",
-            "unknown",
-            row.created_at,
-            row.created_at,
-          ],
-        );
-      }
-    }
-    this.exec("drop table bookmarks_legacy");
-    this.persist();
-  }
-
   /**
    * Writes the in-memory DB to disk immediately. Clears any pending debounced write.
-   * Use for app shutdown, migrations, and terminal run/chat states.
+   * Use for app shutdown and terminal run/chat states.
    */
   private persist(): void {
     if (this.persistFlushTimer != null) {
@@ -2305,28 +2488,63 @@ export class EasycodeDatabase {
     this.persistToDisk();
   }
 
-  /** Debounced persist for high-frequency updates (streaming steps, token counts). */
+  /**
+   * Coalesced persist for high-frequency updates (streaming steps, token
+   * counts). Trailing-throttle rather than sliding-debounce: a pending flush is
+   * never postponed, so sustained streaming still hits disk every 400ms.
+   */
   private schedulePersist(): void {
     if (!this.db) {
       return;
     }
     if (this.persistFlushTimer != null) {
-      clearTimeout(this.persistFlushTimer);
+      return;
     }
     this.persistFlushTimer = setTimeout(() => {
       this.persistFlushTimer = null;
       this.persistToDisk();
-    }, EasycodeDatabase.PERSIST_DEBOUNCE_MS);
+    }, BuildWardenDatabase.PERSIST_DEBOUNCE_MS);
   }
 
+  /**
+   * Exports the in-memory database (cheap memcpy) and writes it to disk
+   * asynchronously via temp-file + rename, so the multi-megabyte file write
+   * never blocks the main-process event loop. Writes never overlap; a write
+   * requested while one is in flight runs once the current write finishes.
+   */
   private persistToDisk(): void {
     if (!this.db) {
       return;
     }
+    if (this.persistInFlightPromise) {
+      this.persistDirty = true;
+      return;
+    }
 
+    const generation = ++this.persistGeneration;
     const bytes = this.db.export();
-    mkdirSync(dirname(this.filePath), { recursive: true });
-    writeFileSync(this.filePath, Buffer.from(bytes));
+    const tmpPath = `${this.filePath}.${generation}.tmp`;
+    this.persistInFlightPromise = (async () => {
+      try {
+        await mkdir(dirname(this.filePath), { recursive: true });
+        await writeFile(tmpPath, Buffer.from(bytes));
+        if (generation === this.persistGeneration) {
+          await rename(tmpPath, this.filePath);
+        } else {
+          // A newer write (e.g. the synchronous shutdown flush) superseded this one.
+          await rm(tmpPath, { force: true });
+        }
+      } catch (error) {
+        console.error("[buildwarden:db] Failed to persist database to disk.", error);
+        await rm(tmpPath, { force: true }).catch(() => {});
+      } finally {
+        this.persistInFlightPromise = null;
+        if (this.persistDirty) {
+          this.persistDirty = false;
+          this.persistToDisk();
+        }
+      }
+    })();
   }
 
   private get database(): Database {

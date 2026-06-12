@@ -20,7 +20,7 @@ This repository is an Electron desktop app for coding-agent workflows. Optimize 
 
 - `apps/desktop`
   - `src/main`: Electron main process, app controller, IPC handlers, workers, secrets, terminal IPC, run/chat orchestration
-  - `src/preload`: safe renderer bridge exposed on `window.easycode`
+  - `src/preload`: safe renderer bridge exposed on `window.buildwarden`
   - `src/renderer/src`: React UI for landing, sidebar, project, run, chat, bookmark, and settings flows
 - `packages/shared`: shared types, DTOs, provider metadata, IPC contract shapes, settings keys, run/chat types
 - `packages/db`: persisted app state, snapshots, bookmarks, chats, settings, run history, checkpoint persistence
@@ -34,7 +34,7 @@ This repository is an Electron desktop app for coding-agent workflows. Optimize 
 
 ## Product Concepts
 
-- A project points at a user repository and must never be destructively confused with an Easycode-created worktree
+- A project points at a user repository and must never be destructively confused with a BuildWarden-created worktree
 - A run may use a dedicated worktree or the local repository, depending on `workspaceType`
 - Chats are first-class alongside runs and have their own history, bookmarks, attachments, and status
 - Bookmarks exist for both runs and chats
@@ -45,13 +45,13 @@ This repository is an Electron desktop app for coding-agent workflows. Optimize 
 ## Agent Priorities
 
 1. Preserve the Electron boundary
-   - Renderer code must go through `window.easycode`
+   - Renderer code must go through `window.buildwarden`
    - Main-process-only logic belongs in `apps/desktop/src/main`
    - When changing bridge methods or payloads, update shared types, main IPC wiring, and preload exposure together
 2. Keep project/worktree semantics correct
    - One agent run maps cleanly to one workspace context
    - Deleting runs/projects must clean up only app-created state and worktrees
-   - Never delete or mutate the user's original repository in a destructive way when removing an Easycode project
+   - Never delete or mutate the user's original repository in a destructive way when removing a BuildWarden project
 3. Keep persisted state and snapshot shape in sync
    - If a record shape changes, update `packages/shared` and `packages/db` together
    - Preserve compatibility for reopened runs/chats/bookmarks/settings where practical
@@ -107,13 +107,13 @@ Useful additional commands:
 
 ```bash
 pnpm test
-pnpm --filter @easycode/desktop build
+pnpm --filter @buildwarden/desktop build
 ```
 
 ## Known Important Constraints
 
 - Do not import raw workspace `.ts` files at runtime outside the Vite/Electron bundle path
-- Keep internal `@easycode/*` packages bundled for Electron main/preload
+- Keep internal `@buildwarden/*` packages bundled for Electron main/preload
 - Secrets must not be written to SQLite as plaintext; use the Electron secret store flow
 - Build artifacts and installers should stay out of Git
 - The embedded run terminal uses `node-pty` and has native-module constraints during local setup and packaging

@@ -12,9 +12,12 @@ import type {
   ProviderAccountInput,
   ProviderAdapter,
   RunExecutionRequest,
+  RunUserInputAnswers,
+  RunUserInputQuestion,
+  RunUserInputRequest,
   ShellApprovalDecision,
   RunTokenUsage,
-} from "@easycode/shared";
+} from "@buildwarden/shared";
 import {
   getCodexCliRecommendedModelIds,
   MODEL_CONFIG_CODEX_REASONING_EFFORT_KEY,
@@ -22,7 +25,7 @@ import {
   PROVIDER_CONFIG_CODEX_HOME_PATH_KEY,
   buildNetworkProxyUrl,
   runShellActivityStreamId,
-} from "@easycode/shared";
+} from "@buildwarden/shared";
 import { createDevLogger } from "./dev-logger";
 
 const CODEX_DEFAULT_MODEL = getCodexCliRecommendedModelIds()[0] ?? "gpt-5.3-codex";
@@ -89,6 +92,7 @@ type TurnExecutionOptions = {
   yoloMode?: boolean;
   signal: AbortSignal;
   requestShellApproval?: (command: string) => Promise<ShellApprovalDecision>;
+  requestUserInput?: (request: RunUserInputRequest) => Promise<RunUserInputAnswers>;
   onChunk?: (chunk: HarnessRunChunk) => void;
   devLogging?: {
     logDirPath: string;
@@ -126,10 +130,10 @@ const DEFAULT_COLLABORATION_INSTRUCTIONS =
   "<collaboration_mode># Collaboration Mode: Default\n\nExecute concrete work when appropriate, keep progress updates concise, and finish with a short practical summary.\n</collaboration_mode>";
 
 const PLAN_COLLABORATION_INSTRUCTIONS =
-  "<collaboration_mode># Plan Mode\n\nInspect first, avoid making changes, and produce a concrete implementation plan.\n</collaboration_mode>";
+  "<collaboration_mode># Plan Mode\n\nInspect first, avoid making changes, and produce a concrete implementation plan. If an important product or implementation choice is ambiguous and would materially change the plan, ask the user one concise structured question with the request_user_input tool before finalizing the plan. End the final plan with a compact numbered implementation-step table or checklist that BuildWarden can display as plan steps.\n</collaboration_mode>";
 
-const EASYCODE_DEVELOPER_INSTRUCTIONS = [
-  "You are Easycode, a desktop coding agent running inside a Git worktree.",
+const BUILDWARDEN_DEVELOPER_INSTRUCTIONS = [
+  "You are BuildWarden, a desktop coding agent running inside a Git worktree.",
   "You are operating on a local codebase and can inspect and modify files from the current workspace.",
   "Use repository context when it is provided, and inspect files before making assumptions.",
   "The workspace root is already the current working directory. Do not prefix commands with cd.",
@@ -153,6 +157,8 @@ const MODE_INSTRUCTIONS: Record<RunExecutionRequest["mode"], string> = {
     "You are in plan mode.",
     "Do not modify files or claim to have changed files.",
     "Inspect the repository and produce a concrete implementation plan.",
+    "If an important product or implementation choice is ambiguous and would materially change the plan, ask one concise structured question with request_user_input before finalizing the plan.",
+    "End with a compact numbered implementation-step table or checklist.",
   ].join("\n"),
   ask: [
     "You are in ask mode.",
@@ -187,6 +193,83 @@ const stringifyValue = (value: unknown): string => {
     return String(value);
   }
 };
+
+const normalizeUserInputOption = (value: unknown): { label: string; description?: string } | null => {
+  if (typeof value === "string") {
+    const label = value.trim();
+    return label ? { label } : null;
+  }
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const label = asString(record.label)?.trim() ?? asString(record.value)?.trim() ?? "";
+  if (!label) {
+    return null;
+  }
+  const description = asString(record.description)?.trim();
+  return {
+    label,
+    ...(description ? { description } : {}),
+  };
+};
+
+const normalizeUserInputQuestions = (value: unknown, fallbackPrompt: string): RunUserInputQuestion[] => {
+  const record = asRecord(value) ?? {};
+  const rawQuestions = asArray(record.questions);
+  const candidates = rawQuestions && rawQuestions.length > 0 ? rawQuestions : [record];
+
+  const questions = candidates
+    .map((candidate, index): RunUserInputQuestion | null => {
+      const questionRecord = asRecord(candidate) ?? {};
+      const question =
+        asString(questionRecord.question)?.trim() ??
+        asString(questionRecord.prompt)?.trim() ??
+        asString(questionRecord.message)?.trim() ??
+        (typeof candidate === "string" ? candidate.trim() : "") ??
+        (index === 0 ? fallbackPrompt.trim() : "");
+      if (!question) {
+        return null;
+      }
+      const id = asString(questionRecord.id)?.trim() || question;
+      const header = asString(questionRecord.header)?.trim() || `Question ${String(index + 1)}`;
+      const options = (asArray(questionRecord.options) ?? [])
+        .map(normalizeUserInputOption)
+        .filter((option): option is { label: string; description?: string } => option !== null);
+      return {
+        id,
+        header,
+        question,
+        options,
+        multiSelect: questionRecord.multiSelect === true,
+        allowCustomAnswer:
+          options.length === 0 || questionRecord.allowCustomAnswer === true || questionRecord.isOther === true,
+      };
+    })
+    .filter((question): question is RunUserInputQuestion => question !== null);
+
+  return questions.length > 0
+    ? questions
+    : [
+        {
+          id: "response",
+          header: "Question",
+          question: fallbackPrompt || "Codex requested user input.",
+          options: [],
+          allowCustomAnswer: true,
+        },
+      ];
+};
+
+const toCodexUserInputAnswers = (answers: RunUserInputAnswers): Record<string, { answers: string[] }> =>
+  Object.fromEntries(
+    Object.entries(answers).map(([questionId, value]) => [
+      questionId,
+      {
+        answers: (Array.isArray(value) ? value : [value]).map((entry) => String(entry)),
+      },
+    ]),
+  );
 
 const humanizeCodexItemType = (value: string): string =>
   value
@@ -397,38 +480,76 @@ const isRecoverableThreadResumeError = (error: unknown): boolean => {
   );
 };
 
-const normalizeUsage = (value: unknown): RunTokenUsage => {
+export const normalizeCodexTokenUsage = (value: unknown): RunTokenUsage => {
   const usage = asRecord(value);
-  const total = asRecord(usage?.total_token_usage ?? usage?.total);
-  const last = asRecord(usage?.last_token_usage ?? usage?.last ?? usage);
+  const total = asRecord(usage?.total_token_usage ?? usage?.totalTokenUsage ?? usage?.total);
+  const last = asRecord(usage?.last_token_usage ?? usage?.lastTokenUsage ?? usage?.last ?? usage);
+  const totalInputTokens = asNumber(total?.input_tokens) ?? asNumber(total?.inputTokens);
+  const totalOutputTokens = asNumber(total?.output_tokens) ?? asNumber(total?.outputTokens);
+  const totalReasoningTokens =
+    asNumber(total?.reasoning_tokens) ??
+    asNumber(total?.reasoningTokens) ??
+    asNumber(total?.reasoning_output_tokens) ??
+    asNumber(total?.reasoningOutputTokens);
+  const totalCachedInputTokens =
+    asNumber(total?.cached_input_tokens) ??
+    asNumber(total?.cachedInputTokens) ??
+    asNumber(total?.cache_read_input_tokens) ??
+    asNumber(total?.cacheReadInputTokens);
+  const totalCacheCreationInputTokens =
+    asNumber(total?.cache_creation_input_tokens) ??
+    asNumber(total?.cacheCreationInputTokens) ??
+    asNumber(total?.cache_write_input_tokens) ??
+    asNumber(total?.cacheWriteInputTokens);
+  const totalTokens = asNumber(total?.total_tokens) ?? asNumber(total?.totalTokens);
+  const lastInputTokens = asNumber(last?.input_tokens) ?? asNumber(last?.inputTokens);
+  const lastOutputTokens = asNumber(last?.output_tokens) ?? asNumber(last?.outputTokens);
+  const lastReasoningTokens =
+    asNumber(last?.reasoning_tokens) ??
+    asNumber(last?.reasoningTokens) ??
+    asNumber(last?.reasoning_output_tokens) ??
+    asNumber(last?.reasoningOutputTokens);
+  const lastCachedInputTokens =
+    asNumber(last?.cached_input_tokens) ??
+    asNumber(last?.cachedInputTokens) ??
+    asNumber(last?.cache_read_input_tokens) ??
+    asNumber(last?.cacheReadInputTokens);
+  const lastCacheCreationInputTokens =
+    asNumber(last?.cache_creation_input_tokens) ??
+    asNumber(last?.cacheCreationInputTokens) ??
+    asNumber(last?.cache_write_input_tokens) ??
+    asNumber(last?.cacheWriteInputTokens);
+  const lastUsedTokens =
+    asNumber(last?.total_tokens) ??
+    asNumber(last?.totalTokens) ??
+    ((lastInputTokens ?? 0) + (lastOutputTokens ?? 0) > 0
+      ? (lastInputTokens ?? 0) + (lastOutputTokens ?? 0)
+      : undefined);
+  const totalProcessedTokens =
+    totalTokens ??
+    ((totalInputTokens ?? 0) + (totalOutputTokens ?? 0) > 0
+      ? (totalInputTokens ?? 0) + (totalOutputTokens ?? 0)
+      : undefined);
+  const maxTokens =
+    asNumber(usage?.model_context_window) ??
+    asNumber(usage?.modelContextWindow) ??
+    asNumber(total?.model_context_window) ??
+    asNumber(total?.modelContextWindow);
   return {
-    inputTokens:
-      asNumber(total?.input_tokens) ??
-      asNumber(total?.inputTokens) ??
-      asNumber(last?.input_tokens) ??
-      asNumber(last?.inputTokens) ??
-      0,
-    outputTokens:
-      asNumber(total?.output_tokens) ??
-      asNumber(total?.outputTokens) ??
-      asNumber(last?.output_tokens) ??
-      asNumber(last?.outputTokens) ??
-      0,
-    reasoningTokens:
-      asNumber(total?.reasoning_tokens) ??
-      asNumber(total?.reasoningTokens) ??
-      asNumber(last?.reasoning_tokens) ??
-      asNumber(last?.reasoningTokens),
-    cachedInputTokens:
-      asNumber(total?.cached_input_tokens) ??
-      asNumber(total?.cachedInputTokens) ??
-      asNumber(last?.cached_input_tokens) ??
-      asNumber(last?.cachedInputTokens),
-    totalTokens:
-      asNumber(total?.total_tokens) ??
-      asNumber(total?.totalTokens) ??
-      asNumber(last?.total_tokens) ??
-      asNumber(last?.totalTokens),
+    inputTokens: totalInputTokens ?? lastInputTokens ?? 0,
+    outputTokens: totalOutputTokens ?? lastOutputTokens ?? 0,
+    reasoningTokens: totalReasoningTokens ?? lastReasoningTokens,
+    cachedInputTokens: totalCachedInputTokens ?? lastCachedInputTokens,
+    cacheCreationInputTokens: totalCacheCreationInputTokens ?? lastCacheCreationInputTokens,
+    totalTokens: totalProcessedTokens ?? lastUsedTokens,
+    usedTokens: lastUsedTokens,
+    totalProcessedTokens,
+    maxTokens,
+    lastUsedTokens,
+    lastInputTokens,
+    lastCachedInputTokens,
+    lastOutputTokens,
+    lastReasoningTokens,
   };
 };
 
@@ -546,7 +667,7 @@ const buildCollaborationMode = (
         reasoning_effort: reasoningEffort,
         developer_instructions: [
           mode === "plan" ? PLAN_COLLABORATION_INSTRUCTIONS : DEFAULT_COLLABORATION_INSTRUCTIONS,
-          EASYCODE_DEVELOPER_INSTRUCTIONS,
+          BUILDWARDEN_DEVELOPER_INSTRUCTIONS,
         ].join("\n\n"),
       },
   };
@@ -668,6 +789,7 @@ class CodexAppServerSession {
   private readonly itemPhases = new Map<string, string>();
   private readonly agentMessages = new Map<string, string>();
   private readonly reasoningMessages = new Map<string, string>();
+  private readonly planMessages = new Map<string, string>();
   private readonly commandExecutions = new Map<string, CommandExecutionContext>();
   private readonly fileChangeSnapshots = new Map<string, FileChangeSnapshot>();
 
@@ -676,6 +798,7 @@ class CodexAppServerSession {
     private readonly requestThreadId: string,
     private readonly cwd: string,
     private readonly requestShellApproval: ((command: string) => Promise<ShellApprovalDecision>) | undefined,
+    private readonly requestUserInput: ((request: RunUserInputRequest) => Promise<RunUserInputAnswers>) | undefined,
     private readonly onChunk: ((chunk: HarnessRunChunk) => void) | undefined,
     private readonly devLogger?: { log: (event: string, data: unknown) => void },
   ) {
@@ -748,8 +871,8 @@ class CodexAppServerSession {
   async initialize(modelId: string, cwd: string, previousThreadId?: string | null, yoloMode = false): Promise<void> {
     await this.sendRequest("initialize", {
       clientInfo: {
-        name: "easycode_desktop",
-        title: "Easycode Desktop",
+        name: "buildwarden_desktop",
+        title: "BuildWarden Desktop",
         version: "0.4.3",
       },
       capabilities: {
@@ -963,22 +1086,60 @@ class CodexAppServerSession {
       const params = asRecord(request.params);
       const item = asRecord(params?.item);
       const prompt =
-        asString(params?.prompt) ??
-        asString(params?.question) ??
-        asString(params?.message) ??
-        asString(item?.prompt) ??
-        asString(item?.question) ??
-        asString(item?.message) ??
-        stringifyValue(params);
+        asString(params?.prompt)?.trim() ||
+        asString(params?.question)?.trim() ||
+        asString(params?.message)?.trim() ||
+        asString(item?.prompt)?.trim() ||
+        asString(item?.question)?.trim() ||
+        asString(item?.message)?.trim() ||
+        "";
+      const questionSource = asArray(params?.questions) ? params : item ?? params ?? {};
+      const questions = normalizeUserInputQuestions(questionSource, prompt || "Codex requested user input.");
+      const hasStructuredQuestions = questions.length > 0;
+      const displayContent = prompt || (hasStructuredQuestions ? "" : stringifyValue(params));
+      if (this.requestUserInput) {
+        void (async () => {
+          const answers = await this.requestUserInput?.({
+            requestId: String(request.id),
+            title: "Codex question",
+            content: displayContent,
+            questions,
+            metadata: {
+              provider: "codex-cli",
+              rawRequestMethod: request.method,
+              rawRequestParams: params ?? {},
+            },
+          });
+          if (!answers) {
+            throw new Error("No answers were returned for Codex user input.");
+          }
+          this.writeMessage({
+            id: request.id,
+            result: {
+              answers: toCodexUserInputAnswers(answers),
+            },
+          });
+        })().catch((error) => {
+          this.writeMessage({
+            id: request.id,
+            error: {
+              code: -32000,
+              message: error instanceof Error ? error.message : "User input failed.",
+            },
+          });
+        });
+        return;
+      }
       this.onChunk?.({
         type: "user-input-requested",
         title: "Codex question",
-        value: prompt || "Codex requested user input.",
+        value: displayContent,
         metadata: {
           provider: "codex-cli",
           requestKind: "user-input",
           requestStatus: "opened",
           requestId: request.id,
+          userInputQuestions: questions,
           rawRequestMethod: request.method,
           rawRequestParams: params ?? {},
         },
@@ -987,7 +1148,7 @@ class CodexAppServerSession {
         id: request.id,
         error: {
           code: -32601,
-          message: "Easycode does not support Codex request_user_input in this mode.",
+          message: "BuildWarden does not support Codex request_user_input in this mode.",
         },
       });
       return;
@@ -1011,7 +1172,7 @@ class CodexAppServerSession {
     }
 
     if (notification.method === "thread/tokenUsage/updated") {
-      this.usage = normalizeUsage(asRecord(params?.tokenUsage) ?? params);
+      this.usage = normalizeCodexTokenUsage(asRecord(params?.tokenUsage) ?? params);
       this.onChunk?.({
         type: "status",
         value: "Usage updated.",
@@ -1026,7 +1187,7 @@ class CodexAppServerSession {
     if (notification.method === "turn/completed") {
       const turn = asRecord(params?.turn);
       const errorMessage = asString(asRecord(turn?.error)?.message);
-      this.usage = normalizeUsage(asRecord(turn?.usage) ?? turn?.usage);
+      this.usage = normalizeCodexTokenUsage(asRecord(turn?.usage) ?? turn?.usage);
       this.onChunk?.({
         type: "status",
         value: "Usage updated.",
@@ -1109,6 +1270,28 @@ class CodexAppServerSession {
       return;
     }
 
+    if (notification.method === "item/plan/delta") {
+      const itemId = asString(params?.itemId) ?? `codex-plan:${this.turnId ?? "turn"}`;
+      const delta = asString(params?.delta) ?? asString(asRecord(params?.content)?.text) ?? "";
+      if (!delta) {
+        return;
+      }
+      const nextValue = `${this.planMessages.get(itemId) ?? ""}${delta}`;
+      this.planMessages.set(itemId, nextValue);
+      this.onChunk?.({
+        type: "plan-updated",
+        title: "Proposed plan",
+        value: nextValue,
+        metadata: {
+          provider: "codex-cli",
+          planKind: "proposal",
+          streamId: itemId,
+          replace: true,
+        },
+      });
+      return;
+    }
+
     if (
       notification.method === "item/commandExecution/outputDelta" ||
       notification.method === "item/fileChange/outputDelta"
@@ -1167,6 +1350,29 @@ class CodexAppServerSession {
       }
 
       if (itemType === "reasoning" || itemType === "userMessage") {
+        return;
+      }
+
+      if (itemType === "plan" && itemId) {
+        const planText =
+          asString(item?.text)?.trim() ??
+          asString(item?.plan)?.trim() ??
+          asString(item?.content)?.trim() ??
+          "";
+        if (notification.method === "item/completed" && planText) {
+          this.planMessages.set(itemId, planText);
+          this.onChunk?.({
+            type: "plan-updated",
+            title: "Proposed plan",
+            value: planText,
+            metadata: {
+              provider: "codex-cli",
+              planKind: "proposal",
+              streamId: itemId,
+              replace: true,
+            },
+          });
+        }
         return;
       }
 
@@ -1443,6 +1649,7 @@ async function executeCodexTurn(options: TurnExecutionOptions): Promise<TurnExec
     options.previousThreadId ?? "",
     options.cwd,
     options.requestShellApproval,
+    options.requestUserInput,
     options.onChunk,
     devLogger.enabled ? devLogger : undefined,
   );
@@ -1527,7 +1734,10 @@ export function assertCodexCliAvailable(config: Record<string, unknown> | undefi
 export class CodexCliHarnessAdapter implements HarnessAdapter {
   readonly harnessType = "codex-app-server" as const;
 
-  constructor(private readonly requestShellApproval?: (command: string) => Promise<ShellApprovalDecision>) {}
+  constructor(
+    private readonly requestShellApproval?: (command: string) => Promise<ShellApprovalDecision>,
+    private readonly requestUserInput?: (request: RunUserInputRequest) => Promise<RunUserInputAnswers>,
+  ) {}
 
   async run(
     input: RunExecutionRequest,
@@ -1553,6 +1763,7 @@ export class CodexCliHarnessAdapter implements HarnessAdapter {
       devLogging: input.devLogging,
       signal,
       requestShellApproval: input.yoloMode === true ? undefined : this.requestShellApproval,
+      requestUserInput: this.requestUserInput,
       onChunk,
     });
     return {

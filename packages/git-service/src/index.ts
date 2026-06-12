@@ -5,7 +5,13 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import simpleGit, { type SimpleGit } from "simple-git";
 import { promisify } from "node:util";
-import { GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE, type GitProjectValidation, type WorktreeInfo } from "@easycode/shared";
+import {
+  GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE,
+  type GitProjectValidation,
+  type ProjectGitBranchInfo,
+  type ProjectGitBranchOverview,
+  type WorktreeInfo,
+} from "@buildwarden/shared";
 import { parseGitRemoteToWebBase, type ParsedGitRemote } from "./remote-parse.js";
 
 const sanitizeSegment = (value: string) =>
@@ -75,6 +81,24 @@ type PublishMode = "created" | "browser-draft";
 type PublishRequestKind = "pull-request" | "merge-request";
 
 type ParsedRemote = ParsedGitRemote;
+
+const parseAheadBehind = (track: string): { ahead: number; behind: number } => {
+  const ahead = Number.parseInt(track.match(/ahead\s+(\d+)/i)?.[1] ?? "0", 10);
+  const behind = Number.parseInt(track.match(/behind\s+(\d+)/i)?.[1] ?? "0", 10);
+  return {
+    ahead: Number.isFinite(ahead) ? ahead : 0,
+    behind: Number.isFinite(behind) ? behind : 0,
+  };
+};
+
+const normalizeGitDate = (value: string): string | null => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const date = new Date(trimmed);
+  return Number.isNaN(date.getTime()) ? trimmed : date.toISOString();
+};
 
 const isCommandMissingError = (error: unknown) => {
   if (!(error instanceof Error)) {
@@ -203,7 +227,7 @@ async function applyWorktreePatch(worktreePath: string, patchText: string, optio
   if (!patchText.trim()) {
     return;
   }
-  const tempPatchPath = join(tmpdir(), `easycode-restore-${crypto.randomUUID()}.patch`);
+  const tempPatchPath = join(tmpdir(), `buildwarden-restore-${crypto.randomUUID()}.patch`);
   await writeFile(tempPatchPath, patchText, "utf8");
   try {
     try {
@@ -280,7 +304,129 @@ export class GitService {
   async checkoutProjectBranch(repoPath: string, branchName: string): Promise<void> {
     const git = simpleGit(repoPath);
     await ensureGitLongPathSupport(git);
-    await git.checkout(branchName);
+    const trimmedBranchName = branchName.trim();
+    if (!trimmedBranchName) {
+      throw new Error("Select a branch.");
+    }
+
+    if (await this.hasLocalBranch(repoPath, trimmedBranchName)) {
+      await git.checkout(trimmedBranchName);
+      return;
+    }
+
+    if (await this.hasRemoteBranch(repoPath, trimmedBranchName)) {
+      await runGitRaw(git, ["checkout", "--track", "-b", trimmedBranchName, `origin/${trimmedBranchName}`]);
+      return;
+    }
+
+    await git.checkout(trimmedBranchName);
+  }
+
+  async getProjectBranchOverview(repoPath: string, defaultBranch: string): Promise<ProjectGitBranchOverview> {
+    const git = simpleGit(repoPath);
+    await ensureGitLongPathSupport(git);
+
+    let currentBranch = "";
+    try {
+      currentBranch = await this.getCurrentBranch(repoPath);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes(GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE)) {
+        throw error;
+      }
+    }
+
+    let provider: ProjectGitBranchOverview["provider"] = "unknown";
+    let webBaseUrl: string | null = null;
+    try {
+      const remoteOutput = await git.remote(["get-url", "origin"]);
+      const remote = parseGitRemoteToWebBase(String(remoteOutput ?? ""));
+      provider = remote?.provider ?? "unknown";
+      webBaseUrl = remote?.webBaseUrl ?? null;
+    } catch {
+      // Repositories without origin still support local branch management.
+    }
+
+    const branches = new Map<string, ProjectGitBranchInfo>();
+    const ensureBranch = (name: string): ProjectGitBranchInfo => {
+      const existing = branches.get(name);
+      if (existing) {
+        return existing;
+      }
+      const created: ProjectGitBranchInfo = {
+        name,
+        isCurrent: name === currentBranch,
+        isDefault: name === defaultBranch,
+        hasLocal: false,
+        hasRemote: false,
+        upstream: null,
+        ahead: 0,
+        behind: 0,
+        commitSha: null,
+        updatedAt: null,
+        subject: null,
+      };
+      branches.set(name, created);
+      return created;
+    };
+
+    const localRefs = await runGitRaw(git, [
+      "for-each-ref",
+      "--format=%(refname:short)%09%(upstream:short)%09%(objectname:short)%09%(committerdate:iso8601)%09%(subject)%09%(upstream:track,nobracket)",
+      "refs/heads",
+    ]);
+    for (const line of localRefs.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
+      const [name = "", upstream = "", commitSha = "", updatedAt = "", subject = "", track = ""] = line.split("\t");
+      if (!name) {
+        continue;
+      }
+      const branch = ensureBranch(name);
+      const tracking = parseAheadBehind(track);
+      branch.hasLocal = true;
+      branch.upstream = upstream || null;
+      branch.hasRemote = branch.hasRemote || upstream.startsWith("origin/");
+      branch.ahead = tracking.ahead;
+      branch.behind = tracking.behind;
+      branch.commitSha = commitSha || branch.commitSha;
+      branch.updatedAt = normalizeGitDate(updatedAt) ?? branch.updatedAt;
+      branch.subject = subject || branch.subject;
+    }
+
+    try {
+      const remoteRefs = await runGitRaw(git, [
+        "for-each-ref",
+        "--format=%(refname:short)%09%(objectname:short)%09%(committerdate:iso8601)%09%(subject)",
+        "refs/remotes/origin",
+      ]);
+      for (const line of remoteRefs.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
+        const [remoteName = "", commitSha = "", updatedAt = "", subject = ""] = line.split("\t");
+        if (!remoteName || remoteName === "origin/HEAD") {
+          continue;
+        }
+        const name = remoteName.replace(/^origin\//, "");
+        const branch = ensureBranch(name);
+        branch.hasRemote = true;
+        branch.commitSha = branch.commitSha ?? commitSha ?? null;
+        branch.updatedAt = branch.updatedAt ?? normalizeGitDate(updatedAt);
+        branch.subject = branch.subject ?? subject ?? null;
+      }
+    } catch {
+      // Remote refs are optional; local-only repositories are valid.
+    }
+
+    return {
+      repoPath,
+      defaultBranch,
+      currentBranch,
+      provider,
+      webBaseUrl,
+      branches: [...branches.values()].sort((left, right) => {
+        if (left.isCurrent !== right.isCurrent) return left.isCurrent ? -1 : 1;
+        if (left.isDefault !== right.isDefault) return left.isDefault ? -1 : 1;
+        if (left.hasLocal !== right.hasLocal) return left.hasLocal ? -1 : 1;
+        return left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: "base" });
+      }),
+    };
   }
 
   async validateProject(repoPath: string): Promise<GitProjectValidation> {
@@ -429,6 +575,107 @@ export class GitService {
     const git = simpleGit(repoPath);
     const branches = await git.branchLocal();
     return branches.all.includes(branchName);
+  }
+
+  async hasRemoteBranch(repoPath: string, branchName: string): Promise<boolean> {
+    const git = simpleGit(repoPath);
+    try {
+      await runGitRaw(git, ["show-ref", "--verify", "--quiet", `refs/remotes/origin/${branchName}`]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async fetchProjectBranches(repoPath: string): Promise<void> {
+    const git = simpleGit(repoPath);
+    await ensureGitLongPathSupport(git);
+    await runGitRaw(git, ["fetch", "--all", "--prune"]);
+  }
+
+  async createProjectBranch(repoPath: string, branchName: string, startPoint: string, checkout = true): Promise<void> {
+    const git = simpleGit(repoPath);
+    await ensureGitLongPathSupport(git);
+    const trimmedBranchName = branchName.trim();
+    const trimmedStartPoint = startPoint.trim();
+    if (!trimmedBranchName) {
+      throw new Error("Enter a branch name.");
+    }
+    if (!trimmedStartPoint) {
+      throw new Error("Select a source branch.");
+    }
+    await this.validateBranchName(repoPath, trimmedBranchName);
+    if (await this.hasLocalBranch(repoPath, trimmedBranchName)) {
+      throw new Error(`A local branch named "${trimmedBranchName}" already exists.`);
+    }
+    if (checkout) {
+      await runGitRaw(git, ["checkout", "-b", trimmedBranchName, trimmedStartPoint]);
+    } else {
+      await runGitRaw(git, ["branch", trimmedBranchName, trimmedStartPoint]);
+    }
+  }
+
+  async renameProjectBranch(repoPath: string, oldName: string, newName: string): Promise<void> {
+    const git = simpleGit(repoPath);
+    await ensureGitLongPathSupport(git);
+    const trimmedOldName = oldName.trim();
+    const trimmedNewName = newName.trim();
+    if (!trimmedOldName || !trimmedNewName) {
+      throw new Error("Enter both the current and new branch names.");
+    }
+    if (!(await this.hasLocalBranch(repoPath, trimmedOldName))) {
+      throw new Error(`Local branch "${trimmedOldName}" was not found.`);
+    }
+    await this.validateBranchName(repoPath, trimmedNewName);
+    if (await this.hasLocalBranch(repoPath, trimmedNewName)) {
+      throw new Error(`A local branch named "${trimmedNewName}" already exists.`);
+    }
+    await runGitRaw(git, ["branch", "-m", trimmedOldName, trimmedNewName]);
+  }
+
+  async deleteProjectBranch(repoPath: string, branchName: string, force = false): Promise<void> {
+    const git = simpleGit(repoPath);
+    await ensureGitLongPathSupport(git);
+    const trimmedBranchName = branchName.trim();
+    if (!trimmedBranchName) {
+      throw new Error("Select a branch.");
+    }
+    const currentBranch = await this.getCurrentBranch(repoPath).catch(() => "");
+    if (trimmedBranchName === currentBranch) {
+      throw new Error("You cannot delete the currently checked out branch.");
+    }
+    if (!(await this.hasLocalBranch(repoPath, trimmedBranchName))) {
+      throw new Error(`Local branch "${trimmedBranchName}" was not found.`);
+    }
+    await runGitRaw(git, ["branch", force ? "-D" : "-d", trimmedBranchName]);
+  }
+
+  async pullProjectBranch(repoPath: string): Promise<void> {
+    const git = simpleGit(repoPath);
+    await ensureGitLongPathSupport(git);
+    await runGitRaw(git, ["pull", "--ff-only"]);
+  }
+
+  async pushProjectBranch(repoPath: string, branchName: string, setUpstream = true): Promise<void> {
+    const git = simpleGit(repoPath);
+    await ensureGitLongPathSupport(git);
+    const trimmedBranchName = branchName.trim();
+    if (!trimmedBranchName) {
+      throw new Error("Select a branch.");
+    }
+    if (!(await this.hasLocalBranch(repoPath, trimmedBranchName))) {
+      throw new Error(`Local branch "${trimmedBranchName}" was not found.`);
+    }
+    await runGitRaw(git, setUpstream ? ["push", "-u", "origin", trimmedBranchName] : ["push", "origin", trimmedBranchName]);
+  }
+
+  private async validateBranchName(repoPath: string, branchName: string): Promise<void> {
+    const git = simpleGit(repoPath);
+    try {
+      await runGitRaw(git, ["check-ref-format", "--branch", branchName]);
+    } catch (error) {
+      throw new Error(`"${branchName}" is not a valid Git branch name: ${extractCommandOutput(error)}`);
+    }
   }
 
   async removeWorktree(repoPath: string, worktreePath: string, branchName?: string): Promise<void> {
@@ -772,13 +1019,13 @@ export class GitService {
   }
 
   private getLegacyWorktreeRoot(repoPath: string): string {
-    return join(repoPath, ".easycode-worktrees");
+    return join(repoPath, ".buildwarden-worktrees");
   }
 
   private getWorktreeRoot(repoPath: string, configuredWorktreeRoot?: string | null): string {
     const repoContainer = configuredWorktreeRoot?.trim() || dirname(repoPath);
     const repoName = sanitizeSegment(basename(repoPath)) || "repo";
-    return join(repoContainer, ".easycode-worktrees", repoName);
+    return join(repoContainer, ".buildwarden-worktrees", repoName);
   }
 }
 

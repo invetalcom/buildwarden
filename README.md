@@ -1,6 +1,6 @@
-# easycode
+# Buildwarden
 
-Easycode is an Electron desktop app for running coding-agent workflows against local repositories. It combines a React renderer, Electron main-process orchestration, local persistence, secure secret storage, Git worktrees, chat and run history, and a provider layer that supports OpenAI, OpenAI-compatible backends, Codex CLI, and Claude Code.
+BuildWarden is an Electron desktop app for running coding-agent workflows against local repositories. It combines a React renderer, Electron main-process orchestration, local persistence, secure secret storage, Git worktrees, chat and run history, and a provider layer that supports OpenAI, OpenAI-compatible backends, Codex CLI, and Claude Code.
 
 ## What It Does
 
@@ -20,7 +20,7 @@ Easycode is an Electron desktop app for running coding-agent workflows against l
 
 - `apps/desktop`
   - Electron main process, IPC wiring, app controller, workers, terminal support, secret store
-  - Preload bridge exposed as `window.easycode`
+  - Preload bridge exposed as `window.buildwarden`
   - React renderer for landing, sidebar, project, run, chat, bookmark, and settings screens
 - `packages/shared`
   - Shared types, IPC contracts, provider metadata, run/chat DTOs, settings keys
@@ -42,7 +42,7 @@ Easycode is an Electron desktop app for running coding-agent workflows against l
 
 ## Providers
 
-Easycode currently supports these provider types:
+BuildWarden currently supports these provider types:
 
 - `openai`
 - `openai-compatible`
@@ -67,7 +67,7 @@ Useful commands:
 pnpm typecheck
 pnpm lint
 pnpm test
-pnpm --filter @easycode/desktop build
+pnpm --filter @buildwarden/desktop build
 ```
 
 Packaging shortcuts:
