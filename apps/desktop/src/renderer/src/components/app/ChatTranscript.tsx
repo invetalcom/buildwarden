@@ -223,6 +223,8 @@ export const ChatTranscript = forwardRef<
 
           if (isAssistantEntry) {
             const copied = copiedItemId === item.id;
+            const attachments = extractAttachmentPayloadsFromMetadata(metadata);
+            const attachmentNames = extractAttachmentNamesFromMetadata(metadata);
             return (
               <section key={item.id} className="chat-turn chat-turn--assistant">
                 <div className="chat-avatar chat-avatar--assistant" aria-hidden>
@@ -242,6 +244,7 @@ export const ChatTranscript = forwardRef<
                       <span>Assistant</span>
                       <span>{timestamp}</span>
                     </div>
+                    <StoredChatAttachments attachments={attachments} fallbackNames={attachmentNames} />
                     <ActivityMarkdownOrGitDiff content={item.content} className="chat-message-body chat-message-body--assistant" />
                   </div>
                 </div>

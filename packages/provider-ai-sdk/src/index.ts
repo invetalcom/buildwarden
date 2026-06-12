@@ -2,9 +2,15 @@ import { Buffer } from "node:buffer";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { createOpenAI } from "@ai-sdk/openai";
+import {
+  createOpenAI,
+  type OpenAIProvider,
+  type OpenAIProviderSettings,
+  type OpenaiResponsesSourceDocumentProviderMetadata,
+  type OpenaiResponsesTextProviderMetadata,
+} from "@ai-sdk/openai";
 import { createXai } from "@ai-sdk/xai";
-import { generateText, jsonSchema, stepCountIs, streamText, tool, type LanguageModel } from "ai";
+import { generateText, jsonSchema, stepCountIs, streamText, tool, type GeneratedFile, type LanguageModel } from "ai";
 import { ProxyAgent } from "undici";
 import type {
   ChatAttachmentPayload,
@@ -20,11 +26,13 @@ import type {
 } from "@buildwarden/shared";
 import {
   AI_SDK_RECOMMENDED_MODEL_IDS,
+  CHAT_ATTACHMENT_LIMITS,
   MODEL_CONFIG_ANTHROPIC_EFFORT_KEY,
   MODEL_CONFIG_OPENAI_REASONING_EFFORT_KEY,
   PROVIDER_CONFIG_AI_SDK_PROVIDER_FAMILY_KEY,
   PROVIDER_CONFIG_DEFAULT_HEADERS_KEY,
   buildNetworkProxyUrl,
+  estimateBase64ByteLength,
   runShellActivityStreamId,
   shouldBypassNetworkProxyForUrl,
 } from "@buildwarden/shared";
@@ -33,6 +41,13 @@ import { createDevLogger } from "./dev-logger";
 
 const CHAT_SYSTEM_PROMPT =
   "You are a helpful AI assistant. Answer the user's questions directly and concisely. You do not have access to any tools or files.";
+
+const CHAT_OPENAI_CODE_INTERPRETER_SYSTEM_PROMPT = [
+  "You are a helpful AI assistant. Answer the user's questions directly and concisely.",
+  "You have access to OpenAI Code Interpreter for sandboxed Python execution.",
+  "When the user asks you to create a downloadable artifact such as a PDF, spreadsheet, data file, chart, or image, use Code Interpreter to create and save the file instead of saying you cannot attach files.",
+  "After creating a file, briefly describe it and reference the saved file so the application can attach it.",
+].join("\n");
 
 const SYSTEM_PROMPT = [
   "You are BuildWarden, a desktop coding agent running inside a Git worktree.",
@@ -68,6 +83,80 @@ const TEXTISH_MIME_PREFIXES = [
 
 const CODE_LIKE_EXT =
   /\.(txt|md|mdx|ts|tsx|js|jsx|mjs|cjs|json|yaml|yml|xml|html|htm|css|scss|less|rs|go|py|java|kt|swift|c|h|cpp|hpp|cs|rb|php|sh|sql|toml|ini|env|log|vue|svelte)$/i;
+
+const GENERATED_FILE_EXTENSIONS: Record<string, string> = {
+  "application/pdf": "pdf",
+  "application/json": "json",
+  "application/vnd.ms-excel": "xls",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "audio/mpeg": "mp3",
+  "audio/mp3": "mp3",
+  "audio/wav": "wav",
+  "audio/x-wav": "wav",
+  "image/gif": "gif",
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "text/csv": "csv",
+  "text/html": "html",
+  "text/markdown": "md",
+  "text/plain": "txt",
+  "video/mp4": "mp4",
+};
+
+const FILE_EXTENSION_MEDIA_TYPES: Record<string, string> = Object.fromEntries(
+  Object.entries(GENERATED_FILE_EXTENSIONS).map(([mediaType, extension]) => [extension, mediaType]),
+);
+
+type OpenAiContainerFileReference = {
+  containerId: string;
+  fileId: string;
+  filename?: string;
+  mediaType?: string;
+};
+
+const generatedFileStem = (mediaType: string): string => {
+  const mime = mediaType.toLowerCase();
+  if (mime.startsWith("image/")) return "generated-image";
+  if (mime === "application/pdf") return "generated-document";
+  if (mime.startsWith("audio/")) return "generated-audio";
+  if (mime.startsWith("video/")) return "generated-video";
+  if (mime.startsWith("text/")) return "generated-text";
+  return "generated-file";
+};
+
+const generatedFileName = (mediaType: string, index: number): string => {
+  const normalized = mediaType.toLowerCase();
+  const extension = GENERATED_FILE_EXTENSIONS[normalized] ?? normalized.split("/")[1]?.split("+").at(-1) ?? "bin";
+  return `${generatedFileStem(normalized)}-${String(index)}.${extension.replace(/[^a-z0-9]/gi, "") || "bin"}`;
+};
+
+const mediaTypeFromFileName = (fileName: string): string | undefined => {
+  const extension = fileName.toLowerCase().split(".").pop() ?? "";
+  return FILE_EXTENSION_MEDIA_TYPES[extension];
+};
+
+const sanitizeGeneratedFileName = (fileName: string): string => {
+  const normalized = fileName.trim().replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_");
+  return normalized || "generated-file.bin";
+};
+
+const generatedFileKey = (attachment: ChatAttachmentPayload): string =>
+  `${attachment.mimeType}:${attachment.dataBase64.slice(0, 96)}:${String(estimateBase64ByteLength(attachment.dataBase64))}`;
+
+const generatedFileToAttachment = (file: GeneratedFile, index: number): ChatAttachmentPayload | null => {
+  const mimeType = file.mediaType.trim() || "application/octet-stream";
+  const dataBase64 = file.base64.trim();
+  if (!dataBase64) {
+    return null;
+  }
+  return {
+    fileName: generatedFileName(mimeType, index),
+    mimeType,
+    dataBase64,
+  };
+};
 
 const describeToolCall = (name: string, args: Record<string, unknown>) => {
   const interestingValue = args.path ?? args.command ?? args.query ?? JSON.stringify(args);
@@ -401,6 +490,24 @@ const createProxyAwareFetch = (networkProxy: NetworkProxyRuntimeConfig | undefin
   };
 };
 
+const createConfiguredOpenAiProvider = (
+  input: RunExecutionRequest,
+  devLogger?: { createLoggedFetch: (baseFetch?: typeof fetch) => typeof fetch },
+): OpenAIProvider => {
+  const baseURL = input.apiBaseUrl?.trim() || undefined;
+  const headers = getDefaultHeaders(input.config);
+  const customFetch = createProxyAwareFetch(input.networkProxy);
+  const loggedFetch = devLogger?.createLoggedFetch(customFetch ?? fetch);
+  const commonOptions = {
+    apiKey: input.apiKey,
+    ...(baseURL ? { baseURL } : {}),
+    ...(headers ? { headers } : {}),
+    ...(loggedFetch ? { fetch: loggedFetch } : customFetch ? { fetch: customFetch } : {}),
+  } satisfies OpenAIProviderSettings;
+
+  return createOpenAI(commonOptions);
+};
+
 const createLanguageModel = (input: RunExecutionRequest, devLogger?: { createLoggedFetch: (baseFetch?: typeof fetch) => typeof fetch }): LanguageModel => {
   const family = getProviderFamily(input.config);
   const baseURL = input.apiBaseUrl?.trim() || undefined;
@@ -434,8 +541,7 @@ const createLanguageModel = (input: RunExecutionRequest, devLogger?: { createLog
   } as Record<string, unknown>;
 
   if (family === "openai") {
-    const provider = createOpenAI(commonOptions);
-    return provider.responses(input.modelId);
+    return createConfiguredOpenAiProvider(input, devLogger).responses(input.modelId);
   }
 
   const factories = {
@@ -445,6 +551,111 @@ const createLanguageModel = (input: RunExecutionRequest, devLogger?: { createLog
   } satisfies Record<Exclude<UnifiedProviderFamily, "openai" | "openai-compatible">, (options?: Record<string, unknown>) => (modelId: string) => LanguageModel>;
 
   return factories[family](commonOptions)(input.modelId);
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const stringField = (record: Record<string, unknown>, key: string): string | undefined => {
+  const value = record[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+};
+
+const rememberOpenAiContainerFileReference = (
+  references: Map<string, OpenAiContainerFileReference>,
+  reference: OpenAiContainerFileReference,
+): void => {
+  if (!reference.containerId || !reference.fileId) {
+    return;
+  }
+  references.set(`${reference.containerId}:${reference.fileId}`, reference);
+};
+
+const collectOpenAiContainerFileReferences = (
+  part: Record<string, unknown>,
+  references: Map<string, OpenAiContainerFileReference>,
+): void => {
+  const providerMetadata = isRecord(part.providerMetadata) ? part.providerMetadata : undefined;
+  const openaiMetadata = providerMetadata && isRecord(providerMetadata.openai) ? providerMetadata.openai : undefined;
+  if (!openaiMetadata) {
+    return;
+  }
+
+  if (part.type === "text") {
+    const metadata = providerMetadata as OpenaiResponsesTextProviderMetadata;
+    for (const annotation of metadata.openai.annotations ?? []) {
+      if (annotation.type !== "container_file_citation") {
+        continue;
+      }
+      const raw = annotation as unknown as Record<string, unknown>;
+      rememberOpenAiContainerFileReference(references, {
+        containerId: stringField(raw, "container_id") ?? "",
+        fileId: stringField(raw, "file_id") ?? "",
+        filename: stringField(raw, "filename"),
+      });
+    }
+    return;
+  }
+
+  if (part.type === "source" && part.sourceType === "document") {
+    const metadata = providerMetadata as OpenaiResponsesSourceDocumentProviderMetadata;
+    const annotation = metadata.openai;
+    if (annotation.type !== "container_file_citation") {
+      return;
+    }
+    rememberOpenAiContainerFileReference(references, {
+      containerId: annotation.containerId,
+      fileId: annotation.fileId,
+      filename: typeof part.filename === "string" ? part.filename : typeof part.title === "string" ? part.title : undefined,
+      mediaType: typeof part.mediaType === "string" ? part.mediaType : undefined,
+    });
+  }
+};
+
+const contentTypeMediaType = (contentType: string | null): string | undefined => {
+  const mediaType = contentType?.split(";")[0]?.trim().toLowerCase();
+  if (mediaType === "application/binary" || mediaType === "application/octet-stream") {
+    return undefined;
+  }
+  return mediaType || undefined;
+};
+
+const downloadOpenAiContainerFile = async (
+  input: RunExecutionRequest,
+  reference: OpenAiContainerFileReference,
+  index: number,
+  devLogger?: { createLoggedFetch: (baseFetch?: typeof fetch) => typeof fetch },
+): Promise<ChatAttachmentPayload> => {
+  const baseURL = (input.apiBaseUrl?.trim() || "https://api.openai.com/v1").replace(/\/+$/, "");
+  const headers = getDefaultHeaders(input.config);
+  const customFetch = createProxyAwareFetch(input.networkProxy);
+  const loggedFetch = devLogger?.createLoggedFetch(customFetch ?? fetch);
+  const requestFetch = loggedFetch ?? customFetch ?? fetch;
+  const url = `${baseURL}/containers/${encodeURIComponent(reference.containerId)}/files/${encodeURIComponent(reference.fileId)}/content`;
+  const response = await requestFetch(url, {
+    headers: {
+      Authorization: `Bearer ${input.apiKey}`,
+      ...(headers ?? {}),
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`OpenAI container file download failed (${String(response.status)} ${response.statusText}).`);
+  }
+
+  const bytes = Buffer.from(await response.arrayBuffer());
+  const fallbackMediaType = reference.filename ? mediaTypeFromFileName(reference.filename) : undefined;
+  const mimeType =
+    contentTypeMediaType(response.headers.get("content-type")) ??
+    reference.mediaType ??
+    fallbackMediaType ??
+    "application/octet-stream";
+  const fileName = sanitizeGeneratedFileName(reference.filename ?? generatedFileName(mimeType, index));
+  return {
+    fileName,
+    mimeType,
+    dataBase64: bytes.toString("base64"),
+  };
 };
 
 const buildRunMessages = (input: RunExecutionRequest): Array<Record<string, unknown>> => {
@@ -601,6 +812,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
     signal: AbortSignal,
   ): Promise<{ summary: string; responseId: string | null; usage: RunTokenUsage }> {
     const isChat = input.isChat === true;
+    const providerFamily = getProviderFamily(input.config);
     const devLogger = createDevLogger({
       logDirPath: input.devLogging?.logDirPath,
       runId: input.runId,
@@ -609,7 +821,13 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
       sessionType: isChat ? "chat" : "run",
     });
     const model = createLanguageModel(input, devLogger.enabled ? devLogger : undefined);
-    const providerOptions = buildAiSdkProviderOptions(getProviderFamily(input.config), input.modelId, input.providerOptions, input.modelConfig);
+    const providerOptions = buildAiSdkProviderOptions(providerFamily, input.modelId, input.providerOptions, input.modelConfig);
+    const openAiChatTools =
+      isChat && providerFamily === "openai"
+        ? {
+            code_interpreter: createConfiguredOpenAiProvider(input, devLogger.enabled ? devLogger : undefined).tools.codeInterpreter(),
+          }
+        : undefined;
     const checkpointMessages = Array.isArray(input.resumeCheckpoint?.messages) ? [...input.resumeCheckpoint.messages] : [];
     const startingMessages =
       checkpointMessages.length > 0
@@ -621,7 +839,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
     if (isChat) {
       startingMessages.push({
         role: "system",
-        content: CHAT_SYSTEM_PROMPT,
+        content: openAiChatTools ? CHAT_OPENAI_CODE_INTERPRETER_SYSTEM_PROMPT : CHAT_SYSTEM_PROMPT,
       });
       if (Array.isArray(input.priorMessages) && input.priorMessages.length > 0) {
         startingMessages.push(...input.priorMessages);
@@ -651,7 +869,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
 
     const tools =
       isChat
-        ? undefined
+        ? openAiChatTools
         : Object.fromEntries(
             toolContext.tools.map((runTool) => [
               runTool.name,
@@ -717,6 +935,40 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
     let activeReasoningText = "";
     let completedReasoningTranscript = "";
     let streamedReasoningSinceLastStep = false;
+    const generatedFileAttachments: ChatAttachmentPayload[] = [];
+    const generatedFileKeys = new Set<string>();
+    const openAiContainerFileReferences = new Map<string, OpenAiContainerFileReference>();
+    let generatedFileBytes = 0;
+    let droppedGeneratedFileCount = 0;
+    let failedGeneratedFileDownloadCount = 0;
+
+    const rememberGeneratedAttachment = (attachment: ChatAttachmentPayload | null): void => {
+      if (!attachment) {
+        return;
+      }
+      const key = generatedFileKey(attachment);
+      if (generatedFileKeys.has(key)) {
+        return;
+      }
+      generatedFileKeys.add(key);
+
+      const fileBytes = estimateBase64ByteLength(attachment.dataBase64);
+      if (
+        generatedFileAttachments.length >= CHAT_ATTACHMENT_LIMITS.maxFileCount ||
+        fileBytes > CHAT_ATTACHMENT_LIMITS.maxBytesPerFile ||
+        generatedFileBytes + fileBytes > CHAT_ATTACHMENT_LIMITS.maxTotalBytes
+      ) {
+        droppedGeneratedFileCount += 1;
+        return;
+      }
+
+      generatedFileBytes += fileBytes;
+      generatedFileAttachments.push(attachment);
+    };
+
+    const rememberGeneratedFile = (file: GeneratedFile): void => {
+      rememberGeneratedAttachment(generatedFileToAttachment(file, generatedFileKeys.size + 1));
+    };
 
     const trimCompletedReasoningPrefix = (value: string) => {
       if (!completedReasoningTranscript) {
@@ -739,7 +991,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
         messages: startingMessages as never,
         tools,
         ...(providerOptions ? { providerOptions: providerOptions as never } : {}),
-        stopWhen: stepCountIs(isChat ? 1 : MODE_POLICIES[input.mode].maxToolRounds),
+        stopWhen: stepCountIs(isChat ? (openAiChatTools ? 6 : 1) : MODE_POLICIES[input.mode].maxToolRounds),
         abortSignal: signal,
         onStepFinish: async (stepResult) => {
           accumulatedUsage = addUsage(accumulatedUsage, normalizeAiSdkTokenUsage(stepResult.usage));
@@ -803,6 +1055,14 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
             });
           }
 
+          for (const part of stepResult.content as Array<Record<string, unknown>>) {
+            collectOpenAiContainerFileReferences(part, openAiContainerFileReferences);
+          }
+
+          for (const file of stepResult.files) {
+            rememberGeneratedFile(file);
+          }
+
           onChunk({
             type: "status",
             value: "Usage updated.",
@@ -816,6 +1076,8 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
     );
 
     for await (const part of result.fullStream as AsyncIterable<Record<string, unknown>>) {
+      collectOpenAiContainerFileReferences(part, openAiContainerFileReferences);
+
       if (part.type === "text-delta" || part.type === "text") {
         resetReasoningSegment();
         const delta =
@@ -877,6 +1139,14 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
         continue;
       }
 
+      if (part.type === "file") {
+        const file = (part as { file?: GeneratedFile }).file;
+        if (file) {
+          rememberGeneratedFile(file);
+        }
+        continue;
+      }
+
       if (part.type === "tool-call-streaming-start") {
         resetReasoningSegment();
         const toolName = typeof part.toolName === "string" ? part.toolName : "tool";
@@ -908,6 +1178,53 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
       }
     }
 
+    if (openAiChatTools && openAiContainerFileReferences.size > 0) {
+      let index = generatedFileAttachments.length + 1;
+      for (const reference of openAiContainerFileReferences.values()) {
+        try {
+          const attachment = await downloadOpenAiContainerFile(input, reference, index, devLogger.enabled ? devLogger : undefined);
+          rememberGeneratedAttachment(attachment);
+          index += 1;
+        } catch (error) {
+          failedGeneratedFileDownloadCount += 1;
+          devLogger?.log("OpenAI.container_file.download.error", {
+            containerId: reference.containerId,
+            fileId: reference.fileId,
+            error: extractErrorText(error),
+          });
+        }
+      }
+    }
+
+    if (generatedFileAttachments.length > 0) {
+      onChunk({
+        type: "message",
+        title: generatedFileAttachments.length === 1 ? "Generated file" : "Generated files",
+        value: `Generated ${String(generatedFileAttachments.length)} file${generatedFileAttachments.length === 1 ? "" : "s"}.`,
+        metadata: {
+          assistantKind: "files",
+          attachments: generatedFileAttachments,
+          attachmentNames: generatedFileAttachments.map((attachment) => attachment.fileName),
+        },
+      });
+    }
+
+    if (failedGeneratedFileDownloadCount > 0) {
+      onChunk({
+        type: "status",
+        title: "Generated file download failed",
+        value: `${String(failedGeneratedFileDownloadCount)} generated file${failedGeneratedFileDownloadCount === 1 ? "" : "s"} could not be downloaded from OpenAI Code Interpreter.`,
+      });
+    }
+
+    if (droppedGeneratedFileCount > 0) {
+      onChunk({
+        type: "status",
+        title: "Generated file skipped",
+        value: `${String(droppedGeneratedFileCount)} generated file${droppedGeneratedFileCount === 1 ? " was" : "s were"} too large or exceeded the stored file limit.`,
+      });
+    }
+
     const finalText = typeof (result as { text?: PromiseLike<string> | string }).text !== "undefined"
       ? (await (result as { text: PromiseLike<string> | string }).text).trim()
       : "";
@@ -933,7 +1250,11 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
       );
     }
 
-    const summary = streamedText.trim() || finalText || "No output returned from the provider.";
+    const generatedFileSummary =
+      generatedFileAttachments.length > 0
+        ? `Generated ${String(generatedFileAttachments.length)} file${generatedFileAttachments.length === 1 ? "" : "s"}.`
+        : "";
+    const summary = streamedText.trim() || finalText || generatedFileSummary || "No output returned from the provider.";
 
     onChunk({
       type: "status",
