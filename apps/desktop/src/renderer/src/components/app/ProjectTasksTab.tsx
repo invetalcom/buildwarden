@@ -1,9 +1,10 @@
-import type { ProjectTaskRecord, ProviderType, UnifiedProviderFamily } from "@easycode/shared";
-import { ListTodo, Trash2 } from "lucide-react";
+import type { ProjectTaskRecord, ProviderType, UnifiedProviderFamily } from "@buildwarden/shared";
+import { Check, ListTodo, Loader2, Pencil, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
+import { Select } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 
 interface ProjectTasksTabProps {
@@ -13,6 +14,7 @@ interface ProjectTasksTabProps {
   defaultTaskModelId: string;
   busy: boolean;
   onCreateTask: (input: { title: string; prompt: string }) => void | Promise<void>;
+  onUpdateTask: (taskId: string, input: { title: string; prompt: string }) => void | Promise<void>;
   onDeleteTask: (taskId: string) => void | Promise<void>;
   onStartTask: (prompt: string, modelId: string) => void | Promise<void>;
 }
@@ -24,12 +26,17 @@ export const ProjectTasksTab = ({
   defaultTaskModelId,
   busy,
   onCreateTask,
+  onUpdateTask,
   onDeleteTask,
   onStartTask,
 }: ProjectTasksTabProps) => {
   const [taskTitle, setTaskTitle] = useState("");
   const [taskPrompt, setTaskPrompt] = useState("");
   const [taskBusy, setTaskBusy] = useState(false);
+  const [savedTaskBusyId, setSavedTaskBusyId] = useState<string | null>(null);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [taskEditTitle, setTaskEditTitle] = useState("");
+  const [taskEditPrompt, setTaskEditPrompt] = useState("");
   const [taskModelById, setTaskModelById] = useState<Record<string, string>>({});
   const [launchTaskId, setLaunchTaskId] = useState<string | null>(null);
   const [launchPromptDraft, setLaunchPromptDraft] = useState("");
@@ -37,6 +44,21 @@ export const ProjectTasksTab = ({
   const [launchStartBusy, setLaunchStartBusy] = useState(false);
   const taskCountLabel = useMemo(() => `${tasks.length} task${tasks.length === 1 ? "" : "s"}`, [tasks.length]);
   const launchTask = useMemo(() => tasks.find((task) => task.id === launchTaskId) ?? null, [launchTaskId, tasks]);
+
+  useEffect(() => {
+    setSavedTaskBusyId(null);
+    setEditingTaskId(null);
+    setTaskEditTitle("");
+    setTaskEditPrompt("");
+  }, [projectId]);
+
+  useEffect(() => {
+    if (editingTaskId && !tasks.some((task) => task.id === editingTaskId)) {
+      setEditingTaskId(null);
+      setTaskEditTitle("");
+      setTaskEditPrompt("");
+    }
+  }, [editingTaskId, tasks]);
 
   useEffect(() => {
     setTaskModelById((current) => {
@@ -66,6 +88,50 @@ export const ProjectTasksTab = ({
     }
   };
 
+  const startEditingTask = (task: ProjectTaskRecord) => {
+    setEditingTaskId(task.id);
+    setTaskEditTitle(task.title);
+    setTaskEditPrompt(task.prompt);
+  };
+
+  const cancelEditingTask = () => {
+    setEditingTaskId(null);
+    setTaskEditTitle("");
+    setTaskEditPrompt("");
+  };
+
+  const handleUpdateTask = async (task: ProjectTaskRecord) => {
+    const trimmedTitle = taskEditTitle.trim();
+    const trimmedPrompt = taskEditPrompt.trim();
+    if (!trimmedTitle || !trimmedPrompt) {
+      window.alert("Enter both a task title and a prompt.");
+      return;
+    }
+    if (trimmedTitle === task.title && trimmedPrompt === task.prompt) {
+      cancelEditingTask();
+      return;
+    }
+    setSavedTaskBusyId(task.id);
+    try {
+      await onUpdateTask(task.id, { title: trimmedTitle, prompt: trimmedPrompt });
+      cancelEditingTask();
+    } finally {
+      setSavedTaskBusyId(null);
+    }
+  };
+
+  const handleDeleteTask = async (taskId: string) => {
+    setSavedTaskBusyId(taskId);
+    try {
+      await onDeleteTask(taskId);
+      if (editingTaskId === taskId) {
+        cancelEditingTask();
+      }
+    } finally {
+      setSavedTaskBusyId(null);
+    }
+  };
+
   const openLaunchDialog = (task: ProjectTaskRecord) => {
     setLaunchTaskId(task.id);
     setLaunchPromptDraft(task.prompt);
@@ -90,7 +156,7 @@ export const ProjectTasksTab = ({
     }
     setLaunchGenerateBusy(true);
     try {
-      const nextPrompt = await window.easycode.generateProjectTaskRunPrompt({
+      const nextPrompt = await window.buildwarden.generateProjectTaskRunPrompt({
         projectId,
         title: launchTask.title,
         notes: launchPromptDraft.trim() || launchTask.prompt,
@@ -155,49 +221,125 @@ export const ProjectTasksTab = ({
         </div>
         <div className="app-scrollbar max-h-[520px] space-y-3 overflow-y-auto pr-1">
           {tasks.length > 0 ? (
-            tasks.map((task) => (
+            tasks.map((task) => {
+              const isEditing = editingTaskId === task.id;
+              const isSavedTaskBusy = savedTaskBusyId === task.id;
+              return (
               <div key={task.id} className="rounded-xl border border-zinc-800/80 bg-zinc-950/50 p-3">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-zinc-100">{task.title}</p>
+                    {isEditing ? (
+                      <Input
+                        value={taskEditTitle}
+                        onChange={(event) => setTaskEditTitle(event.target.value)}
+                        placeholder="Task title"
+                        autoFocus
+                      />
+                    ) : (
+                      <p className="text-sm font-medium text-zinc-100">{task.title}</p>
+                    )}
                     <p className="mt-1 text-[11px] text-zinc-500">{new Date(task.updatedAt).toLocaleString()}</p>
                   </div>
                   <div className="flex flex-wrap items-center gap-1">
-                    <select
-                      value={taskModelById[task.id] ?? defaultTaskModelId}
-                      onChange={(event) =>
-                        setTaskModelById((current) => ({
-                          ...current,
-                          [task.id]: event.target.value,
-                        }))
-                      }
-                      className="min-w-[14rem] max-w-full rounded-lg border border-zinc-800 bg-zinc-900/80 px-2 py-1.5 text-[11px] text-zinc-200 outline-none transition focus:border-cyan-500/50"
-                      title="Select model for this task"
-                    >
-                      {modelOptions.map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                        <Button type="button" size="sm" variant="secondary" className="h-8 px-2 text-xs" onClick={() => openLaunchDialog(task)}>
+                    {isEditing ? (
+                      <>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          className="h-8 px-2 text-xs"
+                          disabled={isSavedTaskBusy || busy || !taskEditTitle.trim() || !taskEditPrompt.trim()}
+                          onClick={() => void handleUpdateTask(task)}
+                        >
+                          {isSavedTaskBusy ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                          ) : (
+                            <Check className="h-3.5 w-3.5" aria-hidden />
+                          )}
+                          Save
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 px-2 text-xs text-zinc-500 hover:text-zinc-100"
+                          disabled={isSavedTaskBusy}
+                          onClick={cancelEditingTask}
+                        >
+                          <X className="h-3.5 w-3.5" aria-hidden />
+                          Cancel
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <Select
+                          value={taskModelById[task.id] ?? defaultTaskModelId}
+                          onValueChange={(value) =>
+                            setTaskModelById((current) => ({
+                              ...current,
+                              [task.id]: value,
+                            }))
+                          }
+                          options={modelOptions.map((option) => ({ value: option.id, label: option.label }))}
+                          ariaLabel="Select model for this task"
+                          className="min-w-[14rem] max-w-full"
+                          triggerClassName="h-8 text-xs"
+                        />
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          className="h-8 px-2 text-xs"
+                          disabled={busy || isSavedTaskBusy}
+                          onClick={() => openLaunchDialog(task)}
+                        >
                           Start run
                         </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      className="h-8 w-8 p-0 text-zinc-500 hover:text-rose-300"
-                      title="Delete task"
-                      onClick={() => void onDeleteTask(task.id)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 w-8 p-0 text-zinc-500 hover:text-zinc-100"
+                          title="Edit task"
+                          aria-label="Edit task"
+                          disabled={busy || isSavedTaskBusy}
+                          onClick={() => startEditingTask(task)}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 w-8 p-0 text-zinc-500 hover:text-rose-300"
+                          title="Delete task"
+                          aria-label="Delete task"
+                          disabled={isSavedTaskBusy}
+                          onClick={() => void handleDeleteTask(task.id)}
+                        >
+                          {isSavedTaskBusy ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                          ) : (
+                            <Trash2 className="h-3.5 w-3.5" />
+                          )}
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </div>
-                <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-zinc-300">{task.prompt}</p>
+                {isEditing ? (
+                  <Textarea
+                    value={taskEditPrompt}
+                    onChange={(event) => setTaskEditPrompt(event.target.value)}
+                    placeholder="Describe the task prompt that should be used later when starting an agent run."
+                    className="mt-3 min-h-32"
+                  />
+                ) : (
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-zinc-300">{task.prompt}</p>
+                )}
               </div>
-            ))
+              );
+            })
           ) : (
             <div className="flex min-h-[220px] items-center justify-center rounded-xl border border-dashed border-zinc-800/80 bg-zinc-950/40 px-4 text-center text-sm text-zinc-500">
               No saved tasks yet. Add a task/story on the left, then start a run from it later.
@@ -217,22 +359,17 @@ export const ProjectTasksTab = ({
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <label className="flex min-w-[16rem] flex-1 items-center gap-2 text-xs text-zinc-400">
                 <span className="shrink-0">Model</span>
-                <select
+                <Select
                   value={taskModelById[launchTask.id] ?? defaultTaskModelId}
-                  onChange={(event) =>
+                  onValueChange={(value) =>
                     setTaskModelById((current) => ({
                       ...current,
-                      [launchTask.id]: event.target.value,
+                      [launchTask.id]: value,
                     }))
                   }
-                  className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-900/80 px-2 py-2 text-sm text-zinc-200 outline-none transition focus:border-cyan-500/50"
-                >
-                  {modelOptions.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                  options={modelOptions.map((option) => ({ value: option.id, label: option.label }))}
+                  className="min-w-0 flex-1"
+                />
               </label>
               <Button type="button" variant="secondary" onClick={() => void handleGeneratePrompt()} disabled={launchGenerateBusy || launchStartBusy}>
                 {launchGenerateBusy ? "Generating..." : "Generate prompt"}
@@ -246,7 +383,7 @@ export const ProjectTasksTab = ({
               autoFocus
             />
             <div className="mt-4 flex items-center justify-end gap-2">
-              <Button type="button" variant="ghost" onClick={closeLaunchDialog} disabled={launchGenerateBusy || launchStartBusy}>
+              <Button type="button" variant="outline" onClick={closeLaunchDialog} disabled={launchGenerateBusy || launchStartBusy}>
                 Cancel
               </Button>
               <Button

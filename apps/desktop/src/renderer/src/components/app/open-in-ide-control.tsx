@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { IDE_KIND_LABELS, type SupportedIdeKind } from "@easycode/shared";
+import { IDE_KIND_LABELS, type SupportedIdeKind } from "@buildwarden/shared";
 import { ChevronDown, Monitor } from "lucide-react";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
@@ -27,8 +27,8 @@ export const OpenInIdeControl = ({ configuredIdeKinds, onOpen, compact }: OpenIn
   };
 
   const btnClass = compact
-    ? "h-8 shrink-0 border-cyan-500/20 bg-cyan-500/5 px-2 text-xs text-cyan-100 hover:bg-cyan-500/10"
-    : "shrink-0 border-cyan-500/20 bg-cyan-500/5 text-cyan-100 hover:bg-cyan-500/10";
+    ? "h-8 shrink-0 border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-2 text-xs text-[var(--ec-accent)] hover:bg-[var(--ec-hover)]"
+    : "shrink-0 border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)] hover:bg-[var(--ec-hover)]";
 
   if (configuredIdeKinds.length === 1) {
     const kind = configuredIdeKinds[0]!;
@@ -73,7 +73,7 @@ export const OpenInIdeControl = ({ configuredIdeKinds, onOpen, compact }: OpenIn
         onClose={() => setMenuOpen(false)}
         align="start"
         widthPx={192}
-        className="overflow-hidden rounded-xl border border-zinc-700/90 bg-zinc-950 py-1 shadow-xl shadow-black/40 ring-1 ring-cyan-500/10"
+        className="glass-popover overflow-hidden py-1"
       >
         <div role="menu">
           {configuredIdeKinds.map((kind) => (
@@ -81,7 +81,7 @@ export const OpenInIdeControl = ({ configuredIdeKinds, onOpen, compact }: OpenIn
               key={kind}
               type="button"
               role="menuitem"
-              className="flex w-full min-w-0 items-center gap-2.5 px-3 py-2 text-left text-sm text-zinc-200 transition hover:bg-zinc-800/80"
+              className="flex w-full min-w-0 items-center gap-2.5 px-3 py-2 text-left text-sm text-[var(--ec-text)] transition hover:bg-[var(--ec-hover)]"
               onClick={() => pick(kind)}
             >
               <IdeBrandIcon kind={kind} className="h-5 w-5 shrink-0" />

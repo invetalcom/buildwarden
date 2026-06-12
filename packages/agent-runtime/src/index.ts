@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { HarnessAdapter, HarnessToolContext, RunEvent, RunExecutionRequest, RunRecord, RunStatus, RunTokenUsage } from "@easycode/shared";
+import type { HarnessAdapter, HarnessToolContext, RunEvent, RunExecutionRequest, RunRecord, RunStatus, RunTokenUsage } from "@buildwarden/shared";
 
 export interface RuntimeRunHandle {
   run: RunRecord;

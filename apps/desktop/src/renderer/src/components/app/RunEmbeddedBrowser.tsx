@@ -160,7 +160,7 @@ export const RunEmbeddedBrowser = ({ className, session, onSessionChange }: Prop
               disabled={!normalizedCurrentUrl || normalizedCurrentUrl.startsWith("about:")}
               onClick={() => {
                 if (normalizedCurrentUrl && !normalizedCurrentUrl.startsWith("about:")) {
-                  void window.easycode.openExternalUrl(normalizedCurrentUrl);
+                  void window.buildwarden.openExternalUrl(normalizedCurrentUrl);
                 }
               }}
             >
@@ -195,7 +195,7 @@ export const RunEmbeddedBrowser = ({ className, session, onSessionChange }: Prop
           </Button>
         </form>
         <p className="mt-1 text-[10px] text-zinc-500">
-          Loads pages inside Easycode. Bare domains default to `https://`; `localhost` defaults to `http://`.
+          Loads pages inside BuildWarden. Bare domains default to `https://`; `localhost` defaults to `http://`.
         </p>
         {error ? <p className="mt-1 text-[10px] text-rose-300">{error}</p> : null}
       </div>

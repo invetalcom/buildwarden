@@ -1,21 +1,24 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   IDE_KIND_LABELS,
   KEYBOARD_SHORTCUT_IDS,
   SUPPORTED_IDE_KINDS,
+  type AppLogDirectorySizeInfo,
   type KeyboardShortcutId,
   type SupportedIdeKind,
   type UiTheme,
-} from "@easycode/shared";
-import { Database, Keyboard, Loader2, Settings2, Terminal } from "lucide-react";
+} from "@buildwarden/shared";
+import { Keyboard, Loader2 } from "lucide-react";
 import { IdeBrandIcon } from "./ide-brand-icons";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
+import { Switch } from "../ui/switch";
 
 const SHORTCUT_LABELS: Record<KeyboardShortcutId, string> = {
   goHome: "Go to starting page",
   toggleSidebar: "Toggle sidebar",
+  openCommandPalette: "Open command palette",
   submitComposer: "Submit run/chat from composer",
   newAgentRun: "New agent run (same project; only while viewing a run)",
   switchToRecentRun1: "Recent run #1 (newest by activity across all projects)",
@@ -31,10 +34,74 @@ const SHORTCUT_LABELS: Record<KeyboardShortcutId, string> = {
 };
 
 const APPEARANCE_OPTIONS: Array<{ value: UiTheme; label: string; hint: string }> = [
-  { value: "dark", label: "Deep dark", hint: "Near-black canvas and glass panels." },
-  { value: "dim", label: "Balanced gray", hint: "Mid gray; softer than deep dark." },
-  { value: "light", label: "Bright", hint: "Light grey shell with inverted panels." },
+  { value: "dark", label: "Dark", hint: "Frosted glass over a deep dark backdrop." },
+  { value: "light", label: "Light", hint: "Frosted glass over a bright airy backdrop." },
 ];
+
+type SettingsSectionProps = {
+  title: string;
+  children: ReactNode;
+};
+
+type SettingsRowProps = {
+  title: string;
+  description: ReactNode;
+  children: ReactNode;
+  align?: "center" | "start";
+};
+
+const SettingsSection = ({ title, children }: SettingsSectionProps) => (
+  <section className="space-y-2">
+    <h3 className="px-1 text-sm font-semibold text-[var(--ec-text)]">{title}</h3>
+    <Card className="overflow-hidden p-0 shadow-none">{children}</Card>
+  </section>
+);
+
+const SettingsRow = ({ title, description, children, align = "center" }: SettingsRowProps) => (
+  <div
+    className={`grid gap-3 border-b border-[var(--ec-border)] px-4 py-3 last:border-b-0 md:grid-cols-[minmax(14rem,0.85fr)_minmax(18rem,1.35fr)] ${
+      align === "start" ? "md:items-start" : "md:items-center"
+    }`}
+  >
+    <div className="min-w-0">
+      <p className="text-sm font-medium text-[var(--ec-text)]">{title}</p>
+      <div className="mt-1 text-xs leading-5 text-[var(--ec-muted)]">{description}</div>
+    </div>
+    <div className={`min-w-0 w-full md:justify-self-end ${align === "start" ? "md:self-start" : "md:self-center"}`}>{children}</div>
+  </div>
+);
+
+const rowControlClass = "w-full md:max-w-[54rem]";
+
+const idePathPlaceholder = (kind: SupportedIdeKind): string => {
+  if (kind === "vscode") {
+    return "Code.exe or Visual Studio Code.app";
+  }
+  if (kind === "cursor") {
+    return "Cursor.exe or Cursor.app";
+  }
+  return "idea64.exe or IntelliJ IDEA.app";
+};
+
+const formatByteSize = (bytes: number): string => {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  const maximumFractionDigits = unitIndex === 0 || value >= 100 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toLocaleString(undefined, { maximumFractionDigits })} ${units[unitIndex]}`;
+};
+
+const formatLogDirectorySize = ({ totalBytes, fileCount, unreadableEntryCount }: AppLogDirectorySizeInfo): string => {
+  const fileLabel = fileCount === 1 ? "file" : "files";
+  const partialLabel = unreadableEntryCount > 0 ? " - partial" : "";
+  return `${formatByteSize(totalBytes)} - ${fileCount.toLocaleString()} ${fileLabel}${partialLabel}`;
+};
 
 const eventToKeyString = (event: KeyboardEvent): string => {
   const parts: string[] = [];
@@ -73,18 +140,69 @@ const ShortcutRow = ({ label, value, onChange }: { label: string; value: string;
   }, [recording, handleKeyDown]);
 
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2">
+    <div className="flex items-center justify-between gap-3 border-b border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-2 last:border-b-0">
       <div className="min-w-0 flex-1">
-        <p className="truncate text-[13px] font-medium text-zinc-200">{label}</p>
+        <p className="truncate text-[13px] font-medium text-[var(--ec-text)]">{label}</p>
       </div>
       <button
         type="button"
-        className="flex min-w-[128px] shrink-0 items-center gap-2 rounded-md border border-zinc-700 bg-zinc-900/80 px-2.5 py-1.5 text-left text-xs text-zinc-300 transition hover:border-zinc-600 hover:bg-zinc-800"
+        className="flex min-w-[128px] shrink-0 items-center gap-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-control)] px-2.5 py-1.5 text-left text-xs text-[var(--ec-text)] transition hover:bg-[var(--ec-control-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ec-ring)]"
         onClick={() => setRecording(true)}
       >
-        <Keyboard className="h-3 w-3 shrink-0 text-zinc-500" />
-        <span className="truncate">{recording ? "Press keys…" : value || "—"}</span>
+        <Keyboard className="h-3 w-3 shrink-0 text-[var(--ec-muted)]" />
+        <span className="truncate">{recording ? "Press keys..." : value || "-"}</span>
       </button>
+    </div>
+  );
+};
+
+const EditorPathCard = ({
+  kind,
+  value,
+  saving,
+  onValueChange,
+  onPickExecutable,
+}: {
+  kind: SupportedIdeKind;
+  value: string;
+  saving: boolean;
+  onValueChange: (value: string) => void;
+  onPickExecutable: () => void | Promise<void>;
+}) => {
+  const configured = value.trim().length > 0;
+
+  return (
+    <div className="rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-3 transition hover:bg-[var(--ec-hover)]">
+      <div className="flex items-start gap-3">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] shadow-sm">
+          <IdeBrandIcon kind={kind} className="h-7 w-7" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center justify-between gap-2">
+            <p className="truncate text-sm font-semibold text-[var(--ec-text)]">{IDE_KIND_LABELS[kind]}</p>
+            <span
+              className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+                configured
+                  ? "border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] text-[var(--ec-success)]"
+                  : "border-[var(--ec-border)] bg-[var(--ec-control)] text-[var(--ec-muted)]"
+              }`}
+            >
+              {configured ? "Configured" : "Not set"}
+            </span>
+          </div>
+          <p className="mt-0.5 text-[11px] text-[var(--ec-muted)]">Executable or app bundle</p>
+        </div>
+      </div>
+      <Input
+        className="mt-3 h-9 font-mono text-xs"
+        value={value}
+        onChange={(event) => onValueChange(event.target.value)}
+        placeholder={idePathPlaceholder(kind)}
+        spellCheck={false}
+      />
+      <Button type="button" variant="secondary" size="sm" className="mt-2 h-8 w-full" disabled={saving} onClick={() => void onPickExecutable()}>
+        Browse...
+      </Button>
     </div>
   );
 };
@@ -94,6 +212,7 @@ export type UserSettingsTabProps = {
   uiTheme: UiTheme;
   enableDevMode: boolean;
   appLogDirPath: string;
+  appLogDirectorySize: AppLogDirectorySizeInfo;
   ideDraft: Partial<Record<SupportedIdeKind, string>>;
   idePathsDirty: boolean;
   idePathsSaving: boolean;
@@ -114,6 +233,7 @@ export const UserSettingsTab = ({
   uiTheme,
   enableDevMode,
   appLogDirPath,
+  appLogDirectorySize,
   ideDraft,
   idePathsDirty,
   idePathsSaving,
@@ -128,187 +248,161 @@ export const UserSettingsTab = ({
   onResetIdeDraft,
   onPickIdeExecutable,
 }: UserSettingsTabProps) => (
-  <div className="space-y-4">
-    <Card className="overflow-auto p-5">
-      <div className="flex items-start gap-3">
-        <div className="rounded-full border border-zinc-800 bg-zinc-900/70 p-2 text-cyan-300">
-          <Settings2 className="h-4 w-4" />
+  <div className="space-y-5">
+    <SettingsSection title="Appearance">
+      <SettingsRow
+        title="Interface theme"
+        description="Choose the dark or light liquid-glass shell. Same options appear at the top of the View menu."
+        align="start"
+      >
+        <div className={`${rowControlClass} grid gap-2 sm:grid-cols-2`} role="radiogroup" aria-label="Interface appearance">
+          {APPEARANCE_OPTIONS.map((opt) => {
+            const selected = uiTheme === opt.value;
+            return (
+              <label
+                key={opt.value}
+                className={`cursor-pointer rounded-md border px-3 py-2.5 transition ${
+                  selected
+                    ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] shadow-[var(--ec-action-shadow)]"
+                    : "border-[var(--ec-border)] bg-[var(--ec-panel-soft)] hover:bg-[var(--ec-hover)]"
+                }`}
+              >
+                <input className="sr-only" type="radio" name="buildwarden-ui-theme" checked={selected} onChange={() => onUiThemeChange(opt.value)} />
+                <p className="text-sm font-medium text-[var(--ec-text)]">{opt.label}</p>
+                <p className="mt-1 text-xs leading-snug text-[var(--ec-muted)]">{opt.hint}</p>
+              </label>
+            );
+          })}
         </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Appearance</p>
-          <p className="mt-2 text-sm font-medium text-zinc-100">Interface theme</p>
-          <p className="mt-1 text-sm text-zinc-400">Choose deep dark, balanced gray, or the bright light-grey shell.</p>
-          <div className="mt-4 grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Interface appearance">
-            {APPEARANCE_OPTIONS.map((opt) => {
-              const selected = uiTheme === opt.value;
+      </SettingsRow>
+    </SettingsSection>
+
+    <SettingsSection title="External editors">
+      <SettingsRow
+        title="IDE executable paths"
+        description={
+          <>
+            Point each IDE at its executable. On Windows use{" "}
+            <code className="rounded bg-[var(--ec-control)] px-1 py-0.5 font-mono text-[var(--ec-text)]">.exe</code>; on macOS choose the{" "}
+            <code className="rounded bg-[var(--ec-control)] px-1 py-0.5 font-mono text-[var(--ec-text)]">.app</code> bundle. Only configured editors
+            appear when opening a run workspace from the run page.
+          </>
+        }
+        align="start"
+      >
+        <div className={`${rowControlClass} space-y-3`}>
+          <div className="grid gap-3">
+            {SUPPORTED_IDE_KINDS.map((kind) => {
+              const value = ideDraft[kind] ?? "";
               return (
-                <label
-                  key={opt.value}
-                  className={`cursor-pointer rounded-xl border px-3 py-2.5 transition ${
-                    selected
-                      ? "border-cyan-500/45 bg-cyan-500/10 shadow-[inset_0_1px_0_rgba(34,211,238,0.12)]"
-                      : "border-zinc-800 bg-zinc-950/60 hover:border-zinc-700"
-                  }`}
-                >
-                  <input
-                    className="sr-only"
-                    type="radio"
-                    name="easycode-ui-theme"
-                    checked={selected}
-                    onChange={() => onUiThemeChange(opt.value)}
-                  />
-                  <p className="text-sm font-medium text-zinc-100">{opt.label}</p>
-                  <p className="mt-1 text-xs leading-snug text-zinc-500">{opt.hint}</p>
-                </label>
+                <EditorPathCard
+                  key={kind}
+                  kind={kind}
+                  value={value}
+                  saving={idePathsSaving}
+                  onValueChange={(nextValue) => {
+                    const next = { ...ideDraft };
+                    if (!nextValue.trim()) {
+                      delete next[kind];
+                    } else {
+                      next[kind] = nextValue;
+                    }
+                    onIdeDraftChange(next);
+                  }}
+                  onPickExecutable={() => onPickIdeExecutable(kind)}
+                />
               );
             })}
           </div>
-          <p className="mt-3 text-xs text-zinc-500">Same options appear at the top of the View menu.</p>
-        </div>
-      </div>
-    </Card>
-
-    <Card className="overflow-hidden p-5">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">External editors</p>
-          <p className="mt-1 text-sm text-zinc-400">
-            Point each IDE at its executable. On Windows use <code className="text-zinc-300">.exe</code>; on macOS you can choose the{" "}
-            <code className="text-zinc-300">.app</code> bundle. Only configured editors appear when opening a run workspace from the run page.
-          </p>
-        </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
-          <Button type="button" variant="secondary" size="sm" disabled={!idePathsDirty || idePathsSaving} onClick={onResetIdeDraft}>
-            Reset
-          </Button>
-          <Button type="button" size="sm" disabled={!idePathsDirty || idePathsSaving} onClick={() => void onSaveIdePaths()}>
-            {idePathsSaving ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Saving…
-              </>
-            ) : (
-              "Save IDE paths"
-            )}
-          </Button>
-        </div>
-      </div>
-
-      <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {SUPPORTED_IDE_KINDS.map((kind) => (
-          <div
-            key={kind}
-            className="group relative overflow-hidden rounded-2xl border border-zinc-800/90 bg-gradient-to-b from-zinc-900/50 to-zinc-950/80 p-4 shadow-inner ring-1 ring-zinc-800/60 transition hover:border-cyan-500/25 hover:ring-cyan-500/10"
-          >
-            <div className="pointer-events-none absolute -right-6 -top-6 h-24 w-24 rounded-full bg-cyan-500/5 blur-2xl transition group-hover:bg-cyan-400/10" />
-            <div className="relative flex items-start gap-3">
-              <div className="rounded-xl border border-zinc-700/80 bg-zinc-950/80 p-2 shadow-sm">
-                <IdeBrandIcon kind={kind} className="h-9 w-9" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-zinc-100">{IDE_KIND_LABELS[kind]}</p>
-                <p className="mt-0.5 text-[11px] text-zinc-500">Executable or app bundle</p>
-              </div>
-            </div>
-            <Input
-              className="relative mt-3 font-mono text-xs"
-              value={ideDraft[kind] ?? ""}
-              onChange={(event) => {
-                const value = event.target.value;
-                const next = { ...ideDraft };
-                if (!value.trim()) {
-                  delete next[kind];
-                } else {
-                  next[kind] = value;
-                }
-                onIdeDraftChange(next);
-              }}
-              placeholder={
-                kind === "vscode" ? "Code.exe or Visual Studio Code.app" : kind === "cursor" ? "Cursor.exe or Cursor.app" : "idea64.exe or IntelliJ IDEA.app"
-              }
-              spellCheck={false}
-            />
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              className="relative mt-2 w-full"
-              disabled={idePathsSaving}
-              onClick={() => void onPickIdeExecutable(kind)}
-            >
-              Browse…
+          <div className="flex flex-wrap items-center justify-start gap-2 md:justify-end">
+            <Button type="button" variant="secondary" size="sm" disabled={!idePathsDirty || idePathsSaving} onClick={onResetIdeDraft}>
+              Reset
+            </Button>
+            <Button type="button" size="sm" disabled={!idePathsDirty || idePathsSaving} onClick={() => void onSaveIdePaths()}>
+              {idePathsSaving ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                "Save IDE paths"
+              )}
             </Button>
           </div>
-        ))}
-      </div>
-    </Card>
-
-    <Card className="overflow-auto p-5">
-      <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Keyboard shortcuts</p>
-      <p className="mt-2 text-sm text-zinc-400">
-        Customize key combinations for common actions. Click a field and press the desired keys. Shortcuts that apply only on certain screens are noted in the label.
-      </p>
-      <div className="mt-4 space-y-3">
-        {KEYBOARD_SHORTCUT_IDS.map((id) => (
-          <ShortcutRow key={id} label={SHORTCUT_LABELS[id]} value={keyboardShortcuts[id]} onChange={(value) => onKeyboardShortcutChange(id, value)} />
-        ))}
-      </div>
-    </Card>
-
-    <Card className="overflow-auto p-5">
-      <div className="flex items-start gap-3">
-        <div className="rounded-full border border-zinc-800 bg-zinc-900/70 p-2 text-amber-300">
-          <Terminal className="h-4 w-4" />
         </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Diagnostics</p>
-          <p className="mt-2 text-sm font-medium text-zinc-100">Enable dev mode</p>
-          <p className="mt-1 text-sm text-zinc-400">
-            Disabled by default. When enabled, Easycode writes provider API requests and responses to local log files for debugging.
-          </p>
-          <label className="mt-4 flex items-start gap-3 rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-3">
-            <input
-              className="mt-1 h-4 w-4 accent-cyan-400"
-              type="checkbox"
-              checked={enableDevMode}
-              onChange={(event) => onEnableDevModeChange(event.target.checked)}
-            />
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-zinc-100">Write request/response logs</p>
-              <p className="mt-1 text-xs text-zinc-500">
-                Logs are stored locally and can become verbose. Turn this on only when you need debugging details.
-              </p>
+      </SettingsRow>
+    </SettingsSection>
+
+    <SettingsSection title="Keyboard shortcuts">
+      <SettingsRow
+        title="Shortcut bindings"
+        description="Customize key combinations for common actions. Click a field and press the desired keys. Shortcuts that apply only on certain screens are noted in the label."
+        align="start"
+      >
+        <div className={`${rowControlClass} overflow-hidden rounded-md border border-[var(--ec-border)]`}>
+          {KEYBOARD_SHORTCUT_IDS.map((id) => (
+            <ShortcutRow key={id} label={SHORTCUT_LABELS[id]} value={keyboardShortcuts[id]} onChange={(value) => onKeyboardShortcutChange(id, value)} />
+          ))}
+        </div>
+      </SettingsRow>
+    </SettingsSection>
+
+    <SettingsSection title="Diagnostics">
+      <SettingsRow
+        title="Provider request logging"
+        description="Disabled by default. When enabled, BuildWarden writes provider API requests and responses to local log files for debugging."
+        align="start"
+      >
+        <div className={rowControlClass}>
+          <div className="rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-[var(--ec-text)]">Write request/response logs</p>
+                <p className="mt-1 text-xs text-[var(--ec-muted)]">
+                  Logs are stored locally and can become verbose. Turn this on only when you need debugging details.
+                </p>
+              </div>
+              <Switch checked={enableDevMode} onCheckedChange={onEnableDevModeChange} aria-label="Write request and response logs" />
             </div>
-          </label>
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <Button type="button" variant="secondary" size="sm" disabled={!appLogDirPath} onClick={() => void onOpenAppLogDirectory()}>
-              Open log folder
-            </Button>
-            {appLogDirPath ? (
-              <code className="max-w-full truncate rounded bg-zinc-900 px-2 py-1 text-xs text-zinc-400">{appLogDirPath}</code>
-            ) : (
-              <span className="text-xs text-zinc-600">Log folder unavailable</span>
-            )}
+            <div className="mt-3 flex min-w-0 flex-col gap-2 border-t border-[var(--ec-border)] pt-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-xs font-medium text-[var(--ec-text)]">Log folder</p>
+                  <span className="rounded bg-[var(--ec-control)] px-2 py-0.5 text-[11px] font-medium text-[var(--ec-muted)]">
+                    {formatLogDirectorySize(appLogDirectorySize)}
+                  </span>
+                </div>
+                {appLogDirPath ? (
+                  <code className="mt-1 block max-w-full truncate rounded bg-[var(--ec-control)] px-2 py-1 text-xs text-[var(--ec-muted)]">{appLogDirPath}</code>
+                ) : (
+                  <span className="mt-1 block text-xs text-[var(--ec-muted)]">Log folder unavailable</span>
+                )}
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="shrink-0 self-start sm:self-auto"
+                disabled={!appLogDirPath}
+                onClick={() => void onOpenAppLogDirectory()}
+              >
+                Open log folder
+              </Button>
+            </div>
           </div>
         </div>
-      </div>
-    </Card>
+      </SettingsRow>
+    </SettingsSection>
 
-    <Card className="overflow-auto p-5">
-      <div className="flex items-start gap-3">
-        <div className="rounded-full border border-zinc-800 bg-zinc-900/70 p-2 text-rose-300">
-          <Database className="h-4 w-4" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Data</p>
-          <p className="mt-2 text-sm font-medium text-zinc-100">Clear database</p>
-          <p className="mt-1 text-sm text-zinc-400">
-            Permanently delete all projects, runs, bookmarks, providers, models, and settings. The app will restart with a fresh database. This cannot be undone.
-          </p>
+    <SettingsSection title="Data">
+      <SettingsRow
+        title="Clear database"
+        description="Permanently delete all projects, runs, bookmarks, providers, models, and settings. The app will restart with a fresh database. This cannot be undone."
+      >
+        <div className={`${rowControlClass} flex justify-start md:justify-end`}>
           <Button
             variant="danger"
             size="sm"
-            className="mt-4"
             disabled={busy}
             onClick={() => {
               const confirmed = window.confirm(
@@ -322,7 +416,7 @@ export const UserSettingsTab = ({
             Clear database and restart
           </Button>
         </div>
-      </div>
-    </Card>
+      </SettingsRow>
+    </SettingsSection>
   </div>
 );

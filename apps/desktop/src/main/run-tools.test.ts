@@ -12,7 +12,7 @@ const tempDirs: string[] = [];
 const execFileAsync = promisify(execFile);
 
 const makeTempDir = async () => {
-  const path = await mkdtemp(join(tmpdir(), "easycode-run-tools-"));
+  const path = await mkdtemp(join(tmpdir(), "buildwarden-run-tools-"));
   tempDirs.push(path);
   return path;
 };
@@ -611,7 +611,7 @@ describe("run tool context", () => {
     expect(result.ok).toBe(false);
     expect(result.content).toContain("Shell command contains disallowed operators.");
     expect(result.content).toContain("do not use cd");
-    expect(result.content).toContain("Easycode already runs run_shell from the worktree root");
+    expect(result.content).toContain("BuildWarden already runs run_shell from the worktree root");
   });
 
   it("returns a friendly missing-directory error for list_files", async () => {

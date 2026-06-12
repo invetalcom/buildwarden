@@ -1,4 +1,4 @@
-import { CHAT_ATTACHMENT_LIMITS, type ChatAttachmentPayload } from "@easycode/shared";
+import { CHAT_ATTACHMENT_LIMITS, type ChatAttachmentPayload } from "@buildwarden/shared";
 
 const readSingleFileAsBase64 = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {

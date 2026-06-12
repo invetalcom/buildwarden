@@ -1,4 +1,4 @@
-import type { RunDiffReviewResult } from "@easycode/shared";
+import type { RunDiffReviewResult } from "@buildwarden/shared";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "../../lib/cn";

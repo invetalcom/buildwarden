@@ -3,18 +3,21 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "../../lib/cn";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center rounded-lg text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 disabled:pointer-events-none disabled:opacity-50",
+  "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ec-ring)] disabled:pointer-events-none disabled:opacity-50",
   {
     variants: {
       variant: {
-        default: "bg-cyan-500 text-zinc-950 hover:bg-cyan-400",
-        ghost: "bg-transparent text-zinc-200 hover:bg-zinc-800",
-        secondary: "bg-zinc-800 text-zinc-100 hover:bg-zinc-700",
-        danger: "bg-rose-500 text-white hover:bg-rose-400",
+        default: "bg-[var(--ec-accent)] text-[var(--ec-accent-foreground)] shadow-[var(--ec-action-shadow)] hover:bg-[var(--ec-accent-strong)]",
+        ghost: "bg-transparent text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
+        secondary: "border border-[var(--ec-border)] bg-[var(--ec-control)] text-[var(--ec-text)] hover:bg-[var(--ec-control-hover)]",
+        outline: "border border-[var(--ec-border)] bg-transparent text-[var(--ec-text)] hover:bg-[var(--ec-hover)]",
+        danger: "bg-[var(--ec-danger)] text-white hover:bg-[var(--ec-danger-strong)]",
       },
       size: {
         default: "h-10 px-4 py-2",
         sm: "h-8 px-3",
+        xs: "h-7 px-2 text-xs",
+        icon: "h-8 w-8 p-0",
       },
     },
     defaultVariants: {

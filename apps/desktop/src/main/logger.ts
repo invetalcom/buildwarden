@@ -99,7 +99,7 @@ const writeLogLine = (level: LogLevel, message: string, metadata?: LogMetadata) 
     ...(metadata ? { metadata: normalizeMetadata(metadata) } : {}),
   });
   const consoleTarget = level === "error" ? console.error : level === "warn" ? console.warn : console.info;
-  consoleTarget(`[easycode:${level}] ${message}`, metadata ?? "");
+  consoleTarget(`[buildwarden:${level}] ${message}`, metadata ?? "");
   if (!currentLogFilePath) {
     return;
   }
@@ -107,7 +107,7 @@ const writeLogLine = (level: LogLevel, message: string, metadata?: LogMetadata) 
     rotateLogFileIfNeeded();
     appendFileSync(currentLogFilePath, `${line}\n`, "utf8");
   } catch (error) {
-    console.error("[easycode:error] Failed to write log line", normalizeError(error));
+    console.error("[buildwarden:error] Failed to write log line", normalizeError(error));
   }
 };
 

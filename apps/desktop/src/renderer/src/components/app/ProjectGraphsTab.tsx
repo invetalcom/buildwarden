@@ -1,4 +1,4 @@
-import type { ProjectInsightKind, ProjectSnapshot } from "@easycode/shared";
+import type { ProjectInsightKind, ProjectSnapshot } from "@buildwarden/shared";
 import { GitGraph, Loader2, Network } from "lucide-react";
 import { useEffect, useState } from "react";
 import { reportRendererError, reportRendererLog, reportRendererWarning } from "../../lib/report-renderer-error";

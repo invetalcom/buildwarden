@@ -1,4 +1,4 @@
-import type { ModelRecord } from "@easycode/shared";
+import type { ModelRecord } from "@buildwarden/shared";
 
 /** Resolve display name for a bookmarked run/chat model configuration id. */
 export function bookmarkModelDisplay(models: ModelRecord[], modelId: string | null | undefined): string {

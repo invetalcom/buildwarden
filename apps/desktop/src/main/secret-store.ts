@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { safeStorage } from "electron";
-import type { SecretStore } from "@easycode/shared";
+import type { SecretStore } from "@buildwarden/shared";
+import { logWarn } from "./logger";
 
 type EncryptedMap = Record<string, string>;
 
@@ -26,7 +27,17 @@ export class ElectronSecretStore implements SecretStore {
     }
 
     const buffer = Buffer.from(encrypted, "base64");
-    return safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buffer) : buffer.toString("utf8");
+    try {
+      return safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buffer) : buffer.toString("utf8");
+    } catch (error) {
+      logWarn("Ignoring unreadable secret-store entry.", {
+        key,
+        error,
+      });
+      delete map[key];
+      this.writeMap(map);
+      return null;
+    }
   }
 
   async deleteSecret(key: string): Promise<void> {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createHarnessAdapter, getHarnessTypeForProvider } from "./harness-adapters";
-import type { ProviderType } from "@easycode/shared";
+import type { ProviderType } from "@buildwarden/shared";
 
 const providerHarnessTypes: Array<[ProviderType, ReturnType<typeof getHarnessTypeForProvider>]> = [
   ["ai-sdk", "ai-sdk"],

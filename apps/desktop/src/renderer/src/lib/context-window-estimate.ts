@@ -1,4 +1,4 @@
-import { CHAT_ATTACHMENT_LIMITS } from "@easycode/shared";
+import { CHAT_ATTACHMENT_LIMITS } from "@buildwarden/shared";
 import { countTokens } from "gpt-tokenizer";
 
 const IMAGE_ATTACHMENT_TOKENS = 1_200;

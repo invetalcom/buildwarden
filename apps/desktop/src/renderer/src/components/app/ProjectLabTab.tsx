@@ -1,10 +1,11 @@
-import type { ProjectLabMode, ProjectLabSettings, ProjectSnapshot, ProviderType, UnifiedProviderFamily } from "@easycode/shared";
-import { Bot, ChevronDown, ChevronRight, ExternalLink, Lightbulb, Loader2, Play, Settings2, Sparkles, Trash2, Users } from "lucide-react";
-import type { MouseEvent, ReactNode } from "react";
+import type { ProjectLabEventRecord, ProjectLabMode, ProjectLabSettings, ProjectSnapshot, ProviderType, UnifiedProviderFamily } from "@buildwarden/shared";
+import { Bot, ChevronDown, ChevronRight, ExternalLink, FileText, Loader2, Rocket, ShieldCheck, Sparkles, Trash2 } from "lucide-react";
+import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
+import { Select } from "../ui/select";
 
 type ModelOption = {
   id: string;
@@ -23,183 +24,52 @@ type ProjectLabTabProps = {
   selectedBaseBranch: string;
   onBaseBranchChange: (value: string) => void;
   onSettingsChange: (settings: ProjectLabSettings) => void | Promise<void>;
-  onRunProjectLab: (input: { mode: ProjectLabMode; baseBranch: string }) => void | Promise<void>;
-  onStartImplementation: (threadId: string) => void | Promise<void>;
+  onRunProjectLab: (input: { mode: ProjectLabMode; baseBranch: string; implementationModelId: string; reviewModelId: string }) => void | Promise<void>;
   onDeleteThread: (threadId: string) => void | Promise<void>;
   onOpenImplementationRun: (runId: string) => void;
-};
-
-const COLOR_STYLES: Record<string, string> = {
-  slate: "border-slate-700/80 bg-slate-950/70 text-slate-100",
-  cyan: "border-cyan-700/40 bg-cyan-950/30 text-cyan-50",
-  rose: "border-rose-700/40 bg-rose-950/30 text-rose-50",
-  amber: "border-amber-700/40 bg-amber-950/30 text-amber-50",
-  emerald: "border-emerald-700/40 bg-emerald-950/30 text-emerald-50",
-  violet: "border-violet-700/40 bg-violet-950/30 text-violet-50",
-  zinc: "border-zinc-800 bg-zinc-950/60 text-zinc-200",
 };
 
 const PROJECT_LAB_MODE_OPTIONS: Array<{ mode: ProjectLabMode; label: string; description: string }> = [
   {
     mode: "new-feature",
     label: "New feature",
-    description: "Find a user-facing capability or workflow slice worth building.",
+    description: "Find one useful product capability and implement the smallest reviewable slice.",
   },
   {
     mode: "bugfix",
     label: "Bugfix",
-    description: "Hunt for a likely defect, sharp edge, or reliability issue.",
+    description: "Find one likely defect or sharp edge and implement a focused fix.",
   },
   {
     mode: "refactoring",
     label: "Refactoring",
-    description: "Find a bounded simplification with a clear safety net.",
+    description: "Find one bounded cleanup that improves maintainability without changing behavior.",
   },
   {
     mode: "rfc-only",
     label: "RFC only",
-    description: "Draft a larger proposal without starting implementation.",
+    description: "Find a larger opportunity and write an RFC instead of changing code.",
   },
 ];
 
-const modeLabel = (mode: ProjectSnapshot["labThreads"][number]["thread"]["mode"]) => {
-  if (mode === "new-feature") {
-    return "New feature";
+const modeLabel = (mode: ProjectLabMode) => PROJECT_LAB_MODE_OPTIONS.find((option) => option.mode === mode)?.label ?? "Project Lab";
+
+const eventToneClass = (role: ProjectLabEventRecord["role"]) => {
+  if (role === "implementation") {
+    return "border-[var(--ec-info-ring)] bg-[var(--ec-info-soft)]";
   }
-  if (mode === "bugfix") {
-    return "Bugfix";
+  if (role === "review") {
+    return "border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)]";
   }
-  if (mode === "refactoring") {
-    return "Refactoring";
+  if (role === "rfc") {
+    return "border-violet-500/25 bg-violet-500/5";
   }
-  return "RFC only";
+  return "border-zinc-800 bg-zinc-950/50";
 };
 
-const markdownFileLinkPattern = /\[([^\]\n]{1,220})\]\(([^)\n]{1,260})\)/g;
-const windowsPathPattern = /[A-Za-z]:[\\/][^\s)\]]+/g;
-const relativeRepoPathPattern = /\b(?:apps|packages)\/[^\s)\]]+/g;
-
-type FormattedTextPart =
-  | {
-      type: "text";
-      value: string;
-    }
-  | {
-      type: "file";
-      label: string;
-      path: string;
-    };
-
-const compactPathLabel = (path: string, fallbackLabel?: string) => {
-  const normalized = path.replaceAll("\\", "/");
-  const cleanFallback = fallbackLabel?.replaceAll("\\", "/").replace(/^\[|\]$/g, "").trim();
-  if (cleanFallback && cleanFallback.length <= 80 && !/^[A-Za-z]:\//.test(cleanFallback)) {
-    return cleanFallback;
-  }
-
-  const knownRoot = normalized.match(/(?:^|\/)((?:apps|packages)\/.+)$/);
-  if (knownRoot) {
-    return knownRoot[1];
-  }
-
-  const parts = normalized.split("/").filter(Boolean);
-  return parts.slice(-2).join("/") || normalized;
-};
-
-const isLikelyFilePath = (value: string) => {
-  const normalized = value.replaceAll("\\", "/").trim();
-  return /^[A-Za-z]:\//.test(normalized) || /^(?:apps|packages)\//.test(normalized);
-};
-
-const splitPathParts = (text: string): FormattedTextPart[] => {
-  const parts: FormattedTextPart[] = [];
-  let cursor = 0;
-  const matches = [
-    ...Array.from(text.matchAll(windowsPathPattern), (match) => ({ index: match.index ?? 0, value: match[0] })),
-    ...Array.from(text.matchAll(relativeRepoPathPattern), (match) => ({ index: match.index ?? 0, value: match[0] })),
-  ].sort((left, right) => left.index - right.index);
-
-  for (const match of matches) {
-    const index = match.index;
-    const rawPath = match.value;
-    if (index < cursor) {
-      continue;
-    }
-    const trimmedPath = rawPath.replace(/[.,;:]+$/u, "");
-    const trailing = rawPath.slice(trimmedPath.length);
-
-    if (index > cursor) {
-      parts.push({ type: "text", value: text.slice(cursor, index) });
-    }
-
-    parts.push({ type: "file", label: compactPathLabel(trimmedPath), path: trimmedPath });
-    if (trailing) {
-      parts.push({ type: "text", value: trailing });
-    }
-    cursor = index + rawPath.length;
-  }
-
-  if (cursor < text.length) {
-    parts.push({ type: "text", value: text.slice(cursor) });
-  }
-
-  return parts;
-};
-
-const formatLabTextParts = (text: string): FormattedTextPart[] => {
-  const parts: FormattedTextPart[] = [];
-  let cursor = 0;
-
-  for (const match of text.matchAll(markdownFileLinkPattern)) {
-    const index = match.index ?? 0;
-    if (index > cursor) {
-      parts.push(...splitPathParts(text.slice(cursor, index)));
-    }
-
-    const label = match[1].trim();
-    const path = match[2].trim();
-    if (isLikelyFilePath(path)) {
-      parts.push({ type: "file", label: compactPathLabel(path, label), path });
-    } else {
-      parts.push({ type: "text", value: match[0] });
-    }
-    cursor = index + match[0].length;
-  }
-
-  if (cursor < text.length) {
-    parts.push(...splitPathParts(text.slice(cursor)));
-  }
-
-  return parts;
-};
-
-const renderLabText = (text: string, className = ""): ReactNode => {
-  const parts = formatLabTextParts(text);
-  return (
-    <span className={`whitespace-pre-wrap break-words ${className}`}>
-      {parts.map((part, index) => {
-        if (part.type === "text") {
-          return <span key={`${index}-text`}>{part.value}</span>;
-        }
-
-        return (
-          <button
-            key={`${index}-${part.path}`}
-            type="button"
-            title={part.path}
-            className="mx-0.5 inline-flex max-w-full align-baseline text-cyan-200 underline decoration-cyan-400/50 underline-offset-2 hover:text-cyan-100"
-            onClick={(event: MouseEvent<HTMLButtonElement>) => {
-              event.stopPropagation();
-              void window.easycode.openPathInFileManager(part.path);
-            }}
-          >
-            {part.label}
-          </button>
-        );
-      })}
-    </span>
-  );
-};
+const renderLabText = (text: string, className = ""): ReactNode => (
+  <span className={`whitespace-pre-wrap break-words ${className}`}>{text}</span>
+);
 
 const implementationStatusLabel = (status: NonNullable<ProjectSnapshot["labThreads"][number]["implementationRun"]>["status"]) => {
   if (status === "completed") {
@@ -211,20 +81,32 @@ const implementationStatusLabel = (status: NonNullable<ProjectSnapshot["labThrea
   if (status === "cancelled") {
     return "Implementation cancelled";
   }
-  return "Implementation in progress";
+  return "Implementation running";
 };
 
-const threadImplementationStatusLabel = (status: ProjectSnapshot["labThreads"][number]["thread"]["status"]) => {
-  if (status === "implemented") {
-    return "Implementation completed";
+const implementationStatusToneClass = (status: NonNullable<ProjectSnapshot["labThreads"][number]["implementationRun"]>["status"]) => {
+  if (status === "completed") {
+    return {
+      panel: "border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)]",
+      pill: "border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] text-[var(--ec-success)]",
+    };
   }
   if (status === "failed") {
-    return "Implementation failed";
+    return {
+      panel: "border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)]",
+      pill: "border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] text-[var(--ec-danger)]",
+    };
   }
-  if (status === "running-implementation") {
-    return "Implementation in progress";
+  if (status === "cancelled") {
+    return {
+      panel: "border-[var(--ec-border)] bg-[var(--ec-muted-soft)]",
+      pill: "border-[var(--ec-border)] bg-[var(--ec-muted-soft)] text-[var(--ec-muted)]",
+    };
   }
-  return null;
+  return {
+    panel: "border-[var(--ec-info-ring)] bg-[var(--ec-info-soft)]",
+    pill: "border-[var(--ec-info-ring)] bg-[var(--ec-info-soft)] text-[var(--ec-info)]",
+  };
 };
 
 export const ProjectLabTab = ({
@@ -237,22 +119,26 @@ export const ProjectLabTab = ({
   onBaseBranchChange,
   onSettingsChange,
   onRunProjectLab,
-  onStartImplementation,
   onDeleteThread,
   onOpenImplementationRun,
 }: ProjectLabTabProps) => {
   const [selectedMode, setSelectedMode] = useState<ProjectLabMode>("new-feature");
-  const [personasOpen, setPersonasOpen] = useState(false);
   const [expandedThreadIds, setExpandedThreadIds] = useState<Record<string, boolean>>({});
-  const sortedThreads = useMemo(() => [...project.labThreads].sort((left, right) => right.thread.createdAt.localeCompare(left.thread.createdAt)), [project.labThreads]);
+
+  const sortedThreads = useMemo(
+    () => [...project.labThreads].sort((left, right) => right.thread.createdAt.localeCompare(left.thread.createdAt)),
+    [project.labThreads],
+  );
   const selectedModeOption = PROJECT_LAB_MODE_OPTIONS.find((option) => option.mode === selectedMode) ?? PROJECT_LAB_MODE_OPTIONS[0];
-  const enabledPersonaCount = settings.personas.filter((persona) => persona.enabled).length;
-  const configuredPersonaCount = settings.personas.filter((persona) => persona.enabled && persona.modelId).length;
-  const discussionPersonaCount = settings.personas.filter(
-    (persona) => persona.enabled && persona.modelId && persona.personaId !== "moderator" && persona.personaId !== "implementer",
-  ).length;
-  const moderatorReady = settings.personas.some((persona) => persona.personaId === "moderator" && persona.enabled && persona.modelId);
   const normalizedBranchOptions = branchOptions.filter(Boolean);
+  const fallbackModelId = modelOptions[0]?.id ?? "";
+  const implementationModelId = settings.implementationModelId && modelOptions.some((option) => option.id === settings.implementationModelId)
+    ? settings.implementationModelId
+    : fallbackModelId;
+  const reviewModelId = settings.reviewModelId && modelOptions.some((option) => option.id === settings.reviewModelId)
+    ? settings.reviewModelId
+    : fallbackModelId;
+  const canRun = settings.enabled && Boolean(selectedBaseBranch) && Boolean(implementationModelId) && Boolean(reviewModelId);
 
   return (
     <div className="space-y-4 pb-2">
@@ -263,13 +149,15 @@ export const ProjectLabTab = ({
               <Sparkles className="h-4 w-4 text-cyan-400" />
               <div className="min-w-0">
                 <h3 className="text-sm font-medium text-zinc-100">Project Lab</h3>
-                <p className="mt-0.5 text-xs text-zinc-500">Persona council for targeted proposals and implementation experiments.</p>
+                <p className="mt-0.5 text-xs text-zinc-500">
+                  Let AI find one useful change, implement it, then have a second agent review the result.
+                </p>
               </div>
             </div>
             <label className="flex h-8 items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950/60 px-2.5 text-xs text-zinc-300">
               <input
                 type="checkbox"
-                className="h-4 w-4 accent-cyan-400"
+                className="h-4 w-4 accent-[var(--ec-accent)]"
                 checked={settings.enabled}
                 onChange={(event) => void onSettingsChange({ ...settings, enabled: event.target.checked })}
               />
@@ -278,50 +166,81 @@ export const ProjectLabTab = ({
           </div>
         </div>
 
-        <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="grid gap-0 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="px-4 py-4">
-            <div className="flex flex-wrap items-end gap-3">
-              <label className="min-w-[220px] flex-1 space-y-1.5">
-                <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Lab mode</span>
-                <select
+            <div className="grid gap-3 lg:grid-cols-2">
+              <label className="space-y-1.5">
+                <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Mode</span>
+                <Select
                   value={selectedMode}
-                  onChange={(event) => setSelectedMode(event.target.value as ProjectLabMode)}
-                  className="h-10 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-100 outline-none transition-colors hover:border-zinc-700 focus:border-cyan-500/60"
-                >
-                  {PROJECT_LAB_MODE_OPTIONS.map((option) => (
-                    <option key={option.mode} value={option.mode}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                  onValueChange={(value) => setSelectedMode(value as ProjectLabMode)}
+                  options={PROJECT_LAB_MODE_OPTIONS.map((option) => ({
+                    value: option.mode,
+                    label: option.label,
+                    description: option.description,
+                  }))}
+                />
               </label>
-              <label className="min-w-[220px] flex-1 space-y-1.5">
+              <label className="space-y-1.5">
                 <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Base branch</span>
-                <select
+                <Select
                   value={selectedBaseBranch}
-                  onChange={(event) => onBaseBranchChange(event.target.value)}
-                  className="h-10 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-100 outline-none transition-colors hover:border-zinc-700 focus:border-cyan-500/60"
-                >
-                  {normalizedBranchOptions.map((branch) => (
-                    <option key={branch} value={branch}>
-                      {branch}
-                    </option>
-                  ))}
-                </select>
+                  onValueChange={onBaseBranchChange}
+                  options={normalizedBranchOptions.map((branch) => ({ value: branch, label: branch }))}
+                />
               </label>
+              <label className="space-y-1.5">
+                <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Implementation model</span>
+                <Select
+                  value={implementationModelId}
+                  onValueChange={(value) => void onSettingsChange({ ...settings, implementationModelId: value || null })}
+                  options={[
+                    { value: "", label: "No model selected" },
+                    ...modelOptions.map((option) => ({ value: option.id, label: option.label })),
+                  ]}
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Review model</span>
+                <Select
+                  value={reviewModelId}
+                  onValueChange={(value) => void onSettingsChange({ ...settings, reviewModelId: value || null })}
+                  options={[
+                    { value: "", label: "No model selected" },
+                    ...modelOptions.map((option) => ({ value: option.id, label: option.label })),
+                  ]}
+                />
+              </label>
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+              <p className="min-w-0 flex-1 text-xs text-zinc-500">{selectedModeOption.description}</p>
               <Button
                 type="button"
                 className="h-10"
-                disabled={busy || !settings.enabled || !selectedBaseBranch}
-                onClick={() => void onRunProjectLab({ mode: selectedMode, baseBranch: selectedBaseBranch })}
+                disabled={busy || !canRun}
+                onClick={() =>
+                  void onRunProjectLab({
+                    mode: selectedMode,
+                    baseBranch: selectedBaseBranch,
+                    implementationModelId,
+                    reviewModelId,
+                  })
+                }
               >
-                {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Lightbulb className="mr-2 h-4 w-4" />}
-                Run Lab
+                {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Rocket className="mr-2 h-4 w-4" />}
+                Start Project Lab
               </Button>
             </div>
-            <p className="mt-2 text-xs text-zinc-500">{selectedModeOption.description}</p>
+          </div>
 
-            <div className="mt-4 grid gap-2 sm:grid-cols-2">
+          <div className="border-t border-zinc-800/80 bg-zinc-950/35 px-4 py-4 xl:border-l xl:border-t-0">
+            <div className="flex items-center gap-2 text-sm font-medium text-zinc-100">
+              <ShieldCheck className="h-4 w-4 text-emerald-400" />
+              Limits
+            </div>
+            <p className="mt-1 text-xs text-zinc-500">Keep proactive lab work bounded per project.</p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
               <label className="rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2">
                 <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Daily cap</span>
                 <Input
@@ -350,141 +269,37 @@ export const ProjectLabTab = ({
               </label>
             </div>
           </div>
-
-          <div className="border-t border-zinc-800/80 bg-zinc-950/35 px-4 py-4 lg:border-l lg:border-t-0">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 text-sm font-medium text-zinc-100">
-                  <Users className="h-4 w-4 text-cyan-400" />
-                  Personas
-                </div>
-                <p className="mt-1 text-xs text-zinc-500">
-                  {configuredPersonaCount}/{enabledPersonaCount} enabled roles have models. {moderatorReady ? "Moderator ready." : "Moderator missing."}{" "}
-                  {discussionPersonaCount > 0 ? "" : "Add one discussion role."}
-                </p>
-              </div>
-              <Button type="button" size="sm" variant="secondary" className="h-8 shrink-0 px-2" onClick={() => setPersonasOpen((current) => !current)}>
-                <Settings2 className="mr-1.5 h-3.5 w-3.5" />
-                {personasOpen ? "Hide" : "Configure"}
-              </Button>
-            </div>
-
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              {settings.personas.map((persona) => (
-                <span
-                  key={persona.personaId}
-                  className={`rounded-full border px-2 py-0.5 text-[10px] ${COLOR_STYLES[persona.enabled ? persona.colorToken : "zinc"] ?? COLOR_STYLES.zinc} ${
-                    persona.enabled && persona.modelId ? "" : "opacity-55"
-                  }`}
-                  title={persona.modelId ? "Model configured" : "No model selected"}
-                >
-                  {persona.label}
-                </span>
-              ))}
-            </div>
-
-            <label className="mt-3 flex items-start gap-2 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2">
-              <input
-                className="mt-0.5 h-4 w-4 accent-cyan-400"
-                type="checkbox"
-                checked={settings.autoImplementation}
-                onChange={(event) => void onSettingsChange({ ...settings, autoImplementation: event.target.checked })}
-              />
-              <span className="min-w-0 text-xs text-zinc-400">
-                <span className="block font-medium text-zinc-200">Auto implementation</span>
-                Start a linked implementation run when the council agrees.
-              </span>
-            </label>
-          </div>
         </div>
-
-        {personasOpen ? (
-          <div className="border-t border-zinc-800/80 bg-zinc-950/20 px-4 py-4">
-            <div className="grid gap-2 xl:grid-cols-2">
-              {settings.personas.map((persona) => (
-                <div key={persona.personaId} className="grid gap-2 rounded-lg border border-zinc-800 bg-zinc-950/50 p-2 sm:grid-cols-[150px_minmax(0,1fr)]">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] ${COLOR_STYLES[persona.colorToken] ?? COLOR_STYLES.zinc}`}>
-                      {persona.label}
-                    </div>
-                    <label className="flex items-center gap-1.5 text-xs text-zinc-400">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 accent-cyan-400"
-                        checked={persona.enabled}
-                        onChange={(event) =>
-                          void onSettingsChange({
-                            ...settings,
-                            personas: settings.personas.map((entry) =>
-                              entry.personaId === persona.personaId ? { ...entry, enabled: event.target.checked } : entry,
-                            ),
-                          })
-                        }
-                      />
-                      On
-                    </label>
-                  </div>
-                  <select
-                    value={persona.modelId ?? ""}
-                    onChange={(event) =>
-                      void onSettingsChange({
-                        ...settings,
-                        personas: settings.personas.map((entry) =>
-                          entry.personaId === persona.personaId ? { ...entry, modelId: event.target.value || null } : entry,
-                        ),
-                      })
-                    }
-                    className="h-9 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2 text-sm text-zinc-100"
-                  >
-                    <option value="">No model selected</option>
-                    {modelOptions.map((option) => (
-                      <option key={option.id} value={option.id}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
       </Card>
 
       <Card className="p-4">
         <div className="flex items-center gap-2">
           <Bot className="h-4 w-4 text-cyan-400" />
-          <h3 className="text-sm font-medium text-zinc-100">Lab Threads</h3>
+          <h3 className="text-sm font-medium text-zinc-100">Lab Runs</h3>
         </div>
         <p className="mt-1 text-xs text-zinc-500">
-          Suggestions, RFCs, and linked implementation experiments stay here instead of mixing into the normal run list.
+          Each run starts one implementation or RFC agent and records the follow-up review here.
         </p>
 
-        <div className="mt-4 space-y-4">
+        <div className="mt-4 space-y-3">
           {sortedThreads.length > 0 ? (
             sortedThreads.map((detail) => {
               const isExpanded = expandedThreadIds[detail.thread.id] ?? false;
               const implementationRun = detail.implementationRun;
-              const implementationStatus = implementationRun
-                ? implementationStatusLabel(implementationRun.status)
-                : threadImplementationStatusLabel(detail.thread.status);
-              const canStartImplementation =
-                Boolean(detail.thread.implementationPrompt?.trim()) &&
-                !implementationRun &&
-                !detail.thread.implementationRunId &&
-                (detail.thread.status === "agreed" || detail.thread.status === "failed");
-              const showHeaderOutcome = !isExpanded && !implementationStatus;
+              const implementationStatus = implementationRun ? implementationStatusLabel(implementationRun.status) : null;
+              const implementationStatusTone = implementationRun ? implementationStatusToneClass(implementationRun.status) : null;
               return (
-                <div key={detail.thread.id} className="rounded-2xl border border-zinc-800 bg-zinc-950/50 p-4">
+                <div key={detail.thread.id} className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-3">
                   <div
                     className="flex cursor-pointer flex-wrap items-start justify-between gap-3"
                     role="button"
                     tabIndex={0}
-                      onClick={() =>
-                        setExpandedThreadIds((current) => ({
-                          ...current,
-                          [detail.thread.id]: !isExpanded,
-                        }))
-                      }
+                    onClick={() =>
+                      setExpandedThreadIds((current) => ({
+                        ...current,
+                        [detail.thread.id]: !isExpanded,
+                      }))
+                    }
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
@@ -512,11 +327,8 @@ export const ProjectLabTab = ({
                           {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                         </span>
                       </div>
-                      <h4 className="mt-2 text-base font-medium text-zinc-100">{detail.thread.title}</h4>
-                      <p className="mt-1 text-sm text-zinc-400">{renderLabText(detail.thread.summary)}</p>
-                      {showHeaderOutcome && detail.thread.outcome ? (
-                        <p className="mt-2 line-clamp-2 text-xs text-zinc-500">{renderLabText(detail.thread.outcome)}</p>
-                      ) : null}
+                      <h4 className="mt-2 text-sm font-medium text-zinc-100">{detail.thread.title}</h4>
+                      <p className="mt-1 text-xs text-zinc-400">{renderLabText(detail.thread.summary)}</p>
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
                       {implementationRun ? (
@@ -525,8 +337,8 @@ export const ProjectLabTab = ({
                           size="sm"
                           variant="ghost"
                           className="h-8 w-8 px-0 text-zinc-500 hover:text-cyan-200"
-                          title="Go to implementation"
-                          aria-label="Go to implementation"
+                          title="Open implementation run"
+                          aria-label="Open implementation run"
                           onClick={(event) => {
                             event.stopPropagation();
                             onOpenImplementationRun(implementationRun.id);
@@ -552,62 +364,47 @@ export const ProjectLabTab = ({
                   </div>
 
                   {isExpanded ? (
-                    <div className="mt-4 space-y-3">
-                      {detail.messages.map((message) => (
-                        <div
-                          key={message.id}
-                          className={`max-w-[88%] rounded-2xl border px-4 py-3 text-sm leading-relaxed ${COLOR_STYLES[message.bubbleColor] ?? COLOR_STYLES.zinc} ${
-                            message.role === "moderator" ? "ml-auto" : ""
-                          }`}
-                        >
-                          <div className="mb-1 text-[11px] uppercase tracking-[0.18em] text-zinc-300/80">{message.personaLabel}</div>
-                          <div>{renderLabText(message.content)}</div>
-                        </div>
-                      ))}
-
+                    <div className="mt-3 space-y-2">
                       {implementationStatus ? (
-                        <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 px-4 py-3">
+                        <div className={`rounded-lg border px-3 py-2 ${implementationStatusTone?.panel ?? ""}`}>
                           <div className="flex flex-wrap items-center justify-between gap-3">
                             <div className="min-w-0">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-[11px] text-cyan-100">
-                                  {implementationStatus}
-                                </span>
-                                {implementationRun ? <span className="truncate text-xs text-zinc-500">{implementationRun.branchName}</span> : null}
-                              </div>
-                              {!implementationRun && detail.thread.implementationRunId ? (
-                                <p className="mt-2 text-xs text-zinc-500">The linked implementation run is no longer available in the snapshot.</p>
+                              <span className={`rounded-full border px-2.5 py-1 text-[11px] ${implementationStatusTone?.pill ?? ""}`}>
+                                {implementationStatus}
+                              </span>
+                              {implementationRun?.branchName ? (
+                                <span className="ml-2 font-mono text-xs text-zinc-500">{implementationRun.branchName}</span>
                               ) : null}
                               {implementationRun?.errorMessage ? (
-                                <p className="mt-1 text-xs text-rose-300">{renderLabText(implementationRun.errorMessage)}</p>
+                                <p className="mt-2 text-xs text-rose-300">{renderLabText(implementationRun.errorMessage)}</p>
                               ) : null}
                             </div>
                             {implementationRun ? (
                               <Button type="button" size="sm" variant="secondary" onClick={() => onOpenImplementationRun(implementationRun.id)}>
                                 <ExternalLink className="mr-2 h-3.5 w-3.5" />
-                                Open implementation
+                                Open run
                               </Button>
                             ) : null}
                           </div>
                         </div>
                       ) : null}
 
-                      {canStartImplementation ? (
-                        <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 px-4 py-3">
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-[11px] text-cyan-100">
-                                Ready to implement
-                              </span>
-                              <p className="mt-2 text-xs text-zinc-500">The council prepared an implementation plan, but auto implementation is disabled.</p>
-                            </div>
-                            <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => void onStartImplementation(detail.thread.id)}>
-                              {busy ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <Play className="mr-2 h-3.5 w-3.5" />}
-                              Start implementation
-                            </Button>
+                      {detail.events.map((event) => (
+                        <div key={event.id} className={`rounded-lg border px-3 py-2 text-sm leading-relaxed ${eventToneClass(event.role)}`}>
+                          <div className="mb-1 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.18em] text-zinc-500">
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              {event.role === "rfc" ? <FileText className="h-3.5 w-3.5 text-violet-300" /> : null}
+                              {event.role === "review" ? <ShieldCheck className="h-3.5 w-3.5 text-[var(--ec-success)]" /> : null}
+                              {event.role === "implementation" ? <Rocket className="h-3.5 w-3.5 text-[var(--ec-info)]" /> : null}
+                              <span className="truncate">{event.label}</span>
+                            </span>
+                            <span className="shrink-0 font-normal normal-case tracking-normal text-zinc-600">
+                              {new Date(event.createdAt).toLocaleString()}
+                            </span>
                           </div>
+                          <div className="text-zinc-300">{renderLabText(event.content)}</div>
                         </div>
-                      ) : null}
+                      ))}
                     </div>
                   ) : null}
                 </div>
@@ -615,7 +412,7 @@ export const ProjectLabTab = ({
             })
           ) : (
             <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 px-4 py-10 text-center text-sm text-zinc-500">
-              No Project Lab threads yet. Enable the lab and ask it to explore the repo.
+              No Project Lab runs yet. Enable the lab, choose implementation and review models, then start one.
             </div>
           )}
         </div>

@@ -9,6 +9,8 @@ import {
   type Options as ClaudeAgentOptions,
   type PermissionResult,
   type PermissionUpdate,
+  type SDKUserMessage,
+  type SlashCommand,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
   ChatAttachmentPayload,
@@ -19,14 +21,17 @@ import type {
   ProviderAccountInput,
   ProviderAdapter,
   RunExecutionRequest,
+  RunUserInputAnswers,
+  RunUserInputQuestion,
+  RunUserInputRequest,
   ShellApprovalDecision,
   RunTokenUsage,
-} from "@easycode/shared";
+} from "@buildwarden/shared";
 import {
   PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY,
   PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY,
   buildNetworkProxyUrl,
-} from "@easycode/shared";
+} from "@buildwarden/shared";
 
 const CLAUDE_DEFAULT_MODEL = "sonnet";
 const TURN_TIMEOUT_MS = 20 * 60 * 1_000;
@@ -56,6 +61,7 @@ type ClaudeTurnExecutionOptions = {
   yoloMode?: boolean;
   signal: AbortSignal;
   requestShellApproval?: (command: string) => Promise<ShellApprovalDecision>;
+  requestUserInput?: (request: RunUserInputRequest) => Promise<RunUserInputAnswers>;
   onChunk?: (chunk: HarnessRunChunk) => void;
 };
 
@@ -63,6 +69,13 @@ type ClaudeTurnExecutionResult = {
   summary: string;
   sessionId: string | null;
   usage: RunTokenUsage;
+};
+
+export type ClaudeCodeSlashCommand = {
+  name: string;
+  description?: string;
+  argumentHint?: string;
+  aliases?: string[];
 };
 
 export type ClaudeCodeProcessLaunch = {
@@ -75,9 +88,16 @@ const asString = (value: unknown): string | undefined => (typeof value === "stri
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const asArray = (value: unknown): unknown[] | undefined => (Array.isArray(value) ? value : undefined);
+
 const asFiniteNumber = (value: unknown): number => {
   const number = Number(value ?? 0);
   return Number.isFinite(number) ? number : 0;
+};
+
+const asOptionalFiniteNumber = (value: unknown): number | undefined => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
 };
 
 const readClaudeResumeSessionId = (value: RunExecutionRequest["providerSessionRuntime"] | undefined | null): string | null => {
@@ -268,6 +288,83 @@ const launchArgsToSdkOptions = (launchArgs: string[]): Pick<ClaudeAgentOptions, 
   };
 };
 
+const waitForAbortSignal = (signal: AbortSignal): Promise<void> => {
+  if (signal.aborted) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+};
+
+const normalizeClaudeSlashCommands = (commands: readonly SlashCommand[] | undefined): ClaudeCodeSlashCommand[] => {
+  const byName = new Map<string, ClaudeCodeSlashCommand>();
+
+  for (const command of commands ?? []) {
+    const name = command.name.trim();
+    if (!name) {
+      continue;
+    }
+    const key = name.toLowerCase();
+    const existing = byName.get(key);
+    const description = command.description.trim();
+    const argumentHint = command.argumentHint.trim();
+    const next: ClaudeCodeSlashCommand = {
+      name,
+      ...(description ? { description } : {}),
+      ...(argumentHint ? { argumentHint } : {}),
+      ...(command.aliases?.length ? { aliases: command.aliases } : {}),
+    };
+    byName.set(key, {
+      ...next,
+      ...(existing?.description && !next.description ? { description: existing.description } : {}),
+      ...(existing?.argumentHint && !next.argumentHint ? { argumentHint: existing.argumentHint } : {}),
+      ...(existing?.aliases?.length && !next.aliases?.length ? { aliases: existing.aliases } : {}),
+    });
+  }
+
+  return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name));
+};
+
+export async function listClaudeCodeSlashCommands(input: {
+  cwd?: string;
+  config?: Record<string, unknown>;
+  networkProxy?: NetworkProxyRuntimeConfig;
+  timeoutMs?: number;
+}): Promise<ClaudeCodeSlashCommand[]> {
+  const { binaryPath, launchArgs } = resolveClaudeCodeConfig(input.config);
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), Math.max(1_000, input.timeoutMs ?? 6_000));
+  const prompt = (async function* (): AsyncGenerator<SDKUserMessage> {
+    await waitForAbortSignal(abortController.signal);
+  })();
+  const claudeQuery = query({
+    prompt,
+    options: {
+      ...(input.cwd ? { cwd: input.cwd } : {}),
+      persistSession: false,
+      pathToClaudeCodeExecutable: binaryPath,
+      abortController,
+      settingSources: ["user", "project", "local"],
+      allowedTools: [],
+      env: buildClaudeProcessEnv(input.networkProxy),
+      stderr: () => {},
+      ...launchArgsToSdkOptions(launchArgs),
+    },
+  });
+
+  try {
+    const init = await claudeQuery.initializationResult();
+    return normalizeClaudeSlashCommands(init.commands);
+  } finally {
+    clearTimeout(timeout);
+    if (!abortController.signal.aborted) {
+      abortController.abort();
+    }
+    claudeQuery.close();
+  }
+}
+
 const modeInstruction = (mode: RunExecutionRequest["mode"]): string => {
   if (mode === "code") {
     return "You are in code mode. Implement the requested changes directly when appropriate, then verify your work when useful.";
@@ -280,7 +377,7 @@ const modeInstruction = (mode: RunExecutionRequest["mode"]): string => {
 
 const buildPrompt = (options: ClaudeTurnExecutionOptions): string => {
   const parts = [
-    "You are Easycode, a desktop coding agent running inside a local repository.",
+    "You are BuildWarden, a desktop coding agent running inside a local repository.",
     "The workspace root is already the current working directory.",
     "Use repository context when provided, inspect files before making assumptions, and keep the final answer concise.",
     modeInstruction(options.inputMode),
@@ -314,16 +411,44 @@ const buildAttachmentPrompt = (attachments: ChatAttachmentPayload[]): string => 
   return lines.join("\n\n");
 };
 
-const readUsage = (value: unknown): RunTokenUsage => {
+type ClaudeUsageReadOptions = {
+  includeContext?: boolean;
+  contextWindow?: number;
+};
+
+const readClaudeContextWindow = (value: unknown): number | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  let maxContextWindow: number | undefined;
+  for (const entry of Object.values(value)) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+    const contextWindow = asOptionalFiniteNumber(entry.contextWindow ?? entry.context_window);
+    if (contextWindow !== undefined && contextWindow > 0) {
+      maxContextWindow = Math.max(maxContextWindow ?? 0, contextWindow);
+    }
+  }
+  return maxContextWindow;
+};
+
+const processedTotal = (usage: RunTokenUsage): number =>
+  usage.totalTokens ?? usage.totalProcessedTokens ?? usage.inputTokens + usage.outputTokens;
+
+const readUsage = (value: unknown, options: ClaudeUsageReadOptions = {}): RunTokenUsage => {
   if (!isRecord(value)) {
     return { inputTokens: 0, outputTokens: 0 };
   }
   const baseInputTokens = asFiniteNumber(value.input_tokens ?? value.inputTokens);
   const outputTokens = asFiniteNumber(value.output_tokens ?? value.outputTokens);
+  const reasoningTokens = asFiniteNumber(
+    value.reasoning_tokens ?? value.reasoningTokens ?? value.thinking_tokens ?? value.thinkingTokens,
+  );
   const cacheReadInputTokens = asFiniteNumber(value.cache_read_input_tokens ?? value.cacheReadInputTokens ?? value.cachedInputTokens);
   const cacheCreationInputTokens = asFiniteNumber(value.cache_creation_input_tokens ?? value.cacheCreationInputTokens);
   const inputTokens = baseInputTokens + cacheReadInputTokens + cacheCreationInputTokens;
-  const totalTokens = asFiniteNumber(value.total_tokens ?? value.totalTokens) || inputTokens + outputTokens;
+  const totalTokens = asOptionalFiniteNumber(value.total_tokens ?? value.totalTokens) ?? inputTokens + outputTokens;
   const usage: RunTokenUsage = {
     inputTokens,
     outputTokens,
@@ -334,8 +459,32 @@ const readUsage = (value: unknown): RunTokenUsage => {
   if (cacheCreationInputTokens > 0) {
     usage.cacheCreationInputTokens = cacheCreationInputTokens;
   }
+  if (reasoningTokens > 0) {
+    usage.reasoningTokens = reasoningTokens;
+  }
   if (totalTokens > 0) {
     usage.totalTokens = totalTokens;
+  }
+  if (options.includeContext && totalTokens > 0) {
+    const maxTokens =
+      typeof options.contextWindow === "number" && Number.isFinite(options.contextWindow) && options.contextWindow > 0
+        ? options.contextWindow
+        : undefined;
+    const usedTokens = maxTokens !== undefined ? Math.min(totalTokens, maxTokens) : totalTokens;
+    usage.usedTokens = usedTokens;
+    usage.lastUsedTokens = usedTokens;
+    usage.totalProcessedTokens = totalTokens;
+    usage.lastInputTokens = inputTokens;
+    usage.lastOutputTokens = outputTokens;
+    if (cacheReadInputTokens > 0) {
+      usage.lastCachedInputTokens = cacheReadInputTokens;
+    }
+    if (reasoningTokens > 0) {
+      usage.lastReasoningTokens = reasoningTokens;
+    }
+    if (maxTokens !== undefined) {
+      usage.maxTokens = maxTokens;
+    }
   }
   return usage;
 };
@@ -344,18 +493,43 @@ const addUsage = (left: RunTokenUsage, right: RunTokenUsage): RunTokenUsage => {
   const reasoningTokens = (left.reasoningTokens ?? 0) + (right.reasoningTokens ?? 0);
   const cachedInputTokens = (left.cachedInputTokens ?? 0) + (right.cachedInputTokens ?? 0);
   const cacheCreationInputTokens = (left.cacheCreationInputTokens ?? 0) + (right.cacheCreationInputTokens ?? 0);
-  const totalTokens = (left.totalTokens ?? left.inputTokens + left.outputTokens) + (right.totalTokens ?? right.inputTokens + right.outputTokens);
-  return {
+  const totalTokens = processedTotal(left) + processedTotal(right);
+  const hasRightContext = right.usedTokens !== undefined || right.lastUsedTokens !== undefined;
+  const contextSource = hasRightContext ? right : left;
+  const usage: RunTokenUsage = {
     inputTokens: left.inputTokens + right.inputTokens,
     outputTokens: left.outputTokens + right.outputTokens,
     ...(reasoningTokens > 0 ? { reasoningTokens } : {}),
     ...(cachedInputTokens > 0 ? { cachedInputTokens } : {}),
     ...(cacheCreationInputTokens > 0 ? { cacheCreationInputTokens } : {}),
     ...(totalTokens > 0 ? { totalTokens } : {}),
+    ...(totalTokens > 0 ? { totalProcessedTokens: totalTokens } : {}),
   };
+  if (contextSource.usedTokens !== undefined) {
+    usage.usedTokens = contextSource.usedTokens;
+  }
+  if (contextSource.maxTokens !== undefined) {
+    usage.maxTokens = contextSource.maxTokens;
+  }
+  if (contextSource.lastUsedTokens !== undefined) {
+    usage.lastUsedTokens = contextSource.lastUsedTokens;
+  }
+  if (contextSource.lastInputTokens !== undefined) {
+    usage.lastInputTokens = contextSource.lastInputTokens;
+  }
+  if (contextSource.lastCachedInputTokens !== undefined) {
+    usage.lastCachedInputTokens = contextSource.lastCachedInputTokens;
+  }
+  if (contextSource.lastOutputTokens !== undefined) {
+    usage.lastOutputTokens = contextSource.lastOutputTokens;
+  }
+  if (contextSource.lastReasoningTokens !== undefined) {
+    usage.lastReasoningTokens = contextSource.lastReasoningTokens;
+  }
+  return usage;
 };
 
-const readModelUsage = (value: unknown): RunTokenUsage | null => {
+const readModelUsage = (value: unknown, options: ClaudeUsageReadOptions = {}): RunTokenUsage | null => {
   if (!isRecord(value)) {
     return null;
   }
@@ -365,7 +539,137 @@ const readModelUsage = (value: unknown): RunTokenUsage | null => {
       usage = addUsage(usage, readUsage(entry));
     }
   }
+  if (options.includeContext && processedTotal(usage) > 0) {
+    const maxTokens =
+      typeof options.contextWindow === "number" && Number.isFinite(options.contextWindow) && options.contextWindow > 0
+        ? options.contextWindow
+        : undefined;
+    const usedTokens = maxTokens !== undefined ? Math.min(processedTotal(usage), maxTokens) : processedTotal(usage);
+    usage.usedTokens = usedTokens;
+    usage.lastUsedTokens = usedTokens;
+    usage.totalProcessedTokens = processedTotal(usage);
+    usage.lastInputTokens = usage.inputTokens;
+    usage.lastOutputTokens = usage.outputTokens;
+    if (usage.cachedInputTokens !== undefined) {
+      usage.lastCachedInputTokens = usage.cachedInputTokens;
+    }
+    if (usage.reasoningTokens !== undefined) {
+      usage.lastReasoningTokens = usage.reasoningTokens;
+    }
+    if (maxTokens !== undefined) {
+      usage.maxTokens = maxTokens;
+    }
+  }
   return usage.inputTokens > 0 || usage.outputTokens > 0 ? usage : null;
+};
+
+const hasUsageTokens = (usage: RunTokenUsage | null | undefined): usage is RunTokenUsage =>
+  Boolean(usage && (usage.inputTokens > 0 || usage.outputTokens > 0 || (usage.usedTokens ?? 0) > 0 || (usage.totalTokens ?? 0) > 0));
+
+const readClaudeUsageKey = (event: Record<string, unknown>, message: Record<string, unknown>): string | undefined => {
+  const messageId = asString(message.id);
+  if (messageId) {
+    return `message:${messageId}`;
+  }
+
+  const requestId =
+    asString(event.requestId) ??
+    asString(event.request_id) ??
+    asString(message.requestId) ??
+    asString(message.request_id);
+  if (requestId) {
+    return `request:${requestId}`;
+  }
+
+  return undefined;
+};
+
+export const mergeClaudeUsageUpdate = (
+  current: RunTokenUsage,
+  previousDeltaUsageByKey: Map<string, RunTokenUsage>,
+  update: { usage?: RunTokenUsage; usageIsDelta?: boolean; usageIsContextSnapshot?: boolean; usageKey?: string },
+): { usage: RunTokenUsage; changed: boolean } => {
+  if (!update.usage) {
+    return { usage: current, changed: false };
+  }
+
+  if (update.usageIsContextSnapshot) {
+    return {
+      usage: {
+        ...current,
+        usedTokens: update.usage.usedTokens,
+        totalProcessedTokens: Math.max(current.totalProcessedTokens ?? processedTotal(current), update.usage.totalProcessedTokens ?? processedTotal(update.usage)),
+        maxTokens: update.usage.maxTokens ?? current.maxTokens,
+        lastUsedTokens: update.usage.lastUsedTokens ?? update.usage.usedTokens ?? current.lastUsedTokens,
+        lastInputTokens: update.usage.lastInputTokens ?? current.lastInputTokens,
+        lastCachedInputTokens: update.usage.lastCachedInputTokens ?? current.lastCachedInputTokens,
+        lastOutputTokens: update.usage.lastOutputTokens ?? current.lastOutputTokens,
+        lastReasoningTokens: update.usage.lastReasoningTokens ?? current.lastReasoningTokens,
+      },
+      changed: true,
+    };
+  }
+
+  if (!update.usageIsDelta) {
+    const currentHasContext = current.usedTokens !== undefined || current.lastUsedTokens !== undefined;
+    if (!currentHasContext) {
+      return { usage: update.usage, changed: true };
+    }
+    return {
+      usage: {
+        ...update.usage,
+        usedTokens: current.usedTokens,
+        maxTokens: update.usage.maxTokens ?? current.maxTokens,
+        lastUsedTokens: current.lastUsedTokens ?? current.usedTokens,
+        lastInputTokens: current.lastInputTokens,
+        lastCachedInputTokens: current.lastCachedInputTokens,
+        lastOutputTokens: current.lastOutputTokens,
+        lastReasoningTokens: current.lastReasoningTokens,
+        totalProcessedTokens: Math.max(update.usage.totalProcessedTokens ?? processedTotal(update.usage), current.totalProcessedTokens ?? 0),
+      },
+      changed: true,
+    };
+  }
+
+  if (update.usageKey) {
+    const previous = previousDeltaUsageByKey.get(update.usageKey);
+    previousDeltaUsageByKey.set(update.usageKey, update.usage);
+    if (previous) {
+      const delta: RunTokenUsage = {
+        inputTokens: Math.max(0, update.usage.inputTokens - previous.inputTokens),
+        outputTokens: Math.max(0, update.usage.outputTokens - previous.outputTokens),
+      };
+      const reasoningTokens = Math.max(0, (update.usage.reasoningTokens ?? 0) - (previous.reasoningTokens ?? 0));
+      const cachedInputTokens = Math.max(0, (update.usage.cachedInputTokens ?? 0) - (previous.cachedInputTokens ?? 0));
+      const cacheCreationInputTokens = Math.max(
+        0,
+        (update.usage.cacheCreationInputTokens ?? 0) - (previous.cacheCreationInputTokens ?? 0),
+      );
+      const totalTokens = Math.max(
+        0,
+        (update.usage.totalTokens ?? update.usage.inputTokens + update.usage.outputTokens) -
+          (previous.totalTokens ?? previous.inputTokens + previous.outputTokens),
+      );
+      if (reasoningTokens > 0) {
+        delta.reasoningTokens = reasoningTokens;
+      }
+      if (cachedInputTokens > 0) {
+        delta.cachedInputTokens = cachedInputTokens;
+      }
+      if (cacheCreationInputTokens > 0) {
+        delta.cacheCreationInputTokens = cacheCreationInputTokens;
+      }
+      if (totalTokens > 0) {
+        delta.totalTokens = totalTokens;
+      }
+      if (delta.inputTokens <= 0 && delta.outputTokens <= 0 && totalTokens <= 0) {
+        return { usage: current, changed: false };
+      }
+      return { usage: addUsage(current, delta), changed: true };
+    }
+  }
+
+  return { usage: addUsage(current, update.usage), changed: true };
 };
 
 const stringifyValue = (value: unknown): string => {
@@ -453,6 +757,58 @@ const readClaudeUserQuestion = (input: Record<string, unknown>): string =>
 const readClaudePlanProposal = (input: Record<string, unknown>): string =>
   (readClaudeToolString(input, ["plan", "content", "text", "message"]) ?? stringifyValue(input)) || "Claude proposed a plan.";
 
+const normalizeClaudeQuestionOption = (value: unknown): { label: string; description?: string } | null => {
+  if (typeof value === "string") {
+    const label = value.trim();
+    return label ? { label } : null;
+  }
+  if (!isRecord(value)) {
+    return null;
+  }
+  const label = asString(value.label)?.trim() ?? asString(value.value)?.trim() ?? "";
+  if (!label) {
+    return null;
+  }
+  const description = asString(value.description)?.trim();
+  return {
+    label,
+    ...(description ? { description } : {}),
+  };
+};
+
+const normalizeClaudeUserInputQuestions = (input: Record<string, unknown>): RunUserInputQuestion[] => {
+  const rawQuestions = asArray(input.questions);
+  const candidates = rawQuestions && rawQuestions.length > 0 ? rawQuestions : [input];
+
+  return candidates
+    .map((candidate, index): RunUserInputQuestion | null => {
+      const questionRecord = isRecord(candidate) ? candidate : {};
+      const question =
+        asString(questionRecord.question)?.trim() ??
+        asString(questionRecord.prompt)?.trim() ??
+        asString(questionRecord.message)?.trim() ??
+        (typeof candidate === "string" ? candidate.trim() : "") ??
+        "";
+      if (!question) {
+        return null;
+      }
+      const header = asString(questionRecord.header)?.trim() || `Question ${String(index + 1)}`;
+      const options = (asArray(questionRecord.options) ?? [])
+        .map(normalizeClaudeQuestionOption)
+        .filter((option): option is { label: string; description?: string } => option !== null);
+      return {
+        // Claude Code currently looks answers up by full question text in some versions.
+        id: question,
+        header,
+        question,
+        options,
+        multiSelect: questionRecord.multiSelect === true,
+        allowCustomAnswer: options.length === 0 || questionRecord.allowCustomAnswer === true,
+      };
+    })
+    .filter((question): question is RunUserInputQuestion => question !== null);
+};
+
 export const buildClaudeCanUseTool = (options: ClaudeTurnExecutionOptions): CanUseTool => async (toolName, input, callbackOptions) => {
   if (callbackOptions.signal.aborted || options.signal.aborted) {
     return claudePermissionDenied("Run cancelled.");
@@ -461,6 +817,34 @@ export const buildClaudeCanUseTool = (options: ClaudeTurnExecutionOptions): CanU
   const normalizedToolName = normalizeClaudeCodeToolName(toolName);
   if (normalizedToolName === "askuserquestion") {
     const question = readClaudeUserQuestion(input);
+    if (options.requestUserInput) {
+      const questions = normalizeClaudeUserInputQuestions(input);
+      if (questions.length > 0) {
+        try {
+          const answers = await options.requestUserInput({
+            requestId: callbackOptions.toolUseID,
+            title: "Claude question",
+            content: question,
+            questions,
+            metadata: {
+              provider: "claude-code",
+              toolName: "AskUserQuestion",
+              callId: callbackOptions.toolUseID,
+              rawToolInput: input,
+            },
+          });
+          return {
+            behavior: "allow",
+            updatedInput: {
+              ...input,
+              answers,
+            },
+          } as PermissionResult;
+        } catch (error) {
+          return claudePermissionDenied(error instanceof Error ? error.message : "User input was cancelled.");
+        }
+      }
+    }
     options.onChunk?.({
       type: "user-input-requested",
       title: "Claude question",
@@ -474,7 +858,7 @@ export const buildClaudeCanUseTool = (options: ClaudeTurnExecutionOptions): CanU
         rawToolInput: input,
       },
     });
-    return claudePermissionDenied("Easycode recorded this question in the run timeline. Wait for the user to answer in a follow-up.");
+    return claudePermissionDenied("BuildWarden recorded this question in the run timeline. Wait for the user to answer in a follow-up.");
   }
 
   if (normalizedToolName === "exitplanmode") {
@@ -493,7 +877,7 @@ export const buildClaudeCanUseTool = (options: ClaudeTurnExecutionOptions): CanU
     });
     return {
       behavior: "deny",
-      message: "Easycode captured the proposed plan for user review. Stop here and wait for a follow-up.",
+      message: "BuildWarden captured the proposed plan for user review. Stop here and wait for a follow-up.",
       interrupt: true,
     };
   }
@@ -509,7 +893,7 @@ export const buildClaudeCanUseTool = (options: ClaudeTurnExecutionOptions): CanU
   if (normalizedToolName === "run_shell") {
     const command = readClaudeToolString(input, ["command"]);
     if (!command) {
-      return claudePermissionDenied("Easycode could not determine the shell command to approve.");
+      return claudePermissionDenied("BuildWarden could not determine the shell command to approve.");
     }
     const decision = options.requestShellApproval ? await options.requestShellApproval(command) : "allow-once";
     return decision === "deny"
@@ -520,12 +904,12 @@ export const buildClaudeCanUseTool = (options: ClaudeTurnExecutionOptions): CanU
   if (isClaudeFileChangeTool(normalizedToolName)) {
     return options.inputMode === "code"
       ? claudePermissionAllowed(input, callbackOptions.suggestions)
-      : claudePermissionDenied("Easycode only allows file edits in code mode.");
+      : claudePermissionDenied("BuildWarden only allows file edits in code mode.");
   }
 
   return options.inputMode === "code"
     ? claudePermissionAllowed(input, callbackOptions.suggestions)
-    : claudePermissionDenied("Easycode only allows this tool in code mode.");
+    : claudePermissionDenied("BuildWarden only allows this tool in code mode.");
 };
 
 const extractTextFromMessage = (value: unknown): string => {
@@ -574,7 +958,15 @@ const extractStreamEventDelta = (event: Record<string, unknown>): { text: string
 
 export const parseClaudeCodeStreamEvent = (
   event: unknown,
-): { assistantText: string; chunks: HarnessRunChunk[]; usage?: RunTokenUsage; sessionId?: string } => {
+): {
+  assistantText: string;
+  chunks: HarnessRunChunk[];
+  usage?: RunTokenUsage;
+  usageIsDelta?: boolean;
+  usageIsContextSnapshot?: boolean;
+  usageKey?: string;
+  sessionId?: string;
+} => {
   if (!isRecord(event)) {
     return { assistantText: "", chunks: [] };
   }
@@ -617,7 +1009,8 @@ export const parseClaudeCodeStreamEvent = (
   if (type === "result") {
     const resultText = extractTextFromMessage(event.result);
     const errors = Array.isArray(event.errors) ? event.errors.map(stringifyValue).filter(Boolean).join("\n") : "";
-    const usage = readModelUsage(event.modelUsage) ?? readUsage(event.usage);
+    const contextWindow = readClaudeContextWindow(event.modelUsage);
+    const usage = readModelUsage(event.modelUsage, { includeContext: true, contextWindow }) ?? readUsage(event.usage, { includeContext: true, contextWindow });
     return {
       assistantText: resultText,
       chunks: resultText
@@ -630,10 +1023,25 @@ export const parseClaudeCodeStreamEvent = (
     };
   }
 
+  if (type === "task_progress" || type === "task_notification") {
+    const contextWindow = readClaudeContextWindow(event.modelUsage);
+    const usage = readUsage(event.usage, { includeContext: true, contextWindow });
+    return {
+      assistantText: "",
+      chunks: [],
+      usage: hasUsageTokens(usage) ? usage : undefined,
+      usageIsContextSnapshot: true,
+      sessionId,
+    };
+  }
+
   const message = event.message ?? event;
   if (!isRecord(message)) {
     return { assistantText: "", chunks: [], sessionId };
   }
+  const rawMessageUsage = readUsage(message.usage);
+  const messageUsage = hasUsageTokens(rawMessageUsage) ? rawMessageUsage : undefined;
+  const messageUsageKey = messageUsage ? readClaudeUsageKey(event, message) : undefined;
 
   const content = Array.isArray(message.content) ? message.content : [message];
   const assistantParts: string[] = [];
@@ -713,7 +1121,14 @@ export const parseClaudeCodeStreamEvent = (
     });
   }
 
-  return { assistantText, chunks, sessionId };
+  return {
+    assistantText,
+    chunks,
+    usage: messageUsage,
+    usageIsDelta: Boolean(messageUsage),
+    usageKey: messageUsageKey,
+    sessionId,
+  };
 };
 
 async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<ClaudeTurnExecutionResult> {
@@ -722,6 +1137,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
   let latestAssistantText = "";
   let sessionId: string | null = null;
   let usage: RunTokenUsage = { inputTokens: 0, outputTokens: 0 };
+  const previousDeltaUsageByKey = new Map<string, RunTokenUsage>();
 
   const abortController = new AbortController();
   let timedOut = false;
@@ -780,8 +1196,18 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
           },
         });
       }
-      if (parsed.usage) {
-        usage = parsed.usage;
+      const usageUpdate = mergeClaudeUsageUpdate(usage, previousDeltaUsageByKey, parsed);
+      if (usageUpdate.changed) {
+        usage = usageUpdate.usage;
+        options.onChunk?.({
+          type: "status",
+          title: "Claude usage",
+          value: "Usage updated.",
+          metadata: {
+            silent: true,
+            usageTotals: usage,
+          },
+        });
       }
       if (parsed.assistantText) {
         assistantText += parsed.assistantText;
@@ -799,7 +1225,11 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
       throw new Error("Claude Code request timed out.");
     }
     if (options.signal.aborted) {
-      throw new Error("Run cancelled.");
+      return {
+        summary: latestAssistantText.trim() || assistantText.trim() || "Claude Code run cancelled.",
+        sessionId,
+        usage,
+      };
     }
     throw error;
   } finally {
@@ -865,7 +1295,10 @@ export function assertClaudeCodeAvailable(config: Record<string, unknown> | unde
 export class ClaudeCodeHarnessAdapter implements HarnessAdapter {
   readonly harnessType = "claude-code" as const;
 
-  constructor(private readonly requestShellApproval?: (command: string) => Promise<ShellApprovalDecision>) {}
+  constructor(
+    private readonly requestShellApproval?: (command: string) => Promise<ShellApprovalDecision>,
+    private readonly requestUserInput?: (request: RunUserInputRequest) => Promise<RunUserInputAnswers>,
+  ) {}
 
   async run(
     input: RunExecutionRequest,
@@ -889,6 +1322,7 @@ export class ClaudeCodeHarnessAdapter implements HarnessAdapter {
       yoloMode: input.yoloMode === true,
       signal,
       requestShellApproval: input.yoloMode === true ? undefined : this.requestShellApproval,
+      requestUserInput: this.requestUserInput,
       onChunk,
     });
     return {

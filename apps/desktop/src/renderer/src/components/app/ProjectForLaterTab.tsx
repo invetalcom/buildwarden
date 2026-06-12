@@ -1,4 +1,4 @@
-import type { RunRecord } from "@easycode/shared";
+import type { RunRecord } from "@buildwarden/shared";
 import { Archive, ArchiveRestore } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -33,7 +33,7 @@ export const ProjectForLaterTab = ({ runs, onSelectRun, onRestoreRunFromForLater
                 </button>
               </div>
               <div className="flex items-center gap-2">
-                <Badge tone={run.status}>{run.status}</Badge>
+                <Badge dot tone={run.status}>{run.status}</Badge>
                 <Button
                   type="button"
                   size="sm"

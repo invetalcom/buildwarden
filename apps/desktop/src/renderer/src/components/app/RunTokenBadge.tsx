@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
+import type { RunTokenUsage } from "@buildwarden/shared";
 
 interface RunTokenBadgeProps {
   inputTokens: number;
   outputTokens: number;
+  usage?: Partial<RunTokenUsage> | null;
 }
 
 const formatCompactNumber = (value: number) => {
@@ -15,22 +17,37 @@ const formatCompactNumber = (value: number) => {
   return value.toLocaleString();
 };
 
-export const RunTokenBadge = ({ inputTokens, outputTokens }: RunTokenBadgeProps) => {
+export const RunTokenBadge = ({ inputTokens, outputTokens, usage }: RunTokenBadgeProps) => {
   const [open, setOpen] = useState(false);
 
   const metrics = useMemo(() => {
-    const total = inputTokens + outputTokens;
-    const inputRatio = total > 0 ? inputTokens / total : 0;
-    const outputRatio = total > 0 ? outputTokens / total : 0;
+    const processedInputTokens = usage?.inputTokens ?? inputTokens;
+    const processedOutputTokens = usage?.outputTokens ?? outputTokens;
+    const processedTotal = usage?.totalProcessedTokens ?? usage?.totalTokens ?? processedInputTokens + processedOutputTokens;
+    const contextUsed = usage?.usedTokens ?? usage?.lastUsedTokens;
+    const displayTotal = contextUsed ?? processedTotal;
+    const maxTokens = usage?.maxTokens;
+    const contextRatio =
+      contextUsed !== undefined && maxTokens !== undefined && maxTokens > 0
+        ? Math.max(0, Math.min(1, contextUsed / maxTokens))
+        : null;
+    const inputRatio = processedTotal > 0 ? processedInputTokens / processedTotal : 0;
+    const outputRatio = processedTotal > 0 ? processedOutputTokens / processedTotal : 0;
     return {
-      total,
+      displayTotal,
+      processedTotal,
+      processedInputTokens,
+      processedOutputTokens,
+      contextUsed,
+      maxTokens,
+      contextRatio,
       inputRatio,
       outputRatio,
       inputPercent: Math.round(inputRatio * 100),
       outputPercent: Math.round(outputRatio * 100),
-      totalCompact: formatCompactNumber(total),
+      totalCompact: formatCompactNumber(displayTotal),
     };
-  }, [inputTokens, outputTokens]);
+  }, [inputTokens, outputTokens, usage]);
 
   const size = 28;
   const radius = 11;
@@ -38,6 +55,7 @@ export const RunTokenBadge = ({ inputTokens, outputTokens }: RunTokenBadgeProps)
   const gap = 3;
   const inputLength = Math.max(0, circumference * metrics.inputRatio - gap / 2);
   const outputLength = Math.max(0, circumference * metrics.outputRatio - gap / 2);
+  const contextLength = metrics.contextRatio !== null ? Math.max(0, circumference * metrics.contextRatio) : 0;
   const inputOffset = 0;
   const outputOffset = -(inputLength + gap);
   const centerTextClass =
@@ -51,13 +69,13 @@ export const RunTokenBadge = ({ inputTokens, outputTokens }: RunTokenBadgeProps)
     <div className="relative shrink-0" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
       <button
         type="button"
-        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-zinc-800/80 bg-zinc-950/60 font-semibold text-zinc-100 transition hover:border-zinc-700 hover:bg-zinc-900/70"
+        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel)] font-semibold text-[var(--ec-text)] transition hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-hover)]"
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         title="Run token usage"
       >
         <span className="sr-only">
-          Token usage: {metrics.total.toLocaleString()} total, {inputTokens.toLocaleString()} input, {outputTokens.toLocaleString()} output
+          Token usage: {metrics.displayTotal.toLocaleString()} shown, {metrics.processedInputTokens.toLocaleString()} input, {metrics.processedOutputTokens.toLocaleString()} output
         </span>
         <svg
           width={size}
@@ -66,27 +84,38 @@ export const RunTokenBadge = ({ inputTokens, outputTokens }: RunTokenBadgeProps)
           className="absolute inset-0 h-8 w-8 -rotate-90"
           aria-hidden="true"
         >
-          <circle cx={size / 2} cy={size / 2} r={radius} fill="none" className="stroke-zinc-800/90" strokeWidth="2" />
-          {inputLength > 0 ? (
+          <circle cx={size / 2} cy={size / 2} r={radius} fill="none" className="stroke-[var(--ec-border)]" strokeWidth="2" />
+          {metrics.contextRatio !== null ? (
             <circle
               cx={size / 2}
               cy={size / 2}
               r={radius}
               fill="none"
-              className="stroke-cyan-300"
+              className="stroke-[var(--ec-accent)]"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeDasharray={`${contextLength} ${circumference}`}
+            />
+          ) : inputLength > 0 ? (
+            <circle
+              cx={size / 2}
+              cy={size / 2}
+              r={radius}
+              fill="none"
+              className="stroke-[var(--ec-accent)]"
               strokeWidth="2"
               strokeLinecap="round"
               strokeDasharray={`${inputLength} ${circumference}`}
               strokeDashoffset={inputOffset}
             />
           ) : null}
-          {outputLength > 0 ? (
+          {metrics.contextRatio === null && outputLength > 0 ? (
             <circle
               cx={size / 2}
               cy={size / 2}
               r={radius}
               fill="none"
-              className="stroke-emerald-300"
+              className="stroke-[var(--ec-success)]"
               strokeWidth="2"
               strokeLinecap="round"
               strokeDasharray={`${outputLength} ${circumference}`}
@@ -99,28 +128,58 @@ export const RunTokenBadge = ({ inputTokens, outputTokens }: RunTokenBadgeProps)
         </span>
       </button>
       {open ? (
-        <div className="absolute left-1/2 top-[calc(100%+0.6rem)] z-[95] w-56 -translate-x-1/2 rounded-2xl border border-zinc-800 bg-zinc-950/98 p-3 text-left shadow-2xl shadow-black/40 backdrop-blur">
-          <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-500">Token Usage</p>
-          <p className="mt-2 text-sm font-semibold text-zinc-100">{metrics.total.toLocaleString()} total</p>
+        <div className="absolute left-1/2 top-[calc(100%+0.6rem)] z-[95] w-64 -translate-x-1/2 glass-popover p-3 text-left">
+          <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--ec-faint)]">Token Usage</p>
+          {metrics.contextUsed !== undefined ? (
+            <p className="mt-2 text-sm font-semibold text-[var(--ec-text)]">
+              {metrics.contextUsed.toLocaleString()}
+              {metrics.maxTokens ? ` / ${metrics.maxTokens.toLocaleString()}` : ""} context used
+            </p>
+          ) : (
+            <p className="mt-2 text-sm font-semibold text-[var(--ec-text)]">{metrics.processedTotal.toLocaleString()} processed</p>
+          )}
+          {metrics.contextUsed !== undefined && metrics.processedTotal > metrics.contextUsed ? (
+            <p className="mt-1 text-xs text-[var(--ec-muted)]">
+              Total processed: {metrics.processedTotal.toLocaleString()} tokens
+            </p>
+          ) : null}
           <div className="mt-3 space-y-2 text-xs">
             <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 text-zinc-300">
-                <span className="h-2 w-2 rounded-full bg-cyan-300" />
+              <div className="flex items-center gap-2 text-[var(--ec-muted)]">
+                <span className="h-2 w-2 rounded-full bg-[var(--ec-accent)]" />
                 <span>Input</span>
               </div>
-              <span className="tabular-nums text-zinc-100">
-                {inputTokens.toLocaleString()} ({metrics.inputPercent}%)
+              <span className="tabular-nums text-[var(--ec-text)]">
+                {metrics.processedInputTokens.toLocaleString()} ({metrics.inputPercent}%)
               </span>
             </div>
             <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 text-zinc-300">
-                <span className="h-2 w-2 rounded-full bg-emerald-300" />
+              <div className="flex items-center gap-2 text-[var(--ec-muted)]">
+                <span className="h-2 w-2 rounded-full bg-[var(--ec-success)]" />
                 <span>Output</span>
               </div>
-              <span className="tabular-nums text-zinc-100">
-                {outputTokens.toLocaleString()} ({metrics.outputPercent}%)
+              <span className="tabular-nums text-[var(--ec-text)]">
+                {metrics.processedOutputTokens.toLocaleString()} ({metrics.outputPercent}%)
               </span>
             </div>
+            {usage?.cachedInputTokens ? (
+              <div className="flex items-center justify-between gap-3 text-[var(--ec-muted)]">
+                <span>Cached read</span>
+                <span className="tabular-nums">{usage.cachedInputTokens.toLocaleString()}</span>
+              </div>
+            ) : null}
+            {usage?.cacheCreationInputTokens ? (
+              <div className="flex items-center justify-between gap-3 text-[var(--ec-muted)]">
+                <span>Cache write</span>
+                <span className="tabular-nums">{usage.cacheCreationInputTokens.toLocaleString()}</span>
+              </div>
+            ) : null}
+            {usage?.reasoningTokens ? (
+              <div className="flex items-center justify-between gap-3 text-[var(--ec-muted)]">
+                <span>Reasoning</span>
+                <span className="tabular-nums">{usage.reasoningTokens.toLocaleString()}</span>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}

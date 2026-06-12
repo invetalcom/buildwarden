@@ -1,7 +1,7 @@
-﻿import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, lstatSync, mkdirSync, readdirSync, statSync, type Dirent } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { dialog, shell } from "electron";
@@ -9,20 +9,35 @@ import { killRunTerminalForRunId } from "./run-terminal-ipc";
 import { buildDependencyGraphSnapshotForProjectGraph, listDependencySourceFilesForProjectGraph } from "./project-graph-utils";
 import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
 import { getHarnessTypeForProvider } from "./harness-adapters";
-import { EasycodeDatabase } from "@easycode/db";
-import { computePrMrDiffViaFetch, GitService } from "@easycode/git-service";
-import { AiSdkProviderAdapter, generateAskTextResultWithAiSdk, suggestCommitMessageWithAiSdk } from "@easycode/provider-ai-sdk";
-import { ClaudeCodeProviderAdapter, assertClaudeCodeAvailable, generateAskTextResultWithClaudeCode, suggestCommitMessageWithClaudeCode } from "@easycode/provider-claude-code";
-import { CodexCliProviderAdapter, assertCodexCliAvailable, generateAskTextResultWithCodexCli, suggestCommitMessageWithCodexCli } from "@easycode/provider-codex-cli";
-import { AzureLegacyProviderAdapter, createAzureLegacyClientFromParts, createAzureLegacyDevLogger } from "@easycode/provider-azure-legacy";
+import { createProjectPrReviewProvider } from "./pr-review/pr-review-provider-factory";
+import { resolveProjectPrReviewRemoteContext } from "./pr-review/pr-review-remote-context";
+import type { ProjectPrReviewProvider, ProjectPrReviewRemoteContext } from "./pr-review/pr-review-types";
+import { BuildWardenDatabase } from "@buildwarden/db";
+import { computePrMrDiffViaFetch, GitService } from "@buildwarden/git-service";
+import { AiSdkProviderAdapter, generateAskTextResultWithAiSdk, suggestCommitMessageWithAiSdk } from "@buildwarden/provider-ai-sdk";
+import {
+  ClaudeCodeProviderAdapter,
+  assertClaudeCodeAvailable,
+  generateAskTextResultWithClaudeCode,
+  listClaudeCodeSlashCommands,
+  suggestCommitMessageWithClaudeCode,
+} from "@buildwarden/provider-claude-code";
+import { CodexCliProviderAdapter, assertCodexCliAvailable, generateAskTextResultWithCodexCli, suggestCommitMessageWithCodexCli } from "@buildwarden/provider-codex-cli";
+import { AzureLegacyProviderAdapter, createAzureLegacyClientFromParts, createAzureLegacyDevLogger } from "@buildwarden/provider-azure-legacy";
+import { INTEGRATED_SKILLS_BY_ID, INTEGRATED_SKILLS_CATALOG } from "@buildwarden/shared/integrated-skills-catalog";
 import {
   APP_SETTING_KEYS,
-  INTEGRATED_SKILLS_BY_ID,
-  INTEGRATED_SKILLS_CATALOG,
   buildNetworkProxyRuntimeConfig,
   buildDefaultProjectLabSettings,
+  filterComposerCommandDescriptors,
   isDetachedHeadProjectErrorMessage,
+  listComposerCommandsForProvider,
+  mergeComposerCommandDescriptors,
   type AppPathsInfo,
+  type AppLogDirectorySizeInfo,
+  type ComposerCommandDescriptor,
+  type ComposerCommandContext,
+  type IntegratedSkillMetadata,
   type NetworkProxyRuntimeConfig,
   type NetworkProxySettingsInput,
   type NetworkProxySettingsSnapshot,
@@ -34,9 +49,12 @@ import {
   parseNetworkProxySettings,
   parseIdePathConfig,
   parseIntegratedSkillsDisabledSetting,
+  parseProjectForgePrMonitorIntervalMinutes,
+  parseProjectForgePrMonitorSettingsSetting,
   parseProjectLabSettingsSetting,
   parseProjectActiveSkillsSetting,
   parseShellAllowlistExtraSetting,
+  serializeProjectForgePrMonitorSettingsSetting,
   validateChatAttachmentPayloads,
   type UnifiedProviderFamily,
   type StoredAttachmentMetadata,
@@ -47,13 +65,27 @@ import {
   type ChatAttachmentPayload,
   type ChatInput,
   type ChatRecord,
-  type DesktopApi,
   type ContinueRunInput,
+  type CreateProjectBranchInput,
+  type DeleteProjectBranchInput,
+  type DesktopApi,
   type FetchProjectPrMrDiffInput,
+  type GetProjectForgeRequestDetailsInput,
+  type ListProjectForgeRequestsInput,
+  type ListComposerCommandsInput,
   type ModelInput,
   type ModelRecord,
   type OpenPathInFileManagerResult,
   type ProjectInput,
+  type ProjectBranchDeleteImpact,
+  type ProjectGitBranchOverview,
+  type ProjectForgeAuthStatus,
+  type ProjectForgePrMonitorConfig,
+  type ProjectForgePrMonitorSettings,
+  type ProjectForgePrMonitorSettingsInput,
+  type ProjectForgeRequestsResult,
+  type ProjectForgeRequestDetailsResult,
+  type ProjectForgeReviewActionResult,
   type GenerateProjectInsightInput,
   type ArchitectureGraphInsightData,
   type DependencyGravityInsightData,
@@ -62,22 +94,24 @@ import {
   type ProjectInsightEdge,
   type ProjectInsightKind,
   type ProjectLabMode,
-  type ProjectLabPersonaConfig,
-  type ProjectLabPersonaId,
   type ProjectLabSettings,
-  type ProjectLabThreadKind,
   type ProjectLabThreadRecord,
   type RunProjectLabInput,
   type ProjectPrMrDiffResult,
+  type PostProjectPrMrReviewInput,
+  type SubmitProjectPrMrCommentsInput,
   type ProjectInsightRecord,
   type ProjectInsightData,
   type ProjectRecord,
+  type ProjectTaskInput,
   type ProjectTaskRecord,
   type ProviderAccountInput,
   type ProviderAdapter,
   type ProviderAccountRecord,
   type ProviderSessionRuntimeInput,
+  type PushProjectBranchInput,
   type RendererLogPayload,
+  type RenameProjectBranchInput,
   type RunResumeCheckpoint,
   type RunDetail,
   type RunDiffReviewFinding,
@@ -89,13 +123,18 @@ import {
   type RunFollowUpOptions,
   type RunInput,
   type RunListVisibility,
+  type RunNoteRecord,
+  type UpdateProjectTaskInput,
+  type UpdateRunNoteInput,
   type RunRecord,
   type RunTokenUsage,
+  type RunUserInputAnswers,
+  type RunUserInputQuestion,
   type ShellApprovalDecision,
   type ShellApprovalRespondOptions,
   type SupportedIdeKind,
   type WorktreeStatus,
-} from "@easycode/shared";
+} from "@buildwarden/shared";
 import { logError, logInfo, logWarn } from "./logger";
 import { ElectronSecretStore } from "./secret-store";
 
@@ -103,6 +142,20 @@ const MAX_DIFF_CHARS_FOR_COMMIT_SUGGEST = 100_000;
 const MAX_DIFF_CHARS_FOR_REVIEW = 140_000;
 const MAX_PROJECT_INSIGHT_PROMPT_CHARS = 20_000;
 const normalizeAssistantOutputText = (value: string) => value.replace(/\s+/g, " ").trim();
+const normalizeRunGoalText = (value: string | null | undefined): string | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed || null;
+};
+const buildPromptWithRunGoal = (prompt: string, goalText: string | null | undefined): string => {
+  const goal = normalizeRunGoalText(goalText);
+  if (!goal) {
+    return prompt;
+  }
+  return ["Run goal:", goal, "", "User request:", prompt.trim() || "(no additional request text)"].join("\n");
+};
 const CANONICAL_RUN_CHUNK_TYPES = new Set<string>([
   "tool-call",
   "tool-result",
@@ -180,15 +233,6 @@ type DependencyGraphSnapshot = {
       resolved: string | null;
     }>;
   }>;
-};
-
-type ProjectLabDecision = {
-  title: string;
-  summary: string;
-  kind: ProjectLabThreadKind;
-  outcome: string;
-  agreed: boolean;
-  implementationPrompt: string | null;
 };
 
 const PROJECT_LAB_MODES: ProjectLabMode[] = ["new-feature", "bugfix", "refactoring", "rfc-only"];
@@ -386,6 +430,15 @@ const getAiSdkProviderFamilyFromConfig = (configJson: string): UnifiedProviderFa
   return "openai";
 };
 
+const parseProviderConfigJson = (configJson: string): Record<string, unknown> => {
+  try {
+    const parsed = JSON.parse(configJson || "{}") as unknown;
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+};
+
 const providerAllowsMissingApiKey = (provider: ProviderAccountRecord): boolean =>
   provider.providerType === "codex-cli" ||
   provider.providerType === "claude-code" ||
@@ -394,13 +447,76 @@ const providerAllowsMissingApiKey = (provider: ProviderAccountRecord): boolean =
 const providerSupportsInterruptedRunRecovery = (providerType: ProviderAccountRecord["providerType"]): boolean =>
   providerType === "codex-cli" || providerType === "claude-code";
 
+const makeNativeComposerCommand = (
+  providerType: ProviderAccountRecord["providerType"],
+  command: `/${string}`,
+  description: string,
+  argumentHint?: string,
+): ComposerCommandDescriptor => ({
+  id: `${providerType}:${command.slice(1).replace(/[^a-z0-9_.:-]+/gi, "-")}`,
+  command: command.toLowerCase() as `/${string}`,
+  label: command.slice(1),
+  description,
+  providerType,
+  effect: "native-prompt",
+  ...(argumentHint ? { argumentHint } : {}),
+  source: "provider",
+  supportsRun: true,
+  supportsFollowUp: true,
+});
+
+const CODEX_NATIVE_COMPOSER_COMMANDS: readonly ComposerCommandDescriptor[] = [
+  makeNativeComposerCommand("codex-cli", "/agent", "Manage or switch Codex agents."),
+  makeNativeComposerCommand("codex-cli", "/apps", "Manage Codex apps and connectors."),
+  makeNativeComposerCommand("codex-cli", "/approve", "Review pending approvals."),
+  makeNativeComposerCommand("codex-cli", "/clear", "Clear the current conversation context."),
+  makeNativeComposerCommand("codex-cli", "/compact", "Compact the conversation context."),
+  makeNativeComposerCommand("codex-cli", "/copy", "Copy the latest assistant response."),
+  makeNativeComposerCommand("codex-cli", "/debug-config", "Show Codex debug configuration."),
+  makeNativeComposerCommand("codex-cli", "/diff", "Show current code changes."),
+  makeNativeComposerCommand("codex-cli", "/exit", "Exit the session."),
+  makeNativeComposerCommand("codex-cli", "/experimental", "Open experimental Codex features."),
+  makeNativeComposerCommand("codex-cli", "/fast", "Switch to a faster model or effort profile."),
+  makeNativeComposerCommand("codex-cli", "/feedback", "Send feedback."),
+  makeNativeComposerCommand("codex-cli", "/fork", "Fork the current conversation."),
+  makeNativeComposerCommand("codex-cli", "/hooks", "Manage Codex hooks."),
+  makeNativeComposerCommand("codex-cli", "/ide", "Manage IDE integration."),
+  makeNativeComposerCommand("codex-cli", "/init", "Create or update repository instructions."),
+  makeNativeComposerCommand("codex-cli", "/keymap", "Change keyboard shortcuts."),
+  makeNativeComposerCommand("codex-cli", "/logout", "Sign out of Codex."),
+  makeNativeComposerCommand("codex-cli", "/mcp", "Manage MCP servers and tools."),
+  makeNativeComposerCommand("codex-cli", "/memories", "Manage saved memories."),
+  makeNativeComposerCommand("codex-cli", "/mention", "Mention a file, symbol, or resource.", "<target>"),
+  makeNativeComposerCommand("codex-cli", "/model", "Change the active model."),
+  makeNativeComposerCommand("codex-cli", "/new", "Start a new session."),
+  makeNativeComposerCommand("codex-cli", "/permissions", "Review or update permissions."),
+  makeNativeComposerCommand("codex-cli", "/personality", "Adjust the assistant personality."),
+  makeNativeComposerCommand("codex-cli", "/plugins", "Manage Codex plugins."),
+  makeNativeComposerCommand("codex-cli", "/ps", "Show active Codex sessions."),
+  makeNativeComposerCommand("codex-cli", "/quit", "Quit the session."),
+  makeNativeComposerCommand("codex-cli", "/raw", "Send raw text without command interpretation."),
+  makeNativeComposerCommand("codex-cli", "/resume", "Resume a previous session."),
+  makeNativeComposerCommand("codex-cli", "/review", "Review current code changes."),
+  makeNativeComposerCommand("codex-cli", "/sandbox-add-read-dir", "Allow Codex to read another directory.", "<path>"),
+  makeNativeComposerCommand("codex-cli", "/side", "Open side-by-side mode."),
+  makeNativeComposerCommand("codex-cli", "/skills", "List or manage Codex skills."),
+  makeNativeComposerCommand("codex-cli", "/status", "Show session status."),
+  makeNativeComposerCommand("codex-cli", "/statusline", "Configure the status line."),
+  makeNativeComposerCommand("codex-cli", "/stop", "Stop the current response."),
+  makeNativeComposerCommand("codex-cli", "/theme", "Change the theme."),
+  makeNativeComposerCommand("codex-cli", "/title", "Set the session title.", "<title>"),
+  makeNativeComposerCommand("codex-cli", "/vim", "Toggle Vim keybindings."),
+];
+
 const SELECTED_PROJECT_KEY = "selectedProjectId";
 const SELECTED_RUN_KEY = "selectedRunId";
 const SELECTED_CHAT_KEY = "selectedChatId";
 const NETWORK_PROXY_PASSWORD_SECRET_KEY = "app:network-proxy-password";
+const PROJECT_FORGE_TOKEN_SECRET_PREFIX = "project:forge-token:";
 const ACTIVE_RUN_STATUSES = new Set<RunRecord["status"]>(["queued", "preparing", "running"]);
 const runCheckpointSettingKey = (runId: string) => `runCheckpoint:${runId}`;
 const runPromptRestorePointSettingKey = (runId: string) => `runPromptRestorePoint:${runId}`;
+const projectForgeTokenSecretKey = (projectId: string) => `${PROJECT_FORGE_TOKEN_SECRET_PREFIX}${projectId}`;
 
 /** Shown when the app restarts while a run or chat was still marked active in the DB. */
 const SESSION_INTERRUPTED_MESSAGE =
@@ -460,6 +576,8 @@ export class AppController
       | "onRunTerminalExit"
       | "onAppMenuCommand"
       | "onAppSettingsChanged"
+      | "onProjectForgeRequestOpen"
+      | "onProjectForgeRequestNotification"
       | "showAppMenu"
       | "openSystemTerminalAtPath"
       | "openExternalUrl"
@@ -474,14 +592,17 @@ export class AppController
   };
   private readonly runWorkers = new Map<string, ActiveWorker>();
   private readonly runShellApprovalStepIds = new Map<string, string>();
+  private readonly runUserInputStepIds = new Map<string, string>();
   private readonly runListeners = new Set<(event: RunEvent) => void>();
   private readonly appWarningListeners = new Set<(warning: AppWarning) => void>();
   private readonly chatWorkers = new Map<string, ActiveWorker>();
   private readonly cancelledProjectLabThreadIds = new Set<string>();
+  private readonly composerCommandCache = new Map<string, { expiresAt: number; commands: ComposerCommandDescriptor[] }>();
+  private readonly composerCommandInflight = new Map<string, Promise<ComposerCommandDescriptor[]>>();
   private chatListeners: ((event: RunEvent & { chatId: string }) => void)[] = [];
 
   constructor(
-    private readonly db: EasycodeDatabase,
+    private readonly db: BuildWardenDatabase,
     private readonly secrets: ElectronSecretStore,
     private readonly logDirPath: string,
   ) {}
@@ -604,6 +725,24 @@ export class AppController
     return settingsByProjectId[projectId] ?? buildDefaultProjectLabSettings();
   }
 
+  private setProjectForgePrMonitorInterval(projectId: string, intervalMinutes: number): void {
+    const settings = parseProjectForgePrMonitorSettingsSetting(
+      this.db.getSettings()[APP_SETTING_KEYS.projectForgePrMonitorSettings],
+    );
+    const normalized = parseProjectForgePrMonitorIntervalMinutes(intervalMinutes);
+    if (normalized > 0) {
+      settings[projectId] = { intervalMinutes: normalized };
+    } else {
+      delete settings[projectId];
+    }
+    const serialized = serializeProjectForgePrMonitorSettingsSetting(settings);
+    if (serialized === "{}") {
+      this.db.deleteSetting(APP_SETTING_KEYS.projectForgePrMonitorSettings);
+      return;
+    }
+    this.db.setSetting(APP_SETTING_KEYS.projectForgePrMonitorSettings, serialized);
+  }
+
   private buildProjectLabRepoBrief(project: ProjectRecord): string {
     const tasks = this.db.listProjectTasks(project.id).slice(0, 5);
     const insights = this.db.listProjectInsights(project.id).slice(0, 4);
@@ -635,7 +774,7 @@ export class AppController
     const priorThreads = this.db
       .listProjectLabThreads(projectId)
       .filter((thread) => thread.id !== excludedThreadId)
-      .filter((thread) => thread.status !== "rejected" && thread.status !== "failed")
+      .filter((thread) => thread.status !== "failed")
       .slice(0, 20);
 
     if (priorThreads.length === 0) {
@@ -645,16 +784,15 @@ export class AppController
     return [
       "Avoid repeating or lightly rephrasing these existing Project Lab topics unless the user explicitly asked to revisit one:",
       ...priorThreads.map((thread) => {
-        const status = thread.status === "implemented" ? "implemented" : thread.status;
         const summary = thread.summary.trim() ? ` - ${thread.summary.trim()}` : "";
         const outcome = thread.outcome?.trim() ? ` Outcome: ${thread.outcome.trim().slice(0, 280)}` : "";
         const implementation = thread.implementationPrompt?.trim()
           ? ` Implementation: ${thread.implementationPrompt.trim().slice(0, 280)}`
           : "";
-        return `- [${status}] ${thread.title}${summary}${outcome}${implementation}`;
+        return `- [${thread.status}] ${thread.title}${summary}${outcome}${implementation}`;
       }),
       "",
-      "The scout must choose a substantially different code area, risk, feature, or refactoring angle. If no distinct idea is worth pursuing, say so instead of duplicating prior work.",
+      "Choose a substantially different code area, risk, feature, or refactoring angle. If no distinct idea is worth pursuing, say so instead of duplicating prior work.",
     ].join("\n");
   }
 
@@ -678,10 +816,10 @@ export class AppController
         const implementation = thread.implementationPrompt?.trim()
           ? ` Worked-on implementation: ${thread.implementationPrompt.trim().slice(0, 520)}`
           : "";
-        return `- [${thread.status}] Feature/topic worked on: ${topic}.${summary}${outcome}${implementation}`;
+        return `- [${thread.status}] Topic: ${topic}.${summary}${outcome}${implementation}`;
       }),
       "",
-      "Strict instruction: do not implement, fix, refactor, or lightly rephrase any feature/topic listed above. Pick a genuinely different code area and user value/risk, or explicitly conclude that there is no distinct same-mode opportunity worth starting.",
+      "Do not implement, fix, refactor, or lightly rephrase any topic listed above. Pick a genuinely different area and value/risk, or explicitly conclude that there is no distinct same-mode opportunity worth starting.",
     ].join("\n");
   }
 
@@ -700,7 +838,7 @@ export class AppController
       return [
         `Chosen Project Lab mode: ${modeLabel}.`,
         userDirection,
-        "Honor the user direction, but frame the discussion through the chosen mode unless the user explicitly asked for a different kind of outcome.",
+        "Honor the user direction, but frame the work through the chosen mode unless the user explicitly asked for a different kind of outcome.",
       ]
         .filter(Boolean)
         .join(" ");
@@ -709,31 +847,28 @@ export class AppController
     if (mode === "new-feature") {
       return [
         "Chosen Project Lab mode: New feature.",
-        "Find one concrete new user-facing product feature or workflow capability.",
-        "Name the user benefit, where it would appear in the app, and the smallest implementation slice.",
+        "Find one concrete new user-facing product feature or workflow capability, then implement the smallest useful slice.",
         "Do not default to internal cleanup unless it directly enables the feature.",
       ].join(" ");
     }
     if (mode === "bugfix") {
       return [
         "Chosen Project Lab mode: Bugfix.",
-        "Find one likely defect, sharp edge, inconsistent behavior, or reliability issue worth fixing.",
-        "Ground the proposal in repo evidence and describe the user-visible failure or risk.",
-        "Prefer a small, verifiable fix over broad cleanup.",
+        "Look for one concrete bug or vulnerability supported by repository evidence, with priority on security issues, authorization/authentication mistakes, null/undefined/null-pointer failures, data-loss risks, race conditions, invalid state handling, and reliability failures.",
+        "Do not make a change just to produce output. Do not implement cosmetic cleanup, broad refactoring, dependency upgrades, naming changes, or speculative improvements.",
+        "If the inspected code looks sound and you cannot identify a defensible bug, make no code changes and explain what you inspected.",
       ].join(" ");
     }
     if (mode === "refactoring") {
       return [
         "Chosen Project Lab mode: Refactoring.",
-        "Find one focused refactor that reduces complexity, coupling, duplication, or future maintenance cost.",
-        "Keep the scope small enough for one worktree and explain the safety checks.",
+        "Find one focused refactor that reduces complexity, coupling, duplication, or maintenance cost, then implement it with a clear safety check.",
       ].join(" ");
     }
     return [
       "Chosen Project Lab mode: RFC only.",
-      "Draft a thoughtful RFC for a larger feature, architecture shift, or refactoring direction.",
-      "Do not propose immediate code changes and do not include an implementation prompt.",
-      "The output should be a written RFC with motivation, proposal, alternatives, risks, and rollout plan.",
+      "Find one larger opportunity and write an RFC only. Do not edit code.",
+      "The RFC should include motivation, proposal, alternatives, risks, rollout, and open questions.",
     ].join(" ");
   }
 
@@ -741,17 +876,19 @@ export class AppController
     if (mode === "new-feature") {
       return [
         "Mode requirements:",
-        "- Prioritize a new capability that a developer using Easycode would notice.",
-        "- Good examples include workflow buttons, better autonomous/project-lab behaviors, richer review surfaces, repo intelligence, remote/network functionality, or collaboration features.",
-        "- Include a small implementable slice if the feature is ready for code.",
+        "- Prioritize a new capability that a developer using BuildWarden would notice.",
+        "- Keep the implementation small enough for one worktree.",
+        "- Update relevant UI, wiring, tests, and docs when needed.",
       ].join("\n");
     }
     if (mode === "bugfix") {
       return [
         "Mode requirements:",
-        "- Prioritize a likely bug, confusing behavior, fragile edge case, or reliability issue.",
-        "- Explain the suspected failure mode and how to verify the fix.",
-        "- Include a small implementation prompt when the fix is actionable.",
+        "- Prioritize security defects, auth/permission mistakes, null/undefined/null-pointer risks, data corruption/loss, race conditions, invalid state transitions, broken error handling, or reliability failures.",
+        "- Require concrete evidence from the code path before changing files.",
+        "- State the suspected failure mode before implementing.",
+        "- Prefer a regression test or targeted validation that would catch the bug.",
+        "- If no defensible bug is found, leave the worktree unchanged and summarize the inspected areas.",
       ].join("\n");
     }
     if (mode === "refactoring") {
@@ -759,119 +896,55 @@ export class AppController
         "Mode requirements:",
         "- Prioritize code health, architecture, cohesion, or simplification.",
         "- Avoid sweeping rewrites; choose a bounded refactor with a clear safety net.",
-        "- Include a small implementation prompt when the refactor is actionable.",
+        "- Preserve behavior unless the user direction says otherwise.",
       ].join("\n");
     }
     return [
       "Mode requirements:",
       "- Produce an RFC only.",
-      "- The final decision kind must be rfc.",
-      "- The final implementationPrompt must be null.",
-      "- No code implementation should be started from this thread.",
+      "- Do not edit files.",
+      "- Include concrete next implementation steps, but leave execution for a future run.",
     ].join("\n");
   }
 
-  private normalizeProjectLabTopicTokens(value: string): Set<string> {
-    const stopWords = new Set([
-      "the",
-      "and",
-      "for",
-      "with",
-      "from",
-      "that",
-      "this",
-      "into",
-      "onto",
-      "about",
-      "should",
-      "would",
-      "could",
-      "implementation",
-      "implement",
-      "feature",
-      "refactor",
-      "improve",
-      "improvement",
-      "project",
-      "lab",
-      "code",
-      "easycode",
-    ]);
+  private buildProjectLabImplementationPrompt(input: RunProjectLabInput, project: ProjectRecord, mode: ProjectLabMode, threadId: string): string {
+    const repoBrief = this.buildProjectLabRepoBrief(project);
+    const avoidanceBrief = this.buildProjectLabAvoidanceBrief(project.id, threadId);
+    const sameModePriorWorkBrief = this.buildProjectLabSameModePriorWorkBrief(project.id, mode, threadId);
+    const opportunityInstruction = this.buildProjectLabOpportunityInstruction(input, mode);
+    const modeBrief = this.buildProjectLabModeBrief(mode);
+    const agentObjective =
+      mode === "bugfix"
+        ? "Your job is to inspect this repository, identify exactly one concrete bug or vulnerability for the selected mode, and implement a narrowly scoped fix only when the evidence supports it."
+        : "Your job is to inspect this repository, identify exactly one worthwhile improvement for the selected mode, and implement it directly in this worktree.";
 
-    return new Set(
-      value
-        .toLowerCase()
-        .replace(/[`"'()[\]{}.,:;!?/\\_-]+/g, " ")
-        .split(/\s+/)
-        .map((token) => token.trim())
-        .filter((token) => token.length >= 4 && !stopWords.has(token)),
-    );
-  }
-
-  private findSimilarProjectLabText(projectId: string, excludedThreadId: string, text: string): ProjectLabThreadRecord | null {
-    const newTokens = this.normalizeProjectLabTopicTokens(text);
-    if (newTokens.size < 4) {
-      return null;
-    }
-
-    const priorThreads = this.db
-      .listProjectLabThreads(projectId)
-      .filter((thread) => thread.id !== excludedThreadId)
-      .filter((thread) => thread.status !== "rejected" && thread.status !== "failed");
-
-    for (const thread of priorThreads) {
-      const existingTokens = this.normalizeProjectLabTopicTokens(
-        [thread.title, thread.summary, thread.outcome ?? "", thread.implementationPrompt ?? ""].join(" "),
-      );
-      if (existingTokens.size < 4) {
-        continue;
-      }
-
-      const shared = [...newTokens].filter((token) => existingTokens.has(token)).length;
-      const smallerSetSize = Math.min(newTokens.size, existingTokens.size);
-      const overlapScore = shared / smallerSetSize;
-      if (shared >= 4 && overlapScore >= 0.55) {
-        return thread;
-      }
-    }
-
-    return null;
-  }
-
-  private findSimilarProjectLabThread(projectId: string, excludedThreadId: string, decision: ProjectLabDecision): ProjectLabThreadRecord | null {
-    return this.findSimilarProjectLabText(projectId, excludedThreadId, [decision.title, decision.summary, decision.outcome].join(" "));
-  }
-
-  private getProjectLabPersonaSystemPrompt(personaId: ProjectLabPersonaId, label: string): string {
-    if (personaId === "architect") {
-      return `You are ${label}. Focus on architecture, coupling, layering, and durable project direction. Be concrete.`;
-    }
-    if (personaId === "security-coach") {
-      return `You are ${label}. Focus on secrets, trust boundaries, risky defaults, dependency safety, and operational hazards.`;
-    }
-    if (personaId === "clean-code") {
-      return `You are ${label}. Focus on readability, naming, cohesion, and reducing accidental complexity.`;
-    }
-    if (personaId === "implementer") {
-      return `You are ${label}. Translate agreed decisions into concrete, implementation-ready coding tasks.`;
-    }
-    return `You are ${label}. Moderate viewpoints, identify agreement, and force a practical outcome.`;
-  }
-
-  private parseProjectLabDecision(raw: string): ProjectLabDecision {
-    const normalized = normalizeJsonResponse(raw);
-    const parsed = JSON.parse(normalized) as Record<string, unknown>;
-    const kind: ProjectLabThreadKind =
-      parsed.kind === "rfc" || parsed.kind === "implementation" ? parsed.kind : "idea";
-    return {
-      title: typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim() : "Project Lab proposal",
-      summary: typeof parsed.summary === "string" && parsed.summary.trim() ? parsed.summary.trim() : "A Project Lab proposal was generated.",
-      kind,
-      outcome: typeof parsed.outcome === "string" && parsed.outcome.trim() ? parsed.outcome.trim() : "No clear outcome was recorded.",
-      agreed: parsed.agreed !== false,
-      implementationPrompt:
-        typeof parsed.implementationPrompt === "string" && parsed.implementationPrompt.trim() ? parsed.implementationPrompt.trim() : null,
-    };
+    return [
+      "You are BuildWarden Project Lab's implementation agent.",
+      agentObjective,
+      "Do not ask for a discussion round or wait for approval. Make a small, reviewable change.",
+      "If the repository evidence shows there is no safe distinct change worth making, make no code changes and explain why in the final answer.",
+      "",
+      `Project: ${project.name}`,
+      opportunityInstruction,
+      "",
+      "Repository brief:",
+      repoBrief,
+      "",
+      modeBrief,
+      "",
+      "Existing Project Lab topics to avoid:",
+      avoidanceBrief,
+      "",
+      "Previous same-mode Project Lab work to avoid:",
+      sameModePriorWorkBrief,
+      "",
+      "Execution requirements:",
+      "- Start by inspecting the relevant code before choosing the exact change.",
+      "- State the opportunity you selected in the run output before or while implementing.",
+      "- Keep changes tightly scoped to one feature, bugfix, or refactor.",
+      "- Run appropriate validation when available, or inspect changed files carefully when validation is not practical.",
+      "- Finish with a concise summary of what changed, why it was worth doing, and how it was checked.",
+    ].join("\n");
   }
 
   private async createProjectLabImplementationRun(
@@ -913,80 +986,57 @@ export class AppController
     }
     const thread = this.db.getProjectLabThread(run.labThreadId);
     const project = this.db.getProject(run.projectId);
-    const settings = this.getProjectLabSettings(project.id);
+    const reviewModelId = thread.reviewModelId?.trim();
+
+    if (!reviewModelId) {
+      this.db.appendProjectLabEvent({
+        threadId: thread.id,
+        role: "system",
+        label: "System",
+        content: "Implementation completed, but no review model was stored on this Project Lab thread.",
+      });
+      this.db.updateProjectLabThread(thread.id, {
+        status: "completed",
+        summary: run.summary?.trim() || thread.summary,
+        outcome: run.summary?.trim() || thread.outcome,
+      });
+      return;
+    }
+
+    this.db.updateProjectLabThread(thread.id, { status: "reviewing" });
     const diff = (await this.getRunWorktreeDiff(run.id)).diff.trim();
+    const context = await this.resolveModelInvocationContext(reviewModelId);
+    const content = await this.askModelForText(run.worktreePath, context, {
+      prompt: [
+        `Project: ${project.name}`,
+        `Project Lab mode: ${PROJECT_LAB_MODE_LABELS[thread.mode]}`,
+        `Implementation thread: ${thread.title}`,
+        `Implementation run summary: ${run.summary ?? "(none)"}`,
+        "",
+        "Review the implementation as a second agent.",
+        "Focus on correctness, scope control, regressions, missing validation, and whether the change matches the Project Lab mode.",
+        "Do not rewrite the implementation. Return concise Markdown with sections: Verdict, Findings, Follow-up.",
+        "",
+        "Diff:",
+        diff || "(No remaining diff found. Review the run summary and note that there was no diff to inspect.)",
+      ].join("\n"),
+      systemPrompt: "You are BuildWarden Project Lab's review agent. Be direct, concrete, and practical.",
+      maxTokens: 900,
+      temperature: 0.2,
+      usageProjectId: project.id,
+    });
 
-    const reviewPersonas = settings.personas.filter(
-      (persona) =>
-        persona.enabled &&
-        persona.modelId &&
-        persona.personaId !== "implementer" &&
-        persona.personaId !== "moderator",
-    );
-    const selectedReviewers = reviewPersonas.slice(0, 2);
-
-    for (const persona of selectedReviewers) {
-      const context = await this.resolveModelInvocationContext(persona.modelId!);
-      const content = await this.askModelForText(run.worktreePath, context, {
-        prompt: [
-          `Project: ${project.name}`,
-          `Implementation thread: ${thread.title}`,
-          "",
-          "Review this implementation from your persona's perspective.",
-          "State whether you approve it, whether you think the change was necessary, and whether you see code issues, bugs, or risks.",
-          "Keep it concise and practical.",
-          "",
-          "Diff:",
-          diff || "(No remaining diff found. Comment on likely outcome and any residual risks.)",
-        ].join("\n"),
-        systemPrompt: this.getProjectLabPersonaSystemPrompt(persona.personaId, persona.label),
-        maxTokens: 500,
-        temperature: 0.3,
-        usageProjectId: project.id,
-      });
-      this.db.appendProjectLabMessage({
-        threadId: thread.id,
-        personaId: persona.personaId,
-        personaLabel: persona.label,
-        role: "persona",
-        bubbleColor: persona.colorToken,
-        content: content.trim() || "No review comment returned.",
-      });
-    }
-
-    const moderator = settings.personas.find((persona) => persona.personaId === "moderator" && persona.enabled && persona.modelId) ?? null;
-    if (moderator?.modelId) {
-      const context = await this.resolveModelInvocationContext(moderator.modelId);
-      const content = await this.askModelForText(run.worktreePath, context, {
-        prompt: [
-          `Project: ${project.name}`,
-          `Implementation thread: ${thread.title}`,
-          `Run summary: ${run.summary ?? "(none)"}`,
-          "",
-          "Summarize what changed, whether the implementation seems necessary, and whether the council should consider it successful.",
-          "",
-          "Diff:",
-          diff || "(No remaining diff found.)",
-        ].join("\n"),
-        systemPrompt: "You are the Project Lab moderator. Write a short post-implementation summary.",
-        maxTokens: 550,
-        temperature: 0.2,
-        usageProjectId: project.id,
-      });
-      this.db.appendProjectLabMessage({
-        threadId: thread.id,
-        personaId: "moderator",
-        personaLabel: moderator.label,
-        role: "moderator",
-        bubbleColor: moderator.colorToken,
-        content: content.trim() || "Implementation completed.",
-      });
-    }
-
+    const review = content.trim() || "Review completed without comments.";
+    this.db.appendProjectLabEvent({
+      threadId: thread.id,
+      role: "review",
+      label: "Review agent",
+      content: review,
+    });
     this.db.updateProjectLabThread(thread.id, {
-      status: "implemented",
+      status: "completed",
       summary: run.summary?.trim() || thread.summary,
-      outcome: run.summary?.trim() || thread.outcome,
+      outcome: review,
     });
   }
 
@@ -995,12 +1045,13 @@ export class AppController
       return;
     }
     const thread = this.db.getProjectLabThread(run.labThreadId);
-    this.db.appendProjectLabMessage({
+    if (thread.status === "cancelled") {
+      return;
+    }
+    this.db.appendProjectLabEvent({
       threadId: thread.id,
-      personaId: "system",
-      personaLabel: "System",
       role: "system",
-      bubbleColor: "zinc",
+      label: "System",
       content: `Implementation ended without success: ${message}`,
     });
     this.db.updateProjectLabThread(thread.id, {
@@ -1009,197 +1060,118 @@ export class AppController
     });
   }
 
+  private cancelProjectLabImplementation(run: RunRecord, message: string): void {
+    if (!run.labThreadId) {
+      return;
+    }
+    try {
+      const thread = this.db.getProjectLabThread(run.labThreadId);
+      if (thread.status === "cancelled") {
+        return;
+      }
+      this.db.appendProjectLabEvent({
+        threadId: thread.id,
+        role: "system",
+        label: "System",
+        content: message,
+      });
+      this.db.updateProjectLabThread(thread.id, {
+        status: "cancelled",
+        outcome: message,
+      });
+    } catch {
+      /* The Project Lab thread may have been deleted while its run was still stopping. */
+    }
+  }
+
   private isProjectLabThreadCancelled(threadId: string): boolean {
     return this.cancelledProjectLabThreadIds.has(threadId);
   }
 
-  private async executeProjectLabThread(
+  private projectLabTitleFromMarkdown(markdown: string, fallback: string): string {
+    const heading = markdown
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => /^#{1,3}\s+/.test(line));
+    return heading?.replace(/^#{1,3}\s+/, "").trim().slice(0, 140) || fallback;
+  }
+
+  private projectLabSummaryFromMarkdown(markdown: string, fallback: string): string {
+    const paragraph = markdown
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#"))[0];
+    return paragraph?.slice(0, 320) || fallback;
+  }
+
+  private async executeProjectLabRfcThread(
     threadId: string,
     input: RunProjectLabInput,
     project: ProjectRecord,
-    settings: ProjectLabSettings,
     mode: ProjectLabMode,
-    discussionPersonas: ProjectLabPersonaConfig[],
-    moderatorPersona: ProjectLabPersonaConfig,
+    implementationModelId: string,
+    reviewModelId: string,
   ): Promise<void> {
     const repoBrief = this.buildProjectLabRepoBrief(project);
     const avoidanceBrief = this.buildProjectLabAvoidanceBrief(project.id, threadId);
     const sameModePriorWorkBrief = this.buildProjectLabSameModePriorWorkBrief(project.id, mode, threadId);
-    const opportunityInstruction = this.buildProjectLabOpportunityInstruction(input, mode);
-    const modeBrief = this.buildProjectLabModeBrief(mode);
-
-    const scoutPersona =
-      discussionPersonas.find((persona) => persona.personaId === "architect") ??
-      discussionPersonas.find((persona) => persona.personaId === "clean-code") ??
-      discussionPersonas[0];
-    if (!scoutPersona) {
-      throw new Error("Project Lab needs at least one discussion persona to scout a candidate.");
-    }
-    const critiquePersonas = discussionPersonas.filter((persona) => persona.personaId !== scoutPersona.personaId);
-
-    const scoutContext = await this.resolveModelInvocationContext(scoutPersona.modelId!);
-    let candidateBrief = "No candidate returned.";
-    let duplicateScoutThread: ProjectLabThreadRecord | null = null;
-    const rejectedScoutTopics: string[] = [];
-
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const scoutRaw = await this.askModelForText(project.repoPath, scoutContext, {
-        prompt: [
-          `Project: ${project.name}`,
-          opportunityInstruction,
-          "",
-          "Repository brief:",
-          repoBrief,
-          "",
-          modeBrief,
-          "",
-          "Existing Project Lab topics to exclude:",
-          avoidanceBrief,
-          "",
-          "Previous same-mode Project Lab work to avoid:",
-          sameModePriorWorkBrief,
-          rejectedScoutTopics.length
-            ? [
-                "",
-                "Rejected duplicate candidate from this run:",
-                rejectedScoutTopics.map((topic) => `- ${topic}`).join("\n"),
-                "Choose a different topic now. Do not revise or rename the rejected topic.",
-              ].join("\n")
-            : "",
-          "",
-          "Before choosing, compare your candidate against the existing Project Lab topics above.",
-          "Also compare it against the previous same-mode Project Lab work. You must choose something different from those prior same-mode runs.",
-          "Scout exactly one candidate for the Project Lab to evaluate.",
-          "Do not list alternatives. Choose the single best topic for this mode.",
-          "Respond with concise markdown using these sections:",
-          "## Candidate",
-          "## Evidence",
-          "## Smallest Useful Slice",
-          "## Initial Implementation Shape",
-          "## Known Risks",
-          "",
-          "The candidate must be meaningfully distinct from the existing Project Lab topics above.",
-        ].join("\n"),
-        systemPrompt: this.getProjectLabPersonaSystemPrompt(scoutPersona.personaId, scoutPersona.label),
-        maxTokens: 900,
-        temperature: 0.4,
-        usageProjectId: project.id,
-      });
-      if (this.isProjectLabThreadCancelled(threadId)) {
-        return;
-      }
-
-      candidateBrief = scoutRaw.trim() || "No candidate returned.";
-      duplicateScoutThread = this.findSimilarProjectLabText(project.id, threadId, candidateBrief);
-      if (!duplicateScoutThread) {
-        break;
-      }
-
-      rejectedScoutTopics.push(`Overlapped with "${duplicateScoutThread.title}": ${candidateBrief.slice(0, 300)}`);
-    }
-
-    this.db.appendProjectLabMessage({
-      threadId,
-      personaId: scoutPersona.personaId,
-      personaLabel: `${scoutPersona.label} scout`,
-      role: "persona",
-      bubbleColor: scoutPersona.colorToken,
-      content: candidateBrief,
-    });
-
-    if (duplicateScoutThread) {
-      this.db.appendProjectLabMessage({
-        threadId,
-        personaId: "system",
-        personaLabel: "System",
-        role: "system",
-        bubbleColor: "zinc",
-        content: `Project Lab stopped before discussion because the scout candidate overlapped with existing Project Lab thread "${duplicateScoutThread.title}".`,
-      });
-      this.db.updateProjectLabThread(threadId, {
-        status: "parked",
-        title: `Duplicate skipped: ${duplicateScoutThread.title}`,
-        summary: `Skipped because the scout candidate overlapped with existing Project Lab thread "${duplicateScoutThread.title}".`,
-        outcome: "No distinct Project Lab topic was selected after checking prior proposals and implementations.",
-        implementationPrompt: null,
-      });
-      return;
-    }
-
-    const critiqueMessages: Array<{ persona: ProjectLabPersonaConfig; content: string }> = [];
-    for (const persona of critiquePersonas) {
-      const context = await this.resolveModelInvocationContext(persona.modelId!);
-      const content = await this.askModelForText(project.repoPath, context, {
-        prompt: [
-          `Project: ${project.name}`,
-          opportunityInstruction,
-          "",
-          "Repository brief:",
-          repoBrief,
-          "",
-          modeBrief,
-          "",
-          "Candidate under review:",
-          candidateBrief,
-          "",
-          "Evaluate this exact candidate from your role. Do not propose a different feature, bugfix, refactor, or RFC.",
-          "Call out what the implementer must watch out for, what should be trimmed, and what must be verified.",
-          "Respond with concise markdown using these sections:",
-          "## Keep",
-          "## Watch Out",
-          "## Change Before Implementation",
-          "## Verification",
-        ].join("\n"),
-        systemPrompt: this.getProjectLabPersonaSystemPrompt(persona.personaId, persona.label),
-        maxTokens: 700,
-        temperature: 0.35,
-        usageProjectId: project.id,
-      });
-      if (this.isProjectLabThreadCancelled(threadId)) {
-        return;
-      }
-      const trimmedContent = content.trim() || "No response returned.";
-      critiqueMessages.push({ persona, content: trimmedContent });
-      this.db.appendProjectLabMessage({
-        threadId,
-        personaId: persona.personaId,
-        personaLabel: persona.label,
-        role: "persona",
-        bubbleColor: persona.colorToken,
-        content: trimmedContent,
-      });
-    }
-
-    const moderatorContext = await this.resolveModelInvocationContext(moderatorPersona.modelId!);
-    const moderatorRaw = await this.askModelForText(project.repoPath, moderatorContext, {
+    const implementationContext = await this.resolveModelInvocationContext(implementationModelId);
+    const rfc = await this.askModelForText(project.repoPath, implementationContext, {
       prompt: [
+        "You are BuildWarden Project Lab's RFC agent.",
+        "Inspect the repository context below and write one useful RFC. Do not modify files.",
+        "",
         `Project: ${project.name}`,
-        opportunityInstruction,
+        this.buildProjectLabOpportunityInstruction(input, mode),
         "",
         "Repository brief:",
         repoBrief,
         "",
-        modeBrief,
+        this.buildProjectLabModeBrief(mode),
         "",
-        "Existing Project Lab topics to exclude:",
+        "Existing Project Lab topics to avoid:",
         avoidanceBrief,
         "",
         "Previous same-mode Project Lab work to avoid:",
         sameModePriorWorkBrief,
         "",
-        "Candidate under review:",
-        candidateBrief,
-        "",
-        "Persona cautions:",
-        critiqueMessages.length
-          ? critiqueMessages.map((entry) => `### ${entry.persona.label}\n${entry.content}`).join("\n\n")
-          : "No additional critique personas were configured; rely on the scout candidate and mode requirements.",
-        "",
-        mode === "rfc-only"
-          ? "Return JSON only with keys: title, summary, kind, outcome, agreed, implementationPrompt. Because this is RFC-only mode, kind must be \"rfc\" and implementationPrompt must be null. The outcome should be the final RFC content or a concise RFC summary. If the candidate repeats an existing Project Lab topic or previous same-mode Project Lab work, set agreed=false and explain that it was skipped as a duplicate."
-          : "Return JSON only with keys: title, summary, kind, outcome, agreed, implementationPrompt. Produce one ideal implementation plan from the scout candidate and persona cautions. Do not introduce a different topic. Include implementationPrompt whenever the plan should be implemented in code. If the candidate repeats an existing Project Lab topic or previous same-mode Project Lab work, set agreed=false and explain that it was skipped as a duplicate.",
+        "Return concise Markdown with sections: Title, Motivation, Proposal, Alternatives, Risks, Rollout, Open Questions.",
       ].join("\n"),
-      systemPrompt: "You are the Project Lab moderator. Return valid JSON only.",
+      systemPrompt: "You write practical engineering RFCs grounded in repository evidence.",
+      maxTokens: 1400,
+      temperature: 0.35,
+      usageProjectId: project.id,
+    });
+    if (this.isProjectLabThreadCancelled(threadId)) {
+      return;
+    }
+
+    const rfcContent = rfc.trim() || "No RFC content returned.";
+    this.db.appendProjectLabEvent({
+      threadId,
+      role: "rfc",
+      label: "RFC agent",
+      content: rfcContent,
+    });
+    this.db.updateProjectLabThread(threadId, {
+      title: this.projectLabTitleFromMarkdown(rfcContent, "Project Lab RFC"),
+      summary: this.projectLabSummaryFromMarkdown(rfcContent, "Project Lab drafted an RFC."),
+      outcome: rfcContent,
+      status: "reviewing",
+    });
+
+    const reviewContext = await this.resolveModelInvocationContext(reviewModelId);
+    const review = await this.askModelForText(project.repoPath, reviewContext, {
+      prompt: [
+        `Project: ${project.name}`,
+        "Review this Project Lab RFC as a second agent.",
+        "Check whether the proposal is useful, scoped, risky, missing alternatives, or ready for a future implementation run.",
+        "Return concise Markdown with sections: Verdict, Gaps, Suggested next step.",
+        "",
+        "RFC:",
+        rfcContent,
+      ].join("\n"),
+      systemPrompt: "You are BuildWarden Project Lab's review agent. Review RFC quality and practicality.",
       maxTokens: 800,
       temperature: 0.25,
       usageProjectId: project.id,
@@ -1208,101 +1180,16 @@ export class AppController
       return;
     }
 
-    let decision = this.parseProjectLabDecision(moderatorRaw);
-    if (mode === "rfc-only") {
-      decision = {
-        ...decision,
-        kind: "rfc",
-        implementationPrompt: null,
-      };
-    }
-    const similarThread = decision.agreed ? this.findSimilarProjectLabThread(project.id, threadId, decision) : null;
-    this.db.appendProjectLabMessage({
+    this.db.appendProjectLabEvent({
       threadId,
-      personaId: "moderator",
-      personaLabel: moderatorPersona.label,
-      role: "moderator",
-      bubbleColor: moderatorPersona.colorToken,
-      content: [
-        `## Verdict`,
-        `**Kind:** ${decision.kind}`,
-        `**Agreed:** ${decision.agreed && !similarThread ? "yes" : "no"}`,
-        "",
-        decision.summary,
-        "",
-        `### Outcome`,
-        similarThread
-          ? `Skipped as a duplicate of existing Project Lab thread "${similarThread.title}". ${decision.outcome}`
-          : decision.outcome,
-      ].join("\n"),
+      role: "review",
+      label: "Review agent",
+      content: review.trim() || "RFC review completed without comments.",
     });
-
-    if (similarThread) {
-      this.db.appendProjectLabMessage({
-        threadId,
-        personaId: "system",
-        personaLabel: "System",
-        role: "system",
-        bubbleColor: "zinc",
-        content: `Skipped duplicate topic. This proposal overlapped with existing Project Lab thread "${similarThread.title}", so no implementation was started.`,
-      });
-      this.db.updateProjectLabThread(threadId, {
-        kind: decision.kind,
-        status: "parked",
-        title: `Duplicate skipped: ${decision.title}`,
-        summary: `Skipped because it overlapped with existing Project Lab thread "${similarThread.title}".`,
-        outcome: decision.outcome,
-        implementationPrompt: null,
-      });
-      return;
-    }
-
-    let nextStatus: ProjectLabThreadRecord["status"] = decision.agreed ? "agreed" : "parked";
-    let implementationRunId: string | null = null;
-    if (settings.autoImplementation && decision.agreed && decision.implementationPrompt?.trim()) {
-      const implementerPersona =
-        settings.personas.find((persona) => persona.personaId === "implementer" && persona.enabled && persona.modelId) ?? null;
-      if (implementerPersona?.modelId && !this.isProjectLabThreadCancelled(threadId)) {
-        const implementationRun = await this.createProjectLabImplementationRun(
-          project.id,
-          threadId,
-          implementerPersona.modelId,
-          decision.implementationPrompt,
-          input.baseBranch?.trim() || project.defaultBranch,
-        );
-        implementationRunId = implementationRun.id;
-        nextStatus = "running-implementation";
-        this.db.appendProjectLabMessage({
-          threadId,
-          personaId: "system",
-          personaLabel: "System",
-          role: "system",
-          bubbleColor: "zinc",
-          content: `Implementation started in worktree \`${implementationRun.branchName}\`. Easycode will clean it up when the thread is deleted.`,
-        });
-      }
-    } else if (decision.agreed && decision.implementationPrompt?.trim() && !settings.autoImplementation) {
-      this.db.appendProjectLabMessage({
-        threadId,
-        personaId: "system",
-        personaLabel: "System",
-        role: "system",
-        bubbleColor: "zinc",
-        content: "The council agreed and prepared an implementation plan, but auto implementation is disabled for this project.",
-      });
-    }
-
     this.db.updateProjectLabThread(threadId, {
-      kind: decision.kind,
-      status: nextStatus,
-      title: decision.title,
-      summary: decision.summary,
-      outcome: decision.outcome,
-      implementationPrompt: decision.implementationPrompt,
-      implementationRunId,
+      status: "completed",
     });
   }
-
   private applyProjectOrder(snapshot: AppSnapshot): AppSnapshot {
     const order = parseProjectOrderSetting(snapshot.settings[APP_SETTING_KEYS.projectOrder]);
     if (order.length === 0 || snapshot.projects.length <= 1) {
@@ -1668,6 +1555,14 @@ export class AppController
     return this.getSnapshot();
   }
 
+  async selectProject(projectId: string): Promise<void> {
+    const project = this.db.getProject(projectId);
+    this.db.touchProject(project.id);
+    this.db.setSetting(SELECTED_PROJECT_KEY, project.id);
+    this.db.deleteSetting(SELECTED_RUN_KEY);
+    this.db.deleteSetting(SELECTED_CHAT_KEY);
+  }
+
   async reorderProjects(projectIds: string[]): Promise<void> {
     const knownProjectIds = new Set(this.db.listProjects().map((project) => project.id));
     const normalized = projectIds.filter((projectId, index) => knownProjectIds.has(projectId) && projectIds.indexOf(projectId) === index);
@@ -1700,9 +1595,104 @@ export class AppController
     }
   }
 
+  async getProjectBranchOverview(projectId: string): Promise<ProjectGitBranchOverview> {
+    const project = this.db.getProject(projectId);
+    return this.gitService.getProjectBranchOverview(project.repoPath, project.defaultBranch);
+  }
+
+  async getProjectBranchDeleteImpact(projectId: string, input: DeleteProjectBranchInput): Promise<ProjectBranchDeleteImpact> {
+    this.db.getProject(projectId);
+    const branchName = input.branchName.trim();
+    if (!branchName) {
+      throw new Error("Select a branch.");
+    }
+
+    return {
+      branchName,
+      linkedRuns: this.listRunsLinkedToProjectBranch(projectId, branchName).map((run) => ({
+        id: run.id,
+        prompt: run.prompt,
+        status: run.status,
+        workspaceType: run.workspaceType,
+        branchName: run.branchName,
+        worktreePath: run.worktreePath,
+        createdAt: run.createdAt,
+        updatedAt: run.updatedAt,
+      })),
+    };
+  }
+
   async checkoutProjectBranch(projectId: string, branchName: string): Promise<void> {
     const project = this.db.getProject(projectId);
     await this.gitService.checkoutProjectBranch(project.repoPath, branchName);
+  }
+
+  async fetchProjectBranches(projectId: string): Promise<ProjectGitBranchOverview> {
+    const project = this.db.getProject(projectId);
+    await this.gitService.fetchProjectBranches(project.repoPath);
+    return this.gitService.getProjectBranchOverview(project.repoPath, project.defaultBranch);
+  }
+
+  async createProjectBranch(projectId: string, input: CreateProjectBranchInput): Promise<ProjectGitBranchOverview> {
+    const project = this.db.getProject(projectId);
+    await this.gitService.createProjectBranch(project.repoPath, input.branchName, input.startPoint, input.checkout !== false);
+    return this.gitService.getProjectBranchOverview(project.repoPath, project.defaultBranch);
+  }
+
+  async renameProjectBranch(projectId: string, input: RenameProjectBranchInput): Promise<ProjectGitBranchOverview> {
+    const project = this.db.getProject(projectId);
+    await this.gitService.renameProjectBranch(project.repoPath, input.oldName, input.newName);
+    return this.gitService.getProjectBranchOverview(project.repoPath, project.defaultBranch);
+  }
+
+  async deleteProjectBranch(projectId: string, input: DeleteProjectBranchInput): Promise<ProjectGitBranchOverview> {
+    const project = this.db.getProject(projectId);
+    const branchName = input.branchName.trim();
+    if (!branchName) {
+      throw new Error("Select a branch.");
+    }
+    const currentBranch = await this.gitService.getCurrentBranch(project.repoPath).catch(() => "");
+    if (branchName === currentBranch) {
+      throw new Error("You cannot delete the currently checked out branch.");
+    }
+
+    const linkedRuns = this.listRunsLinkedToProjectBranch(projectId, branchName);
+    for (const run of linkedRuns) {
+      await this.deleteRun(run.id);
+    }
+
+    if (await this.gitService.hasLocalBranch(project.repoPath, branchName)) {
+      await this.gitService.deleteProjectBranch(project.repoPath, branchName, input.force === true);
+    }
+    return this.gitService.getProjectBranchOverview(project.repoPath, project.defaultBranch);
+  }
+
+  async pullProjectBranch(projectId: string): Promise<ProjectGitBranchOverview> {
+    const project = this.db.getProject(projectId);
+    await this.gitService.pullProjectBranch(project.repoPath);
+    return this.gitService.getProjectBranchOverview(project.repoPath, project.defaultBranch);
+  }
+
+  async pushProjectBranch(projectId: string, input: PushProjectBranchInput): Promise<ProjectGitBranchOverview> {
+    const project = this.db.getProject(projectId);
+    await this.gitService.pushProjectBranch(project.repoPath, input.branchName, input.setUpstream !== false);
+    return this.gitService.getProjectBranchOverview(project.repoPath, project.defaultBranch);
+  }
+
+  private listRunsLinkedToProjectBranch(projectId: string, branchName: string): RunRecord[] {
+    const normalizedBranchName = branchName.trim();
+    if (!normalizedBranchName) {
+      return [];
+    }
+    return this.db.listRunsForProject(projectId).filter((run) => {
+      if (run.branchName.trim() === normalizedBranchName) {
+        return true;
+      }
+      if (run.workspaceType !== "worktree") {
+        return false;
+      }
+      return basename(run.worktreePath) === normalizedBranchName;
+    });
   }
 
   async addProject(input: ProjectInput): Promise<ProjectRecord> {
@@ -1754,6 +1744,108 @@ export class AppController
     });
   }
 
+  async listComposerCommands(input: ListComposerCommandsInput): Promise<ComposerCommandDescriptor[]> {
+    const modelId = input.modelId.trim();
+    if (!modelId) {
+      return [];
+    }
+
+    let model: ModelRecord;
+    let provider: ProviderAccountRecord;
+    let projectPath: string | undefined;
+    try {
+      model = this.db.getModel(modelId);
+      provider = this.db.getProviderAccount(model.providerAccountId);
+      if (input.projectId?.trim()) {
+        projectPath = this.db.getProject(input.projectId).repoPath;
+      }
+    } catch {
+      return [];
+    }
+
+    const context: ComposerCommandContext = input.context;
+    const cacheKey = [provider.id, provider.providerType, model.id, projectPath ?? "", context].join("|");
+    const now = Date.now();
+    const cached = this.composerCommandCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      return filterComposerCommandDescriptors(cached.commands, input.query);
+    }
+
+    const existing = this.composerCommandInflight.get(cacheKey);
+    const pending = existing ?? this.loadComposerCommandsForProvider(provider, projectPath, context);
+    this.composerCommandInflight.set(cacheKey, pending);
+
+    try {
+      const commands = await pending;
+      this.composerCommandCache.set(cacheKey, {
+        commands,
+        expiresAt: Date.now() + 30_000,
+      });
+      return filterComposerCommandDescriptors(commands, input.query);
+    } finally {
+      if (this.composerCommandInflight.get(cacheKey) === pending) {
+        this.composerCommandInflight.delete(cacheKey);
+      }
+    }
+  }
+
+  private async loadComposerCommandsForProvider(
+    provider: ProviderAccountRecord,
+    projectPath: string | undefined,
+    context: ComposerCommandContext,
+  ): Promise<ComposerCommandDescriptor[]> {
+    const staticCommands = listComposerCommandsForProvider(provider.providerType, context);
+    const providerCommands: ComposerCommandDescriptor[] = [];
+
+    if (provider.providerType === "codex-cli") {
+      providerCommands.push(...CODEX_NATIVE_COMPOSER_COMMANDS);
+    } else if (provider.providerType === "claude-code") {
+      try {
+        const commands = await listClaudeCodeSlashCommands({
+          cwd: projectPath,
+          config: parseProviderConfigJson(provider.configJson),
+          networkProxy: await this.resolveNetworkProxyRuntimeConfig(),
+        });
+        for (const command of commands) {
+          const names = [command.name, ...(command.aliases ?? [])];
+          for (const name of names) {
+            const normalized = this.normalizeProviderSlashCommandName(name);
+            if (!normalized) {
+              continue;
+            }
+            providerCommands.push({
+              id: `${provider.providerType}:${normalized.slice(1)}`,
+              command: normalized,
+              label: normalized.slice(1),
+              description: command.description || command.argumentHint || "Run this Claude Code slash command.",
+              providerType: provider.providerType,
+              effect: "native-prompt",
+              ...(command.argumentHint ? { argumentHint: command.argumentHint } : {}),
+              source: "provider",
+              supportsRun: true,
+              supportsFollowUp: true,
+            });
+          }
+        }
+      } catch (error) {
+        this.logControllerWarn("Failed to probe Claude Code slash commands.", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    return mergeComposerCommandDescriptors([...staticCommands, ...providerCommands], context);
+  }
+
+  private normalizeProviderSlashCommandName(value: string): `/${string}` | null {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const withSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+    return /^\/[A-Za-z][A-Za-z0-9_.:-]*$/.test(withSlash) ? (withSlash.toLowerCase() as `/${string}`) : null;
+  }
+
   async deleteProviderAccount(providerAccountId: string): Promise<void> {
     const provider = this.db.getProviderAccount(providerAccountId);
     const runCount = this.db.countRunsForProviderAccount(providerAccountId);
@@ -1794,6 +1886,8 @@ export class AppController
     }
     const displayPrompt =
       userText || (attachmentNames.length ? `Attached: ${attachmentNames.join(", ")}` : input.prompt);
+    const goalText = normalizeRunGoalText(input.goalText);
+    const initialPromptForHarness = buildPromptWithRunGoal(displayPrompt, goalText);
 
     const { attachments: initialAttachments, ...runInsertInput } = input;
 
@@ -1816,6 +1910,7 @@ export class AppController
     let run = this.db.createRun({
       ...runInsertInput,
       prompt: displayPrompt,
+      goalText,
       workspaceType,
       branchName,
       worktreePath,
@@ -1846,11 +1941,15 @@ export class AppController
       commandType: "initial",
       mode: run.mode,
       modelId: run.modelId,
+      goalText: run.goalText,
       yoloMode: input.yoloMode === true,
       reasoningEffort: input.reasoningEffort,
       anthropicEffort: input.anthropicEffort,
       ...this.buildStoredAttachmentMetadata(initialAttachments),
     });
+    if (run.goalText) {
+      await this.appendRunEvent(run.id, "status", "Goal set", run.goalText, { goalText: run.goalText });
+    }
     await this.appendRunEvent(
       run.id,
       "status",
@@ -1874,7 +1973,7 @@ export class AppController
       apiKey ?? "",
       await this.resolveNetworkProxyRuntimeConfig(),
       {
-        promptOverride: userText || undefined,
+        promptOverride: initialPromptForHarness || undefined,
         attachments: initialAttachments,
         skillContext: this.buildIntegratedSkillContext(project.id),
         providerOptions: {
@@ -1934,6 +2033,9 @@ export class AppController
       await this.gitService.cloneWorkspaceChanges(sourceRun.worktreePath, worktreePath);
     }
 
+    const goalText = input.goalText === undefined ? sourceRun.goalText : normalizeRunGoalText(input.goalText);
+    const promptForHarness = buildPromptWithRunGoal(userText, goalText);
+
     let run = this.db.createRun({
       projectId: project.id,
       providerAccountId: provider.id,
@@ -1942,6 +2044,7 @@ export class AppController
       mode: input.mode,
       workspaceType: "worktree",
       prompt: userText,
+      goalText,
       branchName,
       worktreePath,
       parentRunId: sourceRun.id,
@@ -1967,6 +2070,7 @@ export class AppController
       commandType: "initial",
       mode: run.mode,
       modelId: run.modelId,
+      goalText: run.goalText,
       yoloMode: input.yoloMode === true,
       reasoningEffort: input.reasoningEffort,
       anthropicEffort: input.anthropicEffort,
@@ -2005,7 +2109,7 @@ export class AppController
       apiKey ?? "",
       await this.resolveNetworkProxyRuntimeConfig(),
       {
-        promptOverride: userText,
+        promptOverride: promptForHarness,
         skillContext: this.buildIntegratedSkillContext(project.id),
         providerOptions: {
           reasoningEffort: input.reasoningEffort,
@@ -2033,11 +2137,6 @@ export class AppController
     const project = this.db.getProject(run.projectId);
     const model = this.db.getModel(options?.modelId ?? run.modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
-    const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
-
-    if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
-      throw new Error("The provider API key could not be resolved from secure storage.");
-    }
 
     if (this.runWorkers.has(runId)) {
       throw new Error("This run is already active. Wait for it to finish before sending a follow-up.");
@@ -2047,17 +2146,11 @@ export class AppController
 
     const userText = prompt.trim();
     const attachmentNames = options?.attachments?.map((a) => a.fileName) ?? [];
-    if (!userText && attachmentNames.length === 0) {
+    const hasGoalUpdate = options ? Object.prototype.hasOwnProperty.call(options, "goalText") : false;
+    const nextGoalText = hasGoalUpdate ? normalizeRunGoalText(options?.goalText) : run.goalText;
+    if (!userText && attachmentNames.length === 0 && !hasGoalUpdate) {
       throw new Error("Enter a follow-up command or attach at least one file.");
     }
-
-    const followUpPromptForHarness =
-      [
-        userText || (attachmentNames.length ? `Attached: ${attachmentNames.join(", ")}` : ""),
-        this.buildRunFollowUpMemo(run.id),
-      ]
-        .filter(Boolean)
-        .join("\n\n");
 
     const followUpLogContent = [
       userText || "(no text)",
@@ -2071,12 +2164,38 @@ export class AppController
       providerAccountId: provider.id,
       modelId: model.id,
       mode: options?.mode ?? run.mode,
+      ...(hasGoalUpdate ? { goalText: nextGoalText } : {}),
     });
+    if (hasGoalUpdate && !userText && attachmentNames.length === 0) {
+      await this.appendRunEvent(run.id, "log", "Run goal updated", run.goalText ?? "No run goal set.", {
+        source: "user",
+        commandType: "goal",
+        mode: run.mode,
+        modelId: run.modelId,
+        goalText: run.goalText,
+      });
+      return this.db.getRun(run.id);
+    }
+
+    const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
+
+    if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
+      throw new Error("The provider API key could not be resolved from secure storage.");
+    }
+
+    const followUpPromptForHarness =
+      [
+        buildPromptWithRunGoal(userText || (attachmentNames.length ? `Attached: ${attachmentNames.join(", ")}` : ""), run.goalText),
+        this.buildRunFollowUpMemo(run.id),
+      ]
+        .filter(Boolean)
+        .join("\n\n");
     await this.appendRunEvent(run.id, "log", "Follow-up command", followUpLogContent, {
       source: "user",
       commandType: "follow-up",
       mode: run.mode,
       modelId: run.modelId,
+      goalText: run.goalText,
       yoloMode: options?.yoloMode === true,
       reasoningEffort: options?.reasoningEffort,
       anthropicEffort: options?.anthropicEffort,
@@ -2126,7 +2245,7 @@ export class AppController
       } catch (error) {
         throw new Error(
           [
-            `Easycode could not check out the run branch "${run.branchName}" in its worktree.`,
+            `BuildWarden could not check out the run branch "${run.branchName}" in its worktree.`,
             "It may already be checked out in another IDE, repository, or worktree.",
             "Release it from the other source or open the run worktree folder directly instead.",
             "",
@@ -2145,7 +2264,7 @@ export class AppController
       } catch (error) {
         throw new Error(
           [
-            `Easycode could not check out the promoted branch "${run.branchName}" in the project repository.`,
+            `BuildWarden could not check out the promoted branch "${run.branchName}" in the project repository.`,
             "It may be blocked by local changes or another checkout state in the main repository.",
             "",
             `Original error: ${error instanceof Error ? error.message : String(error)}`,
@@ -2330,7 +2449,7 @@ export class AppController
     }
   }
 
-  async createProjectTask(projectId: string, input: { title: string; prompt: string }): Promise<ProjectTaskRecord> {
+  async createProjectTask(projectId: string, input: ProjectTaskInput): Promise<ProjectTaskRecord> {
     const title = input.title.trim();
     const prompt = input.prompt.trim();
     if (!title) {
@@ -2343,6 +2462,19 @@ export class AppController
     return this.db.createProjectTask(projectId, { title, prompt });
   }
 
+  async updateProjectTask(taskId: string, input: UpdateProjectTaskInput): Promise<ProjectTaskRecord> {
+    const existing = this.db.getProjectTask(taskId);
+    const title = input.title === undefined ? existing.title : input.title.trim();
+    const prompt = input.prompt === undefined ? existing.prompt : input.prompt.trim();
+    if (!title) {
+      throw new Error("Enter a task title.");
+    }
+    if (!prompt) {
+      throw new Error("Enter a task prompt.");
+    }
+    return this.db.updateProjectTask(taskId, { title, prompt });
+  }
+
   async deleteProjectTask(taskId: string): Promise<void> {
     this.db.deleteProjectTask(taskId);
   }
@@ -2351,8 +2483,19 @@ export class AppController
     const project = this.db.getProject(input.projectId);
     const settings = this.getProjectLabSettings(project.id);
     if (!settings.enabled) {
-      throw new Error("Enable Project Lab on this project before starting a lab discussion.");
+      throw new Error("Enable Project Lab on this project before starting it.");
     }
+
+    const implementationModelId = input.implementationModelId?.trim() || settings.implementationModelId?.trim() || "";
+    const reviewModelId = input.reviewModelId?.trim() || settings.reviewModelId?.trim() || "";
+    if (!implementationModelId) {
+      throw new Error("Choose an implementation model before running Project Lab.");
+    }
+    if (!reviewModelId) {
+      throw new Error("Choose a review model before running Project Lab.");
+    }
+    this.db.getModel(implementationModelId);
+    this.db.getModel(reviewModelId);
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
@@ -2365,21 +2508,9 @@ export class AppController
 
     const activeCount = this.db
       .listProjectLabThreads(project.id)
-      .filter((thread) => thread.status === "discussing" || thread.status === "running-implementation").length;
+      .filter((thread) => thread.status === "queued" || thread.status === "running" || thread.status === "reviewing").length;
     if (activeCount >= settings.maxConcurrentThreads) {
       throw new Error(`Project Lab already has ${String(settings.maxConcurrentThreads)} active thread(s) on this project.`);
-    }
-
-    const discussionPersonas = settings.personas.filter(
-      (persona) => persona.enabled && persona.modelId && persona.personaId !== "moderator" && persona.personaId !== "implementer",
-    );
-    if (discussionPersonas.length === 0) {
-      throw new Error("Configure at least one discussion persona with a model before running Project Lab.");
-    }
-    const moderatorPersona =
-      settings.personas.find((persona) => persona.personaId === "moderator" && persona.enabled && persona.modelId) ?? null;
-    if (!moderatorPersona?.modelId) {
-      throw new Error("Project Lab needs a moderator model before it can synthesize a decision.");
     }
 
     const mode = this.normalizeProjectLabMode(input.mode);
@@ -2389,99 +2520,79 @@ export class AppController
     if (!availableBranches.includes(baseBranch)) {
       throw new Error(`Base branch "${baseBranch}" is not available for this project. Refresh branches and choose an existing branch.`);
     }
+
     const thread = this.db.createProjectLabThread({
       projectId: project.id,
-      kind: mode === "rfc-only" ? "rfc" : "idea",
+      kind: mode === "rfc-only" ? "rfc" : "implementation",
       mode,
-      status: "discussing",
+      status: "queued",
       origin: input.origin ?? "manual",
-      title: input.topic?.trim() || `${modeLabel} Project Lab discussion`,
-      summary: `Project Lab is gathering viewpoints in ${modeLabel} mode.`,
+      title: input.topic?.trim() || `${modeLabel} Project Lab run`,
+      summary: mode === "rfc-only" ? "Project Lab is drafting an RFC." : `Project Lab is finding and implementing one ${modeLabel.toLowerCase()} opportunity.`,
       seedPrompt: input.topic?.trim() || null,
+      implementationModelId,
+      reviewModelId,
       baseBranch,
     });
 
-    this.db.appendProjectLabMessage({
+    this.db.appendProjectLabEvent({
       threadId: thread.id,
-      personaId: "system",
-      personaLabel: "System",
       role: "system",
-      bubbleColor: "zinc",
+      label: "Project Lab",
       content:
         input.topic?.trim()
-          ? `Project Lab started in ${modeLabel} mode from base branch \`${baseBranch}\` and a user prompt: ${input.topic.trim()}`
-          : `Project Lab started a proactive ${modeLabel} review of this project from base branch \`${baseBranch}\`.`,
+          ? `Started ${modeLabel} mode from base branch \`${baseBranch}\` with user direction: ${input.topic.trim()}`
+          : `Started ${modeLabel} mode from base branch \`${baseBranch}\`.`,
     });
-    void this.executeProjectLabThread(thread.id, input, project, settings, mode, discussionPersonas, moderatorPersona).catch((error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      if (!this.isProjectLabThreadCancelled(thread.id)) {
-        try {
-          this.db.appendProjectLabMessage({
-            threadId: thread.id,
-            personaId: "system",
-            personaLabel: "System",
-            role: "system",
-            bubbleColor: "zinc",
-            content: `Project Lab failed: ${message}`,
-          });
-          this.db.updateProjectLabThread(thread.id, {
-            status: "failed",
-            outcome: message,
-          });
-        } catch {
-          /* thread may have been deleted */
+
+    if (mode === "rfc-only") {
+      this.db.updateProjectLabThread(thread.id, { status: "running" });
+      void this.executeProjectLabRfcThread(thread.id, input, project, mode, implementationModelId, reviewModelId).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!this.isProjectLabThreadCancelled(thread.id)) {
+          try {
+            this.db.appendProjectLabEvent({
+              threadId: thread.id,
+              role: "system",
+              label: "Project Lab",
+              content: `Project Lab RFC failed: ${message}`,
+            });
+            this.db.updateProjectLabThread(thread.id, {
+              status: "failed",
+              outcome: message,
+            });
+          } catch {
+            /* thread may have been deleted */
+          }
         }
-      }
-      this.logControllerError("Project Lab execution failed.", error, { projectId: project.id, threadId: thread.id });
-    });
-
-    return [this.db.getProjectLabThread(thread.id)];
-  }
-
-  async startProjectLabImplementation(threadId: string): Promise<ProjectLabThreadRecord> {
-    const thread = this.db.getProjectLabThread(threadId);
-    if (thread.implementationRunId) {
-      throw new Error("This Project Lab thread already has a linked implementation run.");
-    }
-    if (thread.status === "running-implementation" || thread.status === "implemented") {
-      throw new Error("This Project Lab thread implementation has already started.");
-    }
-    if (thread.mode === "rfc-only") {
-      throw new Error("RFC-only Project Lab threads are written proposals and cannot start code implementation.");
-    }
-    if (!thread.implementationPrompt?.trim()) {
-      throw new Error("This Project Lab thread does not have a stored implementation plan.");
+        this.logControllerError("Project Lab RFC execution failed.", error, { projectId: project.id, threadId: thread.id });
+      });
+      return [this.db.getProjectLabThread(thread.id)];
     }
 
-    const settings = this.getProjectLabSettings(thread.projectId);
-    const implementerPersona =
-      settings.personas.find((persona) => persona.personaId === "implementer" && persona.enabled && persona.modelId) ?? null;
-    if (!implementerPersona?.modelId) {
-      throw new Error("Select an enabled Implementer model in Project Lab settings before starting implementation.");
-    }
-
+    const implementationPrompt = this.buildProjectLabImplementationPrompt(input, project, mode, thread.id);
     const implementationRun = await this.createProjectLabImplementationRun(
-      thread.projectId,
+      project.id,
       thread.id,
-      implementerPersona.modelId,
-      thread.implementationPrompt,
-      thread.baseBranch,
+      implementationModelId,
+      implementationPrompt,
+      baseBranch,
     );
-    this.db.appendProjectLabMessage({
-      threadId,
-      personaId: "system",
-      personaLabel: "System",
-      role: "system",
-      bubbleColor: "zinc",
-      content: `Implementation started in worktree \`${implementationRun.branchName}\`. Easycode will clean it up when the thread is deleted.`,
+    this.db.appendProjectLabEvent({
+      threadId: thread.id,
+      role: "implementation",
+      label: "Implementation agent",
+      content: `Implementation started in worktree \`${implementationRun.branchName}\`. The agent will find one ${modeLabel.toLowerCase()} opportunity, implement it, and a second agent will review the resulting diff afterwards.`,
     });
 
-    return this.db.updateProjectLabThread(threadId, {
-      status: "running-implementation",
-      implementationRunId: implementationRun.id,
-    });
+    return [
+      this.db.updateProjectLabThread(thread.id, {
+        status: "running",
+        implementationPrompt,
+        implementationRunId: implementationRun.id,
+      }),
+    ];
   }
-
   async deleteProjectLabThread(threadId: string): Promise<void> {
     this.cancelledProjectLabThreadIds.add(threadId);
     const thread = this.db.getProjectLabThread(threadId);
@@ -2742,11 +2853,31 @@ export class AppController
     if (!prUrl) {
       throw new Error("Enter a pull request or merge request URL.");
     }
+    const token = await this.secrets.readSecret(projectForgeTokenSecretKey(projectId));
+    if (token?.trim()) {
+      try {
+        const context = await this.resolveProjectPrReviewRemoteContext(projectId);
+        const provider = createProjectPrReviewProvider(context, token.trim());
+        const result = await provider.getRequestDiff(input);
+        if (!result.diff.trim()) {
+          throw new Error("The hosting API returned an empty diff for this PR/MR.");
+        }
+        return result;
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        throw new Error(`Could not load the PR/MR diff via hosting API. ${msg}`);
+      }
+    }
     try {
       const result = await computePrMrDiffViaFetch(project.repoPath, {
         prMrUrl: prUrl,
         baseBranch: input.baseBranch?.trim() || undefined,
       });
+      if (!result.diff.trim()) {
+        throw new Error(
+          "The local git diff is empty. If this PR/MR is already merged, add a Git hosting access token in Project Settings and load it from the hosting API to read the historical diff.",
+        );
+      }
       return {
         diff: result.diff,
         provider: result.provider,
@@ -2757,6 +2888,125 @@ export class AppController
       const msg = error instanceof Error ? error.message : String(error);
       throw new Error(`Could not load the PR/MR diff via git fetch. ${msg}`);
     }
+  }
+
+  async getProjectForgeAuthStatus(projectId: string): Promise<ProjectForgeAuthStatus> {
+    const context = await this.resolveProjectPrReviewRemoteContext(projectId);
+    return {
+      provider: context.provider,
+      webBaseUrl: context.webBaseUrl,
+      repoLabel: context.repoLabel,
+      hasToken: (await this.secrets.readSecret(projectForgeTokenSecretKey(projectId))) !== null,
+    };
+  }
+
+  async saveProjectForgeAuthToken(projectId: string, token: string): Promise<ProjectForgeAuthStatus> {
+    const trimmed = token.trim();
+    if (!trimmed) {
+      throw new Error("Enter an access token before saving.");
+    }
+    await this.resolveProjectPrReviewRemoteContext(projectId);
+    await this.secrets.saveSecret(projectForgeTokenSecretKey(projectId), trimmed);
+    return this.getProjectForgeAuthStatus(projectId);
+  }
+
+  async deleteProjectForgeAuthToken(projectId: string): Promise<ProjectForgeAuthStatus> {
+    await this.resolveProjectPrReviewRemoteContext(projectId);
+    await this.secrets.deleteSecret(projectForgeTokenSecretKey(projectId));
+    this.setProjectForgePrMonitorInterval(projectId, 0);
+    return this.getProjectForgeAuthStatus(projectId);
+  }
+
+  async getProjectForgePrMonitorSettings(projectId: string): Promise<ProjectForgePrMonitorSettings> {
+    this.db.getProject(projectId);
+    const settings = parseProjectForgePrMonitorSettingsSetting(
+      this.db.getSettings()[APP_SETTING_KEYS.projectForgePrMonitorSettings],
+    );
+    return settings[projectId] ?? { intervalMinutes: 0 };
+  }
+
+  async saveProjectForgePrMonitorSettings(
+    projectId: string,
+    input: ProjectForgePrMonitorSettingsInput,
+  ): Promise<ProjectForgePrMonitorSettings> {
+    this.db.getProject(projectId);
+    const intervalMinutes = parseProjectForgePrMonitorIntervalMinutes(input.intervalMinutes);
+    if (intervalMinutes > 0) {
+      const token = await this.secrets.readSecret(projectForgeTokenSecretKey(projectId));
+      if (!token?.trim()) {
+        throw new Error("Save a Git hosting access token before enabling PR/MR background checks.");
+      }
+    }
+    this.setProjectForgePrMonitorInterval(projectId, intervalMinutes);
+    return { intervalMinutes };
+  }
+
+  async listProjectForgePrMonitorConfigs(): Promise<ProjectForgePrMonitorConfig[]> {
+    const settings = parseProjectForgePrMonitorSettingsSetting(
+      this.db.getSettings()[APP_SETTING_KEYS.projectForgePrMonitorSettings],
+    );
+    const configs: ProjectForgePrMonitorConfig[] = [];
+
+    for (const project of this.db.listProjects()) {
+      const intervalMinutes = settings[project.id]?.intervalMinutes ?? 0;
+      if (intervalMinutes <= 0) {
+        continue;
+      }
+      const token = await this.secrets.readSecret(projectForgeTokenSecretKey(project.id));
+      if (!token?.trim()) {
+        continue;
+      }
+      try {
+        const context = await this.resolveProjectPrReviewRemoteContext(project.id);
+        configs.push({
+          projectId: project.id,
+          projectName: project.name,
+          provider: context.provider,
+          repoLabel: context.repoLabel,
+          intervalMinutes,
+        });
+      } catch (error) {
+        logWarn("Skipping PR/MR monitor for project with unresolved Git hosting context.", {
+          projectId: project.id,
+          projectName: project.name,
+          error,
+        });
+      }
+    }
+
+    return configs;
+  }
+
+  async listProjectForgeRequests(
+    projectId: string,
+    input?: ListProjectForgeRequestsInput,
+  ): Promise<ProjectForgeRequestsResult> {
+    const provider = await this.createProjectPrReviewProvider(projectId);
+    return provider.listRequests(input);
+  }
+
+  async getProjectForgeRequestDetails(
+    projectId: string,
+    input: GetProjectForgeRequestDetailsInput,
+  ): Promise<ProjectForgeRequestDetailsResult> {
+    const provider = await this.createProjectPrReviewProvider(projectId);
+    return provider.getRequestDetails(input);
+  }
+
+  async postProjectPrMrReview(
+    projectId: string,
+    input: PostProjectPrMrReviewInput,
+  ): Promise<ProjectForgeReviewActionResult> {
+    const provider = await this.createProjectPrReviewProvider(projectId);
+    return provider.postReview(input);
+  }
+
+  async submitProjectPrMrComments(
+    projectId: string,
+    input: SubmitProjectPrMrCommentsInput,
+  ): Promise<ProjectForgeReviewActionResult> {
+    const provider = await this.createProjectPrReviewProvider(projectId);
+    return provider.submitComments(input);
   }
 
   async analyzeProjectPrMrDiff(
@@ -2792,6 +3042,25 @@ export class AppController
       const msg = error instanceof Error ? error.message : String(error);
       throw new Error(["Could not review the PR/MR diff via the configured provider.", "Try again or switch models.", `Detail: ${msg}`].join(" "));
     }
+  }
+
+  private async resolveProjectPrReviewRemoteContext(projectId: string): Promise<ProjectPrReviewRemoteContext> {
+    const project = this.db.getProject(projectId);
+    return resolveProjectPrReviewRemoteContext(project, this.gitService);
+  }
+
+  private async createProjectPrReviewProvider(projectId: string): Promise<ProjectPrReviewProvider> {
+    const context = await this.resolveProjectPrReviewRemoteContext(projectId);
+    const token = await this.requireProjectForgeToken(projectId);
+    return createProjectPrReviewProvider(context, token);
+  }
+
+  private async requireProjectForgeToken(projectId: string): Promise<string> {
+    const token = await this.secrets.readSecret(projectForgeTokenSecretKey(projectId));
+    if (!token?.trim()) {
+      throw new Error("Add a Git hosting access token in Project Settings before fetching PRs/MRs.");
+    }
+    return token.trim();
   }
 
   private buildRunDiffReviewPrompt(run: RunRecord, diff: string): string {
@@ -3343,7 +3612,7 @@ export class AppController
         "Recent commits:",
         commitSummary || "(no recent commits found)",
         "",
-        "Recent Easycode runs:",
+        "Recent BuildWarden runs:",
         runSummary || "(no runs found)",
       ].join("\n");
     }
@@ -3379,7 +3648,7 @@ export class AppController
       "Recent commits:",
       commitSummary || "(no recent commits found)",
       "",
-      "Recent Easycode runs:",
+      "Recent BuildWarden runs:",
       runSummary || "(no runs found)",
     ].join("\n");
   }
@@ -4007,7 +4276,7 @@ export class AppController
         } catch (error) {
           throw new Error(
             [
-              `Easycode could not release the run branch "${run.branchName}" from its worktree.`,
+              `BuildWarden could not release the run branch "${run.branchName}" from its worktree.`,
               "Close file locks in other tools or open the run worktree folder directly instead.",
               "",
               `Original error: ${error instanceof Error ? error.message : String(error)}`,
@@ -4054,6 +4323,8 @@ export class AppController
       await this.deleteRunResources(project.repoPath, run, "project");
     }
 
+    await this.secrets.deleteSecret(projectForgeTokenSecretKey(projectId));
+    this.setProjectForgePrMonitorInterval(projectId, 0);
     this.db.deleteProject(projectId);
 
     const remainingProjects = this.db.listProjects();
@@ -4116,9 +4387,9 @@ export class AppController
             kind: recoveryKind ?? "provider-session",
             title: canRecoverInterruptedSession ? "Recovery path available" : "Session interrupted",
             detail: checkpoint
-              ? "Easycode saved a checkpoint from the last completed tool round and can start a deliberate recovery turn."
+              ? "BuildWarden saved a checkpoint from the last completed tool round and can start a deliberate recovery turn."
               : providerSessionAvailable
-                ? "Easycode saved the provider session cursor and can continue from the current workspace state."
+                ? "BuildWarden saved the provider session cursor and can continue from the current workspace state."
                 : "No checkpoint or provider session cursor was saved before the application closed.",
             providerType: providerRuntime?.providerType,
             checkpointRound: checkpoint?.round,
@@ -4129,6 +4400,18 @@ export class AppController
         ? { createdAt: promptRestorePoint.createdAt, commandType: promptRestorePoint.commandType }
         : null,
     };
+  }
+
+  async addRunNote(runId: string, input: { content: string }): Promise<RunNoteRecord> {
+    return this.db.addRunNote(runId, input.content);
+  }
+
+  async updateRunNote(noteId: string, input: UpdateRunNoteInput): Promise<RunNoteRecord> {
+    return this.db.updateRunNote(noteId, input);
+  }
+
+  async deleteRunNote(noteId: string): Promise<void> {
+    this.db.deleteRunNote(noteId);
   }
 
   async getRunWorktreeDiff(runId: string): Promise<RunWorktreeDiffResult> {
@@ -4155,6 +4438,10 @@ export class AppController
     active.worker.postMessage({ type: "cancel" });
     this.db.updateRunStatus(runId, "cancelled", { errorMessage: "Run cancelled by user." });
     await this.appendRunEvent(runId, "status", "Run cancelled", "Cancellation requested.");
+    const run = this.db.getRun(runId);
+    if (run.kind === "lab-implementation") {
+      this.cancelProjectLabImplementation(run, "The implementation run was cancelled by the user.");
+    }
     this.emitEvent({
       runId,
       type: "status",
@@ -4320,92 +4607,174 @@ export class AppController
     mkdirSync(this.logDirPath, { recursive: true });
     return {
       logDirPath: this.logDirPath,
+      logDirectorySize: this.calculateDirectorySize(this.logDirPath),
     };
   }
 
-  async getDetectedCodexInstallation(): Promise<{ binaryPath: string | null }> {
-    const commands =
-      process.platform === "win32"
-        ? [
-            { file: "where.exe", args: ["codex.cmd"] },
-            { file: "where.exe", args: ["codex.exe"] },
-            { file: "where.exe", args: ["codex"] },
-          ]
-        : [{ file: "which", args: ["codex"] }];
+  private calculateDirectorySize(dirPath: string): AppLogDirectorySizeInfo {
+    let totalBytes = 0;
+    let fileCount = 0;
+    let unreadableEntryCount = 0;
+    const pendingDirs = [dirPath];
 
-    for (const command of commands) {
+    while (pendingDirs.length > 0) {
+      const currentDir = pendingDirs.pop();
+      if (!currentDir) {
+        continue;
+      }
+
+      let entries: Dirent[];
       try {
-        const result = spawnSync(command.file, command.args, {
-          encoding: "utf8",
-          timeout: 3_000,
-          windowsHide: true,
-        });
-        if (result.status !== 0) {
+        entries = readdirSync(currentDir, { withFileTypes: true });
+      } catch {
+        unreadableEntryCount += 1;
+        continue;
+      }
+
+      for (const entry of entries) {
+        if (entry.isSymbolicLink()) {
           continue;
         }
-        const firstLine = String(result.stdout || "")
-          .split(/\r?\n/g)
-          .map((line) => line.trim())
-          .find(Boolean);
-        if (firstLine) {
-          return { binaryPath: firstLine };
+
+        const entryPath = join(currentDir, entry.name);
+        if (entry.isDirectory()) {
+          pendingDirs.push(entryPath);
+          continue;
         }
-      } catch {
-        this.logControllerWarn("Codex detection strategy failed; continuing to next lookup.", {
-          command: command.file,
-          args: command.args,
-        });
-        // continue to the next strategy
+
+        if (!entry.isFile()) {
+          continue;
+        }
+
+        try {
+          totalBytes += lstatSync(entryPath).size;
+          fileCount += 1;
+        } catch {
+          unreadableEntryCount += 1;
+        }
       }
     }
 
-    return { binaryPath: null };
+    return { totalBytes, fileCount, unreadableEntryCount };
   }
 
-  async getDetectedClaudeInstallation(): Promise<{ binaryPath: string | null }> {
-    if (process.platform === "win32") {
-      const userProfile = process.env.USERPROFILE;
-      const nativeInstallerPath = userProfile ? join(userProfile, ".local", "bin", "claude.exe") : null;
-      if (nativeInstallerPath && existsSync(nativeInstallerPath)) {
-        return { binaryPath: nativeInstallerPath };
-      }
-    }
-
-    const commands =
-      process.platform === "win32"
-        ? [
-            { file: "where.exe", args: ["claude.cmd"] },
-            { file: "where.exe", args: ["claude.exe"] },
-            { file: "where.exe", args: ["claude"] },
-          ]
-        : [{ file: "which", args: ["claude"] }];
-
-    for (const command of commands) {
-      try {
-        const result = spawnSync(command.file, command.args, {
-          encoding: "utf8",
-          timeout: 3_000,
-          windowsHide: true,
-        });
-        if (result.status !== 0) {
-          continue;
+  /**
+   * Resolve a binary on PATH without blocking the main-process event loop.
+   * PATH misses on Windows (`where.exe`) can take hundreds of milliseconds,
+   * and the renderer triggers these lookups right at startup.
+   */
+  private lookupBinaryOnPath(commands: Array<{ file: string; args: string[] }>, label: string): Promise<string | null> {
+    const tryCommand = (command: { file: string; args: string[] }): Promise<string | null> =>
+      new Promise((resolve) => {
+        try {
+          const child = spawn(command.file, command.args, { windowsHide: true, timeout: 3_000 });
+          let stdout = "";
+          child.stdout?.setEncoding("utf8");
+          child.stdout?.on("data", (chunk: string) => {
+            stdout += chunk;
+          });
+          child.on("error", () => resolve(null));
+          child.on("close", (code) => {
+            if (code !== 0) {
+              resolve(null);
+              return;
+            }
+            const firstLine = stdout
+              .split(/\r?\n/g)
+              .map((line) => line.trim())
+              .find(Boolean);
+            resolve(firstLine ?? null);
+          });
+        } catch {
+          this.logControllerWarn(`${label} detection strategy failed; continuing to next lookup.`, {
+            command: command.file,
+            args: command.args,
+          });
+          resolve(null);
         }
-        const firstLine = String(result.stdout || "")
-          .split(/\r?\n/g)
-          .map((line) => line.trim())
-          .find(Boolean);
-        if (firstLine) {
-          return { binaryPath: firstLine };
-        }
-      } catch {
-        this.logControllerWarn("Claude Code detection strategy failed; continuing to next lookup.", {
-          command: command.file,
-          args: command.args,
-        });
-      }
-    }
+      });
 
-    return { binaryPath: null };
+    return commands.reduce<Promise<string | null>>(
+      (previous, command) => previous.then((found) => (found ? found : tryCommand(command))),
+      Promise.resolve(null),
+    );
+  }
+
+  private detectedCodexInstallation: Promise<{ binaryPath: string | null }> | null = null;
+  private detectedClaudeInstallation: Promise<{ binaryPath: string | null }> | null = null;
+
+  getDetectedCodexInstallation(): Promise<{ binaryPath: string | null }> {
+    this.detectedCodexInstallation ??= (async () => {
+      const commands =
+        process.platform === "win32"
+          ? [
+              { file: "where.exe", args: ["codex.cmd"] },
+              { file: "where.exe", args: ["codex.exe"] },
+              { file: "where.exe", args: ["codex"] },
+            ]
+          : [{ file: "which", args: ["codex"] }];
+      const binaryPath = await this.lookupBinaryOnPath(commands, "Codex");
+      if (binaryPath === null) {
+        // Do not cache misses; the user may install the CLI while the app runs.
+        this.detectedCodexInstallation = null;
+      }
+      return { binaryPath };
+    })();
+    return this.detectedCodexInstallation ?? Promise.resolve({ binaryPath: null });
+  }
+
+  getDetectedClaudeInstallation(): Promise<{ binaryPath: string | null }> {
+    this.detectedClaudeInstallation ??= (async () => {
+      if (process.platform === "win32") {
+        const userProfile = process.env.USERPROFILE;
+        const nativeInstallerPath = userProfile ? join(userProfile, ".local", "bin", "claude.exe") : null;
+        if (nativeInstallerPath && existsSync(nativeInstallerPath)) {
+          return { binaryPath: nativeInstallerPath };
+        }
+      }
+
+      const commands =
+        process.platform === "win32"
+          ? [
+              { file: "where.exe", args: ["claude.cmd"] },
+              { file: "where.exe", args: ["claude.exe"] },
+              { file: "where.exe", args: ["claude"] },
+            ]
+          : [{ file: "which", args: ["claude"] }];
+      const binaryPath = await this.lookupBinaryOnPath(commands, "Claude Code");
+      if (binaryPath === null) {
+        this.detectedClaudeInstallation = null;
+      }
+      return { binaryPath };
+    })();
+    return this.detectedClaudeInstallation ?? Promise.resolve({ binaryPath: null });
+  }
+
+  listIntegratedSkills(): Promise<IntegratedSkillMetadata[]> {
+    const seen = new Set<string>();
+    const metadata = INTEGRATED_SKILLS_CATALOG.filter((skill) => {
+      const dedupeKey = `${skill.source}:${skill.name}`;
+      if (seen.has(dedupeKey)) {
+        return false;
+      }
+      seen.add(dedupeKey);
+      return true;
+    }).map((skill) => ({
+      id: skill.id,
+      source: skill.source,
+      category: skill.category,
+      name: skill.name,
+      title: skill.title,
+      description: skill.description,
+      license: skill.license,
+      relativeDir: skill.relativeDir,
+      sourceUrl: skill.sourceUrl,
+    }));
+    return Promise.resolve(metadata);
+  }
+
+  getIntegratedSkillContent(skillId: string): Promise<string | null> {
+    return Promise.resolve(INTEGRATED_SKILLS_BY_ID[skillId]?.content ?? null);
   }
 
   async pickIdeExecutable(): Promise<string | null> {
@@ -4568,6 +4937,58 @@ export class AppController
     });
   }
 
+  async respondToRunUserInput(runId: string, requestId: string, answers: RunUserInputAnswers): Promise<void> {
+    const active = this.runWorkers.get(runId);
+    if (!active) {
+      throw new Error("This run is no longer active.");
+    }
+
+    active.worker.postMessage({
+      type: "user-input-response",
+      requestId,
+      answers,
+    });
+
+    const content = this.formatRunUserInputAnswers(answers);
+    const metadata = {
+      requestKind: "user-input",
+      requestStatus: "resolved",
+      userInputRequestId: requestId,
+      userInputAnswers: answers,
+    };
+    const stepKey = this.userInputStepKey(runId, requestId);
+    const stepId = this.runUserInputStepIds.get(stepKey);
+    if (stepId) {
+      let existingMetadata: Record<string, unknown> = {};
+      try {
+        existingMetadata = JSON.parse(this.db.getRunSteps(runId).find((step) => step.id === stepId)?.metadataJson || "{}") as Record<
+          string,
+          unknown
+        >;
+      } catch {
+        /* keep response metadata even if the stored request metadata is malformed */
+      }
+      this.db.updateRunStep(stepId, {
+        title: "User input submitted",
+        metadataJson: JSON.stringify({
+          ...existingMetadata,
+          ...metadata,
+        }),
+      });
+      this.runUserInputStepIds.delete(stepKey);
+    } else {
+      await this.appendRunEvent(runId, "user-input-requested", "User input submitted", content, metadata);
+    }
+    this.emitEvent({
+      runId,
+      type: "user-input-requested",
+      title: "User input submitted",
+      content,
+      metadata,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
   onRunEvent(listener: (event: RunEvent) => void): () => void {
     this.runListeners.add(listener);
     return () => this.runListeners.delete(listener);
@@ -4646,6 +5067,14 @@ export class AppController
         | { type: "chunk"; chunk: { type: string; value: string; title?: string; metadata?: Record<string, unknown> } }
         | { type: "done"; result: WorkerDoneResult }
         | { type: "shell-approval-request"; requestId: string; command: string }
+        | {
+            type: "user-input-request";
+            requestId: string;
+            title?: string;
+            content?: string;
+            questions?: RunUserInputQuestion[];
+            metadata?: Record<string, unknown>;
+          }
         | { type: "error"; error: string };
 
       if (payload.type === "shell-approval-request") {
@@ -4675,6 +5104,40 @@ export class AppController
             shellApprovalRequest: true,
             command: payload.command,
           },
+          createdAt: new Date().toISOString(),
+        });
+        return;
+      }
+
+      if (payload.type === "user-input-request") {
+        const questions = Array.isArray(payload.questions) ? payload.questions : [];
+        const content =
+          payload.content?.trim() ||
+          this.formatRunUserInputQuestions(questions) ||
+          "The provider requested more input before it can continue.";
+        const metadata = {
+          ...(payload.metadata ?? {}),
+          requestKind: "user-input",
+          requestStatus: "opened",
+          userInputRequest: true,
+          userInputRequestId: payload.requestId,
+          requestId: payload.requestId,
+          userInputQuestions: questions,
+        };
+        const step = await this.appendRunEvent(
+          run.id,
+          "user-input-requested",
+          payload.title?.trim() || "User input requested",
+          content,
+          metadata,
+        );
+        this.runUserInputStepIds.set(this.userInputStepKey(run.id, payload.requestId), step.id);
+        this.emitEvent({
+          runId: run.id,
+          type: "user-input-requested",
+          title: payload.title?.trim() || "User input requested",
+          content,
+          metadata,
           createdAt: new Date().toISOString(),
         });
         return;
@@ -4898,6 +5361,7 @@ export class AppController
           },
           createdAt: new Date().toISOString(),
         });
+        this.clearRunRequestStepIds(run.id);
         this.runWorkers.delete(run.id);
         await worker.terminate();
         if (!wasCancelled && run.kind === "lab-implementation") {
@@ -4907,7 +5371,7 @@ export class AppController
             this.logControllerError("Project Lab implementation review failed.", labReviewError, { runId: run.id });
           }
         } else if (wasCancelled && run.kind === "lab-implementation") {
-          await this.failProjectLabImplementation(run, "The implementation run was cancelled.");
+          this.cancelProjectLabImplementation(run, "The implementation run was cancelled.");
         }
         return;
       }
@@ -4932,17 +5396,22 @@ export class AppController
           content: payload.error,
           createdAt: new Date().toISOString(),
         });
+        this.clearRunRequestStepIds(run.id);
         this.runWorkers.delete(run.id);
         await worker.terminate();
         if (run.kind === "lab-implementation") {
-          await this.failProjectLabImplementation(run, payload.error);
+          if (status === "cancelled") {
+            this.cancelProjectLabImplementation(run, "The implementation run was cancelled.");
+          } else {
+            await this.failProjectLabImplementation(run, payload.error);
+          }
         }
         if (shouldAutoRecover) {
           await this.appendRunEvent(
             run.id,
             "status",
             "Automatic follow-up queued",
-            "Azure Legacy hit the tool-round limit. Easycode is sending an automatic follow-up that asks the model to run a full build or test first before scanning files again.",
+            "Azure Legacy hit the tool-round limit. BuildWarden is sending an automatic follow-up that asks the model to run a full build or test first before scanning files again.",
             {
               autoRecoveryKind: AZURE_LEGACY_AUTO_RECOVERY_KIND,
             },
@@ -4952,7 +5421,7 @@ export class AppController
             type: "status",
             title: "Automatic follow-up queued",
             content:
-              "Azure Legacy hit the tool-round limit. Easycode is sending an automatic follow-up that asks the model to run a full build or test first before scanning files again.",
+              "Azure Legacy hit the tool-round limit. BuildWarden is sending an automatic follow-up that asks the model to run a full build or test first before scanning files again.",
             metadata: {
               autoRecoveryKind: AZURE_LEGACY_AUTO_RECOVERY_KIND,
             },
@@ -5020,6 +5489,41 @@ export class AppController
     return `${runId}:${requestId}`;
   }
 
+  private userInputStepKey(runId: string, requestId: string): string {
+    return `${runId}:${requestId}`;
+  }
+
+  private clearRunRequestStepIds(runId: string): void {
+    const prefix = `${runId}:`;
+    for (const key of this.runShellApprovalStepIds.keys()) {
+      if (key.startsWith(prefix)) {
+        this.runShellApprovalStepIds.delete(key);
+      }
+    }
+    for (const key of this.runUserInputStepIds.keys()) {
+      if (key.startsWith(prefix)) {
+        this.runUserInputStepIds.delete(key);
+      }
+    }
+  }
+
+  private formatRunUserInputQuestions(questions: RunUserInputQuestion[]): string {
+    return questions
+      .map((question, index) => {
+        const heading = question.header || `Question ${String(index + 1)}`;
+        const options = question.options.map((option) => `- ${option.label}${option.description ? `: ${option.description}` : ""}`);
+        return [heading, question.question, ...options].filter(Boolean).join("\n");
+      })
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  private formatRunUserInputAnswers(answers: RunUserInputAnswers): string {
+    return Object.entries(answers)
+      .map(([questionId, answer]) => `${questionId}: ${Array.isArray(answer) ? answer.join(", ") : answer}`)
+      .join("\n");
+  }
+
   private defaultRunEventTitle(type: RunEvent["type"]): string {
     switch (type) {
       case "output":
@@ -5052,7 +5556,7 @@ export class AppController
   private buildRunCommitMessage(prompt: string): string {
     const singleLinePrompt = prompt.replace(/\s+/g, " ").trim();
     const summary = singleLinePrompt.length > 60 ? `${singleLinePrompt.slice(0, 60).trim()}...` : singleLinePrompt;
-    return `easycode: ${summary || "apply run changes"}`;
+    return `buildwarden: ${summary || "apply run changes"}`;
   }
 
   private buildRunFollowUpMemo(runId: string): string {
@@ -5082,6 +5586,7 @@ export class AppController
 
     const parts = [
       "Run memory:",
+      run.goalText ? `- Run goal: ${run.goalText}` : null,
       run.summary ? `- Last run summary: ${run.summary}` : null,
       recentOutput ? `- Latest agent output: ${recentOutput}` : null,
       toolCalls.length > 0 ? ["- Recent tool activity:", ...toolCalls].join("\n") : null,
@@ -5290,7 +5795,7 @@ export class AppController
   private buildInterruptedRunRecoveryPrompt(run: RunRecord): string {
     const memory = this.buildRunFollowUpMemo(run.id);
     return [
-      "The previous Easycode run was interrupted because the desktop app closed while the agent was active.",
+      "The previous BuildWarden run was interrupted because the desktop app closed while the agent was active.",
       "Continue carefully from the current workspace state and the saved provider session. Do not assume the previous process finished.",
       "First inspect what already changed or what the activity log says, avoid repeating completed work, then continue the original task.",
       "",
@@ -5304,7 +5809,7 @@ export class AppController
   private buildRunPullRequestBody(projectName: string, prompt: string, targetBranch: string): string {
     return [
       "## Summary",
-      `- Automated changes from Easycode for \`${projectName}\`.`,
+      `- Automated changes from BuildWarden for \`${projectName}\`.`,
       `- Original run prompt: ${prompt}`,
       "",
       "## Target branch",
@@ -5616,7 +6121,7 @@ export class AppController
       await this.gitService.checkoutWorktreeBranch(run.worktreePath, branchName).catch(() => {});
       throw new Error(
         [
-          `Easycode created branch "${branchName}", but could not check it out in the project repository or transfer the open changes.`,
+          `BuildWarden created branch "${branchName}", but could not check it out in the project repository or transfer the open changes.`,
           "Commit, stash, or discard local changes in the project repository and try again.",
           "",
           `Original error: ${error instanceof Error ? error.message : String(error)}`,
@@ -5655,8 +6160,8 @@ export class AppController
         ]);
         if (!worktreeRegistered && !gitMetadataPresent && !branchPresent) {
           const message = [
-            "The run was removed from Easycode and Git cleanup completed, but Windows kept part of the old worktree folder locked.",
-            "Close any running packaged Easycode app from that folder, Explorer preview, terminal, or antivirus scan, then delete the folder manually.",
+            "The run was removed from BuildWarden and Git cleanup completed, but Windows kept part of the old worktree folder locked.",
+            "Close any running packaged BuildWarden app from that folder, Explorer preview, terminal, or antivirus scan, then delete the folder manually.",
           ].join(" ");
           logWarn("Run deletion left non-git filesystem residue after successful git cleanup.", {
             runId: run.id,

@@ -2,15 +2,15 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { EasycodeDatabase } from "@easycode/db";
+import { BuildWardenDatabase } from "@buildwarden/db";
 
 const tempDirs: string[] = [];
-const dbs: EasycodeDatabase[] = [];
+const dbs: BuildWardenDatabase[] = [];
 
 const makeDb = async () => {
-  const dir = mkdtempSync(join(tmpdir(), "easycode-provider-session-"));
+  const dir = mkdtempSync(join(tmpdir(), "buildwarden-provider-session-"));
   tempDirs.push(dir);
-  const db = new EasycodeDatabase(join(dir, "easycode.sqlite"));
+  const db = new BuildWardenDatabase(join(dir, "buildwarden.sqlite"));
   await db.init();
   dbs.push(db);
   return db;

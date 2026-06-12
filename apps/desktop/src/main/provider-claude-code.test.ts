@@ -3,6 +3,7 @@ import {
   buildClaudeCodeArgs,
   buildClaudeCanUseTool,
   ClaudeCodeProviderAdapter,
+  mergeClaudeUsageUpdate,
   normalizeClaudeCodeModelId,
   parseClaudeCodeStreamEvent,
   resolveClaudeCodeProcessLaunch,
@@ -74,7 +75,7 @@ describe("ClaudeCodeProviderAdapter", () => {
     }
   });
 
-  it("maps old Easycode Claude model ids to current Claude Code model ids", () => {
+  it("maps old BuildWarden Claude model ids to current Claude Code model ids", () => {
     expect(normalizeClaudeCodeModelId("claude-sonnet-4.5")).toBe("claude-sonnet-4-6");
     expect(normalizeClaudeCodeModelId("claude-haiku-4.5")).toBe("claude-haiku-4-5");
     expect(normalizeClaudeCodeModelId("claude-opus-4-1")).toBe("claude-opus-4-7");
@@ -215,6 +216,63 @@ describe("ClaudeCodeProviderAdapter", () => {
     ]);
   });
 
+  it("routes Claude structured user questions through BuildWarden user input", async () => {
+    const requests: unknown[] = [];
+    const canUseTool = buildClaudeCanUseTool({
+      runId: "run-1",
+      cwd: "C:\\repo",
+      prompt: "test",
+      modelId: "sonnet",
+      inputMode: "plan",
+      signal: new AbortController().signal,
+      requestUserInput: async (request) => {
+        requests.push(request);
+        return { "Which framework?": "React" };
+      },
+    });
+    const input = {
+      questions: [
+        {
+          header: "Framework",
+          question: "Which framework?",
+          options: [
+            { label: "React", description: "Use React" },
+            { label: "Vue", description: "Use Vue" },
+          ],
+        },
+      ],
+    };
+
+    await expect(
+      canUseTool("AskUserQuestion", input, { signal: new AbortController().signal, toolUseID: "tool-ask-1" }),
+    ).resolves.toEqual({
+      behavior: "allow",
+      updatedInput: {
+        ...input,
+        answers: { "Which framework?": "React" },
+      },
+    });
+    expect(requests).toEqual([
+      expect.objectContaining({
+        requestId: "tool-ask-1",
+        title: "Claude question",
+        questions: [
+          {
+            id: "Which framework?",
+            header: "Framework",
+            question: "Which framework?",
+            options: [
+              { label: "React", description: "Use React" },
+              { label: "Vue", description: "Use Vue" },
+            ],
+            multiSelect: false,
+            allowCustomAnswer: false,
+          },
+        ],
+      }),
+    ]);
+  });
+
   it("emits a canonical plan update event for Claude plan proposals", async () => {
     const chunks: unknown[] = [];
     const canUseTool = buildClaudeCanUseTool({
@@ -326,6 +384,127 @@ describe("ClaudeCodeProviderAdapter", () => {
       cachedInputTokens: 450_000,
       cacheCreationInputTokens: 10_000,
       totalTokens: 502_000,
+      usedTokens: 502_000,
+      totalProcessedTokens: 502_000,
+      lastUsedTokens: 502_000,
+      lastInputTokens: 500_000,
+      lastCachedInputTokens: 450_000,
+      lastOutputTokens: 2_000,
+    });
+  });
+
+  it("parses Claude assistant message usage as a delta for mid-run updates", () => {
+    const parsed = parseClaudeCodeStreamEvent({
+      type: "assistant",
+      session_id: "session-1",
+      message: {
+        id: "msg-usage-1",
+        content: [{ type: "text", text: "I'll inspect the project." }],
+        usage: {
+          input_tokens: 1_200,
+          output_tokens: 80,
+          cache_read_input_tokens: 2_000,
+        },
+      },
+    });
+
+    expect(parsed.usageIsDelta).toBe(true);
+    expect(parsed.usageKey).toBe("message:msg-usage-1");
+    expect(parsed.usage).toEqual({
+      inputTokens: 3_200,
+      outputTokens: 80,
+      cachedInputTokens: 2_000,
+      totalTokens: 3_280,
+    });
+  });
+
+  it("does not count repeated Claude assistant usage snapshots twice", () => {
+    const first = parseClaudeCodeStreamEvent({
+      type: "assistant",
+      session_id: "session-1",
+      requestId: "req-1",
+      message: {
+        id: "msg-usage-1",
+        content: [{ type: "thinking", thinking: "Looking around." }],
+        usage: {
+          input_tokens: 10,
+          output_tokens: 4,
+          cache_read_input_tokens: 90,
+        },
+      },
+    });
+    const repeatedSnapshot = parseClaudeCodeStreamEvent({
+      type: "assistant",
+      session_id: "session-1",
+      requestId: "req-1",
+      message: {
+        id: "msg-usage-1",
+        content: [{ type: "tool_use", id: "tool-1", name: "Read", input: { file_path: "README.md" } }],
+        usage: {
+          input_tokens: 10,
+          output_tokens: 4,
+          cache_read_input_tokens: 90,
+        },
+      },
+    });
+
+    const counted = new Map();
+    const initial = { inputTokens: 0, outputTokens: 0 };
+    const afterFirst = mergeClaudeUsageUpdate(initial, counted, first);
+    const afterRepeated = mergeClaudeUsageUpdate(afterFirst.usage, counted, repeatedSnapshot);
+
+    expect(afterFirst.changed).toBe(true);
+    expect(afterRepeated.changed).toBe(false);
+    expect(afterRepeated.usage).toEqual({
+      inputTokens: 100,
+      outputTokens: 4,
+      cachedInputTokens: 90,
+      totalTokens: 104,
+      totalProcessedTokens: 104,
+    });
+  });
+
+  it("adds only the positive difference when a repeated Claude usage snapshot grows", () => {
+    const first = parseClaudeCodeStreamEvent({
+      type: "assistant",
+      requestId: "req-1",
+      message: {
+        id: "msg-usage-1",
+        content: [{ type: "text", text: "Partial." }],
+        usage: {
+          input_tokens: 10,
+          output_tokens: 4,
+          cache_read_input_tokens: 90,
+        },
+      },
+    });
+    const updated = parseClaudeCodeStreamEvent({
+      type: "assistant",
+      requestId: "req-1",
+      message: {
+        id: "msg-usage-1",
+        content: [{ type: "text", text: "Complete." }],
+        usage: {
+          input_tokens: 12,
+          output_tokens: 7,
+          cache_read_input_tokens: 90,
+          cache_creation_input_tokens: 5,
+        },
+      },
+    });
+
+    const counted = new Map();
+    const afterFirst = mergeClaudeUsageUpdate({ inputTokens: 0, outputTokens: 0 }, counted, first);
+    const afterUpdated = mergeClaudeUsageUpdate(afterFirst.usage, counted, updated);
+
+    expect(afterUpdated.changed).toBe(true);
+    expect(afterUpdated.usage).toEqual({
+      inputTokens: 107,
+      outputTokens: 7,
+      cachedInputTokens: 90,
+      cacheCreationInputTokens: 5,
+      totalTokens: 114,
+      totalProcessedTokens: 114,
     });
   });
 
@@ -354,6 +533,51 @@ describe("ClaudeCodeProviderAdapter", () => {
       cachedInputTokens: 450_000,
       cacheCreationInputTokens: 10_000,
       totalTokens: 502_000,
+      usedTokens: 502_000,
+      totalProcessedTokens: 502_000,
+      lastUsedTokens: 502_000,
+      lastInputTokens: 500_000,
+      lastCachedInputTokens: 450_000,
+      lastOutputTokens: 2_000,
     });
+  });
+
+  it("preserves Claude task-progress context usage when final usage is accumulated", () => {
+    const progress = parseClaudeCodeStreamEvent({
+      type: "task_progress",
+      usage: {
+        input_tokens: 185_000,
+        output_tokens: 5_000,
+      },
+      modelUsage: {
+        sonnet: {
+          contextWindow: 200_000,
+        },
+      },
+    });
+    const final = parseClaudeCodeStreamEvent({
+      type: "result",
+      result: "done",
+      usage: {
+        input_tokens: 530_000,
+        output_tokens: 5_000,
+      },
+      modelUsage: {
+        sonnet: {
+          contextWindow: 200_000,
+        },
+      },
+    });
+
+    const counted = new Map();
+    const afterProgress = mergeClaudeUsageUpdate({ inputTokens: 0, outputTokens: 0 }, counted, progress);
+    const afterFinal = mergeClaudeUsageUpdate(afterProgress.usage, counted, final);
+
+    expect(progress.usageIsContextSnapshot).toBe(true);
+    expect(afterFinal.usage.usedTokens).toBe(190_000);
+    expect(afterFinal.usage.maxTokens).toBe(200_000);
+    expect(afterFinal.usage.inputTokens).toBe(530_000);
+    expect(afterFinal.usage.outputTokens).toBe(5_000);
+    expect(afterFinal.usage.totalProcessedTokens).toBe(535_000);
   });
 });

@@ -7,11 +7,11 @@ import type {
   RunMode,
   RunTokenUsage,
   RunToolName,
-} from "@easycode/shared";
-import { CHAT_ATTACHMENT_LIMITS } from "@easycode/shared";
+} from "@buildwarden/shared";
+import { CHAT_ATTACHMENT_LIMITS } from "@buildwarden/shared";
 
 export const SYSTEM_PROMPT = [
-  "You are Easycode, a desktop coding agent running inside a Git worktree.",
+  "You are BuildWarden, a desktop coding agent running inside a Git worktree.",
   "You are operating on a local codebase and can inspect and modify files via provided tools.",
   "Use the tools whenever repository context is needed and apply concrete changes when the task requires implementation.",
   "Do not claim to have changed files unless you used the file tools successfully.",

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { BookmarkRecord, ChatBookmarkRecord } from "@easycode/shared";
+import type { BookmarkRecord, ChatBookmarkRecord } from "@buildwarden/shared";
 import { Bookmark, Search, Trash2 } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -37,15 +37,15 @@ export const BookmarksPage = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const easycode = window.easycode;
+  const buildwarden = window.buildwarden;
 
   const loadBookmarks = useCallback(async () => {
-    if (!easycode) return;
+    if (!buildwarden) return;
     setLoading(true);
     try {
       const [runBookmarks, chatBookmarks] = await Promise.all([
-        easycode.getBookmarksWithSteps(),
-        easycode.getChatBookmarksWithSteps(),
+        buildwarden.getBookmarksWithSteps(),
+        buildwarden.getChatBookmarksWithSteps(),
       ]);
       const merged = [...runBookmarks, ...chatBookmarks].sort(
         (a, b) => new Date(b.bookmarkedAt).getTime() - new Date(a.bookmarkedAt).getTime(),
@@ -54,7 +54,7 @@ export const BookmarksPage = ({
     } finally {
       setLoading(false);
     }
-  }, [easycode]);
+  }, [buildwarden]);
 
   useEffect(() => {
     void loadBookmarks();
@@ -68,18 +68,18 @@ export const BookmarksPage = ({
 
   return (
     <div className="space-y-4">
-      <Card className="app-surface-chat-hero overflow-hidden border p-6">
-        <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+      <Card className="app-surface-chat-hero overflow-hidden border p-0">
+        <div className="flex min-h-[6.5rem] flex-col gap-3 p-4 xl:h-[6.5rem] xl:flex-row xl:items-end xl:justify-between">
           <div className="max-w-3xl">
-            <p className="text-xs uppercase tracking-[0.35em] text-cyan-400">Bookmarks</p>
-            <h2 className="mt-3 text-3xl font-semibold text-zinc-50">Saved runs</h2>
-            <p className="mt-3 text-base leading-7 text-zinc-300">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-[var(--ec-accent)]">Bookmarks</p>
+            <h2 className="mt-1 text-2xl font-semibold text-[var(--ec-text)]">Saved runs</h2>
+            <p className="mt-1 text-sm leading-5 text-[var(--ec-muted)]">
               Your bookmarked runs and chats. Bookmarks are stored as copies and persist even if the original is deleted.
             </p>
           </div>
-          <div className="app-surface-chat-stat rounded-xl border px-4 py-3">
-            <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">Bookmarks</p>
-            <p className="mt-1 text-2xl font-semibold text-zinc-100">{bookmarks.length}</p>
+          <div className="min-w-20 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-2 text-right">
+            <p className="font-mono text-lg font-semibold text-[var(--ec-text)]">{bookmarks.length}</p>
+            <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--ec-faint)]">bookmarks</p>
           </div>
         </div>
       </Card>
@@ -121,7 +121,7 @@ export const BookmarksPage = ({
               {filteredBookmarks.map((bookmark) => (
                 <div
                   key={bookmark.id}
-                  className="flex items-center justify-between gap-4 px-4 py-3 transition hover:bg-zinc-900/50"
+                  className="flex items-center justify-between gap-4 px-4 py-3 transition hover:bg-[var(--ec-hover)]"
                 >
                   <button
                     type="button"
@@ -130,7 +130,7 @@ export const BookmarksPage = ({
                     title="Open bookmark"
                   >
                     <div className="flex items-center gap-2">
-                      <Badge tone={bookmark.status}>{bookmark.status}</Badge>
+                      <Badge dot tone={bookmark.status}>{bookmark.status}</Badge>
                       <span className="truncate text-xs text-zinc-500">
                         {isChatBookmark(bookmark)
                           ? `Chat • ${new Date(bookmark.bookmarkedAt).toLocaleString()}`

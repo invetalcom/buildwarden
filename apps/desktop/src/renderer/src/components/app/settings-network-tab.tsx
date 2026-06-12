@@ -1,8 +1,9 @@
-import type { NetworkProxyProtocol } from "@easycode/shared";
+import type { NetworkProxyProtocol } from "@buildwarden/shared";
 import { Globe, Loader2, ShieldCheck } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
+import { Select } from "../ui/select";
 
 export type NetworkProxyDraft = {
   enabled: boolean;
@@ -73,31 +74,25 @@ export const NetworkSettingsTab = ({
 
           <label className="mt-4 flex items-start gap-3 rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-3">
             <input
-              className="mt-1 h-4 w-4 accent-cyan-400"
+              className="mt-1 h-4 w-4 accent-[var(--ec-accent)]"
               type="checkbox"
               checked={draft.enabled}
               onChange={(event) => onDraftChange({ ...draft, enabled: event.target.checked })}
             />
             <div className="min-w-0">
               <p className="text-sm font-medium text-zinc-100">Enable network proxy</p>
-              <p className="mt-1 text-xs text-zinc-500">When off, Easycode connects directly even if host details are filled in below.</p>
+              <p className="mt-1 text-xs text-zinc-500">When off, BuildWarden connects directly even if host details are filled in below.</p>
             </div>
           </label>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-[12rem_minmax(0,1fr)_8rem]">
             <label className="space-y-1.5">
               <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Protocol</span>
-              <select
-                className="h-10 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-100"
+              <Select
                 value={draft.protocol}
-                onChange={(event) => onDraftChange({ ...draft, protocol: event.target.value as NetworkProxyProtocol })}
-              >
-                {PROXY_PROTOCOL_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+                onValueChange={(value) => onDraftChange({ ...draft, protocol: value as NetworkProxyProtocol })}
+                options={PROXY_PROTOCOL_OPTIONS}
+              />
             </label>
 
             <label className="space-y-1.5">
@@ -191,7 +186,7 @@ export const NetworkSettingsTab = ({
           The proxy is applied in the Electron main process and worker-backed provider requests, so background runs and chats use the same setting.
         </div>
         <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-3">
-          Proxy passwords are stored in Easycode&apos;s encrypted secret store, not in the SQLite settings database.
+          Proxy passwords are stored in BuildWarden&apos;s encrypted secret store, not in the SQLite settings database.
         </div>
         <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-3">
           Local calls stay direct automatically. That keeps embedded localhost tooling and local model endpoints reachable without proxy loops.

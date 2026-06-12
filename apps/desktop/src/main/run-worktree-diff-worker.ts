@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 export type WorktreeDiffWorkerOutcome = { ok: true; diff: string } | { ok: false };
 
-/** Runs `computeWorktreeDiff` from `@easycode/git-service` in a dedicated thread (non-blocking main process). */
+/** Runs `computeWorktreeDiff` from `@buildwarden/git-service` in a dedicated thread (non-blocking main process). */
 export function runWorktreeDiffInWorker(worktreePath: string): Promise<WorktreeDiffWorkerOutcome> {
   const workerPath = join(dirname(fileURLToPath(import.meta.url)), "git-diff-worker.js");
 

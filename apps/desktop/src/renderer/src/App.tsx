@@ -1,19 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent } from "react";
 import {
   APP_SETTING_KEYS,
   cycleUiTheme,
   DEFAULT_NETWORK_PROXY_SETTINGS,
   buildDefaultProjectLabSettings,
   GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE,
-  INTEGRATED_SKILLS_CATALOG,
   isDetachedHeadProjectErrorMessage,
   getAiSdkProviderFamilyFromConfigJson,
   DEFAULT_ADD_MODEL_DRAFT,
-  DEFAULT_KEYBOARD_SHORTCUTS,
   DEFAULT_SHELL_ALLOWLIST_PATTERN_SOURCES,
   parseIntegratedSkillsDisabledSetting,
   parseProjectLabSettingsSetting,
   parseProjectActiveSkillsSetting,
+  parseRecentRunDaysSetting,
+  parseRunTimelineDensitySetting,
   parseRunWorkspaceLayoutsSetting,
   parseUiTheme,
   PROVIDER_CONFIG_AI_SDK_PROVIDER_FAMILY_KEY,
@@ -35,6 +35,7 @@ import {
   type ProjectLabSettings,
   type KeyboardShortcutId,
   type NetworkProxySettingsSnapshot,
+  type ProjectForgeRequestOpenPayload,
   type ProjectSnapshot,
   type ProjectInsightKind,
   type ProviderType,
@@ -42,228 +43,126 @@ import {
   type RunMode,
   type RunPublishOptions,
   type RunRecord,
+  type RunTokenUsage,
+  type RunTimelineDensity,
   type RunWorkspaceLayoutPreference,
   type RunWorkspaceLayoutPreferencesByRunId,
   type RunWorkspacePanelId,
   type RunWorkspaceType,
   type ShellApprovalDecision,
+  type SupportedIdeKind,
+  type IntegratedSkillMetadata,
   type UiTheme,
   type UnifiedProviderFamily,
   uiThemeToLegacyDarkMode,
-} from "@easycode/shared";
+} from "@buildwarden/shared";
 import {
-  AlertTriangle,
-  ChevronDown,
-  ChevronRight,
+  Bot,
+  Bookmark,
+  Command as CommandIcon,
   FolderOpen,
   Globe,
   GitBranch,
+  GitPullRequest,
+  Home,
   Loader2,
   MessageSquareText,
-  ShieldCheck,
+  Settings,
   Sparkles,
   SquareTerminal,
-  Trash2,
-  X,
+  StickyNote,
 } from "lucide-react";
-import { BookmarkDetailPage } from "./components/app/BookmarkDetailPage";
+const AllRunsPage = lazy(() => import("./components/app/AllRunsPage").then((m) => ({ default: m.AllRunsPage })));
+const BookmarkDetailPage = lazy(() => import("./components/app/BookmarkDetailPage").then((m) => ({ default: m.BookmarkDetailPage })));
 import { AppTitleBar } from "./components/app/AppTitleBar";
-import { BookmarksPage, type BookmarkItem } from "./components/app/BookmarksPage";
-import { ChatBookmarkDetailPage } from "./components/app/ChatBookmarkDetailPage";
-import { ChatDetailPage } from "./components/app/ChatDetailPage";
-import { ChatPage } from "./components/app/ChatPage";
+const BookmarksPage = lazy(() => import("./components/app/BookmarksPage").then((m) => ({ default: m.BookmarksPage })));
+import { type BookmarkItem } from "./components/app/BookmarksPage";
+const ChatBookmarkDetailPage = lazy(() => import("./components/app/ChatBookmarkDetailPage").then((m) => ({ default: m.ChatBookmarkDetailPage })));
+// Heavy detail surfaces are code-split so the startup chunk stays small; they
+// load on first navigation and stay cached afterwards.
+const ChatDetailPage = lazy(() => import("./components/app/ChatDetailPage").then((m) => ({ default: m.ChatDetailPage })));
+const ChatPage = lazy(() => import("./components/app/ChatPage").then((m) => ({ default: m.ChatPage })));
+import { CommandPalette, type CommandPaletteItem } from "./components/app/CommandPalette";
 import { LandingPage } from "./components/app/LandingPage";
 import { pickRandomLandingJoke } from "./components/app/landing-page-jokes";
-import { ProjectPage } from "./components/app/ProjectPage";
-import { AnchorDropdownPortal } from "./components/app/anchor-dropdown-portal";
-import { OpenInIdeControl } from "./components/app/open-in-ide-control";
-import { RunTokenBadge } from "./components/app/RunTokenBadge";
-import { RunDetailPage } from "./components/app/RunDetailPage";
-import { DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE } from "./components/app/run-workspace-layout";
-import { SettingsPage } from "./components/app/SettingsPage";
+const ProjectPage = lazy(() => import("./components/app/ProjectPage").then((m) => ({ default: m.ProjectPage })));
+import { type ProjectPageTab } from "./components/app/project-page-tabs";
+import {
+  DEFAULT_RUN_BROWSER_SESSION,
+  EMPTY_APP_LOG_DIRECTORY_SIZE,
+  EMPTY_SNAPSHOT,
+  RUN_DRAG_MIME_TYPE,
+  RUN_PANE_IDS,
+  buildRunReasoningInput,
+  cloneDefaultRunWorkspaceLayoutPreference,
+  eventToKeyString,
+  findProjectRun,
+  firstOpenRunId,
+  getOpenRunPaneEntries,
+  harnessTypeForProvider,
+  isRunContinuable,
+  latestRunTokenUsage,
+  paneForOpenRunId,
+  parseKeyboardShortcuts,
+  parseRunDragPayload,
+  readRunTokenUsage,
+  resolveProviderComposerPrompt,
+  runIdIsOpenInPanes,
+  type ConfirmDialogState,
+  type OpenRunPanes,
+  type RunBrowserSessionState,
+  type RunDragPayload,
+  type RunPaneId,
+} from "./components/app/app-model";
+import {
+  AppNotifications,
+  type ProjectForgeRequestToast,
+  type ShellApprovalRequestState,
+} from "./components/app/AppNotifications";
+import { RunActionDialogs } from "./components/app/RunActionDialogs";
+import { RunDetailHeader, RunPaneDropPreviewOverlay } from "./components/app/RunDetailHeader";
+const RunDetailPage = lazy(() => import("./components/app/RunDetailPage").then((m) => ({ default: m.RunDetailPage })));
+const SettingsPage = lazy(() => import("./components/app/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 import { Sidebar } from "./components/app/Sidebar";
-import { Badge } from "./components/ui/badge";
+import { DEFAULT_SIDEBAR_WIDTH, clampSidebarWidth, parseSidebarWidthSetting } from "./components/app/sidebar-width";
 import { Button } from "./components/ui/button";
 import { Card } from "./components/ui/card";
-import { Input } from "./components/ui/input";
-import { Textarea } from "./components/ui/textarea";
 import { cn } from "./lib/cn";
+import { useStableCallback } from "./lib/use-stable-callback";
 import { reportRendererError, reportRendererLog } from "./lib/report-renderer-error";
-
-const EMPTY_SNAPSHOT: AppSnapshot = {
-  projects: [],
-  providerAccounts: [],
-  models: [],
-  selectedProjectId: null,
-  selectedRunId: null,
-  selectedChatId: null,
-  settings: {},
-  bookmarks: [],
-  chatBookmarks: [],
-  chats: [],
-};
-
-const safeParseMetadata = (value: string) => {
-  try {
-    return JSON.parse(value) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
-};
-
-const eventToKeyString = (e: KeyboardEvent): string => {
-  const parts: string[] = [];
-  if (e.ctrlKey || e.metaKey) parts.push("ctrl");
-  if (e.altKey) parts.push("alt");
-  if (e.shiftKey) parts.push("shift");
-  const key = e.key.toLowerCase();
-  if (key === " ") parts.push("space");
-  else if (!["control", "meta", "alt", "shift"].includes(key)) parts.push(key);
-  return parts.join("+");
-};
-
-const parseKeyboardShortcuts = (json: string | undefined): Record<KeyboardShortcutId, string> => {
-  try {
-    const parsed = json ? (JSON.parse(json) as Record<string, string>) : {};
-    return { ...DEFAULT_KEYBOARD_SHORTCUTS, ...parsed };
-  } catch {
-    return { ...DEFAULT_KEYBOARD_SHORTCUTS };
-  }
-};
-
-const harnessTypeForProvider = (providerType: ProviderType) =>
-  providerType === "codex-cli"
-    ? "codex-app-server"
-    : providerType === "claude-code"
-      ? "claude-code"
-      : providerType === "azure-legacy"
-        ? "azure-legacy"
-        : "ai-sdk";
-
-const normalizeOpenAiReasoningEffort = (value: string) => {
-  const allowed = new Set(["none", "low", "medium", "high", "xhigh"]);
-  return allowed.has(value) ? value : "medium";
-};
-
-const normalizeAnthropicEffort = (value: string) => {
-  const allowed = new Set(["low", "medium", "high", "xhigh", "max"]);
-  return allowed.has(value) ? value : "medium";
-};
-
-const buildRunReasoningInput = (
-  providerType: ProviderType,
-  providerFamily: UnifiedProviderFamily | null,
-  reasoningEffort: string,
-  anthropicEffort: string,
-): { reasoningEffort?: string; anthropicEffort?: string } => {
-  if (providerType === "codex-cli" || (providerType === "ai-sdk" && providerFamily === "openai")) {
-    return { reasoningEffort: normalizeOpenAiReasoningEffort(reasoningEffort) };
-  }
-  if (providerType === "claude-code" || (providerType === "ai-sdk" && providerFamily === "anthropic")) {
-    return { anthropicEffort: normalizeAnthropicEffort(anthropicEffort) };
-  }
-  return {};
-};
-
-const isRunContinuable = (run: RunRecord) =>
-  !["queued", "preparing", "running"].includes(run.status);
-
-interface ShellApprovalRequestState {
-  runId: string;
-  requestId: string;
-  command: string;
-  requestedAt: number;
-}
-
-const findProjectRun = (projects: ProjectSnapshot[], runId: string) => {
-  for (const project of projects) {
-    const labImplementationRuns = project.labThreads
-      .map((thread) => thread.implementationRun)
-      .filter((run): run is RunRecord => Boolean(run));
-    const run = [
-      ...project.runs,
-      ...project.forLaterRuns,
-      ...project.activeRuns,
-      ...project.recentRuns,
-      ...labImplementationRuns,
-    ].find((candidate) => candidate.id === runId);
-
-    if (run) {
-      return { project, run };
-    }
-  }
-
-  return null;
-};
-
-interface RunBrowserSessionState {
-  draftUrl: string;
-  currentUrl: string;
-  history: string[];
-  historyIndex: number;
-  reloadKey: number;
-}
-
-interface ConfirmDialogState {
-  title: string;
-  message: string;
-  confirmLabel: string;
-  confirmVariant?: "default" | "danger";
-}
 
 interface SettingsPreviousPageState {
   landingSelected: boolean;
+  allRunsSelected: boolean;
   bookmarksSelected: boolean;
   chatsSelected: boolean;
+  projectPageTab: ProjectPageTab;
   selectedBookmark: BookmarkItem | null;
   selectedChat: ChatRecord | null;
   chatDetail: ChatDetail | null;
   selectedRunId: string | null | undefined;
   runDetail: RunDetail | null;
+  openRunPanes: OpenRunPanes;
+  focusedRunPane: RunPaneId;
+  runDetailsById: Record<string, RunDetail>;
 }
 
-const DEFAULT_RUN_BROWSER_SESSION: RunBrowserSessionState = {
-  draftUrl: "about:blank",
-  currentUrl: "about:blank",
-  history: ["about:blank"],
-  historyIndex: 0,
-  reloadKey: 0,
-};
-
-const cloneDefaultRunWorkspaceLayoutPreference = (): RunWorkspaceLayoutPreference => ({
-  visiblePanels: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.visiblePanels },
-  tileOrder: [...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileOrder],
-  tileLayout: {
-    activity: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.activity },
-    diff: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.diff },
-    terminal: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.terminal },
-    browser: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.browser },
-  },
-  secondaryPanelPosition: DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.secondaryPanelPosition,
-});
-
-const dedupeIntegratedSkillsCatalog = () => {
-  const seen = new Set<string>();
-  return INTEGRATED_SKILLS_CATALOG.filter((skill) => {
-    const dedupeKey = `${skill.source}:${skill.name}`;
-    if (seen.has(dedupeKey)) {
-      return false;
-    }
-    seen.add(dedupeKey);
-    return true;
-  });
-};
-
 export const App = () => {
-  const easycode = window.easycode;
+  const buildwarden = window.buildwarden;
   const showCustomWindowsTitleBar = typeof navigator !== "undefined" && navigator.platform.toLowerCase().startsWith("win");
   const [snapshot, setSnapshot] = useState<AppSnapshot>(EMPTY_SNAPSHOT);
   const [runDetail, setRunDetail] = useState<RunDetail | null>(null);
+  const [openRunPanes, setOpenRunPanes] = useState<OpenRunPanes>({});
+  const [focusedRunPane, setFocusedRunPane] = useState<RunPaneId>("left");
+  const [runDetailsById, setRunDetailsById] = useState<Record<string, RunDetail>>({});
+  const [runPaneDropPreview, setRunPaneDropPreview] = useState<RunPaneId | null>(null);
+  const [runLiveUsageById, setRunLiveUsageById] = useState<Record<string, Partial<RunTokenUsage>>>({});
   const [busy, setBusy] = useState(false);
   /** Runs whose deletion IPC is in flight (does not block the rest of the UI). */
   const [pendingDeleteRunIds, setPendingDeleteRunIds] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const [appWarning, setAppWarning] = useState<AppWarning | null>(null);
+  const [projectForgeRequestToasts, setProjectForgeRequestToasts] = useState<ProjectForgeRequestToast[]>([]);
   const [projectName, setProjectName] = useState("");
   const [projectPath, setProjectPath] = useState("");
   const [providerLabel, setProviderLabel] = useState("AI SDK");
@@ -321,17 +220,30 @@ export const App = () => {
   const [selectedRunId, setSelectedRunId] = useState<string | null | undefined>(undefined);
   const selectedRunIdRef = useRef<string | null | undefined>(undefined);
   selectedRunIdRef.current = selectedRunId;
-  const diffRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const openRunPanesRef = useRef<OpenRunPanes>({});
+  openRunPanesRef.current = openRunPanes;
+  const runDetailsByIdRef = useRef<Record<string, RunDetail>>({});
+  runDetailsByIdRef.current = runDetailsById;
+  const diffRefreshTimersRef = useRef<Partial<Record<string, ReturnType<typeof setTimeout>>>>({});
+  const runDetailLoadTokenRef = useRef<Record<string, number>>({});
   const [landingSelected, setLandingSelected] = useState(true);
+  const [allRunsSelected, setAllRunsSelected] = useState(false);
   const [bookmarksSelected, setBookmarksSelected] = useState(false);
   const [chatsSelected, setChatsSelected] = useState(false);
   const [selectedBookmark, setSelectedBookmark] = useState<BookmarkItem | null>(null);
   const [selectedChat, setSelectedChat] = useState<ChatRecord | null>(null);
   const [chatDetail, setChatDetail] = useState<ChatDetail | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [projectPageTab, setProjectPageTab] = useState<ProjectPageTab>("overview");
+  const [reviewRequestTarget, setReviewRequestTarget] = useState<{
+    projectId: string;
+    url: string;
+    requestId: number;
+  } | null>(null);
   const [settingsPreviousPage, setSettingsPreviousPage] = useState<SettingsPreviousPageState | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(320);
+  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [landingPageJoke] = useState(() => pickRandomLandingJoke());
   const [commitDialogRun, setCommitDialogRun] = useState<RunRecord | null>(null);
   const [continueDialogRun, setContinueDialogRun] = useState<RunRecord | null>(null);
@@ -354,32 +266,37 @@ export const App = () => {
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const [publishMenuOpen, setPublishMenuOpen] = useState(false);
   const [runPanelsMenuOpen, setRunPanelsMenuOpen] = useState(false);
+  const [runDensityMenuOpen, setRunDensityMenuOpen] = useState(false);
   const publishMenuAnchorRef = useRef<HTMLDivElement>(null);
   const runPanelsMenuAnchorRef = useRef<HTMLDivElement>(null);
+  const runDensityMenuAnchorRef = useRef<HTMLDivElement>(null);
   const confirmDialogResolverRef = useRef<((value: boolean) => void) | null>(null);
   const [shellApprovalQueue, setShellApprovalQueue] = useState<ShellApprovalRequestState[]>([]);
   const [runWorkspaceShowActivity, setRunWorkspaceShowActivity] = useState(true);
   const [runWorkspaceShowDiff, setRunWorkspaceShowDiff] = useState(false);
   const [runWorkspaceShowTerminal, setRunWorkspaceShowTerminal] = useState(false);
   const [runWorkspaceShowBrowser, setRunWorkspaceShowBrowser] = useState(false);
+  const [runWorkspaceShowNotes, setRunWorkspaceShowNotes] = useState(false);
   const [runWorkspaceSecondaryPosition, setRunWorkspaceSecondaryPosition] = useState<"right" | "bottom">("right");
   const [runWorkspaceLayoutsByRunId, setRunWorkspaceLayoutsByRunId] = useState<RunWorkspaceLayoutPreferencesByRunId>({});
   const [runBrowserSessions, setRunBrowserSessions] = useState<Record<string, RunBrowserSessionState>>({});
   const [runTerminalOpenLinksInApp, setRunTerminalOpenLinksInApp] = useState<Record<string, boolean>>({});
   const [appLogDirPath, setAppLogDirPath] = useState("");
+  const [appLogDirectorySize, setAppLogDirectorySize] = useState(EMPTY_APP_LOG_DIRECTORY_SIZE);
   const [networkProxySettings, setNetworkProxySettings] = useState<NetworkProxySettingsSnapshot>({
     ...DEFAULT_NETWORK_PROXY_SETTINGS,
     hasPassword: false,
   });
   const preferredRunModelId = snapshot.settings[APP_SETTING_KEYS.lastUsedRunModelId] ?? "";
+  const persistedSidebarWidthSetting = snapshot.settings[APP_SETTING_KEYS.sidebarWidth];
 
   const loadSnapshot = useCallback(async () => {
-    if (!easycode) {
+    if (!buildwarden) {
       setError("The Electron desktop bridge is unavailable. Restart the app with `pnpm dev`.");
       return;
     }
 
-    const next = await easycode.refreshSnapshot();
+    const next = await buildwarden.refreshSnapshot();
     setSnapshot(next);
     setRunProjectId((current) =>
       current && next.projects.some((entry) => entry.project.id === current)
@@ -403,37 +320,93 @@ export const App = () => {
         return null;
       }
 
-      if (current && next.projects.some((entry) => entry.runs.some((run) => run.id === current))) {
+      const hasCurrentRun =
+        current &&
+        next.projects.some(
+          (entry) =>
+            entry.runs.some((run) => run.id === current) ||
+            entry.forLaterRuns.some((run) => run.id === current) ||
+            entry.labThreads.some((detail) => detail.implementationRun?.id === current || detail.thread.implementationRunId === current),
+        );
+      if (hasCurrentRun) {
         return current;
       }
 
       return next.selectedRunId || next.projects[0]?.recentRuns[0]?.id || null;
     });
-  }, [easycode]);
+  }, [buildwarden]);
+
+  const loadAppPaths = useCallback(async () => {
+    if (!buildwarden) {
+      return;
+    }
+
+    try {
+      const paths = await buildwarden.getAppPaths();
+      setAppLogDirPath(paths.logDirPath);
+      setAppLogDirectorySize(paths.logDirectorySize);
+    } catch {
+      setAppLogDirPath("");
+      setAppLogDirectorySize(EMPTY_APP_LOG_DIRECTORY_SIZE);
+    }
+  }, [buildwarden]);
+
+  /**
+   * Streaming runs emit bursts of events; refreshing the full snapshot for each
+   * one wastes IPC and re-renders. Coalesce to at most one refresh per 300ms.
+   */
+  const snapshotRefreshTimerRef = useRef<number | null>(null);
+  const scheduleSnapshotRefresh = useCallback(() => {
+    if (snapshotRefreshTimerRef.current !== null) {
+      return;
+    }
+    snapshotRefreshTimerRef.current = window.setTimeout(() => {
+      snapshotRefreshTimerRef.current = null;
+      void loadSnapshot();
+    }, 300);
+  }, [loadSnapshot]);
+
+  useEffect(
+    () => () => {
+      if (snapshotRefreshTimerRef.current !== null) {
+        window.clearTimeout(snapshotRefreshTimerRef.current);
+        snapshotRefreshTimerRef.current = null;
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const nextWidth = parseSidebarWidthSetting(persistedSidebarWidthSetting);
+    if (nextWidth == null) {
+      return;
+    }
+    setSidebarWidth((current) => (current === nextWidth ? current : nextWidth));
+  }, [persistedSidebarWidthSetting]);
 
   const loadDetectedCodexInstallation = useCallback(async () => {
-    if (!easycode) {
+    if (!buildwarden) {
       return;
     }
-    const detected = await easycode.getDetectedCodexInstallation();
+    const detected = await buildwarden.getDetectedCodexInstallation();
     setDetectedCodexBinaryPath(detected.binaryPath);
-  }, [easycode]);
+  }, [buildwarden]);
 
   const loadDetectedClaudeInstallation = useCallback(async () => {
-    if (!easycode) {
+    if (!buildwarden) {
       return;
     }
-    const detected = await easycode.getDetectedClaudeInstallation();
+    const detected = await buildwarden.getDetectedClaudeInstallation();
     setDetectedClaudeBinaryPath(detected.binaryPath);
-  }, [easycode]);
+  }, [buildwarden]);
 
   const loadNetworkProxySettings = useCallback(async () => {
-    if (!easycode) {
+    if (!buildwarden) {
       return;
     }
-    const next = await easycode.getNetworkProxySettings();
+    const next = await buildwarden.getNetworkProxySettings();
     setNetworkProxySettings(next);
-  }, [easycode]);
+  }, [buildwarden]);
 
   useEffect(() => {
     const validSet = new Set(snapshot.models.map((m) => m.id));
@@ -466,12 +439,12 @@ export const App = () => {
 
   const persistLastUsedRunModelId = useCallback(
     async (modelId: string) => {
-      if (!easycode || !modelId.trim()) {
+      if (!buildwarden || !modelId.trim()) {
         return;
       }
-      await easycode.setAppSetting(APP_SETTING_KEYS.lastUsedRunModelId, modelId);
+      await buildwarden.setAppSetting(APP_SETTING_KEYS.lastUsedRunModelId, modelId);
     },
-    [easycode],
+    [buildwarden],
   );
 
   const handleRunModelChange = useCallback(
@@ -496,101 +469,193 @@ export const App = () => {
     [handleRunWorktreeModelIdsChange, persistLastUsedRunModelId],
   );
 
-  const clearDiffRefreshTimer = useCallback(() => {
-    if (diffRefreshTimerRef.current != null) {
-      clearTimeout(diffRefreshTimerRef.current);
-      diffRefreshTimerRef.current = null;
+  const clearDiffRefreshTimer = useCallback((runId?: string) => {
+    if (runId) {
+      const timer = diffRefreshTimersRef.current[runId];
+      if (timer != null) {
+        clearTimeout(timer);
+        delete diffRefreshTimersRef.current[runId];
+      }
+      return;
+    }
+
+    for (const timer of Object.values(diffRefreshTimersRef.current)) {
+      if (timer != null) {
+        clearTimeout(timer);
+      }
+    }
+    diffRefreshTimersRef.current = {};
+  }, []);
+
+  const replaceRunDetailForRun = useCallback((runId: string, detail: RunDetail) => {
+    setRunDetailsById((current) => {
+      if (current[runId] === detail) {
+        return current;
+      }
+      return { ...current, [runId]: detail };
+    });
+    if (selectedRunIdRef.current === runId) {
+      setRunDetail(detail);
     }
   }, []);
 
+  const mergeRunDetailForRun = useCallback((runId: string, merger: (detail: RunDetail) => RunDetail) => {
+    setRunDetailsById((current) => {
+      const previous = current[runId];
+      if (!previous) {
+        return current;
+      }
+      const next = merger(previous);
+      return { ...current, [runId]: next };
+    });
+    setRunDetail((current) => (current?.run.id === runId ? merger(current) : current));
+  }, []);
+
+  const loadRunDetailForRun = useCallback(
+    async (runId: string) => {
+      if (!buildwarden) {
+        return;
+      }
+
+      clearDiffRefreshTimer(runId);
+      const loadToken = (runDetailLoadTokenRef.current[runId] ?? 0) + 1;
+      runDetailLoadTokenRef.current[runId] = loadToken;
+
+      const fast = await buildwarden.getRunDetail(runId);
+      if (runDetailLoadTokenRef.current[runId] !== loadToken) {
+        return;
+      }
+      replaceRunDetailForRun(runId, { ...fast, diffPending: true, diff: "", worktreeUnavailable: false });
+
+      const diffRes = await buildwarden.getRunWorktreeDiff(runId);
+      if (runDetailLoadTokenRef.current[runId] !== loadToken) {
+        return;
+      }
+      mergeRunDetailForRun(runId, (previous) => ({
+        ...previous,
+        diff: diffRes.diff,
+        worktreeUnavailable: diffRes.worktreeUnavailable,
+        diffPending: false,
+      }));
+    },
+    [buildwarden, clearDiffRefreshTimer, mergeRunDetailForRun, replaceRunDetailForRun],
+  );
+
   const loadRunDetail = useCallback(
     async (runId: string | null | undefined) => {
-      clearDiffRefreshTimer();
       if (!runId) {
         setRunDetail(null);
         return;
       }
-      if (!easycode) {
-        return;
-      }
-
-      const fast = await easycode.getRunDetail(runId);
-      if (selectedRunIdRef.current !== runId) {
-        return;
-      }
-      setRunDetail({ ...fast, diffPending: true, diff: "", worktreeUnavailable: false });
-
-      const diffRes = await easycode.getRunWorktreeDiff(runId);
-      if (selectedRunIdRef.current !== runId) {
-        return;
-      }
-      setRunDetail((prev) =>
-        prev?.run.id === runId
-          ? {
-              ...prev,
-              diff: diffRes.diff,
-              worktreeUnavailable: diffRes.worktreeUnavailable,
-              diffPending: false,
-            }
-          : prev,
-      );
+      await loadRunDetailForRun(runId);
     },
-    [clearDiffRefreshTimer, easycode],
+    [loadRunDetailForRun],
   );
 
-  const refreshRunDetailForActiveRunEvent = useCallback(
+  const refreshOpenRunDetailForEvent = useCallback(
     async (eventRunId: string) => {
-      const currentId = selectedRunIdRef.current;
-      if (!easycode || !currentId || typeof currentId !== "string") {
-        return;
-      }
-      if (eventRunId !== currentId) {
+      const shouldRefresh =
+        selectedRunIdRef.current === eventRunId || runIdIsOpenInPanes(openRunPanesRef.current, eventRunId);
+      if (!buildwarden || !shouldRefresh) {
         return;
       }
 
-      const fast = await easycode.getRunDetail(currentId);
-      if (selectedRunIdRef.current !== currentId) {
+      const fast = await buildwarden.getRunDetail(eventRunId);
+      const stillOpen =
+        selectedRunIdRef.current === eventRunId || runIdIsOpenInPanes(openRunPanesRef.current, eventRunId);
+      if (!stillOpen) {
         return;
       }
-      setRunDetail((prev) => {
-        if (prev?.run.id !== currentId) {
-          return { ...fast, diffPending: true, diff: "", worktreeUnavailable: false };
-        }
-        return {
-          ...fast,
-          diff: prev.diff,
-          worktreeUnavailable: prev.worktreeUnavailable,
-          diffPending: prev.diffPending,
-        };
+
+      const previous = runDetailsByIdRef.current[eventRunId];
+      replaceRunDetailForRun(eventRunId, {
+        ...fast,
+        diff: previous?.diff ?? "",
+        worktreeUnavailable: previous?.worktreeUnavailable ?? false,
+        diffPending: previous?.diffPending ?? true,
       });
 
-      if (diffRefreshTimerRef.current != null) {
-        clearTimeout(diffRefreshTimerRef.current);
-      }
-      diffRefreshTimerRef.current = setTimeout(() => {
-        diffRefreshTimerRef.current = null;
+      clearDiffRefreshTimer(eventRunId);
+      diffRefreshTimersRef.current[eventRunId] = setTimeout(() => {
+        delete diffRefreshTimersRef.current[eventRunId];
         void (async () => {
-          const rid = selectedRunIdRef.current;
-          if (!easycode || !rid || typeof rid !== "string" || rid !== currentId) {
+          const shouldLoadDiff =
+            selectedRunIdRef.current === eventRunId || runIdIsOpenInPanes(openRunPanesRef.current, eventRunId);
+          if (!buildwarden || !shouldLoadDiff) {
             return;
           }
-          const d = await easycode.getRunWorktreeDiff(rid);
-          if (selectedRunIdRef.current !== rid) {
+          const d = await buildwarden.getRunWorktreeDiff(eventRunId);
+          const stillShouldApply =
+            selectedRunIdRef.current === eventRunId || runIdIsOpenInPanes(openRunPanesRef.current, eventRunId);
+          if (!stillShouldApply) {
             return;
           }
-          setRunDetail((prev) =>
-            prev?.run.id === rid ? { ...prev, diff: d.diff, worktreeUnavailable: d.worktreeUnavailable, diffPending: false } : prev,
-          );
+          mergeRunDetailForRun(eventRunId, (prev) => ({
+            ...prev,
+            diff: d.diff,
+            worktreeUnavailable: d.worktreeUnavailable,
+            diffPending: false,
+          }));
         })();
       }, 500);
     },
-    [easycode],
+    [buildwarden, clearDiffRefreshTimer, mergeRunDetailForRun, replaceRunDetailForRun],
+  );
+
+  /**
+   * Refetching the full run detail (entire step history) for every streaming
+   * event is O(n²) over a run's lifetime. Trail-throttle per run and flush
+   * immediately on terminal events so the final state is never delayed.
+   */
+  const runDetailRefreshTimersRef = useRef<Record<string, number>>({});
+  const refreshRunDetailForActiveRunEvent = useCallback(
+    async (eventRunId: string, options?: { immediate?: boolean }) => {
+      if (options?.immediate) {
+        const pending = runDetailRefreshTimersRef.current[eventRunId];
+        if (pending !== undefined) {
+          window.clearTimeout(pending);
+          delete runDetailRefreshTimersRef.current[eventRunId];
+        }
+        await refreshOpenRunDetailForEvent(eventRunId);
+        return;
+      }
+      if (runDetailRefreshTimersRef.current[eventRunId] !== undefined) {
+        return;
+      }
+      runDetailRefreshTimersRef.current[eventRunId] = window.setTimeout(() => {
+        delete runDetailRefreshTimersRef.current[eventRunId];
+        void refreshOpenRunDetailForEvent(eventRunId);
+      }, 400);
+    },
+    [refreshOpenRunDetailForEvent],
+  );
+
+  useEffect(
+    () => () => {
+      for (const timer of Object.values(runDetailRefreshTimersRef.current)) {
+        window.clearTimeout(timer);
+      }
+      runDetailRefreshTimersRef.current = {};
+    },
+    [],
   );
 
   useEffect(() => () => clearDiffRefreshTimer(), [clearDiffRefreshTimer]);
 
   useEffect(() => {
-    if (!easycode) {
+    if (!selectedRunId || typeof selectedRunId !== "string") {
+      setRunDetail(null);
+      return;
+    }
+
+    const cachedDetail = runDetailsById[selectedRunId];
+    if (cachedDetail) {
+      setRunDetail(cachedDetail);
+    }
+  }, [runDetailsById, selectedRunId]);
+
+  useEffect(() => {
+    if (!buildwarden) {
       setError("The Electron desktop bridge is unavailable. Restart the app with `pnpm dev`.");
       return;
     }
@@ -599,11 +664,22 @@ export const App = () => {
     void loadDetectedCodexInstallation();
     void loadDetectedClaudeInstallation();
     void loadNetworkProxySettings();
-    void easycode.getAppPaths().then((paths) => setAppLogDirPath(paths.logDirPath)).catch(() => {});
+    void loadAppPaths();
 
-    const unsubscribe = easycode.onRunEvent((event) => {
+    const unsubscribe = buildwarden.onRunEvent((event) => {
       const approvalRequestId = typeof event.metadata?.approvalRequestId === "string" ? event.metadata.approvalRequestId : null;
       const approvalCommand = typeof event.metadata?.command === "string" ? event.metadata.command : null;
+      const usageTotals = readRunTokenUsage(event.metadata?.usageTotals);
+
+      if (usageTotals) {
+        setRunLiveUsageById((current) => ({
+          ...current,
+          [event.runId]: {
+            ...(current[event.runId] ?? {}),
+            ...usageTotals,
+          },
+        }));
+      }
 
       if (event.metadata?.shellApprovalRequest === true && approvalRequestId && approvalCommand) {
         setShellApprovalQueue((current) => {
@@ -631,11 +707,13 @@ export const App = () => {
         setShellApprovalQueue((current) => current.filter((item) => item.runId !== event.runId));
       }
 
-      void loadSnapshot();
-      void refreshRunDetailForActiveRunEvent(event.runId);
+      scheduleSnapshotRefresh();
+      const isTerminalRunEvent =
+        event.title === "Run completed" || event.title === "Run failed" || event.title === "Run cancelled";
+      void refreshRunDetailForActiveRunEvent(event.runId, { immediate: isTerminalRunEvent });
     });
 
-    const unsubscribeWarning = easycode.onAppWarning((warning) => {
+    const unsubscribeWarning = buildwarden.onAppWarning((warning) => {
       setAppWarning(warning);
     });
 
@@ -643,11 +721,43 @@ export const App = () => {
       unsubscribe();
       unsubscribeWarning();
     };
-  }, [easycode, loadDetectedClaudeInstallation, loadDetectedCodexInstallation, loadNetworkProxySettings, loadSnapshot, refreshRunDetailForActiveRunEvent]);
+  }, [
+    buildwarden,
+    loadAppPaths,
+    loadDetectedClaudeInstallation,
+    loadDetectedCodexInstallation,
+    loadNetworkProxySettings,
+    loadSnapshot,
+    refreshRunDetailForActiveRunEvent,
+    scheduleSnapshotRefresh,
+  ]);
+
+  useEffect(() => {
+    if (!settingsOpen) {
+      return;
+    }
+
+    void loadAppPaths();
+  }, [loadAppPaths, settingsOpen]);
 
   useEffect(() => {
     void loadRunDetail(selectedRunId);
   }, [loadRunDetail, selectedRunId]);
+
+  useEffect(() => {
+    if (!selectedRunId || typeof selectedRunId !== "string") {
+      return;
+    }
+    if (runIdIsOpenInPanes(openRunPanes, selectedRunId)) {
+      return;
+    }
+    if (getOpenRunPaneEntries(openRunPanes).length > 0) {
+      return;
+    }
+
+    setOpenRunPanes({ left: selectedRunId });
+    setFocusedRunPane("left");
+  }, [openRunPanes, selectedRunId]);
 
   const selectedProject = useMemo<ProjectSnapshot | null>(() => {
     return snapshot.projects.find((entry) => entry.project.id === runProjectId) ?? snapshot.projects[0] ?? null;
@@ -660,7 +770,7 @@ export const App = () => {
       return;
     }
     const hasActiveLabThread = selectedProject.labThreads.some(
-      (detail) => detail.thread.status === "discussing" || detail.thread.status === "running-implementation",
+      (detail) => detail.thread.status === "queued" || detail.thread.status === "running" || detail.thread.status === "reviewing",
     );
     if (!hasActiveLabThread) {
       return;
@@ -687,17 +797,18 @@ export const App = () => {
     setRunWorkspaceShowDiff(selectedRunWorkspaceLayout.visiblePanels.diff);
     setRunWorkspaceShowTerminal(selectedRunWorkspaceLayout.visiblePanels.terminal);
     setRunWorkspaceShowBrowser(selectedRunWorkspaceLayout.visiblePanels.browser);
+    setRunWorkspaceShowNotes(selectedRunWorkspaceLayout.visiblePanels.notes);
     setRunWorkspaceSecondaryPosition(selectedRunWorkspaceLayout.secondaryPanelPosition);
   }, [selectedRunWorkspaceLayout]);
 
   const persistRunWorkspaceLayouts = useCallback(
     async (next: RunWorkspaceLayoutPreferencesByRunId) => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
-      await easycode.setAppSetting(APP_SETTING_KEYS.runWorkspaceLayouts, JSON.stringify(next));
+      await buildwarden.setAppSetting(APP_SETTING_KEYS.runWorkspaceLayouts, JSON.stringify(next));
     },
-    [easycode],
+    [buildwarden],
   );
 
   const updateRunWorkspaceLayout = useCallback(
@@ -734,7 +845,7 @@ export const App = () => {
   );
 
   const loadProjectBranches = useCallback(async () => {
-    if (!easycode || !selectedProjectId) {
+    if (!buildwarden || !selectedProjectId) {
       setAvailableRunBranches([]);
       setRunBaseBranch("");
       setCurrentProjectBranch("");
@@ -746,11 +857,11 @@ export const App = () => {
     const defaultBranch = selectedProjectDefaultBranch;
 
     try {
-      const branches = await easycode.getProjectBranches(projectId);
+      const branches = await buildwarden.getProjectBranches(projectId);
       const nextBranches = branches.length > 0 ? branches : [defaultBranch];
 
       try {
-        const currentBranch = await easycode.getProjectCurrentBranch(projectId);
+        const currentBranch = await buildwarden.getProjectCurrentBranch(projectId);
         if (!currentBranch) {
           setAvailableRunBranches(nextBranches);
           setRunBaseBranch((current) =>
@@ -809,20 +920,20 @@ export const App = () => {
       const msg = caught instanceof Error ? caught.message : String(caught);
       setError(msg || "Unexpected error");
     }
-  }, [easycode, selectedProjectDefaultBranch, selectedProjectId]);
+  }, [buildwarden, selectedProjectDefaultBranch, selectedProjectId]);
 
   useEffect(() => {
     void loadProjectBranches();
   }, [loadProjectBranches]);
 
   const submitCheckoutDetachedProjectBranch = useCallback(async () => {
-    if (!easycode || !selectedProject?.project.id || !detachedCheckoutBranch.trim()) {
+    if (!buildwarden || !selectedProject?.project.id || !detachedCheckoutBranch.trim()) {
       return;
     }
 
     setProjectCheckoutBusy(true);
     try {
-      await easycode.checkoutProjectBranch(selectedProject.project.id, detachedCheckoutBranch.trim());
+      await buildwarden.checkoutProjectBranch(selectedProject.project.id, detachedCheckoutBranch.trim());
       await loadProjectBranches();
     } catch (caught) {
       reportRendererError("renderer.project-branch.checkout", caught, {
@@ -833,7 +944,7 @@ export const App = () => {
     } finally {
       setProjectCheckoutBusy(false);
     }
-  }, [easycode, selectedProject, detachedCheckoutBranch, loadProjectBranches]);
+  }, [buildwarden, selectedProject, detachedCheckoutBranch, loadProjectBranches]);
 
   const projectRunStats = useMemo(() => {
     const runs = [...(selectedProject?.runs ?? []), ...(selectedProject?.forLaterRuns ?? [])];
@@ -850,41 +961,60 @@ export const App = () => {
       totalTokens: inputTokens + outputTokens,
     };
   }, [selectedProject]);
+  const selectedRunTokenUsage = useMemo(
+    () => (runDetail ? latestRunTokenUsage(runDetail, runLiveUsageById[runDetail.run.id]) : null),
+    [runDetail, runLiveUsageById],
+  );
 
   const autoCheckoutRunBranchOnOpen = snapshot.settings[APP_SETTING_KEYS.autoCheckoutRunBranchOnOpen] !== "false";
   const autoReleaseRunBranchOnLeave = snapshot.settings[APP_SETTING_KEYS.autoReleaseRunBranchOnLeave] !== "false";
+  const recentRunDays = parseRecentRunDaysSetting(snapshot.settings[APP_SETTING_KEYS.recentRunDays]);
   const uiTheme = parseUiTheme(snapshot.settings);
-  const selectedRun =
-    runDetail?.run ??
-    snapshot.projects.flatMap((p) => [...p.runs, ...p.forLaterRuns]).find((r) => r.id === selectedRunId) ??
-    null;
-  const configuredRunModelOptions = useMemo(
-    () =>
-      snapshot.models.filter((model) => model.enabled !== 0).map((model) => {
-        const providerLabel =
-          snapshot.providerAccounts.find((provider) => provider.id === model.providerAccountId)?.label ?? "Provider";
-
-        return {
-          id: model.id,
-          label: `${model.displayName} - ${providerLabel}`,
-          modelId: model.modelId,
-          providerType: snapshot.providerAccounts.find((provider) => provider.id === model.providerAccountId)?.providerType ?? "ai-sdk",
-          providerFamily: (() => {
-            const provider = snapshot.providerAccounts.find((entry) => entry.id === model.providerAccountId);
-            return provider?.providerType === "ai-sdk" ? getAiSdkProviderFamilyFromConfigJson(provider.configJson) : null;
-          })(),
-        };
-      }),
-    [snapshot.models, snapshot.providerAccounts],
+  const runTimelineDensity = parseRunTimelineDensitySetting(snapshot.settings[APP_SETTING_KEYS.runTimelineDensity]);
+  const updateRunTimelineDensity = useCallback(
+    (density: RunTimelineDensity) => {
+      if (!buildwarden) {
+        return;
+      }
+      void buildwarden.setAppSetting(APP_SETTING_KEYS.runTimelineDensity, density)
+        .then(() => loadSnapshot())
+        .catch((caught) => {
+          setError(caught instanceof Error ? caught.message : "Could not save run timeline density.");
+        });
+    },
+    [buildwarden, loadSnapshot],
   );
-  const configuredChatModelOptions = useMemo(
+  const selectedRun = useMemo(() => {
+    if (runDetail?.run) {
+      return runDetail.run;
+    }
+    if (!selectedRunId || typeof selectedRunId !== "string") {
+      return null;
+    }
+    return findProjectRun(snapshot.projects, selectedRunId)?.run ?? null;
+  }, [runDetail?.run, selectedRunId, snapshot.projects]);
+  const openRunPaneEntries = useMemo(() => getOpenRunPaneEntries(openRunPanes), [openRunPanes]);
+  const openRunPaneCount = openRunPaneEntries.length;
+  const isSplitRunView = openRunPaneCount > 1;
+  const openRunPaneDetails = useMemo(
+    () =>
+      openRunPaneEntries.map((entry) => ({
+        ...entry,
+        detail: runDetailsById[entry.runId] ?? null,
+      })),
+    [openRunPaneEntries, runDetailsById],
+  );
+  const providerAccountById = useMemo(
+    () => new Map(snapshot.providerAccounts.map((provider) => [provider.id, provider])),
+    [snapshot.providerAccounts],
+  );
+  const configuredModelOptions = useMemo(
     () =>
       snapshot.models
         .filter((model) => model.enabled !== 0)
         .map((model) => {
-          const provider = snapshot.providerAccounts.find((entry) => entry.id === model.providerAccountId) ?? null;
-          const providerLabel =
-            provider?.label ?? "Provider";
+          const provider = providerAccountById.get(model.providerAccountId) ?? null;
+          const providerLabel = provider?.label ?? "Provider";
 
           return {
             id: model.id,
@@ -894,22 +1024,19 @@ export const App = () => {
             providerFamily: provider?.providerType === "ai-sdk" ? getAiSdkProviderFamilyFromConfigJson(provider.configJson) : null,
           };
         }),
-    [snapshot.models, snapshot.providerAccounts],
+    [providerAccountById, snapshot.models],
   );
+  const configuredRunModelOptions = configuredModelOptions;
+  const configuredChatModelOptions = configuredModelOptions;
 
   const configuredIdeKinds = useMemo(() => {
     const cfg = parseIdePathConfig(snapshot.settings[APP_SETTING_KEYS.idePaths]);
     return SUPPORTED_IDE_KINDS.filter((k) => (cfg[k]?.trim() ?? "").length > 0);
   }, [snapshot.settings]);
 
-  const selectedRunHasCommit = useMemo(
-    () => runDetail?.steps.some((step) => Boolean(safeParseMetadata(step.metadataJson).commitHash)) ?? false,
-    [runDetail?.steps],
-  );
   const pendingShellApproval = shellApprovalQueue[0] ?? null;
   const visibleShellApprovals = useMemo(() => shellApprovalQueue.slice(0, 3), [shellApprovalQueue]);
   const queuedShellApprovalCount = Math.max(0, shellApprovalQueue.length - visibleShellApprovals.length);
-  const [shellApprovalNow, setShellApprovalNow] = useState(() => Date.now());
   const [visibleShellApprovalStartedAtById, setVisibleShellApprovalStartedAtById] = useState<Record<string, number>>({});
   const getShellApprovalTarget = useCallback(
     (request: ShellApprovalRequestState) =>
@@ -922,22 +1049,18 @@ export const App = () => {
         : null),
     [runDetail?.run, snapshot.projects],
   );
-  const selectedRunHasOpenChanges = Boolean(runDetail?.diff.trim());
-  const selectedRunCanCommit = selectedRun?.status === "completed" && selectedRunHasOpenChanges;
-  const selectedRunCanManageChanges = selectedRun?.status === "completed" && runDetail?.worktreeUnavailable !== true;
-  const selectedRunCanPublish = selectedRunCanManageChanges && !selectedRunHasOpenChanges && selectedRunHasCommit;
-  const selectedRunCanCreateLocalBranch = selectedRunCanManageChanges && (selectedRunHasOpenChanges || selectedRunHasCommit);
-
   const runWorktreeUnavailable = runDetail?.worktreeUnavailable === true;
   const runWorkspaceVisiblePanelCount =
     (runWorkspaceShowActivity ? 1 : 0) +
     (runWorkspaceShowDiff ? 1 : 0) +
     (runWorkspaceShowTerminal ? 1 : 0) +
-    (runWorkspaceShowBrowser ? 1 : 0);
+    (runWorkspaceShowBrowser ? 1 : 0) +
+    (runWorkspaceShowNotes ? 1 : 0);
   const canHideRunWorkspaceActivity = !(runWorkspaceShowActivity && runWorkspaceVisiblePanelCount === 1);
   const canHideRunWorkspaceDiff = !(runWorkspaceShowDiff && runWorkspaceVisiblePanelCount === 1);
   const canHideRunWorkspaceTerminal = !(runWorkspaceShowTerminal && runWorkspaceVisiblePanelCount === 1);
   const canHideRunWorkspaceBrowser = !(runWorkspaceShowBrowser && runWorkspaceVisiblePanelCount === 1);
+  const canHideRunWorkspaceNotes = !(runWorkspaceShowNotes && runWorkspaceVisiblePanelCount === 1);
 
   const setSelectedRunWorkspacePanelVisibility = (panelId: RunWorkspacePanelId, visible: boolean) => {
     if (!selectedRunId || typeof selectedRunId !== "string") {
@@ -949,6 +1072,28 @@ export const App = () => {
       visiblePanels: {
         ...current.visiblePanels,
         [panelId]: visible,
+      },
+    }));
+  };
+
+  const toggleRunWorkspacePanelForRun = (runId: string, panelId: RunWorkspacePanelId, worktreeUnavailableForRun = false) => {
+    const layout = runWorkspaceLayoutsByRunId[runId] ?? cloneDefaultRunWorkspaceLayoutPreference();
+    if (worktreeUnavailableForRun && (panelId === "diff" || panelId === "terminal")) {
+      return;
+    }
+
+    const visibleCount = Object.values(layout.visiblePanels).filter(Boolean).length;
+    const currentlyVisible = layout.visiblePanels[panelId];
+    if (currentlyVisible && visibleCount === 1) {
+      return;
+    }
+
+    const nextVisible = !currentlyVisible;
+    updateRunWorkspaceLayout(runId, (current) => ({
+      ...current,
+      visiblePanels: {
+        ...current.visiblePanels,
+        [panelId]: nextVisible,
       },
     }));
   };
@@ -984,6 +1129,14 @@ export const App = () => {
     const next = !runWorkspaceShowBrowser;
     setRunWorkspaceShowBrowser(next);
     setSelectedRunWorkspacePanelVisibility("browser", next);
+  };
+  const toggleRunWorkspaceNotes = () => {
+    if (runWorkspaceShowNotes && runWorkspaceVisiblePanelCount === 1) {
+      return;
+    }
+    const next = !runWorkspaceShowNotes;
+    setRunWorkspaceShowNotes(next);
+    setSelectedRunWorkspacePanelVisibility("notes", next);
   };
   const runPanelToggleItems = [
     {
@@ -1022,14 +1175,18 @@ export const App = () => {
       subtitle: runWorkspaceShowBrowser ? "Visible" : "Show in-app browser",
       onClick: toggleRunWorkspaceBrowser,
     },
+    {
+      key: "notes",
+      label: "Notes",
+      icon: StickyNote,
+      active: runWorkspaceShowNotes,
+      disabled: runWorkspaceShowNotes && !canHideRunWorkspaceNotes,
+      subtitle: runWorkspaceShowNotes ? "Visible" : "Show run notes",
+      onClick: toggleRunWorkspaceNotes,
+    },
   ] as const;
 
-  const openSelectedRunBrowserUrl = (url: string) => {
-    if (!runDetail?.run) {
-      return;
-    }
-
-    const runId = runDetail.run.id;
+  const openRunBrowserUrl = (runId: string, url: string) => {
     setRunBrowserSessions((current) => {
       const previous = current[runId] ?? DEFAULT_RUN_BROWSER_SESSION;
       const previousHistory = previous.history.length > 0 ? previous.history : [previous.currentUrl];
@@ -1045,24 +1202,41 @@ export const App = () => {
         },
       };
     });
-    setRunWorkspaceShowDiff(false);
-    setRunWorkspaceShowBrowser(true);
-    setSelectedRunWorkspacePanelVisibility("diff", false);
-    setSelectedRunWorkspacePanelVisibility("browser", true);
+    if (selectedRunIdRef.current === runId) {
+      setRunWorkspaceShowDiff(false);
+      setRunWorkspaceShowBrowser(true);
+    }
+    updateRunWorkspaceLayout(runId, (current) => ({
+      ...current,
+      visiblePanels: {
+        ...current.visiblePanels,
+        diff: false,
+        browser: true,
+      },
+    }));
+  };
+
+  const openSelectedRunBrowserUrl = (url: string) => {
+    if (!runDetail?.run) {
+      return;
+    }
+
+    openRunBrowserUrl(runDetail.run.id, url);
   };
 
   /** Agent run detail uses a flex column so the composer stays at the bottom without overlapping scroll content. */
-  const onLandingOrEmptySelection = landingSelected || (!selectedRunId && !selectedProject);
+  const onLandingOrEmptySelection = landingSelected || allRunsSelected || (!selectedRunId && !selectedProject);
   const isAgentRunDetailView =
     !settingsOpen &&
+    !allRunsSelected &&
     !bookmarksSelected &&
     !chatsSelected &&
     !onLandingOrEmptySelection &&
-    Boolean(selectedRunId && runDetail?.run);
-  const isChatDetailView = !settingsOpen && !bookmarksSelected && chatsSelected && Boolean(selectedChat && chatDetail);
+    Boolean(selectedRunId && (runDetail?.run || openRunPaneCount > 0));
+  const isChatDetailView = !settingsOpen && !allRunsSelected && !bookmarksSelected && chatsSelected && Boolean(selectedChat && chatDetail);
   /** Project page (no run open) uses a flex column so the PR/MR tab diff can grow to the bottom of the viewport. */
   const isProjectWorkspaceView =
-    !settingsOpen && !bookmarksSelected && !chatsSelected && !landingSelected && !selectedRunId && Boolean(selectedProject);
+    !settingsOpen && !allRunsSelected && !bookmarksSelected && !chatsSelected && !landingSelected && !selectedRunId && Boolean(selectedProject);
 
   useEffect(() => {
     setPublishMenuOpen(false);
@@ -1092,11 +1266,11 @@ export const App = () => {
 
   const submitShellApprovalDecision = useCallback(
     async (request: ShellApprovalRequestState, decision: ShellApprovalDecision) => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
 
-      await easycode.respondToShellApproval(
+      await buildwarden.respondToShellApproval(
         request.runId,
         request.requestId,
         decision,
@@ -1104,9 +1278,12 @@ export const App = () => {
       );
       setShellApprovalQueue((current) => current.filter((item) => item.requestId !== request.requestId));
       await loadSnapshot();
-      await loadRunDetail(selectedRunId === request.runId ? request.runId : selectedRunId);
+      await loadRunDetailForRun(request.runId);
+      if (selectedRunId && selectedRunId !== request.runId) {
+        await loadRunDetailForRun(selectedRunId);
+      }
     },
-    [easycode, loadRunDetail, loadSnapshot, selectedRunId],
+    [buildwarden, loadRunDetailForRun, loadSnapshot, selectedRunId],
   );
 
   useEffect(() => {
@@ -1114,8 +1291,6 @@ export const App = () => {
       return;
     }
 
-    setShellApprovalNow(Date.now());
-    const intervalId = window.setInterval(() => setShellApprovalNow(Date.now()), 1000);
     const timeoutIds = visibleShellApprovals.map((request) =>
       window.setTimeout(
         () => {
@@ -1128,7 +1303,6 @@ export const App = () => {
     );
 
     return () => {
-      window.clearInterval(intervalId);
       timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId));
     };
   }, [submitShellApprovalDecision, visibleShellApprovalStartedAtById, visibleShellApprovals]);
@@ -1172,6 +1346,31 @@ export const App = () => {
     }
   }, []);
 
+  const openRunDetailInIde = useCallback(
+    (detail: RunDetail, ideKind: SupportedIdeKind) =>
+      void handleAction(async () => {
+        if (!buildwarden) {
+          throw new Error("The Electron desktop bridge is unavailable.");
+        }
+        await buildwarden.openRunWorktreeInIde(detail.run.id, ideKind);
+      }),
+    [buildwarden, handleAction],
+  );
+
+  const openRunDetailInFileManager = useCallback(
+    (detail: RunDetail) =>
+      void handleAction(async () => {
+        if (!buildwarden) {
+          throw new Error("The Electron desktop bridge is unavailable.");
+        }
+        const result = await buildwarden.openPathInFileManager(detail.run.worktreePath);
+        if (!result.ok) {
+          throw new Error(result.error || "Could not open the workspace folder.");
+        }
+      }),
+    [buildwarden, handleAction],
+  );
+
   const requestConfirmation = useCallback((input: ConfirmDialogState) => {
     return new Promise<boolean>((resolve) => {
       confirmDialogResolverRef.current = resolve;
@@ -1187,33 +1386,38 @@ export const App = () => {
   }, []);
 
   const chooseDirectory = async () => {
-    if (!easycode) {
+    if (!buildwarden) {
       setError("The Electron desktop bridge is unavailable.");
       return;
     }
 
-    const picked = await easycode.pickProjectDirectory();
+    const picked = await buildwarden.pickProjectDirectory();
     if (picked) {
+      const derivedName = picked.split(/[\\/]/).filter(Boolean).at(-1)?.trim();
+      const currentDerivedName = projectPath.split(/[\\/]/).filter(Boolean).at(-1)?.trim();
       setProjectPath(picked);
+      if (derivedName && (!projectName.trim() || projectName.trim() === currentDerivedName)) {
+        setProjectName(derivedName);
+      }
     }
   };
 
   const pickDirectory = async (): Promise<string | null> => {
-    if (!easycode) {
+    if (!buildwarden) {
       setError("The Electron desktop bridge is unavailable.");
       return null;
     }
 
-    return easycode.pickProjectDirectory();
+    return buildwarden.pickProjectDirectory();
   };
 
   const submitProject = async () => {
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
 
-      const project = await easycode.addProject({
+      const project = await buildwarden.addProject({
         name: projectName || undefined,
         repoPath: projectPath,
       });
@@ -1226,7 +1430,7 @@ export const App = () => {
 
   const submitProvider = async () => {
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
 
@@ -1281,7 +1485,7 @@ export const App = () => {
         delete config[PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY];
       }
 
-      const provider = await easycode.addProviderAccount({
+      const provider = await buildwarden.addProviderAccount({
         providerType,
         label: providerLabel,
         apiKey: providerType === "codex-cli" || providerType === "claude-code" ? "" : apiKey,
@@ -1304,11 +1508,11 @@ export const App = () => {
 
   const submitModel = async () => {
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
 
-      const model = await easycode.addModel({
+      const model = await buildwarden.addModel({
         providerAccountId: selectedProviderId,
         modelId,
         displayName: modelDisplayName,
@@ -1320,9 +1524,32 @@ export const App = () => {
     });
   };
 
+  const focusRunInPaneState = useCallback(
+    (runId: string, projectId: string, preferredPaneId?: RunPaneId) => {
+      const currentPanes = openRunPanesRef.current;
+      const existingPaneId = paneForOpenRunId(currentPanes, runId);
+      const hasOpenPane = getOpenRunPaneEntries(currentPanes).length > 0;
+      const paneId = existingPaneId ?? (hasOpenPane ? preferredPaneId ?? focusedRunPane : "left");
+      const nextPanes: OpenRunPanes = existingPaneId ? { ...currentPanes } : { ...currentPanes, [paneId]: runId };
+      for (const id of RUN_PANE_IDS) {
+        if (id !== paneId && nextPanes[id] === runId) {
+          delete nextPanes[id];
+        }
+      }
+
+      setOpenRunPanes(nextPanes);
+      setFocusedRunPane(paneId);
+      setRunProjectId(projectId);
+      setSelectedRunId(runId);
+      selectedRunIdRef.current = runId;
+      setRunDetail(runDetailsByIdRef.current[runId] ?? null);
+    },
+    [focusedRunPane],
+  );
+
   const submitRun = async (payload?: { attachments?: ChatAttachmentPayload[] }) => {
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
 
@@ -1357,15 +1584,20 @@ export const App = () => {
           runReasoningEffort,
           runAnthropicEffort,
         );
-        const run = await easycode.createRun({
+        const commandInput = resolveProviderComposerPrompt(runPrompt, selectedProvider.providerType, "run");
+        if (commandInput.goalText !== undefined && !commandInput.prompt.trim() && !(payload?.attachments?.length ?? 0)) {
+          throw new Error("Add a task on the next line after /goal when starting a new run.");
+        }
+        const run = await buildwarden.createRun({
           projectId: runProjectId,
           providerAccountId: selectedModel.providerAccountId,
           modelId: mid,
           harnessType: harnessTypeForProvider(selectedProvider.providerType),
-          mode: runMode,
+          mode: commandInput.mode ?? runMode,
           workspaceType: runWorkspaceType,
           baseBranch: runBaseBranch,
-          prompt: runPrompt,
+          prompt: commandInput.prompt,
+          ...(commandInput.goalText !== undefined ? { goalText: commandInput.goalText } : {}),
           attachments: payload?.attachments,
           ...reasoningInput,
           yoloMode: runYoloMode,
@@ -1385,7 +1617,7 @@ export const App = () => {
     setRunPrompt(prompt);
     try {
       await handleAction(async () => {
-        if (!easycode) {
+        if (!buildwarden) {
           throw new Error("The Electron desktop bridge is unavailable.");
         }
 
@@ -1417,15 +1649,20 @@ export const App = () => {
             runReasoningEffort,
             runAnthropicEffort,
           );
-          const run = await easycode.createRun({
+          const commandInput = resolveProviderComposerPrompt(prompt, selectedProvider.providerType, "run");
+          if (commandInput.goalText !== undefined && !commandInput.prompt.trim()) {
+            throw new Error("Add a task on the next line after /goal when starting a new run.");
+          }
+          const run = await buildwarden.createRun({
             projectId: runProjectId,
             providerAccountId: selectedModel.providerAccountId,
             modelId: mid,
             harnessType: harnessTypeForProvider(selectedProvider.providerType),
-            mode: runMode,
+            mode: commandInput.mode ?? runMode,
             workspaceType: runWorkspaceType,
             baseBranch: runBaseBranch,
-            prompt: trimmedPrompt,
+            prompt: commandInput.prompt,
+            ...(commandInput.goalText !== undefined ? { goalText: commandInput.goalText } : {}),
             ...reasoningInput,
             yoloMode: runYoloMode,
           });
@@ -1466,7 +1703,7 @@ export const App = () => {
     }
 
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
       if (!isRunContinuable(sourceRun)) {
@@ -1490,44 +1727,54 @@ export const App = () => {
         harnessType: harnessTypeForProvider(selectedProvider.providerType),
         mode: sourceRun.mode,
         prompt: continuePrompt.trim(),
+        goalText: sourceRun.goalText,
         includeWorkspaceChanges: continueIncludeWorkspaceChanges,
         yoloMode: runYoloMode,
       };
-      const newRun = await easycode.continueRun(payload);
+      const newRun = await buildwarden.continueRun(payload);
       closeContinueRunDialog();
       await loadSnapshot();
       setLandingSelected(false);
       setBookmarksSelected(false);
       setChatsSelected(false);
-      setRunProjectId(sourceRun.projectId);
-      setSelectedRunId(newRun.id);
+      focusRunInPaneState(newRun.id, sourceRun.projectId, focusedRunPane);
       await loadRunDetail(newRun.id);
     });
   };
 
   const createProjectTask = async (projectId: string, input: { title: string; prompt: string }) => {
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
-      await easycode.createProjectTask(projectId, input);
+      await buildwarden.createProjectTask(projectId, input);
+      await loadSnapshot();
+    });
+  };
+
+  const updateProjectTask = async (taskId: string, input: { title: string; prompt: string }) => {
+    await handleAction(async () => {
+      if (!buildwarden) {
+        throw new Error("The Electron desktop bridge is unavailable.");
+      }
+      await buildwarden.updateProjectTask(taskId, input);
       await loadSnapshot();
     });
   };
 
   const deleteProjectTask = async (taskId: string) => {
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
-      await easycode.deleteProjectTask(taskId);
+      await buildwarden.deleteProjectTask(taskId);
       await loadSnapshot();
     });
   };
 
   const generateProjectInsight = async (projectId: string, kind: ProjectInsightKind, modelId?: string) => {
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
       reportRendererLog({
@@ -1540,7 +1787,7 @@ export const App = () => {
           modelId: modelId ?? null,
         },
       });
-      await easycode.generateProjectInsight({ projectId, kind, modelId });
+      await buildwarden.generateProjectInsight({ projectId, kind, modelId });
       await loadSnapshot();
       reportRendererLog({
         level: "warn",
@@ -1557,57 +1804,75 @@ export const App = () => {
 
   const reorderProjects = async (projectIds: string[]) => {
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
-      await easycode.reorderProjects(projectIds);
+      await buildwarden.reorderProjects(projectIds);
       await loadSnapshot();
     });
   };
 
   const setRunForLater = async (runId: string) => {
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
-      await easycode.setRunListVisibility(runId, "for-later");
+      await buildwarden.setRunListVisibility(runId, "for-later");
       await loadSnapshot();
-      if (selectedRunId === runId) {
-        setSelectedRunId(null);
-        setRunDetail(null);
+      const paneId = paneForOpenRunId(openRunPanesRef.current, runId);
+      if (paneId) {
+        const nextPanes: OpenRunPanes = { ...openRunPanesRef.current };
+        delete nextPanes[paneId];
+        const remainingRunId = firstOpenRunId(nextPanes);
+        const remainingPaneId = remainingRunId ? paneForOpenRunId(nextPanes, remainingRunId) ?? "left" : "left";
+        setOpenRunPanes(nextPanes);
+        setRunDetailsById((current) => {
+          const next = { ...current };
+          delete next[runId];
+          return next;
+        });
+        if (selectedRunId === runId && remainingRunId) {
+          void setFocusedRunSelection(remainingPaneId, remainingRunId).catch((caught) => {
+            setError(caught instanceof Error ? caught.message : "Unexpected error");
+          });
+        } else if (selectedRunId === runId) {
+          clearRunSelectionState(null);
+        }
+      } else if (selectedRunId === runId) {
+        clearRunSelectionState(null);
       }
     });
   };
 
   const restoreRunFromForLater = async (runId: string) => {
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
-      await easycode.setRunListVisibility(runId, "default");
+      await buildwarden.setRunListVisibility(runId, "default");
       await loadSnapshot();
     });
   };
 
   const cancelRun = useCallback(async (run: RunRecord) => {
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
 
-      await easycode.cancelRun(run.id);
+      await buildwarden.cancelRun(run.id);
       await loadSnapshot();
       await loadRunDetail(run.id);
     });
-  }, [easycode, handleAction, loadRunDetail, loadSnapshot]);
+  }, [buildwarden, handleAction, loadRunDetail, loadSnapshot]);
 
   const cancelRunShell = async (run: RunRecord, toolCallId: string) => {
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
 
-      await easycode.cancelRunShell(run.id, toolCallId);
+      await buildwarden.cancelRunShell(run.id, toolCallId);
       await loadRunDetail(run.id);
     });
   };
@@ -1622,22 +1887,42 @@ export const App = () => {
       reasoningEffort?: string;
       anthropicEffort?: string;
       yoloMode?: boolean;
+      goalText?: string | null;
     },
   ) => {
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
 
-      const trimmedPrompt = prompt.trim();
-      if (!trimmedPrompt && !(options.attachments?.length ?? 0)) {
+      const selectedModel = snapshot.models.find((model) => model.id === options.modelId);
+      if (!selectedModel) {
+        throw new Error("Select a configured model before sending a follow-up.");
+      }
+      const selectedProvider = snapshot.providerAccounts.find((provider) => provider.id === selectedModel.providerAccountId);
+      if (!selectedProvider) {
+        throw new Error("The selected model is missing its provider configuration.");
+      }
+      const commandInput = resolveProviderComposerPrompt(prompt, selectedProvider.providerType, "follow-up");
+      const hasExplicitGoalText = Object.prototype.hasOwnProperty.call(options, "goalText");
+      const goalText =
+        commandInput.goalText !== undefined
+          ? commandInput.goalText
+          : hasExplicitGoalText
+            ? options.goalText
+            : undefined;
+      if (!commandInput.prompt.trim() && !(options.attachments?.length ?? 0) && goalText === undefined) {
         throw new Error("Enter a follow-up command or attach at least one file.");
       }
 
-      await easycode.followUpRun(run.id, trimmedPrompt, options);
+      await buildwarden.followUpRun(run.id, commandInput.prompt.trim(), {
+        ...options,
+        mode: commandInput.mode ?? options.mode,
+        ...(goalText !== undefined ? { goalText } : {}),
+      });
       await loadSnapshot();
       await loadRunDetail(run.id);
-      setSelectedRunId(run.id);
+      focusRunInPaneState(run.id, run.projectId);
     });
   };
 
@@ -1645,7 +1930,7 @@ export const App = () => {
     const confirmed = await requestConfirmation({
       title: "Revert run changes",
       message:
-        "Revert repository changes made after the last prompt in this run? This updates the run workspace and cannot be undone from Easycode.",
+        "Revert repository changes made after the last prompt in this run? This updates the run workspace and cannot be undone from BuildWarden.",
       confirmLabel: "Revert changes",
       confirmVariant: "danger",
     });
@@ -1655,33 +1940,33 @@ export const App = () => {
     }
 
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
 
-      await easycode.undoRunToLastPrompt(run.id);
+      await buildwarden.undoRunToLastPrompt(run.id);
       await loadSnapshot();
       await loadRunDetail(run.id);
-      setSelectedRunId(run.id);
+      focusRunInPaneState(run.id, run.projectId);
     });
   };
 
   const recoverInterruptedRun = async (run: RunRecord) => {
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
 
-      await easycode.recoverInterruptedRun(run.id);
+      await buildwarden.recoverInterruptedRun(run.id);
       await loadSnapshot();
       await loadRunDetail(run.id);
-      setSelectedRunId(run.id);
+      focusRunInPaneState(run.id, run.projectId);
     });
   };
 
   const commitRun = async (run: RunRecord) => {
     const normalizedPrompt = run.prompt.replace(/\s+/g, " ").trim();
-    const suggestedMessage = `easycode: ${normalizedPrompt.slice(0, 60) || "apply run changes"}${normalizedPrompt.length > 60 ? "..." : ""}`;
+    const suggestedMessage = `buildwarden: ${normalizedPrompt.slice(0, 60) || "apply run changes"}${normalizedPrompt.length > 60 ? "..." : ""}`;
     setCommitDialogRun(run);
     setCommitMessage(suggestedMessage);
   };
@@ -1722,14 +2007,14 @@ export const App = () => {
   };
 
   const suggestCommitMessageWithAi = async () => {
-    if (!commitDialogRun || !easycode) {
+    if (!commitDialogRun || !buildwarden) {
       return;
     }
 
     setCommitSuggestBusy(true);
     setError(null);
     try {
-      const text = await easycode.suggestCommitMessage(commitDialogRun.id);
+      const text = await buildwarden.suggestCommitMessage(commitDialogRun.id);
       setCommitMessage(text);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not generate commit message.");
@@ -1744,7 +2029,7 @@ export const App = () => {
     }
 
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
 
@@ -1753,21 +2038,21 @@ export const App = () => {
         throw new Error("Enter a commit message.");
       }
 
-      await easycode.commitRun(commitDialogRun.id, trimmedMessage);
+      await buildwarden.commitRun(commitDialogRun.id, trimmedMessage);
       await loadSnapshot();
       await loadRunDetail(commitDialogRun.id);
-      setSelectedRunId(commitDialogRun.id);
+      focusRunInPaneState(commitDialogRun.id, commitDialogRun.projectId);
       closeCommitDialog();
     });
   };
 
   const openPublishDialog = async (run: RunRecord) => {
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
 
-      const options = await easycode.getRunPublishOptions(run.id);
+      const options = await buildwarden.getRunPublishOptions(run.id);
       setPublishDialogRun(run);
       setPublishOptions(options);
       setPullRequestTitle(options.suggestedTitle);
@@ -1779,14 +2064,14 @@ export const App = () => {
   };
 
   const generatePullRequestDescription = async () => {
-    if (!publishDialogRun || !easycode) {
+    if (!publishDialogRun || !buildwarden) {
       return;
     }
 
     setPullRequestDescriptionBusy(true);
     setError(null);
     try {
-      const description = await easycode.suggestRunPullRequestDescription(
+      const description = await buildwarden.suggestRunPullRequestDescription(
         publishDialogRun.id,
         pullRequestTargetBranch.trim(),
         pullRequestTitle.trim(),
@@ -1799,7 +2084,9 @@ export const App = () => {
     }
   };
 
-  const handlePublishDialogKeyDown = (event: React.KeyboardEvent<HTMLInputElement | HTMLDivElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+  const handlePublishDialogKeyDown = (
+    event: React.KeyboardEvent<HTMLInputElement | HTMLButtonElement | HTMLDivElement | HTMLSelectElement | HTMLTextAreaElement>,
+  ) => {
     if (event.key === "Escape") {
       event.preventDefault();
       closePublishDialog();
@@ -1822,7 +2109,7 @@ export const App = () => {
     }
 
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
 
@@ -1847,7 +2134,7 @@ export const App = () => {
         }
       }
 
-      await easycode.createRunPullRequest(
+      await buildwarden.createRunPullRequest(
         publishDialogRun.id,
         trimmedTargetBranch,
         trimmedTitle,
@@ -1856,7 +2143,7 @@ export const App = () => {
       );
       await loadSnapshot();
       await loadRunDetail(publishDialogRun.id);
-      setSelectedRunId(publishDialogRun.id);
+      focusRunInPaneState(publishDialogRun.id, publishDialogRun.projectId);
       closePublishDialog();
     });
   };
@@ -1886,7 +2173,7 @@ export const App = () => {
     }
 
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
 
@@ -1899,19 +2186,19 @@ export const App = () => {
         if (branchPublishDialogRun.workspaceType !== "worktree" && trimmedBranchName === branchPublishDialogRun.branchName) {
           throw new Error("The new local branch must differ from the current worktree branch.");
         }
-        await easycode.createRunLocalBranch(branchPublishDialogRun.id, trimmedBranchName);
+        await buildwarden.createRunLocalBranch(branchPublishDialogRun.id, trimmedBranchName);
       } else {
-        await easycode.publishRunBranch(branchPublishDialogRun.id, trimmedBranchName);
+        await buildwarden.publishRunBranch(branchPublishDialogRun.id, trimmedBranchName);
       }
       await loadSnapshot();
       await loadRunDetail(branchPublishDialogRun.id);
-      setSelectedRunId(branchPublishDialogRun.id);
+      focusRunInPaneState(branchPublishDialogRun.id, branchPublishDialogRun.projectId);
       closeBranchPublishDialog();
     });
   };
 
   const respondToShellApproval = async (request: ShellApprovalRequestState, decision: ShellApprovalDecision) => {
-    if (!easycode) {
+    if (!buildwarden) {
       return;
     }
 
@@ -1929,119 +2216,306 @@ export const App = () => {
   };
 
   const leaveSelectedRun = useCallback(async () => {
-    if (!easycode || !selectedRunId) {
+    if (!buildwarden || !selectedRunId) {
       return;
     }
 
-    await easycode.releaseRun(selectedRunId);
-  }, [easycode, selectedRunId]);
+    await buildwarden.releaseRun(selectedRunId);
+  }, [buildwarden, selectedRunId]);
+
+  const clearRunSelectionState = useCallback((nextSelectedRunId: string | null | undefined = null) => {
+    setSelectedRunId(nextSelectedRunId);
+    selectedRunIdRef.current = nextSelectedRunId;
+    setRunDetail(null);
+    setOpenRunPanes({});
+    setFocusedRunPane("left");
+    setRunDetailsById({});
+  }, []);
+
+  const setFocusedRunSelection = useCallback(
+    async (paneId: RunPaneId, runId: string, projectId?: string) => {
+      const target = findProjectRun(snapshot.projects, runId);
+      const nextProjectId = projectId ?? target?.project.project.id ?? runDetailsByIdRef.current[runId]?.run.projectId ?? "";
+
+      setFocusedRunPane(paneId);
+      setSelectedRunId(runId);
+      selectedRunIdRef.current = runId;
+      if (nextProjectId) {
+        setRunProjectId(nextProjectId);
+      }
+      setRunDetail(runDetailsByIdRef.current[runId] ?? null);
+
+      if (!buildwarden) {
+        return;
+      }
+
+      await buildwarden.activateRun(runId);
+      await loadSnapshot();
+      await loadRunDetailForRun(runId);
+    },
+    [buildwarden, loadRunDetailForRun, loadSnapshot, snapshot.projects],
+  );
+
+  const focusRunPane = useCallback(
+    (paneId: RunPaneId) => {
+      const runId = openRunPanesRef.current[paneId];
+      if (!runId) {
+        return;
+      }
+
+      void setFocusedRunSelection(paneId, runId).catch((caught) => {
+        setError(caught instanceof Error ? caught.message : "Unexpected error");
+      });
+    },
+    [setFocusedRunSelection],
+  );
+
+  const closeRunPane = useCallback(
+    (paneId: RunPaneId) => {
+      const currentPanes = openRunPanesRef.current;
+      const closingRunId = currentPanes[paneId];
+      if (!closingRunId) {
+        return;
+      }
+
+      const wasFocused = selectedRunIdRef.current === closingRunId;
+      const nextPanes: OpenRunPanes = { ...currentPanes };
+      delete nextPanes[paneId];
+      const remainingRunId = firstOpenRunId(nextPanes);
+      const remainingPaneId = remainingRunId ? paneForOpenRunId(nextPanes, remainingRunId) ?? "left" : "left";
+
+      setOpenRunPanes(nextPanes);
+      setRunDetailsById((current) => {
+        if (runIdIsOpenInPanes(nextPanes, closingRunId)) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[closingRunId];
+        return next;
+      });
+
+      if (!remainingRunId) {
+        clearRunSelectionState(null);
+        if (buildwarden && wasFocused) {
+          void buildwarden.releaseRun(closingRunId).catch((caught) => {
+            setError(caught instanceof Error ? caught.message : "Unexpected error");
+          });
+        }
+        return;
+      }
+
+      if (wasFocused) {
+        void setFocusedRunSelection(remainingPaneId, remainingRunId).catch((caught) => {
+          setError(caught instanceof Error ? caught.message : "Unexpected error");
+        });
+      }
+    },
+    [buildwarden, clearRunSelectionState, setFocusedRunSelection],
+  );
 
   const handleProjectSelect = useCallback(async (projectId: string) => {
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
 
       await leaveSelectedRun();
+      await buildwarden.selectProject(projectId);
       await loadSnapshot();
       setLandingSelected(false);
+      setAllRunsSelected(false);
       setBookmarksSelected(false);
       setChatsSelected(false);
       setSettingsOpen(false);
+      setProjectPageTab("overview");
       setRunProjectId(projectId);
-      setSelectedRunId(null);
-      setRunDetail(null);
+      clearRunSelectionState(null);
     });
-  }, [easycode, handleAction, leaveSelectedRun, loadSnapshot]);
+  }, [buildwarden, clearRunSelectionState, handleAction, leaveSelectedRun, loadSnapshot]);
+
+  const handleProjectFeatureSelect = useCallback(async (projectId: string, tab: ProjectPageTab) => {
+    await handleAction(async () => {
+      if (!buildwarden) {
+        throw new Error("The Electron desktop bridge is unavailable.");
+      }
+
+      await leaveSelectedRun();
+      await buildwarden.selectProject(projectId);
+      await loadSnapshot();
+      setLandingSelected(false);
+      setAllRunsSelected(false);
+      setBookmarksSelected(false);
+      setChatsSelected(false);
+      setSettingsOpen(false);
+      setProjectPageTab(tab);
+      setRunProjectId(projectId);
+      clearRunSelectionState(null);
+    });
+  }, [buildwarden, clearRunSelectionState, handleAction, leaveSelectedRun, loadSnapshot]);
+
+  const dismissProjectForgeRequestToast = useCallback((id: string) => {
+    setProjectForgeRequestToasts((current) => current.filter((toast) => toast.id !== id));
+  }, []);
+
+  const openProjectForgeRequest = useCallback(
+    (payload: ProjectForgeRequestOpenPayload) => {
+      setProjectForgeRequestToasts((current) =>
+        current.filter((toast) => toast.projectId !== payload.projectId || toast.prUrl !== payload.prUrl),
+      );
+      setReviewRequestTarget({
+        projectId: payload.projectId,
+        url: payload.prUrl,
+        requestId: Date.now(),
+      });
+      void handleProjectFeatureSelect(payload.projectId, "reviews");
+    },
+    [handleProjectFeatureSelect],
+  );
 
   const handleLandingSelect = useCallback(async () => {
     await handleAction(async () => {
-      if (!easycode) {
-        throw new Error("The Electron desktop bridge is unavailable.");
+      if (buildwarden) {
+        await leaveSelectedRun();
+        await loadSnapshot();
       }
-
-      await leaveSelectedRun();
-      await loadSnapshot();
       setLandingSelected(true);
+      setAllRunsSelected(false);
       setBookmarksSelected(false);
       setChatsSelected(false);
       setSettingsOpen(false);
-      setSelectedRunId(null);
-      setRunDetail(null);
+      clearRunSelectionState(null);
     });
-  }, [easycode, handleAction, leaveSelectedRun, loadSnapshot]);
+  }, [buildwarden, clearRunSelectionState, handleAction, leaveSelectedRun, loadSnapshot]);
 
-  const handleBookmarksSelect = () => {
+  const handleAllRunsSelect = useCallback(async () => {
+    await handleAction(async () => {
+      if (buildwarden) {
+        await leaveSelectedRun();
+        await loadSnapshot();
+      }
+      setLandingSelected(false);
+      setAllRunsSelected(true);
+      setBookmarksSelected(false);
+      setChatsSelected(false);
+      setSettingsOpen(false);
+      setSelectedBookmark(null);
+      setSelectedChat(null);
+      setChatDetail(null);
+      clearRunSelectionState(null);
+    });
+  }, [buildwarden, clearRunSelectionState, handleAction, leaveSelectedRun, loadSnapshot]);
+
+  const handleBookmarksSelect = useCallback(() => {
+    void leaveSelectedRun();
     setBookmarksSelected(true);
+    setAllRunsSelected(false);
     setChatsSelected(false);
     setSelectedBookmark(null);
     setSelectedChat(null);
     setChatDetail(null);
     setLandingSelected(false);
     setSettingsOpen(false);
-    setSelectedRunId(null);
-    setRunDetail(null);
-  };
+    clearRunSelectionState(null);
+  }, [clearRunSelectionState, leaveSelectedRun]);
 
   const handleChatsSelect = useCallback(() => {
+    void leaveSelectedRun();
     setChatsSelected(true);
+    setAllRunsSelected(false);
     setBookmarksSelected(false);
     setSelectedBookmark(null);
     setSelectedChat(null);
     setChatDetail(null);
     setLandingSelected(false);
     setSettingsOpen(false);
-    setSelectedRunId(null);
-    setRunDetail(null);
-  }, []);
+    clearRunSelectionState(null);
+  }, [clearRunSelectionState, leaveSelectedRun]);
 
   const openSettingsPage = useCallback(() => {
     setSettingsPreviousPage({
       landingSelected,
+      allRunsSelected,
       bookmarksSelected,
       chatsSelected,
+      projectPageTab,
       selectedBookmark,
       selectedChat,
       chatDetail,
       selectedRunId,
       runDetail,
+      openRunPanes,
+      focusedRunPane,
+      runDetailsById,
     });
+    void leaveSelectedRun();
     setSettingsOpen(true);
     setLandingSelected(false);
+    setAllRunsSelected(false);
     setBookmarksSelected(false);
     setChatsSelected(false);
     setSelectedBookmark(null);
     setSelectedChat(null);
     setChatDetail(null);
-    setSelectedRunId(null);
-    setRunDetail(null);
-  }, [bookmarksSelected, chatDetail, chatsSelected, landingSelected, runDetail, selectedBookmark, selectedChat, selectedRunId]);
+    clearRunSelectionState(null);
+  }, [
+    allRunsSelected,
+    bookmarksSelected,
+    chatDetail,
+    chatsSelected,
+    clearRunSelectionState,
+    focusedRunPane,
+    landingSelected,
+    leaveSelectedRun,
+    openRunPanes,
+    projectPageTab,
+    runDetail,
+    runDetailsById,
+    selectedBookmark,
+    selectedChat,
+    selectedRunId,
+  ]);
 
   const handleSettingsBack = useCallback(() => {
     setSettingsOpen(false);
     if (settingsPreviousPage) {
       setLandingSelected(settingsPreviousPage.landingSelected);
+      setAllRunsSelected(settingsPreviousPage.allRunsSelected);
       setBookmarksSelected(settingsPreviousPage.bookmarksSelected);
       setChatsSelected(settingsPreviousPage.chatsSelected);
+      setProjectPageTab(settingsPreviousPage.projectPageTab);
       setSelectedBookmark(settingsPreviousPage.selectedBookmark);
       setSelectedChat(settingsPreviousPage.selectedChat);
       setChatDetail(settingsPreviousPage.chatDetail);
       setSelectedRunId(settingsPreviousPage.selectedRunId);
       setRunDetail(settingsPreviousPage.runDetail);
+      setOpenRunPanes(settingsPreviousPage.openRunPanes);
+      setFocusedRunPane(settingsPreviousPage.focusedRunPane);
+      setRunDetailsById(settingsPreviousPage.runDetailsById);
+      if (settingsPreviousPage.selectedRunId && typeof settingsPreviousPage.selectedRunId === "string") {
+        selectedRunIdRef.current = settingsPreviousPage.selectedRunId;
+        void setFocusedRunSelection(
+          settingsPreviousPage.focusedRunPane,
+          settingsPreviousPage.selectedRunId,
+          settingsPreviousPage.runDetail?.run.projectId,
+        ).catch((caught) => {
+          setError(caught instanceof Error ? caught.message : "Unexpected error");
+        });
+      }
       setSettingsPreviousPage(null);
       return;
     }
     setLandingSelected(true);
+    setAllRunsSelected(false);
     setBookmarksSelected(false);
     setChatsSelected(false);
-  }, [settingsPreviousPage]);
+  }, [setFocusedRunSelection, settingsPreviousPage]);
 
   useEffect(() => {
-    if (!easycode) {
+    if (!buildwarden) {
       return;
     }
 
-    return easycode.onAppMenuCommand((command) => {
+    return buildwarden.onAppMenuCommand((command) => {
       if (command === "go-home") {
         void handleLandingSelect();
         return;
@@ -2059,12 +2533,12 @@ export const App = () => {
 
       if (command === "toggle-dark-mode") {
         void handleAction(async () => {
-          if (!easycode) {
+          if (!buildwarden) {
             throw new Error("The Electron desktop bridge is unavailable.");
           }
           const next = cycleUiTheme(parseUiTheme(snapshot.settings));
-          await easycode.setAppSetting(APP_SETTING_KEYS.uiTheme, next);
-          await easycode.setAppSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next));
+          await buildwarden.setAppSetting(APP_SETTING_KEYS.uiTheme, next);
+          await buildwarden.setAppSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next));
           await loadSnapshot();
         });
         return;
@@ -2077,43 +2551,72 @@ export const App = () => {
         } else {
           setSettingsOpen(true);
           setLandingSelected(false);
+          setAllRunsSelected(false);
           setBookmarksSelected(false);
           setChatsSelected(false);
         }
       }
     });
-  }, [easycode, handleAction, handleChatsSelect, handleLandingSelect, handleProjectSelect, loadSnapshot, openSettingsPage, runProjectId, selectedProject, snapshot.projects, snapshot.settings]);
+  }, [buildwarden, handleAction, handleChatsSelect, handleLandingSelect, handleProjectSelect, loadSnapshot, openSettingsPage, runProjectId, selectedProject, snapshot.projects, snapshot.settings]);
 
   useEffect(() => {
-    if (!easycode) {
+    if (!buildwarden) {
       return;
     }
-    return easycode.onAppSettingsChanged(() => {
+    return buildwarden.onProjectForgeRequestOpen((payload: ProjectForgeRequestOpenPayload) => {
+      if (!payload.projectId || !payload.prUrl) {
+        return;
+      }
+      openProjectForgeRequest(payload);
+    });
+  }, [buildwarden, openProjectForgeRequest]);
+
+  useEffect(() => {
+    if (!buildwarden) {
+      return;
+    }
+    return buildwarden.onProjectForgeRequestNotification((payload) => {
+      if (!payload.projectId || !payload.prUrl) {
+        return;
+      }
+      const id = `${payload.projectId}:${payload.prUrl}`;
+      setProjectForgeRequestToasts((current) => [
+        { ...payload, id },
+        ...current.filter((toast) => toast.id !== id),
+      ].slice(0, 4));
+    });
+  }, [buildwarden]);
+
+  useEffect(() => {
+    if (!buildwarden) {
+      return;
+    }
+    return buildwarden.onAppSettingsChanged(() => {
       void loadSnapshot();
     });
-  }, [easycode, loadSnapshot]);
+  }, [buildwarden, loadSnapshot]);
 
   const addRunToBookmarks = async (runId: string) => {
-    if (!easycode) return;
-    await easycode.addBookmark(runId);
+    if (!buildwarden) return;
+    await buildwarden.addBookmark(runId);
     await loadSnapshot();
   };
 
   const removeRunFromBookmarks = async (runId: string) => {
-    if (!easycode) return;
-    await easycode.removeBookmark(runId);
+    if (!buildwarden) return;
+    await buildwarden.removeBookmark(runId);
     await loadSnapshot();
   };
 
   const removeBookmarkById = async (bookmarkId: string) => {
-    if (!easycode) return;
-    await easycode.removeBookmarkById(bookmarkId);
+    if (!buildwarden) return;
+    await buildwarden.removeBookmarkById(bookmarkId);
     await loadSnapshot();
   };
 
   const removeChatBookmarkById = async (bookmarkId: string) => {
-    if (!easycode) return;
-    await easycode.removeChatBookmarkById(bookmarkId);
+    if (!buildwarden) return;
+    await buildwarden.removeChatBookmarkById(bookmarkId);
     await loadSnapshot();
   };
 
@@ -2125,15 +2628,15 @@ export const App = () => {
     anthropicEffort?: string;
   }) => {
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
-      const next = await easycode.refreshSnapshot();
+      const next = await buildwarden.refreshSnapshot();
       const model = next.models.find((m) => m.id === input.modelId);
       if (!model) {
         throw new Error("Select a model in Settings before starting a chat.");
       }
-      const chat = await easycode.createChat({
+      const chat = await buildwarden.createChat({
         providerAccountId: model.providerAccountId,
         modelId: input.modelId,
         prompt: input.prompt,
@@ -2146,16 +2649,18 @@ export const App = () => {
       setBookmarksSelected(false);
       setSelectedChat(chat);
       setChatDetail({ chat, steps: [] });
-      const detail = await easycode.getChatDetail(chat.id);
+      const detail = await buildwarden.getChatDetail(chat.id);
       setChatDetail(detail);
     });
   };
 
-  const handleChatSelect = async (chat: ChatRecord) => {
-    setSelectedChat(chat);
-    const detail = await easycode?.getChatDetail(chat.id);
-    if (detail) setChatDetail(detail);
-  };
+  const handleChatSelect = useCallback(async (chat: Pick<ChatRecord, "id">) => {
+    const detail = await buildwarden?.getChatDetail(chat.id);
+    if (detail) {
+      setSelectedChat(detail.chat);
+      setChatDetail(detail);
+    }
+  }, [buildwarden]);
 
   const followUpChat = async (
     chatId: string,
@@ -2163,19 +2668,19 @@ export const App = () => {
     options?: { modelId?: string; attachments?: ChatAttachmentPayload[]; reasoningEffort?: string; anthropicEffort?: string },
   ) => {
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
-      await easycode.followUpChat(chatId, prompt, options);
+      await buildwarden.followUpChat(chatId, prompt, options);
       await loadSnapshot();
-      const detail = await easycode.getChatDetail(chatId);
+      const detail = await buildwarden.getChatDetail(chatId);
       setChatDetail(detail);
     });
   };
 
   const deleteChat = async (chatId: string) => {
-    if (!easycode) return;
-    await easycode.deleteChat(chatId);
+    if (!buildwarden) return;
+    await buildwarden.deleteChat(chatId);
     await loadSnapshot();
     if (selectedChat?.id === chatId) {
       setSelectedChat(null);
@@ -2184,20 +2689,21 @@ export const App = () => {
   };
 
   const cancelChat = async (chatId: string) => {
-    if (!easycode) return;
-    await easycode.cancelChat(chatId);
+    if (!buildwarden) return;
+    await buildwarden.cancelChat(chatId);
     await loadSnapshot();
-    const detail = await easycode.getChatDetail(chatId);
+    const detail = await buildwarden.getChatDetail(chatId);
     setChatDetail(detail);
   };
 
   const handleRunSelect = useCallback(async (projectId: string, runId: string) => {
-    if (!easycode) {
+    if (!buildwarden) {
       setError("The Electron desktop bridge is unavailable.");
       return;
     }
 
     setLandingSelected(false);
+    setAllRunsSelected(false);
     setBookmarksSelected(false);
     setChatsSelected(false);
     setSettingsOpen(false);
@@ -2205,24 +2711,143 @@ export const App = () => {
     setSelectedChat(null);
     setChatDetail(null);
     setRunProjectId(projectId);
+    setOpenRunPanes({ left: runId });
+    setFocusedRunPane("left");
+    const cachedDetail = runDetailsByIdRef.current[runId] ?? null;
+    setRunDetailsById(cachedDetail ? { [runId]: cachedDetail } : {});
     setSelectedRunId(runId);
-    setRunDetail(null);
+    selectedRunIdRef.current = runId;
+    setRunDetail(cachedDetail);
 
     const runActivateAndSnapshot = async () => {
       if (selectedRunId && selectedRunId !== runId) {
         await leaveSelectedRun();
       }
-      await easycode.activateRun(runId);
+      await buildwarden.activateRun(runId);
       await loadSnapshot();
     };
 
     Promise.all([runActivateAndSnapshot(), loadRunDetail(runId)]).catch((caught) => {
       setError(caught instanceof Error ? caught.message : "Unexpected error");
     });
-  }, [easycode, leaveSelectedRun, loadRunDetail, loadSnapshot, selectedRunId]);
+  }, [buildwarden, leaveSelectedRun, loadRunDetail, loadSnapshot, selectedRunId]);
+
+  const openRunInSplitPane = useCallback(
+    async (projectId: string, runId: string, targetPaneId?: RunPaneId) => {
+      if (!selectedRunIdRef.current) {
+        await handleRunSelect(projectId, runId);
+        return;
+      }
+
+      const currentPanes = openRunPanesRef.current;
+      const currentFocusedRunId = selectedRunIdRef.current;
+      const existingPaneId = paneForOpenRunId(currentPanes, runId);
+      if (existingPaneId) {
+        if (runId === currentFocusedRunId) {
+          return;
+        }
+        await setFocusedRunSelection(existingPaneId, runId, projectId);
+        return;
+      }
+
+      if (runId === currentFocusedRunId) {
+        return;
+      }
+
+      const openEntries = getOpenRunPaneEntries(currentPanes);
+      let paneId: RunPaneId;
+      if (openEntries.length <= 1) {
+        paneId = currentPanes.left ? "right" : "left";
+      } else {
+        paneId = targetPaneId ?? (focusedRunPane === "left" ? "right" : "left");
+      }
+
+      const nextPanes: OpenRunPanes = { ...currentPanes, [paneId]: runId };
+      for (const id of RUN_PANE_IDS) {
+        if (id !== paneId && nextPanes[id] === runId) {
+          delete nextPanes[id];
+        }
+      }
+      setOpenRunPanes(nextPanes);
+      await setFocusedRunSelection(paneId, runId, projectId);
+    },
+    [focusedRunPane, handleRunSelect, setFocusedRunSelection],
+  );
+
+  const handleRunDragStart = useCallback((event: ReactDragEvent<HTMLButtonElement>, projectId: string, runId: string) => {
+    const payload: RunDragPayload = { type: "buildwarden/run", projectId, runId };
+    const serialized = JSON.stringify(payload);
+    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.setData(RUN_DRAG_MIME_TYPE, serialized);
+    event.dataTransfer.setData("text/plain", serialized);
+  }, []);
+
+  const resolveRunPaneDropPreview = useCallback(
+    (targetPaneId?: RunPaneId): RunPaneId | null => {
+      const currentPanes = openRunPanesRef.current;
+      const openEntries = getOpenRunPaneEntries(currentPanes);
+      if (!selectedRunIdRef.current || openEntries.length === 0) {
+        return null;
+      }
+
+      if (openEntries.length <= 1) {
+        return currentPanes.left ? "right" : "left";
+      }
+
+      return targetPaneId ?? (focusedRunPane === "left" ? "right" : "left");
+    },
+    [focusedRunPane],
+  );
+
+  const handleRunPaneDragOver = useCallback((event: ReactDragEvent<HTMLElement>, paneId?: RunPaneId) => {
+    if (!selectedRunIdRef.current) {
+      return;
+    }
+    if (!Array.from(event.dataTransfer.types).includes(RUN_DRAG_MIME_TYPE)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "copy";
+    const nextPreview = resolveRunPaneDropPreview(paneId);
+    setRunPaneDropPreview((current) => (current === nextPreview ? current : nextPreview));
+  }, [resolveRunPaneDropPreview]);
+
+  const handleRunPaneDragLeave = useCallback((event: ReactDragEvent<HTMLElement>) => {
+    const relatedTarget = event.relatedTarget;
+    if (relatedTarget instanceof Node && event.currentTarget.contains(relatedTarget)) {
+      return;
+    }
+
+    setRunPaneDropPreview(null);
+  }, []);
+
+  const handleRunDropOnPane = useCallback(
+    (event: ReactDragEvent<HTMLElement>, paneId?: RunPaneId) => {
+      const payload = parseRunDragPayload(event);
+      if (!payload) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      setRunPaneDropPreview(null);
+      void openRunInSplitPane(payload.projectId, payload.runId, paneId).catch((caught) => {
+        setError(caught instanceof Error ? caught.message : "Unexpected error");
+      });
+    },
+    [openRunInSplitPane],
+  );
 
   const openShellApprovalRun = useCallback(async (request: ShellApprovalRequestState) => {
-    if (!easycode) {
+    if (!buildwarden) {
+      return;
+    }
+
+    const existingPaneId = paneForOpenRunId(openRunPanesRef.current, request.runId);
+    if (existingPaneId) {
+      focusRunPane(existingPaneId);
       return;
     }
 
@@ -2234,23 +2859,206 @@ export const App = () => {
     }
 
     try {
-      const detail = await easycode.getRunDetail(request.runId);
+      const detail = await buildwarden.getRunDetail(request.runId);
       await handleRunSelect(detail.run.projectId, request.runId);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unexpected error");
     }
-  }, [easycode, getShellApprovalTarget, handleRunSelect]);
+  }, [buildwarden, focusRunPane, getShellApprovalTarget, handleRunSelect]);
+
+  const commandPaletteItems = useMemo<CommandPaletteItem[]>(() => {
+    const targetProjectId = runProjectId || selectedProject?.project.id || snapshot.projects[0]?.project.id || "";
+    const newestRuns = snapshot.projects
+      .flatMap((entry) =>
+        [...entry.runs, ...entry.forLaterRuns].map((run) => ({
+          projectId: entry.project.id,
+          projectName: entry.project.name,
+          run,
+        })),
+      )
+      .sort((left, right) => new Date(right.run.updatedAt).getTime() - new Date(left.run.updatedAt).getTime())
+      .slice(0, 10);
+    const newestChats = [...snapshot.chats]
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+      .slice(0, 8);
+
+    const items: CommandPaletteItem[] = [
+      {
+        id: "workspace-home",
+        title: "Go home",
+        subtitle: "Open the workspace overview",
+        section: "Navigate",
+        icon: Home,
+        keywords: ["dashboard", "landing"],
+        onSelect: () => handleLandingSelect(),
+      },
+      {
+        id: "workspace-all-runs",
+        title: "Open all runs",
+        subtitle: "Search and browse runs across projects",
+        section: "Navigate",
+        icon: Bot,
+        keywords: ["history", "agent"],
+        onSelect: () => handleAllRunsSelect(),
+      },
+      {
+        id: "workspace-chats",
+        title: "Open chats",
+        subtitle: "Start or continue a chat",
+        section: "Navigate",
+        icon: MessageSquareText,
+        keywords: ["conversation"],
+        onSelect: handleChatsSelect,
+      },
+      {
+        id: "workspace-bookmarks",
+        title: "Open bookmarks",
+        subtitle: "Saved chats and agent runs",
+        section: "Navigate",
+        icon: Bookmark,
+        keywords: ["saved"],
+        onSelect: handleBookmarksSelect,
+      },
+      {
+        id: "workspace-settings",
+        title: "Open settings",
+        subtitle: "Providers, workspace behavior, shortcuts, and app settings",
+        section: "Navigate",
+        icon: Settings,
+        keywords: ["preferences", "config"],
+        onSelect: openSettingsPage,
+      },
+      {
+        id: "workspace-new-run",
+        title: "New agent run",
+        subtitle: targetProjectId ? "Open the selected project run composer" : "Add a project first",
+        section: "Action",
+        icon: Sparkles,
+        disabled: !targetProjectId,
+        keywords: ["agent", "composer", "start"],
+        onSelect: () => (targetProjectId ? handleProjectSelect(targetProjectId) : undefined),
+      },
+      {
+        id: "workspace-toggle-theme",
+        title: "Toggle theme",
+        subtitle: "Toggle dark and light mode",
+        section: "Action",
+        icon: CommandIcon,
+        keywords: ["appearance", "light", "dark"],
+        onSelect: () =>
+          handleAction(async () => {
+            if (!buildwarden) {
+              throw new Error("The Electron desktop bridge is unavailable.");
+            }
+            const next = cycleUiTheme(parseUiTheme(snapshot.settings));
+            await buildwarden.setAppSetting(APP_SETTING_KEYS.uiTheme, next);
+            await buildwarden.setAppSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next));
+            await loadSnapshot();
+          }),
+      },
+    ];
+
+    for (const entry of snapshot.projects) {
+      items.push(
+        {
+          id: `project-${entry.project.id}`,
+          title: `Open ${entry.project.name}`,
+          subtitle: entry.project.repoPath,
+          section: "Project",
+          icon: FolderOpen,
+          keywords: ["overview", entry.project.defaultBranch],
+          onSelect: () => handleProjectSelect(entry.project.id),
+        },
+        {
+          id: `project-${entry.project.id}-branches`,
+          title: `${entry.project.name}: Branches`,
+          subtitle: "Manage local and remote branches",
+          section: "Project",
+          icon: GitBranch,
+          keywords: ["git", "checkout", "fetch", "pull"],
+          onSelect: () => handleProjectFeatureSelect(entry.project.id, "branches"),
+        },
+        {
+          id: `project-${entry.project.id}-reviews`,
+          title: `${entry.project.name}: Pull / merge requests`,
+          subtitle: "Review PRs and MRs",
+          section: "Project",
+          icon: GitPullRequest,
+          keywords: ["review", "mr", "pr"],
+          onSelect: () => handleProjectFeatureSelect(entry.project.id, "reviews"),
+        },
+      );
+    }
+
+    for (const item of newestRuns) {
+      items.push({
+        id: `run-${item.run.id}`,
+        title: item.run.prompt,
+        subtitle: `${item.projectName} - ${item.run.status} - ${item.run.branchName}`,
+        section: "Run",
+        icon: Bot,
+        keywords: [item.run.id, item.run.status, item.projectName, item.run.branchName],
+        onSelect: () => handleRunSelect(item.projectId, item.run.id),
+      });
+    }
+
+    for (const chat of newestChats) {
+      items.push({
+        id: `chat-${chat.id}`,
+        title: chat.prompt,
+        subtitle: `Chat - ${chat.status} - ${new Date(chat.createdAt).toLocaleString()}`,
+        section: "Chat",
+        icon: MessageSquareText,
+        keywords: [chat.id, chat.status],
+        onSelect: () => handleChatSelect(chat),
+      });
+    }
+
+    return items;
+  }, [
+    buildwarden,
+    handleAction,
+    handleAllRunsSelect,
+    handleBookmarksSelect,
+    handleChatSelect,
+    handleChatsSelect,
+    handleProjectFeatureSelect,
+    handleProjectSelect,
+    handleRunSelect,
+    handleLandingSelect,
+    loadSnapshot,
+    openSettingsPage,
+    runProjectId,
+    selectedProject?.project.id,
+    snapshot.chats,
+    snapshot.projects,
+    snapshot.settings,
+  ]);
 
   const updateBooleanSetting = async (key: string, value: boolean) => {
     await handleAction(async () => {
-      if (!easycode) {
+      if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
 
-      await easycode.setAppSetting(key, String(value));
+      await buildwarden.setAppSetting(key, String(value));
       await loadSnapshot();
     });
   };
+
+  const persistSidebarWidth = useCallback(
+    (width: number) => {
+      const nextWidth = clampSidebarWidth(width);
+      setSidebarWidth(nextWidth);
+      if (!buildwarden) {
+        return;
+      }
+      void buildwarden.setAppSetting(APP_SETTING_KEYS.sidebarWidth, String(nextWidth)).catch((caught) => {
+        setError(caught instanceof Error ? caught.message : "Could not save sidebar width.");
+      });
+    },
+    [buildwarden],
+  );
 
   const keyboardShortcuts = useMemo(
     () => parseKeyboardShortcuts(snapshot.settings[APP_SETTING_KEYS.keyboardShortcuts]),
@@ -2261,7 +3069,27 @@ export const App = () => {
     () => parseShellAllowlistExtraSetting(snapshot.settings[APP_SETTING_KEYS.shellAllowlistExtra]).join("\n"),
     [snapshot.settings],
   );
-  const integratedSkillsCatalog = useMemo(() => dedupeIntegratedSkillsCatalog(), []);
+  const [integratedSkillsCatalog, setIntegratedSkillsCatalog] = useState<IntegratedSkillMetadata[]>([]);
+
+  useEffect(() => {
+    if (!buildwarden) {
+      return;
+    }
+    let cancelled = false;
+    void buildwarden
+      .listIntegratedSkills()
+      .then((skills) => {
+        if (!cancelled) {
+          setIntegratedSkillsCatalog(skills);
+        }
+      })
+      .catch(() => {
+        // Skills are non-critical at boot; settings/composer surfaces handle an empty list.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [buildwarden]);
 
   const globallyDisabledIntegratedSkillIds = useMemo(
     () => parseIntegratedSkillsDisabledSetting(snapshot.settings[APP_SETTING_KEYS.integratedSkillsDisabled]),
@@ -2284,48 +3112,48 @@ export const App = () => {
 
   const updateShellAllowlistExtra = useCallback(
     async (text: string) => {
-      if (!easycode) {
+      if (!buildwarden) {
         return;
       }
       const lines = text
         .split(/\n/)
         .map((line) => line.trim())
         .filter(Boolean);
-      await easycode.setAppSetting(APP_SETTING_KEYS.shellAllowlistExtra, JSON.stringify(lines));
+      await buildwarden.setAppSetting(APP_SETTING_KEYS.shellAllowlistExtra, JSON.stringify(lines));
       await loadSnapshot();
     },
-    [easycode, loadSnapshot],
+    [buildwarden, loadSnapshot],
   );
 
   const updateKeyboardShortcut = useCallback(
     async (id: KeyboardShortcutId, value: string) => {
-      if (!easycode) return;
+      if (!buildwarden) return;
       const current = parseKeyboardShortcuts(snapshot.settings[APP_SETTING_KEYS.keyboardShortcuts]);
       const next = { ...current, [id]: value };
-      await easycode.setAppSetting(APP_SETTING_KEYS.keyboardShortcuts, JSON.stringify(next));
+      await buildwarden.setAppSetting(APP_SETTING_KEYS.keyboardShortcuts, JSON.stringify(next));
       await loadSnapshot();
     },
-    [easycode, loadSnapshot, snapshot.settings],
+    [buildwarden, loadSnapshot, snapshot.settings],
   );
 
   const updateGloballyDisabledIntegratedSkills = useCallback(
     async (skillIds: string[]) => {
-      if (!easycode) {
+      if (!buildwarden) {
         return;
       }
       const validIds = new Set(integratedSkillsCatalog.map((skill) => skill.id));
-      await easycode.setAppSetting(
+      await buildwarden.setAppSetting(
         APP_SETTING_KEYS.integratedSkillsDisabled,
         JSON.stringify([...new Set(skillIds.filter((skillId) => validIds.has(skillId)))].sort()),
       );
       await loadSnapshot();
     },
-    [easycode, integratedSkillsCatalog, loadSnapshot],
+    [buildwarden, integratedSkillsCatalog, loadSnapshot],
   );
 
   const updateProjectActiveSkills = useCallback(
     async (projectId: string, skillIds: string[]) => {
-      if (!easycode) {
+      if (!buildwarden) {
         return;
       }
       const current = parseProjectActiveSkillsSetting(snapshot.settings[APP_SETTING_KEYS.projectActiveSkills]);
@@ -2336,38 +3164,38 @@ export const App = () => {
       } else {
         delete next[projectId];
       }
-      await easycode.setAppSetting(APP_SETTING_KEYS.projectActiveSkills, JSON.stringify(next));
+      await buildwarden.setAppSetting(APP_SETTING_KEYS.projectActiveSkills, JSON.stringify(next));
       await loadSnapshot();
     },
-    [easycode, loadSnapshot, snapshot.settings],
+    [buildwarden, loadSnapshot, snapshot.settings],
   );
 
   const updateProjectLabSettings = useCallback(
     async (projectId: string, settings: ProjectLabSettings) => {
-      if (!easycode) {
+      if (!buildwarden) {
         return;
       }
       const current = parseProjectLabSettingsSetting(snapshot.settings[APP_SETTING_KEYS.projectLabSettings]);
       const next = { ...current, [projectId]: settings };
-      await easycode.setAppSetting(APP_SETTING_KEYS.projectLabSettings, JSON.stringify(next));
+      await buildwarden.setAppSetting(APP_SETTING_KEYS.projectLabSettings, JSON.stringify(next));
       await loadSnapshot();
     },
-    [easycode, loadSnapshot, snapshot.settings],
+    [buildwarden, loadSnapshot, snapshot.settings],
   );
 
   const openAppMenuSection = useCallback(
     async (section: AppMenuSection, anchor: HTMLButtonElement) => {
-      if (!easycode) {
+      if (!buildwarden) {
         return;
       }
       const rect = anchor.getBoundingClientRect();
-      await easycode.showAppMenu(section, Math.round(rect.left), Math.round(rect.bottom));
+      await buildwarden.showAppMenu(section, Math.round(rect.left), Math.round(rect.bottom));
     },
-    [easycode],
+    [buildwarden],
   );
 
   const deleteProject = async (projectId: string) => {
-    if (!easycode) {
+    if (!buildwarden) {
       setError("The Electron desktop bridge is unavailable.");
       return;
     }
@@ -2377,7 +3205,7 @@ export const App = () => {
     const confirmed = await requestConfirmation({
       title: "Delete project",
       message:
-        "Delete this project from Easycode and remove all of its runs, run history, and tracked workspace data? The original repository folder will not be deleted.",
+        "Delete this project from BuildWarden and remove all of its runs, run history, and tracked workspace data? The original repository folder will not be deleted.",
       confirmLabel: "Delete project",
       confirmVariant: "danger",
     });
@@ -2387,7 +3215,7 @@ export const App = () => {
     }
 
     await handleAction(async () => {
-      await easycode.deleteProject(projectId);
+      await buildwarden.deleteProject(projectId);
       setRunBrowserSessions((current) => {
         const next = { ...current };
         for (const runId of deletedRunIds) {
@@ -2418,14 +3246,13 @@ export const App = () => {
         }
         return changed ? next : current;
       });
-      setSelectedRunId(undefined);
-      setRunDetail(null);
+      clearRunSelectionState(undefined);
       await loadSnapshot();
     });
   };
 
   const deleteRun = useCallback(async (run: RunRecord) => {
-    if (!easycode) {
+    if (!buildwarden) {
       setError("The Electron desktop bridge is unavailable.");
       return;
     }
@@ -2450,17 +3277,35 @@ export const App = () => {
 
     const runId = run.id;
     const wasViewingThisRun = selectedRunId === runId;
+    const paneId = paneForOpenRunId(openRunPanesRef.current, runId);
 
-    if (wasViewingThisRun) {
-      setSelectedRunId(null);
-      setRunDetail(null);
+    if (paneId) {
+      const nextPanes: OpenRunPanes = { ...openRunPanesRef.current };
+      delete nextPanes[paneId];
+      const remainingRunId = firstOpenRunId(nextPanes);
+      const remainingPaneId = remainingRunId ? paneForOpenRunId(nextPanes, remainingRunId) ?? "left" : "left";
+      setOpenRunPanes(nextPanes);
+      setRunDetailsById((current) => {
+        const next = { ...current };
+        delete next[runId];
+        return next;
+      });
+      if (wasViewingThisRun && remainingRunId) {
+        void setFocusedRunSelection(remainingPaneId, remainingRunId).catch((caught) => {
+          setError(caught instanceof Error ? caught.message : "Unexpected error");
+        });
+      } else if (wasViewingThisRun) {
+        clearRunSelectionState(null);
+      }
+    } else if (wasViewingThisRun) {
+      clearRunSelectionState(null);
     }
 
     setPendingDeleteRunIds((current) => ({ ...current, [runId]: true }));
 
     void (async () => {
       try {
-        await easycode.deleteRun(runId);
+        await buildwarden.deleteRun(runId);
         setRunBrowserSessions((current) => {
           const next = { ...current };
           delete next[runId];
@@ -2484,17 +3329,26 @@ export const App = () => {
         });
       }
     })();
-  }, [easycode, loadSnapshot, pendingDeleteRunIds, removeRunWorkspaceLayout, requestConfirmation, selectedRunId]);
+  }, [
+    buildwarden,
+    clearRunSelectionState,
+    loadSnapshot,
+    pendingDeleteRunIds,
+    removeRunWorkspaceLayout,
+    requestConfirmation,
+    selectedRunId,
+    setFocusedRunSelection,
+  ]);
 
   const deleteProviderAccount = async (providerAccountId: string) => {
-    if (!easycode) {
+    if (!buildwarden) {
       setError("The Electron desktop bridge is unavailable.");
       return;
     }
 
     const confirmed = await requestConfirmation({
       title: "Delete provider",
-      message: "Delete this provider and its models from Easycode? Providers referenced by existing runs cannot be deleted.",
+      message: "Delete this provider and its models from BuildWarden? Providers referenced by existing runs cannot be deleted.",
       confirmLabel: "Delete provider",
       confirmVariant: "danger",
     });
@@ -2504,20 +3358,20 @@ export const App = () => {
     }
 
     await handleAction(async () => {
-      await easycode.deleteProviderAccount(providerAccountId);
+      await buildwarden.deleteProviderAccount(providerAccountId);
       await loadSnapshot();
     });
   };
 
   const deleteModel = async (modelId: string) => {
-    if (!easycode) {
+    if (!buildwarden) {
       setError("The Electron desktop bridge is unavailable.");
       return;
     }
 
     const confirmed = await requestConfirmation({
       title: "Delete model",
-      message: "Delete this model from Easycode? Models referenced by existing runs cannot be deleted.",
+      message: "Delete this model from BuildWarden? Models referenced by existing runs cannot be deleted.",
       confirmLabel: "Delete model",
       confirmVariant: "danger",
     });
@@ -2527,7 +3381,7 @@ export const App = () => {
     }
 
     await handleAction(async () => {
-      await easycode.deleteModel(modelId);
+      await buildwarden.deleteModel(modelId);
       await loadSnapshot();
     });
   };
@@ -2537,6 +3391,16 @@ export const App = () => {
 
     const handleKeyDown = (e: KeyboardEvent) => {
       const keyStr = eventToKeyString(e);
+
+      if (keyStr === shortcuts.openCommandPalette) {
+        e.preventDefault();
+        setCommandPaletteOpen(true);
+        return;
+      }
+
+      if (commandPaletteOpen) {
+        return;
+      }
 
       if (settingsOpen) {
         if (keyStr === shortcuts.closeSettings) {
@@ -2622,6 +3486,7 @@ export const App = () => {
   }, [
     snapshot.settings,
     snapshot.projects,
+    commandPaletteOpen,
     settingsOpen,
     bookmarksSelected,
     chatsSelected,
@@ -2642,8 +3507,221 @@ export const App = () => {
     document.documentElement.dataset.theme = uiTheme;
   }, [uiTheme]);
 
+  useEffect(() => {
+    const clearRunPaneDropPreview = () => setRunPaneDropPreview(null);
+    window.addEventListener("dragend", clearRunPaneDropPreview);
+    window.addEventListener("drop", clearRunPaneDropPreview);
+    return () => {
+      window.removeEventListener("dragend", clearRunPaneDropPreview);
+      window.removeEventListener("drop", clearRunPaneDropPreview);
+    };
+  }, []);
+
+  const renderRunPaneDropPreviewTile = (paneId: RunPaneId) => (
+    <div
+      key={`drop-preview-${paneId}`}
+      className="relative flex min-h-[400px] min-w-0 flex-1 overflow-hidden rounded-lg border border-dashed border-[var(--ec-accent-ring)] bg-[var(--ec-panel-soft)] p-1.5"
+      onDragOver={(event) => handleRunPaneDragOver(event, paneId)}
+      onDrop={(event) => handleRunDropOnPane(event, paneId)}
+    >
+      <RunPaneDropPreviewOverlay paneId={paneId} mode="tile" />
+    </div>
+  );
+
+  const renderRunPane = (entry: (typeof openRunPaneDetails)[number]) => {
+    const paneDetail = entry.detail;
+    const paneRun = paneDetail?.run ?? findProjectRun(snapshot.projects, entry.runId)?.run ?? null;
+    const isFocused = selectedRunId === entry.runId && focusedRunPane === entry.paneId;
+    const paneDropPreviewActive = runPaneDropPreview === entry.paneId;
+    const paneLayout = runWorkspaceLayoutsByRunId[entry.runId] ?? cloneDefaultRunWorkspaceLayoutPreference();
+    const paneVisiblePanels = isFocused
+      ? {
+          activity: runWorkspaceShowActivity,
+          diff: runWorkspaceShowDiff,
+          terminal: runWorkspaceShowTerminal,
+          browser: runWorkspaceShowBrowser,
+          notes: runWorkspaceShowNotes,
+        }
+      : paneLayout.visiblePanels;
+    const paneSecondaryPosition = isFocused ? runWorkspaceSecondaryPosition : paneLayout.secondaryPanelPosition;
+    const paneTokenUsage = paneDetail ? latestRunTokenUsage(paneDetail, runLiveUsageById[paneDetail.run.id]) : null;
+
+    return (
+      <div
+        key={entry.paneId}
+        className={cn(
+          "flex min-h-0 min-w-0 flex-1 flex-col gap-1.5",
+          "relative overflow-hidden",
+          isSplitRunView &&
+            "rounded-lg border bg-[var(--ec-bg)] p-1.5 shadow-[var(--ec-panel-shadow)]",
+          (isSplitRunView || paneDropPreviewActive) && "rounded-lg border",
+          isSplitRunView && (isFocused ? "border-[var(--ec-accent-ring)]" : "border-[var(--ec-border)]"),
+          paneDropPreviewActive && "border-[var(--ec-accent)]",
+        )}
+        onPointerDownCapture={(event) => {
+          if (event.target instanceof Element && event.target.closest("[data-run-pane-ignore-focus='true']")) {
+            return;
+          }
+          if (!isFocused) {
+            focusRunPane(entry.paneId);
+          }
+        }}
+        onDragOver={(event) => handleRunPaneDragOver(event, entry.paneId)}
+        onDrop={(event) => handleRunDropOnPane(event, entry.paneId)}
+      >
+        {paneRun ? (
+          <RunDetailHeader
+            run={paneRun}
+            runDetail={paneDetail}
+            tokenUsage={paneTokenUsage}
+            busy={busy}
+            pendingDelete={Boolean(pendingDeleteRunIds[paneRun.id])}
+            configuredIdeKinds={configuredIdeKinds}
+            canContinueRun={isRunContinuable(paneRun)}
+            focused={isFocused}
+            splitView={isSplitRunView}
+            paneLabel={entry.paneId}
+            runTimelineDensity={runTimelineDensity}
+            onRunTimelineDensityChange={updateRunTimelineDensity}
+            runDensityMenuOpen={runDensityMenuOpen}
+            setRunDensityMenuOpen={setRunDensityMenuOpen}
+            runDensityMenuAnchorRef={runDensityMenuAnchorRef}
+            runPanelToggleItems={runPanelToggleItems}
+            runWorkspaceVisiblePanelCount={runWorkspaceVisiblePanelCount}
+            runPanelsMenuOpen={runPanelsMenuOpen}
+            setRunPanelsMenuOpen={setRunPanelsMenuOpen}
+            runPanelsMenuAnchorRef={runPanelsMenuAnchorRef}
+            publishMenuOpen={publishMenuOpen}
+            setPublishMenuOpen={setPublishMenuOpen}
+            publishMenuAnchorRef={publishMenuAnchorRef}
+            onCommitRun={commitRun}
+            onOpenPublishDialog={openPublishDialog}
+            onOpenBranchPublishDialog={openBranchPublishDialog}
+            onOpenInIde={openRunDetailInIde}
+            onOpenFileManager={openRunDetailInFileManager}
+            onOpenContinueRunDialog={openContinueRunDialog}
+            onDeleteRun={deleteRun}
+            onClosePane={() => closeRunPane(entry.paneId)}
+          />
+        ) : null}
+
+        {paneDetail?.run ? (
+          <RunDetailPage
+            className="min-h-0 min-w-0 flex-1"
+            runDetail={paneDetail}
+            busy={busy}
+            modelOptions={configuredRunModelOptions}
+            keyboardShortcuts={keyboardShortcuts}
+            pendingShellApproval={null}
+            timelineDensity={runTimelineDensity}
+            showActivity={paneVisiblePanels.activity}
+            showDiff={paneVisiblePanels.diff}
+            showTerminal={paneVisiblePanels.terminal}
+            showBrowser={paneVisiblePanels.browser}
+            showNotes={paneVisiblePanels.notes}
+            onTogglePanel={(panelId) => toggleRunWorkspacePanelForRun(paneDetail.run.id, panelId, paneDetail.worktreeUnavailable === true)}
+            secondaryPanelPosition={paneSecondaryPosition}
+            onSecondaryPanelPositionChange={(position) => {
+              if (isFocused) {
+                setRunWorkspaceSecondaryPosition(position);
+              }
+              updateRunWorkspaceLayout(paneDetail.run.id, (current) => ({
+                ...current,
+                secondaryPanelPosition: position,
+              }));
+            }}
+            tileOrder={paneLayout.tileOrder}
+            tileLayout={paneLayout.tileLayout}
+            onTileOrderChange={(next) => {
+              updateRunWorkspaceLayout(paneDetail.run.id, (current) => ({
+                ...current,
+                tileOrder: next,
+              }));
+            }}
+            onTileLayoutChange={(next) => {
+              updateRunWorkspaceLayout(paneDetail.run.id, (current) => ({
+                ...current,
+                tileLayout: next,
+              }));
+            }}
+            browserSession={runBrowserSessions[paneDetail.run.id] ?? DEFAULT_RUN_BROWSER_SESSION}
+            terminalOpenLinksInApp={runTerminalOpenLinksInApp[paneDetail.run.id] !== false}
+            onTerminalOpenLinksInAppChange={(enabled) =>
+              setRunTerminalOpenLinksInApp((current) => ({
+                ...current,
+                [paneDetail.run.id]: enabled,
+              }))
+            }
+            onBrowserSessionChange={(session) =>
+              setRunBrowserSessions((current) => ({
+                ...current,
+                [paneDetail.run.id]: session,
+              }))
+            }
+            onOpenBrowserUrl={(url) => openRunBrowserUrl(paneDetail.run.id, url)}
+            onRespondToShellApproval={(decision) => respondToPendingShellApproval(decision)}
+            onCancelRunShell={(run, toolCallId) => void cancelRunShell(run, toolCallId)}
+            onCancelRun={(run) => void cancelRun(run)}
+            onUndoRunToLastPrompt={(run) => void undoRunToLastPrompt(run)}
+            onRecoverInterruptedRun={(run) => void recoverInterruptedRun(run)}
+            onCreateProjectTask={(projectId, input) => createProjectTask(projectId, input)}
+            onFollowUpRun={(run, prompt, options) => followUpRun(run, prompt, options)}
+          />
+        ) : (
+          <Card className="flex min-h-[400px] flex-1 flex-col items-center justify-center gap-4 p-8">
+            <Loader2 className="h-10 w-10 animate-spin text-cyan-400" />
+            <p className="text-sm text-zinc-500">Loading run...</p>
+          </Card>
+        )}
+        {paneDropPreviewActive ? <RunPaneDropPreviewOverlay paneId={entry.paneId} mode="replace" /> : null}
+      </div>
+    );
+  };
+
+  // Stable-identity props for the memoized Sidebar: without these, inline
+  // closures would change identity every render and defeat the memo.
+  const sidebarBookmarkedRunIds = useMemo(() => new Set(snapshot.bookmarks.map((b) => b.originalRunId)), [snapshot.bookmarks]);
+  const sidebarOnSelectLanding = useStableCallback(() => void handleLandingSelect());
+  const sidebarOnSelectAllRuns = useStableCallback(() => void handleAllRunsSelect());
+  const sidebarOnSelectBookmarks = useStableCallback(() => handleBookmarksSelect());
+  const sidebarOnSelectChats = useStableCallback(() => handleChatsSelect());
+  const sidebarOnSelectProject = useStableCallback((projectId: string) => handleProjectSelect(projectId));
+  const sidebarOnSelectProjectFeature = useStableCallback(
+    (projectId: string, tab: ProjectPageTab) => void handleProjectFeatureSelect(projectId, tab),
+  );
+  const sidebarOnSelectRun = useStableCallback((projectId: string, runId: string) => handleRunSelect(projectId, runId));
+  const sidebarOnRunDragStart = useStableCallback(
+    (event: ReactDragEvent<HTMLButtonElement>, projectId: string, runId: string) => handleRunDragStart(event, projectId, runId),
+  );
+  const sidebarOnReorderProjects = useStableCallback((projectIds: string[]) => void reorderProjects(projectIds));
+  const sidebarOnAddRunToBookmarks = useStableCallback((_: string, runId: string) => void addRunToBookmarks(runId));
+  const sidebarOnRemoveRunFromBookmarks = useStableCallback((runId: string) => void removeRunFromBookmarks(runId));
+  const sidebarOnContinueRun = useStableCallback((projectId: string, runId: string) => {
+    const project = snapshot.projects.find((p) => p.project.id === projectId);
+    const run = [...(project?.runs ?? []), ...(project?.forLaterRuns ?? [])].find((candidate) => candidate.id === runId);
+    if (run) {
+      openContinueRunDialog(run);
+    }
+  });
+  const sidebarOnDeleteRun = useStableCallback((projectId: string, runId: string) => {
+    const project = snapshot.projects.find((p) => p.project.id === projectId);
+    const run = project?.runs.find((r) => r.id === runId);
+    if (run) {
+      void deleteRun(run);
+    }
+  });
+  const sidebarOnSetRunForLater = useStableCallback((_: string, runId: string) => void setRunForLater(runId));
+  const sidebarOnOpenSettings = useStableCallback(() => openSettingsPage());
+  const sidebarOnWidthCommit = useStableCallback((width: number) => persistSidebarWidth(width));
+  const sidebarOnToggleCollapsed = useStableCallback(() => setSidebarCollapsed((current) => !current));
+
   return (
-    <div className="flex h-screen min-h-0 flex-col overflow-hidden">
+    <div
+      className={cn(
+        "app-shell flex h-screen min-h-0 flex-col overflow-hidden",
+        uiTheme === "light" ? "theme-light" : "theme-dark",
+      )}
+    >
       {showCustomWindowsTitleBar ? (
         <AppTitleBar
           uiTheme={uiTheme}
@@ -2652,60 +3730,54 @@ export const App = () => {
         />
       ) : null}
 
-      <div
-        className={cn(
-          "app-shell flex min-h-0 flex-1 gap-3 px-3 pb-3 text-zinc-100",
-          showCustomWindowsTitleBar ? "pt-2" : "pt-3",
-          uiTheme === "light" ? "theme-light" : uiTheme === "dim" ? "theme-dim" : "theme-dark",
-        )}
-      >
+      <div className="flex min-h-0 flex-1 text-[var(--ec-text)]">
+        <CommandPalette
+          open={commandPaletteOpen}
+          items={commandPaletteItems}
+          onClose={() => setCommandPaletteOpen(false)}
+        />
         <Sidebar
         projects={snapshot.projects}
         landingSelected={landingSelected}
+        allRunsSelected={allRunsSelected}
         bookmarksSelected={bookmarksSelected}
         chatsSelected={chatsSelected}
         settingsSelected={settingsOpen}
-        selectedProjectId={landingSelected || bookmarksSelected || chatsSelected || settingsOpen ? null : (selectedProject?.project.id ?? null)}
+        selectedProjectId={selectedProject?.project.id ?? null}
+        projectView={projectPageTab}
         highlightedRunId={
-          !landingSelected && !bookmarksSelected && !chatsSelected && !settingsOpen && typeof selectedRunId === "string" ? selectedRunId : null
+          !landingSelected && !allRunsSelected && !bookmarksSelected && !chatsSelected && !settingsOpen && typeof selectedRunId === "string" ? selectedRunId : null
         }
         collapsed={sidebarCollapsed}
         width={sidebarWidth}
+        recentRunDays={recentRunDays}
         bookmarksCount={snapshot.bookmarks.length + snapshot.chatBookmarks.length}
         chatsCount={snapshot.chats.length}
-        bookmarkedRunIds={new Set(snapshot.bookmarks.map((b) => b.originalRunId))}
-        onSelectLanding={() => void handleLandingSelect()}
-        onSelectBookmarks={handleBookmarksSelect}
-        onSelectChats={handleChatsSelect}
-        onSelectProject={handleProjectSelect}
-        onSelectRun={handleRunSelect}
-        onReorderProjects={(projectIds) => void reorderProjects(projectIds)}
-        onAddRunToBookmarks={(_, runId) => void addRunToBookmarks(runId)}
-        onRemoveRunFromBookmarks={(runId) => void removeRunFromBookmarks(runId)}
-        onContinueRun={(projectId, runId) => {
-          const project = snapshot.projects.find((p) => p.project.id === projectId);
-          const run = [...(project?.runs ?? []), ...(project?.forLaterRuns ?? [])].find((candidate) => candidate.id === runId);
-          if (run) {
-            openContinueRunDialog(run);
-          }
-        }}
-        onDeleteRun={(projectId, runId) => {
-          const project = snapshot.projects.find((p) => p.project.id === projectId);
-          const run = project?.runs.find((r) => r.id === runId);
-          if (run) {
-            void deleteRun(run);
-          }
-        }}
-        onSetRunForLater={(_, runId) => void setRunForLater(runId)}
+        bookmarkedRunIds={sidebarBookmarkedRunIds}
+        onSelectLanding={sidebarOnSelectLanding}
+        onSelectAllRuns={sidebarOnSelectAllRuns}
+        onSelectBookmarks={sidebarOnSelectBookmarks}
+        onSelectChats={sidebarOnSelectChats}
+        onSelectProject={sidebarOnSelectProject}
+        onSelectProjectFeature={sidebarOnSelectProjectFeature}
+        onSelectRun={sidebarOnSelectRun}
+        onRunDragStart={sidebarOnRunDragStart}
+        onReorderProjects={sidebarOnReorderProjects}
+        onAddRunToBookmarks={sidebarOnAddRunToBookmarks}
+        onRemoveRunFromBookmarks={sidebarOnRemoveRunFromBookmarks}
+        onContinueRun={sidebarOnContinueRun}
+        onDeleteRun={sidebarOnDeleteRun}
+        onSetRunForLater={sidebarOnSetRunForLater}
         pendingDeleteRunIds={pendingDeleteRunIds}
-        onOpenSettings={openSettingsPage}
-        onWidthChange={setSidebarWidth}
-        onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+        onOpenSettings={sidebarOnOpenSettings}
+        onWidthCommit={sidebarOnWidthCommit}
+        onToggleCollapsed={sidebarOnToggleCollapsed}
       />
 
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--ec-bg)]">
         <main
           className={cn(
-            "glass-island min-h-0 min-w-0 flex-1 p-4",
+            "min-h-0 min-w-0 flex-1 p-3",
             isAgentRunDetailView || isChatDetailView || isProjectWorkspaceView
               ? "flex min-h-0 flex-col overflow-hidden"
               : "overflow-y-auto",
@@ -2721,6 +3793,13 @@ export const App = () => {
                 : "space-y-4",
           )}
         >
+          <Suspense
+            fallback={
+              <div className="flex min-h-[200px] flex-1 items-center justify-center">
+                <Loader2 className="h-6 w-6 animate-spin text-[var(--ec-accent)]" />
+              </div>
+            }
+          >
           {settingsOpen ? (
             <SettingsPage
               busy={busy}
@@ -2746,9 +3825,11 @@ export const App = () => {
               modelBaseUrl={modelBaseUrl}
               autoCheckoutRunBranchOnOpen={autoCheckoutRunBranchOnOpen}
               autoReleaseRunBranchOnLeave={autoReleaseRunBranchOnLeave}
+              recentRunDays={recentRunDays}
               uiTheme={uiTheme}
               enableDevMode={snapshot.settings[APP_SETTING_KEYS.enableDevMode] === "true"}
               appLogDirPath={appLogDirPath}
+              appLogDirectorySize={appLogDirectorySize}
               networkProxySettings={networkProxySettings}
               providerAccounts={snapshot.providerAccounts}
               models={snapshot.models}
@@ -2763,23 +3844,32 @@ export const App = () => {
               onDeleteModel={(modelId) => void deleteModel(modelId)}
               onAutoCheckoutRunBranchOnOpenChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.autoCheckoutRunBranchOnOpen, value)}
               onAutoReleaseRunBranchOnLeaveChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.autoReleaseRunBranchOnLeave, value)}
-              onUiThemeChange={(next: UiTheme) =>
+              onRecentRunDaysChange={(value) =>
                 void handleAction(async () => {
-                  if (!easycode) {
+                  if (!buildwarden) {
                     throw new Error("The Electron desktop bridge is unavailable.");
                   }
-                  await easycode.setAppSetting(APP_SETTING_KEYS.uiTheme, next);
-                  await easycode.setAppSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next));
+                  await buildwarden.setAppSetting(APP_SETTING_KEYS.recentRunDays, String(parseRecentRunDaysSetting(value)));
+                  await loadSnapshot();
+                })
+              }
+              onUiThemeChange={(next: UiTheme) =>
+                void handleAction(async () => {
+                  if (!buildwarden) {
+                    throw new Error("The Electron desktop bridge is unavailable.");
+                  }
+                  await buildwarden.setAppSetting(APP_SETTING_KEYS.uiTheme, next);
+                  await buildwarden.setAppSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next));
                   await loadSnapshot();
                 })
               }
               worktreeRootOverrideSettingValue={snapshot.settings[APP_SETTING_KEYS.worktreeRootOverride] ?? ""}
               onSaveWorktreeRootOverride={(value) =>
                 void handleAction(async () => {
-                  if (!easycode) {
+                  if (!buildwarden) {
                     throw new Error("The Electron desktop bridge is unavailable.");
                   }
-                  await easycode.setAppSetting(APP_SETTING_KEYS.worktreeRootOverride, value);
+                  await buildwarden.setAppSetting(APP_SETTING_KEYS.worktreeRootOverride, value);
                   await loadSnapshot();
                 })
               }
@@ -2807,23 +3897,23 @@ export const App = () => {
               shellAllowlistExtraText={shellAllowlistExtraText}
               onShellAllowlistExtraSave={(text: string) => void updateShellAllowlistExtra(text)}
               onResetDatabase={() => {
-                void easycode?.resetDatabase();
+                void buildwarden?.resetDatabase();
               }}
               onSaveNetworkProxySettings={async (input) => {
-                if (!easycode) {
+                if (!buildwarden) {
                   throw new Error("The Electron desktop bridge is unavailable.");
                 }
-                const saved = await easycode.saveNetworkProxySettings(input);
+                const saved = await buildwarden.saveNetworkProxySettings(input);
                 setNetworkProxySettings(saved);
                 await loadSnapshot();
                 return saved;
               }}
               onOpenAppLogDirectory={() =>
                 void handleAction(async () => {
-                  if (!easycode || !appLogDirPath) {
+                  if (!buildwarden || !appLogDirPath) {
                     throw new Error("The app log directory is unavailable.");
                   }
-                  const result = await easycode.openPathInFileManager(appLogDirPath);
+                  const result = await buildwarden.openPathInFileManager(appLogDirPath);
                   if (!result.ok) {
                     throw new Error(result.error || "Could not open log directory.");
                   }
@@ -2832,14 +3922,14 @@ export const App = () => {
               idePathsSettingValue={snapshot.settings[APP_SETTING_KEYS.idePaths] ?? ""}
               onSaveIdePaths={(serialized) =>
                 void handleAction(async () => {
-                  if (!easycode) {
+                  if (!buildwarden) {
                     throw new Error("The Electron desktop bridge is unavailable.");
                   }
-                  await easycode.setAppSetting(APP_SETTING_KEYS.idePaths, serialized);
+                  await buildwarden.setAppSetting(APP_SETTING_KEYS.idePaths, serialized);
                   await loadSnapshot();
                 })
               }
-              onPickIdeExecutable={async () => (easycode ? easycode.pickIdeExecutable() : null)}
+              onPickIdeExecutable={async () => (buildwarden ? buildwarden.pickIdeExecutable() : null)}
               integratedSkills={integratedSkillsCatalog}
               globallyDisabledIntegratedSkillIds={globallyDisabledIntegratedSkillIds}
               onGloballyDisabledIntegratedSkillIdsChange={(skillIds) => void updateGloballyDisabledIntegratedSkills(skillIds)}
@@ -2885,11 +3975,11 @@ export const App = () => {
               }
               onCancel={() => void cancelChat(selectedChat.id)}
               onAddBookmark={async () => {
-                await easycode?.addChatBookmark(selectedChat.id);
+                await buildwarden?.addChatBookmark(selectedChat.id);
                 await loadSnapshot();
               }}
               onRemoveBookmark={async () => {
-                await easycode?.removeChatBookmark(selectedChat.id);
+                await buildwarden?.removeChatBookmark(selectedChat.id);
                 await loadSnapshot();
               }}
             />
@@ -2905,6 +3995,11 @@ export const App = () => {
               onReasoningEffortChange={setChatReasoningEffort}
               onAnthropicEffortChange={setChatAnthropicEffort}
               onDeleteChat={(chatId) => void deleteChat(chatId)}
+            />
+          ) : allRunsSelected ? (
+            <AllRunsPage
+              projects={snapshot.projects}
+              onSelectRun={(projectId, runId) => void handleRunSelect(projectId, runId)}
             />
           ) : landingSelected || (!selectedRunId && !selectedProject) ? (
             <LandingPage
@@ -2923,268 +4018,60 @@ export const App = () => {
                   : "contents"
               }
             >
-              <Card className="relative z-30 shrink-0 px-4 py-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                    {selectedRun ? <Badge tone={selectedRun.status}>{selectedRun.status}</Badge> : null}
-                    {!selectedRun ? <h2 className="truncate text-xl font-semibold">{selectedProject?.project.name ?? "No project selected"}</h2> : null}
-                    {selectedRun && runDetail ? (
-                      <>
-                        <button
-                          type="button"
-                          className="inline-flex min-w-0 max-w-[24rem] items-center gap-2 rounded-full border border-zinc-800/80 bg-zinc-950/60 px-3 py-1 text-[11px] text-zinc-300 transition hover:border-zinc-700 hover:bg-zinc-900/70"
-                          onClick={() => void navigator.clipboard.writeText(runDetail.run.branchName)}
-                          title={runDetail.run.branchName}
-                        >
-                          <GitBranch className="h-3.5 w-3.5 shrink-0 text-emerald-300" />
-                          <span className="truncate font-mono text-[11px] text-zinc-100">{runDetail.run.branchName}</span>
-                        </button>
-                        <RunTokenBadge
-                          inputTokens={runDetail.run.inputTokens}
-                          outputTokens={runDetail.run.outputTokens}
-                        />
-                      </>
-                    ) : null}
-                  </div>
-                  {!selectedRun && selectedProject ? (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      className="h-8 border border-zinc-800 bg-zinc-900/80 px-2 text-rose-400 hover:border-rose-500/30 hover:bg-zinc-900 hover:text-rose-300"
-                      onClick={() => void deleteProject(selectedProject.project.id)}
-                      title="Delete project"
-                      aria-label="Delete project"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                    </Button>
-                  ) : selectedRun ? (
-                    <div className="flex max-w-full shrink-0 flex-nowrap items-center gap-2 overflow-x-auto sm:gap-3">
-                      {runDetail?.run ? (
-                        <div ref={runPanelsMenuAnchorRef} className="relative shrink-0">
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            className="h-8 shrink-0 gap-2 border-cyan-500/20 bg-cyan-500/5 px-2 text-xs text-cyan-100 hover:bg-cyan-500/10"
-                            onClick={() => setRunPanelsMenuOpen((current) => !current)}
-                            aria-expanded={runPanelsMenuOpen}
-                            aria-haspopup="menu"
-                            title="Choose visible run panels"
-                          >
-                            Panels
-                            <span className="rounded-full border border-zinc-700 bg-zinc-900/80 px-1.5 text-[10px] text-zinc-300">
-                              {runWorkspaceVisiblePanelCount}
-                            </span>
-                            <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition ${runPanelsMenuOpen ? "rotate-180" : ""}`} />
-                          </Button>
-                          <AnchorDropdownPortal
-                            open={runPanelsMenuOpen}
-                            anchorRef={runPanelsMenuAnchorRef}
-                            onClose={() => setRunPanelsMenuOpen(false)}
-                            align="start"
-                            widthPx={240}
-                            className="overflow-hidden rounded-xl border border-zinc-700/90 bg-zinc-950 py-1 shadow-xl shadow-black/40 ring-1 ring-cyan-500/10"
-                          >
-                            <div role="menu">
-                              {runPanelToggleItems.map((item) => {
-                                const Icon = item.icon;
-                                return (
-                                  <button
-                                    key={item.key}
-                                    type="button"
-                                    role="menuitemcheckbox"
-                                    aria-checked={item.active}
-                                    disabled={item.disabled}
-                                    className={cn(
-                                      "flex w-full items-center gap-3 px-3 py-2 text-left transition",
-                                      item.disabled
-                                        ? "cursor-not-allowed text-zinc-600"
-                                        : "text-zinc-200 hover:bg-zinc-800/80",
-                                    )}
-                                    onClick={() => {
-                                      item.onClick();
-                                    }}
-                                  >
-                                    <span
-                                      className={cn(
-                                        "flex h-5 w-5 shrink-0 items-center justify-center rounded border text-[10px]",
-                                        item.active
-                                          ? "border-cyan-500/40 bg-cyan-500/10 text-cyan-300"
-                                          : "border-zinc-700 bg-zinc-900/80 text-zinc-500",
-                                      )}
-                                    >
-                                      {item.active ? "ON" : ""}
-                                    </span>
-                                    <Icon className="h-4 w-4 shrink-0 text-zinc-400" />
-                                    <div className="min-w-0 flex-1">
-                                      <div className="text-sm">{item.label}</div>
-                                      <div className="text-[10px] text-zinc-500">{item.subtitle}</div>
-                                    </div>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </AnchorDropdownPortal>
-                        </div>
-                      ) : null}
-                      {selectedRunCanManageChanges ? (
-                        <div ref={publishMenuAnchorRef} className="relative shrink-0">
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            disabled={busy}
-                            className="border border-emerald-500/35 bg-emerald-950/55 text-emerald-100 hover:border-emerald-400/45 hover:bg-emerald-900/65"
-                            title="Commit, publish branch, or open a merge request"
-                            onClick={() => setPublishMenuOpen((current) => !current)}
-                          >
-                            <GitBranch className="mr-2 h-4 w-4 shrink-0 text-emerald-300/95" aria-hidden />
-                            Changes
-                            {publishMenuOpen ? <ChevronDown className="ml-2 h-4 w-4 shrink-0" /> : <ChevronRight className="ml-2 h-4 w-4 shrink-0" />}
-                          </Button>
-                          <AnchorDropdownPortal
-                            open={publishMenuOpen}
-                            anchorRef={publishMenuAnchorRef}
-                            onClose={() => setPublishMenuOpen(false)}
-                            align="end"
-                            widthPx={192}
-                            className="rounded-xl border border-zinc-800 bg-zinc-900 p-1 shadow-2xl"
-                          >
-                            {selectedRunCanCommit ? (
-                              <button
-                                type="button"
-                                className="block w-full rounded-lg px-3 py-2 text-left text-sm text-zinc-100 hover:bg-zinc-800"
-                                onClick={() => {
-                                  setPublishMenuOpen(false);
-                                  void commitRun(selectedRun);
-                                }}
-                              >
-                                Create commit
-                              </button>
-                            ) : null}
-                            <button
-                              type="button"
-                              className={cn(
-                                "block w-full rounded-lg px-3 py-2 text-left text-sm",
-                                selectedRunCanCreateLocalBranch ? "text-zinc-100 hover:bg-zinc-800" : "cursor-not-allowed text-zinc-500",
-                              )}
-                              disabled={!selectedRunCanCreateLocalBranch}
-                              title={!selectedRunCanCreateLocalBranch ? "Create changes before creating a local branch." : undefined}
-                              onClick={() => {
-                                if (!selectedRunCanCreateLocalBranch) return;
-                                setPublishMenuOpen(false);
-                                openBranchPublishDialog(selectedRun, "local");
-                              }}
-                            >
-                              Create local branch
-                            </button>
-                            <button
-                              type="button"
-                              className={cn(
-                                "block w-full rounded-lg px-3 py-2 text-left text-sm",
-                                selectedRunCanPublish ? "text-zinc-100 hover:bg-zinc-800" : "cursor-not-allowed text-zinc-500",
-                              )}
-                              disabled={!selectedRunCanPublish}
-                              title={selectedRunHasOpenChanges ? "Create a commit before creating a merge request or pull request." : undefined}
-                              onClick={() => {
-                                if (!selectedRunCanPublish) return;
-                                setPublishMenuOpen(false);
-                                void openPublishDialog(selectedRun);
-                              }}
-                            >
-                              Create MR / PR
-                            </button>
-                            <button
-                              type="button"
-                              className={cn(
-                                "block w-full rounded-lg px-3 py-2 text-left text-sm",
-                                selectedRunCanPublish ? "text-zinc-100 hover:bg-zinc-800" : "cursor-not-allowed text-zinc-500",
-                              )}
-                              disabled={!selectedRunCanPublish}
-                              title={selectedRunHasOpenChanges ? "Create a commit before publishing the branch." : undefined}
-                              onClick={() => {
-                                if (!selectedRunCanPublish) return;
-                                setPublishMenuOpen(false);
-                                openBranchPublishDialog(selectedRun, "publish");
-                              }}
-                            >
-                              Publish branch
-                            </button>
-                          </AnchorDropdownPortal>
-                        </div>
-                      ) : null}
-                      {runDetail && runDetail.worktreeUnavailable !== true && configuredIdeKinds.length > 0 ? (
-                        <OpenInIdeControl
-                          compact
-                          configuredIdeKinds={configuredIdeKinds}
-                          onOpen={(ideKind) =>
-                            void handleAction(async () => {
-                              if (!easycode) {
-                                throw new Error("The Electron desktop bridge is unavailable.");
-                              }
-                              await easycode.openRunWorktreeInIde(runDetail.run.id, ideKind);
-                            })
-                          }
-                        />
-                      ) : null}
-                      {isRunContinuable(selectedRun) ? (
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          disabled={busy}
-                          className="h-8 shrink-0 border-cyan-500/20 bg-cyan-500/5 px-2 text-xs text-cyan-100 hover:bg-cyan-500/10"
-                          title="Continue as new run. Start a fresh worktree and branch from this run's current state."
-                          aria-label="Continue as new run"
-                          onClick={() => openContinueRunDialog(selectedRun)}
-                        >
-                          <GitBranch className="h-4 w-4 shrink-0" aria-hidden />
-                          <span className="sr-only">Continue as new run</span>
-                        </Button>
-                      ) : null}
-                      {runDetail && runDetail.worktreeUnavailable !== true ? (
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          className="h-8 shrink-0 border-cyan-500/20 bg-cyan-500/5 px-2 text-xs text-cyan-100 hover:bg-cyan-500/10"
-                          title="Open current workspace in file explorer"
-                          aria-label="Open current workspace in file explorer"
-                          onClick={() =>
-                            void handleAction(async () => {
-                              if (!easycode) {
-                                throw new Error("The Electron desktop bridge is unavailable.");
-                              }
-                              const result = await easycode.openPathInFileManager(runDetail.run.worktreePath);
-                              if (!result.ok) {
-                                throw new Error(result.error || "Could not open the workspace folder.");
-                              }
-                            })
-                          }
-                        >
-                          <FolderOpen className="h-4 w-4 shrink-0" />
-                          <span className="sr-only">Open in file explorer</span>
-                        </Button>
-                      ) : null}
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className="border border-zinc-800 bg-zinc-900/80 px-2 text-rose-400 hover:border-rose-500/30 hover:bg-zinc-900 hover:text-rose-300"
-                        disabled={Boolean(selectedRun && pendingDeleteRunIds[selectedRun.id])}
-                        onClick={() => void deleteRun(selectedRun)}
-                        title="Delete run"
-                        aria-label="Delete run"
-                      >
-                        {selectedRun && pendingDeleteRunIds[selectedRun.id] ? (
-                          <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
-                        ) : (
-                          <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
-                        )}
-                      </Button>
-                    </div>
-                  ) : null}
+              {selectedRunId && openRunPaneCount > 0 ? (
+                <div
+                  className={cn(
+                    "min-h-0 min-w-0 flex-1 gap-2",
+                    isSplitRunView || runPaneDropPreview ? "grid grid-cols-1 xl:grid-cols-2" : "flex flex-col",
+                  )}
+                  onDragOver={handleRunPaneDragOver}
+                  onDragLeave={handleRunPaneDragLeave}
+                  onDrop={(event) => handleRunDropOnPane(event)}
+                >
+                  {(runPaneDropPreview ? RUN_PANE_IDS : openRunPaneDetails.map((entry) => entry.paneId)).map((paneId) => {
+                    const entry = openRunPaneDetails.find((candidate) => candidate.paneId === paneId);
+                    if (entry) {
+                      return renderRunPane(entry);
+                    }
+                    if (runPaneDropPreview === paneId) {
+                      return renderRunPaneDropPreviewTile(paneId);
+                    }
+                    return null;
+                  })}
                 </div>
-              </Card>
+              ) : selectedRun ? (
+                <RunDetailHeader
+                  run={selectedRun}
+                  runDetail={runDetail}
+                  tokenUsage={selectedRunTokenUsage}
+                  busy={busy}
+                  pendingDelete={Boolean(pendingDeleteRunIds[selectedRun.id])}
+                  configuredIdeKinds={configuredIdeKinds}
+                  canContinueRun={isRunContinuable(selectedRun)}
+                  runTimelineDensity={runTimelineDensity}
+                  onRunTimelineDensityChange={updateRunTimelineDensity}
+                  runDensityMenuOpen={runDensityMenuOpen}
+                  setRunDensityMenuOpen={setRunDensityMenuOpen}
+                  runDensityMenuAnchorRef={runDensityMenuAnchorRef}
+                  runPanelToggleItems={runPanelToggleItems}
+                  runWorkspaceVisiblePanelCount={runWorkspaceVisiblePanelCount}
+                  runPanelsMenuOpen={runPanelsMenuOpen}
+                  setRunPanelsMenuOpen={setRunPanelsMenuOpen}
+                  runPanelsMenuAnchorRef={runPanelsMenuAnchorRef}
+                  publishMenuOpen={publishMenuOpen}
+                  setPublishMenuOpen={setPublishMenuOpen}
+                  publishMenuAnchorRef={publishMenuAnchorRef}
+                  onCommitRun={commitRun}
+                  onOpenPublishDialog={openPublishDialog}
+                  onOpenBranchPublishDialog={openBranchPublishDialog}
+                  onOpenInIde={openRunDetailInIde}
+                  onOpenFileManager={openRunDetailInFileManager}
+                  onOpenContinueRunDialog={openContinueRunDialog}
+                  onDeleteRun={deleteRun}
+                />
+              ) : null}
 
-              {selectedRunId && runDetail?.run ? (
+              {selectedRunId && openRunPaneCount > 0 ? null : selectedRunId && runDetail?.run ? (
             <RunDetailPage
               className="min-h-0 min-w-0 flex-1"
               runDetail={runDetail}
@@ -3192,15 +4079,18 @@ export const App = () => {
               modelOptions={configuredRunModelOptions}
               keyboardShortcuts={keyboardShortcuts}
               pendingShellApproval={null}
+              timelineDensity={runTimelineDensity}
               showActivity={runWorkspaceShowActivity}
               showDiff={runWorkspaceShowDiff}
               showTerminal={runWorkspaceShowTerminal}
               showBrowser={runWorkspaceShowBrowser}
+              showNotes={runWorkspaceShowNotes}
               onTogglePanel={(panelId) => {
                 if (panelId === "activity") toggleRunWorkspaceActivity();
                 else if (panelId === "diff") toggleRunWorkspaceDiff();
                 else if (panelId === "terminal") toggleRunWorkspaceTerminal();
                 else if (panelId === "browser") toggleRunWorkspaceBrowser();
+                else if (panelId === "notes") toggleRunWorkspaceNotes();
               }}
               secondaryPanelPosition={runWorkspaceSecondaryPosition}
               onSecondaryPanelPositionChange={(position) => {
@@ -3251,6 +4141,7 @@ export const App = () => {
               onCancelRun={(run) => void cancelRun(run)}
               onUndoRunToLastPrompt={(run) => void undoRunToLastPrompt(run)}
               onRecoverInterruptedRun={(run) => void recoverInterruptedRun(run)}
+              onCreateProjectTask={(projectId, input) => createProjectTask(projectId, input)}
               onFollowUpRun={(run, prompt, options) => followUpRun(run, prompt, options)}
             />
           ) : selectedRunId ? (
@@ -3261,6 +4152,7 @@ export const App = () => {
           ) : selectedProject ? (
             <ProjectPage
               project={selectedProject}
+              activeTab={projectPageTab}
               modelOptions={configuredRunModelOptions}
               availableBranches={availableRunBranches}
               currentProjectBranch={currentProjectBranch}
@@ -3274,9 +4166,10 @@ export const App = () => {
               projectRunStats={projectRunStats}
               busy={busy}
               onSubmitRun={(payload) => void submitRun(payload)}
-              onCreateTask={(input) => void createProjectTask(selectedProject.project.id, input)}
-              onDeleteTask={(taskId) => void deleteProjectTask(taskId)}
-              onStartTask={(prompt, modelId) => void submitRunFromPrompt(prompt, modelId)}
+              onCreateTask={(input) => createProjectTask(selectedProject.project.id, input)}
+              onUpdateTask={(taskId, input) => updateProjectTask(taskId, input)}
+              onDeleteTask={(taskId) => deleteProjectTask(taskId)}
+              onStartTask={(prompt, modelId) => submitRunFromPrompt(prompt, modelId)}
               onGenerateInsight={(kind, modelId) => generateProjectInsight(selectedProject.project.id, kind, modelId)}
               onSetRunForLater={(runId) => void setRunForLater(runId)}
               onRestoreRunFromForLater={(runId) => void restoreRunFromForLater(runId)}
@@ -3300,43 +4193,46 @@ export const App = () => {
               onLabSettingsChange={(settings) => void updateProjectLabSettings(selectedProject.project.id, settings)}
               onRunProjectLab={(input) =>
                 void handleAction(async () => {
-                  if (!easycode) {
+                  if (!buildwarden) {
                     throw new Error("The Electron desktop bridge is unavailable.");
                   }
-                  await easycode.runProjectLab({
+                  await buildwarden.runProjectLab({
                     projectId: selectedProject.project.id,
                     mode: input.mode,
                     baseBranch: input.baseBranch,
+                    implementationModelId: input.implementationModelId,
+                    reviewModelId: input.reviewModelId,
                     origin: "manual",
                   });
                   await loadSnapshot();
                 })
               }
-              onStartProjectLabImplementation={(threadId) =>
+              onDeleteProjectLabThread={(threadId) =>
                 void handleAction(async () => {
-                  if (!easycode) {
+                  if (!buildwarden) {
                     throw new Error("The Electron desktop bridge is unavailable.");
                   }
-                  await easycode.startProjectLabImplementation(threadId);
+                  await buildwarden.deleteProjectLabThread(threadId);
                   await loadSnapshot();
                 })
               }
-                onDeleteProjectLabThread={(threadId) =>
-                  void handleAction(async () => {
-                    if (!easycode) {
-                      throw new Error("The Electron desktop bridge is unavailable.");
-                    }
-                    await easycode.deleteProjectLabThread(threadId);
-                    await loadSnapshot();
-                  })
-                }
-                onOpenProjectLabImplementation={(runId) => void handleRunSelect(selectedProject.project.id, runId)}
-              />
+              onOpenProjectLabImplementation={(runId) => void handleRunSelect(selectedProject.project.id, runId)}
+              onBranchesChanged={loadProjectBranches}
+              onDeleteProject={() => void deleteProject(selectedProject.project.id)}
+              reviewRequestTarget={reviewRequestTarget?.projectId === selectedProject.project.id ? reviewRequestTarget : null}
+            />
               ) : (
                 <Card className="p-8 text-center">
                   <p className="text-lg font-medium">No project selected</p>
                   <p className="mt-2 text-sm text-zinc-500">Open Settings to add your first project, provider, and model.</p>
-                  <Button className="mt-4" variant="secondary" onClick={() => setSettingsOpen(true)}>
+                  <Button
+                    className="mt-4"
+                    variant="secondary"
+                    onClick={() => {
+                      setAllRunsSelected(false);
+                      setSettingsOpen(true);
+                    }}
+                  >
                     Open settings
                   </Button>
                 </Card>
@@ -3344,516 +4240,87 @@ export const App = () => {
             </div>
           )}
 
+          </Suspense>
         </section>
         </main>
+        </div>
       </div>
 
-      {Object.keys(pendingDeleteRunIds).length > 0 ? (
-        <div
-          className="fixed bottom-6 left-1/2 z-[65] flex max-w-[min(90vw,24rem)] -translate-x-1/2 items-center gap-2 rounded-full border border-cyan-500/35 bg-zinc-950/95 px-4 py-2 text-sm text-cyan-100 shadow-lg backdrop-blur"
-          role="status"
-          aria-live="polite"
-        >
-          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-cyan-400" aria-hidden />
-          <span>
-            {Object.keys(pendingDeleteRunIds).length === 1
-              ? "Deleting runâ€¦"
-              : `Deleting ${Object.keys(pendingDeleteRunIds).length} runsâ€¦`}
-          </span>
-        </div>
-      ) : null}
+      <AppNotifications
+        busy={busy}
+        pendingDeleteRunCount={Object.keys(pendingDeleteRunIds).length}
+        visibleShellApprovals={visibleShellApprovals}
+        shellApprovalQueueLength={shellApprovalQueue.length}
+        queuedShellApprovalCount={queuedShellApprovalCount}
+        visibleShellApprovalStartedAtById={visibleShellApprovalStartedAtById}
+        getShellApprovalTarget={getShellApprovalTarget}
+        onOpenShellApprovalRun={(request) => void openShellApprovalRun(request)}
+        onRespondToShellApproval={(request, decision) => void respondToShellApproval(request, decision)}
+        error={error}
+        selectedProjectName={selectedProject?.project.name ?? null}
+        detachedCheckoutBranch={detachedCheckoutBranch}
+        availableRunBranches={availableRunBranches}
+        projectCheckoutBusy={projectCheckoutBusy}
+        onDetachedCheckoutBranchChange={setDetachedCheckoutBranch}
+        onSubmitCheckoutDetachedProjectBranch={() => void submitCheckoutDetachedProjectBranch()}
+        onDismissError={() => {
+          setError(null);
+          setDetachedCheckoutBranch("");
+        }}
+        appWarning={appWarning}
+        onDismissAppWarning={() => setAppWarning(null)}
+        projectForgeRequestToasts={projectForgeRequestToasts}
+        onOpenProjectForgeRequest={openProjectForgeRequest}
+        onDismissProjectForgeRequestToast={dismissProjectForgeRequestToast}
+      />
 
-      {visibleShellApprovals.length > 0 ? (
-        <div
-          className="fixed bottom-4 right-4 z-[20040] flex w-[calc(100vw-2rem)] max-w-xl flex-col gap-2"
-          role="region"
-          aria-live="assertive"
-          aria-label="Shell command approvals"
-        >
-          {visibleShellApprovals.map((request, index) => {
-            const target = getShellApprovalTarget(request);
-            const visibleStartedAt = visibleShellApprovalStartedAtById[request.requestId] ?? shellApprovalNow;
-            const secondsRemaining = Math.max(0, Math.ceil((visibleStartedAt + 30_000 - shellApprovalNow) / 1000));
-
-            return (
-              <Card
-                key={request.requestId}
-                className="border-amber-500/35 bg-zinc-950/96 p-3 shadow-2xl shadow-amber-950/25 backdrop-blur"
-              >
-                <div className="flex flex-col gap-2.5">
-                  <div className="flex items-start gap-2.5">
-                    <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-1.5 text-amber-300">
-                      <SquareTerminal className="h-3.5 w-3.5" aria-hidden />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <p className="truncate text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-300/90">
-                          Shell approval needed
-                        </p>
-                        <span className="shrink-0 rounded-full border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-100">
-                          {secondsRemaining}s left
-                        </span>
-                        {visibleShellApprovals.length > 1 ? (
-                          <span className="shrink-0 rounded-full border border-zinc-700 bg-zinc-900/80 px-1.5 py-0.5 text-[10px] text-zinc-400">
-                            {index + 1}/{shellApprovalQueue.length}
-                          </span>
-                        ) : null}
-                      </div>
-                      <p className="mt-0.5 truncate text-sm font-medium text-zinc-100" title={target?.run.prompt ?? undefined}>
-                        {target?.run.prompt ?? "Agent run is waiting for a command decision"}
-                      </p>
-                    </div>
-                  </div>
-
-                  <pre className="app-scrollbar max-h-20 overflow-auto rounded-md border border-zinc-800 bg-zinc-950/90 px-2.5 py-2 text-[11px] leading-relaxed text-zinc-200">
-                    {request.command}
-                  </pre>
-
-                  <div className="flex flex-col gap-2">
-                    <p className="text-[11px] leading-snug text-zinc-500">
-                      Outside the safe allowlist. Auto-denies if no decision is made.
-                    </p>
-                    <div className="flex flex-wrap items-center justify-end gap-1.5">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        className="h-8 gap-1.5 border-cyan-500/25 bg-cyan-500/10 px-2.5 text-xs text-cyan-100 hover:bg-cyan-500/15"
-                        onClick={() => void openShellApprovalRun(request)}
-                        disabled={busy}
-                      >
-                        <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                        Go to run
-                      </Button>
-                      <Button type="button" variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={() => void respondToShellApproval(request, "deny")} disabled={busy}>
-                        Deny
-                      </Button>
-                      <Button type="button" variant="secondary" size="sm" className="h-8 px-2.5 text-xs" onClick={() => void respondToShellApproval(request, "allow-once")} disabled={busy}>
-                        Allow once
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        className="h-8 px-2.5 text-xs"
-                        onClick={() => void respondToShellApproval(request, "allow-for-run")}
-                        disabled={busy}
-                        title="Remember this exact command until the run ends"
-                      >
-                        For this run
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        className="h-8 gap-1.5 px-2.5 text-xs"
-                        onClick={() => void respondToShellApproval(request, "allow-always")}
-                        disabled={busy}
-                        title="Adds an exact-match regex for this command to Settings"
-                      >
-                        <ShieldCheck className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                        Always allow
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </Card>
-            );
-          })}
-          {queuedShellApprovalCount > 0 ? (
-            <div className="self-end rounded-full border border-amber-500/25 bg-zinc-950/95 px-3 py-1 text-[11px] font-medium text-amber-100 shadow-lg backdrop-blur">
-              {queuedShellApprovalCount} more approval{queuedShellApprovalCount === 1 ? "" : "s"} queued
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      {error ? (
-        <div className="fixed right-4 top-14 z-[20050] w-[calc(100vw-2rem)] max-w-md">
-          <Card className="border-rose-500/40 bg-zinc-950/95 p-4 shadow-2xl shadow-rose-950/30 backdrop-blur">
-            <div className="flex items-start gap-3">
-              <div className="mt-0.5 rounded-full border border-rose-500/30 bg-rose-500/10 p-2 text-rose-300">
-                <AlertTriangle className="h-4 w-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-xs uppercase tracking-[0.25em] text-rose-300/80">Error</p>
-                {isDetachedHeadProjectErrorMessage(error) && selectedProject ? (
-                  <p className="mt-1.5 truncate text-sm font-medium text-zinc-100" title={selectedProject.project.name}>
-                    Project: {selectedProject.project.name}
-                  </p>
-                ) : null}
-                <p className="mt-2 text-sm text-rose-100">
-                  {isDetachedHeadProjectErrorMessage(error) ? GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE : error}
-                </p>
-                {isDetachedHeadProjectErrorMessage(error) ? (
-                  <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-stretch">
-                    <label className="sr-only" htmlFor="error-detached-branch">
-                      Branch to check out
-                    </label>
-                    <select
-                      id="error-detached-branch"
-                      className={cn(
-                        "min-h-10 min-w-0 flex-1 rounded-lg border border-rose-500/25 bg-zinc-900 px-3 py-2 text-sm text-rose-50",
-                        "focus:border-rose-400/50 focus:outline-none focus:ring-1 focus:ring-rose-500/30",
-                      )}
-                      value={detachedCheckoutBranch}
-                      onChange={(event) => setDetachedCheckoutBranch(event.target.value)}
-                      disabled={projectCheckoutBusy || availableRunBranches.length === 0}
-                    >
-                      {availableRunBranches.map((name) => (
-                        <option key={name} value={name}>
-                          {name}
-                        </option>
-                      ))}
-                    </select>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      className="shrink-0 border-rose-500/30 bg-rose-950/50 text-rose-100 hover:bg-rose-950/80"
-                      disabled={projectCheckoutBusy || !detachedCheckoutBranch.trim()}
-                      onClick={() => void submitCheckoutDetachedProjectBranch()}
-                    >
-                      {projectCheckoutBusy ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-                          Checking outâ€¦
-                        </>
-                      ) : (
-                        "Check out branch"
-                      )}
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-              <button
-                type="button"
-                className="rounded-lg border border-zinc-800 bg-zinc-900/80 p-1.5 text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
-                onClick={() => {
-                  setError(null);
-                  setDetachedCheckoutBranch("");
-                }}
-                aria-label="Dismiss error notification"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-          </Card>
-        </div>
-      ) : null}
-
-      {appWarning ? (
-        <div className="fixed right-4 top-14 z-[20040] w-[calc(100vw-2rem)] max-w-md">
-          <Card className="border-amber-500/40 bg-zinc-950/95 p-4 shadow-2xl shadow-amber-950/30 backdrop-blur">
-            <div className="flex items-start gap-3">
-              <div className="mt-0.5 rounded-full border border-amber-500/30 bg-amber-500/10 p-2 text-amber-300">
-                <AlertTriangle className="h-4 w-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-xs uppercase tracking-[0.25em] text-amber-300/80">Warning</p>
-                <p className="mt-1.5 text-sm font-medium text-zinc-100">{appWarning.title}</p>
-                <p className="mt-2 text-sm text-amber-100">{appWarning.message}</p>
-                {appWarning.detail ? (
-                  <pre className="app-scrollbar mt-2 max-h-24 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-amber-500/20 bg-zinc-900/80 p-2 text-xs text-amber-50/90">
-                    {appWarning.detail}
-                  </pre>
-                ) : null}
-              </div>
-              <button
-                type="button"
-                className="rounded-lg border border-zinc-800 bg-zinc-900/80 p-1.5 text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
-                onClick={() => setAppWarning(null)}
-                aria-label="Dismiss warning notification"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-          </Card>
-        </div>
-      ) : null}
-
-      {commitDialogRun ? (
-        <div
-          className="absolute inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-6 backdrop-blur-sm"
-          onKeyDown={handleCommitDialogKeyDown}
-        >
-          <Card className="w-full max-w-xl p-5">
-            <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Create commit</p>
-            <h3 className="mt-2 text-xl font-semibold">{commitDialogRun.prompt}</h3>
-            <p className="mt-1 text-sm text-zinc-500">
-              Choose the commit message for this run&apos;s {commitDialogRun.workspaceType === "local" ? "local repository" : "worktree"} changes.
-              <span className="mt-1 block text-[11px] text-zinc-600">Ctrl+Enter (âŒ˜+Enter on Mac) to commit.</span>
-            </p>
-            <div className="relative mt-4">
-              <Textarea
-                className="min-h-32 resize-y pr-11 font-mono text-sm leading-relaxed"
-                value={commitMessage}
-                onChange={(event) => setCommitMessage(event.target.value)}
-                placeholder={`Message (Ctrl+Enter to commit on "${commitDialogRun.branchName}")`}
-                autoFocus
-                rows={6}
-                spellCheck={false}
-              />
-              <button
-                type="button"
-                className="absolute right-2 top-2 rounded-md border border-zinc-700 bg-zinc-900/95 p-2 text-zinc-400 shadow-sm transition hover:border-cyan-500/40 hover:text-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
-                title="Generate commit message with AI"
-                aria-label="Generate commit message with AI"
-                disabled={busy || commitSuggestBusy}
-                onClick={() => void suggestCommitMessageWithAi()}
-              >
-                {commitSuggestBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Sparkles className="h-4 w-4" aria-hidden />}
-              </button>
-            </div>
-            <div className="mt-4 flex items-center justify-end gap-3">
-              <Button variant="ghost" onClick={closeCommitDialog}>
-                Cancel
-              </Button>
-              <Button onClick={() => void submitCommitRun()} disabled={busy || !commitMessage.trim()}>
-                Create commit
-              </Button>
-            </div>
-          </Card>
-        </div>
-      ) : null}
-
-      {publishDialogRun && publishOptions ? (
-        <div
-          className="absolute inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-6 backdrop-blur-sm"
-          onKeyDown={handlePublishDialogKeyDown}
-        >
-          <Card className="w-full max-w-xl p-5">
-            <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Create merge request / pull request</p>
-            <h3 className="mt-2 text-xl font-semibold">{publishDialogRun.prompt}</h3>
-            <p className="mt-1 text-sm text-zinc-500">Choose the source branch, target branch, and review the generated title before publishing.</p>
-            <div className="mt-4 space-y-3">
-              <label className="block text-sm">
-                <span className="mb-1 block text-zinc-300">Source branch</span>
-                <select
-                  className="h-10 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-sm"
-                  value={pullRequestSourceBranchMode}
-                  onChange={(event) => setPullRequestSourceBranchMode(event.target.value === "custom" ? "custom" : "worktree")}
-                  onKeyDown={handlePublishDialogKeyDown}
-                >
-                  <option value="worktree">Keep worktree branch ({publishOptions.defaultSourceBranch})</option>
-                  <option value="custom">Create and use a custom branch</option>
-                </select>
-              </label>
-              {pullRequestSourceBranchMode === "custom" ? (
-                <label className="block text-sm">
-                  <span className="mb-1 block text-zinc-300">Custom source branch name</span>
-                  <Input
-                    value={pullRequestSourceBranchName}
-                    onChange={(event) => setPullRequestSourceBranchName(event.target.value)}
-                    onKeyDown={handlePublishDialogKeyDown}
-                    placeholder="feature/my-custom-branch"
-                    autoFocus
-                  />
-                </label>
-              ) : null}
-              <label className="block text-sm">
-                <span className="mb-1 block text-zinc-300">Target branch</span>
-                <select
-                  className="h-10 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-sm"
-                  value={pullRequestTargetBranch}
-                  onChange={(event) => setPullRequestTargetBranch(event.target.value)}
-                  onKeyDown={handlePublishDialogKeyDown}
-                >
-                  {publishOptions.targetBranches.map((branch) => (
-                    <option key={branch} value={branch}>
-                      {branch}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block text-sm">
-                <span className="mb-1 block text-zinc-300">Merge request / pull request title</span>
-                <Input
-                  value={pullRequestTitle}
-                  onChange={(event) => setPullRequestTitle(event.target.value)}
-                  onKeyDown={handlePublishDialogKeyDown}
-                  placeholder="Merge request / pull request title"
-                  autoFocus={pullRequestSourceBranchMode !== "custom"}
-                />
-              </label>
-              <label className="block text-sm">
-                <div className="mb-1 flex items-center justify-between gap-3">
-                  <span className="block text-zinc-300">Merge request / pull request description</span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 px-2 text-xs"
-                    onClick={() => void generatePullRequestDescription()}
-                    disabled={busy || pullRequestDescriptionBusy || !pullRequestTitle.trim() || !pullRequestTargetBranch.trim()}
-                  >
-                    {pullRequestDescriptionBusy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
-                    Generate
-                  </Button>
-                </div>
-                <Textarea
-                  value={pullRequestDescription}
-                  onChange={(event) => setPullRequestDescription(event.target.value)}
-                  onKeyDown={handlePublishDialogKeyDown}
-                  placeholder="Merge request / pull request description"
-                  className="min-h-36"
-                />
-              </label>
-            </div>
-            <div className="mt-4 flex items-center justify-end gap-3">
-              <Button variant="ghost" onClick={closePublishDialog}>
-                Cancel
-              </Button>
-              <Button
-                onClick={() => void submitPullRequest()}
-                disabled={
-                  busy ||
-                  !pullRequestTitle.trim() ||
-                  !pullRequestTargetBranch.trim() ||
-                  (pullRequestSourceBranchMode === "custom" && !pullRequestSourceBranchName.trim())
-                }
-              >
-                Create MR / PR
-              </Button>
-            </div>
-          </Card>
-        </div>
-      ) : null}
-
-      {branchPublishDialogRun ? (
-        <div
-          className="absolute inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-6 backdrop-blur-sm"
-          onKeyDown={handleBranchPublishDialogKeyDown}
-        >
-          <Card className="w-full max-w-md p-5">
-            <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">
-              {branchPublishMode === "local" ? "Create local branch" : "Publish branch"}
-            </p>
-            <h3 className="mt-2 text-xl font-semibold">{branchPublishDialogRun.prompt}</h3>
-            <label className="mt-4 block text-sm">
-              <span className="mb-1 block text-zinc-300">Branch name</span>
-              <Input
-                value={branchPublishName}
-                onChange={(event) => setBranchPublishName(event.target.value)}
-                placeholder="feature/my-custom-branch"
-                autoFocus
-              />
-            </label>
-            <div className="mt-4 flex items-center justify-end gap-3">
-              <Button variant="ghost" onClick={closeBranchPublishDialog}>
-                Cancel
-              </Button>
-              <Button
-                onClick={() => void publishBranch()}
-                disabled={
-                  busy ||
-                  !branchPublishName.trim() ||
-                  (branchPublishMode === "local" &&
-                    branchPublishDialogRun.workspaceType !== "worktree" &&
-                    branchPublishName.trim() === branchPublishDialogRun.branchName)
-                }
-              >
-                {branchPublishMode === "local" ? "Create local branch" : "Publish branch"}
-              </Button>
-            </div>
-          </Card>
-        </div>
-      ) : null}
-
-      {continueDialogRun ? (
-        <div
-          className="absolute inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-6 backdrop-blur-sm"
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              closeContinueRunDialog();
-              return;
-            }
-            if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-              event.preventDefault();
-              void submitContinueRun();
-            }
-          }}
-        >
-          <Card className="w-full max-w-xl p-5">
-            <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Continue run</p>
-            <h3 className="mt-2 text-xl font-semibold">{continueDialogRun.prompt}</h3>
-            <p className="mt-1 text-sm text-zinc-500">
-              Start a new run from branch <span className="font-medium text-zinc-300">{continueDialogRun.branchName}</span> in a fresh worktree.
-            </p>
-            <div className="mt-4 space-y-3">
-              <label className="block text-sm">
-                <span className="mb-1 block text-zinc-300">Continuation prompt</span>
-                <Textarea
-                  value={continuePrompt}
-                  onChange={(event) => setContinuePrompt(event.target.value)}
-                  placeholder="Continue from the current state and..."
-                  className="min-h-28"
-                  autoFocus
-                />
-              </label>
-              <label className="block text-sm">
-                <span className="mb-1 block text-zinc-300">Model</span>
-                <select
-                  className="h-10 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-sm"
-                  value={continueModelId}
-                  onChange={(event) => setContinueModelId(event.target.value)}
-                >
-                  {configuredRunModelOptions.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-sm text-zinc-300">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 rounded border border-zinc-700 bg-zinc-950 accent-cyan-400"
-                  checked={continueIncludeWorkspaceChanges}
-                  onChange={(event) => setContinueIncludeWorkspaceChanges(event.target.checked)}
-                />
-                <span>Include the source run&apos;s current workspace changes</span>
-              </label>
-            </div>
-            <div className="mt-4 flex items-center justify-end gap-3">
-              <Button variant="ghost" onClick={closeContinueRunDialog}>
-                Cancel
-              </Button>
-              <Button onClick={() => void submitContinueRun()} disabled={busy || !continuePrompt.trim() || !continueModelId}>
-                Start continuation
-              </Button>
-            </div>
-          </Card>
-        </div>
-      ) : null}
-
-      {confirmDialog ? (
-        <div
-          className="absolute inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-6 backdrop-blur-sm"
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              resolveConfirmation(false);
-            }
-          }}
-        >
-          <Card className="w-full max-w-lg p-5">
-            <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Confirm action</p>
-            <h3 className="mt-2 text-xl font-semibold text-zinc-100">{confirmDialog.title}</h3>
-            <p className="mt-3 text-sm leading-relaxed text-zinc-400">{confirmDialog.message}</p>
-            <div className="mt-5 flex items-center justify-end gap-3">
-              <Button variant="ghost" onClick={() => resolveConfirmation(false)} autoFocus>
-                Cancel
-              </Button>
-              <Button
-                variant={confirmDialog.confirmVariant ?? "default"}
-                onClick={() => resolveConfirmation(true)}
-              >
-                {confirmDialog.confirmLabel}
-              </Button>
-            </div>
-          </Card>
-        </div>
-      ) : null}
+      <RunActionDialogs
+        busy={busy}
+        commitDialogRun={commitDialogRun}
+        commitMessage={commitMessage}
+        commitSuggestBusy={commitSuggestBusy}
+        onCommitMessageChange={setCommitMessage}
+        onCommitDialogKeyDown={handleCommitDialogKeyDown}
+        onSuggestCommitMessage={() => void suggestCommitMessageWithAi()}
+        onSubmitCommitRun={() => void submitCommitRun()}
+        onCloseCommitDialog={closeCommitDialog}
+        publishDialogRun={publishDialogRun}
+        publishOptions={publishOptions}
+        pullRequestSourceBranchMode={pullRequestSourceBranchMode}
+        pullRequestSourceBranchName={pullRequestSourceBranchName}
+        pullRequestTargetBranch={pullRequestTargetBranch}
+        pullRequestTitle={pullRequestTitle}
+        pullRequestDescription={pullRequestDescription}
+        pullRequestDescriptionBusy={pullRequestDescriptionBusy}
+        onPullRequestSourceBranchModeChange={setPullRequestSourceBranchMode}
+        onPullRequestSourceBranchNameChange={setPullRequestSourceBranchName}
+        onPullRequestTargetBranchChange={setPullRequestTargetBranch}
+        onPullRequestTitleChange={setPullRequestTitle}
+        onPullRequestDescriptionChange={setPullRequestDescription}
+        onPublishDialogKeyDown={handlePublishDialogKeyDown}
+        onGeneratePullRequestDescription={() => void generatePullRequestDescription()}
+        onSubmitPullRequest={() => void submitPullRequest()}
+        onClosePublishDialog={closePublishDialog}
+        branchPublishDialogRun={branchPublishDialogRun}
+        branchPublishName={branchPublishName}
+        branchPublishMode={branchPublishMode}
+        onBranchPublishNameChange={setBranchPublishName}
+        onBranchPublishDialogKeyDown={handleBranchPublishDialogKeyDown}
+        onPublishBranch={() => void publishBranch()}
+        onCloseBranchPublishDialog={closeBranchPublishDialog}
+        continueDialogRun={continueDialogRun}
+        continuePrompt={continuePrompt}
+        continueModelId={continueModelId}
+        continueIncludeWorkspaceChanges={continueIncludeWorkspaceChanges}
+        continueModelOptions={configuredRunModelOptions}
+        onContinuePromptChange={setContinuePrompt}
+        onContinueModelIdChange={setContinueModelId}
+        onContinueIncludeWorkspaceChangesChange={setContinueIncludeWorkspaceChanges}
+        onSubmitContinueRun={() => void submitContinueRun()}
+        onCloseContinueRunDialog={closeContinueRunDialog}
+        confirmDialog={confirmDialog}
+        onResolveConfirmation={resolveConfirmation}
+      />
 
     </div>
   );

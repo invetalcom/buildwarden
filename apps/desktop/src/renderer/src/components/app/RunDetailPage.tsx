@@ -1,36 +1,41 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import {
   appendChatAttachmentFiles,
-  extractAttachmentNamesFromMetadata,
-  extractAttachmentPayloadsFromMetadata,
-  ChatAttachmentPayload,
-  KeyboardShortcutId,
-  RunDetail,
-  RunRecord,
-  RunWorkspacePanelId,
-  RunWorkspaceTileSize,
-  ShellApprovalDecision,
-} from "@easycode/shared";
+  type ChatAttachmentPayload,
+  type KeyboardShortcutId,
+  type RunDetail,
+  type RunNoteRecord,
+  type RunNoteStatus,
+  type RunRecord,
+  type RunTimelineDensity,
+  type RunUserInputAnswers,
+  type RunWorkspacePanelId,
+  type RunWorkspaceTileSize,
+  type ShellApprovalDecision,
+} from "@buildwarden/shared";
 import {
   Bot,
   Check,
   Copy,
   ExternalLink,
-  ChevronDown,
-  ChevronRight,
   GitBranch,
   Globe,
+  ListTodo,
   Loader2,
   Maximize2,
   MessageSquareText,
   Minimize2,
   PanelBottom,
   PanelRight,
+  Pencil,
   Plus,
   RotateCcw,
   ShieldCheck,
   SquareTerminal,
+  StickyNote,
+  Target,
   Terminal,
+  Trash2,
   X,
 } from "lucide-react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
@@ -38,15 +43,14 @@ import { buildVisibleConversationHistory } from "../../lib/context-window-estima
 import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
 import { ComposerSelect, RunComposer } from "./RunComposer";
 import { RunEmbeddedBrowser } from "./RunEmbeddedBrowser";
-import { StoredChatAttachments } from "./StoredChatAttachments";
+import { RunActivityTimeline } from "./RunActivityTimeline";
 import { RunWorktreeTerminal } from "./RunWorktreeTerminal";
-import { ActivityMarkdownOrGitDiff } from "./activity-message-body";
 import { DiffReviewPanel, type DiffReviewPanelState } from "./diff-review-panel";
 import {
   GitDiffPreview,
   type GitDiffPreviewHandle,
 } from "./git-diff-preview";
-import { looksLikeGitDiff, summarizeDiffStats } from "./git-diff-utils";
+import { summarizeDiffStats } from "./git-diff-utils";
 import { cn } from "../../lib/cn";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -59,15 +63,15 @@ type TilePanelId = RunWorkspacePanelId;
 // Kept for interface compatibility with the shared type.
 type TileLayoutState = Record<TilePanelId, RunWorkspaceTileSize>;
 
-type SecondaryPanelId = "diff" | "terminal" | "browser";
+type SecondaryPanelId = "diff" | "terminal" | "browser" | "notes";
 type SecondaryPanelPosition = "right" | "bottom";
 
 type RunDetailModelOption = {
   id: string;
   label: string;
   modelId: string;
-  providerType: import("@easycode/shared").ProviderType;
-  providerFamily: import("@easycode/shared").UnifiedProviderFamily | null;
+  providerType: import("@buildwarden/shared").ProviderType;
+  providerFamily: import("@buildwarden/shared").UnifiedProviderFamily | null;
 };
 
 const safeParseMetadata = (value: string) => {
@@ -104,81 +108,19 @@ const dedupeFinalSummarySteps = (steps: RunDetail["steps"]) => {
   return deduped;
 };
 
-const trimPreviouslyDisplayedReasoning = (current: string, previous: string | null) => {
-  if (!previous) {
-    return current;
-  }
-  if (current.startsWith(previous)) {
-    return current.slice(previous.length).trimStart();
-  }
-  const normalizedCurrent = normalizeAssistantOutputText(current);
-  const normalizedPrevious = normalizeAssistantOutputText(previous);
-  if (!normalizedPrevious || !normalizedCurrent.startsWith(normalizedPrevious)) {
-    return current;
-  }
-
-  const previousTokens = normalizedPrevious.split(" ").filter(Boolean).length;
-  if (previousTokens <= 0) {
-    return current;
-  }
-
-  let tokenCount = 0;
-  let cutIndex = 0;
-  for (let index = 0; index < current.length; index += 1) {
-    const char = current[index];
-    const prevChar = index > 0 ? current[index - 1] : "";
-    const startsToken = /\S/.test(char) && !/\S/.test(prevChar);
-    if (startsToken) {
-      tokenCount += 1;
-      if (tokenCount > previousTokens) {
-        cutIndex = index;
-        break;
-      }
-    }
-  }
-
-  return cutIndex > 0 ? current.slice(cutIndex).trimStart() : current;
-};
-
-const trimPreviouslyDisplayedAssistant = (current: string, previous: string | null) => {
-  if (!previous) {
-    return current;
-  }
-  if (current.startsWith(previous)) {
-    return current.slice(previous.length).trimStart();
-  }
-  const normalizedCurrent = normalizeAssistantOutputText(current);
-  const normalizedPrevious = normalizeAssistantOutputText(previous);
-  if (!normalizedPrevious || !normalizedCurrent.startsWith(normalizedPrevious)) {
-    return current;
-  }
-
-  const previousTokens = normalizedPrevious.split(" ").filter(Boolean).length;
-  if (previousTokens <= 0) {
-    return current;
-  }
-
-  let tokenCount = 0;
-  let cutIndex = 0;
-  for (let index = 0; index < current.length; index += 1) {
-    const char = current[index];
-    const prevChar = index > 0 ? current[index - 1] : "";
-    const startsToken = /\S/.test(char) && !/\S/.test(prevChar);
-    if (startsToken) {
-      tokenCount += 1;
-      if (tokenCount > previousTokens) {
-        cutIndex = index;
-        break;
-      }
-    }
-  }
-
-  return cutIndex > 0 ? current.slice(cutIndex).trimStart() : current;
-};
-
-const shouldAutoCollapseReasoning = (content: string) => {
-  const lineCount = content.split(/\r?\n/).length;
-  return lineCount > 7 || content.trim().length > 700;
+const formatRunDuration = (startedAt: string | null, finishedAt: string | null) => {
+  if (!startedAt || !finishedAt) return null;
+  const startedMs = Date.parse(startedAt);
+  const finishedMs = Date.parse(finishedAt);
+  if (!Number.isFinite(startedMs) || !Number.isFinite(finishedMs) || finishedMs < startedMs) return null;
+  const totalSeconds = Math.max(0, Math.round((finishedMs - startedMs) / 1000));
+  const seconds = totalSeconds % 60;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const minutes = totalMinutes % 60;
+  const hours = Math.floor(totalMinutes / 60);
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
 };
 
 const getLatestUserCommandOptions = (steps: RunDetail["steps"]) => {
@@ -191,311 +133,6 @@ const getLatestUserCommandOptions = (steps: RunDetail["steps"]) => {
   };
 };
 
-
-/** Tool names whose consecutive calls differ only by path/detail — batch into one compact row. */
-const TOOL_BATCH_MERGE_BY_PATH = new Set(["read_file"]);
-
-type ToolBatchSummarizedRow = {
-  toolName: string;
-  detail: string | null;
-  toolCallId?: string | null;
-  command?: string | null;
-  /** Populated when multiple read_file (etc.) paths are merged into one row. */
-  paths?: string[];
-  count: number;
-  failed: boolean;
-  shellStreaming?: boolean;
-  preview: string | null;
-  writeFileDiff: string | null;
-  createdAt: string;
-};
-
-const ActivityToolBatchRow = ({
-  item,
-  itemIndex,
-  run,
-  busy,
-  onCancelRunShell,
-}: {
-  item: ToolBatchSummarizedRow;
-  itemIndex: number;
-  run: RunRecord;
-  busy: boolean;
-  onCancelRunShell: (run: RunRecord, toolCallId: string) => void;
-}) => {
-  const [writeFileDiffExpanded, setWriteFileDiffExpanded] = useState(false);
-  const shellLineCount = item.toolName === "run_shell" && item.preview ? item.preview.split(/\r?\n/).length : 0;
-  const hasInlineDiff = !item.failed && Boolean(item.writeFileDiff) && looksLikeGitDiff(item.writeFileDiff ?? "");
-  const canCancelShell =
-    item.toolName === "run_shell" &&
-    item.shellStreaming === true &&
-    typeof item.toolCallId === "string" &&
-    ["queued", "preparing", "running"].includes(run.status);
-
-  return (
-    <div
-      key={`${item.toolName}-${item.detail ?? "detail"}-${itemIndex}`}
-      className={`min-w-0 w-full rounded-md px-2 py-1 ${item.failed ? "bg-rose-500/[0.07]" : "bg-zinc-900/50"}`}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${item.failed ? "bg-rose-400" : "bg-cyan-400"}`} />
-            <p className="truncate text-[11px] text-zinc-200">{item.toolName}</p>
-            {item.toolName === "run_shell" && item.shellStreaming ? (
-              <span className="rounded-full border border-amber-500/25 bg-amber-500/10 px-1.5 py-0 text-[9px] uppercase tracking-wide text-amber-300">
-                Live
-              </span>
-            ) : null}
-            {item.count > 1 ? <span className="text-[10px] text-zinc-500">×{item.count}</span> : null}
-          </div>
-          {item.paths && item.paths.length > 0 ? (
-            <details className="group mt-0.5 w-full max-w-full">
-              <summary className="flex cursor-pointer list-none items-center gap-0.5 text-[10px] text-zinc-500 hover:text-zinc-300 [&::-webkit-details-marker]:hidden">
-                <ChevronDown className="h-3 w-3 shrink-0 text-zinc-600 transition group-open:rotate-180" />
-                <span>
-                  {item.paths.length} file{item.paths.length === 1 ? "" : "s"}
-                </span>
-              </summary>
-              <ul className="app-scrollbar mt-1 max-h-40 list-none grid grid-cols-1 gap-x-4 gap-y-0.5 overflow-y-auto border-l border-zinc-700/50 py-0.5 pl-2 font-mono text-[10px] leading-snug text-zinc-500 sm:max-h-48 sm:grid-cols-2 xl:grid-cols-3">
-                {item.paths.map((p, pi) => (
-                  <li key={`${String(pi)}-${p.slice(0, 80)}`} className="min-w-0 break-words" title={p}>
-                    {p}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          ) : item.detail ? (
-            <p className="mt-0.5 truncate text-[10px] text-zinc-500">{item.detail}</p>
-          ) : null}
-          {item.toolName === "run_shell" && item.command ? (
-            <p className="mt-1 truncate rounded border border-zinc-800/80 bg-zinc-950/80 px-1.5 py-1 font-mono text-[10px] text-zinc-300">
-              {item.command}
-            </p>
-          ) : null}
-        </div>
-        <div className="flex shrink-0 flex-col items-end gap-1">
-          <span className="text-[10px] text-zinc-600">{new Date(item.createdAt).toLocaleTimeString()}</span>
-          {canCancelShell ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-6 border-rose-500/30 bg-rose-500/10 px-2 text-[10px] text-rose-200 hover:bg-rose-500/20"
-              disabled={busy}
-              onClick={() => onCancelRunShell(run, item.toolCallId!)}
-            >
-              Cancel
-            </Button>
-          ) : null}
-          {hasInlineDiff ? (
-            <button
-              type="button"
-              className="rounded px-0.5 py-0.5 text-zinc-500 transition hover:bg-zinc-800/70 hover:text-zinc-300"
-              onClick={() => setWriteFileDiffExpanded((current) => !current)}
-              aria-label={writeFileDiffExpanded ? "Collapse diff" : "Expand diff"}
-              title={writeFileDiffExpanded ? "Collapse diff" : "Expand diff"}
-            >
-              {writeFileDiffExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-            </button>
-          ) : null}
-        </div>
-      </div>
-      {item.preview ? (
-        item.toolName === "run_shell" ? (
-          <details className="group mt-1 w-full max-w-full" open={item.shellStreaming ? true : undefined}>
-            <summary className="flex cursor-pointer list-none items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-300 [&::-webkit-details-marker]:hidden">
-              <ChevronDown className="h-3 w-3 shrink-0 text-zinc-600 transition group-open:rotate-180" />
-              <Terminal className="h-3 w-3 shrink-0 text-zinc-600" aria-hidden />
-              <span className="font-medium text-zinc-400">{item.shellStreaming ? "Live output" : "Console output"}</span>
-              <span className="text-zinc-600">
-                · {shellLineCount} line{shellLineCount === 1 ? "" : "s"}
-              </span>
-            </summary>
-            <pre
-              className={cn(
-                "app-scrollbar mt-1 max-h-[min(70vh,36rem)] overflow-auto whitespace-pre-wrap break-words rounded border p-1.5 font-mono text-[10px] leading-snug text-zinc-300",
-                item.failed ? "border-rose-500/20 bg-zinc-950/80" : "border-zinc-700/40 bg-zinc-950/80",
-              )}
-            >
-              {item.preview}
-            </pre>
-          </details>
-        ) : (
-          <pre
-            className={cn(
-              "app-scrollbar mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-words rounded border border-rose-500/20 bg-zinc-950/80 p-1.5 font-mono text-[10px] leading-snug text-zinc-300",
-            )}
-          >
-            {item.preview}
-          </pre>
-        )
-      ) : null}
-      {hasInlineDiff && writeFileDiffExpanded && item.writeFileDiff ? (
-        <div className="mt-1.5 min-w-0 w-full">
-          <GitDiffPreview
-            diffText={item.writeFileDiff}
-            emptyMessage="Could not parse file diff."
-            compact
-            viewType="unified"
-            activityEmphasis
-            hideFileHeader
-            alwaysExpandedFileSections
-          />
-        </div>
-      ) : null}
-    </div>
-  );
-};
-
-const describeActivityDetail = (metadata: Record<string, unknown>) =>
-  ((metadata.source === "user"
-    ? metadata.commandType === "follow-up"
-      ? "User follow-up command"
-      : "Initial user command"
-    : null) ??
-    metadata.path ??
-    metadata.command ??
-    metadata.query ??
-    metadata.toolName) as string | null;
-
-type SingleActivityEntry =
-  | {
-      kind: "single";
-      step: RunDetail["steps"][number];
-      metadata: Record<string, unknown>;
-    }
-  | {
-      kind: "tool";
-      callStep: RunDetail["steps"][number];
-      callMetadata: Record<string, unknown>;
-      resultStep?: RunDetail["steps"][number];
-      resultMetadata?: Record<string, unknown>;
-    };
-
-type ActivityGroupKey = "user" | "status" | "assistant";
-
-type ActivityEntry =
-  | SingleActivityEntry
-  | {
-      kind: "tool-batch";
-      items: Extract<SingleActivityEntry, { kind: "tool" }>[];
-    }
-  | {
-      kind: "single-group";
-      groupKey: ActivityGroupKey;
-      items: Extract<SingleActivityEntry, { kind: "single" }>[];
-    };
-
-const getConsecutiveMergeKey = (entry: Extract<SingleActivityEntry, { kind: "single" }>): ActivityGroupKey | null => {
-  const { step, metadata } = entry;
-  if (step.eventType === "error") return null;
-  if (metadata.source === "user") return "user";
-  if (step.eventType === "status") return "status";
-  /** Reasoning summaries are their own blocks, not merged with normal assistant output. */
-  if (metadata.assistantKind === "reasoning") return null;
-  const isAssistant = step.eventType === "output" || (step.eventType === "log" && metadata.source !== "user");
-  if (isAssistant) return "assistant";
-  return null;
-};
-
-type ActivityEntryPreMerge = Exclude<ActivityEntry, { kind: "single-group" }>;
-
-const normalizeShellCommandForActivity = (value: unknown) =>
-  typeof value === "string" ? value.replace(/\s+/g, " ").trim() : null;
-
-const getToolShellCommand = (entry: Extract<SingleActivityEntry, { kind: "tool" }>) =>
-  normalizeShellCommandForActivity(entry.callMetadata.command) ?? normalizeShellCommandForActivity(entry.resultMetadata?.command);
-
-const getApprovalShellCommand = (entry: Extract<SingleActivityEntry, { kind: "single" }>) =>
-  normalizeShellCommandForActivity(entry.metadata.command) ?? normalizeShellCommandForActivity(entry.step.content);
-
-const moveShellApprovalsBeforeMatchingTools = (entries: SingleActivityEntry[]): SingleActivityEntry[] => {
-  const out: SingleActivityEntry[] = [];
-
-  for (const entry of entries) {
-    if (entry.kind !== "single" || entry.metadata.requestKind !== "approval") {
-      out.push(entry);
-      continue;
-    }
-
-    const approvalCommand = getApprovalShellCommand(entry);
-    if (!approvalCommand) {
-      out.push(entry);
-      continue;
-    }
-
-    const matchingToolIndex = out.findLastIndex((candidate) => {
-      if (candidate.kind !== "tool") return false;
-      const toolName = candidate.callMetadata.toolName ?? candidate.resultMetadata?.toolName;
-      return toolName === "run_shell" && getToolShellCommand(candidate) === approvalCommand;
-    });
-
-    if (matchingToolIndex === -1) {
-      out.push(entry);
-      continue;
-    }
-
-    out.splice(matchingToolIndex, 0, entry);
-  }
-
-  return out;
-};
-
-const mergeConsecutiveSingles = (entries: ActivityEntryPreMerge[]): ActivityEntry[] => {
-  const out: ActivityEntry[] = [];
-  let run: Extract<SingleActivityEntry, { kind: "single" }>[] = [];
-  let runKey: ActivityGroupKey | null = null;
-
-  const flush = () => {
-    if (run.length === 0) return;
-    if (run.length === 1) {
-      out.push(run[0]!);
-    } else {
-      out.push({ kind: "single-group", groupKey: runKey!, items: [...run] });
-    }
-    run = [];
-    runKey = null;
-  };
-
-  for (const e of entries) {
-    if (e.kind === "tool-batch") {
-      flush();
-      out.push(e);
-      continue;
-    }
-    if (e.kind === "tool") {
-      flush();
-      out.push(e);
-      continue;
-    }
-    const k = getConsecutiveMergeKey(e);
-    if (k === null) {
-      flush();
-      out.push(e);
-      continue;
-    }
-    if (runKey !== null && k !== runKey) {
-      flush();
-    }
-    runKey = k;
-    run.push(e);
-  }
-  flush();
-  return out;
-};
-
-const runModeBadgeClassName = (mode: RunRecord["mode"]) => {
-  if (mode === "code") {
-    return "bg-cyan-500/10 text-cyan-300 ring-cyan-400/30";
-  }
-
-  if (mode === "plan") {
-    return "bg-violet-500/10 text-violet-300 ring-violet-400/30";
-  }
-
-  return "bg-zinc-500/10 text-zinc-300 ring-zinc-400/30";
-};
 
 export interface RunBrowserSessionState {
   draftUrl: string;
@@ -513,11 +150,13 @@ interface RunDetailPageProps {
   modelOptions: RunDetailModelOption[];
   keyboardShortcuts: Record<KeyboardShortcutId, string>;
   pendingShellApproval: { command: string; secondsRemaining: number } | null;
+  timelineDensity: RunTimelineDensity;
   /** Activity / diff / terminal / browser panel visibility. */
   showActivity: boolean;
   showDiff: boolean;
   showTerminal: boolean;
   showBrowser: boolean;
+  showNotes: boolean;
   /** Called when a panel should be toggled on or off from within the layout. */
   onTogglePanel: (panelId: TilePanelId) => void;
   /** Whether the secondary panel column is docked to the right or bottom. */
@@ -538,6 +177,7 @@ interface RunDetailPageProps {
   onCancelRun: (run: RunRecord) => void;
   onUndoRunToLastPrompt: (run: RunRecord) => void;
   onRecoverInterruptedRun: (run: RunRecord) => void;
+  onCreateProjectTask: (projectId: string, input: { title: string; prompt: string }) => void | Promise<void>;
   onFollowUpRun: (
     run: RunRecord,
     prompt: string,
@@ -548,6 +188,7 @@ interface RunDetailPageProps {
       reasoningEffort?: string;
       anthropicEffort?: string;
       yoloMode?: boolean;
+      goalText?: string | null;
     },
   ) => Promise<void>;
 }
@@ -559,10 +200,12 @@ export const RunDetailPage = ({
   modelOptions,
   keyboardShortcuts,
   pendingShellApproval,
+  timelineDensity,
   showActivity,
   showDiff,
   showTerminal,
   showBrowser,
+  showNotes,
   onTogglePanel,
   secondaryPanelPosition,
   onSecondaryPanelPositionChange,
@@ -577,10 +220,14 @@ export const RunDetailPage = ({
   onCancelRun,
   onUndoRunToLastPrompt,
   onRecoverInterruptedRun,
+  onCreateProjectTask,
   onFollowUpRun,
 }: RunDetailPageProps) => {
   const [followUpPrompt, setFollowUpPrompt] = useState("");
   const [followUpFiles, setFollowUpFiles] = useState<File[]>([]);
+  const [goalDraft, setGoalDraft] = useState(runDetail.run.goalText ?? "");
+  const [goalEditing, setGoalEditing] = useState(false);
+  const [goalSaving, setGoalSaving] = useState(false);
   const [selectedMode, setSelectedMode] = useState<RunRecord["mode"]>(runDetail.run.mode);
   const [selectedModelId, setSelectedModelId] = useState(runDetail.run.modelId);
   const [selectedReasoningEffort, setSelectedReasoningEffort] = useState("medium");
@@ -591,6 +238,12 @@ export const RunDetailPage = ({
   const [recoveryConfirmOpen, setRecoveryConfirmOpen] = useState(false);
   /** Once the user opens the terminal for this run, keep PTY + xterm mounted; toggling only hides the panel. */
   const [runTerminalPinned, setRunTerminalPinned] = useState(false);
+  const [runNotes, setRunNotes] = useState<RunNoteRecord[]>(runDetail.notes ?? []);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [noteBusyId, setNoteBusyId] = useState<string | null>(null);
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [noteEditDraft, setNoteEditDraft] = useState("");
+  const [selectionMenu, setSelectionMenu] = useState<{ x: number; y: number; text: string } | null>(null);
 
   // Split-pane state
   const [splitPct, setSplitPct] = useState(() => {
@@ -622,6 +275,8 @@ export const RunDetailPage = ({
     () => (diffPending ? { totalFiles: 0, totalAdditions: 0, totalDeletions: 0, files: [] } : summarizeDiffStats(runDetail.diff)),
     [diffPending, runDetail.diff],
   );
+  const openNotes = useMemo(() => runNotes.filter((note) => note.status === "open"), [runNotes]);
+  const closedNotes = useMemo(() => runNotes.filter((note) => note.status === "closed"), [runNotes]);
   const [selectedReviewModelId, setSelectedReviewModelId] = useState(runDetail.run.modelId);
   const [reviewPanel, setReviewPanel] = useState<ReviewPanelState>({ result: null, busy: false, error: null });
   const restorablePromptStepId = useMemo(() => {
@@ -664,7 +319,7 @@ export const RunDetailPage = ({
       error: null,
     }));
     try {
-      const result = await window.easycode.analyzeRunDiff(runDetail.run.id, {
+      const result = await window.buildwarden.analyzeRunDiff(runDetail.run.id, {
         modelId: selectedReviewModelId,
       });
       setReviewPanel({
@@ -683,93 +338,14 @@ export const RunDetailPage = ({
   const reviewBusy = reviewPanel.busy;
   const branchPromotedToProject = runDetail.branchPromotedToProject === true;
   const recovery = runDetail.interruptedRecovery;
-  const activityEntries = useMemo<ActivityEntry[]>(() => {
-    const entries: SingleActivityEntry[] = [];
-    const pendingToolEntries = new Map<string, number>();
-    let previousAssistantContent: string | null = null;
-    let previousReasoningContent: string | null = null;
-
-    for (const step of orderedSteps) {
-      const metadata = safeParseMetadata(step.metadataJson);
-      const callId = typeof metadata.callId === "string" ? metadata.callId : null;
-
-      if (step.eventType === "tool-call" && callId) {
-        pendingToolEntries.set(callId, entries.length);
-        entries.push({
-          kind: "tool",
-          callStep: step,
-          callMetadata: metadata,
-        });
-        continue;
-      }
-
-      if ((step.eventType === "tool-result" || step.eventType === "tool-progress") && callId) {
-        const entryIndex = pendingToolEntries.get(callId);
-        const existing = entryIndex == null ? null : entries[entryIndex];
-        if (entryIndex != null && existing?.kind === "tool") {
-          entries[entryIndex] = {
-            ...existing,
-            resultStep: step,
-            resultMetadata: metadata,
-          };
-          pendingToolEntries.delete(callId);
-          continue;
-        }
-      }
-
-      const normalizedStep =
-        step.eventType === "output"
-          ? metadata.assistantKind === "reasoning"
-            ? {
-                ...step,
-                content: trimPreviouslyDisplayedReasoning(step.content, previousReasoningContent),
-              }
-            : {
-                ...step,
-                content: trimPreviouslyDisplayedAssistant(step.content, previousAssistantContent),
-              }
-          : step;
-
-      if (step.eventType === "output" && metadata.assistantKind === "reasoning") {
-        previousReasoningContent = step.content;
-      } else if (step.eventType === "output") {
-        previousAssistantContent = step.content;
-      }
-
-      entries.push({
-        kind: "single",
-        step: normalizedStep,
-        metadata,
-      });
-    }
-
-    const groupedEntries: ActivityEntryPreMerge[] = [];
-
-    for (const entry of moveShellApprovalsBeforeMatchingTools(entries)) {
-      const previousEntry = groupedEntries[groupedEntries.length - 1];
-
-      if (entry.kind === "tool") {
-        if (previousEntry?.kind === "tool-batch") {
-          previousEntry.items.push(entry);
-        } else {
-          groupedEntries.push({
-            kind: "tool-batch",
-            items: [entry],
-          });
-        }
-        continue;
-      }
-
-      groupedEntries.push(entry);
-    }
-
-    return mergeConsecutiveSingles(groupedEntries);
-  }, [orderedSteps]);
   const latestUserCommandOptions = useMemo(() => getLatestUserCommandOptions(runDetail.steps), [runDetail.steps]);
 
   useEffect(() => {
     setFollowUpPrompt("");
     setFollowUpFiles([]);
+    setGoalDraft(runDetail.run.goalText ?? "");
+    setGoalEditing(false);
+    setGoalSaving(false);
     setSelectedMode(runDetail.run.mode);
     setSelectedModelId(runDetail.run.modelId);
     setSelectedReasoningEffort(latestUserCommandOptions.reasoningEffort);
@@ -780,6 +356,7 @@ export const RunDetailPage = ({
     latestUserCommandOptions.reasoningEffort,
     latestUserCommandOptions.yoloMode,
     runDetail.run.id,
+    runDetail.run.goalText,
     runDetail.run.updatedAt,
     runDetail.run.mode,
     runDetail.run.modelId,
@@ -788,6 +365,15 @@ export const RunDetailPage = ({
   useEffect(() => {
     setRunTerminalPinned(false);
   }, [runDetail.run.id]);
+
+  useEffect(() => {
+    setRunNotes(runDetail.notes ?? []);
+    setNoteDraft("");
+    setNoteBusyId(null);
+    setEditingNoteId(null);
+    setNoteEditDraft("");
+    setSelectionMenu(null);
+  }, [runDetail.run.id, runDetail.notes]);
 
   useEffect(() => {
     if (showTerminal) {
@@ -804,20 +390,6 @@ export const RunDetailPage = ({
   useEffect(() => {
     setModifiedFilesExpanded(false);
   }, [runDetail.run.id, runDetail.run.updatedAt]);
-
-  useEffect(() => {
-    if (worktreeUnavailable) {
-      return;
-    }
-
-    const container = activityContainerRef.current;
-    const end = activityEndRef.current;
-    if (!container || !end) {
-      return;
-    }
-
-    end.scrollIntoView({ block: "end" });
-  }, [orderedSteps.length, runDetail.run.updatedAt, worktreeUnavailable]);
 
   // Close "add panel" popover when clicking outside
   useEffect(() => {
@@ -837,12 +409,14 @@ export const RunDetailPage = ({
       if (prev === "diff" && showDiff) return prev;
       if (prev === "terminal" && showTerminal) return prev;
       if (prev === "browser" && showBrowser) return prev;
+      if (prev === "notes" && showNotes) return prev;
       if (showDiff) return "diff";
       if (showTerminal) return "terminal";
       if (showBrowser) return "browser";
+      if (showNotes) return "notes";
       return null;
     });
-  }, [showDiff, showTerminal, showBrowser]);
+  }, [showDiff, showTerminal, showBrowser, showNotes]);
 
   // Split-pane resize (works for both right and bottom positions)
   useEffect(() => {
@@ -924,10 +498,52 @@ export const RunDetailPage = ({
     }
   };
 
+  const saveGoalText = async (nextGoal: string | null) => {
+    if (busy || isRunActive || goalSaving) {
+      return;
+    }
+    if ((runDetail.run.goalText ?? null) === nextGoal) {
+      setGoalEditing(false);
+      return;
+    }
+    setGoalSaving(true);
+    try {
+      await onFollowUpRun(runDetail.run, "", {
+        mode: selectedMode,
+        modelId: selectedModelId || runDetail.run.modelId,
+        reasoningEffort: selectedReasoningEffort,
+        anthropicEffort: selectedAnthropicEffort,
+        yoloMode: selectedYoloMode,
+        goalText: nextGoal,
+      });
+      setGoalEditing(false);
+    } catch {
+      /* App surfaces errors */
+    } finally {
+      setGoalSaving(false);
+    }
+  };
+
+  const saveGoalDraft = async () => saveGoalText(goalDraft.trim() || null);
+
   const preparePlanContinuation = (plan: string) => {
     setSelectedMode("code");
     setFollowUpPrompt(`Implement this plan:\n\n${plan.trim()}`);
     setFollowUpFiles([]);
+  };
+
+  const submitPlanFeedback = async (feedback: string) => {
+    const trimmed = feedback.trim();
+    if (!trimmed || busy || isRunActive) {
+      return;
+    }
+    await onFollowUpRun(runDetail.run, `Please revise the plan with this feedback:\n\n${trimmed}`, {
+      mode: "plan",
+      modelId: selectedModelId || runDetail.run.modelId,
+      reasoningEffort: selectedReasoningEffort,
+      anthropicEffort: selectedAnthropicEffort,
+      yoloMode: selectedYoloMode,
+    });
   };
 
   const copyStepContent = async (text: string, stepId: string) => {
@@ -938,13 +554,158 @@ export const RunDetailPage = ({
     }, 1500);
   };
 
+  const addRunNote = useCallback(
+    async (content: string) => {
+      const trimmed = content.trim();
+      if (!trimmed) {
+        return;
+      }
+      try {
+        const note = await window.buildwarden.addRunNote(runDetail.run.id, { content: trimmed });
+        setRunNotes((current) => [note, ...current.filter((entry) => entry.id !== note.id)]);
+        setNoteDraft("");
+        setSelectionMenu(null);
+        if (!showNotes) {
+          onTogglePanel("notes");
+        }
+        setActiveSecondaryTab("notes");
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : "Could not add the note.");
+      }
+    },
+    [onTogglePanel, runDetail.run.id, showNotes],
+  );
+
+  const addSelectionToTask = useCallback(
+    async (content: string) => {
+      const trimmed = content.trim();
+      if (!trimmed) {
+        return;
+      }
+      try {
+        setSelectionMenu(null);
+        await onCreateProjectTask(runDetail.run.projectId, { title: trimmed, prompt: "Created from run" });
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : "Could not add the task.");
+      }
+    },
+    [onCreateProjectTask, runDetail.run.projectId],
+  );
+
+  const updateRunNoteStatus = async (note: RunNoteRecord, status: RunNoteStatus) => {
+    setNoteBusyId(note.id);
+    try {
+      const updated = await window.buildwarden.updateRunNote(note.id, { status });
+      setRunNotes((current) => current.map((entry) => (entry.id === updated.id ? updated : entry)));
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Could not update the note.");
+    } finally {
+      setNoteBusyId(null);
+    }
+  };
+
+  const startEditingRunNote = (note: RunNoteRecord) => {
+    setEditingNoteId(note.id);
+    setNoteEditDraft(note.content);
+  };
+
+  const cancelEditingRunNote = () => {
+    setEditingNoteId(null);
+    setNoteEditDraft("");
+  };
+
+  const saveRunNoteContent = async (note: RunNoteRecord) => {
+    const trimmed = noteEditDraft.trim();
+    if (!trimmed) {
+      return;
+    }
+    if (trimmed === note.content) {
+      cancelEditingRunNote();
+      return;
+    }
+    setNoteBusyId(note.id);
+    try {
+      const updated = await window.buildwarden.updateRunNote(note.id, { content: trimmed });
+      setRunNotes((current) => current.map((entry) => (entry.id === updated.id ? updated : entry)));
+      cancelEditingRunNote();
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Could not update the note.");
+    } finally {
+      setNoteBusyId(null);
+    }
+  };
+
+  const deleteRunNote = async (noteId: string) => {
+    setNoteBusyId(noteId);
+    try {
+      await window.buildwarden.deleteRunNote(noteId);
+      setRunNotes((current) => current.filter((entry) => entry.id !== noteId));
+      if (editingNoteId === noteId) {
+        cancelEditingRunNote();
+      }
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Could not delete the note.");
+    } finally {
+      setNoteBusyId(null);
+    }
+  };
+
+  useEffect(() => {
+    const container = activityContainerRef.current;
+    if (!container) {
+      return;
+    }
+
+    const handleContextMenu = (event: globalThis.MouseEvent) => {
+      const selection = window.getSelection();
+      const selectedText = selection?.toString().trim() ?? "";
+      if (!selection || selection.rangeCount === 0 || !selectedText) {
+        return;
+      }
+      const range = selection.getRangeAt(0);
+      if (!container.contains(range.commonAncestorContainer)) {
+        return;
+      }
+      event.preventDefault();
+      setSelectionMenu({
+        x: Math.min(event.clientX, window.innerWidth - 240),
+        y: Math.min(event.clientY, window.innerHeight - 136),
+        text: selectedText,
+      });
+    };
+
+    container.addEventListener("contextmenu", handleContextMenu);
+    return () => container.removeEventListener("contextmenu", handleContextMenu);
+  }, [showActivity]);
+
+  useEffect(() => {
+    if (!selectionMenu) {
+      return;
+    }
+    const closeMenu = () => setSelectionMenu(null);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeMenu();
+      }
+    };
+    window.addEventListener("click", closeMenu);
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("scroll", closeMenu, true);
+    return () => {
+      window.removeEventListener("click", closeMenu);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("scroll", closeMenu, true);
+    };
+  }, [selectionMenu]);
+
   // Derived visibility
-  const hasSecondaryPanels = showDiff || showTerminal || showBrowser;
-  const visiblePanelCount = [showActivity, showDiff, showTerminal, showBrowser].filter(Boolean).length;
+  const hasSecondaryPanels = showDiff || showTerminal || showBrowser || showNotes;
+  const visiblePanelCount = [showActivity, showDiff, showTerminal, showBrowser, showNotes].filter(Boolean).length;
 
   const canHideDiff = showDiff && visiblePanelCount > 1 && !worktreeUnavailable;
   const canHideTerminal = showTerminal && visiblePanelCount > 1 && !worktreeUnavailable;
   const canHideBrowser = showBrowser && visiblePanelCount > 1;
+  const canHideNotes = showNotes && visiblePanelCount > 1;
 
   const secondaryPanelDefs = [
     {
@@ -971,12 +732,22 @@ export const RunDetailPage = ({
       canToggle: true,
       canHide: canHideBrowser,
     },
+    {
+      id: "notes" as const,
+      label: "Notes",
+      Icon: StickyNote,
+      enabled: showNotes,
+      canToggle: true,
+      canHide: canHideNotes,
+    },
   ] as const;
 
   const isGitDiffPanelVisible = showDiff && activeSecondaryTab === "diff";
   const showModifiedFilesSummary = !isRunActive && !diffPending && diffStats.totalFiles > 0 && !isGitDiffPanelVisible;
+  const fallbackFinishedAt = orderedSteps[orderedSteps.length - 1]?.createdAt ?? runDetail.run.updatedAt;
+  const runDurationLabel = formatRunDuration(runDetail.run.startedAt ?? runDetail.run.createdAt, runDetail.run.finishedAt ?? fallbackFinishedAt);
   const modifiedFilesSummary = showModifiedFilesSummary ? (
-    <div className="pointer-events-none absolute bottom-full left-0 right-0 z-20 mb-1 flex justify-center px-2">
+    <div className="pointer-events-none absolute bottom-2 left-0 right-0 z-20 flex justify-center px-2">
       <div
         className={cn(
           "pointer-events-auto overflow-hidden rounded-md border border-zinc-800/70 bg-zinc-900/95 shadow-lg shadow-black/20 backdrop-blur",
@@ -1053,608 +824,243 @@ export const RunDetailPage = ({
     </div>
   ) : null;
 
-  // ─── Activity log content (shared render) ────────────────────────────────
   const activityContent = (
-    <div ref={activityContainerRef} className="app-scrollbar min-h-0 flex-1 space-y-2 overflow-auto px-2.5 py-2">
-      {activityEntries.map((entry) => {
-        if (entry.kind === "tool-batch") {
-          const summarizedItems = entry.items.reduce<ToolBatchSummarizedRow[]>((rows, item) => {
-            const toolName = String(item.callMetadata.toolName ?? item.resultMetadata?.toolName ?? "tool");
-            const detail = describeActivityDetail(item.resultMetadata ?? {}) ?? describeActivityDetail(item.callMetadata);
-            const failed = item.resultMetadata?.ok === false;
-            const shellStreaming = item.resultMetadata?.shellStreaming === true;
-            const toolCallId =
-              typeof item.resultMetadata?.callId === "string"
-                ? item.resultMetadata.callId
-                : typeof item.callMetadata.callId === "string"
-                  ? item.callMetadata.callId
-                  : null;
-            const command =
-              typeof item.resultMetadata?.command === "string"
-                ? item.resultMetadata.command
-                : typeof item.callMetadata.command === "string"
-                  ? item.callMetadata.command
-                  : null;
-            const preview = failed
-              ? item.resultStep?.content ?? item.callStep.content
-              : toolName === "run_shell"
-                ? (item.resultStep?.content ?? "").trim() || null
-                : null;
-            const writeFileDiff =
-              !failed && toolName === "write_file" && typeof item.resultMetadata?.writeFileUnifiedDiff === "string"
-                ? item.resultMetadata.writeFileUnifiedDiff
-                : null;
-            const createdAt = (item.resultStep ?? item.callStep).createdAt;
-            const previousRow = rows[rows.length - 1];
-            const pathKey = detail?.trim() ?? "";
+    <RunActivityTimeline
+      steps={orderedSteps}
+      run={runDetail.run}
+      busy={busy}
+      className={cn(
+        "app-scrollbar min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-0 pt-1",
+        showModifiedFilesSummary
+          ? modifiedFilesExpanded
+            ? "agent-worklog--floating-diff-expanded"
+            : "agent-worklog--floating-diff"
+          : "agent-worklog--flush-end",
+      )}
+      containerRef={activityContainerRef}
+      endRef={activityEndRef}
+      virtualized
+      endClassName={cn("shrink-0", showModifiedFilesSummary ? "h-2" : "h-px")}
+      showLoading={isRunActive}
+      density={timelineDensity}
+      runDurationLabel={runDurationLabel}
+      restorablePromptStepId={restorablePromptStepId}
+      copiedStepId={copiedStepId}
+      expandedReasoningStepIds={expandedReasoningStepIds}
+      onCopyStepContent={copyStepContent}
+      onUndoRunToLastPrompt={() => onUndoRunToLastPrompt(runDetail.run)}
+      onCancelRunShell={(_, toolCallId) => onCancelRunShell(runDetail.run, toolCallId)}
+      onPreparePlanContinuation={preparePlanContinuation}
+      onSubmitPlanFeedback={submitPlanFeedback}
+      onSubmitUserInputAnswers={(_, requestId: string, answers: RunUserInputAnswers) =>
+        window.buildwarden.respondToRunUserInput(runDetail.run.id, requestId, answers)
+      }
+      onToggleReasoningStep={(stepId) =>
+        setExpandedReasoningStepIds((current) => ({
+          ...current,
+          [stepId]: !current[stepId],
+        }))
+      }
+    />
+  );
 
-            const canMergeSamePath =
-              toolName !== "write_file" &&
-              toolName !== "run_shell" &&
-              previousRow &&
-              previousRow.toolName === toolName &&
-              previousRow.detail === detail &&
-              previousRow.failed === failed &&
-              !previousRow.paths?.length;
-
-            const canMergeReadFileRun =
-              TOOL_BATCH_MERGE_BY_PATH.has(toolName) &&
-              pathKey.length > 0 &&
-              previousRow &&
-              previousRow.toolName === toolName &&
-              previousRow.failed === failed;
-
-            if (canMergeSamePath) {
-              previousRow.count += 1;
-              previousRow.createdAt = createdAt;
-              previousRow.toolCallId = toolCallId ?? previousRow.toolCallId;
-              previousRow.command = command ?? previousRow.command;
-              previousRow.shellStreaming = shellStreaming || previousRow.shellStreaming;
-              previousRow.preview = preview ?? previousRow.preview;
-              return rows;
-            }
-
-            if (canMergeReadFileRun) {
-              const existingPaths = previousRow.paths ?? (previousRow.detail ? [previousRow.detail] : []);
-              previousRow.paths = [...existingPaths, pathKey];
-              previousRow.detail = null;
-              previousRow.count += 1;
-              previousRow.createdAt = createdAt;
-              previousRow.toolCallId = toolCallId ?? previousRow.toolCallId;
-              previousRow.command = command ?? previousRow.command;
-              previousRow.shellStreaming = shellStreaming || previousRow.shellStreaming;
-              previousRow.preview = preview ?? previousRow.preview;
-              previousRow.writeFileDiff = writeFileDiff ?? previousRow.writeFileDiff;
-              return rows;
-            }
-
-            rows.push({
-              toolName,
-              detail: pathKey ? detail : null,
-              toolCallId,
-              count: 1,
-              failed,
-              command,
-              shellStreaming,
-              preview,
-              writeFileDiff,
-              createdAt,
-            });
-
-            return rows;
-          }, []);
-
-          const latestTimestamp = summarizedItems[summarizedItems.length - 1]?.createdAt ?? entry.items[0]?.callStep.createdAt;
-
-          return (
-            <div
-              key={`${entry.items[0]?.callStep.id ?? "tool-batch"}-${entry.items.length}`}
-              className="min-w-0 w-full rounded-lg border border-zinc-800/70 bg-zinc-950/50 px-2 py-1.5"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                  <Badge tone="running" className="px-1.5 py-0 text-[10px] bg-cyan-500/10 text-cyan-300 ring-cyan-400/30">
-                    tools
-                  </Badge>
-                  <span className="truncate text-[11px] font-medium text-zinc-200">{entry.items.length}×</span>
-                </div>
-                {latestTimestamp ? (
-                  <span className="shrink-0 text-[10px] text-zinc-600">{new Date(latestTimestamp).toLocaleTimeString()}</span>
-                ) : null}
-              </div>
-              <div className="mt-1 space-y-1">
-                {summarizedItems.map((item, index) => {
-                  return (
-                    <ActivityToolBatchRow
-                      key={`${item.toolName}-${item.detail ?? "detail"}-${index}`}
-                      item={item}
-                      itemIndex={index}
-                      run={runDetail.run}
-                      busy={busy}
-                      onCancelRunShell={onCancelRunShell}
-                    />
-                  );
-                })}
-              </div>
+  const renderNoteCard = (note: RunNoteRecord) => {
+    const isClosed = note.status === "closed";
+    const isBusy = noteBusyId === note.id;
+    const isEditing = editingNoteId === note.id;
+    const trimmedEditDraft = noteEditDraft.trim();
+    const createdLabel = new Date(note.createdAt).toLocaleString();
+    return (
+      <div
+        key={note.id}
+        className={cn(
+          "rounded-lg border px-3 py-2.5",
+          isClosed ? "border-zinc-800/60 bg-zinc-950/25" : "border-cyan-500/20 bg-cyan-500/[0.04]",
+          isClosed && !isEditing ? "opacity-75" : "",
+        )}
+      >
+        <div className="mb-2 flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <Badge tone={isClosed ? "neutral" : "completed"} className="px-1.5 py-0 text-[9px] uppercase tracking-[0.14em]">
+                {note.status}
+              </Badge>
+              <span className="truncate text-[10px] text-zinc-500">{createdLabel}</span>
             </div>
-          );
-        }
-
-        if (entry.kind === "tool") {
-          return null;
-        }
-
-        if (entry.kind === "single-group") {
-          const first = entry.items[0]!;
-          const last = entry.items[entry.items.length - 1]!;
-          const t0 = new Date(first.step.createdAt).toLocaleTimeString();
-          const t1 = new Date(last.step.createdAt).toLocaleTimeString();
-          const timeRange = entry.items.length > 1 && t0 !== t1 ? `${t0}–${t1}` : t0;
-          const groupKey = `sg-${first.step.id}-${entry.groupKey}-${entry.items.length}`;
-
-          if (entry.groupKey === "status") {
-            return (
-              <div key={groupKey} className="rounded-lg border border-zinc-800/50 bg-zinc-950/30 px-2 py-1">
-                <div className="mb-0.5 flex items-center justify-between gap-2">
-                  <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">Status</span>
-                  <span className="text-[10px] text-zinc-600">{timeRange}</span>
-                </div>
-                <ul className="space-y-0.5">
-                  {entry.items.map(({ step }) => (
-                    <li
-                      key={step.id}
-                      className="flex items-start justify-between gap-2 border-t border-zinc-800/30 pt-0.5 first:border-t-0 first:pt-0"
-                    >
-                      <span className="min-w-0 flex-1 text-[10px] leading-snug text-zinc-400">
-                        <span className="text-zinc-500">{step.title}</span>
-                        {step.content ? <span className="text-zinc-500"> · {step.content}</span> : null}
-                      </span>
-                      <span className="shrink-0 text-[10px] text-zinc-600 tabular-nums">
-                        {new Date(step.createdAt).toLocaleTimeString()}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            );
-          }
-
-          if (entry.groupKey === "user") {
-            return (
-              <div key={groupKey} className="ml-auto max-w-[min(92%,34rem)] space-y-1">
-                {entry.items.map(({ step, metadata }) => {
-                  const mode = (metadata.mode as RunRecord["mode"]) ?? runDetail.run.mode;
-                  const att = extractAttachmentNamesFromMetadata(metadata);
-                  const attachments = extractAttachmentPayloadsFromMetadata(metadata);
-                  const canUndoPrompt = step.id === restorablePromptStepId;
-                  return (
-                    <div
-                      key={step.id}
-                      className="rounded-xl border border-fuchsia-500/20 bg-fuchsia-500/[0.06] px-2.5 py-1.5"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex min-w-0 items-center gap-1">
-                          <Badge
-                            tone="queued"
-                            className="px-1.5 py-0 text-[10px] bg-fuchsia-500/10 text-fuchsia-300 ring-fuchsia-400/30"
-                          >
-                            {metadata.commandType === "follow-up" ? "follow-up" : "you"}
-                          </Badge>
-                          <Badge tone="queued" className={`px-1.5 py-0 text-[10px] ${runModeBadgeClassName(mode)}`}>
-                            {mode}
-                          </Badge>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 shrink-0 p-0 text-zinc-400 hover:text-fuchsia-200"
-                            onClick={() => void copyStepContent(step.content, step.id)}
-                            title={copiedStepId === step.id ? "Copied" : "Copy prompt"}
-                            aria-label="Copy prompt"
-                          >
-                            {copiedStepId === step.id ? (
-                              <Check className="h-3.5 w-3.5 text-emerald-400" />
-                            ) : (
-                              <Copy className="h-3.5 w-3.5" />
-                            )}
-                          </Button>
-                          {canUndoPrompt ? (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 w-6 shrink-0 p-0 text-amber-300 hover:bg-amber-500/10 hover:text-amber-200"
-                              title="Undo changes since this prompt"
-                              aria-label="Undo changes since this prompt"
-                              onClick={() => onUndoRunToLastPrompt(runDetail.run)}
-                              disabled={busy || isRunActive}
-                            >
-                              <RotateCcw className="h-3.5 w-3.5" />
-                            </Button>
-                          ) : null}
-                          <span className="text-[10px] text-zinc-500">{new Date(step.createdAt).toLocaleTimeString()}</span>
-                        </div>
-                      </div>
-                      <StoredChatAttachments attachments={attachments} fallbackNames={att} compact />
-                      <ActivityMarkdownOrGitDiff content={step.content} compact className="mt-1" />
-                    </div>
-                  );
-                })}
-              </div>
-            );
-          }
-
-          return (
-            <div key={groupKey} className="w-full min-w-0">
-              <div className="mb-0.5 flex flex-wrap items-center gap-1 text-[10px] uppercase tracking-wider text-zinc-500">
-                <span className="font-medium text-cyan-400/90">Assistant</span>
-                <span className="text-zinc-700">·</span>
-                <span className="tabular-nums">{timeRange}</span>
-                {entry.items.length > 1 ? (
-                  <span className="normal-case text-zinc-600">({entry.items.length} parts)</span>
-                ) : null}
-              </div>
-              <div className="mb-1 flex justify-end">
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            {isEditing ? (
+              <>
                 <Button
                   type="button"
-                  variant="ghost"
                   size="sm"
-                  className="h-6 w-6 shrink-0 p-0 text-zinc-400 hover:text-cyan-300"
-                  onClick={() => void copyStepContent(entry.items.map(({ step }) => step.content).join("\n\n"), groupKey)}
-                  title={copiedStepId === groupKey ? "Copied" : "Copy response"}
-                  aria-label="Copy response"
+                  variant="ghost"
+                  className="h-6 px-2 text-[11px] text-cyan-200 hover:bg-cyan-500/10 hover:text-cyan-100"
+                  disabled={isBusy || !trimmedEditDraft}
+                  onClick={() => void saveRunNoteContent(note)}
                 >
-                  {copiedStepId === groupKey ? (
-                    <Check className="h-3.5 w-3.5 text-emerald-400" />
+                  {isBusy ? (
+                    <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden />
                   ) : (
-                    <Copy className="h-3.5 w-3.5" />
+                    <Check className="mr-1 h-3 w-3" aria-hidden />
                   )}
+                  Save
                 </Button>
-              </div>
-              <div className="space-y-1.5 rounded-xl border border-cyan-500/12 bg-cyan-500/[0.03] px-2 py-1.5">
-                {entry.items.map(({ step, metadata }, i) => {
-                  const detail = describeActivityDetail(metadata);
-                  return (
-                    <div key={step.id}>
-                      {i > 0 ? <div className="mb-1.5 border-t border-zinc-800/40 pt-1.5" /> : null}
-                      {detail && detail !== step.title ? (
-                        <p className="mb-1 truncate text-[10px] text-zinc-500">{String(detail)}</p>
-                      ) : null}
-                      <ActivityMarkdownOrGitDiff content={step.content} compact className="text-zinc-200" />
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        }
-
-        const detail = describeActivityDetail(entry.metadata);
-        const isUserEntry = entry.metadata.source === "user";
-        const isAssistantEntry = entry.step.eventType === "output" || (entry.step.eventType === "log" && !isUserEntry);
-        const isStatusEntry = entry.step.eventType === "status";
-        const isErrorEntry = entry.step.eventType === "error";
-        const isRequestEntry =
-          entry.step.eventType === "request" ||
-          entry.step.eventType === "user-input-requested" ||
-          entry.step.eventType === "approval-requested" ||
-          entry.step.eventType === "approval-resolved";
-        const isPlanEntry = entry.step.eventType === "plan" || entry.step.eventType === "plan-updated";
-        const isDiffEntry = entry.step.eventType === "diff-updated";
-        const mode = (entry.metadata.mode as RunRecord["mode"]) ?? runDetail.run.mode;
-        const timestamp = new Date(entry.step.createdAt).toLocaleTimeString();
-
-        if (isUserEntry) {
-          const att = extractAttachmentNamesFromMetadata(entry.metadata);
-          const attachments = extractAttachmentPayloadsFromMetadata(entry.metadata);
-          const canUndoPrompt = entry.step.id === restorablePromptStepId;
-          return (
-            <div key={entry.step.id} className="ml-auto max-w-[min(92%,34rem)] rounded-xl border border-fuchsia-500/20 bg-fuchsia-500/[0.06] px-2.5 py-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-1">
-                  <Badge
-                    tone="queued"
-                    className="px-1.5 py-0 text-[10px] bg-fuchsia-500/10 text-fuchsia-300 ring-fuchsia-400/30"
-                  >
-                    {entry.metadata.commandType === "follow-up" ? "follow-up" : "you"}
-                  </Badge>
-                  <Badge tone="queued" className={`px-1.5 py-0 text-[10px] ${runModeBadgeClassName(mode)}`}>
-                    {mode}
-                  </Badge>
-                </div>
-                <div className="flex items-center gap-1">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 shrink-0 p-0 text-zinc-400 hover:text-fuchsia-200"
-                    onClick={() => void copyStepContent(entry.step.content, entry.step.id)}
-                    title={copiedStepId === entry.step.id ? "Copied" : "Copy prompt"}
-                    aria-label="Copy prompt"
-                  >
-                    {copiedStepId === entry.step.id ? (
-                      <Check className="h-3.5 w-3.5 text-emerald-400" />
-                    ) : (
-                      <Copy className="h-3.5 w-3.5" />
-                    )}
-                  </Button>
-                  {canUndoPrompt ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 w-6 shrink-0 p-0 text-amber-300 hover:bg-amber-500/10 hover:text-amber-200"
-                      title="Undo changes since this prompt"
-                      aria-label="Undo changes since this prompt"
-                      onClick={() => onUndoRunToLastPrompt(runDetail.run)}
-                      disabled={busy || isRunActive}
-                    >
-                      <RotateCcw className="h-3.5 w-3.5" />
-                    </Button>
-                  ) : null}
-                  <span className="text-[10px] text-zinc-500">{timestamp}</span>
-                </div>
-              </div>
-              <StoredChatAttachments attachments={attachments} fallbackNames={att} compact />
-              <ActivityMarkdownOrGitDiff content={entry.step.content} compact className="mt-1 text-zinc-200" />
-            </div>
-          );
-        }
-
-        if (isRequestEntry) {
-          const requestKind =
-            typeof entry.metadata.requestKind === "string"
-              ? entry.metadata.requestKind
-              : entry.step.eventType.startsWith("approval")
-                ? "approval"
-                : "user-input";
-          const requestResolved = entry.step.eventType === "approval-resolved" || entry.metadata.requestStatus === "resolved";
-          const approvalDecision =
-            typeof entry.metadata.shellApprovalDecision === "string" ? entry.metadata.shellApprovalDecision : null;
-          const approvalMessage =
-            typeof entry.metadata.approvalResolutionMessage === "string" ? entry.metadata.approvalResolutionMessage : null;
-          const isShellApproval = requestKind === "approval" && typeof entry.metadata.approvalRequestId === "string";
-          const decisionLabel =
-            approvalDecision === "deny"
-              ? "Denied"
-              : approvalDecision === "allow-for-run"
-                ? "Allowed for run"
-                : approvalDecision === "allow-always"
-                  ? "Always allowed"
-                  : approvalDecision === "allow-once"
-                    ? "Allowed once"
-                    : null;
-          const requestIconClass = requestResolved
-            ? "h-3.5 w-3.5 shrink-0 text-zinc-500"
-            : "h-3.5 w-3.5 shrink-0 text-violet-300";
-          const requestTitleClass = requestResolved
-            ? "truncate text-[11px] font-medium text-zinc-300"
-            : "truncate text-[11px] font-medium text-violet-100";
-          const requestTimeClass = requestResolved
-            ? "shrink-0 text-[10px] text-zinc-600"
-            : "shrink-0 text-[10px] text-violet-200/70";
-          return (
-            <div
-              key={entry.step.id}
-              className={
-                requestResolved
-                  ? "rounded-lg border border-zinc-800/60 bg-zinc-950/40 px-2.5 py-2"
-                  : "rounded-lg border border-violet-500/25 bg-violet-500/[0.06] px-2.5 py-2"
-              }
-            >
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-1.5">
-                  {isShellApproval ? <Terminal className={requestIconClass} /> : <MessageSquareText className={requestIconClass} />}
-                  <p className={requestTitleClass}>{entry.step.title}</p>
-                  <Badge tone="queued" className="px-1.5 py-0 text-[10px] bg-violet-500/10 text-violet-200 ring-violet-400/30">
-                    {requestKind}
-                  </Badge>
-                  {decisionLabel ? (
-                    <Badge
-                      tone={approvalDecision === "deny" ? "failed" : "completed"}
-                      className="px-1.5 py-0 text-[10px]"
-                    >
-                      {decisionLabel}
-                    </Badge>
-                  ) : null}
-                </div>
-                <span className={requestTimeClass}>{timestamp}</span>
-              </div>
-              {isShellApproval ? (
-                <>
-                  <pre className="app-scrollbar mt-1.5 max-h-28 overflow-auto rounded-md border border-zinc-800/80 bg-zinc-950/65 px-2 py-1.5 text-[11px] leading-relaxed text-zinc-200">
-                    {entry.step.content}
-                  </pre>
-                  {!requestResolved ? (
-                    <div className="mt-1.5 flex items-start gap-1.5 text-[11px] leading-relaxed text-violet-200/80">
-                      <MessageSquareText className="mt-0.5 h-3 w-3 shrink-0 text-violet-300" />
-                      <span>{approvalMessage ?? "Waiting for a shell approval decision."}</span>
-                    </div>
-                  ) : null}
-                </>
-              ) : (
-                <ActivityMarkdownOrGitDiff content={entry.step.content} compact className="mt-1.5 text-zinc-200" />
-              )}
-            </div>
-          );
-        }
-
-        if (isPlanEntry) {
-          return (
-            <div key={entry.step.id} className="rounded-lg border border-emerald-500/25 bg-emerald-500/[0.055] px-2.5 py-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-emerald-300" />
-                  <p className="truncate text-[11px] font-medium text-emerald-100">{entry.step.title}</p>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 rounded-md px-2 text-[10px] text-emerald-200 hover:bg-emerald-500/10 hover:text-emerald-100"
-                    disabled={busy || isRunActive}
-                    onClick={() => preparePlanContinuation(entry.step.content)}
-                  >
-                    Continue in code mode
-                  </Button>
-                  <span className="shrink-0 text-[10px] text-emerald-200/70">{timestamp}</span>
-                </div>
-              </div>
-              <ActivityMarkdownOrGitDiff content={entry.step.content} compact className="mt-1.5 text-zinc-200" />
-            </div>
-          );
-        }
-
-        if (isDiffEntry) {
-          return (
-            <div key={entry.step.id} className="rounded-lg border border-cyan-500/20 bg-cyan-500/[0.04] px-2.5 py-2">
-              <div className="flex items-center justify-between gap-2">
-                <p className="truncate text-[11px] font-medium text-cyan-100">{entry.step.title}</p>
-                <span className="shrink-0 text-[10px] text-cyan-200/70">{timestamp}</span>
-              </div>
-              <ActivityMarkdownOrGitDiff content={entry.step.content} compact className="mt-1.5 text-zinc-200" />
-            </div>
-          );
-        }
-
-        if (isStatusEntry) {
-          return (
-            <div
-              key={entry.step.id}
-              className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800/50 bg-zinc-950/35 px-2 py-1"
-            >
-              <div className="min-w-0">
-                <p className="truncate text-[10px] font-medium uppercase tracking-wide text-zinc-500">{entry.step.title}</p>
-                {entry.step.content ? (
-                  <p className="mt-0.5 truncate text-[10px] text-zinc-500">{entry.step.content}</p>
-                ) : null}
-              </div>
-              <span className="shrink-0 text-[10px] text-zinc-600">{timestamp}</span>
-            </div>
-          );
-        }
-
-        if (isErrorEntry) {
-          return (
-            <div key={entry.step.id} className="rounded-lg border border-rose-500/25 bg-rose-500/[0.06] px-2 py-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-[11px] font-medium text-rose-200">{entry.step.title}</p>
-                <span className="text-[10px] text-rose-200/70">{timestamp}</span>
-              </div>
-              <pre className="app-scrollbar mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded border border-rose-500/15 bg-zinc-950/60 p-1.5 text-[10px] text-zinc-200">
-                {entry.step.content}
-              </pre>
-            </div>
-          );
-        }
-
-        if (isAssistantEntry) {
-          const isReasoning = entry.metadata.assistantKind === "reasoning";
-          const reasoningAutoCollapsed = isReasoning && shouldAutoCollapseReasoning(entry.step.content);
-          const reasoningExpanded = Boolean(expandedReasoningStepIds[entry.step.id]);
-          return (
-            <div key={entry.step.id} className="w-full min-w-0">
-              <div className="mb-0.5 flex flex-wrap items-center gap-1 text-[10px] uppercase tracking-wider text-zinc-500">
-                <span className={`font-medium ${isReasoning ? "text-amber-400/90" : "text-cyan-400/90"}`}>
-                  {isReasoning ? "Reasoning" : "Assistant"}
-                </span>
-                <span className="text-zinc-700">·</span>
-                <span className="tabular-nums">{timestamp}</span>
-              </div>
-              <div
-                className={
-                  isReasoning
-                    ? "rounded-xl border border-amber-500/20 bg-amber-500/[0.04] px-2 py-1.5"
-                    : "relative rounded-xl border border-cyan-500/12 bg-cyan-500/[0.03] px-2 py-1.5"
-                }
-              >
-                {!isReasoning ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="absolute right-1 top-1 z-10 h-6 w-6 shrink-0 p-0 text-zinc-400 hover:bg-cyan-500/10 hover:text-cyan-300"
-                    onClick={() => void copyStepContent(entry.step.content, entry.step.id)}
-                    title={copiedStepId === entry.step.id ? "Copied" : "Copy response"}
-                    aria-label="Copy response"
-                  >
-                    {copiedStepId === entry.step.id ? (
-                      <Check className="h-3.5 w-3.5 text-emerald-400" />
-                    ) : (
-                      <Copy className="h-3.5 w-3.5" />
-                    )}
-                  </Button>
-                ) : null}
-                {isReasoning ? (
-                  <div className="mb-1 flex items-start justify-between gap-2">
-                    <p className="min-w-0 flex-1 text-[10px] leading-snug text-zinc-500">
-                      Reasoning summary from the model (API-visible digest, not raw hidden tokens).
-                    </p>
-                    {reasoningAutoCollapsed ? (
-                      <button
-                        type="button"
-                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-amber-300/60 transition-colors hover:bg-amber-500/10 hover:text-amber-200"
-                        onClick={() =>
-                          setExpandedReasoningStepIds((current) => ({
-                            ...current,
-                            [entry.step.id]: !current[entry.step.id],
-                          }))
-                        }
-                        title={reasoningExpanded ? "Collapse reasoning" : "Expand reasoning"}
-                      >
-                        {reasoningExpanded ? (
-                          <ChevronDown className="h-4 w-4" />
-                        ) : (
-                          <ChevronRight className="h-4 w-4" />
-                        )}
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
-                {detail && detail !== entry.step.title ? (
-                  <p className="mb-1 truncate text-[10px] text-zinc-500">{String(detail)}</p>
-                ) : null}
-                <div className={isReasoning && reasoningAutoCollapsed && !reasoningExpanded ? "max-h-36 overflow-hidden" : undefined}>
-                  <ActivityMarkdownOrGitDiff content={entry.step.content} compact className="text-zinc-200" />
-                </div>
-              </div>
-            </div>
-          );
-        }
-
-        return (
-          <div key={entry.step.id} className="rounded-lg border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <p className="truncate text-[11px] font-medium text-zinc-200">{entry.step.title}</p>
-                {detail ? <p className="mt-0.5 truncate text-[10px] text-zinc-400">{String(detail)}</p> : null}
-              </div>
-              <span className="shrink-0 text-[10px] text-zinc-500">{timestamp}</span>
-            </div>
-            <div className="mt-1">
-              <ActivityMarkdownOrGitDiff content={entry.step.content} compact className="text-zinc-300" />
-            </div>
-          </div>
-        );
-      })}
-      {isRunActive ? (
-        <div className="rounded-lg border border-cyan-500/10 bg-zinc-950/40 px-2 py-2">
-          <div className="run-activity-loading-bar mb-2" />
-          <div className="flex items-center gap-2 text-[11px] text-zinc-500">
-            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-cyan-400/90" aria-hidden />
-            <span className="animate-pulse">Agent is working…</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-2 text-[11px] text-zinc-400 hover:text-zinc-100"
+                  disabled={isBusy}
+                  onClick={cancelEditingRunNote}
+                >
+                  <X className="mr-1 h-3 w-3" aria-hidden />
+                  Cancel
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-2 text-[11px] text-zinc-400 hover:text-zinc-100"
+                  disabled={isBusy}
+                  onClick={() => startEditingRunNote(note)}
+                  title="Edit note"
+                  aria-label="Edit note"
+                >
+                  <Pencil className="h-3 w-3" aria-hidden />
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-2 text-[11px] text-zinc-400 hover:text-zinc-100"
+                  disabled={isBusy}
+                  onClick={() => void updateRunNoteStatus(note, isClosed ? "open" : "closed")}
+                >
+                  <Check className="mr-1 h-3 w-3" aria-hidden />
+                  {isClosed ? "Reopen" : "Close"}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-2 text-[11px] text-red-300/80 hover:bg-red-500/10 hover:text-red-200"
+                  disabled={isBusy}
+                  onClick={() => void deleteRunNote(note.id)}
+                  title="Delete note"
+                >
+                  <Trash2 className="h-3 w-3" aria-hidden />
+                </Button>
+              </>
+            )}
           </div>
         </div>
-      ) : null}
-      <div ref={activityEndRef} />
+        {isEditing ? (
+          <textarea
+            value={noteEditDraft}
+            onChange={(event) => setNoteEditDraft(event.target.value)}
+            className="min-h-24 w-full resize-y rounded-md border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-sm leading-relaxed text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-cyan-500/60"
+            autoFocus
+          />
+        ) : (
+          <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-100">{note.content}</p>
+        )}
+      </div>
+    );
+  };
+
+  const notesPanelContent = (
+    <div className="app-scrollbar flex h-full min-h-0 flex-col overflow-y-auto px-3 py-3">
+      <div className="mb-3 rounded-lg border border-zinc-800/80 bg-zinc-950/45 p-3">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-zinc-100">Run notes</p>
+            <p className="text-[11px] text-zinc-500">
+              {openNotes.length} open, {closedNotes.length} closed
+            </p>
+          </div>
+          <StickyNote className="h-4 w-4 shrink-0 text-cyan-300/80" aria-hidden />
+        </div>
+        <textarea
+          value={noteDraft}
+          onChange={(event) => setNoteDraft(event.target.value)}
+          className="min-h-20 w-full resize-y rounded-md border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-cyan-500/60"
+          placeholder="Add a note for this run"
+        />
+        <div className="mt-2 flex justify-end">
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 px-3 text-xs"
+            disabled={!noteDraft.trim()}
+            onClick={() => void addRunNote(noteDraft)}
+          >
+            <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            Add note
+          </Button>
+        </div>
+      </div>
+      {runNotes.length === 0 ? (
+        <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-zinc-800/80 px-4 py-8 text-center text-sm text-zinc-500">
+          Select text in the activity log, right-click, and add it to notes.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {openNotes.length > 0 ? <div className="space-y-2">{openNotes.map(renderNoteCard)}</div> : null}
+          {closedNotes.length > 0 ? (
+            <div className="space-y-2">
+              <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-600">Closed</p>
+              {closedNotes.map(renderNoteCard)}
+            </div>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 
   return (
     <div className={cn("flex min-h-0 flex-col gap-1.5", className)}>
+      {selectionMenu ? (
+        <div
+          className="fixed z-[80] min-w-[13rem] glass-popover overflow-hidden py-1"
+          style={{
+            left: Math.max(8, selectionMenu.x),
+            top: Math.max(8, selectionMenu.y),
+          }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-200 transition hover:bg-zinc-800/80"
+            onClick={() => {
+              void navigator.clipboard.writeText(selectionMenu.text);
+              setSelectionMenu(null);
+            }}
+          >
+            <Copy className="h-3.5 w-3.5 text-zinc-500" aria-hidden />
+            Copy text
+          </button>
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-200 transition hover:bg-zinc-800/80"
+            onClick={() => void addRunNote(selectionMenu.text)}
+          >
+            <StickyNote className="h-3.5 w-3.5 text-cyan-300" aria-hidden />
+            Add to notes
+          </button>
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-200 transition hover:bg-zinc-800/80"
+            onClick={() => void addSelectionToTask(selectionMenu.text)}
+          >
+            <ListTodo className="h-3.5 w-3.5 text-emerald-300" aria-hidden />
+            Add to tasks
+          </button>
+        </div>
+      ) : null}
       {recovery ? (
         <Card
           className={cn(
@@ -1724,7 +1130,7 @@ export const RunDetailPage = ({
           </div>
           {recoveryConfirmOpen ? (
             <div className="border-t border-cyan-500/10 bg-cyan-500/[0.04] px-3 py-2 text-[11px] leading-5 text-zinc-300">
-              Easycode will start one new turn, reconnect the saved provider thread when possible, inspect the workspace before editing, and keep the
+              BuildWarden will start one new turn, reconnect the saved provider thread when possible, inspect the workspace before editing, and keep the
               existing activity log intact.
             </div>
           ) : null}
@@ -1750,7 +1156,7 @@ export const RunDetailPage = ({
                   <p className="text-xs font-medium text-cyan-200">Branch moved to the project repository</p>
                   <p className="mt-0.5 text-[11px] text-zinc-400">
                     The branch <span className="font-mono text-cyan-200/90">{runDetail.run.branchName}</span> still exists locally and should be checked out in
-                    the main project repository. This run's temporary Easycode worktree was removed on purpose, so Git diffs are no longer available here.
+                    the main project repository. This run's temporary BuildWarden worktree was removed on purpose, so Git diffs are no longer available here.
                     The Activity Log is still available.
                   </p>
                 </>
@@ -1789,6 +1195,7 @@ export const RunDetailPage = ({
             }
           >
             {activityContent}
+            {modifiedFilesSummary}
           </div>
         ) : null}
 
@@ -1877,7 +1284,7 @@ export const RunDetailPage = ({
                     <Plus className="h-3 w-3" />
                   </button>
                   {addPanelOpen ? (
-                    <div className="absolute left-0 top-full z-50 mt-0.5 min-w-[9rem] overflow-hidden rounded-lg border border-zinc-700/80 bg-zinc-900 py-1 shadow-xl shadow-black/40">
+                    <div className="absolute left-0 top-full z-50 mt-0.5 min-w-[9rem] glass-popover overflow-hidden py-1">
                       {secondaryPanelDefs
                         .filter((p) => !p.enabled && p.canToggle)
                         .map((panel) => {
@@ -2059,7 +1466,7 @@ export const RunDetailPage = ({
                       <label className="flex shrink-0 items-center gap-2 text-[10px] text-zinc-400">
                         <input
                           type="checkbox"
-                          className="h-3.5 w-3.5 rounded border border-zinc-700 bg-zinc-950 accent-cyan-400"
+                          className="h-3.5 w-3.5 rounded border border-zinc-700 bg-zinc-950 accent-[var(--ec-accent)]"
                           checked={terminalOpenLinksInApp}
                           onChange={(event) => onTerminalOpenLinksInAppChange(event.target.checked)}
                         />
@@ -2072,7 +1479,7 @@ export const RunDetailPage = ({
                         className="h-8 w-8 shrink-0 p-0 text-zinc-400 hover:text-zinc-100"
                         title="Open external"
                         aria-label="Open external"
-                        onClick={() => void window.easycode.openSystemTerminalAtPath(workspacePath)}
+                        onClick={() => void window.buildwarden.openSystemTerminalAtPath(workspacePath)}
                       >
                         <ExternalLink className="h-3.5 w-3.5" />
                       </Button>
@@ -2100,6 +1507,9 @@ export const RunDetailPage = ({
                   onSessionChange={onBrowserSessionChange}
                 />
               ) : null}
+
+              {/* Notes panel */}
+              {showNotes && activeSecondaryTab === "notes" ? notesPanelContent : null}
 
             </div>
           </div>
@@ -2170,9 +1580,91 @@ export const RunDetailPage = ({
           </Card>
         ) : null}
 
-        <div className="relative">
-          {modifiedFilesSummary}
+        <div>
+          {runDetail.run.goalText || goalEditing ? (
+            <div className="mb-1 flex min-w-0 items-center gap-1.5 rounded-xl border border-[var(--ec-border)] bg-[var(--ec-surface)] px-2 py-1 text-xs">
+              <Target className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" />
+              <span className="shrink-0 font-medium text-[var(--ec-muted)]">Goal</span>
+              {goalEditing ? (
+                <>
+                  <input
+                    className="min-w-0 flex-1 rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-2 py-1 text-xs text-[var(--ec-text)] outline-none transition focus:border-[var(--ec-accent-ring)] focus:ring-2 focus:ring-[var(--ec-ring)]"
+                    value={goalDraft}
+                    onChange={(event) => setGoalDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void saveGoalDraft();
+                      }
+                      if (event.key === "Escape") {
+                        setGoalDraft(runDetail.run.goalText ?? "");
+                        setGoalEditing(false);
+                      }
+                    }}
+                    disabled={busy || isRunActive || goalSaving}
+                    placeholder="Run goal"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => void saveGoalDraft()}
+                    disabled={busy || isRunActive || goalSaving}
+                  >
+                    {goalSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    onClick={() => {
+                      setGoalDraft(runDetail.run.goalText ?? "");
+                      setGoalEditing(false);
+                    }}
+                    disabled={goalSaving}
+                    aria-label="Cancel goal edit"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <span className="min-w-0 flex-1 truncate text-[var(--ec-text)]">{runDetail.run.goalText}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    onClick={() => {
+                      setGoalDraft(runDetail.run.goalText ?? "");
+                      setGoalEditing(true);
+                    }}
+                    disabled={busy || isRunActive}
+                    aria-label="Edit run goal"
+                    title="Edit run goal"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0 text-[var(--ec-muted)]"
+                    onClick={() => void saveGoalText(null)}
+                    disabled={busy || isRunActive || goalSaving}
+                    aria-label="Clear run goal"
+                    title="Clear run goal"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </>
+              )}
+            </div>
+          ) : null}
           <RunComposer
+            commandContext="follow-up"
+            projectId={runDetail.run.projectId}
             attachments={
               <ChatAttachmentPicker
                 variant="footer"

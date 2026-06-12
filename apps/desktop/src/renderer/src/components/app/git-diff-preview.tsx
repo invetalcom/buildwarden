@@ -5,14 +5,16 @@ import {
   useImperativeHandle,
   useMemo,
   useState,
+  type ReactNode,
   type Ref,
 } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
-import type { RunDiffReviewFinding } from "@easycode/shared";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, MessageSquarePlus, Pencil, Trash2 } from "lucide-react";
+import type { ProjectPrMrDiffComment, RunDiffReviewFinding } from "@buildwarden/shared";
 import type { HunkTokens } from "react-diff-view";
 import { Diff, Hunk, findChangeByNewLineNumber, findChangeByOldLineNumber, getChangeKey, markEdits, parseDiff, tokenize } from "react-diff-view";
-import type { ChangeData, HunkData } from "react-diff-view";
+import type { ChangeData, EventMap, GutterOptions, HunkData } from "react-diff-view";
 import { cn } from "../../lib/cn";
+import { ActivityRichText } from "../ui/activity-rich-text";
 import { Button } from "../ui/button";
 import { looksLikeGitDiff } from "./git-diff-utils";
 
@@ -52,6 +54,117 @@ const FINDING_PRIORITY_BORDER: Record<RunDiffReviewFinding["priority"], string> 
 
 type ReviewNavEntry = { finding: RunDiffReviewFinding; fileKey: string | null; globalIndex: number };
 
+const reviewFindingDraftKey = (finding: RunDiffReviewFinding, globalIndex: number) =>
+  [globalIndex, finding.filePath ?? "", finding.lineNumber ?? "", finding.title, finding.detail.slice(0, 80)].join("\0");
+
+export type DiffLineCommentTarget = Omit<ProjectPrMrDiffComment, "body"> & {
+  displayPath: string;
+  changeKey: string;
+  lineLabel: string;
+};
+
+export type DiffPreviewManualComment = ProjectPrMrDiffComment & {
+  id: string;
+  displayPath?: string;
+  lineLabel?: string;
+  author?: string | null;
+  createdAt?: string | null;
+  title?: string | null;
+  remote?: boolean;
+  resolved?: boolean;
+};
+
+const diffLineCommentTargetKey = (target: Omit<ProjectPrMrDiffComment, "body">) =>
+  [
+    target.oldPath,
+    target.newPath,
+    target.side,
+    target.oldLineNumber ?? "",
+    target.newLineNumber ?? "",
+    target.changeType,
+  ].join("\0");
+
+const filePathForComment = (path?: string) => (path && path !== "/dev/null" ? path : "");
+
+const getChangeLineNumbers = (change: ChangeData): { oldLineNumber: number | null; newLineNumber: number | null } => {
+  if (change.type === "normal") {
+    return {
+      oldLineNumber: change.oldLineNumber,
+      newLineNumber: change.newLineNumber,
+    };
+  }
+  if (change.type === "delete") {
+    return {
+      oldLineNumber: change.lineNumber,
+      newLineNumber: null,
+    };
+  }
+  return {
+    oldLineNumber: null,
+    newLineNumber: change.lineNumber,
+  };
+};
+
+const buildDiffLineCommentTarget = (
+  file: { oldPath?: string; newPath?: string },
+  change: ChangeData,
+  side: "old" | "new" | undefined,
+): DiffLineCommentTarget | null => {
+  const targetSide = side ?? (change.type === "delete" ? "old" : "new");
+  if ((change.type === "insert" && targetSide === "old") || (change.type === "delete" && targetSide === "new")) {
+    return null;
+  }
+  const oldPath = filePathForComment(file.oldPath) || filePathForComment(file.newPath);
+  const newPath = filePathForComment(file.newPath) || filePathForComment(file.oldPath);
+  if (!oldPath || !newPath) {
+    return null;
+  }
+  const { oldLineNumber, newLineNumber } = getChangeLineNumbers(change);
+  const lineNumber = targetSide === "old" ? oldLineNumber : newLineNumber;
+  if (!lineNumber) {
+    return null;
+  }
+  const displayPath = formatDiffPath(file.oldPath, file.newPath);
+  return {
+    oldPath,
+    newPath,
+    side: targetSide,
+    oldLineNumber,
+    newLineNumber,
+    changeType: change.type,
+    displayPath,
+    changeKey: getChangeKey(change),
+    lineLabel: `${displayPath}:${String(lineNumber)} ${targetSide === "old" ? "old" : "new"}`,
+  };
+};
+
+const buildDiffLineCommentTargets = (file: { oldPath?: string; newPath?: string }, change: ChangeData): DiffLineCommentTarget[] =>
+  [buildDiffLineCommentTarget(file, change, "old"), buildDiffLineCommentTarget(file, change, "new")].filter(
+    (target): target is DiffLineCommentTarget => Boolean(target),
+  );
+
+const commentMatchesDiffTarget = (comment: DiffPreviewManualComment, targets: DiffLineCommentTarget[]) => {
+  const exactCommentKey = diffLineCommentTargetKey(comment);
+  if (targets.some((target) => diffLineCommentTargetKey(target) === exactCommentKey)) {
+    return true;
+  }
+
+  const commentPath = normalizeDiffPathSegment(comment.newPath || comment.oldPath || comment.displayPath || "");
+  const commentLine = comment.newLineNumber ?? comment.oldLineNumber;
+  if (!commentPath || !commentLine) {
+    return false;
+  }
+
+  return targets.some((target) => {
+    const targetPath = normalizeDiffPathSegment(target.newPath || target.oldPath || target.displayPath);
+    const targetLine = target.newLineNumber ?? target.oldLineNumber;
+    if (!targetPath || !targetLine || targetLine !== commentLine) {
+      return false;
+    }
+    return targetPath === commentPath || targetPath.endsWith(`/${commentPath}`) || commentPath.endsWith(`/${targetPath}`);
+  });
+};
+
 const findDiffChangeForFinding = (hunks: HunkData[], finding: RunDiffReviewFinding): ChangeData | null => {
   if (!finding.lineNumber) {
     return null;
@@ -63,20 +176,42 @@ const ReviewFindingCard = ({
   finding,
   globalIndex,
   active,
+  onDraft,
+  draftDisabled = false,
 }: {
   finding: RunDiffReviewFinding;
   globalIndex: number;
   active: boolean;
+  onDraft?: () => void;
+  draftDisabled?: boolean;
 }) => (
   <div
-    id={`easycode-review-finding-${String(globalIndex)}`}
+    id={`buildwarden-review-finding-${String(globalIndex)}`}
     className={cn(
       "rounded-md border border-zinc-700/70 border-l-[3px] bg-zinc-950/80 px-2.5 py-1.5 text-[11px] text-zinc-300 transition-shadow",
       FINDING_PRIORITY_BORDER[finding.priority],
       active && "ring-2 ring-cyan-400/75 ring-offset-1 ring-offset-zinc-950",
     )}
   >
-    <p className="font-medium text-zinc-100">{finding.title}</p>
+    <div className="flex min-w-0 items-start justify-between gap-2">
+      <p className="min-w-0 font-medium text-zinc-100">{finding.title}</p>
+      {onDraft ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          className="h-6 shrink-0 gap-1 px-1.5 text-[9px]"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDraft();
+          }}
+          disabled={draftDisabled}
+        >
+          {draftDisabled ? <Check className="h-3 w-3" aria-hidden /> : <MessageSquarePlus className="h-3 w-3" aria-hidden />}
+          {draftDisabled ? "Drafted" : "Draft"}
+        </Button>
+      ) : null}
+    </div>
     {finding.lineReference || finding.lineNumber ? (
       <p className="mt-0.5 font-mono text-[10px] text-zinc-500">{finding.lineReference ?? `line ${String(finding.lineNumber)}`}</p>
     ) : null}
@@ -84,6 +219,133 @@ const ReviewFindingCard = ({
     {finding.recommendation ? <p className="mt-1 text-[10px] text-cyan-200/90">Suggestion: {finding.recommendation}</p> : null}
   </div>
 );
+
+const DraftCommentCard = ({
+  comment,
+  editing,
+  onEdit,
+  onRemove,
+}: {
+  comment: DiffPreviewManualComment;
+  editing?: boolean;
+  onEdit?: (id: string) => void;
+  onRemove?: (id: string) => void;
+}) => {
+  const showDraftActions = !comment.remote;
+  return (
+    <div
+      className={cn(
+        "rounded-md border px-2.5 py-1.5 text-[11px] text-zinc-300",
+        comment.remote ? "border-zinc-700/80 bg-zinc-900/55" : "border-cyan-500/20 bg-cyan-500/[0.055]",
+        editing && "border-cyan-400/60 ring-1 ring-cyan-400/40",
+      )}
+    >
+      <div className="flex min-w-0 items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className={cn("text-[11px] font-semibold", comment.remote ? "text-zinc-100" : "text-cyan-100")}>
+              {comment.remote ? (comment.author ?? "Reviewer") : "Draft comment"}
+            </span>
+            {comment.remote && comment.resolved ? (
+              <span className="rounded-full border border-emerald-500/25 bg-emerald-500/[0.08] px-1.5 py-px text-[8px] font-semibold uppercase text-emerald-200">
+                Resolved
+              </span>
+            ) : null}
+            {comment.createdAt ? <span className="text-[9px] text-zinc-600">{new Date(comment.createdAt).toLocaleString()}</span> : null}
+          </div>
+          <p className="mt-0.5 truncate font-mono text-[10px] text-zinc-500">
+            {comment.lineLabel ?? `${comment.newPath || comment.oldPath}:${String(comment.newLineNumber ?? comment.oldLineNumber ?? "")}`}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {showDraftActions && onEdit ? (
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="h-5 w-5 text-zinc-400"
+              title="Edit draft"
+              aria-label="Edit draft"
+              onClick={(event) => {
+                event.stopPropagation();
+                onEdit(comment.id);
+              }}
+              disabled={editing}
+            >
+              <Pencil className="h-3 w-3" aria-hidden />
+            </Button>
+          ) : null}
+          {showDraftActions && onRemove ? (
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="h-5 w-5 text-zinc-400"
+              title="Remove draft"
+              aria-label="Remove draft"
+              onClick={(event) => {
+                event.stopPropagation();
+                onRemove(comment.id);
+              }}
+            >
+              <Trash2 className="h-3 w-3" aria-hidden />
+            </Button>
+          ) : null}
+        </div>
+      </div>
+      {comment.title ? <p className="mt-1 text-[10px] font-medium text-zinc-400">{comment.title}</p> : null}
+      <ActivityRichText content={comment.body} compact className="mt-1 break-words text-zinc-200" />
+    </div>
+  );
+};
+
+const InlineDraftCommentEditor = ({
+  target,
+  initialValue,
+  editorKey,
+  onSave,
+  onCancel,
+  saveLabel = "Add draft",
+}: {
+  target: DiffLineCommentTarget;
+  initialValue: string;
+  editorKey: string;
+  onSave: (value: string) => void;
+  onCancel: () => void;
+  saveLabel?: string;
+}) => {
+  const [value, setValue] = useState(initialValue);
+
+  useEffect(() => {
+    setValue(initialValue);
+  }, [editorKey, initialValue]);
+
+  return (
+    <div
+      className="rounded-md border border-cyan-500/30 bg-cyan-500/[0.075] px-2.5 py-2 text-[11px]"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <p className="min-w-0 truncate font-mono text-[10px] text-cyan-100">{target.lineLabel}</p>
+        <Button type="button" size="sm" variant="ghost" className="h-5 shrink-0 px-1.5 text-[9px] text-zinc-400" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+      <textarea
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+        className="mt-1.5 h-16 w-full resize-none rounded-md border border-zinc-700 bg-zinc-950/80 px-2 py-1.5 text-[11px] text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-cyan-500/70"
+        placeholder="Write a diff comment..."
+        autoFocus
+      />
+      <div className="mt-1.5 flex justify-end">
+        <Button type="button" size="sm" className="h-7 px-2 text-[10px]" onClick={() => onSave(value)} disabled={!value.trim()}>
+          {saveLabel}
+        </Button>
+      </div>
+    </div>
+  );
+};
 
 export type GitDiffPreviewHandle = {
   /** If every file section is expanded, collapse all; otherwise expand all. */
@@ -101,6 +363,18 @@ type GitDiffPreviewProps = {
   wordDiff?: boolean;
   /** Optional review findings to show as inline comment rows (e.g. PR/MR reviewer output). */
   reviewFindings?: RunDiffReviewFinding[] | null;
+  manualCommentTargets?: DiffPreviewManualComment[] | null;
+  activeCommentTarget?: DiffLineCommentTarget | null;
+  draftCommentText?: string;
+  draftCommentSaveLabel?: string;
+  editingDraftCommentId?: string | null;
+  draftedReviewFindingKeys?: Set<string> | null;
+  onAddDiffComment?: (target: DiffLineCommentTarget) => void;
+  onSaveDraftComment?: (value: string) => void;
+  onCancelDraftComment?: () => void;
+  onEditDraftComment?: (id: string) => void;
+  onRemoveDraftComment?: (id: string) => void;
+  onDraftReviewFinding?: (target: DiffLineCommentTarget, finding: RunDiffReviewFinding, findingKey: string) => void;
   activityEmphasis?: boolean;
   hideFileHeader?: boolean;
   hideFileHeaderInlineToggle?: boolean;
@@ -126,6 +400,18 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     viewType = "unified" as "split" | "unified",
     wordDiff = true,
     reviewFindings = null,
+    manualCommentTargets = null,
+    activeCommentTarget = null,
+    draftCommentText = "",
+    draftCommentSaveLabel = "Add draft",
+    editingDraftCommentId = null,
+    draftedReviewFindingKeys = null,
+    onAddDiffComment,
+    onSaveDraftComment,
+    onCancelDraftComment,
+    onEditDraftComment,
+    onRemoveDraftComment,
+    onDraftReviewFinding,
     activityEmphasis = false,
     hideFileHeader = false,
     hideFileHeaderInlineToggle = false,
@@ -278,7 +564,7 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
       return;
     }
     const safe = Math.min(activeReviewNavIndex, reviewNavTotal - 1);
-    const id = `easycode-review-finding-${String(safe)}`;
+    const id = `buildwarden-review-finding-${String(safe)}`;
     const el = typeof document !== "undefined" ? document.getElementById(id) : null;
     if (el) {
       requestAnimationFrame(() => {
@@ -292,10 +578,30 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     [activeReviewNavIndex, reviewNavTotal],
   );
 
+  const manualCommentCountByTarget = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const comment of manualCommentTargets ?? []) {
+      const key = diffLineCommentTargetKey(comment);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return counts;
+  }, [manualCommentTargets]);
+
   const generalNavEntries = useMemo(
     () => reviewNavEntries.filter((e) => e.fileKey === null),
     [reviewNavEntries],
   );
+
+  const wordTokensByFile = useMemo(() => {
+    const tokenMap = new Map<string, HunkTokens>();
+    if (viewType !== "unified" || !wordDiff) {
+      return tokenMap;
+    }
+    files.forEach((file, index) => {
+      tokenMap.set(diffFileKey(file, index), tokenize(file.hunks, { enhancers: [markEdits(file.hunks, { type: "line" })] }));
+    });
+    return tokenMap;
+  }, [files, viewType, wordDiff]);
 
   const scrollAreaHeightClass = compact
     ? "max-h-72"
@@ -398,7 +704,7 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
           const isCollapsed = alwaysExpandedFileSections ? false : (collapsedFiles[fileKey] ?? defaultCollapsedFileSections);
           const filePathLabel = formatDiffPath(file.oldPath, file.newPath);
           const fileNavEntries = reviewNavEntries.filter((e) => e.fileKey === fileKey);
-          const anchoredEntryGroups = new Map<string, ReviewNavEntry[]>();
+          const anchoredEntryGroups = new Map<string, { change: ChangeData; entries: ReviewNavEntry[] }>();
           const fallbackFileNavEntries: ReviewNavEntry[] = [];
           for (const entry of fileNavEntries) {
             const change = findDiffChangeForFinding(file.hunks, entry.finding);
@@ -407,27 +713,142 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
               continue;
             }
             const changeKey = getChangeKey(change);
-            anchoredEntryGroups.set(changeKey, [...(anchoredEntryGroups.get(changeKey) ?? []), entry]);
+            const currentGroup = anchoredEntryGroups.get(changeKey);
+            anchoredEntryGroups.set(changeKey, {
+              change,
+              entries: [...(currentGroup?.entries ?? []), entry],
+            });
           }
-          const reviewWidgets = Object.fromEntries(
-            [...anchoredEntryGroups.entries()].map(([changeKey, entries]) => [
+          const widgetGroups = new Map<string, ReactNode[]>();
+          const addInlineWidget = (changeKey: string, node: ReactNode) => {
+            widgetGroups.set(changeKey, [...(widgetGroups.get(changeKey) ?? []), node]);
+          };
+
+          for (const [changeKey, { change, entries }] of anchoredEntryGroups.entries()) {
+            const draftTarget = buildDiffLineCommentTarget(file, change, undefined);
+            addInlineWidget(
+              changeKey,
+              <div className="space-y-2" key={`${fileKey}-review-widget-${changeKey}`}>
+                {entries.map(({ finding, globalIndex }) => {
+                  const findingKey = reviewFindingDraftKey(finding, globalIndex);
+                  return (
+                    <ReviewFindingCard
+                      key={`${fileKey}-inline-review-${String(globalIndex)}`}
+                      finding={finding}
+                      globalIndex={globalIndex}
+                      active={safeReviewNavIndex === globalIndex}
+                      onDraft={draftTarget && onDraftReviewFinding ? () => onDraftReviewFinding(draftTarget, finding, findingKey) : undefined}
+                      draftDisabled={draftedReviewFindingKeys?.has(findingKey) ?? false}
+                    />
+                  );
+                })}
+              </div>,
+            );
+          }
+
+          const activeCommentTargetKey = activeCommentTarget ? diffLineCommentTargetKey(activeCommentTarget) : null;
+          const canRenderActiveCommentEditor = Boolean(activeCommentTarget) && Boolean(onSaveDraftComment) && Boolean(onCancelDraftComment);
+          for (const hunk of file.hunks) {
+            for (const change of hunk.changes) {
+              const changeTargets = buildDiffLineCommentTargets(file, change);
+              if (changeTargets.length === 0) {
+                continue;
+              }
+              const changeTargetKeys = new Set(changeTargets.map(diffLineCommentTargetKey));
+              const changeKey = getChangeKey(change);
+              const commentsForChange = (manualCommentTargets ?? []).filter((comment) => commentMatchesDiffTarget(comment, changeTargets));
+              const visibleCommentsForChange = commentsForChange.filter((comment) => comment.id !== editingDraftCommentId);
+              if (visibleCommentsForChange.length > 0) {
+                addInlineWidget(
+                  changeKey,
+                  <div className="space-y-2" key={`${fileKey}-manual-comments-${changeKey}`}>
+                    {visibleCommentsForChange.map((comment) => (
+                      <DraftCommentCard
+                        key={comment.id}
+                        comment={comment}
+                        editing={comment.id === editingDraftCommentId}
+                        onEdit={onEditDraftComment}
+                        onRemove={onRemoveDraftComment}
+                      />
+                    ))}
+                  </div>,
+                );
+              }
+              if (activeCommentTargetKey && canRenderActiveCommentEditor && changeTargetKeys.has(activeCommentTargetKey) && activeCommentTarget) {
+                addInlineWidget(
+                  changeKey,
+                  <InlineDraftCommentEditor
+                    key={`${fileKey}-manual-editor-${changeKey}`}
+                    target={activeCommentTarget}
+                    initialValue={draftCommentText}
+                    editorKey={editingDraftCommentId ?? activeCommentTargetKey}
+                    onSave={onSaveDraftComment as (value: string) => void}
+                    onCancel={onCancelDraftComment as () => void}
+                    saveLabel={draftCommentSaveLabel}
+                  />,
+                );
+              }
+            }
+          }
+
+          const diffWidgets = Object.fromEntries(
+            [...widgetGroups.entries()].map(([changeKey, nodes]) => [
               changeKey,
               <div className="space-y-2 px-3 py-2" key={`${fileKey}-widget-${changeKey}`}>
-                {entries.map(({ finding, globalIndex }) => (
-                  <ReviewFindingCard
-                    key={`${fileKey}-inline-review-${String(globalIndex)}`}
-                    finding={finding}
-                    globalIndex={globalIndex}
-                    active={safeReviewNavIndex === globalIndex}
-                  />
-                ))}
+                {nodes}
               </div>,
             ]),
           );
-          const wordTokens: HunkTokens | null =
-            viewType === "unified" && wordDiff
-              ? tokenize(file.hunks, { enhancers: [markEdits(file.hunks, { type: "line" })] })
-              : null;
+          const wordTokens = wordTokensByFile.get(fileKey) ?? null;
+          const renderManualCommentGutter = onAddDiffComment
+            ? (options: GutterOptions) => {
+                const target = buildDiffLineCommentTarget(file, options.change, options.side);
+                const count = target ? (manualCommentCountByTarget.get(diffLineCommentTargetKey(target)) ?? 0) : 0;
+                return (
+                  <span className={cn("inline-flex min-w-full items-center justify-end gap-1", target && "group/diff-comment")}>
+                    <span>{options.renderDefault()}</span>
+                    {target ? (
+                      <span
+                        className={cn(
+                          "rounded px-1 text-[9px] font-semibold transition",
+                          count > 0
+                            ? "bg-cyan-500/20 text-cyan-100"
+                            : "text-zinc-600 opacity-50 group-hover/diff-comment:opacity-100",
+                        )}
+                      >
+                        {count > 0 ? String(count) : "+"}
+                      </span>
+                    ) : null}
+                  </span>
+                );
+              }
+            : undefined;
+          const manualCommentGutterEvents: EventMap | undefined = onAddDiffComment
+            ? {
+                onClick: (args, event) => {
+                  const target = args.change ? buildDiffLineCommentTarget(file, args.change, args.side) : null;
+                  if (!target) {
+                    return;
+                  }
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onAddDiffComment(target);
+                },
+              }
+            : undefined;
+          const manualCommentCodeEvents: EventMap | undefined = onAddDiffComment
+            ? {
+                onClick: (args, event) => {
+                  const target = args.change ? buildDiffLineCommentTarget(file, args.change, args.side) : null;
+                  if (!target) {
+                    return;
+                  }
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onAddDiffComment(target);
+                },
+              }
+            : undefined;
 
           return (
             <div key={fileKey} className="border-b border-zinc-800 last:border-b-0">
@@ -483,7 +904,18 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
               )}
               {!isCollapsed ? (
                 <>
-                  <Diff viewType={viewType} diffType={file.type} hunks={file.hunks} tokens={wordTokens} widgets={reviewWidgets} className="text-xs">
+                  <Diff
+                    viewType={viewType}
+                    diffType={file.type}
+                    hunks={file.hunks}
+                    tokens={wordTokens}
+                    widgets={diffWidgets}
+                    className="text-xs"
+                    codeClassName={onAddDiffComment ? "cursor-pointer transition hover:!bg-cyan-500/[0.08]" : undefined}
+                    renderGutter={renderManualCommentGutter}
+                    gutterEvents={manualCommentGutterEvents}
+                    codeEvents={manualCommentCodeEvents}
+                  >
                     {(hunks) => hunks.map((hunk, hunkIndex) => <Hunk key={`${fileKey}-hunk-${String(hunkIndex)}`} hunk={hunk} />)}
                   </Diff>
                   {fallbackFileNavEntries.length > 0 ? (

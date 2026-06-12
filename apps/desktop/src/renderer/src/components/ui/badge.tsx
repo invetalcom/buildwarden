@@ -2,25 +2,31 @@ import type { HTMLAttributes } from "react";
 import { cn } from "../../lib/cn";
 
 const variants: Record<string, string> = {
-  queued: "bg-amber-500/10 text-amber-300 ring-amber-400/30",
-  preparing: "bg-sky-500/10 text-sky-300 ring-sky-400/30",
-  running: "bg-cyan-500/10 text-cyan-300 ring-cyan-400/30",
-  completed: "bg-emerald-500/10 text-emerald-300 ring-emerald-400/30",
-  failed: "bg-rose-500/10 text-rose-300 ring-rose-400/30",
-  cancelled: "bg-zinc-500/10 text-zinc-300 ring-zinc-400/30",
+  queued: "bg-[var(--ec-warning-soft)] text-[var(--ec-warning)] ring-[var(--ec-warning-ring)]",
+  preparing: "bg-[var(--ec-info-soft)] text-[var(--ec-info)] ring-[var(--ec-info-ring)]",
+  running: "bg-[var(--ec-accent-soft)] text-[var(--ec-accent)] ring-[var(--ec-accent-ring)]",
+  completed: "bg-[var(--ec-success-soft)] text-[var(--ec-success)] ring-[var(--ec-success-ring)]",
+  failed: "bg-[var(--ec-danger-soft)] text-[var(--ec-danger)] ring-[var(--ec-danger-ring)]",
+  cancelled: "bg-[var(--ec-muted-soft)] text-[var(--ec-muted)] ring-[var(--ec-border)]",
+  neutral: "bg-[var(--ec-muted-soft)] text-[var(--ec-muted)] ring-[var(--ec-border)]",
 };
 
 export interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   tone?: keyof typeof variants;
+  /** Render a small tone-colored status dot before the label; running pulses. */
+  dot?: boolean;
 }
 
-export const Badge = ({ className, tone = "queued", ...props }: BadgeProps) => (
+export const Badge = ({ className, tone = "queued", dot = false, children, ...props }: BadgeProps) => (
   <span
     className={cn(
-      "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset",
+      "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset",
       variants[tone],
       className,
     )}
     {...props}
-  />
+  >
+    {dot ? <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full bg-current", tone === "running" && "running-pulse")} /> : null}
+    {children}
+  </span>
 );

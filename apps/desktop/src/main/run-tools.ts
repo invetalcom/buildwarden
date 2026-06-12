@@ -2,7 +2,7 @@ import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { createTwoFilesPatch, FILE_HEADERS_ONLY } from "diff";
-import type { HarnessToolContext, RunMode, RunToolCall, RunToolDefinition, RunToolName, RunToolResult, ShellApprovalDecision } from "@easycode/shared";
+import type { HarnessToolContext, RunMode, RunToolCall, RunToolDefinition, RunToolName, RunToolResult, ShellApprovalDecision } from "@buildwarden/shared";
 import { compileShellAllowlistRegExes } from "./shell-allowlist";
 
 const MAX_FILE_BYTES = 120_000;
@@ -349,7 +349,7 @@ const buildDisallowedShellOperatorsMessage = (command: string) => {
   const guidance: string[] = [
     "Shell command contains disallowed operators.",
     "Run a single repo-local command only; do not use cd, &&, |, ;, redirection, or backticks.",
-    "Easycode already runs run_shell from the worktree root.",
+    "BuildWarden already runs run_shell from the worktree root.",
   ];
 
   if (/\bcd\b/i.test(trimmed)) {

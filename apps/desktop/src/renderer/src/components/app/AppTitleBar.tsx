@@ -1,6 +1,5 @@
 import { ChevronDown } from "lucide-react";
-import { WINDOWS_TITLEBAR_OVERLAY_BACKGROUND, type AppMenuSection, type UiTheme } from "@easycode/shared";
-import appIcon from "../../assets/app-icon.png";
+import { type AppMenuSection, type UiTheme } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 
@@ -19,33 +18,17 @@ type Props = {
   syncWindowsCaptionStrip?: boolean;
 };
 
-export const AppTitleBar = ({ uiTheme, onOpenMenu, syncWindowsCaptionStrip = false }: Props) => {
-  const chromaticDark = uiTheme !== "light";
-  const captionFill = WINDOWS_TITLEBAR_OVERLAY_BACKGROUND[uiTheme];
+export const AppTitleBar = ({ onOpenMenu, syncWindowsCaptionStrip = false }: Props) => {
   return (
     <header
-      style={syncWindowsCaptionStrip ? { backgroundColor: captionFill } : undefined}
+      style={syncWindowsCaptionStrip ? { backgroundColor: "var(--ec-titlebar)" } : undefined}
       className={cn(
         "flex h-10 shrink-0 items-center px-2.5 [-webkit-app-region:drag]",
         syncWindowsCaptionStrip
-          ? chromaticDark
-            ? "border-b border-white/10 text-zinc-100"
-            : "border-b border-slate-400/60 text-slate-800"
-          : chromaticDark
-            ? "glass-titlebar text-zinc-100"
-            : "border-b border-slate-400/60 bg-slate-300/85 text-slate-800 backdrop-blur-xl",
+          ? "border-b border-[var(--ec-border)] text-[var(--ec-text)]"
+          : "glass-titlebar text-[var(--ec-text)]",
       )}
     >
-      <div className="flex min-w-0 items-center gap-1.5 pr-3">
-        <img
-          src={appIcon}
-          alt="Easycode"
-          className="h-6 w-6 rounded-md object-cover shadow-[0_0_14px_rgba(34,211,238,0.18)]"
-          draggable={false}
-        />
-        <span className={`truncate text-sm font-medium tracking-tight ${chromaticDark ? "text-zinc-200" : "text-slate-800"}`}>Easycode</span>
-      </div>
-
       <nav className="flex items-center gap-0.5 pr-[148px] [-webkit-app-region:no-drag]">
         {MENU_SECTIONS.map((section) => (
           <Button
@@ -53,15 +36,11 @@ export const AppTitleBar = ({ uiTheme, onOpenMenu, syncWindowsCaptionStrip = fal
             type="button"
             variant="ghost"
             size="sm"
-            className={`h-7 rounded-md px-2 text-[12px] font-medium ${
-              chromaticDark
-                ? "text-zinc-300 hover:bg-zinc-800/80 hover:text-zinc-50"
-                : "text-slate-700 hover:bg-slate-500/12 hover:text-slate-950"
-            }`}
+            className="h-7 rounded-md px-2 text-[12px] font-medium text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
             onClick={(event) => onOpenMenu(section.id, event.currentTarget)}
           >
             {section.label}
-            <ChevronDown className={`ml-1 h-3 w-3 ${chromaticDark ? "text-zinc-500" : "text-slate-500"}`} />
+            <ChevronDown className="ml-1 size-3 text-[var(--ec-faint)]" />
           </Button>
         ))}
       </nav>

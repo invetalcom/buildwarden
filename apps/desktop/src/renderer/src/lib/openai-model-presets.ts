@@ -19,6 +19,6 @@ export {
   type ProviderConnectionKind,
   type UnifiedModelPreset,
   type UnifiedModelPresetGroup,
-} from "@easycode/shared";
+} from "@buildwarden/shared";
 
 export const MODEL_PRESET_CUSTOM = "__custom__" as const;

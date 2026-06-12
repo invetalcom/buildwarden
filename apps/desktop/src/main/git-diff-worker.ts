@@ -1,5 +1,5 @@
 import { parentPort, workerData } from "node:worker_threads";
-import { computeWorktreeDiff } from "@easycode/git-service";
+import { computeWorktreeDiff } from "@buildwarden/git-service";
 
 const port = parentPort;
 if (!port) {
