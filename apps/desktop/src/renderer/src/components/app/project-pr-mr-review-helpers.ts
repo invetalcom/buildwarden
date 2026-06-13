@@ -71,7 +71,10 @@ const codeLineMatchesThread = (line: ReviewThreadCodeLine, thread: ProjectForgeR
 };
 
 const parseHunkLines = (hunkText: string, thread: ProjectForgeReviewThread): ReviewThreadCodeLine[] => {
-  const rawLines = hunkText.split(/\r?\n/).filter((line) => line.trimEnd().length > 0);
+  const rawLines = hunkText.split(/\r?\n/);
+  if (rawLines[rawLines.length - 1] === "" && /\r?\n$/.test(hunkText)) {
+    rawLines.pop();
+  }
   let oldLine = 0;
   let newLine = 0;
   const parsed: ReviewThreadCodeLine[] = [];
@@ -93,6 +96,10 @@ const parseHunkLines = (hunkText: string, thread: ProjectForgeReviewThread): Rev
     }
 
     if (!oldLine && !newLine) {
+      continue;
+    }
+
+    if (line.startsWith("\\")) {
       continue;
     }
 

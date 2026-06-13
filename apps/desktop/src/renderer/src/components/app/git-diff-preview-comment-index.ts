@@ -31,8 +31,10 @@ export const diffLineCommentTargetKey = (target: Omit<ProjectPrMrDiffComment, "b
 
 export type DiffCommentIndex = {
   exact: Map<string, DiffPreviewManualComment[]>;
-  byLine: Map<number, DiffPreviewManualComment[]>;
+  bySideAndLine: Map<string, DiffPreviewManualComment[]>;
 };
+
+const sideLineKey = (side: "old" | "new", line: number) => `${side}\0${String(line)}`;
 
 const appendCommentIndexValue = <TKey,>(map: Map<TKey, DiffPreviewManualComment[]>, key: TKey, comment: DiffPreviewManualComment) => {
   const current = map.get(key);
@@ -45,17 +47,17 @@ const appendCommentIndexValue = <TKey,>(map: Map<TKey, DiffPreviewManualComment[
 
 export const buildDiffCommentIndex = (comments: readonly DiffPreviewManualComment[] | null | undefined): DiffCommentIndex => {
   const exact = new Map<string, DiffPreviewManualComment[]>();
-  const byLine = new Map<number, DiffPreviewManualComment[]>();
+  const bySideAndLine = new Map<string, DiffPreviewManualComment[]>();
 
   for (const comment of comments ?? []) {
     appendCommentIndexValue(exact, diffLineCommentTargetKey(comment), comment);
-    const line = comment.newLineNumber ?? comment.oldLineNumber;
-    if (line) {
-      appendCommentIndexValue(byLine, line, comment);
+    const line = comment.side === "new" ? comment.newLineNumber : comment.oldLineNumber;
+    if (line != null) {
+      appendCommentIndexValue(bySideAndLine, sideLineKey(comment.side, line), comment);
     }
   }
 
-  return { exact, byLine };
+  return { exact, bySideAndLine };
 };
 
 const diffCommentPathsMatch = (comment: DiffPreviewManualComment, target: DiffLineCommentTarget) => {
@@ -77,12 +79,12 @@ export const findCommentsForDiffTargets = (
       matches.set(comment.id, comment);
     }
 
-    const targetLine = target.newLineNumber ?? target.oldLineNumber;
-    if (!targetLine) {
+    const targetLine = target.side === "new" ? target.newLineNumber : target.oldLineNumber;
+    if (targetLine == null) {
       continue;
     }
 
-    for (const comment of commentIndex.byLine.get(targetLine) ?? []) {
+    for (const comment of commentIndex.bySideAndLine.get(sideLineKey(target.side, targetLine)) ?? []) {
       if (diffCommentPathsMatch(comment, target)) {
         matches.set(comment.id, comment);
       }

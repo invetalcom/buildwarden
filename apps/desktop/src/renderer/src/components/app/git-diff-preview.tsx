@@ -700,7 +700,7 @@ const DiffFileSection = memo(function DiffFileSection({
             tokens={wordTokens}
             widgets={diffWidgets}
             className="text-xs"
-            codeClassName={onAddDiffComment ? "cursor-pointer transition hover:!bg-cyan-500/[0.08]" : undefined}
+            codeClassName={onAddDiffComment ? "cursor-pointer transition hover:bg-cyan-500/[0.08]!" : undefined}
             renderGutter={renderManualCommentGutter}
             gutterEvents={manualCommentGutterEvents}
             codeEvents={manualCommentCodeEvents}
@@ -834,9 +834,23 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     }
   }, [trimmedDiff]);
 
+  const whitespaceFilteredFiles = useMemo(() => {
+    if (!hideWhitespaceChanges) {
+      return parsedFiles;
+    }
+    return parsedFiles
+      .map((file) => ({
+        ...file,
+        hunks: file.hunks
+          .map((hunk) => ({ ...hunk, changes: filterWhitespaceOnlyChanges(hunk.changes) }))
+          .filter((hunk) => hunk.changes.length > 0),
+      }))
+      .filter((file) => file.hunks.length > 0);
+  }, [hideWhitespaceChanges, parsedFiles]);
+
   const fileSummaries = useMemo<DiffPreviewFileSummary[]>(
     () =>
-      parsedFiles.map((file, index) => ({
+      whitespaceFilteredFiles.map((file, index) => ({
         key: diffFileKey(file, index),
         path: formatDiffPath(file.oldPath, file.newPath),
         oldPath: file.oldPath && file.oldPath !== file.newPath ? file.oldPath : null,
@@ -844,24 +858,12 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
         additions: file.hunks.reduce((sum, hunk) => sum + hunk.changes.filter((change) => change.type === "insert").length, 0),
         deletions: file.hunks.reduce((sum, hunk) => sum + hunk.changes.filter((change) => change.type === "delete").length, 0),
       })),
-    [parsedFiles],
+    [whitespaceFilteredFiles],
   );
 
   useEffect(() => {
     onParsedFilesChange?.(fileSummaries);
   }, [fileSummaries, onParsedFilesChange]);
-
-  const whitespaceFilteredFiles = useMemo(() => {
-    if (!hideWhitespaceChanges) {
-      return parsedFiles;
-    }
-    return parsedFiles.map((file) => ({
-      ...file,
-      hunks: file.hunks
-        .map((hunk) => ({ ...hunk, changes: filterWhitespaceOnlyChanges(hunk.changes) }))
-        .filter((hunk) => hunk.changes.length > 0),
-    }));
-  }, [hideWhitespaceChanges, parsedFiles]);
 
   const files = useMemo(() => {
     const active = normalizeDiffPathSegment(activeFilePath ?? "");

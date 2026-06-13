@@ -39,6 +39,7 @@ describe("git diff preview comment indexing", () => {
       makeComment("suffix", { oldPath: "src/App.ts", newPath: "src/App.ts" }),
       makeComment("wrong-line", { newLineNumber: 21 }),
       makeComment("wrong-path", { oldPath: "Frontend/src/App.ts", newPath: "Frontend/src/App.ts" }),
+      makeComment("wrong-side", { side: "old", oldLineNumber: 20, newLineNumber: null, oldPath: "src/App.ts", newPath: "src/App.ts" }),
     ];
 
     const matches = findCommentsForDiffTargets(buildDiffCommentIndex(comments), [target]);

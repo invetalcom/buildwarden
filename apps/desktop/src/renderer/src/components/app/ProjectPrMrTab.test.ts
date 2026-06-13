@@ -228,4 +228,39 @@ describe("ProjectPrMrTab review helpers", () => {
       ]),
     );
   });
+
+  it("keeps blank hunk context lines while ignoring EOF metadata", () => {
+    const thread = {
+      id: "thread-blank-line",
+      providerThreadId: "thread-blank-line",
+      replyToCommentId: null,
+      provider: "github" as const,
+      path: "src/auth.ts",
+      oldPath: "src/auth.ts",
+      side: "new" as const,
+      oldLineNumber: null,
+      newLineNumber: 12,
+      commitSha: "head",
+      diffHunk: [
+        "@@ -10,4 +10,4 @@",
+        " const account = findAccount(email);",
+        " ",
+        "\\ No newline at end of file",
+        "+linkVerifiedAccount(account);",
+        " return account;",
+      ].join("\n"),
+      resolved: false,
+      comments: [{ id: "comment-1", providerCommentId: "1", body: "Use verified email.", author: null, createdAt: null, updatedAt: null, url: null }],
+    };
+
+    const lines = buildReviewThreadCodeLines(thread, "", 5);
+
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "context", oldLineNumber: 11, newLineNumber: 11, content: "" }),
+        expect.objectContaining({ type: "add", newLineNumber: 12, content: "linkVerifiedAccount(account);", highlighted: true }),
+      ]),
+    );
+    expect(lines.some((line) => line.content.startsWith("\\ No newline"))).toBe(false);
+  });
 });

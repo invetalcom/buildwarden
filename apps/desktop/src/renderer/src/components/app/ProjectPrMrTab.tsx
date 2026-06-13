@@ -1025,11 +1025,15 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     }
   }, [canUseForgeApi, preloadRequestData, requestItems]);
 
+  const loadCurrentFilesDiffIfNeeded = () => {
+    if (!hasDiff && activeUrl.trim() && !loadBusy) {
+      void loadDiff({ commitSha: selectedCommitSha ?? null });
+    }
+  };
+
   const showFiles = () => {
     setActiveDetailTab("files");
-    if ((!hasDiff || selectedCommitSha) && activeUrl.trim() && !loadBusy) {
-      void loadDiff({ commitSha: null });
-    }
+    loadCurrentFilesDiffIfNeeded();
   };
 
   const startReviewMode = () => {
@@ -1037,9 +1041,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     setActiveDetailTab("files");
     setPostMessage(null);
     setPostError(null);
-    if ((!hasDiff || selectedCommitSha) && activeUrl.trim() && !loadBusy) {
-      void loadDiff({ commitSha: null });
-    }
+    loadCurrentFilesDiffIfNeeded();
   };
 
   const selectCommitDiff = (commitSha: string) => {
