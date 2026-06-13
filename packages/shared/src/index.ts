@@ -1299,7 +1299,7 @@ export interface ChatAttachmentPayload {
   dataBase64: string;
 }
 
-/** Persisted on user log steps so reopened chats/runs can still render the original attached files/images. */
+/** Persisted on chat/run steps so reopened sessions can still render attached or generated files/images. */
 export interface StoredAttachmentMetadata {
   attachmentNames?: string[];
   attachments?: ChatAttachmentPayload[];

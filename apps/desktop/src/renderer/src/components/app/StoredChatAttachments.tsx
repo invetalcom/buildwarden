@@ -1,23 +1,285 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import type { ChatAttachmentPayload } from "@buildwarden/shared";
-import { Download } from "lucide-react";
+import {
+  Download,
+  File,
+  FileArchive,
+  FileAudio,
+  FileCode,
+  FileImage,
+  FileJson,
+  FileQuestion,
+  FileSpreadsheet,
+  FileText,
+  FileVideo,
+  Presentation,
+} from "lucide-react";
+import {
+  getStoredAttachmentDownloadMimeType,
+  getStoredAttachmentRenderMode,
+  getStoredAttachmentTextPreview,
+  inferStoredAttachmentKind,
+  type StoredAttachmentKind,
+} from "./stored-chat-attachment-utils";
+
+type AttachmentPresentation = {
+  label: string;
+  Icon: typeof FileText;
+  accentClassName: string;
+};
+
+const ATTACHMENT_PRESENTATIONS: Record<StoredAttachmentKind, AttachmentPresentation> = {
+  archive: {
+    label: "Archive",
+    Icon: FileArchive,
+    accentClassName: "border-orange-400/20 bg-orange-500/10 text-orange-200",
+  },
+  audio: {
+    label: "Audio",
+    Icon: FileAudio,
+    accentClassName: "border-violet-400/20 bg-violet-500/10 text-violet-200",
+  },
+  code: {
+    label: "Code",
+    Icon: FileCode,
+    accentClassName: "border-amber-400/20 bg-amber-500/10 text-amber-200",
+  },
+  document: {
+    label: "Doc",
+    Icon: FileText,
+    accentClassName: "border-sky-400/20 bg-sky-500/10 text-sky-200",
+  },
+  file: {
+    label: "File",
+    Icon: File,
+    accentClassName: "border-zinc-500/30 bg-zinc-800/65 text-zinc-200",
+  },
+  image: {
+    label: "Image",
+    Icon: FileImage,
+    accentClassName: "border-cyan-400/20 bg-cyan-500/10 text-cyan-200",
+  },
+  json: {
+    label: "JSON",
+    Icon: FileJson,
+    accentClassName: "border-yellow-400/20 bg-yellow-500/10 text-yellow-100",
+  },
+  pdf: {
+    label: "PDF",
+    Icon: FileText,
+    accentClassName: "border-red-400/20 bg-red-500/10 text-red-200",
+  },
+  presentation: {
+    label: "Slides",
+    Icon: Presentation,
+    accentClassName: "border-amber-400/20 bg-amber-500/10 text-amber-100",
+  },
+  spreadsheet: {
+    label: "Sheet",
+    Icon: FileSpreadsheet,
+    accentClassName: "border-emerald-400/20 bg-emerald-500/10 text-emerald-200",
+  },
+  text: {
+    label: "Text",
+    Icon: FileText,
+    accentClassName: "border-blue-400/20 bg-blue-500/10 text-blue-100",
+  },
+  video: {
+    label: "Video",
+    Icon: FileVideo,
+    accentClassName: "border-rose-400/20 bg-rose-500/10 text-rose-200",
+  },
+};
 
 const toDataUrl = (attachment: ChatAttachmentPayload): string =>
-  `data:${attachment.mimeType || "application/octet-stream"};base64,${attachment.dataBase64}`;
+  `data:${getStoredAttachmentDownloadMimeType(attachment)};base64,${attachment.dataBase64}`;
 
-const formatAttachmentLabel = (attachment: ChatAttachmentPayload): string => {
-  const mime = (attachment.mimeType || "").toLowerCase();
-  if (mime.startsWith("image/")) {
-    return "Image";
-  }
-  if (mime === "application/pdf") {
-    return "PDF";
-  }
-  if (mime.startsWith("text/") || mime === "application/json") {
-    return "Text";
-  }
-  return "File";
+const getPresentation = (fileName: string, mimeType = ""): AttachmentPresentation =>
+  ATTACHMENT_PRESENTATIONS[inferStoredAttachmentKind(fileName, mimeType)] ?? {
+    label: "File",
+    Icon: FileQuestion,
+    accentClassName: "border-zinc-500/30 bg-zinc-800/65 text-zinc-200",
+  };
+
+const AttachmentFooter = ({ attachment }: { attachment: ChatAttachmentPayload }) => {
+  const presentation = getPresentation(attachment.fileName, attachment.mimeType);
+
+  return (
+    <div className="flex min-w-0 items-center gap-1.5 border-t border-zinc-700/45 px-2 py-1.5">
+      <span
+        className={`shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-none ${presentation.accentClassName}`}
+      >
+        {presentation.label}
+      </span>
+      <a
+        href={toDataUrl(attachment)}
+        download={attachment.fileName}
+        className="min-w-0 flex-1 truncate text-[11px] leading-4 text-zinc-300 transition hover:text-zinc-100"
+        title={`Download ${attachment.fileName}`}
+      >
+        {attachment.fileName}
+      </a>
+      <a
+        href={toDataUrl(attachment)}
+        download={attachment.fileName}
+        className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-100"
+        title={`Download ${attachment.fileName}`}
+        aria-label={`Download ${attachment.fileName}`}
+      >
+        <Download className="h-3.5 w-3.5" aria-hidden />
+      </a>
+    </div>
+  );
+};
+
+const NameOnlyAttachmentCard = ({ compact, name }: { compact: boolean; name: string }) => {
+  const presentation = getPresentation(name);
+  const { Icon } = presentation;
+
+  return (
+    <div
+      className={`overflow-hidden rounded-lg border border-zinc-700/65 bg-zinc-950/55 shadow-sm ${
+        compact ? "w-32" : "w-36"
+      }`}
+      title={name}
+    >
+      <div className={`flex flex-col items-center justify-center gap-2 ${compact ? "h-20" : "h-24"} px-3`}>
+        <div className={`rounded-lg border p-2.5 ${presentation.accentClassName}`}>
+          <Icon className="h-6 w-6" aria-hidden />
+        </div>
+        <span className="max-w-full truncate text-[10px] font-semibold uppercase leading-none text-zinc-500">
+          {presentation.label}
+        </span>
+      </div>
+      <div className="truncate border-t border-zinc-700/45 px-2 py-1.5 text-[11px] leading-4 text-zinc-400">{name}</div>
+    </div>
+  );
+};
+
+const IconAttachmentCard = ({ attachment, compact }: { attachment: ChatAttachmentPayload; compact: boolean }) => {
+  const presentation = getPresentation(attachment.fileName, attachment.mimeType);
+  const { Icon } = presentation;
+
+  return (
+    <div
+      className={`overflow-hidden rounded-lg border border-zinc-700/65 bg-zinc-950/55 shadow-sm ${
+        compact ? "w-32" : "w-36"
+      }`}
+      title={attachment.fileName}
+    >
+      <div className={`flex flex-col items-center justify-center gap-2 ${compact ? "h-24" : "h-28"} px-3`}>
+        <div className={`rounded-lg border p-3.5 ${presentation.accentClassName}`}>
+          <Icon className="h-9 w-9" aria-hidden />
+        </div>
+        <span className="max-w-full truncate text-[10px] font-semibold uppercase leading-none text-zinc-500">
+          {presentation.label}
+        </span>
+      </div>
+      <AttachmentFooter attachment={attachment} />
+    </div>
+  );
+};
+
+const ImageAttachmentCard = ({
+  attachment,
+  compact,
+  onOpen,
+}: {
+  attachment: ChatAttachmentPayload;
+  compact: boolean;
+  onOpen: () => void;
+}) => (
+  <div
+    className={`group overflow-hidden rounded-lg border border-cyan-400/20 bg-zinc-950/60 shadow-sm transition hover:border-cyan-300/35 ${
+      compact ? "w-32" : "w-40"
+    }`}
+  >
+    <button type="button" className="block w-full bg-black/40 text-left" title={`Open ${attachment.fileName}`} onClick={onOpen}>
+      <img
+        src={toDataUrl(attachment)}
+        alt={attachment.fileName}
+        className={`${compact ? "h-24" : "h-28"} w-full object-cover transition group-hover:scale-[1.02]`}
+      />
+    </button>
+    <AttachmentFooter attachment={attachment} />
+  </div>
+);
+
+const PdfAttachmentCard = ({
+  attachment,
+  compact,
+  onOpen,
+}: {
+  attachment: ChatAttachmentPayload;
+  compact: boolean;
+  onOpen: () => void;
+}) => {
+  const dataUrl = toDataUrl(attachment);
+
+  return (
+    <div
+      className={`group overflow-hidden rounded-lg border border-red-400/20 bg-zinc-950/60 shadow-sm transition hover:border-red-300/35 ${
+        compact ? "w-36" : "w-44"
+      }`}
+      title={attachment.fileName}
+    >
+      <div className={`relative ${compact ? "h-24" : "h-28"} overflow-hidden bg-zinc-900`}>
+        <object
+          data={`${dataUrl}#toolbar=0&navpanes=0&scrollbar=0`}
+          type="application/pdf"
+          className="pointer-events-none h-full w-full bg-white"
+          aria-label={`Preview ${attachment.fileName}`}
+        >
+          <div className="flex h-full flex-col items-center justify-center gap-2 bg-red-500/10 text-red-200">
+            <FileText className="h-8 w-8" aria-hidden />
+            <span className="text-[10px] font-semibold uppercase leading-none">PDF</span>
+          </div>
+        </object>
+        <button
+          type="button"
+          className="absolute inset-0 cursor-zoom-in rounded-t-lg outline-none ring-inset transition focus-visible:ring-2 focus-visible:ring-red-300"
+          title={`Open ${attachment.fileName}`}
+          aria-label={`Open ${attachment.fileName}`}
+          onClick={onOpen}
+        />
+      </div>
+      <AttachmentFooter attachment={attachment} />
+    </div>
+  );
+};
+
+const TextAttachmentCard = ({
+  attachment,
+  compact,
+  preview,
+}: {
+  attachment: ChatAttachmentPayload;
+  compact: boolean;
+  preview: string;
+}) => {
+  const presentation = getPresentation(attachment.fileName, attachment.mimeType);
+  const { Icon } = presentation;
+
+  return (
+    <div
+      className={`overflow-hidden rounded-lg border border-zinc-700/65 bg-zinc-950/60 shadow-sm ${
+        compact ? "w-44" : "w-52"
+      }`}
+      title={attachment.fileName}
+    >
+      <div className={`${compact ? "h-24" : "h-28"} overflow-hidden bg-zinc-950/80 p-2`}>
+        <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase leading-none text-zinc-500">
+          <Icon className="h-3.5 w-3.5" aria-hidden />
+          <span>{presentation.label}</span>
+        </div>
+        <pre className="max-h-full whitespace-pre-wrap break-words font-mono text-[10px] leading-4 text-zinc-300">
+          {preview}
+        </pre>
+      </div>
+      <AttachmentFooter attachment={attachment} />
+    </div>
+  );
 };
 
 interface StoredChatAttachmentsProps {
@@ -32,70 +294,58 @@ export const StoredChatAttachments = ({
   compact = false,
 }: StoredChatAttachmentsProps) => {
   const [expandedImage, setExpandedImage] = useState<ChatAttachmentPayload | null>(null);
+  const [expandedPdf, setExpandedPdf] = useState<ChatAttachmentPayload | null>(null);
 
   if (attachments.length === 0 && fallbackNames.length === 0) {
     return null;
   }
 
-  const imageAttachments = attachments.filter((attachment) => (attachment.mimeType || "").toLowerCase().startsWith("image/"));
-  const nonImageAttachments = attachments.filter((attachment) => !imageAttachments.includes(attachment));
   const usedNames = new Set(attachments.map((attachment) => attachment.fileName));
   const namesOnly = fallbackNames.filter((name) => !usedNames.has(name));
   const expandedImageUrl = expandedImage ? toDataUrl(expandedImage) : "";
+  const expandedPdfUrl = expandedPdf ? toDataUrl(expandedPdf) : "";
 
   return (
     <>
       <div className={compact ? "mt-1.5 space-y-2" : "mt-2 space-y-2"}>
-        {imageAttachments.length > 0 ? (
-          <div className="flex flex-wrap gap-2">
-            {imageAttachments.map((attachment, index) => (
-              <button
-                key={`${attachment.fileName}-${String(index)}`}
-                type="button"
-                className="group block overflow-hidden rounded-xl border border-fuchsia-500/15 bg-zinc-950/60 text-left transition hover:border-fuchsia-400/30"
-                title={`Open ${attachment.fileName}`}
-                onClick={() => setExpandedImage(attachment)}
-              >
-                <img
-                  src={toDataUrl(attachment)}
-                  alt={attachment.fileName}
-                  className={compact ? "h-24 w-24 object-cover" : "h-28 w-28 object-cover"}
-                />
-                <div className="max-w-28 truncate border-t border-fuchsia-500/10 px-2 py-1 text-[10px] text-zinc-400 group-hover:text-zinc-300">
-                  {attachment.fileName}
-                </div>
-              </button>
-            ))}
-          </div>
-        ) : null}
+        <div className="flex flex-wrap gap-2">
+          {attachments.map((attachment, index) => {
+            const renderMode = getStoredAttachmentRenderMode(attachment);
+            const textPreview = renderMode === "text" ? getStoredAttachmentTextPreview(attachment) : null;
+            const key = `${attachment.fileName}-${String(index)}`;
 
-        {nonImageAttachments.length > 0 || namesOnly.length > 0 ? (
-          <div className="flex flex-wrap gap-1.5">
-            {nonImageAttachments.map((attachment, index) => (
-              <a
-                key={`${attachment.fileName}-${String(index)}`}
-                href={toDataUrl(attachment)}
-                download={attachment.fileName}
-                className="flex max-w-full items-center gap-1 rounded-md border border-fuchsia-500/15 bg-zinc-950/55 px-2 py-1 text-[11px] text-zinc-300 transition hover:border-fuchsia-400/30 hover:text-zinc-100"
-                title={attachment.fileName}
-              >
-                <span className="shrink-0 text-[10px] uppercase tracking-wide text-zinc-500">
-                  {formatAttachmentLabel(attachment)}
-                </span>
-                <span className="truncate">{attachment.fileName}</span>
-              </a>
-            ))}
-            {namesOnly.map((name, index) => (
-              <span
-                key={`${name}-${String(index)}`}
-                className="max-w-full truncate rounded-md border border-fuchsia-500/15 bg-zinc-950/50 px-2 py-1 text-[11px] text-zinc-400"
-                title={name}
-              >
-                {name}
-              </span>
-            ))}
-          </div>
-        ) : null}
+            if (renderMode === "image") {
+              return (
+                <ImageAttachmentCard
+                  key={key}
+                  attachment={attachment}
+                  compact={compact}
+                  onOpen={() => setExpandedImage(attachment)}
+                />
+              );
+            }
+
+            if (renderMode === "pdf") {
+              return (
+                <PdfAttachmentCard
+                  key={key}
+                  attachment={attachment}
+                  compact={compact}
+                  onOpen={() => setExpandedPdf(attachment)}
+                />
+              );
+            }
+
+            if (textPreview) {
+              return <TextAttachmentCard key={key} attachment={attachment} compact={compact} preview={textPreview} />;
+            }
+
+            return <IconAttachmentCard key={key} attachment={attachment} compact={compact} />;
+          })}
+          {namesOnly.map((name, index) => (
+            <NameOnlyAttachmentCard key={`${name}-${String(index)}`} name={name} compact={compact} />
+          ))}
+        </div>
       </div>
 
       {expandedImage
@@ -138,6 +388,66 @@ export const StoredChatAttachments = ({
                     alt={expandedImage.fileName}
                     className="max-h-[80vh] max-w-full object-contain"
                   />
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      {expandedPdf
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[30000] flex items-center justify-center bg-black/80 p-4"
+              onClick={() => setExpandedPdf(null)}
+              role="dialog"
+              aria-modal="true"
+              aria-label={expandedPdf.fileName}
+            >
+              <div
+                className="flex max-h-full w-[min(92vw,72rem)] flex-col overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-950 shadow-2xl"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="flex items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
+                  <p className="truncate text-sm text-zinc-200">{expandedPdf.fileName}</p>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <a
+                      href={expandedPdfUrl}
+                      download={expandedPdf.fileName}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
+                      title={`Download ${expandedPdf.fileName}`}
+                      aria-label={`Download ${expandedPdf.fileName}`}
+                    >
+                      <Download className="h-4 w-4" aria-hidden />
+                    </a>
+                    <button
+                      type="button"
+                      className="rounded-md px-2 py-1 text-xs text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
+                      onClick={() => setExpandedPdf(null)}
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+                <div className="h-[min(82vh,58rem)] bg-zinc-900 p-3">
+                  <object
+                    data={`${expandedPdfUrl}#toolbar=1&navpanes=0`}
+                    type="application/pdf"
+                    className="h-full w-full rounded-lg bg-white"
+                    aria-label={`Preview ${expandedPdf.fileName}`}
+                  >
+                    <div className="flex h-full flex-col items-center justify-center gap-3 rounded-lg bg-red-500/10 text-red-200">
+                      <FileText className="h-12 w-12" aria-hidden />
+                      <span className="text-xs font-semibold uppercase leading-none">PDF</span>
+                      <a
+                        href={expandedPdfUrl}
+                        download={expandedPdf.fileName}
+                        className="rounded-md border border-red-300/20 px-3 py-1.5 text-xs text-red-100 transition hover:bg-red-300/10"
+                      >
+                        Download
+                      </a>
+                    </div>
+                  </object>
                 </div>
               </div>
             </div>,
