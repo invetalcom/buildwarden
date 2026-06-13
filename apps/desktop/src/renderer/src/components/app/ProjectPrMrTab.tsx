@@ -25,6 +25,8 @@ import {
   Info,
   Loader2,
   MessageSquarePlus,
+  PanelLeftClose,
+  PanelLeftOpen,
   RefreshCw,
   Rows2,
   Search,
@@ -314,6 +316,8 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const activeRequestUrlRef = useRef(initialSession?.selectedRequest?.url ?? initialSession?.prUrl.trim() ?? "");
   const hydratedProjectIdRef = useRef(projectId);
   const [requestListWidth, setRequestListWidth] = useState(readStoredRequestListWidth);
+  const [requestListCollapsed, setRequestListCollapsed] = useState(false);
+  const [fileNavigatorCollapsed, setFileNavigatorCollapsed] = useState(false);
   const [isRequestListResizing, setIsRequestListResizing] = useState(false);
   const requestListLayoutRef = useRef<HTMLDivElement>(null);
   const requestListResizeStartRef = useRef<{ x: number; width: number } | null>(null);
@@ -1682,21 +1686,55 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
       return null;
     }
 
+    if (fileNavigatorCollapsed) {
+      return (
+        <aside className="flex min-h-0 flex-col items-center overflow-hidden rounded-md border border-zinc-800 bg-zinc-950/65 py-1.5">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-zinc-400 hover:bg-zinc-900 hover:text-cyan-100"
+            onClick={() => setFileNavigatorCollapsed(false)}
+            title="Show file list"
+            aria-label="Show file list"
+          >
+            <PanelLeftOpen className="h-3.5 w-3.5" aria-hidden />
+          </Button>
+          <span className="mt-1 rounded-full bg-cyan-500/15 px-1.5 py-px font-mono text-[9px] text-cyan-100" title={`${String(fileNavItems.length)} changed files`}>
+            {String(fileNavItems.length)}
+          </span>
+        </aside>
+      );
+    }
+
     return (
       <aside className="flex min-h-0 flex-col overflow-hidden rounded-md border border-zinc-800 bg-zinc-950/65">
         <div className="border-b border-zinc-800 p-1.5">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-zinc-600" aria-hidden />
-            <Input
-              value={diffFileQuery}
-              onChange={(event) => {
-                setDiffFileQuery(event.target.value);
-                setActiveDiffFilePath(null);
-                setHighlightedCommentId(null);
-              }}
-              placeholder="Filter files"
-              className="h-7 pl-7 pr-2 text-[11px]"
-            />
+          <div className="flex items-center gap-1.5">
+            <div className="relative min-w-0 flex-1">
+              <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-zinc-600" aria-hidden />
+              <Input
+                value={diffFileQuery}
+                onChange={(event) => {
+                  setDiffFileQuery(event.target.value);
+                  setActiveDiffFilePath(null);
+                  setHighlightedCommentId(null);
+                }}
+                placeholder="Filter files"
+                className="h-7 pl-7 pr-2 text-[11px]"
+              />
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 shrink-0 border border-zinc-800 bg-zinc-950/80 text-zinc-500 hover:bg-zinc-900 hover:text-cyan-100"
+              onClick={() => setFileNavigatorCollapsed(true)}
+              title="Hide file list"
+              aria-label="Hide file list"
+            >
+              <PanelLeftClose className="h-3.5 w-3.5" aria-hidden />
+            </Button>
           </div>
           <button
             type="button"
@@ -2006,7 +2044,11 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
           <div
             className={cn(
               "grid min-h-0 flex-1 gap-2 overflow-hidden",
-              fileNavigator ? "lg:grid-cols-[minmax(12rem,17rem)_minmax(0,1fr)]" : "lg:grid-cols-1",
+              fileNavigator
+                ? fileNavigatorCollapsed
+                  ? "grid-cols-[2.25rem_minmax(0,1fr)]"
+                  : "lg:grid-cols-[minmax(12rem,17rem)_minmax(0,1fr)]"
+                : "lg:grid-cols-1",
             )}
           >
             {fileNavigator}
@@ -2376,62 +2418,97 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
         className={cn(
           "min-h-0 flex-1",
           requestItems.length > 0
-            ? "grid overflow-hidden gap-2 lg:grid-cols-[var(--pr-mr-request-list-width)_minmax(0,1fr)]"
+            ? cn(
+                "grid overflow-hidden gap-2",
+                requestListCollapsed ? "grid-cols-[2.25rem_minmax(0,1fr)]" : "lg:grid-cols-[var(--pr-mr-request-list-width)_minmax(0,1fr)]",
+              )
             : "flex flex-col",
         )}
         style={requestItems.length > 0 ? requestListLayoutStyle : undefined}
       >
         {requestItems.length > 0 ? (
-          <Card className="relative flex min-h-0 flex-col overflow-hidden border-zinc-800/80 bg-zinc-950/40 p-0">
-            <div className="flex items-center justify-between gap-2 border-b border-zinc-800/80 px-2 py-1.5">
-              <p className="text-[11px] font-semibold text-zinc-100">Requests</p>
-              <span className="font-mono text-[9px] text-zinc-500">{String(requestItems.length)}</span>
-            </div>
-            <div className="app-scrollbar max-h-72 min-h-0 flex-1 overflow-y-auto p-1.5 lg:max-h-none">
-              {requestItems.map((request) => {
-                const selected = selectedRequest?.url === request.url;
-                return (
-                  <button
-                    key={`${request.provider}-${String(request.number)}`}
+          requestListCollapsed ? (
+            <Card className="flex min-h-0 flex-col items-center overflow-hidden border-zinc-800/80 bg-zinc-950/40 py-1.5">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-zinc-400 hover:bg-zinc-900 hover:text-cyan-100"
+                onClick={() => setRequestListCollapsed(false)}
+                title="Show request list"
+                aria-label="Show request list"
+              >
+                <PanelLeftOpen className="h-3.5 w-3.5" aria-hidden />
+              </Button>
+              <span className="mt-1 rounded-full bg-cyan-500/15 px-1.5 py-px font-mono text-[9px] text-cyan-100" title={`${String(requestItems.length)} requests`}>
+                {String(requestItems.length)}
+              </span>
+            </Card>
+          ) : (
+            <Card className="relative flex min-h-0 flex-col overflow-hidden border-zinc-800/80 bg-zinc-950/40 p-0">
+              <div className="flex items-center justify-between gap-2 border-b border-zinc-800/80 px-2 py-1.5">
+                <p className="text-[11px] font-semibold text-zinc-100">Requests</p>
+                <div className="flex shrink-0 items-center gap-1">
+                  <span className="font-mono text-[9px] text-zinc-500">{String(requestItems.length)}</span>
+                  <Button
                     type="button"
-                    className={cn(
-                      "mb-1.5 flex w-full min-w-0 flex-col rounded-md border p-2 text-left transition last:mb-0",
-                      selected
-                        ? "border-cyan-500/50 bg-cyan-500/[0.09] shadow-[inset_2px_0_0_rgba(34,211,238,0.85)]"
-                        : "border-zinc-800/80 bg-zinc-900/45 hover:border-zinc-700 hover:bg-zinc-900/70",
-                    )}
-                    onClick={() => selectRequest(request)}
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 text-zinc-500 hover:bg-zinc-900 hover:text-cyan-100"
+                    onClick={() => setRequestListCollapsed(true)}
+                    title="Hide request list"
+                    aria-label="Hide request list"
                   >
-                    <span className="flex min-w-0 items-center gap-1.5">
-                      <span className={cn("rounded-full border px-1.5 py-px text-[8px] font-semibold uppercase", requestStateTone(request.state))}>
-                        {request.state}
+                    <PanelLeftClose className="h-3.5 w-3.5" aria-hidden />
+                  </Button>
+                </div>
+              </div>
+              <div className="app-scrollbar max-h-72 min-h-0 flex-1 overflow-y-auto p-1.5 lg:max-h-none">
+                {requestItems.map((request) => {
+                  const selected = selectedRequest?.url === request.url;
+                  return (
+                    <button
+                      key={`${request.provider}-${String(request.number)}`}
+                      type="button"
+                      className={cn(
+                        "mb-1.5 flex w-full min-w-0 flex-col rounded-md border p-2 text-left transition last:mb-0",
+                        selected
+                          ? "border-cyan-500/50 bg-cyan-500/[0.09] shadow-[inset_2px_0_0_rgba(34,211,238,0.85)]"
+                          : "border-zinc-800/80 bg-zinc-900/45 hover:border-zinc-700 hover:bg-zinc-900/70",
+                      )}
+                      onClick={() => selectRequest(request)}
+                    >
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span className={cn("rounded-full border px-1.5 py-px text-[8px] font-semibold uppercase", requestStateTone(request.state))}>
+                          {request.state}
+                        </span>
+                        <span className="font-mono text-[9px] text-zinc-500">#{String(request.number)}</span>
+                        {request.draft ? <span className="text-[9px] text-amber-200">draft</span> : null}
                       </span>
-                      <span className="font-mono text-[9px] text-zinc-500">#{String(request.number)}</span>
-                      {request.draft ? <span className="text-[9px] text-amber-200">draft</span> : null}
-                    </span>
-                    <span className="mt-1 line-clamp-2 text-[11px] font-medium leading-snug text-zinc-100">{request.title}</span>
-                    <span className="mt-1 truncate font-mono text-[9px] text-zinc-500">
-                      {request.sourceBranch || "head"} -&gt; {request.targetBranch || "base"}
-                    </span>
-                    <span className="mt-0.5 truncate text-[9px] text-zinc-600">
-                      {[request.author, formatShortDate(request.updatedAt)].filter(Boolean).join(" - ")}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-            <div
-              className={cn(
-                "absolute right-0 top-0 hidden h-full w-1.5 cursor-col-resize transition lg:block",
-                isRequestListResizing ? "bg-cyan-400/45" : "bg-transparent hover:bg-cyan-400/25",
-              )}
-              onMouseDown={startRequestListResize}
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="Resize request list"
-              title="Resize request list"
-            />
-          </Card>
+                      <span className="mt-1 line-clamp-2 text-[11px] font-medium leading-snug text-zinc-100">{request.title}</span>
+                      <span className="mt-1 truncate font-mono text-[9px] text-zinc-500">
+                        {request.sourceBranch || "head"} -&gt; {request.targetBranch || "base"}
+                      </span>
+                      <span className="mt-0.5 truncate text-[9px] text-zinc-600">
+                        {[request.author, formatShortDate(request.updatedAt)].filter(Boolean).join(" - ")}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div
+                className={cn(
+                  "absolute right-0 top-0 hidden h-full w-1.5 cursor-col-resize transition lg:block",
+                  isRequestListResizing ? "bg-cyan-400/45" : "bg-transparent hover:bg-cyan-400/25",
+                )}
+                onMouseDown={startRequestListResize}
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize request list"
+                title="Resize request list"
+              />
+            </Card>
+          )
         ) : null}
 
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
