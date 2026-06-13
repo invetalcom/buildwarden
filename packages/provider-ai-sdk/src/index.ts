@@ -87,22 +87,60 @@ const CODE_LIKE_EXT =
 const GENERATED_FILE_EXTENSIONS: Record<string, string> = {
   "application/pdf": "pdf",
   "application/json": "json",
+  "application/msword": "doc",
+  "application/rtf": "rtf",
+  "application/gzip": "gz",
+  "application/java-archive": "jar",
   "application/vnd.ms-excel": "xls",
+  "application/vnd.ms-excel.sheet.binary.macroenabled.12": "xlsb",
+  "application/vnd.ms-excel.sheet.macroenabled.12": "xlsm",
+  "application/vnd.ms-powerpoint": "ppt",
+  "application/vnd.apple.keynote": "key",
+  "application/vnd.apple.numbers": "numbers",
+  "application/vnd.apple.pages": "pages",
+  "application/vnd.oasis.opendocument.presentation": "odp",
+  "application/vnd.oasis.opendocument.spreadsheet": "ods",
+  "application/vnd.oasis.opendocument.text": "odt",
+  "application/vnd.rar": "rar",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/x-7z-compressed": "7z",
+  "application/x-bzip2": "bz2",
+  "application/x-tar": "tar",
+  "application/x-xz": "xz",
+  "application/zip": "zip",
+  "audio/aac": "aac",
+  "audio/aiff": "aiff",
+  "audio/flac": "flac",
+  "audio/mp4": "m4a",
   "audio/mpeg": "mp3",
   "audio/mp3": "mp3",
+  "audio/ogg": "ogg",
+  "audio/opus": "opus",
+  "audio/webm": "weba",
   "audio/wav": "wav",
   "audio/x-wav": "wav",
   "image/gif": "gif",
+  "image/heic": "heic",
+  "image/heif": "heif",
   "image/jpeg": "jpg",
   "image/png": "png",
+  "image/tiff": "tiff",
   "image/webp": "webp",
   "text/csv": "csv",
   "text/html": "html",
   "text/markdown": "md",
   "text/plain": "txt",
+  "text/tab-separated-values": "tsv",
   "video/mp4": "mp4",
+  "video/mpeg": "mpg",
+  "video/ogg": "ogv",
+  "video/quicktime": "mov",
+  "video/webm": "webm",
+  "video/x-m4v": "m4v",
+  "video/x-matroska": "mkv",
+  "video/x-ms-wmv": "wmv",
 };
 
 const FILE_EXTENSION_MEDIA_TYPES: Record<string, string> = Object.fromEntries(
@@ -620,6 +658,30 @@ const contentTypeMediaType = (contentType: string | null): string | undefined =>
   return mediaType || undefined;
 };
 
+const isTextishMediaType = (mediaType: string): boolean =>
+  TEXTISH_MIME_PREFIXES.some((prefix) => mediaType.startsWith(prefix));
+
+const chooseGeneratedFileMediaType = (
+  responseMediaType: string | undefined,
+  referenceMediaType: string | undefined,
+  fileNameMediaType: string | undefined,
+): string => {
+  const normalizedReferenceMediaType = referenceMediaType?.trim().toLowerCase() || undefined;
+  const extensionMediaType = fileNameMediaType?.trim().toLowerCase() || undefined;
+  const metadataMediaType = extensionMediaType ?? normalizedReferenceMediaType;
+
+  if (
+    responseMediaType &&
+    metadataMediaType &&
+    isTextishMediaType(responseMediaType) &&
+    !isTextishMediaType(metadataMediaType)
+  ) {
+    return metadataMediaType;
+  }
+
+  return responseMediaType ?? normalizedReferenceMediaType ?? extensionMediaType ?? "application/octet-stream";
+};
+
 const downloadOpenAiContainerFile = async (
   input: RunExecutionRequest,
   reference: OpenAiContainerFileReference,
@@ -645,11 +707,11 @@ const downloadOpenAiContainerFile = async (
 
   const bytes = Buffer.from(await response.arrayBuffer());
   const fallbackMediaType = reference.filename ? mediaTypeFromFileName(reference.filename) : undefined;
-  const mimeType =
-    contentTypeMediaType(response.headers.get("content-type")) ??
-    reference.mediaType ??
-    fallbackMediaType ??
-    "application/octet-stream";
+  const mimeType = chooseGeneratedFileMediaType(
+    contentTypeMediaType(response.headers.get("content-type")),
+    reference.mediaType,
+    fallbackMediaType,
+  );
   const fileName = sanitizeGeneratedFileName(reference.filename ?? generatedFileName(mimeType, index));
   return {
     fileName,

@@ -15,20 +15,13 @@ import {
   FileVideo,
   Presentation,
 } from "lucide-react";
-
-type AttachmentKind =
-  | "archive"
-  | "audio"
-  | "code"
-  | "document"
-  | "file"
-  | "image"
-  | "json"
-  | "pdf"
-  | "presentation"
-  | "spreadsheet"
-  | "text"
-  | "video";
+import {
+  getStoredAttachmentDownloadMimeType,
+  getStoredAttachmentRenderMode,
+  getStoredAttachmentTextPreview,
+  inferStoredAttachmentKind,
+  type StoredAttachmentKind,
+} from "./stored-chat-attachment-utils";
 
 type AttachmentPresentation = {
   label: string;
@@ -36,80 +29,7 @@ type AttachmentPresentation = {
   accentClassName: string;
 };
 
-const IMAGE_EXTENSIONS = new Set(["apng", "avif", "bmp", "gif", "ico", "jpeg", "jpg", "png", "svg", "webp"]);
-const TEXT_EXTENSIONS = new Set([
-  "css",
-  "csv",
-  "env",
-  "gitignore",
-  "html",
-  "ini",
-  "log",
-  "md",
-  "mdx",
-  "sql",
-  "svg",
-  "toml",
-  "txt",
-  "xml",
-  "yaml",
-  "yml",
-]);
-const CODE_EXTENSIONS = new Set([
-  "c",
-  "cc",
-  "cpp",
-  "cs",
-  "go",
-  "java",
-  "js",
-  "jsx",
-  "kt",
-  "mjs",
-  "php",
-  "py",
-  "rb",
-  "rs",
-  "sh",
-  "swift",
-  "ts",
-  "tsx",
-]);
-const SPREADSHEET_EXTENSIONS = new Set(["csv", "ods", "tsv", "xls", "xlsm", "xlsx"]);
-const ARCHIVE_EXTENSIONS = new Set(["7z", "br", "bz2", "gz", "rar", "tar", "tgz", "xz", "zip"]);
-const AUDIO_EXTENSIONS = new Set(["aac", "flac", "m4a", "mp3", "ogg", "wav", "weba"]);
-const VIDEO_EXTENSIONS = new Set(["avi", "m4v", "mov", "mp4", "mpeg", "mpg", "webm", "wmv"]);
-const DOCUMENT_EXTENSIONS = new Set(["doc", "docx", "odt", "rtf"]);
-const PRESENTATION_EXTENSIONS = new Set(["key", "odp", "ppt", "pptx"]);
-const TEXT_PREVIEW_LIMIT = 420;
-const TEXT_PREVIEW_BASE64_LIMIT = 650_000;
-
-const EXTENSION_MIME_TYPES: Record<string, string> = {
-  apng: "image/apng",
-  avif: "image/avif",
-  bmp: "image/bmp",
-  css: "text/css",
-  csv: "text/csv",
-  gif: "image/gif",
-  html: "text/html",
-  ico: "image/x-icon",
-  jpeg: "image/jpeg",
-  jpg: "image/jpeg",
-  js: "text/javascript",
-  json: "application/json",
-  md: "text/markdown",
-  mdx: "text/markdown",
-  pdf: "application/pdf",
-  png: "image/png",
-  svg: "image/svg+xml",
-  ts: "text/typescript",
-  tsx: "text/typescript",
-  txt: "text/plain",
-  webp: "image/webp",
-  xml: "text/xml",
-};
-
-const ATTACHMENT_PRESENTATIONS: Record<AttachmentKind, AttachmentPresentation> = {
+const ATTACHMENT_PRESENTATIONS: Record<StoredAttachmentKind, AttachmentPresentation> = {
   archive: {
     label: "Archive",
     Icon: FileArchive,
@@ -172,103 +92,11 @@ const ATTACHMENT_PRESENTATIONS: Record<AttachmentKind, AttachmentPresentation> =
   },
 };
 
-const getFileExtension = (fileName: string): string => {
-  const normalizedName = fileName.split(/[?#]/, 1)[0]?.toLowerCase() ?? "";
-  const dotIndex = normalizedName.lastIndexOf(".");
-  return dotIndex >= 0 ? normalizedName.slice(dotIndex + 1) : "";
-};
-
-const inferAttachmentKind = (fileName: string, mimeType = ""): AttachmentKind => {
-  const mime = mimeType.toLowerCase();
-  const extension = getFileExtension(fileName);
-
-  if (mime.startsWith("image/") || IMAGE_EXTENSIONS.has(extension)) {
-    return "image";
-  }
-  if (mime === "application/pdf" || extension === "pdf") {
-    return "pdf";
-  }
-  if (mime === "application/json" || extension === "json") {
-    return "json";
-  }
-  if (mime.includes("spreadsheet") || mime.includes("excel") || SPREADSHEET_EXTENSIONS.has(extension)) {
-    return "spreadsheet";
-  }
-  if (mime.startsWith("audio/") || AUDIO_EXTENSIONS.has(extension)) {
-    return "audio";
-  }
-  if (mime.startsWith("video/") || VIDEO_EXTENSIONS.has(extension)) {
-    return "video";
-  }
-  if (mime.includes("presentation") || PRESENTATION_EXTENSIONS.has(extension)) {
-    return "presentation";
-  }
-  if (mime.includes("wordprocessingml") || mime.includes("opendocument.text") || DOCUMENT_EXTENSIONS.has(extension)) {
-    return "document";
-  }
-  if (mime.includes("zip") || mime.includes("tar") || ARCHIVE_EXTENSIONS.has(extension)) {
-    return "archive";
-  }
-  if (CODE_EXTENSIONS.has(extension)) {
-    return "code";
-  }
-  if (mime.startsWith("text/") || TEXT_EXTENSIONS.has(extension)) {
-    return "text";
-  }
-  return "file";
-};
-
-const getAttachmentMimeType = (attachment: ChatAttachmentPayload): string => {
-  const kind = inferAttachmentKind(attachment.fileName, attachment.mimeType);
-  const extension = getFileExtension(attachment.fileName);
-  const mime = (attachment.mimeType || "").toLowerCase();
-
-  if (kind === "image") {
-    return mime.startsWith("image/") ? attachment.mimeType : EXTENSION_MIME_TYPES[extension] || "image/png";
-  }
-  if (kind === "pdf") {
-    return "application/pdf";
-  }
-  return attachment.mimeType || EXTENSION_MIME_TYPES[extension] || "application/octet-stream";
-};
-
 const toDataUrl = (attachment: ChatAttachmentPayload): string =>
-  `data:${getAttachmentMimeType(attachment)};base64,${attachment.dataBase64}`;
-
-const canPreviewAsText = (attachment: ChatAttachmentPayload): boolean => {
-  const kind = inferAttachmentKind(attachment.fileName, attachment.mimeType);
-  const extension = getFileExtension(attachment.fileName);
-  const mime = (attachment.mimeType || "").toLowerCase();
-  return (
-    kind === "code" ||
-    kind === "json" ||
-    kind === "text" ||
-    extension === "csv" ||
-    extension === "tsv" ||
-    mime.startsWith("text/")
-  );
-};
-
-const getTextPreview = (attachment: ChatAttachmentPayload): string | null => {
-  if (!canPreviewAsText(attachment) || attachment.dataBase64.length > TEXT_PREVIEW_BASE64_LIMIT) {
-    return null;
-  }
-
-  try {
-    const binary = window.atob(attachment.dataBase64);
-    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-    const decoded = new TextDecoder().decode(bytes).replace(/\r\n/g, "\n").trim();
-    if (decoded.length === 0) {
-      return "Empty file";
-    }
-    return decoded.length > TEXT_PREVIEW_LIMIT ? `${decoded.slice(0, TEXT_PREVIEW_LIMIT).trimEnd()}...` : decoded;
-  } catch {
-    return null;
-  }
-};
+  `data:${getStoredAttachmentDownloadMimeType(attachment)};base64,${attachment.dataBase64}`;
 
 const getPresentation = (fileName: string, mimeType = ""): AttachmentPresentation =>
-  ATTACHMENT_PRESENTATIONS[inferAttachmentKind(fileName, mimeType)] ?? {
+  ATTACHMENT_PRESENTATIONS[inferStoredAttachmentKind(fileName, mimeType)] ?? {
     label: "File",
     Icon: FileQuestion,
     accentClassName: "border-zinc-500/30 bg-zinc-800/65 text-zinc-200",
@@ -340,9 +168,9 @@ const IconAttachmentCard = ({ attachment, compact }: { attachment: ChatAttachmen
       }`}
       title={attachment.fileName}
     >
-      <div className={`flex flex-col items-center justify-center gap-2 ${compact ? "h-20" : "h-24"} px-3`}>
-        <div className={`rounded-lg border p-3 ${presentation.accentClassName}`}>
-          <Icon className="h-7 w-7" aria-hidden />
+      <div className={`flex flex-col items-center justify-center gap-2 ${compact ? "h-24" : "h-28"} px-3`}>
+        <div className={`rounded-lg border p-3.5 ${presentation.accentClassName}`}>
+          <Icon className="h-9 w-9" aria-hidden />
         </div>
         <span className="max-w-full truncate text-[10px] font-semibold uppercase leading-none text-zinc-500">
           {presentation.label}
@@ -465,11 +293,11 @@ export const StoredChatAttachments = ({
       <div className={compact ? "mt-1.5 space-y-2" : "mt-2 space-y-2"}>
         <div className="flex flex-wrap gap-2">
           {attachments.map((attachment, index) => {
-            const kind = inferAttachmentKind(attachment.fileName, attachment.mimeType);
-            const textPreview = getTextPreview(attachment);
+            const renderMode = getStoredAttachmentRenderMode(attachment);
+            const textPreview = renderMode === "text" ? getStoredAttachmentTextPreview(attachment) : null;
             const key = `${attachment.fileName}-${String(index)}`;
 
-            if (kind === "image") {
+            if (renderMode === "image") {
               return (
                 <ImageAttachmentCard
                   key={key}
@@ -480,7 +308,7 @@ export const StoredChatAttachments = ({
               );
             }
 
-            if (kind === "pdf") {
+            if (renderMode === "pdf") {
               return <PdfAttachmentCard key={key} attachment={attachment} compact={compact} />;
             }
 
