@@ -1791,14 +1791,17 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
             >
               <DiffViewIcon className="h-3.5 w-3.5" aria-hidden />
             </Button>
-            <label className="flex h-7 items-center gap-1 rounded-md border border-zinc-800 bg-zinc-950/80 px-2 text-[10px] text-zinc-400">
+            <label
+              className="flex h-7 items-center gap-1 rounded-md border border-zinc-800 bg-zinc-950/80 px-2 text-[10px] text-zinc-400"
+              title="Hide line changes where only whitespace differs."
+            >
               <input
                 type="checkbox"
                 checked={hideWhitespaceChanges}
                 onChange={(event) => setHideWhitespaceChanges(event.target.checked)}
                 className="h-3 w-3 accent-cyan-500"
               />
-              Whitespace
+              Ignore whitespace
             </label>
             {diffChangedFileCount > 0 ? (
               <Button

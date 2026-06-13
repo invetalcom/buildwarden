@@ -66,6 +66,53 @@ type ReviewNavEntry = { finding: RunDiffReviewFinding; fileKey: string | null; g
 const reviewFindingDraftKey = (finding: RunDiffReviewFinding, globalIndex: number) =>
   [globalIndex, finding.filePath ?? "", finding.lineNumber ?? "", finding.title, finding.detail.slice(0, 80)].join("\0");
 
+const normalizeWhitespaceForCompare = (value: string) => value.replace(/\s+/g, "");
+
+const isWhitespaceOnlyReplacement = (deletedChanges: ChangeData[], insertedChanges: ChangeData[]) =>
+  deletedChanges.length > 0 &&
+  deletedChanges.length === insertedChanges.length &&
+  deletedChanges.every((deletedChange, index) => {
+    const insertedChange = insertedChanges[index];
+    return (
+      insertedChange &&
+      normalizeWhitespaceForCompare(deletedChange.content) === normalizeWhitespaceForCompare(insertedChange.content) &&
+      deletedChange.content !== insertedChange.content
+    );
+  });
+
+const filterWhitespaceOnlyChanges = (changes: ChangeData[]) => {
+  const nextChanges: ChangeData[] = [];
+
+  for (let index = 0; index < changes.length; ) {
+    const current = changes[index]!;
+    if (current.type !== "delete") {
+      nextChanges.push(current);
+      index += 1;
+      continue;
+    }
+
+    const deletedChanges: ChangeData[] = [];
+    while (changes[index]?.type === "delete") {
+      deletedChanges.push(changes[index]!);
+      index += 1;
+    }
+
+    const insertedChanges: ChangeData[] = [];
+    while (changes[index]?.type === "insert") {
+      insertedChanges.push(changes[index]!);
+      index += 1;
+    }
+
+    if (isWhitespaceOnlyReplacement(deletedChanges, insertedChanges)) {
+      continue;
+    }
+
+    nextChanges.push(...deletedChanges, ...insertedChanges);
+  }
+
+  return nextChanges;
+};
+
 export type DiffLineCommentTarget = Omit<ProjectPrMrDiffComment, "body"> & {
   displayPath: string;
   changeKey: string;
@@ -498,24 +545,9 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     }
     return parsedFiles.map((file) => ({
       ...file,
-      hunks: file.hunks.map((hunk) => {
-        const nextChanges: ChangeData[] = [];
-        for (let index = 0; index < hunk.changes.length; index++) {
-          const current = hunk.changes[index]!;
-          const next = hunk.changes[index + 1];
-          const isWhitespaceOnlyPair =
-            current.type === "delete" &&
-            next?.type === "insert" &&
-            current.content.trim() === next.content.trim() &&
-            current.content !== next.content;
-          if (isWhitespaceOnlyPair) {
-            index += 1;
-            continue;
-          }
-          nextChanges.push(current);
-        }
-        return { ...hunk, changes: nextChanges };
-      }),
+      hunks: file.hunks
+        .map((hunk) => ({ ...hunk, changes: filterWhitespaceOnlyChanges(hunk.changes) }))
+        .filter((hunk) => hunk.changes.length > 0),
     }));
   }, [hideWhitespaceChanges, parsedFiles]);
 
