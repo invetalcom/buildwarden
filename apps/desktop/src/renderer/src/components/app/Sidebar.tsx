@@ -203,7 +203,7 @@ const SidebarComponent = ({
     return projects
       .map((entry) => {
         const runsById = new Map<string, SidebarRun>();
-        for (const run of [...entry.runs, ...entry.forLaterRuns]) {
+        for (const run of entry.runs) {
           const timestamp = recentRunOrderTimestamp(run);
           if (Number.isFinite(timestamp) && now - timestamp <= recentRunWindowMs) {
             runsById.set(run.id, run);
