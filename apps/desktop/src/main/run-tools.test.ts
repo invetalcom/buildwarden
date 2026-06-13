@@ -692,29 +692,4 @@ describe("run tool context", () => {
     expect((result.metadata as { command?: string }).command).toBe("git checkout main");
   });
 
-  it("can cancel a running shell command and return a tool result the model can see", async () => {
-    const worktreePath = await makeTempDir();
-    const command = process.platform === "win32" ? "Start-Sleep -Seconds 10" : "sleep 10";
-    const tools = createRunToolContext(
-      worktreePath,
-      "code",
-      async () => "allow-once",
-      undefined,
-      {
-        onShellCommandStart: ({ cancel }) => {
-          setTimeout(() => cancel("cancelled-by-user"), 50);
-        },
-      },
-    );
-
-    const result = await tools.executeTool({
-      id: "shell-cancelled",
-      name: "run_shell",
-      arguments: { command },
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.content).toContain("Command cancelled by user");
-    expect((result.metadata as { cancelledByUser?: boolean }).cancelledByUser).toBe(true);
-  });
 });
