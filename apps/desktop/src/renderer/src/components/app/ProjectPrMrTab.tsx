@@ -2052,6 +2052,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
               onDraftReviewFinding={canUseForgeApi ? draftAiFindingComment : undefined}
               onParsedFilesChange={handleParsedDiffFilesChange}
               defaultCollapsedFileSections={false}
+              virtualizeFileSections
               onAllFilesExpandedChange={setAllDiffFilesExpanded}
             />
           </div>

@@ -1,22 +1,37 @@
 import {
   forwardRef,
+  memo,
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
   type Ref,
 } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, MessageSquarePlus, Pencil, Trash2 } from "lucide-react";
-import type { ProjectPrMrDiffComment, RunDiffReviewFinding } from "@buildwarden/shared";
+import type { RunDiffReviewFinding } from "@buildwarden/shared";
 import type { HunkTokens } from "react-diff-view";
 import { Diff, Hunk, findChangeByNewLineNumber, findChangeByOldLineNumber, getChangeKey, markEdits, parseDiff, tokenize } from "react-diff-view";
-import type { ChangeData, EventMap, GutterOptions, HunkData } from "react-diff-view";
+import type { ChangeData, EventMap, FileData, GutterOptions, HunkData } from "react-diff-view";
 import { cn } from "../../lib/cn";
 import { ActivityRichText } from "../ui/activity-rich-text";
 import { Button } from "../ui/button";
+import {
+  buildDiffCommentIndex,
+  diffLineCommentTargetKey,
+  findCommentsForDiffTargets,
+  type DiffCommentIndex,
+  type DiffLineCommentTarget,
+  type DiffPreviewManualComment,
+} from "./git-diff-preview-comment-index";
 import { looksLikeGitDiff } from "./git-diff-utils";
+
+export type { DiffLineCommentTarget, DiffPreviewManualComment } from "./git-diff-preview-comment-index";
 
 const formatDiffPath = (oldPath?: string, newPath?: string) => {
   if (newPath && newPath !== "/dev/null") {
@@ -113,33 +128,6 @@ const filterWhitespaceOnlyChanges = (changes: ChangeData[]) => {
   return nextChanges;
 };
 
-export type DiffLineCommentTarget = Omit<ProjectPrMrDiffComment, "body"> & {
-  displayPath: string;
-  changeKey: string;
-  lineLabel: string;
-};
-
-export type DiffPreviewManualComment = ProjectPrMrDiffComment & {
-  id: string;
-  displayPath?: string;
-  lineLabel?: string;
-  author?: string | null;
-  createdAt?: string | null;
-  title?: string | null;
-  remote?: boolean;
-  resolved?: boolean;
-};
-
-const diffLineCommentTargetKey = (target: Omit<ProjectPrMrDiffComment, "body">) =>
-  [
-    target.oldPath,
-    target.newPath,
-    target.side,
-    target.oldLineNumber ?? "",
-    target.newLineNumber ?? "",
-    target.changeType,
-  ].join("\0");
-
 const filePathForComment = (path?: string) => (path && path !== "/dev/null" ? path : "");
 
 const getChangeLineNumbers = (change: ChangeData): { oldLineNumber: number | null; newLineNumber: number | null } => {
@@ -198,28 +186,6 @@ const buildDiffLineCommentTargets = (file: { oldPath?: string; newPath?: string 
   [buildDiffLineCommentTarget(file, change, "old"), buildDiffLineCommentTarget(file, change, "new")].filter(
     (target): target is DiffLineCommentTarget => Boolean(target),
   );
-
-const commentMatchesDiffTarget = (comment: DiffPreviewManualComment, targets: DiffLineCommentTarget[]) => {
-  const exactCommentKey = diffLineCommentTargetKey(comment);
-  if (targets.some((target) => diffLineCommentTargetKey(target) === exactCommentKey)) {
-    return true;
-  }
-
-  const commentPath = normalizeDiffPathSegment(comment.newPath || comment.oldPath || comment.displayPath || "");
-  const commentLine = comment.newLineNumber ?? comment.oldLineNumber;
-  if (!commentPath || !commentLine) {
-    return false;
-  }
-
-  return targets.some((target) => {
-    const targetPath = normalizeDiffPathSegment(target.newPath || target.oldPath || target.displayPath);
-    const targetLine = target.newLineNumber ?? target.oldLineNumber;
-    if (!targetPath || !targetLine || targetLine !== commentLine) {
-      return false;
-    }
-    return targetPath === commentPath || targetPath.endsWith(`/${commentPath}`) || commentPath.endsWith(`/${targetPath}`);
-  });
-};
 
 const findDiffChangeForFinding = (hunks: HunkData[], finding: RunDiffReviewFinding): ChangeData | null => {
   if (!finding.lineNumber) {
@@ -417,6 +383,349 @@ const InlineDraftCommentEditor = ({
   );
 };
 
+type DiffFileSectionProps = {
+  file: FileData;
+  fileKey: string;
+  filePathLabel: string;
+  isLastFile: boolean;
+  isCollapsed: boolean;
+  anyFilesExpanded: boolean;
+  alwaysExpandedFileSections: boolean;
+  hideFileHeader: boolean;
+  hideFileHeaderInlineToggle: boolean;
+  viewType: "split" | "unified";
+  wordDiff: boolean;
+  fileNavEntries: ReviewNavEntry[];
+  manualCommentIndex: DiffCommentIndex;
+  manualCommentCountByTarget: Map<string, number>;
+  activeCommentTarget: DiffLineCommentTarget | null;
+  draftCommentText: string;
+  draftCommentSaveLabel: string;
+  singleCommentSaveLabel: string;
+  singleCommentBusy: boolean;
+  editingDraftCommentId: string | null;
+  highlightedCommentId: string | null;
+  safeReviewNavIndex: number;
+  draftedReviewFindingKeys: Set<string> | null;
+  onToggleCollapsed: (fileKey: string) => void;
+  onAddDiffComment?: (target: DiffLineCommentTarget) => void;
+  onSaveDraftComment?: (value: string) => void;
+  onSaveSingleComment?: (value: string) => void;
+  onCancelDraftComment?: () => void;
+  onEditDraftComment?: (id: string) => void;
+  onRemoveDraftComment?: (id: string) => void;
+  onDraftReviewFinding?: (target: DiffLineCommentTarget, finding: RunDiffReviewFinding, findingKey: string) => void;
+};
+
+const DiffFileSection = memo(function DiffFileSection({
+  file,
+  fileKey,
+  filePathLabel,
+  isLastFile,
+  isCollapsed,
+  anyFilesExpanded,
+  alwaysExpandedFileSections,
+  hideFileHeader,
+  hideFileHeaderInlineToggle,
+  viewType,
+  wordDiff,
+  fileNavEntries,
+  manualCommentIndex,
+  manualCommentCountByTarget,
+  activeCommentTarget,
+  draftCommentText,
+  draftCommentSaveLabel,
+  singleCommentSaveLabel,
+  singleCommentBusy,
+  editingDraftCommentId,
+  highlightedCommentId,
+  safeReviewNavIndex,
+  draftedReviewFindingKeys,
+  onToggleCollapsed,
+  onAddDiffComment,
+  onSaveDraftComment,
+  onSaveSingleComment,
+  onCancelDraftComment,
+  onEditDraftComment,
+  onRemoveDraftComment,
+  onDraftReviewFinding,
+}: DiffFileSectionProps) {
+  const wordTokens = useMemo<HunkTokens | null>(() => {
+    if (isCollapsed || viewType !== "unified" || !wordDiff) {
+      return null;
+    }
+    return tokenize(file.hunks, { enhancers: [markEdits(file.hunks, { type: "line" })] });
+  }, [file.hunks, isCollapsed, viewType, wordDiff]);
+
+  const { diffWidgets, fallbackFileNavEntries } = useMemo(() => {
+    const anchoredEntryGroups = new Map<string, { change: ChangeData; entries: ReviewNavEntry[] }>();
+    const fallbackEntries: ReviewNavEntry[] = [];
+
+    if (isCollapsed) {
+      return { diffWidgets: {}, fallbackFileNavEntries: fallbackEntries };
+    }
+
+    for (const entry of fileNavEntries) {
+      const change = findDiffChangeForFinding(file.hunks, entry.finding);
+      if (!change) {
+        fallbackEntries.push(entry);
+        continue;
+      }
+      const changeKey = getChangeKey(change);
+      const currentGroup = anchoredEntryGroups.get(changeKey);
+      anchoredEntryGroups.set(changeKey, {
+        change,
+        entries: [...(currentGroup?.entries ?? []), entry],
+      });
+    }
+
+    const widgetGroups = new Map<string, ReactNode[]>();
+    const addInlineWidget = (changeKey: string, node: ReactNode) => {
+      widgetGroups.set(changeKey, [...(widgetGroups.get(changeKey) ?? []), node]);
+    };
+
+    for (const [changeKey, { change, entries }] of anchoredEntryGroups.entries()) {
+      const draftTarget = buildDiffLineCommentTarget(file, change, undefined);
+      addInlineWidget(
+        changeKey,
+        <div className="space-y-2" key={`${fileKey}-review-widget-${changeKey}`}>
+          {entries.map(({ finding, globalIndex }) => {
+            const findingKey = reviewFindingDraftKey(finding, globalIndex);
+            return (
+              <ReviewFindingCard
+                key={`${fileKey}-inline-review-${String(globalIndex)}`}
+                finding={finding}
+                globalIndex={globalIndex}
+                active={safeReviewNavIndex === globalIndex}
+                onDraft={draftTarget && onDraftReviewFinding ? () => onDraftReviewFinding(draftTarget, finding, findingKey) : undefined}
+                draftDisabled={draftedReviewFindingKeys?.has(findingKey) ?? false}
+              />
+            );
+          })}
+        </div>,
+      );
+    }
+
+    const activeCommentTargetKey = activeCommentTarget ? diffLineCommentTargetKey(activeCommentTarget) : null;
+    const canRenderActiveCommentEditor = Boolean(activeCommentTarget) && Boolean(onSaveDraftComment) && Boolean(onCancelDraftComment);
+    for (const hunk of file.hunks) {
+      for (const change of hunk.changes) {
+        const changeTargets = buildDiffLineCommentTargets(file, change);
+        if (changeTargets.length === 0) {
+          continue;
+        }
+        const changeTargetKeys = new Set(changeTargets.map(diffLineCommentTargetKey));
+        const changeKey = getChangeKey(change);
+        const commentsForChange = findCommentsForDiffTargets(manualCommentIndex, changeTargets);
+        const visibleCommentsForChange = commentsForChange.filter((comment) => comment.id !== editingDraftCommentId);
+        if (visibleCommentsForChange.length > 0) {
+          addInlineWidget(
+            changeKey,
+            <div className="space-y-2" key={`${fileKey}-manual-comments-${changeKey}`}>
+              {visibleCommentsForChange.map((comment) => (
+                <DraftCommentCard
+                  key={comment.id}
+                  comment={comment}
+                  editing={comment.id === editingDraftCommentId}
+                  highlighted={comment.id === highlightedCommentId}
+                  onEdit={onEditDraftComment}
+                  onRemove={onRemoveDraftComment}
+                />
+              ))}
+            </div>,
+          );
+        }
+        if (activeCommentTargetKey && canRenderActiveCommentEditor && changeTargetKeys.has(activeCommentTargetKey) && activeCommentTarget) {
+          addInlineWidget(
+            changeKey,
+            <InlineDraftCommentEditor
+              key={`${fileKey}-manual-editor-${changeKey}`}
+              target={activeCommentTarget}
+              initialValue={draftCommentText}
+              editorKey={editingDraftCommentId ?? activeCommentTargetKey}
+              onSave={onSaveDraftComment as (value: string) => void}
+              onSaveSingle={editingDraftCommentId ? undefined : onSaveSingleComment}
+              onCancel={onCancelDraftComment as () => void}
+              saveLabel={draftCommentSaveLabel}
+              singleSaveLabel={singleCommentSaveLabel}
+              singleSaveBusy={singleCommentBusy}
+            />,
+          );
+        }
+      }
+    }
+
+    return {
+      diffWidgets: Object.fromEntries(
+        [...widgetGroups.entries()].map(([changeKey, nodes]) => [
+          changeKey,
+          <div className="space-y-2 px-3 py-2" key={`${fileKey}-widget-${changeKey}`}>
+            {nodes}
+          </div>,
+        ]),
+      ),
+      fallbackFileNavEntries: fallbackEntries,
+    };
+  }, [
+    activeCommentTarget,
+    draftedReviewFindingKeys,
+    draftCommentSaveLabel,
+    draftCommentText,
+    editingDraftCommentId,
+    file,
+    fileKey,
+    fileNavEntries,
+    highlightedCommentId,
+    isCollapsed,
+    manualCommentIndex,
+    onCancelDraftComment,
+    onDraftReviewFinding,
+    onEditDraftComment,
+    onRemoveDraftComment,
+    onSaveDraftComment,
+    onSaveSingleComment,
+    safeReviewNavIndex,
+    singleCommentBusy,
+    singleCommentSaveLabel,
+  ]);
+
+  const renderManualCommentGutter = useMemo(
+    () =>
+      onAddDiffComment
+        ? (options: GutterOptions) => {
+            const target = buildDiffLineCommentTarget(file, options.change, options.side);
+            const count = target ? (manualCommentCountByTarget.get(diffLineCommentTargetKey(target)) ?? 0) : 0;
+            return (
+              <span className={cn("inline-flex min-w-full items-center justify-end gap-1", target && "group/diff-comment")}>
+                <span>{options.renderDefault()}</span>
+                {target ? (
+                  <span
+                    className={cn(
+                      "rounded px-1 text-[9px] font-semibold transition",
+                      count > 0 ? "bg-cyan-500/20 text-cyan-100" : "text-zinc-600 opacity-50 group-hover/diff-comment:opacity-100",
+                    )}
+                  >
+                    {count > 0 ? String(count) : "+"}
+                  </span>
+                ) : null}
+              </span>
+            );
+          }
+        : undefined,
+    [file, manualCommentCountByTarget, onAddDiffComment],
+  );
+
+  const manualCommentGutterEvents = useMemo<EventMap | undefined>(
+    () =>
+      onAddDiffComment
+        ? {
+            onClick: (args, event) => {
+              const target = args.change ? buildDiffLineCommentTarget(file, args.change, args.side) : null;
+              if (!target) {
+                return;
+              }
+              event.preventDefault();
+              event.stopPropagation();
+              onAddDiffComment(target);
+            },
+          }
+        : undefined,
+    [file, onAddDiffComment],
+  );
+
+  const manualCommentCodeEvents = useMemo<EventMap | undefined>(
+    () =>
+      onAddDiffComment
+        ? {
+            onClick: (args, event) => {
+              const target = args.change ? buildDiffLineCommentTarget(file, args.change, args.side) : null;
+              if (!target) {
+                return;
+              }
+              event.preventDefault();
+              event.stopPropagation();
+              onAddDiffComment(target);
+            },
+          }
+        : undefined,
+    [file, onAddDiffComment],
+  );
+
+  return (
+    <div className={cn("border-b border-zinc-800", isLastFile && "border-b-0")}>
+      {alwaysExpandedFileSections ? null : hideFileHeader ? (
+        hideFileHeaderInlineToggle ? (
+          <button
+            type="button"
+            className={cn(
+              "z-10 rounded px-1 py-0.5 text-zinc-500 transition hover:bg-zinc-800/70 hover:text-zinc-300",
+              anyFilesExpanded ? "absolute right-2 top-1" : "absolute right-0 top-[-1.55rem]",
+            )}
+            onClick={() => onToggleCollapsed(fileKey)}
+            aria-label={isCollapsed ? "Expand diff" : "Collapse diff"}
+            title={isCollapsed ? "Expand diff" : "Collapse diff"}
+          >
+            {isCollapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="sticky top-0 z-10 flex w-full items-center justify-end border-b border-zinc-800 bg-zinc-900/95 px-2 py-1 text-zinc-500 backdrop-blur-sm hover:text-zinc-300"
+            onClick={() => onToggleCollapsed(fileKey)}
+            aria-label={isCollapsed ? "Expand diff" : "Collapse diff"}
+            title={isCollapsed ? "Expand diff" : "Collapse diff"}
+          >
+            {isCollapsed ? <ChevronRight className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
+          </button>
+        )
+      ) : (
+        <button
+          type="button"
+          className="sticky top-0 z-10 flex w-full items-center justify-between gap-2 border-b border-zinc-800 bg-zinc-900/95 px-3 py-1.5 text-left backdrop-blur-sm"
+          onClick={() => onToggleCollapsed(fileKey)}
+        >
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <p className="truncate text-xs font-medium text-zinc-100">{filePathLabel}</p>
+            <span className="shrink-0 text-[10px] uppercase tracking-[0.18em] text-zinc-500">{file.type}</span>
+          </div>
+          {isCollapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-500" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-500" />}
+        </button>
+      )}
+      {!isCollapsed ? (
+        <>
+          <Diff
+            viewType={viewType}
+            diffType={file.type}
+            hunks={file.hunks}
+            tokens={wordTokens}
+            widgets={diffWidgets}
+            className="text-xs"
+            codeClassName={onAddDiffComment ? "cursor-pointer transition hover:!bg-cyan-500/[0.08]" : undefined}
+            renderGutter={renderManualCommentGutter}
+            gutterEvents={manualCommentGutterEvents}
+            codeEvents={manualCommentCodeEvents}
+          >
+            {(hunks) => hunks.map((hunk, hunkIndex) => <Hunk key={`${fileKey}-hunk-${String(hunkIndex)}`} hunk={hunk} />)}
+          </Diff>
+          {fallbackFileNavEntries.length > 0 ? (
+            <div className="border-t border-cyan-500/10 bg-zinc-900/30 px-2 py-2">
+              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+                Comments on this file
+                <span className="ml-1 font-mono font-normal text-zinc-600">{filePathLabel}</span>
+              </p>
+              <div className="space-y-2">
+                {fallbackFileNavEntries.map(({ finding, globalIndex }) => (
+                  <ReviewFindingCard key={`${fileKey}-review-${String(globalIndex)}`} finding={finding} globalIndex={globalIndex} active={safeReviewNavIndex === globalIndex} />
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  );
+});
+
 export type GitDiffPreviewHandle = {
   /** If every file section is expanded, collapse all; otherwise expand all. */
   toggleExpandAllFiles: () => void;
@@ -460,6 +769,8 @@ type GitDiffPreviewProps = {
   alwaysExpandedFileSections?: boolean;
   /** When true, each file section starts collapsed. */
   defaultCollapsedFileSections?: boolean;
+  /** Virtualizes file sections for large PR/MR diffs. @default false */
+  virtualizeFileSections?: boolean;
   /** Fired when expanded/collapsed state changes (only when diff parses into file sections). */
   onAllFilesExpandedChange?: (allExpanded: boolean) => void;
   /**
@@ -503,6 +814,7 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     hideFileHeaderInlineToggle = false,
     alwaysExpandedFileSections = false,
     defaultCollapsedFileSections = true,
+    virtualizeFileSections = false,
     onAllFilesExpandedChange,
     fillContainer = false,
   }: GitDiffPreviewProps,
@@ -566,6 +878,44 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     });
   }, [activeFilePath, filePathQuery, whitespaceFilteredFiles]);
 
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const fileIndexByKey = useMemo(() => new Map(files.map((file, index) => [diffFileKey(file, index), index])), [files]);
+  const estimatedFileSectionSizes = useMemo(
+    () =>
+      files.map((file, index) => {
+        const fileKey = diffFileKey(file, index);
+        const isCollapsed = alwaysExpandedFileSections ? false : (collapsedFiles[fileKey] ?? defaultCollapsedFileSections);
+        if (isCollapsed) {
+          return hideFileHeader ? 28 : 34;
+        }
+        const lineCount = file.hunks.reduce((sum, hunk) => sum + hunk.changes.length, 0);
+        const inlineDensity = reviewFindings?.length || manualCommentTargets?.length || activeCommentTarget ? 96 : 0;
+        return Math.min(1200, Math.max(96, 36 + lineCount * 21 + inlineDensity));
+      }),
+    [
+      activeCommentTarget,
+      alwaysExpandedFileSections,
+      collapsedFiles,
+      defaultCollapsedFileSections,
+      files,
+      hideFileHeader,
+      manualCommentTargets,
+      reviewFindings,
+    ],
+  );
+  const fileVirtualizer = useVirtualizer({
+    count: virtualizeFileSections ? files.length : 0,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: (index) => estimatedFileSectionSizes[index] ?? 96,
+    getItemKey: (index) => {
+      const file = files[index];
+      return file ? diffFileKey(file, index) : index;
+    },
+    measureElement: (element) => (element instanceof HTMLElement ? element.getBoundingClientRect().height : 1),
+    useAnimationFrameWithResizeObserver: true,
+    overscan: 4,
+  });
+
   useEffect(() => {
     setCollapsedFiles({});
   }, [activeFilePath, filePathQuery, trimmedDiff]);
@@ -584,6 +934,13 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
       return Object.fromEntries(keys.map((key) => [key, targetCollapsed]));
     });
   }, [alwaysExpandedFileSections, files, defaultCollapsedFileSections]);
+
+  const toggleFileCollapsed = useCallback(
+    (fileKey: string) => {
+      setCollapsedFiles((current) => ({ ...current, [fileKey]: !(current[fileKey] ?? defaultCollapsedFileSections) }));
+    },
+    [defaultCollapsedFileSections],
+  );
 
   useImperativeHandle(
     ref,
@@ -652,6 +1009,13 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     [reviewFindings],
   );
 
+  useLayoutEffect(() => {
+    if (!virtualizeFileSections) {
+      return;
+    }
+    fileVirtualizer.measure();
+  }, [collapsedFiles, files, fileVirtualizer, hideWhitespaceChanges, reviewFindingsFingerprint, virtualizeFileSections, viewType]);
+
   useEffect(() => {
     setActiveReviewNavIndex(0);
   }, [trimmedDiff, reviewFindingsFingerprint]);
@@ -677,9 +1041,14 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
       }
       const clamped = Math.max(0, Math.min(reviewNavTotal - 1, nextIndex));
       expandFileForNavIndex(clamped);
+      const fileKey = reviewNavEntries[clamped]?.fileKey;
+      const fileIndex = fileKey ? fileIndexByKey.get(fileKey) : undefined;
+      if (virtualizeFileSections && fileIndex !== undefined) {
+        fileVirtualizer.scrollToIndex(fileIndex, { align: "start" });
+      }
       setActiveReviewNavIndex(clamped);
     },
-    [expandFileForNavIndex, reviewNavTotal],
+    [expandFileForNavIndex, fileIndexByKey, fileVirtualizer, reviewNavEntries, reviewNavTotal, virtualizeFileSections],
   );
 
   useEffect(() => {
@@ -694,14 +1063,19 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
       return;
     }
     const safe = Math.min(activeReviewNavIndex, reviewNavTotal - 1);
-    const id = `buildwarden-review-finding-${String(safe)}`;
-    const el = typeof document !== "undefined" ? document.getElementById(id) : null;
-    if (el) {
-      requestAnimationFrame(() => {
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-      });
+    const fileKey = reviewNavEntries[safe]?.fileKey;
+    const fileIndex = fileKey ? fileIndexByKey.get(fileKey) : undefined;
+    if (virtualizeFileSections && fileIndex !== undefined) {
+      fileVirtualizer.scrollToIndex(fileIndex, { align: "start" });
     }
-  }, [activeReviewNavIndex, reviewNavTotal]);
+    const id = `buildwarden-review-finding-${String(safe)}`;
+    requestAnimationFrame(() => {
+      const el = typeof document !== "undefined" ? document.getElementById(id) : null;
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    });
+  }, [activeReviewNavIndex, fileIndexByKey, fileVirtualizer, reviewNavEntries, reviewNavTotal, virtualizeFileSections]);
 
   const safeReviewNavIndex = useMemo(
     () => (reviewNavTotal === 0 ? 0 : Math.min(activeReviewNavIndex, reviewNavTotal - 1)),
@@ -717,21 +1091,27 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     return counts;
   }, [manualCommentTargets]);
 
-  const generalNavEntries = useMemo(
-    () => reviewNavEntries.filter((e) => e.fileKey === null),
-    [reviewNavEntries],
-  );
+  const manualCommentIndex = useMemo(() => buildDiffCommentIndex(manualCommentTargets), [manualCommentTargets]);
 
-  const wordTokensByFile = useMemo(() => {
-    const tokenMap = new Map<string, HunkTokens>();
-    if (viewType !== "unified" || !wordDiff) {
-      return tokenMap;
+  const { generalNavEntries, reviewEntriesByFileKey } = useMemo(() => {
+    const general: ReviewNavEntry[] = [];
+    const byFileKey = new Map<string, ReviewNavEntry[]>();
+
+    for (const entry of reviewNavEntries) {
+      if (!entry.fileKey) {
+        general.push(entry);
+        continue;
+      }
+      const current = byFileKey.get(entry.fileKey);
+      if (current) {
+        current.push(entry);
+      } else {
+        byFileKey.set(entry.fileKey, [entry]);
+      }
     }
-    files.forEach((file, index) => {
-      tokenMap.set(diffFileKey(file, index), tokenize(file.hunks, { enhancers: [markEdits(file.hunks, { type: "line" })] }));
-    });
-    return tokenMap;
-  }, [files, viewType, wordDiff]);
+
+    return { generalNavEntries: general, reviewEntriesByFileKey: byFileKey };
+  }, [reviewNavEntries]);
 
   const scrollAreaHeightClass = compact
     ? "max-h-72"
@@ -782,9 +1162,52 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
   }
 
   const viewerClass = activityEmphasis ? "diff-viewer diff-viewer--activity" : "diff-viewer";
+  const renderFileSection = (file: FileData, index: number) => {
+    const fileKey = diffFileKey(file, index);
+    const isCollapsed = alwaysExpandedFileSections ? false : (collapsedFiles[fileKey] ?? defaultCollapsedFileSections);
+    const filePathLabel = formatDiffPath(file.oldPath, file.newPath);
+    return (
+      <DiffFileSection
+        key={fileKey}
+        file={file}
+        fileKey={fileKey}
+        filePathLabel={filePathLabel}
+        isLastFile={index === files.length - 1}
+        isCollapsed={isCollapsed}
+        anyFilesExpanded={anyFilesExpanded}
+        alwaysExpandedFileSections={alwaysExpandedFileSections}
+        hideFileHeader={hideFileHeader}
+        hideFileHeaderInlineToggle={hideFileHeaderInlineToggle}
+        viewType={viewType}
+        wordDiff={wordDiff}
+        fileNavEntries={reviewEntriesByFileKey.get(fileKey) ?? []}
+        manualCommentIndex={manualCommentIndex}
+        manualCommentCountByTarget={manualCommentCountByTarget}
+        activeCommentTarget={activeCommentTarget}
+        draftCommentText={draftCommentText}
+        draftCommentSaveLabel={draftCommentSaveLabel}
+        singleCommentSaveLabel={singleCommentSaveLabel}
+        singleCommentBusy={singleCommentBusy}
+        editingDraftCommentId={editingDraftCommentId}
+        highlightedCommentId={highlightedCommentId}
+        safeReviewNavIndex={safeReviewNavIndex}
+        draftedReviewFindingKeys={draftedReviewFindingKeys}
+        onToggleCollapsed={toggleFileCollapsed}
+        onAddDiffComment={onAddDiffComment}
+        onSaveDraftComment={onSaveDraftComment}
+        onSaveSingleComment={onSaveSingleComment}
+        onCancelDraftComment={onCancelDraftComment}
+        onEditDraftComment={onEditDraftComment}
+        onRemoveDraftComment={onRemoveDraftComment}
+        onDraftReviewFinding={onDraftReviewFinding}
+      />
+    );
+  };
+  const virtualFileItems = virtualizeFileSections ? fileVirtualizer.getVirtualItems() : [];
 
   return (
     <div
+      ref={scrollContainerRef}
       className={cn(
         "app-scrollbar overflow-auto rounded-lg border bg-zinc-950/80",
         className,
@@ -843,252 +1266,39 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
             </div>
           </div>
         ) : null}
-        {files.map((file, index) => {
-          const fileKey = diffFileKey(file, index);
-          const isCollapsed = alwaysExpandedFileSections ? false : (collapsedFiles[fileKey] ?? defaultCollapsedFileSections);
-          const filePathLabel = formatDiffPath(file.oldPath, file.newPath);
-          const fileNavEntries = reviewNavEntries.filter((e) => e.fileKey === fileKey);
-          const anchoredEntryGroups = new Map<string, { change: ChangeData; entries: ReviewNavEntry[] }>();
-          const fallbackFileNavEntries: ReviewNavEntry[] = [];
-          for (const entry of fileNavEntries) {
-            const change = findDiffChangeForFinding(file.hunks, entry.finding);
-            if (!change) {
-              fallbackFileNavEntries.push(entry);
-              continue;
-            }
-            const changeKey = getChangeKey(change);
-            const currentGroup = anchoredEntryGroups.get(changeKey);
-            anchoredEntryGroups.set(changeKey, {
-              change,
-              entries: [...(currentGroup?.entries ?? []), entry],
-            });
-          }
-          const widgetGroups = new Map<string, ReactNode[]>();
-          const addInlineWidget = (changeKey: string, node: ReactNode) => {
-            widgetGroups.set(changeKey, [...(widgetGroups.get(changeKey) ?? []), node]);
-          };
-
-          for (const [changeKey, { change, entries }] of anchoredEntryGroups.entries()) {
-            const draftTarget = buildDiffLineCommentTarget(file, change, undefined);
-            addInlineWidget(
-              changeKey,
-              <div className="space-y-2" key={`${fileKey}-review-widget-${changeKey}`}>
-                {entries.map(({ finding, globalIndex }) => {
-                  const findingKey = reviewFindingDraftKey(finding, globalIndex);
-                  return (
-                    <ReviewFindingCard
-                      key={`${fileKey}-inline-review-${String(globalIndex)}`}
-                      finding={finding}
-                      globalIndex={globalIndex}
-                      active={safeReviewNavIndex === globalIndex}
-                      onDraft={draftTarget && onDraftReviewFinding ? () => onDraftReviewFinding(draftTarget, finding, findingKey) : undefined}
-                      draftDisabled={draftedReviewFindingKeys?.has(findingKey) ?? false}
-                    />
-                  );
-                })}
-              </div>,
-            );
-          }
-
-          const activeCommentTargetKey = activeCommentTarget ? diffLineCommentTargetKey(activeCommentTarget) : null;
-          const canRenderActiveCommentEditor = Boolean(activeCommentTarget) && Boolean(onSaveDraftComment) && Boolean(onCancelDraftComment);
-          for (const hunk of file.hunks) {
-            for (const change of hunk.changes) {
-              const changeTargets = buildDiffLineCommentTargets(file, change);
-              if (changeTargets.length === 0) {
-                continue;
+        {virtualizeFileSections ? (
+          <div className="relative" style={{ height: `${String(fileVirtualizer.getTotalSize())}px` }}>
+            {virtualFileItems.map((virtualFile) => {
+              const file = files[virtualFile.index];
+              if (!file) {
+                return null;
               }
-              const changeTargetKeys = new Set(changeTargets.map(diffLineCommentTargetKey));
-              const changeKey = getChangeKey(change);
-              const commentsForChange = (manualCommentTargets ?? []).filter((comment) => commentMatchesDiffTarget(comment, changeTargets));
-              const visibleCommentsForChange = commentsForChange.filter((comment) => comment.id !== editingDraftCommentId);
-              if (visibleCommentsForChange.length > 0) {
-                addInlineWidget(
-                  changeKey,
-                  <div className="space-y-2" key={`${fileKey}-manual-comments-${changeKey}`}>
-                    {visibleCommentsForChange.map((comment) => (
-                      <DraftCommentCard
-                        key={comment.id}
-                        comment={comment}
-                        editing={comment.id === editingDraftCommentId}
-                        highlighted={comment.id === highlightedCommentId}
-                        onEdit={onEditDraftComment}
-                        onRemove={onRemoveDraftComment}
-                      />
-                    ))}
-                  </div>,
-                );
-              }
-              if (activeCommentTargetKey && canRenderActiveCommentEditor && changeTargetKeys.has(activeCommentTargetKey) && activeCommentTarget) {
-                addInlineWidget(
-                  changeKey,
-                  <InlineDraftCommentEditor
-                    key={`${fileKey}-manual-editor-${changeKey}`}
-                    target={activeCommentTarget}
-                    initialValue={draftCommentText}
-                    editorKey={editingDraftCommentId ?? activeCommentTargetKey}
-                    onSave={onSaveDraftComment as (value: string) => void}
-                    onSaveSingle={editingDraftCommentId ? undefined : onSaveSingleComment}
-                    onCancel={onCancelDraftComment as () => void}
-                    saveLabel={draftCommentSaveLabel}
-                    singleSaveLabel={singleCommentSaveLabel}
-                    singleSaveBusy={singleCommentBusy}
-                  />,
-                );
-              }
-            }
-          }
-
-          const diffWidgets = Object.fromEntries(
-            [...widgetGroups.entries()].map(([changeKey, nodes]) => [
-              changeKey,
-              <div className="space-y-2 px-3 py-2" key={`${fileKey}-widget-${changeKey}`}>
-                {nodes}
-              </div>,
-            ]),
-          );
-          const wordTokens = wordTokensByFile.get(fileKey) ?? null;
-          const renderManualCommentGutter = onAddDiffComment
-            ? (options: GutterOptions) => {
-                const target = buildDiffLineCommentTarget(file, options.change, options.side);
-                const count = target ? (manualCommentCountByTarget.get(diffLineCommentTargetKey(target)) ?? 0) : 0;
-                return (
-                  <span className={cn("inline-flex min-w-full items-center justify-end gap-1", target && "group/diff-comment")}>
-                    <span>{options.renderDefault()}</span>
-                    {target ? (
-                      <span
-                        className={cn(
-                          "rounded px-1 text-[9px] font-semibold transition",
-                          count > 0
-                            ? "bg-cyan-500/20 text-cyan-100"
-                            : "text-zinc-600 opacity-50 group-hover/diff-comment:opacity-100",
-                        )}
-                      >
-                        {count > 0 ? String(count) : "+"}
-                      </span>
-                    ) : null}
-                  </span>
-                );
-              }
-            : undefined;
-          const manualCommentGutterEvents: EventMap | undefined = onAddDiffComment
-            ? {
-                onClick: (args, event) => {
-                  const target = args.change ? buildDiffLineCommentTarget(file, args.change, args.side) : null;
-                  if (!target) {
-                    return;
-                  }
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onAddDiffComment(target);
-                },
-              }
-            : undefined;
-          const manualCommentCodeEvents: EventMap | undefined = onAddDiffComment
-            ? {
-                onClick: (args, event) => {
-                  const target = args.change ? buildDiffLineCommentTarget(file, args.change, args.side) : null;
-                  if (!target) {
-                    return;
-                  }
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onAddDiffComment(target);
-                },
-              }
-            : undefined;
-
-          return (
-            <div key={fileKey} className="border-b border-zinc-800 last:border-b-0">
-              {alwaysExpandedFileSections ? null : hideFileHeader ? (
-                hideFileHeaderInlineToggle ? (
-                  <button
-                    type="button"
-                    className={cn(
-                      "z-10 rounded px-1 py-0.5 text-zinc-500 transition hover:bg-zinc-800/70 hover:text-zinc-300",
-                      anyFilesExpanded ? "absolute right-2 top-1" : "absolute right-0 top-[-1.55rem]",
-                    )}
-                    onClick={() => setCollapsedFiles((current) => ({ ...current, [fileKey]: !isCollapsed }))}
-                    aria-label={isCollapsed ? "Expand diff" : "Collapse diff"}
-                    title={isCollapsed ? "Expand diff" : "Collapse diff"}
-                  >
-                    {isCollapsed ? (
-                      <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-                    ) : (
-                      <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-                    )}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="sticky top-0 z-10 flex w-full items-center justify-end border-b border-zinc-800 bg-zinc-900/95 px-2 py-1 text-zinc-500 backdrop-blur-sm hover:text-zinc-300"
-                    onClick={() => setCollapsedFiles((current) => ({ ...current, [fileKey]: !isCollapsed }))}
-                    aria-label={isCollapsed ? "Expand diff" : "Collapse diff"}
-                    title={isCollapsed ? "Expand diff" : "Collapse diff"}
-                  >
-                    {isCollapsed ? (
-                      <ChevronRight className="h-4 w-4 shrink-0" />
-                    ) : (
-                      <ChevronDown className="h-4 w-4 shrink-0" />
-                    )}
-                  </button>
-                )
-              ) : (
-                <button
-                  type="button"
-                  className="sticky top-0 z-10 flex w-full items-center justify-between gap-2 border-b border-zinc-800 bg-zinc-900/95 px-3 py-1.5 text-left backdrop-blur-sm"
-                  onClick={() => setCollapsedFiles((current) => ({ ...current, [fileKey]: !isCollapsed }))}
+              const virtualStyle: CSSProperties = {
+                position: "absolute",
+                left: 0,
+                top: 0,
+                width: "100%",
+                transform: `translateY(${String(virtualFile.start)}px)`,
+              };
+              return (
+                <div
+                  key={virtualFile.key}
+                  ref={(node) => {
+                    if (node) {
+                      fileVirtualizer.measureElement(node);
+                    }
+                  }}
+                  data-index={virtualFile.index}
+                  style={virtualStyle}
                 >
-                  <div className="flex min-w-0 flex-1 items-center gap-2">
-                    <p className="truncate text-xs font-medium text-zinc-100">{formatDiffPath(file.oldPath, file.newPath)}</p>
-                    <span className="shrink-0 text-[10px] uppercase tracking-[0.18em] text-zinc-500">{file.type}</span>
-                  </div>
-                  {isCollapsed ? (
-                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
-                  ) : (
-                    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
-                  )}
-                </button>
-              )}
-              {!isCollapsed ? (
-                <>
-                  <Diff
-                    viewType={viewType}
-                    diffType={file.type}
-                    hunks={file.hunks}
-                    tokens={wordTokens}
-                    widgets={diffWidgets}
-                    className="text-xs"
-                    codeClassName={onAddDiffComment ? "cursor-pointer transition hover:!bg-cyan-500/[0.08]" : undefined}
-                    renderGutter={renderManualCommentGutter}
-                    gutterEvents={manualCommentGutterEvents}
-                    codeEvents={manualCommentCodeEvents}
-                  >
-                    {(hunks) => hunks.map((hunk, hunkIndex) => <Hunk key={`${fileKey}-hunk-${String(hunkIndex)}`} hunk={hunk} />)}
-                  </Diff>
-                  {fallbackFileNavEntries.length > 0 ? (
-                    <div className="border-t border-cyan-500/10 bg-zinc-900/30 px-2 py-2">
-                      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
-                        Comments on this file
-                        <span className="ml-1 font-mono font-normal text-zinc-600">{filePathLabel}</span>
-                      </p>
-                      <div className="space-y-2">
-                        {fallbackFileNavEntries.map(({ finding, globalIndex }) => (
-                          <ReviewFindingCard
-                            key={`${fileKey}-review-${String(globalIndex)}`}
-                            finding={finding}
-                            globalIndex={globalIndex}
-                            active={safeReviewNavIndex === globalIndex}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                </>
-              ) : null}
-            </div>
-          );
-        })}
+                  {renderFileSection(file, virtualFile.index)}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          files.map((file, index) => renderFileSection(file, index))
+        )}
       </div>
     </div>
   );
