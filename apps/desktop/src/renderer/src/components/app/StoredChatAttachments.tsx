@@ -206,21 +206,29 @@ const ImageAttachmentCard = ({
   </div>
 );
 
-const PdfAttachmentCard = ({ attachment, compact }: { attachment: ChatAttachmentPayload; compact: boolean }) => {
+const PdfAttachmentCard = ({
+  attachment,
+  compact,
+  onOpen,
+}: {
+  attachment: ChatAttachmentPayload;
+  compact: boolean;
+  onOpen: () => void;
+}) => {
   const dataUrl = toDataUrl(attachment);
 
   return (
     <div
-      className={`overflow-hidden rounded-lg border border-red-400/20 bg-zinc-950/60 shadow-sm ${
+      className={`group overflow-hidden rounded-lg border border-red-400/20 bg-zinc-950/60 shadow-sm transition hover:border-red-300/35 ${
         compact ? "w-36" : "w-44"
       }`}
       title={attachment.fileName}
     >
-      <div className={`${compact ? "h-24" : "h-28"} overflow-hidden bg-zinc-900`}>
+      <div className={`relative ${compact ? "h-24" : "h-28"} overflow-hidden bg-zinc-900`}>
         <object
           data={`${dataUrl}#toolbar=0&navpanes=0&scrollbar=0`}
           type="application/pdf"
-          className="h-full w-full bg-white"
+          className="pointer-events-none h-full w-full bg-white"
           aria-label={`Preview ${attachment.fileName}`}
         >
           <div className="flex h-full flex-col items-center justify-center gap-2 bg-red-500/10 text-red-200">
@@ -228,6 +236,13 @@ const PdfAttachmentCard = ({ attachment, compact }: { attachment: ChatAttachment
             <span className="text-[10px] font-semibold uppercase leading-none">PDF</span>
           </div>
         </object>
+        <button
+          type="button"
+          className="absolute inset-0 cursor-zoom-in rounded-t-lg outline-none ring-inset transition focus-visible:ring-2 focus-visible:ring-red-300"
+          title={`Open ${attachment.fileName}`}
+          aria-label={`Open ${attachment.fileName}`}
+          onClick={onOpen}
+        />
       </div>
       <AttachmentFooter attachment={attachment} />
     </div>
@@ -279,6 +294,7 @@ export const StoredChatAttachments = ({
   compact = false,
 }: StoredChatAttachmentsProps) => {
   const [expandedImage, setExpandedImage] = useState<ChatAttachmentPayload | null>(null);
+  const [expandedPdf, setExpandedPdf] = useState<ChatAttachmentPayload | null>(null);
 
   if (attachments.length === 0 && fallbackNames.length === 0) {
     return null;
@@ -287,6 +303,7 @@ export const StoredChatAttachments = ({
   const usedNames = new Set(attachments.map((attachment) => attachment.fileName));
   const namesOnly = fallbackNames.filter((name) => !usedNames.has(name));
   const expandedImageUrl = expandedImage ? toDataUrl(expandedImage) : "";
+  const expandedPdfUrl = expandedPdf ? toDataUrl(expandedPdf) : "";
 
   return (
     <>
@@ -309,7 +326,14 @@ export const StoredChatAttachments = ({
             }
 
             if (renderMode === "pdf") {
-              return <PdfAttachmentCard key={key} attachment={attachment} compact={compact} />;
+              return (
+                <PdfAttachmentCard
+                  key={key}
+                  attachment={attachment}
+                  compact={compact}
+                  onOpen={() => setExpandedPdf(attachment)}
+                />
+              );
             }
 
             if (textPreview) {
@@ -364,6 +388,66 @@ export const StoredChatAttachments = ({
                     alt={expandedImage.fileName}
                     className="max-h-[80vh] max-w-full object-contain"
                   />
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      {expandedPdf
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[30000] flex items-center justify-center bg-black/80 p-4"
+              onClick={() => setExpandedPdf(null)}
+              role="dialog"
+              aria-modal="true"
+              aria-label={expandedPdf.fileName}
+            >
+              <div
+                className="flex max-h-full w-[min(92vw,72rem)] flex-col overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-950 shadow-2xl"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="flex items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
+                  <p className="truncate text-sm text-zinc-200">{expandedPdf.fileName}</p>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <a
+                      href={expandedPdfUrl}
+                      download={expandedPdf.fileName}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
+                      title={`Download ${expandedPdf.fileName}`}
+                      aria-label={`Download ${expandedPdf.fileName}`}
+                    >
+                      <Download className="h-4 w-4" aria-hidden />
+                    </a>
+                    <button
+                      type="button"
+                      className="rounded-md px-2 py-1 text-xs text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
+                      onClick={() => setExpandedPdf(null)}
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+                <div className="h-[min(82vh,58rem)] bg-zinc-900 p-3">
+                  <object
+                    data={`${expandedPdfUrl}#toolbar=1&navpanes=0`}
+                    type="application/pdf"
+                    className="h-full w-full rounded-lg bg-white"
+                    aria-label={`Preview ${expandedPdf.fileName}`}
+                  >
+                    <div className="flex h-full flex-col items-center justify-center gap-3 rounded-lg bg-red-500/10 text-red-200">
+                      <FileText className="h-12 w-12" aria-hidden />
+                      <span className="text-xs font-semibold uppercase leading-none">PDF</span>
+                      <a
+                        href={expandedPdfUrl}
+                        download={expandedPdf.fileName}
+                        className="rounded-md border border-red-300/20 px-3 py-1.5 text-xs text-red-100 transition hover:bg-red-300/10"
+                      >
+                        Download
+                      </a>
+                    </div>
+                  </object>
                 </div>
               </div>
             </div>,
