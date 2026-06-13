@@ -8,6 +8,8 @@ import type {
   ProjectForgeRequestsResult,
   ProjectForgeReviewActionResult,
   ProjectPrMrDiffResult,
+  ReplyProjectPrMrReviewThreadInput,
+  ResolveProjectPrMrReviewThreadInput,
   SubmitProjectPrMrCommentsInput,
 } from "@buildwarden/shared";
 
@@ -38,4 +40,6 @@ export interface ProjectPrReviewProvider {
   getRequestDiff(input: FetchProjectPrMrDiffInput): Promise<ProjectPrMrDiffResult>;
   postReview(input: PostProjectPrMrReviewInput): Promise<ProjectForgeReviewActionResult>;
   submitComments(input: SubmitProjectPrMrCommentsInput): Promise<ProjectForgeReviewActionResult>;
+  replyToThread(input: ReplyProjectPrMrReviewThreadInput): Promise<ProjectForgeReviewActionResult>;
+  resolveThread(input: ResolveProjectPrMrReviewThreadInput): Promise<ProjectForgeReviewActionResult>;
 }

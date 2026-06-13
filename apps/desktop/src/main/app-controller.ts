@@ -99,6 +99,8 @@ import {
   type RunProjectLabInput,
   type ProjectPrMrDiffResult,
   type PostProjectPrMrReviewInput,
+  type ReplyProjectPrMrReviewThreadInput,
+  type ResolveProjectPrMrReviewThreadInput,
   type SubmitProjectPrMrCommentsInput,
   type ProjectInsightRecord,
   type ProjectInsightData,
@@ -2868,6 +2870,9 @@ export class AppController
         throw new Error(`Could not load the PR/MR diff via hosting API. ${msg}`);
       }
     }
+    if (input.commitSha?.trim()) {
+      throw new Error("Commit-specific PR/MR diffs require a Git hosting access token in Project Settings.");
+    }
     try {
       const result = await computePrMrDiffViaFetch(project.repoPath, {
         prMrUrl: prUrl,
@@ -3007,6 +3012,22 @@ export class AppController
   ): Promise<ProjectForgeReviewActionResult> {
     const provider = await this.createProjectPrReviewProvider(projectId);
     return provider.submitComments(input);
+  }
+
+  async replyProjectPrMrReviewThread(
+    projectId: string,
+    input: ReplyProjectPrMrReviewThreadInput,
+  ): Promise<ProjectForgeReviewActionResult> {
+    const provider = await this.createProjectPrReviewProvider(projectId);
+    return provider.replyToThread(input);
+  }
+
+  async resolveProjectPrMrReviewThread(
+    projectId: string,
+    input: ResolveProjectPrMrReviewThreadInput,
+  ): Promise<ProjectForgeReviewActionResult> {
+    const provider = await this.createProjectPrReviewProvider(projectId);
+    return provider.resolveThread(input);
   }
 
   async analyzeProjectPrMrDiff(

@@ -82,6 +82,10 @@ const api: DesktopApi = {
     invoke(IPC_CHANNELS.getProjectForgeRequestDetails, projectId, input),
   postProjectPrMrReview: (projectId: string, input) => invoke(IPC_CHANNELS.postProjectPrMrReview, projectId, input),
   submitProjectPrMrComments: (projectId: string, input) => invoke(IPC_CHANNELS.submitProjectPrMrComments, projectId, input),
+  replyProjectPrMrReviewThread: (projectId: string, input) =>
+    invoke(IPC_CHANNELS.replyProjectPrMrReviewThread, projectId, input),
+  resolveProjectPrMrReviewThread: (projectId: string, input) =>
+    invoke(IPC_CHANNELS.resolveProjectPrMrReviewThread, projectId, input),
   createRun: (input: RunInput) => invoke(IPC_CHANNELS.createRun, input),
   continueRun: (input: ContinueRunInput) => invoke(IPC_CHANNELS.continueRun, input),
   createRunPullRequest: (runId: string, targetBranch: string, title: string, sourceBranchName?: string, description?: string) =>

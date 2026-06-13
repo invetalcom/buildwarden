@@ -3,8 +3,13 @@ import type {
   FetchProjectPrMrDiffInput,
   ListProjectForgeRequestsInput,
   ProjectForgeActivityItem,
+  ProjectForgeChangedFileStatus,
+  ProjectForgeChangedFileSummary,
+  ProjectForgeCommitSummary,
   ProjectForgeRequestDetails,
   ProjectForgeRequestDetailsResult,
+  ProjectForgeReviewThread,
+  ProjectForgeReviewThreadComment,
   PostProjectPrMrReviewInput,
   ProjectForgeRequestState,
   ProjectForgeRequestSummary,
@@ -12,6 +17,8 @@ import type {
   ProjectForgeReviewActionResult,
   ProjectPrMrDiffResult,
   ProjectPrMrDiffComment,
+  ReplyProjectPrMrReviewThreadInput,
+  ResolveProjectPrMrReviewThreadInput,
   SubmitProjectPrMrCommentsInput,
 } from "@buildwarden/shared";
 import type { PrReviewHttpClient } from "./pr-review-http-client";
@@ -137,6 +144,75 @@ const mapGithubRequestDetails = (record: Record<string, unknown>): ProjectForgeR
   };
 };
 
+const firstLine = (value: string) => value.split(/\r?\n/, 1)[0]?.trim() || value.trim();
+
+const mapGithubCommitSummary = (record: Record<string, unknown>): ProjectForgeCommitSummary | null => {
+  const sha = recordString(record, "sha");
+  const commit = recordObject(record, "commit");
+  const message = commit ? (recordString(commit, "message") ?? "") : "";
+  if (!sha || !commit) {
+    return null;
+  }
+  const author = recordObject(commit, "author");
+  const committer = recordObject(commit, "committer");
+  return {
+    sha,
+    shortSha: sha.slice(0, 7),
+    title: firstLine(message),
+    message,
+    authorName: author ? recordString(author, "name") : null,
+    authorEmail: author ? recordString(author, "email") : null,
+    authorUser: githubUserSummary(recordObject(record, "author")),
+    committerName: committer ? recordString(committer, "name") : null,
+    committedAt: committer ? recordString(committer, "date") : null,
+    authoredAt: author ? recordString(author, "date") : null,
+    url: recordString(record, "html_url"),
+    commentCount: recordNumber(commit, "comment_count"),
+  };
+};
+
+const githubGraphqlUserSummary = (record: Record<string, unknown> | null): ProjectForgeActivityItem["author"] => {
+  if (!record) {
+    return null;
+  }
+  const username = recordString(record, "login");
+  if (!username) {
+    return null;
+  }
+  return {
+    username,
+    name: null,
+    avatarUrl: recordString(record, "avatarUrl"),
+    webUrl: recordString(record, "url"),
+  };
+};
+
+const githubChangedFileStatus = (value: string | null): ProjectForgeChangedFileStatus => {
+  if (value === "added" || value === "modified" || value === "removed" || value === "renamed" || value === "changed") {
+    return value;
+  }
+  if (value === "copied" || value === "unchanged") {
+    return value;
+  }
+  return "unknown";
+};
+
+const mapGithubChangedFileSummary = (record: Record<string, unknown>): ProjectForgeChangedFileSummary | null => {
+  const path = recordString(record, "filename");
+  if (!path) {
+    return null;
+  }
+  return {
+    path,
+    oldPath: recordString(record, "previous_filename"),
+    status: githubChangedFileStatus(recordString(record, "status")),
+    additions: recordNumber(record, "additions"),
+    deletions: recordNumber(record, "deletions"),
+    patchAvailable: Boolean(recordString(record, "patch")),
+    commentCount: 0,
+  };
+};
+
 const activityTimestamp = (item: ProjectForgeActivityItem): string => item.createdAt ?? item.updatedAt ?? "";
 
 const sortActivity = (items: ProjectForgeActivityItem[]) =>
@@ -197,6 +273,94 @@ const githubTimelineEventBody = (record: Record<string, unknown>): string | null
   return null;
 };
 
+const toGithubReviewThreadComment = (entry: Record<string, unknown>): ProjectForgeReviewThreadComment => {
+  const id = recordNumber(entry, "id") ?? recordString(entry, "node_id") ?? crypto.randomUUID();
+  return {
+    id: `github-diff-comment-${String(id)}`,
+    providerCommentId: String(id),
+    body: recordString(entry, "body") ?? "",
+    author: githubUserSummary(recordObject(entry, "user")),
+    createdAt: recordString(entry, "created_at"),
+    updatedAt: recordString(entry, "updated_at"),
+    url: recordString(entry, "html_url"),
+  };
+};
+
+const githubGraphqlReviewThreadComment = (entry: Record<string, unknown>): ProjectForgeReviewThreadComment => {
+  const providerCommentId = recordNumber(entry, "databaseId") ?? recordString(entry, "fullDatabaseId");
+  const id = providerCommentId != null ? String(providerCommentId) : (recordString(entry, "id") ?? crypto.randomUUID());
+  return {
+    id: `github-diff-comment-${String(id)}`,
+    providerCommentId: providerCommentId != null ? String(providerCommentId) : null,
+    body: recordString(entry, "body") ?? "",
+    author: githubGraphqlUserSummary(recordObject(entry, "author")),
+    createdAt: recordString(entry, "createdAt"),
+    updatedAt: recordString(entry, "updatedAt"),
+    url: recordString(entry, "url"),
+  };
+};
+
+const githubGraphqlReviewThreadFromNode = (node: Record<string, unknown>): ProjectForgeReviewThread | null => {
+  const providerThreadId = recordString(node, "id");
+  const path = recordString(node, "path");
+  const line = recordNumber(node, "line") ?? recordNumber(node, "originalLine");
+  const commentsConnection = recordObject(node, "comments");
+  const commentsValue = commentsConnection?.nodes;
+  const commentRecords = Array.isArray(commentsValue) ? onlyRecords(commentsValue) : [];
+  const firstComment = commentRecords[0] ?? null;
+  const firstCommentPath = firstComment ? recordString(firstComment, "path") : null;
+  const firstLine = firstComment ? (recordNumber(firstComment, "line") ?? recordNumber(firstComment, "originalLine")) : null;
+  const resolvedPath = path ?? firstCommentPath;
+  const resolvedLine = line ?? firstLine;
+  if (!providerThreadId || !resolvedPath || !resolvedLine) {
+    return null;
+  }
+  const rawSide = recordString(node, "diffSide");
+  const side = rawSide === "LEFT" ? "old" : "new";
+  const comments = commentRecords.map(githubGraphqlReviewThreadComment);
+  return {
+    id: providerThreadId,
+    providerThreadId,
+    replyToCommentId: comments[0]?.providerCommentId ?? null,
+    provider: "github",
+    path: resolvedPath,
+    oldPath: resolvedPath,
+    side,
+    oldLineNumber: side === "old" ? resolvedLine : null,
+    newLineNumber: side === "new" ? resolvedLine : null,
+    commitSha: firstComment ? (recordString(recordObject(firstComment, "commit") ?? {}, "oid") ?? recordString(recordObject(firstComment, "originalCommit") ?? {}, "oid")) : null,
+    diffHunk: firstComment ? recordString(firstComment, "diffHunk") : null,
+    resolved: recordBoolean(node, "isResolved"),
+    comments: comments.length > 0 ? comments : [],
+  };
+};
+
+const githubReviewThreadFromComment = (entry: Record<string, unknown>, fallbackIndex: number): ProjectForgeReviewThread | null => {
+  const id = recordNumber(entry, "id") ?? recordString(entry, "node_id") ?? fallbackIndex;
+  const path = recordString(entry, "path");
+  const line = recordNumber(entry, "line") ?? recordNumber(entry, "original_line");
+  if (!path || !line) {
+    return null;
+  }
+  const rawSide = recordString(entry, "side");
+  const side = rawSide === "LEFT" ? "old" : "new";
+  return {
+    id: `github-thread-${String(id)}`,
+    providerThreadId: `github-thread-${String(id)}`,
+    replyToCommentId: String(id),
+    provider: "github",
+    path,
+    oldPath: recordString(entry, "original_path"),
+    side,
+    oldLineNumber: side === "old" ? line : null,
+    newLineNumber: side === "new" ? line : null,
+    commitSha: recordString(entry, "commit_id") ?? recordString(entry, "original_commit_id"),
+    diffHunk: recordString(entry, "diff_hunk"),
+    resolved: null,
+    comments: [toGithubReviewThreadComment(entry)],
+  };
+};
+
 const toGithubReviewComment = (comment: ProjectPrMrDiffComment): Record<string, unknown> => {
   const line = comment.side === "old" ? comment.oldLineNumber : comment.newLineNumber;
   if (!line) {
@@ -207,6 +371,20 @@ const toGithubReviewComment = (comment: ProjectPrMrDiffComment): Record<string, 
     line,
     side: comment.side === "old" ? "LEFT" : "RIGHT",
     body: comment.body,
+  };
+};
+
+const toGithubSingleReviewComment = (comment: ProjectPrMrDiffComment, commitId: string): Record<string, unknown> => {
+  const line = comment.side === "old" ? comment.oldLineNumber : comment.newLineNumber;
+  if (!line) {
+    throw new Error("A draft comment could not be mapped to a GitHub diff line.");
+  }
+  return {
+    body: comment.body,
+    commit_id: commitId,
+    path: comment.side === "old" ? (comment.oldPath || comment.newPath) : (comment.newPath || comment.oldPath),
+    line,
+    side: comment.side === "old" ? "LEFT" : "RIGHT",
   };
 };
 
@@ -274,7 +452,8 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
       throw new Error("The hosting API returned an incomplete pull request response.");
     }
 
-    const [issueComments, reviews, reviewComments, timeline] = await Promise.all([
+    const pullRequestNodeId = recordString(pullRequest, "node_id");
+    const [issueComments, reviews, reviewComments, timeline, commits, files, graphqlReviewThreads] = await Promise.all([
       this.getPagedArray(`/repos/${owner}/${repo}/issues/${number}/comments?per_page=100`).catch((error) => {
         warnings.push(error instanceof Error ? error.message : "Could not load pull request comments.");
         return [];
@@ -291,10 +470,25 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
         warnings.push(error instanceof Error ? error.message : "Could not load pull request timeline events.");
         return [];
       }),
+      this.getPagedArray(`/repos/${owner}/${repo}/pulls/${number}/commits?per_page=100`).catch((error) => {
+        warnings.push(error instanceof Error ? error.message : "Could not load pull request commits.");
+        return [];
+      }),
+      this.getPagedArray(`/repos/${owner}/${repo}/pulls/${number}/files?per_page=100`).catch((error) => {
+        warnings.push(error instanceof Error ? error.message : "Could not load changed files.");
+        return [];
+      }),
+      pullRequestNodeId
+        ? this.getGraphqlReviewThreads(pullRequestNodeId).catch((error) => {
+            warnings.push(error instanceof Error ? error.message : "Could not load pull request review threads.");
+            return [];
+          })
+        : Promise.resolve([]),
     ]);
 
     const commentIds = new Set<string>();
     const activity: ProjectForgeActivityItem[] = [];
+    const reviewThreads: ProjectForgeReviewThread[] = [];
 
     for (const entry of onlyRecords(issueComments)) {
       const id = recordNumber(entry, "id");
@@ -338,6 +532,10 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
 
     for (const entry of onlyRecords(reviewComments)) {
       const id = recordNumber(entry, "id");
+      const thread = githubReviewThreadFromComment(entry, activity.length);
+      if (thread && graphqlReviewThreads.length === 0) {
+        reviewThreads.push(thread);
+      }
       activity.push({
         id: `github-diff-comment-${String(id ?? activity.length)}`,
         provider: "github",
@@ -351,7 +549,12 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
         createdAt: recordString(entry, "created_at"),
         updatedAt: recordString(entry, "updated_at"),
         author: githubUserSummary(recordObject(entry, "user")),
+        commitSha: recordString(entry, "commit_id") ?? recordString(entry, "original_commit_id"),
       });
+    }
+
+    if (graphqlReviewThreads.length > 0) {
+      reviewThreads.push(...graphqlReviewThreads);
     }
 
     for (const entry of onlyRecords(timeline)) {
@@ -374,7 +577,15 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
         createdAt: recordString(entry, "created_at"),
         updatedAt: null,
         author: githubTimelineAuthor(entry),
+        commitSha: event === "committed" ? recordString(entry, "commit_id") : null,
       });
+    }
+
+    const commitSummaries = onlyRecords(commits).map(mapGithubCommitSummary).filter((entry): entry is ProjectForgeCommitSummary => Boolean(entry));
+    const fileSummaries = onlyRecords(files).map(mapGithubChangedFileSummary).filter((entry): entry is ProjectForgeChangedFileSummary => Boolean(entry));
+    const diffCommentCountsByPath = new Map<string, number>();
+    for (const thread of reviewThreads) {
+      diffCommentCountsByPath.set(thread.path, (diffCommentCountsByPath.get(thread.path) ?? 0) + thread.comments.length);
     }
 
     return {
@@ -383,6 +594,9 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
       repoLabel: this.context.repoLabel,
       request,
       activity: sortActivity(activity),
+      commits: commitSummaries,
+      files: fileSummaries.map((file) => ({ ...file, commentCount: diffCommentCountsByPath.get(file.path) ?? 0 })),
+      reviewThreads,
       warnings,
     };
   }
@@ -392,6 +606,18 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
     const owner = encodeURIComponent(this.context.github.owner);
     const repo = encodeURIComponent(this.context.github.repo);
     const number = String(parsed.number);
+    const commitSha = input.commitSha?.trim();
+    if (commitSha) {
+      const diff = (await this.http.text(`/repos/${owner}/${repo}/commits/${encodeURIComponent(commitSha)}`, {
+        headers: { Accept: "application/vnd.github.diff" },
+      })).trim();
+      return {
+        diff,
+        provider: "github",
+        number: parsed.number,
+        baseRef: `GitHub commit ${commitSha.slice(0, 12)}`,
+      };
+    }
     const diff = (await this.http.text(`/repos/${owner}/${repo}/pulls/${number}`, {
       headers: { Accept: "application/vnd.github.diff" },
     })).trim();
@@ -440,9 +666,37 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
     const parsed = parseAndValidatePrMrUrl(prUrl, this.context);
     const comments = normalizeDraftComments(input.comments);
     assertDraftCommentsAreSubmittable(comments);
+    const owner = encodeURIComponent(this.context.github.owner);
+    const repo = encodeURIComponent(this.context.github.repo);
+    const pullNumber = String(parsed.number);
+
+    if (input.mode === "single") {
+      if (comments.length !== 1) {
+        throw new Error("Single diff comments must contain exactly one comment.");
+      }
+      const pullRequest = await this.http.json(`/repos/${owner}/${repo}/pulls/${pullNumber}`);
+      const head = isRecord(pullRequest) ? recordObject(pullRequest, "head") : null;
+      const headSha = head ? recordString(head, "sha") : null;
+      if (!headSha) {
+        throw new Error("Could not resolve the pull request head commit for this single comment.");
+      }
+      const payload = await this.http.json(
+        `/repos/${owner}/${repo}/pulls/${pullNumber}/comments`,
+        {
+          method: "POST",
+          body: JSON.stringify(toGithubSingleReviewComment(comments[0]!, headSha)),
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+      const url = isRecord(payload) ? (recordString(payload, "html_url") ?? undefined) : undefined;
+      return {
+        message: "Submitted one pull request diff comment.",
+        url,
+      };
+    }
 
     const payload = await this.http.json(
-      `/repos/${encodeURIComponent(this.context.github.owner)}/${encodeURIComponent(this.context.github.repo)}/pulls/${String(parsed.number)}/reviews`,
+      `/repos/${owner}/${repo}/pulls/${pullNumber}/reviews`,
       {
         method: "POST",
         body: JSON.stringify({
@@ -457,6 +711,58 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
     return {
       message: `Submitted ${String(comments.length)} pull request diff comment${comments.length === 1 ? "" : "s"}.`,
       url,
+    };
+  }
+
+  async replyToThread(input: ReplyProjectPrMrReviewThreadInput): Promise<ProjectForgeReviewActionResult> {
+    const body = input.body.trim();
+    if (!body) {
+      throw new Error("Replies need a message body.");
+    }
+    const parsed = parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
+    const commentId = input.replyToCommentId?.trim();
+    if (!commentId) {
+      throw new Error("This GitHub review thread cannot be replied to because the top-level comment ID was not returned by GitHub.");
+    }
+    const owner = encodeURIComponent(this.context.github.owner);
+    const repo = encodeURIComponent(this.context.github.repo);
+    const payload = await this.http.json(
+      `/repos/${owner}/${repo}/pulls/${String(parsed.number)}/comments/${encodeURIComponent(commentId)}/replies`,
+      {
+        method: "POST",
+        body: JSON.stringify({ body }),
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+    const url = isRecord(payload) ? (recordString(payload, "html_url") ?? undefined) : undefined;
+    return {
+      message: "Replied to the pull request review thread.",
+      url,
+    };
+  }
+
+  async resolveThread(input: ResolveProjectPrMrReviewThreadInput): Promise<ProjectForgeReviewActionResult> {
+    parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
+    const threadId = input.threadId.trim();
+    if (!threadId || threadId.startsWith("github-thread-")) {
+      throw new Error("This GitHub review thread cannot be resolved because GitHub did not return a GraphQL review thread ID.");
+    }
+    const mutation = input.resolved ? "resolveReviewThread" : "unresolveReviewThread";
+    await this.http.json("/graphql", {
+      method: "POST",
+      body: JSON.stringify({
+        query: `mutation UpdateReviewThread($threadId: ID!) {
+          ${mutation}(input: { threadId: $threadId }) {
+            thread { id isResolved }
+          }
+        }`,
+        variables: { threadId },
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+    return {
+      message: input.resolved ? "Resolved the pull request review thread." : "Reopened the pull request review thread.",
+      url: input.prUrl.trim(),
     };
   }
 
@@ -487,6 +793,67 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
     if (viewerLogin && authorLogin && viewerLogin.toLowerCase() === authorLogin.toLowerCase()) {
       throw new Error("GitHub does not allow approving your own pull request. Use Comment instead, or approve with a reviewer token.");
     }
+  }
+
+  private async getGraphqlReviewThreads(pullRequestNodeId: string): Promise<ProjectForgeReviewThread[]> {
+    const payload = await this.http.json("/graphql", {
+      method: "POST",
+      body: JSON.stringify({
+        query: `query PullRequestReviewThreads($id: ID!) {
+          node(id: $id) {
+            ... on PullRequest {
+              reviewThreads(first: 100) {
+                nodes {
+                  id
+                  isResolved
+                  isOutdated
+                  path
+                  line
+                  originalLine
+                  diffSide
+                  comments(first: 100) {
+                    nodes {
+                      id
+                      databaseId
+                      fullDatabaseId
+                      body
+                      createdAt
+                      updatedAt
+                      url
+                      path
+                      line
+                      originalLine
+                      diffHunk
+                      author { login avatarUrl url }
+                      commit { oid }
+                      originalCommit { oid }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }`,
+        variables: { id: pullRequestNodeId },
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!isRecord(payload)) {
+      throw new Error("The hosting API returned an unexpected GraphQL response while loading review threads.");
+    }
+    if (Array.isArray(payload.errors) && payload.errors.length > 0) {
+      throw new Error("GitHub GraphQL could not load review threads.");
+    }
+    const data = recordObject(payload, "data");
+    const node = data ? recordObject(data, "node") : null;
+    const reviewThreadsConnection = node ? recordObject(node, "reviewThreads") : null;
+    const nodes = reviewThreadsConnection?.nodes;
+    if (!Array.isArray(nodes)) {
+      return [];
+    }
+    return onlyRecords(nodes)
+      .map(githubGraphqlReviewThreadFromNode)
+      .filter((thread): thread is ProjectForgeReviewThread => Boolean(thread));
   }
 
   private async getPagedArray(path: string): Promise<unknown[]> {
