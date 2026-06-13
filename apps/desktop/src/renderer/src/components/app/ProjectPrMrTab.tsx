@@ -22,7 +22,6 @@ import {
   GitPullRequest,
   Info,
   Loader2,
-  MessageSquare,
   MessageSquarePlus,
   RefreshCw,
   Search,
@@ -37,6 +36,7 @@ import { Select } from "../ui/select";
 import { ActivityRichText } from "../ui/activity-rich-text";
 import { DiffReviewPanel, type DiffReviewPanelState } from "./diff-review-panel";
 import { ComposerSelect } from "./RunComposer";
+import { AgentLogRow, AgentWorklog, type AgentWorklogTone } from "./agent-worklog";
 import {
   GitDiffPreview,
   type DiffLineCommentTarget,
@@ -1304,21 +1304,53 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const prLoadHelp =
     "Paste a GitHub PR or GitLab MR link, or fetch requests from the hosting API. Files changed loads the diff without running AI review.";
 
+  const conversationItemTone = (item: ProjectForgeActivityItem): AgentWorklogTone => {
+    if (item.kind === "diff-comment") {
+      return "diff";
+    }
+    if (item.kind === "review") {
+      return "request";
+    }
+    if (item.commitSha) {
+      return "tools";
+    }
+    if (item.kind === "comment") {
+      return "answer";
+    }
+    return "status";
+  };
+
+  const conversationItemLabel = (item: ProjectForgeActivityItem) => {
+    if (item.kind === "diff-comment") {
+      return "Comment";
+    }
+    if (item.commitSha) {
+      return "Commit";
+    }
+    if (item.kind === "review") {
+      return "Review";
+    }
+    if (item.kind === "comment") {
+      return "Note";
+    }
+    return "Event";
+  };
+
   const renderThreadCodeLines = (lines: ReviewThreadCodeLine[]) => {
     if (lines.length === 0) {
       return (
-        <p className="rounded-md border border-dashed border-zinc-800 bg-zinc-950/50 p-2 text-[10px] text-zinc-600">
+        <p className="px-1 py-1 text-[10px] text-zinc-600">
           Code context is not available for this thread yet.
         </p>
       );
     }
     return (
-      <div className="overflow-hidden rounded-md border border-zinc-800 bg-zinc-950/75 font-mono text-[10px]">
+      <div className="overflow-hidden rounded-md bg-zinc-950/65 font-mono text-[10px] ring-1 ring-inset ring-zinc-800/70">
         {lines.map((line) => (
           <div
             key={line.key}
             className={cn(
-              "grid grid-cols-[3.25rem_3.25rem_1rem_minmax(0,1fr)] items-start border-b border-zinc-900/80 last:border-b-0",
+              "grid grid-cols-[3.25rem_3.25rem_1rem_minmax(0,1fr)] items-start border-b border-zinc-900/70 last:border-b-0",
               line.type === "add" && "bg-emerald-500/[0.07]",
               line.type === "delete" && "bg-rose-500/[0.07]",
               line.type === "hunk" && "bg-cyan-500/[0.07] text-cyan-200",
@@ -1352,72 +1384,73 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     const busyResolve = threadActionBusyId === `resolve:${thread.id}`;
     const confirmResolve = confirmResolveThreadId === thread.id;
     return (
-      <article key={item.id} className="rounded-md border border-zinc-800 bg-zinc-950/55 p-2">
-        <div className="flex min-w-0 items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[11px] font-semibold text-zinc-200">
-                {thread.comments[0]?.author?.username ?? item.author?.username ?? (item.provider === "gitlab" ? "GitLab" : "GitHub")}
-              </span>
-              <span className={cn("rounded-full border px-1.5 py-px text-[8px] font-semibold uppercase", activityKindTone(item.kind))}>
-                Diff comment
-              </span>
-              {thread.resolved ? (
-                <span className="rounded-full border border-emerald-500/25 bg-emerald-500/[0.08] px-1.5 py-px text-[8px] font-semibold uppercase text-emerald-200">
-                  Closed
+      <AgentLogRow key={item.id} tone="diff" label="Comment" time={formatActivityDate(item.createdAt)}>
+        <div className={cn("min-w-0 pr-2 py-0.5", thread.resolved && "opacity-80")}>
+          <div className="flex min-w-0 items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-semibold text-zinc-200">
+                  {thread.comments[0]?.author?.username ?? item.author?.username ?? (item.provider === "gitlab" ? "GitLab" : "GitHub")}
                 </span>
+                <span className={cn("rounded-full border px-1.5 py-px text-[8px] font-semibold uppercase", activityKindTone(item.kind))}>
+                  Diff comment
+                </span>
+                {thread.resolved ? (
+                  <span className="rounded-full border border-zinc-700 bg-zinc-900/70 px-1.5 py-px text-[8px] font-semibold uppercase text-zinc-400">
+                    Closed
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-0.5 truncate font-mono text-[10px] text-zinc-500">
+                {thread.path}:{String(thread.newLineNumber ?? thread.oldLineNumber ?? "")}
+                {thread.commitSha ? ` ${thread.commitSha.slice(0, 8)}` : ""}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <span className="text-[9px] text-zinc-600">{formatActivityDate(item.createdAt)}</span>
+              {canUseForgeApi ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className={cn(
+                    "h-6 px-2 text-[10px]",
+                    thread.resolved
+                      ? "text-zinc-400 hover:text-cyan-100"
+                      : confirmResolve
+                        ? "border border-amber-500/40 bg-amber-500/[0.08] text-amber-100 hover:bg-amber-500/[0.12] hover:text-amber-50"
+                        : "text-zinc-500 hover:text-zinc-200",
+                  )}
+                  onClick={() => {
+                    if (thread.resolved !== true && !confirmResolve) {
+                      setConfirmResolveThreadId(thread.id);
+                      setPostMessage(null);
+                      setPostError(null);
+                      return;
+                    }
+                    void toggleThreadResolved(thread);
+                  }}
+                  disabled={busyResolve}
+                  title={thread.resolved ? "Reopen this thread" : confirmResolve ? "Confirm closing this thread" : "Close this thread as resolved"}
+                >
+                  {busyResolve ? <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden /> : null}
+                  {thread.resolved ? "Reopen thread" : confirmResolve ? "Confirm close" : "Close thread"}
+                </Button>
               ) : null}
             </div>
-            <p className="mt-0.5 font-mono text-[10px] text-zinc-500">
-              {thread.path}:{String(thread.newLineNumber ?? thread.oldLineNumber ?? "")}
-              {thread.commitSha ? ` ${thread.commitSha.slice(0, 8)}` : ""}
-            </p>
           </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            <span className="text-[9px] text-zinc-600">{formatActivityDate(item.createdAt)}</span>
-            {canUseForgeApi ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className={cn(
-                  "h-6 px-2 text-[10px]",
-                  thread.resolved
-                    ? "text-zinc-400 hover:text-cyan-100"
-                    : confirmResolve
-                      ? "border border-amber-500/40 bg-amber-500/[0.08] text-amber-100 hover:bg-amber-500/[0.12] hover:text-amber-50"
-                      : "text-zinc-500 hover:text-zinc-200",
-                )}
-                onClick={() => {
-                  if (thread.resolved !== true && !confirmResolve) {
-                    setConfirmResolveThreadId(thread.id);
-                    setPostMessage(null);
-                    setPostError(null);
-                    return;
-                  }
-                  void toggleThreadResolved(thread);
-                }}
-                disabled={busyResolve}
-                title={thread.resolved ? "Reopen this thread" : confirmResolve ? "Confirm closing this thread" : "Close this thread as resolved"}
-              >
-                {busyResolve ? <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden /> : null}
-                {thread.resolved ? "Reopen thread" : confirmResolve ? "Confirm close" : "Close thread"}
-              </Button>
-            ) : null}
-          </div>
-        </div>
-        <div className="mt-2">{renderThreadCodeLines(codeLines)}</div>
-        <div className="mt-2 space-y-2">
-          {thread.comments.map((comment) => (
-            <div key={comment.id} className="rounded-md border border-zinc-800 bg-zinc-900/35 p-2">
-              <div className="flex min-w-0 items-center justify-between gap-2">
-                <span className="truncate text-[11px] font-semibold text-zinc-200">{comment.author?.username ?? "Reviewer"}</span>
-                <span className="shrink-0 text-[9px] text-zinc-600">{formatActivityDate(comment.createdAt)}</span>
+          <div className="mt-2">{renderThreadCodeLines(codeLines)}</div>
+          <div className="mt-2 divide-y divide-zinc-800/70">
+            {thread.comments.map((comment) => (
+              <div key={comment.id} className="py-2 first:pt-0 last:pb-0">
+                <div className="flex min-w-0 items-center justify-between gap-2">
+                  <span className="truncate text-[11px] font-semibold text-zinc-200">{comment.author?.username ?? "Reviewer"}</span>
+                  <span className="shrink-0 text-[9px] text-zinc-600">{formatActivityDate(comment.createdAt)}</span>
+                </div>
+                <ActivityRichText content={comment.body} compact className="mt-1 break-words text-zinc-300" />
               </div>
-              <ActivityRichText content={comment.body} compact className="mt-1 break-words text-zinc-300" />
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
         {isReplying ? (
           <div className="mt-2 rounded-md border border-cyan-500/25 bg-cyan-500/[0.055] p-2">
             <textarea
@@ -1474,7 +1507,50 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
             {confirmResolve ? <span className="text-[9px] text-amber-200/80">Click Confirm close to resolve this thread.</span> : null}
           </div>
         )}
-      </article>
+        </div>
+      </AgentLogRow>
+    );
+  };
+
+  const renderConversationActivityItem = (item: ProjectForgeActivityItem) => {
+    const itemCommit = item.commitSha ? (visibleRequestDetails?.commits.find((commit) => commit.sha === item.commitSha) ?? null) : null;
+    return (
+      <AgentLogRow key={item.id} tone={conversationItemTone(item)} label={conversationItemLabel(item)} time={formatActivityDate(item.createdAt)}>
+        <div className="min-w-0 pr-2 py-0.5">
+          <div className="flex min-w-0 items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-semibold text-zinc-200">
+                  {item.author?.username ?? (item.provider === "gitlab" ? "GitLab" : "GitHub")}
+                </span>
+                <span className={cn("rounded-full border px-1.5 py-px text-[8px] font-semibold uppercase", activityKindTone(item.kind))}>
+                  {item.kind}
+                </span>
+              </div>
+              <p className="mt-0.5 text-[11px] leading-snug text-zinc-400">
+                {item.title}
+                {item.path ? (
+                  <span className="font-mono text-zinc-500">
+                    {" "}
+                    in {item.path}
+                    {item.line ? `:${String(item.line)}` : ""}
+                  </span>
+                ) : null}
+                {itemCommit ? (
+                  <span className="font-mono text-zinc-500">
+                    {" "}
+                    {itemCommit.shortSha} {commitTitleForActivity(itemCommit, itemCommit.sha)}
+                  </span>
+                ) : item.commitSha ? (
+                  <span className="font-mono text-zinc-500"> {item.commitSha.slice(0, 12)}</span>
+                ) : null}
+              </p>
+            </div>
+            <span className="shrink-0 text-[9px] text-zinc-600">{formatActivityDate(item.createdAt)}</span>
+          </div>
+          {item.body ? <ActivityRichText content={item.body} compact className="mt-1.5 break-words text-zinc-300" /> : null}
+        </div>
+      </AgentLogRow>
     );
   };
 
@@ -1486,144 +1562,82 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     const details = visibleRequestDetails?.request ?? null;
     const description = details?.description?.trim() || "";
     const labels = details?.labels ?? [];
+    const authorName = details?.authorUser?.username ?? overviewRequest?.author ?? "Unknown author";
+    const avatarFallback = authorName.slice(0, 2).toUpperCase();
 
     return (
-      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-zinc-800/80 bg-zinc-950/40 p-0">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800/80 px-3 py-2">
-          <div className="flex min-w-0 items-center gap-2">
-            <FileText className="h-3.5 w-3.5 shrink-0 text-cyan-300" aria-hidden />
-            <p className="text-xs font-semibold text-zinc-100">Overview</p>
-            {details ? (
-              <span className="font-mono text-[10px] text-zinc-500">
-                {details.changedFiles != null ? `${String(details.changedFiles)} files` : "diff summary pending"}
-                {details.additions != null || details.deletions != null ? (
-                  <>
-                    {" "}
-                    <span className="text-emerald-300">+{String(details.additions ?? 0)}</span>{" "}
-                    <span className="text-rose-300">-{String(details.deletions ?? 0)}</span>
-                  </>
-                ) : null}
-              </span>
-            ) : null}
-          </div>
-          {detailsBusy ? (
-            <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500">
-              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-              Loading activity
-            </span>
-          ) : null}
-        </div>
-        <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto p-3">
-          <section className="min-w-0">
-            <div className="flex min-w-0 items-start gap-2">
-              {details?.authorUser?.avatarUrl ? (
-                <img src={details.authorUser.avatarUrl} alt="" className="mt-0.5 h-7 w-7 shrink-0 rounded-full bg-zinc-900" />
-              ) : (
-                <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-[10px] text-zinc-400">
-                  {(details?.authorUser?.username ?? overviewRequest?.author)?.slice(0, 2).toUpperCase() ?? "PR"}
-                </div>
-              )}
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-xs font-semibold text-zinc-100">{details?.authorUser?.username ?? overviewRequest?.author ?? "Unknown author"}</span>
-                  <span className="text-[10px] text-zinc-500">opened this {activeKind}</span>
-                  {details?.createdAt ? <span className="text-[10px] text-zinc-600">{formatActivityDate(details.createdAt)}</span> : null}
-                </div>
-                {labels.length > 0 ? (
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {labels.map((label) => (
-                      <span key={label} className="rounded-full border border-zinc-700 bg-zinc-900/80 px-1.5 py-0.5 text-[9px] text-zinc-300">
-                        {label}
+      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-zinc-800/80 bg-zinc-950/35 p-0">
+        <AgentWorklog className="agent-worklog-density--comfortable app-scrollbar min-h-0 flex-1 overflow-y-auto">
+          <AgentLogRow tone="prompt" label="Opened" time={formatActivityDate(details?.createdAt ?? overviewRequest?.updatedAt ?? null)}>
+            <div className="min-w-0 pr-2 py-0.5">
+              <div className="flex min-w-0 items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                    {details?.authorUser?.avatarUrl ? (
+                      <img src={details.authorUser.avatarUrl} alt="" className="h-5 w-5 shrink-0 rounded-full bg-zinc-900" />
+                    ) : (
+                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-[9px] font-semibold text-zinc-400">
+                        {avatarFallback}
                       </span>
-                    ))}
+                    )}
+                    <span className="text-[11px] font-semibold text-zinc-100">{authorName}</span>
+                    <span className="text-[10px] text-zinc-500">opened this {activeKind}</span>
+                    {details?.createdAt ? <span className="text-[10px] text-zinc-600">{formatActivityDate(details.createdAt)}</span> : null}
                   </div>
-                ) : null}
-                <div className="mt-2 rounded-md border border-zinc-800 bg-zinc-950/70">
-                  {description ? (
-                    <div className="app-scrollbar max-h-80 overflow-y-auto break-words p-2 text-zinc-300">
-                      <ActivityRichText content={description} compact />
-                    </div>
-                  ) : (
-                    <p className="p-2 text-xs text-zinc-600">No description provided.</p>
-                  )}
+                  <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[10px] text-zinc-500">
+                    <span>{details?.changedFiles != null ? `${String(details.changedFiles)} files` : `${String(loadedOrReportedFileCount)} files`}</span>
+                    {details?.additions != null || details?.deletions != null ? (
+                      <span>
+                        <span className="text-emerald-300">+{String(details.additions ?? 0)}</span>{" "}
+                        <span className="text-rose-300">-{String(details.deletions ?? 0)}</span>
+                      </span>
+                    ) : null}
+                    <span>{String(conversationActivity.length)} events</span>
+                    {detailsBusy ? (
+                      <span className="inline-flex items-center gap-1 text-zinc-500">
+                        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                        loading
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
-                {detailsError ? <p className="mt-2 text-[10px] text-rose-300">{detailsError}</p> : null}
-                {visibleRequestDetails?.warnings.length ? (
-                  <div className="mt-2 space-y-1">
-                    {visibleRequestDetails.warnings.map((warning) => (
-                      <p key={warning} className="text-[10px] text-amber-200/90">
-                        {warning}
-                      </p>
-                    ))}
-                  </div>
-                ) : null}
               </div>
+              {labels.length > 0 ? (
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {labels.map((label) => (
+                    <span key={label} className="rounded-full border border-zinc-700/80 bg-zinc-900/55 px-1.5 py-px text-[9px] text-zinc-300">
+                      {label}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              <div className="mt-2 max-w-none break-words text-[12px] leading-relaxed text-zinc-300">
+                {description ? <ActivityRichText content={description} compact /> : <p className="text-xs text-zinc-600">No description provided.</p>}
+              </div>
+              {detailsError ? <p className="mt-2 text-[10px] text-rose-300">{detailsError}</p> : null}
+              {visibleRequestDetails?.warnings.length ? (
+                <div className="mt-2 space-y-1">
+                  {visibleRequestDetails.warnings.map((warning) => (
+                    <p key={warning} className="text-[10px] text-amber-200/90">
+                      {warning}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
             </div>
-          </section>
+          </AgentLogRow>
 
-          <section className="mt-3 border-t border-zinc-800/80 pt-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5">
-                <MessageSquare className="h-3.5 w-3.5 text-zinc-500" aria-hidden />
-                <p className="text-xs font-semibold text-zinc-100">Timeline</p>
-              </div>
-              <span className="font-mono text-[10px] text-zinc-500">{String(conversationActivity.length)}</span>
-            </div>
-            {conversationActivity.length > 0 ? (
-              <div className="space-y-2">
-                {conversationActivity.map((item) => {
-                  const thread = item.kind === "diff-comment" ? findReviewThreadForActivity(item) : null;
-                  if (thread) {
-                    return renderReviewThreadTimelineItem(item, thread);
-                  }
-                  const itemCommit = item.commitSha
-                    ? (visibleRequestDetails?.commits.find((commit) => commit.sha === item.commitSha) ?? null)
-                    : null;
-                  return (
-                    <article key={item.id} className="rounded-md border border-zinc-800 bg-zinc-950/55 p-2">
-                      <div className="flex min-w-0 items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="text-[11px] font-semibold text-zinc-200">
-                              {item.author?.username ?? (item.provider === "gitlab" ? "GitLab" : "GitHub")}
-                            </span>
-                            <span className={cn("rounded-full border px-1.5 py-px text-[8px] font-semibold uppercase", activityKindTone(item.kind))}>
-                              {item.kind}
-                            </span>
-                          </div>
-                          <p className="mt-0.5 text-[11px] text-zinc-400">
-                            {item.title}
-                            {item.path ? (
-                              <span className="font-mono text-zinc-500">
-                                {" "}
-                                in {item.path}
-                                {item.line ? `:${String(item.line)}` : ""}
-                              </span>
-                            ) : null}
-                            {itemCommit ? (
-                              <span className="font-mono text-zinc-500">
-                                {" "}
-                                {itemCommit.shortSha} {commitTitleForActivity(itemCommit, itemCommit.sha)}
-                              </span>
-                            ) : item.commitSha ? (
-                              <span className="font-mono text-zinc-500"> {item.commitSha.slice(0, 12)}</span>
-                            ) : null}
-                          </p>
-                        </div>
-                        <span className="shrink-0 text-[9px] text-zinc-600">{formatActivityDate(item.createdAt)}</span>
-                      </div>
-                      {item.body ? <ActivityRichText content={item.body} compact className="mt-2 break-words text-zinc-300" /> : null}
-                    </article>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="rounded-md border border-dashed border-zinc-800 p-3 text-xs text-zinc-600">
-                {detailsBusy ? "Loading activity..." : "No timeline events were returned."}
-              </p>
-            )}
-          </section>
-        </div>
+          {conversationActivity.length > 0 ? (
+            conversationActivity.map((item) => {
+              const thread = item.kind === "diff-comment" ? findReviewThreadForActivity(item) : null;
+              return thread ? renderReviewThreadTimelineItem(item, thread) : renderConversationActivityItem(item);
+            })
+          ) : (
+            <AgentLogRow tone="status" label="Timeline" time={null}>
+              <p className="py-1 text-xs text-zinc-600">{detailsBusy ? "Loading activity..." : "No timeline events were returned."}</p>
+            </AgentLogRow>
+          )}
+        </AgentWorklog>
       </Card>
     );
   };
