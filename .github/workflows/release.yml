@@ -1,0 +1,73 @@
+name: Release Builds
+
+on:
+  push:
+    tags:
+      - "v*"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows installer
+            os: windows-latest
+            command: pnpm build:win
+            artifact: buildwarden-windows-installer
+          - name: Windows portable
+            os: windows-latest
+            command: pnpm build:win:portable
+            artifact: buildwarden-windows-portable
+          - name: Linux package
+            os: ubuntu-latest
+            command: pnpm build:linux
+            artifact: buildwarden-linux
+          - name: Linux AppImage
+            os: ubuntu-latest
+            command: pnpm build:linux:appimage
+            artifact: buildwarden-linux-appimage
+          - name: macOS package
+            os: macos-latest
+            command: pnpm build:mac
+            artifact: buildwarden-macos
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build release artifact
+        run: ${{ matrix.command }}
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: apps/desktop/release/**
+          if-no-files-found: error
+          retention-days: 14
