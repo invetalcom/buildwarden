@@ -16,6 +16,7 @@ import type {
 import {
   ChevronDown,
   CheckCircle2,
+  Columns2,
   ClipboardList,
   Eye,
   ExternalLink,
@@ -25,6 +26,7 @@ import {
   Loader2,
   MessageSquarePlus,
   RefreshCw,
+  Rows2,
   Search,
   Sparkles,
   SquarePen,
@@ -1764,6 +1766,10 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     }
     const fileNavigator = renderFileNavigator();
     const reviewModeActive = reviewDraftMode || draftComments.length > 0;
+    const nextDiffViewType = diffViewType === "unified" ? "split" : "unified";
+    const DiffViewIcon = diffViewType === "unified" ? Rows2 : Columns2;
+    const diffViewLabel = diffViewType === "unified" ? "Unified diff view" : "Split diff view";
+    const nextDiffViewLabel = nextDiffViewType === "unified" ? "unified" : "split";
 
     return (
       <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-zinc-800/80 bg-zinc-950/40 p-0">
@@ -1774,21 +1780,17 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                 All changes
               </Button>
             ) : null}
-            <div className="flex h-7 overflow-hidden rounded-md border border-zinc-800 bg-zinc-950/80">
-              {(["unified", "split"] as const).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  className={cn(
-                    "px-2 text-[10px] capitalize transition",
-                    diffViewType === mode ? "bg-cyan-500/15 text-cyan-100" : "text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300",
-                  )}
-                  onClick={() => setDiffViewType(mode)}
-                >
-                  {mode}
-                </button>
-              ))}
-            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 border border-zinc-800 bg-zinc-950/80 p-0 text-[var(--ec-accent)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-accent-strong)]"
+              title={`${diffViewLabel}. Click to switch to ${nextDiffViewLabel} view.`}
+              aria-label={`${diffViewLabel}. Switch to ${nextDiffViewLabel} view.`}
+              onClick={() => setDiffViewType(nextDiffViewType)}
+            >
+              <DiffViewIcon className="h-3.5 w-3.5" aria-hidden />
+            </Button>
             <label className="flex h-7 items-center gap-1 rounded-md border border-zinc-800 bg-zinc-950/80 px-2 text-[10px] text-zinc-400">
               <input
                 type="checkbox"
