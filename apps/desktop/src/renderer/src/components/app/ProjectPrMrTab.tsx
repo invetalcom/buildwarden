@@ -14,8 +14,9 @@ import type {
   UnifiedProviderFamily,
 } from "@buildwarden/shared";
 import {
-  Bot,
+  ChevronDown,
   CheckCircle2,
+  ClipboardList,
   Eye,
   ExternalLink,
   FileText,
@@ -25,6 +26,8 @@ import {
   MessageSquarePlus,
   RefreshCw,
   Search,
+  Sparkles,
+  SquarePen,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
@@ -35,8 +38,8 @@ import { Input } from "../ui/input";
 import { Select } from "../ui/select";
 import { ActivityRichText } from "../ui/activity-rich-text";
 import { DiffReviewPanel, type DiffReviewPanelState } from "./diff-review-panel";
-import { ComposerSelect } from "./RunComposer";
 import { AgentLogRow, AgentWorklog, type AgentWorklogTone } from "./agent-worklog";
+import { AnchorDropdownPortal } from "./anchor-dropdown-portal";
 import {
   GitDiffPreview,
   type DiffLineCommentTarget,
@@ -135,7 +138,7 @@ const commitTitleForActivity = (commit: ProjectForgeCommitSummary | null | undef
 
 const requestStateTone = (state: string) => {
   if (state === "merged") {
-    return "border-violet-500/30 bg-violet-500/[0.12] text-violet-200";
+    return "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]";
   }
   if (state === "closed") {
     return "border-rose-500/30 bg-rose-500/[0.08] text-rose-200";
@@ -144,7 +147,7 @@ const requestStateTone = (state: string) => {
 };
 
 const activityKindTone = (kind: ProjectForgeActivityItem["kind"]) => {
-  if (kind === "review") return "border-violet-500/25 bg-violet-500/[0.08] text-violet-200";
+  if (kind === "review") return "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]";
   if (kind === "diff-comment") return "border-cyan-500/25 bg-cyan-500/[0.08] text-cyan-100";
   if (kind === "state") return "border-emerald-500/25 bg-emerald-500/[0.08] text-emerald-200";
   if (kind === "event") return "border-zinc-700 bg-zinc-800/45 text-zinc-300";
@@ -289,7 +292,9 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const [reviewDraftMode, setReviewDraftMode] = useState(false);
   const [manualSubmitBusy, setManualSubmitBusy] = useState(false);
   const [singleSubmitBusy, setSingleSubmitBusy] = useState(false);
+  const [aiReviewMenuOpen, setAiReviewMenuOpen] = useState(false);
   const gitDiffPanelRef = useRef<GitDiffPreviewHandle>(null);
+  const aiReviewMenuAnchorRef = useRef<HTMLDivElement>(null);
   const [allDiffFilesExpanded, setAllDiffFilesExpanded] = useState(false);
   const [activeDetailTab, setActiveDetailTab] = useState<RequestDetailTab>(() => normalizeRequestDetailTab(initialSession?.activeDetailTab));
   const [selectedCommitSha, setSelectedCommitSha] = useState<string | null>(() => initialSession?.selectedCommitSha ?? null);
@@ -464,6 +469,30 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     setReviewModelId(modelOptions[0]?.id ?? "");
   }, [modelOptions, reviewModelId]);
 
+  const reviewModelSelectOptions = useMemo(
+    () =>
+      modelOptions.map((option) => ({
+        value: option.id,
+        label: option.label,
+        description: option.modelId,
+      })),
+    [modelOptions],
+  );
+
+  useEffect(() => {
+    if (!aiReviewMenuOpen) {
+      return;
+    }
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setAiReviewMenuOpen(false);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [aiReviewMenuOpen]);
+
   useEffect(() => {
     let cancelled = false;
     setForgeAuthStatus(null);
@@ -632,10 +661,6 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const loadedOrReportedFileCount = diffChangedFileCount || visibleRequestDetails?.request.changedFiles || 0;
   const totalActivityCount = visibleRequestDetails?.activity.length ?? visibleRequestDetails?.request.commentCount ?? 0;
   const commitCount = visibleRequestDetails?.commits.length ?? 0;
-  const selectedCommit = useMemo(
-    () => visibleRequestDetails?.commits.find((commit) => commit.sha === selectedCommitSha) ?? null,
-    [selectedCommitSha, visibleRequestDetails],
-  );
   const handleParsedDiffFilesChange = useCallback((files: DiffPreviewFileSummary[]) => {
     setParsedDiffFiles(files);
   }, []);
@@ -650,6 +675,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     setMeta(null);
     setLoadError(null);
     setReviewPanel(emptyReviewPanel());
+    setAiReviewMenuOpen(false);
     setAllDiffFilesExpanded(false);
     setSelectedCommitSha(null);
     setActiveDiffFilePath(null);
@@ -883,6 +909,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     }
     const commitSha = options.commitSha?.trim() || null;
     setActiveDetailTab("files");
+    setAiReviewMenuOpen(false);
     setSelectedCommitSha(commitSha);
     setLoadBusy(true);
     setLoadError(null);
@@ -1025,6 +1052,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
       }));
       return;
     }
+    setAiReviewMenuOpen(false);
     setReviewPanel((current) => ({
       ...current,
       busy: true,
@@ -1734,141 +1762,192 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     if (!diffText.trim()) {
       return null;
     }
-    const selectedCommitTitle = selectedCommit ? `${selectedCommit.shortSha} ${selectedCommit.title}` : selectedCommitSha ? selectedCommitSha.slice(0, 12) : null;
     const fileNavigator = renderFileNavigator();
     const reviewModeActive = reviewDraftMode || draftComments.length > 0;
 
     return (
       <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-zinc-800/80 bg-zinc-950/40 p-0">
         <div className="shrink-0 border-b border-zinc-800/80 px-2 py-1.5">
-          <div className="flex flex-wrap items-end justify-between gap-x-2 gap-y-1.5">
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-[11px] font-medium leading-none text-zinc-100">
-                {selectedCommitTitle ? `Commit diff: ${selectedCommitTitle}` : "Files changed"}
-              </p>
-              <p className="mt-0.5 hidden text-[9px] leading-tight text-zinc-500 sm:block">
-                {canUseForgeApi
-                  ? reviewModeActive
-                    ? "Review mode is active; clicked lines are added as drafts until you submit the review"
-                    : "Click a diff line to add a single comment or start a review"
-                  : "Loaded via git fetch; commit lists and inline posting need a hosting token"}
-              </p>
+          <div className="flex flex-wrap items-center justify-end gap-x-1.5 gap-y-1">
+            {selectedCommitSha ? (
+              <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-[10px] text-zinc-400" onClick={() => void loadDiff({ commitSha: null })}>
+                All changes
+              </Button>
+            ) : null}
+            <div className="flex h-7 overflow-hidden rounded-md border border-zinc-800 bg-zinc-950/80">
+              {(["unified", "split"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  className={cn(
+                    "px-2 text-[10px] capitalize transition",
+                    diffViewType === mode ? "bg-cyan-500/15 text-cyan-100" : "text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300",
+                  )}
+                  onClick={() => setDiffViewType(mode)}
+                >
+                  {mode}
+                </button>
+              ))}
             </div>
-            <div className="flex min-w-0 flex-wrap items-center justify-end gap-x-1.5 gap-y-1">
-              {selectedCommitSha ? (
-                <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-[10px] text-zinc-400" onClick={() => void loadDiff({ commitSha: null })}>
-                  All changes
-                </Button>
-              ) : null}
-              <div className="flex h-7 overflow-hidden rounded-md border border-zinc-800 bg-zinc-950/80">
-                {(["unified", "split"] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    className={cn(
-                      "px-2 text-[10px] capitalize transition",
-                      diffViewType === mode ? "bg-cyan-500/15 text-cyan-100" : "text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300",
-                    )}
-                    onClick={() => setDiffViewType(mode)}
-                  >
-                    {mode}
-                  </button>
-                ))}
-              </div>
-              <label className="flex h-7 items-center gap-1 rounded-md border border-zinc-800 bg-zinc-950/80 px-2 text-[10px] text-zinc-400">
-                <input
-                  type="checkbox"
-                  checked={hideWhitespaceChanges}
-                  onChange={(event) => setHideWhitespaceChanges(event.target.checked)}
-                  className="h-3 w-3 accent-cyan-500"
-                />
-                Whitespace
-              </label>
-              <span className="shrink-0 text-[9px] font-medium uppercase tracking-wide text-zinc-500" title="Reviewer simulator">
-                Model
-              </span>
-              <ComposerSelect
-                value={reviewModelId}
-                onChange={setReviewModelId}
-                disabled={reviewBusy || modelOptions.length === 0}
-                icon={Bot}
-                iconClassName="text-cyan-300"
-                buttonClassName="h-7 max-w-[11rem] gap-1 px-2 text-[10px] sm:max-w-[14rem]"
-                options={modelOptions.map((option) => ({
-                  value: option.id,
-                  label: option.label,
-                  contextModelId: option.modelId,
-                  providerType: option.providerType,
-                  providerFamily: option.providerFamily,
-                }))}
-                menuClassName="w-[22rem]"
-                  menuSide="bottom"
-                />
+            <label className="flex h-7 items-center gap-1 rounded-md border border-zinc-800 bg-zinc-950/80 px-2 text-[10px] text-zinc-400">
+              <input
+                type="checkbox"
+                checked={hideWhitespaceChanges}
+                onChange={(event) => setHideWhitespaceChanges(event.target.checked)}
+                className="h-3 w-3 accent-cyan-500"
+              />
+              Whitespace
+            </label>
+            {diffChangedFileCount > 0 ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 shrink-0 px-2 text-[10px] text-zinc-400"
+                title={allDiffFilesExpanded ? "Collapse all files" : "Expand all files"}
+                onClick={() => gitDiffPanelRef.current?.toggleExpandAllFiles()}
+              >
+                {allDiffFilesExpanded ? "Collapse all" : "Expand all"}
+              </Button>
+            ) : null}
+            <div ref={aiReviewMenuAnchorRef} className="relative">
               <Button
                 type="button"
                 size="sm"
-                variant="secondary"
-                className="h-7 px-2 text-[10px]"
-                onClick={() => void runPrMrReview()}
-                disabled={reviewBusy || !hasDiff || !reviewModelId.trim()}
+                variant="ghost"
+                className={cn(
+                  "h-8 border border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-2 text-[10px] font-semibold text-[var(--ec-accent)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-accent-strong)]",
+                  aiReviewMenuOpen && "bg-[var(--ec-accent-soft)] text-[var(--ec-accent-strong)]",
+                )}
+                onClick={() => setAiReviewMenuOpen((open) => !open)}
+                disabled={!hasDiff}
+                title="Choose a model and start an AI review."
+                aria-haspopup="dialog"
+                aria-expanded={aiReviewMenuOpen}
               >
-                {reviewBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Bot className="mr-1 h-3.5 w-3.5" aria-hidden />}
+                {reviewBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Sparkles className="mr-1 h-3.5 w-3.5" aria-hidden />}
                 AI review
+                <ChevronDown className={cn("ml-0.5 h-3.5 w-3.5 transition", aiReviewMenuOpen && "rotate-180")} aria-hidden />
               </Button>
-              {diffChangedFileCount > 0 ? (
+            </div>
+            <AnchorDropdownPortal
+              open={aiReviewMenuOpen}
+              anchorRef={aiReviewMenuAnchorRef}
+              align="end"
+              placement="bottom"
+              widthPx={292}
+              onClose={() => setAiReviewMenuOpen(false)}
+              className="glass-popover overflow-hidden rounded-md border border-[var(--ec-accent-ring)] bg-zinc-950/95 p-2 shadow-xl"
+            >
+              <div className="space-y-2">
+                <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--ec-accent)]">
+                  <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                  AI review
+                </div>
+                <div>
+                  <span className="mb-1 block text-[10px] font-medium text-zinc-500">Model</span>
+                  <div className="app-scrollbar max-h-44 space-y-1 overflow-y-auto pr-0.5" role="listbox" aria-label="AI review model">
+                    {reviewModelSelectOptions.length > 0 ? (
+                      reviewModelSelectOptions.map((option) => {
+                        const selected = option.value === reviewModelId;
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            role="option"
+                            aria-selected={selected}
+                            className={cn(
+                              "flex w-full min-w-0 items-center gap-2 rounded-md border px-2 py-1.5 text-left transition",
+                              selected
+                                ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-text)]"
+                                : "border-zinc-800 bg-zinc-900/70 text-zinc-300 hover:border-[var(--ec-accent-ring)] hover:bg-[var(--ec-accent-soft)]",
+                            )}
+                            onClick={() => setReviewModelId(option.value)}
+                            disabled={reviewBusy}
+                          >
+                            <Sparkles className={cn("h-3.5 w-3.5 shrink-0", selected ? "text-[var(--ec-accent)]" : "text-zinc-500")} aria-hidden />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-[11px] font-semibold">{option.label}</span>
+                              {option.description ? <span className="block truncate text-[9px] text-zinc-500">{option.description}</span> : null}
+                            </span>
+                            {selected ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" aria-hidden /> : null}
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <p className="rounded-md border border-dashed border-zinc-800 px-2 py-2 text-[11px] text-zinc-500">No review models configured.</p>
+                    )}
+                  </div>
+                </div>
                 <Button
                   type="button"
-                  variant="ghost"
                   size="sm"
-                  className="h-7 shrink-0 px-2 text-[10px] text-zinc-400"
-                  title={allDiffFilesExpanded ? "Collapse all files" : "Expand all files"}
-                  onClick={() => gitDiffPanelRef.current?.toggleExpandAllFiles()}
+                  className="h-8 w-full px-2 text-[11px]"
+                  onClick={() => void runPrMrReview()}
+                  disabled={reviewBusy || !hasDiff || !reviewModelId.trim()}
                 >
-                  {allDiffFilesExpanded ? "Collapse all" : "Expand all"}
+                  {reviewBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Sparkles className="mr-1 h-3.5 w-3.5" aria-hidden />}
+                  Start AI review
                 </Button>
-              ) : null}
-              {canUseForgeApi ? (
-                reviewModeActive ? (
-                  <>
-                    <span
-                      className="rounded-full border border-cyan-500/30 bg-cyan-500/[0.08] px-2 py-1 text-[9px] font-medium text-cyan-100"
-                      title="Review comments are kept as drafts until the review is submitted."
-                    >
-                      Review mode{draftComments.length > 0 ? ` | ${String(draftComments.length)} draft${draftComments.length === 1 ? "" : "s"}` : ""}
+              </div>
+            </AnchorDropdownPortal>
+            {canUseForgeApi ? (
+              reviewModeActive ? (
+                <div
+                  className="flex h-8 items-center overflow-hidden rounded-md border border-amber-500/30 bg-amber-500/[0.07] shadow-[inset_2px_0_0_rgba(245,158,11,0.62)]"
+                  title="Manual review: collect line comments as drafts, then submit them together."
+                >
+                  <span
+                    className="flex h-full shrink-0 items-center gap-1 border-r border-amber-500/20 px-2 text-[10px] font-semibold text-amber-100"
+                    title="Review comments are kept as drafts until the review is submitted."
+                  >
+                    <ClipboardList className="h-3.5 w-3.5" aria-hidden />
+                    Drafts
+                    <span className="rounded-full bg-amber-300/15 px-1.5 py-px font-mono text-[9px] text-amber-50">
+                      {String(draftComments.length)}
                     </span>
-                    {reviewDraftMode && draftComments.length === 0 ? (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 px-2 text-[10px] text-zinc-400"
-                        onClick={() => {
-                          setReviewDraftMode(false);
-                          clearDraftEditor();
-                        }}
-                      >
-                        Stop review
-                      </Button>
-                    ) : null}
+                  </span>
+                  {reviewDraftMode && draftComments.length === 0 ? (
                     <Button
                       type="button"
                       size="sm"
-                      variant="secondary"
-                      className="h-7 px-2 text-[10px]"
-                      onClick={() => void submitDraftDiffComments()}
-                      disabled={manualSubmitBusy || draftComments.length === 0 || !activeUrl.trim()}
+                      variant="ghost"
+                      className="h-8 rounded-none border-r border-amber-500/20 px-2 text-[10px] text-amber-200/80 hover:bg-amber-500/[0.12] hover:text-amber-50"
+                      onClick={() => {
+                        setReviewDraftMode(false);
+                        clearDraftEditor();
+                      }}
                     >
-                      {manualSubmitBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <MessageSquarePlus className="mr-1 h-3.5 w-3.5" aria-hidden />}
-                      Submit review
+                      Stop
                     </Button>
-                  </>
-                ) : (
-                  <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-[10px]" onClick={startReviewMode} disabled={!activeUrl.trim()}>
-                    <MessageSquarePlus className="mr-1 h-3.5 w-3.5" aria-hidden />
-                    Start review
+                  ) : null}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 rounded-none px-2 text-[10px] font-semibold text-amber-100 hover:bg-amber-500/[0.14] hover:text-amber-50"
+                    onClick={() => void submitDraftDiffComments()}
+                    disabled={manualSubmitBusy || draftComments.length === 0 || !activeUrl.trim()}
+                  >
+                    {manualSubmitBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <SquarePen className="mr-1 h-3.5 w-3.5" aria-hidden />}
+                    Submit
                   </Button>
-                )
-              ) : null}
+                </div>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-8 border border-amber-500/30 bg-amber-500/[0.08] px-2 text-[10px] font-semibold text-amber-100 hover:bg-amber-500/[0.14] hover:text-amber-50"
+                  onClick={startReviewMode}
+                  disabled={!activeUrl.trim()}
+                  title="Start a manual review and batch line comments as drafts."
+                >
+                  <SquarePen className="mr-1 h-3.5 w-3.5" aria-hidden />
+                  Draft review
+                </Button>
+              )
+            ) : null}
               {!overviewRequest && canUseForgeApi ? (
                 <>
                   <Button
@@ -1903,7 +1982,6 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                   </Button>
                 </>
               ) : null}
-            </div>
           </div>
         </div>
         <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-hidden px-2 pb-2 pt-1.5">
