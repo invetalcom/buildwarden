@@ -825,6 +825,8 @@ export interface FetchProjectPrMrDiffInput {
   prUrl: string;
   /** Optional target branch name (e.g. `main` or `develop`). When omitted, uses `origin/HEAD` or `origin/main`. */
   baseBranch?: string;
+  /** Optional commit SHA to review one commit instead of the full PR/MR diff. Requires hosting API support. */
+  commitSha?: string;
 }
 
 export interface ProjectPrMrDiffResult {
@@ -961,6 +963,67 @@ export interface ProjectForgeUserSummary {
   webUrl: string | null;
 }
 
+export interface ProjectForgeCommitSummary {
+  sha: string;
+  shortSha: string;
+  title: string;
+  message: string;
+  authorName: string | null;
+  authorEmail: string | null;
+  authorUser: ProjectForgeUserSummary | null;
+  committerName: string | null;
+  committedAt: string | null;
+  authoredAt: string | null;
+  url: string | null;
+  commentCount: number | null;
+}
+
+export type ProjectForgeChangedFileStatus =
+  | "added"
+  | "modified"
+  | "removed"
+  | "renamed"
+  | "copied"
+  | "changed"
+  | "unchanged"
+  | "unknown";
+
+export interface ProjectForgeChangedFileSummary {
+  path: string;
+  oldPath: string | null;
+  status: ProjectForgeChangedFileStatus;
+  additions: number | null;
+  deletions: number | null;
+  patchAvailable: boolean;
+  commentCount: number;
+}
+
+export interface ProjectForgeReviewThreadComment {
+  id: string;
+  providerCommentId: string | null;
+  body: string;
+  author: ProjectForgeUserSummary | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  url: string | null;
+}
+
+export interface ProjectForgeReviewThread {
+  id: string;
+  providerThreadId: string;
+  replyToCommentId: string | null;
+  provider: ProjectForgeProvider;
+  path: string;
+  oldPath: string | null;
+  side: ProjectPrMrDiffCommentSide;
+  oldLineNumber: number | null;
+  newLineNumber: number | null;
+  commitSha: string | null;
+  diffHunk: string | null;
+  resolved: boolean | null;
+  comments: ProjectForgeReviewThreadComment[];
+}
+
 export interface ProjectForgeRequestDetails extends ProjectForgeRequestSummary {
   description: string;
   authorUser: ProjectForgeUserSummary | null;
@@ -989,6 +1052,7 @@ export interface ProjectForgeActivityItem {
   createdAt: string | null;
   updatedAt: string | null;
   author: ProjectForgeUserSummary | null;
+  commitSha?: string | null;
   resolved?: boolean;
 }
 
@@ -1002,6 +1066,9 @@ export interface ProjectForgeRequestDetailsResult {
   repoLabel: string;
   request: ProjectForgeRequestDetails;
   activity: ProjectForgeActivityItem[];
+  commits: ProjectForgeCommitSummary[];
+  files: ProjectForgeChangedFileSummary[];
+  reviewThreads: ProjectForgeReviewThread[];
   warnings: string[];
 }
 
@@ -1023,6 +1090,19 @@ export interface ProjectForgeReviewActionResult {
   url?: string;
 }
 
+export interface ReplyProjectPrMrReviewThreadInput {
+  prUrl: string;
+  threadId: string;
+  replyToCommentId?: string | null;
+  body: string;
+}
+
+export interface ResolveProjectPrMrReviewThreadInput {
+  prUrl: string;
+  threadId: string;
+  resolved: boolean;
+}
+
 export type ProjectPrMrDiffCommentSide = "old" | "new";
 export type ProjectPrMrDiffCommentChangeType = "insert" | "delete" | "normal";
 
@@ -1039,6 +1119,7 @@ export interface ProjectPrMrDiffComment {
 export interface SubmitProjectPrMrCommentsInput {
   prUrl: string;
   body?: string;
+  mode?: "review" | "single";
   comments: ProjectPrMrDiffComment[];
 }
 
@@ -1785,6 +1866,8 @@ export interface DesktopApi {
   getProjectForgeRequestDetails(projectId: string, input: GetProjectForgeRequestDetailsInput): Promise<ProjectForgeRequestDetailsResult>;
   postProjectPrMrReview(projectId: string, input: PostProjectPrMrReviewInput): Promise<ProjectForgeReviewActionResult>;
   submitProjectPrMrComments(projectId: string, input: SubmitProjectPrMrCommentsInput): Promise<ProjectForgeReviewActionResult>;
+  replyProjectPrMrReviewThread(projectId: string, input: ReplyProjectPrMrReviewThreadInput): Promise<ProjectForgeReviewActionResult>;
+  resolveProjectPrMrReviewThread(projectId: string, input: ResolveProjectPrMrReviewThreadInput): Promise<ProjectForgeReviewActionResult>;
   followUpRun(runId: string, prompt: string, options?: RunFollowUpOptions): Promise<RunRecord>;
   getRunPublishOptions(runId: string): Promise<RunPublishOptions>;
   activateRun(runId: string): Promise<void>;
@@ -1932,6 +2015,8 @@ export const IPC_CHANNELS = {
   getProjectForgeRequestDetails: "buildwarden:get-project-forge-request-details",
   postProjectPrMrReview: "buildwarden:post-project-pr-mr-review",
   submitProjectPrMrComments: "buildwarden:submit-project-pr-mr-comments",
+  replyProjectPrMrReviewThread: "buildwarden:reply-project-pr-mr-review-thread",
+  resolveProjectPrMrReviewThread: "buildwarden:resolve-project-pr-mr-review-thread",
   createRunPullRequest: "buildwarden:create-run-pull-request",
   suggestRunPullRequestDescription: "buildwarden:suggest-run-pull-request-description",
   createRunLocalBranch: "buildwarden:create-run-local-branch",

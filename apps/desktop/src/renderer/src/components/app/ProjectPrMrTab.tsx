@@ -1,9 +1,11 @@
 import type {
   ProjectForgeActivityItem,
   ProjectForgeAuthStatus,
+  ProjectForgeCommitSummary,
   ProjectForgeRequestDetailsResult,
   ProjectForgeRequestState,
   ProjectForgeRequestSummary,
+  ProjectForgeReviewThread,
   ProjectPrMrDiffComment,
   ProjectPrMrDiffResult,
   ProviderType,
@@ -23,6 +25,7 @@ import {
   MessageSquare,
   MessageSquarePlus,
   RefreshCw,
+  Search,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
@@ -34,8 +37,24 @@ import { Select } from "../ui/select";
 import { ActivityRichText } from "../ui/activity-rich-text";
 import { DiffReviewPanel, type DiffReviewPanelState } from "./diff-review-panel";
 import { ComposerSelect } from "./RunComposer";
-import { GitDiffPreview, type DiffLineCommentTarget, type DiffPreviewManualComment, type GitDiffPreviewHandle } from "./git-diff-preview";
+import {
+  GitDiffPreview,
+  type DiffLineCommentTarget,
+  type DiffPreviewFileSummary,
+  type DiffPreviewManualComment,
+  type GitDiffPreviewHandle,
+} from "./git-diff-preview";
 import { countChangedFilesInDiff } from "./git-diff-utils";
+import {
+  buildPrMrFileNavItems,
+  buildRemoteDiffComments,
+  buildReviewThreadCodeLines,
+  normalizeRequestDetailTab,
+  pathsMatch,
+  type DraftDiffComment,
+  type RequestDetailTab,
+  type ReviewThreadCodeLine,
+} from "./project-pr-mr-review-helpers";
 
 interface ProjectPrMrTabProps {
   projectId: string;
@@ -109,6 +128,11 @@ const formatActivityDate = (value: string | null) => {
 
 const providerLabel = (provider: "github" | "gitlab") => (provider === "gitlab" ? "MR" : "PR");
 
+const requestDiffCacheKey = (url: string, commitSha?: string | null) => `${url.trim()}\0${commitSha?.trim() || "all"}`;
+
+const commitTitleForActivity = (commit: ProjectForgeCommitSummary | null | undefined, fallbackSha: string) =>
+  commit?.title?.trim() || fallbackSha.slice(0, 12);
+
 const requestStateTone = (state: string) => {
   if (state === "merged") {
     return "border-violet-500/30 bg-violet-500/[0.12] text-violet-200";
@@ -161,14 +185,6 @@ const formatReviewBody = (review: RunDiffReviewResult): string => {
   return lines.join("\n");
 };
 
-type DraftDiffComment = ProjectPrMrDiffComment & {
-  id: string;
-  displayPath: string;
-  lineLabel: string;
-  aiFindingKey?: string;
-};
-
-type RequestDetailTab = "overview" | "changes";
 type ProjectPrMrMeta = { provider: "github" | "gitlab"; number: number; baseRef: string };
 type ProjectPrMrSessionState = {
   prUrl: string;
@@ -182,6 +198,11 @@ type ProjectPrMrSessionState = {
   selectedRequest: ProjectForgeRequestSummary | null;
   requestDetails: ProjectForgeRequestDetailsResult | null;
   activeDetailTab: RequestDetailTab;
+  selectedCommitSha: string | null;
+  diffViewType: "unified" | "split";
+  hideWhitespaceChanges: boolean;
+  activeDiffFilePath: string | null;
+  diffFileQuery: string;
   detailsCache: Map<string, ProjectForgeRequestDetailsResult>;
   diffCache: Map<string, ProjectPrMrDiffResult>;
 };
@@ -257,14 +278,27 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const [postBusy, setPostBusy] = useState(false);
   const [postMessage, setPostMessage] = useState<string | null>(null);
   const [postError, setPostError] = useState<string | null>(null);
+  const [replyThreadId, setReplyThreadId] = useState<string | null>(null);
+  const [replyThreadText, setReplyThreadText] = useState("");
+  const [threadActionBusyId, setThreadActionBusyId] = useState<string | null>(null);
+  const [confirmResolveThreadId, setConfirmResolveThreadId] = useState<string | null>(null);
   const [activeCommentTarget, setActiveCommentTarget] = useState<DiffLineCommentTarget | null>(null);
   const [draftCommentText, setDraftCommentText] = useState("");
   const [editingDraftCommentId, setEditingDraftCommentId] = useState<string | null>(null);
   const [draftComments, setDraftComments] = useState<DraftDiffComment[]>([]);
+  const [reviewDraftMode, setReviewDraftMode] = useState(false);
   const [manualSubmitBusy, setManualSubmitBusy] = useState(false);
+  const [singleSubmitBusy, setSingleSubmitBusy] = useState(false);
   const gitDiffPanelRef = useRef<GitDiffPreviewHandle>(null);
   const [allDiffFilesExpanded, setAllDiffFilesExpanded] = useState(false);
-  const [activeDetailTab, setActiveDetailTab] = useState<RequestDetailTab>(() => initialSession?.activeDetailTab ?? "overview");
+  const [activeDetailTab, setActiveDetailTab] = useState<RequestDetailTab>(() => normalizeRequestDetailTab(initialSession?.activeDetailTab));
+  const [selectedCommitSha, setSelectedCommitSha] = useState<string | null>(() => initialSession?.selectedCommitSha ?? null);
+  const [diffViewType, setDiffViewType] = useState<"unified" | "split">(() => initialSession?.diffViewType ?? "unified");
+  const [hideWhitespaceChanges, setHideWhitespaceChanges] = useState(() => initialSession?.hideWhitespaceChanges ?? false);
+  const [activeDiffFilePath, setActiveDiffFilePath] = useState<string | null>(() => initialSession?.activeDiffFilePath ?? null);
+  const [diffFileQuery, setDiffFileQuery] = useState(() => initialSession?.diffFileQuery ?? "");
+  const [parsedDiffFiles, setParsedDiffFiles] = useState<DiffPreviewFileSummary[]>([]);
+  const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
   const requestDetailsCacheRef = useRef(initialSession?.detailsCache ?? new Map<string, ProjectForgeRequestDetailsResult>());
   const requestDetailsInFlightRef = useRef(new Map<string, Promise<ProjectForgeRequestDetailsResult>>());
   const requestDiffCacheRef = useRef(initialSession?.diffCache ?? new Map<string, ProjectPrMrDiffResult>());
@@ -311,6 +345,11 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
       selectedRequest,
       requestDetails,
       activeDetailTab,
+      selectedCommitSha,
+      diffViewType,
+      hideWhitespaceChanges,
+      activeDiffFilePath,
+      diffFileQuery,
       detailsCache: requestDetailsCacheRef.current,
       diffCache: requestDiffCacheRef.current,
     };
@@ -322,8 +361,12 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     }
   }, [
     activeDetailTab,
+    activeDiffFilePath,
     baseBranch,
+    diffFileQuery,
     diffText,
+    diffViewType,
+    hideWhitespaceChanges,
     meta,
     prUrl,
     projectId,
@@ -333,6 +376,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     requestRepoLabel,
     requestState,
     selectedRequest,
+    selectedCommitSha,
   ]);
 
   useEffect(() => {
@@ -471,7 +515,12 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
       setBaseBranch(cached.baseBranch);
       setDiffText(cached.diffText);
       setMeta(cached.meta);
-      setActiveDetailTab(cached.activeDetailTab);
+      setActiveDetailTab(normalizeRequestDetailTab(cached.activeDetailTab));
+      setSelectedCommitSha(cached.selectedCommitSha ?? null);
+      setDiffViewType(cached.diffViewType ?? "unified");
+      setHideWhitespaceChanges(cached.hideWhitespaceChanges ?? false);
+      setActiveDiffFilePath(cached.activeDiffFilePath ?? null);
+      setDiffFileQuery(cached.diffFileQuery ?? "");
     } else {
       requestDetailsCacheRef.current.clear();
       requestDiffCacheRef.current.clear();
@@ -486,7 +535,12 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
       setBaseBranch("");
       setDiffText("");
       setMeta(null);
-      setActiveDetailTab("overview");
+      setActiveDetailTab("conversation");
+      setSelectedCommitSha(null);
+      setDiffViewType("unified");
+      setHideWhitespaceChanges(false);
+      setActiveDiffFilePath(null);
+      setDiffFileQuery("");
     }
 
     hydratedProjectIdRef.current = projectId;
@@ -494,6 +548,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     setLoadBusy(false);
     setListBusy(false);
     setManualSubmitBusy(false);
+    setSingleSubmitBusy(false);
     setDetailsError(null);
     setLoadError(null);
     setListError(null);
@@ -501,6 +556,10 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     setPostError(null);
     clearDraftEditor();
     setDraftComments([]);
+    setReviewDraftMode(false);
+    setConfirmResolveThreadId(null);
+    setParsedDiffFiles([]);
+    setHighlightedCommentId(null);
     setReviewPanel(emptyReviewPanel());
   }, [clearDraftEditor, projectId]);
 
@@ -524,32 +583,46 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   }, [activeUrl]);
 
   const timelineActivity = useMemo(() => visibleRequestDetails?.activity ?? [], [visibleRequestDetails]);
-  const remoteDiffComments = useMemo<DiffPreviewManualComment[]>(
+  const reviewThreadByCommentId = useMemo(() => {
+    const map = new Map<string, ProjectForgeReviewThread>();
+    for (const thread of visibleRequestDetails?.reviewThreads ?? []) {
+      for (const comment of thread.comments) {
+        map.set(comment.id, thread);
+      }
+    }
+    return map;
+  }, [visibleRequestDetails]);
+  const findReviewThreadForActivity = useCallback(
+    (item: ProjectForgeActivityItem) => {
+      const exact = reviewThreadByCommentId.get(item.id);
+      if (exact) {
+        return exact;
+      }
+      if (item.kind !== "diff-comment" || !item.path || !item.line) {
+        return null;
+      }
+      return (
+        visibleRequestDetails?.reviewThreads.find((thread) => {
+          const line = thread.side === "old" ? thread.oldLineNumber : thread.newLineNumber;
+          return line === item.line && pathsMatch(thread.path, item.path);
+        }) ?? null
+      );
+    },
+    [reviewThreadByCommentId, visibleRequestDetails],
+  );
+  const conversationActivity = useMemo(
     () =>
-      (visibleRequestDetails?.activity ?? [])
-        .filter((item) => item.kind === "diff-comment" && item.path?.trim() && item.line && (item.body?.trim() || item.title.trim()))
-        .map((item) => {
-          const path = item.path ?? "";
-          const line = item.line ?? null;
-          const body = item.body?.trim() || item.title;
-          return {
-            id: `remote-${item.id}`,
-            oldPath: path,
-            newPath: path,
-            side: "new" as const,
-            oldLineNumber: null,
-            newLineNumber: line,
-            changeType: "insert" as const,
-            body,
-            displayPath: path,
-            lineLabel: `${path}:${String(line)} new`,
-            author: item.author?.username ?? null,
-            createdAt: item.createdAt,
-            title: item.title,
-            remote: true,
-            resolved: item.resolved,
-          };
-        }),
+      timelineActivity.filter((item) => {
+        if (item.kind !== "diff-comment") {
+          return true;
+        }
+        const thread = findReviewThreadForActivity(item);
+        return !thread || thread.comments[0]?.id === item.id;
+      }),
+    [findReviewThreadForActivity, timelineActivity],
+  );
+  const remoteDiffComments = useMemo<DiffPreviewManualComment[]>(
+    () => buildRemoteDiffComments(visibleRequestDetails),
     [visibleRequestDetails],
   );
   const diffCommentTargets = useMemo<DiffPreviewManualComment[]>(
@@ -558,6 +631,19 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   );
   const loadedOrReportedFileCount = diffChangedFileCount || visibleRequestDetails?.request.changedFiles || 0;
   const totalActivityCount = visibleRequestDetails?.activity.length ?? visibleRequestDetails?.request.commentCount ?? 0;
+  const commitCount = visibleRequestDetails?.commits.length ?? 0;
+  const selectedCommit = useMemo(
+    () => visibleRequestDetails?.commits.find((commit) => commit.sha === selectedCommitSha) ?? null,
+    [selectedCommitSha, visibleRequestDetails],
+  );
+  const handleParsedDiffFilesChange = useCallback((files: DiffPreviewFileSummary[]) => {
+    setParsedDiffFiles(files);
+  }, []);
+
+  const fileNavItems = useMemo(
+    () => buildPrMrFileNavItems(visibleRequestDetails, parsedDiffFiles, draftComments),
+    [draftComments, parsedDiffFiles, visibleRequestDetails],
+  );
 
   const resetLoadedDiff = useCallback(() => {
     setDiffText("");
@@ -565,10 +651,20 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     setLoadError(null);
     setReviewPanel(emptyReviewPanel());
     setAllDiffFilesExpanded(false);
+    setSelectedCommitSha(null);
+    setActiveDiffFilePath(null);
+    setDiffFileQuery("");
+    setParsedDiffFiles([]);
+    setHighlightedCommentId(null);
     setPostMessage(null);
     setPostError(null);
+    setReplyThreadId(null);
+    setReplyThreadText("");
+    setThreadActionBusyId(null);
+    setConfirmResolveThreadId(null);
     clearDraftEditor();
     setDraftComments([]);
+    setReviewDraftMode(false);
   }, [clearDraftEditor]);
 
   const applyDiffResult = useCallback((result: ProjectPrMrDiffResult) => {
@@ -619,25 +715,27 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   );
 
   const fetchRequestDiff = useCallback(
-    (targetUrl: string, targetBaseBranch?: string): Promise<ProjectPrMrDiffResult> => {
+    (targetUrl: string, targetBaseBranch?: string, commitSha?: string | null): Promise<ProjectPrMrDiffResult> => {
       const url = targetUrl.trim();
       if (!url) {
         return Promise.reject(new Error("Enter a PR/MR URL or select a request first."));
       }
+      const sha = commitSha?.trim() || null;
 
-      if (!canUseForgeApi) {
+      if (!canUseForgeApi && !sha) {
         return window.buildwarden.fetchProjectPrMrDiff(projectId, {
           prUrl: url,
           baseBranch: targetBaseBranch?.trim() || undefined,
         });
       }
 
-      const cached = requestDiffCacheRef.current.get(url);
+      const cacheKey = requestDiffCacheKey(url, sha);
+      const cached = requestDiffCacheRef.current.get(cacheKey);
       if (cached) {
         return Promise.resolve(cached);
       }
 
-      const inFlight = requestDiffInFlightRef.current.get(url);
+      const inFlight = requestDiffInFlightRef.current.get(cacheKey);
       if (inFlight) {
         return inFlight;
       }
@@ -647,10 +745,11 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
         .fetchProjectPrMrDiff(projectId, {
           prUrl: url,
           baseBranch: targetBaseBranch?.trim() || undefined,
+          commitSha: sha ?? undefined,
         })
         .then((result) => {
           if (requestPreloadGenerationRef.current === generation) {
-            requestDiffCacheRef.current.set(url, result);
+            requestDiffCacheRef.current.set(cacheKey, result);
           }
           return result;
         })
@@ -659,12 +758,12 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
           throw new Error(message);
         })
         .finally(() => {
-          if (requestDiffInFlightRef.current.get(url) === request) {
-            requestDiffInFlightRef.current.delete(url);
+          if (requestDiffInFlightRef.current.get(cacheKey) === request) {
+            requestDiffInFlightRef.current.delete(cacheKey);
           }
         });
 
-      requestDiffInFlightRef.current.set(url, request);
+      requestDiffInFlightRef.current.set(cacheKey, request);
       return request;
     },
     [canUseForgeApi, projectId],
@@ -716,7 +815,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     setPrUrl(request.url);
     setBaseBranch(request.targetBranch);
     resetLoadedDiff();
-    setActiveDetailTab("overview");
+    setActiveDetailTab("conversation");
     const cachedDetails = requestDetailsCacheRef.current.get(request.url);
     if (cachedDetails) {
       setRequestDetails(cachedDetails);
@@ -726,7 +825,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
       void loadRequestDetails(request.url);
     }
 
-    const cachedDiff = requestDiffCacheRef.current.get(request.url);
+    const cachedDiff = requestDiffCacheRef.current.get(requestDiffCacheKey(request.url));
     if (cachedDiff) {
       applyDiffResult(cachedDiff);
       setLoadError(null);
@@ -742,7 +841,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
           }
         })
         .catch(() => {
-          /* Prefetch errors surface when the user explicitly opens Changes. */
+          /* Prefetch errors surface when the user explicitly opens Files changed. */
         });
     }
   };
@@ -776,22 +875,31 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     }
   };
 
-  const loadDiff = async () => {
+  const loadDiff = async (options: { commitSha?: string | null } = {}) => {
     const targetUrl = activeUrl.trim();
     if (!targetUrl) {
       setLoadError("Enter a PR/MR URL or select a request first.");
       return;
     }
-    setActiveDetailTab("changes");
+    const commitSha = options.commitSha?.trim() || null;
+    setActiveDetailTab("files");
+    setSelectedCommitSha(commitSha);
     setLoadBusy(true);
     setLoadError(null);
     setMeta(null);
     setDiffText("");
+    setActiveDiffFilePath(null);
+    setDiffFileQuery("");
+    setParsedDiffFiles([]);
+    setHighlightedCommentId(null);
     setReviewPanel(emptyReviewPanel());
     setPostMessage(null);
     setPostError(null);
+    setReplyThreadId(null);
+    setReplyThreadText("");
+    setThreadActionBusyId(null);
+    setConfirmResolveThreadId(null);
     clearDraftEditor();
-    setDraftComments([]);
     try {
       if (canUseForgeApi) {
         void loadRequestDetails(targetUrl);
@@ -799,7 +907,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
         setRequestDetails(null);
         setDetailsError(null);
       }
-      const result = await fetchRequestDiff(targetUrl, activeBaseBranch.trim() || undefined);
+      const result = await fetchRequestDiff(targetUrl, activeBaseBranch.trim() || undefined, commitSha);
       setPrUrl(targetUrl);
       applyDiffResult(result);
     } catch (error) {
@@ -834,7 +942,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     setSelectedRequest(null);
     setPrUrl(targetUrl);
     setBaseBranch("");
-    setActiveDetailTab("overview");
+    setActiveDetailTab("conversation");
     resetLoadedDiff();
 
     if (canUseForgeApi) {
@@ -864,7 +972,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
           setDetailsBusy(false);
         }
 
-        const cachedDiff = requestDiffCacheRef.current.get(url);
+        const cachedDiff = requestDiffCacheRef.current.get(requestDiffCacheKey(url));
         if (cachedDiff) {
           applyDiffResult(cachedDiff);
           setLoadError(null);
@@ -884,18 +992,36 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     }
   }, [canUseForgeApi, preloadRequestData, requestItems]);
 
-  const showChanges = () => {
-    setActiveDetailTab("changes");
-    if (!hasDiff && activeUrl.trim() && !loadBusy) {
-      void loadDiff();
+  const showFiles = () => {
+    setActiveDetailTab("files");
+    if ((!hasDiff || selectedCommitSha) && activeUrl.trim() && !loadBusy) {
+      void loadDiff({ commitSha: null });
     }
+  };
+
+  const startReviewMode = () => {
+    setReviewDraftMode(true);
+    setActiveDetailTab("files");
+    setPostMessage(null);
+    setPostError(null);
+    if ((!hasDiff || selectedCommitSha) && activeUrl.trim() && !loadBusy) {
+      void loadDiff({ commitSha: null });
+    }
+  };
+
+  const selectCommitDiff = (commitSha: string) => {
+    const sha = commitSha.trim();
+    if (!sha || loadBusy) {
+      return;
+    }
+    void loadDiff({ commitSha: sha });
   };
 
   const runPrMrReview = async () => {
     if (!hasDiff) {
       setReviewPanel((current) => ({
         ...current,
-        error: "View changes before running AI review.",
+        error: "Load files changed before running AI review.",
       }));
       return;
     }
@@ -989,6 +1115,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
         },
       ]);
     }
+    setReviewDraftMode(true);
     clearDraftEditor();
     setPostMessage(null);
     setPostError(null);
@@ -1042,23 +1169,34 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     setActiveCommentTarget(target);
     setDraftCommentText(body);
     setEditingDraftCommentId(id);
+    setReviewDraftMode(true);
     setPostMessage(null);
     setPostError(null);
   };
 
   const submitDraftDiffComments = async () => {
+    const url = activeUrl.trim();
+    if (!url || draftComments.length === 0) {
+      return;
+    }
     setManualSubmitBusy(true);
     setPostMessage(null);
     setPostError(null);
     try {
       const result = await window.buildwarden.submitProjectPrMrComments(projectId, {
-        prUrl: activeUrl.trim(),
+        prUrl: url,
         body: `BuildWarden submitted ${String(draftComments.length)} draft diff comment${draftComments.length === 1 ? "" : "s"}.`,
+        mode: "review",
         comments: draftComments.map(toSubmittedDiffComment),
       });
       setDraftComments([]);
+      setReviewDraftMode(false);
       clearDraftEditor();
       setPostMessage(result.message);
+      if (url) {
+        requestDetailsCacheRef.current.delete(url);
+        void loadRequestDetails(url);
+      }
     } catch (error) {
       setPostError(formatAppErrorMessage(error, "Could not submit the draft diff comments."));
     } finally {
@@ -1066,8 +1204,279 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     }
   };
 
+  const submitSingleDiffComment = async (draftBody: string) => {
+    const body = draftBody.trim();
+    const url = activeUrl.trim();
+    if (!activeCommentTarget || !body || !url) {
+      return;
+    }
+    setSingleSubmitBusy(true);
+    setPostMessage(null);
+    setPostError(null);
+    try {
+      const result = await window.buildwarden.submitProjectPrMrComments(projectId, {
+        prUrl: url,
+        mode: "single",
+        comments: [
+          {
+            oldPath: activeCommentTarget.oldPath,
+            newPath: activeCommentTarget.newPath,
+            side: activeCommentTarget.side,
+            oldLineNumber: activeCommentTarget.oldLineNumber,
+            newLineNumber: activeCommentTarget.newLineNumber,
+            changeType: activeCommentTarget.changeType,
+            body,
+          },
+        ],
+      });
+      clearDraftEditor();
+      setPostMessage(result.message);
+      requestDetailsCacheRef.current.delete(url);
+      void loadRequestDetails(url);
+    } catch (error) {
+      setPostError(formatAppErrorMessage(error, "Could not submit the diff comment."));
+    } finally {
+      setSingleSubmitBusy(false);
+    }
+  };
+
+  const refreshActiveRequestDetails = useCallback(() => {
+    const url = activeUrl.trim();
+    if (!url) {
+      return;
+    }
+    requestDetailsCacheRef.current.delete(url);
+    void loadRequestDetails(url);
+  }, [activeUrl, loadRequestDetails]);
+
+  const submitThreadReply = async (thread: ProjectForgeReviewThread) => {
+    const body = replyThreadText.trim();
+    const url = activeUrl.trim();
+    if (!body || !url) {
+      return;
+    }
+    setThreadActionBusyId(`reply:${thread.id}`);
+    setPostMessage(null);
+    setPostError(null);
+    try {
+      const result = await window.buildwarden.replyProjectPrMrReviewThread(projectId, {
+        prUrl: url,
+        threadId: thread.providerThreadId,
+        replyToCommentId: thread.replyToCommentId,
+        body,
+      });
+      setReplyThreadId(null);
+      setReplyThreadText("");
+      setPostMessage(result.message);
+      refreshActiveRequestDetails();
+    } catch (error) {
+      setPostError(formatAppErrorMessage(error, "Could not reply to the review thread."));
+    } finally {
+      setThreadActionBusyId(null);
+    }
+  };
+
+  const toggleThreadResolved = async (thread: ProjectForgeReviewThread) => {
+    const url = activeUrl.trim();
+    if (!url) {
+      return;
+    }
+    const nextResolved = thread.resolved !== true;
+    setThreadActionBusyId(`resolve:${thread.id}`);
+    setPostMessage(null);
+    setPostError(null);
+    try {
+      const result = await window.buildwarden.resolveProjectPrMrReviewThread(projectId, {
+        prUrl: url,
+        threadId: thread.providerThreadId,
+        resolved: nextResolved,
+      });
+      setPostMessage(result.message);
+      refreshActiveRequestDetails();
+    } catch (error) {
+      setPostError(formatAppErrorMessage(error, "Could not update the review thread."));
+    } finally {
+      setConfirmResolveThreadId(null);
+      setThreadActionBusyId(null);
+    }
+  };
+
   const prLoadHelp =
-    "Paste a GitHub PR or GitLab MR link, or fetch requests from the hosting API. View changes loads the diff without running AI review.";
+    "Paste a GitHub PR or GitLab MR link, or fetch requests from the hosting API. Files changed loads the diff without running AI review.";
+
+  const renderThreadCodeLines = (lines: ReviewThreadCodeLine[]) => {
+    if (lines.length === 0) {
+      return (
+        <p className="rounded-md border border-dashed border-zinc-800 bg-zinc-950/50 p-2 text-[10px] text-zinc-600">
+          Code context is not available for this thread yet.
+        </p>
+      );
+    }
+    return (
+      <div className="overflow-hidden rounded-md border border-zinc-800 bg-zinc-950/75 font-mono text-[10px]">
+        {lines.map((line) => (
+          <div
+            key={line.key}
+            className={cn(
+              "grid grid-cols-[3.25rem_3.25rem_1rem_minmax(0,1fr)] items-start border-b border-zinc-900/80 last:border-b-0",
+              line.type === "add" && "bg-emerald-500/[0.07]",
+              line.type === "delete" && "bg-rose-500/[0.07]",
+              line.type === "hunk" && "bg-cyan-500/[0.07] text-cyan-200",
+              line.highlighted && "ring-1 ring-inset ring-cyan-300/50",
+            )}
+          >
+            <span className="select-none px-1.5 py-0.5 text-right text-zinc-600">{line.oldLineNumber ?? ""}</span>
+            <span className="select-none border-l border-zinc-900/80 px-1.5 py-0.5 text-right text-zinc-600">{line.newLineNumber ?? ""}</span>
+            <span
+              className={cn(
+                "select-none border-l border-zinc-900/80 px-1 py-0.5 text-center",
+                line.type === "add" && "text-emerald-300",
+                line.type === "delete" && "text-rose-300",
+                line.type === "context" && "text-zinc-600",
+                line.type === "hunk" && "text-cyan-300",
+              )}
+            >
+              {line.type === "add" ? "+" : line.type === "delete" ? "-" : line.type === "hunk" ? "@" : ""}
+            </span>
+            <code className="min-w-0 whitespace-pre-wrap break-words border-l border-zinc-900/80 px-2 py-0.5 text-zinc-300">{line.content}</code>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const renderReviewThreadTimelineItem = (item: ProjectForgeActivityItem, thread: ProjectForgeReviewThread) => {
+    const codeLines = buildReviewThreadCodeLines(thread, diffText);
+    const isReplying = replyThreadId === thread.id;
+    const busyReply = threadActionBusyId === `reply:${thread.id}`;
+    const busyResolve = threadActionBusyId === `resolve:${thread.id}`;
+    const confirmResolve = confirmResolveThreadId === thread.id;
+    return (
+      <article key={item.id} className="rounded-md border border-zinc-800 bg-zinc-950/55 p-2">
+        <div className="flex min-w-0 items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] font-semibold text-zinc-200">
+                {thread.comments[0]?.author?.username ?? item.author?.username ?? (item.provider === "gitlab" ? "GitLab" : "GitHub")}
+              </span>
+              <span className={cn("rounded-full border px-1.5 py-px text-[8px] font-semibold uppercase", activityKindTone(item.kind))}>
+                Diff comment
+              </span>
+              {thread.resolved ? (
+                <span className="rounded-full border border-emerald-500/25 bg-emerald-500/[0.08] px-1.5 py-px text-[8px] font-semibold uppercase text-emerald-200">
+                  Closed
+                </span>
+              ) : null}
+            </div>
+            <p className="mt-0.5 font-mono text-[10px] text-zinc-500">
+              {thread.path}:{String(thread.newLineNumber ?? thread.oldLineNumber ?? "")}
+              {thread.commitSha ? ` ${thread.commitSha.slice(0, 8)}` : ""}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <span className="text-[9px] text-zinc-600">{formatActivityDate(item.createdAt)}</span>
+            {canUseForgeApi ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className={cn(
+                  "h-6 px-2 text-[10px]",
+                  thread.resolved
+                    ? "text-zinc-400 hover:text-cyan-100"
+                    : confirmResolve
+                      ? "border border-amber-500/40 bg-amber-500/[0.08] text-amber-100 hover:bg-amber-500/[0.12] hover:text-amber-50"
+                      : "text-zinc-500 hover:text-zinc-200",
+                )}
+                onClick={() => {
+                  if (thread.resolved !== true && !confirmResolve) {
+                    setConfirmResolveThreadId(thread.id);
+                    setPostMessage(null);
+                    setPostError(null);
+                    return;
+                  }
+                  void toggleThreadResolved(thread);
+                }}
+                disabled={busyResolve}
+                title={thread.resolved ? "Reopen this thread" : confirmResolve ? "Confirm closing this thread" : "Close this thread as resolved"}
+              >
+                {busyResolve ? <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden /> : null}
+                {thread.resolved ? "Reopen thread" : confirmResolve ? "Confirm close" : "Close thread"}
+              </Button>
+            ) : null}
+          </div>
+        </div>
+        <div className="mt-2">{renderThreadCodeLines(codeLines)}</div>
+        <div className="mt-2 space-y-2">
+          {thread.comments.map((comment) => (
+            <div key={comment.id} className="rounded-md border border-zinc-800 bg-zinc-900/35 p-2">
+              <div className="flex min-w-0 items-center justify-between gap-2">
+                <span className="truncate text-[11px] font-semibold text-zinc-200">{comment.author?.username ?? "Reviewer"}</span>
+                <span className="shrink-0 text-[9px] text-zinc-600">{formatActivityDate(comment.createdAt)}</span>
+              </div>
+              <ActivityRichText content={comment.body} compact className="mt-1 break-words text-zinc-300" />
+            </div>
+          ))}
+        </div>
+        {isReplying ? (
+          <div className="mt-2 rounded-md border border-cyan-500/25 bg-cyan-500/[0.055] p-2">
+            <textarea
+              value={replyThreadText}
+              onChange={(event) => setReplyThreadText(event.target.value)}
+              className="h-16 w-full resize-none rounded-md border border-zinc-700 bg-zinc-950/80 px-2 py-1.5 text-[11px] text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-cyan-500/70"
+              placeholder="Reply to this thread..."
+              autoFocus
+            />
+            <div className="mt-1.5 flex justify-end gap-1.5">
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-[10px] text-zinc-400"
+                onClick={() => {
+                  setReplyThreadId(null);
+                  setReplyThreadText("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                className="h-7 px-2 text-[10px]"
+                onClick={() => void submitThreadReply(thread)}
+                disabled={!replyThreadText.trim() || busyReply}
+              >
+                {busyReply ? <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden /> : null}
+                Reply
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-1.5">
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              className="h-6 px-2 text-[10px]"
+              onClick={() => {
+                setReplyThreadId(thread.id);
+                setReplyThreadText("");
+                setConfirmResolveThreadId(null);
+                setPostMessage(null);
+                setPostError(null);
+              }}
+              disabled={!canUseForgeApi || thread.resolved === true}
+              title={canUseForgeApi ? "Reply to this thread" : "Replies require a Git hosting token"}
+            >
+              Reply
+            </Button>
+            {confirmResolve ? <span className="text-[9px] text-amber-200/80">Click Confirm close to resolve this thread.</span> : null}
+          </div>
+        )}
+      </article>
+    );
+  };
 
   const renderOverviewCard = () => {
     if (!overviewRequest && !detailsBusy && !detailsError) {
@@ -1158,38 +1567,55 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                 <MessageSquare className="h-3.5 w-3.5 text-zinc-500" aria-hidden />
                 <p className="text-xs font-semibold text-zinc-100">Timeline</p>
               </div>
-              <span className="font-mono text-[10px] text-zinc-500">{String(timelineActivity.length)}</span>
+              <span className="font-mono text-[10px] text-zinc-500">{String(conversationActivity.length)}</span>
             </div>
-            {timelineActivity.length > 0 ? (
+            {conversationActivity.length > 0 ? (
               <div className="space-y-2">
-                {timelineActivity.map((item) => (
-                  <article key={item.id} className="rounded-md border border-zinc-800 bg-zinc-950/55 p-2">
-                    <div className="flex min-w-0 items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="text-[11px] font-semibold text-zinc-200">
-                            {item.author?.username ?? (item.provider === "gitlab" ? "GitLab" : "GitHub")}
-                          </span>
-                          <span className={cn("rounded-full border px-1.5 py-px text-[8px] font-semibold uppercase", activityKindTone(item.kind))}>
-                            {item.kind}
-                          </span>
-                        </div>
-                        <p className="mt-0.5 text-[11px] text-zinc-400">
-                          {item.title}
-                          {item.path ? (
-                            <span className="font-mono text-zinc-500">
-                              {" "}
-                              in {item.path}
-                              {item.line ? `:${String(item.line)}` : ""}
+                {conversationActivity.map((item) => {
+                  const thread = item.kind === "diff-comment" ? findReviewThreadForActivity(item) : null;
+                  if (thread) {
+                    return renderReviewThreadTimelineItem(item, thread);
+                  }
+                  const itemCommit = item.commitSha
+                    ? (visibleRequestDetails?.commits.find((commit) => commit.sha === item.commitSha) ?? null)
+                    : null;
+                  return (
+                    <article key={item.id} className="rounded-md border border-zinc-800 bg-zinc-950/55 p-2">
+                      <div className="flex min-w-0 items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-[11px] font-semibold text-zinc-200">
+                              {item.author?.username ?? (item.provider === "gitlab" ? "GitLab" : "GitHub")}
                             </span>
-                          ) : null}
-                        </p>
+                            <span className={cn("rounded-full border px-1.5 py-px text-[8px] font-semibold uppercase", activityKindTone(item.kind))}>
+                              {item.kind}
+                            </span>
+                          </div>
+                          <p className="mt-0.5 text-[11px] text-zinc-400">
+                            {item.title}
+                            {item.path ? (
+                              <span className="font-mono text-zinc-500">
+                                {" "}
+                                in {item.path}
+                                {item.line ? `:${String(item.line)}` : ""}
+                              </span>
+                            ) : null}
+                            {itemCommit ? (
+                              <span className="font-mono text-zinc-500">
+                                {" "}
+                                {itemCommit.shortSha} {commitTitleForActivity(itemCommit, itemCommit.sha)}
+                              </span>
+                            ) : item.commitSha ? (
+                              <span className="font-mono text-zinc-500"> {item.commitSha.slice(0, 12)}</span>
+                            ) : null}
+                          </p>
+                        </div>
+                        <span className="shrink-0 text-[9px] text-zinc-600">{formatActivityDate(item.createdAt)}</span>
                       </div>
-                      <span className="shrink-0 text-[9px] text-zinc-600">{formatActivityDate(item.createdAt)}</span>
-                    </div>
-                    {item.body ? <ActivityRichText content={item.body} compact className="mt-2 break-words text-zinc-300" /> : null}
-                  </article>
-                ))}
+                      {item.body ? <ActivityRichText content={item.body} compact className="mt-2 break-words text-zinc-300" /> : null}
+                    </article>
+                  );
+                })}
               </div>
             ) : (
               <p className="rounded-md border border-dashed border-zinc-800 p-3 text-xs text-zinc-600">
@@ -1202,22 +1628,148 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     );
   };
 
-  const renderDiffCard = () => {
-    if (!diffText.trim()) {
+  const renderFileNavigator = () => {
+    const normalizedQuery = diffFileQuery.replace(/\\/g, "/").replace(/^a\//, "").replace(/^b\//, "").trim().toLowerCase();
+    const visibleFiles = normalizedQuery
+      ? fileNavItems.filter((file) => file.path.toLowerCase().includes(normalizedQuery) || (file.oldPath?.toLowerCase().includes(normalizedQuery) ?? false))
+      : fileNavItems;
+
+    if (fileNavItems.length === 0) {
       return null;
     }
 
     return (
+      <aside className="flex min-h-0 flex-col overflow-hidden rounded-md border border-zinc-800 bg-zinc-950/65">
+        <div className="border-b border-zinc-800 p-1.5">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-zinc-600" aria-hidden />
+            <Input
+              value={diffFileQuery}
+              onChange={(event) => {
+                setDiffFileQuery(event.target.value);
+                setActiveDiffFilePath(null);
+                setHighlightedCommentId(null);
+              }}
+              placeholder="Filter files"
+              className="h-7 pl-7 pr-2 text-[11px]"
+            />
+          </div>
+          <button
+            type="button"
+            className={cn(
+              "mt-1.5 flex h-7 w-full items-center justify-between rounded px-2 text-left text-[11px] transition",
+              !activeDiffFilePath && !diffFileQuery.trim() ? "bg-cyan-500/[0.12] text-cyan-100" : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200",
+            )}
+            onClick={() => {
+              setActiveDiffFilePath(null);
+              setDiffFileQuery("");
+              setHighlightedCommentId(null);
+            }}
+          >
+            <span>All files</span>
+            <span className="font-mono text-[9px] text-zinc-500">{String(fileNavItems.length)}</span>
+          </button>
+        </div>
+        <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto p-1.5">
+          {visibleFiles.length > 0 ? (
+            visibleFiles.map((file) => {
+              const selected = activeDiffFilePath ? pathsMatch(file.path, activeDiffFilePath) : false;
+              return (
+                <button
+                  key={file.key}
+                  type="button"
+                  className={cn(
+                    "mb-1 flex w-full min-w-0 flex-col rounded border p-1.5 text-left transition last:mb-0",
+                    selected
+                      ? "border-cyan-500/45 bg-cyan-500/[0.09] shadow-[inset_2px_0_0_rgba(34,211,238,0.8)]"
+                      : "border-zinc-800 bg-zinc-900/35 hover:border-zinc-700 hover:bg-zinc-900/60",
+                  )}
+                  onClick={() => {
+                    setActiveDiffFilePath(file.path);
+                    setDiffFileQuery("");
+                    setHighlightedCommentId(null);
+                  }}
+                >
+                  <span className="flex min-w-0 items-center justify-between gap-1.5">
+                    <span className="truncate font-mono text-[10px] text-zinc-200">{file.path}</span>
+                    <span className="shrink-0 rounded border border-zinc-700 px-1 py-px text-[8px] uppercase text-zinc-500">{file.status}</span>
+                  </span>
+                  <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[9px]">
+                    {file.additions != null ? <span className="font-mono text-emerald-300">+{String(file.additions)}</span> : null}
+                    {file.deletions != null ? <span className="font-mono text-rose-300">-{String(file.deletions)}</span> : null}
+                    {file.commentCount > 0 ? (
+                      <span className="rounded-full bg-cyan-500/15 px-1.5 py-px text-cyan-100">{String(file.commentCount)} comment</span>
+                    ) : null}
+                    {file.draftCount > 0 ? (
+                      <span className="rounded-full bg-amber-500/15 px-1.5 py-px text-amber-100">{String(file.draftCount)} draft</span>
+                    ) : null}
+                    {!file.patchAvailable ? <span className="text-zinc-600">no patch</span> : null}
+                  </span>
+                </button>
+              );
+            })
+          ) : (
+            <p className="rounded border border-dashed border-zinc-800 p-2 text-[11px] text-zinc-600">No files match the filter.</p>
+          )}
+        </div>
+      </aside>
+    );
+  };
+
+  const renderDiffCard = () => {
+    if (!diffText.trim()) {
+      return null;
+    }
+    const selectedCommitTitle = selectedCommit ? `${selectedCommit.shortSha} ${selectedCommit.title}` : selectedCommitSha ? selectedCommitSha.slice(0, 12) : null;
+    const fileNavigator = renderFileNavigator();
+    const reviewModeActive = reviewDraftMode || draftComments.length > 0;
+
+    return (
       <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-zinc-800/80 bg-zinc-950/40 p-0">
-        <div className="shrink-0 border-b border-zinc-800/80 px-2 py-1.5" title="Merge base to PR/MR head via local git fetch.">
+        <div className="shrink-0 border-b border-zinc-800/80 px-2 py-1.5">
           <div className="flex flex-wrap items-end justify-between gap-x-2 gap-y-1.5">
             <div className="min-w-0 flex-1">
-              <p className="text-[11px] font-medium leading-none text-zinc-100">Diff</p>
+              <p className="truncate text-[11px] font-medium leading-none text-zinc-100">
+                {selectedCommitTitle ? `Commit diff: ${selectedCommitTitle}` : "Files changed"}
+              </p>
               <p className="mt-0.5 hidden text-[9px] leading-tight text-zinc-500 sm:block">
-                {canUseForgeApi ? "Click a diff line to draft a comment - AI review is optional" : "Loaded via git fetch without hosting API details"}
+                {canUseForgeApi
+                  ? reviewModeActive
+                    ? "Review mode is active; clicked lines are added as drafts until you submit the review"
+                    : "Click a diff line to add a single comment or start a review"
+                  : "Loaded via git fetch; commit lists and inline posting need a hosting token"}
               </p>
             </div>
             <div className="flex min-w-0 flex-wrap items-center justify-end gap-x-1.5 gap-y-1">
+              {selectedCommitSha ? (
+                <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-[10px] text-zinc-400" onClick={() => void loadDiff({ commitSha: null })}>
+                  All changes
+                </Button>
+              ) : null}
+              <div className="flex h-7 overflow-hidden rounded-md border border-zinc-800 bg-zinc-950/80">
+                {(["unified", "split"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={cn(
+                      "px-2 text-[10px] capitalize transition",
+                      diffViewType === mode ? "bg-cyan-500/15 text-cyan-100" : "text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300",
+                    )}
+                    onClick={() => setDiffViewType(mode)}
+                  >
+                    {mode}
+                  </button>
+                ))}
+              </div>
+              <label className="flex h-7 items-center gap-1 rounded-md border border-zinc-800 bg-zinc-950/80 px-2 text-[10px] text-zinc-400">
+                <input
+                  type="checkbox"
+                  checked={hideWhitespaceChanges}
+                  onChange={(event) => setHideWhitespaceChanges(event.target.checked)}
+                  className="h-3 w-3 accent-cyan-500"
+                />
+                Whitespace
+              </label>
               <span className="shrink-0 text-[9px] font-medium uppercase tracking-wide text-zinc-500" title="Reviewer simulator">
                 Model
               </span>
@@ -1261,23 +1813,47 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                   {allDiffFilesExpanded ? "Collapse all" : "Expand all"}
                 </Button>
               ) : null}
-              {draftComments.length > 0 ? (
-                <span className="rounded-full border border-cyan-500/30 bg-cyan-500/[0.08] px-2 py-1 text-[9px] font-medium text-cyan-100">
-                  {String(draftComments.length)} draft{draftComments.length === 1 ? "" : "s"}
-                </span>
-              ) : null}
               {canUseForgeApi ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="secondary"
-                  className="h-7 px-2 text-[10px]"
-                  onClick={() => void submitDraftDiffComments()}
-                  disabled={manualSubmitBusy || draftComments.length === 0 || !activeUrl.trim()}
-                >
-                  {manualSubmitBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <MessageSquarePlus className="mr-1 h-3.5 w-3.5" aria-hidden />}
-                  Submit drafts
-                </Button>
+                reviewModeActive ? (
+                  <>
+                    <span
+                      className="rounded-full border border-cyan-500/30 bg-cyan-500/[0.08] px-2 py-1 text-[9px] font-medium text-cyan-100"
+                      title="Review comments are kept as drafts until the review is submitted."
+                    >
+                      Review mode{draftComments.length > 0 ? ` | ${String(draftComments.length)} draft${draftComments.length === 1 ? "" : "s"}` : ""}
+                    </span>
+                    {reviewDraftMode && draftComments.length === 0 ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-[10px] text-zinc-400"
+                        onClick={() => {
+                          setReviewDraftMode(false);
+                          clearDraftEditor();
+                        }}
+                      >
+                        Stop review
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      className="h-7 px-2 text-[10px]"
+                      onClick={() => void submitDraftDiffComments()}
+                      disabled={manualSubmitBusy || draftComments.length === 0 || !activeUrl.trim()}
+                    >
+                      {manualSubmitBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <MessageSquarePlus className="mr-1 h-3.5 w-3.5" aria-hidden />}
+                      Submit review
+                    </Button>
+                  </>
+                ) : (
+                  <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-[10px]" onClick={startReviewMode} disabled={!activeUrl.trim()}>
+                    <MessageSquarePlus className="mr-1 h-3.5 w-3.5" aria-hidden />
+                    Start review
+                  </Button>
+                )
               ) : null}
               {!overviewRequest && canUseForgeApi ? (
                 <>
@@ -1330,41 +1906,151 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
               />
             </div>
           ) : null}
-          <GitDiffPreview
-            ref={gitDiffPanelRef}
-            diffText={diffText}
-            fillContainer
-            className="min-h-0 flex-1"
-            emptyMessage="No changes in this range."
-            activityEmphasis
-            viewType="unified"
-            wordDiff
-            reviewFindings={reviewPanel.result?.findings ?? null}
-            manualCommentTargets={diffCommentTargets}
-            activeCommentTarget={activeCommentTarget}
-            draftCommentText={draftCommentText}
-            draftCommentSaveLabel={editingDraftCommentId ? "Save draft" : "Add draft"}
-            editingDraftCommentId={editingDraftCommentId}
-            draftedReviewFindingKeys={draftedReviewFindingKeys}
-            onAddDiffComment={
-              canUseForgeApi
-                ? (target) => {
-                    setActiveCommentTarget(target);
-                    setDraftCommentText("");
-                    setEditingDraftCommentId(null);
-                    setPostMessage(null);
-                    setPostError(null);
-                  }
-                : undefined
-            }
-            onSaveDraftComment={saveDraftDiffComment}
-            onCancelDraftComment={clearDraftEditor}
-            onEditDraftComment={canUseForgeApi ? editDraftDiffComment : undefined}
-            onRemoveDraftComment={canUseForgeApi ? removeDraftDiffComment : undefined}
-            onDraftReviewFinding={canUseForgeApi ? draftAiFindingComment : undefined}
-            defaultCollapsedFileSections={false}
-            onAllFilesExpandedChange={setAllDiffFilesExpanded}
-          />
+          <div
+            className={cn(
+              "grid min-h-0 flex-1 gap-2 overflow-hidden",
+              fileNavigator ? "lg:grid-cols-[minmax(12rem,17rem)_minmax(0,1fr)]" : "lg:grid-cols-1",
+            )}
+          >
+            {fileNavigator}
+            <GitDiffPreview
+              ref={gitDiffPanelRef}
+              diffText={diffText}
+              fillContainer
+              className="min-h-0 flex-1"
+              emptyMessage="No changes in this range."
+              activityEmphasis
+              viewType={diffViewType}
+              wordDiff
+              hideWhitespaceChanges={hideWhitespaceChanges}
+              filePathQuery={activeDiffFilePath ? "" : diffFileQuery}
+              activeFilePath={activeDiffFilePath}
+              highlightedCommentId={highlightedCommentId}
+              reviewFindings={reviewPanel.result?.findings ?? null}
+              manualCommentTargets={diffCommentTargets}
+              activeCommentTarget={activeCommentTarget}
+              draftCommentText={draftCommentText}
+              draftCommentSaveLabel={editingDraftCommentId ? "Save draft" : "Add to review"}
+              singleCommentSaveLabel="Add single comment"
+              singleCommentBusy={singleSubmitBusy}
+              editingDraftCommentId={editingDraftCommentId}
+              draftedReviewFindingKeys={draftedReviewFindingKeys}
+              onAddDiffComment={
+                canUseForgeApi
+                  ? (target) => {
+                      setActiveCommentTarget(target);
+                      setDraftCommentText("");
+                      setEditingDraftCommentId(null);
+                      setHighlightedCommentId(null);
+                      setPostMessage(null);
+                      setPostError(null);
+                    }
+                  : undefined
+              }
+              onSaveDraftComment={saveDraftDiffComment}
+              onSaveSingleComment={canUseForgeApi && !editingDraftCommentId && !reviewModeActive ? (value) => void submitSingleDiffComment(value) : undefined}
+              onCancelDraftComment={clearDraftEditor}
+              onEditDraftComment={canUseForgeApi ? editDraftDiffComment : undefined}
+              onRemoveDraftComment={canUseForgeApi ? removeDraftDiffComment : undefined}
+              onDraftReviewFinding={canUseForgeApi ? draftAiFindingComment : undefined}
+              onParsedFilesChange={handleParsedDiffFilesChange}
+              defaultCollapsedFileSections={false}
+              onAllFilesExpandedChange={setAllDiffFilesExpanded}
+            />
+          </div>
+        </div>
+      </Card>
+    );
+  };
+
+  const renderCommitsCard = () => {
+    const commits = visibleRequestDetails?.commits ?? [];
+
+    if (!canUseForgeApi) {
+      return (
+        <Card className="flex min-h-0 flex-1 items-center justify-center border-zinc-800/80 bg-zinc-950/30 p-4">
+          <div className="max-w-md text-center">
+            <p className="text-sm font-semibold text-zinc-100">Commits need a hosting token</p>
+            <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+              Add a GitHub or GitLab token in Project Settings to browse commit lists, commit diffs, and remote review threads.
+            </p>
+          </div>
+        </Card>
+      );
+    }
+
+    if (detailsBusy && commits.length === 0) {
+      return (
+        <Card className="flex min-h-0 flex-1 items-center justify-center border-zinc-800/80 bg-zinc-950/30 p-4">
+          <span className="inline-flex items-center gap-2 text-xs text-zinc-500">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            Loading commits
+          </span>
+        </Card>
+      );
+    }
+
+    return (
+      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-zinc-800/80 bg-zinc-950/40 p-0">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800/80 px-3 py-2">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-zinc-100">Commits</p>
+            <p className="mt-0.5 text-[10px] text-zinc-500">Select one commit to inspect only that diff.</p>
+          </div>
+          <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-[10px]" onClick={() => void loadDiff({ commitSha: null })}>
+            All changes
+          </Button>
+        </div>
+        <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto p-2">
+          {commits.length > 0 ? (
+            <div className="space-y-1.5">
+              {commits.map((commit) => {
+                const selected = selectedCommitSha === commit.sha;
+                return (
+                  <div
+                    key={commit.sha}
+                    className={cn(
+                      "flex w-full min-w-0 items-start gap-2 rounded-md border p-2 text-left transition",
+                      selected
+                        ? "border-cyan-500/50 bg-cyan-500/[0.09] shadow-[inset_2px_0_0_rgba(34,211,238,0.85)]"
+                        : "border-zinc-800 bg-zinc-900/35 hover:border-zinc-700 hover:bg-zinc-900/65",
+                    )}
+                  >
+                    <button type="button" className="flex min-w-0 flex-1 items-start gap-2 text-left" onClick={() => selectCommitDiff(commit.sha)}>
+                      <span className="mt-0.5 shrink-0 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 font-mono text-[10px] text-cyan-100">
+                        {commit.shortSha}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-xs font-semibold text-zinc-100">{commit.title || commit.shortSha}</span>
+                        <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-zinc-500">
+                          <span>{commit.authorUser?.username ?? commit.authorName ?? "Unknown author"}</span>
+                          <span>{formatActivityDate(commit.committedAt ?? commit.authoredAt)}</span>
+                          {commit.commentCount ? <span>{String(commit.commentCount)} comments</span> : null}
+                        </span>
+                      </span>
+                    </button>
+                    {commit.url ? (
+                      <button
+                        type="button"
+                        className="shrink-0 rounded p-1 text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-200"
+                        title="Open commit"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void window.buildwarden.openExternalUrl(commit.url ?? "");
+                        }}
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="rounded-md border border-dashed border-zinc-800 p-3 text-xs text-zinc-600">
+              {detailsError ? "Commit data could not be loaded for this request." : "No commits were returned for this request."}
+            </p>
+          )}
         </div>
       </Card>
     );
@@ -1423,24 +2109,45 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
             type="button"
             className={cn(
               "flex h-9 items-center gap-1.5 border-b-2 px-0.5 text-xs font-medium transition",
-              activeDetailTab === "overview" ? "border-cyan-400 text-zinc-100" : "border-transparent text-zinc-500 hover:text-zinc-300",
+              activeDetailTab === "conversation" ? "border-cyan-400 text-zinc-100" : "border-transparent text-zinc-500 hover:text-zinc-300",
             )}
-            onClick={() => setActiveDetailTab("overview")}
+            onClick={() => setActiveDetailTab("conversation")}
           >
             <FileText className="h-3.5 w-3.5" aria-hidden />
-            Overview
+            Conversation
             <span className="rounded-full bg-zinc-800 px-1.5 py-px font-mono text-[10px] text-zinc-400">{String(totalActivityCount)}</span>
           </button>
           <button
             type="button"
             className={cn(
               "flex h-9 items-center gap-1.5 border-b-2 px-0.5 text-xs font-medium transition",
-              activeDetailTab === "changes" ? "border-cyan-400 text-zinc-100" : "border-transparent text-zinc-500 hover:text-zinc-300",
+              activeDetailTab === "commits" ? "border-cyan-400 text-zinc-100" : "border-transparent text-zinc-500 hover:text-zinc-300",
+              !canUseForgeApi && "cursor-not-allowed opacity-60 hover:text-zinc-500",
             )}
-            onClick={showChanges}
+            onClick={() => {
+              if (canUseForgeApi) {
+                setActiveDetailTab("commits");
+              }
+            }}
+            disabled={!canUseForgeApi}
+            title={canUseForgeApi ? "View commits" : "Commits require a Git hosting token"}
+          >
+            <GitPullRequest className="h-3.5 w-3.5" aria-hidden />
+            Commits
+            {commitCount > 0 ? (
+              <span className="rounded-full bg-zinc-800 px-1.5 py-px font-mono text-[10px] text-zinc-400">{String(commitCount)}</span>
+            ) : null}
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "flex h-9 items-center gap-1.5 border-b-2 px-0.5 text-xs font-medium transition",
+              activeDetailTab === "files" ? "border-cyan-400 text-zinc-100" : "border-transparent text-zinc-500 hover:text-zinc-300",
+            )}
+            onClick={showFiles}
           >
             {loadBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Eye className="h-3.5 w-3.5" aria-hidden />}
-            Changes
+            Files changed
             {loadedOrReportedFileCount > 0 ? (
               <span className="rounded-full bg-zinc-800 px-1.5 py-px font-mono text-[10px] text-zinc-400">
                 {String(loadedOrReportedFileCount)}
@@ -1529,7 +2236,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                   setRequestDetails(null);
                   setDetailsError(null);
                   setPrUrl(event.target.value);
-                  setActiveDetailTab("overview");
+                  setActiveDetailTab("conversation");
                 }}
                 placeholder="https://github.com/org/repo/pull/123 or GitLab .../-/merge_requests/456"
                 className="h-7 font-mono text-[11px]"
@@ -1632,28 +2339,39 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
           {renderRequestHeader()}
 
-          {activeDetailTab === "overview" ? (
+          {activeDetailTab === "conversation" ? (
             renderOverviewCard()
+          ) : activeDetailTab === "commits" ? (
+            renderCommitsCard()
           ) : !hasDiff ? (
             <Card className="flex min-h-0 flex-1 items-center justify-center border-zinc-800/80 bg-zinc-950/30 p-4">
               <div className="max-w-md text-center">
                 <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full border border-cyan-500/25 bg-cyan-500/[0.07] text-cyan-200">
                   <Eye className="h-4 w-4" aria-hidden />
                 </div>
-                <p className="mt-3 text-sm font-semibold text-zinc-100">Changes are not loaded yet</p>
+                <p className="mt-3 text-sm font-semibold text-zinc-100">Files changed are not loaded yet</p>
                 <p className="mt-1 text-xs leading-relaxed text-zinc-500">
-                  Use View changes to load the diff without running AI. Once the diff is visible, click any line to draft a manual comment.
+                  Load the diff without running AI. Once it is visible, click any line to add a single comment or batch a review comment.
                 </p>
-                <Button
-                  type="button"
-                  size="sm"
-                  className="mt-3 h-8 px-3 text-[11px]"
-                  onClick={() => void loadDiff()}
-                  disabled={loadBusy || !activeUrl.trim()}
-                >
-                  {loadBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Eye className="mr-1 h-3.5 w-3.5" aria-hidden />}
-                  View changes
-                </Button>
+                <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    className="h-8 px-3 text-[11px]"
+                    onClick={() => void loadDiff()}
+                    disabled={loadBusy || !activeUrl.trim()}
+                  >
+                    {loadBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Eye className="mr-1 h-3.5 w-3.5" aria-hidden />}
+                    Load files changed
+                  </Button>
+                  {canUseForgeApi ? (
+                    <Button type="button" size="sm" className="h-8 px-3 text-[11px]" onClick={startReviewMode} disabled={loadBusy || !activeUrl.trim()}>
+                      <MessageSquarePlus className="mr-1 h-3.5 w-3.5" aria-hidden />
+                      Start review
+                    </Button>
+                  ) : null}
+                </div>
               </div>
             </Card>
           ) : (

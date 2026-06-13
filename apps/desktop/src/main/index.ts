@@ -711,6 +711,12 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.submitProjectPrMrComments, (_, projectId: string, input) =>
     controller.submitProjectPrMrComments(projectId, input),
   );
+  ipcMain.handle(IPC_CHANNELS.replyProjectPrMrReviewThread, (_, projectId: string, input) =>
+    controller.replyProjectPrMrReviewThread(projectId, input),
+  );
+  ipcMain.handle(IPC_CHANNELS.resolveProjectPrMrReviewThread, (_, projectId: string, input) =>
+    controller.resolveProjectPrMrReviewThread(projectId, input),
+  );
   ipcMain.handle(IPC_CHANNELS.createProjectTask, (_, projectId: string, input) => controller.createProjectTask(projectId, input));
   ipcMain.handle(IPC_CHANNELS.updateProjectTask, (_, taskId: string, input) => controller.updateProjectTask(taskId, input));
   ipcMain.handle(IPC_CHANNELS.deleteProjectTask, (_, taskId: string) => controller.deleteProjectTask(taskId));

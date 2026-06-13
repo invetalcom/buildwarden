@@ -4,14 +4,21 @@ import type {
   ListProjectForgeRequestsInput,
   PostProjectPrMrReviewInput,
   ProjectForgeActivityItem,
+  ProjectForgeChangedFileStatus,
+  ProjectForgeChangedFileSummary,
+  ProjectForgeCommitSummary,
   ProjectForgeRequestDetails,
   ProjectForgeRequestDetailsResult,
   ProjectForgeRequestState,
   ProjectForgeRequestSummary,
   ProjectForgeRequestsResult,
+  ProjectForgeReviewThread,
+  ProjectForgeReviewThreadComment,
   ProjectForgeReviewActionResult,
   ProjectPrMrDiffResult,
   ProjectPrMrDiffComment,
+  ReplyProjectPrMrReviewThreadInput,
+  ResolveProjectPrMrReviewThreadInput,
   SubmitProjectPrMrCommentsInput,
 } from "@buildwarden/shared";
 import type { PrReviewHttpClient } from "./pr-review-http-client";
@@ -115,6 +122,53 @@ const mapGitlabRequestDetails = (record: Record<string, unknown>): ProjectForgeR
   };
 };
 
+const firstLine = (value: string) => value.split(/\r?\n/, 1)[0]?.trim() || value.trim();
+
+const mapGitlabCommitSummary = (record: Record<string, unknown>): ProjectForgeCommitSummary | null => {
+  const sha = recordString(record, "id");
+  const message = recordString(record, "message") ?? recordString(record, "title") ?? "";
+  if (!sha) {
+    return null;
+  }
+  return {
+    sha,
+    shortSha: recordString(record, "short_id") ?? sha.slice(0, 8),
+    title: recordString(record, "title") ?? firstLine(message),
+    message,
+    authorName: recordString(record, "author_name"),
+    authorEmail: recordString(record, "author_email"),
+    authorUser: null,
+    committerName: recordString(record, "committer_name"),
+    committedAt: recordString(record, "committed_date") ?? recordString(record, "created_at"),
+    authoredAt: recordString(record, "authored_date"),
+    url: recordString(record, "web_url"),
+    commentCount: null,
+  };
+};
+
+const gitlabChangedFileStatus = (record: Record<string, unknown>): ProjectForgeChangedFileStatus => {
+  if (recordBoolean(record, "new_file")) return "added";
+  if (recordBoolean(record, "deleted_file")) return "removed";
+  if (recordBoolean(record, "renamed_file")) return "renamed";
+  return "modified";
+};
+
+const mapGitlabChangedFileSummary = (record: Record<string, unknown>): ProjectForgeChangedFileSummary | null => {
+  const path = recordString(record, "new_path") ?? recordString(record, "old_path");
+  if (!path) {
+    return null;
+  }
+  return {
+    path,
+    oldPath: recordString(record, "old_path"),
+    status: gitlabChangedFileStatus(record),
+    additions: null,
+    deletions: null,
+    patchAvailable: Boolean(recordString(record, "diff")) && !recordBoolean(record, "too_large"),
+    commentCount: 0,
+  };
+};
+
 const activityTimestamp = (item: ProjectForgeActivityItem): string => item.createdAt ?? item.updatedAt ?? "";
 
 const sortActivity = (items: ProjectForgeActivityItem[]) =>
@@ -131,6 +185,83 @@ const extractGitlabDiffRefs = (record: Record<string, unknown>): GitlabDiffRefs 
     return null;
   }
   return { baseSha, startSha, headSha };
+};
+
+const gitlabThreadComment = (note: Record<string, unknown>): ProjectForgeReviewThreadComment => {
+  const id = recordNumber(note, "id") ?? crypto.randomUUID();
+  return {
+    id: `gitlab-discussion-note-${String(id)}`,
+    providerCommentId: String(id),
+    body: recordString(note, "body") ?? "",
+    author: gitlabUserSummary(recordObject(note, "author")),
+    createdAt: recordString(note, "created_at"),
+    updatedAt: recordString(note, "updated_at"),
+    url: null,
+  };
+};
+
+const buildGitlabReviewThread = (
+  discussion: Record<string, unknown>,
+  notesList: Record<string, unknown>[],
+  fallbackIndex: number,
+): ProjectForgeReviewThread | null => {
+  const positionedNote = notesList.find((note) => recordObject(note, "position"));
+  const position = positionedNote ? recordObject(positionedNote, "position") : null;
+  if (!position) {
+    return null;
+  }
+  const path = recordString(position, "new_path") ?? recordString(position, "old_path");
+  const oldLine = recordNumber(position, "old_line");
+  const newLine = recordNumber(position, "new_line");
+  if (!path || (!oldLine && !newLine)) {
+    return null;
+  }
+  return {
+    id: `gitlab-thread-${recordString(discussion, "id") ?? String(fallbackIndex)}`,
+    providerThreadId: recordString(discussion, "id") ?? String(fallbackIndex),
+    replyToCommentId: null,
+    provider: "gitlab",
+    path,
+    oldPath: recordString(position, "old_path"),
+    side: newLine ? "new" : "old",
+    oldLineNumber: oldLine,
+    newLineNumber: newLine,
+    commitSha: recordString(position, "head_sha"),
+    diffHunk: null,
+    resolved: recordBoolean(discussion, "resolved") || notesList.some((note) => recordBoolean(note, "resolved")),
+    comments: notesList.map(gitlabThreadComment),
+  };
+};
+
+const quoteDiffPath = (path: string) => path.replace(/\\/g, "/");
+
+const gitlabDiffRowsToUnifiedDiff = (rows: Record<string, unknown>[]): string => {
+  const sections: string[] = [];
+  for (const row of rows) {
+    const oldPath = recordString(row, "old_path") ?? recordString(row, "new_path") ?? "unknown";
+    const newPath = recordString(row, "new_path") ?? oldPath;
+    const diff = recordString(row, "diff") ?? "";
+    if (!diff.trim()) {
+      continue;
+    }
+    if (diff.startsWith("diff --git")) {
+      sections.push(diff.trimEnd());
+      continue;
+    }
+    const oldDisplay = recordBoolean(row, "new_file") ? "/dev/null" : `a/${quoteDiffPath(oldPath)}`;
+    const newDisplay = recordBoolean(row, "deleted_file") ? "/dev/null" : `b/${quoteDiffPath(newPath)}`;
+    const header = [
+      `diff --git a/${quoteDiffPath(oldPath)} b/${quoteDiffPath(newPath)}`,
+      recordBoolean(row, "new_file") ? "new file mode 100644" : null,
+      recordBoolean(row, "deleted_file") ? "deleted file mode 100644" : null,
+      recordBoolean(row, "renamed_file") && oldPath !== newPath ? `rename from ${quoteDiffPath(oldPath)}` : null,
+      recordBoolean(row, "renamed_file") && oldPath !== newPath ? `rename to ${quoteDiffPath(newPath)}` : null,
+      `--- ${oldDisplay}`,
+      `+++ ${newDisplay}`,
+    ].filter((line): line is string => Boolean(line));
+    sections.push(`${header.join("\n")}\n${diff.trimEnd()}`);
+  }
+  return sections.join("\n");
 };
 
 const toGitlabDiscussionPosition = (comment: ProjectPrMrDiffComment, refs: GitlabDiffRefs): Record<string, unknown> => {
@@ -230,7 +361,7 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
       throw new Error("The hosting API returned an incomplete merge request response.");
     }
 
-    const [notes, discussions, stateEvents] = await Promise.all([
+    const [notes, discussions, stateEvents, commits, changesPayload] = await Promise.all([
       this.getPagedArray(`/projects/${projectPath}/merge_requests/${iid}/notes?sort=asc&order_by=created_at&per_page=100`).catch((error) => {
         warnings.push(error instanceof Error ? error.message : "Could not load merge request notes.");
         return [];
@@ -243,10 +374,19 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
         warnings.push(error instanceof Error ? error.message : "Could not load merge request state events.");
         return [];
       }),
+      this.getPagedArray(`/projects/${projectPath}/merge_requests/${iid}/commits?per_page=100`).catch((error) => {
+        warnings.push(error instanceof Error ? error.message : "Could not load merge request commits.");
+        return [];
+      }),
+      this.http.json(`/projects/${projectPath}/merge_requests/${iid}/changes`).catch((error) => {
+        warnings.push(error instanceof Error ? error.message : "Could not load changed files.");
+        return null;
+      }),
     ]);
 
     const noteIds = new Set<string>();
     const activity: ProjectForgeActivityItem[] = [];
+    const reviewThreads: ProjectForgeReviewThread[] = [];
 
     for (const entry of onlyRecords(notes)) {
       const id = recordNumber(entry, "id");
@@ -292,6 +432,10 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
     for (const discussion of onlyRecords(discussions)) {
       const notesValue = discussion.notes;
       const notesList = Array.isArray(notesValue) ? onlyRecords(notesValue) : [];
+      const reviewThread = buildGitlabReviewThread(discussion, notesList, activity.length);
+      if (reviewThread) {
+        reviewThreads.push(reviewThread);
+      }
       for (const note of notesList) {
         const id = recordNumber(note, "id");
         if (id && noteIds.has(String(id))) {
@@ -314,6 +458,7 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
           createdAt: recordString(note, "created_at"),
           updatedAt: recordString(note, "updated_at"),
           author: gitlabUserSummary(recordObject(note, "author")),
+          commitSha: position ? recordString(position, "head_sha") : null,
           resolved: recordBoolean(note, "resolved") || recordBoolean(discussion, "resolved"),
         });
       }
@@ -338,12 +483,25 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
       });
     }
 
+    const changes = isRecord(changesPayload) && Array.isArray(changesPayload.changes) ? onlyRecords(changesPayload.changes) : [];
+    const commitSummaries = onlyRecords(commits).map(mapGitlabCommitSummary).filter((entry): entry is ProjectForgeCommitSummary => Boolean(entry));
+    const diffCommentCountsByPath = new Map<string, number>();
+    for (const thread of reviewThreads) {
+      diffCommentCountsByPath.set(thread.path, (diffCommentCountsByPath.get(thread.path) ?? 0) + thread.comments.length);
+    }
+
     return {
       provider: this.context.provider,
       webBaseUrl: this.context.webBaseUrl,
       repoLabel: this.context.repoLabel,
       request,
       activity: sortActivity(activity),
+      commits: commitSummaries,
+      files: changes
+        .map(mapGitlabChangedFileSummary)
+        .filter((entry): entry is ProjectForgeChangedFileSummary => Boolean(entry))
+        .map((file) => ({ ...file, commentCount: diffCommentCountsByPath.get(file.path) ?? 0 })),
+      reviewThreads,
       warnings,
     };
   }
@@ -352,6 +510,18 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
     const parsed = parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
     const iid = String(parsed.number);
     const projectPath = this.context.gitlab.encodedProjectPath;
+    const commitSha = input.commitSha?.trim();
+    if (commitSha) {
+      const rows = await this.getPagedArray(
+        `/projects/${projectPath}/repository/commits/${encodeURIComponent(commitSha)}/diff?unidiff=true&per_page=100`,
+      );
+      return {
+        diff: gitlabDiffRowsToUnifiedDiff(onlyRecords(rows)),
+        provider: "gitlab",
+        number: parsed.number,
+        baseRef: `GitLab commit ${commitSha.slice(0, 12)}`,
+      };
+    }
     const diff = (await this.http.text(`/projects/${projectPath}/merge_requests/${iid}/raw_diffs`)).trim();
     return {
       diff,
@@ -406,6 +576,9 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
     assertDraftCommentsAreSubmittable(comments);
 
     const refs = await this.resolveDiffRefs(parsed.number);
+    if (input.mode === "single" && comments.length !== 1) {
+      throw new Error("Single diff comments must contain exactly one comment.");
+    }
     for (const comment of comments) {
       const body = new URLSearchParams({ body: comment.body });
       const position = toGitlabDiscussionPosition(comment, refs);
@@ -418,10 +591,62 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
       });
     }
+    if (input.mode !== "single" && input.body?.trim()) {
+      await this.postNote(parsed.number, input.body.trim());
+    }
 
     return {
-      message: `Submitted ${String(comments.length)} merge request diff comment${comments.length === 1 ? "" : "s"}.`,
+      message:
+        input.mode === "single"
+          ? "Submitted one merge request diff comment."
+          : `Submitted ${String(comments.length)} merge request diff comment${comments.length === 1 ? "" : "s"}.`,
       url: prUrl,
+    };
+  }
+
+  async replyToThread(input: ReplyProjectPrMrReviewThreadInput): Promise<ProjectForgeReviewActionResult> {
+    const body = input.body.trim();
+    if (!body) {
+      throw new Error("Replies need a message body.");
+    }
+    const parsed = parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
+    const discussionId = input.threadId.trim();
+    if (!discussionId) {
+      throw new Error("This GitLab discussion cannot be replied to because its discussion ID is missing.");
+    }
+    const payload = new URLSearchParams({ body });
+    await this.http.json(
+      `/projects/${this.context.gitlab.encodedProjectPath}/merge_requests/${String(parsed.number)}/discussions/${encodeURIComponent(discussionId)}/notes`,
+      {
+        method: "POST",
+        body: payload.toString(),
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      },
+    );
+    return {
+      message: "Replied to the merge request discussion.",
+      url: input.prUrl.trim(),
+    };
+  }
+
+  async resolveThread(input: ResolveProjectPrMrReviewThreadInput): Promise<ProjectForgeReviewActionResult> {
+    const parsed = parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
+    const discussionId = input.threadId.trim();
+    if (!discussionId) {
+      throw new Error("This GitLab discussion cannot be updated because its discussion ID is missing.");
+    }
+    const payload = new URLSearchParams({ resolved: String(input.resolved) });
+    await this.http.json(
+      `/projects/${this.context.gitlab.encodedProjectPath}/merge_requests/${String(parsed.number)}/discussions/${encodeURIComponent(discussionId)}`,
+      {
+        method: "PUT",
+        body: payload.toString(),
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      },
+    );
+    return {
+      message: input.resolved ? "Resolved the merge request discussion." : "Reopened the merge request discussion.",
+      url: input.prUrl.trim(),
     };
   }
 

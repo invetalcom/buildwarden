@@ -35,6 +35,15 @@ const diffFileKey = (file: { oldPath?: string; newPath?: string }, index: number
 
 const normalizeDiffPathSegment = (value: string) => value.replace(/\\/g, "/").replace(/^a\//, "").replace(/^b\//, "").trim();
 
+export type DiffPreviewFileSummary = {
+  key: string;
+  path: string;
+  oldPath: string | null;
+  type: string;
+  additions: number;
+  deletions: number;
+};
+
 /** Whether a review finding applies to this diff file path. */
 const findingMatchesDiffFile = (filePath: string, findingPath: string | null | undefined): boolean => {
   const raw = findingPath?.trim();
@@ -223,11 +232,13 @@ const ReviewFindingCard = ({
 const DraftCommentCard = ({
   comment,
   editing,
+  highlighted,
   onEdit,
   onRemove,
 }: {
   comment: DiffPreviewManualComment;
   editing?: boolean;
+  highlighted?: boolean;
   onEdit?: (id: string) => void;
   onRemove?: (id: string) => void;
 }) => {
@@ -238,6 +249,7 @@ const DraftCommentCard = ({
         "rounded-md border px-2.5 py-1.5 text-[11px] text-zinc-300",
         comment.remote ? "border-zinc-700/80 bg-zinc-900/55" : "border-cyan-500/20 bg-cyan-500/[0.055]",
         editing && "border-cyan-400/60 ring-1 ring-cyan-400/40",
+        highlighted && "border-cyan-300/80 ring-2 ring-cyan-300/40",
       )}
     >
       <div className="flex min-w-0 items-start justify-between gap-2">
@@ -304,15 +316,21 @@ const InlineDraftCommentEditor = ({
   initialValue,
   editorKey,
   onSave,
+  onSaveSingle,
   onCancel,
   saveLabel = "Add draft",
+  singleSaveLabel = "Add single comment",
+  singleSaveBusy = false,
 }: {
   target: DiffLineCommentTarget;
   initialValue: string;
   editorKey: string;
   onSave: (value: string) => void;
+  onSaveSingle?: (value: string) => void;
   onCancel: () => void;
   saveLabel?: string;
+  singleSaveLabel?: string;
+  singleSaveBusy?: boolean;
 }) => {
   const [value, setValue] = useState(initialValue);
 
@@ -338,7 +356,12 @@ const InlineDraftCommentEditor = ({
         placeholder="Write a diff comment..."
         autoFocus
       />
-      <div className="mt-1.5 flex justify-end">
+      <div className="mt-1.5 flex flex-wrap justify-end gap-1.5">
+        {onSaveSingle ? (
+          <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-[10px]" onClick={() => onSaveSingle(value)} disabled={!value.trim() || singleSaveBusy}>
+            {singleSaveBusy ? "Posting..." : singleSaveLabel}
+          </Button>
+        ) : null}
         <Button type="button" size="sm" className="h-7 px-2 text-[10px]" onClick={() => onSave(value)} disabled={!value.trim()}>
           {saveLabel}
         </Button>
@@ -367,14 +390,22 @@ type GitDiffPreviewProps = {
   activeCommentTarget?: DiffLineCommentTarget | null;
   draftCommentText?: string;
   draftCommentSaveLabel?: string;
+  singleCommentSaveLabel?: string;
+  singleCommentBusy?: boolean;
   editingDraftCommentId?: string | null;
   draftedReviewFindingKeys?: Set<string> | null;
+  filePathQuery?: string;
+  activeFilePath?: string | null;
+  hideWhitespaceChanges?: boolean;
+  highlightedCommentId?: string | null;
   onAddDiffComment?: (target: DiffLineCommentTarget) => void;
   onSaveDraftComment?: (value: string) => void;
+  onSaveSingleComment?: (value: string) => void;
   onCancelDraftComment?: () => void;
   onEditDraftComment?: (id: string) => void;
   onRemoveDraftComment?: (id: string) => void;
   onDraftReviewFinding?: (target: DiffLineCommentTarget, finding: RunDiffReviewFinding, findingKey: string) => void;
+  onParsedFilesChange?: (files: DiffPreviewFileSummary[]) => void;
   activityEmphasis?: boolean;
   hideFileHeader?: boolean;
   hideFileHeaderInlineToggle?: boolean;
@@ -404,14 +435,22 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     activeCommentTarget = null,
     draftCommentText = "",
     draftCommentSaveLabel = "Add draft",
+    singleCommentSaveLabel = "Add single comment",
+    singleCommentBusy = false,
     editingDraftCommentId = null,
     draftedReviewFindingKeys = null,
+    filePathQuery = "",
+    activeFilePath = null,
+    hideWhitespaceChanges = false,
+    highlightedCommentId = null,
     onAddDiffComment,
     onSaveDraftComment,
+    onSaveSingleComment,
     onCancelDraftComment,
     onEditDraftComment,
     onRemoveDraftComment,
     onDraftReviewFinding,
+    onParsedFilesChange,
     activityEmphasis = false,
     hideFileHeader = false,
     hideFileHeaderInlineToggle = false,
@@ -424,7 +463,7 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
 ) {
   const trimmedDiff = diffText.trim();
   const [collapsedFiles, setCollapsedFiles] = useState<Record<string, boolean>>({});
-  const files = useMemo(() => {
+  const parsedFiles = useMemo(() => {
     if (!trimmedDiff || !looksLikeGitDiff(trimmedDiff)) {
       return [];
     }
@@ -436,9 +475,68 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     }
   }, [trimmedDiff]);
 
+  const fileSummaries = useMemo<DiffPreviewFileSummary[]>(
+    () =>
+      parsedFiles.map((file, index) => ({
+        key: diffFileKey(file, index),
+        path: formatDiffPath(file.oldPath, file.newPath),
+        oldPath: file.oldPath && file.oldPath !== file.newPath ? file.oldPath : null,
+        type: file.type,
+        additions: file.hunks.reduce((sum, hunk) => sum + hunk.changes.filter((change) => change.type === "insert").length, 0),
+        deletions: file.hunks.reduce((sum, hunk) => sum + hunk.changes.filter((change) => change.type === "delete").length, 0),
+      })),
+    [parsedFiles],
+  );
+
+  useEffect(() => {
+    onParsedFilesChange?.(fileSummaries);
+  }, [fileSummaries, onParsedFilesChange]);
+
+  const whitespaceFilteredFiles = useMemo(() => {
+    if (!hideWhitespaceChanges) {
+      return parsedFiles;
+    }
+    return parsedFiles.map((file) => ({
+      ...file,
+      hunks: file.hunks.map((hunk) => {
+        const nextChanges: ChangeData[] = [];
+        for (let index = 0; index < hunk.changes.length; index++) {
+          const current = hunk.changes[index]!;
+          const next = hunk.changes[index + 1];
+          const isWhitespaceOnlyPair =
+            current.type === "delete" &&
+            next?.type === "insert" &&
+            current.content.trim() === next.content.trim() &&
+            current.content !== next.content;
+          if (isWhitespaceOnlyPair) {
+            index += 1;
+            continue;
+          }
+          nextChanges.push(current);
+        }
+        return { ...hunk, changes: nextChanges };
+      }),
+    }));
+  }, [hideWhitespaceChanges, parsedFiles]);
+
+  const files = useMemo(() => {
+    const active = normalizeDiffPathSegment(activeFilePath ?? "");
+    const query = normalizeDiffPathSegment(filePathQuery).toLowerCase();
+    if (!active && !query) {
+      return whitespaceFilteredFiles;
+    }
+    return whitespaceFilteredFiles.filter((file) => {
+      const label = normalizeDiffPathSegment(formatDiffPath(file.oldPath, file.newPath));
+      if (active) {
+        return label === active || label.endsWith(`/${active}`) || active.endsWith(`/${label}`);
+      }
+      return label.toLowerCase().includes(query);
+    });
+  }, [activeFilePath, filePathQuery, whitespaceFilteredFiles]);
+
   useEffect(() => {
     setCollapsedFiles({});
-  }, [trimmedDiff]);
+  }, [activeFilePath, filePathQuery, trimmedDiff]);
 
   const toggleExpandAllFiles = useCallback(() => {
     setCollapsedFiles((current) => {
@@ -623,6 +721,20 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     );
   }
 
+  if (parsedFiles.length > 0 && files.length === 0) {
+    return (
+      <div
+        className={cn(
+          "rounded-xl border border-zinc-800 bg-zinc-950/70 p-3 text-xs text-zinc-500",
+          className,
+          fillContainer && "flex min-h-[10rem] flex-1 items-center justify-center",
+        )}
+      >
+        No files match the current filter.
+      </div>
+    );
+  }
+
   if (files.length === 0) {
     return (
       <pre
@@ -767,6 +879,7 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
                         key={comment.id}
                         comment={comment}
                         editing={comment.id === editingDraftCommentId}
+                        highlighted={comment.id === highlightedCommentId}
                         onEdit={onEditDraftComment}
                         onRemove={onRemoveDraftComment}
                       />
@@ -783,8 +896,11 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
                     initialValue={draftCommentText}
                     editorKey={editingDraftCommentId ?? activeCommentTargetKey}
                     onSave={onSaveDraftComment as (value: string) => void}
+                    onSaveSingle={editingDraftCommentId ? undefined : onSaveSingleComment}
                     onCancel={onCancelDraftComment as () => void}
                     saveLabel={draftCommentSaveLabel}
+                    singleSaveLabel={singleCommentSaveLabel}
+                    singleSaveBusy={singleCommentBusy}
                   />,
                 );
               }
