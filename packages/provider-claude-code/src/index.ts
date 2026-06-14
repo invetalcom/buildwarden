@@ -25,12 +25,15 @@ import type {
   RunUserInputQuestion,
   RunUserInputRequest,
   ShellApprovalDecision,
+  RunPlanProgressPayload,
   RunTokenUsage,
 } from "@buildwarden/shared";
 import {
   PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY,
   PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY,
   buildNetworkProxyUrl,
+  formatRunPlanProgressContent,
+  normalizeRunPlanStepStatus,
 } from "@buildwarden/shared";
 
 const CLAUDE_DEFAULT_MODEL = "sonnet";
@@ -701,9 +704,45 @@ const isClaudeReadOnlyTool = (toolName: string): boolean =>
   new Set(["read_file", "list_files", "search_repo", "glob", "ls", "grep"]).has(normalizeClaudeCodeToolName(toolName));
 
 const isClaudeFileChangeTool = (toolName: string): boolean =>
-  new Set(["write_file", "edit_file", "write", "edit", "multiedit", "notebookedit", "todowrite"]).has(
+  new Set(["write_file", "edit_file", "write", "edit", "multiedit", "notebookedit"]).has(
     normalizeClaudeCodeToolName(toolName),
   );
+
+const isClaudeTodoWriteTool = (toolName: string): boolean => normalizeClaudeCodeToolName(toolName) === "todowrite";
+
+const extractClaudeTodoPlanProgress = (input: unknown): RunPlanProgressPayload | null => {
+  const record = isRecord(input) ? input : {};
+  const todos = asArray(record.todos);
+  if (!todos?.length) {
+    return null;
+  }
+  const steps = todos
+    .filter((todo): todo is Record<string, unknown> => isRecord(todo))
+    .map((todo, index) => {
+      const content = asString(todo.content)?.trim() ?? asString(todo.title)?.trim() ?? asString(todo.activeForm)?.trim() ?? "";
+      return {
+        title: content || `Step ${String(index + 1)}`,
+        status: normalizeRunPlanStepStatus(todo.status),
+      };
+    });
+  return steps.length > 0 ? { steps, source: "claude" } : null;
+};
+
+const buildPlanProgressChunk = (
+  progress: RunPlanProgressPayload,
+  metadata: Record<string, unknown>,
+): HarnessRunChunk => ({
+  type: "plan-progress",
+  title: "Plan progress",
+  value: formatRunPlanProgressContent(progress),
+  metadata: {
+    provider: "claude-code",
+    planProgress: progress,
+    streamId: "claude-plan-progress",
+    replace: true,
+    ...metadata,
+  },
+});
 
 const claudePermissionDenied = (message: string): PermissionResult => ({
   behavior: "deny",
@@ -880,6 +919,20 @@ export const buildClaudeCanUseTool = (options: ClaudeTurnExecutionOptions): CanU
       message: "BuildWarden captured the proposed plan for user review. Stop here and wait for a follow-up.",
       interrupt: true,
     };
+  }
+
+  if (normalizedToolName === "todowrite") {
+    const progress = extractClaudeTodoPlanProgress(input);
+    if (progress) {
+      options.onChunk?.(
+        buildPlanProgressChunk(progress, {
+          toolName: "TodoWrite",
+          callId: callbackOptions.toolUseID,
+          rawToolInput: input,
+        }),
+      );
+    }
+    return claudePermissionAllowed(input);
   }
 
   if (options.yoloMode === true) {
@@ -1080,6 +1133,20 @@ export const parseClaudeCodeStreamEvent = (
     if (partType === "tool_use") {
       const rawName = typeof part.name === "string" ? part.name : "tool";
       const name = normalizeClaudeCodeToolName(rawName);
+      if (isClaudeTodoWriteTool(name)) {
+        const progress = extractClaudeTodoPlanProgress(part.input);
+        if (progress) {
+          chunks.push(
+            buildPlanProgressChunk(progress, {
+              toolName: "TodoWrite",
+              rawToolName: rawName,
+              callId: typeof part.id === "string" ? part.id : undefined,
+              rawToolInput: part.input,
+            }),
+          );
+        }
+        continue;
+      }
       const toolInput = describeClaudeToolInput(name, part.input);
       chunks.push({
         type: "tool-call",

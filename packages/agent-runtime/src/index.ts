@@ -66,6 +66,7 @@ export class DefaultRuntimeExecutor implements RuntimeExecutor {
           "approval-resolved",
           "user-input-requested",
           "plan-updated",
+          "plan-progress",
           "diff-updated",
           "tool-progress",
           "request",
@@ -99,6 +100,8 @@ export class DefaultRuntimeExecutor implements RuntimeExecutor {
                           ? "User Input Requested"
                           : chunk.type === "plan-updated" || chunk.type === "plan"
                             ? "Plan Updated"
+                            : chunk.type === "plan-progress"
+                              ? "Plan Progress"
                             : chunk.type === "diff-updated"
                               ? "Diff Updated"
                               : "Run Status"),

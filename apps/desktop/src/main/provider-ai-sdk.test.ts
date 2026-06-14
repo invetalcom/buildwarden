@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AI_SDK_RECOMMENDED_MODEL_IDS } from "@buildwarden/shared";
-import { AiSdkProviderAdapter } from "../../../../packages/provider-ai-sdk/src";
+import { AiSdkProviderAdapter, buildAiSdkPlanProgressChunk } from "../../../../packages/provider-ai-sdk/src";
 
 describe("AiSdkProviderAdapter", () => {
   it("rejects missing api keys for direct providers", () => {
@@ -33,5 +33,32 @@ describe("AiSdkProviderAdapter", () => {
   it("lists recommended models from shared catalog", () => {
     const adapter = new AiSdkProviderAdapter();
     expect(adapter.listRecommendedModels()).toEqual([...AI_SDK_RECOMMENDED_MODEL_IDS]);
+  });
+
+  it("builds plan-progress chunks for the internal update_plan tool", () => {
+    expect(
+      buildAiSdkPlanProgressChunk({
+        steps: [
+          { title: "Inspect contracts", status: "completed" },
+          { title: "Patch renderer", status: "in_progress" },
+        ],
+      }),
+    ).toEqual({
+      type: "plan-progress",
+      title: "Plan progress",
+      value: "1. [x] Inspect contracts\n2. [-] Patch renderer",
+      metadata: {
+        provider: "ai-sdk",
+        planProgress: {
+          source: "ai-sdk",
+          steps: [
+            { title: "Inspect contracts", status: "completed" },
+            { title: "Patch renderer", status: "inProgress" },
+          ],
+        },
+        streamId: "ai-sdk-plan-progress",
+        replace: true,
+      },
+    });
   });
 });

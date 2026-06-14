@@ -10,7 +10,7 @@ import {
   type OpenaiResponsesTextProviderMetadata,
 } from "@ai-sdk/openai";
 import { createXai } from "@ai-sdk/xai";
-import { generateText, jsonSchema, stepCountIs, streamText, tool, type GeneratedFile, type LanguageModel } from "ai";
+import { generateText, jsonSchema, stepCountIs, streamText, tool, type GeneratedFile, type LanguageModel, type ToolSet } from "ai";
 import { ProxyAgent } from "undici";
 import type {
   ChatAttachmentPayload,
@@ -33,6 +33,8 @@ import {
   PROVIDER_CONFIG_DEFAULT_HEADERS_KEY,
   buildNetworkProxyUrl,
   estimateBase64ByteLength,
+  formatRunPlanProgressContent,
+  normalizeRunPlanProgressPayload,
   runShellActivityStreamId,
   shouldBypassNetworkProxyForUrl,
 } from "@buildwarden/shared";
@@ -594,6 +596,31 @@ const createLanguageModel = (input: RunExecutionRequest, devLogger?: { createLog
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+export const buildAiSdkPlanProgressChunk = (args: unknown): HarnessRunChunk | null => {
+  const parsedArgs = isRecord(args) ? args : {};
+  const progress = normalizeRunPlanProgressPayload(
+    {
+      ...parsedArgs,
+      source: "ai-sdk",
+    },
+    "ai-sdk",
+  );
+  if (!progress) {
+    return null;
+  }
+  return {
+    type: "plan-progress",
+    title: "Plan progress",
+    value: formatRunPlanProgressContent(progress),
+    metadata: {
+      provider: "ai-sdk",
+      planProgress: progress,
+      streamId: "ai-sdk-plan-progress",
+      replace: true,
+    },
+  };
+};
+
 const stringField = (record: Record<string, unknown>, key: string): string | undefined => {
   const value = record[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -733,7 +760,14 @@ const buildRunMessages = (input: RunExecutionRequest): Array<Record<string, unkn
   return [
     {
       role: "system",
-      content: `${SYSTEM_PROMPT}\n\n${MODE_INSTRUCTIONS[input.mode]}`,
+      content: [
+        SYSTEM_PROMPT,
+        ...(input.mode === "ask"
+          ? []
+          : ["When working from a multi-step plan, use update_plan to keep a compact checklist current before and after meaningful implementation steps."]),
+        "",
+        MODE_INSTRUCTIONS[input.mode],
+      ].join("\n"),
     },
     {
       role: "user",
@@ -929,65 +963,111 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
     let completedToolRounds = 0;
     let successfulMutationToolCalls = 0;
 
-    const tools =
-      isChat
-        ? openAiChatTools
-        : Object.fromEntries(
-            toolContext.tools.map((runTool) => [
-              runTool.name,
-              tool({
-                description: runTool.description,
-                inputSchema: jsonSchema(runTool.inputSchema),
-                execute: async (args: unknown) => {
-                  const parsedArgs = typeof args === "object" && args && !Array.isArray(args) ? (args as Record<string, unknown>) : {};
-                  const callId = crypto.randomUUID();
-                  onChunk({
-                    type: "tool-call",
-                    title: `Tool call: ${runTool.name}`,
-                    value: describeToolCall(runTool.name, parsedArgs),
-                    metadata: {
-                      toolName: runTool.name,
-                      arguments: parsedArgs,
-                      callId,
-                    },
-                  });
+    const runTools: ToolSet = Object.fromEntries(
+      toolContext.tools.map((runTool) => [
+        runTool.name,
+        tool({
+          description: runTool.description,
+          inputSchema: jsonSchema(runTool.inputSchema),
+          execute: async (args: unknown) => {
+            const parsedArgs = typeof args === "object" && args && !Array.isArray(args) ? (args as Record<string, unknown>) : {};
+            const callId = crypto.randomUUID();
+            onChunk({
+              type: "tool-call",
+              title: `Tool call: ${runTool.name}`,
+              value: describeToolCall(runTool.name, parsedArgs),
+              metadata: {
+                toolName: runTool.name,
+                arguments: parsedArgs,
+                callId,
+              },
+            });
 
-                  const result = await toolContext.executeTool({
-                    id: callId,
-                    name: runTool.name,
-                    arguments: parsedArgs,
-                  });
-                  if (
-                    result.ok &&
-                    (runTool.name === "write_file" || runTool.name === "edit_file" || runTool.name === "delete_file")
-                  ) {
-                    successfulMutationToolCalls += 1;
-                  }
+            const result = await toolContext.executeTool({
+              id: callId,
+              name: runTool.name,
+              arguments: parsedArgs,
+            });
+            if (
+              result.ok &&
+              (runTool.name === "write_file" || runTool.name === "edit_file" || runTool.name === "delete_file")
+            ) {
+              successfulMutationToolCalls += 1;
+            }
 
-                  onChunk({
-                    type: "tool-result",
-                    title: `Tool result: ${runTool.name}`,
-                    value: result.content,
-                    metadata: {
-                      toolName: runTool.name,
-                      callId,
-                      ok: result.ok,
-                      ...result.metadata,
-                      ...(runTool.name === "run_shell"
-                        ? { streamId: runShellActivityStreamId(callId), replace: true }
-                        : {}),
-                    },
-                  });
+            onChunk({
+              type: "tool-result",
+              title: `Tool result: ${runTool.name}`,
+              value: result.content,
+              metadata: {
+                toolName: runTool.name,
+                callId,
+                ok: result.ok,
+                ...result.metadata,
+                ...(runTool.name === "run_shell"
+                  ? { streamId: runShellActivityStreamId(callId), replace: true }
+                  : {}),
+              },
+            });
 
-                  return {
-                    ok: result.ok,
-                    content: result.content,
-                    metadata: result.metadata,
-                  };
+            return {
+              ok: result.ok,
+              content: result.content,
+              metadata: result.metadata,
+            };
+          },
+        }),
+      ]),
+    );
+
+    if (!isChat && input.mode !== "ask") {
+      runTools.update_plan = tool({
+        description: "Update the visible implementation checklist. This only reports progress to BuildWarden; it does not read or write files.",
+        inputSchema: jsonSchema({
+          type: "object",
+          properties: {
+            explanation: {
+              type: ["string", "null"],
+              description: "Optional short note explaining why the plan changed.",
+            },
+            steps: {
+              type: "array",
+              minItems: 1,
+              maxItems: 24,
+              items: {
+                type: "object",
+                properties: {
+                  title: { type: "string" },
+                  status: { type: "string", enum: ["pending", "inProgress", "in_progress", "completed"] },
                 },
-              }),
-            ]),
-          );
+                required: ["title", "status"],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ["steps"],
+          additionalProperties: false,
+        }),
+        execute: async (args: unknown) => {
+          const chunk = buildAiSdkPlanProgressChunk(args);
+          const progress = normalizeRunPlanProgressPayload(chunk?.metadata?.planProgress, "ai-sdk");
+          if (!chunk || !progress) {
+            return {
+              ok: false,
+              content: "Plan progress was not updated because no valid steps were provided.",
+            };
+          }
+          const completed = progress.steps.filter((step) => step.status === "completed").length;
+          onChunk(chunk);
+          return {
+            ok: true,
+            content: `Plan progress updated (${String(completed)}/${String(progress.steps.length)} completed).`,
+          };
+        },
+      });
+    }
+
+    const tools = isChat ? openAiChatTools : runTools;
 
     let latestResponseId: string | null = null;
     const streamOutId = crypto.randomUUID();

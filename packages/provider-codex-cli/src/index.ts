@@ -24,6 +24,8 @@ import {
   PROVIDER_CONFIG_CODEX_BINARY_PATH_KEY,
   PROVIDER_CONFIG_CODEX_HOME_PATH_KEY,
   buildNetworkProxyUrl,
+  formatRunPlanProgressContent,
+  normalizeRunPlanProgressPayload,
   runShellActivityStreamId,
 } from "@buildwarden/shared";
 import { createDevLogger } from "./dev-logger";
@@ -550,6 +552,25 @@ export const normalizeCodexTokenUsage = (value: unknown): RunTokenUsage => {
     lastCachedInputTokens,
     lastOutputTokens,
     lastReasoningTokens,
+  };
+};
+
+export const buildCodexPlanProgressChunk = (params: unknown): HarnessRunChunk | null => {
+  const progress = normalizeRunPlanProgressPayload(params, "codex");
+  if (!progress) {
+    return null;
+  }
+  return {
+    type: "plan-progress",
+    title: "Plan progress",
+    value: formatRunPlanProgressContent(progress),
+    metadata: {
+      provider: "codex-cli",
+      planProgress: progress,
+      streamId: "codex-plan-progress",
+      replace: true,
+      rawPlanUpdate: params ?? {},
+    },
   };
 };
 
@@ -1289,6 +1310,14 @@ class CodexAppServerSession {
           replace: true,
         },
       });
+      return;
+    }
+
+    if (notification.method === "turn/plan/updated") {
+      const chunk = buildCodexPlanProgressChunk(params);
+      if (chunk) {
+        this.onChunk?.(chunk);
+      }
       return;
     }
 
