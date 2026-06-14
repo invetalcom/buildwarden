@@ -6,6 +6,7 @@ import { Button } from "../ui/button";
 import { AnchorDropdownPortal } from "./anchor-dropdown-portal";
 
 const statusLabel = (status: string) => (status === "inProgress" ? "in progress" : status);
+const MAX_SEGMENTED_STEPS = 5;
 
 const StepIcon = ({ status }: { status: string }) => {
   if (status === "completed") {
@@ -43,6 +44,7 @@ export function RunPlanProgressPill({ progress }: { progress: DerivedRunPlanProg
       completed,
       total: progress.steps.length,
       activeTitle: active?.title ?? "Plan",
+      completedPercent: Math.round((completed / progress.steps.length) * 100),
     };
   }, [progress]);
 
@@ -69,21 +71,30 @@ export function RunPlanProgressPill({ progress }: { progress: DerivedRunPlanProg
         <span className="shrink-0 tabular-nums">
           {summary.completed}/{summary.total}
         </span>
-        <span className="hidden h-1.5 w-14 overflow-hidden rounded-full bg-[var(--ec-panel)] sm:flex" aria-hidden>
-          {progress.steps.map((step, index) => (
+        {summary.total <= MAX_SEGMENTED_STEPS ? (
+          <span className="hidden h-1.5 w-14 overflow-hidden rounded-full bg-[var(--ec-panel)] sm:flex" aria-hidden>
+            {progress.steps.map((step, index) => (
+              <span
+                key={`${step.status}:${index}:${step.title}`}
+                className={cn(
+                  "min-w-0 flex-1 border-r border-[var(--ec-bg)] last:border-r-0",
+                  step.status === "completed"
+                    ? "bg-[var(--ec-success)]"
+                    : step.status === "inProgress"
+                      ? "bg-[var(--ec-info)]"
+                      : "bg-[var(--ec-border-strong)]",
+                )}
+              />
+            ))}
+          </span>
+        ) : (
+          <span className="hidden h-1.5 w-14 overflow-hidden rounded-full bg-[var(--ec-panel)] sm:block" aria-hidden>
             <span
-              key={`${step.status}:${index}:${step.title}`}
-              className={cn(
-                "min-w-0 flex-1 border-r border-[var(--ec-bg)] last:border-r-0",
-                step.status === "completed"
-                  ? "bg-[var(--ec-success)]"
-                  : step.status === "inProgress"
-                    ? "bg-[var(--ec-info)]"
-                    : "bg-[var(--ec-border-strong)]",
-              )}
+              className="block h-full rounded-full bg-[var(--ec-success)]"
+              style={{ width: `${String(summary.completedPercent)}%` }}
             />
-          ))}
-        </span>
+          </span>
+        )}
         <span className="hidden max-w-[10rem] truncate text-left text-[11px] text-[var(--ec-text)] md:inline">
           {summary.activeTitle}
         </span>
