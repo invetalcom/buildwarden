@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseRunPlanProgressStepsFromMarkdown } from "@buildwarden/shared";
+import { normalizeRunPlanStepStatus, parseRunPlanProgressStepsFromMarkdown } from "@buildwarden/shared";
 import { deriveLatestRunPlanProgress, type RunPlanProgressStepLike } from "./run-plan-progress";
 
 const step = (
@@ -16,6 +16,14 @@ const step = (
 });
 
 describe("run plan progress markdown parsing", () => {
+  it("normalizes status variants case-insensitively", () => {
+    expect(normalizeRunPlanStepStatus("Completed")).toBe("completed");
+    expect(normalizeRunPlanStepStatus("DONE")).toBe("completed");
+    expect(normalizeRunPlanStepStatus("IN_PROGRESS")).toBe("inProgress");
+    expect(normalizeRunPlanStepStatus("in-progress")).toBe("inProgress");
+    expect(normalizeRunPlanStepStatus("ACTIVE")).toBe("inProgress");
+  });
+
   it("parses compact checkbox progress with status inference", () => {
     expect(
       parseRunPlanProgressStepsFromMarkdown(

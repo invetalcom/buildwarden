@@ -61,4 +61,10 @@ describe("AiSdkProviderAdapter", () => {
       },
     });
   });
+
+  it("returns null for invalid update_plan payloads", () => {
+    expect(buildAiSdkPlanProgressChunk({ steps: [] })).toBeNull();
+    expect(buildAiSdkPlanProgressChunk({})).toBeNull();
+    expect(buildAiSdkPlanProgressChunk({ steps: "not an array" })).toBeNull();
+  });
 });

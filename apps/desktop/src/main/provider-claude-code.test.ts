@@ -432,6 +432,31 @@ describe("ClaudeCodeProviderAdapter", () => {
     ]);
   });
 
+  it("caps Claude TodoWrite plan progress to the shared step limit", () => {
+    const parsed = parseClaudeCodeStreamEvent({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "todo-1",
+            name: "TodoWrite",
+            input: {
+              todos: Array.from({ length: 30 }, (_, index) => ({
+                content: `Step ${String(index + 1)}`,
+                status: "pending",
+              })),
+            },
+          },
+        ],
+      },
+    });
+
+    expect(parsed.chunks).toHaveLength(1);
+    const metadata = parsed.chunks[0]?.metadata as { planProgress?: { steps?: unknown[] } } | undefined;
+    expect(metadata?.planProgress?.steps).toHaveLength(24);
+  });
+
   it("parses Claude Code reasoning and tool results as distinct chunks", () => {
     const reasoning = parseClaudeCodeStreamEvent({
       type: "assistant",

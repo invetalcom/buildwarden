@@ -33,6 +33,7 @@ import {
   PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY,
   buildNetworkProxyUrl,
   formatRunPlanProgressContent,
+  normalizeRunPlanProgressPayload,
   normalizeRunPlanStepStatus,
 } from "@buildwarden/shared";
 
@@ -725,7 +726,7 @@ const extractClaudeTodoPlanProgress = (input: unknown): RunPlanProgressPayload |
         status: normalizeRunPlanStepStatus(todo.status),
       };
     });
-  return steps.length > 0 ? { steps, source: "claude" } : null;
+  return normalizeRunPlanProgressPayload({ steps, source: "claude" }, "claude");
 };
 
 const buildPlanProgressChunk = (

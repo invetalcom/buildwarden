@@ -273,10 +273,17 @@ export interface RunPlanProgressPayload {
 }
 
 export const normalizeRunPlanStepStatus = (value: unknown): RunPlanStepStatus => {
-  if (value === "completed" || value === "done" || value === "complete") {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase().replace(/[\s-]+/g, "_") : "";
+  if (normalized === "completed" || normalized === "done" || normalized === "complete") {
     return "completed";
   }
-  if (value === "inProgress" || value === "in_progress" || value === "active" || value === "current" || value === "progress") {
+  if (
+    normalized === "inprogress" ||
+    normalized === "in_progress" ||
+    normalized === "active" ||
+    normalized === "current" ||
+    normalized === "progress"
+  ) {
     return "inProgress";
   }
   return "pending";

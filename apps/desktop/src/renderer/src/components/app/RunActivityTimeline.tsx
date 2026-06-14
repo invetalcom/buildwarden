@@ -3,6 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   extractAttachmentNamesFromMetadata,
   extractAttachmentPayloadsFromMetadata,
+  formatRunPlanProgressContent,
   type RunEventType,
   type RunMode,
   type RunStatus,
@@ -1419,6 +1420,7 @@ export function RunActivityTimeline({
           const progress = normalizeRunPlanProgressPayload(entry.metadata.planProgress);
           const completed = progress?.steps.filter((step) => step.status === "completed").length ?? 0;
           const total = progress?.steps.length ?? null;
+          const planContent = progress ? formatRunPlanProgressContent(progress) : entry.step.content;
           return (
             <AgentLogRow key={entry.step.id} tone="plan" label="Plan" time={rowTime(timestamp)}>
               <AgentPanel tone="plan" className="px-2.5 py-2">
@@ -1433,7 +1435,7 @@ export function RunActivityTimeline({
                     </AgentChip>
                   ) : null}
                 </div>
-                <RunPlanSteps content={entry.step.content} />
+                <RunPlanSteps content={planContent} />
               </AgentPanel>
             </AgentLogRow>
           );
