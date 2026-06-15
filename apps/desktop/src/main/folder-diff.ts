@@ -3,26 +3,11 @@ import { existsSync } from "node:fs";
 import { copyFile, lstat, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { createTwoFilesPatch } from "diff";
+import { FOLDER_WORKSPACE_IGNORED_NAMES } from "./folder-workspace-constants";
 
 const MAX_TEXT_SNAPSHOT_BYTES = 512 * 1024;
 const MANIFEST_FILE = "manifest.json";
 const FILES_DIR = "files";
-const IGNORED_NAMES = new Set([
-  ".git",
-  ".hg",
-  ".svn",
-  ".cache",
-  ".next",
-  ".nuxt",
-  ".turbo",
-  ".vite",
-  "coverage",
-  "dist",
-  "build",
-  "node_modules",
-  "target",
-  ".buildwarden-worktrees",
-]);
 
 type SnapshotEntry = {
   path: string;
@@ -98,7 +83,7 @@ const readCurrentFile = async (rootPath: string, absolutePath: string): Promise<
 const scanFiles = async (rootPath: string, currentPath = rootPath, files: CurrentFile[] = []): Promise<CurrentFile[]> => {
   const entries = await readdir(currentPath, { withFileTypes: true });
   for (const entry of entries) {
-    if (IGNORED_NAMES.has(entry.name)) {
+    if (FOLDER_WORKSPACE_IGNORED_NAMES.has(entry.name)) {
       continue;
     }
     const absolutePath = join(currentPath, entry.name);

@@ -1,25 +1,7 @@
 import { existsSync } from "node:fs";
 import { copyFile, lstat, mkdir, readdir, readlink, rm, symlink } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
-
-const MANAGED_WORKSPACE_DIR = ".buildwarden-worktrees";
-
-const IGNORED_NAMES = new Set([
-  ".git",
-  ".hg",
-  ".svn",
-  ".cache",
-  ".next",
-  ".nuxt",
-  ".turbo",
-  ".vite",
-  "coverage",
-  "dist",
-  "build",
-  "node_modules",
-  "target",
-  MANAGED_WORKSPACE_DIR,
-]);
+import { FOLDER_WORKSPACE_IGNORED_NAMES, MANAGED_WORKSPACE_DIR } from "./folder-workspace-constants";
 
 export const sanitizeWorkspaceSegment = (value: string): string =>
   value
@@ -49,7 +31,7 @@ const copyDirectoryContents = async (sourcePath: string, targetPath: string): Pr
   await mkdir(targetPath, { recursive: true });
   const entries = await readdir(sourcePath, { withFileTypes: true });
   for (const entry of entries) {
-    if (IGNORED_NAMES.has(entry.name)) {
+    if (FOLDER_WORKSPACE_IGNORED_NAMES.has(entry.name)) {
       continue;
     }
 
