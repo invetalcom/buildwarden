@@ -4683,7 +4683,7 @@ export class AppController
       });
       return {
         diff: outcome.diff,
-        worktreeUnavailable: false,
+        worktreeUnavailable: outcome.missingSnapshot,
         diffUnavailableReason: outcome.missingSnapshot ? "No folder baseline snapshot is available for this run." : null,
       };
     }
