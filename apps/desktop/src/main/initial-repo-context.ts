@@ -377,7 +377,7 @@ export const buildInitialRepoContext = async (
   ]);
 
   const gitStatusText = gitStatus?.content ?? "Git history unavailable: this run uses a plain project folder.";
-  const changedFiles = parseChangedFiles(gitStatusText, profile.changedFilesMax);
+  const changedFiles = gitStatus?.content ? parseChangedFiles(gitStatus.content, profile.changedFilesMax) : [];
   const sections: ContextSection[] = [
     {
       key: "facts",
