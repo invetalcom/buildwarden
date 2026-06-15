@@ -202,8 +202,8 @@ export const GitWorkspaceSettingsTab = ({
             </div>
             <Input placeholder="Display name (optional)" value={projectName} onChange={(event) => onProjectNameChange(event.target.value)} />
             {projectFolderGitWarning ? (
-              <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-200">
-                <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-300" aria-hidden />
+              <div className="flex items-start gap-2 rounded-md border border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] px-3 py-2 text-xs leading-5 text-[var(--ec-warning)]">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-[var(--ec-warning)]" aria-hidden />
                 <span className="min-w-0">{projectFolderGitWarning}</span>
               </div>
             ) : null}
