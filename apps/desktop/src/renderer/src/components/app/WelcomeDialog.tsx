@@ -54,12 +54,32 @@ const focusableSelector = [
   "[tabindex]:not([tabindex='-1'])",
 ].join(",");
 
+const WELCOME_DIALOG_FOCUS_SCOPE_ID = "welcome-dialog";
+const welcomeDialogPortalSelector = `[data-focus-scope-portal-id="${WELCOME_DIALOG_FOCUS_SCOPE_ID}"]`;
+
 const getFocusableElements = (container: HTMLElement): HTMLElement[] =>
   Array.from(container.querySelectorAll<HTMLElement>(focusableSelector)).filter((element) => {
     if (element.getAttribute("aria-hidden") === "true") return false;
     if (element.hasAttribute("disabled")) return false;
     return element.offsetParent !== null || element === document.activeElement;
   });
+
+const getWelcomeFocusScopeElements = (dialog: HTMLElement): HTMLElement[] => [
+  ...getFocusableElements(dialog),
+  ...Array.from(document.querySelectorAll<HTMLElement>(welcomeDialogPortalSelector)).flatMap((portal) =>
+    getFocusableElements(portal),
+  ),
+];
+
+const isWithinWelcomeFocusScope = (dialog: HTMLElement, target: EventTarget | null): boolean => {
+  if (!(target instanceof Node)) {
+    return false;
+  }
+  if (dialog.contains(target)) {
+    return true;
+  }
+  return target instanceof Element && Boolean(target.closest(welcomeDialogPortalSelector));
+};
 
 export const WelcomeDialog = ({
   stepKey,
@@ -116,18 +136,21 @@ export const WelcomeDialog = ({
     titleRef.current?.focus();
 
     const focusWithinDialog = (event: FocusEvent) => {
-      if (event.target instanceof Node && dialog.contains(event.target)) {
+      if (isWithinWelcomeFocusScope(dialog, event.target)) {
         return;
       }
-      (getFocusableElements(dialog)[0] ?? titleRef.current ?? dialog).focus();
+      (getWelcomeFocusScopeElements(dialog)[0] ?? titleRef.current ?? dialog).focus();
     };
 
     const trapTabKey = (event: KeyboardEvent) => {
       if (event.key !== "Tab") {
         return;
       }
+      if (!isWithinWelcomeFocusScope(dialog, event.target)) {
+        return;
+      }
 
-      const focusableElements = getFocusableElements(dialog);
+      const focusableElements = getWelcomeFocusScopeElements(dialog);
       if (focusableElements.length === 0) {
         event.preventDefault();
         (titleRef.current ?? dialog).focus();
@@ -151,10 +174,10 @@ export const WelcomeDialog = ({
     };
 
     document.addEventListener("focusin", focusWithinDialog);
-    dialog.addEventListener("keydown", trapTabKey);
+    document.addEventListener("keydown", trapTabKey);
     return () => {
       document.removeEventListener("focusin", focusWithinDialog);
-      dialog.removeEventListener("keydown", trapTabKey);
+      document.removeEventListener("keydown", trapTabKey);
       previouslyFocused?.focus();
     };
   }, []);
@@ -166,6 +189,7 @@ export const WelcomeDialog = ({
         role="dialog"
         aria-modal="true"
         aria-labelledby="welcome-dialog-title"
+        data-focus-scope-id={WELCOME_DIALOG_FOCUS_SCOPE_ID}
         tabIndex={-1}
         className="glass-popover flex max-h-[calc(100vh-2rem)] w-full max-w-6xl overflow-hidden text-[var(--ec-text)]"
       >
