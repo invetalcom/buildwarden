@@ -72,4 +72,17 @@ describe("run activity timeline shaping", () => {
     expect(entries[0]?.kind).toBe("diff-batch");
     expect(entries[0]?.kind === "diff-batch" ? entries[0].items : []).toHaveLength(2);
   });
+
+  it("shows only the latest plan progress row", () => {
+    const entries = buildActivityEntries([
+      step("progress-1", "plan-progress", { planProgress: { steps: [{ title: "First", status: "inProgress" }] } }, "1. [-] First"),
+      step("answer", "output", { source: "assistant" }, "Working on it"),
+      step("progress-2", "plan-progress", { planProgress: { steps: [{ title: "First", status: "completed" }] } }, "1. [x] First"),
+    ]);
+
+    const progressEntries = entries.filter((entry) => entry.kind === "single" && entry.step.eventType === "plan-progress");
+
+    expect(progressEntries).toHaveLength(1);
+    expect(progressEntries[0]?.kind === "single" ? progressEntries[0].step.id : null).toBe("progress-2");
+  });
 });

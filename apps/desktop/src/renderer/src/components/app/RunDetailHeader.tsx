@@ -1,4 +1,4 @@
-import type { Dispatch, RefObject, SetStateAction } from "react";
+import { useMemo, type Dispatch, type RefObject, type SetStateAction } from "react";
 import {
   RUN_TIMELINE_DENSITIES,
   type RunDetail,
@@ -26,6 +26,8 @@ import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { AnchorDropdownPortal } from "./anchor-dropdown-portal";
 import { OpenInIdeControl } from "./open-in-ide-control";
+import { deriveLatestRunPlanProgress } from "../../lib/run-plan-progress";
+import { RunPlanProgressPill } from "./RunPlanProgressPill";
 import { RunTokenBadge } from "./RunTokenBadge";
 
 const RUN_TIMELINE_DENSITY_LABELS: Record<RunTimelineDensity, string> = {
@@ -143,6 +145,10 @@ export const RunDetailHeader = ({
   const canCommit = run.status === "completed" && hasOpenChanges;
   const canPublish = canManageChanges && !hasOpenChanges && hasCommit;
   const canCreateLocalBranch = canManageChanges && (hasOpenChanges || hasCommit);
+  const planProgress = useMemo(
+    () => deriveLatestRunPlanProgress(runDetail?.steps ?? [], run.mode),
+    [run.mode, runDetail?.steps],
+  );
 
   return (
     <Card className={cn("relative z-30 shrink-0", splitView ? "px-3 py-2" : "px-4 py-3")}>
@@ -180,6 +186,7 @@ export const RunDetailHeader = ({
                 outputTokens={runDetail.run.outputTokens}
                 usage={tokenUsage}
               />
+              <RunPlanProgressPill progress={planProgress} />
             </>
           ) : null}
         </div>

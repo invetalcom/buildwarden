@@ -303,6 +303,55 @@ describe("ClaudeCodeProviderAdapter", () => {
     ]);
   });
 
+  it("allows Claude TodoWrite and emits plan progress", async () => {
+    const chunks: unknown[] = [];
+    const canUseTool = buildClaudeCanUseTool({
+      runId: "run-1",
+      cwd: "C:\\repo",
+      prompt: "test",
+      modelId: "sonnet",
+      inputMode: "plan",
+      signal: new AbortController().signal,
+      onChunk: (chunk) => chunks.push(chunk),
+    });
+
+    await expect(
+      canUseTool(
+        "TodoWrite",
+        {
+          todos: [
+            { content: "Inspect contracts", status: "completed" },
+            { content: "Patch header", status: "in_progress" },
+            { content: "Run validation", status: "pending" },
+          ],
+        },
+        { signal: new AbortController().signal, toolUseID: "todo-1" },
+      ),
+    ).resolves.toMatchObject({ behavior: "allow" });
+    expect(chunks).toEqual([
+      {
+        type: "plan-progress",
+        title: "Plan progress",
+        value: "1. [x] Inspect contracts\n2. [-] Patch header\n3. [ ] Run validation",
+        metadata: expect.objectContaining({
+          provider: "claude-code",
+          toolName: "TodoWrite",
+          callId: "todo-1",
+          streamId: "claude-plan-progress",
+          replace: true,
+          planProgress: {
+            source: "claude",
+            steps: [
+              { title: "Inspect contracts", status: "completed" },
+              { title: "Patch header", status: "inProgress" },
+              { title: "Run validation", status: "pending" },
+            ],
+          },
+        }),
+      },
+    ]);
+  });
+
   it("parses Claude Code assistant text and tool use as separate timeline chunks", () => {
     const parsed = parseClaudeCodeStreamEvent({
       type: "assistant",
@@ -331,6 +380,81 @@ describe("ClaudeCodeProviderAdapter", () => {
         metadata: { assistantKind: "assistant" },
       },
     ]);
+  });
+
+  it("parses Claude TodoWrite tool use as plan progress", () => {
+    const parsed = parseClaudeCodeStreamEvent({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "todo-1",
+            name: "TodoWrite",
+            input: {
+              todos: [
+                { content: "   ", status: "in_progress" },
+                { content: "Ship it", status: "completed" },
+              ],
+            },
+          },
+        ],
+      },
+    });
+
+    expect(parsed.chunks).toEqual([
+      {
+        type: "plan-progress",
+        title: "Plan progress",
+        value: "1. [-] Step 1\n2. [x] Ship it",
+        metadata: {
+          provider: "claude-code",
+          toolName: "TodoWrite",
+          rawToolName: "TodoWrite",
+          callId: "todo-1",
+          rawToolInput: {
+            todos: [
+              { content: "   ", status: "in_progress" },
+              { content: "Ship it", status: "completed" },
+            ],
+          },
+          planProgress: {
+            source: "claude",
+            steps: [
+              { title: "Step 1", status: "inProgress" },
+              { title: "Ship it", status: "completed" },
+            ],
+          },
+          streamId: "claude-plan-progress",
+          replace: true,
+        },
+      },
+    ]);
+  });
+
+  it("caps Claude TodoWrite plan progress to the shared step limit", () => {
+    const parsed = parseClaudeCodeStreamEvent({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "todo-1",
+            name: "TodoWrite",
+            input: {
+              todos: Array.from({ length: 30 }, (_, index) => ({
+                content: `Step ${String(index + 1)}`,
+                status: "pending",
+              })),
+            },
+          },
+        ],
+      },
+    });
+
+    expect(parsed.chunks).toHaveLength(1);
+    const metadata = parsed.chunks[0]?.metadata as { planProgress?: { steps?: unknown[] } } | undefined;
+    expect(metadata?.planProgress?.steps).toHaveLength(24);
   });
 
   it("parses Claude Code reasoning and tool results as distinct chunks", () => {

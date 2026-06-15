@@ -3,18 +3,21 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   extractAttachmentNamesFromMetadata,
   extractAttachmentPayloadsFromMetadata,
+  formatRunPlanProgressContent,
   type RunEventType,
   type RunMode,
   type RunStatus,
   type RunTimelineDensity,
   type RunUserInputAnswers,
   type RunUserInputQuestion,
+  normalizeRunPlanProgressPayload,
 } from "@buildwarden/shared";
 import {
   Check,
   ChevronDown,
   ChevronRight,
   Copy,
+  ListTodo,
   Loader2,
   MessageSquareText,
   RotateCcw,
@@ -272,6 +275,7 @@ const estimateTimelineItemSize = (item: TimelineRenderItem | undefined, density:
   if (entry.step.eventType === "status") return 64;
   if (entry.step.eventType === "request" || entry.step.eventType === "user-input-requested") return 190;
   if (entry.step.eventType === "approval-requested" || entry.step.eventType === "approval-resolved") return 130;
+  if (entry.step.eventType === "plan-progress") return 150;
   if (entry.step.eventType === "plan" || entry.step.eventType === "plan-updated" || entry.step.eventType === "diff-updated") {
     return 260;
   }
@@ -450,8 +454,13 @@ const runModeBadgeClassName = (mode: RunMode) => {
 export const buildActivityEntries = (steps: RunActivityStep[]) => {
   const entries: SingleActivityEntry[] = [];
   const pendingToolEntries = new Map<string, number>();
+  const latestPlanProgressStepId = steps.findLast((step) => step.eventType === "plan-progress")?.id;
 
   for (const step of steps) {
+    if (step.eventType === "plan-progress" && step.id !== latestPlanProgressStepId) {
+      continue;
+    }
+
     const metadata = safeParseMetadata(step.metadataJson);
     const callId = typeof metadata.callId === "string" ? metadata.callId : null;
 
@@ -1255,6 +1264,7 @@ export function RunActivityTimeline({
           entry.step.eventType === "user-input-requested" ||
           entry.step.eventType === "approval-requested" ||
           entry.step.eventType === "approval-resolved";
+        const isPlanProgressEntry = entry.step.eventType === "plan-progress";
         const isPlanEntry = entry.step.eventType === "plan" || entry.step.eventType === "plan-updated";
         const isDiffEntry = entry.step.eventType === "diff-updated";
         const mode = (entry.metadata.mode as RunMode) ?? run.mode;
@@ -1403,6 +1413,31 @@ export function RunActivityTimeline({
                 <ActivityMarkdownOrGitDiff content={entry.step.content} compact={compactContent} className="mt-1.5 text-[color:var(--ec-text)]" />
               )}
             </AgentPanel>
+          );
+        }
+
+        if (isPlanProgressEntry) {
+          const progress = normalizeRunPlanProgressPayload(entry.metadata.planProgress);
+          const completed = progress?.steps.filter((step) => step.status === "completed").length ?? 0;
+          const total = progress?.steps.length ?? null;
+          const planContent = progress ? formatRunPlanProgressContent(progress) : entry.step.content;
+          return (
+            <AgentLogRow key={entry.step.id} tone="plan" label="Plan" time={rowTime(timestamp)}>
+              <AgentPanel tone="plan" className="px-2.5 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <ListTodo className="h-3.5 w-3.5 shrink-0 text-[var(--ec-info)]" />
+                    <p className="truncate text-[11px] font-medium text-[color:var(--ec-text)]">{entry.step.title}</p>
+                  </div>
+                  {total !== null ? (
+                    <AgentChip className="shrink-0">
+                      {completed}/{total}
+                    </AgentChip>
+                  ) : null}
+                </div>
+                <RunPlanSteps content={planContent} />
+              </AgentPanel>
+            </AgentLogRow>
           );
         }
 

@@ -1,86 +1,22 @@
 import { Check, Circle, Loader2 } from "lucide-react";
+import { parseRunPlanProgressStepsFromMarkdown, type RunPlanStepStatus } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
-
-type PlanStepStatus = "pending" | "active" | "completed";
 
 type ParsedPlanStep = {
   id: string;
   title: string;
-  status: PlanStepStatus;
-};
-
-const cleanStepTitle = (value: string) =>
-  value
-    .replace(/\*\*/g, "")
-    .replace(/`/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-const inferStatus = (value: string): PlanStepStatus => {
-  const normalized = value.toLowerCase();
-  if (normalized.includes("done") || normalized.includes("complete")) {
-    return "completed";
-  }
-  if (normalized.includes("active") || normalized.includes("current") || normalized.includes("progress")) {
-    return "active";
-  }
-  return "pending";
+  status: RunPlanStepStatus;
 };
 
 const parsePlanSteps = (content: string): ParsedPlanStep[] => {
-  const steps: ParsedPlanStep[] = [];
-  for (const [index, line] of content.split(/\r?\n/).entries()) {
-    const tableCells = line
-      .trim()
-      .split("|")
-      .map((cell) => cell.trim())
-      .filter(Boolean);
-    if (
-      tableCells.length >= 2 &&
-      !tableCells.every((cell) => /^:?-{2,}:?$/.test(cell)) &&
-      !tableCells.some((cell) => /^step|status|task|description$/i.test(cell))
-    ) {
-      const numericIndex = tableCells.findIndex((cell) => /^\d+[.)]?$/.test(cell));
-      const statusCell = tableCells.find((cell) => /pending|active|current|progress|done|complete/i.test(cell));
-      const titleCell = tableCells.find((cell, cellIndex) => cellIndex !== numericIndex && cell !== statusCell);
-      if (titleCell) {
-        steps.push({
-          id: `${String(index)}:${titleCell}`,
-          title: cleanStepTitle(titleCell),
-          status: statusCell ? inferStatus(statusCell) : "pending",
-        });
-      }
-      continue;
-    }
-
-    const checkbox = line.match(/^\s*(?:[-*]|\d+[.)])\s+\[([ xX-])\]\s+(.+)$/);
-    if (checkbox) {
-      const marker = checkbox[1];
-      const title = cleanStepTitle(checkbox[2] ?? "");
-      if (title) {
-        steps.push({
-          id: `${String(index)}:${title}`,
-          title,
-          status: marker === "x" || marker === "X" ? "completed" : marker === "-" ? "active" : "pending",
-        });
-      }
-      continue;
-    }
-
-    const numbered = line.match(/^\s*(?:#{1,6}\s*)?(\d+)[.)]\s+(.+)$/);
-    if (numbered) {
-      const title = cleanStepTitle(numbered[2] ?? "");
-      if (title) {
-        steps.push({
-          id: `${String(index)}:${title}`,
-          title,
-          status: "pending",
-        });
-      }
-    }
-  }
-  return steps.slice(0, 12);
+  return parseRunPlanProgressStepsFromMarkdown(content, { inferStatus: true, maxSteps: 12 }).map((step, index) => ({
+    id: `${String(index)}:${step.title}`,
+    title: step.title,
+    status: step.status,
+  }));
 };
+
+const planStepStatusLabel = (status: RunPlanStepStatus): string => (status === "inProgress" ? "in progress" : status);
 
 export function RunPlanSteps({ content }: { content: string }) {
   const steps = parsePlanSteps(content);
@@ -109,19 +45,19 @@ export function RunPlanSteps({ content }: { content: string }) {
                   "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium",
                   step.status === "completed"
                     ? "bg-[color:var(--ec-success-soft)] text-[color:var(--ec-success)]"
-                    : step.status === "active"
+                    : step.status === "inProgress"
                       ? "bg-[color:var(--ec-info-soft)] text-[color:var(--ec-info)]"
                       : "bg-[color:var(--ec-control)] text-[color:var(--ec-muted)]",
                 )}
               >
                 {step.status === "completed" ? (
                   <Check className="h-2.5 w-2.5" />
-                ) : step.status === "active" ? (
+                ) : step.status === "inProgress" ? (
                   <Loader2 className="h-2.5 w-2.5 animate-spin" />
                 ) : (
                   <Circle className="h-2 w-2 fill-current" />
                 )}
-                {step.status}
+                {planStepStatusLabel(step.status)}
               </span>
             </div>
             <div className="min-w-0 border-b border-[color:var(--ec-border)] px-2 py-1.5 leading-relaxed text-[color:var(--ec-text)]">

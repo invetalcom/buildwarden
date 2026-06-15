@@ -165,6 +165,7 @@ const CANONICAL_RUN_CHUNK_TYPES = new Set<string>([
   "approval-resolved",
   "user-input-requested",
   "plan-updated",
+  "plan-progress",
   "diff-updated",
   "tool-progress",
   "request",
@@ -5210,7 +5211,11 @@ export class AppController
         const shouldReplace =
           payload.chunk.metadata?.replace === true &&
           streamId &&
-          (payload.chunk.type === "message" || payload.chunk.type === "tool-result" || payload.chunk.type === "tool-progress");
+          (payload.chunk.type === "message" ||
+            payload.chunk.type === "tool-result" ||
+            payload.chunk.type === "tool-progress" ||
+            payload.chunk.type === "plan-updated" ||
+            payload.chunk.type === "plan-progress");
         const silent = payload.chunk.metadata?.silent === true;
         const checkpoint =
           payload.chunk.metadata?.checkpoint === true &&
@@ -5565,6 +5570,8 @@ export class AppController
       case "plan-updated":
       case "plan":
         return "Plan updated";
+      case "plan-progress":
+        return "Plan progress";
       case "diff-updated":
         return "Diff updated";
       case "error":

@@ -247,12 +247,194 @@ export type RunEventType =
   | "approval-resolved"
   | "user-input-requested"
   | "plan-updated"
+  | "plan-progress"
   | "diff-updated"
   | "tool-progress"
   | "request"
   | "plan";
 
 export type RunToolName = "read_file" | "write_file" | "edit_file" | "delete_file" | "list_files" | "search_repo" | "run_shell";
+
+export type RunPlanStepStatus = "pending" | "inProgress" | "completed";
+
+// Future Cursor support should map ACP session/update plan payloads and
+// cursor/update_todos notifications into this normalized contract.
+export type RunPlanProgressSource = "codex" | "claude" | "ai-sdk" | "cursor-acp";
+
+export interface RunPlanProgressStep {
+  title: string;
+  status: RunPlanStepStatus;
+}
+
+export interface RunPlanProgressPayload {
+  explanation?: string | null;
+  steps: RunPlanProgressStep[];
+  source?: RunPlanProgressSource;
+}
+
+export const normalizeRunPlanStepStatus = (value: unknown): RunPlanStepStatus => {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase().replace(/[\s-]+/g, "_") : "";
+  if (normalized === "completed" || normalized === "done" || normalized === "complete") {
+    return "completed";
+  }
+  if (
+    normalized === "inprogress" ||
+    normalized === "in_progress" ||
+    normalized === "active" ||
+    normalized === "current" ||
+    normalized === "progress"
+  ) {
+    return "inProgress";
+  }
+  return "pending";
+};
+
+const cleanRunPlanStepTitle = (value: string) =>
+  value
+    .replace(/\*\*/g, "")
+    .replace(/`/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const readRunPlanProgressRecord = (value: unknown, index: number): RunPlanProgressStep | null => {
+  if (typeof value === "string") {
+    const title = cleanRunPlanStepTitle(value);
+    return title ? { title, status: "pending" } : null;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const rawTitle = record.title ?? record.step ?? record.content ?? record.text;
+  const title = typeof rawTitle === "string" ? cleanRunPlanStepTitle(rawTitle) : "";
+  return {
+    title: title || `Step ${String(index + 1)}`,
+    status: normalizeRunPlanStepStatus(record.status),
+  };
+};
+
+export const normalizeRunPlanProgressPayload = (
+  value: unknown,
+  fallbackSource?: RunPlanProgressSource,
+): RunPlanProgressPayload | null => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const rawSteps = Array.isArray(record.steps) ? record.steps : Array.isArray(record.plan) ? record.plan : [];
+  const steps = rawSteps
+    .map(readRunPlanProgressRecord)
+    .filter((step): step is RunPlanProgressStep => step !== null)
+    .slice(0, 24);
+  if (steps.length === 0) {
+    return null;
+  }
+  const explanation = typeof record.explanation === "string" ? record.explanation.trim() : record.explanation === null ? null : undefined;
+  const rawSource = record.source;
+  const source =
+    rawSource === "codex" || rawSource === "claude" || rawSource === "ai-sdk" || rawSource === "cursor-acp"
+      ? rawSource
+      : fallbackSource;
+  return {
+    ...(explanation !== undefined ? { explanation } : {}),
+    steps,
+    ...(source ? { source } : {}),
+  };
+};
+
+export const formatRunPlanProgressContent = (progress: RunPlanProgressPayload): string => {
+  const lines: string[] = [];
+  if (progress.explanation?.trim()) {
+    lines.push(progress.explanation.trim(), "");
+  }
+  for (const [index, step] of progress.steps.entries()) {
+    const marker = step.status === "completed" ? "[x]" : step.status === "inProgress" ? "[-]" : "[ ]";
+    lines.push(`${String(index + 1)}. ${marker} ${step.title}`);
+  }
+  return lines.join("\n").trim();
+};
+
+export const parseRunPlanProgressStepsFromMarkdown = (
+  content: string,
+  options: { inferStatus?: boolean; maxSteps?: number } = {},
+): RunPlanProgressStep[] => {
+  const steps: RunPlanProgressStep[] = [];
+  const inferStatus = options.inferStatus === true;
+  const maxSteps = options.maxSteps ?? 24;
+
+  const statusFromText = (value: string): RunPlanStepStatus => {
+    if (!inferStatus) {
+      return "pending";
+    }
+    const normalized = value.toLowerCase();
+    if (normalized.includes("done") || normalized.includes("complete")) {
+      return "completed";
+    }
+    if (normalized.includes("active") || normalized.includes("current") || normalized.includes("progress")) {
+      return "inProgress";
+    }
+    return "pending";
+  };
+
+  for (const line of content.split(/\r?\n/)) {
+    const trimmedLine = line.trim();
+    const tableCells = trimmedLine
+      .split("|")
+      .map((cell) => cell.trim())
+      .filter(Boolean);
+    if (
+      tableCells.length >= 2 &&
+      !tableCells.every((cell) => /^:?-+:?$/.test(cell)) &&
+      !tableCells.some((cell) => /^#?$|^step$|^status$|^state$|^task$|^description$|^files?$/i.test(cell))
+    ) {
+      const numericIndex = tableCells.findIndex((cell) => /^\d+[.)]?$/.test(cell));
+      const statusCell = tableCells.find((cell) => /pending|active|current|progress|done|complete/i.test(cell));
+      const titleCell = tableCells.find((cell, cellIndex) => cellIndex !== numericIndex && cell !== statusCell);
+      const title = titleCell ? cleanRunPlanStepTitle(titleCell) : "";
+      if (title) {
+        steps.push({
+          title,
+          status: statusCell ? statusFromText(statusCell) : "pending",
+        });
+      }
+      continue;
+    }
+
+    const checkbox = line.match(/^\s*(?:[-*]|\d+[.)])\s+\[([ xX-])\]\s+(.+)$/);
+    if (checkbox) {
+      const marker = checkbox[1];
+      const title = cleanRunPlanStepTitle(checkbox[2] ?? "");
+      if (title) {
+        steps.push({
+          title,
+          status:
+            inferStatus && (marker === "x" || marker === "X")
+              ? "completed"
+              : inferStatus && marker === "-"
+                ? "inProgress"
+                : "pending",
+        });
+      }
+      continue;
+    }
+
+    const numbered = line.match(/^\s*(?:#{1,6}\s*)?(\d+)[.)]\s+(.+)$/);
+    if (numbered) {
+      const title = cleanRunPlanStepTitle(numbered[2] ?? "");
+      if (title) {
+        steps.push({
+          title,
+          status: "pending",
+        });
+      }
+    }
+
+    if (steps.length >= maxSteps) {
+      return steps.slice(0, maxSteps);
+    }
+  }
+  return steps.slice(0, maxSteps);
+};
 
 /** Activity log stream id for in-place updates while `run_shell` is executing (matches final tool-result chunk). */
 export const runShellActivityStreamId = (callId: string) => `shell-stream-${callId}`;
@@ -1688,6 +1870,7 @@ export interface HarnessRunChunk {
     | "approval-resolved"
     | "user-input-requested"
     | "plan-updated"
+    | "plan-progress"
     | "diff-updated"
     | "tool-progress"
     | "request"
