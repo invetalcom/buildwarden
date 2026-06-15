@@ -80,6 +80,7 @@ import {
   type OpenPathInFileManagerResult,
   type ProjectInput,
   type ProjectBranchDeleteImpact,
+  type ProjectFolderGitStatus,
   type ProjectGitBranchOverview,
   type ProjectGitConversionCandidate,
   type ProjectForgeAuthStatus,
@@ -1679,6 +1680,25 @@ export class AppController
     const converted = this.db.updateProjectKind(project.id, "git", validation.defaultBranch);
     this.db.touchProject(converted.id);
     return converted;
+  }
+
+  async checkProjectFolderGitStatus(repoPath: string): Promise<ProjectFolderGitStatus> {
+    const trimmed = repoPath.trim();
+    if (!trimmed) {
+      return { path: "", exists: false, isDirectory: false, isGitRepo: false };
+    }
+    try {
+      if (!existsSync(trimmed)) {
+        return { path: trimmed, exists: false, isDirectory: false, isGitRepo: false };
+      }
+      if (!statSync(trimmed).isDirectory()) {
+        return { path: trimmed, exists: true, isDirectory: false, isGitRepo: false };
+      }
+      const validation = await this.gitService.validateProject(trimmed);
+      return { path: trimmed, exists: true, isDirectory: true, isGitRepo: validation.isGitRepo };
+    } catch {
+      return { path: trimmed, exists: false, isDirectory: false, isGitRepo: false };
+    }
   }
 
   async getProjectBranchDeleteImpact(projectId: string, input: DeleteProjectBranchInput): Promise<ProjectBranchDeleteImpact> {

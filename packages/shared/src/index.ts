@@ -869,6 +869,13 @@ export interface ProjectInput {
   repoPath: string;
 }
 
+export interface ProjectFolderGitStatus {
+  path: string;
+  exists: boolean;
+  isDirectory: boolean;
+  isGitRepo: boolean;
+}
+
 export interface RunInput {
   projectId: string;
   providerAccountId: string;
@@ -2017,6 +2024,7 @@ export interface DesktopApi {
   getProjectBranchOverview(projectId: string): Promise<ProjectGitBranchOverview>;
   checkProjectGitConversion(projectId: string): Promise<ProjectGitConversionCandidate | null>;
   convertProjectToGit(projectId: string): Promise<ProjectRecord>;
+  checkProjectFolderGitStatus(repoPath: string): Promise<ProjectFolderGitStatus>;
   /** Check out a local branch on the project’s main repository (fixes detached HEAD). */
   checkoutProjectBranch(projectId: string, branchName: string): Promise<void>;
   fetchProjectBranches(projectId: string): Promise<ProjectGitBranchOverview>;
@@ -2245,6 +2253,7 @@ export const IPC_CHANNELS = {
   getProjectBranchOverview: "buildwarden:get-project-branch-overview",
   checkProjectGitConversion: "buildwarden:check-project-git-conversion",
   convertProjectToGit: "buildwarden:convert-project-to-git",
+  checkProjectFolderGitStatus: "buildwarden:check-project-folder-git-status",
   checkoutProjectBranch: "buildwarden:checkout-project-branch",
   fetchProjectBranches: "buildwarden:fetch-project-branches",
   createProjectBranch: "buildwarden:create-project-branch",

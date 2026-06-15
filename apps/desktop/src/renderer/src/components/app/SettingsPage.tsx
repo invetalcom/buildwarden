@@ -42,6 +42,7 @@ interface SettingsPageProps {
   projects: AppSnapshot["projects"];
   projectName: string;
   projectPath: string;
+  projectFolderGitWarning: string | null;
   providerLabel: string;
   providerType: ProviderType;
   providerFamily: UnifiedProviderFamily;
@@ -134,6 +135,7 @@ export const SettingsPage = ({
   projects,
   projectName,
   projectPath,
+  projectFolderGitWarning,
   providerLabel,
   providerType,
   providerFamily,
@@ -450,6 +452,7 @@ export const SettingsPage = ({
           projects={projects}
           projectName={projectName}
           projectPath={projectPath}
+          projectFolderGitWarning={projectFolderGitWarning}
           autoCheckoutRunBranchOnOpen={autoCheckoutRunBranchOnOpen}
           autoReleaseRunBranchOnLeave={autoReleaseRunBranchOnLeave}
           recentRunDaysDraft={recentRunDaysDraft}

@@ -651,6 +651,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.getProjectBranchOverview, (_, projectId: string) => controller.getProjectBranchOverview(projectId));
   ipcMain.handle(IPC_CHANNELS.checkProjectGitConversion, (_, projectId: string) => controller.checkProjectGitConversion(projectId));
   ipcMain.handle(IPC_CHANNELS.convertProjectToGit, (_, projectId: string) => controller.convertProjectToGit(projectId));
+  ipcMain.handle(IPC_CHANNELS.checkProjectFolderGitStatus, (_, repoPath: string) => controller.checkProjectFolderGitStatus(repoPath));
   ipcMain.handle(IPC_CHANNELS.checkoutProjectBranch, (_, projectId: string, branchName: string) =>
     controller.checkoutProjectBranch(projectId, branchName),
   );

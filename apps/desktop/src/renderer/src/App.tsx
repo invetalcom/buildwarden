@@ -35,6 +35,7 @@ import {
   type ProjectLabSettings,
   type KeyboardShortcutId,
   type NetworkProxySettingsSnapshot,
+  type ProjectFolderGitStatus,
   type ProjectForgeRequestOpenPayload,
   type ProjectSnapshot,
   type ProjectInsightKind,
@@ -172,6 +173,7 @@ export const App = () => {
   const [projectForgeRequestToasts, setProjectForgeRequestToasts] = useState<ProjectForgeRequestToast[]>([]);
   const [projectName, setProjectName] = useState("");
   const [projectPath, setProjectPath] = useState("");
+  const [projectFolderGitStatus, setProjectFolderGitStatus] = useState<ProjectFolderGitStatus | null>(null);
   const [providerLabel, setProviderLabel] = useState("AI SDK");
   const [providerType, setProviderType] = useState<ProviderType>("ai-sdk");
   const [providerFamily, setProviderFamily] = useState<UnifiedProviderFamily>("openai");
@@ -296,6 +298,10 @@ export const App = () => {
     ...DEFAULT_NETWORK_PROXY_SETTINGS,
     hasPassword: false,
   });
+  const projectFolderGitWarning =
+    projectFolderGitStatus?.exists === true && projectFolderGitStatus.isDirectory && !projectFolderGitStatus.isGitRepo
+      ? "The selected folder is not a Git repository. It will be added as a plain folder project; Git-only features like branches, commits, worktrees, and PR/MR tools will be unavailable."
+      : null;
   const preferredRunModelId = snapshot.settings[APP_SETTING_KEYS.lastUsedRunModelId] ?? "";
   const persistedSidebarWidthSetting = snapshot.settings[APP_SETTING_KEYS.sidebarWidth];
 
@@ -748,6 +754,40 @@ export const App = () => {
 
     void loadAppPaths();
   }, [loadAppPaths, settingsOpen]);
+
+  useEffect(() => {
+    if (!buildwarden || !settingsOpen) {
+      setProjectFolderGitStatus(null);
+      return;
+    }
+
+    const repoPath = projectPath.trim();
+    if (!repoPath) {
+      setProjectFolderGitStatus(null);
+      return;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(() => {
+      void buildwarden
+        .checkProjectFolderGitStatus(repoPath)
+        .then((status) => {
+          if (!cancelled && status.path === repoPath) {
+            setProjectFolderGitStatus(status);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setProjectFolderGitStatus(null);
+          }
+        });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [buildwarden, projectPath, settingsOpen]);
 
   useEffect(() => {
     void loadRunDetail(selectedRunId);
@@ -1495,6 +1535,7 @@ export const App = () => {
       });
       setProjectName("");
       setProjectPath("");
+      setProjectFolderGitStatus(null);
       await loadSnapshot();
       setRunProjectId(project.id);
     });
@@ -3886,6 +3927,7 @@ export const App = () => {
               projects={snapshot.projects}
               projectName={projectName}
               projectPath={projectPath}
+              projectFolderGitWarning={projectFolderGitWarning}
               providerLabel={providerLabel}
               providerType={providerType}
               providerFamily={providerFamily}

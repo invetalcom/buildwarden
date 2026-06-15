@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { AppSnapshot } from "@buildwarden/shared";
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
@@ -11,6 +11,7 @@ export type GitWorkspaceSettingsTabProps = {
   projects: AppSnapshot["projects"];
   projectName: string;
   projectPath: string;
+  projectFolderGitWarning: string | null;
   autoCheckoutRunBranchOnOpen: boolean;
   autoReleaseRunBranchOnLeave: boolean;
   recentRunDaysDraft: string;
@@ -84,6 +85,7 @@ export const GitWorkspaceSettingsTab = ({
   projects,
   projectName,
   projectPath,
+  projectFolderGitWarning,
   autoCheckoutRunBranchOnOpen,
   autoReleaseRunBranchOnLeave,
   recentRunDaysDraft,
@@ -199,6 +201,12 @@ export const GitWorkspaceSettingsTab = ({
               </Button>
             </div>
             <Input placeholder="Display name (optional)" value={projectName} onChange={(event) => onProjectNameChange(event.target.value)} />
+            {projectFolderGitWarning ? (
+              <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-200">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-300" aria-hidden />
+                <span className="min-w-0">{projectFolderGitWarning}</span>
+              </div>
+            ) : null}
           </div>
         </SettingsRow>
         <SettingsRow title="Existing projects" description="Remove projects from BuildWarden without deleting the original folder." align="start">
