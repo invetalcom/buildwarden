@@ -169,7 +169,7 @@ export const WelcomeDialog = ({
         tabIndex={-1}
         className="glass-popover flex max-h-[calc(100vh-2rem)] w-full max-w-6xl overflow-hidden text-[var(--ec-text)]"
       >
-        <aside className="hidden w-60 shrink-0 border-r border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-4 md:block">
+        <aside className="hidden w-60 shrink-0 border-r border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-3 md:block">
           <div className="flex items-center gap-2">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--ec-accent-soft)] text-[var(--ec-accent)] ring-1 ring-[var(--ec-accent-ring)]">
               <Sparkles className="h-4 w-4" aria-hidden />
@@ -179,7 +179,7 @@ export const WelcomeDialog = ({
               <p className="text-xs text-[var(--ec-muted)]">Quick start</p>
             </div>
           </div>
-          <div className="mt-6 space-y-1">
+          <div className="mt-5 space-y-1">
             {steps.map((step, index) => {
               const active = step === stepKey;
               const check = step !== "intro" && step !== "done"
@@ -204,13 +204,13 @@ export const WelcomeDialog = ({
               );
             })}
           </div>
-          <p className="mt-6 text-xs leading-5 text-[var(--ec-muted)]">
+          <p className="mt-5 text-xs leading-5 text-[var(--ec-muted)]">
             You can skip individual setup steps. BuildWarden will bring this back on startup until every check has been completed once.
           </p>
         </aside>
 
         <section className="flex min-w-0 flex-1 flex-col">
-          <header className="border-b border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-5 py-4">
+          <header className="border-b border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-4 py-3">
             <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--ec-accent)]">
               Step {String(Math.min(stepIndex + 1, steps.length))} of {String(steps.length)}
             </p>
@@ -218,11 +218,11 @@ export const WelcomeDialog = ({
               ref={titleRef}
               id="welcome-dialog-title"
               tabIndex={-1}
-              className="mt-1 text-2xl font-semibold tracking-tight text-[var(--ec-text)] outline-none"
+              className="mt-0.5 text-xl font-semibold tracking-tight text-[var(--ec-text)] outline-none"
             >
               {stepKey === "intro" ? "Welcome to BuildWarden" : stepKey === "done" ? (allChecksComplete ? "All set & done" : "Done for now") : currentCheck?.title}
             </h2>
-            <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--ec-muted)]">
+            <p className="mt-0.5 max-w-3xl text-sm leading-5 text-[var(--ec-muted)]">
               {stepKey === "intro"
                 ? introSubtitle
                 : stepKey === "done"
@@ -233,12 +233,12 @@ export const WelcomeDialog = ({
             </p>
           </header>
 
-          <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto p-5">
+          <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto p-4">
             {stepKey === "intro" ? (
-              <div className="space-y-4">
-                <div className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-4">
-                  <p className="text-lg font-semibold text-[var(--ec-text)]">{introTitle}</p>
-                  <p className="mt-2 text-sm leading-6 text-[var(--ec-muted)]">
+              <div className="space-y-3">
+                <div className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-3">
+                  <p className="text-base font-semibold text-[var(--ec-text)]">{introTitle}</p>
+                  <p className="mt-1 text-sm leading-5 text-[var(--ec-muted)]">
                     {introDescription}
                   </p>
                 </div>
@@ -247,7 +247,7 @@ export const WelcomeDialog = ({
                     const Icon = checkIconById[check.id];
                     const complete = completedSet.has(check.id);
                     return (
-                      <div key={check.id} className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-3">
+                      <div key={check.id} className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-2.5">
                         <div className="flex items-start gap-3">
                           <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[var(--ec-control)] text-[var(--ec-accent)]">
                             <Icon className="h-4 w-4" aria-hidden />
@@ -276,8 +276,8 @@ export const WelcomeDialog = ({
             ) : null}
 
             {stepKey === "project" ? (
-              <div className="space-y-4">
-                <div className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-4">
+              <div className="space-y-3">
+                <div className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-3">
                   <ProjectSetupFields {...projectSetupProps} />
                 </div>
                 <p className="text-xs leading-5 text-[var(--ec-muted)]">
@@ -287,19 +287,19 @@ export const WelcomeDialog = ({
             ) : null}
 
             {stepKey === "done" ? (
-              <div className="space-y-4">
-                <div className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-5">
-                  <p className="text-lg font-semibold text-[var(--ec-text)]">
+              <div className="space-y-3">
+                <div className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-4">
+                  <p className="text-base font-semibold text-[var(--ec-text)]">
                     {allChecksComplete ? "You're good to go." : "You're free to roam."}
                   </p>
-                  <p className="mt-2 text-sm leading-6 text-[var(--ec-muted)]">
+                  <p className="mt-1 text-sm leading-5 text-[var(--ec-muted)]">
                     {allChecksComplete
                       ? "The setup checks have all been completed at least once, so future startup goes straight to the workspace."
                       : "Skipped steps are not marked done. The welcome screen will come back later until those bits are finished once."}
                   </p>
                 </div>
                 {skippedIncompleteChecks.length > 0 ? (
-                  <div className="rounded-lg border border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] p-4 text-sm text-[var(--ec-warning)]">
+                  <div className="rounded-lg border border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] p-3 text-sm text-[var(--ec-warning)]">
                     Still pending: {skippedIncompleteChecks.map((check) => check.navLabel).join(", ")}.
                   </div>
                 ) : null}
@@ -307,7 +307,7 @@ export const WelcomeDialog = ({
             ) : null}
           </div>
 
-          <footer className="flex items-center justify-between gap-3 border-t border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-5 py-4">
+          <footer className="flex items-center justify-between gap-3 border-t border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-4 py-3">
             <div className="flex items-center gap-1 md:hidden">
               {steps.map((step) => (
                 <span
