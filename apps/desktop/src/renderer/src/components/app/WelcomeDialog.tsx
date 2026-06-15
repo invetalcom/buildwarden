@@ -1,4 +1,4 @@
-import type { ComponentType } from "react";
+import { useEffect, useRef, type ComponentType } from "react";
 import { Check, Circle, Cpu, FolderOpen, Sparkles } from "lucide-react";
 import { Button } from "../ui/button";
 import {
@@ -45,6 +45,22 @@ const formatCheckList = (checks: Array<{ navLabel: string }>): string => {
   return `${checks.slice(0, -1).map((check) => check.navLabel).join(", ")} and ${checks.at(-1)!.navLabel}`;
 };
 
+const focusableSelector = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])",
+].join(",");
+
+const getFocusableElements = (container: HTMLElement): HTMLElement[] =>
+  Array.from(container.querySelectorAll<HTMLElement>(focusableSelector)).filter((element) => {
+    if (element.getAttribute("aria-hidden") === "true") return false;
+    if (element.hasAttribute("disabled")) return false;
+    return element.offsetParent !== null || element === document.activeElement;
+  });
+
 export const WelcomeDialog = ({
   stepKey,
   stepIndex,
@@ -60,6 +76,8 @@ export const WelcomeDialog = ({
   onSkipCheck,
   onFinish,
 }: WelcomeDialogProps) => {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
   const completedSet = new Set(completedCheckIds);
   const skippedSet = new Set(skippedCheckIds);
   const allChecksComplete = WELCOME_CHECK_DEFINITIONS.every((check) => completedSet.has(check.id));
@@ -90,12 +108,65 @@ export const WelcomeDialog = ({
         ? `You already handled ${completedCheckList}. Let's finish ${missingCheckList}.`
         : "Everything looks ready. No extra homework today.";
 
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    titleRef.current?.focus();
+
+    const focusWithinDialog = (event: FocusEvent) => {
+      if (event.target instanceof Node && dialog.contains(event.target)) {
+        return;
+      }
+      (getFocusableElements(dialog)[0] ?? titleRef.current ?? dialog).focus();
+    };
+
+    const trapTabKey = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") {
+        return;
+      }
+
+      const focusableElements = getFocusableElements(dialog);
+      if (focusableElements.length === 0) {
+        event.preventDefault();
+        (titleRef.current ?? dialog).focus();
+        return;
+      }
+
+      const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const activeIndex = activeElement ? focusableElements.indexOf(activeElement) : -1;
+      const firstElement = focusableElements[0]!;
+      const lastElement = focusableElements[focusableElements.length - 1]!;
+
+      if (event.shiftKey && activeIndex <= 0) {
+        event.preventDefault();
+        lastElement.focus();
+        return;
+      }
+      if (!event.shiftKey && (activeIndex === -1 || activeIndex === focusableElements.length - 1)) {
+        event.preventDefault();
+        firstElement.focus();
+      }
+    };
+
+    document.addEventListener("focusin", focusWithinDialog);
+    dialog.addEventListener("keydown", trapTabKey);
+    return () => {
+      document.removeEventListener("focusin", focusWithinDialog);
+      dialog.removeEventListener("keydown", trapTabKey);
+      previouslyFocused?.focus();
+    };
+  }, []);
+
   return (
     <div className="absolute inset-0 z-[70] flex items-center justify-center bg-zinc-950/70 p-4 backdrop-blur-md">
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="welcome-dialog-title"
+        tabIndex={-1}
         className="glass-popover flex max-h-[calc(100vh-2rem)] w-full max-w-6xl overflow-hidden text-[var(--ec-text)]"
       >
         <aside className="hidden w-60 shrink-0 border-r border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-4 md:block">
@@ -143,7 +214,12 @@ export const WelcomeDialog = ({
             <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--ec-accent)]">
               Step {String(Math.min(stepIndex + 1, steps.length))} of {String(steps.length)}
             </p>
-            <h2 id="welcome-dialog-title" className="mt-1 text-2xl font-semibold tracking-tight text-[var(--ec-text)]">
+            <h2
+              ref={titleRef}
+              id="welcome-dialog-title"
+              tabIndex={-1}
+              className="mt-1 text-2xl font-semibold tracking-tight text-[var(--ec-text)] outline-none"
+            >
               {stepKey === "intro" ? "Welcome to BuildWarden" : stepKey === "done" ? (allChecksComplete ? "All set & done" : "Done for now") : currentCheck?.title}
             </h2>
             <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--ec-muted)]">
