@@ -2201,6 +2201,9 @@ export class AppController
     if (sourceRun.workspaceVcs === "folder") {
       workspaceType = "copy";
       workspaceVcs = "folder";
+      if (sourceRun.workspaceType === "local" && input.includeWorkspaceChanges === false) {
+        throw new Error("Folder continuations from the project folder cannot exclude workspace changes yet.");
+      }
       const sourcePath = input.includeWorkspaceChanges !== false ? sourceRun.worktreePath : project.repoPath;
       const folderWorkspace = await createFolderWorkspaceCopy({
         sourcePath,
