@@ -179,6 +179,7 @@ const run = async () => {
             mode: request.mode,
             modelId: request.modelId,
             prompt: request.prompt,
+            workspaceVcs: request.workspaceVcs,
           }),
         ]
           .filter((part): part is string => Boolean(part && part.trim()))

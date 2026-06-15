@@ -77,6 +77,11 @@ const workspaceModes: Array<{ id: RunWorkspaceType; label: string; description: 
   { id: "local", label: "Local", description: "Use the current checkout." },
 ];
 
+const folderWorkspaceModes: Array<{ id: RunWorkspaceType; label: string; description: string }> = [
+  { id: "copy", label: "Copy", description: "Copy files to an isolated workspace." },
+  { id: "local", label: "Folder", description: "Edit the project folder directly." },
+];
+
 const effortOptions = ["low", "medium", "high", "xhigh"];
 
 const SummaryTile = ({ icon, label, value, detail }: { icon: ReactNode; label: string; value: string; detail?: string }) => (
@@ -219,14 +224,16 @@ export const ProjectSettingsPage = ({
   onActiveIntegratedSkillIdsChange,
   onDeleteProject,
 }: ProjectSettingsPageProps) => {
+  const isFolderProject = project.project.kind === "folder";
+  const workspaceModeChoices = isFolderProject ? folderWorkspaceModes : workspaceModes;
   const selectedModelIds =
-    runWorkspaceType === "worktree"
+    runWorkspaceType === "worktree" || runWorkspaceType === "copy"
       ? runWorktreeModelIds
       : runModelId
         ? [runModelId]
         : [];
   const activeSkillCount = activeIntegratedSkillIds.length;
-  const branchChoices = (runWorkspaceType === "local" ? [currentProjectBranch] : availableBranches).filter(Boolean);
+  const branchChoices = isFolderProject ? [] : (runWorkspaceType === "local" ? [currentProjectBranch] : availableBranches).filter(Boolean);
   const formatTokens = (value: number) => value.toLocaleString();
   const outcomeSummary = `${projectRunStats.completed} done / ${projectRunStats.failed} failed / ${projectRunStats.cancelled} stopped`;
   const totalRunsLabel =
@@ -259,6 +266,13 @@ export const ProjectSettingsPage = ({
     setForgeMonitorIntervalMinutes("0");
     setForgeMonitorError(null);
     setForgeMonitorMessage(null);
+    if (project.project.kind === "folder") {
+      setForgeBusy(false);
+      setForgeMonitorBusy(false);
+      return () => {
+        cancelled = true;
+      };
+    }
     setForgeBusy(true);
     setForgeMonitorBusy(true);
     void Promise.all([
@@ -292,7 +306,7 @@ export const ProjectSettingsPage = ({
         forgeMonitorAutosaveTimerRef.current = null;
       }
     };
-  }, [project.project.id]);
+  }, [project.project.id, project.project.kind]);
 
   const saveForgeToken = async () => {
     setForgeError(null);
@@ -443,18 +457,37 @@ export const ProjectSettingsPage = ({
           </div>
         </CardHeader>
         <CardContent className="grid gap-2 p-3 sm:grid-cols-2 xl:grid-cols-5">
-          <SummaryTile
-            icon={<GitBranch className="size-3.5 text-[var(--ec-accent)]" />}
-            label="Current branch"
-            value={currentProjectBranch || "unknown"}
-            detail={`Default: ${project.project.defaultBranch || "unknown"}`}
-          />
-          <SummaryTile
-            icon={<GitBranch className="size-3.5 text-[var(--ec-accent)]" />}
-            label="Known branches"
-            value={`${availableBranches.length}`}
-            detail="Available local and remote branches"
-          />
+          {isFolderProject ? (
+            <>
+              <SummaryTile
+                icon={<FolderGit2 className="size-3.5 text-[var(--ec-accent)]" />}
+                label="Project type"
+                value="Folder"
+                detail="Git history unavailable"
+              />
+              <SummaryTile
+                icon={<GitBranch className="size-3.5 text-[var(--ec-accent)]" />}
+                label="Workspace modes"
+                value="Copy / Folder"
+                detail="No branch checkout required"
+              />
+            </>
+          ) : (
+            <>
+              <SummaryTile
+                icon={<GitBranch className="size-3.5 text-[var(--ec-accent)]" />}
+                label="Current branch"
+                value={currentProjectBranch || "unknown"}
+                detail={`Default: ${project.project.defaultBranch || "unknown"}`}
+              />
+              <SummaryTile
+                icon={<GitBranch className="size-3.5 text-[var(--ec-accent)]" />}
+                label="Known branches"
+                value={`${availableBranches.length}`}
+                detail="Available local and remote branches"
+              />
+            </>
+          )}
           <SummaryTile
             icon={<Sparkles className="size-3.5 text-[var(--ec-accent)]" />}
             label="Project skills"
@@ -493,9 +526,12 @@ export const ProjectSettingsPage = ({
             </div>
           </SettingsRow>
 
-          <SettingsRow title="Workspace" description="Choose whether new runs use isolated worktrees or the current project checkout.">
+          <SettingsRow
+            title="Workspace"
+            description={isFolderProject ? "Choose whether new runs use an isolated folder copy or edit the project folder directly." : "Choose whether new runs use isolated worktrees or the current project checkout."}
+          >
             <div className={`${rowControlClass} grid gap-2 sm:grid-cols-2`}>
-              {workspaceModes.map((mode) => (
+              {workspaceModeChoices.map((mode) => (
                 <ChoiceButton
                   key={mode.id}
                   selected={runWorkspaceType === mode.id}
@@ -508,48 +544,50 @@ export const ProjectSettingsPage = ({
             </div>
           </SettingsRow>
 
-          <SettingsRow
-            title="Base branch"
-            description={runWorkspaceType === "local" ? "Local runs use the current checkout branch." : "Worktree runs branch from this selected base."}
-            align="start"
-          >
-            <div className={`${rowControlClass} min-w-0 overflow-hidden rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)]`}>
-              <div className="flex items-center justify-between gap-3 border-b border-[var(--ec-border)] px-3 py-2">
-                <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-[var(--ec-text)]">
-                  <GitBranch className="size-3.5 shrink-0 text-[var(--ec-accent)]" />
-                  <span className="truncate">Base branch</span>
+          {!isFolderProject ? (
+            <SettingsRow
+              title="Base branch"
+              description={runWorkspaceType === "local" ? "Local runs use the current checkout branch." : "Worktree runs branch from this selected base."}
+              align="start"
+            >
+              <div className={`${rowControlClass} min-w-0 overflow-hidden rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)]`}>
+                <div className="flex items-center justify-between gap-3 border-b border-[var(--ec-border)] px-3 py-2">
+                  <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-[var(--ec-text)]">
+                    <GitBranch className="size-3.5 shrink-0 text-[var(--ec-accent)]" />
+                    <span className="truncate">Base branch</span>
+                  </div>
+                  <span className="shrink-0 font-mono text-[11px] text-[var(--ec-faint)]">{branchChoices.length}</span>
                 </div>
-                <span className="shrink-0 font-mono text-[11px] text-[var(--ec-faint)]">{branchChoices.length}</span>
+                <div className="app-scrollbar max-h-56 overflow-y-auto p-1.5">
+                  {branchChoices.map((branch) => {
+                    const selected = (runWorkspaceType === "local" ? currentProjectBranch : runBaseBranch) === branch;
+                    return (
+                      <button
+                        key={branch}
+                        type="button"
+                        className={cn(
+                          "flex h-8 w-full items-center gap-2 rounded px-2 text-left font-mono text-xs transition",
+                          selected
+                            ? "bg-[var(--ec-accent-soft)] text-[var(--ec-text)]"
+                            : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
+                        )}
+                        disabled={busy || runWorkspaceType === "local"}
+                        onClick={() => onRunBaseBranchChange(branch)}
+                      >
+                        <GitBranch className="size-3.5 shrink-0" />
+                        <span className="truncate">{branch}</span>
+                        {selected ? <span className="ml-auto size-1.5 shrink-0 rounded-full bg-[var(--ec-accent)]" /> : null}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-              <div className="app-scrollbar max-h-56 overflow-y-auto p-1.5">
-                {branchChoices.map((branch) => {
-                  const selected = (runWorkspaceType === "local" ? currentProjectBranch : runBaseBranch) === branch;
-                  return (
-                    <button
-                      key={branch}
-                      type="button"
-                      className={cn(
-                        "flex h-8 w-full items-center gap-2 rounded px-2 text-left font-mono text-xs transition",
-                        selected
-                          ? "bg-[var(--ec-accent-soft)] text-[var(--ec-text)]"
-                          : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
-                      )}
-                      disabled={busy || runWorkspaceType === "local"}
-                      onClick={() => onRunBaseBranchChange(branch)}
-                    >
-                      <GitBranch className="size-3.5 shrink-0" />
-                      <span className="truncate">{branch}</span>
-                      {selected ? <span className="ml-auto size-1.5 shrink-0 rounded-full bg-[var(--ec-accent)]" /> : null}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </SettingsRow>
+            </SettingsRow>
+          ) : null}
 
           <SettingsRow
             title="Model set"
-            description={runWorkspaceType === "worktree" ? "Select one or more models for multi-worktree runs." : "Select the default model for local runs."}
+            description={runWorkspaceType === "worktree" || runWorkspaceType === "copy" ? "Select one or more models for isolated workspace runs." : "Select the default model for direct workspace runs."}
             align="start"
           >
             <div className={`${rowControlClass} min-w-0 overflow-hidden rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)]`}>
@@ -575,7 +613,7 @@ export const ProjectSettingsPage = ({
                       )}
                       disabled={busy}
                       onClick={() => {
-                        if (runWorkspaceType === "worktree") {
+                        if (runWorkspaceType === "worktree" || runWorkspaceType === "copy") {
                           toggleWorktreeModel(model.id);
                         } else {
                           onRunModelChange(model.id);
@@ -611,13 +649,13 @@ export const ProjectSettingsPage = ({
               </div>
               <div className="flex items-center gap-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-3 text-xs text-[var(--ec-muted)]">
                 <ShieldOff className="size-3.5 shrink-0 text-[var(--ec-danger)]" />
-                <span className="min-w-0">Full Access applies to future runs and should only be used for trusted repositories.</span>
+                <span className="min-w-0">Full Access applies to future runs and should only be used for trusted project folders.</span>
               </div>
             </div>
           </SettingsRow>
         </SettingsSection>
 
-        <SettingsSection title="Git hosting">
+        {!isFolderProject ? <SettingsSection title="Git hosting">
           <SettingsRow
             title="Access token"
             description="Token used to fetch and review PRs/MRs for this project. Secrets are stored outside the app database."
@@ -717,10 +755,10 @@ export const ProjectSettingsPage = ({
               </div>
             </SettingsRow>
           ) : null}
-        </SettingsSection>
+        </SettingsSection> : null}
 
         <SettingsSection title="Project skills">
-          <SettingsRow title="Enabled skills" description="Skills selected here are prepended to new agent runs for this repository." align="start">
+          <SettingsRow title="Enabled skills" description="Skills selected here are prepended to new agent runs for this project." align="start">
             <div className={`${rowControlClass} space-y-3`}>
               <div className="flex justify-start md:justify-end">
                 <Badge tone="neutral">{activeSkillCount} selected</Badge>

@@ -88,6 +88,13 @@ const projectTools: Array<{ tab: ProjectPageTab; label: string; icon: typeof Bot
   { tab: "for-later", label: "For Later", icon: Archive, count: (project) => project.forLaterRuns.length },
 ];
 
+const projectToolVisible = (project: AppSnapshot["projects"][number] | null | undefined, tab: ProjectPageTab): boolean => {
+  if (!project || project.project.kind === "git") {
+    return true;
+  }
+  return tab !== "branches" && tab !== "reviews";
+};
+
 const formatRelativeTime = (dateString: string | null) => {
   if (!dateString) return "just now";
   const diffMinutes = Math.max(0, Math.floor((Date.now() - new Date(dateString).getTime()) / 60000));
@@ -319,6 +326,7 @@ const SidebarComponent = ({
     { label: "Bookmarks", icon: Bookmark, selected: bookmarksSelected, onClick: onSelectBookmarks, count: bookmarksCount ? `${bookmarksCount}` : "" },
     { label: "Settings", icon: Settings, selected: settingsSelected, onClick: onOpenSettings, count: "" },
   ];
+  const visibleProjectTools = projectTools.filter((tool) => projectToolVisible(selectedProject, tool.tab));
 
   if (collapsed) {
     return (
@@ -344,7 +352,7 @@ const SidebarComponent = ({
               {selectedProject.project.name.slice(0, 1).toUpperCase()}
             </button>
           ) : null}
-          {projectTools.map((tool) => {
+          {visibleProjectTools.map((tool) => {
             const Icon = tool.icon;
             const active = Boolean(selectedProjectId) && !landingSelected && !allRunsSelected && !bookmarksSelected && !chatsSelected && !settingsSelected && projectView === tool.tab;
             return (
@@ -401,7 +409,9 @@ const SidebarComponent = ({
             <FolderGit2 className="size-4 shrink-0 text-[var(--ec-accent)]" />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-semibold text-[var(--ec-text)]">{selectedProject?.project.name ?? "Select project"}</span>
-              <span className="block truncate font-mono text-[10px] text-[var(--ec-muted)]">{selectedProject?.project.defaultBranch ?? "No project selected"}</span>
+              <span className="block truncate font-mono text-[10px] text-[var(--ec-muted)]">
+                {selectedProject ? (selectedProject.project.kind === "folder" ? "Folder" : selectedProject.project.defaultBranch) : "No project selected"}
+              </span>
             </span>
             <ChevronDown className={cn("size-3.5 shrink-0 text-[var(--ec-muted)] transition", projectMenuOpen && "rotate-180")} />
           </button>
@@ -433,7 +443,7 @@ const SidebarComponent = ({
                     <span className={cn("size-2 shrink-0 rounded-full", entry.activeRuns.length > 0 ? "bg-[var(--ec-accent)]" : "bg-[var(--ec-faint)]")} />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-xs font-medium text-[var(--ec-text)]">{entry.project.name}</span>
-                      <span className="block truncate font-mono text-[10px] text-[var(--ec-muted)]">{entry.project.defaultBranch}</span>
+                      <span className="block truncate font-mono text-[10px] text-[var(--ec-muted)]">{entry.project.kind === "folder" ? "Folder" : entry.project.defaultBranch}</span>
                     </span>
                     {selected ? <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--ec-accent)]">Active</span> : null}
                   </button>
@@ -483,7 +493,7 @@ const SidebarComponent = ({
           {projectToolsExpanded ? (
             <div className="mt-1 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-1 shadow-[var(--ec-panel-shadow)]">
               <div className="space-y-0.5">
-                {projectTools.map((tool) => {
+                {visibleProjectTools.map((tool) => {
                   const Icon = tool.icon;
                   const active =
                     selectedProjectId === selectedProject.project.id &&

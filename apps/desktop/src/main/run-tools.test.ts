@@ -611,7 +611,7 @@ describe("run tool context", () => {
     expect(result.ok).toBe(false);
     expect(result.content).toContain("Shell command contains disallowed operators.");
     expect(result.content).toContain("do not use cd");
-    expect(result.content).toContain("BuildWarden already runs run_shell from the worktree root");
+    expect(result.content).toContain("BuildWarden already runs run_shell from the workspace root");
   });
 
   it("returns a friendly missing-directory error for list_files", async () => {
@@ -627,8 +627,8 @@ describe("run tool context", () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.content).toContain("Directory not found in the run worktree");
-    expect(result.content).toContain("Paths must be relative to the worktree root");
+    expect(result.content).toContain("Directory not found in the run workspace");
+    expect(result.content).toContain("Paths must be relative to the workspace root");
     expect(result.content).toContain("call list_files on . or a confirmed parent directory before retrying");
     expect(result.content).toContain("Nearest existing parent: src/main/resources/db");
     expect(result.content).toContain("src/main/resources/db/README.md");

@@ -162,7 +162,7 @@ interface RunDetailPageProps {
   /** Whether the secondary panel column is docked to the right or bottom. */
   secondaryPanelPosition: SecondaryPanelPosition;
   onSecondaryPanelPositionChange: (position: SecondaryPanelPosition) => void;
-  /** Legacy tile order/layout — retained for interface compatibility, not actively used in layout. */
+  /** Legacy tile order/layout - retained for interface compatibility, not actively used in layout. */
   tileOrder: TilePanelId[];
   tileLayout: TileLayoutState;
   onTileOrderChange: (next: TilePanelId[]) => void;
@@ -1162,11 +1162,22 @@ export const RunDetailPage = ({
                 </>
               ) : (
                 <>
-                  <p className="text-xs font-medium text-amber-200">Git worktree no longer available</p>
-                  <p className="mt-0.5 text-[11px] text-zinc-400">
-                    The branch <span className="font-mono text-amber-200/90">{runDetail.run.branchName}</span> or its worktree has been removed.
-                    Git diffs cannot be shown. Only the Activity Log is available.
-                  </p>
+                  {runDetail.run.workspaceVcs === "folder" ? (
+                    <>
+                      <p className="text-xs font-medium text-amber-200">Folder workspace no longer available</p>
+                      <p className="mt-0.5 text-[11px] text-zinc-400">
+                        The run workspace folder has been moved or removed. Diffs cannot be shown. Only the Activity Log is available.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-xs font-medium text-amber-200">Git worktree no longer available</p>
+                      <p className="mt-0.5 text-[11px] text-zinc-400">
+                        The branch <span className="font-mono text-amber-200/90">{runDetail.run.branchName}</span> or its worktree has been removed.
+                        Git diffs cannot be shown. Only the Activity Log is available.
+                      </p>
+                    </>
+                  )}
                 </>
               )}
             </div>
@@ -1174,7 +1185,7 @@ export const RunDetailPage = ({
         </Card>
       ) : null}
 
-      {/* ── Main split area ──────────────────────────────────────────── */}
+      {/* Main split area */}
       <div
         ref={splitContainerRef}
         className={cn(
@@ -1267,7 +1278,7 @@ export const RunDetailPage = ({
                 );
               })}
 
-              {/* "Add panel" button — shown when there are hidden panels */}
+              {/* "Add panel" button - shown when there are hidden panels */}
               {secondaryPanelDefs.some((p) => !p.enabled && p.canToggle) ? (
                 <div ref={addPanelRef} className="relative flex items-center">
                   <button
@@ -1530,7 +1541,7 @@ export const RunDetailPage = ({
         </div>
       ) : null}
 
-      {/* ── Bottom: shell approval + follow-up composer ─────────────── */}
+      {/* Bottom: shell approval + follow-up composer */}
       <div className="shrink-0 space-y-1 pt-0.5">
         {pendingShellApproval ? (
           <Card className="border-amber-500/25 bg-[linear-gradient(180deg,rgba(120,53,15,0.12),rgba(9,9,11,0.96))] p-4">
@@ -1553,7 +1564,7 @@ export const RunDetailPage = ({
                 </pre>
                 <p className="mt-3 text-xs text-zinc-500">
                   Allow once for a single execution. &quot;For this run&quot; remembers the exact command until the run ends. &quot;Save to
-                  settings&quot; adds a permanent exact-match pattern (see Settings → GIT &amp; Workspace).
+                  settings&quot; adds a permanent exact-match pattern (see Settings &gt; Projects &amp; Workspace).
                 </p>
               </div>
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">

@@ -124,6 +124,7 @@ export const ProjectLabTab = ({
 }: ProjectLabTabProps) => {
   const [selectedMode, setSelectedMode] = useState<ProjectLabMode>("new-feature");
   const [expandedThreadIds, setExpandedThreadIds] = useState<Record<string, boolean>>({});
+  const isFolderProject = project.project.kind === "folder";
 
   const sortedThreads = useMemo(
     () => [...project.labThreads].sort((left, right) => right.thread.createdAt.localeCompare(left.thread.createdAt)),
@@ -138,7 +139,7 @@ export const ProjectLabTab = ({
   const reviewModelId = settings.reviewModelId && modelOptions.some((option) => option.id === settings.reviewModelId)
     ? settings.reviewModelId
     : fallbackModelId;
-  const canRun = settings.enabled && Boolean(selectedBaseBranch) && Boolean(implementationModelId) && Boolean(reviewModelId);
+  const canRun = settings.enabled && (isFolderProject || Boolean(selectedBaseBranch)) && Boolean(implementationModelId) && Boolean(reviewModelId);
 
   return (
     <div className="space-y-4 pb-2">
@@ -181,14 +182,16 @@ export const ProjectLabTab = ({
                   }))}
                 />
               </label>
-              <label className="space-y-1.5">
-                <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Base branch</span>
-                <Select
-                  value={selectedBaseBranch}
-                  onValueChange={onBaseBranchChange}
-                  options={normalizedBranchOptions.map((branch) => ({ value: branch, label: branch }))}
-                />
-              </label>
+              {!isFolderProject ? (
+                <label className="space-y-1.5">
+                  <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Base branch</span>
+                  <Select
+                    value={selectedBaseBranch}
+                    onValueChange={onBaseBranchChange}
+                    options={normalizedBranchOptions.map((branch) => ({ value: branch, label: branch }))}
+                  />
+                </label>
+              ) : null}
               <label className="space-y-1.5">
                 <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Implementation model</span>
                 <Select
@@ -222,7 +225,7 @@ export const ProjectLabTab = ({
                 onClick={() =>
                   void onRunProjectLab({
                     mode: selectedMode,
-                    baseBranch: selectedBaseBranch,
+                    baseBranch: isFolderProject ? "" : selectedBaseBranch,
                     implementationModelId,
                     reviewModelId,
                   })
@@ -372,8 +375,14 @@ export const ProjectLabTab = ({
                               <span className={`rounded-full border px-2.5 py-1 text-[11px] ${implementationStatusTone?.pill ?? ""}`}>
                                 {implementationStatus}
                               </span>
-                              {implementationRun?.branchName ? (
-                                <span className="ml-2 font-mono text-xs text-zinc-500">{implementationRun.branchName}</span>
+                              {implementationRun ? (
+                                <span className="ml-2 font-mono text-xs text-zinc-500">
+                                  {implementationRun.workspaceVcs === "folder"
+                                    ? implementationRun.workspaceType === "copy"
+                                      ? "Folder copy"
+                                      : "Project folder"
+                                    : implementationRun.branchName}
+                                </span>
                               ) : null}
                               {implementationRun?.errorMessage ? (
                                 <p className="mt-2 text-xs text-rose-300">{renderLabText(implementationRun.errorMessage)}</p>

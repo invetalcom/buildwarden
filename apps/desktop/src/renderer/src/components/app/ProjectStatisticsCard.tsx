@@ -1,4 +1,4 @@
-import { Activity, FolderGit2, PlayCircle, WalletCards } from "lucide-react";
+import { Activity, FolderOpen, PlayCircle, WalletCards } from "lucide-react";
 import type { ReactNode } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 
@@ -53,7 +53,7 @@ export const ProjectStatisticsCard = ({ projectRunStats, repoPath }: ProjectStat
     <Card className="min-w-0 overflow-hidden">
       <CardHeader className="border-b border-[var(--ec-border)] p-4">
         <CardTitle>Statistics</CardTitle>
-        <CardDescription>Runs, token usage, and the repository this project controls.</CardDescription>
+        <CardDescription>Runs, token usage, and the project folder this project controls.</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-2 p-3 sm:grid-cols-2 xl:grid-cols-[0.95fr_1fr_minmax(14rem,1.45fr)]">
         <StatTile
@@ -80,8 +80,8 @@ export const ProjectStatisticsCard = ({ projectRunStats, repoPath }: ProjectStat
           }}
         >
           <div className="flex items-center gap-2 text-xs text-[var(--ec-muted)]">
-            <FolderGit2 className="size-3.5 text-[var(--ec-accent)]" />
-            <span className="truncate">Repository</span>
+            <FolderOpen className="size-3.5 text-[var(--ec-accent)]" />
+            <span className="truncate">Project folder</span>
             <Activity className="ml-auto size-3 text-[var(--ec-faint)]" />
           </div>
           <p className="mt-2 block w-full truncate font-mono text-xs font-semibold text-[var(--ec-text)]">{repoPath}</p>

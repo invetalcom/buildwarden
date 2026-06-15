@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { AppSnapshot } from "@buildwarden/shared";
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
@@ -11,6 +11,7 @@ export type GitWorkspaceSettingsTabProps = {
   projects: AppSnapshot["projects"];
   projectName: string;
   projectPath: string;
+  projectFolderGitWarning: string | null;
   autoCheckoutRunBranchOnOpen: boolean;
   autoReleaseRunBranchOnLeave: boolean;
   recentRunDaysDraft: string;
@@ -84,6 +85,7 @@ export const GitWorkspaceSettingsTab = ({
   projects,
   projectName,
   projectPath,
+  projectFolderGitWarning,
   autoCheckoutRunBranchOnOpen,
   autoReleaseRunBranchOnLeave,
   recentRunDaysDraft,
@@ -123,7 +125,7 @@ export const GitWorkspaceSettingsTab = ({
       <SettingsSection title="App behavior">
         <SettingsRow
           title="Auto checkout run branch"
-          description="When you open a run, BuildWarden tries to reattach its branch in the worktree."
+          description="Git-only. When you open a Git worktree run, BuildWarden tries to reattach its branch."
         >
           <div className={`${rowControlClass} flex justify-start md:justify-end`}>
             <Switch
@@ -135,7 +137,7 @@ export const GitWorkspaceSettingsTab = ({
         </SettingsRow>
         <SettingsRow
           title="Auto release idle run branch"
-          description="When you leave a completed run, BuildWarden detaches the worktree so another IDE can check out the branch."
+          description="Git-only. When you leave a completed Git worktree run, BuildWarden detaches the worktree so another IDE can check out the branch."
         >
           <div className={`${rowControlClass} flex justify-start md:justify-end`}>
             <Switch
@@ -179,15 +181,15 @@ export const GitWorkspaceSettingsTab = ({
 
       <SettingsSection title="Projects">
         <SettingsRow
-          title="Add repository"
-          description="Register a local Git repository so runs, branches, PR review, and project tools can use it."
+          title="Add project folder"
+          description="Register a local folder. Git repositories enable branches, worktrees, commits, and PR/MR review; plain folders can still run agents."
           align="start"
         >
           <div className={`${rowControlClass} space-y-2`}>
             <div className="flex min-w-0 flex-wrap gap-2 sm:flex-nowrap">
               <Input
                 className="min-w-[12rem] flex-1"
-                placeholder="Path to Git repository"
+                placeholder="Path to project folder"
                 value={projectPath}
                 onChange={(event) => onProjectPathChange(event.target.value)}
               />
@@ -199,9 +201,15 @@ export const GitWorkspaceSettingsTab = ({
               </Button>
             </div>
             <Input placeholder="Display name (optional)" value={projectName} onChange={(event) => onProjectNameChange(event.target.value)} />
+            {projectFolderGitWarning ? (
+              <div className="flex items-start gap-2 rounded-md border border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] px-3 py-2 text-xs leading-5 text-[var(--ec-warning)]">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-[var(--ec-warning)]" aria-hidden />
+                <span className="min-w-0">{projectFolderGitWarning}</span>
+              </div>
+            ) : null}
           </div>
         </SettingsRow>
-        <SettingsRow title="Existing projects" description="Remove repositories from BuildWarden without deleting the original repo." align="start">
+        <SettingsRow title="Existing projects" description="Remove projects from BuildWarden without deleting the original folder." align="start">
           <div className={`${rowControlClass} app-scrollbar max-h-72 overflow-auto rounded-md border border-[var(--ec-border)]`}>
             {projects.length > 0 ? (
               projects.map((entry) => (
@@ -225,10 +233,10 @@ export const GitWorkspaceSettingsTab = ({
         </SettingsRow>
       </SettingsSection>
 
-      <SettingsSection title="Worktrees">
+      <SettingsSection title="Managed workspaces">
         <SettingsRow
-          title="Custom worktree folder"
-          description="Optional absolute directory for new agent-run worktrees. Leave it blank to keep the default sibling-folder behavior."
+          title="Custom workspace folder"
+          description="Optional absolute directory for new Git worktrees and folder copies. Leave it blank to keep the default sibling-folder behavior."
           align="start"
         >
           <div className={`${rowControlClass} space-y-2`}>
@@ -237,7 +245,7 @@ export const GitWorkspaceSettingsTab = ({
                 className="min-w-[12rem] flex-1 font-mono text-xs"
                 value={worktreeRootDraft}
                 onChange={(event) => onWorktreeRootDraftChange(event.target.value)}
-                placeholder="Default: parent of repo/.buildwarden-worktrees/<repo-name>"
+                placeholder="Default: parent/.buildwarden-worktrees/<project-name>"
                 spellCheck={false}
               />
               <Button type="button" variant="secondary" className="shrink-0" onClick={() => void onBrowseWorktreeRootDirectory()}>
@@ -275,7 +283,7 @@ export const GitWorkspaceSettingsTab = ({
               </Button>
             </div>
             <div className="text-xs leading-5 text-[var(--ec-muted)] md:text-right">
-              <p>Existing runs keep using their stored worktree paths, so changing this only affects newly created worktrees.</p>
+              <p>Existing runs keep using their stored workspace paths, so changing this only affects newly created worktrees and folder copies.</p>
               {worktreeRootOverrideSettingValue.trim() ? <p>Saved override: {worktreeRootOverrideSettingValue.trim()}</p> : null}
             </div>
           </div>

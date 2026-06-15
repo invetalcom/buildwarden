@@ -97,6 +97,7 @@ export class BuildWardenDatabase {
     }
 
     this.createInitialSchema();
+    this.applySchemaMigrations();
     this.persist();
   }
 
@@ -208,6 +209,8 @@ export class BuildWardenDatabase {
     const steps = this.getRunSteps(runId);
     const bookmarkId = createId();
     const bookmarkedAt = nowIso();
+    const branchName =
+      run.workspaceVcs === "folder" ? (run.workspaceType === "copy" ? "Folder copy" : "Project folder") : run.branchName;
 
     this.run(
       `
@@ -221,7 +224,7 @@ export class BuildWardenDatabase {
         project.name,
         run.prompt,
         run.status,
-        run.branchName,
+        branchName,
         run.createdAt,
         bookmarkedAt,
         run.modelId,
@@ -962,15 +965,16 @@ export class BuildWardenDatabase {
     this.persist();
   }
 
-  addProject(input: ProjectInput & { defaultBranch: string; resolvedName: string }): ProjectRecord {
+  addProject(input: ProjectInput & { defaultBranch: string; resolvedName: string; kind?: ProjectRecord["kind"] }): ProjectRecord {
     const id = createId();
     const createdAt = nowIso();
+    const kind = input.kind ?? "git";
     this.run(
       `
-      insert into projects (id, name, repo_path, default_branch, cumulative_input_tokens, cumulative_output_tokens, created_at, updated_at, last_opened_at)
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      insert into projects (id, name, repo_path, default_branch, project_kind, cumulative_input_tokens, cumulative_output_tokens, created_at, updated_at, last_opened_at)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
-      [id, input.resolvedName, input.repoPath, input.defaultBranch, 0, 0, createdAt, createdAt, createdAt],
+      [id, input.resolvedName, input.repoPath, input.defaultBranch, kind, 0, 0, createdAt, createdAt, createdAt],
     );
     this.persist();
     return this.getProject(id);
@@ -984,6 +988,7 @@ export class BuildWardenDatabase {
         name,
         repo_path as repoPath,
         default_branch as defaultBranch,
+        project_kind as kind,
         cumulative_input_tokens as cumulativeInputTokens,
         cumulative_output_tokens as cumulativeOutputTokens,
         created_at as createdAt,
@@ -1003,6 +1008,7 @@ export class BuildWardenDatabase {
         name,
         repo_path as repoPath,
         default_branch as defaultBranch,
+        project_kind as kind,
         cumulative_input_tokens as cumulativeInputTokens,
         cumulative_output_tokens as cumulativeOutputTokens,
         created_at as createdAt,
@@ -1028,6 +1034,20 @@ export class BuildWardenDatabase {
       [timestamp, timestamp, projectId],
     );
     this.persist();
+  }
+
+  updateProjectKind(projectId: string, kind: ProjectRecord["kind"], defaultBranch: string): ProjectRecord {
+    const timestamp = nowIso();
+    this.run(
+      `
+      update projects
+      set project_kind = ?, default_branch = ?, updated_at = ?
+      where id = ?
+      `,
+      [kind, defaultBranch, timestamp, projectId],
+    );
+    this.persist();
+    return this.getProject(projectId);
   }
 
   incrementProjectTokenUsage(projectId: string, inputTokensDelta: number, outputTokensDelta: number): ProjectRecord {
@@ -1239,9 +1259,9 @@ export class BuildWardenDatabase {
       `
       insert into runs (
         id, project_id, provider_account_id, model_id, harness_type, run_mode, workspace_type, prompt, status,
-        goal_text, branch_name, worktree_path, summary, error_message, last_provider_response_id, input_tokens, output_tokens, list_visibility, run_kind, lab_thread_id,
+        workspace_vcs, goal_text, branch_name, worktree_path, summary, error_message, last_provider_response_id, input_tokens, output_tokens, list_visibility, run_kind, lab_thread_id,
         parent_run_id, root_run_id, lineage_title, created_at, updated_at, started_at, finished_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         id,
@@ -1253,6 +1273,7 @@ export class BuildWardenDatabase {
         input.workspaceType,
         input.prompt,
         "queued",
+        input.workspaceVcs ?? "git",
         input.goalText ?? null,
         input.branchName,
         input.worktreePath,
@@ -1376,6 +1397,7 @@ export class BuildWardenDatabase {
         harness_type as harnessType,
         run_mode as mode,
         workspace_type as workspaceType,
+        workspace_vcs as workspaceVcs,
         prompt,
         goal_text as goalText,
         status,
@@ -1524,6 +1546,7 @@ export class BuildWardenDatabase {
         harness_type as harnessType,
         run_mode as mode,
         workspace_type as workspaceType,
+        workspace_vcs as workspaceVcs,
         prompt,
         goal_text as goalText,
         status,
@@ -1572,6 +1595,7 @@ export class BuildWardenDatabase {
             harness_type as harnessType,
             run_mode as mode,
             workspace_type as workspaceType,
+            workspace_vcs as workspaceVcs,
             prompt,
             goal_text as goalText,
             status,
@@ -1619,6 +1643,7 @@ export class BuildWardenDatabase {
         harness_type as harnessType,
         run_mode as mode,
         workspace_type as workspaceType,
+        workspace_vcs as workspaceVcs,
         prompt,
         goal_text as goalText,
         status,
@@ -1821,7 +1846,7 @@ export class BuildWardenDatabase {
       [workspaceType, trimmedPath, timestamp, runId],
     );
 
-    if (workspaceType === "worktree") {
+    if (workspaceType === "worktree" || workspaceType === "copy") {
       this.run(
         `
         update worktrees
@@ -2165,6 +2190,7 @@ export class BuildWardenDatabase {
         name text not null,
         repo_path text not null unique,
         default_branch text not null,
+        project_kind text not null default 'git',
         cumulative_input_tokens integer not null default 0,
         cumulative_output_tokens integer not null default 0,
         created_at text not null,
@@ -2205,6 +2231,7 @@ export class BuildWardenDatabase {
         harness_type text not null,
         run_mode text not null default 'code',
         workspace_type text not null default 'worktree',
+        workspace_vcs text not null default 'git',
         prompt text not null,
         goal_text text,
         status text not null,
@@ -2435,6 +2462,19 @@ export class BuildWardenDatabase {
       create index if not exists idx_provider_session_runtime_last_seen on provider_session_runtime(last_seen_at);
     `);
 
+  }
+
+  private applySchemaMigrations(): void {
+    this.ensureColumn("projects", "project_kind", "text not null default 'git'");
+    this.ensureColumn("runs", "workspace_vcs", "text not null default 'git'");
+  }
+
+  private ensureColumn(tableName: string, columnName: string, definition: string): void {
+    const columns = this.all<{ name: string }>(`pragma table_info(${tableName})`);
+    if (columns.some((column) => column.name === columnName)) {
+      return;
+    }
+    this.exec(`alter table ${tableName} add column ${columnName} ${definition}`);
   }
 
   private all<T>(sql: string, params: unknown[] = []): T[] {

@@ -135,7 +135,7 @@ const PLAN_COLLABORATION_INSTRUCTIONS =
   "<collaboration_mode># Plan Mode\n\nInspect first, avoid making changes, and produce a concrete implementation plan. If an important product or implementation choice is ambiguous and would materially change the plan, ask the user one concise structured question with the request_user_input tool before finalizing the plan. End the final plan with a compact numbered implementation-step table or checklist that BuildWarden can display as plan steps.\n</collaboration_mode>";
 
 const BUILDWARDEN_DEVELOPER_INSTRUCTIONS = [
-  "You are BuildWarden, a desktop coding agent running inside a Git worktree.",
+  "You are BuildWarden, a desktop coding agent running inside a project workspace.",
   "You are operating on a local codebase and can inspect and modify files from the current workspace.",
   "Use repository context when it is provided, and inspect files before making assumptions.",
   "The workspace root is already the current working directory. Do not prefix commands with cd.",

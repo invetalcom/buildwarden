@@ -20,6 +20,7 @@ type ConfirmDialogState = {
   title: string;
   message: string;
   confirmLabel: string;
+  cancelLabel?: string;
   confirmVariant?: ComponentProps<typeof Button>["variant"];
 };
 
@@ -325,7 +326,13 @@ export const RunActionDialogs = ({
           <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Continue run</p>
           <h3 className="mt-2 text-xl font-semibold">{continueDialogRun.prompt}</h3>
           <p className="mt-1 text-sm text-zinc-500">
-            Start a new run from branch <span className="font-medium text-zinc-300">{continueDialogRun.branchName}</span> in a fresh worktree.
+            {continueDialogRun.workspaceVcs === "folder" ? (
+              <>Start a new run in a fresh copied workspace from this run&apos;s current folder state.</>
+            ) : (
+              <>
+                Start a new run from branch <span className="font-medium text-zinc-300">{continueDialogRun.branchName}</span> in a fresh worktree.
+              </>
+            )}
           </p>
           <div className="mt-4 space-y-3">
             <label className="block text-sm">
@@ -383,7 +390,7 @@ export const RunActionDialogs = ({
           <p className="mt-3 text-sm leading-relaxed text-zinc-400">{confirmDialog.message}</p>
           <div className="mt-5 flex items-center justify-end gap-3">
             <Button variant="outline" onClick={() => onResolveConfirmation(false)} autoFocus>
-              Cancel
+              {confirmDialog.cancelLabel ?? "Cancel"}
             </Button>
             <Button
               variant={confirmDialog.confirmVariant ?? "default"}

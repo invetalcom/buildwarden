@@ -35,6 +35,9 @@ const formatRunDuration = (run: RunRecord) => {
   return `${seconds}s`;
 };
 
+const formatRunWorkspaceLabel = (run: RunRecord) =>
+  run.workspaceVcs === "folder" ? (run.workspaceType === "copy" ? "Folder copy" : "Project folder") : run.branchName;
+
 const parseSearchTerms = (value: string) =>
   value
     .toLocaleLowerCase()
@@ -137,7 +140,7 @@ export const AllRunsPage = ({ projects, onSelectRun }: AllRunsPageProps) => {
                         <Clock3 className="size-3" />
                         {formatRelativeTime(run.finishedAt ?? run.updatedAt)} - {formatRunDuration(run)}
                       </span>
-                      <span className="truncate font-mono">{run.branchName}</span>
+                      <span className="truncate font-mono">{formatRunWorkspaceLabel(run)}</span>
                     </div>
                   </div>
                   <Badge dot tone={run.status}>{run.status}</Badge>
