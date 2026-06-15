@@ -1822,6 +1822,9 @@ export class AppController
       return [];
     }
     return this.db.listRunsForProject(projectId).filter((run) => {
+      if (run.workspaceVcs !== "git") {
+        return false;
+      }
       if (run.branchName.trim() === normalizedBranchName) {
         return true;
       }
