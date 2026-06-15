@@ -660,6 +660,34 @@ export class AppController
     });
   }
 
+  private async captureFolderBaselineSnapshotOrFail(run: RunRecord, project: ProjectRecord): Promise<void> {
+    try {
+      await this.captureFolderBaselineSnapshot(run);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      const message = `Could not prepare the folder baseline snapshot for this run. ${detail}`;
+      this.db.updateRunStatus(run.id, "failed", { errorMessage: message });
+      await this.appendRunEvent(run.id, "error", "Folder snapshot failed", message);
+      this.emitEvent({
+        runId: run.id,
+        type: "error",
+        title: "Folder snapshot failed",
+        content: message,
+        createdAt: new Date().toISOString(),
+      });
+      try {
+        await this.deleteRunResources(project.repoPath, run, "run");
+      } catch (cleanupError) {
+        logWarn("Failed to clean up folder run resources after snapshot creation failed.", {
+          runId: run.id,
+          worktreePath: run.worktreePath,
+          error: cleanupError,
+        });
+      }
+      throw error;
+    }
+  }
+
   private getProjectActiveIntegratedSkills(projectId: string) {
     const settings = this.db.getSettings();
     const disabledSkillIds = new Set(
@@ -2108,7 +2136,7 @@ export class AppController
       createdAt: new Date().toISOString(),
     });
 
-    await this.captureFolderBaselineSnapshot(run);
+    await this.captureFolderBaselineSnapshotOrFail(run, project);
     await this.capturePromptRestorePoint(run.id, "initial");
     const worker = this.startWorker(
       run,
@@ -2267,7 +2295,7 @@ export class AppController
       createdAt: new Date().toISOString(),
     });
 
-    await this.captureFolderBaselineSnapshot(run);
+    await this.captureFolderBaselineSnapshotOrFail(run, project);
     await this.capturePromptRestorePoint(run.id, "initial");
     const worker = this.startWorker(
       run,
