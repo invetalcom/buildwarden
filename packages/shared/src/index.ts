@@ -2356,6 +2356,8 @@ export const APP_SETTING_KEYS = {
   projectForgePrMonitorSettings: "projectForgePrMonitorSettings",
   /** JSON object with app-wide outbound proxy host/port/user settings (password stored in secure storage). */
   networkProxyConfig: "networkProxyConfig",
+  /** JSON string array of welcome/onboarding check ids that have been satisfied at least once. */
+  welcomeCompletedCheckIds: "welcomeCompletedCheckIds",
 } as const;
 
 export const DEFAULT_RECENT_RUN_DAYS = 2;
@@ -2365,6 +2367,26 @@ export const MAX_RECENT_RUN_DAYS = 365;
 export type RunTimelineDensity = "compact" | "comfortable" | "detailed";
 
 export const RUN_TIMELINE_DENSITIES = ["compact", "comfortable", "detailed"] as const satisfies readonly RunTimelineDensity[];
+
+export const parseWelcomeCompletedCheckIdsSetting = (raw: string | undefined | null): string[] => {
+  if (!raw?.trim()) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return Array.from(
+      new Set(parsed.filter((value): value is string => typeof value === "string").map((value) => value.trim()).filter(Boolean)),
+    );
+  } catch {
+    return [];
+  }
+};
+
+export const serializeWelcomeCompletedCheckIdsSetting = (ids: Iterable<string>): string =>
+  JSON.stringify(Array.from(new Set(Array.from(ids).map((id) => id.trim()).filter(Boolean))).sort());
 
 export const parseRunTimelineDensitySetting = (raw: string | undefined): RunTimelineDensity => {
   const normalized = raw?.trim().toLowerCase();

@@ -45,6 +45,17 @@ export type GitWorkspaceSettingsTabProps = {
   onResetShellAllowlistDraft: () => void;
 };
 
+export type ProjectSetupFieldsProps = {
+  busy: boolean;
+  projectName: string;
+  projectPath: string;
+  projectFolderGitWarning: string | null;
+  onChooseDirectory: () => void;
+  onSubmitProject: () => void;
+  onProjectNameChange: (value: string) => void;
+  onProjectPathChange: (value: string) => void;
+};
+
 type SettingsSectionProps = {
   title: string;
   children: ReactNode;
@@ -79,6 +90,41 @@ const SettingsRow = ({ title, description, children, align = "center" }: Setting
 );
 
 const rowControlClass = "w-full md:max-w-[42rem]";
+
+export const ProjectSetupFields = ({
+  busy,
+  projectName,
+  projectPath,
+  projectFolderGitWarning,
+  onChooseDirectory,
+  onSubmitProject,
+  onProjectNameChange,
+  onProjectPathChange,
+}: ProjectSetupFieldsProps) => (
+  <div className="space-y-2">
+    <div className="flex min-w-0 flex-wrap gap-2 sm:flex-nowrap">
+      <Input
+        className="min-w-[12rem] flex-1"
+        placeholder="Path to project folder"
+        value={projectPath}
+        onChange={(event) => onProjectPathChange(event.target.value)}
+      />
+      <Button type="button" variant="secondary" className="shrink-0" onClick={onChooseDirectory}>
+        Browse
+      </Button>
+      <Button type="button" className="shrink-0" onClick={onSubmitProject} disabled={busy || !projectPath}>
+        Add project
+      </Button>
+    </div>
+    <Input placeholder="Display name (optional)" value={projectName} onChange={(event) => onProjectNameChange(event.target.value)} />
+    {projectFolderGitWarning ? (
+      <div className="flex items-start gap-2 rounded-md border border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] px-3 py-2 text-xs leading-5 text-[var(--ec-warning)]">
+        <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-[var(--ec-warning)]" aria-hidden />
+        <span className="min-w-0">{projectFolderGitWarning}</span>
+      </div>
+    ) : null}
+  </div>
+);
 
 export const GitWorkspaceSettingsTab = ({
   busy,
@@ -185,28 +231,17 @@ export const GitWorkspaceSettingsTab = ({
           description="Register a local folder. Git repositories enable branches, worktrees, commits, and PR/MR review; plain folders can still run agents."
           align="start"
         >
-          <div className={`${rowControlClass} space-y-2`}>
-            <div className="flex min-w-0 flex-wrap gap-2 sm:flex-nowrap">
-              <Input
-                className="min-w-[12rem] flex-1"
-                placeholder="Path to project folder"
-                value={projectPath}
-                onChange={(event) => onProjectPathChange(event.target.value)}
-              />
-              <Button type="button" variant="secondary" className="shrink-0" onClick={onChooseDirectory}>
-                Browse
-              </Button>
-              <Button type="button" className="shrink-0" onClick={onSubmitProject} disabled={busy || !projectPath}>
-                Add project
-              </Button>
-            </div>
-            <Input placeholder="Display name (optional)" value={projectName} onChange={(event) => onProjectNameChange(event.target.value)} />
-            {projectFolderGitWarning ? (
-              <div className="flex items-start gap-2 rounded-md border border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] px-3 py-2 text-xs leading-5 text-[var(--ec-warning)]">
-                <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-[var(--ec-warning)]" aria-hidden />
-                <span className="min-w-0">{projectFolderGitWarning}</span>
-              </div>
-            ) : null}
+          <div className={rowControlClass}>
+            <ProjectSetupFields
+              busy={busy}
+              projectName={projectName}
+              projectPath={projectPath}
+              projectFolderGitWarning={projectFolderGitWarning}
+              onChooseDirectory={onChooseDirectory}
+              onSubmitProject={onSubmitProject}
+              onProjectNameChange={onProjectNameChange}
+              onProjectPathChange={onProjectPathChange}
+            />
           </div>
         </SettingsRow>
         <SettingsRow title="Existing projects" description="Remove projects from BuildWarden without deleting the original folder." align="start">

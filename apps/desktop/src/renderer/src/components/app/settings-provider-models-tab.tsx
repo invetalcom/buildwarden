@@ -1,6 +1,6 @@
 import type { AppSnapshot, ProviderType, UnifiedModelPreset, UnifiedModelPresetGroup, UnifiedProviderFamily } from "@buildwarden/shared";
 import { useEffect, useState } from "react";
-import { ChevronDown, KeyRound, Loader2, Plus, Terminal, Trash2 } from "lucide-react";
+import { CheckCircle2, ChevronDown, KeyRound, Loader2, Plus, Terminal, Trash2 } from "lucide-react";
 import {
   DEFAULT_ADD_MODEL_DRAFT,
   MODEL_PRESET_CUSTOM,
@@ -35,20 +35,25 @@ const DEFAULT_LABEL_BY_TYPE: Record<ProviderType, string> = {
 const SettingsField = ({
   label,
   hint,
+  compact = false,
   children,
 }: {
   label: string;
   hint?: string;
+  compact?: boolean;
   children: React.ReactNode;
 }) => (
-  <label className="block space-y-2">
+  <label className={cn("block", compact ? "space-y-1.5" : "space-y-2")}>
     <div className="space-y-1">
       <span className="block text-sm font-medium text-zinc-200">{label}</span>
-      {hint ? <span className="block text-xs leading-relaxed text-zinc-500">{hint}</span> : null}
+      {hint ? <span className={cn("block text-zinc-500", compact ? "text-[11px] leading-4" : "text-xs leading-relaxed")}>{hint}</span> : null}
     </div>
     {children}
   </label>
 );
+
+export type ProviderModelsOpenPanel = "connection" | "model" | null;
+export type ProviderModelsPresentation = "settings" | "welcome";
 
 export type ProviderModelsSettingsTabProps = {
   busy: boolean;
@@ -95,6 +100,10 @@ export type ProviderModelsSettingsTabProps = {
   onModelDisplayNameChange: (value: string) => void;
   onModelBaseUrlChange: (value: string) => void;
   onSetOpenAiPresetUserChoseCustom: (value: boolean) => void;
+  openPanel?: ProviderModelsOpenPanel;
+  defaultOpenPanel?: ProviderModelsOpenPanel;
+  onOpenPanelChange?: (panel: ProviderModelsOpenPanel) => void;
+  presentation?: ProviderModelsPresentation;
 };
 
 export const ProviderModelsSettingsTab = ({
@@ -142,9 +151,34 @@ export const ProviderModelsSettingsTab = ({
   onModelDisplayNameChange,
   onModelBaseUrlChange,
   onSetOpenAiPresetUserChoseCustom,
+  openPanel: controlledOpenPanel,
+  defaultOpenPanel = null,
+  onOpenPanelChange,
+  presentation = "settings",
 }: ProviderModelsSettingsTabProps) => {
-  const [openPanel, setOpenPanel] = useState<null | "connection" | "model">(null);
+  const [internalOpenPanel, setInternalOpenPanel] = useState<ProviderModelsOpenPanel>(defaultOpenPanel);
   const [connectionKind, setConnectionKind] = useState<ReturnType<typeof connectionKindForProviderType> | null>(null);
+  const openPanel = controlledOpenPanel ?? internalOpenPanel;
+  const isWelcomePresentation = presentation === "welcome";
+  const providerReady = providerAccounts.length > 0;
+  const modelReady = models.length > 0;
+  const showProviderBaseUrlField =
+    !isWelcomePresentation ||
+    providerType === "azure-legacy" ||
+    (providerType === "ai-sdk" && providerFamily === "openai-compatible");
+  const setOpenPanel = (next: ProviderModelsOpenPanel | ((current: ProviderModelsOpenPanel) => ProviderModelsOpenPanel)) => {
+    const resolved = typeof next === "function" ? next(openPanel) : next;
+    if (controlledOpenPanel === undefined) {
+      setInternalOpenPanel(resolved);
+    }
+    onOpenPanelChange?.(resolved);
+  };
+
+  useEffect(() => {
+    if (controlledOpenPanel === undefined) {
+      setInternalOpenPanel(defaultOpenPanel);
+    }
+  }, [controlledOpenPanel, defaultOpenPanel]);
 
   useEffect(() => {
     if (openPanel === "connection") {
@@ -164,7 +198,40 @@ export const ProviderModelsSettingsTab = ({
   );
 
   return (
-    <div className="space-y-4">
+    <div className={cn(isWelcomePresentation ? "space-y-3" : "space-y-4")}>
+      {isWelcomePresentation ? (
+        <div className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-2.5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm leading-5 text-[var(--ec-muted)]">
+              Add one provider and one model to get started. You can add more anytime in Settings.
+            </p>
+            <div className="flex shrink-0 flex-wrap gap-1.5">
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs",
+                  providerReady
+                    ? "border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] text-[var(--ec-success)]"
+                    : "border-[var(--ec-border)] bg-[var(--ec-control)] text-[var(--ec-muted)]",
+                )}
+              >
+                {providerReady ? <CheckCircle2 className="h-3.5 w-3.5" aria-hidden /> : null}
+                Connection {providerReady ? "ready" : "needed"}
+              </span>
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs",
+                  modelReady
+                    ? "border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] text-[var(--ec-success)]"
+                    : "border-[var(--ec-border)] bg-[var(--ec-control)] text-[var(--ec-muted)]",
+                )}
+              >
+                {modelReady ? <CheckCircle2 className="h-3.5 w-3.5" aria-hidden /> : null}
+                Model {modelReady ? "ready" : "needed"}
+              </span>
+            </div>
+          </div>
+        </div>
+      ) : (
       <div className="grid gap-4 lg:grid-cols-2">
         <Card className="app-surface-inset-soft border-white/8 p-4">
           <div className="flex items-center justify-between gap-2">
@@ -254,51 +321,86 @@ export const ProviderModelsSettingsTab = ({
           </div>
         </Card>
       </div>
+      )}
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className={cn("grid sm:grid-cols-2", isWelcomePresentation ? "gap-2" : "gap-3")}>
         <button
           type="button"
-          onClick={() => setOpenPanel((p) => (p === "connection" ? null : "connection"))}
+          onClick={() => {
+            if (isWelcomePresentation) {
+              setOpenPanel("connection");
+              return;
+            }
+            setOpenPanel((p) => (p === "connection" ? null : "connection"));
+          }}
           className={cn(
-            "flex w-full items-center justify-between gap-3 rounded-2xl border px-4 py-3.5 text-left transition",
+            "flex w-full items-center justify-between gap-3 border text-left transition",
+            isWelcomePresentation ? "rounded-lg px-3 py-2.5" : "rounded-2xl px-4 py-3.5",
             openPanel === "connection"
               ? "border-cyan-400/35 bg-cyan-500/[0.08] text-cyan-100"
               : "border-white/8 bg-white/[0.02] text-zinc-200 hover:border-white/12 hover:bg-white/[0.04]",
           )}
         >
           <div className="space-y-0.5">
-            <p className="text-sm font-semibold">Add a connection</p>
+            <p className="text-sm font-semibold">{isWelcomePresentation ? "1. Connection" : "Add a connection"}</p>
             <p className="text-xs text-zinc-500">Local SDK/CLI or bring your own API key</p>
           </div>
-          <ChevronDown className={cn("h-4 w-4 shrink-0 transition", openPanel === "connection" ? "rotate-180" : "")} />
+          {isWelcomePresentation && providerReady ? (
+            <CheckCircle2 className="h-4 w-4 shrink-0 text-[var(--ec-success)]" aria-hidden />
+          ) : (
+            <ChevronDown className={cn("h-4 w-4 shrink-0 transition", openPanel === "connection" ? "rotate-180" : "")} />
+          )}
         </button>
         <button
           type="button"
-          onClick={() => setOpenPanel((p) => (p === "model" ? null : "model"))}
+          disabled={isWelcomePresentation && !providerReady}
+          onClick={() => {
+            if (isWelcomePresentation) {
+              setOpenPanel("model");
+              return;
+            }
+            setOpenPanel((p) => (p === "model" ? null : "model"));
+          }}
           className={cn(
-            "flex w-full items-center justify-between gap-3 rounded-2xl border px-4 py-3.5 text-left transition",
+            "flex w-full items-center justify-between gap-3 border text-left transition",
+            isWelcomePresentation ? "rounded-lg px-3 py-2.5 disabled:cursor-not-allowed disabled:opacity-55" : "rounded-2xl px-4 py-3.5",
             openPanel === "model"
               ? "border-fuchsia-400/30 bg-fuchsia-500/[0.07] text-fuchsia-100"
               : "border-white/8 bg-white/[0.02] text-zinc-200 hover:border-white/12 hover:bg-white/[0.04]",
           )}
         >
           <div className="space-y-0.5">
-            <p className="text-sm font-semibold">Add a model</p>
-            <p className="text-xs text-zinc-500">Tied to a connection; presets match your account</p>
+            <p className="text-sm font-semibold">{isWelcomePresentation ? "2. Model" : "Add a model"}</p>
+            <p className="text-xs text-zinc-500">
+              {isWelcomePresentation && !providerReady ? "Unlocks after the connection" : "Tied to a connection; presets match your account"}
+            </p>
           </div>
-          <ChevronDown className={cn("h-4 w-4 shrink-0 transition", openPanel === "model" ? "rotate-180" : "")} />
+          {isWelcomePresentation && modelReady ? (
+            <CheckCircle2 className="h-4 w-4 shrink-0 text-[var(--ec-success)]" aria-hidden />
+          ) : (
+            <ChevronDown className={cn("h-4 w-4 shrink-0 transition", openPanel === "model" ? "rotate-180" : "")} />
+          )}
         </button>
       </div>
 
       {openPanel === "connection" ? (
-        <Card className="app-surface-settings-form-card overflow-hidden border-cyan-500/15 p-0">
-          <div className="border-b border-white/6 px-5 py-3">
+        <Card
+          className={cn(
+            "app-surface-settings-form-card overflow-hidden p-0",
+            isWelcomePresentation ? "rounded-lg border-[var(--ec-border)]" : "border-cyan-500/15",
+          )}
+        >
+          <div className={cn("border-b border-white/6", isWelcomePresentation ? "px-4 py-2.5" : "px-5 py-3")}>
             <p className="text-[11px] uppercase tracking-[0.28em] text-cyan-300/60">New connection</p>
-            <h3 className="mt-1 text-lg font-semibold text-zinc-50">Set up a provider account</h3>
-            <p className="mt-0.5 text-sm text-zinc-500">Pick how you authenticate, then the concrete integration.</p>
+            <h3 className={cn("mt-1 font-semibold text-zinc-50", isWelcomePresentation ? "text-base" : "text-lg")}>
+              {isWelcomePresentation ? "Give BuildWarden a way to reach an AI" : "Set up a provider account"}
+            </h3>
+            <p className={cn("mt-0.5 text-zinc-500", isWelcomePresentation ? "text-xs" : "text-sm")}>
+              Pick local tools or bring an API key. Nothing fancy required.
+            </p>
           </div>
-          <div className="space-y-4 px-5 py-4">
-            <div className="grid gap-3 sm:grid-cols-2">
+          <div className={cn(isWelcomePresentation ? "space-y-3 px-4 py-3" : "space-y-4 px-5 py-4")}>
+            <div className={cn("grid sm:grid-cols-2", isWelcomePresentation ? "gap-2" : "gap-3")}>
               {(["local-sdk-cli", "bring-your-own-key"] as const).map((kind) => {
                 const active = (connectionKind ?? connectionKindForProviderType(providerType)) === kind;
                 return (
@@ -313,7 +415,8 @@ export const ProviderModelsSettingsTab = ({
                       }
                     }}
                     className={cn(
-                      "flex h-full min-h-[4.5rem] flex-col items-start gap-1 rounded-2xl border px-4 py-3 text-left transition",
+                      "flex h-full flex-col items-start gap-1 border text-left transition",
+                      isWelcomePresentation ? "min-h-[3.75rem] rounded-lg px-3 py-2.5" : "min-h-[4.5rem] rounded-2xl px-4 py-3",
                       active
                         ? "border-cyan-400/40 bg-cyan-500/10"
                         : "border-white/8 bg-zinc-950/40 hover:border-white/15",
@@ -324,7 +427,7 @@ export const ProviderModelsSettingsTab = ({
                       {kind === "bring-your-own-key" ? <KeyRound className="h-4 w-4 text-amber-200/80" /> : null}
                       {PROVIDER_CONNECTION_KIND_LABELS[kind]}
                     </span>
-                    <span className="text-xs leading-relaxed text-zinc-500">
+                    <span className={cn("text-zinc-500", isWelcomePresentation ? "text-[11px] leading-4" : "text-xs leading-relaxed")}>
                       {kind === "local-sdk-cli"
                         ? "Uses tools already on your machine (Codex or Claude Code)."
                         : "You supply a key or endpoint: AI SDK or Azure deployments."}
@@ -355,24 +458,32 @@ export const ProviderModelsSettingsTab = ({
                 </div>
               </div>
 
-            <div className="app-surface-inset-soft rounded-2xl border p-4">
-              <div className="grid gap-3 md:grid-cols-2">
-                <SettingsField label="Display label" hint="Shown in menus next to this connection.">
-                  <Input
-                    value={providerLabel}
-                    onChange={(event) => onProviderLabelChange(event.target.value)}
-                    placeholder="e.g. Work OpenAI"
-                  />
-                </SettingsField>
-                <div className="hidden md:block" aria-hidden />
-              </div>
+            <div className={cn("app-surface-inset-soft border", isWelcomePresentation ? "rounded-lg p-3" : "rounded-2xl p-4")}>
+              {!isWelcomePresentation ? (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <SettingsField label="Display label" hint="Shown in menus next to this connection.">
+                    <Input
+                      value={providerLabel}
+                      onChange={(event) => onProviderLabelChange(event.target.value)}
+                      placeholder="e.g. Work OpenAI"
+                    />
+                  </SettingsField>
+                  <div className="hidden md:block" aria-hidden />
+                </div>
+              ) : null}
 
               {providerType === "ai-sdk" ? (
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
-                  <SettingsField label="Provider family" hint="Select which vendor backs this account.">
+                  <SettingsField label="Provider family" hint="Select which vendor backs this account." compact={isWelcomePresentation}>
                     <Select
                       value={providerFamily}
-                      onValueChange={(value) => onProviderFamilyChange(value as UnifiedProviderFamily)}
+                      onValueChange={(value) => {
+                        const next = value as UnifiedProviderFamily;
+                        onProviderFamilyChange(next);
+                        if (isWelcomePresentation && next !== "openai-compatible") {
+                          onProviderBaseUrlChange("");
+                        }
+                      }}
                       options={[
                         { value: "openai", label: "OpenAI" },
                         { value: "anthropic", label: "Anthropic" },
@@ -380,12 +491,13 @@ export const ProviderModelsSettingsTab = ({
                         { value: "xai", label: "xAI" },
                         { value: "openai-compatible", label: "OpenAI-compatible" },
                       ]}
-                      triggerClassName="h-11 rounded-xl"
+                      triggerClassName={cn("h-11", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}
                     />
                   </SettingsField>
                   <SettingsField
                     label="API key"
                     hint={providerFamily === "openai-compatible" ? "Optional on some self-hosted servers." : "Stored only on this machine."}
+                    compact={isWelcomePresentation}
                   >
                     <Input value={apiKey} onChange={(event) => onApiKeyChange(event.target.value)} type="password" placeholder="Key" />
                   </SettingsField>
@@ -394,14 +506,14 @@ export const ProviderModelsSettingsTab = ({
 
               {providerType === "codex-cli" ? (
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
-                  <SettingsField label="Codex binary path" hint="Leave blank to use `codex` on PATH.">
+                  <SettingsField label="Codex binary path" hint="Leave blank to use `codex` on PATH." compact={isWelcomePresentation}>
                     <Input
                       value={codexBinaryPath}
                       onChange={(event) => onCodexBinaryPathChange(event.target.value)}
                       placeholder={detectedCodexBinaryPath ?? "codex or path to codex.cmd"}
                     />
                   </SettingsField>
-                  <SettingsField label="CODEX_HOME" hint="If auth lives in a custom folder.">
+                  <SettingsField label="CODEX_HOME" hint="If auth lives in a custom folder." compact={isWelcomePresentation}>
                     <Input value={codexHomePath} onChange={(event) => onCodexHomePathChange(event.target.value)} placeholder="Optional" />
                   </SettingsField>
                 </div>
@@ -409,14 +521,14 @@ export const ProviderModelsSettingsTab = ({
 
               {providerType === "claude-code" ? (
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
-                  <SettingsField label="Claude binary path" hint="Leave blank to use `claude` on PATH.">
+                  <SettingsField label="Claude binary path" hint="Leave blank to use `claude` on PATH." compact={isWelcomePresentation}>
                     <Input
                       value={claudeBinaryPath}
                       onChange={(event) => onClaudeBinaryPathChange(event.target.value)}
                       placeholder={detectedClaudeBinaryPath ?? "claude or path to claude.cmd"}
                     />
                   </SettingsField>
-                  <SettingsField label="Launch arguments" hint="Optional extra CLI flags.">
+                  <SettingsField label="Launch arguments" hint="Optional extra CLI flags." compact={isWelcomePresentation}>
                     <Input
                       value={claudeLaunchArgs}
                       onChange={(event) => onClaudeLaunchArgsChange(event.target.value)}
@@ -426,10 +538,10 @@ export const ProviderModelsSettingsTab = ({
                 </div>
               ) : null}
 
-              {providerType !== "codex-cli" && providerType !== "claude-code" ? (
+              {providerType !== "codex-cli" && providerType !== "claude-code" && (providerType === "azure-legacy" || showProviderBaseUrlField) ? (
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
                   {providerType === "azure-legacy" ? (
-                    <SettingsField label="API key" hint="Optional for some Azure setups.">
+                    <SettingsField label="API key" hint="Optional for some Azure setups." compact={isWelcomePresentation}>
                       <Input
                         value={apiKey}
                         onChange={(event) => onApiKeyChange(event.target.value)}
@@ -438,28 +550,31 @@ export const ProviderModelsSettingsTab = ({
                       />
                     </SettingsField>
                   ) : null}
-                  <SettingsField
-                    label="Base URL"
-                    hint={
-                      providerType === "azure-legacy"
-                        ? "Deployment URL (includes deployment segment)."
-                        : providerFamily === "openai-compatible"
-                          ? "Root URL for the compatible server."
-                          : "Gateway or proxy, optional."
-                    }
-                  >
-                    <Input
-                      value={providerBaseUrl}
-                      onChange={(event) => onProviderBaseUrlChange(event.target.value)}
-                      placeholder="Optional"
-                    />
-                  </SettingsField>
+                  {showProviderBaseUrlField ? (
+                    <SettingsField
+                      label="Base URL"
+                      hint={
+                        providerType === "azure-legacy"
+                          ? "Deployment URL (includes deployment segment)."
+                          : providerFamily === "openai-compatible"
+                            ? "Root URL for the compatible server."
+                            : "Gateway or proxy, optional."
+                      }
+                      compact={isWelcomePresentation}
+                    >
+                      <Input
+                        value={providerBaseUrl}
+                        onChange={(event) => onProviderBaseUrlChange(event.target.value)}
+                        placeholder="Optional"
+                      />
+                    </SettingsField>
+                  ) : null}
                 </div>
               ) : null}
 
               {providerType === "azure-legacy" ? (
                 <div className="mt-3">
-                  <SettingsField label="Azure api-version" hint="The model ID below should match the deployment name.">
+                  <SettingsField label="Azure api-version" hint="The model ID below should match the deployment name." compact={isWelcomePresentation}>
                     <Input
                       value={providerAzureApiVersion}
                       onChange={(event) => onProviderAzureApiVersionChange(event.target.value)}
@@ -469,7 +584,7 @@ export const ProviderModelsSettingsTab = ({
                 </div>
               ) : null}
 
-              {providerType === "ai-sdk" ? (
+              {providerType === "ai-sdk" && !isWelcomePresentation ? (
                 <div className="mt-3">
                   <SettingsField label="Advanced provider config JSON" hint="Optional extra headers, etc.">
                     <Textarea
@@ -483,13 +598,13 @@ export const ProviderModelsSettingsTab = ({
               ) : null}
 
               {providerType === "codex-cli" ? (
-                <p className="mt-3 rounded-xl border border-cyan-500/12 bg-cyan-500/[0.04] px-3 py-2 text-xs leading-relaxed text-zinc-500">
+                <p className={cn("mt-3 border border-cyan-500/12 bg-cyan-500/[0.04] px-3 py-2 text-xs leading-relaxed text-zinc-500", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}>
                   Runs and chats go through a local <code className="text-zinc-400">codex app-server</code> using your CLI login
                   {detectedCodexBinaryPath ? <span> (detected: {detectedCodexBinaryPath})</span> : null}.
                 </p>
               ) : null}
               {providerType === "claude-code" ? (
-                <p className="mt-3 rounded-xl border border-violet-500/12 bg-violet-500/[0.04] px-3 py-2 text-xs leading-relaxed text-zinc-500">
+                <p className={cn("mt-3 border border-violet-500/12 bg-violet-500/[0.04] px-3 py-2 text-xs leading-relaxed text-zinc-500", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}>
                   Uses <code className="text-zinc-400">claude -p</code> and your local Claude Code session
                   {detectedClaudeBinaryPath ? <span> (detected: {detectedClaudeBinaryPath})</span> : null}.
                 </p>
@@ -498,7 +613,7 @@ export const ProviderModelsSettingsTab = ({
 
             <div className="flex flex-wrap items-center gap-2">
               <Button
-                className="min-w-[9rem] rounded-xl"
+                className={cn("min-w-[9rem]", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}
                 onClick={onSubmitProvider}
                 disabled={
                   busy ||
@@ -511,23 +626,34 @@ export const ProviderModelsSettingsTab = ({
                 {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
                 Save connection
               </Button>
-              <Button type="button" variant="secondary" className="rounded-xl" onClick={() => setOpenPanel(null)}>
-                Collapse
-              </Button>
+              {!isWelcomePresentation ? (
+                <Button type="button" variant="secondary" className="rounded-xl" onClick={() => setOpenPanel(null)}>
+                  Collapse
+                </Button>
+              ) : null}
             </div>
           </div>
         </Card>
       ) : null}
 
       {openPanel === "model" ? (
-        <Card className="app-surface-settings-form-card overflow-hidden border-fuchsia-500/12 p-0">
-          <div className="border-b border-white/6 px-5 py-3">
+        <Card
+          className={cn(
+            "app-surface-settings-form-card overflow-hidden p-0",
+            isWelcomePresentation ? "rounded-lg border-[var(--ec-border)]" : "border-fuchsia-500/12",
+          )}
+        >
+          <div className={cn("border-b border-white/6", isWelcomePresentation ? "px-4 py-2.5" : "px-5 py-3")}>
             <p className="text-[11px] uppercase tracking-[0.28em] text-fuchsia-300/50">New model</p>
-            <h3 className="mt-1 text-lg font-semibold text-zinc-50">Register a model for a connection</h3>
-            <p className="mt-0.5 text-sm text-zinc-500">Presets are filtered to match the account you select.</p>
+            <h3 className={cn("mt-1 font-semibold text-zinc-50", isWelcomePresentation ? "text-base" : "text-lg")}>
+              {isWelcomePresentation ? "Pick the model BuildWarden should use first" : "Register a model for a connection"}
+            </h3>
+            <p className={cn("mt-0.5 text-zinc-500", isWelcomePresentation ? "text-xs" : "text-sm")}>
+              Presets are filtered to match the selected connection.
+            </p>
           </div>
-          <div className="space-y-4 px-5 py-4">
-            <SettingsField label="Connection" hint="Model entries always belong to one account.">
+          <div className={cn(isWelcomePresentation ? "space-y-3 px-4 py-3" : "space-y-4 px-5 py-4")}>
+            <SettingsField label="Connection" hint="Model entries always belong to one account." compact={isWelcomePresentation}>
               <Select
                 value={selectedProviderId}
                 onValueChange={onSelectedProviderIdChange}
@@ -539,17 +665,17 @@ export const ProviderModelsSettingsTab = ({
                     description: PROVIDER_TYPE_LABELS[provider.providerType],
                   })),
                 ]}
-                triggerClassName="h-11 rounded-xl"
+                triggerClassName={cn("h-11", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}
               />
             </SettingsField>
 
             {showOpenAiModelPresets ? (
-              <div className="rounded-2xl border border-fuchsia-500/15 bg-fuchsia-500/[0.04] p-3">
+              <div className={cn("border border-fuchsia-500/15 bg-fuchsia-500/[0.04] p-3", isWelcomePresentation ? "rounded-lg" : "rounded-2xl")}>
                 <p className="text-sm font-medium text-fuchsia-100/95">Quick picks</p>
                 <p className="mt-0.5 text-xs text-zinc-500">Only models that apply to the selected account.</p>
                 <Select
                   className="mt-2"
-                  triggerClassName="h-11 rounded-xl"
+                  triggerClassName={cn("h-11", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}
                   value={openAiPresetSelectValue}
                   onValueChange={(value) => {
                     if (value === MODEL_PRESET_CUSTOM) {
@@ -576,20 +702,20 @@ export const ProviderModelsSettingsTab = ({
                 />
               </div>
             ) : selectedProviderId ? (
-              <p className="rounded-xl border border-zinc-800/90 px-3 py-2 text-xs text-zinc-500">
+              <p className={cn("border border-zinc-800/90 px-3 py-2 text-xs text-zinc-500", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}>
                 This connection has no quick picks (e.g. some Azure deployments). Enter the model ID your server expects.
               </p>
             ) : null}
 
             <div className="grid gap-3 md:grid-cols-2">
-              <SettingsField label="Model ID" hint="Identifier sent in API calls.">
+              <SettingsField label="Model ID" hint="Identifier sent in API calls." compact={isWelcomePresentation}>
                 <Input
                   value={modelId}
                   onChange={(event) => onModelIdChange(event.target.value)}
                   placeholder={`e.g. ${DEFAULT_ADD_MODEL_DRAFT.modelId}`}
                 />
               </SettingsField>
-              <SettingsField label="Display name" hint="Label in the UI.">
+              <SettingsField label="Display name" hint="Label in the UI." compact={isWelcomePresentation}>
                 <Input
                   value={modelDisplayName}
                   onChange={(event) => onModelDisplayNameChange(event.target.value)}
@@ -597,26 +723,30 @@ export const ProviderModelsSettingsTab = ({
                 />
               </SettingsField>
             </div>
-            <SettingsField label="Base URL override" hint="Only if this deployment needs its own URL.">
-              <Input
-                value={modelBaseUrl}
-                onChange={(event) => onModelBaseUrlChange(event.target.value)}
-                placeholder="Optional"
-              />
-            </SettingsField>
+            {!isWelcomePresentation ? (
+              <SettingsField label="Base URL override" hint="Only if this deployment needs its own URL.">
+                <Input
+                  value={modelBaseUrl}
+                  onChange={(event) => onModelBaseUrlChange(event.target.value)}
+                  placeholder="Optional"
+                />
+              </SettingsField>
+            ) : null}
 
             <div className="flex flex-wrap items-center gap-2">
               <Button
-                className="min-w-[9rem] rounded-xl"
+                className={cn("min-w-[9rem]", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}
                 onClick={onSubmitModel}
                 disabled={busy || !selectedProviderId || !modelId}
               >
                 {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
                 Add model
               </Button>
-              <Button type="button" variant="secondary" className="rounded-xl" onClick={() => setOpenPanel(null)}>
-                Collapse
-              </Button>
+              {!isWelcomePresentation ? (
+                <Button type="button" variant="secondary" className="rounded-xl" onClick={() => setOpenPanel(null)}>
+                  Collapse
+                </Button>
+              ) : null}
             </div>
           </div>
         </Card>

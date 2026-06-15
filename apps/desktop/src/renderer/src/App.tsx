@@ -15,6 +15,7 @@ import {
   parseRecentRunDaysSetting,
   parseRunTimelineDensitySetting,
   parseRunWorkspaceLayoutsSetting,
+  parseWelcomeCompletedCheckIdsSetting,
   parseUiTheme,
   PROVIDER_CONFIG_AI_SDK_PROVIDER_FAMILY_KEY,
   PROVIDER_CONFIG_AZURE_API_VERSION_KEY,
@@ -22,6 +23,7 @@ import {
   PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY,
   PROVIDER_CONFIG_CODEX_BINARY_PATH_KEY,
   PROVIDER_CONFIG_CODEX_HOME_PATH_KEY,
+  serializeWelcomeCompletedCheckIdsSetting,
   SUPPORTED_IDE_KINDS,
   parseIdePathConfig,
   parseShellAllowlistExtraSetting,
@@ -126,9 +128,23 @@ const RunDetailPage = lazy(() => import("./components/app/RunDetailPage").then((
 const SettingsPage = lazy(() => import("./components/app/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 import { Sidebar } from "./components/app/Sidebar";
 import { DEFAULT_SIDEBAR_WIDTH, clampSidebarWidth, parseSidebarWidthSetting } from "./components/app/sidebar-width";
+import { WelcomeDialog, type WelcomeStepKey } from "./components/app/WelcomeDialog";
+import {
+  WELCOME_CHECK_DEFINITIONS,
+  getSatisfiedWelcomeCheckIds,
+  orderWelcomeCheckIds,
+  type WelcomeCheckId,
+} from "./components/app/welcome-checks";
+import type { ProviderModelsOpenPanel } from "./components/app/settings-provider-models-tab";
 import { Button } from "./components/ui/button";
 import { Card } from "./components/ui/card";
 import { cn } from "./lib/cn";
+import {
+  MODEL_PRESET_CUSTOM,
+  emptyModelPresetsByGroup,
+  getModelPresetsByGroupForProvider,
+  getModelPresetsForProvider,
+} from "./lib/openai-model-presets";
 import { useStableCallback } from "./lib/use-stable-callback";
 import { reportRendererError, reportRendererLog } from "./lib/report-renderer-error";
 
@@ -159,6 +175,13 @@ export const App = () => {
   const buildwarden = window.buildwarden;
   const showCustomWindowsTitleBar = typeof navigator !== "undefined" && navigator.platform.toLowerCase().startsWith("win");
   const [snapshot, setSnapshot] = useState<AppSnapshot>(EMPTY_SNAPSHOT);
+  const [snapshotLoaded, setSnapshotLoaded] = useState(false);
+  const [welcomeOpen, setWelcomeOpen] = useState(false);
+  const [welcomeFinishedForSession, setWelcomeFinishedForSession] = useState(false);
+  const [welcomeStepIndex, setWelcomeStepIndex] = useState(0);
+  const [welcomeSkippedCheckIds, setWelcomeSkippedCheckIds] = useState<WelcomeCheckId[]>([]);
+  const [welcomeProviderModelsOpenPanel, setWelcomeProviderModelsOpenPanel] =
+    useState<ProviderModelsOpenPanel>("connection");
   const [runDetail, setRunDetail] = useState<RunDetail | null>(null);
   const [openRunPanes, setOpenRunPanes] = useState<OpenRunPanes>({});
   const [focusedRunPane, setFocusedRunPane] = useState<RunPaneId>("left");
@@ -191,6 +214,7 @@ export const App = () => {
   const [modelId, setModelId] = useState(() => DEFAULT_ADD_MODEL_DRAFT.modelId);
   const [modelDisplayName, setModelDisplayName] = useState(() => DEFAULT_ADD_MODEL_DRAFT.displayName);
   const [modelBaseUrl, setModelBaseUrl] = useState("");
+  const [welcomeOpenAiPresetUserChoseCustom, setWelcomeOpenAiPresetUserChoseCustom] = useState(false);
   const [runProjectId, setRunProjectId] = useState("");
   const [runModelId, setRunModelId] = useState("");
   const [runWorktreeModelIds, setRunWorktreeModelIds] = useState<string[]>([]);
@@ -304,6 +328,51 @@ export const App = () => {
       : null;
   const preferredRunModelId = snapshot.settings[APP_SETTING_KEYS.lastUsedRunModelId] ?? "";
   const persistedSidebarWidthSetting = snapshot.settings[APP_SETTING_KEYS.sidebarWidth];
+  const welcomeCompletedCheckIds = useMemo(
+    () => orderWelcomeCheckIds(parseWelcomeCompletedCheckIdsSetting(snapshot.settings[APP_SETTING_KEYS.welcomeCompletedCheckIds])),
+    [snapshot.settings],
+  );
+  const welcomeSatisfiedCheckIds = useMemo(() => getSatisfiedWelcomeCheckIds(snapshot), [snapshot]);
+  const welcomeKnownCompletedCheckIds = useMemo(
+    () => orderWelcomeCheckIds([...welcomeCompletedCheckIds, ...welcomeSatisfiedCheckIds]),
+    [welcomeCompletedCheckIds, welcomeSatisfiedCheckIds],
+  );
+  const welcomeKnownCompletedSet = useMemo(() => new Set(welcomeKnownCompletedCheckIds), [welcomeKnownCompletedCheckIds]);
+  const welcomePendingChecks = useMemo(
+    () => WELCOME_CHECK_DEFINITIONS.filter((check) => !welcomeKnownCompletedSet.has(check.id)),
+    [welcomeKnownCompletedSet],
+  );
+  const welcomeStepKeys = useMemo<WelcomeStepKey[]>(
+    () => ["intro", ...welcomePendingChecks.map((check) => check.id), "done"],
+    [welcomePendingChecks],
+  );
+  const welcomeStepKey = welcomeStepKeys[Math.min(welcomeStepIndex, welcomeStepKeys.length - 1)] ?? "intro";
+  const shouldCheckProjectFolderGitStatus = settingsOpen || (welcomeOpen && welcomeStepKey === "project");
+  const selectedProviderAccount = snapshot.providerAccounts.find((provider) => provider.id === selectedProviderId) ?? null;
+  const modelPresetsForSelectedProvider = useMemo(() => {
+    if (!selectedProviderAccount) return [];
+    const family =
+      selectedProviderAccount.providerType === "ai-sdk"
+        ? getAiSdkProviderFamilyFromConfigJson(selectedProviderAccount.configJson)
+        : undefined;
+    return getModelPresetsForProvider(selectedProviderAccount.providerType, family);
+  }, [selectedProviderAccount]);
+  const showModelPresetsForSelectedProvider = modelPresetsForSelectedProvider.length > 0;
+  const openAiPresetMatchForSelectedProvider = modelPresetsForSelectedProvider.find(
+    (preset) => preset.modelId === modelId.trim() && preset.displayName === modelDisplayName.trim(),
+  );
+  const openAiPresetSelectValueForSelectedProvider =
+    !showModelPresetsForSelectedProvider || welcomeOpenAiPresetUserChoseCustom || !openAiPresetMatchForSelectedProvider
+      ? MODEL_PRESET_CUSTOM
+      : openAiPresetMatchForSelectedProvider.modelId;
+  const openAiPresetsGroupedForSelectedProvider = selectedProviderAccount
+    ? getModelPresetsByGroupForProvider(
+        selectedProviderAccount.providerType,
+        selectedProviderAccount.providerType === "ai-sdk"
+          ? getAiSdkProviderFamilyFromConfigJson(selectedProviderAccount.configJson)
+          : undefined,
+      )
+    : emptyModelPresetsByGroup();
 
   const loadSnapshot = useCallback(async () => {
     if (!buildwarden) {
@@ -313,6 +382,7 @@ export const App = () => {
 
     const next = await buildwarden.refreshSnapshot();
     setSnapshot(next);
+    setSnapshotLoaded(true);
     setRunProjectId((current) =>
       current && next.projects.some((entry) => entry.project.id === current)
         ? current
@@ -398,6 +468,70 @@ export const App = () => {
     }
     setSidebarWidth((current) => (current === nextWidth ? current : nextWidth));
   }, [persistedSidebarWidthSetting]);
+
+  useEffect(() => {
+    if (!buildwarden || !snapshotLoaded) {
+      return;
+    }
+    const serializedCurrent = serializeWelcomeCompletedCheckIdsSetting(welcomeCompletedCheckIds);
+    const serializedNext = serializeWelcomeCompletedCheckIdsSetting(welcomeKnownCompletedCheckIds);
+    if (serializedCurrent === serializedNext) {
+      return;
+    }
+    void buildwarden.setAppSetting(APP_SETTING_KEYS.welcomeCompletedCheckIds, serializedNext).catch((caught) => {
+      reportRendererError("renderer.welcome.persist-completed-checks", caught);
+    });
+  }, [buildwarden, snapshotLoaded, welcomeCompletedCheckIds, welcomeKnownCompletedCheckIds]);
+
+  useEffect(() => {
+    if (!snapshotLoaded || welcomeFinishedForSession || welcomeOpen || welcomePendingChecks.length === 0) {
+      return;
+    }
+    setWelcomeSkippedCheckIds([]);
+    setWelcomeStepIndex(0);
+    setWelcomeOpen(true);
+  }, [snapshotLoaded, welcomeFinishedForSession, welcomeOpen, welcomePendingChecks.length]);
+
+  useEffect(() => {
+    if (welcomeStepIndex < welcomeStepKeys.length) {
+      return;
+    }
+    setWelcomeStepIndex(Math.max(0, welcomeStepKeys.length - 1));
+  }, [welcomeStepIndex, welcomeStepKeys.length]);
+
+  useEffect(() => {
+    if (snapshot.providerAccounts.length === 0) {
+      setWelcomeProviderModelsOpenPanel("connection");
+      return;
+    }
+    if (snapshot.models.length === 0) {
+      setWelcomeProviderModelsOpenPanel("model");
+    }
+  }, [snapshot.models.length, snapshot.providerAccounts.length]);
+
+  useEffect(() => {
+    setWelcomeOpenAiPresetUserChoseCustom(false);
+  }, [selectedProviderId]);
+
+  useEffect(() => {
+    if (!selectedProviderAccount) return;
+    const family =
+      selectedProviderAccount.providerType === "ai-sdk"
+        ? getAiSdkProviderFamilyFromConfigJson(selectedProviderAccount.configJson)
+        : undefined;
+    const list = getModelPresetsForProvider(selectedProviderAccount.providerType, family);
+    if (list.length === 0) return;
+    const stillValid = list.some(
+      (preset) => preset.modelId === modelId.trim() && preset.displayName === modelDisplayName.trim(),
+    );
+    if (!stillValid) {
+      const first = list[0]!;
+      setModelId(first.modelId);
+      setModelDisplayName(first.displayName);
+    }
+    // intentionally omit modelId / modelDisplayName: revalidate only when the selected connection changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProviderId, selectedProviderAccount?.id, selectedProviderAccount?.configJson, selectedProviderAccount?.providerType]);
 
   const loadDetectedCodexInstallation = useCallback(async () => {
     if (!buildwarden) {
@@ -756,7 +890,7 @@ export const App = () => {
   }, [loadAppPaths, settingsOpen]);
 
   useEffect(() => {
-    if (!buildwarden || !settingsOpen) {
+    if (!buildwarden || !shouldCheckProjectFolderGitStatus) {
       setProjectFolderGitStatus(null);
       return;
     }
@@ -787,7 +921,7 @@ export const App = () => {
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [buildwarden, projectPath, settingsOpen]);
+  }, [buildwarden, projectPath, shouldCheckProjectFolderGitStatus]);
 
   useEffect(() => {
     void loadRunDetail(selectedRunId);
@@ -3527,6 +3661,10 @@ export const App = () => {
     const shortcuts = parseKeyboardShortcuts(snapshot.settings[APP_SETTING_KEYS.keyboardShortcuts]);
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (welcomeOpen) {
+        return;
+      }
+
       const keyStr = eventToKeyString(e);
 
       if (keyStr === shortcuts.openCommandPalette) {
@@ -3623,6 +3761,7 @@ export const App = () => {
   }, [
     snapshot.settings,
     snapshot.projects,
+    welcomeOpen,
     commandPaletteOpen,
     settingsOpen,
     bookmarksSelected,
@@ -3851,6 +3990,20 @@ export const App = () => {
   const sidebarOnOpenSettings = useStableCallback(() => openSettingsPage());
   const sidebarOnWidthCommit = useStableCallback((width: number) => persistSidebarWidth(width));
   const sidebarOnToggleCollapsed = useStableCallback(() => setSidebarCollapsed((current) => !current));
+  const handleWelcomeIntroNext = useStableCallback(() => {
+    setWelcomeStepIndex((current) => Math.min(current + 1, welcomeStepKeys.length - 1));
+  });
+  const handleWelcomeBack = useStableCallback(() => {
+    setWelcomeStepIndex((current) => Math.max(0, current - 1));
+  });
+  const handleWelcomeSkipCheck = useStableCallback((checkId: WelcomeCheckId) => {
+    setWelcomeSkippedCheckIds((current) => (current.includes(checkId) ? current : [...current, checkId]));
+    setWelcomeStepIndex((current) => Math.min(current + 1, welcomeStepKeys.length - 1));
+  });
+  const handleWelcomeFinish = useStableCallback(() => {
+    setWelcomeOpen(false);
+    setWelcomeFinishedForSession(true);
+  });
 
   return (
     <div
@@ -4383,6 +4536,78 @@ export const App = () => {
         </main>
         </div>
       </div>
+
+      {welcomeOpen ? (
+        <WelcomeDialog
+          stepKey={welcomeStepKey}
+          stepIndex={Math.min(welcomeStepIndex, welcomeStepKeys.length - 1)}
+          steps={welcomeStepKeys}
+          completedCheckIds={welcomeKnownCompletedCheckIds}
+          skippedCheckIds={welcomeSkippedCheckIds}
+          providerModelsOpenPanel={welcomeProviderModelsOpenPanel}
+          onProviderModelsOpenPanelChange={setWelcomeProviderModelsOpenPanel}
+          onBack={handleWelcomeBack}
+          onIntroNext={handleWelcomeIntroNext}
+          onSkipCheck={handleWelcomeSkipCheck}
+          onFinish={handleWelcomeFinish}
+          providerModelsProps={{
+            busy,
+            providerLabel,
+            providerType,
+            providerFamily,
+            apiKey,
+            codexBinaryPath,
+            codexHomePath,
+            detectedCodexBinaryPath,
+            claudeBinaryPath,
+            claudeLaunchArgs,
+            detectedClaudeBinaryPath,
+            providerBaseUrl,
+            providerConfigJson,
+            providerAzureApiVersion,
+            selectedProviderId,
+            modelId,
+            modelDisplayName,
+            modelBaseUrl,
+            providerAccounts: snapshot.providerAccounts,
+            models: snapshot.models,
+            showOpenAiModelPresets: showModelPresetsForSelectedProvider,
+            openAiPresetSelectValue: openAiPresetSelectValueForSelectedProvider,
+            openAiPresetsGrouped: openAiPresetsGroupedForSelectedProvider,
+            modelPresetsForSelected: modelPresetsForSelectedProvider,
+            onSubmitProvider: () => void submitProvider(),
+            onSubmitModel: () => void submitModel(),
+            onDeleteProviderAccount: (providerAccountId) => void deleteProviderAccount(providerAccountId),
+            onDeleteModel: (modelId) => void deleteModel(modelId),
+            onProviderLabelChange: setProviderLabel,
+            onProviderTypeChange: setProviderType,
+            onProviderFamilyChange: setProviderFamily,
+            onApiKeyChange: setApiKey,
+            onCodexBinaryPathChange: setCodexBinaryPath,
+            onCodexHomePathChange: setCodexHomePath,
+            onClaudeBinaryPathChange: setClaudeBinaryPath,
+            onClaudeLaunchArgsChange: setClaudeLaunchArgs,
+            onProviderBaseUrlChange: setProviderBaseUrl,
+            onProviderConfigJsonChange: setProviderConfigJson,
+            onProviderAzureApiVersionChange: setProviderAzureApiVersion,
+            onSelectedProviderIdChange: setSelectedProviderId,
+            onModelIdChange: setModelId,
+            onModelDisplayNameChange: setModelDisplayName,
+            onModelBaseUrlChange: setModelBaseUrl,
+            onSetOpenAiPresetUserChoseCustom: setWelcomeOpenAiPresetUserChoseCustom,
+          }}
+          projectSetupProps={{
+            busy,
+            projectName,
+            projectPath,
+            projectFolderGitWarning,
+            onChooseDirectory: () => void chooseDirectory(),
+            onSubmitProject: () => void submitProject(),
+            onProjectNameChange: setProjectName,
+            onProjectPathChange: setProjectPath,
+          }}
+        />
+      ) : null}
 
       <AppNotifications
         busy={busy}

@@ -83,9 +83,12 @@ export const AnchorDropdownPortal = ({
     return null;
   }
 
+  const focusScopeId = anchorRef.current?.closest<HTMLElement>("[data-focus-scope-id]")?.dataset.focusScopeId;
+
   return createPortal(
     <div
       ref={menuRef}
+      data-focus-scope-portal-id={focusScopeId}
       className={cn("fixed z-[20000]", className)}
       style={{ top: pos.top, left: pos.left, width: widthPx, maxHeight: pos.maxHeight || undefined }}
     >
