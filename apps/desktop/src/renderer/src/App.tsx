@@ -1455,6 +1455,7 @@ export const App = () => {
     if (!buildwarden || !selectedProject || selectedProject.project.kind !== "folder") {
       return;
     }
+    let cancelled = false;
     const projectId = selectedProject.project.id;
     if (dismissedGitConversionProjectIdsRef.current.has(projectId) || gitConversionCheckInFlightRef.current.has(projectId)) {
       return;
@@ -1464,6 +1465,9 @@ export const App = () => {
     void (async () => {
       try {
         const candidate = await buildwarden.checkProjectGitConversion(projectId);
+        if (cancelled) {
+          return;
+        }
         if (!candidate) {
           return;
         }
@@ -1474,21 +1478,33 @@ export const App = () => {
           confirmLabel: "Convert to Git project",
           cancelLabel: "Not now",
         });
+        if (cancelled) {
+          return;
+        }
         if (!confirmed) {
           dismissedGitConversionProjectIdsRef.current.add(projectId);
           return;
         }
         await buildwarden.convertProjectToGit(projectId);
+        if (cancelled) {
+          return;
+        }
         setRunWorkspaceType("worktree");
         await loadSnapshot();
         void loadProjectBranches();
       } catch (caught) {
+        if (cancelled) {
+          return;
+        }
         reportRendererError("renderer.project.git-conversion", caught, { projectId });
         setError(caught instanceof Error ? caught.message : "Could not check whether this folder is now a Git repository.");
       } finally {
         gitConversionCheckInFlightRef.current.delete(projectId);
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [buildwarden, loadProjectBranches, loadSnapshot, requestConfirmation, selectedProject]);
 
   useEffect(() => {
