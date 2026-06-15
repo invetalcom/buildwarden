@@ -3661,6 +3661,10 @@ export const App = () => {
     const shortcuts = parseKeyboardShortcuts(snapshot.settings[APP_SETTING_KEYS.keyboardShortcuts]);
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (welcomeOpen) {
+        return;
+      }
+
       const keyStr = eventToKeyString(e);
 
       if (keyStr === shortcuts.openCommandPalette) {
@@ -3757,6 +3761,7 @@ export const App = () => {
   }, [
     snapshot.settings,
     snapshot.projects,
+    welcomeOpen,
     commandPaletteOpen,
     settingsOpen,
     bookmarksSelected,
