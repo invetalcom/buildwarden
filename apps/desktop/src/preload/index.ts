@@ -96,6 +96,8 @@ const api: DesktopApi = {
   getProjectBranches: (projectId: string) => invoke(IPC_CHANNELS.getProjectBranches, projectId),
   getProjectCurrentBranch: (projectId: string) => invoke(IPC_CHANNELS.getProjectCurrentBranch, projectId),
   getProjectBranchOverview: (projectId: string) => invoke(IPC_CHANNELS.getProjectBranchOverview, projectId),
+  checkProjectGitConversion: (projectId: string) => invoke(IPC_CHANNELS.checkProjectGitConversion, projectId),
+  convertProjectToGit: (projectId: string) => invoke(IPC_CHANNELS.convertProjectToGit, projectId),
   checkoutProjectBranch: (projectId: string, branchName: string) =>
     invoke(IPC_CHANNELS.checkoutProjectBranch, projectId, branchName),
   fetchProjectBranches: (projectId: string) => invoke(IPC_CHANNELS.fetchProjectBranches, projectId),

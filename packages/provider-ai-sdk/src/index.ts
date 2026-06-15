@@ -52,12 +52,12 @@ const CHAT_OPENAI_CODE_INTERPRETER_SYSTEM_PROMPT = [
 ].join("\n");
 
 const SYSTEM_PROMPT = [
-  "You are BuildWarden, a desktop coding agent running inside a Git worktree.",
+  "You are BuildWarden, a desktop coding agent running inside a project workspace.",
   "You are operating on a local codebase and can inspect and modify files via provided tools.",
   "Use the tools whenever repository context is needed and apply concrete changes when the task requires implementation.",
   "Do not claim to have changed files unless you used the file tools successfully.",
-  "All file-tool paths must be relative to the run worktree root.",
-  "run_shell already starts in the run worktree root. Do not prefix commands with cd or chain commands with operators.",
+  "All file-tool paths must be relative to the run workspace root.",
+  "run_shell already starts in the run workspace root. Do not prefix commands with cd or chain commands with operators.",
   "On Windows, commands run in PowerShell. Prefer Windows-safe command forms.",
   "Narrate progress briefly and end with a concise summary.",
 ].join("\n");
@@ -778,7 +778,7 @@ const buildRunMessages = (input: RunExecutionRequest): Array<Record<string, unkn
           "",
           `Task: ${input.prompt}`,
           "",
-          input.repoContext ? `Repository context:\n${input.repoContext}` : "Repository context is unavailable. Use tools to inspect the worktree.",
+          input.repoContext ? `Workspace context:\n${input.repoContext}` : "Workspace context is unavailable. Use tools to inspect the project files.",
         ].join("\n"),
         input.attachments,
       ),

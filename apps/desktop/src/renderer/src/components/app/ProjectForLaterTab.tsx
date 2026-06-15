@@ -10,7 +10,10 @@ interface ProjectForLaterTabProps {
   onRestoreRunFromForLater: (runId: string) => void | Promise<void>;
 }
 
-const formatRunMeta = (run: RunRecord) => `${run.branchName} - ${new Date(run.createdAt).toLocaleString()}`;
+const formatRunMeta = (run: RunRecord) => {
+  const workspaceLabel = run.workspaceVcs === "folder" ? (run.workspaceType === "copy" ? "Folder copy" : "Project folder") : run.branchName;
+  return `${workspaceLabel} - ${new Date(run.createdAt).toLocaleString()}`;
+};
 
 export const ProjectForLaterTab = ({ runs, onSelectRun, onRestoreRunFromForLater }: ProjectForLaterTabProps) => (
   <Card className="p-4">

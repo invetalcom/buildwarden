@@ -281,6 +281,7 @@ const ComposerMultiModelSelect = ({
 };
 
 const WORKSPACE_LABELS: Record<RunWorkspaceType, string> = {
+  copy: "Copy",
   local: "Local",
   worktree: "Worktree",
 };
@@ -294,6 +295,8 @@ const ComposerRunSettingsButton = ({
   branchOptions,
   onBranchChange,
   branchDisabled,
+  workspaceTypeOptions,
+  workspaceLabels,
   disabled,
   menuSide,
 }: {
@@ -305,12 +308,14 @@ const ComposerRunSettingsButton = ({
   branchOptions?: ComposerSelectOption[];
   onBranchChange?: (branch: string) => void;
   branchDisabled?: boolean;
+  workspaceTypeOptions?: RunWorkspaceType[];
+  workspaceLabels?: Partial<Record<RunWorkspaceType, string>>;
   disabled?: boolean;
   menuSide: "top" | "bottom";
 }) => {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const workspaceLabel = selectedWorkspaceType ? WORKSPACE_LABELS[selectedWorkspaceType] : null;
+  const workspaceLabel = selectedWorkspaceType ? (workspaceLabels?.[selectedWorkspaceType] ?? WORKSPACE_LABELS[selectedWorkspaceType]) : null;
   const summary = [MODE_LABELS[selectedMode], workspaceLabel, selectedBranch].filter(Boolean).join(" / ");
 
   useEffect(() => {
@@ -332,9 +337,9 @@ const ComposerRunSettingsButton = ({
     value: mode,
     label: MODE_LABELS[mode],
   }));
-  const workspaceOptions = (["worktree", "local"] as const).map((value) => ({
+  const workspaceOptions = (workspaceTypeOptions ?? ["worktree", "local"]).map((value) => ({
     value,
-    label: WORKSPACE_LABELS[value],
+    label: workspaceLabels?.[value] ?? WORKSPACE_LABELS[value],
   }));
 
   return (
@@ -479,6 +484,8 @@ interface RunComposerProps {
   branchDisabled?: boolean;
   selectedWorkspaceType?: RunWorkspaceType;
   onWorkspaceTypeChange?: (value: RunWorkspaceType) => void;
+  workspaceTypeOptions?: RunWorkspaceType[];
+  workspaceLabels?: Partial<Record<RunWorkspaceType, string>>;
   busy: boolean;
   isRunActive?: boolean;
   onCancel?: () => void;
@@ -529,6 +536,8 @@ export const RunComposer = ({
   branchDisabled = false,
   selectedWorkspaceType,
   onWorkspaceTypeChange,
+  workspaceTypeOptions,
+  workspaceLabels,
   busy,
   isRunActive = false,
   onCancel,
@@ -855,6 +864,8 @@ export const RunComposer = ({
                   branchOptions={branchSelectOptions}
                   onBranchChange={onBranchChange}
                   branchDisabled={branchDisabled}
+                  workspaceTypeOptions={workspaceTypeOptions}
+                  workspaceLabels={workspaceLabels}
                   disabled={busy}
                   menuSide={dropdownSide}
                 />

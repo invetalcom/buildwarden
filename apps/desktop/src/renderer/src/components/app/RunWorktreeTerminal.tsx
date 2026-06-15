@@ -178,7 +178,7 @@ export const RunWorktreeTerminal = ({
         ptyStarted = true;
         if (result.reused) {
           term.writeln(
-            "\r\n\x1b[90m[Same shell session — prior scrollback is not replayed; press Enter if you do not see a prompt.]\x1b[0m\r\n",
+            "\r\n\x1b[90m[Same shell session - prior scrollback is not replayed; press Enter if you do not see a prompt.]\x1b[0m\r\n",
           );
         }
         pushSize();
@@ -255,7 +255,7 @@ export const RunWorktreeTerminal = ({
   if (disabled) {
     return (
       <div className={cn("rounded-lg border border-zinc-800 bg-zinc-950/50 p-4 text-sm text-zinc-500", className)}>
-        Worktree path is not available. Open the repository folder in your system terminal instead.
+        Workspace path is not available. Open the project folder in your system terminal instead.
       </div>
     );
   }

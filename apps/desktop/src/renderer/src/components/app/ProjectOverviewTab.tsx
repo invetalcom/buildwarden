@@ -1,4 +1,4 @@
-import { appendChatAttachmentFiles, type ChatAttachmentPayload, type ProviderType, type RunMode, type RunWorkspaceType, type UnifiedProviderFamily } from "@buildwarden/shared";
+import { appendChatAttachmentFiles, type ChatAttachmentPayload, type ProjectKind, type ProviderType, type RunMode, type RunWorkspaceType, type RunWorkspaceVcs, type UnifiedProviderFamily } from "@buildwarden/shared";
 import { Archive, Clock3, Play, PlayCircle } from "lucide-react";
 import { useState } from "react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
@@ -21,10 +21,13 @@ interface ProjectOverviewTabProps {
   projectId: string;
   projectName: string;
   repoPath: string;
+  projectKind: ProjectKind;
   runs: Array<{
     id: string;
     prompt: string;
     branchName: string;
+    workspaceType: RunWorkspaceType;
+    workspaceVcs: RunWorkspaceVcs;
     createdAt: string;
     status: "queued" | "preparing" | "running" | "completed" | "failed" | "cancelled";
     inputTokens: number;
@@ -59,12 +62,21 @@ interface ProjectOverviewTabProps {
   onYoloModeChange: (value: boolean) => void;
 }
 
-const formatRunMeta = (branchName: string, createdAt: string) => `${branchName} - ${new Date(createdAt).toLocaleString()}`;
+const formatRunMeta = (run: { branchName: string; workspaceType: RunWorkspaceType; workspaceVcs: RunWorkspaceVcs; createdAt: string }) => {
+  const workspaceLabel =
+    run.workspaceVcs === "folder"
+      ? run.workspaceType === "copy"
+        ? "Folder copy"
+        : "Project folder"
+      : run.branchName;
+  return `${workspaceLabel} - ${new Date(run.createdAt).toLocaleString()}`;
+};
 
 export const ProjectOverviewTab = ({
   projectId,
   projectName,
   repoPath,
+  projectKind,
   runs,
   modelOptions,
   availableBranches,
@@ -96,6 +108,12 @@ export const ProjectOverviewTab = ({
 }: ProjectOverviewTabProps) => {
   const formatTokens = (value: number) => value.toLocaleString();
   const [runAttachmentFiles, setRunAttachmentFiles] = useState<File[]>([]);
+  const isFolderProject = projectKind === "folder";
+  const workspaceTypeOptions: RunWorkspaceType[] = isFolderProject ? ["copy", "local"] : ["worktree", "local"];
+  const branchOptions = isFolderProject
+    ? []
+    : (runWorkspaceType === "local" ? [currentProjectBranch] : availableBranches).filter(Boolean);
+  const canUseMultiModel = runWorkspaceType === "worktree" || runWorkspaceType === "copy";
 
   const handleStartRun = async () => {
     let attachments: ChatAttachmentPayload[] | undefined;
@@ -139,7 +157,7 @@ export const ProjectOverviewTab = ({
               onWorkspaceTypeChange={onRunWorkspaceTypeChange}
               selectedModelId={runModelId}
               onModelChange={onRunModelChange}
-              modelSelectionMode={runWorkspaceType === "worktree" ? "multi" : "single"}
+              modelSelectionMode={canUseMultiModel ? "multi" : "single"}
               selectedModelIds={runWorktreeModelIds}
               onModelIdsChange={onRunWorktreeModelIdsChange}
               modelOptions={modelOptions.map((option) => ({
@@ -149,15 +167,15 @@ export const ProjectOverviewTab = ({
                 providerType: option.providerType,
                 providerFamily: option.providerFamily,
               }))}
-              selectedBranch={runWorkspaceType === "local" ? currentProjectBranch : runBaseBranch}
-              branchOptions={(runWorkspaceType === "local" ? [currentProjectBranch] : availableBranches)
-                .filter(Boolean)
-                .map((branch) => ({
+              workspaceTypeOptions={workspaceTypeOptions}
+              selectedBranch={isFolderProject ? undefined : runWorkspaceType === "local" ? currentProjectBranch : runBaseBranch}
+              branchOptions={branchOptions.map((branch) => ({
                   value: branch,
                   label: runWorkspaceType === "local" ? `${branch} (current)` : branch,
                 }))}
               onBranchChange={onRunBaseBranchChange}
               branchDisabled={runWorkspaceType === "local"}
+              workspaceLabels={isFolderProject ? { copy: "Copy", local: "Folder" } : undefined}
               busy={busy}
               onSubmit={() => void handleStartRun()}
               submitLabel="Start run"
@@ -170,8 +188,8 @@ export const ProjectOverviewTab = ({
               submitDisabled={
                 busy ||
                 !projectId ||
-                (runWorkspaceType === "worktree" ? runWorktreeModelIds.length === 0 : !runModelId) ||
-                !(runWorkspaceType === "local" ? currentProjectBranch : runBaseBranch) ||
+                (canUseMultiModel ? runWorktreeModelIds.length === 0 : !runModelId) ||
+                (!isFolderProject && !(runWorkspaceType === "local" ? currentProjectBranch : runBaseBranch)) ||
                 (!runPrompt.trim() && runAttachmentFiles.length === 0)
               }
               sticky={false}
@@ -202,7 +220,7 @@ export const ProjectOverviewTab = ({
                 <div key={run.id} className="flex items-center gap-3 border-t border-[var(--ec-border)] px-4 py-3 transition hover:bg-[var(--ec-hover)]">
                   <button className="min-w-0 flex-1 text-left" onClick={() => onSelectRun(run.id)} type="button">
                     <p className="truncate text-sm font-semibold text-[var(--ec-text)]">{run.prompt}</p>
-                    <p className="mt-0.5 truncate font-mono text-xs text-[var(--ec-muted)]">{formatRunMeta(run.branchName, run.createdAt)}</p>
+                    <p className="mt-0.5 truncate font-mono text-xs text-[var(--ec-muted)]">{formatRunMeta(run)}</p>
                   </button>
                   <div className="flex shrink-0 items-center gap-2">
                     <Badge dot tone={run.status}>{run.status}</Badge>

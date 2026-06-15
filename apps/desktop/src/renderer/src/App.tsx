@@ -147,6 +147,13 @@ interface SettingsPreviousPageState {
   runDetailsById: Record<string, RunDetail>;
 }
 
+const formatRunWorkspaceLabel = (run: RunRecord): string => {
+  if (run.workspaceVcs === "folder") {
+    return run.workspaceType === "copy" ? "Folder copy" : "Project folder";
+  }
+  return run.branchName;
+};
+
 export const App = () => {
   const buildwarden = window.buildwarden;
   const showCustomWindowsTitleBar = typeof navigator !== "undefined" && navigator.platform.toLowerCase().startsWith("win");
@@ -236,6 +243,8 @@ export const App = () => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [projectPageTab, setProjectPageTab] = useState<ProjectPageTab>("overview");
+  const dismissedGitConversionProjectIdsRef = useRef<Set<string>>(new Set());
+  const gitConversionCheckInFlightRef = useRef<Set<string>>(new Set());
   const [reviewRequestTarget, setReviewRequestTarget] = useState<{
     projectId: string;
     url: string;
@@ -766,6 +775,15 @@ export const App = () => {
   const selectedProjectDefaultBranch = selectedProject?.project.defaultBranch ?? "";
 
   useEffect(() => {
+    if (selectedProject?.project.kind === "folder" && runWorkspaceType !== "copy" && runWorkspaceType !== "local") {
+      setRunWorkspaceType("copy");
+    }
+    if (selectedProject?.project.kind === "git" && runWorkspaceType === "copy") {
+      setRunWorkspaceType("worktree");
+    }
+  }, [runWorkspaceType, selectedProject?.project.kind]);
+
+  useEffect(() => {
     if (!selectedProject) {
       return;
     }
@@ -852,6 +870,14 @@ export const App = () => {
       setDetachedCheckoutBranch("");
       return;
     }
+    if (selectedProject?.project.kind === "folder") {
+      setAvailableRunBranches([]);
+      setRunBaseBranch("");
+      setCurrentProjectBranch("");
+      setDetachedCheckoutBranch("");
+      setError((prev) => (prev && isDetachedHeadProjectErrorMessage(prev) ? null : prev));
+      return;
+    }
 
     const projectId = selectedProjectId;
     const defaultBranch = selectedProjectDefaultBranch;
@@ -920,7 +946,7 @@ export const App = () => {
       const msg = caught instanceof Error ? caught.message : String(caught);
       setError(msg || "Unexpected error");
     }
-  }, [buildwarden, selectedProjectDefaultBranch, selectedProjectId]);
+  }, [buildwarden, selectedProject, selectedProjectDefaultBranch, selectedProjectId]);
 
   useEffect(() => {
     void loadProjectBranches();
@@ -1385,6 +1411,52 @@ export const App = () => {
     resolve?.(confirmed);
   }, []);
 
+  useEffect(() => {
+    if (!buildwarden || !selectedProject || selectedProject.project.kind !== "folder") {
+      return;
+    }
+    const projectId = selectedProject.project.id;
+    if (dismissedGitConversionProjectIdsRef.current.has(projectId) || gitConversionCheckInFlightRef.current.has(projectId)) {
+      return;
+    }
+
+    gitConversionCheckInFlightRef.current.add(projectId);
+    void (async () => {
+      try {
+        const candidate = await buildwarden.checkProjectGitConversion(projectId);
+        if (!candidate) {
+          return;
+        }
+        const confirmed = await requestConfirmation({
+          title: "Git repository detected",
+          message:
+            "BuildWarden found that this project folder is now a Git repository. Convert it to a Git project? This enables branches, worktrees, commits, and pull/merge request tools. No files will be changed, and existing folder runs will stay unchanged.",
+          confirmLabel: "Convert to Git project",
+          cancelLabel: "Not now",
+        });
+        if (!confirmed) {
+          dismissedGitConversionProjectIdsRef.current.add(projectId);
+          return;
+        }
+        await buildwarden.convertProjectToGit(projectId);
+        setRunWorkspaceType("worktree");
+        await loadSnapshot();
+        void loadProjectBranches();
+      } catch (caught) {
+        reportRendererError("renderer.project.git-conversion", caught, { projectId });
+        setError(caught instanceof Error ? caught.message : "Could not check whether this folder is now a Git repository.");
+      } finally {
+        gitConversionCheckInFlightRef.current.delete(projectId);
+      }
+    })();
+  }, [buildwarden, loadProjectBranches, loadSnapshot, requestConfirmation, selectedProject]);
+
+  useEffect(() => {
+    if (selectedProject?.project.kind === "folder" && (projectPageTab === "branches" || projectPageTab === "reviews")) {
+      setProjectPageTab("overview");
+    }
+  }, [projectPageTab, selectedProject]);
+
   const chooseDirectory = async () => {
     if (!buildwarden) {
       setError("The Electron desktop bridge is unavailable.");
@@ -1554,7 +1626,7 @@ export const App = () => {
       }
 
       const modelIds =
-        runWorkspaceType === "worktree"
+        runWorkspaceType === "worktree" || runWorkspaceType === "copy"
           ? runWorktreeModelIds.filter((id) => snapshot.models.some((m) => m.id === id))
           : [runModelId].filter((id) => snapshot.models.some((m) => m.id === id));
       if (modelIds.length === 0) {
@@ -2339,6 +2411,11 @@ export const App = () => {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
 
+      const targetProject = snapshot.projects.find((entry) => entry.project.id === projectId);
+      const nextTab =
+        targetProject?.project.kind === "folder" && (tab === "branches" || tab === "reviews")
+          ? "overview"
+          : tab;
       await leaveSelectedRun();
       await buildwarden.selectProject(projectId);
       await loadSnapshot();
@@ -2347,11 +2424,11 @@ export const App = () => {
       setBookmarksSelected(false);
       setChatsSelected(false);
       setSettingsOpen(false);
-      setProjectPageTab(tab);
+      setProjectPageTab(nextTab);
       setRunProjectId(projectId);
       clearRunSelectionState(null);
     });
-  }, [buildwarden, clearRunSelectionState, handleAction, leaveSelectedRun, loadSnapshot]);
+  }, [buildwarden, clearRunSelectionState, handleAction, leaveSelectedRun, loadSnapshot, snapshot.projects]);
 
   const dismissProjectForgeRequestToast = useCallback((id: string) => {
     setProjectForgeRequestToasts((current) => current.filter((toast) => toast.id !== id));
@@ -2959,17 +3036,18 @@ export const App = () => {
     ];
 
     for (const entry of snapshot.projects) {
-      items.push(
-        {
+      items.push({
           id: `project-${entry.project.id}`,
           title: `Open ${entry.project.name}`,
           subtitle: entry.project.repoPath,
           section: "Project",
           icon: FolderOpen,
-          keywords: ["overview", entry.project.defaultBranch],
+          keywords: ["overview", entry.project.kind === "git" ? entry.project.defaultBranch : "folder"],
           onSelect: () => handleProjectSelect(entry.project.id),
-        },
-        {
+        });
+      if (entry.project.kind === "git") {
+        items.push(
+          {
           id: `project-${entry.project.id}-branches`,
           title: `${entry.project.name}: Branches`,
           subtitle: "Manage local and remote branches",
@@ -2986,18 +3064,20 @@ export const App = () => {
           icon: GitPullRequest,
           keywords: ["review", "mr", "pr"],
           onSelect: () => handleProjectFeatureSelect(entry.project.id, "reviews"),
-        },
-      );
+          },
+        );
+      }
     }
 
     for (const item of newestRuns) {
+      const workspaceLabel = formatRunWorkspaceLabel(item.run);
       items.push({
         id: `run-${item.run.id}`,
         title: item.run.prompt,
-        subtitle: `${item.projectName} - ${item.run.status} - ${item.run.branchName}`,
+        subtitle: `${item.projectName} - ${item.run.status} - ${workspaceLabel}`,
         section: "Run",
         icon: Bot,
-        keywords: [item.run.id, item.run.status, item.projectName, item.run.branchName],
+        keywords: [item.run.id, item.run.status, item.projectName, workspaceLabel],
         onSelect: () => handleRunSelect(item.projectId, item.run.id),
       });
     }
@@ -4147,7 +4227,7 @@ export const App = () => {
           ) : selectedRunId ? (
             <Card className="flex min-h-[400px] flex-col items-center justify-center gap-4 p-8">
               <Loader2 className="h-10 w-10 animate-spin text-cyan-400" />
-              <p className="text-sm text-zinc-500">Loading runâ€¦</p>
+              <p className="text-sm text-zinc-500">Loading run...</p>
             </Card>
           ) : selectedProject ? (
             <ProjectPage

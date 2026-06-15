@@ -139,9 +139,12 @@ export const RunDetailHeader = ({
   onClosePane,
 }: RunDetailHeaderProps) => {
   const stackedHeader = splitView && focused;
+  const isGitRun = run.workspaceVcs === "git";
+  const workspaceLabel = isGitRun ? run.branchName : run.workspaceType === "copy" ? "Folder copy" : "Project folder";
+  const workspaceCopyValue = isGitRun ? run.branchName : run.worktreePath;
   const hasCommit = runDetail?.steps.some((step) => Boolean(safeParseMetadata(step.metadataJson).commitHash)) ?? false;
   const hasOpenChanges = Boolean(runDetail?.diff.trim());
-  const canManageChanges = run.status === "completed" && runDetail?.worktreeUnavailable !== true;
+  const canManageChanges = isGitRun && run.status === "completed" && runDetail?.worktreeUnavailable !== true;
   const canCommit = run.status === "completed" && hasOpenChanges;
   const canPublish = canManageChanges && !hasOpenChanges && hasCommit;
   const canCreateLocalBranch = canManageChanges && (hasOpenChanges || hasCommit);
@@ -175,11 +178,15 @@ export const RunDetailHeader = ({
                   "inline-flex min-w-0 items-center gap-2 rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-1 text-[11px] text-[var(--ec-muted)] transition hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-hover)]",
                   stackedHeader ? "max-w-full flex-1 basis-44" : "max-w-[24rem]",
                 )}
-                onClick={() => void navigator.clipboard.writeText(runDetail.run.branchName)}
-                title={runDetail.run.branchName}
+                onClick={() => void navigator.clipboard.writeText(workspaceCopyValue)}
+                title={workspaceCopyValue}
               >
-                <GitBranch className="size-3.5 shrink-0 text-[var(--ec-success)]" />
-                <span className="truncate font-mono text-[11px] text-[var(--ec-text)]">{runDetail.run.branchName}</span>
+                {isGitRun ? (
+                  <GitBranch className="size-3.5 shrink-0 text-[var(--ec-success)]" />
+                ) : (
+                  <FolderOpen className="size-3.5 shrink-0 text-[var(--ec-success)]" />
+                )}
+                <span className="truncate font-mono text-[11px] text-[var(--ec-text)]">{workspaceLabel}</span>
               </button>
               <RunTokenBadge
                 inputTokens={runDetail.run.inputTokens}
@@ -420,7 +427,11 @@ export const RunDetailHeader = ({
               size="sm"
               disabled={busy}
               className="h-8 shrink-0 border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-2 text-xs text-[var(--ec-accent)] hover:bg-[var(--ec-hover)]"
-              title="Continue as new run. Start a fresh worktree and branch from this run's current state."
+              title={
+                isGitRun
+                  ? "Continue as new run. Start a fresh worktree and branch from this run's current state."
+                  : "Continue as new run. Start a fresh copied workspace from this run's current state."
+              }
               aria-label="Continue as new run"
               onClick={() => onOpenContinueRunDialog(run)}
             >

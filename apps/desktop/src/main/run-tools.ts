@@ -36,11 +36,11 @@ const buildAgentShellEnv = (): NodeJS.ProcessEnv => {
 const TOOL_DEFINITIONS: RunToolDefinition[] = [
   {
     name: "read_file",
-    description: "Read a UTF-8 text file from the run worktree. Use this before editing files. Pass optional 1-based startLine/endLine to inspect a focused range of a large file.",
+    description: "Read a UTF-8 text file from the run workspace. Use this before editing files. Pass optional 1-based startLine/endLine to inspect a focused range of a large file.",
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "Path relative to the worktree root." },
+        path: { type: "string", description: "Path relative to the workspace root." },
         startLine: { type: ["number", "null"], description: "Optional 1-based first line to read." },
         endLine: { type: ["number", "null"], description: "Optional 1-based final line to read, inclusive." },
       },
@@ -50,11 +50,11 @@ const TOOL_DEFINITIONS: RunToolDefinition[] = [
   },
   {
     name: "write_file",
-    description: "Create or replace a UTF-8 text file in the run worktree.",
+    description: "Create or replace a UTF-8 text file in the run workspace.",
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "Path relative to the worktree root." },
+        path: { type: "string", description: "Path relative to the workspace root." },
         content: { type: "string", description: "Full file content to write." },
       },
       required: ["path", "content"],
@@ -67,7 +67,7 @@ const TOOL_DEFINITIONS: RunToolDefinition[] = [
     inputSchema: {
       type: "object",
       properties: {
-        file_path: { type: "string", description: "Path relative to the worktree root." },
+        file_path: { type: "string", description: "Path relative to the workspace root." },
         old_string: { type: "string", description: "Exact literal text to replace. Use empty string to create a new file." },
         new_string: { type: "string", description: "Replacement text, or full file contents when creating a new file." },
         expected_replacements: { type: "number", description: "Exact number of replacements expected.", minimum: 1 },
@@ -78,11 +78,11 @@ const TOOL_DEFINITIONS: RunToolDefinition[] = [
   },
   {
     name: "delete_file",
-    description: "Delete a file or directory inside the run worktree.",
+    description: "Delete a file or directory inside the run workspace.",
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "Path relative to the worktree root." },
+        path: { type: "string", description: "Path relative to the workspace root." },
       },
       required: ["path"],
       additionalProperties: false,
@@ -90,7 +90,7 @@ const TOOL_DEFINITIONS: RunToolDefinition[] = [
   },
   {
     name: "list_files",
-    description: "List files in the run worktree, optionally below a relative subdirectory.",
+    description: "List files in the run workspace, optionally below a relative subdirectory.",
     inputSchema: {
       type: "object",
       properties: {
@@ -103,7 +103,7 @@ const TOOL_DEFINITIONS: RunToolDefinition[] = [
   },
   {
     name: "search_repo",
-    description: "Search text in the run worktree and return matching files and lines.",
+    description: "Search text in the run workspace and return matching files and lines.",
     inputSchema: {
       type: "object",
       properties: {
@@ -320,8 +320,8 @@ const listImmediateEntries = async (target: string, root: string, limit = 24): P
 
 const buildMissingPathMessage = async (root: string, kind: "file" | "directory", inputPath: string) => {
   const lines = [
-    `${kind === "file" ? "File" : "Directory"} not found in the run worktree: ${formatRelativePathHint(inputPath)}.`,
-    "Paths must be relative to the worktree root.",
+    `${kind === "file" ? "File" : "Directory"} not found in the run workspace: ${formatRelativePathHint(inputPath)}.`,
+    "Paths must be relative to the workspace root.",
     "If the exact location is unknown, call list_files on . or a confirmed parent directory before retrying.",
   ];
 
@@ -349,7 +349,7 @@ const buildDisallowedShellOperatorsMessage = (command: string) => {
   const guidance: string[] = [
     "Shell command contains disallowed operators.",
     "Run a single repo-local command only; do not use cd, &&, |, ;, redirection, or backticks.",
-    "BuildWarden already runs run_shell from the worktree root.",
+    "BuildWarden already runs run_shell from the workspace root.",
   ];
 
   if (/\bcd\b/i.test(trimmed)) {
@@ -422,7 +422,7 @@ const isWithinRoot = (root: string, target: string) => {
 const resolveWorktreePath = (root: string, inputPath: string) => {
   const target = resolve(root, inputPath || ".");
   if (!isWithinRoot(root, target)) {
-    throw new Error(`Path escapes the run worktree: ${inputPath}`);
+    throw new Error(`Path escapes the run workspace: ${inputPath}`);
   }
   return target;
 };

@@ -8,6 +8,8 @@ import { dialog, shell } from "electron";
 import { killRunTerminalForRunId } from "./run-terminal-ipc";
 import { buildDependencyGraphSnapshotForProjectGraph, listDependencySourceFilesForProjectGraph } from "./project-graph-utils";
 import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
+import { createFolderSnapshot, deleteFolderSnapshot, diffFolderAgainstSnapshot, getFolderSnapshotRoot } from "./folder-diff";
+import { createFolderWorkspaceCopy, removeFolderWorkspaceCopy } from "./folder-workspace";
 import { getHarnessTypeForProvider } from "./harness-adapters";
 import { createProjectPrReviewProvider } from "./pr-review/pr-review-provider-factory";
 import { resolveProjectPrReviewRemoteContext } from "./pr-review/pr-review-remote-context";
@@ -79,6 +81,7 @@ import {
   type ProjectInput,
   type ProjectBranchDeleteImpact,
   type ProjectGitBranchOverview,
+  type ProjectGitConversionCandidate,
   type ProjectForgeAuthStatus,
   type ProjectForgePrMonitorConfig,
   type ProjectForgePrMonitorSettings,
@@ -126,6 +129,7 @@ import {
   type RunInput,
   type RunListVisibility,
   type RunNoteRecord,
+  type RunWorkspaceVcs,
   type UpdateProjectTaskInput,
   type UpdateRunNoteInput,
   type RunRecord,
@@ -621,6 +625,40 @@ export class AppController
     logWarn(message, metadata);
   }
 
+  private getFolderSnapshotRoot(): string {
+    return getFolderSnapshotRoot(this.db.getFilePath());
+  }
+
+  private requireGitProject(project: ProjectRecord, featureLabel: string): void {
+    if (project.kind !== "git") {
+      throw new Error(`${featureLabel} is only available for Git projects.`);
+    }
+  }
+
+  private requireGitRun(run: RunRecord, featureLabel: string): void {
+    if (run.workspaceVcs !== "git") {
+      throw new Error(`${featureLabel} is only available for Git-backed runs.`);
+    }
+  }
+
+  private getRunWorkspaceLabel(run: RunRecord): string {
+    if (run.workspaceVcs === "folder") {
+      return run.workspaceType === "copy" ? "Folder copy" : "Project folder";
+    }
+    return run.workspaceType === "local" ? `Local repository on ${run.branchName}` : `Worktree ${run.branchName}`;
+  }
+
+  private async captureFolderBaselineSnapshot(run: RunRecord): Promise<void> {
+    if (run.workspaceVcs !== "folder") {
+      return;
+    }
+    await createFolderSnapshot({
+      runId: run.id,
+      workspacePath: run.worktreePath,
+      snapshotsRoot: this.getFolderSnapshotRoot(),
+    });
+  }
+
   private getProjectActiveIntegratedSkills(projectId: string) {
     const settings = this.db.getSettings();
     const disabledSkillIds = new Set(
@@ -918,14 +956,14 @@ export class AppController
     const modeBrief = this.buildProjectLabModeBrief(mode);
     const agentObjective =
       mode === "bugfix"
-        ? "Your job is to inspect this repository, identify exactly one concrete bug or vulnerability for the selected mode, and implement a narrowly scoped fix only when the evidence supports it."
-        : "Your job is to inspect this repository, identify exactly one worthwhile improvement for the selected mode, and implement it directly in this worktree.";
+        ? "Your job is to inspect this project, identify exactly one concrete bug or vulnerability for the selected mode, and implement a narrowly scoped fix only when the evidence supports it."
+        : "Your job is to inspect this project, identify exactly one worthwhile improvement for the selected mode, and implement it directly in this workspace.";
 
     return [
       "You are BuildWarden Project Lab's implementation agent.",
       agentObjective,
       "Do not ask for a discussion round or wait for approval. Make a small, reviewable change.",
-      "If the repository evidence shows there is no safe distinct change worth making, make no code changes and explain why in the final answer.",
+      "If the project evidence shows there is no safe distinct change worth making, make no code changes and explain why in the final answer.",
       "",
       `Project: ${project.name}`,
       opportunityInstruction,
@@ -959,9 +997,11 @@ export class AppController
   ): Promise<RunRecord> {
     const project = this.db.getProject(projectId);
     const selectedBaseBranch = baseBranch?.trim() || project.defaultBranch;
-    const availableBranches = await this.getProjectBranches(projectId);
-    if (!availableBranches.includes(selectedBaseBranch)) {
-      throw new Error(`Base branch "${selectedBaseBranch}" is not available for this project. Choose an existing Project Lab base branch and start a new thread.`);
+    if (project.kind === "git") {
+      const availableBranches = await this.getProjectBranches(projectId);
+      if (!availableBranches.includes(selectedBaseBranch)) {
+        throw new Error(`Base branch "${selectedBaseBranch}" is not available for this project. Choose an existing Project Lab base branch and start a new thread.`);
+      }
     }
     const model = this.db.getModel(modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
@@ -972,8 +1012,8 @@ export class AppController
       modelId,
       harnessType,
       mode: "code",
-      workspaceType: "worktree",
-      baseBranch: selectedBaseBranch,
+      workspaceType: project.kind === "folder" ? "copy" : "worktree",
+      baseBranch: project.kind === "git" ? selectedBaseBranch : undefined,
       prompt,
       kind: "lab-implementation",
       labThreadId: threadId,
@@ -1366,7 +1406,7 @@ export class AppController
       runId: chat.id,
       type: "status",
       title: "Chat starting",
-      content: "Starting chatâ€¦",
+      content: "Starting chat...",
       createdAt: new Date().toISOString(),
     });
 
@@ -1581,12 +1621,14 @@ export class AppController
 
   async getProjectBranches(projectId: string): Promise<string[]> {
     const project = this.db.getProject(projectId);
+    this.requireGitProject(project, "Branch management");
     const branches = await this.gitService.listTargetBranches(project.repoPath);
     return branches.length > 0 ? branches : [project.defaultBranch];
   }
 
   async getProjectCurrentBranch(projectId: string): Promise<string> {
     const project = this.db.getProject(projectId);
+    this.requireGitProject(project, "Branch management");
     try {
       return await this.gitService.getCurrentBranch(project.repoPath);
     } catch (error) {
@@ -1600,11 +1642,48 @@ export class AppController
 
   async getProjectBranchOverview(projectId: string): Promise<ProjectGitBranchOverview> {
     const project = this.db.getProject(projectId);
+    this.requireGitProject(project, "Branch management");
     return this.gitService.getProjectBranchOverview(project.repoPath, project.defaultBranch);
   }
 
+  async checkProjectGitConversion(projectId: string): Promise<ProjectGitConversionCandidate | null> {
+    const project = this.db.getProject(projectId);
+    if (project.kind !== "folder") {
+      return null;
+    }
+    const validation = await this.gitService.validateProject(project.repoPath);
+    if (!validation.isGitRepo) {
+      return null;
+    }
+    const currentBranch = await this.gitService.getCurrentBranch(project.repoPath).catch(() => validation.defaultBranch);
+    return {
+      projectId: project.id,
+      repoPath: validation.repoPath,
+      repoName: validation.repoName,
+      defaultBranch: validation.defaultBranch,
+      currentBranch,
+      isWorktree: validation.isWorktree,
+      isDirty: validation.isDirty,
+    };
+  }
+
+  async convertProjectToGit(projectId: string): Promise<ProjectRecord> {
+    const project = this.db.getProject(projectId);
+    if (project.kind === "git") {
+      return project;
+    }
+    const validation = await this.gitService.validateProject(project.repoPath);
+    if (!validation.isGitRepo) {
+      throw new Error("This project folder is not a Git repository yet.");
+    }
+    const converted = this.db.updateProjectKind(project.id, "git", validation.defaultBranch);
+    this.db.touchProject(converted.id);
+    return converted;
+  }
+
   async getProjectBranchDeleteImpact(projectId: string, input: DeleteProjectBranchInput): Promise<ProjectBranchDeleteImpact> {
-    this.db.getProject(projectId);
+    const project = this.db.getProject(projectId);
+    this.requireGitProject(project, "Branch management");
     const branchName = input.branchName.trim();
     if (!branchName) {
       throw new Error("Select a branch.");
@@ -1627,29 +1706,34 @@ export class AppController
 
   async checkoutProjectBranch(projectId: string, branchName: string): Promise<void> {
     const project = this.db.getProject(projectId);
+    this.requireGitProject(project, "Branch checkout");
     await this.gitService.checkoutProjectBranch(project.repoPath, branchName);
   }
 
   async fetchProjectBranches(projectId: string): Promise<ProjectGitBranchOverview> {
     const project = this.db.getProject(projectId);
+    this.requireGitProject(project, "Branch fetching");
     await this.gitService.fetchProjectBranches(project.repoPath);
     return this.gitService.getProjectBranchOverview(project.repoPath, project.defaultBranch);
   }
 
   async createProjectBranch(projectId: string, input: CreateProjectBranchInput): Promise<ProjectGitBranchOverview> {
     const project = this.db.getProject(projectId);
+    this.requireGitProject(project, "Branch creation");
     await this.gitService.createProjectBranch(project.repoPath, input.branchName, input.startPoint, input.checkout !== false);
     return this.gitService.getProjectBranchOverview(project.repoPath, project.defaultBranch);
   }
 
   async renameProjectBranch(projectId: string, input: RenameProjectBranchInput): Promise<ProjectGitBranchOverview> {
     const project = this.db.getProject(projectId);
+    this.requireGitProject(project, "Branch renaming");
     await this.gitService.renameProjectBranch(project.repoPath, input.oldName, input.newName);
     return this.gitService.getProjectBranchOverview(project.repoPath, project.defaultBranch);
   }
 
   async deleteProjectBranch(projectId: string, input: DeleteProjectBranchInput): Promise<ProjectGitBranchOverview> {
     const project = this.db.getProject(projectId);
+    this.requireGitProject(project, "Branch deletion");
     const branchName = input.branchName.trim();
     if (!branchName) {
       throw new Error("Select a branch.");
@@ -1672,12 +1756,14 @@ export class AppController
 
   async pullProjectBranch(projectId: string): Promise<ProjectGitBranchOverview> {
     const project = this.db.getProject(projectId);
+    this.requireGitProject(project, "Git pull");
     await this.gitService.pullProjectBranch(project.repoPath);
     return this.gitService.getProjectBranchOverview(project.repoPath, project.defaultBranch);
   }
 
   async pushProjectBranch(projectId: string, input: PushProjectBranchInput): Promise<ProjectGitBranchOverview> {
     const project = this.db.getProject(projectId);
+    this.requireGitProject(project, "Git push");
     await this.gitService.pushProjectBranch(project.repoPath, input.branchName, input.setUpstream !== false);
     return this.gitService.getProjectBranchOverview(project.repoPath, project.defaultBranch);
   }
@@ -1699,15 +1785,21 @@ export class AppController
   }
 
   async addProject(input: ProjectInput): Promise<ProjectRecord> {
-    const validation = await this.gitService.validateProject(input.repoPath);
-
-    if (!validation.isGitRepo) {
-      throw new Error("The selected folder is not a Git repository.");
+    const repoPath = input.repoPath.trim();
+    if (!repoPath) {
+      throw new Error("Choose a project folder.");
     }
+    if (!existsSync(repoPath) || !statSync(repoPath).isDirectory()) {
+      throw new Error("The selected path is not a folder.");
+    }
+    const validation = await this.gitService.validateProject(repoPath);
+    const kind: ProjectRecord["kind"] = validation.isGitRepo ? "git" : "folder";
 
     const project = this.db.addProject({
       ...input,
-      defaultBranch: validation.defaultBranch,
+      repoPath,
+      kind,
+      defaultBranch: validation.isGitRepo ? validation.defaultBranch : "",
       resolvedName: input.name?.trim() || validation.repoName,
     });
     this.db.touchProject(project.id);
@@ -1894,32 +1986,60 @@ export class AppController
 
     const { attachments: initialAttachments, ...runInsertInput } = input;
 
-    const workspaceType = input.workspaceType ?? "worktree";
+    const workspaceType = input.workspaceType ?? (project.kind === "folder" ? "copy" : "worktree");
+    const workspaceVcs: RunWorkspaceVcs = project.kind === "folder" ? "folder" : "git";
     const configuredWorktreeRoot = this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
-    const { branchName, worktreePath } =
-      workspaceType === "local"
-        ? {
-            branchName: await this.gitService.getCurrentBranch(project.repoPath),
-            worktreePath: project.repoPath,
-          }
-        : await this.gitService.createWorktreeForRun(
-            project.repoPath,
-            project.name,
-            crypto.randomUUID(),
-            input.baseBranch?.trim() || project.defaultBranch,
-            configuredWorktreeRoot,
-          );
+    let branchName: string;
+    let worktreePath: string;
+
+    if (project.kind === "folder") {
+      if (workspaceType === "worktree") {
+        throw new Error("Git worktrees are only available for Git projects.");
+      }
+      if (workspaceType === "copy") {
+        const folderWorkspace = await createFolderWorkspaceCopy({
+          sourcePath: project.repoPath,
+          projectName: project.name,
+          runId: crypto.randomUUID(),
+          configuredWorkspaceRoot: configuredWorktreeRoot,
+        });
+        branchName = folderWorkspace.branchName;
+        worktreePath = folderWorkspace.worktreePath;
+      } else {
+        branchName = "project-folder";
+        worktreePath = project.repoPath;
+      }
+    } else {
+      if (workspaceType === "copy") {
+        throw new Error("Folder copy runs are only available for non-Git folder projects.");
+      }
+      if (workspaceType === "local") {
+        branchName = await this.gitService.getCurrentBranch(project.repoPath);
+        worktreePath = project.repoPath;
+      } else {
+        const gitWorkspace = await this.gitService.createWorktreeForRun(
+          project.repoPath,
+          project.name,
+          crypto.randomUUID(),
+          input.baseBranch?.trim() || project.defaultBranch,
+          configuredWorktreeRoot,
+        );
+        branchName = gitWorkspace.branchName;
+        worktreePath = gitWorkspace.worktreePath;
+      }
+    }
 
     let run = this.db.createRun({
       ...runInsertInput,
       prompt: displayPrompt,
       goalText,
       workspaceType,
+      workspaceVcs,
       branchName,
       worktreePath,
     });
 
-    if (workspaceType === "worktree") {
+    if (workspaceType === "worktree" || workspaceType === "copy") {
       this.db.upsertWorktree({
         id: run.id,
         projectId: run.projectId,
@@ -1957,17 +2077,18 @@ export class AppController
       run.id,
       "status",
       "Run queued",
-      workspaceType === "local" ? `Using local repository on branch ${branchName}` : `Preparing worktree ${worktreePath}`,
+      workspaceType === "local" ? `Using ${this.getRunWorkspaceLabel(run)}` : `Preparing workspace ${worktreePath}`,
     );
     run = this.db.updateRunStatus(run.id, "preparing");
     this.emitEvent({
       runId: run.id,
       type: "status",
       title: "Run preparing",
-      content: workspaceType === "local" ? `Using local repository ${worktreePath}` : `Created worktree ${worktreePath}`,
+      content: workspaceType === "local" ? `Using workspace ${worktreePath}` : `Created workspace ${worktreePath}`,
       createdAt: new Date().toISOString(),
     });
 
+    await this.captureFolderBaselineSnapshot(run);
     await this.capturePromptRestorePoint(run.id, "initial");
     const worker = this.startWorker(
       run,
@@ -2014,7 +2135,7 @@ export class AppController
       throw new Error("Enter a continuation prompt.");
     }
 
-    if (sourceRun.workspaceType === "local" && input.includeWorkspaceChanges !== false) {
+    if (sourceRun.workspaceVcs === "git" && sourceRun.workspaceType === "local" && input.includeWorkspaceChanges !== false) {
       const currentBranch = await this.gitService.getCurrentBranch(project.repoPath);
       if (currentBranch !== sourceRun.branchName) {
         throw new Error(
@@ -2024,16 +2145,37 @@ export class AppController
     }
 
     const configuredWorktreeRoot = this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
-    const { branchName, worktreePath } = await this.gitService.createWorktreeForContinuation(
-      project.repoPath,
-      project.name,
-      crypto.randomUUID(),
-      sourceRun.branchName,
-      configuredWorktreeRoot,
-    );
+    let workspaceType: RunRecord["workspaceType"] = "worktree";
+    let workspaceVcs: RunWorkspaceVcs = sourceRun.workspaceVcs;
+    let branchName: string;
+    let worktreePath: string;
 
-    if (input.includeWorkspaceChanges !== false) {
-      await this.gitService.cloneWorkspaceChanges(sourceRun.worktreePath, worktreePath);
+    if (sourceRun.workspaceVcs === "folder") {
+      workspaceType = "copy";
+      workspaceVcs = "folder";
+      const sourcePath = input.includeWorkspaceChanges !== false ? sourceRun.worktreePath : project.repoPath;
+      const folderWorkspace = await createFolderWorkspaceCopy({
+        sourcePath,
+        projectName: project.name,
+        runId: crypto.randomUUID(),
+        configuredWorkspaceRoot: configuredWorktreeRoot,
+      });
+      branchName = folderWorkspace.branchName;
+      worktreePath = folderWorkspace.worktreePath;
+    } else {
+      const gitWorkspace = await this.gitService.createWorktreeForContinuation(
+        project.repoPath,
+        project.name,
+        crypto.randomUUID(),
+        sourceRun.branchName,
+        configuredWorktreeRoot,
+      );
+      branchName = gitWorkspace.branchName;
+      worktreePath = gitWorkspace.worktreePath;
+
+      if (input.includeWorkspaceChanges !== false) {
+        await this.gitService.cloneWorkspaceChanges(sourceRun.worktreePath, worktreePath);
+      }
     }
 
     const goalText = input.goalText === undefined ? sourceRun.goalText : normalizeRunGoalText(input.goalText);
@@ -2045,7 +2187,8 @@ export class AppController
       modelId: model.id,
       harnessType: input.harnessType,
       mode: input.mode,
-      workspaceType: "worktree",
+      workspaceType,
+      workspaceVcs,
       prompt: userText,
       goalText,
       branchName,
@@ -2085,7 +2228,7 @@ export class AppController
       run.id,
       "status",
       "Continuation queued",
-      `Preparing worktree ${worktreePath} from ${sourceRun.branchName}`,
+      `Preparing workspace ${worktreePath} from ${this.getRunWorkspaceLabel(sourceRun)}`,
       {
         continuedFromRunId: sourceRun.id,
         continuedFromBranch: sourceRun.branchName,
@@ -2096,7 +2239,7 @@ export class AppController
       runId: run.id,
       type: "status",
       title: "Run preparing",
-      content: `Created continuation worktree ${worktreePath}`,
+      content: `Created continuation workspace ${worktreePath}`,
       metadata: {
         continuedFromRunId: sourceRun.id,
         continuedFromBranch: sourceRun.branchName,
@@ -2104,6 +2247,7 @@ export class AppController
       createdAt: new Date().toISOString(),
     });
 
+    await this.captureFolderBaselineSnapshot(run);
     await this.capturePromptRestorePoint(run.id, "initial");
     const worker = this.startWorker(
       run,
@@ -2237,6 +2381,7 @@ export class AppController
     const branchPromotedToProject = this.wasRunPromotedToProject(run.id);
 
     if (
+      run.workspaceVcs === "git" &&
       run.workspaceType === "worktree" &&
       this.isSettingEnabled(APP_SETTING_KEYS.autoCheckoutRunBranchOnOpen, true) &&
       existsSync(run.worktreePath) &&
@@ -2257,6 +2402,7 @@ export class AppController
         );
       }
     } else if (
+      run.workspaceVcs === "git" &&
       run.workspaceType === "worktree" &&
       branchPromotedToProject &&
       this.isSettingEnabled(APP_SETTING_KEYS.autoCheckoutRunBranchOnOpen, true)
@@ -2282,6 +2428,7 @@ export class AppController
 
   async commitRun(runId: string, message: string): Promise<void> {
     const run = this.db.getRun(runId);
+    this.requireGitRun(run, "Committing");
 
     if (run.status !== "completed") {
       throw new Error("Only completed runs can be committed.");
@@ -2317,6 +2464,7 @@ export class AppController
 
   async suggestCommitMessage(runId: string): Promise<string> {
     const run = this.db.getRun(runId);
+    this.requireGitRun(run, "Commit message suggestions");
 
     if (run.status !== "completed") {
       throw new Error("Only completed runs can use AI commit suggestions.");
@@ -2338,7 +2486,7 @@ export class AppController
     if (diff.length > MAX_DIFF_CHARS_FOR_COMMIT_SUGGEST) {
       diff =
         diff.slice(0, MAX_DIFF_CHARS_FOR_COMMIT_SUGGEST) +
-        "\n\n[Diff truncated for commit message generation â€” review before committing.]";
+        "\n\n[Diff truncated for commit message generation - review before committing.]";
     }
 
     const model = this.db.getModel(run.modelId);
@@ -2361,7 +2509,7 @@ export class AppController
       "Write a concise git commit message for these changes.",
       "Use an imperative mood subject line, at most about 72 characters.",
       "Optionally add a blank line and a short body if needed.",
-      "Output only the commit message text Ã¢â‚¬â€ no quotes, markdown fences, or commentary.",
+      "Output only the commit message text - no quotes, markdown fences, or commentary.",
     ].join("\n");
 
     if (provider.providerType === "codex-cli") {
@@ -2518,10 +2666,12 @@ export class AppController
 
     const mode = this.normalizeProjectLabMode(input.mode);
     const modeLabel = PROJECT_LAB_MODE_LABELS[mode];
-    const baseBranch = input.baseBranch?.trim() || project.defaultBranch;
-    const availableBranches = await this.getProjectBranches(project.id);
-    if (!availableBranches.includes(baseBranch)) {
-      throw new Error(`Base branch "${baseBranch}" is not available for this project. Refresh branches and choose an existing branch.`);
+    const baseBranch = project.kind === "git" ? input.baseBranch?.trim() || project.defaultBranch : "project-folder";
+    if (project.kind === "git") {
+      const availableBranches = await this.getProjectBranches(project.id);
+      if (!availableBranches.includes(baseBranch)) {
+        throw new Error(`Base branch "${baseBranch}" is not available for this project. Refresh branches and choose an existing branch.`);
+      }
     }
 
     const thread = this.db.createProjectLabThread({
@@ -2544,8 +2694,12 @@ export class AppController
       label: "Project Lab",
       content:
         input.topic?.trim()
-          ? `Started ${modeLabel} mode from base branch \`${baseBranch}\` with user direction: ${input.topic.trim()}`
-          : `Started ${modeLabel} mode from base branch \`${baseBranch}\`.`,
+          ? project.kind === "git"
+            ? `Started ${modeLabel} mode from base branch \`${baseBranch}\` with user direction: ${input.topic.trim()}`
+            : `Started ${modeLabel} mode for this project folder with user direction: ${input.topic.trim()}`
+          : project.kind === "git"
+            ? `Started ${modeLabel} mode from base branch \`${baseBranch}\`.`
+            : `Started ${modeLabel} mode for this project folder.`,
     });
 
     if (mode === "rfc-only") {
@@ -2585,7 +2739,10 @@ export class AppController
       threadId: thread.id,
       role: "implementation",
       label: "Implementation agent",
-      content: `Implementation started in worktree \`${implementationRun.branchName}\`. The agent will find one ${modeLabel.toLowerCase()} opportunity, implement it, and a second agent will review the resulting diff afterwards.`,
+      content:
+        implementationRun.workspaceVcs === "folder"
+          ? `Implementation started in a copied folder workspace. The agent will find one ${modeLabel.toLowerCase()} opportunity, implement it, and a second agent will review the resulting diff afterwards.`
+          : `Implementation started in worktree \`${implementationRun.branchName}\`. The agent will find one ${modeLabel.toLowerCase()} opportunity, implement it, and a second agent will review the resulting diff afterwards.`,
     });
 
     return [
@@ -2806,22 +2963,25 @@ export class AppController
       throw new Error("Only completed runs can use AI diff reviews.");
     }
 
-    if (run.workspaceType === "worktree") {
+    if (run.workspaceVcs === "git" && run.workspaceType === "worktree") {
       await this.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
     }
 
-    if (!(await this.gitService.hasChanges(run.worktreePath))) {
+    if (run.workspaceVcs === "git" && !(await this.gitService.hasChanges(run.worktreePath))) {
       throw new Error("There are no changes to review for this run.");
     }
 
-    const diffOutcome = await runWorktreeDiffInWorker(run.worktreePath);
-    if (!diffOutcome.ok) {
-      throw new Error("Could not read the worktree diff.");
+    const diffOutcome = await this.getRunWorktreeDiff(run.id);
+    if (diffOutcome.worktreeUnavailable) {
+      throw new Error(diffOutcome.diffUnavailableReason || "Could not read the workspace diff.");
     }
 
     let diff = diffOutcome.diff;
+    if (!diff.trim()) {
+      throw new Error("There are no changes to review for this run.");
+    }
     if (diff.length > MAX_DIFF_CHARS_FOR_REVIEW) {
-      diff = `${diff.slice(0, MAX_DIFF_CHARS_FOR_REVIEW)}\n\n[Diff truncated for AI review â€” focus on highest-risk changes.]`;
+      diff = `${diff.slice(0, MAX_DIFF_CHARS_FOR_REVIEW)}\n\n[Diff truncated for AI review - focus on highest-risk changes.]`;
     }
 
     const targetModelId = options?.modelId?.trim() || run.modelId;
@@ -2852,6 +3012,7 @@ export class AppController
 
   async fetchProjectPrMrDiff(projectId: string, input: FetchProjectPrMrDiffInput): Promise<ProjectPrMrDiffResult> {
     const project = this.db.getProject(projectId);
+    this.requireGitProject(project, "Pull and merge request review");
     const prUrl = input.prUrl?.trim() ?? "";
     if (!prUrl) {
       throw new Error("Enter a pull request or merge request URL.");
@@ -2924,7 +3085,8 @@ export class AppController
   }
 
   async getProjectForgePrMonitorSettings(projectId: string): Promise<ProjectForgePrMonitorSettings> {
-    this.db.getProject(projectId);
+    const project = this.db.getProject(projectId);
+    this.requireGitProject(project, "PR/MR monitoring");
     const settings = parseProjectForgePrMonitorSettingsSetting(
       this.db.getSettings()[APP_SETTING_KEYS.projectForgePrMonitorSettings],
     );
@@ -2935,7 +3097,8 @@ export class AppController
     projectId: string,
     input: ProjectForgePrMonitorSettingsInput,
   ): Promise<ProjectForgePrMonitorSettings> {
-    this.db.getProject(projectId);
+    const project = this.db.getProject(projectId);
+    this.requireGitProject(project, "PR/MR monitoring");
     const intervalMinutes = parseProjectForgePrMonitorIntervalMinutes(input.intervalMinutes);
     if (intervalMinutes > 0) {
       const token = await this.secrets.readSecret(projectForgeTokenSecretKey(projectId));
@@ -2954,6 +3117,9 @@ export class AppController
     const configs: ProjectForgePrMonitorConfig[] = [];
 
     for (const project of this.db.listProjects()) {
+      if (project.kind !== "git") {
+        continue;
+      }
       const intervalMinutes = settings[project.id]?.intervalMinutes ?? 0;
       if (intervalMinutes <= 0) {
         continue;
@@ -3036,12 +3202,13 @@ export class AppController
     input: { prUrl: string; diff: string; modelId?: string },
   ): Promise<RunDiffReviewResult> {
     const project = this.db.getProject(projectId);
+    this.requireGitProject(project, "Pull and merge request review");
     let diff = input.diff.trim();
     if (!diff) {
       throw new Error("Load a PR/MR diff before running AI review.");
     }
     if (diff.length > MAX_DIFF_CHARS_FOR_REVIEW) {
-      diff = `${diff.slice(0, MAX_DIFF_CHARS_FOR_REVIEW)}\n\n[Diff truncated for AI review â€” focus on highest-risk changes.]`;
+      diff = `${diff.slice(0, MAX_DIFF_CHARS_FOR_REVIEW)}\n\n[Diff truncated for AI review - focus on highest-risk changes.]`;
     }
     const targetModelId = input.modelId?.trim();
     if (!targetModelId) {
@@ -3068,6 +3235,7 @@ export class AppController
 
   private async resolveProjectPrReviewRemoteContext(projectId: string): Promise<ProjectPrReviewRemoteContext> {
     const project = this.db.getProject(projectId);
+    this.requireGitProject(project, "Pull and merge request review");
     return resolveProjectPrReviewRemoteContext(project, this.gitService);
   }
 
@@ -4015,7 +4183,9 @@ export class AppController
 
   async getRunPublishOptions(runId: string): Promise<{ defaultTargetBranch: string; defaultSourceBranch: string; defaultDescription: string; suggestedTitle: string; targetBranches: string[] }> {
     const run = this.db.getRun(runId);
+    this.requireGitRun(run, "Publishing");
     const project = this.db.getProject(run.projectId);
+    this.requireGitProject(project, "Publishing");
 
     const targetBranches = await this.gitService.listTargetBranches(run.worktreePath);
     const defaultTargetBranch =
@@ -4039,7 +4209,9 @@ export class AppController
     description?: string,
   ): Promise<string> {
     let run = this.db.getRun(runId);
+    this.requireGitRun(run, "Pull and merge request creation");
     const project = this.db.getProject(run.projectId);
+    this.requireGitProject(project, "Pull and merge request creation");
     const trimmedTitle = title.trim();
     const trimmedTargetBranch = targetBranch.trim();
     const trimmedSourceBranch = sourceBranchName?.trim() || run.branchName;
@@ -4111,7 +4283,9 @@ export class AppController
 
   async suggestRunPullRequestDescription(runId: string, targetBranch: string, title: string): Promise<string> {
     const run = this.db.getRun(runId);
+    this.requireGitRun(run, "Pull and merge request description generation");
     const project = this.db.getProject(run.projectId);
+    this.requireGitProject(project, "Pull and merge request description generation");
     const trimmedTargetBranch = targetBranch.trim();
     const trimmedTitle = title.trim();
 
@@ -4185,7 +4359,9 @@ export class AppController
 
   async publishRunBranch(runId: string, branchName?: string): Promise<string> {
     let run = this.db.getRun(runId);
+    this.requireGitRun(run, "Publishing");
     const project = this.db.getProject(run.projectId);
+    this.requireGitProject(project, "Publishing");
     const trimmedBranchName = branchName?.trim() || run.branchName;
     const createdCustomBranch = trimmedBranchName !== run.branchName;
 
@@ -4234,7 +4410,9 @@ export class AppController
 
   async createRunLocalBranch(runId: string, branchName: string): Promise<string> {
     let run = this.db.getRun(runId);
+    this.requireGitRun(run, "Local branch creation");
     const project = this.db.getProject(run.projectId);
+    this.requireGitProject(project, "Local branch creation");
     const originalRunBranchName = run.branchName;
     const trimmedBranchName = branchName.trim();
 
@@ -4322,10 +4500,10 @@ export class AppController
         return;
       }
       if (!isAbsolute(trimmed)) {
-        throw new Error("Custom worktree folder must be an absolute path.");
+        throw new Error("Custom managed workspace folder must be an absolute path.");
       }
       if (existsSync(trimmed) && !statSync(trimmed).isDirectory()) {
-        throw new Error("Custom worktree folder must point to a directory.");
+        throw new Error("Custom managed workspace folder must point to a directory.");
       }
       this.db.setSetting(key, trimmed);
       return;
@@ -4439,12 +4617,32 @@ export class AppController
   async getRunWorktreeDiff(runId: string): Promise<RunWorktreeDiffResult> {
     const run = this.db.getRun(runId);
     const project = this.db.getProject(run.projectId);
+    if (run.workspaceVcs === "folder") {
+      if (!existsSync(run.worktreePath) || !statSync(run.worktreePath).isDirectory()) {
+        return {
+          diff: "",
+          worktreeUnavailable: true,
+          diffUnavailableReason: "The folder workspace is no longer available.",
+        };
+      }
+      const outcome = await diffFolderAgainstSnapshot({
+        runId: run.id,
+        workspacePath: run.worktreePath,
+        snapshotsRoot: this.getFolderSnapshotRoot(),
+      });
+      return {
+        diff: outcome.diff,
+        worktreeUnavailable: false,
+        diffUnavailableReason: outcome.missingSnapshot ? "No folder baseline snapshot is available for this run." : null,
+      };
+    }
+
     const branchPromotedToProject = this.wasRunPromotedToProject(runId);
     const diffPath =
       run.workspaceType === "worktree" && !existsSync(run.worktreePath) && branchPromotedToProject ? project.repoPath : run.worktreePath;
     const outcome = await runWorktreeDiffInWorker(diffPath);
     if (!outcome.ok) {
-      return { diff: "", worktreeUnavailable: true };
+      return { diff: "", worktreeUnavailable: true, diffUnavailableReason: "The Git workspace is no longer available." };
     }
     return { diff: outcome.diff, worktreeUnavailable: false };
   }
@@ -4498,7 +4696,7 @@ export class AppController
 
   async pickProjectDirectory(): Promise<string | null> {
     const result = await dialog.showOpenDialog({
-      title: "Choose a Git repository",
+      title: "Choose a project folder",
       properties: ["openDirectory"],
     });
 
@@ -4588,6 +4786,7 @@ export class AppController
 
   async undoRunToLastPrompt(runId: string): Promise<void> {
     const run = this.db.getRun(runId);
+    this.requireGitRun(run, "Undo to last prompt");
     if (this.runWorkers.has(runId)) {
       throw new Error("Wait for the active run to finish before undoing changes.");
     }
@@ -4841,7 +5040,7 @@ export class AppController
     const config = parseIdePathConfig(typeof raw === "string" ? raw : undefined);
     const exe = config[ideKind]?.trim();
     if (!exe) {
-      throw new Error(`${IDE_KIND_LABELS[ideKind]} is not configured. Add its path in Settings â†’ User Settings.`);
+      throw new Error(`${IDE_KIND_LABELS[ideKind]} is not configured. Add its path in Settings > User Settings.`);
     }
 
     await this.launchIdeWithFolder(exe, folderPath);
@@ -4923,7 +5122,7 @@ export class AppController
         : decision === "allow-for-run"
           ? "The requested shell command was allowed and will stay allowed for this run."
           : decision === "allow-always"
-            ? "The requested shell command was allowed. An exact-match pattern was added to Settings â†’ GIT & Workspace â†’ Shell allowlist."
+            ? "The requested shell command was allowed. An exact-match pattern was added to Settings > Projects & Workspace > Shell allowlist."
             : "The requested shell command was allowed once.";
 
     const metadata = {
@@ -5058,6 +5257,7 @@ export class AppController
         request: {
           runId: run.id,
           worktreePath: run.worktreePath,
+          workspaceVcs: run.workspaceVcs,
           mode: run.mode,
           yoloMode: options?.yoloMode === true,
           prompt: options?.promptOverride ?? run.prompt,
@@ -5783,6 +5983,10 @@ export class AppController
 
   private async capturePromptRestorePoint(runId: string, commandType: "initial" | "follow-up"): Promise<void> {
     const run = this.db.getRun(runId);
+    if (run.workspaceVcs !== "git") {
+      this.clearRunPromptRestorePoint(runId);
+      return;
+    }
     const patch = await this.gitService.createPromptRestorePatch(run.worktreePath);
     this.setRunPromptRestorePoint(runId, {
       createdAt: new Date().toISOString(),
@@ -5948,7 +6152,7 @@ export class AppController
       workerData: {
         request: {
           runId: chat.id,
-          // Chats are not bound to a repo; provider harnesses (e.g. Claude Code) still need a real `cwd` for `spawn` — a placeholder breaks Windows with ENOENT.
+          // Chats are not bound to a repo; provider harnesses still need a real `cwd` for `spawn`.
           worktreePath: homedir(),
           mode: "ask" as const,
           prompt: promptOverride ?? chat.prompt,
@@ -6098,7 +6302,7 @@ export class AppController
   }
 
   private updateWorktreeStatus(run: RunRecord, status: WorktreeStatus): void {
-    if (run.workspaceType !== "worktree") {
+    if (run.workspaceType !== "worktree" && run.workspaceType !== "copy") {
       return;
     }
 
@@ -6205,6 +6409,26 @@ export class AppController
         } else {
           cleanupErrors.push(error instanceof Error ? error.message : String(error));
         }
+      }
+    }
+
+    if (run.workspaceType === "copy") {
+      try {
+        await removeFolderWorkspaceCopy(run.worktreePath);
+      } catch (error) {
+        cleanupErrors.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    if (run.workspaceVcs === "folder") {
+      try {
+        await deleteFolderSnapshot(this.getFolderSnapshotRoot(), run.id);
+      } catch (error) {
+        logWarn("Failed to delete folder run snapshot.", {
+          runId: run.id,
+          worktreePath: run.worktreePath,
+          error,
+        });
       }
     }
 

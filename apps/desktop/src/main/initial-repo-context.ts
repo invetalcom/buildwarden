@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { countTokens } from "gpt-tokenizer";
-import type { RunMode } from "@buildwarden/shared";
+import type { RunMode, RunWorkspaceVcs } from "@buildwarden/shared";
 import { createRunToolContext } from "./run-tools";
 
 /** Rough token estimate if `countTokens` fails (rare). */
@@ -322,19 +322,23 @@ const assembleSectionsWithinBudget = (sections: ContextSection[], maxTotalTokens
  */
 export const buildInitialRepoContext = async (
   worktreePath: string,
-  options: RunMode | { mode?: RunMode; modelId?: string; prompt?: string } = {},
+  options: RunMode | { mode?: RunMode; modelId?: string; prompt?: string; workspaceVcs?: RunWorkspaceVcs } = {},
 ): Promise<string> => {
   const normalizedOptions = typeof options === "string" ? { mode: options } : options;
   const mode = normalizedOptions.mode ?? "code";
+  const workspaceVcs = normalizedOptions.workspaceVcs ?? "git";
   const profile = withModelBudget(mode, normalizedOptions.modelId);
   const toolContext = createRunToolContext(worktreePath, mode);
   const promptHints = extractPromptPathHints(normalizedOptions.prompt ?? "");
 
-  const gitStatusPromise = toolContext.executeTool({
-    id: "initial-git-status-sb",
-    name: "run_shell",
-    arguments: { command: "git status -sb" },
-  });
+  const gitStatusPromise =
+    workspaceVcs === "git"
+      ? toolContext.executeTool({
+          id: "initial-git-status-sb",
+          name: "run_shell",
+          arguments: { command: "git status -sb" },
+        })
+      : Promise.resolve(null);
   const packageJsonPreviewPromise = existsSync(resolve(worktreePath, "package.json"))
     ? toolContext.executeTool({
         id: "initial-read-package-json",
@@ -372,19 +376,19 @@ export const buildInitialRepoContext = async (
     topLevelListingPromise ?? Promise.resolve(null),
   ]);
 
-  const gitStatusText = gitStatus.content;
+  const gitStatusText = gitStatus?.content ?? "Git history unavailable: this run uses a plain project folder.";
   const changedFiles = parseChangedFiles(gitStatusText, profile.changedFilesMax);
   const sections: ContextSection[] = [
     {
       key: "facts",
       priority: 10,
       text: [
-        "Repository facts:",
+        workspaceVcs === "git" ? "Repository facts:" : "Project folder facts:",
         "- Workspace root: .",
         `- Mode: ${mode}`,
         `- Model: ${normalizedOptions.modelId ?? "(unknown)"}`,
         "",
-        "Git (branch + short status):",
+        workspaceVcs === "git" ? "Git (branch + short status):" : "Git:",
         gitStatusText,
       ].join("\n"),
     },
@@ -440,7 +444,7 @@ export const buildInitialRepoContext = async (
     sections.push({
       key: "file-map",
       priority: 60,
-      text: `Worktree file map:\n${recursiveListing.content}`,
+      text: `Workspace file map:\n${recursiveListing.content}`,
     });
   }
 

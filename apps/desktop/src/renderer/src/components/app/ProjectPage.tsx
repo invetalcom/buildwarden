@@ -139,6 +139,7 @@ export const ProjectPage = ({
           projectId={project.project.id}
           projectName={project.project.name}
           repoPath={project.project.repoPath}
+          projectKind={project.project.kind}
           runs={project.runs}
           modelOptions={modelOptions}
           availableBranches={availableBranches}
@@ -184,7 +185,7 @@ export const ProjectPage = ({
         />
       ) : null}
 
-      {activeTab === "branches" ? (
+      {activeTab === "branches" && project.project.kind === "git" ? (
         <ProjectBranchesPage
           projectId={project.project.id}
           repoPath={project.project.repoPath}
@@ -212,7 +213,7 @@ export const ProjectPage = ({
         />
       ) : null}
 
-      {activeTab === "reviews" ? (
+      {activeTab === "reviews" && project.project.kind === "git" ? (
         <ProjectPrMrTab
           projectId={project.project.id}
           modelOptions={modelOptions}

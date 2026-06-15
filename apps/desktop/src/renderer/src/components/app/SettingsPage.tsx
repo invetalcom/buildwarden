@@ -120,7 +120,7 @@ interface SettingsPageProps {
 
 const TAB_CONFIG: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }> = [
   { id: "provider-models", label: "Provider & Models", icon: <Cpu className="h-4 w-4" /> },
-  { id: "git-workspace", label: "Git & Workspace", icon: <FolderGit2 className="h-4 w-4" /> },
+  { id: "git-workspace", label: "Projects & Workspace", icon: <FolderGit2 className="h-4 w-4" /> },
   { id: "skills", label: "Skills", icon: <Database className="h-4 w-4" /> },
   { id: "network", label: "Network", icon: <Globe className="h-4 w-4" /> },
   { id: "user", label: "User Settings", icon: <Settings2 className="h-4 w-4" /> },

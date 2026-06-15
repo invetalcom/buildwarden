@@ -22,7 +22,9 @@ export type ProviderType = "ai-sdk" | "azure-legacy" | "codex-cli" | "claude-cod
 export type HarnessType = "ai-sdk" | "azure-legacy" | "codex-app-server" | "claude-code";
 
 export type RunMode = "code" | "plan" | "ask";
-export type RunWorkspaceType = "worktree" | "local";
+export type ProjectKind = "git" | "folder";
+export type RunWorkspaceType = "worktree" | "local" | "copy";
+export type RunWorkspaceVcs = "git" | "folder";
 export type RunListVisibility = "default" | "for-later";
 export type RunKind = "standard" | "lab-implementation";
 
@@ -469,6 +471,7 @@ export interface ProjectRecord {
   name: string;
   repoPath: string;
   defaultBranch: string;
+  kind: ProjectKind;
   cumulativeInputTokens: number;
   cumulativeOutputTokens: number;
   createdAt: string;
@@ -508,6 +511,7 @@ export interface RunRecord {
   harnessType: HarnessType;
   mode: RunMode;
   workspaceType: RunWorkspaceType;
+  workspaceVcs: RunWorkspaceVcs;
   prompt: string;
   goalText: string | null;
   /** Derived at read time from initial/follow-up user prompts, run goal text, and submitted user-input answers. */
@@ -873,6 +877,7 @@ export interface RunInput {
   mode: RunMode;
   yoloMode?: boolean;
   workspaceType: RunWorkspaceType;
+  workspaceVcs?: RunWorkspaceVcs;
   baseBranch?: string;
   prompt: string;
   goalText?: string | null;
@@ -1000,6 +1005,17 @@ export interface RunDetail {
 export interface RunWorktreeDiffResult {
   diff: string;
   worktreeUnavailable: boolean;
+  diffUnavailableReason?: string | null;
+}
+
+export interface ProjectGitConversionCandidate {
+  projectId: string;
+  repoPath: string;
+  repoName: string;
+  defaultBranch: string;
+  currentBranch: string;
+  isWorktree: boolean;
+  isDirty: boolean;
 }
 
 /** Load a GitHub PR / GitLab MR diff via `git fetch` (no hosting HTTP API). */
@@ -1741,6 +1757,7 @@ export interface ProviderSessionRuntimeInput {
 export interface RunExecutionRequest {
   runId: string;
   worktreePath: string;
+  workspaceVcs?: RunWorkspaceVcs;
   mode: RunMode;
   yoloMode?: boolean;
   prompt: string;
@@ -1998,6 +2015,8 @@ export interface DesktopApi {
   getProjectBranches(projectId: string): Promise<string[]>;
   getProjectCurrentBranch(projectId: string): Promise<string>;
   getProjectBranchOverview(projectId: string): Promise<ProjectGitBranchOverview>;
+  checkProjectGitConversion(projectId: string): Promise<ProjectGitConversionCandidate | null>;
+  convertProjectToGit(projectId: string): Promise<ProjectRecord>;
   /** Check out a local branch on the project’s main repository (fixes detached HEAD). */
   checkoutProjectBranch(projectId: string, branchName: string): Promise<void>;
   fetchProjectBranches(projectId: string): Promise<ProjectGitBranchOverview>;
@@ -2224,6 +2243,8 @@ export const IPC_CHANNELS = {
   getProjectBranches: "buildwarden:get-project-branches",
   getProjectCurrentBranch: "buildwarden:get-project-current-branch",
   getProjectBranchOverview: "buildwarden:get-project-branch-overview",
+  checkProjectGitConversion: "buildwarden:check-project-git-conversion",
+  convertProjectToGit: "buildwarden:convert-project-to-git",
   checkoutProjectBranch: "buildwarden:checkout-project-branch",
   fetchProjectBranches: "buildwarden:fetch-project-branches",
   createProjectBranch: "buildwarden:create-project-branch",
