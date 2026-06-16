@@ -805,7 +805,7 @@ export const RunComposer = ({
         <div className="app-input-surface rounded-[1.75rem] border border-[var(--ec-border)] bg-[var(--ec-input)] shadow-[0_18px_50px_rgba(0,0,0,0.18)] transition focus-within:border-[var(--ec-accent)] focus-within:shadow-[var(--ec-action-shadow)]">
           <Textarea
             ref={textareaRef}
-            className={`${textareaMinClass} !border-0 !bg-transparent resize-none rounded-[1.75rem] px-5 pb-2 pt-4 text-[15px] leading-relaxed placeholder:text-[15px] placeholder:font-normal focus:!border-transparent sm:placeholder:text-[15px] ${textareaClassName}`.trim()}
+            className={`${textareaMinClass} !border-0 !bg-transparent resize-none rounded-[1.75rem] px-5 pb-2 pt-4 text-[15px] leading-relaxed placeholder:text-[15px] placeholder:font-normal focus:!border-transparent focus:!ring-0 sm:placeholder:text-[15px] ${textareaClassName}`.trim()}
             placeholder={placeholder}
             value={prompt}
             autoFocus={autoFocus}
