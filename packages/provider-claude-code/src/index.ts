@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -317,24 +317,60 @@ export const getClaudeCodeAvailableModelsForVersion = (version: string | null): 
     };
   });
 
+const readClaudeVersionOutput = (command: string, args: string[], timeoutMs: number): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      windowsHide: true,
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      child.kill();
+      reject(new Error("Claude Code version probe timed out."));
+    }, timeoutMs);
+
+    const settle = (callback: () => void): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      callback();
+    };
+
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on("error", (error) => {
+      settle(() => reject(new Error(`Could not start Claude Code (${error.message}).`)));
+    });
+    child.on("close", (code) => {
+      settle(() => {
+        if (code !== 0) {
+          const detail = String(stderr || stdout || "").trim() || `exit code ${String(code)}`;
+          reject(new Error(`Claude Code is not available: ${detail}`));
+          return;
+        }
+        resolve(`${stdout}\n${stderr}`);
+      });
+    });
+  });
+
 export const listAvailableModelsWithClaudeCode = async (
   config: Record<string, unknown> | undefined,
 ): Promise<ProviderAvailableModel[]> => {
   const { binaryPath } = resolveClaudeCodeConfig(config);
   const launch = resolveClaudeCodeProcessLaunch(binaryPath, ["--version"]);
-  const result = spawnSync(launch.command, launch.args, {
-    timeout: 4_000,
-    encoding: "utf8",
-    windowsHide: true,
-  });
-  if (result.error) {
-    throw new Error(`Could not start Claude Code (${result.error.message}).`);
-  }
-  if (result.status !== 0) {
-    const detail = String(result.stderr || result.stdout || "").trim() || `exit code ${String(result.status)}`;
-    throw new Error(`Claude Code is not available: ${detail}`);
-  }
-  const version = parseClaudeCodeVersion(`${result.stdout ?? ""}\n${result.stderr ?? ""}`);
+  const version = parseClaudeCodeVersion(await readClaudeVersionOutput(launch.command, launch.args, 4_000));
   return getClaudeCodeAvailableModelsForVersion(version);
 };
 
