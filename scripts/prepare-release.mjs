@@ -8,7 +8,8 @@ const rootDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const version = process.argv[2];
 
 const usage = "Usage: pnpm release:prepare 1.0.0";
-const semverPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+const semverPattern =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 
 if (version === "--help" || version === "-h") {
   console.log(usage);
