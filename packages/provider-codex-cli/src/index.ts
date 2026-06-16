@@ -887,6 +887,7 @@ class CodexAppServerProbeClient implements CodexModelListClient {
 
   constructor(private readonly child: ChildProcessWithoutNullStreams) {
     this.output = readline.createInterface({ input: child.stdout });
+    child.stderr.resume();
     this.output.on("line", (line) => {
       this.handleStdoutLine(line);
     });
