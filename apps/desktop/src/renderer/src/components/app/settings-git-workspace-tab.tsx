@@ -168,6 +168,49 @@ export const GitWorkspaceSettingsTab = ({
 
   return (
     <div className="space-y-5">
+      <SettingsSection title="Projects">
+        <SettingsRow
+          title="Add project folder"
+          description="Register a local folder. Git repositories enable branches, worktrees, commits, and PR/MR review; plain folders can still run agents."
+          align="start"
+        >
+          <div className={rowControlClass}>
+            <ProjectSetupFields
+              busy={busy}
+              projectName={projectName}
+              projectPath={projectPath}
+              projectFolderGitWarning={projectFolderGitWarning}
+              onChooseDirectory={onChooseDirectory}
+              onSubmitProject={onSubmitProject}
+              onProjectNameChange={onProjectNameChange}
+              onProjectPathChange={onProjectPathChange}
+            />
+          </div>
+        </SettingsRow>
+        <SettingsRow title="Existing projects" description="Remove projects from BuildWarden without deleting the original folder." align="start">
+          <div className={`${rowControlClass} app-scrollbar max-h-72 overflow-auto rounded-md border border-[var(--ec-border)]`}>
+            {projects.length > 0 ? (
+              projects.map((entry) => (
+                <div
+                  key={entry.project.id}
+                  className="flex items-center justify-between gap-3 border-b border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-2.5 last:border-b-0"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-[var(--ec-text)]">{entry.project.name}</p>
+                    <p className="truncate text-xs text-[var(--ec-muted)]">{entry.project.repoPath}</p>
+                  </div>
+                  <Button type="button" variant="danger" size="sm" className="shrink-0" onClick={() => onDeleteProject(entry.project.id)}>
+                    Delete
+                  </Button>
+                </div>
+              ))
+            ) : (
+              <p className="px-3 py-2.5 text-sm text-[var(--ec-muted)]">No projects added yet.</p>
+            )}
+          </div>
+        </SettingsRow>
+      </SettingsSection>
+
       <SettingsSection title="App behavior">
         <SettingsRow
           title="Auto checkout run branch"
@@ -221,49 +264,6 @@ export const GitWorkspaceSettingsTab = ({
                 Enter a whole number between {recentRunDaysMin} and {recentRunDaysMax}.
               </p>
             ) : null}
-          </div>
-        </SettingsRow>
-      </SettingsSection>
-
-      <SettingsSection title="Projects">
-        <SettingsRow
-          title="Add project folder"
-          description="Register a local folder. Git repositories enable branches, worktrees, commits, and PR/MR review; plain folders can still run agents."
-          align="start"
-        >
-          <div className={rowControlClass}>
-            <ProjectSetupFields
-              busy={busy}
-              projectName={projectName}
-              projectPath={projectPath}
-              projectFolderGitWarning={projectFolderGitWarning}
-              onChooseDirectory={onChooseDirectory}
-              onSubmitProject={onSubmitProject}
-              onProjectNameChange={onProjectNameChange}
-              onProjectPathChange={onProjectPathChange}
-            />
-          </div>
-        </SettingsRow>
-        <SettingsRow title="Existing projects" description="Remove projects from BuildWarden without deleting the original folder." align="start">
-          <div className={`${rowControlClass} app-scrollbar max-h-72 overflow-auto rounded-md border border-[var(--ec-border)]`}>
-            {projects.length > 0 ? (
-              projects.map((entry) => (
-                <div
-                  key={entry.project.id}
-                  className="flex items-center justify-between gap-3 border-b border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-2.5 last:border-b-0"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-[var(--ec-text)]">{entry.project.name}</p>
-                    <p className="truncate text-xs text-[var(--ec-muted)]">{entry.project.repoPath}</p>
-                  </div>
-                  <Button type="button" variant="danger" size="sm" className="shrink-0" onClick={() => onDeleteProject(entry.project.id)}>
-                    Delete
-                  </Button>
-                </div>
-              ))
-            ) : (
-              <p className="px-3 py-2.5 text-sm text-[var(--ec-muted)]">No projects added yet.</p>
-            )}
           </div>
         </SettingsRow>
       </SettingsSection>
