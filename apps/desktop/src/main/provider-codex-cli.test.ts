@@ -3,7 +3,7 @@ import {
   buildCodexPlanProgressChunk,
   parseCodexModelListPage,
   requestCodexAvailableModels,
-} from "../../../../packages/provider-codex-cli/src";
+} from "@buildwarden/provider-codex-cli";
 
 describe("Codex CLI plan progress", () => {
   it("maps turn plan updates to replaceable plan-progress chunks", () => {
