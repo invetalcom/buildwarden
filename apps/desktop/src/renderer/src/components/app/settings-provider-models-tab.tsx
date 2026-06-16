@@ -267,11 +267,14 @@ export const ProviderModelsSettingsTab = ({
     ) {
       return;
     }
-    const stillValid = providerQuickPicks.some((preset) => preset.modelId === modelId.trim());
+    const stillValid = providerQuickPicks.some((preset) => preset.modelId === modelId.trim() && !preset.disabled);
     if (stillValid) {
       return;
     }
-    const first = providerQuickPicks[0]!;
+    const first = providerQuickPicks.find((preset) => !preset.disabled);
+    if (!first) {
+      return;
+    }
     onModelIdChange(first.modelId);
     onModelDisplayNameChange(first.displayName);
   }, [
