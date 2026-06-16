@@ -20,6 +20,8 @@ import type {
   NetworkProxyRuntimeConfig,
   ProviderAccountInput,
   ProviderAdapter,
+  ProviderAvailableModel,
+  ProviderAvailableModelsContext,
   RunExecutionRequest,
   RunTokenUsage,
   UnifiedProviderFamily,
@@ -34,6 +36,7 @@ import {
   buildNetworkProxyUrl,
   estimateBase64ByteLength,
   formatRunPlanProgressContent,
+  getModelPresetsForProvider,
   normalizeRunPlanProgressPayload,
   runShellActivityStreamId,
   shouldBypassNetworkProxyForUrl,
@@ -419,6 +422,14 @@ const buildAttachmentUserContent = (
   return parts;
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+
+const asTrimmedString = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim() ? value.trim() : undefined;
+
 const getProviderFamily = (config: Record<string, unknown> | undefined): UnifiedProviderFamily => {
   const raw = config?.[PROVIDER_CONFIG_AI_SDK_PROVIDER_FAMILY_KEY];
   if (
@@ -431,6 +442,101 @@ const getProviderFamily = (config: Record<string, unknown> | undefined): Unified
     return raw;
   }
   return "openai";
+};
+
+const AI_SDK_MODELS_API_URL = "https://ai-gateway.vercel.sh/v1/models";
+
+type ModelsApiFetch = (input: string, init?: RequestInit) => Promise<Response>;
+
+const aiSdkModelsApiItems = (value: unknown): unknown[] => {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (!isRecord(value)) {
+    return [];
+  }
+  const models = asArray(value.models);
+  if (models.length > 0) {
+    return models;
+  }
+  const data = asArray(value.data);
+  if (data.length > 0) {
+    return data;
+  }
+  return asArray(value.items);
+};
+
+export const parseAiSdkModelsApiAvailableModels = (
+  value: unknown,
+  family: UnifiedProviderFamily,
+): ProviderAvailableModel[] => {
+  if (family !== "google") {
+    return [];
+  }
+
+  return aiSdkModelsApiItems(value).flatMap((item) => {
+    if (!isRecord(item)) {
+      return [];
+    }
+
+    const rawModelId = asTrimmedString(item.id);
+    if (!rawModelId?.startsWith("google/")) {
+      return [];
+    }
+
+    const modelType = asTrimmedString(item.modelType ?? item.type)?.toLowerCase();
+    if (modelType && modelType !== "language") {
+      return [];
+    }
+
+    const modelId = rawModelId.slice("google/".length).trim();
+    if (!modelId) {
+      return [];
+    }
+
+    return [
+      {
+        modelId,
+        displayName: asTrimmedString(item.name) ?? asTrimmedString(item.displayName) ?? modelId,
+        source: "provider" as const,
+      },
+    ];
+  });
+};
+
+export const requestAiSdkModelsApiAvailableModels = async (
+  family: UnifiedProviderFamily,
+  fetchImpl: ModelsApiFetch = fetch,
+): Promise<ProviderAvailableModel[]> => {
+  const response = await fetchImpl(AI_SDK_MODELS_API_URL, {
+    headers: {
+      Accept: "application/json",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`AI SDK model catalog request failed (${String(response.status)} ${response.statusText}).`);
+  }
+
+  const models = parseAiSdkModelsApiAvailableModels(await response.json(), family);
+  if (models.length === 0) {
+    throw new Error(`AI SDK model catalog did not report any ${family} language models.`);
+  }
+  return models;
+};
+
+export const listAvailableModelsWithAiSdk = async (
+  context: ProviderAvailableModelsContext,
+): Promise<ProviderAvailableModel[]> => {
+  const family = getProviderFamily(context.config);
+  if (family === "google") {
+    return requestAiSdkModelsApiAvailableModels(family);
+  }
+
+  return getModelPresetsForProvider(context.providerType, family).map((preset) => ({
+    modelId: preset.modelId,
+    displayName: preset.displayName,
+    source: "curated" as const,
+  }));
 };
 
 const getDefaultHeaders = (config: Record<string, unknown> | undefined): Record<string, string> | undefined => {
@@ -592,9 +698,6 @@ const createLanguageModel = (input: RunExecutionRequest, devLogger?: { createLog
 
   return factories[family](commonOptions)(input.modelId);
 };
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 export const buildAiSdkPlanProgressChunk = (args: unknown): HarnessRunChunk | null => {
   const parsedArgs = isRecord(args) ? args : {};
@@ -881,6 +984,10 @@ export class AiSdkProviderAdapter implements ProviderAdapter {
 
   listRecommendedModels(): string[] {
     return [...AI_SDK_RECOMMENDED_MODEL_IDS];
+  }
+
+  async listAvailableModels(context: ProviderAvailableModelsContext): Promise<ProviderAvailableModel[]> {
+    return listAvailableModelsWithAiSdk(context);
   }
 
   validateConfiguration(input: ProviderAccountInput): void {
