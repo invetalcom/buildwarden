@@ -800,6 +800,7 @@ export const ProviderModelsSettingsTab = ({
                     <Select
                       className="mt-2"
                       triggerClassName={cn("h-11", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}
+                      maxMenuHeightPx={320}
                       value={quickPickSelectValue}
                       onValueChange={(value) => {
                         if (value === MODEL_PRESET_CUSTOM) {

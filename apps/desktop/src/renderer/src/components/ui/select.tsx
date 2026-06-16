@@ -29,6 +29,7 @@ export type SelectProps = {
   triggerClassName?: string;
   menuClassName?: string;
   optionClassName?: string;
+  maxMenuHeightPx?: number;
   align?: AnchorDropdownAlign;
   placement?: AnchorDropdownPlacement;
   onKeyDown?: (event: KeyboardEvent<HTMLButtonElement>) => void;
@@ -47,6 +48,7 @@ export const Select = ({
   triggerClassName,
   menuClassName,
   optionClassName,
+  maxMenuHeightPx,
   align = "start",
   placement = "auto",
   onKeyDown,
@@ -134,6 +136,7 @@ export const Select = ({
         align={align}
         placement={placement}
         widthPx={menuWidth}
+        maxHeightPx={maxMenuHeightPx}
         onClose={() => setOpen(false)}
         className={cn(
           "glass-popover overflow-hidden",

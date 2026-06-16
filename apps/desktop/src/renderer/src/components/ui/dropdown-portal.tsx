@@ -15,6 +15,7 @@ export const AnchorDropdownPortal = ({
   align = "start",
   placement = "auto",
   widthPx = 192,
+  maxHeightPx,
   className,
   children,
 }: {
@@ -24,6 +25,7 @@ export const AnchorDropdownPortal = ({
   align?: AnchorDropdownAlign;
   placement?: AnchorDropdownPlacement;
   widthPx?: number;
+  maxHeightPx?: number;
   className?: string;
   children: ReactNode;
 }) => {
@@ -45,14 +47,17 @@ export const AnchorDropdownPortal = ({
       const menuHeight = menuRef.current?.offsetHeight ?? 0;
       const availableBelow = window.innerHeight - r.bottom - gap - pad;
       const availableAbove = r.top - gap - pad;
+      const menuHeightForPlacement = menuHeight > 0 ? Math.min(menuHeight, maxHeightPx ?? menuHeight) : 0;
       const shouldOpenUp =
         placement === "top" ||
-        (placement === "auto" && menuHeight > 0 && availableBelow < menuHeight && availableAbove > availableBelow);
+        (placement === "auto" && menuHeightForPlacement > 0 && availableBelow < menuHeightForPlacement && availableAbove > availableBelow);
       let left = align === "end" ? r.right - widthPx : r.left;
       left = Math.max(pad, Math.min(left, window.innerWidth - widthPx - pad));
-      const rawTop = shouldOpenUp ? r.top - gap - menuHeight : r.bottom + gap;
-      const top = Math.max(pad, Math.min(rawTop, window.innerHeight - Math.max(menuHeight, 1) - pad));
-      const maxHeight = Math.max(120, shouldOpenUp ? availableAbove : availableBelow);
+      const availableHeight = shouldOpenUp ? availableAbove : availableBelow;
+      const maxHeight = Math.max(120, maxHeightPx ? Math.min(availableHeight, maxHeightPx) : availableHeight);
+      const renderedHeight = Math.max(1, menuHeight > 0 ? Math.min(menuHeight, maxHeight) : maxHeight);
+      const rawTop = shouldOpenUp ? r.top - gap - renderedHeight : r.bottom + gap;
+      const top = Math.max(pad, Math.min(rawTop, window.innerHeight - renderedHeight - pad));
       setPos({ top, left, maxHeight });
     };
     updatePosition();
@@ -62,7 +67,7 @@ export const AnchorDropdownPortal = ({
       window.removeEventListener("scroll", updatePosition, true);
       window.removeEventListener("resize", updatePosition);
     };
-  }, [open, align, placement, widthPx, anchorRef]);
+  }, [open, align, placement, widthPx, maxHeightPx, anchorRef]);
 
   useEffect(() => {
     if (!open) {
