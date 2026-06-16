@@ -10,6 +10,7 @@ const version = process.argv[2];
 const usage = "Usage: pnpm release:prepare 1.0.0";
 const semverPattern =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
+const skippedPackageSearchDirs = new Set([".git", ".vite", "dist", "dist-release", "node_modules", "out", "release"]);
 
 if (version === "--help" || version === "-h") {
   console.log(usage);
@@ -36,6 +37,26 @@ const runGit = (args) =>
     stdio: "inherit",
   });
 
+const collectPackageFiles = async (absoluteDir, relativeDir, paths) => {
+  const packagePath = join(relativeDir, "package.json");
+
+  if (existsSync(join(rootDir, packagePath))) {
+    paths.push(packagePath);
+  }
+
+  const entries = await readdir(absoluteDir, { withFileTypes: true });
+
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.isDirectory() || skippedPackageSearchDirs.has(entry.name)) {
+      continue;
+    }
+
+    const childRelativeDir = join(relativeDir, entry.name);
+
+    await collectPackageFiles(join(rootDir, childRelativeDir), childRelativeDir, paths);
+  }
+};
+
 const listWorkspacePackageFiles = async () => {
   const paths = ["package.json"];
 
@@ -46,19 +67,7 @@ const listWorkspacePackageFiles = async () => {
       continue;
     }
 
-    const entries = await readdir(absoluteWorkspaceDir, { withFileTypes: true });
-
-    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-      if (!entry.isDirectory()) {
-        continue;
-      }
-
-      const packagePath = join(workspaceDir, entry.name, "package.json");
-
-      if (existsSync(join(rootDir, packagePath))) {
-        paths.push(packagePath);
-      }
-    }
+    await collectPackageFiles(absoluteWorkspaceDir, workspaceDir, paths);
   }
 
   return paths;
