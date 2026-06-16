@@ -21,12 +21,7 @@ if (!semverPattern.test(version ?? "")) {
   process.exit(1);
 }
 
-const formatLocalDate = (date) =>
-  [
-    date.getFullYear(),
-    String(date.getMonth() + 1).padStart(2, "0"),
-    String(date.getDate()).padStart(2, "0"),
-  ].join("-");
+const formatReleaseDate = (date) => date.toISOString().slice(0, 10);
 
 const git = (args) =>
   execFileSync("git", args, {
@@ -78,7 +73,7 @@ if (dirtyPackageFiles) {
   process.exit(1);
 }
 
-const releaseDate = formatLocalDate(new Date());
+const releaseDate = formatReleaseDate(new Date());
 
 for (const packagePath of packagePaths) {
   const absolutePath = join(rootDir, packagePath);
