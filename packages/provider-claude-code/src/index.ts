@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +20,8 @@ import type {
   NetworkProxyRuntimeConfig,
   ProviderAccountInput,
   ProviderAdapter,
+  ProviderAvailableModel,
+  ProviderAvailableModelsContext,
   RunExecutionRequest,
   RunUserInputAnswers,
   RunUserInputQuestion,
@@ -39,6 +41,26 @@ import {
 
 const CLAUDE_DEFAULT_MODEL = "sonnet";
 const TURN_TIMEOUT_MS = 20 * 60 * 1_000;
+
+type ClaudeCodeModelCatalogEntry = {
+  modelId: string;
+  displayName: string;
+  minimumCliVersion?: string;
+};
+
+const CLAUDE_CODE_MODEL_CATALOG: readonly ClaudeCodeModelCatalogEntry[] = [
+  { modelId: "sonnet", displayName: "Claude Code Sonnet (auto)" },
+  { modelId: "opus", displayName: "Claude Code Opus (auto)" },
+  { modelId: "haiku", displayName: "Claude Code Haiku (auto)" },
+  { modelId: "opusplan", displayName: "Claude Code Opus Plan (auto)" },
+  { modelId: "sonnet[1m]", displayName: "Claude Code Sonnet 1M (auto)" },
+  { modelId: "opus[1m]", displayName: "Claude Code Opus 1M (auto)" },
+  { modelId: "claude-sonnet-4-6", displayName: "Claude Sonnet 4.6" },
+  { modelId: "claude-opus-4-8", displayName: "Claude Opus 4.8", minimumCliVersion: "2.1.154" },
+  { modelId: "claude-opus-4-7", displayName: "Claude Opus 4.7", minimumCliVersion: "2.1.111" },
+  { modelId: "claude-haiku-4-5", displayName: "Claude Haiku 4.5" },
+  { modelId: "claude-haiku-4-5-20251001", displayName: "Claude Haiku 4.5 (2025-10-01)" },
+] as const;
 
 type ClaudeCodeResolvedConfig = {
   binaryPath: string;
@@ -238,6 +260,118 @@ export const resolveClaudeCodeProcessLaunch = (binaryPath: string, args: string[
   }
 
   return { command: binaryPath, args };
+};
+
+type ParsedClaudeCodeVersion = {
+  major: number;
+  minor: number;
+  patch: number;
+};
+
+export const parseClaudeCodeVersion = (output: string): string | null => {
+  const match = output.match(/(\d+)\.(\d+)\.(\d+)/);
+  return match ? `${match[1]}.${match[2]}.${match[3]}` : null;
+};
+
+const parseVersionParts = (version: string): ParsedClaudeCodeVersion | null => {
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)$/);
+  if (!match) {
+    return null;
+  }
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+  };
+};
+
+const compareClaudeCodeVersions = (left: string, right: string): number => {
+  const leftParts = parseVersionParts(left);
+  const rightParts = parseVersionParts(right);
+  if (!leftParts || !rightParts) {
+    return 0;
+  }
+  if (leftParts.major !== rightParts.major) {
+    return leftParts.major - rightParts.major;
+  }
+  if (leftParts.minor !== rightParts.minor) {
+    return leftParts.minor - rightParts.minor;
+  }
+  return leftParts.patch - rightParts.patch;
+};
+
+const isClaudeCodeVersionAtLeast = (version: string, minimumVersion: string): boolean =>
+  compareClaudeCodeVersions(version, minimumVersion) >= 0;
+
+export const getClaudeCodeAvailableModelsForVersion = (version: string | null): ProviderAvailableModel[] =>
+  CLAUDE_CODE_MODEL_CATALOG.map((entry) => {
+    const unavailableReason =
+      version && entry.minimumCliVersion && !isClaudeCodeVersionAtLeast(version, entry.minimumCliVersion)
+        ? `Requires Claude Code v${entry.minimumCliVersion} or later (current v${version}).`
+        : undefined;
+    return {
+      modelId: entry.modelId,
+      displayName: entry.displayName,
+      source: "curated",
+      ...(unavailableReason ? { unavailableReason } : {}),
+    };
+  });
+
+const readClaudeVersionOutput = (command: string, args: string[], timeoutMs: number): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      windowsHide: true,
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      child.kill();
+      reject(new Error("Claude Code version probe timed out."));
+    }, timeoutMs);
+
+    const settle = (callback: () => void): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      callback();
+    };
+
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on("error", (error) => {
+      settle(() => reject(new Error(`Could not start Claude Code (${error.message}).`)));
+    });
+    child.on("close", (code) => {
+      settle(() => {
+        if (code !== 0) {
+          const detail = String(stderr || stdout || "").trim() || `exit code ${String(code)}`;
+          reject(new Error(`Claude Code is not available: ${detail}`));
+          return;
+        }
+        resolve(`${stdout}\n${stderr}`);
+      });
+    });
+  });
+
+export const listAvailableModelsWithClaudeCode = async (
+  config: Record<string, unknown> | undefined,
+): Promise<ProviderAvailableModel[]> => {
+  const { binaryPath } = resolveClaudeCodeConfig(config);
+  const launch = resolveClaudeCodeProcessLaunch(binaryPath, ["--version"]);
+  const version = parseClaudeCodeVersion(await readClaudeVersionOutput(launch.command, launch.args, 4_000));
+  return getClaudeCodeAvailableModelsForVersion(version);
 };
 
 const buildClaudeProcessEnv = (networkProxy?: NetworkProxyRuntimeConfig): NodeJS.ProcessEnv => {
@@ -1317,18 +1451,11 @@ export class ClaudeCodeProviderAdapter implements ProviderAdapter {
   readonly providerType = "claude-code" as const;
 
   listRecommendedModels(): string[] {
-    return [
-      "sonnet",
-      "opus",
-      "haiku",
-      "opusplan",
-      "sonnet[1m]",
-      "opus[1m]",
-      "claude-sonnet-4-6",
-      "claude-opus-4-7",
-      "claude-haiku-4-5",
-      "claude-haiku-4-5-20251001",
-    ];
+    return CLAUDE_CODE_MODEL_CATALOG.map((entry) => entry.modelId);
+  }
+
+  async listAvailableModels(context: ProviderAvailableModelsContext): Promise<ProviderAvailableModel[]> {
+    return listAvailableModelsWithClaudeCode(context.config);
   }
 
   validateConfiguration(input: ProviderAccountInput): void {

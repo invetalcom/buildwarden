@@ -1,5 +1,5 @@
-import type { AppSnapshot, ProviderType, UnifiedModelPreset, UnifiedModelPresetGroup, UnifiedProviderFamily } from "@buildwarden/shared";
-import { useEffect, useState } from "react";
+import type { AppSnapshot, ProviderType, UnifiedModelPresetGroup, UnifiedProviderFamily } from "@buildwarden/shared";
+import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, ChevronDown, KeyRound, Loader2, Plus, Terminal, Trash2 } from "lucide-react";
 import {
   DEFAULT_ADD_MODEL_DRAFT,
@@ -17,6 +17,11 @@ import { Input } from "../ui/input";
 import { Select } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { cn } from "../../lib/cn";
+import {
+  EMPTY_AVAILABLE_PROVIDER_MODELS_STATE,
+  shouldRequestAvailableProviderModels,
+  type AvailableProviderModelsState,
+} from "../../lib/available-provider-models";
 
 const PROVIDER_TYPE_LABELS: Record<ProviderType, string> = {
   "ai-sdk": "AI SDK",
@@ -30,6 +35,13 @@ const DEFAULT_LABEL_BY_TYPE: Record<ProviderType, string> = {
   "azure-legacy": "Azure Legacy",
   "codex-cli": "Codex CLI",
   "claude-code": "Claude Code",
+};
+
+type ModelQuickPick = {
+  modelId: string;
+  displayName: string;
+  description: string;
+  disabled?: boolean;
 };
 
 const SettingsField = ({
@@ -76,12 +88,12 @@ export type ProviderModelsSettingsTabProps = {
   modelBaseUrl: string;
   providerAccounts: AppSnapshot["providerAccounts"];
   models: AppSnapshot["models"];
-  modelPresetsForSelected: readonly UnifiedModelPreset[];
-  showOpenAiModelPresets: boolean;
-  openAiPresetSelectValue: string;
+  openAiPresetUserChoseCustom: boolean;
   openAiPresetsGrouped: ReturnType<typeof getModelPresetsByGroupForProvider>;
+  availableModelsState?: AvailableProviderModelsState;
   onSubmitProvider: () => void;
   onSubmitModel: () => void;
+  onEnsureAvailableModels: (providerAccountId: string) => void;
   onDeleteProviderAccount: (providerAccountId: string) => void;
   onDeleteModel: (modelId: string) => void;
   onProviderLabelChange: (value: string) => void;
@@ -127,12 +139,12 @@ export const ProviderModelsSettingsTab = ({
   modelBaseUrl,
   providerAccounts,
   models,
-  modelPresetsForSelected,
-  showOpenAiModelPresets,
-  openAiPresetSelectValue,
+  openAiPresetUserChoseCustom,
   openAiPresetsGrouped,
+  availableModelsState = EMPTY_AVAILABLE_PROVIDER_MODELS_STATE,
   onSubmitProvider,
   onSubmitModel,
+  onEnsureAvailableModels,
   onDeleteProviderAccount,
   onDeleteModel,
   onProviderLabelChange,
@@ -193,9 +205,88 @@ export const ProviderModelsSettingsTab = ({
     setConnectionKind(connectionKindForProviderType(t));
   };
 
-  const groupOrderForSelect = unifiedModelPresetGroupsInOrder().filter(
-    (group: UnifiedModelPresetGroup) => (openAiPresetsGrouped[group] ?? []).length > 0,
+  const groupOrderForSelect = useMemo(
+    () =>
+      unifiedModelPresetGroupsInOrder().filter(
+        (group: UnifiedModelPresetGroup) => (openAiPresetsGrouped[group] ?? []).length > 0,
+      ),
+    [openAiPresetsGrouped],
   );
+  const fallbackQuickPicks = useMemo<ModelQuickPick[]>(
+    () =>
+      groupOrderForSelect.flatMap((group: UnifiedModelPresetGroup) =>
+        (openAiPresetsGrouped[group] ?? []).map((preset) => ({
+          modelId: preset.modelId,
+          displayName: preset.displayName,
+          description: UNIFIED_MODEL_PRESET_GROUP_LABELS[group],
+        })),
+      ),
+    [groupOrderForSelect, openAiPresetsGrouped],
+  );
+  const providerQuickPicks = useMemo<ModelQuickPick[]>(
+    () =>
+      availableModelsState.models.map((model) => ({
+        modelId: model.modelId,
+        displayName: model.displayName,
+        description: model.unavailableReason ?? (model.source === "provider" ? "Provider" : "Curated"),
+        disabled: Boolean(model.unavailableReason),
+      })),
+    [availableModelsState.models],
+  );
+  const quickPicks = useMemo<ModelQuickPick[]>(
+    () =>
+      availableModelsState.status === "loaded"
+        ? providerQuickPicks
+        : availableModelsState.status === "error" && providerQuickPicks.length > 0
+          ? providerQuickPicks
+          : fallbackQuickPicks,
+    [availableModelsState.status, fallbackQuickPicks, providerQuickPicks],
+  );
+  const quickPickSourceLabel = quickPicks.some((model) => model.description === "Provider")
+    ? "Available models reported for the selected account."
+    : "Curated models for the selected account.";
+  const quickPickMatch = quickPicks.find((preset) => preset.modelId === modelId.trim());
+  const quickPickSelectValue =
+    quickPicks.length === 0 || openAiPresetUserChoseCustom || !quickPickMatch ? MODEL_PRESET_CUSTOM : quickPickMatch.modelId;
+  const modelLookupPending =
+    selectedProviderId !== "" && (availableModelsState.status === "idle" || availableModelsState.status === "loading");
+
+  useEffect(() => {
+    if (shouldRequestAvailableProviderModels(openPanel, selectedProviderId, availableModelsState)) {
+      onEnsureAvailableModels(selectedProviderId);
+    }
+  }, [availableModelsState, onEnsureAvailableModels, openPanel, selectedProviderId]);
+
+  useEffect(() => {
+    if (
+      openPanel !== "model" ||
+      !selectedProviderId ||
+      openAiPresetUserChoseCustom ||
+      availableModelsState.status !== "loaded" ||
+      providerQuickPicks.length === 0
+    ) {
+      return;
+    }
+    const stillValid = providerQuickPicks.some((preset) => preset.modelId === modelId.trim() && !preset.disabled);
+    if (stillValid) {
+      return;
+    }
+    const first = providerQuickPicks.find((preset) => !preset.disabled);
+    if (!first) {
+      return;
+    }
+    onModelIdChange(first.modelId);
+    onModelDisplayNameChange(first.displayName);
+  }, [
+    availableModelsState.status,
+    modelId,
+    onModelDisplayNameChange,
+    onModelIdChange,
+    openAiPresetUserChoseCustom,
+    openPanel,
+    providerQuickPicks,
+    selectedProviderId,
+  ]);
 
   return (
     <div className={cn(isWelcomePresentation ? "space-y-3" : "space-y-4")}>
@@ -669,56 +760,91 @@ export const ProviderModelsSettingsTab = ({
               />
             </SettingsField>
 
-            {showOpenAiModelPresets ? (
+            {selectedProviderId ? (
               <div className={cn("border border-fuchsia-500/15 bg-fuchsia-500/[0.04] p-3", isWelcomePresentation ? "rounded-lg" : "rounded-2xl")}>
                 <p className="text-sm font-medium text-fuchsia-100/95">Quick picks</p>
-                <p className="mt-0.5 text-xs text-zinc-500">Only models that apply to the selected account.</p>
-                <Select
-                  className="mt-2"
-                  triggerClassName={cn("h-11", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}
-                  value={openAiPresetSelectValue}
-                  onValueChange={(value) => {
-                    if (value === MODEL_PRESET_CUSTOM) {
-                      onSetOpenAiPresetUserChoseCustom(true);
-                      return;
-                    }
-                    onSetOpenAiPresetUserChoseCustom(false);
-                    const preset = modelPresetsForSelected.find((p) => p.modelId === value);
-                    if (preset) {
-                      onModelIdChange(preset.modelId);
-                      onModelDisplayNameChange(preset.displayName);
-                    }
-                  }}
-                  options={[
-                    { value: MODEL_PRESET_CUSTOM, label: "Custom" },
-                    ...groupOrderForSelect.flatMap((group: UnifiedModelPresetGroup) =>
-                      (openAiPresetsGrouped[group] ?? []).map((preset) => ({
-                        value: preset.modelId,
-                        label: `${preset.displayName} - ${preset.modelId}`,
-                        description: UNIFIED_MODEL_PRESET_GROUP_LABELS[group],
-                      })),
-                    ),
-                  ]}
-                />
+                <p className="mt-0.5 text-xs text-zinc-500">
+                  {availableModelsState.status === "loaded"
+                    ? quickPickSourceLabel
+                    : "Only models that apply to the selected account."}
+                </p>
+                {modelLookupPending ? (
+                  <div
+                    className={cn(
+                      "mt-2 flex h-11 items-center gap-2 border border-zinc-800 bg-black/30 px-3 text-sm text-zinc-400",
+                      isWelcomePresentation ? "rounded-lg" : "rounded-xl",
+                    )}
+                  >
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                    Loading models...
+                  </div>
+                ) : availableModelsState.status === "loaded" && quickPicks.length === 0 ? (
+                  <p className={cn("mt-2 border border-zinc-800/90 px-3 py-2 text-xs text-zinc-500", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}>
+                    No models reported; enter a model ID manually.
+                  </p>
+                ) : (
+                  <>
+                    {availableModelsState.status === "error" ? (
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs text-amber-300/90">Could not load live models. Showing curated quick picks.</p>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className={cn("h-7 px-2.5 text-xs", isWelcomePresentation ? "rounded-md" : "rounded-lg")}
+                          onClick={() => onEnsureAvailableModels(selectedProviderId)}
+                        >
+                          Retry
+                        </Button>
+                      </div>
+                    ) : null}
+                    <Select
+                      className="mt-2"
+                      triggerClassName={cn("h-11", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}
+                      value={quickPickSelectValue}
+                      onValueChange={(value) => {
+                        if (value === MODEL_PRESET_CUSTOM) {
+                          onSetOpenAiPresetUserChoseCustom(true);
+                          return;
+                        }
+                        onSetOpenAiPresetUserChoseCustom(false);
+                        const preset = quickPicks.find((p) => p.modelId === value);
+                        if (preset) {
+                          onModelIdChange(preset.modelId);
+                          onModelDisplayNameChange(preset.displayName);
+                        }
+                      }}
+                      options={[
+                        { value: MODEL_PRESET_CUSTOM, label: "Custom" },
+                        ...quickPicks.map((preset) => ({
+                          value: preset.modelId,
+                          label: `${preset.displayName} - ${preset.modelId}`,
+                          description: preset.description,
+                          disabled: preset.disabled,
+                        })),
+                      ]}
+                    />
+                  </>
+                )}
               </div>
-            ) : selectedProviderId ? (
-              <p className={cn("border border-zinc-800/90 px-3 py-2 text-xs text-zinc-500", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}>
-                This connection has no quick picks (e.g. some Azure deployments). Enter the model ID your server expects.
-              </p>
             ) : null}
 
             <div className="grid gap-3 md:grid-cols-2">
               <SettingsField label="Model ID" hint="Identifier sent in API calls." compact={isWelcomePresentation}>
                 <Input
                   value={modelId}
-                  onChange={(event) => onModelIdChange(event.target.value)}
+                  onChange={(event) => {
+                    onSetOpenAiPresetUserChoseCustom(true);
+                    onModelIdChange(event.target.value);
+                  }}
                   placeholder={`e.g. ${DEFAULT_ADD_MODEL_DRAFT.modelId}`}
                 />
               </SettingsField>
               <SettingsField label="Display name" hint="Label in the UI." compact={isWelcomePresentation}>
                 <Input
                   value={modelDisplayName}
-                  onChange={(event) => onModelDisplayNameChange(event.target.value)}
+                  onChange={(event) => {
+                    onModelDisplayNameChange(event.target.value);
+                  }}
                   placeholder={`e.g. ${DEFAULT_ADD_MODEL_DRAFT.displayName}`}
                 />
               </SettingsField>

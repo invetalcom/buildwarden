@@ -8,6 +8,7 @@ import {
   type ContinueRunInput,
   type DesktopApi,
   type FollowUpChatOptions,
+  type ListAvailableProviderModelsInput,
   type ModelInput,
   type NetworkProxySettingsInput,
   type ProjectForgePrMonitorSettingsInput,
@@ -51,6 +52,8 @@ const invoke = async (channel: string, ...args: unknown[]): Promise<any> => {
 const api: DesktopApi = {
   activateRun: (runId: string) => invoke(IPC_CHANNELS.activateRun, runId),
   addModel: (input: ModelInput) => invoke(IPC_CHANNELS.addModel, input),
+  listAvailableProviderModels: (input: ListAvailableProviderModelsInput) =>
+    invoke(IPC_CHANNELS.listAvailableProviderModels, input),
   createProjectTask: (projectId: string, input) => invoke(IPC_CHANNELS.createProjectTask, projectId, input),
   updateProjectTask: (taskId: string, input) => invoke(IPC_CHANNELS.updateProjectTask, taskId, input),
   deleteProjectTask: (taskId: string) => invoke(IPC_CHANNELS.deleteProjectTask, taskId),

@@ -208,6 +208,12 @@ export const UNIFIED_MODEL_PRESETS: readonly UnifiedModelPreset[] = [
   },
   {
     group: "anthropic",
+    modelId: "claude-opus-4-8",
+    displayName: "Claude Opus 4.8",
+    tags: ["claude-code", "ai-sdk:anthropic"],
+  },
+  {
+    group: "anthropic",
     modelId: "claude-opus-4-7",
     displayName: "Claude Opus 4.7",
     tags: ["claude-code", "ai-sdk:anthropic"],

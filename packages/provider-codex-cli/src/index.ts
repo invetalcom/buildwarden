@@ -11,6 +11,8 @@ import type {
   NetworkProxyRuntimeConfig,
   ProviderAccountInput,
   ProviderAdapter,
+  ProviderAvailableModel,
+  ProviderAvailableModelsContext,
   RunExecutionRequest,
   RunUserInputAnswers,
   RunUserInputQuestion,
@@ -795,6 +797,242 @@ const killChildTree = (child: ChildProcessWithoutNullStreams): void => {
   }
   child.kill();
 };
+
+type CodexModelListClient = {
+  request<T = unknown>(method: string, params: unknown, timeoutMs?: number): Promise<T>;
+};
+
+type CodexModelListPage = {
+  models: ProviderAvailableModel[];
+  nextCursor?: string;
+};
+
+const readCodexModelListItems = (value: unknown): unknown[] => {
+  const record = asRecord(value);
+  return asArray(record?.data) ?? asArray(record?.models) ?? asArray(record?.items) ?? [];
+};
+
+export const parseCodexModelListPage = (value: unknown): CodexModelListPage => {
+  const record = asRecord(value);
+  const nextCursor =
+    asString(record?.nextCursor)?.trim() ||
+    asString(record?.next_cursor)?.trim() ||
+    undefined;
+  const models = readCodexModelListItems(value)
+    .map((item): ProviderAvailableModel | null => {
+      const itemRecord = asRecord(item);
+      const modelId = asString(itemRecord?.model)?.trim() || asString(itemRecord?.id)?.trim() || "";
+      if (!modelId) {
+        return null;
+      }
+      const displayName =
+        asString(itemRecord?.displayName)?.trim() ||
+        asString(itemRecord?.display_name)?.trim() ||
+        asString(itemRecord?.name)?.trim() ||
+        asString(itemRecord?.label)?.trim() ||
+        modelId;
+      return {
+        modelId,
+        displayName,
+        source: "provider",
+      };
+    })
+    .filter((model): model is ProviderAvailableModel => model !== null);
+  return {
+    models,
+    ...(nextCursor ? { nextCursor } : {}),
+  };
+};
+
+export const requestCodexAvailableModels = async (
+  client: CodexModelListClient,
+): Promise<ProviderAvailableModel[]> => {
+  const models: ProviderAvailableModel[] = [];
+  const seenModelIds = new Set<string>();
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+
+  for (let pageIndex = 0; pageIndex < 100; pageIndex += 1) {
+    const cursorKey = cursor ?? "";
+    if (seenCursors.has(cursorKey)) {
+      break;
+    }
+    seenCursors.add(cursorKey);
+
+    const page = parseCodexModelListPage(
+      await client.request("model/list", cursor ? { cursor } : {}, INITIALIZE_TIMEOUT_MS),
+    );
+    for (const model of page.models) {
+      const key = model.modelId.toLowerCase();
+      if (seenModelIds.has(key)) {
+        continue;
+      }
+      seenModelIds.add(key);
+      models.push(model);
+    }
+    if (!page.nextCursor) {
+      break;
+    }
+    cursor = page.nextCursor;
+  }
+
+  return models;
+};
+
+class CodexAppServerProbeClient implements CodexModelListClient {
+  private readonly pending = new Map<string, PendingRequest>();
+  private readonly output: readline.Interface;
+  private nextRequestId = 1;
+  private stopped = false;
+
+  constructor(private readonly child: ChildProcessWithoutNullStreams) {
+    this.output = readline.createInterface({ input: child.stdout });
+    child.stderr.resume();
+    this.output.on("line", (line) => {
+      this.handleStdoutLine(line);
+    });
+    child.on("error", (error) => {
+      this.rejectPending(error);
+    });
+    child.on("exit", (code, signal) => {
+      if (this.stopped) {
+        return;
+      }
+      const detail = signal ? `signal ${signal}` : `exit code ${String(code)}`;
+      this.rejectPending(new Error(`Codex app-server exited during model discovery (${detail}).`));
+    });
+  }
+
+  async initialize(): Promise<void> {
+    await this.request("initialize", {
+      clientInfo: {
+        name: "buildwarden_desktop",
+        title: "BuildWarden Desktop",
+        version: "0.4.3",
+      },
+      capabilities: {
+        experimentalApi: true,
+      },
+    });
+    this.writeMessage({ method: "initialized" });
+    try {
+      await this.request("account/read", {}, 5_000);
+    } catch {
+      // Older/newer Codex builds may vary here. Model discovery can continue without account metadata.
+    }
+  }
+
+  async request<T = unknown>(method: string, params: unknown, timeoutMs = INITIALIZE_TIMEOUT_MS): Promise<T> {
+    const id = this.nextRequestId++;
+    const result = await new Promise<unknown>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(String(id));
+        reject(new Error(`Timed out waiting for ${method}.`));
+      }, timeoutMs);
+      this.pending.set(String(id), {
+        method,
+        timeout,
+        resolve,
+        reject,
+      });
+      this.writeMessage({ id, method, params });
+    });
+    return result as T;
+  }
+
+  stop(): void {
+    this.stopped = true;
+    this.rejectPending(new Error("Codex model discovery stopped before the request completed."));
+    this.output.close();
+    if (!this.child.killed) {
+      killChildTree(this.child);
+    }
+  }
+
+  private handleStdoutLine(line: string): void {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      return;
+    }
+
+    if (this.isServerRequest(parsed)) {
+      this.writeMessage({
+        id: parsed.id,
+        error: {
+          code: -32601,
+          message: `Unsupported request during model discovery: ${parsed.method}`,
+        },
+      });
+      return;
+    }
+
+    if (this.isResponse(parsed)) {
+      this.handleResponse(parsed);
+    }
+  }
+
+  private handleResponse(response: JsonRpcResponse): void {
+    const key = String(response.id);
+    const pending = this.pending.get(key);
+    if (!pending) {
+      return;
+    }
+    clearTimeout(pending.timeout);
+    this.pending.delete(key);
+    if (response.error?.message) {
+      pending.reject(new Error(`${pending.method} failed: ${response.error.message}`));
+      return;
+    }
+    pending.resolve(response.result);
+  }
+
+  private rejectPending(error: Error): void {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeout);
+      pending.reject(error);
+    }
+    this.pending.clear();
+  }
+
+  private writeMessage(message: unknown): void {
+    if (!this.child.stdin.writable) {
+      throw new Error("Cannot write to Codex app-server stdin.");
+    }
+    this.child.stdin.write(`${JSON.stringify(message)}\n`);
+  }
+
+  private isServerRequest(value: unknown): value is JsonRpcRequest {
+    return isRecord(value) && typeof value.method === "string" && (typeof value.id === "string" || typeof value.id === "number");
+  }
+
+  private isResponse(value: unknown): value is JsonRpcResponse {
+    return isRecord(value) && (typeof value.id === "string" || typeof value.id === "number") && !("method" in value);
+  }
+}
+
+export async function listAvailableModelsWithCodexCli(options: {
+  config?: Record<string, unknown>;
+  cwd?: string;
+  networkProxy?: NetworkProxyRuntimeConfig;
+}): Promise<ProviderAvailableModel[]> {
+  const cwd = options.cwd ?? process.cwd();
+  const { binaryPath, homePath } = resolveCodexCliConfig(options.config);
+  const child = spawn(binaryPath, ["-c", "shell_environment_policy.inherit=all", "app-server"], {
+    cwd,
+    env: buildCodexProcessEnv(cwd, homePath, options.networkProxy),
+    stdio: ["pipe", "pipe", "pipe"],
+    shell: process.platform === "win32",
+  });
+  const client = new CodexAppServerProbeClient(child);
+  try {
+    await client.initialize();
+    return await requestCodexAvailableModels(client);
+  } finally {
+    client.stop();
+  }
+}
 
 class CodexAppServerSession {
   private readonly pending = new Map<string, PendingRequest>();
@@ -1725,6 +1963,10 @@ export class CodexCliProviderAdapter implements ProviderAdapter {
 
   listRecommendedModels(): string[] {
     return getCodexCliRecommendedModelIds();
+  }
+
+  async listAvailableModels(context: ProviderAvailableModelsContext): Promise<ProviderAvailableModel[]> {
+    return listAvailableModelsWithCodexCli({ config: context.config });
   }
 
   validateConfiguration(input: ProviderAccountInput): void {
