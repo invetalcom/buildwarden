@@ -782,9 +782,17 @@ export const ProviderModelsSettingsTab = ({
                 ) : (
                   <>
                     {availableModelsState.status === "error" ? (
-                      <p className="mt-2 text-xs text-amber-300/90">
-                        Could not load live models. Showing curated quick picks.
-                      </p>
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs text-amber-300/90">Could not load live models. Showing curated quick picks.</p>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className={cn("h-7 px-2.5 text-xs", isWelcomePresentation ? "rounded-md" : "rounded-lg")}
+                          onClick={() => onEnsureAvailableModels(selectedProviderId)}
+                        >
+                          Retry
+                        </Button>
+                      </div>
                     ) : null}
                     <Select
                       className="mt-2"

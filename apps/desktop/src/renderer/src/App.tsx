@@ -370,7 +370,6 @@ export const App = () => {
       if (
         current?.status === "loading" ||
         current?.status === "loaded" ||
-        current?.status === "error" ||
         availableModelRequestsInFlightRef.current.has(providerAccountId)
       ) {
         return;
