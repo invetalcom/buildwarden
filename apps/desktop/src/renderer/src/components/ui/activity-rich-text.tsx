@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
+import { isExternalRunWorkspaceHref, parseRunWorkspaceFileReference } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
 
 const markdownSanitizeSchema = {
@@ -23,7 +24,7 @@ const markdownSanitizeSchema = {
   },
 };
 
-const mdComponents = (compact: boolean): Components => ({
+const mdComponents = (compact: boolean, onOpenWorkspaceFile?: (path: string) => void): Components => ({
   p: ({ children, ...props }) => (
     <p className={cn("mb-2 text-[color:var(--ec-text)] last:mb-0", compact ? "leading-snug" : "leading-relaxed")} {...props}>
       {children}
@@ -76,7 +77,11 @@ const mdComponents = (compact: boolean): Components => ({
         return;
       }
       const lower = href.trim().toLowerCase();
-      if (!lower.startsWith("http://") && !lower.startsWith("https://") && !lower.startsWith("mailto:")) {
+      if (!isExternalRunWorkspaceHref(lower)) {
+        if (onOpenWorkspaceFile && parseRunWorkspaceFileReference(href)) {
+          e.preventDefault();
+          onOpenWorkspaceFile(href);
+        }
         return;
       }
       e.preventDefault();
@@ -236,13 +241,14 @@ export interface ActivityRichTextProps {
   /** Tighter typography for compact run activity panel */
   compact?: boolean;
   className?: string;
+  onOpenWorkspaceFile?: (path: string) => void;
 }
 
 /**
  * Renders agent/user messages as Markdown (lists, code, tables via GFM).
  * Do not pass git diffs here — handle those separately.
  */
-export const ActivityRichText = ({ content, compact = false, className }: ActivityRichTextProps) => {
+export const ActivityRichText = ({ content, compact = false, className, onOpenWorkspaceFile }: ActivityRichTextProps) => {
   if (!content.trim()) {
     return null;
   }
@@ -252,7 +258,7 @@ export const ActivityRichText = ({ content, compact = false, className }: Activi
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeRaw, [rehypeSanitize, markdownSanitizeSchema]]}
-        components={mdComponents(compact)}
+        components={mdComponents(compact, onOpenWorkspaceFile)}
       >
         {content}
       </ReactMarkdown>

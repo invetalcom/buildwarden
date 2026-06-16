@@ -125,6 +125,7 @@ const api: DesktopApi = {
   updateRunNote: (noteId: string, input) => invoke(IPC_CHANNELS.updateRunNote, noteId, input),
   deleteRunNote: (noteId: string) => invoke(IPC_CHANNELS.deleteRunNote, noteId),
   setRunListVisibility: (runId: string, visibility) => invoke(IPC_CHANNELS.setRunListVisibility, runId, visibility),
+  getRunWorkspaceFile: (input) => invoke(IPC_CHANNELS.getRunWorkspaceFile, input),
   getRunWorktreeDiff: (runId: string) => invoke(IPC_CHANNELS.getRunWorktreeDiff, runId),
   resumeRunFromCheckpoint: (runId: string) => invoke(IPC_CHANNELS.resumeRunFromCheckpoint, runId),
   recoverInterruptedRun: (runId: string) => invoke(IPC_CHANNELS.recoverInterruptedRun, runId),

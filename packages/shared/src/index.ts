@@ -1039,6 +1039,90 @@ export interface RunWorktreeDiffResult {
   diffUnavailableReason?: string | null;
 }
 
+export interface RunWorkspaceFileInput {
+  runId: string;
+  path: string;
+}
+
+export type RunWorkspaceFileUnavailableReason =
+  | "empty-path"
+  | "outside-workspace"
+  | "workspace-unavailable"
+  | "not-found"
+  | "directory"
+  | "binary"
+  | "read-error";
+
+export interface RunWorkspaceFileResult {
+  path: string;
+  requestedPath: string;
+  workspacePath: string;
+  content: string | null;
+  sizeBytes: number | null;
+  truncated: boolean;
+  line: number | null;
+  column: number | null;
+  unavailableReason?: RunWorkspaceFileUnavailableReason;
+  error?: string;
+}
+
+export interface RunWorkspaceFileReference {
+  path: string;
+  line: number | null;
+  column: number | null;
+}
+
+const RUN_WORKSPACE_FILE_EXTERNAL_PROTOCOL_RE = /^(?:https?|mailto):/i;
+
+const maybeDecodeFileReference = (value: string): string => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
+
+export const isExternalRunWorkspaceHref = (href: string): boolean =>
+  RUN_WORKSPACE_FILE_EXTERNAL_PROTOCOL_RE.test(href.trim());
+
+export const parseRunWorkspaceFileReference = (value: string): RunWorkspaceFileReference | null => {
+  let next = maybeDecodeFileReference(value).trim();
+  if (!next || isExternalRunWorkspaceHref(next) || next.startsWith("#")) {
+    return null;
+  }
+
+  let line: number | null = null;
+  let column: number | null = null;
+
+  const hashLineMatch = /#L(\d+)(?:C(\d+))?$/i.exec(next);
+  if (hashLineMatch) {
+    line = Number(hashLineMatch[1]);
+    column = hashLineMatch[2] ? Number(hashLineMatch[2]) : null;
+    next = next.slice(0, hashLineMatch.index);
+  } else {
+    const trailingLineMatch = /:(\d+)(?::(\d+))?$/.exec(next);
+    if (trailingLineMatch) {
+      line = Number(trailingLineMatch[1]);
+      column = trailingLineMatch[2] ? Number(trailingLineMatch[2]) : null;
+      next = next.slice(0, trailingLineMatch.index);
+    }
+  }
+
+  const path = next.trim();
+  if (!path || (line != null && (!Number.isSafeInteger(line) || line < 1))) {
+    return null;
+  }
+  if (column != null && (!Number.isSafeInteger(column) || column < 1)) {
+    return null;
+  }
+
+  return {
+    path,
+    line,
+    column,
+  };
+};
+
 export interface ProjectGitConversionCandidate {
   projectId: string;
   repoPath: string;
@@ -2121,6 +2205,8 @@ export interface DesktopApi {
   updateRunNote(noteId: string, input: UpdateRunNoteInput): Promise<RunNoteRecord>;
   deleteRunNote(noteId: string): Promise<void>;
   setRunListVisibility(runId: string, visibility: RunListVisibility): Promise<RunRecord>;
+  /** Read one text file inside the run's effective workspace for the sidebar file viewer. */
+  getRunWorkspaceFile(input: RunWorkspaceFileInput): Promise<RunWorkspaceFileResult>;
   /** Worktree git diff only; can be slow on large repos. Call after {@link getRunDetail} for progressive loading. */
   getRunWorktreeDiff(runId: string): Promise<RunWorktreeDiffResult>;
   resumeRunFromCheckpoint(runId: string): Promise<void>;
@@ -2272,6 +2358,7 @@ export const IPC_CHANNELS = {
   updateRunNote: "buildwarden:update-run-note",
   deleteRunNote: "buildwarden:delete-run-note",
   setRunListVisibility: "buildwarden:set-run-list-visibility",
+  getRunWorkspaceFile: "buildwarden:get-run-workspace-file",
   getRunWorktreeDiff: "buildwarden:get-run-worktree-diff",
   resumeRunFromCheckpoint: "buildwarden:resume-run-from-checkpoint",
   recoverInterruptedRun: "buildwarden:recover-interrupted-run",

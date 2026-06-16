@@ -777,6 +777,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.updateRunNote, (_, noteId: string, input) => controller.updateRunNote(noteId, input));
   ipcMain.handle(IPC_CHANNELS.deleteRunNote, (_, noteId: string) => controller.deleteRunNote(noteId));
   ipcMain.handle(IPC_CHANNELS.setRunListVisibility, (_, runId: string, visibility) => controller.setRunListVisibility(runId, visibility));
+  ipcMain.handle(IPC_CHANNELS.getRunWorkspaceFile, (_, input) => controller.getRunWorkspaceFile(input));
   ipcMain.handle(IPC_CHANNELS.getRunWorktreeDiff, (_, runId: string) => controller.getRunWorktreeDiff(runId));
   ipcMain.handle(IPC_CHANNELS.resumeRunFromCheckpoint, (_, runId: string) => controller.resumeRunFromCheckpoint(runId));
   ipcMain.handle(IPC_CHANNELS.recoverInterruptedRun, (_, runId: string) => controller.recoverInterruptedRun(runId));

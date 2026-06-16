@@ -8,6 +8,7 @@ import { dialog, shell } from "electron";
 import { killRunTerminalForRunId } from "./run-terminal-ipc";
 import { buildDependencyGraphSnapshotForProjectGraph, listDependencySourceFilesForProjectGraph } from "./project-graph-utils";
 import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
+import { readRunWorkspaceFileForPreview } from "./run-workspace-file";
 import { createFolderSnapshot, deleteFolderSnapshot, diffFolderAgainstSnapshot, getFolderSnapshotRoot } from "./folder-diff";
 import { createFolderWorkspaceCopy, removeFolderWorkspaceCopy } from "./folder-workspace";
 import { getHarnessTypeForProvider } from "./harness-adapters";
@@ -104,6 +105,9 @@ import {
   type ProjectLabSettings,
   type ProjectLabThreadRecord,
   type RunProjectLabInput,
+  type RunRecord,
+  type RunWorkspaceFileInput,
+  type RunWorkspaceFileResult,
   type ProjectPrMrDiffResult,
   type PostProjectPrMrReviewInput,
   type ReplyProjectPrMrReviewThreadInput,
@@ -137,7 +141,6 @@ import {
   type RunWorkspaceVcs,
   type UpdateProjectTaskInput,
   type UpdateRunNoteInput,
-  type RunRecord,
   type RunTokenUsage,
   type RunUserInputAnswers,
   type RunUserInputQuestion,
@@ -683,6 +686,14 @@ export class AppController
       return run.workspaceType === "copy" ? "Folder copy" : "Project folder";
     }
     return run.workspaceType === "local" ? `Local repository on ${run.branchName}` : `Worktree ${run.branchName}`;
+  }
+
+  private getEffectiveRunWorkspacePath(run: RunRecord, project?: ProjectRecord): string {
+    const owningProject = project ?? this.db.getProject(run.projectId);
+    const branchPromotedToProject = this.wasRunPromotedToProject(run.id);
+    return run.workspaceType === "worktree" && !existsSync(run.worktreePath) && branchPromotedToProject
+      ? owningProject.repoPath
+      : run.worktreePath;
   }
 
   private async captureFolderBaselineSnapshot(run: RunRecord): Promise<void> {
@@ -4660,8 +4671,7 @@ export class AppController
     const provider = this.db.getProviderAccount(model.providerAccountId);
     const providerRecoverySupported = providerSupportsInterruptedRunRecovery(provider.providerType);
     const branchPromotedToProject = this.wasRunPromotedToProject(runId);
-    const workspacePath =
-      run.workspaceType === "worktree" && !existsSync(run.worktreePath) && branchPromotedToProject ? project.repoPath : run.worktreePath;
+    const workspacePath = this.getEffectiveRunWorkspacePath(run, project);
     const checkpoint = this.getRunCheckpoint(runId);
     const promptRestorePoint = this.getRunPromptRestorePoint(runId);
     const detail = this.db.getRunDetail(runId, "");
@@ -4731,6 +4741,32 @@ export class AppController
     this.db.deleteRunNote(noteId);
   }
 
+  async getRunWorkspaceFile(input: RunWorkspaceFileInput): Promise<RunWorkspaceFileResult> {
+    const run = this.db.getRun(input.runId);
+    const project = this.db.getProject(run.projectId);
+    const workspacePath = this.getEffectiveRunWorkspacePath(run, project);
+    const requestedPath = typeof input.path === "string" ? input.path : "";
+
+    try {
+      return await readRunWorkspaceFileForPreview({ workspacePath, requestedPath });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not read file.";
+      this.logControllerWarn("Could not read run workspace file.", { runId: run.id, path: requestedPath, error: message });
+      return {
+        path: requestedPath,
+        requestedPath,
+        workspacePath,
+        content: null,
+        sizeBytes: null,
+        truncated: false,
+        line: null,
+        column: null,
+        unavailableReason: "read-error",
+        error: message,
+      };
+    }
+  }
+
   async getRunWorktreeDiff(runId: string): Promise<RunWorktreeDiffResult> {
     const run = this.db.getRun(runId);
     const project = this.db.getProject(run.projectId);
@@ -4754,9 +4790,7 @@ export class AppController
       };
     }
 
-    const branchPromotedToProject = this.wasRunPromotedToProject(runId);
-    const diffPath =
-      run.workspaceType === "worktree" && !existsSync(run.worktreePath) && branchPromotedToProject ? project.repoPath : run.worktreePath;
+    const diffPath = this.getEffectiveRunWorkspacePath(run, project);
     const outcome = await runWorktreeDiffInWorker(diffPath);
     if (!outcome.ok) {
       return { diff: "", worktreeUnavailable: true, diffUnavailableReason: "The Git workspace is no longer available." };

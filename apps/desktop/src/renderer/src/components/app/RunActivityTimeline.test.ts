@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildActivityEntries, buildTimelineRenderItems, type RunActivityStep } from "./RunActivityTimeline";
+import { buildActivityEntries, buildTimelineRenderItems, isOpenableToolPath, type RunActivityStep } from "./RunActivityTimeline";
 
 const step = (
   id: string,
@@ -27,6 +27,17 @@ describe("run activity timeline shaping", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]?.kind).toBe("tool-batch");
     expect(entries[0]?.kind === "tool-batch" ? entries[0].items : []).toHaveLength(2);
+  });
+
+  it("marks only workspace-file tool paths as openable", () => {
+    expect(isOpenableToolPath("read_file", "src/App.tsx")).toBe(true);
+    expect(isOpenableToolPath("write_file", "src/App.tsx")).toBe(true);
+    expect(isOpenableToolPath("edit_file", "src/App.tsx")).toBe(true);
+    expect(isOpenableToolPath("delete_file", "src/App.tsx")).toBe(true);
+    expect(isOpenableToolPath("list_files", "src")).toBe(true);
+    expect(isOpenableToolPath("search_repo", "src")).toBe(true);
+    expect(isOpenableToolPath("run_shell", "pnpm test")).toBe(false);
+    expect(isOpenableToolPath("read_file", "  ")).toBe(false);
   });
 
   it("appends plan decision, loading, and end spacer rows in order", () => {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import {
   appendChatAttachmentFiles,
+  parseRunWorkspaceFileReference,
   type ChatAttachmentPayload,
   type KeyboardShortcutId,
   type RunDetail,
@@ -9,6 +10,7 @@ import {
   type RunRecord,
   type RunTimelineDensity,
   type RunUserInputAnswers,
+  type RunWorkspaceFileReference,
   type RunWorkspacePanelId,
   type RunWorkspaceTileSize,
   type ShellApprovalDecision,
@@ -18,6 +20,7 @@ import {
   Check,
   Copy,
   ExternalLink,
+  FileText,
   GitBranch,
   Globe,
   ListTodo,
@@ -44,6 +47,7 @@ import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
 import { ComposerSelect, RunComposer } from "./RunComposer";
 import { RunEmbeddedBrowser } from "./RunEmbeddedBrowser";
 import { RunActivityTimeline } from "./RunActivityTimeline";
+import { RunFilePanel } from "./RunFilePanel";
 import { RunWorktreeTerminal } from "./RunWorktreeTerminal";
 import { DiffReviewPanel, type DiffReviewPanelState } from "./diff-review-panel";
 import {
@@ -63,7 +67,7 @@ type TilePanelId = RunWorkspacePanelId;
 // Kept for interface compatibility with the shared type.
 type TileLayoutState = Record<TilePanelId, RunWorkspaceTileSize>;
 
-type SecondaryPanelId = "diff" | "terminal" | "browser" | "notes";
+type SecondaryPanelId = "diff" | "terminal" | "browser" | "notes" | "file";
 type SecondaryPanelPosition = "right" | "bottom";
 
 type RunDetailModelOption = {
@@ -256,6 +260,7 @@ export const RunDetailPage = ({
 
   // Which secondary panel tab is currently in view
   const [activeSecondaryTab, setActiveSecondaryTab] = useState<SecondaryPanelId | null>(null);
+  const [filePanelTarget, setFilePanelTarget] = useState<RunWorkspaceFileReference | null>(null);
   // "Add panel" popover in the tab strip
   const [addPanelOpen, setAddPanelOpen] = useState(false);
   const addPanelRef = useRef<HTMLDivElement>(null);
@@ -364,6 +369,7 @@ export const RunDetailPage = ({
 
   useEffect(() => {
     setRunTerminalPinned(false);
+    setFilePanelTarget(null);
   }, [runDetail.run.id]);
 
   useEffect(() => {
@@ -406,17 +412,19 @@ export const RunDetailPage = ({
   // Keep the active secondary tab in sync with panel visibility changes
   useEffect(() => {
     setActiveSecondaryTab((prev) => {
+      if (prev === "file" && filePanelTarget) return prev;
       if (prev === "diff" && showDiff) return prev;
       if (prev === "terminal" && showTerminal) return prev;
       if (prev === "browser" && showBrowser) return prev;
       if (prev === "notes" && showNotes) return prev;
+      if (filePanelTarget) return "file";
       if (showDiff) return "diff";
       if (showTerminal) return "terminal";
       if (showBrowser) return "browser";
       if (showNotes) return "notes";
       return null;
     });
-  }, [showDiff, showTerminal, showBrowser, showNotes]);
+  }, [filePanelTarget, showDiff, showTerminal, showBrowser, showNotes]);
 
   // Split-pane resize (works for both right and bottom positions)
   useEffect(() => {
@@ -469,6 +477,36 @@ export const RunDetailPage = ({
     setSplitPct(next === "right" ? 60 : 55);
     onSecondaryPanelPositionChange(next);
   };
+
+  const closeFilePanel = useCallback(() => {
+    setFilePanelTarget(null);
+    setActiveSecondaryTab((current) => (current === "file" ? null : current));
+    if (!showActivity && !showDiff && !showTerminal && !showBrowser && !showNotes) {
+      onTogglePanel("activity");
+    }
+  }, [onTogglePanel, showActivity, showBrowser, showDiff, showNotes, showTerminal]);
+
+  const openRunFileReference = useCallback((value: string | RunWorkspaceFileReference): boolean => {
+    const reference = typeof value === "string" ? parseRunWorkspaceFileReference(value) : value;
+    if (!reference) {
+      return false;
+    }
+    setFilePanelTarget(reference);
+    setActiveSecondaryTab("file");
+    setAddPanelOpen(false);
+    return true;
+  }, []);
+
+  const closeSecondaryPanel = useCallback(
+    (panelId: SecondaryPanelId) => {
+      if (panelId === "file") {
+        closeFilePanel();
+        return;
+      }
+      onTogglePanel(panelId);
+    },
+    [closeFilePanel, onTogglePanel],
+  );
 
   const handleFollowUpSubmit = async () => {
     const trimmed = followUpPrompt.trim();
@@ -699,8 +737,9 @@ export const RunDetailPage = ({
   }, [selectionMenu]);
 
   // Derived visibility
-  const hasSecondaryPanels = showDiff || showTerminal || showBrowser || showNotes;
-  const visiblePanelCount = [showActivity, showDiff, showTerminal, showBrowser, showNotes].filter(Boolean).length;
+  const hasFilePanel = Boolean(filePanelTarget);
+  const hasSecondaryPanels = showDiff || showTerminal || showBrowser || showNotes || hasFilePanel;
+  const visiblePanelCount = [showActivity, showDiff, showTerminal, showBrowser, showNotes, hasFilePanel].filter(Boolean).length;
 
   const canHideDiff = showDiff && visiblePanelCount > 1 && !worktreeUnavailable;
   const canHideTerminal = showTerminal && visiblePanelCount > 1 && !worktreeUnavailable;
@@ -739,6 +778,14 @@ export const RunDetailPage = ({
       enabled: showNotes,
       canToggle: true,
       canHide: canHideNotes,
+    },
+    {
+      id: "file" as const,
+      label: "File",
+      Icon: FileText,
+      enabled: hasFilePanel,
+      canToggle: false,
+      canHide: hasFilePanel,
     },
   ] as const;
 
@@ -806,9 +853,12 @@ export const RunDetailPage = ({
         {modifiedFilesExpanded ? (
           <div className="app-scrollbar max-h-52 overflow-y-auto border-t border-zinc-800/70 bg-zinc-950/35">
                 {diffStats.files.map((file) => (
-                  <div
+                  <button
+                    type="button"
                     key={`${file.path}-${file.additions}-${file.deletions}`}
-                    className="flex w-max min-w-full items-center justify-between gap-6 border-b border-zinc-800/50 px-2.5 py-1.5 text-[11px] last:border-b-0"
+                    className="flex w-max min-w-full items-center justify-between gap-6 border-b border-zinc-800/50 px-2.5 py-1.5 text-left text-[11px] transition last:border-b-0 hover:bg-zinc-800/60"
+                    onClick={() => openRunFileReference(file.path)}
+                    title={`Open ${file.path}`}
                   >
                     <span className="whitespace-nowrap text-zinc-200">{file.path}</span>
                     <span className="shrink-0 text-[10px] font-medium">
@@ -816,7 +866,7 @@ export const RunDetailPage = ({
                       <span className="mx-1 text-zinc-700">/</span>
                   <span className="text-red-300/85">-{file.deletions}</span>
                 </span>
-              </div>
+              </button>
             ))}
           </div>
         ) : null}
@@ -855,6 +905,7 @@ export const RunDetailPage = ({
       onSubmitUserInputAnswers={(_, requestId: string, answers: RunUserInputAnswers) =>
         window.buildwarden.respondToRunUserInput(runDetail.run.id, requestId, answers)
       }
+      onOpenWorkspaceFile={openRunFileReference}
       onToggleReasoningStep={(stepId) =>
         setExpandedReasoningStepIds((current) => ({
           ...current,
@@ -1259,13 +1310,13 @@ export const RunDetailPage = ({
                         className="ml-0.5 flex h-4 w-4 items-center justify-center rounded opacity-0 transition group-hover:opacity-100 hover:bg-zinc-700/80"
                         onClick={(e) => {
                           e.stopPropagation();
-                          onTogglePanel(panel.id);
+                          closeSecondaryPanel(panel.id);
                         }}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
                             e.stopPropagation();
-                            onTogglePanel(panel.id);
+                            closeSecondaryPanel(panel.id);
                           }
                         }}
                         title={`Hide ${panel.label}`}
@@ -1306,6 +1357,9 @@ export const RunDetailPage = ({
                               type="button"
                               className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-zinc-300 transition hover:bg-zinc-800/80"
                               onClick={() => {
+                                if (panel.id === "file") {
+                                  return;
+                                }
                                 onTogglePanel(panel.id);
                                 setActiveSecondaryTab(panel.id);
                                 setAddPanelOpen(false);
@@ -1356,6 +1410,16 @@ export const RunDetailPage = ({
 
             {/* Active panel content */}
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+
+              {/* File panel */}
+              {filePanelTarget && activeSecondaryTab === "file" ? (
+                <RunFilePanel
+                  runId={runDetail.run.id}
+                  target={filePanelTarget}
+                  diffText={runDetail.diff}
+                  diffPending={diffPending}
+                />
+              ) : null}
 
               {/* Git Diff panel */}
               {showDiff && activeSecondaryTab === "diff" ? (
@@ -1455,6 +1519,7 @@ export const RunDetailPage = ({
                           activityEmphasis
                           defaultCollapsedFileSections
                           onAllFilesExpandedChange={setAllDiffFilesExpanded}
+                          onOpenFile={openRunFileReference}
                         />
                       </div>
                     )}

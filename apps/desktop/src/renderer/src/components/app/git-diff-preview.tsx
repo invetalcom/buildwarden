@@ -408,6 +408,7 @@ type DiffFileSectionProps = {
   safeReviewNavIndex: number;
   draftedReviewFindingKeys: Set<string> | null;
   onToggleCollapsed: (fileKey: string) => void;
+  onOpenFile?: (path: string) => void;
   onAddDiffComment?: (target: DiffLineCommentTarget) => void;
   onSaveDraftComment?: (value: string) => void;
   onSaveSingleComment?: (value: string) => void;
@@ -442,6 +443,7 @@ const DiffFileSection = memo(function DiffFileSection({
   safeReviewNavIndex,
   draftedReviewFindingKeys,
   onToggleCollapsed,
+  onOpenFile,
   onAddDiffComment,
   onSaveDraftComment,
   onSaveSingleComment,
@@ -678,6 +680,27 @@ const DiffFileSection = memo(function DiffFileSection({
             {isCollapsed ? <ChevronRight className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
           </button>
         )
+      ) : onOpenFile ? (
+        <div className="sticky top-0 z-10 flex w-full items-center justify-between gap-2 border-b border-zinc-800 bg-zinc-900/95 px-3 py-1.5 text-left backdrop-blur-sm">
+          <button
+            type="button"
+            className="flex min-w-0 flex-1 items-center gap-2 text-left transition hover:text-cyan-200"
+            onClick={() => onOpenFile(filePathLabel)}
+            title={`Open ${filePathLabel}`}
+          >
+            <p className="truncate text-xs font-medium text-zinc-100">{filePathLabel}</p>
+            <span className="shrink-0 text-[10px] uppercase tracking-[0.18em] text-zinc-500">{file.type}</span>
+          </button>
+          <button
+            type="button"
+            className="rounded px-1 py-0.5 text-zinc-500 transition hover:bg-zinc-800/70 hover:text-zinc-300"
+            onClick={() => onToggleCollapsed(fileKey)}
+            aria-label={isCollapsed ? "Expand diff" : "Collapse diff"}
+            title={isCollapsed ? "Expand diff" : "Collapse diff"}
+          >
+            {isCollapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
+          </button>
+        </div>
       ) : (
         <button
           type="button"
@@ -762,6 +785,7 @@ type GitDiffPreviewProps = {
   onRemoveDraftComment?: (id: string) => void;
   onDraftReviewFinding?: (target: DiffLineCommentTarget, finding: RunDiffReviewFinding, findingKey: string) => void;
   onParsedFilesChange?: (files: DiffPreviewFileSummary[]) => void;
+  onOpenFile?: (path: string) => void;
   activityEmphasis?: boolean;
   hideFileHeader?: boolean;
   hideFileHeaderInlineToggle?: boolean;
@@ -809,6 +833,7 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     onRemoveDraftComment,
     onDraftReviewFinding,
     onParsedFilesChange,
+    onOpenFile,
     activityEmphasis = false,
     hideFileHeader = false,
     hideFileHeaderInlineToggle = false,
@@ -1195,6 +1220,7 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
         safeReviewNavIndex={safeReviewNavIndex}
         draftedReviewFindingKeys={draftedReviewFindingKeys}
         onToggleCollapsed={toggleFileCollapsed}
+        onOpenFile={onOpenFile}
         onAddDiffComment={onAddDiffComment}
         onSaveDraftComment={onSaveDraftComment}
         onSaveSingleComment={onSaveSingleComment}
