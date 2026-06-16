@@ -3,8 +3,10 @@ import {
   buildClaudeCodeArgs,
   buildClaudeCanUseTool,
   ClaudeCodeProviderAdapter,
+  getClaudeCodeAvailableModelsForVersion,
   mergeClaudeUsageUpdate,
   normalizeClaudeCodeModelId,
+  parseClaudeCodeVersion,
   parseClaudeCodeStreamEvent,
   resolveClaudeCodeProcessLaunch,
 } from "../../../../packages/provider-claude-code/src";
@@ -80,6 +82,32 @@ describe("ClaudeCodeProviderAdapter", () => {
     expect(normalizeClaudeCodeModelId("claude-haiku-4.5")).toBe("claude-haiku-4-5");
     expect(normalizeClaudeCodeModelId("claude-opus-4-1")).toBe("claude-opus-4-7");
     expect(normalizeClaudeCodeModelId("sonnet")).toBe("sonnet");
+  });
+
+  it("parses Claude Code versions from CLI output", () => {
+    expect(parseClaudeCodeVersion("Claude Code 2.1.111")).toBe("2.1.111");
+    expect(parseClaudeCodeVersion("claude 2.2.0\n")).toBe("2.2.0");
+    expect(parseClaudeCodeVersion("unknown")).toBeNull();
+  });
+
+  it("marks curated Claude models unavailable below known minimum CLI versions", () => {
+    const olderModels = getClaudeCodeAvailableModelsForVersion("2.1.110");
+    const opus47Models = getClaudeCodeAvailableModelsForVersion("2.1.111");
+    const opus48Models = getClaudeCodeAvailableModelsForVersion("2.1.154");
+
+    expect(olderModels.find((model) => model.modelId === "claude-opus-4-7")?.unavailableReason).toContain("v2.1.111");
+    expect(opus47Models.find((model) => model.modelId === "claude-opus-4-7")?.unavailableReason).toBeUndefined();
+    expect(opus47Models.find((model) => model.modelId === "claude-opus-4-8")?.unavailableReason).toContain("v2.1.154");
+    expect(opus48Models.find((model) => model.modelId === "claude-opus-4-8")?.unavailableReason).toBeUndefined();
+    expect(opus48Models.map((model) => model.modelId)).toContain("sonnet");
+  });
+
+  it("keeps the full curated Claude list when the version cannot be parsed", () => {
+    const ids = getClaudeCodeAvailableModelsForVersion(null).map((model) => model.modelId);
+
+    expect(ids).toContain("claude-opus-4-8");
+    expect(ids).toContain("claude-opus-4-7");
+    expect(ids).toContain("claude-haiku-4-5");
   });
 
   it("adds Claude resume arguments when a durable session id is available", () => {

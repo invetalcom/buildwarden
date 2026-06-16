@@ -15,6 +15,7 @@ import {
   type AppMenuCommand,
   type AppMenuSection,
   type ChatInput,
+  type ListAvailableProviderModelsInput,
   type ModelInput,
   type NetworkProxySettingsInput,
   type ProjectInput,
@@ -676,6 +677,9 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.addProject, (_, input: ProjectInput) => controller.addProject(input));
   ipcMain.handle(IPC_CHANNELS.addProviderAccount, (_, input: ProviderAccountInput) => controller.addProviderAccount(input));
   ipcMain.handle(IPC_CHANNELS.addModel, (_, input: ModelInput) => controller.addModel(input));
+  ipcMain.handle(IPC_CHANNELS.listAvailableProviderModels, (_, input: ListAvailableProviderModelsInput) =>
+    controller.listAvailableProviderModels(input),
+  );
   ipcMain.handle(IPC_CHANNELS.listComposerCommands, (_, input) => controller.listComposerCommands(input));
   ipcMain.handle(IPC_CHANNELS.activateRun, (_, runId: string) => controller.activateRun(runId));
   ipcMain.handle(IPC_CHANNELS.commitRun, (_, runId: string, message: string) => controller.commitRun(runId, message));

@@ -140,11 +140,11 @@ import { Button } from "./components/ui/button";
 import { Card } from "./components/ui/card";
 import { cn } from "./lib/cn";
 import {
-  MODEL_PRESET_CUSTOM,
   emptyModelPresetsByGroup,
   getModelPresetsByGroupForProvider,
   getModelPresetsForProvider,
 } from "./lib/openai-model-presets";
+import type { AvailableProviderModelsState } from "./lib/available-provider-models";
 import { useStableCallback } from "./lib/use-stable-callback";
 import { reportRendererError, reportRendererLog } from "./lib/report-renderer-error";
 
@@ -215,6 +215,10 @@ export const App = () => {
   const [modelDisplayName, setModelDisplayName] = useState(() => DEFAULT_ADD_MODEL_DRAFT.displayName);
   const [modelBaseUrl, setModelBaseUrl] = useState("");
   const [welcomeOpenAiPresetUserChoseCustom, setWelcomeOpenAiPresetUserChoseCustom] = useState(false);
+  const [availableModelsByProviderId, setAvailableModelsByProviderId] = useState<Record<string, AvailableProviderModelsState>>({});
+  const availableModelsByProviderIdRef = useRef<Record<string, AvailableProviderModelsState>>({});
+  const availableModelRequestsInFlightRef = useRef<Set<string>>(new Set());
+  availableModelsByProviderIdRef.current = availableModelsByProviderId;
   const [runProjectId, setRunProjectId] = useState("");
   const [runModelId, setRunModelId] = useState("");
   const [runWorktreeModelIds, setRunWorktreeModelIds] = useState<string[]>([]);
@@ -349,22 +353,6 @@ export const App = () => {
   const welcomeStepKey = welcomeStepKeys[Math.min(welcomeStepIndex, welcomeStepKeys.length - 1)] ?? "intro";
   const shouldCheckProjectFolderGitStatus = settingsOpen || (welcomeOpen && welcomeStepKey === "project");
   const selectedProviderAccount = snapshot.providerAccounts.find((provider) => provider.id === selectedProviderId) ?? null;
-  const modelPresetsForSelectedProvider = useMemo(() => {
-    if (!selectedProviderAccount) return [];
-    const family =
-      selectedProviderAccount.providerType === "ai-sdk"
-        ? getAiSdkProviderFamilyFromConfigJson(selectedProviderAccount.configJson)
-        : undefined;
-    return getModelPresetsForProvider(selectedProviderAccount.providerType, family);
-  }, [selectedProviderAccount]);
-  const showModelPresetsForSelectedProvider = modelPresetsForSelectedProvider.length > 0;
-  const openAiPresetMatchForSelectedProvider = modelPresetsForSelectedProvider.find(
-    (preset) => preset.modelId === modelId.trim() && preset.displayName === modelDisplayName.trim(),
-  );
-  const openAiPresetSelectValueForSelectedProvider =
-    !showModelPresetsForSelectedProvider || welcomeOpenAiPresetUserChoseCustom || !openAiPresetMatchForSelectedProvider
-      ? MODEL_PRESET_CUSTOM
-      : openAiPresetMatchForSelectedProvider.modelId;
   const openAiPresetsGroupedForSelectedProvider = selectedProviderAccount
     ? getModelPresetsByGroupForProvider(
         selectedProviderAccount.providerType,
@@ -373,6 +361,72 @@ export const App = () => {
           : undefined,
       )
     : emptyModelPresetsByGroup();
+  const ensureAvailableModels = useCallback(
+    (providerAccountId: string) => {
+      if (!providerAccountId) {
+        return;
+      }
+      const current = availableModelsByProviderIdRef.current[providerAccountId];
+      if (
+        current?.status === "loading" ||
+        current?.status === "loaded" ||
+        current?.status === "error" ||
+        availableModelRequestsInFlightRef.current.has(providerAccountId)
+      ) {
+        return;
+      }
+      if (!buildwarden) {
+        setAvailableModelsByProviderId((previous) => ({
+          ...previous,
+          [providerAccountId]: {
+            status: "error",
+            models: [],
+            errorMessage: "The Electron desktop bridge is unavailable.",
+          },
+        }));
+        return;
+      }
+
+      availableModelRequestsInFlightRef.current.add(providerAccountId);
+      setAvailableModelsByProviderId((previous) => ({
+        ...previous,
+        [providerAccountId]: {
+          status: "loading",
+          models: previous[providerAccountId]?.models ?? [],
+          errorMessage: null,
+        },
+      }));
+
+      void buildwarden
+        .listAvailableProviderModels({ providerAccountId })
+        .then((result) => {
+          setAvailableModelsByProviderId((previous) => ({
+            ...previous,
+            [providerAccountId]: {
+              status: result.errorMessage ? "error" : "loaded",
+              models: result.models,
+              errorMessage: result.errorMessage ?? null,
+            },
+          }));
+        })
+        .catch((caught) => {
+          reportRendererError("renderer.provider-models.available-models", caught, { providerAccountId });
+          const message = caught instanceof Error ? caught.message : "Available models could not be loaded.";
+          setAvailableModelsByProviderId((previous) => ({
+            ...previous,
+            [providerAccountId]: {
+              status: "error",
+              models: [],
+              errorMessage: message,
+            },
+          }));
+        })
+        .finally(() => {
+          availableModelRequestsInFlightRef.current.delete(providerAccountId);
+        });
+    },
+    [buildwarden],
+  );
 
   const loadSnapshot = useCallback(async () => {
     if (!buildwarden) {
@@ -4124,12 +4178,14 @@ export const App = () => {
               networkProxySettings={networkProxySettings}
               providerAccounts={snapshot.providerAccounts}
               models={snapshot.models}
+              availableModelsByProviderId={availableModelsByProviderId}
               onBack={handleSettingsBack}
               onChooseDirectory={() => void chooseDirectory()}
               onPickDirectory={pickDirectory}
               onSubmitProject={() => void submitProject()}
               onSubmitProvider={() => void submitProvider()}
               onSubmitModel={() => void submitModel()}
+              onEnsureAvailableModels={ensureAvailableModels}
               onDeleteProject={(projectId) => void deleteProject(projectId)}
               onDeleteProviderAccount={(providerAccountId) => void deleteProviderAccount(providerAccountId)}
               onDeleteModel={(modelId) => void deleteModel(modelId)}
@@ -4571,12 +4627,12 @@ export const App = () => {
             modelBaseUrl,
             providerAccounts: snapshot.providerAccounts,
             models: snapshot.models,
-            showOpenAiModelPresets: showModelPresetsForSelectedProvider,
-            openAiPresetSelectValue: openAiPresetSelectValueForSelectedProvider,
+            openAiPresetUserChoseCustom: welcomeOpenAiPresetUserChoseCustom,
             openAiPresetsGrouped: openAiPresetsGroupedForSelectedProvider,
-            modelPresetsForSelected: modelPresetsForSelectedProvider,
+            availableModelsState: selectedProviderId ? availableModelsByProviderId[selectedProviderId] : undefined,
             onSubmitProvider: () => void submitProvider(),
             onSubmitModel: () => void submitModel(),
+            onEnsureAvailableModels: ensureAvailableModels,
             onDeleteProviderAccount: (providerAccountId) => void deleteProviderAccount(providerAccountId),
             onDeleteModel: (modelId) => void deleteModel(modelId),
             onProviderLabelChange: setProviderLabel,

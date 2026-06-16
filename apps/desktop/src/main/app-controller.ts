@@ -32,6 +32,7 @@ import {
   buildNetworkProxyRuntimeConfig,
   buildDefaultProjectLabSettings,
   filterComposerCommandDescriptors,
+  getModelPresetsForProvider,
   isDetachedHeadProjectErrorMessage,
   listComposerCommandsForProvider,
   mergeComposerCommandDescriptors,
@@ -74,6 +75,8 @@ import {
   type FetchProjectPrMrDiffInput,
   type GetProjectForgeRequestDetailsInput,
   type ListProjectForgeRequestsInput,
+  type ListAvailableProviderModelsInput,
+  type ListAvailableProviderModelsResult,
   type ListComposerCommandsInput,
   type ModelInput,
   type ModelRecord,
@@ -113,6 +116,7 @@ import {
   type ProjectTaskRecord,
   type ProviderAccountInput,
   type ProviderAdapter,
+  type ProviderAvailableModel,
   type ProviderAccountRecord,
   type ProviderSessionRuntimeInput,
   type PushProjectBranchInput,
@@ -445,6 +449,38 @@ const parseProviderConfigJson = (configJson: string): Record<string, unknown> =>
   } catch {
     return {};
   }
+};
+
+const dedupeAvailableProviderModels = (models: readonly ProviderAvailableModel[]): ProviderAvailableModel[] => {
+  const seen = new Set<string>();
+  const deduped: ProviderAvailableModel[] = [];
+  for (const model of models) {
+    const modelId = model.modelId.trim();
+    if (!modelId) {
+      continue;
+    }
+    const key = modelId.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push({
+      ...model,
+      modelId,
+      displayName: model.displayName.trim() || modelId,
+    });
+  }
+  return deduped;
+};
+
+const getCuratedAvailableModelsForProvider = (provider: ProviderAccountRecord): ProviderAvailableModel[] => {
+  const providerFamily =
+    provider.providerType === "ai-sdk" ? getAiSdkProviderFamilyFromConfig(provider.configJson) : undefined;
+  return getModelPresetsForProvider(provider.providerType, providerFamily).map((preset) => ({
+    modelId: preset.modelId,
+    displayName: preset.displayName,
+    source: "curated" as const,
+  }));
 };
 
 const providerAllowsMissingApiKey = (provider: ProviderAccountRecord): boolean =>
@@ -1888,6 +1924,33 @@ export class AppController
       },
       config: input.config,
     });
+  }
+
+  async listAvailableProviderModels(
+    input: ListAvailableProviderModelsInput,
+  ): Promise<ListAvailableProviderModelsResult> {
+    const provider = this.db.getProviderAccount(input.providerAccountId);
+    const fallbackModels = dedupeAvailableProviderModels(getCuratedAvailableModelsForProvider(provider));
+    const adapter = this.providerAdapters[provider.providerType];
+    if (!adapter.listAvailableModels) {
+      return { models: fallbackModels };
+    }
+
+    try {
+      const models = await adapter.listAvailableModels({
+        providerAccountId: provider.id,
+        providerType: provider.providerType,
+        config: parseProviderConfigJson(provider.configJson),
+        apiBaseUrl: provider.apiBaseUrl,
+      });
+      return { models: dedupeAvailableProviderModels(models) };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Available models could not be loaded.";
+      return {
+        models: fallbackModels,
+        errorMessage: detail,
+      };
+    }
   }
 
   async listComposerCommands(input: ListComposerCommandsInput): Promise<ComposerCommandDescriptor[]> {

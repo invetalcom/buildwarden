@@ -860,6 +860,30 @@ export interface ModelInput {
   enabled?: boolean;
 }
 
+export interface ProviderAvailableModel {
+  modelId: string;
+  displayName: string;
+  source: "provider" | "curated";
+  capabilities?: Partial<ProviderCapabilityMap>;
+  unavailableReason?: string;
+}
+
+export interface ListAvailableProviderModelsInput {
+  providerAccountId: string;
+}
+
+export interface ListAvailableProviderModelsResult {
+  models: ProviderAvailableModel[];
+  errorMessage?: string;
+}
+
+export interface ProviderAvailableModelsContext {
+  providerAccountId: string;
+  providerType: ProviderType;
+  config: Record<string, unknown>;
+  apiBaseUrl?: string | null;
+}
+
 export const MODEL_CONFIG_OPENAI_REASONING_EFFORT_KEY = "openaiReasoningEffort";
 export const MODEL_CONFIG_ANTHROPIC_EFFORT_KEY = "anthropicEffort";
 export const MODEL_CONFIG_CODEX_REASONING_EFFORT_KEY = "codexReasoningEffort";
@@ -1937,6 +1961,9 @@ export interface HarnessToolContext {
 export interface ProviderAdapter {
   readonly providerType: ProviderType;
   listRecommendedModels(): string[];
+  listAvailableModels?(
+    context: ProviderAvailableModelsContext,
+  ): Promise<ProviderAvailableModel[]>;
   validateConfiguration(input: ProviderAccountInput): void;
 }
 
@@ -2037,6 +2064,7 @@ export interface DesktopApi {
   addProject(input: ProjectInput): Promise<ProjectRecord>;
   addProviderAccount(input: ProviderAccountInput): Promise<ProviderAccountRecord>;
   addModel(input: ModelInput): Promise<ModelRecord>;
+  listAvailableProviderModels(input: ListAvailableProviderModelsInput): Promise<ListAvailableProviderModelsResult>;
   listComposerCommands(input: ListComposerCommandsInput): Promise<ComposerCommandDescriptor[]>;
   createProjectTask(projectId: string, input: ProjectTaskInput): Promise<ProjectTaskRecord>;
   updateProjectTask(taskId: string, input: UpdateProjectTaskInput): Promise<ProjectTaskRecord>;
@@ -2199,6 +2227,7 @@ export interface RunTerminalExitPayload {
 export const IPC_CHANNELS = {
   activateRun: "buildwarden:activate-run",
   addModel: "buildwarden:add-model",
+  listAvailableProviderModels: "buildwarden:list-available-provider-models",
   createProjectTask: "buildwarden:create-project-task",
   updateProjectTask: "buildwarden:update-project-task",
   deleteProjectTask: "buildwarden:delete-project-task",

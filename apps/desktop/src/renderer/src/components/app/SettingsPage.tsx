@@ -22,12 +22,12 @@ import {
 import { ArrowLeft, Cpu, Database, FolderGit2, Globe, Settings2 } from "lucide-react";
 import { APP_VERSION, APP_VERSION_DATE } from "../../lib/app-build-meta";
 import {
-  MODEL_PRESET_CUSTOM,
   emptyModelPresetsByGroup,
   getAiSdkProviderFamilyFromConfigJson,
   getModelPresetsByGroupForProvider,
   getModelPresetsForProvider,
 } from "../../lib/openai-model-presets";
+import type { AvailableProviderModelsState } from "../../lib/available-provider-models";
 import { Button } from "../ui/button";
 import { ProviderModelsSettingsTab } from "./settings-provider-models-tab";
 import { GitWorkspaceSettingsTab } from "./settings-git-workspace-tab";
@@ -71,12 +71,14 @@ interface SettingsPageProps {
   networkProxySettings: NetworkProxySettingsSnapshot;
   providerAccounts: AppSnapshot["providerAccounts"];
   models: AppSnapshot["models"];
+  availableModelsByProviderId: Record<string, AvailableProviderModelsState>;
   onBack: () => void;
   onChooseDirectory: () => void;
   onPickDirectory: () => Promise<string | null>;
   onSubmitProject: () => void;
   onSubmitProvider: () => void;
   onSubmitModel: () => void;
+  onEnsureAvailableModels: (providerAccountId: string) => void;
   onDeleteProject: (projectId: string) => void;
   onDeleteProviderAccount: (providerAccountId: string) => void;
   onDeleteModel: (modelId: string) => void;
@@ -164,12 +166,14 @@ export const SettingsPage = ({
   networkProxySettings,
   providerAccounts,
   models,
+  availableModelsByProviderId,
   onBack,
   onChooseDirectory,
   onPickDirectory,
   onSubmitProject,
   onSubmitProvider,
   onSubmitModel,
+  onEnsureAvailableModels,
   onDeleteProject,
   onDeleteProviderAccount,
   onDeleteModel,
@@ -228,20 +232,6 @@ export const SettingsPage = ({
   const [networkProxySaving, setNetworkProxySaving] = useState(false);
 
   const selectedProviderAccount = providerAccounts.find((provider) => provider.id === selectedProviderId) ?? null;
-  const modelPresetsForSelected = (() => {
-    if (!selectedProviderAccount) return [];
-    const fam =
-      selectedProviderAccount.providerType === "ai-sdk"
-        ? getAiSdkProviderFamilyFromConfigJson(selectedProviderAccount.configJson)
-        : undefined;
-    return getModelPresetsForProvider(selectedProviderAccount.providerType, fam);
-  })();
-  const showModelPresets = modelPresetsForSelected.length > 0;
-  const openAiPresetMatch = modelPresetsForSelected.find(
-    (preset) => preset.modelId === modelId.trim() && preset.displayName === modelDisplayName.trim(),
-  );
-  const openAiPresetSelectValue =
-    !showModelPresets || openAiPresetUserChoseCustom || !openAiPresetMatch ? MODEL_PRESET_CUSTOM : openAiPresetMatch.modelId;
   const openAiPresetsGrouped = selectedProviderAccount
     ? getModelPresetsByGroupForProvider(
         selectedProviderAccount.providerType,
@@ -250,6 +240,7 @@ export const SettingsPage = ({
           : undefined,
       )
     : emptyModelPresetsByGroup();
+  const availableModelsState = selectedProviderId ? availableModelsByProviderId[selectedProviderId] : undefined;
 
   useEffect(() => {
     setOpenAiPresetUserChoseCustom(false);
@@ -419,12 +410,12 @@ export const SettingsPage = ({
           modelBaseUrl={modelBaseUrl}
           providerAccounts={providerAccounts}
           models={models}
-          showOpenAiModelPresets={showModelPresets}
-          openAiPresetSelectValue={openAiPresetSelectValue}
+          openAiPresetUserChoseCustom={openAiPresetUserChoseCustom}
           openAiPresetsGrouped={openAiPresetsGrouped}
-          modelPresetsForSelected={modelPresetsForSelected}
+          availableModelsState={availableModelsState}
           onSubmitProvider={onSubmitProvider}
           onSubmitModel={onSubmitModel}
+          onEnsureAvailableModels={onEnsureAvailableModels}
           onDeleteProviderAccount={onDeleteProviderAccount}
           onDeleteModel={onDeleteModel}
           onProviderLabelChange={onProviderLabelChange}
