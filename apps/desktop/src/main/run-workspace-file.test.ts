@@ -44,6 +44,14 @@ describe("run workspace file references", () => {
     });
   });
 
+  it("normalizes browser-style Windows absolute href paths", () => {
+    expect(parseRunWorkspaceFileReference("/C:/repo/src/App.tsx:42")).toEqual({
+      path: "C:/repo/src/App.tsx",
+      line: 42,
+      column: null,
+    });
+  });
+
   it("ignores external URLs", () => {
     expect(parseRunWorkspaceFileReference("https://example.com/src/App.tsx")).toBeNull();
     expect(parseRunWorkspaceFileReference("mailto:dev@example.com")).toBeNull();
@@ -64,6 +72,15 @@ describe("run workspace file guard", () => {
     expect(ok.path).toBe("src/example.ts");
     expect(ok.content).toBe("one\ntwo\n");
     expect(ok.line).toBe(2);
+
+    if (/^[A-Za-z]:[\\/]/.test(root)) {
+      const browserStyleAbsolute = `/${join(root, "src", "example.ts").replace(/\\/g, "/")}:2`;
+      const absoluteOk = await readRunWorkspaceFileForPreview({ workspacePath: root, requestedPath: browserStyleAbsolute });
+      expect(absoluteOk.unavailableReason).toBeUndefined();
+      expect(absoluteOk.path).toBe("src/example.ts");
+      expect(absoluteOk.content).toBe("one\ntwo\n");
+      expect(absoluteOk.line).toBe(2);
+    }
 
     const outside = await readRunWorkspaceFileForPreview({ workspacePath: root, requestedPath: "../outside.ts" });
     expect(outside.unavailableReason).toBe("outside-workspace");

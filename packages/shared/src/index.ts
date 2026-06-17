@@ -1082,6 +1082,9 @@ const maybeDecodeFileReference = (value: string): string => {
   }
 };
 
+const normalizeRunWorkspaceFilePath = (value: string): string =>
+  value.replace(/^\/([A-Za-z]:[\\/])/, "$1");
+
 export const isExternalRunWorkspaceHref = (href: string): boolean =>
   RUN_WORKSPACE_FILE_EXTERNAL_PROTOCOL_RE.test(href.trim());
 
@@ -1108,7 +1111,7 @@ export const parseRunWorkspaceFileReference = (value: string): RunWorkspaceFileR
     }
   }
 
-  const path = next.trim();
+  const path = normalizeRunWorkspaceFilePath(next.trim());
   if (!path || (line != null && (!Number.isSafeInteger(line) || line < 1))) {
     return null;
   }

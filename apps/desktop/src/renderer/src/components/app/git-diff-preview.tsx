@@ -13,7 +13,7 @@ import {
   type Ref,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, MessageSquarePlus, Pencil, Trash2 } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, FileText, MessageSquarePlus, Pencil, Trash2 } from "lucide-react";
 import type { RunDiffReviewFinding } from "@buildwarden/shared";
 import type { HunkTokens } from "react-diff-view";
 import { Diff, Hunk, findChangeByNewLineNumber, findChangeByOldLineNumber, getChangeKey, markEdits, parseDiff, tokenize } from "react-diff-view";
@@ -684,28 +684,40 @@ const DiffFileSection = memo(function DiffFileSection({
         <div className="sticky top-0 z-10 flex w-full items-center justify-between gap-2 border-b border-zinc-800 bg-zinc-900/95 px-3 py-1.5 text-left backdrop-blur-sm">
           <button
             type="button"
-            className="flex min-w-0 flex-1 items-center gap-2 text-left transition hover:text-cyan-200"
-            onClick={() => onOpenFile(filePathLabel)}
-            title={`Open ${filePathLabel}`}
+            className="flex min-w-0 flex-1 items-center gap-2 text-left transition hover:text-zinc-50"
+            onClick={() => onToggleCollapsed(fileKey)}
+            title={filePathLabel}
           >
             <p className="truncate text-xs font-medium text-zinc-100">{filePathLabel}</p>
             <span className="shrink-0 text-[10px] uppercase tracking-[0.18em] text-zinc-500">{file.type}</span>
           </button>
-          <button
-            type="button"
-            className="rounded px-1 py-0.5 text-zinc-500 transition hover:bg-zinc-800/70 hover:text-zinc-300"
-            onClick={() => onToggleCollapsed(fileKey)}
-            aria-label={isCollapsed ? "Expand diff" : "Collapse diff"}
-            title={isCollapsed ? "Expand diff" : "Collapse diff"}
-          >
-            {isCollapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
-          </button>
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              className="rounded px-1 py-0.5 text-zinc-500 transition hover:bg-zinc-800/70 hover:text-cyan-200"
+              onClick={() => onOpenFile(filePathLabel)}
+              aria-label={`Open file ${filePathLabel}`}
+              title={`Open file ${filePathLabel}`}
+            >
+              <FileText className="h-3.5 w-3.5 shrink-0" />
+            </button>
+            <button
+              type="button"
+              className="rounded px-1 py-0.5 text-zinc-500 transition hover:bg-zinc-800/70 hover:text-zinc-300"
+              onClick={() => onToggleCollapsed(fileKey)}
+              aria-label={isCollapsed ? "Expand diff" : "Collapse diff"}
+              title={isCollapsed ? "Expand diff" : "Collapse diff"}
+            >
+              {isCollapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
+            </button>
+          </div>
         </div>
       ) : (
         <button
           type="button"
           className="sticky top-0 z-10 flex w-full items-center justify-between gap-2 border-b border-zinc-800 bg-zinc-900/95 px-3 py-1.5 text-left backdrop-blur-sm"
           onClick={() => onToggleCollapsed(fileKey)}
+          title={filePathLabel}
         >
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <p className="truncate text-xs font-medium text-zinc-100">{filePathLabel}</p>
