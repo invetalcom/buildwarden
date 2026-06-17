@@ -14,6 +14,7 @@ import type {
   UnifiedProviderFamily,
 } from "@buildwarden/shared";
 import {
+  ArrowUpRight,
   ChevronDown,
   CheckCircle2,
   Columns2,
@@ -23,6 +24,7 @@ import {
   FileText,
   GitPullRequest,
   Info,
+  KeyRound,
   Loader2,
   MessageSquarePlus,
   PanelLeftClose,
@@ -32,6 +34,7 @@ import {
   Search,
   Sparkles,
   SquarePen,
+  Settings,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
@@ -68,6 +71,7 @@ interface ProjectPrMrTabProps {
   modelOptions: Array<{ id: string; label: string; modelId: string; providerType: ProviderType; providerFamily: UnifiedProviderFamily | null }>;
   defaultModelId: string;
   initialRequest?: { url: string; requestId: number } | null;
+  onOpenProjectSettings: () => void;
 }
 
 const requestStateOptions: Array<{ id: ProjectForgeRequestState; label: string }> = [
@@ -259,7 +263,7 @@ const formatAppErrorMessage = (error: unknown, fallback: string) => {
   return message.replace(/^Error invoking remote method '[^']+': Error: /, "");
 };
 
-export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initialRequest = null }: ProjectPrMrTabProps) => {
+export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initialRequest = null, onOpenProjectSettings }: ProjectPrMrTabProps) => {
   const initialSession = getProjectPrMrSession(projectId);
   const [prUrl, setPrUrl] = useState(() => initialSession?.prUrl ?? "");
   const [baseBranch, setBaseBranch] = useState(() => initialSession?.baseBranch ?? "");
@@ -667,6 +671,10 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const loadedOrReportedFileCount = diffChangedFileCount || visibleRequestDetails?.request.changedFiles || 0;
   const totalActivityCount = visibleRequestDetails?.activity.length ?? visibleRequestDetails?.request.commentCount ?? 0;
   const commitCount = visibleRequestDetails?.commits.length ?? 0;
+  const shouldShowForgeTokenHint = forgeAuthStatus?.hasToken === false;
+  const requestListWasFetched = Boolean(requestProvider || requestRepoLabel);
+  const shouldShowRequestLoadHint =
+    canUseForgeApi && requestItems.length === 0 && !overviewRequest && !detailsBusy && !detailsError && !listBusy && !listError;
   const handleParsedDiffFilesChange = useCallback((files: DiffPreviewFileSummary[]) => {
     setParsedDiffFiles(files);
   }, []);
@@ -1678,6 +1686,61 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     );
   };
 
+  const renderForgeTokenHintCard = () => (
+    <Card className="flex min-h-0 flex-1 items-center justify-center overflow-hidden border-[var(--ec-accent-ring)] bg-[linear-gradient(135deg,var(--ec-accent-soft),var(--ec-success-soft))] p-4">
+      <div className="w-full max-w-2xl text-center">
+        <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--ec-panel-soft)] text-[var(--ec-accent)] ring-1 ring-[var(--ec-accent-ring)]">
+          <KeyRound className="h-5 w-5" aria-hidden />
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5">
+          <h3 className="text-sm font-semibold text-[var(--ec-text)]">Add a Git Access Token to unlock full PR/MR review</h3>
+          <span className="rounded-full bg-[var(--ec-success-soft)] px-1.5 py-px text-[8px] font-semibold uppercase text-[var(--ec-success)] ring-1 ring-[var(--ec-success-ring)]">
+            More features
+          </span>
+        </div>
+        <p className="mx-auto mt-2 max-w-xl text-xs leading-5 text-[var(--ec-muted)]">
+          Right now BuildWarden can only load a manually pasted PR/MR URL. Save a GitHub or GitLab token for this project to fetch requests from the repo,
+          show commits and remote review threads, and post comments or approvals.
+        </p>
+        <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+          {["Fetch request list", "Browse commits", "Show review threads", "Post reviews"].map((feature) => (
+            <span
+              key={feature}
+              className="rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-2 py-1 text-[10px] font-medium text-[var(--ec-muted)]"
+            >
+              {feature}
+            </span>
+          ))}
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          className="mt-4 h-8 border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-3 text-xs text-[var(--ec-accent)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-accent-strong)]"
+          onClick={onOpenProjectSettings}
+        >
+          <Settings className="h-3.5 w-3.5" aria-hidden />
+          Open Project Settings
+        </Button>
+      </div>
+    </Card>
+  );
+
+  const renderRequestLoadHint = () => (
+    <div className="relative min-h-0 flex-1">
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-6 pb-28">
+        <div className="inline-flex max-w-md items-center gap-3 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-4 py-3 text-xs leading-5 text-[var(--ec-muted)] opacity-80 shadow-[var(--ec-panel-shadow)]">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-[var(--ec-control)] text-[var(--ec-faint)]">
+            <ArrowUpRight className="h-5 w-5" aria-hidden />
+          </span>
+          <p className="min-w-0 font-medium">
+            {requestListWasFetched ? "No requests found. Select another status and fetch again." : "Select a status, then fetch pull requests."}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+
   const renderFileNavigator = () => {
     const normalizedQuery = diffFileQuery.replace(/\\/g, "/").replace(/^a\//, "").replace(/^b\//, "").trim().toLowerCase();
     const visibleFiles = normalizedQuery
@@ -2520,7 +2583,8 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
           {renderRequestHeader()}
 
           {activeDetailTab === "conversation" ? (
-            renderOverviewCard()
+            (renderOverviewCard() ??
+              (shouldShowForgeTokenHint ? renderForgeTokenHintCard() : shouldShowRequestLoadHint ? renderRequestLoadHint() : null))
           ) : activeDetailTab === "commits" ? (
             renderCommitsCard()
           ) : !hasDiff ? (

@@ -70,6 +70,7 @@ interface ProjectPageProps {
   onOpenProjectLabImplementation: (runId: string) => void;
   onBranchesChanged: () => void | Promise<void>;
   onDeleteProject: () => void | Promise<void>;
+  onOpenProjectSettings: () => void | Promise<void>;
   reviewRequestTarget?: { url: string; requestId: number } | null;
 }
 
@@ -119,6 +120,7 @@ export const ProjectPage = ({
   onOpenProjectLabImplementation,
   onBranchesChanged,
   onDeleteProject,
+  onOpenProjectSettings,
   reviewRequestTarget = null,
 }: ProjectPageProps) => {
   const defaultTaskModelId = useMemo(
@@ -219,6 +221,7 @@ export const ProjectPage = ({
           modelOptions={modelOptions}
           defaultModelId={defaultTaskModelId}
           initialRequest={reviewRequestTarget}
+          onOpenProjectSettings={onOpenProjectSettings}
         />
       ) : null}
 
