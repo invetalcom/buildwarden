@@ -14,6 +14,7 @@ import type {
   UnifiedProviderFamily,
 } from "@buildwarden/shared";
 import {
+  ArrowUpRight,
   ChevronDown,
   CheckCircle2,
   Columns2,
@@ -671,6 +672,9 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const totalActivityCount = visibleRequestDetails?.activity.length ?? visibleRequestDetails?.request.commentCount ?? 0;
   const commitCount = visibleRequestDetails?.commits.length ?? 0;
   const shouldShowForgeTokenHint = forgeAuthStatus?.hasToken === false;
+  const requestListWasFetched = Boolean(requestProvider || requestRepoLabel);
+  const shouldShowRequestLoadHint =
+    canUseForgeApi && requestItems.length === 0 && !overviewRequest && !detailsBusy && !detailsError && !listBusy && !listError;
   const handleParsedDiffFilesChange = useCallback((files: DiffPreviewFileSummary[]) => {
     setParsedDiffFiles(files);
   }, []);
@@ -1722,6 +1726,21 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     </Card>
   );
 
+  const renderRequestLoadHint = () => (
+    <div className="relative min-h-0 flex-1">
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-6 pb-28">
+        <div className="inline-flex max-w-md items-center gap-3 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-4 py-3 text-xs leading-5 text-[var(--ec-muted)] opacity-80 shadow-[var(--ec-panel-shadow)]">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-[var(--ec-control)] text-[var(--ec-faint)]">
+            <ArrowUpRight className="h-5 w-5" aria-hidden />
+          </span>
+          <p className="min-w-0 font-medium">
+            {requestListWasFetched ? "No requests found. Select another status and fetch again." : "Select a status, then fetch pull requests."}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+
   const renderFileNavigator = () => {
     const normalizedQuery = diffFileQuery.replace(/\\/g, "/").replace(/^a\//, "").replace(/^b\//, "").trim().toLowerCase();
     const visibleFiles = normalizedQuery
@@ -2564,7 +2583,8 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
           {renderRequestHeader()}
 
           {activeDetailTab === "conversation" ? (
-            (renderOverviewCard() ?? (shouldShowForgeTokenHint ? renderForgeTokenHintCard() : null))
+            (renderOverviewCard() ??
+              (shouldShowForgeTokenHint ? renderForgeTokenHintCard() : shouldShowRequestLoadHint ? renderRequestLoadHint() : null))
           ) : activeDetailTab === "commits" ? (
             renderCommitsCard()
           ) : !hasDiff ? (
