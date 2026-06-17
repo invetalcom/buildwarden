@@ -107,6 +107,12 @@ const isRunCompletionStatus = (step: RunActivityStep) => {
 };
 
 const TOOL_BATCH_MERGE_BY_PATH = new Set(["read_file"]);
+const FILE_LINK_TOOL_NAMES = new Set(["read_file", "write_file", "edit_file", "delete_file", "list_files", "search_repo"]);
+
+// Exported for focused renderer behavior tests.
+// eslint-disable-next-line react-refresh/only-export-components
+export const isOpenableToolPath = (toolName: string, path: string | null | undefined): boolean =>
+  FILE_LINK_TOOL_NAMES.has(toolName) && Boolean(path?.trim());
 
 type ToolBatchSummarizedRow = {
   toolName: string;
@@ -539,6 +545,34 @@ export const buildActivityEntries = (steps: RunActivityStep[]) => {
   return mergeConsecutiveSingles(groupedEntries);
 };
 
+const ActivityFilePathButton = ({
+  path,
+  onOpenWorkspaceFile,
+  className,
+}: {
+  path: string;
+  onOpenWorkspaceFile?: (path: string) => void;
+  className?: string;
+}) => {
+  if (!onOpenWorkspaceFile) {
+    return <span className={className}>{path}</span>;
+  }
+  return (
+    <button
+      type="button"
+      className={cn("min-w-0 truncate text-left font-mono text-[color:var(--ec-muted)] hover:text-[color:var(--ec-accent)]", className)}
+      title={`Open ${path}`}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onOpenWorkspaceFile(path);
+      }}
+    >
+      {path}
+    </button>
+  );
+};
+
 const ActivityToolBatchRow = ({
   item,
   itemIndex,
@@ -547,6 +581,7 @@ const ActivityToolBatchRow = ({
   busy,
   readOnly,
   onCancelRunShell,
+  onOpenWorkspaceFile,
 }: {
   item: ToolBatchSummarizedRow;
   itemIndex: number;
@@ -555,6 +590,7 @@ const ActivityToolBatchRow = ({
   busy: boolean;
   readOnly: boolean;
   onCancelRunShell?: (run: RunActivityRun, toolCallId: string) => void;
+  onOpenWorkspaceFile?: (path: string) => void;
 }) => {
   const [writeFileDiffExpanded, setWriteFileDiffExpanded] = useState(false);
   const isCompact = density === "compact";
@@ -563,6 +599,7 @@ const ActivityToolBatchRow = ({
   const hasInlineDiff = !item.failed && Boolean(item.writeFileDiff) && looksLikeGitDiff(item.writeFileDiff ?? "");
   const hasExpandableContent = Boolean(item.preview) || Boolean(item.paths?.length);
   const renderDetachedPreview = Boolean(item.preview) && !hasExpandableContent;
+  const canOpenDetailPath = isOpenableToolPath(item.toolName, item.detail);
   const canCancelShell =
     !readOnly &&
     item.toolName === "run_shell" &&
@@ -587,9 +624,15 @@ const ActivityToolBatchRow = ({
                   style={{ backgroundColor: item.failed ? "var(--ec-danger)" : item.shellStreaming ? "var(--ec-accent)" : "var(--ec-faint)" }}
                 />
                 <span className="shrink-0 font-semibold text-[color:var(--ec-text)]">{item.toolName}</span>
-                <span className="min-w-0 flex-1 truncate font-mono text-[color:var(--ec-muted)]">
-                  {item.command ?? item.detail ?? (item.paths?.length ? `${item.paths.length} files` : "")}
-                </span>
+                {item.command ? (
+                  <span className="min-w-0 flex-1 truncate font-mono text-[color:var(--ec-muted)]">{item.command}</span>
+                ) : canOpenDetailPath && item.detail ? (
+                  <ActivityFilePathButton path={item.detail} onOpenWorkspaceFile={onOpenWorkspaceFile} className="flex-1" />
+                ) : (
+                  <span className="min-w-0 flex-1 truncate font-mono text-[color:var(--ec-muted)]">
+                    {item.detail ?? (item.paths?.length ? `${item.paths.length} files` : "")}
+                  </span>
+                )}
                 {item.count > 1 ? <span className="shrink-0 text-[10px] text-[color:var(--ec-faint)]">x{item.count}</span> : null}
                 {item.toolName === "run_shell" && item.preview && !isCompact ? (
                   <span className="agent-tool-extra shrink-0 text-[10px] text-[color:var(--ec-faint)]">
@@ -602,7 +645,7 @@ const ActivityToolBatchRow = ({
                 <ul className="app-scrollbar mt-1 grid max-h-40 list-none grid-cols-1 gap-x-4 gap-y-0.5 overflow-y-auto border-l border-[color:var(--ec-border)] py-0.5 pl-3 font-mono text-[10px] leading-snug text-[color:var(--ec-muted)] sm:max-h-48 sm:grid-cols-2 xl:grid-cols-3">
                   {item.paths.map((p, pi) => (
                     <li key={`${String(pi)}-${p.slice(0, 80)}`} className="min-w-0 break-words" title={p}>
-                      {p}
+                      <ActivityFilePathButton path={p} onOpenWorkspaceFile={onOpenWorkspaceFile} className="max-w-full break-words" />
                     </li>
                   ))}
                 </ul>
@@ -633,7 +676,13 @@ const ActivityToolBatchRow = ({
                 style={{ backgroundColor: item.failed ? "var(--ec-danger)" : item.shellStreaming ? "var(--ec-accent)" : "var(--ec-faint)" }}
               />
               <span className="shrink-0 font-semibold text-[color:var(--ec-text)]">{item.toolName}</span>
-              <span className="min-w-0 flex-1 truncate font-mono text-[color:var(--ec-muted)]">{item.command ?? item.detail}</span>
+              {item.command ? (
+                <span className="min-w-0 flex-1 truncate font-mono text-[color:var(--ec-muted)]">{item.command}</span>
+              ) : canOpenDetailPath && item.detail ? (
+                <ActivityFilePathButton path={item.detail} onOpenWorkspaceFile={onOpenWorkspaceFile} className="flex-1" />
+              ) : (
+                <span className="min-w-0 flex-1 truncate font-mono text-[color:var(--ec-muted)]">{item.detail}</span>
+              )}
               {item.count > 1 ? <span className="shrink-0 text-[10px] text-[color:var(--ec-faint)]">x{item.count}</span> : null}
               {item.shellStreaming ? <span className="agent-tool-live-dots" aria-hidden /> : null}
             </div>
@@ -710,6 +759,7 @@ const ActivityToolBatchRow = ({
             activityEmphasis
             hideFileHeader
             alwaysExpandedFileSections
+            onOpenFile={onOpenWorkspaceFile}
           />
         </div>
       ) : null}
@@ -729,9 +779,11 @@ type DiffBatchSummarizedRow = {
 const ActivityDiffBatchRow = ({
   item,
   density,
+  onOpenWorkspaceFile,
 }: {
   item: DiffBatchSummarizedRow;
   density: RunTimelineDensity;
+  onOpenWorkspaceFile?: (path: string) => void;
 }) => {
   const hasContent = item.content.trim().length > 0;
   const detail = item.path ?? item.title.replace(/^Diff updated:\s*/i, "");
@@ -744,7 +796,11 @@ const ActivityDiffBatchRow = ({
             <ChevronDown className="h-3 w-3 shrink-0 text-[color:var(--ec-faint)] transition group-open:rotate-180" />
             <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[color:var(--ec-info)]" />
             <span className="shrink-0 font-semibold text-[color:var(--ec-text)]">{item.toolName}</span>
-            <span className="min-w-0 flex-1 truncate font-mono text-[color:var(--ec-muted)]">{detail}</span>
+            {item.path ? (
+              <ActivityFilePathButton path={item.path} onOpenWorkspaceFile={onOpenWorkspaceFile} className="flex-1" />
+            ) : (
+              <span className="min-w-0 flex-1 truncate font-mono text-[color:var(--ec-muted)]">{detail}</span>
+            )}
           </summary>
           <div className="mt-1.5 rounded-md border border-[color:var(--ec-border)] bg-[color:var(--ec-panel-muted)] px-2 py-1.5">
             {looksLikeGitDiff(item.content) ? (
@@ -756,9 +812,15 @@ const ActivityDiffBatchRow = ({
                 activityEmphasis
                 hideFileHeader
                 alwaysExpandedFileSections
+                onOpenFile={onOpenWorkspaceFile}
               />
             ) : (
-              <ActivityMarkdownOrGitDiff content={item.content} compact={density !== "detailed"} className="text-[color:var(--ec-text)]" />
+              <ActivityMarkdownOrGitDiff
+                content={item.content}
+                compact={density !== "detailed"}
+                className="text-[color:var(--ec-text)]"
+                onOpenWorkspaceFile={onOpenWorkspaceFile}
+              />
             )}
           </div>
         </details>
@@ -767,7 +829,11 @@ const ActivityDiffBatchRow = ({
           <span className="h-3 w-3 shrink-0" aria-hidden />
           <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[color:var(--ec-info)]" />
           <span className="shrink-0 font-semibold text-[color:var(--ec-text)]">{item.toolName}</span>
-          <span className="min-w-0 flex-1 truncate font-mono text-[color:var(--ec-muted)]">{detail}</span>
+          {item.path ? (
+            <ActivityFilePathButton path={item.path} onOpenWorkspaceFile={onOpenWorkspaceFile} className="flex-1" />
+          ) : (
+            <span className="min-w-0 flex-1 truncate font-mono text-[color:var(--ec-muted)]">{detail}</span>
+          )}
         </div>
       )}
     </div>
@@ -797,6 +863,7 @@ export function RunActivityTimeline({
   onPreparePlanContinuation,
   onSubmitPlanFeedback,
   onSubmitUserInputAnswers,
+  onOpenWorkspaceFile,
   onToggleReasoningStep,
 }: {
   steps: RunActivityStep[];
@@ -821,6 +888,7 @@ export function RunActivityTimeline({
   onPreparePlanContinuation?: (plan: string) => void;
   onSubmitPlanFeedback?: (feedback: string) => Promise<void>;
   onSubmitUserInputAnswers?: (run: RunActivityRun, requestId: string, answers: RunUserInputAnswers) => Promise<void> | void;
+  onOpenWorkspaceFile?: (path: string) => void;
   onToggleReasoningStep?: (stepId: string) => void;
 }) {
   const [internalCopiedStepId, setInternalCopiedStepId] = useState<string | null>(null);
@@ -989,7 +1057,7 @@ export function RunActivityTimeline({
             >
               <div className="agent-tool-stack agent-tool-stack--bare">
                 {summarizedItems.map((item) => (
-                  <ActivityDiffBatchRow key={item.id} item={item} density={density} />
+                  <ActivityDiffBatchRow key={item.id} item={item} density={density} onOpenWorkspaceFile={onOpenWorkspaceFile} />
                 ))}
               </div>
             </AgentLogRow>
@@ -1104,6 +1172,7 @@ export function RunActivityTimeline({
                     busy={busy}
                     readOnly={readOnly}
                     onCancelRunShell={onCancelRunShell}
+                    onOpenWorkspaceFile={onOpenWorkspaceFile}
                   />
                 ))}
               </div>
@@ -1205,7 +1274,7 @@ export function RunActivityTimeline({
                           </div>
                         </div>
                         <StoredChatAttachments attachments={attachments} fallbackNames={att} compact={compactContent} />
-                        <ActivityMarkdownOrGitDiff content={step.content} compact={compactContent} className="mt-1" />
+                        <ActivityMarkdownOrGitDiff content={step.content} compact={compactContent} className="mt-1" onOpenWorkspaceFile={onOpenWorkspaceFile} />
                       </div>
                     );
                   })}
@@ -1245,7 +1314,7 @@ export function RunActivityTimeline({
                         <p className="agent-density-detail mb-1 truncate text-[10px] text-zinc-500">{String(detail)}</p>
                       ) : null}
                       {shouldShowPlanSteps ? <RunPlanSteps content={step.content} /> : null}
-                      <ActivityMarkdownOrGitDiff content={step.content} compact={compactContent} className="agent-response-text" />
+                      <ActivityMarkdownOrGitDiff content={step.content} compact={compactContent} className="agent-response-text" onOpenWorkspaceFile={onOpenWorkspaceFile} />
                     </div>
                   );
                 })}
@@ -1320,7 +1389,7 @@ export function RunActivityTimeline({
                   </div>
                 </div>
                 <StoredChatAttachments attachments={attachments} fallbackNames={att} compact={compactContent} />
-                <ActivityMarkdownOrGitDiff content={entry.step.content} compact={compactContent} className="mt-1 text-zinc-200" />
+                <ActivityMarkdownOrGitDiff content={entry.step.content} compact={compactContent} className="mt-1 text-zinc-200" onOpenWorkspaceFile={onOpenWorkspaceFile} />
               </div>
             </AgentLogRow>
           );
@@ -1410,7 +1479,7 @@ export function RunActivityTimeline({
                   ) : null}
                 </>
               ) : (
-                <ActivityMarkdownOrGitDiff content={entry.step.content} compact={compactContent} className="mt-1.5 text-[color:var(--ec-text)]" />
+                <ActivityMarkdownOrGitDiff content={entry.step.content} compact={compactContent} className="mt-1.5 text-[color:var(--ec-text)]" onOpenWorkspaceFile={onOpenWorkspaceFile} />
               )}
             </AgentPanel>
           );
@@ -1467,7 +1536,7 @@ export function RunActivityTimeline({
                 </div>
               </div>
               <RunPlanSteps content={entry.step.content} />
-              <ActivityMarkdownOrGitDiff content={entry.step.content} compact={compactContent} className="mt-1.5 text-[color:var(--ec-text)]" />
+              <ActivityMarkdownOrGitDiff content={entry.step.content} compact={compactContent} className="mt-1.5 text-[color:var(--ec-text)]" onOpenWorkspaceFile={onOpenWorkspaceFile} />
             </AgentPanel>
           );
         }
@@ -1480,7 +1549,7 @@ export function RunActivityTimeline({
                   <p className="truncate text-[11px] font-medium text-[color:var(--ec-text)]">{entry.step.title}</p>
                 </div>
                 {entry.step.content.trim() ? (
-                  <ActivityMarkdownOrGitDiff content={entry.step.content} compact={compactContent} className="mt-1.5 text-[color:var(--ec-text)]" />
+                  <ActivityMarkdownOrGitDiff content={entry.step.content} compact={compactContent} className="mt-1.5 text-[color:var(--ec-text)]" onOpenWorkspaceFile={onOpenWorkspaceFile} />
                 ) : null}
               </AgentPanel>
             </AgentLogRow>
@@ -1575,7 +1644,7 @@ export function RunActivityTimeline({
                   ) : (
                     <>
                       {shouldShowPlanSteps ? <RunPlanSteps content={entry.step.content} /> : null}
-                      <ActivityMarkdownOrGitDiff content={entry.step.content} compact={compactContent} className="agent-response-text" />
+                      <ActivityMarkdownOrGitDiff content={entry.step.content} compact={compactContent} className="agent-response-text" onOpenWorkspaceFile={onOpenWorkspaceFile} />
                     </>
                   )}
                 </div>
@@ -1594,7 +1663,7 @@ export function RunActivityTimeline({
               <span className="agent-density-meta shrink-0 text-[10px] text-zinc-500">{timestamp}</span>
             </div>
             <div className="mt-1">
-              <ActivityMarkdownOrGitDiff content={entry.step.content} compact={compactContent} className="text-zinc-300" />
+              <ActivityMarkdownOrGitDiff content={entry.step.content} compact={compactContent} className="text-zinc-300" onOpenWorkspaceFile={onOpenWorkspaceFile} />
             </div>
           </div>
         );

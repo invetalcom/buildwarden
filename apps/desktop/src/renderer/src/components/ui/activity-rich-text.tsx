@@ -4,7 +4,11 @@ import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
+import { FileText } from "lucide-react";
+import { isExternalRunWorkspaceHref, parseRunWorkspaceFileReference } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
+import { getOpenableInlineCodePath } from "./activity-file-links";
+import { Button } from "./button";
 
 const markdownSanitizeSchema = {
   ...defaultSchema,
@@ -23,7 +27,7 @@ const markdownSanitizeSchema = {
   },
 };
 
-const mdComponents = (compact: boolean): Components => ({
+const mdComponents = (compact: boolean, onOpenWorkspaceFile?: (path: string) => void): Components => ({
   p: ({ children, ...props }) => (
     <p className={cn("mb-2 text-[color:var(--ec-text)] last:mb-0", compact ? "leading-snug" : "leading-relaxed")} {...props}>
       {children}
@@ -76,7 +80,11 @@ const mdComponents = (compact: boolean): Components => ({
         return;
       }
       const lower = href.trim().toLowerCase();
-      if (!lower.startsWith("http://") && !lower.startsWith("https://") && !lower.startsWith("mailto:")) {
+      if (!isExternalRunWorkspaceHref(lower)) {
+        if (onOpenWorkspaceFile && parseRunWorkspaceFileReference(href)) {
+          e.preventDefault();
+          onOpenWorkspaceFile(href);
+        }
         return;
       }
       e.preventDefault();
@@ -186,7 +194,8 @@ const mdComponents = (compact: boolean): Components => ({
         </code>
       );
     }
-    return (
+    const openablePath = onOpenWorkspaceFile ? getOpenableInlineCodePath(children) : null;
+    const inlineCode = (
       <code
         className={cn(
           "rounded bg-[color:var(--ec-control)] px-1 py-0.5 font-mono text-[0.92em] text-[color:var(--ec-text)]",
@@ -196,6 +205,33 @@ const mdComponents = (compact: boolean): Components => ({
       >
         {children}
       </code>
+    );
+
+    if (!openablePath) {
+      return inlineCode;
+    }
+
+    const openInlineFile = (event: MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onOpenWorkspaceFile?.(openablePath);
+    };
+
+    return (
+      <>
+        {inlineCode}
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="ml-1 h-4 w-4 rounded align-[-0.18em] p-0 text-[color:var(--ec-muted)] opacity-75 transition hover:bg-[color:var(--ec-hover)] hover:text-[color:var(--ec-accent)] hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[color:var(--ec-accent-ring)]"
+          title={`Open ${openablePath}`}
+          aria-label={`Open file ${openablePath}`}
+          onClick={openInlineFile}
+        >
+          <FileText className="h-3 w-3" aria-hidden="true" />
+        </Button>
+      </>
     );
   },
   pre: ({ children, ...props }) => (
@@ -236,13 +272,14 @@ export interface ActivityRichTextProps {
   /** Tighter typography for compact run activity panel */
   compact?: boolean;
   className?: string;
+  onOpenWorkspaceFile?: (path: string) => void;
 }
 
 /**
  * Renders agent/user messages as Markdown (lists, code, tables via GFM).
  * Do not pass git diffs here — handle those separately.
  */
-export const ActivityRichText = ({ content, compact = false, className }: ActivityRichTextProps) => {
+export const ActivityRichText = ({ content, compact = false, className, onOpenWorkspaceFile }: ActivityRichTextProps) => {
   if (!content.trim()) {
     return null;
   }
@@ -252,7 +289,7 @@ export const ActivityRichText = ({ content, compact = false, className }: Activi
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeRaw, [rehypeSanitize, markdownSanitizeSchema]]}
-        components={mdComponents(compact)}
+        components={mdComponents(compact, onOpenWorkspaceFile)}
       >
         {content}
       </ReactMarkdown>

@@ -9,10 +9,12 @@ export const ActivityMarkdownOrGitDiff = ({
   content,
   className,
   compact = false,
+  onOpenWorkspaceFile,
 }: {
   content: string;
   className?: string;
   compact?: boolean;
+  onOpenWorkspaceFile?: (path: string) => void;
 }) => {
   if (looksLikeGitDiff(content)) {
     return (
@@ -23,10 +25,11 @@ export const ActivityMarkdownOrGitDiff = ({
           compact={compact}
           viewType="unified"
           activityEmphasis
+          onOpenFile={onOpenWorkspaceFile}
         />
       </div>
     );
   }
 
-  return <ActivityRichText content={content} className={className} compact={compact} />;
+  return <ActivityRichText content={content} className={className} compact={compact} onOpenWorkspaceFile={onOpenWorkspaceFile} />;
 };
