@@ -8,6 +8,7 @@ import { FileText } from "lucide-react";
 import { isExternalRunWorkspaceHref, parseRunWorkspaceFileReference } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
 import { getOpenableInlineCodePath } from "./activity-file-links";
+import { Button } from "./button";
 
 const markdownSanitizeSchema = {
   ...defaultSchema,
@@ -219,15 +220,17 @@ const mdComponents = (compact: boolean, onOpenWorkspaceFile?: (path: string) => 
     return (
       <>
         {inlineCode}
-        <button
+        <Button
           type="button"
-          className="ml-1 inline-flex h-4 w-4 items-center justify-center rounded align-[-0.18em] text-[color:var(--ec-muted)] opacity-75 transition hover:bg-[color:var(--ec-hover)] hover:text-[color:var(--ec-accent)] hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[color:var(--ec-accent-ring)]"
+          variant="ghost"
+          size="icon"
+          className="ml-1 h-4 w-4 rounded align-[-0.18em] p-0 text-[color:var(--ec-muted)] opacity-75 transition hover:bg-[color:var(--ec-hover)] hover:text-[color:var(--ec-accent)] hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[color:var(--ec-accent-ring)]"
           title={`Open ${openablePath}`}
           aria-label={`Open file ${openablePath}`}
           onClick={openInlineFile}
         >
           <FileText className="h-3 w-3" aria-hidden="true" />
-        </button>
+        </Button>
       </>
     );
   },
