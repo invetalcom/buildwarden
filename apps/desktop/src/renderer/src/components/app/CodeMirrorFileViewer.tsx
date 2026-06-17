@@ -1,13 +1,8 @@
 import { useEffect, useMemo, useRef } from "react";
-import { css } from "@codemirror/lang-css";
-import { html } from "@codemirror/lang-html";
-import { javascript } from "@codemirror/lang-javascript";
-import { json } from "@codemirror/lang-json";
-import { markdown } from "@codemirror/lang-markdown";
-import { python } from "@codemirror/lang-python";
 import { bracketMatching, foldGutter, indentOnInput, syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
 import { EditorState } from "@codemirror/state";
 import { EditorView, drawSelection, highlightActiveLine, highlightActiveLineGutter, lineNumbers } from "@codemirror/view";
+import { codeMirrorLanguageExtensionForPath } from "./code-mirror-languages";
 
 const codeMirrorTheme = EditorView.theme(
   {
@@ -56,32 +51,6 @@ const codeMirrorTheme = EditorView.theme(
   { dark: true },
 );
 
-const extensionForPath = (filePath: string) => {
-  const lower = filePath.toLowerCase();
-  if (/\.(?:ts|tsx|mts|cts)$/.test(lower)) {
-    return javascript({ typescript: true, jsx: lower.endsWith("x") });
-  }
-  if (/\.(?:js|jsx|mjs|cjs)$/.test(lower)) {
-    return javascript({ jsx: lower.endsWith("x") });
-  }
-  if (/\.(?:json|jsonc|jsonl|lock)$/.test(lower) || lower.endsWith("package-lock")) {
-    return json();
-  }
-  if (/\.(?:css|scss|sass|less|pcss|postcss)$/.test(lower)) {
-    return css();
-  }
-  if (/\.(?:html|htm|xml|svg)$/.test(lower)) {
-    return html();
-  }
-  if (/\.(?:md|mdx|markdown)$/.test(lower)) {
-    return markdown();
-  }
-  if (/\.(?:py|pyw)$/.test(lower)) {
-    return python();
-  }
-  return [];
-};
-
 export interface CodeMirrorFileViewerProps {
   content: string;
   filePath: string;
@@ -93,7 +62,7 @@ export interface CodeMirrorFileViewerProps {
 export const CodeMirrorFileViewer = ({ content, filePath, line, column, className }: CodeMirrorFileViewerProps) => {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const languageExtension = useMemo(() => extensionForPath(filePath), [filePath]);
+  const languageExtension = useMemo(() => codeMirrorLanguageExtensionForPath(filePath), [filePath]);
 
   useEffect(() => {
     const host = hostRef.current;
