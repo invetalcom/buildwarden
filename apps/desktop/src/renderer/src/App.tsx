@@ -4043,6 +4043,12 @@ export const App = () => {
   const sidebarOnOpenSettings = useStableCallback(() => openSettingsPage());
   const sidebarOnWidthCommit = useStableCallback((width: number) => persistSidebarWidth(width));
   const sidebarOnToggleCollapsed = useStableCallback(() => setSidebarCollapsed((current) => !current));
+  const projectPageOnOpenProjectSettings = useStableCallback(() => {
+    if (!selectedProject) {
+      return;
+    }
+    void handleProjectFeatureSelect(selectedProject.project.id, "settings");
+  });
   const handleWelcomeIntroNext = useStableCallback(() => {
     setWelcomeStepIndex((current) => Math.min(current + 1, welcomeStepKeys.length - 1));
   });
@@ -4565,7 +4571,7 @@ export const App = () => {
               onOpenProjectLabImplementation={(runId) => void handleRunSelect(selectedProject.project.id, runId)}
               onBranchesChanged={loadProjectBranches}
               onDeleteProject={() => void deleteProject(selectedProject.project.id)}
-              onOpenProjectSettings={() => void handleProjectFeatureSelect(selectedProject.project.id, "settings")}
+              onOpenProjectSettings={projectPageOnOpenProjectSettings}
               reviewRequestTarget={reviewRequestTarget?.projectId === selectedProject.project.id ? reviewRequestTarget : null}
             />
               ) : (
