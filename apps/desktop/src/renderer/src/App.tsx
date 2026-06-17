@@ -4565,6 +4565,7 @@ export const App = () => {
               onOpenProjectLabImplementation={(runId) => void handleRunSelect(selectedProject.project.id, runId)}
               onBranchesChanged={loadProjectBranches}
               onDeleteProject={() => void deleteProject(selectedProject.project.id)}
+              onOpenProjectSettings={() => void handleProjectFeatureSelect(selectedProject.project.id, "settings")}
               reviewRequestTarget={reviewRequestTarget?.projectId === selectedProject.project.id ? reviewRequestTarget : null}
             />
               ) : (
