@@ -4,8 +4,10 @@ import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
+import { FileText } from "lucide-react";
 import { isExternalRunWorkspaceHref, parseRunWorkspaceFileReference } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
+import { getOpenableInlineCodePath } from "./activity-file-links";
 
 const markdownSanitizeSchema = {
   ...defaultSchema,
@@ -191,7 +193,8 @@ const mdComponents = (compact: boolean, onOpenWorkspaceFile?: (path: string) => 
         </code>
       );
     }
-    return (
+    const openablePath = onOpenWorkspaceFile ? getOpenableInlineCodePath(children) : null;
+    const inlineCode = (
       <code
         className={cn(
           "rounded bg-[color:var(--ec-control)] px-1 py-0.5 font-mono text-[0.92em] text-[color:var(--ec-text)]",
@@ -201,6 +204,31 @@ const mdComponents = (compact: boolean, onOpenWorkspaceFile?: (path: string) => 
       >
         {children}
       </code>
+    );
+
+    if (!openablePath) {
+      return inlineCode;
+    }
+
+    const openInlineFile = (event: MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onOpenWorkspaceFile?.(openablePath);
+    };
+
+    return (
+      <>
+        {inlineCode}
+        <button
+          type="button"
+          className="ml-1 inline-flex h-4 w-4 items-center justify-center rounded align-[-0.18em] text-[color:var(--ec-muted)] opacity-75 transition hover:bg-[color:var(--ec-hover)] hover:text-[color:var(--ec-accent)] hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[color:var(--ec-accent-ring)]"
+          title={`Open ${openablePath}`}
+          aria-label={`Open file ${openablePath}`}
+          onClick={openInlineFile}
+        >
+          <FileText className="h-3 w-3" aria-hidden="true" />
+        </button>
+      </>
     );
   },
   pre: ({ children, ...props }) => (
