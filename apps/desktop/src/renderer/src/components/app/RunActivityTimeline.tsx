@@ -948,6 +948,7 @@ export function RunActivityTimeline({
   );
   const scrollElementRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
+  const initiallyScrolledRunIdRef = useRef<string | null>(null);
   const setWorklogRef = useCallback(
     (node: HTMLDivElement | null) => {
       scrollElementRef.current = node;
@@ -964,8 +965,25 @@ export function RunActivityTimeline({
       return element instanceof HTMLElement ? measureTimelineRowElement(element) : 1;
     },
     useAnimationFrameWithResizeObserver: true,
+    initialOffset: virtualized ? () => Number.MAX_SAFE_INTEGER : undefined,
+    anchorTo: "end",
+    scrollEndThreshold: 140,
     overscan: 10,
   });
+  const scrollTimelineToEnd = useCallback(() => {
+    const container = scrollElementRef.current;
+    if (!container || timelineItems.length === 0) {
+      return false;
+    }
+
+    if (virtualized) {
+      rowVirtualizer.scrollToEnd({ behavior: "auto" });
+    } else {
+      container.scrollTop = container.scrollHeight;
+    }
+    shouldStickToBottomRef.current = true;
+    return true;
+  }, [rowVirtualizer, timelineItems.length, virtualized]);
 
   useEffect(() => {
     shouldStickToBottomRef.current = true;
@@ -1021,15 +1039,36 @@ export function RunActivityTimeline({
     return () => window.cancelAnimationFrame(frame);
   }, [activeReasoningStepIds, measureVisibleVirtualRows, stepMeasurementSignature, timelineItems.length, virtualized]);
 
+  useLayoutEffect(() => {
+    if (initiallyScrolledRunIdRef.current === run.id || timelineItems.length === 0 || !scrollElementRef.current) {
+      return;
+    }
+
+    if (scrollTimelineToEnd()) {
+      initiallyScrolledRunIdRef.current = run.id;
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      if (scrollTimelineToEnd()) {
+        initiallyScrolledRunIdRef.current = run.id;
+      }
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [run.id, scrollTimelineToEnd, timelineItems.length]);
+
   useEffect(() => {
     if (!virtualized || !isRunActive || !shouldStickToBottomRef.current || timelineItems.length === 0) {
       return;
     }
     const frame = window.requestAnimationFrame(() => {
-      rowVirtualizer.scrollToIndex(timelineItems.length - 1, { align: "end" });
+      scrollTimelineToEnd();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [isRunActive, rowVirtualizer, run.status, run.id, stepMeasurementSignature, steps.length, timelineItems.length, virtualized]);
+  }, [isRunActive, run.status, run.id, scrollTimelineToEnd, stepMeasurementSignature, steps.length, timelineItems.length, virtualized]);
 
   const renderActivityEntry = (entry: ActivityEntry): ReactNode => {
         if (entry.kind === "diff-batch") {

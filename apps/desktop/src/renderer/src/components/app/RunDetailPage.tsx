@@ -876,6 +876,7 @@ export const RunDetailPage = ({
 
   const activityContent = (
     <RunActivityTimeline
+      key={runDetail.run.id}
       steps={orderedSteps}
       run={runDetail.run}
       busy={busy}
