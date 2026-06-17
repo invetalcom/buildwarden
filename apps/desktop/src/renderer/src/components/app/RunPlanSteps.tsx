@@ -32,7 +32,7 @@ export function RunPlanSteps({ content }: { content: string }) {
           {steps.filter((step) => step.status === "completed").length}/{steps.length}
         </span>
       </div>
-      <div className="grid grid-cols-[2.25rem_5rem_minmax(0,1fr)] border-t border-[color:var(--ec-border)] text-[11px]">
+      <div className="grid grid-cols-[2.25rem_6.5rem_minmax(0,1fr)] border-t border-[color:var(--ec-border)] text-[11px]">
         <div className="border-b border-[color:var(--ec-border)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[color:var(--ec-faint)]">#</div>
         <div className="border-b border-[color:var(--ec-border)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[color:var(--ec-faint)]">State</div>
         <div className="border-b border-[color:var(--ec-border)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[color:var(--ec-faint)]">Step</div>
@@ -42,7 +42,7 @@ export function RunPlanSteps({ content }: { content: string }) {
             <div className="border-b border-[color:var(--ec-border)] px-2 py-1.5">
               <span
                 className={cn(
-                  "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium",
+                  "inline-flex items-center gap-1 whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-medium",
                   step.status === "completed"
                     ? "bg-[color:var(--ec-success-soft)] text-[color:var(--ec-success)]"
                     : step.status === "inProgress"
