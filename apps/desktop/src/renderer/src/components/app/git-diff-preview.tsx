@@ -653,6 +653,9 @@ const DiffFileSection = memo(function DiffFileSection({
     [file, onAddDiffComment],
   );
 
+  const openFilePath = normalizeDiffPathSegment(filePathLabel);
+  const canOpenFilePath = Boolean(openFilePath && openFilePath !== "Unknown file");
+
   return (
     <div className={cn("border-b border-zinc-800", isLastFile && "border-b-0")}>
       {alwaysExpandedFileSections ? null : hideFileHeader ? (
@@ -695,7 +698,11 @@ const DiffFileSection = memo(function DiffFileSection({
             <button
               type="button"
               className="rounded px-1 py-0.5 text-zinc-500 transition hover:bg-zinc-800/70 hover:text-cyan-200"
-              onClick={() => onOpenFile(filePathLabel)}
+              onClick={() => {
+                if (canOpenFilePath) {
+                  onOpenFile(openFilePath);
+                }
+              }}
               aria-label={`Open file ${filePathLabel}`}
               title={`Open file ${filePathLabel}`}
             >
