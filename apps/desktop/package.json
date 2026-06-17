@@ -1,6 +1,6 @@
 {
   "name": "@buildwarden/desktop",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "releaseDate": "2026-06-17",
   "private": true,
   "type": "module",
