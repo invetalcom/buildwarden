@@ -96,5 +96,15 @@ describe("run workspace file guard", () => {
 
     const directory = await readRunWorkspaceFileForPreview({ workspacePath: root, requestedPath: "src" });
     expect(directory.unavailableReason).toBe("directory");
+
+    const missingWorkspace = await readRunWorkspaceFileForPreview({
+      workspacePath: join(root, "missing-workspace"),
+      requestedPath: "src/missing.ts",
+    });
+    expect(missingWorkspace.unavailableReason).toBe("workspace-unavailable");
+
+    await writeFile(join(root, "src", "binary.bin"), Buffer.from([0x62, 0x00, 0x69, 0x6e]));
+    const binary = await readRunWorkspaceFileForPreview({ workspacePath: root, requestedPath: "src/binary.bin" });
+    expect(binary.unavailableReason).toBe("binary");
   });
 });
