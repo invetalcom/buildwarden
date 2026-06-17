@@ -42,7 +42,7 @@
 :root[data-theme="dark"],
 body[data-theme="dark"] {
   --ec-bg: rgba(15, 17, 19, 0.42);
-  --ec-bg-elevated: rgba(32, 36, 41, 0.78);
+  --ec-bg-elevated: rgba(32, 36, 41, 0.96);
   --ec-titlebar: #101417;
   --ec-sidebar: rgba(9, 11, 12, 0.3);
   --ec-panel: rgba(30, 34, 39, 0.6);
@@ -99,7 +99,7 @@ body[data-theme="dark"] {
 :root[data-theme="light"],
 body[data-theme="light"] {
   --ec-bg: rgba(240, 246, 251, 0.46);
-  --ec-bg-elevated: rgba(255, 255, 255, 0.8);
+  --ec-bg-elevated: rgba(255, 255, 255, 0.96);
   --ec-titlebar: #e7eef6;
   --ec-sidebar: rgba(255, 255, 255, 0.3);
   --ec-panel: rgba(255, 255, 255, 0.62);
@@ -219,7 +219,7 @@ body[data-theme="light"] {
 
 /* Floating surfaces (dropdowns, popovers, tooltips, command palette) hover over
    arbitrary sharp content, so they get a real backdrop blur behind their
-   translucent fill. */
+   subtly translucent fill. */
 [class*="bg-[var(--ec-bg-elevated)]"],
 .app-composer-dropdown-panel,
 .glass-popover {
