@@ -946,6 +946,7 @@ export function RunActivityTimeline({
       }),
     [activityEntries, canShowPlanDecision, density, latestPlanDecisionText, showLoading],
   );
+  const hasRenderableActivity = activityEntries.length > 0 || showLoading;
   const scrollElementRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const initiallyScrolledRunIdRef = useRef<string | null>(null);
@@ -972,7 +973,7 @@ export function RunActivityTimeline({
   });
   const scrollTimelineToEnd = useCallback(() => {
     const container = scrollElementRef.current;
-    if (!container || timelineItems.length === 0) {
+    if (!container || !hasRenderableActivity) {
       return false;
     }
 
@@ -983,7 +984,7 @@ export function RunActivityTimeline({
     }
     shouldStickToBottomRef.current = true;
     return true;
-  }, [rowVirtualizer, timelineItems.length, virtualized]);
+  }, [hasRenderableActivity, rowVirtualizer, virtualized]);
 
   useEffect(() => {
     shouldStickToBottomRef.current = true;
@@ -1040,7 +1041,7 @@ export function RunActivityTimeline({
   }, [activeReasoningStepIds, measureVisibleVirtualRows, stepMeasurementSignature, timelineItems.length, virtualized]);
 
   useLayoutEffect(() => {
-    if (initiallyScrolledRunIdRef.current === run.id || timelineItems.length === 0 || !scrollElementRef.current) {
+    if (initiallyScrolledRunIdRef.current === run.id || !hasRenderableActivity || !scrollElementRef.current) {
       return;
     }
 
@@ -1058,17 +1059,17 @@ export function RunActivityTimeline({
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [run.id, scrollTimelineToEnd, timelineItems.length]);
+  }, [hasRenderableActivity, run.id, scrollTimelineToEnd]);
 
   useEffect(() => {
-    if (!virtualized || !isRunActive || !shouldStickToBottomRef.current || timelineItems.length === 0) {
+    if (!virtualized || !isRunActive || !shouldStickToBottomRef.current || !hasRenderableActivity) {
       return;
     }
     const frame = window.requestAnimationFrame(() => {
       scrollTimelineToEnd();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [isRunActive, run.status, run.id, scrollTimelineToEnd, stepMeasurementSignature, steps.length, timelineItems.length, virtualized]);
+  }, [hasRenderableActivity, isRunActive, run.status, run.id, scrollTimelineToEnd, stepMeasurementSignature, steps.length, virtualized]);
 
   const renderActivityEntry = (entry: ActivityEntry): ReactNode => {
         if (entry.kind === "diff-batch") {
