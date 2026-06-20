@@ -28,6 +28,7 @@ const PROVIDER_TYPE_LABELS: Record<ProviderType, string> = {
   "azure-legacy": "Azure Legacy",
   "codex-cli": "Codex CLI",
   "claude-code": "Claude Code",
+  "cursor-agent": "Cursor Agent",
 };
 
 const DEFAULT_LABEL_BY_TYPE: Record<ProviderType, string> = {
@@ -35,6 +36,7 @@ const DEFAULT_LABEL_BY_TYPE: Record<ProviderType, string> = {
   "azure-legacy": "Azure Legacy",
   "codex-cli": "Codex CLI",
   "claude-code": "Claude Code",
+  "cursor-agent": "Cursor Agent",
 };
 
 type ModelQuickPick = {
@@ -79,6 +81,10 @@ export type ProviderModelsSettingsTabProps = {
   claudeBinaryPath: string;
   claudeLaunchArgs: string;
   detectedClaudeBinaryPath: string | null;
+  cursorBinaryPath: string;
+  cursorApiEndpoint: string;
+  detectedCursorBinaryPath: string | null;
+  detectedCursorMessage: string | null;
   providerBaseUrl: string;
   providerConfigJson: string;
   providerAzureApiVersion: string;
@@ -104,6 +110,8 @@ export type ProviderModelsSettingsTabProps = {
   onCodexHomePathChange: (value: string) => void;
   onClaudeBinaryPathChange: (value: string) => void;
   onClaudeLaunchArgsChange: (value: string) => void;
+  onCursorBinaryPathChange: (value: string) => void;
+  onCursorApiEndpointChange: (value: string) => void;
   onProviderBaseUrlChange: (value: string) => void;
   onProviderConfigJsonChange: (value: string) => void;
   onProviderAzureApiVersionChange: (value: string) => void;
@@ -130,6 +138,10 @@ export const ProviderModelsSettingsTab = ({
   claudeBinaryPath,
   claudeLaunchArgs,
   detectedClaudeBinaryPath,
+  cursorBinaryPath,
+  cursorApiEndpoint,
+  detectedCursorBinaryPath,
+  detectedCursorMessage,
   providerBaseUrl,
   providerConfigJson,
   providerAzureApiVersion,
@@ -155,6 +167,8 @@ export const ProviderModelsSettingsTab = ({
   onCodexHomePathChange,
   onClaudeBinaryPathChange,
   onClaudeLaunchArgsChange,
+  onCursorBinaryPathChange,
+  onCursorApiEndpointChange,
   onProviderBaseUrlChange,
   onProviderConfigJsonChange,
   onProviderAzureApiVersionChange,
@@ -520,7 +534,7 @@ export const ProviderModelsSettingsTab = ({
                     </span>
                     <span className={cn("text-zinc-500", isWelcomePresentation ? "text-[11px] leading-4" : "text-xs leading-relaxed")}>
                       {kind === "local-sdk-cli"
-                        ? "Uses tools already on your machine (Codex or Claude Code)."
+                        ? "Uses tools already on your machine (Codex, Claude Code, or Cursor Agent)."
                         : "You supply a key or endpoint: AI SDK or Azure deployments."}
                     </span>
                   </button>
@@ -629,7 +643,29 @@ export const ProviderModelsSettingsTab = ({
                 </div>
               ) : null}
 
-              {providerType !== "codex-cli" && providerType !== "claude-code" && (providerType === "azure-legacy" || showProviderBaseUrlField) ? (
+              {providerType === "cursor-agent" ? (
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <SettingsField label="Cursor binary path" hint="Leave blank to auto-detect `agent` or `cursor-agent`." compact={isWelcomePresentation}>
+                    <Input
+                      value={cursorBinaryPath}
+                      onChange={(event) => onCursorBinaryPathChange(event.target.value)}
+                      placeholder={detectedCursorBinaryPath ?? "agent or cursor-agent"}
+                    />
+                  </SettingsField>
+                  <SettingsField label="Cursor API endpoint" hint="Optional endpoint passed with `agent -e`." compact={isWelcomePresentation}>
+                    <Input
+                      value={cursorApiEndpoint}
+                      onChange={(event) => onCursorApiEndpointChange(event.target.value)}
+                      placeholder="Optional"
+                    />
+                  </SettingsField>
+                </div>
+              ) : null}
+
+              {providerType !== "codex-cli" &&
+              providerType !== "claude-code" &&
+              providerType !== "cursor-agent" &&
+              (providerType === "azure-legacy" || showProviderBaseUrlField) ? (
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
                   {providerType === "azure-legacy" ? (
                     <SettingsField label="API key" hint="Optional for some Azure setups." compact={isWelcomePresentation}>
@@ -698,6 +734,13 @@ export const ProviderModelsSettingsTab = ({
                 <p className={cn("mt-3 border border-violet-500/12 bg-violet-500/[0.04] px-3 py-2 text-xs leading-relaxed text-zinc-500", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}>
                   Uses <code className="text-zinc-400">claude -p</code> and your local Claude Code session
                   {detectedClaudeBinaryPath ? <span> (detected: {detectedClaudeBinaryPath})</span> : null}.
+                </p>
+              ) : null}
+              {providerType === "cursor-agent" ? (
+                <p className={cn("mt-3 border border-cyan-500/12 bg-cyan-500/[0.04] px-3 py-2 text-xs leading-relaxed text-zinc-500", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}>
+                  Uses <code className="text-zinc-400">agent acp</code> and your local Cursor CLI login
+                  {detectedCursorBinaryPath ? <span> (detected: {detectedCursorBinaryPath})</span> : null}.
+                  {!detectedCursorBinaryPath && detectedCursorMessage ? <span> {detectedCursorMessage}</span> : null}
                 </p>
               ) : null}
             </div>

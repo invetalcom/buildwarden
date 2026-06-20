@@ -7,6 +7,7 @@ const providerHarnessTypes: Array<[ProviderType, ReturnType<typeof getHarnessTyp
   ["azure-legacy", "azure-legacy"],
   ["codex-cli", "codex-app-server"],
   ["claude-code", "claude-code"],
+  ["cursor-agent", "cursor-acp"],
 ];
 
 describe("harness adapter helpers", () => {

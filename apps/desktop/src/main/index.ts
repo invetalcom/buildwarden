@@ -672,6 +672,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.getAppPaths, () => controller.getAppPaths());
   ipcMain.handle(IPC_CHANNELS.getDetectedCodexInstallation, () => controller.getDetectedCodexInstallation());
   ipcMain.handle(IPC_CHANNELS.getDetectedClaudeInstallation, () => controller.getDetectedClaudeInstallation());
+  ipcMain.handle(IPC_CHANNELS.getDetectedCursorInstallation, () => controller.getDetectedCursorInstallation());
   ipcMain.handle(IPC_CHANNELS.listIntegratedSkills, () => controller.listIntegratedSkills());
   ipcMain.handle(IPC_CHANNELS.getIntegratedSkillContent, (_, skillId: string) => controller.getIntegratedSkillContent(skillId));
   ipcMain.handle(IPC_CHANNELS.addProject, (_, input: ProjectInput) => controller.addProject(input));

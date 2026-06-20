@@ -32,6 +32,8 @@
       "@buildwarden/provider-codex-cli/*": ["packages/provider-codex-cli/src/*"],
       "@buildwarden/provider-claude-code": ["packages/provider-claude-code/src/index.ts"],
       "@buildwarden/provider-claude-code/*": ["packages/provider-claude-code/src/*"],
+      "@buildwarden/provider-cursor-agent": ["packages/provider-cursor-agent/src/index.ts"],
+      "@buildwarden/provider-cursor-agent/*": ["packages/provider-cursor-agent/src/*"],
       "@buildwarden/provider-azure-legacy": ["packages/provider-azure-legacy/src/index.ts"],
       "@buildwarden/provider-azure-legacy/*": ["packages/provider-azure-legacy/src/*"],
       "@buildwarden/provider-openai": ["packages/provider-openai/src/index.ts"],

@@ -37,6 +37,7 @@ describe("provider composer commands", () => {
   it("filters native commands by provider", () => {
     expect(listComposerCommandsForProvider("codex-cli", "run").map((command) => command.command)).toEqual(["/plan", "/goal"]);
     expect(listComposerCommandsForProvider("claude-code", "run").map((command) => command.command)).toEqual(["/plan"]);
+    expect(listComposerCommandsForProvider("cursor-agent", "run").map((command) => command.command)).toEqual(["/plan"]);
     expect(listComposerCommandsForProvider("ai-sdk", "run")).toEqual([]);
   });
 

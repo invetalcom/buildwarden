@@ -17,6 +17,7 @@ export type ModelPresetTag =
   | "ai-sdk-adapter-curated"
   | "codex-cli"
   | "claude-code"
+  | "cursor-agent"
   | "azure-legacy";
 
 /** @see ModelPresetTag */
@@ -28,12 +29,14 @@ export const PROVIDER_CONNECTION_KIND_LABELS: Record<ProviderConnectionKind, str
 };
 
 export const PROVIDER_TYPES_BY_CONNECTION_KIND: Record<ProviderConnectionKind, readonly ProviderType[]> = {
-  "local-sdk-cli": ["codex-cli", "claude-code"],
+  "local-sdk-cli": ["codex-cli", "claude-code", "cursor-agent"],
   "bring-your-own-key": ["ai-sdk", "azure-legacy"],
 };
 
 export function connectionKindForProviderType(providerType: ProviderType): ProviderConnectionKind {
-  return providerType === "codex-cli" || providerType === "claude-code" ? "local-sdk-cli" : "bring-your-own-key";
+  return providerType === "codex-cli" || providerType === "claude-code" || providerType === "cursor-agent"
+    ? "local-sdk-cli"
+    : "bring-your-own-key";
 }
 
 /**
@@ -74,6 +77,7 @@ function modelPresetTagMatches(
 ): boolean {
   if (tag === "codex-cli") return providerType === "codex-cli";
   if (tag === "claude-code") return providerType === "claude-code";
+  if (tag === "cursor-agent") return providerType === "cursor-agent";
   if (tag === "azure-legacy") return providerType === "azure-legacy";
   if (tag === "ai-sdk:openai") {
     if (providerType !== "ai-sdk") return false;
@@ -161,6 +165,12 @@ export const UNIFIED_MODEL_PRESET_GROUP_LABELS: Record<UnifiedModelPresetGroup, 
 };
 
 export const UNIFIED_MODEL_PRESETS: readonly UnifiedModelPreset[] = [
+  {
+    group: "coding",
+    modelId: "default",
+    displayName: "Cursor Auto",
+    tags: ["cursor-agent"],
+  },
   {
     group: "openai",
     modelId: "gpt-5.5",
@@ -308,6 +318,11 @@ const PROVIDER_CAPABILITIES_BY_TYPE: Record<ProviderType, ProviderCapabilityMap>
     supportsCustomBaseUrl: false,
   },
   "claude-code": {
+    supportsStreaming: true,
+    supportsTools: true,
+    supportsCustomBaseUrl: false,
+  },
+  "cursor-agent": {
     supportsStreaming: true,
     supportsTools: true,
     supportsCustomBaseUrl: false,
