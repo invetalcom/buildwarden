@@ -32,6 +32,7 @@ import {
   APP_SETTING_KEYS,
   buildNetworkProxyRuntimeConfig,
   buildDefaultProjectLabSettings,
+  computeNextAutomationRunAt,
   filterComposerCommandDescriptors,
   getModelPresetsForProvider,
   isDetachedHeadProjectErrorMessage,
@@ -58,9 +59,21 @@ import {
   parseProjectLabSettingsSetting,
   parseProjectActiveSkillsSetting,
   parseShellAllowlistExtraSetting,
+  renderAutomationTemplate,
   serializeProjectForgePrMonitorSettingsSetting,
   validateChatAttachmentPayloads,
+  normalizeAutomationAction,
+  normalizeAutomationGuardrails,
+  normalizeAutomationTrigger,
   type UnifiedProviderFamily,
+  type AutomationInput,
+  type AutomationNotificationPayload,
+  type AutomationPreviewResult,
+  type AutomationRecord,
+  type AutomationRunDetail,
+  type AutomationRunRecord,
+  type AutomationTriggerEvent,
+  type UpdateAutomationInput,
   type StoredAttachmentMetadata,
   type AppSnapshot,
   type BookmarkRecord,
@@ -91,6 +104,7 @@ import {
   type ProjectForgePrMonitorConfig,
   type ProjectForgePrMonitorSettings,
   type ProjectForgePrMonitorSettingsInput,
+  type ProjectForgeRequestSummary,
   type ProjectForgeRequestsResult,
   type ProjectForgeRequestDetailsResult,
   type ProjectForgeReviewActionResult,
@@ -625,6 +639,7 @@ export class AppController
       | "onAppSettingsChanged"
       | "onProjectForgeRequestOpen"
       | "onProjectForgeRequestNotification"
+      | "onAutomationNotification"
       | "showAppMenu"
       | "openSystemTerminalAtPath"
       | "openExternalUrl"
@@ -2756,6 +2771,540 @@ export class AppController
 
   async deleteProjectTask(taskId: string): Promise<void> {
     this.db.deleteProjectTask(taskId);
+  }
+
+  async listProjectAutomations(projectId: string): Promise<AutomationRecord[]> {
+    this.db.getProject(projectId);
+    return this.db.listProjectAutomations(projectId);
+  }
+
+  async createProjectAutomation(projectId: string, input: AutomationInput): Promise<AutomationRecord> {
+    this.db.getProject(projectId);
+    return this.db.createProjectAutomation(projectId, {
+      ...input,
+      trigger: normalizeAutomationTrigger(input.trigger),
+      action: normalizeAutomationAction(input.action),
+      guardrails: normalizeAutomationGuardrails(input.guardrails),
+    });
+  }
+
+  async updateProjectAutomation(automationId: string, input: UpdateAutomationInput): Promise<AutomationRecord> {
+    return this.db.updateProjectAutomation(automationId, {
+      ...input,
+      trigger: input.trigger ? normalizeAutomationTrigger(input.trigger) : undefined,
+      action: input.action ? normalizeAutomationAction(input.action) : undefined,
+      guardrails: input.guardrails ? normalizeAutomationGuardrails(input.guardrails) : undefined,
+    });
+  }
+
+  async deleteProjectAutomation(automationId: string): Promise<void> {
+    this.db.deleteProjectAutomation(automationId);
+  }
+
+  async previewProjectAutomation(projectId: string, input: AutomationInput | AutomationRecord): Promise<AutomationPreviewResult> {
+    const project = this.db.getProject(projectId);
+    const automation = "id" in input
+      ? input
+      : ({
+          id: "preview",
+          projectId,
+          name: input.name.trim() || "Automation preview",
+          description: input.description?.trim() ?? "",
+          enabled: input.enabled === false ? 0 : 1,
+          trigger: normalizeAutomationTrigger(input.trigger),
+          action: normalizeAutomationAction(input.action),
+          guardrails: normalizeAutomationGuardrails(input.guardrails),
+          lastRunAt: null,
+          nextRunAt: null,
+          failureCount: 0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        } satisfies AutomationRecord);
+    const triggerEvent = this.buildManualAutomationEvent("Preview");
+    const renderedPrompt = this.renderAutomationActionTemplate(project, automation, triggerEvent);
+    return {
+      renderedPrompt,
+      nextRunAt: automation.enabled ? computeNextAutomationRunAt(automation.trigger) : null,
+      triggerSummary: this.describeAutomationTrigger(automation),
+      actionSummary: this.describeAutomationAction(automation),
+    };
+  }
+
+  async runProjectAutomationNow(automationId: string): Promise<AutomationRunRecord> {
+    const automation = this.db.getAutomation(automationId);
+    return this.executeAutomation(automation, this.buildManualAutomationEvent("Manual run"));
+  }
+
+  async listAutomationRuns(automationId: string): Promise<AutomationRunRecord[]> {
+    this.db.getAutomation(automationId);
+    return this.db.listAutomationRuns(automationId);
+  }
+
+  async getAutomationRunDetail(automationRunId: string): Promise<AutomationRunDetail> {
+    return this.db.getAutomationRunDetail(automationRunId);
+  }
+
+  async runDueAutomations(): Promise<AutomationNotificationPayload[]> {
+    const notifications: AutomationNotificationPayload[] = [];
+    const dueAutomations = this.db.listDueAutomations(new Date());
+    for (const automation of dueAutomations) {
+      if (!automation.enabled) {
+        continue;
+      }
+      const now = new Date();
+      const nextRunAt = computeNextAutomationRunAt(automation.trigger, now);
+      this.db.touchAutomationSchedule(automation.id, nextRunAt);
+      try {
+        if (automation.trigger.type === "schedule") {
+          const run = await this.executeAutomation(automation, {
+            type: "schedule",
+            reason: "Scheduled run",
+            scheduledFor: automation.nextRunAt,
+            fingerprint: `schedule:${automation.id}:${automation.nextRunAt ?? now.toISOString()}`,
+          });
+          notifications.push(this.buildAutomationNotification(automation, run));
+        } else if (automation.trigger.type === "pr-mr") {
+          notifications.push(...await this.runPrMrAutomationCheck(automation));
+        }
+      } catch (error) {
+        this.logControllerWarn("Local automation tick failed.", {
+          automationId: automation.id,
+          projectId: automation.projectId,
+          error,
+        });
+      }
+    }
+    return notifications;
+  }
+
+  async runAllPrMrAutomationChecks(): Promise<AutomationNotificationPayload[]> {
+    const notifications: AutomationNotificationPayload[] = [];
+    const automations = this.db.listEnabledAutomations().filter((automation) => automation.trigger.type === "pr-mr");
+    for (const automation of automations) {
+      const now = new Date();
+      this.db.touchAutomationSchedule(automation.id, computeNextAutomationRunAt(automation.trigger, now));
+      notifications.push(...await this.runPrMrAutomationCheck(automation));
+    }
+    return notifications;
+  }
+
+  private async runPrMrAutomationCheck(automation: AutomationRecord): Promise<AutomationNotificationPayload[]> {
+    if (automation.trigger.type !== "pr-mr") {
+      return [];
+    }
+    const trigger = automation.trigger;
+    const notifications: AutomationNotificationPayload[] = [];
+    try {
+      const state = trigger.state ?? "open";
+      const result = await this.listProjectForgeRequests(automation.projectId, { state });
+      const requests = result.items.filter((item) => state === "all" || item.state === state);
+      const hasBaseline = this.db.hasAnyAutomationFingerprint(automation.id);
+
+      for (const item of requests) {
+        const triggerEvent = await this.buildPrMrAutomationTriggerEvent(automation, result.repoLabel, item);
+        const fingerprint = triggerEvent.fingerprint;
+        if (!fingerprint) {
+          continue;
+        }
+        if (!hasBaseline) {
+          this.db.markAutomationFingerprint(automation.id, fingerprint, { baseline: true, prUrl: item.url });
+          continue;
+        }
+        if (this.db.hasAutomationFingerprint(automation.id, fingerprint)) {
+          continue;
+        }
+        this.db.markAutomationFingerprint(automation.id, fingerprint, { prUrl: item.url, event: automation.trigger.event });
+        const run = await this.executeAutomation(automation, triggerEvent);
+        notifications.push(this.buildAutomationNotification(automation, run));
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const run = this.db.createAutomationRun({
+        automationId: automation.id,
+        projectId: automation.projectId,
+        status: "failed",
+        triggerType: "pr-mr",
+        triggerEvent: {
+          type: "pr-mr",
+          reason: "PR/MR polling failed",
+          metadata: { error: message },
+        },
+        renderedPrompt: "",
+      });
+      this.db.appendAutomationEvent({
+        automationRunId: run.id,
+        kind: "error",
+        title: "Polling failed",
+        content: message,
+      });
+      const failed = this.db.updateAutomationRun(run.id, {
+        status: "failed",
+        errorMessage: message,
+        finishedAt: new Date().toISOString(),
+      });
+      notifications.push(this.buildAutomationNotification(automation, failed));
+    }
+    return notifications;
+  }
+
+  private async buildPrMrAutomationTriggerEvent(
+    automation: AutomationRecord,
+    repoLabel: string,
+    item: ProjectForgeRequestSummary,
+  ): Promise<AutomationTriggerEvent> {
+    const baseEvent: AutomationTriggerEvent = {
+      type: "pr-mr",
+      reason: `PR/MR ${automation.trigger.type === "pr-mr" ? automation.trigger.event : "updated"}`,
+      prUrl: item.url,
+      prNumber: item.number,
+      prTitle: item.title,
+      prAuthor: item.author,
+      prState: item.state,
+      prSourceBranch: item.sourceBranch,
+      prTargetBranch: item.targetBranch,
+      provider: item.provider,
+      repoLabel,
+    };
+    if (automation.trigger.type !== "pr-mr") {
+      return baseEvent;
+    }
+    if (automation.trigger.event === "opened") {
+      return {
+        ...baseEvent,
+        reason: "PR/MR opened",
+        fingerprint: `pr-mr:opened:${item.provider}:${String(item.number)}`,
+      };
+    }
+    if (automation.trigger.event === "updated") {
+      return {
+        ...baseEvent,
+        reason: "PR/MR updated",
+        fingerprint: `pr-mr:updated:${item.provider}:${String(item.number)}:${item.updatedAt ?? item.createdAt ?? "unknown"}`,
+      };
+    }
+
+    try {
+      const details = await this.getProjectForgeRequestDetails(automation.projectId, { prUrl: item.url });
+      const reviewTimestamps = [
+        ...details.activity.map((activity) => activity.updatedAt ?? activity.createdAt ?? ""),
+        ...details.reviewThreads.flatMap((thread) => thread.comments.map((comment) => comment.updatedAt ?? comment.createdAt ?? "")),
+      ]
+        .filter(Boolean)
+        .sort();
+      const latestReviewActivity = reviewTimestamps.at(-1) ?? item.updatedAt ?? item.createdAt ?? "unknown";
+      return {
+        ...baseEvent,
+        reason: "PR/MR review activity",
+        fingerprint: [
+          "pr-mr:review-activity",
+          item.provider,
+          String(item.number),
+          String(details.request.commentCount ?? 0),
+          String(details.request.reviewCommentCount ?? 0),
+          String(details.reviewThreads.length),
+          latestReviewActivity,
+        ].join(":"),
+        metadata: {
+          commentCount: details.request.commentCount,
+          reviewCommentCount: details.request.reviewCommentCount,
+          reviewThreadCount: details.reviewThreads.length,
+        },
+      };
+    } catch {
+      return {
+        ...baseEvent,
+        reason: "PR/MR review activity",
+        fingerprint: `pr-mr:review-activity:${item.provider}:${String(item.number)}:${item.updatedAt ?? item.createdAt ?? "unknown"}`,
+      };
+    }
+  }
+
+  private buildManualAutomationEvent(reason: string): AutomationTriggerEvent {
+    return {
+      type: "manual",
+      reason,
+      fingerprint: null,
+    };
+  }
+
+  private async executeAutomation(automation: AutomationRecord, triggerEvent: AutomationTriggerEvent): Promise<AutomationRunRecord> {
+    const project = this.db.getProject(automation.projectId);
+    const activeCount = this.db.countActiveAutomationRuns(automation.id);
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayCount = this.db.countAutomationRunsSince(automation.id, todayStart.toISOString());
+    const renderedPrompt = this.renderAutomationActionTemplate(project, automation, triggerEvent);
+    const automationRun = this.db.createAutomationRun({
+      automationId: automation.id,
+      projectId: automation.projectId,
+      status: "queued",
+      triggerType: triggerEvent.type,
+      triggerEvent,
+      renderedPrompt,
+      linkedPrUrl: triggerEvent.prUrl ?? null,
+    });
+
+    if (activeCount >= automation.guardrails.maxConcurrentRuns) {
+      this.db.appendAutomationEvent({
+        automationRunId: automationRun.id,
+        kind: "output",
+        title: "Skipped",
+        content: `Automation already has ${String(activeCount)} active run(s).`,
+      });
+      return this.db.updateAutomationRun(automationRun.id, {
+        status: "skipped",
+        finishedAt: new Date().toISOString(),
+        output: { reason: "max-concurrent-runs" },
+      });
+    }
+    if (todayCount >= automation.guardrails.dailyRunLimit) {
+      this.db.appendAutomationEvent({
+        automationRunId: automationRun.id,
+        kind: "output",
+        title: "Skipped",
+        content: `Automation reached the daily limit of ${String(automation.guardrails.dailyRunLimit)} run(s).`,
+      });
+      return this.db.updateAutomationRun(automationRun.id, {
+        status: "skipped",
+        finishedAt: new Date().toISOString(),
+        output: { reason: "daily-run-limit" },
+      });
+    }
+
+    const startedAt = new Date().toISOString();
+    this.db.updateAutomationRun(automationRun.id, { status: "running", startedAt });
+    this.db.appendAutomationEvent({
+      automationRunId: automationRun.id,
+      kind: "trigger",
+      title: triggerEvent.reason,
+      content: this.describeAutomationTrigger(automation),
+      metadata: triggerEvent.metadata,
+    });
+
+    try {
+      const action = automation.action;
+      if (action.type === "notify") {
+        this.db.appendAutomationEvent({
+          automationRunId: automationRun.id,
+          kind: "output",
+          title: "Notification prepared",
+          content: renderedPrompt,
+        });
+        return this.db.updateAutomationRun(automationRun.id, {
+          status: "succeeded",
+          finishedAt: new Date().toISOString(),
+          output: { message: renderedPrompt },
+        });
+      }
+
+      if (action.type === "create-task") {
+        const title = renderAutomationTemplate(action.titleTemplate, this.buildAutomationTemplateValues(project, automation, triggerEvent)).trim();
+        const task = await this.createProjectTask(automation.projectId, {
+          title: title || automation.name,
+          prompt: renderedPrompt,
+        });
+        this.db.appendAutomationEvent({
+          automationRunId: automationRun.id,
+          kind: "action",
+          title: "Task created",
+          content: task.title,
+          metadata: { taskId: task.id },
+        });
+        return this.db.updateAutomationRun(automationRun.id, {
+          status: "succeeded",
+          linkedTaskId: task.id,
+          finishedAt: new Date().toISOString(),
+          output: { taskId: task.id, taskTitle: task.title },
+        });
+      }
+
+      if (action.type === "start-run") {
+        const model = this.db.getModel(action.modelId);
+        const provider = this.db.getProviderAccount(model.providerAccountId);
+        const run = await this.createRun({
+          projectId: automation.projectId,
+          providerAccountId: model.providerAccountId,
+          modelId: model.id,
+          harnessType: getHarnessTypeForProvider(provider.providerType),
+          mode: action.mode,
+          workspaceType: action.workspaceType,
+          baseBranch: action.baseBranch ?? project.defaultBranch,
+          prompt: renderedPrompt,
+          yoloMode: automation.guardrails.accessMode === "full-access",
+        });
+        this.db.appendAutomationEvent({
+          automationRunId: automationRun.id,
+          kind: "action",
+          title: "Agent run started",
+          content: run.prompt,
+          metadata: { runId: run.id },
+        });
+        return this.db.updateAutomationRun(automationRun.id, {
+          status: "succeeded",
+          linkedRunId: run.id,
+          finishedAt: new Date().toISOString(),
+          output: { runId: run.id },
+        });
+      }
+
+      if (action.type === "run-project-lab") {
+        const threads = await this.runProjectLab({
+          projectId: automation.projectId,
+          mode: action.mode,
+          baseBranch: action.baseBranch ?? project.defaultBranch,
+          topic: renderedPrompt,
+          implementationModelId: action.implementationModelId,
+          reviewModelId: action.reviewModelId,
+          origin: "automation",
+        });
+        const threadIds = threads.map((thread) => thread.id);
+        this.db.appendAutomationEvent({
+          automationRunId: automationRun.id,
+          kind: "action",
+          title: "Project Lab started",
+          content: `${String(threadIds.length)} thread(s) created.`,
+          metadata: { threadIds },
+        });
+        return this.db.updateAutomationRun(automationRun.id, {
+          status: "succeeded",
+          linkedLabThreadIds: threadIds,
+          finishedAt: new Date().toISOString(),
+          output: { threadIds },
+        });
+      }
+
+      const prUrl = triggerEvent.prUrl?.trim();
+      if (!prUrl) {
+        throw new Error("Analyze PR/MR automations require a PR/MR trigger event.");
+      }
+      const diff = await this.fetchProjectPrMrDiff(automation.projectId, {
+        prUrl,
+        baseBranch: triggerEvent.prTargetBranch ?? undefined,
+      });
+      const review = await this.analyzeProjectPrMrDiff(automation.projectId, {
+        prUrl,
+        diff: diff.diff,
+        modelId: action.modelId,
+      });
+      this.db.appendAutomationEvent({
+        automationRunId: automationRun.id,
+        kind: "output",
+        title: "Draft PR/MR review saved",
+        content: review.summary,
+        metadata: { score: review.score, scoreLabel: review.scoreLabel },
+      });
+      return this.db.updateAutomationRun(automationRun.id, {
+        status: "succeeded",
+        linkedPrUrl: prUrl,
+        finishedAt: new Date().toISOString(),
+        output: {
+          review,
+          prompt: renderedPrompt,
+          provider: diff.provider,
+          number: diff.number,
+          baseRef: diff.baseRef,
+          externalWritesRequireConfirmation: automation.guardrails.requireExternalWriteConfirmation,
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.db.appendAutomationEvent({
+        automationRunId: automationRun.id,
+        kind: "error",
+        title: "Automation failed",
+        content: message,
+      });
+      return this.db.updateAutomationRun(automationRun.id, {
+        status: "failed",
+        errorMessage: message,
+        finishedAt: new Date().toISOString(),
+      });
+    }
+  }
+
+  private renderAutomationActionTemplate(
+    project: ProjectRecord,
+    automation: AutomationRecord,
+    triggerEvent: AutomationTriggerEvent,
+  ): string {
+    const values = this.buildAutomationTemplateValues(project, automation, triggerEvent);
+    const action = automation.action;
+    if (action.type === "notify") {
+      return renderAutomationTemplate(action.messageTemplate, values).trim();
+    }
+    if (action.type === "start-run" || action.type === "create-task") {
+      return renderAutomationTemplate(action.promptTemplate, values).trim();
+    }
+    if (action.type === "run-project-lab") {
+      return renderAutomationTemplate(action.topicTemplate, values).trim();
+    }
+    return renderAutomationTemplate(action.promptTemplate, values).trim();
+  }
+
+  private buildAutomationTemplateValues(
+    project: ProjectRecord,
+    automation: AutomationRecord,
+    triggerEvent: AutomationTriggerEvent,
+  ): Record<string, string | number | null | undefined> {
+    return {
+      "project.id": project.id,
+      "project.name": project.name,
+      "project.path": project.repoPath,
+      "project.defaultBranch": project.defaultBranch,
+      "automation.id": automation.id,
+      "automation.name": automation.name,
+      "trigger.reason": triggerEvent.reason,
+      "trigger.type": triggerEvent.type,
+      "pr.url": triggerEvent.prUrl,
+      "pr.number": triggerEvent.prNumber,
+      "pr.title": triggerEvent.prTitle,
+      "pr.author": triggerEvent.prAuthor,
+      "pr.state": triggerEvent.prState,
+      "pr.sourceBranch": triggerEvent.prSourceBranch,
+      "pr.targetBranch": triggerEvent.prTargetBranch,
+      "pr.provider": triggerEvent.provider,
+      "repo.label": triggerEvent.repoLabel,
+    };
+  }
+
+  private describeAutomationTrigger(automation: AutomationRecord): string {
+    const trigger = automation.trigger;
+    if (trigger.type === "manual") {
+      return "Manual";
+    }
+    if (trigger.type === "schedule") {
+      return trigger.mode === "daily"
+        ? `Daily at ${trigger.dailyTime ?? "09:00"}`
+        : `Every ${String(trigger.intervalMinutes ?? 60)} minute(s)`;
+    }
+    return `PR/MR ${trigger.event.replace("-", " ")} every ${String(trigger.intervalMinutes)} minute(s)`;
+  }
+
+  private describeAutomationAction(automation: AutomationRecord): string {
+    const action = automation.action;
+    if (action.type === "start-run") return "Start agent run";
+    if (action.type === "run-project-lab") return "Run Project Lab";
+    if (action.type === "create-task") return "Create task";
+    if (action.type === "analyze-pr-mr") return "Analyze PR/MR";
+    return "Notify";
+  }
+
+  private buildAutomationNotification(
+    automation: AutomationRecord,
+    run: AutomationRunRecord,
+  ): AutomationNotificationPayload {
+    const project = this.db.getProject(automation.projectId);
+    const statusLabel = run.status === "succeeded" ? "completed" : run.status;
+    return {
+      automationId: automation.id,
+      automationRunId: run.id,
+      projectId: automation.projectId,
+      projectName: project.name,
+      automationName: automation.name,
+      status: run.status,
+      title: `${automation.name} ${statusLabel}`,
+      message: run.errorMessage ?? (run.renderedPrompt.slice(0, 240) || this.describeAutomationAction(automation)),
+    };
   }
 
   async runProjectLab(input: RunProjectLabInput): Promise<ProjectLabThreadRecord[]> {

@@ -18,6 +18,7 @@ import {
   GitPullRequest,
   LayoutGrid,
   ListChecks,
+  PlaySquare,
   MessageSquare,
   Plus,
   Settings,
@@ -84,6 +85,7 @@ const projectTools: Array<{ tab: ProjectPageTab; label: string; icon: typeof Bot
   { tab: "graphs", label: "Graphs", icon: GitGraph },
   { tab: "ai-insights-history", label: "AI Insights", icon: BrainCircuit },
   { tab: "tasks", label: "Task Board", icon: ListChecks, count: (project) => project.tasks.length },
+  { tab: "automations", label: "Automations", icon: PlaySquare, count: (project) => project.automations.length },
   { tab: "lab", label: "Project Lab", icon: Sparkles, count: (project) => project.labThreads.length },
   { tab: "for-later", label: "For Later", icon: Archive, count: (project) => project.forLaterRuns.length },
 ];

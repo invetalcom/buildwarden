@@ -119,6 +119,7 @@ import {
 } from "./components/app/app-model";
 import {
   AppNotifications,
+  type AutomationToast,
   type ProjectForgeRequestToast,
   type ShellApprovalRequestState,
 } from "./components/app/AppNotifications";
@@ -194,6 +195,7 @@ export const App = () => {
   const [error, setError] = useState<string | null>(null);
   const [appWarning, setAppWarning] = useState<AppWarning | null>(null);
   const [projectForgeRequestToasts, setProjectForgeRequestToasts] = useState<ProjectForgeRequestToast[]>([]);
+  const [automationToasts, setAutomationToasts] = useState<AutomationToast[]>([]);
   const [projectName, setProjectName] = useState("");
   const [projectPath, setProjectPath] = useState("");
   const [projectFolderGitStatus, setProjectFolderGitStatus] = useState<ProjectFolderGitStatus | null>(null);
@@ -2678,6 +2680,10 @@ export const App = () => {
     setProjectForgeRequestToasts((current) => current.filter((toast) => toast.id !== id));
   }, []);
 
+  const dismissAutomationToast = useCallback((id: string) => {
+    setAutomationToasts((current) => current.filter((toast) => toast.id !== id));
+  }, []);
+
   const openProjectForgeRequest = useCallback(
     (payload: ProjectForgeRequestOpenPayload) => {
       setProjectForgeRequestToasts((current) =>
@@ -2907,6 +2913,20 @@ export const App = () => {
       ].slice(0, 4));
     });
   }, [buildwarden]);
+
+  useEffect(() => {
+    if (!buildwarden) {
+      return;
+    }
+    return buildwarden.onAutomationNotification((payload) => {
+      const id = `${payload.automationRunId}:${payload.status}`;
+      setAutomationToasts((current) => [
+        { ...payload, id },
+        ...current.filter((toast) => toast.id !== id),
+      ].slice(0, 4));
+      void loadSnapshot();
+    });
+  }, [buildwarden, loadSnapshot]);
 
   useEffect(() => {
     if (!buildwarden) {
@@ -4569,6 +4589,7 @@ export const App = () => {
                 })
               }
               onOpenProjectLabImplementation={(runId) => void handleRunSelect(selectedProject.project.id, runId)}
+              onAutomationsChanged={loadSnapshot}
               onBranchesChanged={loadProjectBranches}
               onDeleteProject={() => void deleteProject(selectedProject.project.id)}
               onOpenProjectSettings={projectPageOnOpenProjectSettings}
@@ -4697,6 +4718,8 @@ export const App = () => {
         projectForgeRequestToasts={projectForgeRequestToasts}
         onOpenProjectForgeRequest={openProjectForgeRequest}
         onDismissProjectForgeRequestToast={dismissProjectForgeRequestToast}
+        automationToasts={automationToasts}
+        onDismissAutomationToast={dismissAutomationToast}
       />
 
       <RunActionDialogs

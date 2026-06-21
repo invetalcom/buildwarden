@@ -580,6 +580,303 @@ export interface UpdateProjectTaskInput {
   prompt?: string;
 }
 
+export type AutomationTriggerType = "manual" | "schedule" | "pr-mr";
+export type AutomationScheduleMode = "interval" | "daily";
+export type AutomationPrMrEvent = "opened" | "updated" | "review-activity";
+export type AutomationActionType = "notify" | "start-run" | "run-project-lab" | "create-task" | "analyze-pr-mr";
+export type AutomationRunStatus = "queued" | "running" | "succeeded" | "failed" | "skipped";
+export type AutomationEventKind = "trigger" | "action" | "output" | "error";
+export type AutomationAccessMode = "supervised" | "full-access";
+
+export interface AutomationManualTrigger {
+  type: "manual";
+}
+
+export interface AutomationScheduleTrigger {
+  type: "schedule";
+  mode: AutomationScheduleMode;
+  intervalMinutes?: number;
+  dailyTime?: string;
+}
+
+export interface AutomationPrMrTrigger {
+  type: "pr-mr";
+  event: AutomationPrMrEvent;
+  intervalMinutes: number;
+  state?: ProjectForgeRequestState;
+}
+
+export type AutomationTrigger = AutomationManualTrigger | AutomationScheduleTrigger | AutomationPrMrTrigger;
+
+export interface AutomationNotifyAction {
+  type: "notify";
+  messageTemplate: string;
+}
+
+export interface AutomationStartRunAction {
+  type: "start-run";
+  modelId: string;
+  mode: RunMode;
+  workspaceType: RunWorkspaceType;
+  baseBranch?: string | null;
+  promptTemplate: string;
+}
+
+export interface AutomationRunProjectLabAction {
+  type: "run-project-lab";
+  mode: ProjectLabMode;
+  baseBranch?: string | null;
+  implementationModelId: string;
+  reviewModelId: string;
+  topicTemplate: string;
+}
+
+export interface AutomationCreateTaskAction {
+  type: "create-task";
+  titleTemplate: string;
+  promptTemplate: string;
+}
+
+export interface AutomationAnalyzePrMrAction {
+  type: "analyze-pr-mr";
+  modelId: string;
+  promptTemplate: string;
+}
+
+export type AutomationAction =
+  | AutomationNotifyAction
+  | AutomationStartRunAction
+  | AutomationRunProjectLabAction
+  | AutomationCreateTaskAction
+  | AutomationAnalyzePrMrAction;
+
+export interface AutomationGuardrails {
+  maxConcurrentRuns: number;
+  dailyRunLimit: number;
+  accessMode: AutomationAccessMode;
+  requireExternalWriteConfirmation: boolean;
+}
+
+export interface AutomationRecord {
+  id: string;
+  projectId: string;
+  name: string;
+  description: string;
+  enabled: number;
+  trigger: AutomationTrigger;
+  action: AutomationAction;
+  guardrails: AutomationGuardrails;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  failureCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AutomationInput {
+  name: string;
+  description?: string;
+  enabled?: boolean;
+  trigger: AutomationTrigger;
+  action: AutomationAction;
+  guardrails?: Partial<AutomationGuardrails>;
+}
+
+export interface UpdateAutomationInput {
+  name?: string;
+  description?: string;
+  enabled?: boolean;
+  trigger?: AutomationTrigger;
+  action?: AutomationAction;
+  guardrails?: Partial<AutomationGuardrails>;
+}
+
+export interface AutomationTriggerEvent {
+  type: AutomationTriggerType;
+  reason: string;
+  fingerprint?: string | null;
+  scheduledFor?: string | null;
+  prUrl?: string | null;
+  prNumber?: number | null;
+  prTitle?: string | null;
+  prAuthor?: string | null;
+  prState?: string | null;
+  prSourceBranch?: string | null;
+  prTargetBranch?: string | null;
+  provider?: ProjectForgeProvider | null;
+  repoLabel?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AutomationRunRecord {
+  id: string;
+  automationId: string;
+  projectId: string;
+  status: AutomationRunStatus;
+  triggerType: AutomationTriggerType;
+  triggerEvent: AutomationTriggerEvent;
+  renderedPrompt: string;
+  output: Record<string, unknown> | null;
+  errorMessage: string | null;
+  linkedRunId: string | null;
+  linkedTaskId: string | null;
+  linkedLabThreadIds: string[];
+  linkedPrUrl: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  updatedAt: string;
+}
+
+export interface AutomationEventRecord {
+  id: string;
+  automationRunId: string;
+  kind: AutomationEventKind;
+  title: string;
+  content: string;
+  metadataJson: string;
+  createdAt: string;
+}
+
+export interface AutomationRunDetail {
+  run: AutomationRunRecord;
+  events: AutomationEventRecord[];
+}
+
+export interface AutomationPreviewResult {
+  renderedPrompt: string;
+  nextRunAt: string | null;
+  triggerSummary: string;
+  actionSummary: string;
+}
+
+export interface AutomationNotificationPayload {
+  automationId: string;
+  automationRunId: string;
+  projectId: string;
+  projectName: string;
+  automationName: string;
+  status: AutomationRunStatus;
+  title: string;
+  message: string;
+}
+
+export const DEFAULT_AUTOMATION_GUARDRAILS: AutomationGuardrails = {
+  maxConcurrentRuns: 1,
+  dailyRunLimit: 12,
+  accessMode: "supervised",
+  requireExternalWriteConfirmation: true,
+};
+
+const clampAutomationInteger = (value: unknown, fallback: number, min: number, max: number): number => {
+  const parsed = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, Math.round(parsed)));
+};
+
+export const normalizeAutomationGuardrails = (input?: Partial<AutomationGuardrails> | null): AutomationGuardrails => ({
+  maxConcurrentRuns: clampAutomationInteger(input?.maxConcurrentRuns, DEFAULT_AUTOMATION_GUARDRAILS.maxConcurrentRuns, 1, 10),
+  dailyRunLimit: clampAutomationInteger(input?.dailyRunLimit, DEFAULT_AUTOMATION_GUARDRAILS.dailyRunLimit, 1, 100),
+  accessMode: input?.accessMode === "full-access" ? "full-access" : "supervised",
+  requireExternalWriteConfirmation: input?.requireExternalWriteConfirmation !== false,
+});
+
+export const normalizeAutomationTrigger = (input: AutomationTrigger): AutomationTrigger => {
+  if (input.type === "schedule") {
+    if (input.mode === "daily") {
+      const dailyTime = /^\d{2}:\d{2}$/.test(input.dailyTime ?? "") ? input.dailyTime! : "09:00";
+      return { type: "schedule", mode: "daily", dailyTime };
+    }
+    return {
+      type: "schedule",
+      mode: "interval",
+      intervalMinutes: clampAutomationInteger(input.intervalMinutes, 60, 1, 10_080),
+    };
+  }
+  if (input.type === "pr-mr") {
+    return {
+      type: "pr-mr",
+      event: ["opened", "updated", "review-activity"].includes(input.event) ? input.event : "opened",
+      intervalMinutes: clampAutomationInteger(input.intervalMinutes, 15, 1, 1_440),
+      state: input.state ?? "open",
+    };
+  }
+  return { type: "manual" };
+};
+
+export const normalizeAutomationAction = (input: AutomationAction): AutomationAction => {
+  if (input.type === "start-run") {
+    return {
+      type: "start-run",
+      modelId: input.modelId.trim(),
+      mode: input.mode === "ask" || input.mode === "plan" ? input.mode : "code",
+      workspaceType: input.workspaceType === "local" || input.workspaceType === "copy" ? input.workspaceType : "worktree",
+      baseBranch: input.baseBranch?.trim() || null,
+      promptTemplate: input.promptTemplate.trim(),
+    };
+  }
+  if (input.type === "run-project-lab") {
+    return {
+      type: "run-project-lab",
+      mode: input.mode,
+      baseBranch: input.baseBranch?.trim() || null,
+      implementationModelId: input.implementationModelId.trim(),
+      reviewModelId: input.reviewModelId.trim(),
+      topicTemplate: input.topicTemplate.trim(),
+    };
+  }
+  if (input.type === "create-task") {
+    return {
+      type: "create-task",
+      titleTemplate: input.titleTemplate.trim(),
+      promptTemplate: input.promptTemplate.trim(),
+    };
+  }
+  if (input.type === "analyze-pr-mr") {
+    return {
+      type: "analyze-pr-mr",
+      modelId: input.modelId.trim(),
+      promptTemplate: input.promptTemplate.trim(),
+    };
+  }
+  return { type: "notify", messageTemplate: input.messageTemplate.trim() };
+};
+
+export const computeNextAutomationRunAt = (
+  trigger: AutomationTrigger,
+  from: Date = new Date(),
+): string | null => {
+  const normalized = normalizeAutomationTrigger(trigger);
+  if (normalized.type === "manual") {
+    return null;
+  }
+  if (normalized.type === "pr-mr") {
+    return new Date(from.getTime() + normalized.intervalMinutes * 60_000).toISOString();
+  }
+  if (normalized.mode === "interval") {
+    return new Date(from.getTime() + (normalized.intervalMinutes ?? 60) * 60_000).toISOString();
+  }
+
+  const [hourRaw, minuteRaw] = (normalized.dailyTime ?? "09:00").split(":");
+  const next = new Date(from);
+  next.setHours(Number.parseInt(hourRaw ?? "9", 10), Number.parseInt(minuteRaw ?? "0", 10), 0, 0);
+  if (next.getTime() <= from.getTime()) {
+    next.setDate(next.getDate() + 1);
+  }
+  return next.toISOString();
+};
+
+export const renderAutomationTemplate = (
+  template: string,
+  values: Record<string, string | number | null | undefined>,
+): string =>
+  template.replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (_match, key: string) => {
+    const value = values[key];
+    return value === null || value === undefined ? "" : String(value);
+  });
+
 export type ProjectLabThreadKind = "implementation" | "rfc";
 export type ProjectLabMode = "new-feature" | "bugfix" | "refactoring" | "rfc-only";
 export type ProjectLabThreadStatus =
@@ -589,7 +886,7 @@ export type ProjectLabThreadStatus =
   | "cancelled"
   | "completed"
   | "failed";
-export type ProjectLabOrigin = "manual" | "idle" | "task";
+export type ProjectLabOrigin = "manual" | "idle" | "task" | "automation";
 export type ProjectLabEventRole = "system" | "implementation" | "review" | "rfc";
 
 export interface ProjectLabSettings {
@@ -991,6 +1288,7 @@ export interface ProjectSnapshot {
   activeRuns: RunRecord[];
   recentRuns: RunRecord[];
   tasks: ProjectTaskRecord[];
+  automations: AutomationRecord[];
   insights: ProjectInsightRecord[];
   labThreads: ProjectLabThreadDetail[];
 }
@@ -2156,6 +2454,14 @@ export interface DesktopApi {
   createProjectTask(projectId: string, input: ProjectTaskInput): Promise<ProjectTaskRecord>;
   updateProjectTask(taskId: string, input: UpdateProjectTaskInput): Promise<ProjectTaskRecord>;
   deleteProjectTask(taskId: string): Promise<void>;
+  listProjectAutomations(projectId: string): Promise<AutomationRecord[]>;
+  createProjectAutomation(projectId: string, input: AutomationInput): Promise<AutomationRecord>;
+  updateProjectAutomation(automationId: string, input: UpdateAutomationInput): Promise<AutomationRecord>;
+  deleteProjectAutomation(automationId: string): Promise<void>;
+  previewProjectAutomation(projectId: string, input: AutomationInput | AutomationRecord): Promise<AutomationPreviewResult>;
+  runProjectAutomationNow(automationId: string): Promise<AutomationRunRecord>;
+  listAutomationRuns(automationId: string): Promise<AutomationRunRecord[]>;
+  getAutomationRunDetail(automationRunId: string): Promise<AutomationRunDetail>;
   runProjectLab(input: RunProjectLabInput): Promise<ProjectLabThreadRecord[]>;
   deleteProjectLabThread(threadId: string): Promise<void>;
   generateProjectTaskRunPrompt(input: { projectId: string; title: string; notes: string; modelId: string }): Promise<string>;
@@ -2277,6 +2583,7 @@ export interface DesktopApi {
   onAppSettingsChanged(listener: () => void): () => void;
   onProjectForgeRequestOpen(listener: (payload: ProjectForgeRequestOpenPayload) => void): () => void;
   onProjectForgeRequestNotification(listener: (payload: ProjectForgeRequestNotificationPayload) => void): () => void;
+  onAutomationNotification(listener: (payload: AutomationNotificationPayload) => void): () => void;
   showAppMenu(section: AppMenuSection, x: number, y: number): Promise<void>;
 }
 
@@ -2320,6 +2627,14 @@ export const IPC_CHANNELS = {
   createProjectTask: "buildwarden:create-project-task",
   updateProjectTask: "buildwarden:update-project-task",
   deleteProjectTask: "buildwarden:delete-project-task",
+  listProjectAutomations: "buildwarden:list-project-automations",
+  createProjectAutomation: "buildwarden:create-project-automation",
+  updateProjectAutomation: "buildwarden:update-project-automation",
+  deleteProjectAutomation: "buildwarden:delete-project-automation",
+  previewProjectAutomation: "buildwarden:preview-project-automation",
+  runProjectAutomationNow: "buildwarden:run-project-automation-now",
+  listAutomationRuns: "buildwarden:list-automation-runs",
+  getAutomationRunDetail: "buildwarden:get-automation-run-detail",
   runProjectLab: "buildwarden:run-project-lab",
   deleteProjectLabThread: "buildwarden:delete-project-lab-thread",
   generateProjectTaskRunPrompt: "buildwarden:generate-project-task-run-prompt",
@@ -2435,6 +2750,7 @@ export const IPC_CHANNELS = {
   appSettingsChanged: "buildwarden:app-settings-changed",
   projectForgeRequestOpen: "buildwarden:project-forge-request-open",
   projectForgeRequestNotification: "buildwarden:project-forge-request-notification",
+  automationNotification: "buildwarden:automation-notification",
   showAppMenu: "buildwarden:show-app-menu",
 } as const;
 

@@ -15,6 +15,7 @@ import { ProjectForLaterTab } from "./ProjectForLaterTab";
 import { ProjectAiInsightsHistoryPage } from "./ProjectAiInsightsHistoryPage";
 import { ProjectLabTab } from "./ProjectLabTab";
 import { ProjectOverviewTab } from "./ProjectOverviewTab";
+import { ProjectAutomationsTab } from "./ProjectAutomationsTab";
 import { ProjectBranchesPage } from "./ProjectBranchesPage";
 import { ProjectPrMrTab } from "./ProjectPrMrTab";
 import { ProjectSettingsPage } from "./ProjectSettingsPage";
@@ -68,6 +69,7 @@ interface ProjectPageProps {
   onRunProjectLab: (input: { mode: ProjectLabMode; baseBranch: string; implementationModelId: string; reviewModelId: string }) => void | Promise<void>;
   onDeleteProjectLabThread: (threadId: string) => void | Promise<void>;
   onOpenProjectLabImplementation: (runId: string) => void;
+  onAutomationsChanged: () => void | Promise<void>;
   onBranchesChanged: () => void | Promise<void>;
   onDeleteProject: () => void | Promise<void>;
   onOpenProjectSettings: () => void | Promise<void>;
@@ -118,6 +120,7 @@ export const ProjectPage = ({
   onRunProjectLab,
   onDeleteProjectLabThread,
   onOpenProjectLabImplementation,
+  onAutomationsChanged,
   onBranchesChanged,
   onDeleteProject,
   onOpenProjectSettings,
@@ -212,6 +215,19 @@ export const ProjectPage = ({
           onRunProjectLab={onRunProjectLab}
           onDeleteThread={onDeleteProjectLabThread}
           onOpenImplementationRun={onOpenProjectLabImplementation}
+        />
+      ) : null}
+
+      {activeTab === "automations" ? (
+        <ProjectAutomationsTab
+          project={project.project}
+          automations={project.automations}
+          modelOptions={modelOptions}
+          branchOptions={availableBranches}
+          defaultModelId={defaultTaskModelId}
+          defaultBaseBranch={runBaseBranch || project.project.defaultBranch}
+          onSelectRun={onSelectRun}
+          onChanged={onAutomationsChanged}
         />
       ) : null}
 

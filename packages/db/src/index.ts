@@ -6,6 +6,17 @@ import initSqlJs, { type Database, type QueryExecResult, type SqlJsStatic } from
 import type {
   AppSettingRecord,
   AppSnapshot,
+  AutomationAction,
+  AutomationEventKind,
+  AutomationEventRecord,
+  AutomationGuardrails,
+  AutomationInput,
+  AutomationRecord,
+  AutomationRunDetail,
+  AutomationRunRecord,
+  AutomationRunStatus,
+  AutomationTrigger,
+  AutomationTriggerEvent,
   BookmarkRecord,
   BookmarkStepRecord,
   BookmarkSummary,
@@ -24,6 +35,7 @@ import type {
   ProjectLabThreadDetail,
   ProjectLabThreadKind,
   ProjectLabMode,
+  ProjectLabOrigin,
   ProjectLabThreadRecord,
   ProjectLabThreadStatus,
   ProjectTaskInput,
@@ -44,6 +56,12 @@ import type {
   RunStatus,
   RunStepRecord,
   WorktreeRecord,
+} from "@buildwarden/shared";
+import {
+  computeNextAutomationRunAt,
+  normalizeAutomationAction,
+  normalizeAutomationGuardrails,
+  normalizeAutomationTrigger,
 } from "@buildwarden/shared";
 
 const require = createRequire(import.meta.url);
@@ -160,6 +178,7 @@ export class BuildWardenDatabase {
         activeRuns: runs.filter((run) => ["queued", "preparing", "running"].includes(run.status)),
         recentRuns: runs.slice(0, 12),
         tasks: this.listProjectTasks(project.id),
+        automations: this.listProjectAutomations(project.id),
         insights: this.listProjectInsights(project.id),
         labThreads: this.listProjectLabThreadDetails(project.id),
       } satisfies ProjectSnapshot;
@@ -498,6 +517,530 @@ export class BuildWardenDatabase {
     this.persist();
   }
 
+  createProjectAutomation(projectId: string, input: AutomationInput): AutomationRecord {
+    const id = createId();
+    const createdAt = nowIso();
+    const trigger = normalizeAutomationTrigger(input.trigger);
+    const action = normalizeAutomationAction(input.action);
+    const guardrails = normalizeAutomationGuardrails(input.guardrails);
+    const nextRunAt = input.enabled === false ? null : computeNextAutomationRunAt(trigger, new Date(createdAt));
+    const name = input.name.trim();
+    if (!name) {
+      throw new Error("Automation name cannot be empty.");
+    }
+    this.run(
+      `
+      insert into automations (
+        id, project_id, name, description, enabled, trigger_json, action_json, guardrails_json,
+        last_run_at, next_run_at, failure_count, created_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, null, ?, 0, ?, ?)
+      `,
+      [
+        id,
+        projectId,
+        name,
+        input.description?.trim() ?? "",
+        input.enabled === false ? 0 : 1,
+        JSON.stringify(trigger),
+        JSON.stringify(action),
+        JSON.stringify(guardrails),
+        nextRunAt,
+        createdAt,
+        createdAt,
+      ],
+    );
+    this.persist();
+    return this.getAutomation(id);
+  }
+
+  updateProjectAutomation(automationId: string, input: Partial<AutomationInput>): AutomationRecord {
+    const existing = this.getAutomation(automationId);
+    const name = input.name === undefined ? existing.name : input.name.trim();
+    if (!name) {
+      throw new Error("Automation name cannot be empty.");
+    }
+    const enabled = input.enabled === undefined ? existing.enabled : input.enabled ? 1 : 0;
+    const trigger = input.trigger ? normalizeAutomationTrigger(input.trigger) : existing.trigger;
+    const action = input.action ? normalizeAutomationAction(input.action) : existing.action;
+    const guardrails = input.guardrails
+      ? normalizeAutomationGuardrails({ ...existing.guardrails, ...input.guardrails })
+      : existing.guardrails;
+    const updatedAt = nowIso();
+    const nextRunAt = enabled ? computeNextAutomationRunAt(trigger, new Date(updatedAt)) : null;
+
+    this.run(
+      `
+      update automations
+      set name = ?, description = ?, enabled = ?, trigger_json = ?, action_json = ?, guardrails_json = ?,
+          next_run_at = ?, updated_at = ?
+      where id = ?
+      `,
+      [
+        name,
+        input.description === undefined ? existing.description : input.description.trim(),
+        enabled,
+        JSON.stringify(trigger),
+        JSON.stringify(action),
+        JSON.stringify(guardrails),
+        nextRunAt,
+        updatedAt,
+        automationId,
+      ],
+    );
+    this.persist();
+    return this.getAutomation(automationId);
+  }
+
+  deleteProjectAutomation(automationId: string): void {
+    const runIds = this.all<{ id: string }>("select id from automation_runs where automation_id = ?", [automationId]).map((row) => row.id);
+    for (const batch of chunkValues(runIds)) {
+      const placeholders = batch.map(() => "?").join(", ");
+      this.run(`delete from automation_events where automation_run_id in (${placeholders})`, batch);
+    }
+    this.run("delete from automation_event_fingerprints where automation_id = ?", [automationId]);
+    this.run("delete from automation_runs where automation_id = ?", [automationId]);
+    this.run("delete from automations where id = ?", [automationId]);
+    this.persist();
+  }
+
+  getAutomation(automationId: string): AutomationRecord {
+    const row = this.first<{
+      id: string;
+      projectId: string;
+      name: string;
+      description: string;
+      enabled: number;
+      triggerJson: string;
+      actionJson: string;
+      guardrailsJson: string;
+      lastRunAt: string | null;
+      nextRunAt: string | null;
+      failureCount: number;
+      createdAt: string;
+      updatedAt: string;
+    }>(
+      `
+      select
+        id,
+        project_id as projectId,
+        name,
+        description,
+        enabled,
+        trigger_json as triggerJson,
+        action_json as actionJson,
+        guardrails_json as guardrailsJson,
+        last_run_at as lastRunAt,
+        next_run_at as nextRunAt,
+        failure_count as failureCount,
+        created_at as createdAt,
+        updated_at as updatedAt
+      from automations
+      where id = ?
+      `,
+      [automationId],
+    );
+    if (!row) {
+      throw new Error(`Automation not found: ${automationId}`);
+    }
+    return this.mapAutomationRow(row);
+  }
+
+  listProjectAutomations(projectId: string): AutomationRecord[] {
+    return this.all<{
+      id: string;
+      projectId: string;
+      name: string;
+      description: string;
+      enabled: number;
+      triggerJson: string;
+      actionJson: string;
+      guardrailsJson: string;
+      lastRunAt: string | null;
+      nextRunAt: string | null;
+      failureCount: number;
+      createdAt: string;
+      updatedAt: string;
+    }>(
+      `
+      select
+        id,
+        project_id as projectId,
+        name,
+        description,
+        enabled,
+        trigger_json as triggerJson,
+        action_json as actionJson,
+        guardrails_json as guardrailsJson,
+        last_run_at as lastRunAt,
+        next_run_at as nextRunAt,
+        failure_count as failureCount,
+        created_at as createdAt,
+        updated_at as updatedAt
+      from automations
+      where project_id = ?
+      order by updated_at desc, created_at desc
+      `,
+      [projectId],
+    ).map((row) => this.mapAutomationRow(row));
+  }
+
+  listEnabledAutomations(): AutomationRecord[] {
+    return this.all<{
+      id: string;
+      projectId: string;
+      name: string;
+      description: string;
+      enabled: number;
+      triggerJson: string;
+      actionJson: string;
+      guardrailsJson: string;
+      lastRunAt: string | null;
+      nextRunAt: string | null;
+      failureCount: number;
+      createdAt: string;
+      updatedAt: string;
+    }>(
+      `
+      select
+        id,
+        project_id as projectId,
+        name,
+        description,
+        enabled,
+        trigger_json as triggerJson,
+        action_json as actionJson,
+        guardrails_json as guardrailsJson,
+        last_run_at as lastRunAt,
+        next_run_at as nextRunAt,
+        failure_count as failureCount,
+        created_at as createdAt,
+        updated_at as updatedAt
+      from automations
+      where enabled = 1
+      order by next_run_at is null asc, next_run_at asc, updated_at desc
+      `,
+    ).map((row) => this.mapAutomationRow(row));
+  }
+
+  listDueAutomations(reference = new Date()): AutomationRecord[] {
+    const referenceIso = reference.toISOString();
+    return this.listEnabledAutomations().filter(
+      (automation) => automation.nextRunAt !== null && automation.nextRunAt <= referenceIso,
+    );
+  }
+
+  touchAutomationSchedule(automationId: string, nextRunAt: string | null, lastRunAt?: string | null): void {
+    const updatedAt = nowIso();
+    this.run(
+      `
+      update automations
+      set next_run_at = ?, last_run_at = coalesce(?, last_run_at), updated_at = ?
+      where id = ?
+      `,
+      [nextRunAt, lastRunAt ?? null, updatedAt, automationId],
+    );
+    this.persist();
+  }
+
+  countActiveAutomationRuns(automationId: string): number {
+    return this.first<{ count: number }>(
+      "select count(*) as count from automation_runs where automation_id = ? and status in ('queued', 'running')",
+      [automationId],
+    )?.count ?? 0;
+  }
+
+  countAutomationRunsSince(automationId: string, sinceIso: string): number {
+    return this.first<{ count: number }>(
+      "select count(*) as count from automation_runs where automation_id = ? and created_at >= ?",
+      [automationId, sinceIso],
+    )?.count ?? 0;
+  }
+
+  createAutomationRun(input: {
+    automationId: string;
+    projectId: string;
+    status?: AutomationRunStatus;
+    triggerType: AutomationTrigger["type"];
+    triggerEvent: AutomationTriggerEvent;
+    renderedPrompt: string;
+    linkedPrUrl?: string | null;
+  }): AutomationRunRecord {
+    const id = createId();
+    const createdAt = nowIso();
+    const status = input.status ?? "queued";
+    this.run(
+      `
+      insert into automation_runs (
+        id, automation_id, project_id, status, trigger_type, trigger_event_json, rendered_prompt, output_json,
+        error_message, linked_run_id, linked_task_id, linked_lab_thread_ids_json, linked_pr_url,
+        created_at, started_at, finished_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, null, null, null, null, '[]', ?, ?, null, null, ?)
+      `,
+      [
+        id,
+        input.automationId,
+        input.projectId,
+        status,
+        input.triggerType,
+        JSON.stringify(input.triggerEvent),
+        input.renderedPrompt,
+        input.linkedPrUrl ?? null,
+        createdAt,
+        createdAt,
+      ],
+    );
+    this.persist();
+    return this.getAutomationRun(id);
+  }
+
+  updateAutomationRun(
+    automationRunId: string,
+    input: Partial<{
+      status: AutomationRunStatus;
+      renderedPrompt: string;
+      output: Record<string, unknown> | null;
+      errorMessage: string | null;
+      linkedRunId: string | null;
+      linkedTaskId: string | null;
+      linkedLabThreadIds: string[];
+      linkedPrUrl: string | null;
+      startedAt: string | null;
+      finishedAt: string | null;
+    }>,
+  ): AutomationRunRecord {
+    const existing = this.getAutomationRun(automationRunId);
+    const updatedAt = nowIso();
+    this.run(
+      `
+      update automation_runs
+      set status = ?,
+          rendered_prompt = ?,
+          output_json = ?,
+          error_message = ?,
+          linked_run_id = ?,
+          linked_task_id = ?,
+          linked_lab_thread_ids_json = ?,
+          linked_pr_url = ?,
+          started_at = ?,
+          finished_at = ?,
+          updated_at = ?
+      where id = ?
+      `,
+      [
+        input.status ?? existing.status,
+        input.renderedPrompt ?? existing.renderedPrompt,
+        input.output === undefined ? (existing.output ? JSON.stringify(existing.output) : null) : input.output ? JSON.stringify(input.output) : null,
+        input.errorMessage === undefined ? existing.errorMessage : input.errorMessage,
+        input.linkedRunId === undefined ? existing.linkedRunId : input.linkedRunId,
+        input.linkedTaskId === undefined ? existing.linkedTaskId : input.linkedTaskId,
+        JSON.stringify(input.linkedLabThreadIds ?? existing.linkedLabThreadIds),
+        input.linkedPrUrl === undefined ? existing.linkedPrUrl : input.linkedPrUrl,
+        input.startedAt === undefined ? existing.startedAt : input.startedAt,
+        input.finishedAt === undefined ? existing.finishedAt : input.finishedAt,
+        updatedAt,
+        automationRunId,
+      ],
+    );
+
+    if (input.status === "failed") {
+      this.run("update automations set failure_count = failure_count + 1, last_run_at = ?, updated_at = ? where id = ?", [
+        input.finishedAt ?? updatedAt,
+        updatedAt,
+        existing.automationId,
+      ]);
+    } else if (input.status === "succeeded" || input.status === "skipped") {
+      this.run("update automations set last_run_at = ?, updated_at = ? where id = ?", [
+        input.finishedAt ?? updatedAt,
+        updatedAt,
+        existing.automationId,
+      ]);
+    }
+
+    this.persist();
+    return this.getAutomationRun(automationRunId);
+  }
+
+  getAutomationRun(automationRunId: string): AutomationRunRecord {
+    const row = this.first<{
+      id: string;
+      automationId: string;
+      projectId: string;
+      status: AutomationRunStatus;
+      triggerType: AutomationTrigger["type"];
+      triggerEventJson: string;
+      renderedPrompt: string;
+      outputJson: string | null;
+      errorMessage: string | null;
+      linkedRunId: string | null;
+      linkedTaskId: string | null;
+      linkedLabThreadIdsJson: string;
+      linkedPrUrl: string | null;
+      createdAt: string;
+      startedAt: string | null;
+      finishedAt: string | null;
+      updatedAt: string;
+    }>(
+      `
+      select
+        id,
+        automation_id as automationId,
+        project_id as projectId,
+        status,
+        trigger_type as triggerType,
+        trigger_event_json as triggerEventJson,
+        rendered_prompt as renderedPrompt,
+        output_json as outputJson,
+        error_message as errorMessage,
+        linked_run_id as linkedRunId,
+        linked_task_id as linkedTaskId,
+        linked_lab_thread_ids_json as linkedLabThreadIdsJson,
+        linked_pr_url as linkedPrUrl,
+        created_at as createdAt,
+        started_at as startedAt,
+        finished_at as finishedAt,
+        updated_at as updatedAt
+      from automation_runs
+      where id = ?
+      `,
+      [automationRunId],
+    );
+    if (!row) {
+      throw new Error(`Automation run not found: ${automationRunId}`);
+    }
+    return this.mapAutomationRunRow(row);
+  }
+
+  listAutomationRuns(automationId: string): AutomationRunRecord[] {
+    return this.all<{
+      id: string;
+      automationId: string;
+      projectId: string;
+      status: AutomationRunStatus;
+      triggerType: AutomationTrigger["type"];
+      triggerEventJson: string;
+      renderedPrompt: string;
+      outputJson: string | null;
+      errorMessage: string | null;
+      linkedRunId: string | null;
+      linkedTaskId: string | null;
+      linkedLabThreadIdsJson: string;
+      linkedPrUrl: string | null;
+      createdAt: string;
+      startedAt: string | null;
+      finishedAt: string | null;
+      updatedAt: string;
+    }>(
+      `
+      select
+        id,
+        automation_id as automationId,
+        project_id as projectId,
+        status,
+        trigger_type as triggerType,
+        trigger_event_json as triggerEventJson,
+        rendered_prompt as renderedPrompt,
+        output_json as outputJson,
+        error_message as errorMessage,
+        linked_run_id as linkedRunId,
+        linked_task_id as linkedTaskId,
+        linked_lab_thread_ids_json as linkedLabThreadIdsJson,
+        linked_pr_url as linkedPrUrl,
+        created_at as createdAt,
+        started_at as startedAt,
+        finished_at as finishedAt,
+        updated_at as updatedAt
+      from automation_runs
+      where automation_id = ?
+      order by created_at desc
+      limit 100
+      `,
+      [automationId],
+    ).map((row) => this.mapAutomationRunRow(row));
+  }
+
+  getAutomationRunDetail(automationRunId: string): AutomationRunDetail {
+    return {
+      run: this.getAutomationRun(automationRunId),
+      events: this.listAutomationEvents(automationRunId),
+    };
+  }
+
+  appendAutomationEvent(input: {
+    automationRunId: string;
+    kind: AutomationEventKind;
+    title: string;
+    content: string;
+    metadata?: Record<string, unknown>;
+  }): AutomationEventRecord {
+    const id = createId();
+    const createdAt = nowIso();
+    this.run(
+      `
+      insert into automation_events (id, automation_run_id, kind, title, content, metadata_json, created_at)
+      values (?, ?, ?, ?, ?, ?, ?)
+      `,
+      [id, input.automationRunId, input.kind, input.title, input.content, JSON.stringify(input.metadata ?? {}), createdAt],
+    );
+    this.persist();
+    return {
+      id,
+      automationRunId: input.automationRunId,
+      kind: input.kind,
+      title: input.title,
+      content: input.content,
+      metadataJson: JSON.stringify(input.metadata ?? {}),
+      createdAt,
+    };
+  }
+
+  listAutomationEvents(automationRunId: string): AutomationEventRecord[] {
+    return this.all<AutomationEventRecord>(
+      `
+      select
+        id,
+        automation_run_id as automationRunId,
+        kind,
+        title,
+        content,
+        metadata_json as metadataJson,
+        created_at as createdAt
+      from automation_events
+      where automation_run_id = ?
+      order by created_at asc
+      `,
+      [automationRunId],
+    );
+  }
+
+  hasAutomationFingerprint(automationId: string, fingerprint: string): boolean {
+    const row = this.first<{ fingerprint: string }>(
+      "select fingerprint from automation_event_fingerprints where automation_id = ? and fingerprint = ?",
+      [automationId, fingerprint],
+    );
+    return Boolean(row);
+  }
+
+  hasAnyAutomationFingerprint(automationId: string): boolean {
+    const row = this.first<{ count: number }>(
+      "select count(*) as count from automation_event_fingerprints where automation_id = ?",
+      [automationId],
+    );
+    return (row?.count ?? 0) > 0;
+  }
+
+  markAutomationFingerprint(automationId: string, fingerprint: string, payload: Record<string, unknown>): void {
+    const seenAt = nowIso();
+    this.run(
+      `
+      insert into automation_event_fingerprints (automation_id, fingerprint, last_payload_json, seen_at)
+      values (?, ?, ?, ?)
+      on conflict(automation_id, fingerprint) do update set last_payload_json = excluded.last_payload_json, seen_at = excluded.seen_at
+      `,
+      [automationId, fingerprint, JSON.stringify(payload), seenAt],
+    );
+    this.persist();
+  }
+
   getProjectInsight(projectId: string, kind: ProjectInsightKind): ProjectInsightRecord | null {
     return (
       this.first<ProjectInsightRecord>(
@@ -581,7 +1124,7 @@ export class BuildWardenDatabase {
       kind: ProjectLabThreadKind;
       mode: ProjectLabMode;
       status: ProjectLabThreadStatus;
-    origin: "manual" | "idle" | "task";
+    origin: ProjectLabOrigin;
     title: string;
       summary: string;
       outcome?: string | null;
@@ -1092,6 +1635,16 @@ export class BuildWardenDatabase {
     this.run("delete from project_lab_threads where project_id = ?", [projectId]);
     this.run("delete from project_tasks where project_id = ?", [projectId]);
     this.run("delete from project_insights where project_id = ?", [projectId]);
+    this.run(
+      "delete from automation_events where automation_run_id in (select id from automation_runs where project_id = ?)",
+      [projectId],
+    );
+    this.run(
+      "delete from automation_event_fingerprints where automation_id in (select id from automations where project_id = ?)",
+      [projectId],
+    );
+    this.run("delete from automation_runs where project_id = ?", [projectId]);
+    this.run("delete from automations where project_id = ?", [projectId]);
     this.run("delete from projects where id = ?", [projectId]);
     this.persist();
   }
@@ -2183,6 +2736,117 @@ export class BuildWardenDatabase {
     };
   }
 
+  private mapAutomationRow(row: {
+    id: string;
+    projectId: string;
+    name: string;
+    description: string;
+    enabled: number;
+    triggerJson: string;
+    actionJson: string;
+    guardrailsJson: string;
+    lastRunAt: string | null;
+    nextRunAt: string | null;
+    failureCount: number;
+    createdAt: string;
+    updatedAt: string;
+  }): AutomationRecord {
+    let trigger: AutomationTrigger = { type: "manual" };
+    let action: AutomationAction = { type: "notify", messageTemplate: "Automation {{automation.name}} ran." };
+    let guardrails: AutomationGuardrails = normalizeAutomationGuardrails();
+    try {
+      trigger = normalizeAutomationTrigger(JSON.parse(row.triggerJson) as AutomationTrigger);
+    } catch {
+      trigger = { type: "manual" };
+    }
+    try {
+      action = normalizeAutomationAction(JSON.parse(row.actionJson) as AutomationAction);
+    } catch {
+      action = { type: "notify", messageTemplate: "Automation {{automation.name}} ran." };
+    }
+    try {
+      guardrails = normalizeAutomationGuardrails(JSON.parse(row.guardrailsJson) as Partial<AutomationGuardrails>);
+    } catch {
+      guardrails = normalizeAutomationGuardrails();
+    }
+    return {
+      id: row.id,
+      projectId: row.projectId,
+      name: row.name,
+      description: row.description,
+      enabled: row.enabled,
+      trigger,
+      action,
+      guardrails,
+      lastRunAt: row.lastRunAt,
+      nextRunAt: row.nextRunAt,
+      failureCount: row.failureCount,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  private mapAutomationRunRow(row: {
+    id: string;
+    automationId: string;
+    projectId: string;
+    status: AutomationRunStatus;
+    triggerType: AutomationTrigger["type"];
+    triggerEventJson: string;
+    renderedPrompt: string;
+    outputJson: string | null;
+    errorMessage: string | null;
+    linkedRunId: string | null;
+    linkedTaskId: string | null;
+    linkedLabThreadIdsJson: string;
+    linkedPrUrl: string | null;
+    createdAt: string;
+    startedAt: string | null;
+    finishedAt: string | null;
+    updatedAt: string;
+  }): AutomationRunRecord {
+    let triggerEvent: AutomationTriggerEvent = { type: row.triggerType, reason: "Unknown trigger" };
+    let output: Record<string, unknown> | null = null;
+    let linkedLabThreadIds: string[] = [];
+    try {
+      const parsed = JSON.parse(row.triggerEventJson) as AutomationTriggerEvent;
+      triggerEvent = parsed && typeof parsed === "object" ? parsed : triggerEvent;
+    } catch {
+      triggerEvent = { type: row.triggerType, reason: "Unknown trigger" };
+    }
+    try {
+      const parsed = row.outputJson ? (JSON.parse(row.outputJson) as unknown) : null;
+      output = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+    } catch {
+      output = null;
+    }
+    try {
+      const parsed = JSON.parse(row.linkedLabThreadIdsJson) as unknown;
+      linkedLabThreadIds = Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : [];
+    } catch {
+      linkedLabThreadIds = [];
+    }
+    return {
+      id: row.id,
+      automationId: row.automationId,
+      projectId: row.projectId,
+      status: row.status,
+      triggerType: row.triggerType,
+      triggerEvent,
+      renderedPrompt: row.renderedPrompt,
+      output,
+      errorMessage: row.errorMessage,
+      linkedRunId: row.linkedRunId,
+      linkedTaskId: row.linkedTaskId,
+      linkedLabThreadIds,
+      linkedPrUrl: row.linkedPrUrl,
+      createdAt: row.createdAt,
+      startedAt: row.startedAt,
+      finishedAt: row.finishedAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
   private createInitialSchema(): void {
     this.exec(`
       create table if not exists projects (
@@ -2429,9 +3093,73 @@ export class BuildWardenDatabase {
         foreign key(thread_id) references project_lab_threads(id)
       );
 
+      create table if not exists automations (
+        id text primary key,
+        project_id text not null,
+        name text not null,
+        description text not null default '',
+        enabled integer not null default 1,
+        trigger_json text not null,
+        action_json text not null,
+        guardrails_json text not null default '{}',
+        last_run_at text,
+        next_run_at text,
+        failure_count integer not null default 0,
+        created_at text not null,
+        updated_at text not null,
+        foreign key(project_id) references projects(id)
+      );
+
+      create table if not exists automation_runs (
+        id text primary key,
+        automation_id text not null,
+        project_id text not null,
+        status text not null,
+        trigger_type text not null,
+        trigger_event_json text not null default '{}',
+        rendered_prompt text not null default '',
+        output_json text,
+        error_message text,
+        linked_run_id text,
+        linked_task_id text,
+        linked_lab_thread_ids_json text not null default '[]',
+        linked_pr_url text,
+        created_at text not null,
+        started_at text,
+        finished_at text,
+        updated_at text not null,
+        foreign key(automation_id) references automations(id),
+        foreign key(project_id) references projects(id)
+      );
+
+      create table if not exists automation_events (
+        id text primary key,
+        automation_run_id text not null,
+        kind text not null,
+        title text not null,
+        content text not null,
+        metadata_json text not null default '{}',
+        created_at text not null,
+        foreign key(automation_run_id) references automation_runs(id)
+      );
+
+      create table if not exists automation_event_fingerprints (
+        automation_id text not null,
+        fingerprint text not null,
+        last_payload_json text not null default '{}',
+        seen_at text not null,
+        primary key (automation_id, fingerprint),
+        foreign key(automation_id) references automations(id)
+      );
+
       create unique index if not exists idx_project_insights_project_kind on project_insights(project_id, kind);
       create index if not exists idx_project_lab_threads_project_id on project_lab_threads(project_id);
       create index if not exists idx_project_lab_events_thread_id on project_lab_events(thread_id);
+      create index if not exists idx_automations_project_id on automations(project_id);
+      create index if not exists idx_automations_next_run on automations(enabled, next_run_at);
+      create index if not exists idx_automation_runs_automation_created on automation_runs(automation_id, created_at desc);
+      create index if not exists idx_automation_runs_status on automation_runs(status);
+      create index if not exists idx_automation_events_run_created on automation_events(automation_run_id, created_at);
       create index if not exists idx_runs_project_created_at on runs(project_id, created_at desc);
       create index if not exists idx_runs_status on runs(status);
       create index if not exists idx_runs_parent_run_id on runs(parent_run_id);

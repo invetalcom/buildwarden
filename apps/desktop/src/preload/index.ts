@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import {
   IPC_CHANNELS,
+  type AutomationNotificationPayload,
   type AppWarning,
   type AppMenuCommand,
   type AppMenuSection,
@@ -57,6 +58,14 @@ const api: DesktopApi = {
   createProjectTask: (projectId: string, input) => invoke(IPC_CHANNELS.createProjectTask, projectId, input),
   updateProjectTask: (taskId: string, input) => invoke(IPC_CHANNELS.updateProjectTask, taskId, input),
   deleteProjectTask: (taskId: string) => invoke(IPC_CHANNELS.deleteProjectTask, taskId),
+  listProjectAutomations: (projectId: string) => invoke(IPC_CHANNELS.listProjectAutomations, projectId),
+  createProjectAutomation: (projectId: string, input) => invoke(IPC_CHANNELS.createProjectAutomation, projectId, input),
+  updateProjectAutomation: (automationId: string, input) => invoke(IPC_CHANNELS.updateProjectAutomation, automationId, input),
+  deleteProjectAutomation: (automationId: string) => invoke(IPC_CHANNELS.deleteProjectAutomation, automationId),
+  previewProjectAutomation: (projectId: string, input) => invoke(IPC_CHANNELS.previewProjectAutomation, projectId, input),
+  runProjectAutomationNow: (automationId: string) => invoke(IPC_CHANNELS.runProjectAutomationNow, automationId),
+  listAutomationRuns: (automationId: string) => invoke(IPC_CHANNELS.listAutomationRuns, automationId),
+  getAutomationRunDetail: (automationRunId: string) => invoke(IPC_CHANNELS.getAutomationRunDetail, automationRunId),
   runProjectLab: (input) => invoke(IPC_CHANNELS.runProjectLab, input),
   deleteProjectLabThread: (threadId: string) => invoke(IPC_CHANNELS.deleteProjectLabThread, threadId),
   generateProjectTaskRunPrompt: (input) => invoke(IPC_CHANNELS.generateProjectTaskRunPrompt, input),
@@ -210,6 +219,11 @@ const api: DesktopApi = {
     const wrapped = (_event: Electron.IpcRendererEvent, payload: ProjectForgeRequestNotificationPayload) => listener(payload);
     ipcRenderer.on(IPC_CHANNELS.projectForgeRequestNotification, wrapped);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.projectForgeRequestNotification, wrapped);
+  },
+  onAutomationNotification: (listener) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, payload: AutomationNotificationPayload) => listener(payload);
+    ipcRenderer.on(IPC_CHANNELS.automationNotification, wrapped);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.automationNotification, wrapped);
   },
   showAppMenu: (section: AppMenuSection, x: number, y: number) => invoke(IPC_CHANNELS.showAppMenu, section, x, y),
   releaseRun: (runId: string) => invoke(IPC_CHANNELS.releaseRun, runId),

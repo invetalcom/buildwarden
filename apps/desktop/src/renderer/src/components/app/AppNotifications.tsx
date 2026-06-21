@@ -3,11 +3,12 @@ import {
   GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE,
   isDetachedHeadProjectErrorMessage,
   type AppWarning,
+  type AutomationNotificationPayload,
   type ProjectForgeRequestNotificationPayload,
   type RunRecord,
   type ShellApprovalDecision,
 } from "@buildwarden/shared";
-import { AlertTriangle, ChevronRight, GitPullRequest, Loader2, ShieldCheck, SquareTerminal, X } from "lucide-react";
+import { AlertTriangle, ChevronRight, GitPullRequest, Loader2, PlaySquare, ShieldCheck, SquareTerminal, X } from "lucide-react";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -21,6 +22,10 @@ export interface ShellApprovalRequestState {
 }
 
 export type ProjectForgeRequestToast = ProjectForgeRequestNotificationPayload & {
+  id: string;
+};
+
+export type AutomationToast = AutomationNotificationPayload & {
   id: string;
 };
 
@@ -51,6 +56,8 @@ interface AppNotificationsProps {
   projectForgeRequestToasts: ProjectForgeRequestToast[];
   onOpenProjectForgeRequest: (toast: ProjectForgeRequestToast) => void;
   onDismissProjectForgeRequestToast: (id: string) => void;
+  automationToasts: AutomationToast[];
+  onDismissAutomationToast: (id: string) => void;
 }
 
 export const AppNotifications = ({
@@ -76,6 +83,8 @@ export const AppNotifications = ({
   projectForgeRequestToasts,
   onOpenProjectForgeRequest,
   onDismissProjectForgeRequestToast,
+  automationToasts,
+  onDismissAutomationToast,
 }: AppNotificationsProps) => {
   // 1Hz countdown ticker scoped here so it does not re-render the whole app;
   // it only runs while shell-approval toasts are actually visible.
@@ -356,6 +365,52 @@ export const AppNotifications = ({
                 className="rounded-lg border border-zinc-800 bg-zinc-900/80 p-1.5 text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
                 onClick={() => onDismissProjectForgeRequestToast(toast.id)}
                 aria-label="Dismiss pull request notification"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </Card>
+        ))}
+      </div>
+    ) : null}
+
+    {automationToasts.length > 0 ? (
+      <div
+        className={cn(
+          "fixed right-4 z-[20038] flex w-[calc(100vw-2rem)] max-w-md flex-col gap-2",
+          projectForgeRequestToasts.length > 0 ? "top-80" : appWarning ? "top-64" : "top-14",
+        )}
+        role="region"
+        aria-live="polite"
+        aria-label="Automation notifications"
+      >
+        {automationToasts.map((toast) => (
+          <Card key={toast.id} className="border-blue-500/30 bg-zinc-950/95 p-3 shadow-2xl shadow-blue-950/20 backdrop-blur">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 rounded-full border border-blue-500/30 bg-blue-500/10 p-2 text-blue-200">
+                <PlaySquare className="h-4 w-4" aria-hidden />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-blue-200/80">
+                  Automation {toast.status}
+                </p>
+                <p className="mt-1 truncate text-sm font-semibold text-zinc-100" title={toast.title}>
+                  {toast.title}
+                </p>
+                <p className="mt-1 line-clamp-2 text-xs text-zinc-400">
+                  {toast.projectName} - {toast.message}
+                </p>
+                <div className="mt-3 flex justify-end">
+                  <Button type="button" size="xs" variant="ghost" onClick={() => onDismissAutomationToast(toast.id)}>
+                    Dismiss
+                  </Button>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="rounded-lg border border-zinc-800 bg-zinc-900/80 p-1.5 text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
+                onClick={() => onDismissAutomationToast(toast.id)}
+                aria-label="Dismiss automation notification"
               >
                 <X className="h-4 w-4" />
               </button>

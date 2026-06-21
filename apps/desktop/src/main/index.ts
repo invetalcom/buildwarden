@@ -12,6 +12,7 @@ import {
   uiThemeToLegacyDarkMode,
   WINDOWS_TITLEBAR_OVERLAY_BACKGROUND,
   WINDOWS_TITLEBAR_OVERLAY_HEIGHT,
+  type AutomationNotificationPayload,
   type AppMenuCommand,
   type AppMenuSection,
   type ChatInput,
@@ -202,6 +203,29 @@ const showProjectForgeRequestNotification = (input: {
 
 const showProjectForgeRequestInAppNotification = (payload: ProjectForgeRequestNotificationPayload): void => {
   mainWindow?.webContents.send(IPC_CHANNELS.projectForgeRequestNotification, payload);
+};
+
+const showAutomationInAppNotification = (payload: AutomationNotificationPayload): void => {
+  mainWindow?.webContents.send(IPC_CHANNELS.automationNotification, payload);
+};
+
+const showAutomationDesktopNotification = (payload: AutomationNotificationPayload): void => {
+  if (!Notification.isSupported()) {
+    return;
+  }
+  const notification = new Notification({
+    title: payload.title,
+    body: `${payload.projectName}: ${payload.message}`,
+    silent: true,
+  });
+  notification.show();
+};
+
+const publishAutomationNotifications = (payloads: AutomationNotificationPayload[]): void => {
+  for (const payload of payloads) {
+    showAutomationInAppNotification(payload);
+    showAutomationDesktopNotification(payload);
+  }
 };
 
 type ProjectForgeMonitorState = {
@@ -727,6 +751,43 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.createProjectTask, (_, projectId: string, input) => controller.createProjectTask(projectId, input));
   ipcMain.handle(IPC_CHANNELS.updateProjectTask, (_, taskId: string, input) => controller.updateProjectTask(taskId, input));
   ipcMain.handle(IPC_CHANNELS.deleteProjectTask, (_, taskId: string) => controller.deleteProjectTask(taskId));
+  ipcMain.handle(IPC_CHANNELS.listProjectAutomations, (_, projectId: string) => controller.listProjectAutomations(projectId));
+  ipcMain.handle(IPC_CHANNELS.createProjectAutomation, (_, projectId: string, input) =>
+    controller.createProjectAutomation(projectId, input),
+  );
+  ipcMain.handle(IPC_CHANNELS.updateProjectAutomation, (_, automationId: string, input) =>
+    controller.updateProjectAutomation(automationId, input),
+  );
+  ipcMain.handle(IPC_CHANNELS.deleteProjectAutomation, (_, automationId: string) =>
+    controller.deleteProjectAutomation(automationId),
+  );
+  ipcMain.handle(IPC_CHANNELS.previewProjectAutomation, (_, projectId: string, input) =>
+    controller.previewProjectAutomation(projectId, input),
+  );
+  ipcMain.handle(IPC_CHANNELS.runProjectAutomationNow, async (_, automationId: string) => {
+    const run = await controller.runProjectAutomationNow(automationId);
+    const project = db.getSnapshot(run.projectId).projects.find((entry) => entry.project.id === run.projectId)?.project;
+    const automation = project ? (await controller.listProjectAutomations(project.id)).find((item) => item.id === automationId) : null;
+    if (project && automation) {
+      publishAutomationNotifications([
+        {
+          automationId,
+          automationRunId: run.id,
+          projectId: run.projectId,
+          projectName: project.name,
+          automationName: automation.name,
+          status: run.status,
+          title: `${automation.name} ${run.status === "succeeded" ? "completed" : run.status}`,
+          message: run.errorMessage ?? run.renderedPrompt.slice(0, 240),
+        },
+      ]);
+    }
+    return run;
+  });
+  ipcMain.handle(IPC_CHANNELS.listAutomationRuns, (_, automationId: string) => controller.listAutomationRuns(automationId));
+  ipcMain.handle(IPC_CHANNELS.getAutomationRunDetail, (_, automationRunId: string) =>
+    controller.getAutomationRunDetail(automationRunId),
+  );
   ipcMain.handle(IPC_CHANNELS.runProjectLab, (_, input) => controller.runProjectLab(input));
   ipcMain.handle(IPC_CHANNELS.deleteProjectLabThread, (_, threadId: string) => controller.deleteProjectLabThread(threadId));
   ipcMain.handle(IPC_CHANNELS.generateProjectTaskRunPrompt, (_, input) => controller.generateProjectTaskRunPrompt(input));
@@ -849,7 +910,23 @@ const bootstrap = async (): Promise<void> => {
   });
 
   registerRunTerminalIpc();
+  let localAutomationTimer: ReturnType<typeof setInterval> | null = null;
+  const refreshLocalAutomations = async () => {
+    try {
+      publishAutomationNotifications(await controller.runDueAutomations());
+    } catch (error) {
+      logWarn("Failed to refresh local automations.", { error });
+    }
+  };
+  localAutomationTimer = setInterval(() => {
+    void refreshLocalAutomations();
+  }, 60_000);
+
   app.on("before-quit", () => {
+    if (localAutomationTimer) {
+      clearInterval(localAutomationTimer);
+      localAutomationTimer = null;
+    }
     disposeAllRunTerminals();
     for (const state of projectForgeMonitorStates.values()) {
       clearInterval(state.timer);
@@ -887,6 +964,7 @@ const bootstrap = async (): Promise<void> => {
     processUptimeMs: Math.round(process.uptime() * 1000),
   });
   await refreshProjectForgePrMonitors(controller);
+  await refreshLocalAutomations();
 };
 
 const createMainWindow = (theme: UiTheme): void => {
