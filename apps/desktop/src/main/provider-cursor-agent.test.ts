@@ -85,15 +85,21 @@ describe("CursorAgentProviderAdapter", () => {
     expect(adapter.listRecommendedModels()).toEqual(["default"]);
   });
 
-  it("routes Windows command shims through shell mode while preserving explicit exe paths", () => {
+  it("wraps Windows command shims without shell mode while preserving explicit exe paths", () => {
     const shim = resolveCursorAgentProcessLaunch("agent", ["acp"]);
 
     if (process.platform === "win32") {
-      expect(shim).toEqual({ command: "agent", args: ["acp"], shell: true });
+      expect(shim).toEqual({
+        command: process.env.ComSpec || "cmd.exe",
+        args: ["/d", "/s", "/c", '"agent" "acp"'],
+      });
       expect(resolveCursorAgentProcessLaunch("C:\\Tools\\agent.exe", ["acp"])).toEqual({
         command: "C:\\Tools\\agent.exe",
         args: ["acp"],
       });
+      expect(() => resolveCursorAgentProcessLaunch("agent", ["-e", "https://cursor.example.test?a=1&b=2", "acp"])).toThrow(
+        "shell metacharacters",
+      );
     } else {
       expect(shim).toEqual({ command: "agent", args: ["acp"] });
     }
@@ -364,6 +370,24 @@ describe("CursorAgentProviderAdapter", () => {
       maxTokens: 200_000,
       lastInputTokens: 120,
       lastOutputTokens: 35,
+    });
+
+    expect(
+      normalizeCursorTokenUsage({
+        update: {
+          sessionUpdate: "usage_update",
+          used: 4096,
+          size: 200_000,
+          input_tokens: 120,
+          output_tokens: 35,
+        },
+      }),
+    ).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      usedTokens: 4096,
+      lastUsedTokens: 4096,
+      maxTokens: 200_000,
     });
   });
 

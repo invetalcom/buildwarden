@@ -138,6 +138,7 @@ const api: DesktopApi = {
   getAppPaths: () => invoke(IPC_CHANNELS.getAppPaths),
   getDetectedCodexInstallation: () => invoke(IPC_CHANNELS.getDetectedCodexInstallation),
   getDetectedClaudeInstallation: () => invoke(IPC_CHANNELS.getDetectedClaudeInstallation),
+  getDetectedCursorInstallation: () => invoke(IPC_CHANNELS.getDetectedCursorInstallation),
   listIntegratedSkills: () => invoke(IPC_CHANNELS.listIntegratedSkills),
   getIntegratedSkillContent: (skillId: string) => invoke(IPC_CHANNELS.getIntegratedSkillContent, skillId),
   pickProjectDirectory: () => invoke(IPC_CHANNELS.pickProjectDirectory),

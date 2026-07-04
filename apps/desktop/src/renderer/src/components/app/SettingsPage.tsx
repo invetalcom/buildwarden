@@ -53,6 +53,10 @@ interface SettingsPageProps {
   claudeBinaryPath: string;
   claudeLaunchArgs: string;
   detectedClaudeBinaryPath: string | null;
+  cursorBinaryPath: string;
+  cursorApiEndpoint: string;
+  detectedCursorBinaryPath: string | null;
+  detectedCursorMessage: string | null;
   providerBaseUrl: string;
   providerConfigJson: string;
   providerAzureApiVersion: string;
@@ -98,6 +102,8 @@ interface SettingsPageProps {
   onCodexHomePathChange: (value: string) => void;
   onClaudeBinaryPathChange: (value: string) => void;
   onClaudeLaunchArgsChange: (value: string) => void;
+  onCursorBinaryPathChange: (value: string) => void;
+  onCursorApiEndpointChange: (value: string) => void;
   onProviderBaseUrlChange: (value: string) => void;
   onProviderConfigJsonChange: (value: string) => void;
   onProviderAzureApiVersionChange: (value: string) => void;
@@ -148,6 +154,10 @@ export const SettingsPage = ({
   claudeBinaryPath,
   claudeLaunchArgs,
   detectedClaudeBinaryPath,
+  cursorBinaryPath,
+  cursorApiEndpoint,
+  detectedCursorBinaryPath,
+  detectedCursorMessage,
   providerBaseUrl,
   providerConfigJson,
   providerAzureApiVersion,
@@ -193,6 +203,8 @@ export const SettingsPage = ({
   onCodexHomePathChange,
   onClaudeBinaryPathChange,
   onClaudeLaunchArgsChange,
+  onCursorBinaryPathChange,
+  onCursorApiEndpointChange,
   onProviderBaseUrlChange,
   onProviderConfigJsonChange,
   onProviderAzureApiVersionChange,
@@ -401,6 +413,10 @@ export const SettingsPage = ({
           claudeBinaryPath={claudeBinaryPath}
           claudeLaunchArgs={claudeLaunchArgs}
           detectedClaudeBinaryPath={detectedClaudeBinaryPath}
+          cursorBinaryPath={cursorBinaryPath}
+          cursorApiEndpoint={cursorApiEndpoint}
+          detectedCursorBinaryPath={detectedCursorBinaryPath}
+          detectedCursorMessage={detectedCursorMessage}
           providerBaseUrl={providerBaseUrl}
           providerConfigJson={providerConfigJson}
           providerAzureApiVersion={providerAzureApiVersion}
@@ -426,6 +442,8 @@ export const SettingsPage = ({
           onCodexHomePathChange={onCodexHomePathChange}
           onClaudeBinaryPathChange={onClaudeBinaryPathChange}
           onClaudeLaunchArgsChange={onClaudeLaunchArgsChange}
+          onCursorBinaryPathChange={onCursorBinaryPathChange}
+          onCursorApiEndpointChange={onCursorApiEndpointChange}
           onProviderBaseUrlChange={onProviderBaseUrlChange}
           onProviderConfigJsonChange={onProviderConfigJsonChange}
           onProviderAzureApiVersionChange={onProviderAzureApiVersionChange}

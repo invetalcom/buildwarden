@@ -17,9 +17,9 @@ import type { IntegratedSkillDefinition as IntegratedSkillDefinitionType } from 
 /** Renderer-facing skill descriptor without the heavy body/reference payloads. */
 export type IntegratedSkillMetadata = Omit<IntegratedSkillDefinitionType, "content" | "references">;
 
-export type ProviderType = "ai-sdk" | "azure-legacy" | "codex-cli" | "claude-code";
+export type ProviderType = "ai-sdk" | "azure-legacy" | "codex-cli" | "claude-code" | "cursor-agent";
 
-export type HarnessType = "ai-sdk" | "azure-legacy" | "codex-app-server" | "claude-code";
+export type HarnessType = "ai-sdk" | "azure-legacy" | "codex-app-server" | "claude-code" | "cursor-acp";
 
 export type RunMode = "code" | "plan" | "ask";
 export type ProjectKind = "git" | "folder";
@@ -94,6 +94,17 @@ export const PROVIDER_COMPOSER_COMMANDS = [
     label: "Plan",
     description: "Use Claude Code plan mode for this prompt.",
     providerType: "claude-code",
+    effect: "set-run-mode",
+    runMode: "plan",
+    supportsRun: true,
+    supportsFollowUp: true,
+  },
+  {
+    id: "cursor-plan",
+    command: "/plan",
+    label: "Plan",
+    description: "Use Cursor Agent plan mode for this prompt.",
+    providerType: "cursor-agent",
     effect: "set-run-mode",
     runMode: "plan",
     supportsRun: true,
@@ -841,6 +852,8 @@ export const PROVIDER_CONFIG_CODEX_BINARY_PATH_KEY = "codexBinaryPath";
 export const PROVIDER_CONFIG_CODEX_HOME_PATH_KEY = "codexHomePath";
 export const PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY = "claudeBinaryPath";
 export const PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY = "claudeLaunchArgs";
+export const PROVIDER_CONFIG_CURSOR_BINARY_PATH_KEY = "cursorBinaryPath";
+export const PROVIDER_CONFIG_CURSOR_API_ENDPOINT_KEY = "cursorApiEndpoint";
 
 export interface ProviderAccountInput {
   providerType: ProviderType;
@@ -865,6 +878,7 @@ export interface ProviderAvailableModel {
   displayName: string;
   source: "provider" | "curated";
   capabilities?: Partial<ProviderCapabilityMap>;
+  config?: Record<string, unknown>;
   unavailableReason?: string;
 }
 
@@ -2111,6 +2125,11 @@ export interface DetectedClaudeInstallation {
   binaryPath: string | null;
 }
 
+export interface DetectedCursorInstallation {
+  binaryPath: string | null;
+  message?: string;
+}
+
 export type AppMenuCommand = "go-home" | "new-agent-run" | "new-chat" | "open-settings" | "toggle-dark-mode";
 export type AppMenuSection = "file" | "edit" | "view" | "window" | "help";
 
@@ -2230,6 +2249,7 @@ export interface DesktopApi {
   getAppPaths(): Promise<AppPathsInfo>;
   getDetectedCodexInstallation(): Promise<DetectedCodexInstallation>;
   getDetectedClaudeInstallation(): Promise<DetectedClaudeInstallation>;
+  getDetectedCursorInstallation(): Promise<DetectedCursorInstallation>;
   /** Lightweight skill descriptors (no bodies); deduped by source:name. */
   listIntegratedSkills(): Promise<IntegratedSkillMetadata[]>;
   /** Full markdown body of one skill, loaded on demand (e.g. settings preview). */
@@ -2390,6 +2410,7 @@ export const IPC_CHANNELS = {
   getAppPaths: "buildwarden:get-app-paths",
   getDetectedCodexInstallation: "buildwarden:get-detected-codex-installation",
   getDetectedClaudeInstallation: "buildwarden:get-detected-claude-installation",
+  getDetectedCursorInstallation: "buildwarden:get-detected-cursor-installation",
   listIntegratedSkills: "buildwarden:list-integrated-skills",
   getIntegratedSkillContent: "buildwarden:get-integrated-skill-content",
   openExternalUrl: "buildwarden:open-external-url",

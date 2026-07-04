@@ -23,6 +23,8 @@ import {
   PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY,
   PROVIDER_CONFIG_CODEX_BINARY_PATH_KEY,
   PROVIDER_CONFIG_CODEX_HOME_PATH_KEY,
+  PROVIDER_CONFIG_CURSOR_API_ENDPOINT_KEY,
+  PROVIDER_CONFIG_CURSOR_BINARY_PATH_KEY,
   serializeWelcomeCompletedCheckIdsSetting,
   SUPPORTED_IDE_KINDS,
   parseIdePathConfig,
@@ -171,6 +173,9 @@ const formatRunWorkspaceLabel = (run: RunRecord): string => {
   return run.branchName;
 };
 
+const isLocalProviderType = (type: ProviderType): boolean =>
+  type === "codex-cli" || type === "claude-code" || type === "cursor-agent";
+
 export const App = () => {
   const buildwarden = window.buildwarden;
   const showCustomWindowsTitleBar = typeof navigator !== "undefined" && navigator.platform.toLowerCase().startsWith("win");
@@ -207,6 +212,10 @@ export const App = () => {
   const [claudeBinaryPath, setClaudeBinaryPath] = useState("");
   const [claudeLaunchArgs, setClaudeLaunchArgs] = useState("");
   const [detectedClaudeBinaryPath, setDetectedClaudeBinaryPath] = useState<string | null>(null);
+  const [cursorBinaryPath, setCursorBinaryPath] = useState("");
+  const [cursorApiEndpoint, setCursorApiEndpoint] = useState("");
+  const [detectedCursorBinaryPath, setDetectedCursorBinaryPath] = useState<string | null>(null);
+  const [detectedCursorMessage, setDetectedCursorMessage] = useState<string | null>(null);
   const [providerBaseUrl, setProviderBaseUrl] = useState("");
   const [providerConfigJson, setProviderConfigJson] = useState("{}");
   const [providerAzureApiVersion, setProviderAzureApiVersion] = useState("2024-06-01");
@@ -602,6 +611,15 @@ export const App = () => {
     setDetectedClaudeBinaryPath(detected.binaryPath);
   }, [buildwarden]);
 
+  const loadDetectedCursorInstallation = useCallback(async () => {
+    if (!buildwarden) {
+      return;
+    }
+    const detected = await buildwarden.getDetectedCursorInstallation();
+    setDetectedCursorBinaryPath(detected.binaryPath);
+    setDetectedCursorMessage(detected.message ?? null);
+  }, [buildwarden]);
+
   const loadNetworkProxySettings = useCallback(async () => {
     if (!buildwarden) {
       return;
@@ -865,6 +883,7 @@ export const App = () => {
     void loadSnapshot();
     void loadDetectedCodexInstallation();
     void loadDetectedClaudeInstallation();
+    void loadDetectedCursorInstallation();
     void loadNetworkProxySettings();
     void loadAppPaths();
 
@@ -928,6 +947,7 @@ export const App = () => {
     loadAppPaths,
     loadDetectedClaudeInstallation,
     loadDetectedCodexInstallation,
+    loadDetectedCursorInstallation,
     loadNetworkProxySettings,
     loadSnapshot,
     refreshRunDetailForActiveRunEvent,
@@ -940,7 +960,22 @@ export const App = () => {
     }
 
     void loadAppPaths();
-  }, [loadAppPaths, settingsOpen]);
+    void loadDetectedCodexInstallation();
+    void loadDetectedClaudeInstallation();
+    void loadDetectedCursorInstallation();
+  }, [
+    loadAppPaths,
+    loadDetectedClaudeInstallation,
+    loadDetectedCodexInstallation,
+    loadDetectedCursorInstallation,
+    settingsOpen,
+  ]);
+
+  useEffect(() => {
+    if (providerType === "cursor-agent") {
+      void loadDetectedCursorInstallation();
+    }
+  }, [loadDetectedCursorInstallation, providerType]);
 
   useEffect(() => {
     if (!buildwarden || !shouldCheckProjectFolderGitStatus) {
@@ -1800,12 +1835,28 @@ export const App = () => {
         delete config[PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY];
         delete config[PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY];
       }
+      if (providerType === "cursor-agent") {
+        const effectiveCursorBinaryPath = cursorBinaryPath.trim() || detectedCursorBinaryPath?.trim() || "";
+        if (effectiveCursorBinaryPath) {
+          config[PROVIDER_CONFIG_CURSOR_BINARY_PATH_KEY] = effectiveCursorBinaryPath;
+        } else {
+          delete config[PROVIDER_CONFIG_CURSOR_BINARY_PATH_KEY];
+        }
+        if (cursorApiEndpoint.trim()) {
+          config[PROVIDER_CONFIG_CURSOR_API_ENDPOINT_KEY] = cursorApiEndpoint.trim();
+        } else {
+          delete config[PROVIDER_CONFIG_CURSOR_API_ENDPOINT_KEY];
+        }
+      } else {
+        delete config[PROVIDER_CONFIG_CURSOR_BINARY_PATH_KEY];
+        delete config[PROVIDER_CONFIG_CURSOR_API_ENDPOINT_KEY];
+      }
 
       const provider = await buildwarden.addProviderAccount({
         providerType,
         label: providerLabel,
-        apiKey: providerType === "codex-cli" || providerType === "claude-code" ? "" : apiKey,
-        apiBaseUrl: providerType === "codex-cli" || providerType === "claude-code" ? undefined : providerBaseUrl || undefined,
+        apiKey: isLocalProviderType(providerType) ? "" : apiKey,
+        apiBaseUrl: isLocalProviderType(providerType) ? undefined : providerBaseUrl || undefined,
         config,
       });
       setApiKey("");
@@ -1813,6 +1864,8 @@ export const App = () => {
       setCodexHomePath("");
       setClaudeBinaryPath("");
       setClaudeLaunchArgs("");
+      setCursorBinaryPath("");
+      setCursorApiEndpoint("");
       setProviderFamily("openai");
       setProviderBaseUrl("");
       setProviderConfigJson("{}");
@@ -1828,11 +1881,16 @@ export const App = () => {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
 
+      const availableModel = availableModelsByProviderIdRef.current[selectedProviderId]?.models.find(
+        (candidate) => candidate.modelId === modelId.trim(),
+      );
       const model = await buildwarden.addModel({
         providerAccountId: selectedProviderId,
         modelId,
         displayName: modelDisplayName,
         baseUrlOverride: modelBaseUrl || undefined,
+        config: availableModel?.config,
+        capabilities: availableModel?.capabilities,
       });
       await loadSnapshot();
       handleRunModelChange(model.id);
@@ -4166,6 +4224,10 @@ export const App = () => {
               claudeBinaryPath={claudeBinaryPath}
               claudeLaunchArgs={claudeLaunchArgs}
               detectedClaudeBinaryPath={detectedClaudeBinaryPath}
+              cursorBinaryPath={cursorBinaryPath}
+              cursorApiEndpoint={cursorApiEndpoint}
+              detectedCursorBinaryPath={detectedCursorBinaryPath}
+              detectedCursorMessage={detectedCursorMessage}
               providerBaseUrl={providerBaseUrl}
               providerConfigJson={providerConfigJson}
               providerAzureApiVersion={providerAzureApiVersion}
@@ -4236,6 +4298,8 @@ export const App = () => {
               onCodexHomePathChange={setCodexHomePath}
               onClaudeBinaryPathChange={setClaudeBinaryPath}
               onClaudeLaunchArgsChange={setClaudeLaunchArgs}
+              onCursorBinaryPathChange={setCursorBinaryPath}
+              onCursorApiEndpointChange={setCursorApiEndpoint}
               onProviderBaseUrlChange={setProviderBaseUrl}
               onProviderConfigJsonChange={setProviderConfigJson}
               onProviderAzureApiVersionChange={setProviderAzureApiVersion}
@@ -4624,6 +4688,10 @@ export const App = () => {
             claudeBinaryPath,
             claudeLaunchArgs,
             detectedClaudeBinaryPath,
+            cursorBinaryPath,
+            cursorApiEndpoint,
+            detectedCursorBinaryPath,
+            detectedCursorMessage,
             providerBaseUrl,
             providerConfigJson,
             providerAzureApiVersion,
@@ -4649,6 +4717,8 @@ export const App = () => {
             onCodexHomePathChange: setCodexHomePath,
             onClaudeBinaryPathChange: setClaudeBinaryPath,
             onClaudeLaunchArgsChange: setClaudeLaunchArgs,
+            onCursorBinaryPathChange: setCursorBinaryPath,
+            onCursorApiEndpointChange: setCursorApiEndpoint,
             onProviderBaseUrlChange: setProviderBaseUrl,
             onProviderConfigJsonChange: setProviderConfigJson,
             onProviderAzureApiVersionChange: setProviderAzureApiVersion,
