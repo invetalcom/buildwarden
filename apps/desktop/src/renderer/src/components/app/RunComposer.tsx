@@ -715,6 +715,7 @@ export const RunComposer = ({
   );
   const supportsReasoning = (option: ComposerSelectOption) =>
     option.providerType === "codex-cli" ||
+    option.providerType === "cursor-agent" ||
     option.providerType === "claude-code" ||
     (option.providerType === "ai-sdk" && (option.providerFamily === "openai" || option.providerFamily === "anthropic"));
   const showMultiReasoningControl =
@@ -727,6 +728,7 @@ export const RunComposer = ({
   const showReasoningControl =
     !useMultiModel &&
     (activeModelOption?.providerType === "codex-cli" ||
+      activeModelOption?.providerType === "cursor-agent" ||
       (activeModelOption?.providerType === "ai-sdk" && activeModelOption.providerFamily === "openai"));
   const showAnthropicControl =
     !useMultiModel &&

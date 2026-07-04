@@ -98,6 +98,22 @@ describe("deriveLatestRunPlanProgress", () => {
     });
   });
 
+  it("maps Cursor provider plan metadata to the Cursor ACP source", () => {
+    const progress = deriveLatestRunPlanProgress(
+      [step("plan", "plan-updated", "1. Inspect ACP\n2. Update todos", { provider: "cursor-agent" })],
+      "code",
+    );
+
+    expect(progress).toMatchObject({
+      fallback: true,
+      source: "cursor-acp",
+      steps: [
+        { title: "Inspect ACP", status: "pending" },
+        { title: "Update todos", status: "pending" },
+      ],
+    });
+  });
+
   it("does not infer progress from ordinary assistant output", () => {
     expect(
       deriveLatestRunPlanProgress([step("output", "output", "1. This is just an answer\n2. Not a plan", { source: "assistant" })], "code"),

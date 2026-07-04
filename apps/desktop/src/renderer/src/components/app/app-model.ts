@@ -149,6 +149,8 @@ export const harnessTypeForProvider = (providerType: ProviderType) =>
     ? "codex-app-server"
     : providerType === "claude-code"
       ? "claude-code"
+      : providerType === "cursor-agent"
+        ? "cursor-acp"
       : providerType === "azure-legacy"
         ? "azure-legacy"
         : "ai-sdk";
@@ -169,7 +171,7 @@ export const buildRunReasoningInput = (
   reasoningEffort: string,
   anthropicEffort: string,
 ): { reasoningEffort?: string; anthropicEffort?: string } => {
-  if (providerType === "codex-cli" || (providerType === "ai-sdk" && providerFamily === "openai")) {
+  if (providerType === "codex-cli" || providerType === "cursor-agent" || (providerType === "ai-sdk" && providerFamily === "openai")) {
     return { reasoningEffort: normalizeOpenAiReasoningEffort(reasoningEffort) };
   }
   if (providerType === "claude-code" || (providerType === "ai-sdk" && providerFamily === "anthropic")) {

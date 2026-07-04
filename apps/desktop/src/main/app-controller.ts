@@ -9,6 +9,7 @@ import { killRunTerminalForRunId } from "./run-terminal-ipc";
 import { buildDependencyGraphSnapshotForProjectGraph, listDependencySourceFilesForProjectGraph } from "./project-graph-utils";
 import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
 import { readRunWorkspaceFileForPreview } from "./run-workspace-file";
+import { normalizeJsonResponse } from "./json-response";
 import { createFolderSnapshot, deleteFolderSnapshot, diffFolderAgainstSnapshot, getFolderSnapshotRoot } from "./folder-diff";
 import { createFolderWorkspaceCopy, removeFolderWorkspaceCopy } from "./folder-workspace";
 import { getHarnessTypeForProvider } from "./harness-adapters";
@@ -26,6 +27,13 @@ import {
   suggestCommitMessageWithClaudeCode,
 } from "@buildwarden/provider-claude-code";
 import { CodexCliProviderAdapter, assertCodexCliAvailable, generateAskTextResultWithCodexCli, suggestCommitMessageWithCodexCli } from "@buildwarden/provider-codex-cli";
+import {
+  CursorAgentProviderAdapter,
+  assertCursorAgentAvailable,
+  generateAskTextResultWithCursorAgent,
+  getCursorAgentBinaryPathCandidates,
+  suggestCommitMessageWithCursorAgent,
+} from "@buildwarden/provider-cursor-agent";
 import { AzureLegacyProviderAdapter, createAzureLegacyClientFromParts, createAzureLegacyDevLogger } from "@buildwarden/provider-azure-legacy";
 import { INTEGRATED_SKILLS_BY_ID, INTEGRATED_SKILLS_CATALOG } from "@buildwarden/shared/integrated-skills-catalog";
 import {
@@ -330,14 +338,6 @@ const normalizeSuggestedCommitMessage = (raw: string): string => {
   return t;
 };
 
-const normalizeJsonResponse = (raw: string): string => {
-  const trimmed = raw.trim();
-  if (!trimmed.startsWith("```")) {
-    return trimmed;
-  }
-  return trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-};
-
 const extractChatCompletionText = (content: unknown): string => {
   if (typeof content === "string") {
     return content;
@@ -489,10 +489,11 @@ const getCuratedAvailableModelsForProvider = (provider: ProviderAccountRecord): 
 const providerAllowsMissingApiKey = (provider: ProviderAccountRecord): boolean =>
   provider.providerType === "codex-cli" ||
   provider.providerType === "claude-code" ||
+  provider.providerType === "cursor-agent" ||
   (provider.providerType === "ai-sdk" && getAiSdkProviderFamilyFromConfig(provider.configJson) === "openai-compatible");
 
 const providerSupportsInterruptedRunRecovery = (providerType: ProviderAccountRecord["providerType"]): boolean =>
-  providerType === "codex-cli" || providerType === "claude-code";
+  providerType === "codex-cli" || providerType === "claude-code" || providerType === "cursor-agent";
 
 const makeNativeComposerCommand = (
   providerType: ProviderAccountRecord["providerType"],
@@ -636,6 +637,7 @@ export class AppController
     "azure-legacy": new AzureLegacyProviderAdapter(),
     "codex-cli": new CodexCliProviderAdapter(),
     "claude-code": new ClaudeCodeProviderAdapter(),
+    "cursor-agent": new CursorAgentProviderAdapter(),
   };
   private readonly runWorkers = new Map<string, ActiveWorker>();
   private readonly runShellApprovalStepIds = new Map<string, string>();
@@ -1911,6 +1913,8 @@ export class AppController
       assertCodexCliAvailable(input.config);
     } else if (input.providerType === "claude-code") {
       assertClaudeCodeAvailable(input.config);
+    } else if (input.providerType === "cursor-agent") {
+      await assertCursorAgentAvailable(input.config);
     }
 
     const keyRef = `provider:${crypto.randomUUID()}`;
@@ -2669,6 +2673,22 @@ export class AppController
       );
       if (!text) {
         throw new Error("Claude Code returned an empty commit message.");
+      }
+      return text;
+    }
+
+    if (provider.providerType === "cursor-agent") {
+      const text = normalizeSuggestedCommitMessage(
+        await suggestCommitMessageWithCursorAgent({
+          cwd: run.worktreePath,
+          modelId: model.modelId,
+          config: providerConfig,
+          modelConfig: JSON.parse(model.configJson || "{}") as Record<string, unknown>,
+          diffPrompt: commitMessagePrompt,
+        }),
+      );
+      if (!text) {
+        throw new Error("Cursor Agent returned an empty commit message.");
       }
       return text;
     }
@@ -3587,6 +3607,19 @@ export class AppController
         modelId: model.modelId,
         config: providerConfig,
         networkProxy,
+      });
+      this.recordStandaloneModelUsage(input.usageProjectId, result.usage);
+      return result.text.trim();
+    }
+
+    if (provider.providerType === "cursor-agent") {
+      const result = await generateAskTextResultWithCursorAgent({
+        cwd,
+        prompt: [input.systemPrompt, input.prompt].filter((part) => part.trim()).join("\n\n"),
+        modelId: model.modelId,
+        config: providerConfig,
+        modelConfig,
+        devLogging,
       });
       this.recordStandaloneModelUsage(input.usageProjectId, result.usage);
       return result.text.trim();
@@ -4902,7 +4935,7 @@ export class AppController
     const model = this.db.getModel(run.modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
     if (!providerSupportsInterruptedRunRecovery(provider.providerType)) {
-      throw new Error("Interrupted-session recovery is only available for Codex CLI and Claude Code runs.");
+      throw new Error("Interrupted-session recovery is only available for Codex CLI, Claude Code, and Cursor Agent runs.");
     }
 
     if (await this.resumeInterruptedRunFromCheckpoint(run, "manual")) {
@@ -5074,6 +5107,7 @@ export class AppController
 
   private detectedCodexInstallation: Promise<{ binaryPath: string | null }> | null = null;
   private detectedClaudeInstallation: Promise<{ binaryPath: string | null }> | null = null;
+  private detectedCursorInstallation: Promise<{ binaryPath: string | null; message?: string }> | null = null;
 
   getDetectedCodexInstallation(): Promise<{ binaryPath: string | null }> {
     this.detectedCodexInstallation ??= (async () => {
@@ -5120,6 +5154,54 @@ export class AppController
       return { binaryPath };
     })();
     return this.detectedClaudeInstallation ?? Promise.resolve({ binaryPath: null });
+  }
+
+  getDetectedCursorInstallation(): Promise<{ binaryPath: string | null; message?: string }> {
+    this.detectedCursorInstallation ??= (async () => {
+      const nativePath = getCursorAgentBinaryPathCandidates().find((candidate) => existsSync(candidate));
+      if (nativePath) {
+        return { binaryPath: nativePath };
+      }
+
+      const commands =
+        process.platform === "win32"
+          ? [
+              { file: "where.exe", args: ["agent.cmd"] },
+              { file: "where.exe", args: ["agent.exe"] },
+              { file: "where.exe", args: ["agent"] },
+              { file: "where.exe", args: ["cursor-agent.cmd"] },
+              { file: "where.exe", args: ["cursor-agent.exe"] },
+              { file: "where.exe", args: ["cursor-agent"] },
+            ]
+          : [
+              { file: "which", args: ["agent"] },
+              { file: "which", args: ["cursor-agent"] },
+            ];
+      const binaryPath = await this.lookupBinaryOnPath(commands, "Cursor Agent");
+      if (binaryPath === null) {
+        this.detectedCursorInstallation = null;
+      }
+      if (binaryPath) {
+        return { binaryPath };
+      }
+
+      const cursorDesktopPath =
+        process.platform === "win32" && process.env.LOCALAPPDATA
+          ? join(process.env.LOCALAPPDATA, "Programs", "cursor", "resources", "app", "bin", "cursor.cmd")
+          : null;
+      if (cursorDesktopPath && existsSync(cursorDesktopPath)) {
+        return {
+          binaryPath: null,
+          message:
+            "Cursor desktop is installed, but the Cursor Agent CLI was not found. Install or expose `agent`/`cursor-agent` on PATH, then run `agent login` and `agent about`.",
+        };
+      }
+      return {
+        binaryPath: null,
+        message: "Cursor Agent CLI was not found. Install Cursor CLI and ensure `agent about` or `cursor-agent about` works.",
+      };
+    })();
+    return this.detectedCursorInstallation ?? Promise.resolve({ binaryPath: null });
   }
 
   listIntegratedSkills(): Promise<IntegratedSkillMetadata[]> {

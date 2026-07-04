@@ -32,6 +32,7 @@ const safeParseMetadata = (value: string) => {
 const sourceFromProvider = (provider: unknown): RunPlanProgressSource | undefined => {
   if (provider === "codex-cli") return "codex";
   if (provider === "claude-code") return "claude";
+  if (provider === "cursor-agent") return "cursor-acp";
   if (provider === "ai-sdk") return "ai-sdk";
   return undefined;
 };
