@@ -192,11 +192,13 @@ const eventRoleIcon = (role: ProjectLoopEventRecord["role"]) => {
   return null;
 };
 
-const StatusPill = ({ status }: { status: ProjectLoopStatus | ProjectLoopIterationRecord["status"] }) => (
-  <span className={cn("rounded-full border px-2.5 py-0.5 text-[11px]", statusToneClass(status))}>
-    {status in LOOP_STATUS_LABELS
-      ? LOOP_STATUS_LABELS[status as ProjectLoopStatus]
-      : ITERATION_STATUS_LABELS[status as ProjectLoopIterationRecord["status"]]}
+const StatusPill = (
+  props:
+    | { kind: "loop"; status: ProjectLoopStatus }
+    | { kind: "iteration"; status: ProjectLoopIterationRecord["status"] },
+) => (
+  <span className={cn("rounded-full border px-2.5 py-0.5 text-[11px]", statusToneClass(props.status))}>
+    {props.kind === "loop" ? LOOP_STATUS_LABELS[props.status] : ITERATION_STATUS_LABELS[props.status]}
   </span>
 );
 
@@ -354,7 +356,7 @@ const LoopListRow = ({ item, onSelect }: { item: ProjectLoopListItem; onSelect: 
       <div className="flex min-w-0 flex-1 items-center gap-2">
         {isActive ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-cyan-400" /> : null}
         <span className="truncate text-sm text-zinc-100">{loop.name}</span>
-        <StatusPill status={loop.status} />
+        <StatusPill kind="loop" status={loop.status} />
         {pendingUiReviewCount > 0 ? (
           <span className="shrink-0 rounded-full border border-[var(--ec-warning)] bg-[var(--ec-warning)]/10 px-2 py-0.5 text-[10px] text-[var(--ec-warning)]">
             {pendingUiReviewCount} approval{pendingUiReviewCount === 1 ? "" : "s"} needed
@@ -634,7 +636,7 @@ const LoopDetailView = ({
             </Button>
             {isActive ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-cyan-400" /> : <RefreshCw className="h-4 w-4 shrink-0 text-cyan-400" />}
             <h3 className="truncate text-sm font-medium text-zinc-100">{loop.name}</h3>
-            <StatusPill status={loop.status} />
+            <StatusPill kind="loop" status={loop.status} />
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             {isActive ? (
@@ -749,7 +751,7 @@ const LoopDetailView = ({
                         {iteration.iterationIndex + 1}
                       </span>
                       <span className="truncate text-sm text-zinc-100">{iteration.title}</span>
-                      <StatusPill status={iteration.status} />
+                      <StatusPill kind="iteration" status={iteration.status} />
                       <span className="text-zinc-600">
                         {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                       </span>
