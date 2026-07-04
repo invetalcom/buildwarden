@@ -22,7 +22,14 @@ import type {
   SubmitProjectPrMrCommentsInput,
 } from "@buildwarden/shared";
 import type { PrReviewHttpClient } from "./pr-review-http-client";
-import type { GitlabDiffRefs, ProjectPrReviewProvider, ProjectPrReviewRemoteContext } from "./pr-review-types";
+import type {
+  CreateForgeRequestInput,
+  ForgeRequestApprovalStatus,
+  GitlabDiffRefs,
+  MergeForgeRequestInput,
+  ProjectPrReviewProvider,
+  ProjectPrReviewRemoteContext,
+} from "./pr-review-types";
 import {
   assertDraftCommentsAreSubmittable,
   isRecord,
@@ -647,6 +654,72 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
     return {
       message: input.resolved ? "Resolved the merge request discussion." : "Reopened the merge request discussion.",
       url: input.prUrl.trim(),
+    };
+  }
+
+  async createRequest(input: CreateForgeRequestInput): Promise<ProjectForgeRequestSummary> {
+    const payload = await this.http.json(`/projects/${this.context.gitlab.encodedProjectPath}/merge_requests`, {
+      method: "POST",
+      body: JSON.stringify({
+        source_branch: input.sourceBranch,
+        target_branch: input.targetBranch,
+        title: input.title,
+        description: input.description,
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!isRecord(payload)) {
+      throw new Error("The hosting API returned an unexpected response while creating the merge request.");
+    }
+    const summary = mapGitlabRequestSummary(payload);
+    if (!summary) {
+      throw new Error("The hosting API returned an incomplete response while creating the merge request.");
+    }
+    return summary;
+  }
+
+  async mergeRequest(input: MergeForgeRequestInput): Promise<ProjectForgeReviewActionResult> {
+    const parsed = parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
+    const body: Record<string, unknown> = {};
+    if (input.mergeCommitTitle?.trim()) {
+      body.merge_commit_message = input.mergeCommitTitle.trim();
+    }
+    await this.http.json(
+      `/projects/${this.context.gitlab.encodedProjectPath}/merge_requests/${String(parsed.number)}/merge`,
+      {
+        method: "PUT",
+        body: JSON.stringify(body),
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+    return {
+      message: "Merged the merge request.",
+      url: input.prUrl.trim(),
+    };
+  }
+
+  async getRequestApprovalStatus(input: GetProjectForgeRequestDetailsInput): Promise<ForgeRequestApprovalStatus> {
+    const parsed = parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
+    const payload = await this.http.json(
+      `/projects/${this.context.gitlab.encodedProjectPath}/merge_requests/${String(parsed.number)}/approvals`,
+    );
+    if (!isRecord(payload)) {
+      return { approved: false, approvedBy: [] };
+    }
+    const approvedByRaw = Array.isArray(payload.approved_by) ? payload.approved_by : [];
+    const approvedBy = approvedByRaw
+      .map((entry) => {
+        if (!isRecord(entry)) {
+          return null;
+        }
+        const user = recordObject(entry, "user");
+        return user ? (recordString(user, "username") ?? recordString(user, "name")) : null;
+      })
+      .filter((entry): entry is string => Boolean(entry));
+    const approvedFlag = recordBoolean(payload, "approved");
+    return {
+      approved: approvedFlag || approvedBy.length > 0,
+      approvedBy,
     };
   }
 

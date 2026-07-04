@@ -1,6 +1,7 @@
 export type ProjectPageTab =
   | "overview"
   | "lab"
+  | "loops"
   | "branches"
   | "tasks"
   | "reviews"
@@ -12,6 +13,7 @@ export type ProjectPageTab =
 export const PROJECT_PAGE_LABELS: Record<ProjectPageTab, string> = {
   overview: "Agent Runs",
   lab: "Project Lab",
+  loops: "Loops",
   branches: "Branches",
   tasks: "Task Board",
   reviews: "MR Review",

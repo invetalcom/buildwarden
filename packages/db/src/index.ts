@@ -26,6 +26,18 @@ import type {
   ProjectLabMode,
   ProjectLabThreadRecord,
   ProjectLabThreadStatus,
+  ProjectLoopDetail,
+  ProjectLoopEventRecord,
+  ProjectLoopIterationRecord,
+  ProjectLoopIterationStatus,
+  ProjectLoopListItem,
+  ProjectLoopMergePolicy,
+  ProjectLoopPrReviewPolicy,
+  ProjectLoopRecord,
+  ProjectLoopStatus,
+  ProjectLoopUiChangePolicy,
+  ProjectLoopUiReviewRecord,
+  ProjectLoopUiReviewStatus,
   ProjectTaskInput,
   ProjectTaskRecord,
   ProjectRecord,
@@ -162,6 +174,7 @@ export class BuildWardenDatabase {
         tasks: this.listProjectTasks(project.id),
         insights: this.listProjectInsights(project.id),
         labThreads: this.listProjectLabThreadDetails(project.id),
+        loops: this.listProjectLoopListItems(project.id),
       } satisfies ProjectSnapshot;
     });
 
@@ -820,6 +833,458 @@ export class BuildWardenDatabase {
     this.persist();
   }
 
+  private static readonly PROJECT_LOOP_SELECT = `
+    select
+      id,
+      project_id as projectId,
+      name,
+      prompt,
+      runner_model_id as runnerModelId,
+      review_model_id as reviewModelId,
+      merge_policy as mergePolicy,
+      ui_change_policy as uiChangePolicy,
+      pr_review_policy as prReviewPolicy,
+      ui_review_instructions as uiReviewInstructions,
+      base_branch as baseBranch,
+      status,
+      plan_summary as planSummary,
+      error_message as errorMessage,
+      created_at as createdAt,
+      updated_at as updatedAt,
+      started_at as startedAt,
+      finished_at as finishedAt
+    from project_loops
+  `;
+
+  private static readonly PROJECT_LOOP_ITERATION_SELECT = `
+    select
+      id,
+      loop_id as loopId,
+      iteration_index as iterationIndex,
+      title,
+      objective,
+      status,
+      run_id as runId,
+      branch_name as branchName,
+      pr_url as prUrl,
+      pr_number as prNumber,
+      target_branch as targetBranch,
+      error_message as errorMessage,
+      ai_review_posted as aiReviewPosted,
+      processed_comment_ids_json as processedCommentIdsJson,
+      created_at as createdAt,
+      updated_at as updatedAt
+    from project_loop_iterations
+  `;
+
+  private static readonly PROJECT_LOOP_UI_REVIEW_SELECT = `
+    select
+      id,
+      loop_id as loopId,
+      iteration_id as iterationId,
+      round,
+      page_name as pageName,
+      description,
+      image_path as imagePath,
+      status,
+      feedback,
+      created_at as createdAt,
+      updated_at as updatedAt
+    from project_loop_ui_reviews
+  `;
+
+  createProjectLoop(input: {
+    projectId: string;
+    name: string;
+    prompt: string;
+    runnerModelId: string;
+    reviewModelId?: string | null;
+    mergePolicy: ProjectLoopMergePolicy;
+    uiChangePolicy: ProjectLoopUiChangePolicy;
+    prReviewPolicy?: ProjectLoopPrReviewPolicy;
+    uiReviewInstructions?: string | null;
+    baseBranch: string;
+    status: ProjectLoopStatus;
+  }): ProjectLoopRecord {
+    const id = createId();
+    const timestamp = nowIso();
+    this.run(
+      `
+      insert into project_loops (
+        id, project_id, name, prompt, runner_model_id, review_model_id, merge_policy, ui_change_policy, pr_review_policy,
+        ui_review_instructions, base_branch, status, plan_summary, error_message, created_at, updated_at, started_at, finished_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, null, ?, ?, ?, null)
+      `,
+      [
+        id,
+        input.projectId,
+        input.name,
+        input.prompt,
+        input.runnerModelId,
+        input.reviewModelId ?? null,
+        input.mergePolicy,
+        input.uiChangePolicy,
+        input.prReviewPolicy ?? "none",
+        input.uiReviewInstructions ?? null,
+        input.baseBranch,
+        input.status,
+        timestamp,
+        timestamp,
+        timestamp,
+      ],
+    );
+    this.persist();
+    return this.getProjectLoop(id);
+  }
+
+  getProjectLoop(loopId: string): ProjectLoopRecord {
+    const loop = this.first<ProjectLoopRecord>(`${BuildWardenDatabase.PROJECT_LOOP_SELECT} where id = ?`, [loopId]);
+    if (!loop) {
+      throw new Error(`Project loop not found: ${loopId}`);
+    }
+    return loop;
+  }
+
+  listProjectLoops(projectId: string): ProjectLoopRecord[] {
+    return this.all<ProjectLoopRecord>(`${BuildWardenDatabase.PROJECT_LOOP_SELECT} where project_id = ? order by created_at desc`, [
+      projectId,
+    ]);
+  }
+
+  listProjectLoopsWithStatuses(statuses: ProjectLoopStatus[]): ProjectLoopRecord[] {
+    if (statuses.length === 0) {
+      return [];
+    }
+    const placeholders = statuses.map(() => "?").join(", ");
+    return this.all<ProjectLoopRecord>(
+      `${BuildWardenDatabase.PROJECT_LOOP_SELECT} where status in (${placeholders}) order by created_at asc`,
+      statuses,
+    );
+  }
+
+  updateProjectLoop(
+    loopId: string,
+    fields: {
+      status?: ProjectLoopStatus;
+      name?: string;
+      planSummary?: string | null;
+      errorMessage?: string | null;
+      startedAt?: string | null;
+      finishedAt?: string | null;
+    },
+  ): ProjectLoopRecord {
+    const existing = this.getProjectLoop(loopId);
+    this.run(
+      `
+      update project_loops
+      set status = ?, name = ?, plan_summary = ?, error_message = ?, started_at = ?, finished_at = ?, updated_at = ?
+      where id = ?
+      `,
+      [
+        fields.status ?? existing.status,
+        fields.name ?? existing.name,
+        fields.planSummary !== undefined ? fields.planSummary : existing.planSummary,
+        fields.errorMessage !== undefined ? fields.errorMessage : existing.errorMessage,
+        fields.startedAt !== undefined ? fields.startedAt : existing.startedAt,
+        fields.finishedAt !== undefined ? fields.finishedAt : existing.finishedAt,
+        nowIso(),
+        loopId,
+      ],
+    );
+    this.persist();
+    return this.getProjectLoop(loopId);
+  }
+
+  createProjectLoopIteration(input: {
+    loopId: string;
+    iterationIndex: number;
+    title: string;
+    objective: string;
+    status?: ProjectLoopIterationStatus;
+    targetBranch?: string | null;
+  }): ProjectLoopIterationRecord {
+    const id = createId();
+    const timestamp = nowIso();
+    this.run(
+      `
+      insert into project_loop_iterations (
+        id, loop_id, iteration_index, title, objective, status, run_id, branch_name, pr_url, pr_number,
+        target_branch, error_message, processed_comment_ids_json, created_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, null, null, null, null, ?, null, '[]', ?, ?)
+      `,
+      [
+        id,
+        input.loopId,
+        input.iterationIndex,
+        input.title,
+        input.objective,
+        input.status ?? "pending",
+        input.targetBranch ?? null,
+        timestamp,
+        timestamp,
+      ],
+    );
+    this.persist();
+    return this.getProjectLoopIteration(id);
+  }
+
+  /**
+   * Inserts a whole loop plan and persists it as one disk write, so an app crash
+   * cannot leave a partially persisted (truncated) iteration list behind. Existing
+   * iterations for the loop are replaced, making plan creation idempotent.
+   */
+  replaceProjectLoopIterations(
+    loopId: string,
+    entries: Array<{ title: string; objective: string; targetBranch?: string | null }>,
+  ): ProjectLoopIterationRecord[] {
+    const timestamp = nowIso();
+    this.run("delete from project_loop_iterations where loop_id = ?", [loopId]);
+    for (const [index, entry] of entries.entries()) {
+      this.run(
+        `
+        insert into project_loop_iterations (
+          id, loop_id, iteration_index, title, objective, status, run_id, branch_name, pr_url, pr_number,
+          target_branch, error_message, processed_comment_ids_json, created_at, updated_at
+        ) values (?, ?, ?, ?, ?, 'pending', null, null, null, null, ?, null, '[]', ?, ?)
+        `,
+        [createId(), loopId, index, entry.title, entry.objective, entry.targetBranch ?? null, timestamp, timestamp],
+      );
+    }
+    this.persist();
+    return this.listProjectLoopIterations(loopId);
+  }
+
+  getProjectLoopIteration(iterationId: string): ProjectLoopIterationRecord {
+    const iteration = this.first<ProjectLoopIterationRecord>(
+      `${BuildWardenDatabase.PROJECT_LOOP_ITERATION_SELECT} where id = ?`,
+      [iterationId],
+    );
+    if (!iteration) {
+      throw new Error(`Project loop iteration not found: ${iterationId}`);
+    }
+    return iteration;
+  }
+
+  getProjectLoopIterationByRunId(runId: string): ProjectLoopIterationRecord | null {
+    return this.first<ProjectLoopIterationRecord>(
+      `${BuildWardenDatabase.PROJECT_LOOP_ITERATION_SELECT} where run_id = ?`,
+      [runId],
+    );
+  }
+
+  listProjectLoopIterations(loopId: string): ProjectLoopIterationRecord[] {
+    return this.all<ProjectLoopIterationRecord>(
+      `${BuildWardenDatabase.PROJECT_LOOP_ITERATION_SELECT} where loop_id = ? order by iteration_index asc`,
+      [loopId],
+    );
+  }
+
+  updateProjectLoopIteration(
+    iterationId: string,
+    fields: {
+      status?: ProjectLoopIterationStatus;
+      title?: string;
+      objective?: string;
+      runId?: string | null;
+      branchName?: string | null;
+      prUrl?: string | null;
+      prNumber?: number | null;
+      targetBranch?: string | null;
+      errorMessage?: string | null;
+      aiReviewPosted?: boolean;
+      processedCommentIdsJson?: string;
+    },
+  ): ProjectLoopIterationRecord {
+    const existing = this.getProjectLoopIteration(iterationId);
+    this.run(
+      `
+      update project_loop_iterations
+      set status = ?, title = ?, objective = ?, run_id = ?, branch_name = ?, pr_url = ?, pr_number = ?,
+          target_branch = ?, error_message = ?, ai_review_posted = ?, processed_comment_ids_json = ?, updated_at = ?
+      where id = ?
+      `,
+      [
+        fields.status ?? existing.status,
+        fields.title ?? existing.title,
+        fields.objective ?? existing.objective,
+        fields.runId !== undefined ? fields.runId : existing.runId,
+        fields.branchName !== undefined ? fields.branchName : existing.branchName,
+        fields.prUrl !== undefined ? fields.prUrl : existing.prUrl,
+        fields.prNumber !== undefined ? fields.prNumber : existing.prNumber,
+        fields.targetBranch !== undefined ? fields.targetBranch : existing.targetBranch,
+        fields.errorMessage !== undefined ? fields.errorMessage : existing.errorMessage,
+        fields.aiReviewPosted !== undefined ? (fields.aiReviewPosted ? 1 : 0) : existing.aiReviewPosted,
+        fields.processedCommentIdsJson ?? existing.processedCommentIdsJson,
+        nowIso(),
+        iterationId,
+      ],
+    );
+    this.persist();
+    return this.getProjectLoopIteration(iterationId);
+  }
+
+  appendProjectLoopEvent(input: {
+    loopId: string;
+    iterationId?: string | null;
+    role: ProjectLoopEventRecord["role"];
+    label: string;
+    content: string;
+  }): ProjectLoopEventRecord {
+    const id = createId();
+    const createdAt = nowIso();
+    this.run(
+      `
+      insert into project_loop_events (id, loop_id, iteration_id, role, label, content, created_at)
+      values (?, ?, ?, ?, ?, ?, ?)
+      `,
+      [id, input.loopId, input.iterationId ?? null, input.role, input.label, input.content, createdAt],
+    );
+    this.persist();
+    return {
+      id,
+      loopId: input.loopId,
+      iterationId: input.iterationId ?? null,
+      role: input.role,
+      label: input.label,
+      content: input.content,
+      createdAt,
+    };
+  }
+
+  listProjectLoopEvents(loopId: string): ProjectLoopEventRecord[] {
+    return this.all<ProjectLoopEventRecord>(
+      `
+      select
+        id,
+        loop_id as loopId,
+        iteration_id as iterationId,
+        role,
+        label,
+        content,
+        created_at as createdAt
+      from project_loop_events
+      where loop_id = ?
+      order by created_at asc
+      `,
+      [loopId],
+    );
+  }
+
+  createProjectLoopUiReview(input: {
+    loopId: string;
+    iterationId: string;
+    round: number;
+    pageName: string;
+    description?: string | null;
+    imagePath: string;
+    status?: ProjectLoopUiReviewStatus;
+    feedback?: string | null;
+  }): ProjectLoopUiReviewRecord {
+    const id = createId();
+    const timestamp = nowIso();
+    this.run(
+      `
+      insert into project_loop_ui_reviews (id, loop_id, iteration_id, round, page_name, description, image_path, status, feedback, created_at, updated_at)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        id,
+        input.loopId,
+        input.iterationId,
+        input.round,
+        input.pageName,
+        input.description ?? null,
+        input.imagePath,
+        input.status ?? "pending",
+        input.feedback ?? null,
+        timestamp,
+        timestamp,
+      ],
+    );
+    this.persist();
+    return this.getProjectLoopUiReview(id);
+  }
+
+  getProjectLoopUiReview(reviewId: string): ProjectLoopUiReviewRecord {
+    const review = this.first<ProjectLoopUiReviewRecord>(
+      `${BuildWardenDatabase.PROJECT_LOOP_UI_REVIEW_SELECT} where id = ?`,
+      [reviewId],
+    );
+    if (!review) {
+      throw new Error(`Project loop UI review not found: ${reviewId}`);
+    }
+    return review;
+  }
+
+  listProjectLoopUiReviews(loopId: string): ProjectLoopUiReviewRecord[] {
+    return this.all<ProjectLoopUiReviewRecord>(
+      `${BuildWardenDatabase.PROJECT_LOOP_UI_REVIEW_SELECT} where loop_id = ? order by created_at asc`,
+      [loopId],
+    );
+  }
+
+  updateProjectLoopUiReview(
+    reviewId: string,
+    fields: {
+      status?: ProjectLoopUiReviewStatus;
+      feedback?: string | null;
+    },
+  ): ProjectLoopUiReviewRecord {
+    const existing = this.getProjectLoopUiReview(reviewId);
+    this.run(
+      `
+      update project_loop_ui_reviews
+      set status = ?, feedback = ?, updated_at = ?
+      where id = ?
+      `,
+      [
+        fields.status ?? existing.status,
+        fields.feedback !== undefined ? fields.feedback : existing.feedback,
+        nowIso(),
+        reviewId,
+      ],
+    );
+    this.persist();
+    return this.getProjectLoopUiReview(reviewId);
+  }
+
+  listProjectLoopListItems(projectId: string): ProjectLoopListItem[] {
+    const loops = this.listProjectLoops(projectId);
+    if (loops.length === 0) {
+      return [];
+    }
+    return loops.map((loop) => {
+      const iterations = this.listProjectLoopIterations(loop.id);
+      const runs = this.listRunsByIds(iterations.flatMap((iteration) => (iteration.runId ? [iteration.runId] : [])));
+      const pendingUiReviewCount = this.all<{ id: string }>(
+        "select id from project_loop_ui_reviews where loop_id = ? and status = 'pending'",
+        [loop.id],
+      ).length;
+      return { loop, iterations, runs, pendingUiReviewCount };
+    });
+  }
+
+  getProjectLoopDetail(loopId: string): ProjectLoopDetail {
+    const loop = this.getProjectLoop(loopId);
+    const iterations = this.listProjectLoopIterations(loopId);
+    const runIds = iterations.flatMap((iteration) => (iteration.runId ? [iteration.runId] : []));
+    return {
+      loop,
+      iterations,
+      events: this.listProjectLoopEvents(loopId),
+      uiReviews: this.listProjectLoopUiReviews(loopId),
+      runs: this.listRunsByIds(runIds),
+    };
+  }
+
+  deleteProjectLoop(loopId: string): void {
+    this.run("delete from project_loop_ui_reviews where loop_id = ?", [loopId]);
+    this.run("delete from project_loop_events where loop_id = ?", [loopId]);
+    this.run("delete from project_loop_iterations where loop_id = ?", [loopId]);
+    this.run("delete from project_loops where id = ?", [loopId]);
+    this.persist();
+  }
+
   getChat(id: string): ChatRecord {
     const chat = this.first<ChatRecord>(
       `
@@ -1090,6 +1555,13 @@ export class BuildWardenDatabase {
     this.run("delete from runs where project_id = ?", [projectId]);
     this.run("delete from project_lab_events where thread_id in (select id from project_lab_threads where project_id = ?)", [projectId]);
     this.run("delete from project_lab_threads where project_id = ?", [projectId]);
+    // Defense in depth: the app controller deletes loops (with their runs and stored
+    // screenshots) before calling this, but the DB-level cascade keeps the tables
+    // consistent for any other caller.
+    this.run("delete from project_loop_ui_reviews where loop_id in (select id from project_loops where project_id = ?)", [projectId]);
+    this.run("delete from project_loop_events where loop_id in (select id from project_loops where project_id = ?)", [projectId]);
+    this.run("delete from project_loop_iterations where loop_id in (select id from project_loops where project_id = ?)", [projectId]);
+    this.run("delete from project_loops where project_id = ?", [projectId]);
     this.run("delete from project_tasks where project_id = ?", [projectId]);
     this.run("delete from project_insights where project_id = ?", [projectId]);
     this.run("delete from projects where id = ?", [projectId]);
@@ -2429,6 +2901,81 @@ export class BuildWardenDatabase {
         foreign key(thread_id) references project_lab_threads(id)
       );
 
+      create table if not exists project_loops (
+        id text primary key,
+        project_id text not null,
+        name text not null,
+        prompt text not null,
+        runner_model_id text not null,
+        review_model_id text,
+        merge_policy text not null default 'wait-for-approval',
+        ui_change_policy text not null default 'auto',
+        pr_review_policy text not null default 'none',
+        ui_review_instructions text,
+        base_branch text not null,
+        status text not null,
+        plan_summary text,
+        error_message text,
+        created_at text not null,
+        updated_at text not null,
+        started_at text,
+        finished_at text,
+        foreign key(project_id) references projects(id)
+      );
+
+      create table if not exists project_loop_iterations (
+        id text primary key,
+        loop_id text not null,
+        iteration_index integer not null,
+        title text not null,
+        objective text not null,
+        status text not null default 'pending',
+        run_id text,
+        branch_name text,
+        pr_url text,
+        pr_number integer,
+        target_branch text,
+        error_message text,
+        ai_review_posted integer not null default 0,
+        processed_comment_ids_json text not null default '[]',
+        created_at text not null,
+        updated_at text not null,
+        foreign key(loop_id) references project_loops(id)
+      );
+
+      create table if not exists project_loop_events (
+        id text primary key,
+        loop_id text not null,
+        iteration_id text,
+        role text not null,
+        label text not null,
+        content text not null,
+        created_at text not null,
+        foreign key(loop_id) references project_loops(id)
+      );
+
+      create table if not exists project_loop_ui_reviews (
+        id text primary key,
+        loop_id text not null,
+        iteration_id text not null,
+        round integer not null default 1,
+        page_name text not null,
+        description text,
+        image_path text not null,
+        status text not null default 'pending',
+        feedback text,
+        created_at text not null,
+        updated_at text not null,
+        foreign key(loop_id) references project_loops(id),
+        foreign key(iteration_id) references project_loop_iterations(id)
+      );
+
+      create index if not exists idx_project_loops_project_id on project_loops(project_id);
+      create index if not exists idx_project_loop_iterations_loop_id on project_loop_iterations(loop_id, iteration_index);
+      create unique index if not exists idx_project_loop_iterations_loop_index_unique on project_loop_iterations(loop_id, iteration_index);
+      create index if not exists idx_project_loop_events_loop_id on project_loop_events(loop_id, created_at);
+      create index if not exists idx_project_loop_ui_reviews_loop_id on project_loop_ui_reviews(loop_id, created_at);
+
       create unique index if not exists idx_project_insights_project_kind on project_insights(project_id, kind);
       create index if not exists idx_project_lab_threads_project_id on project_lab_threads(project_id);
       create index if not exists idx_project_lab_events_thread_id on project_lab_events(thread_id);
@@ -2467,6 +3014,8 @@ export class BuildWardenDatabase {
   private applySchemaMigrations(): void {
     this.ensureColumn("projects", "project_kind", "text not null default 'git'");
     this.ensureColumn("runs", "workspace_vcs", "text not null default 'git'");
+    this.ensureColumn("project_loops", "pr_review_policy", "text not null default 'none'");
+    this.ensureColumn("project_loop_iterations", "ai_review_posted", "integer not null default 0");
   }
 
   private ensureColumn(tableName: string, columnName: string, definition: string): void {

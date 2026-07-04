@@ -3,6 +3,7 @@ import type {
   ProjectInsightKind,
   ProjectLabMode,
   ProjectLabSettings,
+  ProjectLoopAvailability,
   ProjectSnapshot,
   ProviderType,
   RunMode,
@@ -14,6 +15,7 @@ import { cn } from "../../lib/cn";
 import { ProjectForLaterTab } from "./ProjectForLaterTab";
 import { ProjectAiInsightsHistoryPage } from "./ProjectAiInsightsHistoryPage";
 import { ProjectLabTab } from "./ProjectLabTab";
+import { ProjectLoopsTab } from "./ProjectLoopsTab";
 import { ProjectOverviewTab } from "./ProjectOverviewTab";
 import { ProjectBranchesPage } from "./ProjectBranchesPage";
 import { ProjectPrMrTab } from "./ProjectPrMrTab";
@@ -68,6 +70,9 @@ interface ProjectPageProps {
   onRunProjectLab: (input: { mode: ProjectLabMode; baseBranch: string; implementationModelId: string; reviewModelId: string }) => void | Promise<void>;
   onDeleteProjectLabThread: (threadId: string) => void | Promise<void>;
   onOpenProjectLabImplementation: (runId: string) => void;
+  loopAvailability: ProjectLoopAvailability | null;
+  onOpenLoopRun: (runId: string) => void;
+  onLoopsChanged: () => void | Promise<void>;
   onBranchesChanged: () => void | Promise<void>;
   onDeleteProject: () => void | Promise<void>;
   onOpenProjectSettings: () => void | Promise<void>;
@@ -118,6 +123,9 @@ export const ProjectPage = ({
   onRunProjectLab,
   onDeleteProjectLabThread,
   onOpenProjectLabImplementation,
+  loopAvailability,
+  onOpenLoopRun,
+  onLoopsChanged,
   onBranchesChanged,
   onDeleteProject,
   onOpenProjectSettings,
@@ -133,7 +141,8 @@ export const ProjectPage = ({
       <div
         className={cn(
           "flex min-h-0 flex-1 flex-col",
-          activeTab === "reviews" ? "overflow-hidden" : "overflow-y-auto",
+          // Reviews and Loops manage their own internal scrolling (Loops pins its explainer footer).
+          activeTab === "reviews" || activeTab === "loops" ? "overflow-hidden" : "overflow-y-auto",
         )}
       >
       {activeTab === "overview" ? (
@@ -212,6 +221,18 @@ export const ProjectPage = ({
           onRunProjectLab={onRunProjectLab}
           onDeleteThread={onDeleteProjectLabThread}
           onOpenImplementationRun={onOpenProjectLabImplementation}
+        />
+      ) : null}
+
+      {activeTab === "loops" && project.project.kind === "git" ? (
+        <ProjectLoopsTab
+          project={project}
+          modelOptions={modelOptions}
+          branchOptions={availableBranches}
+          busy={busy}
+          availability={loopAvailability}
+          onOpenRun={onOpenLoopRun}
+          onLoopsChanged={onLoopsChanged}
         />
       ) : null}
 

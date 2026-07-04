@@ -16,6 +16,7 @@ import { getHarnessTypeForProvider } from "./harness-adapters";
 import { createProjectPrReviewProvider } from "./pr-review/pr-review-provider-factory";
 import { resolveProjectPrReviewRemoteContext } from "./pr-review/pr-review-remote-context";
 import type { ProjectPrReviewProvider, ProjectPrReviewRemoteContext } from "./pr-review/pr-review-types";
+import { ProjectLoopRunner } from "./loop/loop-runner";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import { computePrMrDiffViaFetch, GitService } from "@buildwarden/git-service";
 import { AiSdkProviderAdapter, generateAskTextResultWithAiSdk, suggestCommitMessageWithAiSdk } from "@buildwarden/provider-ai-sdk";
@@ -112,6 +113,13 @@ import {
   type ProjectLabMode,
   type ProjectLabSettings,
   type ProjectLabThreadRecord,
+  type CreateProjectLoopInput,
+  type ProjectLoopAvailability,
+  type ProjectLoopChangedPayload,
+  type ProjectLoopDetail,
+  type ProjectLoopRecord,
+  type ProjectLoopUiReviewDecisionInput,
+  isLoopCapableProviderType,
   type RunProjectLabInput,
   type RunRecord,
   type RunWorkspaceFileInput,
@@ -646,6 +654,8 @@ export class AppController
   private readonly appWarningListeners = new Set<(warning: AppWarning) => void>();
   private readonly chatWorkers = new Map<string, ActiveWorker>();
   private readonly cancelledProjectLabThreadIds = new Set<string>();
+  private readonly loopChangedListeners = new Set<(payload: ProjectLoopChangedPayload) => void>();
+  private loopRunnerInstance: ProjectLoopRunner | null = null;
   private readonly composerCommandCache = new Map<string, { expiresAt: number; commands: ComposerCommandDescriptor[] }>();
   private readonly composerCommandInflight = new Map<string, Promise<ComposerCommandDescriptor[]>>();
   private chatListeners: ((event: RunEvent & { chatId: string }) => void)[] = [];
@@ -2917,6 +2927,147 @@ export class AppController
     this.db.deleteProjectLabThread(threadId);
   }
 
+  /**
+   * Runs a background loop action that internally moves the renderer's project/run
+   * selection (createRun / followUpRunInternal do) and restores the previous
+   * selection afterwards, including on failure.
+   */
+  private async withPreservedRunSelection<T>(action: () => Promise<T>): Promise<T> {
+    const settings = this.db.getSettings();
+    const previousProjectId = settings[SELECTED_PROJECT_KEY];
+    const previousRunId = settings[SELECTED_RUN_KEY];
+    try {
+      return await action();
+    } finally {
+      if (previousRunId) {
+        this.db.setSetting(SELECTED_RUN_KEY, previousRunId);
+      } else {
+        this.db.deleteSetting(SELECTED_RUN_KEY);
+      }
+      if (previousProjectId) {
+        this.db.setSetting(SELECTED_PROJECT_KEY, previousProjectId);
+      } else {
+        this.db.deleteSetting(SELECTED_PROJECT_KEY);
+      }
+    }
+  }
+
+  private get loopRunner(): ProjectLoopRunner {
+    if (!this.loopRunnerInstance) {
+      this.loopRunnerInstance = new ProjectLoopRunner({
+        db: this.db,
+        gitService: this.gitService,
+        uiReviewImageRoot: join(dirname(this.db.getFilePath()), "loop-ui-reviews"),
+        createIterationRun: (input) => this.withPreservedRunSelection(() => this.createRun(input)),
+        followUpRun: (runId, prompt, options) =>
+          this.withPreservedRunSelection(() => this.followUpRunInternal(runId, prompt, options, { loopFollowUp: true })),
+        cancelRun: (runId) => this.cancelRun(runId),
+        deleteRun: (runId) => this.deleteRun(runId),
+        askModelForText: async (cwd, modelId, input) => {
+          const context = await this.resolveModelInvocationContext(modelId);
+          return this.askModelForText(cwd, context, input);
+        },
+        createForgeProvider: (projectId) => this.createProjectPrReviewProvider(projectId),
+        emitLoopChanged: (payload) => {
+          for (const listener of this.loopChangedListeners) {
+            listener(payload);
+          }
+        },
+        logError: (message, error, metadata) => this.logControllerError(message, error, metadata),
+        logWarn: (message, metadata) => this.logControllerWarn(message, metadata),
+      });
+    }
+    return this.loopRunnerInstance;
+  }
+
+  onProjectLoopChanged(listener: (payload: ProjectLoopChangedPayload) => void): () => void {
+    this.loopChangedListeners.add(listener);
+    return () => this.loopChangedListeners.delete(listener);
+  }
+
+  /** Re-enters all active loops after an app restart (call after {@link reconcileOrphanedActiveSessions}). */
+  resumeActiveProjectLoops(): void {
+    try {
+      this.loopRunner.resumeActiveLoops();
+    } catch (error) {
+      this.logControllerError("Could not resume active project loops on startup.", error);
+    }
+  }
+
+  async createProjectLoop(input: CreateProjectLoopInput): Promise<ProjectLoopRecord> {
+    const project = this.db.getProject(input.projectId);
+    this.requireGitProject(project, "Loops");
+    return this.loopRunner.startLoop(input);
+  }
+
+  async getProjectLoopDetail(loopId: string): Promise<ProjectLoopDetail> {
+    return this.db.getProjectLoopDetail(loopId);
+  }
+
+  async cancelProjectLoop(loopId: string): Promise<void> {
+    await this.loopRunner.cancelLoop(loopId);
+  }
+
+  async resumeProjectLoop(loopId: string): Promise<void> {
+    await this.loopRunner.resumeLoop(loopId);
+  }
+
+  async deleteProjectLoop(loopId: string): Promise<void> {
+    await this.loopRunner.deleteLoop(loopId);
+  }
+
+  async respondToProjectLoopUiReview(reviewId: string, input: ProjectLoopUiReviewDecisionInput): Promise<void> {
+    await this.loopRunner.respondToUiReview(reviewId, input);
+  }
+
+  async getProjectLoopUiReviewImage(reviewId: string): Promise<string | null> {
+    return this.loopRunner.getUiReviewImageDataUrl(reviewId);
+  }
+
+  async getProjectLoopAvailability(projectId: string): Promise<ProjectLoopAvailability> {
+    const project = this.db.getProject(projectId);
+    const enabledModels = this.db.listModels().filter((model) => model.enabled);
+    const providersById = new Map(this.db.listProviderAccounts().map((provider) => [provider.id, provider]));
+    const hasLocalModels = enabledModels.some((model) => {
+      const provider = providersById.get(model.providerAccountId);
+      return provider ? isLoopCapableProviderType(provider.providerType) : false;
+    });
+
+    if (project.kind !== "git") {
+      return { available: false, reason: "not-git", hasToken: false, hasLocalModels };
+    }
+
+    let context: ProjectPrReviewRemoteContext;
+    try {
+      context = await this.resolveProjectPrReviewRemoteContext(projectId);
+    } catch {
+      return { available: false, reason: "no-remote", hasToken: false, hasLocalModels };
+    }
+
+    const hasToken = Boolean((await this.secrets.readSecret(projectForgeTokenSecretKey(projectId)))?.trim());
+    if (!hasToken) {
+      return {
+        available: false,
+        reason: "no-forge-token",
+        provider: context.provider,
+        repoLabel: context.repoLabel,
+        hasToken,
+        hasLocalModels,
+      };
+    }
+    if (!hasLocalModels) {
+      return {
+        available: false,
+        reason: "no-local-models",
+        provider: context.provider,
+        repoLabel: context.repoLabel,
+        hasToken,
+        hasLocalModels,
+      };
+    }
+    return { available: true, provider: context.provider, repoLabel: context.repoLabel, hasToken, hasLocalModels };
+  }
+
   async generateProjectTaskRunPrompt(input: { projectId: string; title: string; notes: string; modelId: string }): Promise<string> {
     const project = this.db.getProject(input.projectId);
     const context = await this.resolveModelInvocationContext(input.modelId);
@@ -4674,8 +4825,17 @@ export class AppController
 
   async deleteProject(projectId: string): Promise<void> {
     const project = this.db.getProject(projectId);
-    const runs = this.db.listRunsForProject(projectId);
 
+    // Loops first: this cancels their timers/runs and removes loop rows, runs, and stored screenshots.
+    for (const loop of this.db.listProjectLoops(projectId)) {
+      try {
+        await this.loopRunner.deleteLoop(loop.id);
+      } catch (loopError) {
+        this.logControllerWarn("Could not delete a project loop while deleting the project.", { projectId, loopId: loop.id, error: loopError });
+      }
+    }
+
+    const runs = this.db.listRunsForProject(projectId);
     for (const run of runs) {
       killRunTerminalForRunId(run.id);
       this.clearRunCheckpoint(run.id);
@@ -4845,6 +5005,15 @@ export class AppController
     const run = this.db.getRun(runId);
     if (run.kind === "lab-implementation") {
       this.cancelProjectLabImplementation(run, "The implementation run was cancelled by the user.");
+    }
+    if (run.kind === "loop-iteration") {
+      const iteration = this.db.getProjectLoopIterationByRunId(runId);
+      if (iteration) {
+        // Cancelling a loop's implementation run means stopping the whole loop.
+        await this.loopRunner.cancelLoop(iteration.loopId).catch((error) => {
+          this.logControllerError("Could not cancel the loop after its run was cancelled.", error, { runId, loopId: iteration.loopId });
+        });
+      }
     }
     this.emitEvent({
       runId,
@@ -5832,6 +6001,9 @@ export class AppController
         } else if (wasCancelled && run.kind === "lab-implementation") {
           this.cancelProjectLabImplementation(run, "The implementation run was cancelled.");
         }
+        if (run.kind === "loop-iteration") {
+          this.loopRunner.handleRunTerminal(run.id);
+        }
         return;
       }
 
@@ -5864,6 +6036,9 @@ export class AppController
           } else {
             await this.failProjectLabImplementation(run, payload.error);
           }
+        }
+        if (run.kind === "loop-iteration") {
+          this.loopRunner.handleRunTerminal(run.id);
         }
         if (shouldAutoRecover) {
           await this.appendRunEvent(
@@ -5929,6 +6104,9 @@ export class AppController
       this.updateWorktreeStatus(run, "ready");
       await this.appendRunEvent(run.id, "error", "Worker error", error.message);
       this.runWorkers.delete(run.id);
+      if (run.kind === "loop-iteration") {
+        this.loopRunner.handleRunTerminal(run.id);
+      }
     });
 
     return worker;
