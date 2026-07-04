@@ -1,4 +1,4 @@
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -1556,19 +1556,73 @@ export const listAvailableModelsWithCursorAgent = async (
 const getCursorFallbackModels = (): string[] =>
   getModelPresetsForProvider(PROVIDER, undefined).map((preset) => preset.modelId);
 
-const runCursorAbout = (binaryPath: string, args: string[]): { status: number | null; stdout: string; stderr: string; error?: Error } => {
-  const launch = resolveCursorAgentProcessLaunch(binaryPath, args);
-  const result = spawnSync(launch.command, launch.args, {
-    encoding: "utf8",
-    timeout: ABOUT_TIMEOUT_MS,
-    windowsHide: true,
+type CursorAboutResult = { status: number | null; stdout: string; stderr: string; error?: Error };
+
+const runCursorAbout = async (binaryPath: string, args: string[]): Promise<CursorAboutResult> => {
+  let launch: CursorProcessLaunch;
+  try {
+    launch = resolveCursorAgentProcessLaunch(binaryPath, args);
+  } catch (error) {
+    return {
+      status: null,
+      stdout: "",
+      stderr: "",
+      error: error instanceof Error ? error : new Error(String(error)),
+    };
+  }
+
+  return await new Promise<CursorAboutResult>((resolve) => {
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let child: ChildProcessWithoutNullStreams | undefined;
+
+    const finish = (result: CursorAboutResult) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      resolve(result);
+    };
+
+    const timeout = setTimeout(() => {
+      child?.kill();
+      finish({
+        status: null,
+        stdout,
+        stderr,
+        error: new Error(`Cursor Agent about timed out after ${String(ABOUT_TIMEOUT_MS)}ms.`),
+      });
+    }, ABOUT_TIMEOUT_MS);
+
+    try {
+      child = spawn(launch.command, launch.args, {
+        windowsHide: true,
+      });
+    } catch (error) {
+      finish({
+        status: null,
+        stdout,
+        stderr,
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
+      return;
+    }
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", (error) => {
+      finish({ status: null, stdout, stderr, error });
+    });
+    child.on("close", (code) => {
+      finish({ status: code, stdout, stderr });
+    });
   });
-  return {
-    status: result.status,
-    stdout: typeof result.stdout === "string" ? result.stdout : "",
-    stderr: typeof result.stderr === "string" ? result.stderr : "",
-    error: result.error,
-  };
 };
 
 const combinedCommandOutput = (result: { stdout: string; stderr: string }): string =>
@@ -1633,8 +1687,8 @@ export async function assertCursorAgentAvailable(config?: Record<string, unknown
 
   for (const binaryPath of binaryCandidates) {
     lastBinaryPath = binaryPath;
-    const first = runCursorAbout(binaryPath, ["about", "--format", "json"]);
-    const second = first.status === 0 && !isCursorAboutJsonFormatUnsupported(first) ? first : runCursorAbout(binaryPath, ["about"]);
+    const first = await runCursorAbout(binaryPath, ["about", "--format", "json"]);
+    const second = first.status === 0 && !isCursorAboutJsonFormatUnsupported(first) ? first : await runCursorAbout(binaryPath, ["about"]);
     lastDetail = combinedCommandOutput(second) || combinedCommandOutput(first);
     if (second.error) {
       lastDetail = second.error.message;
