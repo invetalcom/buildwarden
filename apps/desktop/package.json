@@ -1,7 +1,7 @@
 {
   "name": "@buildwarden/desktop",
-  "version": "0.5.2",
-  "releaseDate": "2026-06-17",
+  "version": "0.5.3",
+  "releaseDate": "2026-07-04",
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
