@@ -56,6 +56,7 @@ type JsonRpcMessage = {
 type CursorProcessLaunch = {
   command: string;
   args: string[];
+  windowsVerbatimArguments?: boolean;
 };
 
 type CursorAcpConfigOption = {
@@ -175,10 +176,17 @@ const quoteWindowsCommandShimArgument = (value: string): string => {
   return `"${value}"`;
 };
 
-const resolveWindowsCommandShimLaunch = (command: string, args: string[]): CursorProcessLaunch => ({
-  command: process.env.ComSpec || "cmd.exe",
-  args: ["/d", "/s", "/c", [command, ...args].map(quoteWindowsCommandShimArgument).join(" ")],
-});
+const resolveWindowsCommandShimLaunch = (command: string, args: string[], hasPathSeparator: boolean): CursorProcessLaunch => {
+  const commandText = hasPathSeparator ? quoteWindowsCommandShimArgument(command) : command;
+  if (!hasPathSeparator && WINDOWS_CMD_ARGUMENT_UNSAFE_PATTERN.test(commandText)) {
+    throw new Error("Cursor Agent command-shim arguments cannot contain Windows shell metacharacters.");
+  }
+  return {
+    command: process.env.ComSpec || "cmd.exe",
+    args: ["/d", "/c", ["call", commandText, ...args.map(quoteWindowsCommandShimArgument)].join(" ")],
+    windowsVerbatimArguments: true,
+  };
+};
 
 export const resolveCursorAgentProcessLaunch = (binaryPath: string, args: string[]): CursorProcessLaunch => {
   if (process.platform !== "win32") {
@@ -188,7 +196,7 @@ export const resolveCursorAgentProcessLaunch = (binaryPath: string, args: string
   const hasPathSeparator = /[\\/]/.test(binaryPath);
   const isCommandShim = /\.(?:cmd|bat)$/i.test(binaryPath);
   if (!hasPathSeparator || isCommandShim) {
-    return resolveWindowsCommandShimLaunch(binaryPath, args);
+    return resolveWindowsCommandShimLaunch(binaryPath, args, hasPathSeparator);
   }
 
   return { command: binaryPath, args };
@@ -814,11 +822,13 @@ class CursorAcpJsonRpcConnection {
       env: process.env,
       stdio: "pipe",
       windowsHide: true,
+      windowsVerbatimArguments: this.launch.windowsVerbatimArguments,
     });
     this.child = child;
     this.devLogger?.log("cursor.process.start", {
       command: this.launch.command,
       args: this.launch.args,
+      windowsVerbatimArguments: this.launch.windowsVerbatimArguments,
       cwd: this.cwd,
     });
 
@@ -1621,6 +1631,7 @@ const runCursorAbout = async (binaryPath: string, args: string[]): Promise<Curso
     try {
       child = spawn(launch.command, launch.args, {
         windowsHide: true,
+        windowsVerbatimArguments: launch.windowsVerbatimArguments,
       });
     } catch (error) {
       finish({
