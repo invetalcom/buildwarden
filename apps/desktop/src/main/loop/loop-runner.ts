@@ -902,14 +902,24 @@ export class ProjectLoopRunner {
         this.deps.logWarn("AI UI review call failed for a page.", { loopId: loop.id, pageName: page.name, error });
       }
       if (!verdict) {
-        verdict = { verdict: "approve" as const, feedback: "" };
+        // Never auto-approve an ambiguous or unparseable verdict; escalate the page
+        // to a manual (pending) review so the user decides.
+        this.deps.db.createProjectLoopUiReview({
+          loopId: loop.id,
+          iterationId: iteration.id,
+          round,
+          pageName: page.name,
+          description: page.description,
+          imagePath,
+        });
         this.appendEvent(
           loop,
           "ui-review",
           "AI verdict unavailable",
-          `The reviewer did not return a parseable verdict for "${page.name}". The page counts as approved for this round.`,
+          `The reviewer did not return a clear verdict for "${page.name}". Approve or reject this page yourself in the loop detail page.`,
           iteration.id,
         );
+        continue;
       }
       this.deps.db.createProjectLoopUiReview({
         loopId: loop.id,

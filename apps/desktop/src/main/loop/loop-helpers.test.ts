@@ -106,6 +106,15 @@ describe("parseLoopAiUiVerdict", () => {
     expect(parseLoopAiUiVerdict('{"feedback":"looks odd"}')).toBeNull();
     expect(parseLoopAiUiVerdict("not json")).toBeNull();
   });
+
+  it("does not treat negated approvals as approvals", () => {
+    expect(parseLoopAiUiVerdict('{"verdict":"not approved","feedback":"broken layout"}')).toBeNull();
+    expect(parseLoopAiUiVerdict('{"verdict":"disapproved","feedback":"broken layout"}')).toBeNull();
+    expect(parseLoopAiUiVerdict('{"verdict":"rejected","feedback":"broken layout"}')).toEqual({
+      verdict: "request-changes",
+      feedback: "broken layout",
+    });
+  });
 });
 
 describe("parseLoopPrReviewResult", () => {

@@ -126,6 +126,20 @@ export const parseLoopUiManifest = (raw: string): LoopUiManifestPage[] | null =>
   }
 };
 
+const LOOP_UI_APPROVE_VERDICTS = new Set(["approve", "approved", "ok", "pass", "lgtm"]);
+const LOOP_UI_CHANGE_VERDICTS = new Set([
+  "request-changes",
+  "request_changes",
+  "requestchanges",
+  "changes-requested",
+  "changes_requested",
+  "changes",
+  "reject",
+  "rejected",
+  "fail",
+  "failed",
+]);
+
 export const parseLoopAiUiVerdict = (raw: string): LoopAiUiVerdict | null => {
   try {
     const parsed = JSON.parse(normalizeJsonResponse(raw)) as unknown;
@@ -134,10 +148,12 @@ export const parseLoopAiUiVerdict = (raw: string): LoopAiUiVerdict | null => {
     }
     const verdictRaw = (readString(parsed, "verdict") ?? readString(parsed, "decision") ?? "").toLowerCase();
     const feedback = readString(parsed, "feedback") ?? readString(parsed, "reason") ?? "";
-    if (verdictRaw.includes("approve") || verdictRaw === "ok" || verdictRaw === "pass") {
+    // Exact allowlists only: substring checks would classify "not approved" /
+    // "disapproved" as approvals.
+    if (LOOP_UI_APPROVE_VERDICTS.has(verdictRaw)) {
       return { verdict: "approve", feedback };
     }
-    if (verdictRaw.includes("change") || verdictRaw.includes("reject") || verdictRaw === "fail") {
+    if (LOOP_UI_CHANGE_VERDICTS.has(verdictRaw)) {
       return { verdict: "request-changes", feedback: feedback || "The reviewer requested changes without details." };
     }
     return null;
