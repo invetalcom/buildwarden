@@ -37,6 +37,7 @@ describe("provider composer commands", () => {
   it("filters native commands by provider", () => {
     expect(listComposerCommandsForProvider("codex-cli", "run").map((command) => command.command)).toEqual(["/plan", "/goal"]);
     expect(listComposerCommandsForProvider("claude-code", "run").map((command) => command.command)).toEqual(["/plan"]);
+    expect(listComposerCommandsForProvider("cursor-agent", "run").map((command) => command.command)).toEqual(["/plan"]);
     expect(listComposerCommandsForProvider("ai-sdk", "run")).toEqual([]);
   });
 
@@ -46,6 +47,14 @@ describe("provider composer commands", () => {
     expect(resolved.unsupportedCommand).toBeUndefined();
     expect(resolved.mode).toBe("plan");
     expect(resolved.prompt).toBe("inspect auth flow");
+  });
+
+  it("maps /plan to plan mode for Cursor Agent", () => {
+    const resolved = resolveComposerCommandPrompt("/plan review auth flow", "cursor-agent", "run");
+
+    expect(resolved.unsupportedCommand).toBeUndefined();
+    expect(resolved.mode).toBe("plan");
+    expect(resolved.prompt).toBe("review auth flow");
   });
 
   it("parses /goal as run goal with optional prompt on the next line", () => {

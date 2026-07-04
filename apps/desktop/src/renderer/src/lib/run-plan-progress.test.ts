@@ -98,6 +98,52 @@ describe("deriveLatestRunPlanProgress", () => {
     });
   });
 
+  it("prefers structured Cursor plan-progress events over markdown fallback", () => {
+    const progress = deriveLatestRunPlanProgress(
+      [
+        step("plan", "plan-updated", "1. Old plan\n2. Old renderer", { provider: "cursor-agent" }),
+        step("progress", "plan-progress", "", {
+          provider: "cursor-agent",
+          planProgress: {
+            explanation: "Cursor is working",
+            steps: [
+              { title: "Inspect ACP", status: "completed" },
+              { title: "Wire renderer", status: "in_progress" },
+            ],
+          },
+        }),
+      ],
+      "code",
+    );
+
+    expect(progress).toMatchObject({
+      explanation: "Cursor is working",
+      fallback: false,
+      source: "cursor-acp",
+      stepId: "progress",
+      steps: [
+        { title: "Inspect ACP", status: "completed" },
+        { title: "Wire renderer", status: "inProgress" },
+      ],
+    });
+  });
+
+  it("maps Cursor provider plan metadata to the Cursor ACP source", () => {
+    const progress = deriveLatestRunPlanProgress(
+      [step("plan", "plan-updated", "1. Inspect ACP\n2. Update todos", { provider: "cursor-agent" })],
+      "code",
+    );
+
+    expect(progress).toMatchObject({
+      fallback: true,
+      source: "cursor-acp",
+      steps: [
+        { title: "Inspect ACP", status: "pending" },
+        { title: "Update todos", status: "pending" },
+      ],
+    });
+  });
+
   it("does not infer progress from ordinary assistant output", () => {
     expect(
       deriveLatestRunPlanProgress([step("output", "output", "1. This is just an answer\n2. Not a plan", { source: "assistant" })], "code"),
