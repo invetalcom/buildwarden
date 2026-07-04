@@ -67,6 +67,14 @@ type ProjectLoopsTabProps = {
   onLoopsChanged: () => void | Promise<void>;
 };
 
+type LoopListSection = "open" | "merged" | "cancelled";
+
+const LOOP_LIST_EMPTY_MESSAGES: Record<LoopListSection, string> = {
+  open: "No open loops.",
+  merged: "No merged loops yet.",
+  cancelled: "No cancelled loops.",
+};
+
 const MERGE_POLICY_OPTIONS: Array<{ value: ProjectLoopMergePolicy; label: string; description: string }> = [
   {
     value: "wait-for-approval",
@@ -868,7 +876,7 @@ export const ProjectLoopsTab = ({
   onLoopsChanged,
 }: ProjectLoopsTabProps) => {
   const [selectedLoopId, setSelectedLoopId] = useState<string | null>(null);
-  const [loopListSection, setLoopListSection] = useState<"open" | "merged">("open");
+  const [loopListSection, setLoopListSection] = useState<LoopListSection>("open");
   const [formOpen, setFormOpen] = useState(false);
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -894,10 +902,16 @@ export const ProjectLoopsTab = ({
     () => [...project.loops].sort((left, right) => right.loop.createdAt.localeCompare(left.loop.createdAt)),
     [project.loops],
   );
-  // "Merged" = the loop completed, i.e. all of its PRs were merged. Failed and
-  // cancelled loops stay under "Open" since they are still actionable (resume/delete).
+  // "Merged" = the loop completed, i.e. all of its PRs were merged. Failed
+  // and in-progress loops stay under "Open"; cancelled loops have their own bucket.
   const mergedLoops = useMemo(() => loops.filter((item) => item.loop.status === "completed"), [loops]);
-  const openLoops = useMemo(() => loops.filter((item) => item.loop.status !== "completed"), [loops]);
+  const cancelledLoops = useMemo(() => loops.filter((item) => item.loop.status === "cancelled"), [loops]);
+  const openLoops = useMemo(
+    () => loops.filter((item) => item.loop.status !== "completed" && item.loop.status !== "cancelled"),
+    [loops],
+  );
+  const visibleLoops =
+    loopListSection === "open" ? openLoops : loopListSection === "merged" ? mergedLoops : cancelledLoops;
   const selectedLoop = selectedLoopId ? loops.find((item) => item.loop.id === selectedLoopId) ?? null : null;
 
   useEffect(() => {
@@ -1133,6 +1147,7 @@ export const ProjectLoopsTab = ({
                 [
                   { section: "open" as const, label: "Open", Icon: RefreshCw, count: openLoops.length },
                   { section: "merged" as const, label: "Merged", Icon: GitMerge, count: mergedLoops.length },
+                  { section: "cancelled" as const, label: "Cancelled", Icon: X, count: cancelledLoops.length },
                 ]
               ).map(({ section, label, Icon, count }) => (
                 <button
@@ -1162,14 +1177,12 @@ export const ProjectLoopsTab = ({
             <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 px-4 py-10 text-center text-sm text-zinc-500">
               No loops yet. Start one and BuildWarden plans, implements, opens PRs, waits for merges, and addresses review comments on its own.
             </div>
-          ) : (loopListSection === "open" ? openLoops : mergedLoops).length === 0 ? (
+          ) : visibleLoops.length === 0 ? (
             <p className="rounded-lg border border-dashed border-zinc-800/70 bg-zinc-950/30 px-3 py-2 text-xs text-zinc-600">
-              {loopListSection === "open" ? "No open loops." : "No merged loops yet."}
+              {LOOP_LIST_EMPTY_MESSAGES[loopListSection]}
             </p>
           ) : (
-            (loopListSection === "open" ? openLoops : mergedLoops).map((item) => (
-              <LoopListRow key={item.loop.id} item={item} onSelect={setSelectedLoopId} />
-            ))
+            visibleLoops.map((item) => <LoopListRow key={item.loop.id} item={item} onSelect={setSelectedLoopId} />)
           )}
         </div>
       </Card>
