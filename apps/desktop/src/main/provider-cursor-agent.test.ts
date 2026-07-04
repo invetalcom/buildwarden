@@ -49,15 +49,21 @@ describe("CursorAgentProviderAdapter", () => {
     ).toThrow("Cursor binary path cannot be blank");
   });
 
-  it("routes Windows command shims through shell mode while preserving explicit exe paths", () => {
+  it("wraps Windows command shims without shell mode while preserving explicit exe paths", () => {
     const shim = resolveCursorAgentProcessLaunch("agent", ["acp"]);
 
     if (process.platform === "win32") {
-      expect(shim).toEqual({ command: "agent", args: ["acp"], shell: true });
+      expect(shim).toEqual({
+        command: process.env.ComSpec || "cmd.exe",
+        args: ["/d", "/s", "/c", '"agent" "acp"'],
+      });
       expect(resolveCursorAgentProcessLaunch("C:\\Tools\\agent.exe", ["acp"])).toEqual({
         command: "C:\\Tools\\agent.exe",
         args: ["acp"],
       });
+      expect(() => resolveCursorAgentProcessLaunch("agent", ["-e", "https://cursor.example.test?a=1&b=2", "acp"])).toThrow(
+        "shell metacharacters",
+      );
     } else {
       expect(shim).toEqual({ command: "agent", args: ["acp"] });
     }

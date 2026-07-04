@@ -56,7 +56,6 @@ type JsonRpcMessage = {
 type CursorProcessLaunch = {
   command: string;
   args: string[];
-  shell?: boolean;
 };
 
 type CursorAcpConfigOption = {
@@ -167,6 +166,20 @@ export const createCursorDevLogger = (input: {
   };
 };
 
+const WINDOWS_CMD_ARGUMENT_UNSAFE_PATTERN = /[\r\n"&|<>^%!]/;
+
+const quoteWindowsCommandShimArgument = (value: string): string => {
+  if (WINDOWS_CMD_ARGUMENT_UNSAFE_PATTERN.test(value)) {
+    throw new Error("Cursor Agent command-shim arguments cannot contain Windows shell metacharacters.");
+  }
+  return `"${value}"`;
+};
+
+const resolveWindowsCommandShimLaunch = (command: string, args: string[]): CursorProcessLaunch => ({
+  command: process.env.ComSpec || "cmd.exe",
+  args: ["/d", "/s", "/c", [command, ...args].map(quoteWindowsCommandShimArgument).join(" ")],
+});
+
 export const resolveCursorAgentProcessLaunch = (binaryPath: string, args: string[]): CursorProcessLaunch => {
   if (process.platform !== "win32") {
     return { command: binaryPath, args };
@@ -175,7 +188,7 @@ export const resolveCursorAgentProcessLaunch = (binaryPath: string, args: string
   const hasPathSeparator = /[\\/]/.test(binaryPath);
   const isCommandShim = /\.(?:cmd|bat)$/i.test(binaryPath);
   if (!hasPathSeparator || isCommandShim) {
-    return { command: binaryPath, args, shell: true };
+    return resolveWindowsCommandShimLaunch(binaryPath, args);
   }
 
   return { command: binaryPath, args };
@@ -779,14 +792,12 @@ class CursorAcpJsonRpcConnection {
       env: process.env,
       stdio: "pipe",
       windowsHide: true,
-      shell: this.launch.shell,
     });
     this.child = child;
     this.devLogger?.log("cursor.process.start", {
       command: this.launch.command,
       args: this.launch.args,
       cwd: this.cwd,
-      shell: this.launch.shell === true,
     });
 
     const stdoutLines = createInterface({ input: child.stdout });
@@ -1551,7 +1562,6 @@ const runCursorAbout = (binaryPath: string, args: string[]): { status: number | 
     encoding: "utf8",
     timeout: ABOUT_TIMEOUT_MS,
     windowsHide: true,
-    shell: launch.shell,
   });
   return {
     status: result.status,
