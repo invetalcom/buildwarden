@@ -1555,6 +1555,13 @@ export class BuildWardenDatabase {
     this.run("delete from runs where project_id = ?", [projectId]);
     this.run("delete from project_lab_events where thread_id in (select id from project_lab_threads where project_id = ?)", [projectId]);
     this.run("delete from project_lab_threads where project_id = ?", [projectId]);
+    // Defense in depth: the app controller deletes loops (with their runs and stored
+    // screenshots) before calling this, but the DB-level cascade keeps the tables
+    // consistent for any other caller.
+    this.run("delete from project_loop_ui_reviews where loop_id in (select id from project_loops where project_id = ?)", [projectId]);
+    this.run("delete from project_loop_events where loop_id in (select id from project_loops where project_id = ?)", [projectId]);
+    this.run("delete from project_loop_iterations where loop_id in (select id from project_loops where project_id = ?)", [projectId]);
+    this.run("delete from project_loops where project_id = ?", [projectId]);
     this.run("delete from project_tasks where project_id = ?", [projectId]);
     this.run("delete from project_insights where project_id = ?", [projectId]);
     this.run("delete from projects where id = ?", [projectId]);
