@@ -906,6 +906,19 @@ export const ProjectLoopsTab = ({
     }
   }, [project.loops, selectedLoopId]);
 
+  // The tab stays mounted when the selected project changes; reset the draft so
+  // e.g. a base branch from the previous repo cannot leak into the next loop.
+  useEffect(() => {
+    setSelectedLoopId(null);
+    setLoopListSection("open");
+    setFormOpen(false);
+    setName("");
+    setPrompt("");
+    setUiReviewInstructions("");
+    setBaseBranch(project.project.defaultBranch);
+    setCreateError(null);
+  }, [project.project.id, project.project.defaultBranch]);
+
   const normalizedBranchOptions = branchOptions.filter(Boolean);
 
   const submitLoop = async () => {
