@@ -4935,7 +4935,7 @@ export class AppController
     const model = this.db.getModel(run.modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
     if (!providerSupportsInterruptedRunRecovery(provider.providerType)) {
-      throw new Error("Interrupted-session recovery is only available for Codex CLI and Claude Code runs.");
+      throw new Error("Interrupted-session recovery is only available for Codex CLI, Claude Code, and Cursor Agent runs.");
     }
 
     if (await this.resumeInterruptedRunFromCheckpoint(run, "manual")) {
