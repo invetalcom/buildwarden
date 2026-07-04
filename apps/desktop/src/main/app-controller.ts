@@ -9,6 +9,7 @@ import { killRunTerminalForRunId } from "./run-terminal-ipc";
 import { buildDependencyGraphSnapshotForProjectGraph, listDependencySourceFilesForProjectGraph } from "./project-graph-utils";
 import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
 import { readRunWorkspaceFileForPreview } from "./run-workspace-file";
+import { normalizeJsonResponse } from "./json-response";
 import { createFolderSnapshot, deleteFolderSnapshot, diffFolderAgainstSnapshot, getFolderSnapshotRoot } from "./folder-diff";
 import { createFolderWorkspaceCopy, removeFolderWorkspaceCopy } from "./folder-workspace";
 import { getHarnessTypeForProvider } from "./harness-adapters";
@@ -335,14 +336,6 @@ const normalizeSuggestedCommitMessage = (raw: string): string => {
     t = t.replace(/^```[\w-]*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
   }
   return t;
-};
-
-const normalizeJsonResponse = (raw: string): string => {
-  const trimmed = raw.trim();
-  if (!trimmed.startsWith("```")) {
-    return trimmed;
-  }
-  return trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
 };
 
 const extractChatCompletionText = (content: unknown): string => {
