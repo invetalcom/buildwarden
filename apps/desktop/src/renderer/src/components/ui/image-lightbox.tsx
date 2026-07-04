@@ -20,7 +20,9 @@ export const ImageLightbox = ({ imageUrl, title, downloadFileName, onClose }: Im
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        event.stopPropagation();
+        // Block other window-level Escape listeners too, so closing the lightbox
+        // does not also trigger global Escape shortcuts.
+        event.stopImmediatePropagation();
         onClose();
       }
     };
