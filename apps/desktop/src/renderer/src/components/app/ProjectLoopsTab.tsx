@@ -20,18 +20,24 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   ExternalLink,
   GitMerge,
   GitPullRequest,
   Image as ImageIcon,
+  KeyRound,
+  ListChecks,
   Loader2,
   MessageSquareWarning,
+  MonitorSmartphone,
   Play,
+  Power,
   RefreshCw,
   Rocket,
   ShieldCheck,
   Square,
   Trash2,
+  Wrench,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -193,6 +199,147 @@ const StatusPill = ({ status }: { status: ProjectLoopStatus | ProjectLoopIterati
       : ITERATION_STATUS_LABELS[status as ProjectLoopIterationRecord["status"]]}
   </span>
 );
+
+const BetaBadge = () => (
+  <span className="shrink-0 rounded-full border border-amber-400/35 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-300">
+    Beta
+  </span>
+);
+
+const LOOP_EXPLAINER_STEPS: Array<{ Icon: typeof Bot; title: string; text: string }> = [
+  {
+    Icon: ListChecks,
+    title: "Plan",
+    text: "The agent inspects your repository and splits the request into one or more PR-sized iterations.",
+  },
+  {
+    Icon: Wrench,
+    title: "Implement",
+    text: "Each iteration is built unattended in its own worktree by a local agent (Codex CLI or Claude Code).",
+  },
+  {
+    Icon: ImageIcon,
+    title: "UI check",
+    text: "Affected pages are screenshotted automatically. You - or an AI reviewer - approve every page first.",
+  },
+  {
+    Icon: GitPullRequest,
+    title: "Pull request",
+    text: "Changes are committed, pushed, and opened as a PR/MR through your GitHub/GitLab token. Optionally an AI review is posted on the PR.",
+  },
+  {
+    Icon: GitMerge,
+    title: "Merge & audit",
+    text: "Review comments are answered and fixed until the PR merges. Then the next iteration starts; a final audit wraps up.",
+  },
+];
+
+const LOOP_EXPLAINER_FACTS: Array<{ Icon: typeof Bot; title: string; text: string }> = [
+  {
+    Icon: Power,
+    title: "Survives restarts",
+    text: "Every step is persisted. Close BuildWarden and loops continue exactly where they stopped.",
+  },
+  {
+    Icon: MonitorSmartphone,
+    title: "Fully in the background",
+    text: "No PR pages to babysit. Open a loop's detail page for progress, screenshots, and the agent output.",
+  },
+  {
+    Icon: KeyRound,
+    title: "What it needs",
+    text: "A Git project with a GitHub/GitLab access token and a local Codex CLI or Claude Code model.",
+  },
+];
+
+const LOOPS_EXPLAINER_COLLAPSED_STORAGE_KEY = "buildwarden:loops-explainer-collapsed";
+
+const LoopsExplainer = () => {
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem(LOOPS_EXPLAINER_COLLAPSED_STORAGE_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleCollapsed = () => {
+    setCollapsed((current) => {
+      const next = !current;
+      try {
+        window.localStorage.setItem(LOOPS_EXPLAINER_COLLAPSED_STORAGE_KEY, String(next));
+      } catch {
+        /* private mode or blocked storage; the toggle still works for this session */
+      }
+      return next;
+    });
+  };
+
+  return (
+    <Card className="p-4">
+      <div className="flex items-center gap-2">
+        <Bot className="h-4 w-4 text-cyan-400" />
+        <h3 className="text-sm font-medium text-zinc-100">What are agent loops?</h3>
+        <BetaBadge />
+        <button
+          type="button"
+          className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-100"
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "Expand explanation" : "Minimize explanation"}
+          title={collapsed ? "Expand explanation" : "Minimize explanation"}
+          onClick={toggleCollapsed}
+        >
+          {collapsed ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        </button>
+      </div>
+
+      {collapsed ? null : (
+        <>
+          <p className="mt-1 max-w-3xl text-xs text-zinc-500">
+            A loop is a hands-off delivery pipeline: you describe a feature or fix once, and BuildWarden drives it from plan to merged
+            pull requests - implementing, screenshotting, reviewing, and reacting to feedback until everything is on your target branch.
+          </p>
+
+          <div className="mt-4 grid gap-2 md:grid-cols-3 xl:grid-cols-5">
+            {LOOP_EXPLAINER_STEPS.map(({ Icon, title, text }, index) => (
+              <div key={title} className="relative rounded-xl border border-zinc-800 bg-zinc-950/50 p-3">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-cyan-500/30 bg-cyan-500/10 font-mono text-[11px] text-cyan-200">
+                    {index + 1}
+                  </span>
+                  <Icon className="h-4 w-4 shrink-0 text-cyan-300" />
+                  <span className="truncate text-xs font-medium text-zinc-100">{title}</span>
+                </div>
+                <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">{text}</p>
+                {index < LOOP_EXPLAINER_STEPS.length - 1 ? (
+                  <ChevronRight className="absolute -right-2 top-1/2 hidden h-4 w-4 -translate-y-1/2 text-zinc-700 xl:block" />
+                ) : null}
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-3 grid gap-2 md:grid-cols-3">
+            {LOOP_EXPLAINER_FACTS.map(({ Icon, title, text }) => (
+              <div key={title} className="flex items-start gap-2.5 rounded-xl border border-zinc-800/70 bg-zinc-950/35 px-3 py-2.5">
+                <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-300" />
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-zinc-200">{title}</p>
+                  <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500">{text}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <p className="mt-3 flex items-center gap-1.5 text-[11px] text-zinc-600">
+            <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+            You stay in control: choose per loop whether PRs merge automatically or wait for approval, and how UI changes are reviewed.
+            Loops can be cancelled, resumed, and deleted at any time.
+          </p>
+        </>
+      )}
+    </Card>
+  );
+};
 
 const LoopListRow = ({ item, onSelect }: { item: ProjectLoopListItem; onSelect: (loopId: string) => void }) => {
   const { loop, iterations, pendingUiReviewCount } = item;
@@ -784,6 +931,7 @@ export const ProjectLoopsTab = ({
 
   if (availability && !availability.available) {
     return (
+      <div className="min-h-0 flex-1 overflow-y-auto">
       <Card className="p-6 text-center">
         <RefreshCw className="mx-auto h-6 w-6 text-cyan-400" />
         <p className="mt-3 text-sm font-medium text-zinc-100">Loops are not available for this project yet</p>
@@ -797,29 +945,36 @@ export const ProjectLoopsTab = ({
                 : "Loops need at least one enabled model from a local provider (Codex CLI or Claude Code), because only they can drive the app and capture screenshots."}
         </p>
       </Card>
+      </div>
     );
   }
 
   if (selectedLoop) {
     return (
-      <LoopDetailView
-        loopId={selectedLoop.loop.id}
-        busy={busy}
-        onBack={() => setSelectedLoopId(null)}
-        onOpenRun={onOpenRun}
-        onLoopsChanged={onLoopsChanged}
-      />
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <LoopDetailView
+          loopId={selectedLoop.loop.id}
+          busy={busy}
+          onBack={() => setSelectedLoopId(null)}
+          onOpenRun={onOpenRun}
+          onLoopsChanged={onLoopsChanged}
+        />
+      </div>
     );
   }
 
   return (
-    <div className="space-y-4 pb-2">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">
       <Card className="overflow-hidden p-0">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/80 px-4 py-3">
           <div className="flex min-w-0 items-center gap-3">
             <RefreshCw className="h-4 w-4 text-cyan-400" />
             <div className="min-w-0">
-              <h3 className="text-sm font-medium text-zinc-100">Loops</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-medium text-zinc-100">Loops</h3>
+                <BetaBadge />
+              </div>
               <p className="mt-0.5 text-xs text-zinc-500">
                 Describe a feature or fix; the loop plans it, implements it PR by PR, waits for merges, and addresses review comments - fully in the background.
               </p>
@@ -997,6 +1152,11 @@ export const ProjectLoopsTab = ({
           )}
         </div>
       </Card>
+      </div>
+
+      <div className="shrink-0 pt-3">
+        <LoopsExplainer />
+      </div>
     </div>
   );
 };
