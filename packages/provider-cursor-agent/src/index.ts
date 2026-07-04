@@ -446,10 +446,10 @@ const readUsageFromRecord = (record: Record<string, unknown>): RunTokenUsage | n
   const cachedInputTokens = asFiniteNumber(record.cachedInputTokens ?? record.cached_input_tokens);
   const totalTokens = asFiniteNumber(record.totalTokens ?? record.total_tokens ?? record.tokens);
   const usedTokens = asFiniteNumber(
-    record.usedTokens ?? record.used_tokens ?? record.contextUsedTokens ?? record.context_used_tokens,
+    record.usedTokens ?? record.used_tokens ?? record.contextUsedTokens ?? record.context_used_tokens ?? record.used,
   );
   const maxTokens = asFiniteNumber(
-    record.maxTokens ?? record.max_tokens ?? record.contextWindow ?? record.context_window ?? record.contextWindowTokens,
+    record.maxTokens ?? record.max_tokens ?? record.contextWindow ?? record.context_window ?? record.contextWindowTokens ?? record.size,
   );
 
   if (
@@ -477,9 +477,31 @@ const readUsageFromRecord = (record: Record<string, unknown>): RunTokenUsage | n
   };
 };
 
+const readUsageUpdateSnapshot = (record: Record<string, unknown>): RunTokenUsage | null => {
+  const source = isRecord(record.usage) ? record.usage : record;
+  const usedTokens = asFiniteNumber(
+    source.usedTokens ?? source.used_tokens ?? source.contextUsedTokens ?? source.context_used_tokens ?? source.used,
+  );
+  const maxTokens = asFiniteNumber(
+    source.maxTokens ?? source.max_tokens ?? source.contextWindow ?? source.context_window ?? source.contextWindowTokens ?? source.size,
+  );
+  if (usedTokens === undefined && maxTokens === undefined) {
+    return null;
+  }
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    ...(usedTokens !== undefined ? { usedTokens, lastUsedTokens: usedTokens } : {}),
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+  };
+};
+
 export const normalizeCursorTokenUsage = (payload: unknown): RunTokenUsage | null => {
   if (!isRecord(payload)) {
     return null;
+  }
+  if (payload.sessionUpdate === "usage_update") {
+    return readUsageUpdateSnapshot(payload);
   }
   const direct = readUsageFromRecord(payload);
   if (direct) {

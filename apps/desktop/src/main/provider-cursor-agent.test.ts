@@ -272,5 +272,23 @@ describe("CursorAgentProviderAdapter", () => {
       lastInputTokens: 120,
       lastOutputTokens: 35,
     });
+
+    expect(
+      normalizeCursorTokenUsage({
+        update: {
+          sessionUpdate: "usage_update",
+          used: 4096,
+          size: 200_000,
+          input_tokens: 120,
+          output_tokens: 35,
+        },
+      }),
+    ).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      usedTokens: 4096,
+      lastUsedTokens: 4096,
+      maxTokens: 200_000,
+    });
   });
 });
