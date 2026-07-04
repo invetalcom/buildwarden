@@ -1,7 +1,11 @@
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   CursorAgentProviderAdapter,
   buildCursorPlanProgressChunk,
+  createCursorDevLogger,
   deriveCursorMaxTokensFromConfigOptions,
   extractCursorTodosAsPlanProgress,
   mapCursorUserInputAnswers,
@@ -56,6 +60,32 @@ describe("CursorAgentProviderAdapter", () => {
       });
     } else {
       expect(shim).toEqual({ command: "agent", args: ["acp"] });
+    }
+  });
+
+  it("writes Cursor dev request logs as JSONL", () => {
+    const logDir = mkdtempSync(join(tmpdir(), "buildwarden-cursor-logs-"));
+    try {
+      const logger = createCursorDevLogger({
+        logDirPath: logDir,
+        runId: "run-1",
+        modelId: "composer-2.5",
+        sessionType: "run",
+      });
+
+      expect(logger.enabled).toBe(true);
+      logger.log("cursor.rpc.outbound", { method: "initialize", params: { protocolVersion: 1 } });
+
+      const line = readFileSync(join(logDir, "run-run-1-cursor-agent-composer-2.5.jsonl"), "utf8").trim();
+      expect(JSON.parse(line)).toMatchObject({
+        event: "cursor.rpc.outbound",
+        data: {
+          method: "initialize",
+          params: { protocolVersion: 1 },
+        },
+      });
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
     }
   });
 

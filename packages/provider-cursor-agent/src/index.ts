@@ -1,5 +1,5 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -88,6 +88,7 @@ type CursorRuntimeOptions = {
   cwd: string;
   binaryPath: string;
   apiEndpoint?: string;
+  devLogger?: CursorDevLogger;
   resumeSessionId?: string;
   modelId: string;
   mode: RunMode;
@@ -103,6 +104,11 @@ type CursorRuntimeOptions = {
   onUsage?: (usage: RunTokenUsage) => void;
   onAssistantText?: (text: string) => void;
   signal: AbortSignal;
+};
+
+type CursorDevLogger = {
+  enabled: boolean;
+  log: (event: string, data: unknown) => void;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -127,6 +133,38 @@ const sanitizeMetadataValue = (value: unknown): unknown => {
   } catch {
     return String(value);
   }
+};
+
+const toJsonLine = (event: string, data: unknown) =>
+  JSON.stringify({
+    ts: new Date().toISOString(),
+    event,
+    data: sanitizeMetadataValue(data),
+  }) + "\n";
+
+export const createCursorDevLogger = (input: {
+  logDirPath?: string;
+  runId: string;
+  modelId: string;
+  sessionType: "run" | "chat";
+}): CursorDevLogger => {
+  const enabled = Boolean(input.logDirPath?.trim());
+  const logDirPath = input.logDirPath?.trim() ?? "";
+  const filePath = enabled ? join(logDirPath, `${input.sessionType}-${input.runId}-${PROVIDER}-${input.modelId}.jsonl`) : "";
+
+  if (enabled) {
+    mkdirSync(logDirPath, { recursive: true });
+  }
+
+  return {
+    enabled,
+    log: (event, data) => {
+      if (!enabled) {
+        return;
+      }
+      appendFileSync(filePath, toJsonLine(event, data), "utf8");
+    },
+  };
 };
 
 export const resolveCursorAgentProcessLaunch = (binaryPath: string, args: string[]): CursorProcessLaunch => {
@@ -718,6 +756,7 @@ class CursorAcpJsonRpcConnection {
   constructor(
     private readonly launch: CursorProcessLaunch,
     private readonly cwd: string,
+    private readonly devLogger?: CursorDevLogger,
     private readonly timeoutMs = 30_000,
   ) {}
 
@@ -743,14 +782,30 @@ class CursorAcpJsonRpcConnection {
       shell: this.launch.shell,
     });
     this.child = child;
+    this.devLogger?.log("cursor.process.start", {
+      command: this.launch.command,
+      args: this.launch.args,
+      cwd: this.cwd,
+      shell: this.launch.shell === true,
+    });
 
     const stdoutLines = createInterface({ input: child.stdout });
     stdoutLines.on("line", (line) => this.handleLine(line));
     child.stderr.on("data", (chunk: Buffer) => {
-      this.stderr += chunk.toString("utf8");
+      const message = chunk.toString("utf8");
+      this.stderr += message;
+      this.devLogger?.log("cursor.stderr", { message });
     });
-    child.on("error", (error) => this.rejectAll(error));
+    child.on("error", (error) => {
+      this.devLogger?.log("cursor.process.error", { message: error.message });
+      this.rejectAll(error);
+    });
     child.on("exit", (code, signal) => {
+      this.devLogger?.log("cursor.process.exit", {
+        code,
+        signal,
+        stderr: this.stderr.trim(),
+      });
       if (this.pending.size > 0) {
         this.rejectAll(new Error(`Cursor Agent ACP exited (${code ?? signal ?? "unknown"}). ${this.stderr.trim()}`.trim()));
       }
@@ -777,6 +832,7 @@ class CursorAcpJsonRpcConnection {
     }
     const id = this.nextId++;
     const message = { jsonrpc: "2.0", id, method, params };
+    this.devLogger?.log("cursor.rpc.outbound", message);
     const promise = new Promise<unknown>((resolve, reject) => {
       const timeout =
         timeoutMs > 0
@@ -796,7 +852,9 @@ class CursorAcpJsonRpcConnection {
     if (!child) {
       return;
     }
-    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
+    const message = { jsonrpc: "2.0", method, params };
+    this.devLogger?.log("cursor.rpc.outbound", message);
+    child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
   private handleLine(line: string): void {
@@ -808,10 +866,12 @@ class CursorAcpJsonRpcConnection {
     try {
       message = JSON.parse(trimmed) as JsonRpcMessage;
     } catch {
+      this.devLogger?.log("cursor.rpc.invalid", { line: trimmed });
       return;
     }
 
     if (message.id !== undefined && !message.method) {
+      this.devLogger?.log("cursor.rpc.response", message);
       const pending = this.pending.get(message.id);
       if (!pending) {
         return;
@@ -827,11 +887,13 @@ class CursorAcpJsonRpcConnection {
     }
 
     if (message.method && message.id !== undefined) {
+      this.devLogger?.log("cursor.rpc.request", message);
       void this.handleIncomingRequest(message);
       return;
     }
 
     if (message.method) {
+      this.devLogger?.log("cursor.rpc.notification", message);
       const handlers = this.notificationHandlers.get(message.method) ?? [];
       for (const handler of handlers) {
         void Promise.resolve(handler(message.params)).catch(() => {
@@ -859,6 +921,7 @@ class CursorAcpJsonRpcConnection {
   }
 
   private sendResponse(message: JsonRpcMessage): void {
+    this.devLogger?.log("cursor.rpc.outbound", message);
     this.child?.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
@@ -1084,7 +1147,7 @@ class CursorAcpRuntime {
       ...(options.apiEndpoint ? ["-e", options.apiEndpoint] : []),
       "acp",
     ]);
-    this.connection = new CursorAcpJsonRpcConnection(launch, options.cwd);
+    this.connection = new CursorAcpJsonRpcConnection(launch, options.cwd, options.devLogger);
     this.registerHandlers();
   }
 
@@ -1626,11 +1689,18 @@ const cursorRuntimeFromRunInput = (
   signal: AbortSignal,
   requestShellApproval?: (command: string) => Promise<ShellApprovalDecision>,
   requestUserInput?: (request: RunUserInputRequest) => Promise<RunUserInputAnswers>,
-): CursorAcpRuntime =>
-  new CursorAcpRuntime({
+): CursorAcpRuntime => {
+  const devLogger = createCursorDevLogger({
+    logDirPath: input.devLogging?.logDirPath,
+    runId: input.runId,
+    modelId: input.modelId || CURSOR_DEFAULT_MODEL,
+    sessionType: input.isChat ? "chat" : "run",
+  });
+  return new CursorAcpRuntime({
     cwd: input.worktreePath,
     binaryPath: getCursorAgentBinaryPath(input.config),
     apiEndpoint: getCursorAgentApiEndpoint(input.config),
+    devLogger: devLogger.enabled ? devLogger : undefined,
     resumeSessionId: sessionIdFromResumeCursor(input),
     modelId: input.modelId,
     mode: input.mode,
@@ -1643,6 +1713,7 @@ const cursorRuntimeFromRunInput = (
     onChunk,
     signal,
   });
+};
 
 export class CursorAgentHarnessAdapter implements HarnessAdapter {
   readonly harnessType = HARNESS;
@@ -1712,6 +1783,11 @@ type GenerateAskTextWithCursorAgentInput = {
     reasoningEffort?: string;
   };
   signal?: AbortSignal;
+  devLogging?: {
+    logDirPath: string;
+    runId?: string;
+    sessionType?: "run" | "chat";
+  };
 };
 
 export async function generateAskTextResultWithCursorAgent(input: GenerateAskTextWithCursorAgentInput): Promise<{
@@ -1721,7 +1797,7 @@ export async function generateAskTextResultWithCursorAgent(input: GenerateAskTex
   const harness = new CursorAgentHarnessAdapter();
   const result = await harness.run(
     {
-      runId: "cursor-ask-text",
+      runId: input.devLogging?.runId ?? "ask-text",
       worktreePath: input.cwd,
       mode: "ask",
       prompt: input.prompt,
@@ -1732,6 +1808,7 @@ export async function generateAskTextResultWithCursorAgent(input: GenerateAskTex
       modelConfig: input.modelConfig,
       providerOptions: input.providerOptions,
       isChat: true,
+      devLogging: input.devLogging ? { logDirPath: input.devLogging.logDirPath } : undefined,
     },
     {
       tools: [],

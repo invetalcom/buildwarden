@@ -3626,6 +3626,7 @@ export class AppController
         modelId: model.modelId,
         config: providerConfig,
         modelConfig,
+        devLogging,
       });
       this.recordStandaloneModelUsage(input.usageProjectId, result.usage);
       return result.text.trim();
