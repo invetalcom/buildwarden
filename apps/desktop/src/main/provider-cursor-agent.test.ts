@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -85,13 +86,19 @@ describe("CursorAgentProviderAdapter", () => {
     expect(adapter.listRecommendedModels()).toEqual(["default"]);
   });
 
-  it("wraps Windows command shims without shell mode while preserving explicit exe paths", () => {
+  it("wraps Windows command shims through cmd while preserving explicit exe paths", () => {
     const shim = resolveCursorAgentProcessLaunch("agent", ["acp"]);
 
     if (process.platform === "win32") {
       expect(shim).toEqual({
         command: process.env.ComSpec || "cmd.exe",
-        args: ["/d", "/s", "/c", '"agent" "acp"'],
+        args: ["/d", "/c", 'call agent "acp"'],
+        windowsVerbatimArguments: true,
+      });
+      expect(resolveCursorAgentProcessLaunch("C:\\Users\\test\\AppData\\Local\\cursor-agent\\agent.cmd", ["about"])).toEqual({
+        command: process.env.ComSpec || "cmd.exe",
+        args: ["/d", "/c", 'call "C:\\Users\\test\\AppData\\Local\\cursor-agent\\agent.cmd" "about"'],
+        windowsVerbatimArguments: true,
       });
       expect(resolveCursorAgentProcessLaunch("C:\\Tools\\agent.exe", ["acp"])).toEqual({
         command: "C:\\Tools\\agent.exe",
@@ -103,6 +110,28 @@ describe("CursorAgentProviderAdapter", () => {
     } else {
       expect(shim).toEqual({ command: "agent", args: ["acp"] });
     }
+  });
+
+  it("launches a full Windows command-shim path without quoting it as a literal command", () => {
+    if (process.platform !== "win32" || !process.env.LOCALAPPDATA) {
+      return;
+    }
+    const binaryPath = join(process.env.LOCALAPPDATA, "cursor-agent", "agent.cmd");
+    if (!existsSync(binaryPath)) {
+      return;
+    }
+
+    const launch = resolveCursorAgentProcessLaunch(binaryPath, ["about"]);
+    const result = spawnSync(launch.command, launch.args, {
+      encoding: "utf8",
+      timeout: 15_000,
+      windowsHide: true,
+      windowsVerbatimArguments: launch.windowsVerbatimArguments,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain("ist entweder falsch geschrieben");
+    expect(result.stdout).toContain("Cursor CLI");
   });
 
   it("writes Cursor dev request logs as JSONL", () => {
