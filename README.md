@@ -41,6 +41,8 @@ BuildWarden is yet another GUI for coding agents. In comparison to most others, 
   - Codex CLI app-server provider and harness, including local session resume, shell approval/user-input bridging, and Codex-oriented model helpers.
 - `packages/provider-claude-code`
   - Claude Code provider and harness using the local `claude` CLI.
+- `packages/provider-cursor-agent`
+  - Cursor Agent provider and harness using the local `agent acp` CLI flow.
 
 ## Providers
 
@@ -50,8 +52,9 @@ BuildWarden currently models provider accounts with these provider types:
 - `azure-legacy`
 - `codex-cli`
 - `claude-code`
+- `cursor-agent`
 
-The AI SDK provider can be configured for OpenAI, Anthropic, Google, xAI, or OpenAI-compatible endpoints. Codex CLI and Claude Code use local CLI installations and local session state. Provider configuration and auth stay separate from runtime execution so the app can share run/chat orchestration while keeping provider-specific behavior isolated.
+The AI SDK provider can be configured for OpenAI, Anthropic, Google, xAI, or OpenAI-compatible endpoints. Codex CLI, Claude Code, and Cursor Agent use local CLI installations and local session state. Provider configuration and auth stay separate from runtime execution so the app can share run/chat orchestration while keeping provider-specific behavior isolated.
 
 ## Git, Worktrees, And Review
 

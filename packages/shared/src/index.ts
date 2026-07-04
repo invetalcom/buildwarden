@@ -270,8 +270,8 @@ export type RunToolName = "read_file" | "write_file" | "edit_file" | "delete_fil
 
 export type RunPlanStepStatus = "pending" | "inProgress" | "completed";
 
-// Future Cursor support should map ACP session/update plan payloads and
-// cursor/update_todos notifications into this normalized contract.
+// Provider-specific plan and todo updates normalize into this shared contract,
+// including Cursor ACP session/update payloads and cursor/update_todos notifications.
 export type RunPlanProgressSource = "codex" | "claude" | "ai-sdk" | "cursor-acp";
 
 export interface RunPlanProgressStep {

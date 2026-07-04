@@ -13,7 +13,7 @@ This repository is an Electron desktop app for coding-agent workflows. Optimize 
 - `sql.js` for local persisted app state
 - `simple-git` for repository and worktree operations
 - `node-pty` for the embedded run terminal
-- OpenAI-first provider/harness architecture with support for OpenAI-compatible, Codex CLI, and Claude Code providers
+- OpenAI-first provider/harness architecture with support for OpenAI-compatible, Codex CLI, Claude Code, and Cursor Agent providers
 - Vitest + ESLint + TypeScript for validation
 
 ## Workspace Layout
@@ -31,6 +31,7 @@ This repository is an Electron desktop app for coding-agent workflows. Optimize 
 - `packages/provider-azure-legacy`: Azure Legacy Provider client and harness helpers
 - `packages/provider-codex-cli`: Codex CLI provider adapter and related commit-message helpers
 - `packages/provider-claude-code`: Claude Code provider adapter and related local CLI helpers
+- `packages/provider-cursor-agent`: Cursor Agent provider adapter and related local CLI helpers
 
 ## Product Concepts
 
