@@ -2927,29 +2927,38 @@ export class AppController
     this.db.deleteProjectLabThread(threadId);
   }
 
+  /**
+   * Runs a background loop action that internally moves the renderer's project/run
+   * selection (createRun / followUpRunInternal do) and restores the previous
+   * selection afterwards, including on failure.
+   */
+  private async withPreservedRunSelection<T>(action: () => Promise<T>): Promise<T> {
+    const settings = this.db.getSettings();
+    const previousProjectId = settings[SELECTED_PROJECT_KEY];
+    const previousRunId = settings[SELECTED_RUN_KEY];
+    try {
+      return await action();
+    } finally {
+      if (previousRunId) {
+        this.db.setSetting(SELECTED_RUN_KEY, previousRunId);
+      } else {
+        this.db.deleteSetting(SELECTED_RUN_KEY);
+      }
+      if (previousProjectId) {
+        this.db.setSetting(SELECTED_PROJECT_KEY, previousProjectId);
+      }
+    }
+  }
+
   private get loopRunner(): ProjectLoopRunner {
     if (!this.loopRunnerInstance) {
       this.loopRunnerInstance = new ProjectLoopRunner({
         db: this.db,
         gitService: this.gitService,
         uiReviewImageRoot: join(dirname(this.db.getFilePath()), "loop-ui-reviews"),
-        createIterationRun: async (input) => {
-          // Loop runs happen in the background; restore whatever the user had selected.
-          const settings = this.db.getSettings();
-          const previousProjectId = settings[SELECTED_PROJECT_KEY];
-          const previousRunId = settings[SELECTED_RUN_KEY];
-          const run = await this.createRun(input);
-          if (previousRunId) {
-            this.db.setSetting(SELECTED_RUN_KEY, previousRunId);
-          } else {
-            this.db.deleteSetting(SELECTED_RUN_KEY);
-          }
-          if (previousProjectId) {
-            this.db.setSetting(SELECTED_PROJECT_KEY, previousProjectId);
-          }
-          return run;
-        },
-        followUpRun: (runId, prompt, options) => this.followUpRunInternal(runId, prompt, options, { loopFollowUp: true }),
+        createIterationRun: (input) => this.withPreservedRunSelection(() => this.createRun(input)),
+        followUpRun: (runId, prompt, options) =>
+          this.withPreservedRunSelection(() => this.followUpRunInternal(runId, prompt, options, { loopFollowUp: true })),
         cancelRun: (runId) => this.cancelRun(runId),
         deleteRun: (runId) => this.deleteRun(runId),
         askModelForText: async (cwd, modelId, input) => {
