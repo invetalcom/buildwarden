@@ -1,13 +1,16 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   CursorAgentProviderAdapter,
+  assertCursorAgentAvailable,
   buildCursorPlanProgressChunk,
   createCursorDevLogger,
   deriveCursorMaxTokensFromConfigOptions,
   extractCursorTodosAsPlanProgress,
+  getCursorAgentBinaryPath,
+  getCursorAgentBinaryPathCandidates,
   mapCursorUserInputAnswers,
   normalizeCursorTokenUsage,
   parseCursorAboutOutput,
@@ -47,6 +50,39 @@ describe("CursorAgentProviderAdapter", () => {
         },
       }),
     ).toThrow("Cursor binary path cannot be blank");
+  });
+
+  it("rejects blank Cursor API endpoint overrides", () => {
+    const adapter = new CursorAgentProviderAdapter();
+
+    expect(() =>
+      adapter.validateConfiguration({
+        providerType: "cursor-agent",
+        label: "Cursor Agent",
+        apiKey: "",
+        config: {
+          cursorApiEndpoint: "   ",
+        },
+      }),
+    ).toThrow("Cursor API endpoint cannot be blank");
+  });
+
+  it("allows configuration with no config object at all", () => {
+    const adapter = new CursorAgentProviderAdapter();
+
+    expect(() =>
+      adapter.validateConfiguration({
+        providerType: "cursor-agent",
+        label: "Cursor Agent",
+        apiKey: "",
+      }),
+    ).not.toThrow();
+  });
+
+  it("lists the Cursor Auto preset as the recommended fallback model", () => {
+    const adapter = new CursorAgentProviderAdapter();
+
+    expect(adapter.listRecommendedModels()).toEqual(["default"]);
   });
 
   it("wraps Windows command shims without shell mode while preserving explicit exe paths", () => {
@@ -102,6 +138,12 @@ describe("CursorAgentProviderAdapter", () => {
     });
     expect(parseCursorAboutOutput(JSON.stringify({ userEmail: null }))).toEqual({ authenticated: false });
     expect(parseCursorAboutOutput("not authenticated, please login")).toEqual({ authenticated: false });
+  });
+
+  it("returns no models when the response is missing a models array", () => {
+    expect(parseCursorAvailableModelsResponse({})).toEqual([]);
+    expect(parseCursorAvailableModelsResponse({ models: "not-an-array" })).toEqual([]);
+    expect(parseCursorAvailableModelsResponse(null)).toEqual([]);
   });
 
   it("parses available models and preserves ACP config options", () => {
@@ -162,6 +204,16 @@ describe("CursorAgentProviderAdapter", () => {
     ).toBe(272_000);
   });
 
+  it("returns undefined when no context window config option is present", () => {
+    expect(deriveCursorMaxTokensFromConfigOptions(undefined)).toBeUndefined();
+    expect(deriveCursorMaxTokensFromConfigOptions([])).toBeUndefined();
+    expect(
+      deriveCursorMaxTokensFromConfigOptions([
+        { id: "reasoning", name: "Reasoning", category: "model_config", type: "select" },
+      ]),
+    ).toBeUndefined();
+  });
+
   it("maps BuildWarden answer labels back to Cursor option ids", () => {
     expect(
       mapCursorUserInputAnswers(
@@ -180,6 +232,15 @@ describe("CursorAgentProviderAdapter", () => {
       modes: ["plan", "agent"],
       custom: "free-form",
     });
+  });
+
+  it("passes through answers unchanged when no answer map exists for a question", () => {
+    expect(
+      mapCursorUserInputAnswers(
+        { unmapped: "raw-value", list: ["a", "b"] },
+        { language: { TypeScript: "ts" } },
+      ),
+    ).toEqual({ unmapped: "raw-value", list: ["a", "b"] });
   });
 
   it("resolves base model ids and reasoning config updates", () => {
@@ -201,6 +262,44 @@ describe("CursorAgentProviderAdapter", () => {
         { reasoningEffort: "high" },
       ),
     ).toEqual([{ configId: "reasoning", value: "high" }]);
+  });
+
+  it("defaults an unset or blank model id to the Cursor default model", () => {
+    expect(resolveCursorAcpBaseModelId(undefined)).toBe("default");
+    expect(resolveCursorAcpBaseModelId(null)).toBe("default");
+    expect(resolveCursorAcpBaseModelId("   ")).toBe("default");
+    expect(resolveCursorAcpBaseModelId("plain-model")).toBe("plain-model");
+  });
+
+  it("returns no config updates when no reasoning effort is requested or no matching option exists", () => {
+    expect(resolveCursorAcpConfigUpdates(undefined, undefined)).toEqual([]);
+    expect(resolveCursorAcpConfigUpdates([], { reasoningEffort: "high" })).toEqual([]);
+    expect(
+      resolveCursorAcpConfigUpdates(
+        [{ id: "context", name: "Context Window", category: "model_config", type: "select" }],
+        { reasoningEffort: "high" },
+      ),
+    ).toEqual([]);
+    expect(
+      resolveCursorAcpConfigUpdates(
+        [
+          {
+            id: "reasoning",
+            name: "Reasoning",
+            category: "model_config",
+            type: "select",
+            options: [{ value: "low", name: "Low" }],
+          },
+        ],
+        { reasoningEffort: "nonexistent" },
+      ),
+    ).toEqual([]);
+  });
+
+  it("returns null when there are no todos to map", () => {
+    expect(extractCursorTodosAsPlanProgress(null)).toBeNull();
+    expect(extractCursorTodosAsPlanProgress({})).toBeNull();
+    expect(extractCursorTodosAsPlanProgress({ todos: [] })).toBeNull();
   });
 
   it("maps Cursor todos to normalized plan progress", () => {
@@ -290,5 +389,52 @@ describe("CursorAgentProviderAdapter", () => {
       lastUsedTokens: 4096,
       maxTokens: 200_000,
     });
+  });
+
+  it("returns null when the payload has no recognizable usage fields", () => {
+    expect(normalizeCursorTokenUsage(null)).toBeNull();
+    expect(normalizeCursorTokenUsage("not-an-object")).toBeNull();
+    expect(normalizeCursorTokenUsage({ unrelated: true })).toBeNull();
+  });
+
+  it("recurses into a nested update payload to find usage fields", () => {
+    expect(
+      normalizeCursorTokenUsage({
+        update: {
+          usage: { input_tokens: 10, output_tokens: 4 },
+        },
+      }),
+    ).toMatchObject({
+      inputTokens: 10,
+      outputTokens: 4,
+      lastInputTokens: 10,
+      lastOutputTokens: 4,
+    });
+  });
+
+  it("resolves the configured Cursor binary path over auto-detected candidates", () => {
+    expect(getCursorAgentBinaryPath({ cursorBinaryPath: "/custom/path/to/agent" })).toBe("/custom/path/to/agent");
+    expect(typeof getCursorAgentBinaryPath(undefined)).toBe("string");
+    expect(getCursorAgentBinaryPath(undefined).length).toBeGreaterThan(0);
+  });
+
+  it("derives Cursor binary path candidates from the home directory or environment", () => {
+    if (process.platform === "win32") {
+      const env = { APPDATA: "C:\\Users\\test\\AppData\\Roaming", USERPROFILE: "C:\\Users\\test" } as NodeJS.ProcessEnv;
+      const candidates = getCursorAgentBinaryPathCandidates(env);
+      expect(candidates).toContain(join("C:\\Users\\test\\AppData\\Roaming", "npm", "agent.exe"));
+      expect(candidates).toContain(join("C:\\Users\\test\\AppData\\Roaming", "npm", "cursor-agent.cmd"));
+    } else {
+      expect(getCursorAgentBinaryPathCandidates()).toEqual([
+        join(homedir(), ".local", "bin", "agent"),
+        join(homedir(), ".local", "bin", "cursor-agent"),
+      ]);
+    }
+  });
+
+  it("rejects when the configured Cursor binary cannot be found or executed", async () => {
+    await expect(
+      assertCursorAgentAvailable({ cursorBinaryPath: "buildwarden-nonexistent-cursor-agent-binary" }),
+    ).rejects.toThrow(/Cursor Agent CLI was not found or is not available/);
   });
 });

@@ -32,4 +32,22 @@ describe("normalizeJsonResponse", () => {
   it("returns normalized text when no JSON value is present", () => {
     expect(normalizeJsonResponse("  No structured payload.  ")).toBe("No structured payload.");
   });
+
+  it("extracts a fenced JSON array embedded after leading commentary", () => {
+    const raw = "Here is the result:\n```\n[1, 2, 3]\n```\nThanks!";
+
+    expect(normalizeJsonResponse(raw)).toBe("[1, 2, 3]");
+  });
+
+  it("extracts a balanced JSON array without surrounding fences", () => {
+    const raw = 'Findings follow: ["one", "two"] end of message';
+
+    expect(JSON.parse(normalizeJsonResponse(raw))).toEqual(["one", "two"]);
+  });
+
+  it("falls back to the trimmed original text when braces never balance", () => {
+    const raw = "  Some commentary { not valid json  ";
+
+    expect(normalizeJsonResponse(raw)).toBe("Some commentary { not valid json");
+  });
 });

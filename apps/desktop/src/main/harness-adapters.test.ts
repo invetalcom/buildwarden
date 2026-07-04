@@ -26,4 +26,20 @@ describe("harness adapter helpers", () => {
     expect(adapter.harnessType).toBe("codex-app-server");
     expect(await requestShellApproval("git status")).toBe("deny");
   });
+
+  it("wires shell approval and user input options through to the Cursor Agent adapter", async () => {
+    const requestShellApproval = async () => "allow-once" as const;
+    const requestUserInput = async () => ({});
+    const adapter = createHarnessAdapter("cursor-agent", { requestShellApproval, requestUserInput });
+
+    expect(adapter.harnessType).toBe("cursor-acp");
+  });
+
+  it("creates independent Cursor Agent adapter instances per call", () => {
+    const first = createHarnessAdapter("cursor-agent");
+    const second = createHarnessAdapter("cursor-agent");
+
+    expect(first).not.toBe(second);
+    expect(first.harnessType).toBe(second.harnessType);
+  });
 });

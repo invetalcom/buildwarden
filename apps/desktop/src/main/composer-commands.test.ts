@@ -49,6 +49,14 @@ describe("provider composer commands", () => {
     expect(resolved.prompt).toBe("inspect auth flow");
   });
 
+  it("maps /plan to plan mode for Cursor Agent", () => {
+    const resolved = resolveComposerCommandPrompt("/plan review auth flow", "cursor-agent", "run");
+
+    expect(resolved.unsupportedCommand).toBeUndefined();
+    expect(resolved.mode).toBe("plan");
+    expect(resolved.prompt).toBe("review auth flow");
+  });
+
   it("parses /goal as run goal with optional prompt on the next line", () => {
     const resolved = resolveComposerCommandPrompt("/goal Improve auth flow\nReview the login controller", "codex-cli", "follow-up");
 
