@@ -579,12 +579,14 @@ const LoopDetailView = ({
   }, [loopId, reloadDetail]);
 
   const runAction = useCallback(
-    async (action: () => Promise<void>) => {
+    async (action: () => Promise<void>, options?: { reloadAfter?: boolean }) => {
       setActionPending(true);
       setError(null);
       try {
         await action();
-        await reloadDetail();
+        if (options?.reloadAfter !== false) {
+          await reloadDetail();
+        }
         await onLoopsChanged();
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : "The loop action failed.");
@@ -669,10 +671,14 @@ const LoopDetailView = ({
               disabled={busy || actionPending}
               onClick={() => {
                 if (window.confirm("Delete this loop, its runs, and its screenshots? Created PRs/MRs stay on the Git host.")) {
-                  void runAction(async () => {
-                    await window.buildwarden.deleteProjectLoop(loop.id);
-                    onBack();
-                  });
+                  // The loop is gone after this action; reloading its detail would just fail.
+                  void runAction(
+                    async () => {
+                      await window.buildwarden.deleteProjectLoop(loop.id);
+                      onBack();
+                    },
+                    { reloadAfter: false },
+                  );
                 }
               }}
             >
