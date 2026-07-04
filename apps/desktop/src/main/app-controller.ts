@@ -2946,6 +2946,8 @@ export class AppController
       }
       if (previousProjectId) {
         this.db.setSetting(SELECTED_PROJECT_KEY, previousProjectId);
+      } else {
+        this.db.deleteSetting(SELECTED_PROJECT_KEY);
       }
     }
   }
