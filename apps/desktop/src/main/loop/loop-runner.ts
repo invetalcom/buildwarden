@@ -1393,6 +1393,10 @@ export class ProjectLoopRunner {
       finished.summary?.trim() ? `\n${finished.summary.trim().slice(0, 1_500)}` : "",
       `\n\n${LOOP_COMMENT_MARKER}`,
     ].join("");
+    // Comments are only marked processed once their thread was actually handled;
+    // otherwise a transient forge failure would leave an unresolved thread with no
+    // retry path and block auto-merge indefinitely.
+    const retryCommentIds = new Set<string>();
     for (const entry of feedback.threads) {
       try {
         await forge.replyToThread({
@@ -1407,7 +1411,14 @@ export class ProjectLoopRunner {
       try {
         await forge.resolveThread({ prUrl: iteration.prUrl, threadId: entry.thread.providerThreadId, resolved: true });
       } catch (error) {
-        this.deps.logWarn("Could not resolve a review thread.", { loopId: loop.id, threadId: entry.thread.providerThreadId, error });
+        this.deps.logWarn("Could not resolve a review thread; it will be retried on the next poll.", {
+          loopId: loop.id,
+          threadId: entry.thread.providerThreadId,
+          error,
+        });
+        for (const comment of entry.thread.comments) {
+          retryCommentIds.add(comment.id);
+        }
       }
     }
     if (feedback.generalComments.length > 0) {
@@ -1418,12 +1429,20 @@ export class ProjectLoopRunner {
           event: "comment",
         });
       } catch (error) {
-        this.deps.logWarn("Could not post the loop's comment reply.", { loopId: loop.id, error });
+        this.deps.logWarn("Could not post the loop's comment reply; the comments will be retried on the next poll.", {
+          loopId: loop.id,
+          error,
+        });
+        for (const item of feedback.generalComments) {
+          retryCommentIds.add(item.id);
+        }
       }
     }
 
     for (const id of feedback.seenCommentIds) {
-      processedIds.add(id);
+      if (!retryCommentIds.has(id)) {
+        processedIds.add(id);
+      }
     }
     this.deps.db.updateProjectLoopIteration(iteration.id, {
       status: "awaiting-merge",
@@ -1434,7 +1453,9 @@ export class ProjectLoopRunner {
       loop,
       "forge",
       "Review comments addressed",
-      "The fixes were committed and pushed; the addressed threads were answered and resolved.",
+      retryCommentIds.size > 0
+        ? "The fixes were committed and pushed, but some threads could not be answered or resolved; they are retried on the next poll."
+        : "The fixes were committed and pushed; the addressed threads were answered and resolved.",
       iteration.id,
     );
   }
