@@ -618,9 +618,16 @@ const bootstrap = async (): Promise<void> => {
     new ElectronSecretStore(join(dataDirPath, secretsFileName)),
     logDirPath,
   );
-  const startupReconciliation = controller.reconcileOrphanedActiveSessions().catch((error) => {
-    logError("Failed to reconcile orphaned active sessions during startup.", { error });
-  });
+  const startupReconciliation = controller
+    .reconcileOrphanedActiveSessions()
+    .catch((error) => {
+      logError("Failed to reconcile orphaned active sessions during startup.", { error });
+    })
+    .finally(() => {
+      // Loops persist their full progress; re-enter their state machines after the
+      // interrupted-run reconciliation marked orphaned sessions.
+      controller.resumeActiveProjectLoops();
+    });
 
   const applyUiTheme = async (next: UiTheme) => {
     await controller.setAppSetting(APP_SETTING_KEYS.uiTheme, next);
@@ -730,6 +737,20 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.deleteProjectTask, (_, taskId: string) => controller.deleteProjectTask(taskId));
   ipcMain.handle(IPC_CHANNELS.runProjectLab, (_, input) => controller.runProjectLab(input));
   ipcMain.handle(IPC_CHANNELS.deleteProjectLabThread, (_, threadId: string) => controller.deleteProjectLabThread(threadId));
+  ipcMain.handle(IPC_CHANNELS.createProjectLoop, (_, input) => controller.createProjectLoop(input));
+  ipcMain.handle(IPC_CHANNELS.getProjectLoopDetail, (_, loopId: string) => controller.getProjectLoopDetail(loopId));
+  ipcMain.handle(IPC_CHANNELS.cancelProjectLoop, (_, loopId: string) => controller.cancelProjectLoop(loopId));
+  ipcMain.handle(IPC_CHANNELS.resumeProjectLoop, (_, loopId: string) => controller.resumeProjectLoop(loopId));
+  ipcMain.handle(IPC_CHANNELS.deleteProjectLoop, (_, loopId: string) => controller.deleteProjectLoop(loopId));
+  ipcMain.handle(IPC_CHANNELS.respondToProjectLoopUiReview, (_, reviewId: string, input) =>
+    controller.respondToProjectLoopUiReview(reviewId, input),
+  );
+  ipcMain.handle(IPC_CHANNELS.getProjectLoopUiReviewImage, (_, reviewId: string) =>
+    controller.getProjectLoopUiReviewImage(reviewId),
+  );
+  ipcMain.handle(IPC_CHANNELS.getProjectLoopAvailability, (_, projectId: string) =>
+    controller.getProjectLoopAvailability(projectId),
+  );
   ipcMain.handle(IPC_CHANNELS.generateProjectTaskRunPrompt, (_, input) => controller.generateProjectTaskRunPrompt(input));
   ipcMain.handle(IPC_CHANNELS.generateProjectInsight, (_, input) => controller.generateProjectInsight(input));
   ipcMain.handle(IPC_CHANNELS.createRun, (_, input: RunInput) => controller.createRun(input));
@@ -875,6 +896,10 @@ const bootstrap = async (): Promise<void> => {
 
   controller.onChatEvent((event) => {
     mainWindow?.webContents.send(IPC_CHANNELS.chatEvent, event);
+  });
+
+  controller.onProjectLoopChanged((payload) => {
+    mainWindow?.webContents.send(IPC_CHANNELS.projectLoopChanged, payload);
   });
 
   controller.onAppWarning((warning) => {

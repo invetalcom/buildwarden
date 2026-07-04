@@ -22,7 +22,13 @@ import type {
   SubmitProjectPrMrCommentsInput,
 } from "@buildwarden/shared";
 import type { PrReviewHttpClient } from "./pr-review-http-client";
-import type { ProjectPrReviewProvider, ProjectPrReviewRemoteContext } from "./pr-review-types";
+import type {
+  CreateForgeRequestInput,
+  ForgeRequestApprovalStatus,
+  MergeForgeRequestInput,
+  ProjectPrReviewProvider,
+  ProjectPrReviewRemoteContext,
+} from "./pr-review-types";
 import {
   assertDraftCommentsAreSubmittable,
   isRecord,
@@ -763,6 +769,78 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
     return {
       message: input.resolved ? "Resolved the pull request review thread." : "Reopened the pull request review thread.",
       url: input.prUrl.trim(),
+    };
+  }
+
+  async createRequest(input: CreateForgeRequestInput): Promise<ProjectForgeRequestSummary> {
+    const owner = encodeURIComponent(this.context.github.owner);
+    const repo = encodeURIComponent(this.context.github.repo);
+    const payload = await this.http.json(`/repos/${owner}/${repo}/pulls`, {
+      method: "POST",
+      body: JSON.stringify({
+        title: input.title,
+        head: input.sourceBranch,
+        base: input.targetBranch,
+        body: input.description,
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!isRecord(payload)) {
+      throw new Error("The hosting API returned an unexpected response while creating the pull request.");
+    }
+    const summary = mapGithubRequestSummary(payload);
+    if (!summary) {
+      throw new Error("The hosting API returned an incomplete response while creating the pull request.");
+    }
+    return summary;
+  }
+
+  async mergeRequest(input: MergeForgeRequestInput): Promise<ProjectForgeReviewActionResult> {
+    const parsed = parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
+    const owner = encodeURIComponent(this.context.github.owner);
+    const repo = encodeURIComponent(this.context.github.repo);
+    const body: Record<string, unknown> = { merge_method: "merge" };
+    if (input.mergeCommitTitle?.trim()) {
+      body.commit_title = input.mergeCommitTitle.trim();
+    }
+    const payload = await this.http.json(`/repos/${owner}/${repo}/pulls/${String(parsed.number)}/merge`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json" },
+    });
+    const merged = isRecord(payload) ? recordBoolean(payload, "merged") : false;
+    if (!merged) {
+      const message = isRecord(payload) ? (recordString(payload, "message") ?? "GitHub did not merge the pull request.") : "GitHub did not merge the pull request.";
+      throw new Error(message);
+    }
+    return {
+      message: "Merged the pull request.",
+      url: input.prUrl.trim(),
+    };
+  }
+
+  async getRequestApprovalStatus(input: GetProjectForgeRequestDetailsInput): Promise<ForgeRequestApprovalStatus> {
+    const parsed = parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
+    const owner = encodeURIComponent(this.context.github.owner);
+    const repo = encodeURIComponent(this.context.github.repo);
+    const reviews = await this.getPagedArray(`/repos/${owner}/${repo}/pulls/${String(parsed.number)}/reviews?per_page=100`);
+    // Only the latest substantive review per user counts (APPROVED / CHANGES_REQUESTED supersede earlier ones).
+    const latestStateByUser = new Map<string, string>();
+    for (const entry of onlyRecords(reviews)) {
+      const state = recordString(entry, "state")?.toUpperCase();
+      const user = recordObject(entry, "user");
+      const login = user ? recordString(user, "login") : null;
+      if (!state || !login) {
+        continue;
+      }
+      if (state === "APPROVED" || state === "CHANGES_REQUESTED" || state === "DISMISSED") {
+        latestStateByUser.set(login, state);
+      }
+    }
+    const approvedBy = [...latestStateByUser.entries()].filter(([, state]) => state === "APPROVED").map(([login]) => login);
+    return {
+      approved: approvedBy.length > 0,
+      approvedBy,
     };
   }
 

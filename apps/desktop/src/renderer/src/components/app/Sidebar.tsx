@@ -20,6 +20,7 @@ import {
   ListChecks,
   MessageSquare,
   Plus,
+  RefreshCw,
   Settings,
   Sparkles,
   Trash2,
@@ -75,6 +76,8 @@ interface SidebarProps {
   onOpenSettings: () => void;
   onWidthCommit: (width: number) => void;
   onToggleCollapsed: () => void;
+  /** Project ids where Loops are available (Git project + saved forge token). Controls the Loops nav entry. */
+  loopEnabledProjectIds: ReadonlySet<string>;
 }
 
 const projectTools: Array<{ tab: ProjectPageTab; label: string; icon: typeof Bot; count?: (project: AppSnapshot["projects"][number]) => number }> = [
@@ -85,10 +88,19 @@ const projectTools: Array<{ tab: ProjectPageTab; label: string; icon: typeof Bot
   { tab: "ai-insights-history", label: "AI Insights", icon: BrainCircuit },
   { tab: "tasks", label: "Task Board", icon: ListChecks, count: (project) => project.tasks.length },
   { tab: "lab", label: "Project Lab", icon: Sparkles, count: (project) => project.labThreads.length },
+  { tab: "loops", label: "Loops", icon: RefreshCw, count: (project) => project.loops.length },
   { tab: "for-later", label: "For Later", icon: Archive, count: (project) => project.forLaterRuns.length },
 ];
 
-const projectToolVisible = (project: AppSnapshot["projects"][number] | null | undefined, tab: ProjectPageTab): boolean => {
+const projectToolVisible = (
+  project: AppSnapshot["projects"][number] | null | undefined,
+  tab: ProjectPageTab,
+  loopEnabledProjectIds: ReadonlySet<string>,
+): boolean => {
+  if (tab === "loops") {
+    // Loops need a Git project with a saved GitHub/GitLab access token.
+    return Boolean(project && project.project.kind === "git" && loopEnabledProjectIds.has(project.project.id));
+  }
   if (!project || project.project.kind === "git") {
     return true;
   }
@@ -180,6 +192,7 @@ const SidebarComponent = ({
   onOpenSettings,
   onWidthCommit,
   onToggleCollapsed,
+  loopEnabledProjectIds,
 }: SidebarProps) => {
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [projectToolsExpanded, setProjectToolsExpanded] = useState(true);
@@ -326,7 +339,7 @@ const SidebarComponent = ({
     { label: "Bookmarks", icon: Bookmark, selected: bookmarksSelected, onClick: onSelectBookmarks, count: bookmarksCount ? `${bookmarksCount}` : "" },
     { label: "Settings", icon: Settings, selected: settingsSelected, onClick: onOpenSettings, count: "" },
   ];
-  const visibleProjectTools = projectTools.filter((tool) => projectToolVisible(selectedProject, tool.tab));
+  const visibleProjectTools = projectTools.filter((tool) => projectToolVisible(selectedProject, tool.tab, loopEnabledProjectIds));
 
   if (collapsed) {
     return (

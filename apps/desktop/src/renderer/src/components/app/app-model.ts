@@ -220,6 +220,13 @@ export const findProjectRun = (projects: ProjectSnapshot[], runId: string) => {
         return { project, run: thread.implementationRun };
       }
     }
+
+    for (const loopItem of project.loops) {
+      const loopRun = findRunInList(loopItem.runs, runId);
+      if (loopRun) {
+        return { project, run: loopRun };
+      }
+    }
   }
 
   return null;

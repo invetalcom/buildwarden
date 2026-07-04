@@ -26,7 +26,7 @@ export type ProjectKind = "git" | "folder";
 export type RunWorkspaceType = "worktree" | "local" | "copy";
 export type RunWorkspaceVcs = "git" | "folder";
 export type RunListVisibility = "default" | "for-later";
-export type RunKind = "standard" | "lab-implementation";
+export type RunKind = "standard" | "lab-implementation" | "loop-iteration";
 
 export type ComposerCommandContext = "run" | "follow-up" | "chat";
 export type ComposerCommandEffect = "set-run-mode" | "set-goal" | "native-prompt";
@@ -646,6 +646,194 @@ export interface ProjectLabThreadDetail {
   implementationRun: RunRecord | null;
 }
 
+/**
+ * Project Loops: fully automated feature/fix pipelines. A loop plans the work,
+ * implements it in one or more sequential PR-sized iterations, creates PRs/MRs
+ * through the Git hosting API, waits for merges, addresses review comments,
+ * and gates UI-affecting changes behind screenshot approval (manual or AI).
+ */
+export type ProjectLoopMergePolicy = "auto-merge" | "wait-for-approval";
+export type ProjectLoopUiChangePolicy = "auto" | "manual-approval" | "ai-review";
+/** Whether the loop's review model posts a visible code review on each created PR/MR. */
+export type ProjectLoopPrReviewPolicy = "none" | "ai-review";
+
+export type ProjectLoopStatus =
+  | "planning"
+  | "implementing"
+  | "awaiting-ui-approval"
+  | "reviewing-ui"
+  | "creating-pr"
+  | "awaiting-merge"
+  | "addressing-comments"
+  | "auditing"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type ProjectLoopIterationStatus =
+  | "pending"
+  | "implementing"
+  | "awaiting-ui-approval"
+  | "reviewing-ui"
+  | "creating-pr"
+  | "awaiting-merge"
+  | "addressing-comments"
+  | "merged"
+  | "failed"
+  | "cancelled"
+  | "skipped";
+
+export type ProjectLoopEventRole = "system" | "planner" | "runner" | "ui-review" | "forge" | "audit" | "user";
+
+export type ProjectLoopUiReviewStatus =
+  | "pending"
+  | "approved"
+  | "changes-requested"
+  | "ai-approved"
+  | "ai-changes-requested";
+
+/** Provider types whose models can drive a loop (local CLIs with real computer-use / screenshot capabilities). */
+export const LOOP_CAPABLE_PROVIDER_TYPES: readonly ProviderType[] = ["codex-cli", "claude-code"];
+
+export const isLoopCapableProviderType = (providerType: ProviderType): boolean =>
+  LOOP_CAPABLE_PROVIDER_TYPES.includes(providerType);
+
+/** Active loop statuses that the engine resumes after an app restart. */
+export const ACTIVE_PROJECT_LOOP_STATUSES: readonly ProjectLoopStatus[] = [
+  "planning",
+  "implementing",
+  "awaiting-ui-approval",
+  "reviewing-ui",
+  "creating-pr",
+  "awaiting-merge",
+  "addressing-comments",
+  "auditing",
+];
+
+export const isActiveProjectLoopStatus = (status: ProjectLoopStatus): boolean =>
+  ACTIVE_PROJECT_LOOP_STATUSES.includes(status);
+
+export interface ProjectLoopRecord {
+  id: string;
+  projectId: string;
+  name: string;
+  prompt: string;
+  runnerModelId: string;
+  reviewModelId: string | null;
+  mergePolicy: ProjectLoopMergePolicy;
+  uiChangePolicy: ProjectLoopUiChangePolicy;
+  prReviewPolicy: ProjectLoopPrReviewPolicy;
+  /** Optional user-provided extra instructions appended to the screenshot-capture prompt. */
+  uiReviewInstructions: string | null;
+  baseBranch: string;
+  status: ProjectLoopStatus;
+  planSummary: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface ProjectLoopIterationRecord {
+  id: string;
+  loopId: string;
+  iterationIndex: number;
+  title: string;
+  objective: string;
+  status: ProjectLoopIterationStatus;
+  runId: string | null;
+  branchName: string | null;
+  prUrl: string | null;
+  prNumber: number | null;
+  targetBranch: string | null;
+  errorMessage: string | null;
+  /** 1 once the loop's AI code review was posted on this iteration's PR/MR (single review pass per PR). */
+  aiReviewPosted: number;
+  /** JSON string array of forge comment/thread ids that were already addressed by the loop. */
+  processedCommentIdsJson: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectLoopEventRecord {
+  id: string;
+  loopId: string;
+  iterationId: string | null;
+  role: ProjectLoopEventRole;
+  label: string;
+  content: string;
+  createdAt: string;
+}
+
+export interface ProjectLoopUiReviewRecord {
+  id: string;
+  loopId: string;
+  iterationId: string;
+  /** Review round within the iteration (feedback cycles increment it). */
+  round: number;
+  pageName: string;
+  description: string | null;
+  /** Absolute path of the stored screenshot copy (app data dir, survives worktree cleanup). */
+  imagePath: string;
+  status: ProjectLoopUiReviewStatus;
+  feedback: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectLoopListItem {
+  loop: ProjectLoopRecord;
+  iterations: ProjectLoopIterationRecord[];
+  /** Implementation runs of the iterations (kind "loop-iteration"; hidden from normal run lists). */
+  runs: RunRecord[];
+  pendingUiReviewCount: number;
+}
+
+export interface ProjectLoopDetail {
+  loop: ProjectLoopRecord;
+  iterations: ProjectLoopIterationRecord[];
+  events: ProjectLoopEventRecord[];
+  uiReviews: ProjectLoopUiReviewRecord[];
+  /** Implementation runs referenced by the iterations, for provider-output links. */
+  runs: RunRecord[];
+}
+
+export interface CreateProjectLoopInput {
+  projectId: string;
+  name: string;
+  prompt: string;
+  runnerModelId: string;
+  reviewModelId?: string | null;
+  mergePolicy: ProjectLoopMergePolicy;
+  uiChangePolicy: ProjectLoopUiChangePolicy;
+  prReviewPolicy?: ProjectLoopPrReviewPolicy;
+  uiReviewInstructions?: string | null;
+  baseBranch?: string;
+}
+
+export interface ProjectLoopUiReviewDecisionInput {
+  decision: "approve" | "request-changes";
+  feedback?: string;
+}
+
+export type ProjectLoopUnavailableReason = "not-git" | "no-remote" | "no-forge-token" | "no-local-models";
+
+export interface ProjectLoopAvailability {
+  available: boolean;
+  reason?: ProjectLoopUnavailableReason;
+  provider?: ProjectForgeProvider;
+  repoLabel?: string;
+  hasToken: boolean;
+  hasLocalModels: boolean;
+}
+
+/** Payload sent to the renderer whenever a loop changes (status, events, reviews). */
+export interface ProjectLoopChangedPayload {
+  loopId: string;
+  projectId: string;
+}
+
 export type ProjectInsightKind =
   | "architecture-graph"
   | "dependency-gravity"
@@ -1007,6 +1195,7 @@ export interface ProjectSnapshot {
   tasks: ProjectTaskRecord[];
   insights: ProjectInsightRecord[];
   labThreads: ProjectLabThreadDetail[];
+  loops: ProjectLoopListItem[];
 }
 
 export interface RunDetail {
@@ -2177,6 +2366,16 @@ export interface DesktopApi {
   deleteProjectTask(taskId: string): Promise<void>;
   runProjectLab(input: RunProjectLabInput): Promise<ProjectLabThreadRecord[]>;
   deleteProjectLabThread(threadId: string): Promise<void>;
+  createProjectLoop(input: CreateProjectLoopInput): Promise<ProjectLoopRecord>;
+  getProjectLoopDetail(loopId: string): Promise<ProjectLoopDetail>;
+  cancelProjectLoop(loopId: string): Promise<void>;
+  resumeProjectLoop(loopId: string): Promise<void>;
+  deleteProjectLoop(loopId: string): Promise<void>;
+  respondToProjectLoopUiReview(reviewId: string, input: ProjectLoopUiReviewDecisionInput): Promise<void>;
+  /** Base64 data URL of a stored loop UI-review screenshot. */
+  getProjectLoopUiReviewImage(reviewId: string): Promise<string | null>;
+  getProjectLoopAvailability(projectId: string): Promise<ProjectLoopAvailability>;
+  onProjectLoopChanged(listener: (payload: ProjectLoopChangedPayload) => void): () => void;
   generateProjectTaskRunPrompt(input: { projectId: string; title: string; notes: string; modelId: string }): Promise<string>;
   generateProjectInsight(input: GenerateProjectInsightInput): Promise<ProjectInsightRecord>;
   createRun(input: RunInput): Promise<RunRecord>;
@@ -2342,6 +2541,15 @@ export const IPC_CHANNELS = {
   deleteProjectTask: "buildwarden:delete-project-task",
   runProjectLab: "buildwarden:run-project-lab",
   deleteProjectLabThread: "buildwarden:delete-project-lab-thread",
+  createProjectLoop: "buildwarden:create-project-loop",
+  getProjectLoopDetail: "buildwarden:get-project-loop-detail",
+  cancelProjectLoop: "buildwarden:cancel-project-loop",
+  resumeProjectLoop: "buildwarden:resume-project-loop",
+  deleteProjectLoop: "buildwarden:delete-project-loop",
+  respondToProjectLoopUiReview: "buildwarden:respond-to-project-loop-ui-review",
+  getProjectLoopUiReviewImage: "buildwarden:get-project-loop-ui-review-image",
+  getProjectLoopAvailability: "buildwarden:get-project-loop-availability",
+  projectLoopChanged: "buildwarden:project-loop-changed",
   generateProjectTaskRunPrompt: "buildwarden:generate-project-task-run-prompt",
   generateProjectInsight: "buildwarden:generate-project-insight",
   addProject: "buildwarden:add-project",

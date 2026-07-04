@@ -22,6 +22,7 @@ import {
   inferStoredAttachmentKind,
   type StoredAttachmentKind,
 } from "./stored-chat-attachment-utils";
+import { ImageLightbox } from "../ui/image-lightbox";
 
 type AttachmentPresentation = {
   label: string;
@@ -348,52 +349,14 @@ export const StoredChatAttachments = ({
         </div>
       </div>
 
-      {expandedImage
-        ? createPortal(
-            <div
-              className="fixed inset-0 z-[30000] flex items-center justify-center bg-black/80 p-4"
-              onClick={() => setExpandedImage(null)}
-              role="dialog"
-              aria-modal="true"
-              aria-label={expandedImage.fileName}
-            >
-              <div
-                className="max-h-full max-w-6xl overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-950 shadow-2xl"
-                onClick={(event) => event.stopPropagation()}
-              >
-                <div className="flex items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
-                  <p className="truncate text-sm text-zinc-200">{expandedImage.fileName}</p>
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    <a
-                      href={expandedImageUrl}
-                      download={expandedImage.fileName}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
-                      title={`Download ${expandedImage.fileName}`}
-                      aria-label={`Download ${expandedImage.fileName}`}
-                    >
-                      <Download className="h-4 w-4" aria-hidden />
-                    </a>
-                    <button
-                      type="button"
-                      className="rounded-md px-2 py-1 text-xs text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
-                      onClick={() => setExpandedImage(null)}
-                    >
-                      Close
-                    </button>
-                  </div>
-                </div>
-                <div className="flex max-h-[85vh] items-center justify-center bg-black p-3">
-                  <img
-                    src={expandedImageUrl}
-                    alt={expandedImage.fileName}
-                    className="max-h-[80vh] max-w-full object-contain"
-                  />
-                </div>
-              </div>
-            </div>,
-            document.body,
-          )
-        : null}
+      {expandedImage ? (
+        <ImageLightbox
+          imageUrl={expandedImageUrl}
+          title={expandedImage.fileName}
+          downloadFileName={expandedImage.fileName}
+          onClose={() => setExpandedImage(null)}
+        />
+      ) : null}
 
       {expandedPdf
         ? createPortal(

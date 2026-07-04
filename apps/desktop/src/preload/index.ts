@@ -15,6 +15,8 @@ import {
   type ProjectForgeRequestNotificationPayload,
   type ProjectForgeRequestOpenPayload,
   type ProjectInput,
+  type ProjectLoopChangedPayload,
+  type ProjectLoopUiReviewDecisionInput,
   type ProviderAccountInput,
   type RunEvent,
   type RunFollowUpOptions,
@@ -59,6 +61,20 @@ const api: DesktopApi = {
   deleteProjectTask: (taskId: string) => invoke(IPC_CHANNELS.deleteProjectTask, taskId),
   runProjectLab: (input) => invoke(IPC_CHANNELS.runProjectLab, input),
   deleteProjectLabThread: (threadId: string) => invoke(IPC_CHANNELS.deleteProjectLabThread, threadId),
+  createProjectLoop: (input) => invoke(IPC_CHANNELS.createProjectLoop, input),
+  getProjectLoopDetail: (loopId: string) => invoke(IPC_CHANNELS.getProjectLoopDetail, loopId),
+  cancelProjectLoop: (loopId: string) => invoke(IPC_CHANNELS.cancelProjectLoop, loopId),
+  resumeProjectLoop: (loopId: string) => invoke(IPC_CHANNELS.resumeProjectLoop, loopId),
+  deleteProjectLoop: (loopId: string) => invoke(IPC_CHANNELS.deleteProjectLoop, loopId),
+  respondToProjectLoopUiReview: (reviewId: string, input: ProjectLoopUiReviewDecisionInput) =>
+    invoke(IPC_CHANNELS.respondToProjectLoopUiReview, reviewId, input),
+  getProjectLoopUiReviewImage: (reviewId: string) => invoke(IPC_CHANNELS.getProjectLoopUiReviewImage, reviewId),
+  getProjectLoopAvailability: (projectId: string) => invoke(IPC_CHANNELS.getProjectLoopAvailability, projectId),
+  onProjectLoopChanged: (listener: (payload: ProjectLoopChangedPayload) => void) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, payload: ProjectLoopChangedPayload) => listener(payload);
+    ipcRenderer.on(IPC_CHANNELS.projectLoopChanged, wrapped);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.projectLoopChanged, wrapped);
+  },
   generateProjectTaskRunPrompt: (input) => invoke(IPC_CHANNELS.generateProjectTaskRunPrompt, input),
   generateProjectInsight: (input) => invoke(IPC_CHANNELS.generateProjectInsight, input),
   addProject: (input: ProjectInput) => invoke(IPC_CHANNELS.addProject, input),

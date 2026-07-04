@@ -41,6 +41,7 @@ import {
   type NetworkProxySettingsSnapshot,
   type ProjectFolderGitStatus,
   type ProjectForgeRequestOpenPayload,
+  type ProjectLoopAvailability,
   type ProjectSnapshot,
   type ProjectInsightKind,
   type ProviderType,
@@ -282,6 +283,7 @@ export const App = () => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [projectPageTab, setProjectPageTab] = useState<ProjectPageTab>("overview");
+  const [loopAvailabilityByProjectId, setLoopAvailabilityByProjectId] = useState<Record<string, ProjectLoopAvailability>>({});
   const dismissedGitConversionProjectIdsRef = useRef<Set<string>>(new Set());
   const gitConversionCheckInFlightRef = useRef<Set<string>>(new Set());
   const [reviewRequestTarget, setReviewRequestTarget] = useState<{
@@ -473,7 +475,8 @@ export const App = () => {
           (entry) =>
             entry.runs.some((run) => run.id === current) ||
             entry.forLaterRuns.some((run) => run.id === current) ||
-            entry.labThreads.some((detail) => detail.implementationRun?.id === current || detail.thread.implementationRunId === current),
+            entry.labThreads.some((detail) => detail.implementationRun?.id === current || detail.thread.implementationRunId === current) ||
+            entry.loops.some((item) => item.iterations.some((iteration) => iteration.runId === current)),
         );
       if (hasCurrentRun) {
         return current;
@@ -521,6 +524,54 @@ export const App = () => {
       }
     },
     [],
+  );
+
+  /**
+   * Loop availability (Git remote + saved forge token + local-provider models) gates the
+   * Loops entry in the sidebar. Keyed on project ids and the active tab so it refreshes
+   * after e.g. saving a hosting token in MR Review, without re-running on every
+   * streaming snapshot refresh.
+   */
+  const snapshotProjectsRef = useRef(snapshot.projects);
+  snapshotProjectsRef.current = snapshot.projects;
+  const loopAvailabilityProjectsKey = useMemo(
+    () => snapshot.projects.map((entry) => `${entry.project.id}:${entry.project.kind}`).join("|"),
+    [snapshot.projects],
+  );
+  useEffect(() => {
+    if (!buildwarden) {
+      return;
+    }
+    let disposed = false;
+    void (async () => {
+      const next: Record<string, ProjectLoopAvailability> = {};
+      for (const entry of snapshotProjectsRef.current) {
+        if (entry.project.kind !== "git") {
+          continue;
+        }
+        try {
+          next[entry.project.id] = await buildwarden.getProjectLoopAvailability(entry.project.id);
+        } catch {
+          /* project without resolvable remote: leave it unavailable */
+        }
+      }
+      if (!disposed) {
+        setLoopAvailabilityByProjectId(next);
+      }
+    })();
+    return () => {
+      disposed = true;
+    };
+  }, [buildwarden, loopAvailabilityProjectsKey, projectPageTab]);
+
+  const loopEnabledProjectIds = useMemo(
+    () =>
+      new Set(
+        Object.entries(loopAvailabilityByProjectId)
+          .filter(([, availability]) => availability.hasToken)
+          .map(([projectId]) => projectId),
+      ),
+    [loopAvailabilityByProjectId],
   );
 
   useEffect(() => {
@@ -938,9 +989,14 @@ export const App = () => {
       setAppWarning(warning);
     });
 
+    const unsubscribeLoopChanged = buildwarden.onProjectLoopChanged(() => {
+      scheduleSnapshotRefresh();
+    });
+
     return () => {
       unsubscribe();
       unsubscribeWarning();
+      unsubscribeLoopChanged();
     };
   }, [
     buildwarden,
@@ -2715,7 +2771,7 @@ export const App = () => {
 
       const targetProject = snapshot.projects.find((entry) => entry.project.id === projectId);
       const nextTab =
-        targetProject?.project.kind === "folder" && (tab === "branches" || tab === "reviews")
+        targetProject?.project.kind === "folder" && (tab === "branches" || tab === "reviews" || tab === "loops")
           ? "overview"
           : tab;
       await leaveSelectedRun();
@@ -4179,6 +4235,7 @@ export const App = () => {
         onOpenSettings={sidebarOnOpenSettings}
         onWidthCommit={sidebarOnWidthCommit}
         onToggleCollapsed={sidebarOnToggleCollapsed}
+        loopEnabledProjectIds={loopEnabledProjectIds}
       />
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--ec-bg)]">
@@ -4633,6 +4690,9 @@ export const App = () => {
                 })
               }
               onOpenProjectLabImplementation={(runId) => void handleRunSelect(selectedProject.project.id, runId)}
+              loopAvailability={loopAvailabilityByProjectId[selectedProject.project.id] ?? null}
+              onOpenLoopRun={(runId) => void handleRunSelect(selectedProject.project.id, runId)}
+              onLoopsChanged={loadSnapshot}
               onBranchesChanged={loadProjectBranches}
               onDeleteProject={() => void deleteProject(selectedProject.project.id)}
               onOpenProjectSettings={projectPageOnOpenProjectSettings}
