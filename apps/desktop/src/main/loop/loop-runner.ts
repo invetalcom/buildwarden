@@ -1480,6 +1480,11 @@ export class ProjectLoopRunner {
       this.assertNotCancelled(state);
       this.appendEvent(loop, "audit", "Final audit", audit.trim() || "The audit returned no findings.");
     } catch (error) {
+      if (error instanceof LoopCancelledError) {
+        // A cancellation during the audit must not be swallowed as an "audit skipped",
+        // or the cancelled loop would be overwritten as completed below.
+        throw error;
+      }
       this.deps.logWarn("The final loop audit failed; the loop still completes.", { loopId: loop.id, error });
       this.appendEvent(
         loop,
@@ -1488,6 +1493,7 @@ export class ProjectLoopRunner {
         `The final audit could not run: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+    this.assertNotCancelled(state);
     const merged = this.deps.db.listProjectLoopIterations(loop.id).filter((iteration) => iteration.status === "merged").length;
     this.deps.db.updateProjectLoop(loop.id, { status: "completed", finishedAt: new Date().toISOString() });
     this.appendEvent(
