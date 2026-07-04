@@ -34,7 +34,7 @@ export const PROVIDER_TYPES_BY_CONNECTION_KIND: Record<ProviderConnectionKind, r
 };
 
 export function connectionKindForProviderType(providerType: ProviderType): ProviderConnectionKind {
-  return providerType === "codex-cli" || providerType === "claude-code" || providerType === "cursor-agent"
+  return PROVIDER_TYPES_BY_CONNECTION_KIND["local-sdk-cli"].includes(providerType)
     ? "local-sdk-cli"
     : "bring-your-own-key";
 }
