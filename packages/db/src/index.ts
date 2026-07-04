@@ -1028,6 +1028,32 @@ export class BuildWardenDatabase {
     return this.getProjectLoopIteration(id);
   }
 
+  /**
+   * Inserts a whole loop plan and persists it as one disk write, so an app crash
+   * cannot leave a partially persisted (truncated) iteration list behind. Existing
+   * iterations for the loop are replaced, making plan creation idempotent.
+   */
+  replaceProjectLoopIterations(
+    loopId: string,
+    entries: Array<{ title: string; objective: string; targetBranch?: string | null }>,
+  ): ProjectLoopIterationRecord[] {
+    const timestamp = nowIso();
+    this.run("delete from project_loop_iterations where loop_id = ?", [loopId]);
+    for (const [index, entry] of entries.entries()) {
+      this.run(
+        `
+        insert into project_loop_iterations (
+          id, loop_id, iteration_index, title, objective, status, run_id, branch_name, pr_url, pr_number,
+          target_branch, error_message, processed_comment_ids_json, created_at, updated_at
+        ) values (?, ?, ?, ?, ?, 'pending', null, null, null, null, ?, null, '[]', ?, ?)
+        `,
+        [createId(), loopId, index, entry.title, entry.objective, entry.targetBranch ?? null, timestamp, timestamp],
+      );
+    }
+    this.persist();
+    return this.listProjectLoopIterations(loopId);
+  }
+
   getProjectLoopIteration(iterationId: string): ProjectLoopIterationRecord {
     const iteration = this.first<ProjectLoopIterationRecord>(
       `${BuildWardenDatabase.PROJECT_LOOP_ITERATION_SELECT} where id = ?`,
@@ -2939,6 +2965,7 @@ export class BuildWardenDatabase {
 
       create index if not exists idx_project_loops_project_id on project_loops(project_id);
       create index if not exists idx_project_loop_iterations_loop_id on project_loop_iterations(loop_id, iteration_index);
+      create unique index if not exists idx_project_loop_iterations_loop_index_unique on project_loop_iterations(loop_id, iteration_index);
       create index if not exists idx_project_loop_events_loop_id on project_loop_events(loop_id, created_at);
       create index if not exists idx_project_loop_ui_reviews_loop_id on project_loop_ui_reviews(loop_id, created_at);
 

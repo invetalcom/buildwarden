@@ -501,15 +501,11 @@ export class ProjectLoopRunner {
       this.appendEvent(loop, "planner", "Plan fallback", "The planner did not return a parseable plan. The request will be implemented as one PR.");
     }
 
-    for (const [index, entry] of plan.iterations.entries()) {
-      this.deps.db.createProjectLoopIteration({
-        loopId: loop.id,
-        iterationIndex: index,
-        title: entry.title,
-        objective: entry.objective,
-        targetBranch: loop.baseBranch,
-      });
-    }
+    // Single-write replace: a crash mid-planning can never persist a truncated plan.
+    this.deps.db.replaceProjectLoopIterations(
+      loop.id,
+      plan.iterations.map((entry) => ({ title: entry.title, objective: entry.objective, targetBranch: loop.baseBranch })),
+    );
     this.deps.db.updateProjectLoop(loop.id, { status: "implementing", planSummary: plan.summary || null });
     this.appendEvent(
       loop,
