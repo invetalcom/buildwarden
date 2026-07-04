@@ -620,13 +620,15 @@ const bootstrap = async (): Promise<void> => {
   );
   const startupReconciliation = controller
     .reconcileOrphanedActiveSessions()
-    .catch((error) => {
-      logError("Failed to reconcile orphaned active sessions during startup.", { error });
-    })
-    .finally(() => {
-      // Loops persist their full progress; re-enter their state machines after the
-      // interrupted-run reconciliation marked orphaned sessions.
+    .then(() => {
+      // Loops persist their full progress; re-enter their state machines only after the
+      // interrupted-run reconciliation marked orphaned sessions terminal. Resuming on a
+      // failed reconciliation could leave the runner waiting forever on a stale
+      // "running" loop-iteration run that has no worker.
       controller.resumeActiveProjectLoops();
+    })
+    .catch((error) => {
+      logError("Failed to reconcile orphaned active sessions during startup; active loops were not auto-resumed.", { error });
     });
 
   const applyUiTheme = async (next: UiTheme) => {
