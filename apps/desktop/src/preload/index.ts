@@ -18,6 +18,7 @@ import {
   type ProjectLoopChangedPayload,
   type ProjectLoopUiReviewDecisionInput,
   type ProviderAccountInput,
+  type RunChatInput,
   type RunEvent,
   type RunFollowUpOptions,
   type RunInput,
@@ -176,6 +177,8 @@ const api: DesktopApi = {
   getChatBookmarksWithSteps: () => invoke(IPC_CHANNELS.getChatBookmarksWithSteps),
   resetDatabase: () => invoke(IPC_CHANNELS.resetDatabase),
   createChat: (input: ChatInput) => invoke(IPC_CHANNELS.createChat, input),
+  createRunChat: (runId: string, input: RunChatInput) => invoke(IPC_CHANNELS.createRunChat, runId, input),
+  getRunChat: (runId: string) => invoke(IPC_CHANNELS.getRunChat, runId),
   getChatDetail: (chatId: string) => invoke(IPC_CHANNELS.getChatDetail, chatId),
   followUpChat: (chatId: string, prompt: string, options?: FollowUpChatOptions) =>
     invoke(IPC_CHANNELS.followUpChat, chatId, prompt, options),

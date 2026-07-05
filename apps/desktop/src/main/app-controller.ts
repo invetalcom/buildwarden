@@ -78,6 +78,8 @@ import {
   type ChatAttachmentPayload,
   type ChatInput,
   type ChatRecord,
+  RUN_CHAT_CONTEXT_SOURCE,
+  type RunChatInput,
   type ContinueRunInput,
   type CreateProjectBranchInput,
   type DeleteProjectBranchInput,
@@ -166,6 +168,12 @@ import {
   type WorktreeStatus,
 } from "@buildwarden/shared";
 import { logError, logInfo, logWarn } from "./logger";
+import {
+  buildRunChatContext,
+  buildRunChatFirstTurnPrompt,
+  buildRunChatUpdateTurnPrompt,
+  providerReplaysChatHistory,
+} from "./run-chat-context";
 import { ElectronSecretStore } from "./secret-store";
 
 const MAX_DIFF_CHARS_FOR_COMMIT_SUGGEST = 100_000;
@@ -1511,6 +1519,152 @@ export class AppController
     return this.db.getChatDetail(chatId);
   }
 
+  async getRunChat(runId: string): Promise<ChatDetail | null> {
+    const chat = this.db.getLatestChatForRun(runId);
+    return chat ? this.db.getChatDetail(chat.id) : null;
+  }
+
+  private async buildRunChatContextForRun(runId: string): Promise<string> {
+    const run = this.db.getRun(runId);
+    const project = this.db.getProject(run.projectId);
+    const diffResult = await this.getRunWorktreeDiff(runId);
+    return buildRunChatContext({
+      run,
+      steps: this.db.getRunSteps(runId),
+      projectName: project.name,
+      diff: diffResult.diff,
+      diffUnavailableReason: diffResult.diffUnavailableReason ?? null,
+    });
+  }
+
+  /**
+   * Syncs the hidden run-context step with the run's latest steps and diff before a
+   * follow-up turn. History-replaying providers pick the new content up automatically
+   * on the next turn; for session-based providers the caller re-sends the context in
+   * the prompt when it changed. Returns null when the refresh failed (the chat then
+   * continues with the previous context).
+   */
+  private async refreshRunChatContext(chat: ChatRecord): Promise<{ context: string; changed: boolean } | null> {
+    if (!chat.runId) {
+      return null;
+    }
+    try {
+      const context = await this.buildRunChatContextForRun(chat.runId);
+      const contextStep = this.db.getChatSteps(chat.id).find((step) => {
+        try {
+          return (JSON.parse(step.metadataJson || "{}") as Record<string, unknown>).source === RUN_CHAT_CONTEXT_SOURCE;
+        } catch {
+          return false;
+        }
+      });
+      if (!contextStep) {
+        await this.appendChatEvent(chat.id, "log", "Run context", context, {
+          source: RUN_CHAT_CONTEXT_SOURCE,
+          hidden: true,
+          runId: chat.runId,
+        });
+        return { context, changed: true };
+      }
+      if (contextStep.content === context) {
+        return { context, changed: false };
+      }
+      this.db.updateChatStep(contextStep.id, { content: context });
+      return { context, changed: true };
+    } catch (error) {
+      this.logControllerWarn("Could not refresh the run chat context; continuing with the previous context.", {
+        chatId: chat.id,
+        runId: chat.runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Starts (or continues) the run-scoped Q&A chat for a run. The first turn seeds the
+   * conversation with a hidden context step holding the run's prompts, output, and diff.
+   */
+  async createRunChat(runId: string, input: RunChatInput): Promise<ChatRecord> {
+    const existing = this.db.getLatestChatForRun(runId);
+    if (existing) {
+      return this.followUpChat(existing.id, input.prompt, {
+        modelId: input.modelId !== existing.modelId ? input.modelId : undefined,
+        attachments: input.attachments,
+        reasoningEffort: input.reasoningEffort,
+        anthropicEffort: input.anthropicEffort,
+      });
+    }
+
+    this.db.getRun(runId); // validate the run exists before creating the chat
+    const model = this.db.getModel(input.modelId);
+    const provider = this.db.getProviderAccount(model.providerAccountId);
+    const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
+
+    if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
+      throw new Error("The provider API key could not be resolved from secure storage.");
+    }
+
+    validateChatAttachmentPayloads(input.attachments);
+
+    const userText = input.prompt.trim();
+    const attachmentNames = input.attachments?.map((a) => a.fileName) ?? [];
+    if (!userText && attachmentNames.length === 0) {
+      throw new Error("Enter a message or attach at least one file.");
+    }
+
+    const contextBlock = await this.buildRunChatContextForRun(runId);
+
+    const displayPrompt =
+      userText || (attachmentNames.length ? `Attached: ${attachmentNames.join(", ")}` : "");
+
+    // Run chats intentionally skip SELECTED_CHAT_KEY: they live in the run detail
+    // panel and must not hijack the Chats page selection.
+    const chat = this.db.createChat(provider.id, model.id, displayPrompt, runId);
+
+    await this.appendChatEvent(chat.id, "log", "Run context", contextBlock, {
+      source: RUN_CHAT_CONTEXT_SOURCE,
+      hidden: true,
+      runId,
+    });
+
+    const logContent = [
+      userText || "(no text)",
+      attachmentNames.length ? `\nAttachments: ${attachmentNames.join(", ")}` : "",
+    ].join("");
+
+    await this.appendChatEvent(chat.id, "log", "Initial message", logContent, {
+      source: "user",
+      commandType: "initial",
+      modelId: chat.modelId,
+      reasoningEffort: input.reasoningEffort,
+      anthropicEffort: input.anthropicEffort,
+      ...this.buildStoredAttachmentMetadata(input.attachments),
+    });
+    this.db.updateChatStatus(chat.id, "preparing", { startedAt: new Date().toISOString() });
+    this.emitChatEvent(chat.id, {
+      runId: chat.id,
+      type: "status",
+      title: "Chat starting",
+      content: "Starting chat...",
+      createdAt: new Date().toISOString(),
+    });
+
+    // History-replaying providers receive the context through prior messages (the hidden
+    // step maps to a user turn); session-based CLI providers only see what is in the
+    // prompt, so the context must ride along on the first turn.
+    const firstTurnPrompt = providerReplaysChatHistory(provider.providerType)
+      ? userText
+      : buildRunChatFirstTurnPrompt(contextBlock, userText);
+
+    const worker = this.startChatWorker(chat, provider, model, apiKey ?? "", await this.resolveNetworkProxyRuntimeConfig(), firstTurnPrompt, input.attachments, {
+      reasoningEffort: input.reasoningEffort,
+      anthropicEffort: input.anthropicEffort,
+    });
+    this.chatWorkers.set(chat.id, { worker, cancelled: false });
+
+    return this.db.getChat(chat.id);
+  }
+
   async followUpChat(
     chatId: string,
     prompt: string,
@@ -1537,10 +1691,23 @@ export class AppController
       throw new Error("This chat is already active. Wait for it to finish before sending a follow-up.");
     }
 
-    this.db.setSetting(SELECTED_CHAT_KEY, chatId);
+    if (!chat.runId) {
+      this.db.setSetting(SELECTED_CHAT_KEY, chatId);
+    }
     if (options?.modelId) {
       this.db.updateChatConfiguration(chatId, options.modelId);
       chat = this.db.getChat(chatId);
+    }
+
+    // Run chats see the run's latest steps and diff on every turn: the hidden context
+    // step is refreshed in place, and session-based providers get the updated context
+    // re-sent with the prompt (their session still holds the stale version).
+    let workerPrompt = userText;
+    if (chat.runId) {
+      const refreshed = await this.refreshRunChatContext(chat);
+      if (refreshed?.changed && !providerReplaysChatHistory(provider.providerType)) {
+        workerPrompt = buildRunChatUpdateTurnPrompt(refreshed.context, userText);
+      }
     }
 
     const logContent = [
@@ -1558,7 +1725,7 @@ export class AppController
     });
     this.db.updateChatStatus(chat.id, "preparing", { startedAt: new Date().toISOString() });
 
-    const worker = this.startChatWorker(chat, provider, model, apiKey ?? "", await this.resolveNetworkProxyRuntimeConfig(), userText, options?.attachments, {
+    const worker = this.startChatWorker(chat, provider, model, apiKey ?? "", await this.resolveNetworkProxyRuntimeConfig(), workerPrompt, options?.attachments, {
       reasoningEffort: options?.reasoningEffort,
       anthropicEffort: options?.anthropicEffort,
     });
@@ -1583,9 +1750,12 @@ export class AppController
       this.chatWorkers.delete(chatId);
       await active.worker.terminate();
     }
+    const isRunChat = Boolean(this.db.getChat(chatId).runId);
     this.db.deleteProviderSessionRuntime(chatId, "chat");
     this.db.deleteChat(chatId);
-    this.db.deleteSetting(SELECTED_CHAT_KEY);
+    if (!isRunChat) {
+      this.db.deleteSetting(SELECTED_CHAT_KEY);
+    }
   }
 
   async cancelChat(chatId: string): Promise<void> {
@@ -5041,6 +5211,17 @@ export class AppController
     this.clearRunCheckpoint(runId);
     this.clearRunPromptRestorePoint(runId);
     this.db.deleteProviderSessionRuntime(runId, "run");
+    const runChat = this.db.getLatestChatForRun(runId);
+    if (runChat) {
+      const activeChat = this.chatWorkers.get(runChat.id);
+      if (activeChat) {
+        activeChat.cancelled = true;
+        activeChat.worker.postMessage({ type: "cancel" });
+        this.chatWorkers.delete(runChat.id);
+        await activeChat.worker.terminate();
+      }
+      this.db.deleteProviderSessionRuntime(runChat.id, "chat");
+    }
     await this.deleteRunResources(project.repoPath, run, "run");
     this.db.deleteRun(runId);
     this.db.deleteSetting(SELECTED_RUN_KEY);
@@ -6312,7 +6493,7 @@ export class AppController
           /* ignore */
         }
 
-        if (step.eventType === "log" && metadata.source === "user") {
+        if (step.eventType === "log" && (metadata.source === "user" || metadata.source === RUN_CHAT_CONTEXT_SOURCE)) {
           return [{ role: "user", content: step.content }];
         }
 

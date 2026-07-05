@@ -1899,6 +1899,8 @@ export interface ChatSummary {
   prompt: string;
   status: RunStatus;
   createdAt: string;
+  /** Set for run-scoped chats; null for standalone chats. */
+  runId?: string | null;
 }
 
 export interface AppSnapshot {
@@ -2294,6 +2296,8 @@ export interface ChatRecord {
   id: string;
   providerAccountId: string;
   modelId: string;
+  /** Set for run-scoped chats ("chat about this run"); null for standalone chats. */
+  runId: string | null;
   prompt: string;
   status: RunStatus;
   lastProviderResponseId: string | null;
@@ -2333,7 +2337,7 @@ export const buildPriorChatCompletionMessagesFromSteps = (steps: ChatStepRecord[
       // Subagent-internal messages are not part of the parent conversation.
       continue;
     }
-    if (step.eventType === "log" && meta.source === "user") {
+    if (step.eventType === "log" && (meta.source === "user" || meta.source === RUN_CHAT_CONTEXT_SOURCE)) {
       out.push({ role: "user", content: step.content });
       continue;
     }
@@ -2363,6 +2367,20 @@ export interface ChatInput {
   reasoningEffort?: string;
   anthropicEffort?: string;
 }
+
+export interface RunChatInput {
+  modelId: string;
+  prompt: string;
+  attachments?: ChatAttachmentPayload[];
+  reasoningEffort?: string;
+  anthropicEffort?: string;
+}
+
+/**
+ * Metadata `source` marker for the hidden chat step that seeds a run chat with the
+ * run's output and diff. Hidden in transcripts; replayed as a user turn in history.
+ */
+export const RUN_CHAT_CONTEXT_SOURCE = "run-context";
 
 export interface FollowUpChatOptions {
   modelId?: string;
@@ -2647,6 +2665,10 @@ export interface DesktopApi {
   getChatBookmarksWithSteps(): Promise<ChatBookmarkRecord[]>;
   resetDatabase(): Promise<void>;
   createChat(input: ChatInput): Promise<ChatRecord>;
+  /** Creates the run-scoped chat for a run, seeding it with run output + diff context. */
+  createRunChat(runId: string, input: RunChatInput): Promise<ChatRecord>;
+  /** Returns the run-scoped chat for a run, or null when none was started yet. */
+  getRunChat(runId: string): Promise<ChatDetail | null>;
   getChatDetail(chatId: string): Promise<ChatDetail>;
   followUpChat(chatId: string, prompt: string, options?: FollowUpChatOptions): Promise<ChatRecord>;
   listChats(): Promise<ChatRecord[]>;
@@ -2818,6 +2840,8 @@ export const IPC_CHANNELS = {
   getChatBookmarksWithSteps: "buildwarden:get-chat-bookmarks-with-steps",
   resetDatabase: "buildwarden:reset-database",
   createChat: "buildwarden:create-chat",
+  createRunChat: "buildwarden:create-run-chat",
+  getRunChat: "buildwarden:get-run-chat",
   getChatDetail: "buildwarden:get-chat-detail",
   followUpChat: "buildwarden:follow-up-chat",
   listChats: "buildwarden:list-chats",
@@ -3073,7 +3097,7 @@ export const WINDOWS_TITLEBAR_OVERLAY_BACKGROUND: Record<UiTheme, string> = {
   light: "#e7eef6",
 };
 
-export type RunWorkspacePanelId = "activity" | "diff" | "terminal" | "browser" | "notes";
+export type RunWorkspacePanelId = "activity" | "diff" | "terminal" | "browser" | "notes" | "chat";
 
 export interface RunWorkspaceTileSize {
   colSpan: number;
@@ -3090,7 +3114,7 @@ export interface RunWorkspaceLayoutPreference {
 
 export type RunWorkspaceLayoutPreferencesByRunId = Record<string, RunWorkspaceLayoutPreference>;
 
-const RUN_WORKSPACE_PANEL_IDS: readonly RunWorkspacePanelId[] = ["activity", "diff", "terminal", "browser", "notes"];
+const RUN_WORKSPACE_PANEL_IDS: readonly RunWorkspacePanelId[] = ["activity", "diff", "terminal", "browser", "notes", "chat"];
 
 const RUN_WORKSPACE_PANEL_DEFAULTS: Record<
   RunWorkspacePanelId,
@@ -3101,6 +3125,7 @@ const RUN_WORKSPACE_PANEL_DEFAULTS: Record<
   terminal: { visible: false, size: { colSpan: 5, rowSpan: 3 } },
   browser: { visible: false, size: { colSpan: 7, rowSpan: 3 } },
   notes: { visible: false, size: { colSpan: 5, rowSpan: 3 } },
+  chat: { visible: false, size: { colSpan: 5, rowSpan: 3 } },
 };
 
 const isRunWorkspacePanelId = (value: unknown): value is RunWorkspacePanelId =>

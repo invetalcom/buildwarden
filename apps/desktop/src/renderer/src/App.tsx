@@ -73,6 +73,7 @@ import {
   Home,
   Loader2,
   MessageSquareText,
+  MessagesSquare,
   Settings,
   Sparkles,
   SquareTerminal,
@@ -328,6 +329,7 @@ export const App = () => {
   const [runWorkspaceShowTerminal, setRunWorkspaceShowTerminal] = useState(false);
   const [runWorkspaceShowBrowser, setRunWorkspaceShowBrowser] = useState(false);
   const [runWorkspaceShowNotes, setRunWorkspaceShowNotes] = useState(false);
+  const [runWorkspaceShowChat, setRunWorkspaceShowChat] = useState(false);
   const [runWorkspaceSecondaryPosition, setRunWorkspaceSecondaryPosition] = useState<"right" | "bottom">("right");
   const [runWorkspaceLayoutsByRunId, setRunWorkspaceLayoutsByRunId] = useState<RunWorkspaceLayoutPreferencesByRunId>({});
   const [runBrowserSessions, setRunBrowserSessions] = useState<Record<string, RunBrowserSessionState>>({});
@@ -1135,6 +1137,7 @@ export const App = () => {
     setRunWorkspaceShowTerminal(selectedRunWorkspaceLayout.visiblePanels.terminal);
     setRunWorkspaceShowBrowser(selectedRunWorkspaceLayout.visiblePanels.browser);
     setRunWorkspaceShowNotes(selectedRunWorkspaceLayout.visiblePanels.notes);
+    setRunWorkspaceShowChat(selectedRunWorkspaceLayout.visiblePanels.chat);
     setRunWorkspaceSecondaryPosition(selectedRunWorkspaceLayout.secondaryPanelPosition);
   }, [selectedRunWorkspaceLayout]);
 
@@ -1400,12 +1403,14 @@ export const App = () => {
     (runWorkspaceShowDiff ? 1 : 0) +
     (runWorkspaceShowTerminal ? 1 : 0) +
     (runWorkspaceShowBrowser ? 1 : 0) +
-    (runWorkspaceShowNotes ? 1 : 0);
+    (runWorkspaceShowNotes ? 1 : 0) +
+    (runWorkspaceShowChat ? 1 : 0);
   const canHideRunWorkspaceActivity = !(runWorkspaceShowActivity && runWorkspaceVisiblePanelCount === 1);
   const canHideRunWorkspaceDiff = !(runWorkspaceShowDiff && runWorkspaceVisiblePanelCount === 1);
   const canHideRunWorkspaceTerminal = !(runWorkspaceShowTerminal && runWorkspaceVisiblePanelCount === 1);
   const canHideRunWorkspaceBrowser = !(runWorkspaceShowBrowser && runWorkspaceVisiblePanelCount === 1);
   const canHideRunWorkspaceNotes = !(runWorkspaceShowNotes && runWorkspaceVisiblePanelCount === 1);
+  const canHideRunWorkspaceChat = !(runWorkspaceShowChat && runWorkspaceVisiblePanelCount === 1);
 
   const setSelectedRunWorkspacePanelVisibility = (panelId: RunWorkspacePanelId, visible: boolean) => {
     if (!selectedRunId || typeof selectedRunId !== "string") {
@@ -1483,6 +1488,14 @@ export const App = () => {
     setRunWorkspaceShowNotes(next);
     setSelectedRunWorkspacePanelVisibility("notes", next);
   };
+  const toggleRunWorkspaceChat = () => {
+    if (runWorkspaceShowChat && runWorkspaceVisiblePanelCount === 1) {
+      return;
+    }
+    const next = !runWorkspaceShowChat;
+    setRunWorkspaceShowChat(next);
+    setSelectedRunWorkspacePanelVisibility("chat", next);
+  };
   const runPanelToggleItems = [
     {
       key: "activity",
@@ -1528,6 +1541,15 @@ export const App = () => {
       disabled: runWorkspaceShowNotes && !canHideRunWorkspaceNotes,
       subtitle: runWorkspaceShowNotes ? "Visible" : "Show run notes",
       onClick: toggleRunWorkspaceNotes,
+    },
+    {
+      key: "chat",
+      label: "Chat",
+      icon: MessagesSquare,
+      active: runWorkspaceShowChat,
+      disabled: runWorkspaceShowChat && !canHideRunWorkspaceChat,
+      subtitle: runWorkspaceShowChat ? "Visible" : "Ask about this run",
+      onClick: toggleRunWorkspaceChat,
     },
   ] as const;
 
@@ -3985,6 +4007,7 @@ export const App = () => {
           terminal: runWorkspaceShowTerminal,
           browser: runWorkspaceShowBrowser,
           notes: runWorkspaceShowNotes,
+          chat: runWorkspaceShowChat,
         }
       : paneLayout.visiblePanels;
     const paneSecondaryPosition = isFocused ? runWorkspaceSecondaryPosition : paneLayout.secondaryPanelPosition;
@@ -4065,6 +4088,7 @@ export const App = () => {
             showTerminal={paneVisiblePanels.terminal}
             showBrowser={paneVisiblePanels.browser}
             showNotes={paneVisiblePanels.notes}
+            showChat={paneVisiblePanels.chat}
             onTogglePanel={(panelId) => toggleRunWorkspacePanelForRun(paneDetail.run.id, panelId, paneDetail.worktreeUnavailable === true)}
             secondaryPanelPosition={paneSecondaryPosition}
             onSecondaryPanelPositionChange={(position) => {
@@ -4563,12 +4587,14 @@ export const App = () => {
               showTerminal={runWorkspaceShowTerminal}
               showBrowser={runWorkspaceShowBrowser}
               showNotes={runWorkspaceShowNotes}
+              showChat={runWorkspaceShowChat}
               onTogglePanel={(panelId) => {
                 if (panelId === "activity") toggleRunWorkspaceActivity();
                 else if (panelId === "diff") toggleRunWorkspaceDiff();
                 else if (panelId === "terminal") toggleRunWorkspaceTerminal();
                 else if (panelId === "browser") toggleRunWorkspaceBrowser();
                 else if (panelId === "notes") toggleRunWorkspaceNotes();
+                else if (panelId === "chat") toggleRunWorkspaceChat();
               }}
               secondaryPanelPosition={runWorkspaceSecondaryPosition}
               onSecondaryPanelPositionChange={(position) => {
