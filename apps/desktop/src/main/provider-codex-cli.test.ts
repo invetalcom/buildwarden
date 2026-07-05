@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import type { HarnessRunChunk } from "@buildwarden/shared";
+import { mergeRunSubagentInfo, type HarnessRunChunk } from "@buildwarden/shared";
 import {
   buildCodexPlanProgressChunk,
   CodexAppServerSession,
@@ -264,5 +264,41 @@ describe("Codex agent nickname extraction", () => {
     expect(extractCodexAgentNickname("Count the .txt files in this directory.")).toBeUndefined();
     expect(extractCodexAgentNickname(undefined)).toBeUndefined();
     expect(extractCodexAgentNickname("")).toBeUndefined();
+  });
+});
+
+describe("subagent usage merging", () => {
+  it("keeps known usage sub-fields when an update carries partial usage", () => {
+    const running = mergeRunSubagentInfo(undefined, {
+      id: "agent-1",
+      source: "codex-cli",
+      status: "running",
+      usage: { toolUses: 3, durationMs: 4_200 },
+    });
+
+    const afterTokenRefresh = mergeRunSubagentInfo(running, {
+      id: "agent-1",
+      source: "codex-cli",
+      status: "running",
+      usage: { totalTokens: 14_202 },
+    });
+
+    expect(afterTokenRefresh.usage).toEqual({ totalTokens: 14_202, toolUses: 3, durationMs: 4_200 });
+  });
+
+  it("still adopts usage when only one side has it", () => {
+    const withoutUsage = mergeRunSubagentInfo(undefined, { id: "agent-1", source: "codex-cli", status: "running" });
+    expect(withoutUsage.usage).toBeUndefined();
+
+    const gained = mergeRunSubagentInfo(withoutUsage, {
+      id: "agent-1",
+      source: "codex-cli",
+      status: "running",
+      usage: { totalTokens: 10 },
+    });
+    expect(gained.usage).toEqual({ totalTokens: 10 });
+
+    const kept = mergeRunSubagentInfo(gained, { id: "agent-1", source: "codex-cli", status: "completed" });
+    expect(kept.usage).toEqual({ totalTokens: 10 });
   });
 });

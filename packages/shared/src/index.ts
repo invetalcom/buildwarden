@@ -492,7 +492,9 @@ export const mergeRunSubagentInfo = (previous: RunSubagentInfo | undefined, next
   activity: next.activity ?? previous?.activity,
   lastToolName: next.lastToolName ?? previous?.lastToolName,
   isBackground: next.isBackground ?? previous?.isBackground,
-  usage: next.usage ?? previous?.usage,
+  // Usage updates are often partial (e.g. a token-count-only refresh), so
+  // merge field-by-field instead of replacing the whole object.
+  usage: next.usage && previous?.usage ? { ...previous.usage, ...next.usage } : next.usage ?? previous?.usage,
   startedAtMs: next.startedAtMs ?? previous?.startedAtMs,
   endedAtMs: next.endedAtMs ?? previous?.endedAtMs,
 });
