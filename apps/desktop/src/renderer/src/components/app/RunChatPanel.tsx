@@ -167,7 +167,12 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
   const handleCancel = () => {
     const chatId = chatIdRef.current;
     if (!chatId) return;
-    void buildwarden.cancelChat(chatId).then(() => loadRunChat());
+    void buildwarden
+      .cancelChat(chatId)
+      .then(() => loadRunChat())
+      .catch((e) => {
+        window.alert(e instanceof Error ? e.message : "Could not cancel the chat.");
+      });
   };
 
   return (
