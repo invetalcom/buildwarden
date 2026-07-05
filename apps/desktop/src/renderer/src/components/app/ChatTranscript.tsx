@@ -27,6 +27,34 @@ const safeParseMetadata = (value: string) => {
   }
 };
 
+type ChatTranscriptEntry = { item: ChatTranscriptItem; metadata: Record<string, unknown> };
+
+// The chat pipeline appends a new step for every subagent lifecycle chunk
+// (only "message" chunks replace in place), so a subagent would otherwise
+// render one panel per update. Keep a single panel anchored where the
+// subagent first appeared, showing its latest state.
+// Exported for focused transcript shaping tests.
+// eslint-disable-next-line react-refresh/only-export-components
+export const collapseChatSubagentEntries = (entries: ChatTranscriptEntry[]): ChatTranscriptEntry[] => {
+  const anchorIndexBySubagentId = new Map<string, number>();
+  const out: ChatTranscriptEntry[] = [];
+  for (const entry of entries) {
+    const info = normalizeRunSubagentInfo(entry.metadata.subagent);
+    if (!info) {
+      out.push(entry);
+      continue;
+    }
+    const anchorIndex = anchorIndexBySubagentId.get(info.id);
+    if (anchorIndex === undefined) {
+      anchorIndexBySubagentId.set(info.id, out.length);
+      out.push(entry);
+      continue;
+    }
+    out[anchorIndex] = entry;
+  }
+  return out;
+};
+
 export const ChatTranscript = forwardRef<
   HTMLDivElement,
   {
@@ -57,17 +85,19 @@ export const ChatTranscript = forwardRef<
 
     const entries = useMemo(
       () =>
-        items
-          .map((item) => ({ item, metadata: safeParseMetadata(item.metadataJson) }))
-          .filter(({ item, metadata }) => {
-            // Subagent-internal activity stays inside the subagent summary line.
-            if (typeof metadata.subagentId === "string" && metadata.subagentId) return false;
-            const isEmpty = !item.content?.trim();
-            const isAgentOutputTitle = item.title === "Agent output";
-            if (isEmpty && (item.eventType === "output" || isAgentOutputTitle)) return false;
-            if (isAgentOutputTitle && item.eventType === "status") return false;
-            return true;
-          }),
+        collapseChatSubagentEntries(
+          items
+            .map((item) => ({ item, metadata: safeParseMetadata(item.metadataJson) }))
+            .filter(({ item, metadata }) => {
+              // Subagent-internal activity stays inside the subagent summary line.
+              if (typeof metadata.subagentId === "string" && metadata.subagentId) return false;
+              const isEmpty = !item.content?.trim();
+              const isAgentOutputTitle = item.title === "Agent output";
+              if (isEmpty && (item.eventType === "output" || isAgentOutputTitle)) return false;
+              if (isAgentOutputTitle && item.eventType === "status") return false;
+              return true;
+            }),
+        ),
       [items],
     );
 
