@@ -24,6 +24,7 @@ import {
   type ProjectForgeRequestOpenPayload,
   type ProviderAccountInput,
   type RendererLogPayload,
+  type RunChatInput,
   type RunEvent,
   type RunInput,
   type UiTheme,
@@ -860,6 +861,10 @@ const bootstrap = async (): Promise<void> => {
     app.quit();
   });
   ipcMain.handle(IPC_CHANNELS.createChat, (_, input: ChatInput) => controller.createChat(input));
+  ipcMain.handle(IPC_CHANNELS.createRunChat, (_, runId: string, input: RunChatInput) =>
+    controller.createRunChat(runId, input),
+  );
+  ipcMain.handle(IPC_CHANNELS.getRunChat, (_, runId: string) => controller.getRunChat(runId));
   ipcMain.handle(IPC_CHANNELS.getChatDetail, (_, chatId: string) => controller.getChatDetail(chatId));
   ipcMain.handle(IPC_CHANNELS.followUpChat, (_, chatId: string, prompt: string, options) =>
     controller.followUpChat(chatId, prompt, options),

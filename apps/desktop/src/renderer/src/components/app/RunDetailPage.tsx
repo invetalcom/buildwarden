@@ -27,6 +27,7 @@ import {
   Loader2,
   Maximize2,
   MessageSquareText,
+  MessagesSquare,
   Minimize2,
   PanelBottom,
   PanelRight,
@@ -45,6 +46,7 @@ import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
 import { buildVisibleConversationHistory } from "../../lib/context-window-estimate";
 import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
 import { ComposerSelect, RunComposer } from "./RunComposer";
+import { RunChatPanel } from "./RunChatPanel";
 import { RunEmbeddedBrowser } from "./RunEmbeddedBrowser";
 import { RunActivityTimeline } from "./RunActivityTimeline";
 import { RunFilePanel } from "./RunFilePanel";
@@ -67,7 +69,7 @@ type TilePanelId = RunWorkspacePanelId;
 // Kept for interface compatibility with the shared type.
 type TileLayoutState = Record<TilePanelId, RunWorkspaceTileSize>;
 
-type SecondaryPanelId = "diff" | "terminal" | "browser" | "notes" | "file";
+type SecondaryPanelId = "diff" | "terminal" | "browser" | "notes" | "chat" | "file";
 type SecondaryPanelPosition = "right" | "bottom";
 
 type RunDetailModelOption = {
@@ -163,6 +165,7 @@ interface RunDetailPageProps {
   showTerminal: boolean;
   showBrowser: boolean;
   showNotes: boolean;
+  showChat: boolean;
   /** Called when a panel should be toggled on or off from within the layout. */
   onTogglePanel: (panelId: TilePanelId) => void;
   /** Whether the secondary panel column is docked to the right or bottom. */
@@ -213,6 +216,7 @@ export const RunDetailPage = ({
   showTerminal,
   showBrowser,
   showNotes,
+  showChat,
   onTogglePanel,
   secondaryPanelPosition,
   onSecondaryPanelPositionChange,
@@ -420,14 +424,16 @@ export const RunDetailPage = ({
       if (prev === "terminal" && showTerminal) return prev;
       if (prev === "browser" && showBrowser) return prev;
       if (prev === "notes" && showNotes) return prev;
+      if (prev === "chat" && showChat) return prev;
       if (filePanelTarget) return "file";
       if (showDiff) return "diff";
       if (showTerminal) return "terminal";
       if (showBrowser) return "browser";
       if (showNotes) return "notes";
+      if (showChat) return "chat";
       return null;
     });
-  }, [filePanelTarget, showDiff, showTerminal, showBrowser, showNotes]);
+  }, [filePanelTarget, showDiff, showTerminal, showBrowser, showNotes, showChat]);
 
   // Split-pane resize (works for both right and bottom positions)
   useEffect(() => {
@@ -484,10 +490,10 @@ export const RunDetailPage = ({
   const closeFilePanel = useCallback(() => {
     setFilePanelTarget(null);
     setActiveSecondaryTab((current) => (current === "file" ? null : current));
-    if (!showActivity && !showDiff && !showTerminal && !showBrowser && !showNotes) {
+    if (!showActivity && !showDiff && !showTerminal && !showBrowser && !showNotes && !showChat) {
       onTogglePanel("activity");
     }
-  }, [onTogglePanel, showActivity, showBrowser, showDiff, showNotes, showTerminal]);
+  }, [onTogglePanel, showActivity, showBrowser, showChat, showDiff, showNotes, showTerminal]);
 
   const openRunFileReference = useCallback((value: string | RunWorkspaceFileReference): boolean => {
     const reference = typeof value === "string" ? parseRunWorkspaceFileReference(value) : value;
@@ -741,13 +747,14 @@ export const RunDetailPage = ({
 
   // Derived visibility
   const hasFilePanel = Boolean(filePanelTarget);
-  const hasSecondaryPanels = showDiff || showTerminal || showBrowser || showNotes || hasFilePanel;
-  const visiblePanelCount = [showActivity, showDiff, showTerminal, showBrowser, showNotes, hasFilePanel].filter(Boolean).length;
+  const hasSecondaryPanels = showDiff || showTerminal || showBrowser || showNotes || showChat || hasFilePanel;
+  const visiblePanelCount = [showActivity, showDiff, showTerminal, showBrowser, showNotes, showChat, hasFilePanel].filter(Boolean).length;
 
   const canHideDiff = showDiff && visiblePanelCount > 1 && !worktreeUnavailable;
   const canHideTerminal = showTerminal && visiblePanelCount > 1 && !worktreeUnavailable;
   const canHideBrowser = showBrowser && visiblePanelCount > 1;
   const canHideNotes = showNotes && visiblePanelCount > 1;
+  const canHideChat = showChat && visiblePanelCount > 1;
 
   const secondaryPanelDefs = [
     {
@@ -781,6 +788,14 @@ export const RunDetailPage = ({
       enabled: showNotes,
       canToggle: true,
       canHide: canHideNotes,
+    },
+    {
+      id: "chat" as const,
+      label: "Chat",
+      Icon: MessagesSquare,
+      enabled: showChat,
+      canToggle: true,
+      canHide: canHideChat,
     },
     {
       id: "file" as const,
@@ -1591,6 +1606,18 @@ export const RunDetailPage = ({
 
               {/* Notes panel */}
               {showNotes && activeSecondaryTab === "notes" ? notesPanelContent : null}
+
+              {/* Run chat panel; stays mounted while enabled so the transcript survives tab switches. */}
+              {showChat ? (
+                <div className={cn("h-full min-h-0 flex-col overflow-hidden", activeSecondaryTab === "chat" ? "flex" : "hidden")}>
+                  <RunChatPanel
+                    runId={runDetail.run.id}
+                    defaultModelId={selectedModelId || runDetail.run.modelId}
+                    modelOptions={modelOptions}
+                    keyboardShortcuts={keyboardShortcuts}
+                  />
+                </div>
+              ) : null}
 
             </div>
           </div>

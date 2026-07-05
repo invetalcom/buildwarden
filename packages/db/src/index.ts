@@ -317,13 +317,30 @@ export class BuildWardenDatabase {
   }
 
   listChats(): ChatSummary[] {
+    // Run-scoped chats live inside the run detail view and stay out of the Chats page.
     return this.all<ChatSummary>(
       `
-      select id, prompt, status, created_at as createdAt
+      select id, prompt, status, created_at as createdAt, run_id as runId
       from chats
+      where run_id is null
       order by updated_at desc
       `,
     );
+  }
+
+  getLatestChatForRun(runId: string): ChatRecord | null {
+    const row = this.first<{ id: string }>(
+      "select id from chats where run_id = ? order by created_at desc limit 1",
+      [runId],
+    );
+    return row ? this.getChat(row.id) : null;
+  }
+
+  getChatsForRun(runId: string): ChatRecord[] {
+    return this.all<{ id: string }>(
+      "select id from chats where run_id = ? order by created_at desc",
+      [runId],
+    ).map((row) => this.getChat(row.id));
   }
 
   listChatsWithSteps(): ChatDetail[] {
@@ -415,15 +432,15 @@ export class BuildWardenDatabase {
     });
   }
 
-  createChat(providerAccountId: string, modelId: string, prompt: string): ChatRecord {
+  createChat(providerAccountId: string, modelId: string, prompt: string, runId?: string | null): ChatRecord {
     const id = createId();
     const createdAt = nowIso();
     this.run(
       `
-      insert into chats (id, provider_account_id, model_id, prompt, status, last_provider_response_id, input_tokens, output_tokens, created_at, updated_at, started_at, finished_at)
-      values (?, ?, ?, ?, 'queued', null, 0, 0, ?, ?, null, null)
+      insert into chats (id, provider_account_id, model_id, run_id, prompt, status, last_provider_response_id, input_tokens, output_tokens, created_at, updated_at, started_at, finished_at)
+      values (?, ?, ?, ?, ?, 'queued', null, 0, 0, ?, ?, null, null)
       `,
-      [id, providerAccountId, modelId, prompt, createdAt, createdAt],
+      [id, providerAccountId, modelId, runId ?? null, prompt, createdAt, createdAt],
     );
     this.persist();
     return this.getChat(id);
@@ -1292,6 +1309,7 @@ export class BuildWardenDatabase {
         id,
         provider_account_id as providerAccountId,
         model_id as modelId,
+        run_id as runId,
         prompt,
         status,
         last_provider_response_id as lastProviderResponseId,
@@ -1552,6 +1570,14 @@ export class BuildWardenDatabase {
       [projectId],
     );
     this.run("delete from worktrees where project_id = ?", [projectId]);
+    this.run(
+      `
+      delete from chat_steps
+      where chat_id in (select id from chats where run_id in (select id from runs where project_id = ?))
+      `,
+      [projectId],
+    );
+    this.run("delete from chats where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from runs where project_id = ?", [projectId]);
     this.run("delete from project_lab_events where thread_id in (select id from project_lab_threads where project_id = ?)", [projectId]);
     this.run("delete from project_lab_threads where project_id = ?", [projectId]);
@@ -1907,6 +1933,8 @@ export class BuildWardenDatabase {
     this.run("delete from run_notes where run_id = ?", [runId]);
     this.run("delete from run_steps where run_id = ?", [runId]);
     this.run("delete from worktrees where run_id = ?", [runId]);
+    this.run("delete from chat_steps where chat_id in (select id from chats where run_id = ?)", [runId]);
+    this.run("delete from chats where run_id = ?", [runId]);
     this.run("delete from runs where id = ?", [runId]);
     this.persist();
   }
@@ -2156,6 +2184,7 @@ export class BuildWardenDatabase {
         id,
         provider_account_id as providerAccountId,
         model_id as modelId,
+        run_id as runId,
         prompt,
         status,
         last_provider_response_id as lastProviderResponseId,
@@ -2798,6 +2827,7 @@ export class BuildWardenDatabase {
         id text primary key,
         provider_account_id text not null,
         model_id text not null,
+        run_id text,
         prompt text not null,
         status text not null,
         last_provider_response_id text,
@@ -3016,6 +3046,7 @@ export class BuildWardenDatabase {
     this.ensureColumn("runs", "workspace_vcs", "text not null default 'git'");
     this.ensureColumn("project_loops", "pr_review_policy", "text not null default 'none'");
     this.ensureColumn("project_loop_iterations", "ai_review_posted", "integer not null default 0");
+    this.ensureColumn("chats", "run_id", "text");
   }
 
   private ensureColumn(tableName: string, columnName: string, definition: string): void {

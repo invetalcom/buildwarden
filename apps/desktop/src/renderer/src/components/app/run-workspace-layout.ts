@@ -4,7 +4,7 @@ type TilePanelId = RunWorkspacePanelId;
 
 type TileLayoutState = Record<TilePanelId, RunWorkspaceTileSize>;
 
-export const DEFAULT_TILE_ORDER: TilePanelId[] = ["activity", "diff", "terminal", "browser", "notes"];
+export const DEFAULT_TILE_ORDER: TilePanelId[] = ["activity", "diff", "terminal", "browser", "notes", "chat"];
 
 export const DEFAULT_TILE_LAYOUT: TileLayoutState = {
   activity: { colSpan: 7, rowSpan: 4 },
@@ -12,6 +12,7 @@ export const DEFAULT_TILE_LAYOUT: TileLayoutState = {
   terminal: { colSpan: 5, rowSpan: 3 },
   browser: { colSpan: 7, rowSpan: 3 },
   notes: { colSpan: 5, rowSpan: 3 },
+  chat: { colSpan: 5, rowSpan: 3 },
 };
 
 export const DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE: RunWorkspaceLayoutPreference = {
@@ -21,6 +22,7 @@ export const DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE: RunWorkspaceLayoutPreferen
     terminal: false,
     browser: false,
     notes: false,
+    chat: false,
   },
   tileOrder: DEFAULT_TILE_ORDER,
   tileLayout: DEFAULT_TILE_LAYOUT,

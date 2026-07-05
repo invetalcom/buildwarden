@@ -277,6 +277,7 @@ export const cloneDefaultRunWorkspaceLayoutPreference = (): RunWorkspaceLayoutPr
     terminal: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.terminal },
     browser: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.browser },
     notes: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.notes },
+    chat: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.chat },
   },
   secondaryPanelPosition: DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.secondaryPanelPosition,
 });
