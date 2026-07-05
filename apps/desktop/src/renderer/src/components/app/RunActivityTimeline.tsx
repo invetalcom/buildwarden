@@ -1232,10 +1232,18 @@ export function RunActivityTimeline({
 
   const timelineItemsRef = useRef(timelineItems);
   timelineItemsRef.current = timelineItems;
+  // A focus request outlives this component in App state, so a remount (e.g.
+  // reopening the same run) would otherwise replay the last jump. Seed the
+  // handled nonce from the mount-time prop and only act on nonces that arrive
+  // after mounting; cards likewise only see the focus while it is active.
+  const handledSubagentFocusNonceRef = useRef(subagentFocus?.nonce ?? 0);
+  const [activeSubagentFocus, setActiveSubagentFocus] = useState<{ subagentId: string; nonce: number } | null>(null);
   useEffect(() => {
-    if (!subagentFocus) {
+    if (!subagentFocus || subagentFocus.nonce === handledSubagentFocusNonceRef.current) {
       return;
     }
+    handledSubagentFocusNonceRef.current = subagentFocus.nonce;
+    setActiveSubagentFocus(subagentFocus);
     const index = timelineItemsRef.current.findIndex(
       (item) => item.kind === "entry" && item.entry.kind === "subagent" && item.entry.info.id === subagentFocus.subagentId,
     );
@@ -1495,7 +1503,7 @@ export function RunActivityTimeline({
               key={`subagent-${entry.info.id}`}
               entry={entry}
               compactContent={compactContent}
-              focusNonce={subagentFocus?.subagentId === entry.info.id ? subagentFocus.nonce : 0}
+              focusNonce={activeSubagentFocus?.subagentId === entry.info.id ? activeSubagentFocus.nonce : 0}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
               renderEntry={(nested, index) => (
                 <div key={`subagent-${entry.info.id}-nested-${String(index)}`}>{renderActivityEntry(nested)}</div>
