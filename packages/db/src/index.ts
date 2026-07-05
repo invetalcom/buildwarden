@@ -336,6 +336,13 @@ export class BuildWardenDatabase {
     return row ? this.getChat(row.id) : null;
   }
 
+  getChatsForRun(runId: string): ChatRecord[] {
+    return this.all<{ id: string }>(
+      "select id from chats where run_id = ? order by created_at desc",
+      [runId],
+    ).map((row) => this.getChat(row.id));
+  }
+
   listChatsWithSteps(): ChatDetail[] {
     const summaries = this.listChats();
     return summaries.map((s) => this.getChatDetail(s.id));

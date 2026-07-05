@@ -661,6 +661,8 @@ export class AppController
   private readonly runListeners = new Set<(event: RunEvent) => void>();
   private readonly appWarningListeners = new Set<(warning: AppWarning) => void>();
   private readonly chatWorkers = new Map<string, ActiveWorker>();
+  /** In-flight run-chat creations by run id; serializes concurrent first sends for the same run. */
+  private readonly runChatCreations = new Map<string, Promise<ChatRecord>>();
   private readonly cancelledProjectLabThreadIds = new Set<string>();
   private readonly loopChangedListeners = new Set<(payload: ProjectLoopChangedPayload) => void>();
   private loopRunnerInstance: ProjectLoopRunner | null = null;
@@ -1585,6 +1587,14 @@ export class AppController
    * conversation with a hidden context step holding the run's prompts, output, and diff.
    */
   async createRunChat(runId: string, input: RunChatInput): Promise<ChatRecord> {
+    // Creation awaits the worktree diff, which can take seconds; serialize with any
+    // in-flight creation for the same run so a concurrent send cannot slip past the
+    // existence check and create a duplicate chat.
+    const pending = this.runChatCreations.get(runId);
+    if (pending) {
+      await pending.catch(() => undefined);
+    }
+
     const existing = this.db.getLatestChatForRun(runId);
     if (existing) {
       return this.followUpChat(existing.id, input.prompt, {
@@ -1595,6 +1605,16 @@ export class AppController
       });
     }
 
+    const creation = this.startNewRunChat(runId, input);
+    this.runChatCreations.set(runId, creation);
+    try {
+      return await creation;
+    } finally {
+      this.runChatCreations.delete(runId);
+    }
+  }
+
+  private async startNewRunChat(runId: string, input: RunChatInput): Promise<ChatRecord> {
     this.db.getRun(runId); // validate the run exists before creating the chat
     const model = this.db.getModel(input.modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
@@ -5211,8 +5231,7 @@ export class AppController
     this.clearRunCheckpoint(runId);
     this.clearRunPromptRestorePoint(runId);
     this.db.deleteProviderSessionRuntime(runId, "run");
-    const runChat = this.db.getLatestChatForRun(runId);
-    if (runChat) {
+    for (const runChat of this.db.getChatsForRun(runId)) {
       const activeChat = this.chatWorkers.get(runChat.id);
       if (activeChat) {
         activeChat.cancelled = true;

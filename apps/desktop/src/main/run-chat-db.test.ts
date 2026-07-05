@@ -83,6 +83,21 @@ describe("run-scoped chats", () => {
     expect(db.getLatestChatForRun(run.id)?.id).toBe(chat.id);
   });
 
+  it("lists every chat attached to a run", async () => {
+    const db = await makeDb();
+    const { provider, model, run } = addRunFixture(db);
+
+    expect(db.getChatsForRun(run.id)).toEqual([]);
+    const first = db.createChat(provider.id, model.id, "First", run.id);
+    const second = db.createChat(provider.id, model.id, "Second", run.id);
+    db.createChat(provider.id, model.id, "Standalone");
+
+    const ids = db.getChatsForRun(run.id).map((chat) => chat.id);
+    expect(ids).toHaveLength(2);
+    expect(ids).toContain(first.id);
+    expect(ids).toContain(second.id);
+  });
+
   it("deletes run chats and their steps together with the run", async () => {
     const db = await makeDb();
     const { provider, model, run } = addRunFixture(db);
