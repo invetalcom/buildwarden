@@ -26,9 +26,14 @@ import {
   PROVIDER_CONFIG_CODEX_BINARY_PATH_KEY,
   PROVIDER_CONFIG_CODEX_HOME_PATH_KEY,
   buildNetworkProxyUrl,
+  buildRunSubagentChunk,
   formatRunPlanProgressContent,
+  isTerminalRunSubagentStatus,
+  mergeRunSubagentInfo,
   normalizeRunPlanProgressPayload,
+  normalizeRunSubagentStatus,
   runShellActivityStreamId,
+  type RunSubagentInfo,
 } from "@buildwarden/shared";
 import { createDevLogger } from "./dev-logger";
 
@@ -274,6 +279,21 @@ const toCodexUserInputAnswers = (answers: RunUserInputAnswers): Record<string, {
       },
     ]),
   );
+
+// Codex does not put an agent nickname on the wire for collab tool calls, but
+// parent agents routinely name their workers in the delegation prompt, e.g.
+// `You are subagent "board-structure". ...`. Pull that name out when present.
+export const extractCodexAgentNickname = (prompt: string | undefined): string | undefined => {
+  if (!prompt) {
+    return undefined;
+  }
+  const head = prompt.slice(0, 240);
+  const match =
+    head.match(/(?:sub-?agent|agent|worker)\s+["'“„]([^"'”“]{1,48})["'”]/i) ??
+    head.match(/^you are\s+["'“„]([^"'”“]{1,48})["'”]/i);
+  const nickname = match?.[1]?.trim();
+  return nickname || undefined;
+};
 
 const humanizeCodexItemType = (value: string): string =>
   value
@@ -1034,7 +1054,9 @@ export async function listAvailableModelsWithCodexCli(options: {
   }
 }
 
-class CodexAppServerSession {
+// Exported for focused subagent-routing tests; production code should use the
+// harness adapter instead of constructing sessions directly.
+export class CodexAppServerSession {
   private readonly pending = new Map<string, PendingRequest>();
   private readonly output: readline.Interface;
   private nextRequestId = 1;
@@ -1051,6 +1073,11 @@ class CodexAppServerSession {
   private readonly planMessages = new Map<string, string>();
   private readonly commandExecutions = new Map<string, CommandExecutionContext>();
   private readonly fileChangeSnapshots = new Map<string, FileChangeSnapshot>();
+  // Collab subagents keyed by their child thread id. All notifications on this
+  // connection that carry a thread id other than the session's own thread
+  // belong to a spawned subagent thread.
+  private readonly subagents = new Map<string, RunSubagentInfo>();
+  private activeSubagentId: string | null = null;
 
   constructor(
     private readonly child: ChildProcessWithoutNullStreams,
@@ -1265,6 +1292,7 @@ class CodexAppServerSession {
   }
 
   private async interruptTurn(): Promise<void> {
+    this.cancelActiveSubagents();
     if (!this.threadId || !this.turnId) {
       return;
     }
@@ -1275,6 +1303,15 @@ class CodexAppServerSession {
       });
     } catch {
       // Best effort before terminating the child process.
+    }
+  }
+
+  // Interrupting the parent turn tears down its collab agent threads too.
+  private cancelActiveSubagents(): void {
+    for (const info of this.subagents.values()) {
+      if (!isTerminalRunSubagentStatus(info.status)) {
+        this.emitSubagentUpdate(info.id, { status: "cancelled", endedAtMs: Date.now() });
+      }
     }
   }
 
@@ -1422,9 +1459,116 @@ class CodexAppServerSession {
     });
   }
 
+  // Emits a chunk, stamping it with the owning subagent id when the current
+  // notification came from a child (subagent) thread.
+  private emit(chunk: HarnessRunChunk): void {
+    if (!this.activeSubagentId) {
+      this.onChunk?.(chunk);
+      return;
+    }
+    this.onChunk?.({
+      ...chunk,
+      metadata: {
+        ...chunk.metadata,
+        subagentId: this.activeSubagentId,
+      },
+    });
+  }
+
+  private emitSubagentUpdate(childThreadId: string, update: Partial<RunSubagentInfo>): void {
+    const previous = this.subagents.get(childThreadId);
+    const next = mergeRunSubagentInfo(previous, {
+      id: childThreadId,
+      source: "codex-cli",
+      status: update.status ?? previous?.status ?? "running",
+      ...(update.name ? { name: update.name } : {}),
+      ...(update.model ? { model: update.model } : {}),
+      ...(update.description ? { description: update.description } : {}),
+      ...(update.prompt ? { prompt: update.prompt } : {}),
+      ...(update.summary ? { summary: update.summary } : {}),
+      ...(update.activity ? { activity: update.activity } : {}),
+      ...(update.lastToolName ? { lastToolName: update.lastToolName } : {}),
+      ...(update.usage ? { usage: update.usage } : {}),
+      ...(update.startedAtMs !== undefined ? { startedAtMs: update.startedAtMs } : {}),
+      ...(update.endedAtMs !== undefined ? { endedAtMs: update.endedAtMs } : {}),
+    });
+    this.subagents.set(childThreadId, next);
+    this.onChunk?.(buildRunSubagentChunk(next));
+  }
+
+  private readNotificationThreadId(params: Record<string, unknown> | undefined): string | undefined {
+    return asString(params?.threadId) ?? asString(asRecord(params?.thread)?.id);
+  }
+
   private handleNotification(notification: JsonRpcNotification): void {
     this.devLogger?.log("codex.rpc.notification", notification);
     const params = asRecord(notification.params);
+    const notificationThreadId = this.readNotificationThreadId(params);
+    if (this.threadId && notificationThreadId && notificationThreadId !== this.threadId) {
+      // A spawned subagent thread shares this connection. Never let its
+      // lifecycle end the parent turn or leak into the parent transcript.
+      this.handleChildThreadNotification(notificationThreadId, notification, params);
+      return;
+    }
+    this.handleThreadNotificationBody(notification, params);
+  }
+
+  private handleChildThreadNotification(
+    childThreadId: string,
+    notification: JsonRpcNotification,
+    params: Record<string, unknown> | undefined,
+  ): void {
+    const method = notification.method;
+    if (method === "turn/started") {
+      this.emitSubagentUpdate(childThreadId, { status: "running", startedAtMs: Date.now() });
+      return;
+    }
+    if (method === "turn/completed") {
+      const turn = asRecord(params?.turn);
+      const failed = (asString(turn?.status) ?? "").toLowerCase() === "failed";
+      const errorMessage = asString(asRecord(turn?.error)?.message);
+      this.emitSubagentUpdate(childThreadId, {
+        status: failed ? "failed" : "completed",
+        ...(failed && errorMessage ? { summary: errorMessage } : {}),
+        endedAtMs: Date.now(),
+      });
+      return;
+    }
+    if (method === "thread/tokenUsage/updated") {
+      const totalTokens = asNumber(asRecord(asRecord(params?.tokenUsage)?.total)?.totalTokens);
+      if (totalTokens !== undefined) {
+        this.emitSubagentUpdate(childThreadId, { usage: { totalTokens } });
+      }
+      return;
+    }
+    if (method === "error") {
+      const message = asString(asRecord(params?.error)?.message);
+      if (params?.willRetry !== true) {
+        this.emitSubagentUpdate(childThreadId, { status: "failed", ...(message ? { summary: message } : {}) });
+      }
+      return;
+    }
+    if (
+      method === "item/agentMessage/delta" ||
+      method === "item/reasoning/summaryTextDelta" ||
+      method === "item/commandExecution/outputDelta" ||
+      method === "item/fileChange/outputDelta" ||
+      method === "item/started" ||
+      method === "item/completed"
+    ) {
+      this.activeSubagentId = childThreadId;
+      try {
+        this.handleThreadNotificationBody(notification, params);
+      } finally {
+        this.activeSubagentId = null;
+      }
+      return;
+    }
+    // Remaining child-thread lifecycle noise (status changes, MCP startup,
+    // plan updates) has no bearing on the parent run.
+  }
+
+  private handleThreadNotificationBody(notification: JsonRpcNotification, params: Record<string, unknown> | undefined): void {
     if (notification.method === "thread/started") {
       this.threadId = this.readThreadId(params) ?? this.threadId;
       return;
@@ -1493,10 +1637,10 @@ class CodexAppServerSession {
       }
       const nextValue = `${this.agentMessages.get(itemId) ?? ""}${delta}`;
       this.agentMessages.set(itemId, nextValue);
-      if (this.itemPhases.get(itemId) === "final_answer") {
+      if (!this.activeSubagentId && this.itemPhases.get(itemId) === "final_answer") {
         this.assistantText = nextValue;
       }
-      this.onChunk?.({
+      this.emit({
         type: "message",
         title: "Agent output",
         value: nextValue,
@@ -1516,7 +1660,7 @@ class CodexAppServerSession {
       }
       const nextValue = `${this.reasoningMessages.get(itemId) ?? ""}${delta}`;
       this.reasoningMessages.set(itemId, nextValue);
-      this.onChunk?.({
+      this.emit({
         type: "message",
         title: "Reasoning",
         value: nextValue,
@@ -1576,7 +1720,7 @@ class CodexAppServerSession {
         if (commandExecution?.toolName !== "run_shell") {
           return;
         }
-        this.onChunk?.({
+        this.emit({
           type: "tool-progress",
           title: "Tool progress: run_shell",
           value: nextValue,
@@ -1610,7 +1754,11 @@ class CodexAppServerSession {
         if (notification.method === "item/completed" && phase === "final_answer") {
           const text = asString(item?.text)?.trim();
           if (text) {
-            this.assistantText = text;
+            if (this.activeSubagentId) {
+              this.emitSubagentUpdate(this.activeSubagentId, { summary: text });
+            } else {
+              this.assistantText = text;
+            }
           }
         }
         return;
@@ -1620,7 +1768,28 @@ class CodexAppServerSession {
         return;
       }
 
+      if (itemType === "collabAgentToolCall") {
+        this.handleCollabAgentToolCallItem(item);
+        return;
+      }
+
+      if (itemType === "subAgentActivity") {
+        const agentThreadId = asString(item?.agentThreadId);
+        if (agentThreadId) {
+          const kind = asString(item?.kind);
+          this.emitSubagentUpdate(agentThreadId, {
+            ...(asString(item?.agentPath) ? { name: asString(item?.agentPath) } : {}),
+            status: kind === "interrupted" ? "cancelled" : "running",
+          });
+        }
+        return;
+      }
+
       if (itemType === "plan" && itemId) {
+        if (this.activeSubagentId) {
+          // A subagent's internal plan should not surface as the run's plan.
+          return;
+        }
         const planText =
           asString(item?.text)?.trim() ??
           asString(item?.plan)?.trim() ??
@@ -1655,7 +1824,7 @@ class CodexAppServerSession {
           });
         }
         if (notification.method === "item/started") {
-          this.onChunk?.({
+          this.emit({
             type: "tool-call",
             title: `Tool call: ${executionContext.toolName}`,
             value: executionContext.path ?? executionContext.command,
@@ -1672,7 +1841,7 @@ class CodexAppServerSession {
 
         const output = asString(item?.aggregatedOutput)?.trim() || "";
         const exitCode = asNumber(item?.exitCode);
-        this.onChunk?.({
+        this.emit({
           type: "tool-result",
           title: `Tool result: ${executionContext.toolName}`,
           value:
@@ -1709,7 +1878,7 @@ class CodexAppServerSession {
           }
           if (filePaths.length > 0) {
             for (const [index, filePath] of filePaths.entries()) {
-              this.onChunk?.({
+              this.emit({
                 type: "tool-call",
                 title: "Tool call: write_file",
                 value: filePath,
@@ -1721,7 +1890,7 @@ class CodexAppServerSession {
               });
             }
           } else {
-            this.onChunk?.({
+            this.emit({
               type: "tool-call",
               title: "Tool call: write_file",
               value: "Applying file changes.",
@@ -1738,6 +1907,7 @@ class CodexAppServerSession {
           item,
           itemId,
           filePaths,
+          subagentId: this.activeSubagentId ?? undefined,
         });
         return;
       }
@@ -1750,7 +1920,7 @@ class CodexAppServerSession {
         asString(params?.reason) ??
         humanizeCodexItemType(itemType);
 
-      this.onChunk?.({
+      this.emit({
         type: notification.method === "item/started" ? "status" : "status",
         title: "Codex update",
         value: detail,
@@ -1763,13 +1933,23 @@ class CodexAppServerSession {
     item: Record<string, unknown>;
     itemId?: string;
     filePaths: string[];
+    subagentId?: string;
   }): Promise<void> {
+    // This method runs async work, so the router's activeSubagentId is gone by
+    // the time chunks are emitted; stamp from the captured id instead.
+    const emitChunk = (chunk: HarnessRunChunk): void => {
+      if (!input.subagentId) {
+        this.onChunk?.(chunk);
+        return;
+      }
+      this.onChunk?.({ ...chunk, metadata: { ...chunk.metadata, subagentId: input.subagentId } });
+    };
     const snapshot = input.itemId ? this.fileChangeSnapshots.get(input.itemId) : undefined;
     const paths = input.filePaths.length > 0 ? input.filePaths : snapshot?.paths ?? [];
     const output = asString(input.item.aggregatedOutput)?.trim() || asString(input.item.text) || "File changes applied.";
 
     if (paths.length === 0) {
-      this.onChunk?.({
+      emitChunk({
         type: "tool-result",
         title: "Tool result: write_file",
         value: output,
@@ -1801,7 +1981,7 @@ class CodexAppServerSession {
             ? `Updated ${filePath}.`
             : output;
 
-      this.onChunk?.({
+      emitChunk({
         type: "diff-updated",
         title: `Diff updated: ${toolName}`,
         value: diffText || content,
@@ -1813,7 +1993,7 @@ class CodexAppServerSession {
         },
       });
 
-      this.onChunk?.({
+      emitChunk({
         type: "tool-result",
         title: `Tool result: ${toolName}`,
         value: content,
@@ -1826,6 +2006,37 @@ class CodexAppServerSession {
         },
       });
     });
+  }
+
+  // Collab tool-call items on the parent thread announce spawned agent threads
+  // (`receiverThreadIds`) and their last known states (`agentsStates`).
+  private handleCollabAgentToolCallItem(item: Record<string, unknown>): void {
+    const nickname = extractCodexAgentNickname(asString(item.prompt));
+    const tool = asString(item.tool) ?? "collab";
+    const prompt = asString(item.prompt)?.trim();
+    const model = asString(item.model)?.trim();
+    const receiverThreadIds = (asArray(item.receiverThreadIds) ?? []).filter(
+      (value): value is string => typeof value === "string" && value.trim().length > 0,
+    );
+    const agentsStates = asRecord(item.agentsStates) ?? {};
+    const childThreadIds = new Set([...receiverThreadIds, ...Object.keys(agentsStates)]);
+    const isSpawn = tool === "spawnAgent" || tool === "resumeAgent";
+    for (const childThreadId of childThreadIds) {
+      const state = asRecord(agentsStates[childThreadId]);
+      const rawStatus = asString(state?.status);
+      const message = asString(state?.message)?.trim();
+      this.emitSubagentUpdate(childThreadId, {
+        ...(isSpawn && prompt ? { prompt, description: prompt.split("\n")[0]?.slice(0, 120) } : {}),
+        ...(isSpawn && nickname ? { name: nickname } : {}),
+        ...(model ? { model } : {}),
+        ...(rawStatus
+          ? { status: normalizeRunSubagentStatus(rawStatus) }
+          : isSpawn
+            ? { status: "pending" as const }
+            : {}),
+        ...(message ? { summary: message } : {}),
+      });
+    }
   }
 
   private handleResponse(response: JsonRpcResponse): void {

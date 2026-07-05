@@ -317,6 +317,7 @@ export const App = () => {
   const [publishMenuOpen, setPublishMenuOpen] = useState(false);
   const [runPanelsMenuOpen, setRunPanelsMenuOpen] = useState(false);
   const [runDensityMenuOpen, setRunDensityMenuOpen] = useState(false);
+  const [subagentFocusRequest, setSubagentFocusRequest] = useState<{ runId: string; subagentId: string; nonce: number } | null>(null);
   const publishMenuAnchorRef = useRef<HTMLDivElement>(null);
   const runPanelsMenuAnchorRef = useRef<HTMLDivElement>(null);
   const runDensityMenuAnchorRef = useRef<HTMLDivElement>(null);
@@ -4044,6 +4045,7 @@ export const App = () => {
             onOpenFileManager={openRunDetailInFileManager}
             onOpenContinueRunDialog={openContinueRunDialog}
             onDeleteRun={deleteRun}
+            onFocusSubagent={(subagentId) => setSubagentFocusRequest({ runId: paneRun.id, subagentId, nonce: Date.now() })}
             onClosePane={() => closeRunPane(entry.paneId)}
           />
         ) : null}
@@ -4057,6 +4059,7 @@ export const App = () => {
             keyboardShortcuts={keyboardShortcuts}
             pendingShellApproval={null}
             timelineDensity={runTimelineDensity}
+            subagentFocus={subagentFocusRequest?.runId === paneDetail.run.id ? subagentFocusRequest : null}
             showActivity={paneVisiblePanels.activity}
             showDiff={paneVisiblePanels.diff}
             showTerminal={paneVisiblePanels.terminal}
@@ -4541,6 +4544,7 @@ export const App = () => {
                   onOpenFileManager={openRunDetailInFileManager}
                   onOpenContinueRunDialog={openContinueRunDialog}
                   onDeleteRun={deleteRun}
+                  onFocusSubagent={(subagentId) => setSubagentFocusRequest({ runId: selectedRun.id, subagentId, nonce: Date.now() })}
                 />
               ) : null}
 
@@ -4553,6 +4557,7 @@ export const App = () => {
               keyboardShortcuts={keyboardShortcuts}
               pendingShellApproval={null}
               timelineDensity={runTimelineDensity}
+              subagentFocus={subagentFocusRequest?.runId === runDetail.run.id ? subagentFocusRequest : null}
               showActivity={runWorkspaceShowActivity}
               showDiff={runWorkspaceShowDiff}
               showTerminal={runWorkspaceShowTerminal}

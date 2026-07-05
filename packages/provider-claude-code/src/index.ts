@@ -34,9 +34,14 @@ import {
   PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY,
   PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY,
   buildNetworkProxyUrl,
+  buildRunSubagentChunk,
   formatRunPlanProgressContent,
+  isTerminalRunSubagentStatus,
+  mergeRunSubagentInfo,
   normalizeRunPlanProgressPayload,
   normalizeRunPlanStepStatus,
+  normalizeRunSubagentStatus,
+  type RunSubagentInfo,
 } from "@buildwarden/shared";
 
 const CLAUDE_DEFAULT_MODEL = "sonnet";
@@ -863,6 +868,94 @@ const extractClaudeTodoPlanProgress = (input: unknown): RunPlanProgressPayload |
   return normalizeRunPlanProgressPayload({ steps, source: "claude" }, "claude");
 };
 
+const isClaudeSubagentSpawnTool = (toolName: string): boolean => {
+  const normalized = toolName.trim().toLowerCase();
+  return normalized === "agent" || normalized === "task";
+};
+
+const readClaudeSubagentUsage = (value: unknown): RunSubagentInfo["usage"] | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const totalTokens = asOptionalFiniteNumber(value.total_tokens ?? value.totalTokens);
+  const toolUses = asOptionalFiniteNumber(value.tool_uses ?? value.toolUses);
+  const durationMs = asOptionalFiniteNumber(value.duration_ms ?? value.durationMs);
+  if (totalTokens === undefined && toolUses === undefined && durationMs === undefined) {
+    return undefined;
+  }
+  return {
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
+    ...(toolUses !== undefined ? { toolUses } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+  };
+};
+
+// The final Agent tool result appends an "agentId: <id> (...)" trailer plus a
+// <usage> block after the subagent's actual answer. Keep only the answer.
+const stripClaudeAgentResultTrailer = (text: string): string =>
+  text
+    .replace(/agentId:\s*[\w-]+[^\n]*/g, "")
+    .replace(/<usage>[\s\S]*?<\/usage>/g, "")
+    .trim();
+
+/**
+ * Tracks subagents spawned through the Agent/Task tool across stream events.
+ * The canonical subagent id is the Agent tool_use id: it links the spawn block,
+ * `task_*` system events (`tool_use_id`), inner messages (`parent_tool_use_id`),
+ * and the final tool_result.
+ */
+export class ClaudeSubagentTracker {
+  private readonly byToolUseId = new Map<string, RunSubagentInfo>();
+  private readonly taskIdToToolUseId = new Map<string, string>();
+
+  has(toolUseId: string): boolean {
+    return this.byToolUseId.has(toolUseId);
+  }
+
+  get(toolUseId: string): RunSubagentInfo | undefined {
+    return this.byToolUseId.get(toolUseId);
+  }
+
+  resolveToolUseId(candidate: { toolUseId?: string; taskId?: string }): string | undefined {
+    if (candidate.toolUseId) {
+      return candidate.toolUseId;
+    }
+    return candidate.taskId ? this.taskIdToToolUseId.get(candidate.taskId) : undefined;
+  }
+
+  listActive(): RunSubagentInfo[] {
+    return [...this.byToolUseId.values()].filter((info) => !isTerminalRunSubagentStatus(info.status));
+  }
+
+  upsert(toolUseId: string, update: Partial<RunSubagentInfo> & { taskId?: string }): RunSubagentInfo {
+    if (update.taskId) {
+      this.taskIdToToolUseId.set(update.taskId, toolUseId);
+    }
+    const previous = this.byToolUseId.get(toolUseId);
+    const next = mergeRunSubagentInfo(previous, {
+      id: toolUseId,
+      source: "claude-code",
+      status: update.status ?? previous?.status ?? "pending",
+      ...(update.name ? { name: update.name } : {}),
+      ...(update.model ? { model: update.model } : {}),
+      ...(update.description ? { description: update.description } : {}),
+      ...(update.prompt ? { prompt: update.prompt } : {}),
+      ...(update.summary ? { summary: update.summary } : {}),
+      ...(update.activity ? { activity: update.activity } : {}),
+      ...(update.lastToolName ? { lastToolName: update.lastToolName } : {}),
+      ...(update.isBackground !== undefined ? { isBackground: update.isBackground } : {}),
+      ...(update.usage ? { usage: update.usage } : {}),
+      ...(update.startedAtMs !== undefined ? { startedAtMs: update.startedAtMs } : {}),
+      ...(update.endedAtMs !== undefined ? { endedAtMs: update.endedAtMs } : {}),
+    });
+    this.byToolUseId.set(toolUseId, next);
+    return next;
+  }
+}
+
+const buildClaudeSubagentChunk = (subagent: RunSubagentInfo, metadata: Record<string, unknown> = {}): HarnessRunChunk =>
+  buildRunSubagentChunk(subagent, metadata);
+
 const buildPlanProgressChunk = (
   progress: RunPlanProgressPayload,
   metadata: Record<string, unknown>,
@@ -1070,6 +1163,12 @@ export const buildClaudeCanUseTool = (options: ClaudeTurnExecutionOptions): CanU
     return claudePermissionAllowed(input);
   }
 
+  if (isClaudeSubagentSpawnTool(toolName)) {
+    // Spawning a subagent is safe in every mode: its inner tool calls still go
+    // through this permission callback and the run's permission mode.
+    return claudePermissionAllowed(input);
+  }
+
   if (options.yoloMode === true) {
     return claudePermissionAllowed(input);
   }
@@ -1144,8 +1243,78 @@ const extractStreamEventDelta = (event: Record<string, unknown>): { text: string
   };
 };
 
+const CLAUDE_TASK_EVENT_SUBTYPES = new Set(["task_started", "task_progress", "task_updated", "task_notification"]);
+
+const parseClaudeTaskEvent = (
+  event: Record<string, unknown>,
+  subtype: string,
+  tracker: ClaudeSubagentTracker,
+): HarnessRunChunk[] => {
+  const taskId = asString(event.task_id);
+  const toolUseId = tracker.resolveToolUseId({ toolUseId: asString(event.tool_use_id), taskId });
+  if (!toolUseId) {
+    return [];
+  }
+
+  if (subtype === "task_started") {
+    const info = tracker.upsert(toolUseId, {
+      taskId,
+      status: "running",
+      name: asString(event.subagent_type),
+      description: asString(event.description),
+      prompt: asString(event.prompt),
+      startedAtMs: Date.now(),
+    });
+    return [buildClaudeSubagentChunk(info)];
+  }
+
+  if (subtype === "task_progress") {
+    const info = tracker.upsert(toolUseId, {
+      taskId,
+      status: "running",
+      name: asString(event.subagent_type),
+      activity: asString(event.description),
+      lastToolName: asString(event.last_tool_name),
+      usage: readClaudeSubagentUsage(event.usage),
+    });
+    return [buildClaudeSubagentChunk(info)];
+  }
+
+  if (subtype === "task_updated") {
+    const patch = isRecord(event.patch) ? event.patch : {};
+    const status = patch.status !== undefined ? normalizeRunSubagentStatus(patch.status) : undefined;
+    const endedAtMs = asOptionalFiniteNumber(patch.end_time);
+    const info = tracker.upsert(toolUseId, {
+      taskId,
+      ...(status ? { status } : {}),
+      ...(endedAtMs !== undefined ? { endedAtMs } : {}),
+    });
+    return [buildClaudeSubagentChunk(info)];
+  }
+
+  // task_notification: terminal status with the subagent's final summary.
+  const info = tracker.upsert(toolUseId, {
+    taskId,
+    status: normalizeRunSubagentStatus(event.status),
+    summary: asString(event.summary),
+    usage: readClaudeSubagentUsage(event.usage),
+  });
+  return [buildClaudeSubagentChunk(info)];
+};
+
+const stampClaudeSubagentChunks = (chunks: HarnessRunChunk[], subagentId: string): HarnessRunChunk[] =>
+  chunks.map((chunk) => ({
+    ...chunk,
+    metadata: {
+      ...chunk.metadata,
+      subagentId,
+      ...(typeof chunk.metadata?.streamId === "string" ? { streamId: `${chunk.metadata.streamId}:${subagentId}` } : {}),
+    },
+  }));
+
 export const parseClaudeCodeStreamEvent = (
   event: unknown,
+  tracker?: ClaudeSubagentTracker,
 ): {
   assistantText: string;
   chunks: HarnessRunChunk[];
@@ -1162,31 +1331,48 @@ export const parseClaudeCodeStreamEvent = (
   const chunks: HarnessRunChunk[] = [];
   const type = String(event.type ?? "");
   const sessionId = typeof event.session_id === "string" ? event.session_id : undefined;
+  // Messages emitted from inside a subagent carry the spawning Agent tool_use id.
+  const parentToolUseId = asString(event.parent_tool_use_id);
 
   if (type === "stream_event") {
     const delta = extractStreamEventDelta(event);
     if (!delta) {
       return { assistantText: "", chunks: [], sessionId };
     }
+    const deltaChunks: HarnessRunChunk[] = [
+      {
+        type: "message",
+        title: delta.isReasoning ? "Reasoning" : "Agent output",
+        value: delta.text,
+        metadata: {
+          assistantKind: delta.isReasoning ? "reasoning" : "assistant",
+          streamId: delta.isReasoning ? "claude-reasoning" : "claude-assistant",
+        },
+      },
+    ];
+    if (parentToolUseId) {
+      return {
+        assistantText: "",
+        chunks: stampClaudeSubagentChunks(deltaChunks, parentToolUseId),
+        sessionId,
+      };
+    }
     return {
       assistantText: delta.isReasoning ? "" : delta.text,
-      chunks: [
-        {
-          type: "message",
-          title: delta.isReasoning ? "Reasoning" : "Agent output",
-          value: delta.text,
-          metadata: {
-            assistantKind: delta.isReasoning ? "reasoning" : "assistant",
-            streamId: delta.isReasoning ? "claude-reasoning" : "claude-assistant",
-          },
-        },
-      ],
+      chunks: deltaChunks,
       sessionId,
     };
   }
 
   if (type === "system") {
     const subtype = typeof event.subtype === "string" ? event.subtype : "system";
+    if (tracker && CLAUDE_TASK_EVENT_SUBTYPES.has(subtype)) {
+      return {
+        assistantText: "",
+        chunks: parseClaudeTaskEvent(event, subtype, tracker),
+        sessionId,
+      };
+    }
     return {
       assistantText: "",
       chunks: [{ type: "status", title: "Claude Code", value: subtype, metadata: { silent: true } }],
@@ -1216,7 +1402,7 @@ export const parseClaudeCodeStreamEvent = (
     const usage = readUsage(event.usage, { includeContext: true, contextWindow });
     return {
       assistantText: "",
-      chunks: [],
+      chunks: tracker ? parseClaudeTaskEvent(event, type, tracker) : [],
       usage: hasUsageTokens(usage) ? usage : undefined,
       usageIsContextSnapshot: true,
       sessionId,
@@ -1268,6 +1454,18 @@ export const parseClaudeCodeStreamEvent = (
     if (partType === "tool_use") {
       const rawName = typeof part.name === "string" ? part.name : "tool";
       const name = normalizeClaudeCodeToolName(rawName);
+      if (tracker && !parentToolUseId && isClaudeSubagentSpawnTool(rawName) && typeof part.id === "string") {
+        const input = isRecord(part.input) ? part.input : {};
+        const info = tracker.upsert(part.id, {
+          status: "pending",
+          name: asString(input.subagent_type),
+          description: asString(input.description),
+          prompt: asString(input.prompt),
+          ...(input.run_in_background !== undefined ? { isBackground: input.run_in_background === true } : {}),
+        });
+        chunks.push(buildClaudeSubagentChunk(info, { rawToolName: rawName, rawToolInput: part.input }));
+        continue;
+      }
       if (isClaudeTodoWriteTool(name)) {
         const progress = extractClaudeTodoPlanProgress(part.input);
         if (progress) {
@@ -1299,13 +1497,25 @@ export const parseClaudeCodeStreamEvent = (
     }
 
     if (partType === "tool_result") {
+      const toolUseId = typeof part.tool_use_id === "string" ? part.tool_use_id : undefined;
+      if (tracker && !parentToolUseId && toolUseId && tracker.has(toolUseId)) {
+        const resultText = extractTextFromMessage({ content: part.content ?? part.text ?? part.result });
+        const summary = stripClaudeAgentResultTrailer(resultText || stringifyValue(part.content ?? part.text ?? part.result));
+        const info = tracker.upsert(toolUseId, {
+          status: part.is_error === true ? "failed" : "completed",
+          ...(summary ? { summary } : {}),
+          endedAtMs: Date.now(),
+        });
+        chunks.push(buildClaudeSubagentChunk(info));
+        continue;
+      }
       const result = stringifyValue(part.content ?? part.text ?? part.result);
       chunks.push({
         type: "tool-result",
         title: "Tool result",
         value: result || "(no tool result content)",
         metadata: {
-          callId: typeof part.tool_use_id === "string" ? part.tool_use_id : undefined,
+          callId: toolUseId,
           ok: part.is_error !== true,
           provider: "claude-code",
         },
@@ -1321,6 +1531,19 @@ export const parseClaudeCodeStreamEvent = (
       value: assistantText,
       metadata: { assistantKind: "assistant" },
     });
+  }
+
+  if (parentToolUseId) {
+    // Subagent-internal activity: group it under the owning subagent and keep
+    // its text out of the parent transcript and run summary.
+    return {
+      assistantText: "",
+      chunks: stampClaudeSubagentChunks(chunks, parentToolUseId),
+      usage: messageUsage,
+      usageIsDelta: Boolean(messageUsage),
+      usageKey: messageUsageKey,
+      sessionId,
+    };
   }
 
   return {
@@ -1340,6 +1563,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
   let sessionId: string | null = null;
   let usage: RunTokenUsage = { inputTokens: 0, outputTokens: 0 };
   const previousDeltaUsageByKey = new Map<string, RunTokenUsage>();
+  const subagentTracker = new ClaudeSubagentTracker();
 
   const abortController = new AbortController();
   let timedOut = false;
@@ -1372,7 +1596,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
 
   try {
     for await (const event of claudeQuery) {
-      const parsed = parseClaudeCodeStreamEvent(event);
+      const parsed = parseClaudeCodeStreamEvent(event, subagentTracker);
       if (parsed.sessionId && parsed.sessionId !== sessionId) {
         sessionId = parsed.sessionId;
         options.onChunk?.({
@@ -1427,6 +1651,12 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
       throw new Error("Claude Code request timed out.");
     }
     if (options.signal.aborted) {
+      // Aborting kills the CLI process, taking any in-flight subagents with it.
+      for (const info of subagentTracker.listActive()) {
+        options.onChunk?.(
+          buildClaudeSubagentChunk(subagentTracker.upsert(info.id, { status: "cancelled", endedAtMs: Date.now() })),
+        );
+      }
       return {
         summary: latestAssistantText.trim() || assistantText.trim() || "Claude Code run cancelled.",
         sessionId,

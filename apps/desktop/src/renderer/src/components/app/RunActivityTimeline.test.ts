@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildActivityEntries, buildTimelineRenderItems, isOpenableToolPath, type RunActivityStep } from "./RunActivityTimeline";
+import { buildActivityEntries, buildTimelineRenderItems, deriveRunSubagents, isOpenableToolPath, type RunActivityStep } from "./RunActivityTimeline";
 
 const step = (
   id: string,
@@ -95,5 +95,114 @@ describe("run activity timeline shaping", () => {
 
     expect(progressEntries).toHaveLength(1);
     expect(progressEntries[0]?.kind === "single" ? progressEntries[0].step.id : null).toBe("progress-2");
+  });
+});
+
+describe("run activity timeline subagents", () => {
+  const subagentLifecycle = (id: string, status: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    source: "claude-code",
+    status,
+    name: "general-purpose",
+    description: "Count .txt files",
+    ...extra,
+  });
+
+  it("groups subagent lifecycle and stamped inner steps into one subagent entry", () => {
+    const entries = buildActivityEntries([
+      step("prompt", "log", { source: "user" }, "Count files"),
+      step("spawn", "tool-progress", {
+        toolName: "subagent",
+        callId: "agent-1",
+        subagent: { id: "agent-1", source: "claude-code", status: "completed", name: "general-purpose", summary: "2 files" },
+      }),
+      step("inner-call", "tool-call", { callId: "inner-1", toolName: "search_repo", subagentId: "agent-1" }),
+      step("inner-result", "tool-result", { callId: "inner-1", toolName: "search_repo", subagentId: "agent-1" }),
+      step("answer", "output", { source: "assistant" }, "There are 2 files."),
+    ]);
+
+    expect(entries.map((entry) => entry.kind)).toEqual(["single", "subagent", "single"]);
+    const subagentEntry = entries[1];
+    if (subagentEntry?.kind !== "subagent") {
+      throw new Error("expected a subagent entry");
+    }
+    expect(subagentEntry.info).toMatchObject({ id: "agent-1", status: "completed", summary: "2 files" });
+    expect(subagentEntry.entries).toHaveLength(1);
+    expect(subagentEntry.entries[0]?.kind).toBe("tool-batch");
+  });
+
+  it("keeps the subagent card anchored at its first lifecycle step across updates", () => {
+    const entries = buildActivityEntries([
+      step("spawn", "tool-progress", {
+        toolName: "subagent",
+        callId: "agent-1",
+        subagent: subagentLifecycle("agent-1", "running"),
+      }),
+      step("answer", "output", { source: "assistant" }, "Delegating."),
+      step("done", "tool-result", {
+        toolName: "subagent",
+        callId: "agent-1",
+        subagent: { ...subagentLifecycle("agent-1", "completed"), summary: "All done" },
+      }),
+    ]);
+
+    expect(entries.map((entry) => entry.kind)).toEqual(["subagent", "single"]);
+    const subagentEntry = entries[0];
+    if (subagentEntry?.kind !== "subagent") {
+      throw new Error("expected a subagent entry");
+    }
+    expect(subagentEntry.info.status).toBe("completed");
+    expect(subagentEntry.info.summary).toBe("All done");
+  });
+
+  it("derives latest subagent states for header badges", () => {
+    const subagents = deriveRunSubagents([
+      step("spawn-1", "tool-progress", {
+        subagent: { id: "agent-1", source: "codex-cli", status: "running" },
+      }),
+      step("spawn-2", "tool-progress", {
+        subagent: { id: "agent-2", source: "codex-cli", status: "running" },
+      }),
+      step("done-1", "tool-result", {
+        subagent: { id: "agent-1", source: "codex-cli", status: "completed" },
+      }),
+    ]);
+
+    expect(subagents).toHaveLength(2);
+    expect(subagents.find((subagent) => subagent.id === "agent-1")?.status).toBe("completed");
+    expect(subagents.find((subagent) => subagent.id === "agent-2")?.status).toBe("running");
+  });
+});
+
+describe("run activity timeline subagent cancellation", () => {
+  const runningSubagentStep = step("spawn", "tool-progress", {
+    toolName: "subagent",
+    callId: "agent-1",
+    subagent: { id: "agent-1", source: "codex-cli", status: "running", description: "Explore" },
+  });
+
+  it("coerces non-terminal subagents to cancelled once the run has stopped", () => {
+    const entries = buildActivityEntries([runningSubagentStep], { runActive: false });
+    const entry = entries[0];
+    if (entry?.kind !== "subagent") {
+      throw new Error("expected a subagent entry");
+    }
+    expect(entry.info.status).toBe("cancelled");
+
+    const subagents = deriveRunSubagents([runningSubagentStep], { runActive: false });
+    expect(subagents[0]?.status).toBe("cancelled");
+  });
+
+  it("keeps live statuses while the run is active and terminal statuses always", () => {
+    const activeEntries = buildActivityEntries([runningSubagentStep], { runActive: true });
+    expect(activeEntries[0]?.kind === "subagent" ? activeEntries[0].info.status : null).toBe("running");
+
+    const completedStep = step("done", "tool-result", {
+      toolName: "subagent",
+      callId: "agent-2",
+      subagent: { id: "agent-2", source: "codex-cli", status: "completed", summary: "ok" },
+    });
+    const stoppedEntries = buildActivityEntries([completedStep], { runActive: false });
+    expect(stoppedEntries[0]?.kind === "subagent" ? stoppedEntries[0].info.status : null).toBe("completed");
   });
 });
