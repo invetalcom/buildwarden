@@ -6,6 +6,9 @@ import { describe, expect, it } from "vitest";
 import {
   CursorAgentProviderAdapter,
   assertCursorAgentAvailable,
+  cursorSubagentStatusFromToolStatus,
+  isCursorSubagentToolState,
+  readCursorTaskRequestInfo,
   buildCursorPlanProgressChunk,
   createCursorDevLogger,
   deriveCursorMaxTokensFromConfigOptions,
@@ -465,5 +468,57 @@ describe("CursorAgentProviderAdapter", () => {
     await expect(
       assertCursorAgentAvailable({ cursorBinaryPath: "buildwarden-nonexistent-cursor-agent-binary" }),
     ).rejects.toThrow(/Cursor Agent CLI was not found or is not available/);
+  });
+});
+
+describe("Cursor Agent subagents", () => {
+  it("detects task tool calls from rawInput tool names and Task titles", () => {
+    expect(isCursorSubagentToolState({ toolName: "task", title: undefined })).toBe(true);
+    expect(isCursorSubagentToolState({ toolName: undefined, title: "Task: Subagent task" })).toBe(true);
+    expect(isCursorSubagentToolState({ toolName: undefined, title: "Read file" })).toBe(false);
+    expect(isCursorSubagentToolState({ toolName: "shell", title: undefined })).toBe(false);
+  });
+
+  it("maps ACP tool statuses to subagent statuses", () => {
+    expect(cursorSubagentStatusFromToolStatus("pending")).toBe("pending");
+    expect(cursorSubagentStatusFromToolStatus("inProgress")).toBe("running");
+    expect(cursorSubagentStatusFromToolStatus("completed")).toBe("completed");
+    expect(cursorSubagentStatusFromToolStatus("failed")).toBe("failed");
+    expect(cursorSubagentStatusFromToolStatus(undefined)).toBe("pending");
+  });
+
+  it("reads delegation metadata from cursor/task server requests", () => {
+    const info = readCursorTaskRequestInfo({
+      toolCallId: "tool_fa98baa2",
+      description: "Count .txt files in directory",
+      prompt: "Count the number of .txt files.\nReport only the count.",
+      subagentType: { custom: { unspecified: {} } },
+      model: "default",
+      agentId: "d8d6daf7",
+      durationMs: 6610,
+    });
+
+    expect(info).toEqual({
+      toolCallId: "tool_fa98baa2",
+      description: "Count .txt files in directory",
+      prompt: "Count the number of .txt files.\nReport only the count.",
+      durationMs: 6610,
+    });
+  });
+
+  it("extracts named subagent types and non-default models", () => {
+    const info = readCursorTaskRequestInfo({
+      toolCallId: "tool_1",
+      subagentType: "code-reviewer",
+      model: "claude-sonnet-5",
+    });
+    expect(info.agentName).toBe("code-reviewer");
+    expect(info.model).toBe("claude-sonnet-5");
+
+    const keyed = readCursorTaskRequestInfo({
+      toolCallId: "tool_2",
+      subagentType: { generalPurpose: {} },
+    });
+    expect(keyed.agentName).toBe("generalPurpose");
   });
 });

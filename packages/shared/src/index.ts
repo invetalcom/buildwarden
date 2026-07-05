@@ -367,6 +367,174 @@ export const formatRunPlanProgressContent = (progress: RunPlanProgressPayload): 
   return lines.join("\n").trim();
 };
 
+// Provider-specific subagent (sub-thread / collab agent / task tool) activity
+// normalizes into this shared contract. Lifecycle updates ride on
+// "tool-progress"/"tool-result" chunks carrying `metadata.subagent`; chunks that
+// originate inside a subagent carry `metadata.subagentId` so the renderer can
+// group them under the owning subagent card.
+export type RunSubagentSource = "claude-code" | "codex-cli" | "cursor-acp";
+
+export type RunSubagentStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+
+export interface RunSubagentUsage {
+  totalTokens?: number;
+  toolUses?: number;
+  durationMs?: number;
+}
+
+export interface RunSubagentInfo {
+  /** Provider-scoped stable id: Claude task_id, Codex child threadId, Cursor agentId/toolCallId. */
+  id: string;
+  source: RunSubagentSource;
+  status: RunSubagentStatus;
+  /** Subagent type or nickname, e.g. "general-purpose". */
+  name?: string;
+  model?: string;
+  /** Short human label for what was delegated. */
+  description?: string;
+  /** Full delegation prompt when the provider exposes it. */
+  prompt?: string;
+  /** Final output text when known. */
+  summary?: string;
+  /** Live activity label while running (e.g. Claude task_progress description). */
+  activity?: string;
+  lastToolName?: string;
+  isBackground?: boolean;
+  usage?: RunSubagentUsage;
+  startedAtMs?: number;
+  endedAtMs?: number;
+}
+
+export const normalizeRunSubagentStatus = (value: unknown): RunSubagentStatus => {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase().replace(/[\s_-]+/g, "") : "";
+  if (normalized === "completed" || normalized === "complete" || normalized === "done" || normalized === "success") {
+    return "completed";
+  }
+  if (normalized === "failed" || normalized === "errored" || normalized === "error" || normalized === "failure") {
+    return "failed";
+  }
+  if (normalized === "cancelled" || normalized === "canceled" || normalized === "interrupted" || normalized === "shutdown") {
+    return "cancelled";
+  }
+  if (normalized === "running" || normalized === "inprogress" || normalized === "active" || normalized === "started") {
+    return "running";
+  }
+  return "pending";
+};
+
+const asSharedString = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim() ? value.trim() : undefined;
+
+const asSharedFiniteNumber = (value: unknown): number | undefined => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
+};
+
+export const normalizeRunSubagentInfo = (value: unknown): RunSubagentInfo | null => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const id = asSharedString(record.id);
+  if (!id) {
+    return null;
+  }
+  const rawSource = record.source;
+  const source: RunSubagentSource =
+    rawSource === "claude-code" || rawSource === "codex-cli" || rawSource === "cursor-acp" ? rawSource : "claude-code";
+  const rawUsage =
+    typeof record.usage === "object" && record.usage !== null && !Array.isArray(record.usage)
+      ? (record.usage as Record<string, unknown>)
+      : null;
+  const usage: RunSubagentUsage = {};
+  const totalTokens = asSharedFiniteNumber(rawUsage?.totalTokens ?? rawUsage?.total_tokens);
+  const toolUses = asSharedFiniteNumber(rawUsage?.toolUses ?? rawUsage?.tool_uses);
+  const durationMs = asSharedFiniteNumber(rawUsage?.durationMs ?? rawUsage?.duration_ms);
+  if (totalTokens !== undefined) usage.totalTokens = totalTokens;
+  if (toolUses !== undefined) usage.toolUses = toolUses;
+  if (durationMs !== undefined) usage.durationMs = durationMs;
+  const name = asSharedString(record.name);
+  const model = asSharedString(record.model);
+  const description = asSharedString(record.description);
+  const prompt = asSharedString(record.prompt);
+  const summary = asSharedString(record.summary);
+  const activity = asSharedString(record.activity);
+  const lastToolName = asSharedString(record.lastToolName);
+  const startedAtMs = asSharedFiniteNumber(record.startedAtMs);
+  const endedAtMs = asSharedFiniteNumber(record.endedAtMs);
+  return {
+    id,
+    source,
+    status: normalizeRunSubagentStatus(record.status),
+    ...(name ? { name } : {}),
+    ...(model ? { model } : {}),
+    ...(description ? { description } : {}),
+    ...(prompt ? { prompt } : {}),
+    ...(summary ? { summary } : {}),
+    ...(activity ? { activity } : {}),
+    ...(lastToolName ? { lastToolName } : {}),
+    ...(record.isBackground === true ? { isBackground: true } : {}),
+    ...(Object.keys(usage).length > 0 ? { usage } : {}),
+    ...(startedAtMs !== undefined ? { startedAtMs } : {}),
+    ...(endedAtMs !== undefined ? { endedAtMs } : {}),
+  };
+};
+
+/** Merge a subagent update into prior state, keeping known fields when the update omits them. */
+export const mergeRunSubagentInfo = (previous: RunSubagentInfo | undefined, next: RunSubagentInfo): RunSubagentInfo => ({
+  ...previous,
+  ...next,
+  name: next.name ?? previous?.name,
+  model: next.model ?? previous?.model,
+  description: next.description ?? previous?.description,
+  prompt: next.prompt ?? previous?.prompt,
+  summary: next.summary ?? previous?.summary,
+  activity: next.activity ?? previous?.activity,
+  lastToolName: next.lastToolName ?? previous?.lastToolName,
+  isBackground: next.isBackground ?? previous?.isBackground,
+  usage: next.usage ?? previous?.usage,
+  startedAtMs: next.startedAtMs ?? previous?.startedAtMs,
+  endedAtMs: next.endedAtMs ?? previous?.endedAtMs,
+});
+
+export const isTerminalRunSubagentStatus = (status: RunSubagentStatus): boolean =>
+  status === "completed" || status === "failed" || status === "cancelled";
+
+export const runSubagentStreamId = (subagentId: string): string => `subagent:${subagentId}`;
+
+export const formatRunSubagentContent = (subagent: RunSubagentInfo): string => {
+  const label = subagent.name ? `${subagent.name}` : "subagent";
+  const heading = subagent.description?.trim() || subagent.prompt?.trim().split("\n")[0] || label;
+  if (subagent.status === "completed" && subagent.summary?.trim()) {
+    return subagent.summary.trim();
+  }
+  return heading;
+};
+
+/**
+ * Builds the run chunk that carries a subagent lifecycle update. All updates
+ * for one subagent share a stream id and replace the same run step; terminal
+ * updates switch to "tool-result" so the step reads as finished.
+ */
+export const buildRunSubagentChunk = (
+  subagent: RunSubagentInfo,
+  metadata: Record<string, unknown> = {},
+): HarnessRunChunk => ({
+  type: isTerminalRunSubagentStatus(subagent.status) ? "tool-result" : "tool-progress",
+  title: `Subagent: ${subagent.name ?? "agent"}`,
+  value: formatRunSubagentContent(subagent),
+  metadata: {
+    provider: subagent.source,
+    toolName: "subagent",
+    callId: subagent.id,
+    subagent,
+    streamId: runSubagentStreamId(subagent.id),
+    replace: true,
+    ...(isTerminalRunSubagentStatus(subagent.status) ? { ok: subagent.status === "completed" } : {}),
+    ...metadata,
+  },
+});
+
 export const parseRunPlanProgressStepsFromMarkdown = (
   content: string,
   options: { inferStatus?: boolean; maxSteps?: number } = {},
@@ -2158,6 +2326,10 @@ export const buildPriorChatCompletionMessagesFromSteps = (steps: ChatStepRecord[
       meta = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
     } catch {
       /* ignore */
+    }
+    if (typeof meta.subagentId === "string" && meta.subagentId) {
+      // Subagent-internal messages are not part of the parent conversation.
+      continue;
     }
     if (step.eventType === "log" && meta.source === "user") {
       out.push({ role: "user", content: step.content });

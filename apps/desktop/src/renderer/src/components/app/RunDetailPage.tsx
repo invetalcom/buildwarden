@@ -155,6 +155,8 @@ interface RunDetailPageProps {
   keyboardShortcuts: Record<KeyboardShortcutId, string>;
   pendingShellApproval: { command: string; secondsRemaining: number } | null;
   timelineDensity: RunTimelineDensity;
+  /** Request to scroll to and expand a subagent card in the activity timeline. */
+  subagentFocus?: { subagentId: string; nonce: number } | null;
   /** Activity / diff / terminal / browser panel visibility. */
   showActivity: boolean;
   showDiff: boolean;
@@ -205,6 +207,7 @@ export const RunDetailPage = ({
   keyboardShortcuts,
   pendingShellApproval,
   timelineDensity,
+  subagentFocus = null,
   showActivity,
   showDiff,
   showTerminal,
@@ -894,6 +897,7 @@ export const RunDetailPage = ({
       endClassName={cn("shrink-0", showModifiedFilesSummary ? "h-2" : "h-px")}
       showLoading={isRunActive}
       density={timelineDensity}
+      subagentFocus={subagentFocus}
       runDurationLabel={runDurationLabel}
       restorablePromptStepId={restorablePromptStepId}
       copiedStepId={copiedStepId}

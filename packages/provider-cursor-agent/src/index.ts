@@ -5,12 +5,17 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import {
+  buildRunSubagentChunk,
   formatRunPlanProgressContent,
   getModelPresetsForProvider,
+  isTerminalRunSubagentStatus,
+  mergeRunSubagentInfo,
   normalizeRunPlanProgressPayload,
   normalizeRunPlanStepStatus,
   PROVIDER_CONFIG_CURSOR_API_ENDPOINT_KEY,
   PROVIDER_CONFIG_CURSOR_BINARY_PATH_KEY,
+  type RunSubagentInfo,
+  type RunSubagentStatus,
   type ChatAttachmentPayload,
   type HarnessAdapter,
   type HarnessRunChunk,
@@ -75,6 +80,8 @@ type CursorToolState = {
   status?: "pending" | "inProgress" | "completed" | "failed";
   command?: string;
   detail?: string;
+  toolName?: string;
+  rawOutput?: Record<string, unknown>;
   raw?: unknown;
 };
 
@@ -715,6 +722,8 @@ const parseCursorToolState = (params: unknown): CursorToolState | null => {
   const status = normalizeCursorToolStatus(update.status) ?? (updateKind === "tool_call" ? "pending" : undefined);
   const command = extractCommandFromRawInput(update.rawInput, title);
   const detail = command ?? textContentFromToolContent(update.content) ?? title;
+  const toolName = isRecord(update.rawInput) ? asString(update.rawInput._toolName)?.trim() : undefined;
+  const rawOutput = isRecord(update.rawOutput) ? update.rawOutput : undefined;
   return {
     id,
     ...(kind ? { kind } : {}),
@@ -722,6 +731,8 @@ const parseCursorToolState = (params: unknown): CursorToolState | null => {
     ...(status ? { status } : {}),
     ...(command ? { command } : {}),
     ...(detail ? { detail } : {}),
+    ...(toolName ? { toolName } : {}),
+    ...(rawOutput ? { rawOutput } : {}),
     raw: sanitizeMetadataValue(params),
   };
 };
@@ -733,8 +744,71 @@ const mergeCursorToolState = (left: CursorToolState | undefined, right: CursorTo
   status: right.status ?? left?.status,
   command: right.command ?? left?.command,
   detail: right.detail ?? left?.detail,
+  toolName: right.toolName ?? left?.toolName,
+  rawOutput: right.rawOutput ?? left?.rawOutput,
   raw: right.raw ?? left?.raw,
 });
+
+// Subagents surface over Cursor ACP as a "task" tool call
+// (`rawInput._toolName === "task"`, title "Task: ..."). The richer metadata
+// (description, prompt, model, agentId) arrives via the custom `cursor/task`
+// server request keyed by the same toolCallId.
+export const isCursorSubagentToolState = (tool: Pick<CursorToolState, "toolName" | "title">): boolean =>
+  tool.toolName === "task" || /^task\s*:/i.test(tool.title ?? "");
+
+export const cursorSubagentStatusFromToolStatus = (status: CursorToolState["status"]): RunSubagentStatus => {
+  if (status === "completed") return "completed";
+  if (status === "failed") return "failed";
+  if (status === "inProgress") return "running";
+  return "pending";
+};
+
+export type CursorTaskRequestInfo = {
+  toolCallId?: string;
+  description?: string;
+  prompt?: string;
+  model?: string;
+  agentName?: string;
+  durationMs?: number;
+};
+
+const readCursorSubagentTypeName = (value: unknown): string | undefined => {
+  if (typeof value === "string") {
+    return value.trim() || undefined;
+  }
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  for (const [key, nested] of Object.entries(value)) {
+    if (key === "unspecified") {
+      continue;
+    }
+    const nestedName = readCursorSubagentTypeName(nested);
+    if (nestedName) {
+      return nestedName;
+    }
+    if (key !== "custom") {
+      return key;
+    }
+  }
+  return undefined;
+};
+
+export const readCursorTaskRequestInfo = (params: unknown): CursorTaskRequestInfo => {
+  if (!isRecord(params)) {
+    return {};
+  }
+  const model = asString(params.model)?.trim();
+  const durationMs = asFiniteNumber(params.durationMs);
+  return {
+    ...(asString(params.toolCallId)?.trim() ? { toolCallId: asString(params.toolCallId)?.trim() } : {}),
+    ...(asString(params.description)?.trim() ? { description: asString(params.description)?.trim() } : {}),
+    ...(asString(params.prompt)?.trim() ? { prompt: asString(params.prompt)?.trim() } : {}),
+    ...(model && model !== "default" ? { model } : {}),
+    ...(readCursorSubagentTypeName(params.subagentType) ? { agentName: readCursorSubagentTypeName(params.subagentType) } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+  };
+};
 
 const cursorToolChunkForState = (tool: CursorToolState): HarnessRunChunk => {
   const toolName = normalizeCursorToolName(tool.kind);
@@ -1182,6 +1256,7 @@ class CursorAcpRuntime {
   private readonly connection: CursorAcpJsonRpcConnection;
   private session: CursorAcpStartedSession | null = null;
   private readonly toolStates = new Map<string, CursorToolState>();
+  private readonly subagents = new Map<string, RunSubagentInfo>();
   private assistantText = "";
   private usage: RunTokenUsage = { inputTokens: 0, outputTokens: 0 };
 
@@ -1293,6 +1368,12 @@ class CursorAcpRuntime {
     if (!this.session) {
       return;
     }
+    // Cancelling the session tears down any in-flight subagent tasks with it.
+    for (const info of this.subagents.values()) {
+      if (!isTerminalRunSubagentStatus(info.status)) {
+        this.emitSubagentUpdate(info.id, { status: "cancelled", endedAtMs: Date.now() });
+      }
+    }
     await this.connection.request("session/cancel", { sessionId: this.session.sessionId }).catch(() => undefined);
   }
 
@@ -1327,7 +1408,59 @@ class CursorAcpRuntime {
     this.connection.handleNotification("cursor/update_todos", (params) => this.handleCursorTodos(params));
     this.connection.handleRequest("cursor/create_plan", (params) => this.handleCursorCreatePlan(params));
     this.connection.handleRequest("cursor/ask_question", (params) => this.handleCursorAskQuestion(params));
+    this.connection.handleRequest("cursor/task", (params) => this.handleCursorTask(params));
     this.connection.handleRequest("session/request_permission", (params) => this.handlePermissionRequest(params));
+  }
+
+  private emitSubagentUpdate(subagentId: string, update: Partial<RunSubagentInfo>): void {
+    const previous = this.subagents.get(subagentId);
+    const next = mergeRunSubagentInfo(previous, {
+      id: subagentId,
+      source: "cursor-acp",
+      status: update.status ?? previous?.status ?? "pending",
+      ...(update.name ? { name: update.name } : {}),
+      ...(update.model ? { model: update.model } : {}),
+      ...(update.description ? { description: update.description } : {}),
+      ...(update.prompt ? { prompt: update.prompt } : {}),
+      ...(update.summary ? { summary: update.summary } : {}),
+      ...(update.isBackground !== undefined ? { isBackground: update.isBackground } : {}),
+      ...(update.usage ? { usage: update.usage } : {}),
+      ...(update.startedAtMs !== undefined ? { startedAtMs: update.startedAtMs } : {}),
+      ...(update.endedAtMs !== undefined ? { endedAtMs: update.endedAtMs } : {}),
+    });
+    this.subagents.set(subagentId, next);
+    this.options.onChunk?.(this.withUsage(buildRunSubagentChunk(next)));
+  }
+
+  // Cursor sends this custom request with the subagent's delegation metadata
+  // (description, prompt, model, agentId) keyed by the task toolCallId.
+  private handleCursorTask(params: unknown): Record<string, unknown> {
+    const info = readCursorTaskRequestInfo(params);
+    if (info.toolCallId) {
+      this.emitSubagentUpdate(info.toolCallId, {
+        ...(info.agentName ? { name: info.agentName } : {}),
+        ...(info.model ? { model: info.model } : {}),
+        ...(info.description ? { description: info.description } : {}),
+        ...(info.prompt ? { prompt: info.prompt } : {}),
+        ...(info.durationMs !== undefined ? { usage: { durationMs: info.durationMs } } : {}),
+      });
+    }
+    return {};
+  }
+
+  private emitSubagentUpdateFromToolState(tool: CursorToolState): void {
+    const status = cursorSubagentStatusFromToolStatus(tool.status);
+    const titleDescription = tool.title?.replace(/^task\s*:\s*/i, "").trim();
+    const durationMs = asFiniteNumber(tool.rawOutput?.durationMs);
+    const isBackground = tool.rawOutput?.isBackground;
+    this.emitSubagentUpdate(tool.id, {
+      status,
+      ...(titleDescription && titleDescription.toLowerCase() !== "subagent task" ? { description: titleDescription } : {}),
+      ...(typeof isBackground === "boolean" ? { isBackground } : {}),
+      ...(durationMs !== undefined ? { usage: { durationMs } } : {}),
+      ...(status === "running" && !this.subagents.get(tool.id)?.startedAtMs ? { startedAtMs: Date.now() } : {}),
+      ...(status === "completed" || status === "failed" ? { endedAtMs: Date.now() } : {}),
+    });
   }
 
   private requireSession(): CursorAcpStartedSession {
@@ -1431,6 +1564,10 @@ class CursorAcpRuntime {
     if (tool) {
       const merged = mergeCursorToolState(this.toolStates.get(tool.id), tool);
       this.toolStates.set(tool.id, merged);
+      if (isCursorSubagentToolState(merged)) {
+        this.emitSubagentUpdateFromToolState(merged);
+        return;
+      }
       this.options.onChunk?.(this.withUsage(cursorToolChunkForState(merged)));
     }
   }

@@ -3,6 +3,7 @@ import {
   buildClaudeCodeArgs,
   buildClaudeCanUseTool,
   ClaudeCodeProviderAdapter,
+  ClaudeSubagentTracker,
   getClaudeCodeAvailableModelsForVersion,
   mergeClaudeUsageUpdate,
   normalizeClaudeCodeModelId,
@@ -731,5 +732,206 @@ describe("ClaudeCodeProviderAdapter", () => {
     expect(afterFinal.usage.inputTokens).toBe(530_000);
     expect(afterFinal.usage.outputTokens).toBe(5_000);
     expect(afterFinal.usage.totalProcessedTokens).toBe(535_000);
+  });
+});
+
+describe("Claude Code subagents", () => {
+  const spawnAgentEvent = {
+    type: "assistant",
+    session_id: "session-1",
+    message: {
+      content: [
+        {
+          type: "tool_use",
+          id: "toolu_agent_1",
+          name: "Agent",
+          input: {
+            description: "Count .txt files",
+            subagent_type: "general-purpose",
+            run_in_background: false,
+            prompt: "Count all .txt files in the workspace.",
+          },
+        },
+      ],
+    },
+  };
+
+  it("maps Agent tool_use spawns to subagent lifecycle chunks", () => {
+    const tracker = new ClaudeSubagentTracker();
+    const parsed = parseClaudeCodeStreamEvent(spawnAgentEvent, tracker);
+
+    expect(parsed.chunks).toHaveLength(1);
+    const chunk = parsed.chunks[0]!;
+    expect(chunk.type).toBe("tool-progress");
+    expect(chunk.title).toBe("Subagent: general-purpose");
+    expect(chunk.metadata?.toolName).toBe("subagent");
+    expect(chunk.metadata?.streamId).toBe("subagent:toolu_agent_1");
+    expect(chunk.metadata?.replace).toBe(true);
+    expect(chunk.metadata?.subagent).toMatchObject({
+      id: "toolu_agent_1",
+      source: "claude-code",
+      status: "pending",
+      name: "general-purpose",
+      description: "Count .txt files",
+      isBackground: false,
+    });
+  });
+
+  it("keeps emitting generic tool calls for Agent spawns without a tracker", () => {
+    const parsed = parseClaudeCodeStreamEvent(spawnAgentEvent);
+    expect(parsed.chunks[0]?.type).toBe("tool-call");
+  });
+
+  it("merges task_started and task_progress system events into the tracked subagent", () => {
+    const tracker = new ClaudeSubagentTracker();
+    parseClaudeCodeStreamEvent(spawnAgentEvent, tracker);
+
+    const started = parseClaudeCodeStreamEvent(
+      {
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-1",
+        tool_use_id: "toolu_agent_1",
+        description: "Count .txt files",
+        subagent_type: "general-purpose",
+        prompt: "Count all .txt files in the workspace.",
+        session_id: "session-1",
+      },
+      tracker,
+    );
+    expect(started.chunks[0]?.metadata?.subagent).toMatchObject({
+      id: "toolu_agent_1",
+      status: "running",
+      prompt: "Count all .txt files in the workspace.",
+    });
+
+    const progress = parseClaudeCodeStreamEvent(
+      {
+        type: "system",
+        subtype: "task_progress",
+        task_id: "task-1",
+        tool_use_id: "toolu_agent_1",
+        description: "Finding *.txt",
+        subagent_type: "general-purpose",
+        usage: { total_tokens: 16_541, tool_uses: 1, duration_ms: 3_427 },
+        last_tool_name: "Glob",
+      },
+      tracker,
+    );
+    expect(progress.chunks[0]?.metadata?.subagent).toMatchObject({
+      status: "running",
+      activity: "Finding *.txt",
+      lastToolName: "Glob",
+      usage: { totalTokens: 16_541, toolUses: 1, durationMs: 3_427 },
+    });
+  });
+
+  it("resolves task_updated events through the task id when tool_use_id is missing", () => {
+    const tracker = new ClaudeSubagentTracker();
+    parseClaudeCodeStreamEvent(spawnAgentEvent, tracker);
+    parseClaudeCodeStreamEvent(
+      {
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-1",
+        tool_use_id: "toolu_agent_1",
+        subagent_type: "general-purpose",
+      },
+      tracker,
+    );
+
+    const updated = parseClaudeCodeStreamEvent(
+      {
+        type: "system",
+        subtype: "task_updated",
+        task_id: "task-1",
+        patch: { status: "completed", end_time: 1_783_195_491_569 },
+      },
+      tracker,
+    );
+    expect(updated.chunks[0]?.type).toBe("tool-result");
+    expect(updated.chunks[0]?.metadata?.subagent).toMatchObject({
+      id: "toolu_agent_1",
+      status: "completed",
+      endedAtMs: 1_783_195_491_569,
+    });
+  });
+
+  it("stamps subagent-internal messages and keeps their text out of the parent transcript", () => {
+    const tracker = new ClaudeSubagentTracker();
+    parseClaudeCodeStreamEvent(spawnAgentEvent, tracker);
+
+    const inner = parseClaudeCodeStreamEvent(
+      {
+        type: "assistant",
+        parent_tool_use_id: "toolu_agent_1",
+        message: {
+          content: [
+            { type: "text", text: "Searching for files." },
+            { type: "tool_use", id: "toolu_glob_1", name: "Glob", input: { pattern: "*.txt" } },
+          ],
+        },
+      },
+      tracker,
+    );
+
+    expect(inner.assistantText).toBe("");
+    expect(inner.chunks.length).toBeGreaterThan(0);
+    for (const chunk of inner.chunks) {
+      expect(chunk.metadata?.subagentId).toBe("toolu_agent_1");
+    }
+  });
+
+  it("completes the subagent from the Agent tool result and strips the agentId trailer", () => {
+    const tracker = new ClaudeSubagentTracker();
+    parseClaudeCodeStreamEvent(spawnAgentEvent, tracker);
+
+    const result = parseClaudeCodeStreamEvent(
+      {
+        type: "user",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "toolu_agent_1",
+              content: [
+                { type: "text", text: "**2**\n\nThere are 2 .txt files." },
+                { type: "text", text: "agentId: a55c4b4a (use SendMessage to continue)\n<usage>subagent_tokens: 17424</usage>" },
+              ],
+            },
+          ],
+        },
+      },
+      tracker,
+    );
+
+    expect(result.chunks).toHaveLength(1);
+    const chunk = result.chunks[0]!;
+    expect(chunk.type).toBe("tool-result");
+    expect(chunk.metadata?.ok).toBe(true);
+    expect(chunk.metadata?.subagent).toMatchObject({
+      id: "toolu_agent_1",
+      status: "completed",
+      summary: "**2**\n\nThere are 2 .txt files.",
+    });
+  });
+
+  it("allows the Agent tool in plan mode so subagents can research", async () => {
+    const canUseTool = buildClaudeCanUseTool({
+      runId: "run-1",
+      cwd: "C:\repo",
+      prompt: "test",
+      modelId: "sonnet",
+      inputMode: "plan",
+      signal: new AbortController().signal,
+    });
+
+    await expect(
+      canUseTool(
+        "Agent",
+        { description: "explore", prompt: "look around", subagent_type: "Explore" },
+        { signal: new AbortController().signal, suggestions: [], toolUseID: "toolu_agent_2" },
+      ),
+    ).resolves.toMatchObject({ behavior: "allow" });
   });
 });

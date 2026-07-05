@@ -4,15 +4,19 @@ import {
   extractAttachmentNamesFromMetadata,
   extractAttachmentPayloadsFromMetadata,
   formatRunPlanProgressContent,
+  isTerminalRunSubagentStatus,
   type RunEventType,
   type RunMode,
   type RunStatus,
+  type RunSubagentInfo,
   type RunTimelineDensity,
   type RunUserInputAnswers,
   type RunUserInputQuestion,
   normalizeRunPlanProgressPayload,
+  normalizeRunSubagentInfo,
 } from "@buildwarden/shared";
 import {
+  Bot,
   Check,
   ChevronDown,
   ChevronRight,
@@ -158,6 +162,12 @@ type ActivityEntry =
       kind: "single-group";
       groupKey: ActivityGroupKey;
       items: Extract<SingleActivityEntry, { kind: "single" }>[];
+    }
+  | {
+      kind: "subagent";
+      step: RunActivityStep;
+      info: RunSubagentInfo;
+      entries: ActivityEntry[];
     };
 
 type ActivityEntryPreMerge = Exclude<ActivityEntry, { kind: "single-group" }>;
@@ -207,6 +217,9 @@ const getActivityEntryKey = (entry: ActivityEntry, index: number) => {
   }
   if (entry.kind === "tool") {
     return entry.callStep?.id ?? entry.resultStep?.id ?? `tool-${index}`;
+  }
+  if (entry.kind === "subagent") {
+    return `subagent-${entry.info.id}`;
   }
   return entry.step.id;
 };
@@ -272,6 +285,9 @@ const estimateTimelineItemSize = (item: TimelineRenderItem | undefined, density:
   if (entry.kind === "tool") {
     return 48;
   }
+  if (entry.kind === "subagent") {
+    return 96;
+  }
   if (entry.kind === "single-group") {
     if (entry.groupKey === "status") return 42 + entry.items.length * 22;
     if (entry.groupKey === "user") return 104 + entry.items.length * 48;
@@ -332,8 +348,12 @@ const getConsecutiveMergeKey = (entry: Extract<SingleActivityEntry, { kind: "sin
   return null;
 };
 
-const moveShellApprovalsBeforeMatchingTools = (entries: SingleActivityEntry[]): SingleActivityEntry[] => {
-  const out: SingleActivityEntry[] = [];
+type SubagentActivityEntry = Extract<ActivityEntry, { kind: "subagent" }>;
+
+const moveShellApprovalsBeforeMatchingTools = (
+  entries: (SingleActivityEntry | SubagentActivityEntry)[],
+): (SingleActivityEntry | SubagentActivityEntry)[] => {
+  const out: (SingleActivityEntry | SubagentActivityEntry)[] = [];
 
   for (const entry of entries) {
     if (entry.kind !== "single" || entry.metadata.requestKind !== "approval") {
@@ -392,6 +412,11 @@ const mergeConsecutiveSingles = (entries: ActivityEntryPreMerge[]): ActivityEntr
       continue;
     }
     if (e.kind === "tool") {
+      flush();
+      out.push(e);
+      continue;
+    }
+    if (e.kind === "subagent") {
       flush();
       out.push(e);
       continue;
@@ -455,15 +480,72 @@ const runModeBadgeClassName = (mode: RunMode) => {
   return "bg-zinc-500/10 text-zinc-300 ring-zinc-400/30";
 };
 
+// A subagent can never keep working once its run has stopped: the CLI process
+// that hosted it is gone. Treat any non-terminal status as cancelled then.
+const coerceStoppedSubagentInfo = (info: RunSubagentInfo, runActive: boolean | undefined): RunSubagentInfo =>
+  runActive === false && !isTerminalRunSubagentStatus(info.status) ? { ...info, status: "cancelled" } : info;
+
 // Exported for focused virtualization model tests.
 // eslint-disable-next-line react-refresh/only-export-components
-export const buildActivityEntries = (steps: RunActivityStep[]) => {
-  const entries: SingleActivityEntry[] = [];
-  const pendingToolEntries = new Map<string, number>();
-  const latestPlanProgressStepId = steps.findLast((step) => step.eventType === "plan-progress")?.id;
+export const buildActivityEntries = (
+  steps: RunActivityStep[],
+  options: { extractSubagents?: boolean; runActive?: boolean } = {},
+): ActivityEntry[] => {
+  const extractSubagents = options.extractSubagents !== false;
+  // Steps stamped with `subagentId` are a subagent's internal activity and nest
+  // inside that subagent's card; steps carrying `metadata.subagent` are the
+  // card's lifecycle updates and anchor its position in the timeline.
+  const innerStepsBySubagent = new Map<string, RunActivityStep[]>();
+  const subagentInfoByStepId = new Map<string, RunSubagentInfo>();
+  const mainSteps: RunActivityStep[] = [];
+  if (extractSubagents) {
+    const anchorStepIdBySubagent = new Map<string, string>();
+    for (const step of steps) {
+      const metadata = safeParseMetadata(step.metadataJson);
+      const subagentId = typeof metadata.subagentId === "string" && metadata.subagentId ? metadata.subagentId : null;
+      if (subagentId) {
+        const list = innerStepsBySubagent.get(subagentId) ?? [];
+        list.push(step);
+        innerStepsBySubagent.set(subagentId, list);
+        continue;
+      }
+      const rawInfo = normalizeRunSubagentInfo(metadata.subagent);
+      if (rawInfo) {
+        const info = coerceStoppedSubagentInfo(rawInfo, options.runActive);
+        const anchorStepId = anchorStepIdBySubagent.get(info.id);
+        if (anchorStepId === undefined) {
+          anchorStepIdBySubagent.set(info.id, step.id);
+          mainSteps.push(step);
+          subagentInfoByStepId.set(step.id, info);
+        } else {
+          // Follow-up lifecycle steps refresh the already-anchored card.
+          subagentInfoByStepId.set(anchorStepId, info);
+        }
+        continue;
+      }
+      mainSteps.push(step);
+    }
+  } else {
+    mainSteps.push(...steps);
+  }
 
-  for (const step of steps) {
+  const entries: (SingleActivityEntry | SubagentActivityEntry)[] = [];
+  const pendingToolEntries = new Map<string, number>();
+  const latestPlanProgressStepId = mainSteps.findLast((step) => step.eventType === "plan-progress")?.id;
+
+  for (const step of mainSteps) {
     if (step.eventType === "plan-progress" && step.id !== latestPlanProgressStepId) {
+      continue;
+    }
+
+    const subagentInfo = subagentInfoByStepId.get(step.id);
+    if (subagentInfo) {
+      entries.push({
+        kind: "subagent",
+        step,
+        info: subagentInfo,
+        entries: buildActivityEntries(innerStepsBySubagent.get(subagentInfo.id) ?? [], { extractSubagents: false }),
+      });
       continue;
     }
 
@@ -543,6 +625,162 @@ export const buildActivityEntries = (steps: RunActivityStep[]) => {
   }
 
   return mergeConsecutiveSingles(groupedEntries);
+};
+
+// Derives the latest state of every subagent in a run, for header badges.
+// Exported for focused renderer behavior tests.
+// eslint-disable-next-line react-refresh/only-export-components
+export const deriveRunSubagents = (
+  steps: Pick<RunActivityStep, "metadataJson">[],
+  options: { runActive?: boolean } = {},
+): RunSubagentInfo[] => {
+  const byId = new Map<string, RunSubagentInfo>();
+  for (const step of steps) {
+    const info = normalizeRunSubagentInfo(safeParseMetadata(step.metadataJson).subagent);
+    if (info) {
+      byId.set(info.id, coerceStoppedSubagentInfo(info, options.runActive));
+    }
+  }
+  return [...byId.values()];
+};
+
+const formatSubagentDurationLabel = (info: RunSubagentInfo): string | null => {
+  const durationMs =
+    info.usage?.durationMs ??
+    (info.startedAtMs !== undefined && info.endedAtMs !== undefined && info.endedAtMs > info.startedAtMs
+      ? info.endedAtMs - info.startedAtMs
+      : undefined);
+  if (durationMs === undefined || durationMs <= 0) {
+    return null;
+  }
+  if (durationMs < 1_000) {
+    return "<1s";
+  }
+  const totalSeconds = Math.round(durationMs / 1_000);
+  if (totalSeconds < 60) {
+    return `${String(totalSeconds)}s`;
+  }
+  return `${String(Math.floor(totalSeconds / 60))}m ${String(totalSeconds % 60)}s`;
+};
+
+const subagentStatusBadge = (status: RunSubagentInfo["status"]): { label: string; className: string } => {
+  if (status === "completed") return { label: "done", className: "bg-emerald-500/10 text-emerald-300 ring-emerald-400/30" };
+  if (status === "failed") return { label: "failed", className: "bg-red-500/10 text-red-300 ring-red-400/30" };
+  if (status === "cancelled") return { label: "cancelled", className: "bg-amber-500/10 text-amber-300 ring-amber-400/30" };
+  if (status === "running") return { label: "running", className: "bg-sky-500/10 text-sky-300 ring-sky-400/30" };
+  return { label: "pending", className: "bg-zinc-500/10 text-zinc-300 ring-zinc-400/30" };
+};
+
+const ActivitySubagentCard = ({
+  entry,
+  compactContent,
+  focusNonce = 0,
+  onOpenWorkspaceFile,
+  renderEntry,
+  rowTime,
+}: {
+  entry: SubagentActivityEntry;
+  compactContent: boolean;
+  focusNonce?: number;
+  onOpenWorkspaceFile?: (path: string) => void;
+  renderEntry: (nested: ActivityEntry, index: number) => ReactNode;
+  rowTime: (time: string | null | undefined) => string | null | undefined;
+}) => {
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    if (focusNonce > 0) {
+      setExpanded(true);
+    }
+  }, [focusNonce]);
+  const { info } = entry;
+  const isRunning = info.status === "running";
+  const badge = subagentStatusBadge(info.status);
+  const durationLabel = formatSubagentDurationLabel(info);
+  const heading = info.description?.trim() || info.prompt?.trim().split("\n")[0] || "Delegated task";
+  const liveActivity = isRunning ? info.activity ?? (info.lastToolName ? `Using ${info.lastToolName}` : null) : null;
+  const hasExpandableContent = entry.entries.length > 0 || Boolean(info.summary?.trim()) || Boolean(info.prompt?.trim());
+  const stats: string[] = [];
+  if (durationLabel) {
+    stats.push(durationLabel);
+  }
+  if (info.usage?.totalTokens) {
+    stats.push(`${info.usage.totalTokens.toLocaleString()} tok`);
+  }
+  if (info.usage?.toolUses) {
+    stats.push(`${String(info.usage.toolUses)} ${info.usage.toolUses === 1 ? "tool" : "tools"}`);
+  }
+  if (info.model) {
+    stats.push(info.model);
+  }
+  if (info.isBackground) {
+    stats.push("background");
+  }
+
+  return (
+    <div data-subagent-id={info.id}>
+      <AgentLogRow tone="tools" label="Subagent" time={rowTime(new Date(entry.step.createdAt).toLocaleTimeString())}>
+        <AgentPanel tone="tools" className="px-2.5 py-1.5">
+        <button
+          type="button"
+          className="flex w-full min-w-0 items-center gap-1.5 text-left"
+          onClick={() => setExpanded((current) => !current)}
+          disabled={!hasExpandableContent}
+          aria-expanded={expanded}
+        >
+          {isRunning ? (
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-sky-400" />
+          ) : (
+            <Bot className="h-3.5 w-3.5 shrink-0 text-[color:var(--ec-muted)]" />
+          )}
+          <span className="shrink-0 text-[11px] font-medium text-zinc-200">{info.name ?? "agent"}</span>
+          <Badge tone="queued" className={`shrink-0 px-1.5 py-0 text-[10px] ${badge.className}`}>
+            {badge.label}
+          </Badge>
+          <span className="min-w-0 flex-1 truncate text-[11px] text-zinc-400" title={heading}>
+            {heading}
+          </span>
+          {stats.length > 0 ? (
+            <span className="agent-density-meta shrink-0 text-[10px] text-zinc-500 tabular-nums">{stats.join(" · ")}</span>
+          ) : null}
+          {hasExpandableContent ? (
+            expanded ? (
+              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+            )
+          ) : null}
+        </button>
+        {liveActivity ? (
+          <p className="mt-1 truncate pl-5 text-[10px] text-sky-300/80" title={liveActivity}>
+            {liveActivity}
+          </p>
+        ) : null}
+        {expanded ? (
+          <div className="mt-1.5 space-y-1.5 border-l border-zinc-800/60 pl-2">
+            {info.prompt?.trim() && info.prompt.trim() !== heading ? (
+              <p className="whitespace-pre-wrap text-[10px] leading-snug text-zinc-500">{info.prompt.trim()}</p>
+            ) : null}
+            {entry.entries.length > 0 ? (
+              <div className="agent-worklog agent-worklog--nested">
+                {entry.entries.map((nested, index) => renderEntry(nested, index))}
+              </div>
+            ) : null}
+            {info.summary?.trim() ? (
+              <div className="agent-panel agent-panel--answer px-2 py-1.5">
+                <ActivityMarkdownOrGitDiff
+                  content={info.summary.trim()}
+                  compact={compactContent}
+                  className="agent-response-text"
+                  onOpenWorkspaceFile={onOpenWorkspaceFile}
+                />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        </AgentPanel>
+      </AgentLogRow>
+    </div>
+  );
 };
 
 const ActivityFilePathButton = ({
@@ -857,6 +1095,7 @@ export function RunActivityTimeline({
   containerRef,
   endRef,
   virtualized = false,
+  subagentFocus = null,
   onCopyStepContent,
   onUndoRunToLastPrompt,
   onCancelRunShell,
@@ -882,6 +1121,7 @@ export function RunActivityTimeline({
   containerRef?: Ref<HTMLDivElement>;
   endRef?: Ref<HTMLDivElement>;
   virtualized?: boolean;
+  subagentFocus?: { subagentId: string; nonce: number } | null;
   onCopyStepContent?: (text: string, stepId: string) => void | Promise<void>;
   onUndoRunToLastPrompt?: (run: RunActivityRun) => void;
   onCancelRunShell?: (run: RunActivityRun, toolCallId: string) => void;
@@ -893,10 +1133,10 @@ export function RunActivityTimeline({
 }) {
   const [internalCopiedStepId, setInternalCopiedStepId] = useState<string | null>(null);
   const [internalExpandedReasoningStepIds, setInternalExpandedReasoningStepIds] = useState<Record<string, boolean>>({});
-  const activityEntries = useMemo(() => buildActivityEntries(steps), [steps]);
+  const isRunActive = ["queued", "preparing", "running"].includes(run.status);
+  const activityEntries = useMemo(() => buildActivityEntries(steps, { runActive: isRunActive }), [isRunActive, steps]);
   const activeCopiedStepId = copiedStepId ?? internalCopiedStepId;
   const activeReasoningStepIds = expandedReasoningStepIds ?? internalExpandedReasoningStepIds;
-  const isRunActive = ["queued", "preparing", "running"].includes(run.status);
   const latestPlanDecisionText = useMemo(
     () => getLatestPlanDecisionText(activityEntries, run.mode),
     [activityEntries, run.mode],
@@ -989,6 +1229,31 @@ export function RunActivityTimeline({
   useEffect(() => {
     shouldStickToBottomRef.current = true;
   }, [run.id]);
+
+  const timelineItemsRef = useRef(timelineItems);
+  timelineItemsRef.current = timelineItems;
+  useEffect(() => {
+    if (!subagentFocus) {
+      return;
+    }
+    const index = timelineItemsRef.current.findIndex(
+      (item) => item.kind === "entry" && item.entry.kind === "subagent" && item.entry.info.id === subagentFocus.subagentId,
+    );
+    if (index === -1) {
+      return;
+    }
+    // Jumping to a card means the user left the live tail on purpose.
+    shouldStickToBottomRef.current = false;
+    if (virtualized) {
+      rowVirtualizer.scrollToIndex(index, { align: "start", behavior: "auto" });
+    }
+    const frame = window.requestAnimationFrame(() => {
+      scrollElementRef.current
+        ?.querySelector(`[data-subagent-id="${CSS.escape(subagentFocus.subagentId)}"]`)
+        ?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [rowVirtualizer, subagentFocus, virtualized]);
 
   useEffect(() => {
     if (!virtualized) {
@@ -1222,6 +1487,22 @@ export function RunActivityTimeline({
 
         if (entry.kind === "tool") {
           return null;
+        }
+
+        if (entry.kind === "subagent") {
+          return (
+            <ActivitySubagentCard
+              key={`subagent-${entry.info.id}`}
+              entry={entry}
+              compactContent={compactContent}
+              focusNonce={subagentFocus?.subagentId === entry.info.id ? subagentFocus.nonce : 0}
+              onOpenWorkspaceFile={onOpenWorkspaceFile}
+              renderEntry={(nested, index) => (
+                <div key={`subagent-${entry.info.id}-nested-${String(index)}`}>{renderActivityEntry(nested)}</div>
+              )}
+              rowTime={rowTime}
+            />
+          );
         }
 
         if (entry.kind === "single-group") {

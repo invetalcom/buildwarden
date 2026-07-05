@@ -2,9 +2,11 @@ import { forwardRef, useCallback, useMemo, useState, type Ref } from "react";
 import {
   extractAttachmentNamesFromMetadata,
   extractAttachmentPayloadsFromMetadata,
+  isTerminalRunSubagentStatus,
+  normalizeRunSubagentInfo,
   type RunEventType,
 } from "@buildwarden/shared";
-import { BrainCircuit, Check, ChevronDown, Copy, Loader2, MessageSquareText, ShieldCheck } from "lucide-react";
+import { Bot, BrainCircuit, Check, ChevronDown, Copy, Loader2, MessageSquareText, ShieldCheck } from "lucide-react";
 import { ActivityMarkdownOrGitDiff } from "./activity-message-body";
 import { StoredChatAttachments } from "./StoredChatAttachments";
 
@@ -57,7 +59,9 @@ export const ChatTranscript = forwardRef<
       () =>
         items
           .map((item) => ({ item, metadata: safeParseMetadata(item.metadataJson) }))
-          .filter(({ item }) => {
+          .filter(({ item, metadata }) => {
+            // Subagent-internal activity stays inside the subagent summary line.
+            if (typeof metadata.subagentId === "string" && metadata.subagentId) return false;
             const isEmpty = !item.content?.trim();
             const isAgentOutputTitle = item.title === "Agent output";
             if (isEmpty && (item.eventType === "output" || isAgentOutputTitle)) return false;
@@ -145,6 +149,42 @@ export const ChatTranscript = forwardRef<
                     <ActivityMarkdownOrGitDiff content={item.content} className="chat-reasoning-body" />
                   </details>
                 </div>
+              </section>
+            );
+          }
+
+          const rawSubagent = normalizeRunSubagentInfo(metadata.subagent);
+          if (rawSubagent) {
+            // Once the chat stops working, the CLI process hosting the
+            // subagent is gone; a non-terminal status can never update again.
+            const subagent =
+              !showLoading && !isTerminalRunSubagentStatus(rawSubagent.status)
+                ? { ...rawSubagent, status: "cancelled" as const }
+                : rawSubagent;
+            const isSubagentRunning = subagent.status === "running" || subagent.status === "pending";
+            const heading = subagent.description?.trim() || subagent.prompt?.trim().split("\n")[0] || "Delegated task";
+            return (
+              <section key={item.id} className="chat-inline-panel chat-inline-panel--note">
+                <div className="chat-panel-header">
+                  <div className="flex min-w-0 items-center gap-2">
+                    {isSubagentRunning ? (
+                      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[color:var(--ec-info)]" />
+                    ) : (
+                      <Bot className="h-4 w-4 shrink-0 text-[color:var(--ec-muted)]" />
+                    )}
+                    <p className="truncate text-sm font-medium text-[color:var(--ec-text)]">
+                      Subagent{subagent.name ? `: ${subagent.name}` : ""}
+                    </p>
+                    <span className="chat-panel-kicker">{subagent.status}</span>
+                  </div>
+                  <span className="chat-message-time">{timestamp}</span>
+                </div>
+                <p className="mt-1 truncate text-xs text-[color:var(--ec-muted)]" title={heading}>
+                  {heading}
+                </p>
+                {subagent.summary?.trim() ? (
+                  <ActivityMarkdownOrGitDiff content={subagent.summary.trim()} className="chat-panel-body" />
+                ) : null}
               </section>
             );
           }
