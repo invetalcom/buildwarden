@@ -804,10 +804,10 @@ export const RunComposer = ({
       }
     >
       <div className={dense ? "p-1" : "p-1.5"}>
-        <div className="app-input-surface rounded-[1.75rem] border border-[var(--ec-border)] bg-[var(--ec-input)] shadow-[0_18px_50px_rgba(0,0,0,0.18)] transition focus-within:border-[var(--ec-accent)] focus-within:shadow-[var(--ec-action-shadow)]">
+        <div className="app-composer-shell">
           <Textarea
             ref={textareaRef}
-            className={`${textareaMinClass} !border-0 !bg-transparent resize-none rounded-[1.75rem] px-5 pb-2 pt-4 text-[15px] leading-relaxed placeholder:text-[15px] placeholder:font-normal focus:!border-transparent focus:!ring-0 sm:placeholder:text-[15px] ${textareaClassName}`.trim()}
+            className={`${textareaMinClass} !border-0 !bg-transparent resize-none rounded-t-[calc(1.25rem_-_1px)] rounded-b-none px-4 pb-2 pt-3.5 text-[15px] leading-relaxed placeholder:text-[15px] placeholder:font-normal focus:!border-transparent focus:!ring-0 sm:placeholder:text-[15px] ${textareaClassName}`.trim()}
             placeholder={placeholder}
             value={prompt}
             autoFocus={autoFocus}
@@ -853,7 +853,7 @@ export const RunComposer = ({
               Slash command is not available for the selected model provider.
             </div>
           ) : null}
-          <div className="flex flex-col gap-2 px-3 pb-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+          <div className="app-composer-toolbar flex flex-col gap-2 px-2.5 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-3">
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
               {attachments}
               {!isChat ? (
@@ -992,7 +992,7 @@ export const RunComposer = ({
               ) : null}
               <Button
                 size="sm"
-                className="h-11 w-11 shrink-0 rounded-full p-0 text-sm shadow-[var(--ec-action-shadow)] [&_svg]:m-0 [&_svg]:h-5 [&_svg]:w-5"
+                className="app-composer-send h-10 w-10 shrink-0 rounded-full p-0 text-sm shadow-[var(--ec-action-shadow)] [&_svg]:m-0 [&_svg]:h-5 [&_svg]:w-5"
                 disabled={isSubmitDisabled}
                 onClick={() => void onSubmit()}
                 title={submitLabel}
