@@ -1,7 +1,8 @@
 import { appendChatAttachmentFiles, type ChatAttachmentPayload, type ProjectKind, type ProviderType, type RunMode, type RunWorkspaceType, type RunWorkspaceVcs, type UnifiedProviderFamily } from "@buildwarden/shared";
-import { Archive, Clock3, Play, PlayCircle } from "lucide-react";
-import { useState } from "react";
+import { Archive, Clock3, Play, PlayCircle, Search, X } from "lucide-react";
+import { useMemo, useState } from "react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
+import { parseSearchTerms, runMatchesSearch } from "../../lib/run-search";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -13,6 +14,7 @@ import {
   CardTitle,
 } from "../ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
+import { Input } from "../ui/input";
 import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
 import type { ProjectRunStats } from "./ProjectStatisticsCard";
 import { RunComposer } from "./RunComposer";
@@ -25,6 +27,8 @@ interface ProjectOverviewTabProps {
   runs: Array<{
     id: string;
     prompt: string;
+    goalText?: string | null;
+    userInputSearchText?: string;
     branchName: string;
     workspaceType: RunWorkspaceType;
     workspaceVcs: RunWorkspaceVcs;
@@ -108,6 +112,10 @@ export const ProjectOverviewTab = ({
 }: ProjectOverviewTabProps) => {
   const formatTokens = (value: number) => value.toLocaleString();
   const [runAttachmentFiles, setRunAttachmentFiles] = useState<File[]>([]);
+  const [runSearchQuery, setRunSearchQuery] = useState("");
+  const runSearchTerms = useMemo(() => parseSearchTerms(runSearchQuery), [runSearchQuery]);
+  const visibleRuns = useMemo(() => runs.filter((run) => runMatchesSearch(run, runSearchTerms)), [runs, runSearchTerms]);
+  const hasRunSearch = runSearchTerms.length > 0;
   const isFolderProject = projectKind === "folder";
   const workspaceTypeOptions: RunWorkspaceType[] = isFolderProject ? ["copy", "local"] : ["worktree", "local"];
   const branchOptions = isFolderProject
@@ -206,17 +214,44 @@ export const ProjectOverviewTab = ({
       </section>
 
       <Card className="flex min-h-0 flex-1 flex-col">
-        <CardHeader className="shrink-0 flex-row items-center justify-between gap-3">
+        <CardHeader className="shrink-0 flex-row flex-wrap items-center justify-between gap-3">
           <div>
             <CardTitle>Run History</CardTitle>
-            <CardDescription>{runs.length} visible runs in this project.</CardDescription>
+            <CardDescription>
+              {hasRunSearch ? `${visibleRuns.length} matching of ${runs.length}` : `${runs.length} visible`} runs in this project.
+            </CardDescription>
           </div>
-          <Clock3 className="size-4 text-[var(--ec-muted)]" />
+          <div className="flex min-w-0 flex-1 items-center justify-end gap-3">
+            <span className="relative block min-w-[14rem] max-w-md flex-1">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--ec-faint)]" />
+              <Input
+                value={runSearchQuery}
+                onChange={(event) => setRunSearchQuery(event.target.value)}
+                placeholder="Search past runs"
+                aria-label="Search runs"
+                className="h-8 pr-8 pl-8 text-xs"
+              />
+              {runSearchQuery ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0.5 top-1/2 h-7 w-7 -translate-y-1/2 text-[var(--ec-muted)]"
+                  onClick={() => setRunSearchQuery("")}
+                  aria-label="Clear run search"
+                  title="Clear search"
+                >
+                  <X className="size-3.5" />
+                </Button>
+              ) : null}
+            </span>
+            <Clock3 className="size-4 shrink-0 text-[var(--ec-muted)]" />
+          </div>
         </CardHeader>
         <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-b-lg p-0">
-          {runs.length > 0 ? (
+          {visibleRuns.length > 0 ? (
             <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto">
-              {runs.map((run) => (
+              {visibleRuns.map((run) => (
                 <div key={run.id} className="flex items-center gap-3 border-t border-[var(--ec-border)] px-4 py-3 transition hover:bg-[var(--ec-hover)]">
                   <button className="min-w-0 flex-1 text-left" onClick={() => onSelectRun(run.id)} type="button">
                     <p className="truncate text-sm font-semibold text-[var(--ec-text)]">{run.prompt}</p>
@@ -238,6 +273,14 @@ export const ProjectOverviewTab = ({
                 </div>
               ))}
             </div>
+          ) : hasRunSearch && runs.length > 0 ? (
+            <Empty>
+              <EmptyHeader>
+                <Search className="size-10 text-[var(--ec-muted)]" />
+                <EmptyTitle>No matching runs</EmptyTitle>
+                <EmptyDescription>Search checks only user prompts, follow-ups, run goals, and submitted answers.</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
           ) : (
             <Empty>
               <EmptyHeader>
