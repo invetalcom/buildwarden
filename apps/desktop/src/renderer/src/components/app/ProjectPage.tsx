@@ -141,8 +141,8 @@ export const ProjectPage = ({
       <div
         className={cn(
           "flex min-h-0 flex-1 flex-col",
-          // Reviews and Loops manage their own internal scrolling (Loops pins its explainer footer).
-          activeTab === "reviews" || activeTab === "loops" ? "overflow-hidden" : "overflow-y-auto",
+          // Overview, Reviews, and Loops manage their own internal scrolling (Overview scrolls its run history, Loops pins its explainer footer).
+          activeTab === "overview" || activeTab === "reviews" || activeTab === "loops" ? "overflow-hidden" : "overflow-y-auto",
         )}
       >
       {activeTab === "overview" ? (

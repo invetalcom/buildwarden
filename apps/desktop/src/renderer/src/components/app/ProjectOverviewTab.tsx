@@ -128,8 +128,8 @@ export const ProjectOverviewTab = ({
   };
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-col gap-3">
-      <section className="grid gap-3">
+    <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col gap-3">
+      <section className="grid shrink-0 gap-3">
         <Card>
           <CardHeader className="p-4">
             <div className="flex min-w-0 items-start justify-between gap-4">
@@ -205,17 +205,17 @@ export const ProjectOverviewTab = ({
         </Card>
       </section>
 
-      <Card>
-        <CardHeader className="flex-row items-center justify-between gap-3">
+      <Card className="flex min-h-0 flex-1 flex-col">
+        <CardHeader className="shrink-0 flex-row items-center justify-between gap-3">
           <div>
             <CardTitle>Run History</CardTitle>
             <CardDescription>{runs.length} visible runs in this project.</CardDescription>
           </div>
           <Clock3 className="size-4 text-[var(--ec-muted)]" />
         </CardHeader>
-        <CardContent className="p-0">
+        <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-b-lg p-0">
           {runs.length > 0 ? (
-            <div className="app-scrollbar max-h-[520px] overflow-y-auto">
+            <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto">
               {runs.map((run) => (
                 <div key={run.id} className="flex items-center gap-3 border-t border-[var(--ec-border)] px-4 py-3 transition hover:bg-[var(--ec-hover)]">
                   <button className="min-w-0 flex-1 text-left" onClick={() => onSelectRun(run.id)} type="button">
