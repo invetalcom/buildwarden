@@ -2898,6 +2898,8 @@ export const APP_SETTING_KEYS = {
   projectActiveSkills: "projectActiveSkills",
   /** JSON object keyed by project id containing Project Lab automation settings. */
   projectLabSettings: "projectLabSettings",
+  /** JSON object keyed by project id with persisted run defaults (mode, workspace, base branch, models, efforts, full access). */
+  projectRunDefaults: "projectRunDefaults",
   /** JSON object keyed by project id with PR/MR background polling intervals. */
   projectForgePrMonitorSettings: "projectForgePrMonitorSettings",
   /** JSON object with app-wide outbound proxy host/port/user settings (password stored in secure storage). */
@@ -3060,6 +3062,80 @@ export const serializeProjectLabSettingsSetting = (value: ProjectLabSettingsByPr
       ]),
     ),
   );
+
+/** Per-project defaults applied to new agent runs, persisted across app restarts. */
+export interface ProjectRunDefaults {
+  mode: RunMode;
+  workspaceType: RunWorkspaceType;
+  /** Base branch for worktree runs. Empty string = use the project default branch. */
+  baseBranch: string;
+  /** Default model for direct (local) workspace runs. Empty string = last used / first available. */
+  modelId: string;
+  /** Models used for isolated workspace (worktree/copy) runs. Empty = fall back to {@link modelId}. */
+  worktreeModelIds: string[];
+  reasoningEffort: string;
+  anthropicEffort: string;
+  /** Full Access: skip per-tool approvals for new runs. */
+  yoloMode: boolean;
+}
+
+export type ProjectRunDefaultsByProjectId = Record<string, ProjectRunDefaults>;
+
+export const buildDefaultProjectRunDefaults = (): ProjectRunDefaults => ({
+  mode: "code",
+  workspaceType: "worktree",
+  baseBranch: "",
+  modelId: "",
+  worktreeModelIds: [],
+  reasoningEffort: "medium",
+  anthropicEffort: "medium",
+  yoloMode: false,
+});
+
+const RUN_DEFAULT_MODES: readonly RunMode[] = ["code", "plan", "ask"];
+const RUN_DEFAULT_WORKSPACE_TYPES: readonly RunWorkspaceType[] = ["worktree", "local", "copy"];
+const RUN_DEFAULT_EFFORTS: readonly string[] = ["low", "medium", "high", "xhigh"];
+
+export const parseProjectRunDefaultsSetting = (raw: string | undefined | null): ProjectRunDefaultsByProjectId => {
+  if (raw == null || !String(raw).trim()) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(String(raw)) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    const result: ProjectRunDefaultsByProjectId = {};
+    for (const [projectId, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!projectId.trim() || !value || typeof value !== "object" || Array.isArray(value)) {
+        continue;
+      }
+      const record = value as Record<string, unknown>;
+      const defaults = buildDefaultProjectRunDefaults();
+      result[projectId] = {
+        mode: RUN_DEFAULT_MODES.includes(record.mode as RunMode) ? (record.mode as RunMode) : defaults.mode,
+        workspaceType: RUN_DEFAULT_WORKSPACE_TYPES.includes(record.workspaceType as RunWorkspaceType)
+          ? (record.workspaceType as RunWorkspaceType)
+          : defaults.workspaceType,
+        baseBranch: typeof record.baseBranch === "string" ? record.baseBranch.trim() : defaults.baseBranch,
+        modelId: typeof record.modelId === "string" ? record.modelId.trim() : defaults.modelId,
+        worktreeModelIds: Array.isArray(record.worktreeModelIds)
+          ? [...new Set(record.worktreeModelIds.filter((x): x is string => typeof x === "string" && x.trim().length > 0))]
+          : defaults.worktreeModelIds,
+        reasoningEffort: RUN_DEFAULT_EFFORTS.includes(record.reasoningEffort as string)
+          ? (record.reasoningEffort as string)
+          : defaults.reasoningEffort,
+        anthropicEffort: RUN_DEFAULT_EFFORTS.includes(record.anthropicEffort as string)
+          ? (record.anthropicEffort as string)
+          : defaults.anthropicEffort,
+        yoloMode: record.yoloMode === true,
+      };
+    }
+    return result;
+  } catch {
+    return {};
+  }
+};
 
 /** Visual theme: liquid-glass dark or liquid-glass light. */
 export const UI_THEME_VALUES = ["dark", "light"] as const;

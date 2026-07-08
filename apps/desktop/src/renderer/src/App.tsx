@@ -4,6 +4,7 @@ import {
   cycleUiTheme,
   DEFAULT_NETWORK_PROXY_SETTINGS,
   buildDefaultProjectLabSettings,
+  buildDefaultProjectRunDefaults,
   GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE,
   isDetachedHeadProjectErrorMessage,
   getAiSdkProviderFamilyFromConfigJson,
@@ -12,6 +13,7 @@ import {
   parseIntegratedSkillsDisabledSetting,
   parseProjectLabSettingsSetting,
   parseProjectActiveSkillsSetting,
+  parseProjectRunDefaultsSetting,
   parseRecentRunDaysSetting,
   parseRunTimelineDensitySetting,
   parseRunWorkspaceLayoutsSetting,
@@ -37,6 +39,8 @@ import {
   type ChatRecord,
   type ContinueRunInput,
   type ProjectLabSettings,
+  type ProjectRunDefaults,
+  type ProjectRunDefaultsByProjectId,
   type KeyboardShortcutId,
   type NetworkProxySettingsSnapshot,
   type ProjectFolderGitStatus,
@@ -1094,6 +1098,123 @@ export const App = () => {
   }, [runProjectId, snapshot.projects]);
   const selectedProjectId = selectedProject?.project.id ?? "";
   const selectedProjectDefaultBranch = selectedProject?.project.defaultBranch ?? "";
+
+  const projectRunDefaultsByProjectId = useMemo<ProjectRunDefaultsByProjectId>(
+    () => parseProjectRunDefaultsSetting(snapshot.settings[APP_SETTING_KEYS.projectRunDefaults]),
+    [snapshot.settings],
+  );
+  const projectRunDefaultsRef = useRef<ProjectRunDefaultsByProjectId>({});
+  useEffect(() => {
+    projectRunDefaultsRef.current = projectRunDefaultsByProjectId;
+  }, [projectRunDefaultsByProjectId]);
+
+  const persistProjectRunDefaults = useCallback(
+    (partial: Partial<ProjectRunDefaults>) => {
+      if (!buildwarden || !selectedProjectId) {
+        return;
+      }
+      const current = projectRunDefaultsRef.current[selectedProjectId] ?? buildDefaultProjectRunDefaults();
+      const next = { ...projectRunDefaultsRef.current, [selectedProjectId]: { ...current, ...partial } };
+      projectRunDefaultsRef.current = next;
+      void buildwarden.setAppSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify(next)).catch((caught) => {
+        reportRendererError("renderer.project-run-defaults.persist", caught, { projectId: selectedProjectId });
+        setError(caught instanceof Error ? caught.message : "Could not save project run defaults.");
+      });
+    },
+    [buildwarden, selectedProjectId],
+  );
+
+  // Restore persisted run defaults whenever the selected project changes (including initial app start).
+  const hydratedRunDefaultsProjectIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!snapshotLoaded || !selectedProjectId) {
+      return;
+    }
+    if (hydratedRunDefaultsProjectIdRef.current === selectedProjectId) {
+      return;
+    }
+    hydratedRunDefaultsProjectIdRef.current = selectedProjectId;
+    const stored = projectRunDefaultsByProjectId[selectedProjectId];
+    const defaults = stored ?? buildDefaultProjectRunDefaults();
+    setRunMode(defaults.mode);
+    setRunWorkspaceType(defaults.workspaceType);
+    setRunReasoningEffort(defaults.reasoningEffort);
+    setRunAnthropicEffort(defaults.anthropicEffort);
+    setRunYoloMode(defaults.yoloMode);
+    setRunBaseBranch(defaults.baseBranch);
+    const validModelIds = new Set(snapshot.models.map((model) => model.id));
+    if (stored?.modelId && validModelIds.has(stored.modelId)) {
+      setRunModelId(stored.modelId);
+    }
+    const storedWorktreeModelIds = (stored?.worktreeModelIds ?? []).filter((id) => validModelIds.has(id));
+    if (storedWorktreeModelIds.length > 0) {
+      setRunWorktreeModelIds(storedWorktreeModelIds);
+    }
+  }, [projectRunDefaultsByProjectId, selectedProjectId, snapshot.models, snapshotLoaded]);
+
+  const changeRunMode = useCallback(
+    (value: RunMode) => {
+      setRunMode(value);
+      persistProjectRunDefaults({ mode: value });
+    },
+    [persistProjectRunDefaults],
+  );
+
+  const changeRunWorkspaceType = useCallback(
+    (value: RunWorkspaceType) => {
+      setRunWorkspaceType(value);
+      persistProjectRunDefaults({ workspaceType: value });
+    },
+    [persistProjectRunDefaults],
+  );
+
+  const changeRunBaseBranch = useCallback(
+    (value: string) => {
+      setRunBaseBranch(value);
+      persistProjectRunDefaults({ baseBranch: value });
+    },
+    [persistProjectRunDefaults],
+  );
+
+  const changeRunReasoningEffort = useCallback(
+    (value: string) => {
+      setRunReasoningEffort(value);
+      persistProjectRunDefaults({ reasoningEffort: value });
+    },
+    [persistProjectRunDefaults],
+  );
+
+  const changeRunAnthropicEffort = useCallback(
+    (value: string) => {
+      setRunAnthropicEffort(value);
+      persistProjectRunDefaults({ anthropicEffort: value });
+    },
+    [persistProjectRunDefaults],
+  );
+
+  const changeRunYoloMode = useCallback(
+    (value: boolean) => {
+      setRunYoloMode(value);
+      persistProjectRunDefaults({ yoloMode: value });
+    },
+    [persistProjectRunDefaults],
+  );
+
+  const changeRunModel = useCallback(
+    (modelId: string) => {
+      handleRunModelChange(modelId);
+      persistProjectRunDefaults({ modelId });
+    },
+    [handleRunModelChange, persistProjectRunDefaults],
+  );
+
+  const changeRunWorktreeModelIds = useCallback(
+    (ids: string[]) => {
+      handleRunWorktreeModelIdsChangeAndPersist(ids);
+      persistProjectRunDefaults({ worktreeModelIds: ids, modelId: ids[0] ?? "" });
+    },
+    [handleRunWorktreeModelIdsChangeAndPersist, persistProjectRunDefaults],
+  );
 
   useEffect(() => {
     if (selectedProject?.project.kind === "folder" && runWorkspaceType !== "copy" && runWorkspaceType !== "local") {
@@ -4680,16 +4801,16 @@ export const App = () => {
               reasoningEffort={runReasoningEffort}
               anthropicEffort={runAnthropicEffort}
               yoloMode={runYoloMode}
-              onReasoningEffortChange={setRunReasoningEffort}
-              onAnthropicEffortChange={setRunAnthropicEffort}
-              onYoloModeChange={setRunYoloMode}
+              onReasoningEffortChange={changeRunReasoningEffort}
+              onAnthropicEffortChange={changeRunAnthropicEffort}
+              onYoloModeChange={changeRunYoloMode}
               onSelectRun={(runId) => void handleRunSelect(selectedProject.project.id, runId)}
               onRunPromptChange={setRunPrompt}
-              onRunModeChange={setRunMode}
-              onRunWorkspaceTypeChange={setRunWorkspaceType}
-              onRunBaseBranchChange={setRunBaseBranch}
-              onRunModelChange={handleRunModelChange}
-              onRunWorktreeModelIdsChange={handleRunWorktreeModelIdsChangeAndPersist}
+              onRunModeChange={changeRunMode}
+              onRunWorkspaceTypeChange={changeRunWorkspaceType}
+              onRunBaseBranchChange={changeRunBaseBranch}
+              onRunModelChange={changeRunModel}
+              onRunWorktreeModelIdsChange={changeRunWorktreeModelIds}
               availableIntegratedSkills={enabledIntegratedSkills}
               activeIntegratedSkillIds={projectActiveSkillsByProjectId[selectedProject.project.id] ?? []}
               onActiveIntegratedSkillIdsChange={(skillIds) => void updateProjectActiveSkills(selectedProject.project.id, skillIds)}
