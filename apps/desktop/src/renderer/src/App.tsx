@@ -1142,15 +1142,21 @@ export const App = () => {
     setRunAnthropicEffort(defaults.anthropicEffort);
     setRunYoloMode(defaults.yoloMode);
     setRunBaseBranch(defaults.baseBranch);
+    // Always reset model selections so a project without stored defaults does not inherit the
+    // previous project's models. Without a stored value, fall back to the last used model like
+    // loadSnapshot does (setting "" would leave local-mode runs without a model until the next
+    // snapshot refresh, because the reconciliation effect never writes runModelId back).
     const validModelIds = new Set(snapshot.models.map((model) => model.id));
-    if (stored?.modelId && validModelIds.has(stored.modelId)) {
-      setRunModelId(stored.modelId);
-    }
+    const resolvedModelId =
+      stored?.modelId && validModelIds.has(stored.modelId)
+        ? stored.modelId
+        : preferredRunModelId && validModelIds.has(preferredRunModelId)
+          ? preferredRunModelId
+          : snapshot.models[0]?.id ?? "";
+    setRunModelId(resolvedModelId);
     const storedWorktreeModelIds = (stored?.worktreeModelIds ?? []).filter((id) => validModelIds.has(id));
-    if (storedWorktreeModelIds.length > 0) {
-      setRunWorktreeModelIds(storedWorktreeModelIds);
-    }
-  }, [projectRunDefaultsByProjectId, selectedProjectId, snapshot.models, snapshotLoaded]);
+    setRunWorktreeModelIds(storedWorktreeModelIds.length > 0 ? storedWorktreeModelIds : resolvedModelId ? [resolvedModelId] : []);
+  }, [preferredRunModelId, projectRunDefaultsByProjectId, selectedProjectId, snapshot.models, snapshotLoaded]);
 
   const changeRunMode = useCallback(
     (value: RunMode) => {
