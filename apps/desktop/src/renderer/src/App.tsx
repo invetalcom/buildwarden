@@ -149,6 +149,7 @@ import {
   getModelPresetsForProvider,
 } from "./lib/openai-model-presets";
 import type { AvailableProviderModelsState } from "./lib/available-provider-models";
+import { useProjectRunDefaults } from "./lib/use-project-run-defaults";
 import { useStableCallback } from "./lib/use-stable-callback";
 import { reportRendererError, reportRendererLog } from "./lib/report-renderer-error";
 
@@ -1094,6 +1095,35 @@ export const App = () => {
   }, [runProjectId, snapshot.projects]);
   const selectedProjectId = selectedProject?.project.id ?? "";
   const selectedProjectDefaultBranch = selectedProject?.project.defaultBranch ?? "";
+
+  const {
+    changeRunMode,
+    changeRunWorkspaceType,
+    changeRunBaseBranch,
+    changeRunReasoningEffort,
+    changeRunAnthropicEffort,
+    changeRunYoloMode,
+    changeRunModel,
+    changeRunWorktreeModelIds,
+  } = useProjectRunDefaults({
+    buildwarden,
+    snapshotLoaded,
+    projectRunDefaultsSetting: snapshot.settings[APP_SETTING_KEYS.projectRunDefaults],
+    models: snapshot.models,
+    preferredRunModelId,
+    selectedProjectId,
+    setRunMode,
+    setRunWorkspaceType,
+    setRunBaseBranch,
+    setRunReasoningEffort,
+    setRunAnthropicEffort,
+    setRunYoloMode,
+    setRunModelId,
+    setRunWorktreeModelIds,
+    onRunModelChange: handleRunModelChange,
+    onRunWorktreeModelIdsChange: handleRunWorktreeModelIdsChangeAndPersist,
+    onError: setError,
+  });
 
   useEffect(() => {
     if (selectedProject?.project.kind === "folder" && runWorkspaceType !== "copy" && runWorkspaceType !== "local") {
@@ -4680,16 +4710,16 @@ export const App = () => {
               reasoningEffort={runReasoningEffort}
               anthropicEffort={runAnthropicEffort}
               yoloMode={runYoloMode}
-              onReasoningEffortChange={setRunReasoningEffort}
-              onAnthropicEffortChange={setRunAnthropicEffort}
-              onYoloModeChange={setRunYoloMode}
+              onReasoningEffortChange={changeRunReasoningEffort}
+              onAnthropicEffortChange={changeRunAnthropicEffort}
+              onYoloModeChange={changeRunYoloMode}
               onSelectRun={(runId) => void handleRunSelect(selectedProject.project.id, runId)}
               onRunPromptChange={setRunPrompt}
-              onRunModeChange={setRunMode}
-              onRunWorkspaceTypeChange={setRunWorkspaceType}
-              onRunBaseBranchChange={setRunBaseBranch}
-              onRunModelChange={handleRunModelChange}
-              onRunWorktreeModelIdsChange={handleRunWorktreeModelIdsChangeAndPersist}
+              onRunModeChange={changeRunMode}
+              onRunWorkspaceTypeChange={changeRunWorkspaceType}
+              onRunBaseBranchChange={changeRunBaseBranch}
+              onRunModelChange={changeRunModel}
+              onRunWorktreeModelIdsChange={changeRunWorktreeModelIds}
               availableIntegratedSkills={enabledIntegratedSkills}
               activeIntegratedSkillIds={projectActiveSkillsByProjectId[selectedProject.project.id] ?? []}
               onActiveIntegratedSkillIdsChange={(skillIds) => void updateProjectActiveSkills(selectedProject.project.id, skillIds)}
