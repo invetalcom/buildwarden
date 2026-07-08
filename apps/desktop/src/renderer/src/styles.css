@@ -267,15 +267,17 @@ body[data-theme="light"] {
   background-color: var(--ec-bg-elevated);
 }
 
-/* Prompt composer (agent runs + chats): a single frosted sheet with a soft
-   top sheen, a tinted toolbar band, and an accent glow while focused. The
-   shell must never clip — its dropdown menus overflow above/below it. */
+/* Prompt composer (agent runs + chats): one continuous frosted sheet — the
+   controls float at the bottom of the same surface instead of sitting in a
+   divided toolbar band — with a soft top sheen and an accent glow while
+   focused. The shell must never clip — its dropdown menus overflow above/below
+   it. Radius is mirrored by the textarea's rounded-t in RunComposer. */
 .app-composer-shell {
   position: relative;
   border: 1px solid var(--ec-border);
-  border-radius: 1.25rem;
+  border-radius: 1.4rem;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--ec-panel-strong) 46%, transparent), transparent 4.5rem),
+    linear-gradient(180deg, color-mix(in srgb, var(--ec-panel-strong) 42%, transparent), transparent 5rem),
     var(--ec-input);
   backdrop-filter: blur(24px) saturate(150%);
   -webkit-backdrop-filter: blur(24px) saturate(150%);
@@ -287,8 +289,12 @@ body[data-theme="light"] {
     box-shadow 220ms ease;
 }
 
+.app-composer-shell:hover:not(:focus-within) {
+  border-color: var(--ec-border-strong);
+}
+
 .app-composer-shell:focus-within {
-  border-color: color-mix(in srgb, var(--ec-accent) 55%, var(--ec-border));
+  border-color: color-mix(in srgb, var(--ec-accent) 60%, var(--ec-border));
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.09),
     0 0 0 3px color-mix(in srgb, var(--ec-accent) 16%, transparent),
@@ -308,11 +314,10 @@ body[data-theme="light"] .app-composer-shell:focus-within {
     0 12px 38px color-mix(in srgb, var(--ec-shadow) 60%, transparent);
 }
 
+/* Control row inside the shell: no divider, no tint — the pills float on the
+   sheet itself. Kept as a class so the row can be re-themed in one place. */
 .app-composer-toolbar {
-  border-top: 1px solid color-mix(in srgb, var(--ec-border) 75%, transparent);
-  border-bottom-left-radius: calc(1.25rem - 1px);
-  border-bottom-right-radius: calc(1.25rem - 1px);
-  background: color-mix(in srgb, var(--ec-panel-soft) 60%, transparent);
+  background: transparent;
 }
 
 .app-composer-send {
@@ -321,6 +326,11 @@ body[data-theme="light"] .app-composer-shell:focus-within {
     transform 140ms ease,
     filter 140ms ease,
     box-shadow 140ms ease;
+}
+
+.app-composer-send:disabled {
+  box-shadow: none;
+  filter: saturate(0.55);
 }
 
 .app-composer-send:hover:not(:disabled) {

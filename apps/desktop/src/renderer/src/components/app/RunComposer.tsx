@@ -65,6 +65,11 @@ const MODE_LABELS: Record<RunMode, string> = {
   plan: "Plan",
 };
 
+/* One look for every pill trigger in the composer toolbar: compact, borderless,
+   quiet until hovered. Callers append via buttonClassName for one-off tweaks. */
+const composerTriggerClass =
+  "inline-flex h-8 items-center gap-1.5 rounded-full bg-transparent px-2.5 text-[13px] font-medium text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] disabled:pointer-events-none disabled:opacity-50";
+
 interface ComposerSelectOption {
   value: string;
   label: string;
@@ -122,13 +127,13 @@ export const ComposerSelect = ({
     <div ref={rootRef} className={`relative ${open ? "z-[80]" : "z-10"}`}>
       <button
         type="button"
-        className={`inline-flex h-9 items-center gap-2 rounded-full border border-transparent bg-transparent px-3 text-sm text-[var(--ec-muted)] transition hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] disabled:pointer-events-none disabled:opacity-50 ${buttonClassName}`}
+        className={`${composerTriggerClass} ${buttonClassName}`}
         onClick={() => setOpen((current) => !current)}
         disabled={disabled || options.length === 0}
       >
-        <Icon className={`h-4 w-4 ${iconClassName}`} />
+        <Icon className={`h-3.5 w-3.5 ${iconClassName}`} />
         <span className="max-w-[16rem] truncate text-[var(--ec-text)]">{selectedOption?.displayLabel ?? selectedOption?.label ?? "Select"}</span>
-        <ChevronDown className={`h-4 w-4 text-[var(--ec-faint)] transition ${open ? "rotate-180" : ""}`} />
+        <ChevronDown className={`h-3.5 w-3.5 text-[var(--ec-faint)] transition ${open ? "rotate-180" : ""}`} />
       </button>
       {open ? (
         <div
@@ -143,7 +148,7 @@ export const ComposerSelect = ({
               <button
                 key={option.value}
                 type="button"
-                className={`flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
+                className={`flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${
                   isSelected
                     ? "bg-[var(--ec-control)] text-[var(--ec-text)]"
                     : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
@@ -237,13 +242,13 @@ const ComposerMultiModelSelect = ({
     <div ref={rootRef} className={`relative ${open ? "z-[80]" : "z-10"}`}>
       <button
         type="button"
-        className={`inline-flex h-9 items-center gap-2 rounded-full border border-transparent bg-transparent px-3 text-sm text-[var(--ec-muted)] transition hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] disabled:pointer-events-none disabled:opacity-50 ${buttonClassName}`}
+        className={`${composerTriggerClass} ${buttonClassName}`}
         onClick={() => setOpen((current) => !current)}
         disabled={disabled || options.length === 0}
       >
-        <Icon className={`h-4 w-4 ${iconClassName}`} />
+        <Icon className={`h-3.5 w-3.5 ${iconClassName}`} />
         <span className="max-w-[16rem] truncate text-[var(--ec-text)]">{summaryLabel}</span>
-        <ChevronDown className={`h-4 w-4 text-[var(--ec-faint)] transition ${open ? "rotate-180" : ""}`} />
+        <ChevronDown className={`h-3.5 w-3.5 text-[var(--ec-faint)] transition ${open ? "rotate-180" : ""}`} />
       </button>
       {open ? (
         <div
@@ -259,7 +264,7 @@ const ComposerMultiModelSelect = ({
               <button
                 key={option.value}
                 type="button"
-                className={`flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
+                className={`flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${
                   isSelected
                     ? "bg-[var(--ec-control)] text-[var(--ec-text)]"
                     : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
@@ -316,7 +321,7 @@ const ComposerRunSettingsButton = ({
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const workspaceLabel = selectedWorkspaceType ? (workspaceLabels?.[selectedWorkspaceType] ?? WORKSPACE_LABELS[selectedWorkspaceType]) : null;
-  const summary = [MODE_LABELS[selectedMode], workspaceLabel, selectedBranch].filter(Boolean).join(" / ");
+  const summary = [MODE_LABELS[selectedMode], workspaceLabel, selectedBranch].filter(Boolean).join(" · ");
 
   useEffect(() => {
     if (!open) {
@@ -346,13 +351,28 @@ const ComposerRunSettingsButton = ({
     <div ref={rootRef} className={`relative ${open ? "z-[80]" : "z-10"}`}>
       <button
         type="button"
-        className="inline-flex h-9 max-w-[22rem] items-center gap-2 rounded-full border border-transparent bg-transparent px-3 text-sm text-[var(--ec-muted)] transition hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] disabled:pointer-events-none disabled:opacity-50"
+        className={`${composerTriggerClass} max-w-[22rem]`}
         onClick={() => setOpen((current) => !current)}
         disabled={disabled}
+        title={summary || "Run settings"}
       >
-        <SlidersHorizontal className="h-4 w-4 text-[var(--ec-muted)]" />
-        <span className="truncate text-[var(--ec-text)]">{summary || "Run settings"}</span>
-        <ChevronDown className={`h-4 w-4 text-[var(--ec-faint)] transition ${open ? "rotate-180" : ""}`} />
+        <SlidersHorizontal className="h-3.5 w-3.5 text-[var(--ec-muted)]" />
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="shrink-0 text-[var(--ec-text)]">{MODE_LABELS[selectedMode]}</span>
+          {workspaceLabel ? (
+            <>
+              <span className="shrink-0 text-[var(--ec-faint)]">·</span>
+              <span className="shrink-0">{workspaceLabel}</span>
+            </>
+          ) : null}
+          {selectedBranch ? (
+            <>
+              <span className="shrink-0 text-[var(--ec-faint)]">·</span>
+              <span className="min-w-0 max-w-[10rem] truncate font-normal">{selectedBranch}</span>
+            </>
+          ) : null}
+        </span>
+        <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-[var(--ec-faint)] transition ${open ? "rotate-180" : ""}`} />
       </button>
       {open ? (
         <div
@@ -807,7 +827,7 @@ export const RunComposer = ({
         <div className="app-composer-shell">
           <Textarea
             ref={textareaRef}
-            className={`${textareaMinClass} !border-0 !bg-transparent resize-none rounded-t-[calc(1.25rem_-_1px)] rounded-b-none px-4 pb-2 pt-3.5 text-[15px] leading-relaxed placeholder:text-[15px] placeholder:font-normal focus:!border-transparent focus:!ring-0 sm:placeholder:text-[15px] ${textareaClassName}`.trim()}
+            className={`${textareaMinClass} !border-0 !bg-transparent resize-none rounded-t-[calc(1.4rem_-_1px)] rounded-b-none px-4 pb-1.5 pt-3.5 text-[15px] leading-relaxed placeholder:text-[15px] placeholder:font-normal focus:!border-transparent focus:!ring-0 sm:placeholder:text-[15px] ${textareaClassName}`.trim()}
             placeholder={placeholder}
             value={prompt}
             autoFocus={autoFocus}
@@ -853,7 +873,7 @@ export const RunComposer = ({
               Slash command is not available for the selected model provider.
             </div>
           ) : null}
-          <div className="app-composer-toolbar flex flex-col gap-2 px-2.5 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-3">
+          <div className="app-composer-toolbar flex flex-col gap-2 px-3 pb-2.5 pt-1 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
               {attachments}
               {!isChat ? (
@@ -884,12 +904,14 @@ export const RunComposer = ({
                   disabled={busy}
                   onClick={() => onYoloModeChange(!yoloMode)}
                   className={[
-                    "inline-flex h-9 shrink-0 items-center gap-2 rounded-full border border-transparent bg-transparent px-3 text-sm font-medium transition hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-hover)]",
-                    yoloMode ? "text-[var(--ec-danger)]" : "text-[var(--ec-muted)] hover:text-[var(--ec-text)]",
+                    "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-[13px] font-medium transition",
+                    yoloMode
+                      ? "bg-[var(--ec-danger-soft)] text-[var(--ec-danger)] ring-1 ring-inset ring-[var(--ec-danger-ring)]"
+                      : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
                     busy ? "cursor-not-allowed opacity-60" : "",
                   ].join(" ")}
                 >
-                  <ShieldOff className={["h-4 w-4", yoloMode ? "text-[var(--ec-danger)]" : "text-[var(--ec-muted)]"].join(" ")} />
+                  <ShieldOff className={["h-3.5 w-3.5", yoloMode ? "text-[var(--ec-danger)]" : "text-[var(--ec-muted)]"].join(" ")} />
                   Full access
                 </button>
               ) : null}
@@ -986,13 +1008,13 @@ export const RunComposer = ({
                 />
               ) : null}
               {isRunActive ? (
-                <Button variant="danger" size="sm" className="h-9 rounded-full px-3 text-xs" onClick={onCancel}>
+                <Button variant="danger" size="sm" className="h-8 rounded-full px-3 text-xs" onClick={onCancel}>
                   Cancel run
                 </Button>
               ) : null}
               <Button
                 size="sm"
-                className="app-composer-send h-10 w-10 shrink-0 rounded-full p-0 text-sm shadow-[var(--ec-action-shadow)] [&_svg]:m-0 [&_svg]:h-5 [&_svg]:w-5"
+                className="app-composer-send h-9 w-9 shrink-0 rounded-full p-0 text-sm shadow-[var(--ec-action-shadow)] [&_svg]:m-0 [&_svg]:h-5 [&_svg]:w-5"
                 disabled={isSubmitDisabled}
                 onClick={() => void onSubmit()}
                 title={submitLabel}

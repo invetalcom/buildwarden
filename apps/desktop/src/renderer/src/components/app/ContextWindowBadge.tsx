@@ -57,7 +57,7 @@ export const ContextWindowBadge = ({
     <div className="relative" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
       <button
         type="button"
-        className={`inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel)] transition hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-hover)] ${toneClass}`}
+        className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-[var(--ec-hover)] ${toneClass}`}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         title="Estimated context window"
@@ -67,7 +67,7 @@ export const ContextWindowBadge = ({
           width={ringSize}
           height={ringSize}
           viewBox={`0 0 ${ringSize} ${ringSize}`}
-          className="h-6 w-6 -rotate-90"
+          className="h-5 w-5 -rotate-90"
           aria-hidden="true"
         >
           <circle cx={ringSize / 2} cy={ringSize / 2} r={radius} fill="none" className="stroke-[var(--ec-border)]" strokeWidth="2" />

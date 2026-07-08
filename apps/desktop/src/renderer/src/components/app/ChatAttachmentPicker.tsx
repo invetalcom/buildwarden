@@ -72,7 +72,7 @@ export const ChatAttachmentPicker = ({ files, onChange, disabled, variant = "def
             type="button"
             variant="ghost"
             size="sm"
-            className="h-9 w-9 shrink-0 rounded-xl border border-[var(--ec-border)] bg-[var(--ec-control)] p-0 text-[var(--ec-muted)] hover:border-[var(--ec-border-strong)] hover:text-[var(--ec-accent)]"
+            className="h-8 w-8 shrink-0 rounded-full p-0 text-[var(--ec-muted)] hover:text-[var(--ec-text)]"
             disabled={disabled || files.length >= CHAT_ATTACHMENT_LIMITS.maxFileCount}
             onClick={() => inputRef.current?.click()}
             title={limitsTitle}
