@@ -165,6 +165,8 @@ const api: DesktopApi = {
   pickIdeExecutable: () => invoke(IPC_CHANNELS.pickIdeExecutable),
   openRunWorktreeInIde: (runId: string, ideKind: SupportedIdeKind) =>
     invoke(IPC_CHANNELS.openRunWorktreeInIde, runId, ideKind),
+  openFolderInIde: (folderPath: string, ideKind: SupportedIdeKind) =>
+    invoke(IPC_CHANNELS.openFolderInIde, folderPath, ideKind),
   addBookmark: (runId: string) => invoke(IPC_CHANNELS.addBookmark, runId),
   removeBookmark: (runId: string) => invoke(IPC_CHANNELS.removeBookmark, runId),
   removeBookmarkById: (bookmarkId: string) => invoke(IPC_CHANNELS.removeBookmarkById, bookmarkId),

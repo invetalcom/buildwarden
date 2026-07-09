@@ -843,6 +843,9 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.openRunWorktreeInIde, (_, runId: string, ideKind: unknown) =>
     controller.openRunWorktreeInIde(runId, parseSupportedIdeKind(ideKind)),
   );
+  ipcMain.handle(IPC_CHANNELS.openFolderInIde, (_, folderPath: string, ideKind: unknown) =>
+    controller.openFolderInIde(folderPath, parseSupportedIdeKind(ideKind)),
+  );
   ipcMain.handle(IPC_CHANNELS.addBookmark, (_, runId: string) => controller.addBookmark(runId));
   ipcMain.handle(IPC_CHANNELS.removeBookmark, (_, runId: string) => controller.removeBookmark(runId));
   ipcMain.handle(IPC_CHANNELS.removeBookmarkById, (_, bookmarkId: string) => controller.removeBookmarkById(bookmarkId));

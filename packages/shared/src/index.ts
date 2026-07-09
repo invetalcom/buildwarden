@@ -2652,6 +2652,8 @@ export interface DesktopApi {
   pickIdeExecutable(): Promise<string | null>;
   /** Open the run worktree folder in the given IDE (must be configured under {@link APP_SETTING_KEYS.idePaths}). */
   openRunWorktreeInIde(runId: string, ideKind: SupportedIdeKind): Promise<void>;
+  /** Open an arbitrary folder (e.g. a project's repo path) in the given IDE (must be configured under {@link APP_SETTING_KEYS.idePaths}). */
+  openFolderInIde(folderPath: string, ideKind: SupportedIdeKind): Promise<void>;
   onRunEvent(listener: (event: RunEvent) => void): () => void;
   addBookmark(runId: string): Promise<void>;
   removeBookmark(runId: string): Promise<void>;
@@ -2821,6 +2823,7 @@ export const IPC_CHANNELS = {
   reportRendererLog: "buildwarden:report-renderer-log",
   pickIdeExecutable: "buildwarden:pick-ide-executable",
   openRunWorktreeInIde: "buildwarden:open-run-worktree-in-ide",
+  openFolderInIde: "buildwarden:open-folder-in-ide",
   releaseRun: "buildwarden:release-run",
   respondToShellApproval: "buildwarden:respond-to-shell-approval",
   respondToRunUserInput: "buildwarden:respond-to-run-user-input",
