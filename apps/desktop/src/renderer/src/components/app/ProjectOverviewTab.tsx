@@ -1,5 +1,5 @@
-import { appendChatAttachmentFiles, type ChatAttachmentPayload, type ProjectKind, type ProviderType, type RunMode, type RunWorkspaceType, type RunWorkspaceVcs, type UnifiedProviderFamily } from "@buildwarden/shared";
-import { Archive, Clock3, Play, PlayCircle, Search, X } from "lucide-react";
+import { appendChatAttachmentFiles, type ChatAttachmentPayload, type ProjectKind, type ProviderType, type RunMode, type RunWorkspaceType, type RunWorkspaceVcs, type SupportedIdeKind, type UnifiedProviderFamily } from "@buildwarden/shared";
+import { Archive, Clock3, FolderOpen, Play, PlayCircle, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
 import { parseSearchTerms, runMatchesSearch } from "../../lib/run-search";
@@ -16,6 +16,7 @@ import {
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Input } from "../ui/input";
 import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
+import { OpenInIdeControl } from "./open-in-ide-control";
 import type { ProjectRunStats } from "./ProjectStatisticsCard";
 import { RunComposer } from "./RunComposer";
 
@@ -38,6 +39,7 @@ interface ProjectOverviewTabProps {
     outputTokens: number;
   }>;
   modelOptions: Array<{ id: string; label: string; modelId: string; providerType: ProviderType; providerFamily: UnifiedProviderFamily | null }>;
+  configuredIdeKinds: SupportedIdeKind[];
   availableBranches: string[];
   currentProjectBranch: string;
   runPrompt: string;
@@ -83,6 +85,7 @@ export const ProjectOverviewTab = ({
   projectKind,
   runs,
   modelOptions,
+  configuredIdeKinds,
   availableBranches,
   currentProjectBranch,
   runPrompt,
@@ -123,6 +126,21 @@ export const ProjectOverviewTab = ({
     : (runWorkspaceType === "local" ? [currentProjectBranch] : availableBranches).filter(Boolean);
   const canUseMultiModel = runWorkspaceType === "worktree" || runWorkspaceType === "copy";
 
+  const openProjectInFileManager = async () => {
+    const result = await window.buildwarden.openPathInFileManager(repoPath);
+    if (!result.ok && result.error) {
+      window.alert(`Could not open folder: ${result.error}`);
+    }
+  };
+
+  const openProjectInIde = async (ideKind: SupportedIdeKind) => {
+    try {
+      await window.buildwarden.openFolderInIde(repoPath, ideKind);
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Could not open the project in the IDE.");
+    }
+  };
+
   const handleStartRun = async () => {
     let attachments: ChatAttachmentPayload[] | undefined;
     try {
@@ -147,9 +165,24 @@ export const ProjectOverviewTab = ({
                 <CardDescription className="truncate font-mono">{repoPath}</CardDescription>
               </div>
               <CardAction>
-                <Badge dot tone={projectRunStats.active > 0 ? "running" : "neutral"}>
-                  {projectRunStats.active > 0 ? `${projectRunStats.active} active` : "idle"}
-                </Badge>
+                <div className="flex items-center gap-2">
+                  <OpenInIdeControl compact configuredIdeKinds={configuredIdeKinds} onOpen={(ideKind) => void openProjectInIde(ideKind)} />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="h-8 shrink-0 border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-2 text-xs text-[var(--ec-accent)] hover:bg-[var(--ec-hover)]"
+                    title="Open project folder in file explorer"
+                    aria-label="Open project folder in file explorer"
+                    onClick={() => void openProjectInFileManager()}
+                  >
+                    <FolderOpen className="h-4 w-4 shrink-0" />
+                    <span className="sr-only">Open in file explorer</span>
+                  </Button>
+                  <Badge dot tone={projectRunStats.active > 0 ? "running" : "neutral"}>
+                    {projectRunStats.active > 0 ? `${projectRunStats.active} active` : "idle"}
+                  </Badge>
+                </div>
               </CardAction>
             </div>
           </CardHeader>

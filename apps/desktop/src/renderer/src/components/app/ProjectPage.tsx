@@ -8,6 +8,7 @@ import type {
   ProviderType,
   RunMode,
   RunWorkspaceType,
+  SupportedIdeKind,
   UnifiedProviderFamily,
 } from "@buildwarden/shared";
 import { Suspense, lazy, useMemo } from "react";
@@ -30,6 +31,7 @@ interface ProjectPageProps {
   project: ProjectSnapshot;
   activeTab: ProjectPageTab;
   modelOptions: Array<{ id: string; label: string; modelId: string; providerType: ProviderType; providerFamily: UnifiedProviderFamily | null }>;
+  configuredIdeKinds: SupportedIdeKind[];
   availableBranches: string[];
   currentProjectBranch: string;
   runPrompt: string;
@@ -83,6 +85,7 @@ export const ProjectPage = ({
   project,
   activeTab,
   modelOptions,
+  configuredIdeKinds,
   availableBranches,
   currentProjectBranch,
   runPrompt,
@@ -153,6 +156,7 @@ export const ProjectPage = ({
           projectKind={project.project.kind}
           runs={project.runs}
           modelOptions={modelOptions}
+          configuredIdeKinds={configuredIdeKinds}
           availableBranches={availableBranches}
           currentProjectBranch={currentProjectBranch}
           runPrompt={runPrompt}

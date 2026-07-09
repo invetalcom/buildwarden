@@ -5629,12 +5629,20 @@ export class AppController
     if (!folderPath) {
       throw new Error("This run has no workspace path.");
     }
+    await this.openFolderInIde(folderPath, ideKind);
+  }
+
+  async openFolderInIde(folderPath: string, ideKind: SupportedIdeKind): Promise<void> {
+    const trimmedPath = folderPath.trim();
+    if (!trimmedPath) {
+      throw new Error("No folder path was provided.");
+    }
     try {
-      if (!existsSync(folderPath) || !statSync(folderPath).isDirectory()) {
-        throw new Error("Run workspace folder is not available on disk.");
+      if (!existsSync(trimmedPath) || !statSync(trimmedPath).isDirectory()) {
+        throw new Error("The folder is not available on disk.");
       }
     } catch (e) {
-      throw new Error(e instanceof Error ? e.message : "Could not access the run workspace folder.");
+      throw new Error(e instanceof Error ? e.message : "Could not access the folder.");
     }
 
     const settings = this.db.getSettings();
@@ -5645,7 +5653,7 @@ export class AppController
       throw new Error(`${IDE_KIND_LABELS[ideKind]} is not configured. Add its path in Settings > User Settings.`);
     }
 
-    await this.launchIdeWithFolder(exe, folderPath);
+    await this.launchIdeWithFolder(exe, trimmedPath);
   }
 
   private launchIdeWithFolder(exePath: string, folderPath: string): Promise<void> {

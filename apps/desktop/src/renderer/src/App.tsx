@@ -4688,6 +4688,7 @@ export const App = () => {
               project={selectedProject}
               activeTab={projectPageTab}
               modelOptions={configuredRunModelOptions}
+              configuredIdeKinds={configuredIdeKinds}
               availableBranches={availableRunBranches}
               currentProjectBranch={currentProjectBranch}
               runPrompt={runPrompt}
