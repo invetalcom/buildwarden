@@ -1,6 +1,7 @@
 import type { AppSnapshot, RunRecord } from "@buildwarden/shared";
 import { Clock3, FolderGit2, PlayCircle, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
+import { parseSearchTerms, runMatchesSearch } from "../../lib/run-search";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
@@ -37,19 +38,6 @@ const formatRunDuration = (run: RunRecord) => {
 
 const formatRunWorkspaceLabel = (run: RunRecord) =>
   run.workspaceVcs === "folder" ? (run.workspaceType === "copy" ? "Folder copy" : "Project folder") : run.branchName;
-
-const parseSearchTerms = (value: string) =>
-  value
-    .toLocaleLowerCase()
-    .split(/\s+/)
-    .map((term) => term.trim())
-    .filter(Boolean);
-
-const runMatchesSearch = (run: RunRecord, terms: string[]) => {
-  if (terms.length === 0) return true;
-  const searchText = (run.userInputSearchText ?? [run.prompt, run.goalText ?? ""].join("\n")).toLocaleLowerCase();
-  return terms.every((term) => searchText.includes(term));
-};
 
 export const AllRunsPage = ({ projects, onSelectRun }: AllRunsPageProps) => {
   const [searchQuery, setSearchQuery] = useState("");
