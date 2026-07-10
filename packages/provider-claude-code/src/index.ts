@@ -442,9 +442,13 @@ export const listAvailableModelsWithClaudeCode = async (
     if (discovered.length > 0) {
       return discovered;
     }
-  } catch {
+  } catch (error) {
     // Discovery needs a CLI recent enough to answer the supported-models
     // control request; fall back to the curated catalog below.
+    console.warn(
+      "[buildwarden:provider-claude-code] Live model discovery failed; falling back to the curated catalog.",
+      error,
+    );
   }
   const { binaryPath } = resolveClaudeCodeConfig(config);
   const launch = resolveClaudeCodeProcessLaunch(binaryPath, ["--version"]);
