@@ -56,6 +56,16 @@ BuildWarden currently models provider accounts with these provider types:
 
 The AI SDK provider can be configured for OpenAI, Anthropic, Google, xAI, or OpenAI-compatible endpoints. Codex CLI, Claude Code, and Cursor Agent use local CLI installations and local session state. Provider configuration and auth stay separate from runtime execution so the app can share run/chat orchestration while keeping provider-specific behavior isolated.
 
+### Local Provider And Full Computer Usage
+
+To use a local provider and give BuildWarden full access to the computer, install at least one of these tools/CLIs on the PC:
+
+- [Codex CLI](https://learn.chatgpt.com/docs/codex/cli)
+- [Claude Code](https://code.claude.com/docs/en/quickstart#step-1-install-claude-code)
+- [Cursor CLI](https://cursor.com/de/cli)
+
+A local provider is optional. If none of these tools is installed, any supported API key can still be used through the Vercel AI SDK provider.
+
 ## Git, Worktrees, And Review
 
 - Project repositories are user-owned and must not be confused with BuildWarden-created worktrees.
