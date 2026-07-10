@@ -2177,7 +2177,7 @@ export class CodexCliProviderAdapter implements ProviderAdapter {
   }
 
   async listAvailableModels(context: ProviderAvailableModelsContext): Promise<ProviderAvailableModel[]> {
-    return listAvailableModelsWithCodexCli({ config: context.config });
+    return listAvailableModelsWithCodexCli({ config: context.config, networkProxy: context.networkProxy });
   }
 
   validateConfiguration(input: ProviderAccountInput): void {

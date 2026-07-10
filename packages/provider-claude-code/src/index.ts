@@ -435,9 +435,10 @@ export async function discoverClaudeCodeModels(input: {
 
 export const listAvailableModelsWithClaudeCode = async (
   config: Record<string, unknown> | undefined,
+  networkProxy?: NetworkProxyRuntimeConfig,
 ): Promise<ProviderAvailableModel[]> => {
   try {
-    const discovered = await discoverClaudeCodeModels({ config });
+    const discovered = await discoverClaudeCodeModels({ config, networkProxy });
     if (discovered.length > 0) {
       return discovered;
     }
@@ -1757,7 +1758,7 @@ export class ClaudeCodeProviderAdapter implements ProviderAdapter {
   }
 
   async listAvailableModels(context: ProviderAvailableModelsContext): Promise<ProviderAvailableModel[]> {
-    return listAvailableModelsWithClaudeCode(context.config);
+    return listAvailableModelsWithClaudeCode(context.config, context.networkProxy);
   }
 
   validateConfiguration(input: ProviderAccountInput): void {

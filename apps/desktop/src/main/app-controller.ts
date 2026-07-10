@@ -2233,11 +2233,13 @@ export class AppController
     }
 
     try {
+      const networkProxy = await this.resolveNetworkProxyRuntimeConfig();
       const models = await adapter.listAvailableModels({
         providerAccountId: provider.id,
         providerType: provider.providerType,
         config: parseProviderConfigJson(provider.configJson),
         apiBaseUrl: provider.apiBaseUrl,
+        ...(networkProxy ? { networkProxy } : {}),
       });
       return { models: dedupeAvailableProviderModels(models) };
     } catch (error) {
