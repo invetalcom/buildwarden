@@ -98,7 +98,12 @@ const writeLogLine = (level: LogLevel, message: string, metadata?: LogMetadata) 
     message,
     ...(metadata ? { metadata: normalizeMetadata(metadata) } : {}),
   });
-  const consoleTarget = level === "error" ? console.error : level === "warn" ? console.warn : console.info;
+  let consoleTarget = console.info;
+  if (level === "error") {
+    consoleTarget = console.error;
+  } else if (level === "warn") {
+    consoleTarget = console.warn;
+  }
   consoleTarget(`[buildwarden:${level}] ${message}`, metadata ?? "");
   if (!currentLogFilePath) {
     return;

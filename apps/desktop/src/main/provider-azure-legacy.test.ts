@@ -11,7 +11,7 @@ describe("AzureLegacyProviderAdapter", () => {
         label: "Azure Legacy",
         apiKey: "test-key",
       }),
-    ).toThrowError("A base URL is required for Azure Legacy providers.");
+    ).toThrow("A base URL is required for Azure Legacy providers.");
   });
 
   it("accepts valid settings", () => {

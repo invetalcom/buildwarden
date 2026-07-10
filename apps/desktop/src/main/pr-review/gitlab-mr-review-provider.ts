@@ -602,13 +602,11 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
       await this.postNote(parsed.number, input.body.trim());
     }
 
-    return {
-      message:
-        input.mode === "single"
-          ? "Submitted one merge request diff comment."
-          : `Submitted ${String(comments.length)} merge request diff comment${comments.length === 1 ? "" : "s"}.`,
-      url: prUrl,
-    };
+    let message = `Submitted ${String(comments.length)} merge request diff comment${comments.length === 1 ? "" : "s"}.`;
+    if (input.mode === "single") {
+      message = "Submitted one merge request diff comment.";
+    }
+    return { message, url: prUrl };
   }
 
   async replyToThread(input: ReplyProjectPrMrReviewThreadInput): Promise<ProjectForgeReviewActionResult> {

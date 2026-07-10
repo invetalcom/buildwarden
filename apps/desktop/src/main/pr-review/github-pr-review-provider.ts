@@ -66,7 +66,7 @@ const githubNextPageFromLinkHeader = (linkHeader: string | null): number | null 
     if (!/\brel="next"/.test(part)) {
       continue;
     }
-    const match = part.match(/<([^>]+)>/);
+    const match = /<([^>]+)>/.exec(part);
     if (!match?.[1]) {
       continue;
     }
@@ -128,7 +128,12 @@ const githubLabels = (record: Record<string, unknown>): string[] => {
     return [];
   }
   return labels
-    .map((entry) => (isRecord(entry) ? recordString(entry, "name") : typeof entry === "string" ? entry.trim() : null))
+    .map((entry) => {
+      if (isRecord(entry)) {
+        return recordString(entry, "name");
+      }
+      return typeof entry === "string" ? entry.trim() : null;
+    })
     .filter((entry): entry is string => Boolean(entry));
 };
 

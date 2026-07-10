@@ -33,7 +33,6 @@ describe("ProjectLoopRunner", () => {
   let project: ProjectRecord;
   let provider: ProviderAccountRecord;
   let model: ModelRecord;
-  let askTextCalls: string[];
   let planResponse: string;
   let prReviewResponse: string;
   let forgeState: {
@@ -228,7 +227,6 @@ describe("ProjectLoopRunner", () => {
       configJson: "{}",
     });
     model = db.addModel({ providerAccountId: provider.id, modelId: "sonnet", displayName: "Sonnet" });
-    askTextCalls = [];
     forgeState = {
       merged: false,
       createRequests: 0,
@@ -260,7 +258,6 @@ describe("ProjectLoopRunner", () => {
         db.deleteRun(runId);
       },
       askModelForText: async (_cwd, _modelId, input) => {
-        askTextCalls.push(input.prompt.slice(0, 60));
         if (input.prompt.includes("planning agent")) {
           return planResponse;
         }

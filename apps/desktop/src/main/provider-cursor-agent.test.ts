@@ -446,8 +446,8 @@ describe("CursorAgentProviderAdapter", () => {
 
   it("resolves the configured Cursor binary path over auto-detected candidates", () => {
     expect(getCursorAgentBinaryPath({ cursorBinaryPath: "/custom/path/to/agent" })).toBe("/custom/path/to/agent");
-    expect(typeof getCursorAgentBinaryPath(undefined)).toBe("string");
-    expect(getCursorAgentBinaryPath(undefined).length).toBeGreaterThan(0);
+    expect(typeof getCursorAgentBinaryPath()).toBe("string");
+    expect(getCursorAgentBinaryPath().length).toBeGreaterThan(0);
   });
 
   it("derives Cursor binary path candidates from the home directory or environment", () => {

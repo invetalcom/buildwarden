@@ -37,7 +37,7 @@ import {
   Settings,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
+import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -139,6 +139,26 @@ const formatActivityDate = (value: string | null) => {
 
 const providerLabel = (provider: "github" | "gitlab") => (provider === "gitlab" ? "MR" : "PR");
 
+const DIFF_LINE_MARKERS: Record<string, string> = {
+  add: "+",
+  delete: "-",
+  hunk: "@",
+};
+
+const resolveThreadButtonPresentation = (resolved: boolean, confirmResolve: boolean) => {
+  if (resolved) {
+    return { className: "text-zinc-400 hover:text-cyan-100", title: "Reopen this thread", label: "Reopen thread" };
+  }
+  if (confirmResolve) {
+    return {
+      className: "border border-amber-500/40 bg-amber-500/[0.08] text-amber-100 hover:bg-amber-500/[0.12] hover:text-amber-50",
+      title: "Confirm closing this thread",
+      label: "Confirm close",
+    };
+  }
+  return { className: "text-zinc-500 hover:text-zinc-200", title: "Close this thread as resolved", label: "Close thread" };
+};
+
 const requestDiffCacheKey = (url: string, commitSha?: string | null) => `${url.trim()}\0${commitSha?.trim() || "all"}`;
 
 const commitTitleForActivity = (commit: ProjectForgeCommitSummary | null | undefined, fallbackSha: string) =>
@@ -179,7 +199,8 @@ const formatReviewBody = (review: RunDiffReviewResult): string => {
     lines.push("", "### Findings");
     for (const finding of review.findings) {
       const location = [finding.filePath, finding.lineReference].filter(Boolean).join(" - ");
-      lines.push(`- **${finding.priority.toUpperCase()}** ${finding.title}${location ? ` (${location})` : ""}`);
+      const locationSuffix = location ? ` (${location})` : "";
+      lines.push(`- **${finding.priority.toUpperCase()}** ${finding.title}${locationSuffix}`);
       lines.push(`  ${finding.detail}`);
       if (finding.recommendation) {
         lines.push(`  Recommendation: ${finding.recommendation}`);
@@ -321,6 +342,13 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const hydratedProjectIdRef = useRef(projectId);
   const [requestListWidth, setRequestListWidth] = useState(readStoredRequestListWidth);
   const [requestListCollapsed, setRequestListCollapsed] = useState(false);
+  let requestListLayoutClass = "flex flex-col";
+  if (requestItems.length > 0) {
+    requestListLayoutClass = cn(
+      "grid overflow-hidden gap-2",
+      requestListCollapsed ? "grid-cols-[2.25rem_minmax(0,1fr)]" : "lg:grid-cols-[var(--pr-mr-request-list-width)_minmax(0,1fr)]",
+    );
+  }
   const [fileNavigatorCollapsed, setFileNavigatorCollapsed] = useState(false);
   const [isRequestListResizing, setIsRequestListResizing] = useState(false);
   const requestListLayoutRef = useRef<HTMLDivElement>(null);
@@ -608,7 +636,12 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const hasReviewState = reviewPanel.busy || Boolean(reviewPanel.result) || Boolean(reviewPanel.error);
   const activeUrl = selectedRequest?.url ?? prUrl.trim();
   const activeBaseBranch = selectedRequest?.targetBranch ?? baseBranch.trim();
-  const activeKind = selectedRequest ? providerLabel(selectedRequest.provider) : meta ? providerLabel(meta.provider) : "PR/MR";
+  let activeKind = "PR/MR";
+  if (selectedRequest) {
+    activeKind = providerLabel(selectedRequest.provider);
+  } else if (meta) {
+    activeKind = providerLabel(meta.provider);
+  }
   const draftedReviewFindingKeys = useMemo(
     () => new Set(draftComments.map((comment) => comment.aiFindingKey).filter((key): key is string => Boolean(key))),
     [draftComments],
@@ -1412,7 +1445,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                 line.type === "hunk" && "text-cyan-300",
               )}
             >
-              {line.type === "add" ? "+" : line.type === "delete" ? "-" : line.type === "hunk" ? "@" : ""}
+              {DIFF_LINE_MARKERS[line.type] ?? ""}
             </span>
             <code className="min-w-0 whitespace-pre-wrap break-words border-l border-zinc-900/80 px-2 py-0.5 text-zinc-300">{line.content}</code>
           </div>
@@ -1427,6 +1460,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     const busyReply = threadActionBusyId === `reply:${thread.id}`;
     const busyResolve = threadActionBusyId === `resolve:${thread.id}`;
     const confirmResolve = confirmResolveThreadId === thread.id;
+    const resolveButton = resolveThreadButtonPresentation(thread.resolved === true, confirmResolve);
     return (
       <AgentLogRow key={item.id} tone="diff" label="Comment" time={formatActivityDate(item.createdAt)}>
         <div className={cn("min-w-0 pr-2 py-0.5", thread.resolved && "opacity-80")}>
@@ -1457,14 +1491,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                   type="button"
                   size="sm"
                   variant="ghost"
-                  className={cn(
-                    "h-6 px-2 text-[10px]",
-                    thread.resolved
-                      ? "text-zinc-400 hover:text-cyan-100"
-                      : confirmResolve
-                        ? "border border-amber-500/40 bg-amber-500/[0.08] text-amber-100 hover:bg-amber-500/[0.12] hover:text-amber-50"
-                        : "text-zinc-500 hover:text-zinc-200",
-                  )}
+                  className={cn("h-6 px-2 text-[10px]", resolveButton.className)}
                   onClick={() => {
                     if (thread.resolved !== true && !confirmResolve) {
                       setConfirmResolveThreadId(thread.id);
@@ -1475,10 +1502,10 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                     void toggleThreadResolved(thread);
                   }}
                   disabled={busyResolve}
-                  title={thread.resolved ? "Reopen this thread" : confirmResolve ? "Confirm closing this thread" : "Close this thread as resolved"}
+                  title={resolveButton.title}
                 >
                   {busyResolve ? <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden /> : null}
-                  {thread.resolved ? "Reopen thread" : confirmResolve ? "Confirm close" : "Close thread"}
+                  {resolveButton.label}
                 </Button>
               ) : null}
             </div>
@@ -1585,7 +1612,8 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                     {" "}
                     {itemCommit.shortSha} {commitTitleForActivity(itemCommit, itemCommit.sha)}
                   </span>
-                ) : item.commitSha ? (
+                ) : null}
+                {!itemCommit && item.commitSha ? (
                   <span className="font-mono text-zinc-500"> {item.commitSha.slice(0, 12)}</span>
                 ) : null}
               </p>
@@ -1997,8 +2025,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
             </Button>
           </div>
         </AnchorDropdownPortal>
-        {canUseForgeApi ? (
-          reviewModeActive ? (
+        {canUseForgeApi && reviewModeActive ? (
             <div
               className="flex h-8 items-center overflow-hidden rounded-md border border-amber-500/30 bg-amber-500/[0.07] shadow-[inset_2px_0_0_rgba(245,158,11,0.62)]"
               title="Manual review: collect line comments as drafts, then submit them together."
@@ -2037,7 +2064,8 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                 Submit
               </Button>
             </div>
-          ) : (
+        ) : null}
+        {canUseForgeApi && !reviewModeActive ? (
             <Button
               type="button"
               size="sm"
@@ -2050,7 +2078,6 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
               <SquarePen className="mr-1 h-3.5 w-3.5" aria-hidden />
               Draft review
             </Button>
-          )
         ) : null}
         {!overviewRequest && canUseForgeApi ? (
           <>
@@ -2087,6 +2114,12 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
       return null;
     }
     const fileNavigator = renderFileNavigator();
+    let fileNavigatorGridClass = "lg:grid-cols-1";
+    if (fileNavigator) {
+      fileNavigatorGridClass = fileNavigatorCollapsed
+        ? "grid-cols-[2.25rem_minmax(0,1fr)]"
+        : "lg:grid-cols-[minmax(12rem,17rem)_minmax(0,1fr)]";
+    }
     const reviewModeActive = reviewDraftMode || draftComments.length > 0;
 
     return (
@@ -2107,14 +2140,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
             </div>
           ) : null}
           <div
-            className={cn(
-              "grid min-h-0 flex-1 gap-2 overflow-hidden",
-              fileNavigator
-                ? fileNavigatorCollapsed
-                  ? "grid-cols-[2.25rem_minmax(0,1fr)]"
-                  : "lg:grid-cols-[minmax(12rem,17rem)_minmax(0,1fr)]"
-                : "lg:grid-cols-1",
-            )}
+            className={cn("grid min-h-0 flex-1 gap-2 overflow-hidden", fileNavigatorGridClass)}
           >
             {fileNavigator}
             <GitDiffPreview
@@ -2166,6 +2192,20 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
         </div>
       </Card>
     );
+  };
+
+  const renderConversationTab = (): ReactNode => {
+    const overviewCard = renderOverviewCard();
+    if (overviewCard) {
+      return overviewCard;
+    }
+    if (shouldShowForgeTokenHint) {
+      return renderForgeTokenHintCard();
+    }
+    if (shouldShowRequestLoadHint) {
+      return renderRequestLoadHint();
+    }
+    return null;
   };
 
   const renderCommitsCard = () => {
@@ -2483,19 +2523,10 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
 
       <div
         ref={requestListLayoutRef}
-        className={cn(
-          "min-h-0 flex-1",
-          requestItems.length > 0
-            ? cn(
-                "grid overflow-hidden gap-2",
-                requestListCollapsed ? "grid-cols-[2.25rem_minmax(0,1fr)]" : "lg:grid-cols-[var(--pr-mr-request-list-width)_minmax(0,1fr)]",
-              )
-            : "flex flex-col",
-        )}
+        className={cn("min-h-0 flex-1", requestListLayoutClass)}
         style={requestItems.length > 0 ? requestListLayoutStyle : undefined}
       >
-        {requestItems.length > 0 ? (
-          requestListCollapsed ? (
+        {requestItems.length > 0 && requestListCollapsed ? (
             <Card className="flex min-h-0 flex-col items-center overflow-hidden border-zinc-800/80 bg-zinc-950/40 py-1.5">
               <Button
                 type="button"
@@ -2512,7 +2543,8 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                 {String(requestItems.length)}
               </span>
             </Card>
-          ) : (
+        ) : null}
+        {requestItems.length > 0 && !requestListCollapsed ? (
             <Card className="relative flex min-h-0 flex-col overflow-hidden border-zinc-800/80 bg-zinc-950/40 p-0">
               <div className="flex items-center justify-between gap-2 border-b border-zinc-800/80 px-2 py-1.5">
                 <p className="text-[11px] font-semibold text-zinc-100">Requests</p>
@@ -2576,18 +2608,14 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                 title="Resize request list"
               />
             </Card>
-          )
         ) : null}
 
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
           {renderRequestHeader()}
 
-          {activeDetailTab === "conversation" ? (
-            (renderOverviewCard() ??
-              (shouldShowForgeTokenHint ? renderForgeTokenHintCard() : shouldShowRequestLoadHint ? renderRequestLoadHint() : null))
-          ) : activeDetailTab === "commits" ? (
-            renderCommitsCard()
-          ) : !hasDiff ? (
+          {activeDetailTab === "conversation" ? renderConversationTab() : null}
+          {activeDetailTab === "commits" ? renderCommitsCard() : null}
+          {activeDetailTab !== "conversation" && activeDetailTab !== "commits" && !hasDiff ? (
             <Card className="flex min-h-0 flex-1 items-center justify-center border-zinc-800/80 bg-zinc-950/30 p-4">
               <div className="max-w-md text-center">
                 <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full border border-cyan-500/25 bg-cyan-500/[0.07] text-cyan-200">
@@ -2618,9 +2646,8 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                 </div>
               </div>
             </Card>
-          ) : (
-            renderDiffCard()
-          )}
+          ) : null}
+          {activeDetailTab !== "conversation" && activeDetailTab !== "commits" && hasDiff ? renderDiffCard() : null}
         </div>
       </div>
     </div>

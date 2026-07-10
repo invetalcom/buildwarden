@@ -759,16 +759,16 @@ const runSafeCommand = async (
       const body = raw.trim();
       if (aborted) {
         const cancelledByUser = options?.signal?.reason === SHELL_ABORT_REASON_CANCELLED_BY_USER;
+        let abortContent: string;
+        if (cancelledByUser) {
+          const message =
+            "Command cancelled by user. The user manually stopped this run_shell command because it appeared stuck. Do not retry it automatically.";
+          abortContent = body ? `${body}\n\n${message}` : message;
+        } else {
+          abortContent = body ? `${body}\n\n(Command aborted.)` : "Command aborted.";
+        }
         finish({
-          content: truncate(
-            cancelledByUser
-              ? body
-                ? `${body}\n\nCommand cancelled by user. The user manually stopped this run_shell command because it appeared stuck. Do not retry it automatically.`
-                : "Command cancelled by user. The user manually stopped this run_shell command because it appeared stuck. Do not retry it automatically."
-              : body
-                ? `${body}\n\n(Command aborted.)`
-                : "Command aborted.",
-          ),
+          content: truncate(abortContent),
           metadata: {
             command: trimmed,
             exitCode: null,
@@ -805,12 +805,12 @@ export const createRunToolContext = (
 ): HarnessToolContext => {
   const allowedTools = TOOL_ALLOWLIST_BY_MODE[mode];
   const yoloMode = options?.yoloMode === true;
-  const effectiveTools =
-    yoloMode
-      ? new Set(TOOL_DEFINITIONS.map((tool) => tool.name))
-      : toolNamesOverride && toolNamesOverride.length > 0
-      ? new Set(mode === "code" ? toolNamesOverride : toolNamesOverride.filter((toolName) => allowedTools.has(toolName)))
-      : allowedTools;
+  let effectiveTools = allowedTools;
+  if (yoloMode) {
+    effectiveTools = new Set(TOOL_DEFINITIONS.map((tool) => tool.name));
+  } else if (toolNamesOverride && toolNamesOverride.length > 0) {
+    effectiveTools = new Set(mode === "code" ? toolNamesOverride : toolNamesOverride.filter((toolName) => allowedTools.has(toolName)));
+  }
   const tools = TOOL_DEFINITIONS.filter((tool) => effectiveTools.has(tool.name));
   const readFilesThisRun = new Set<string>();
 

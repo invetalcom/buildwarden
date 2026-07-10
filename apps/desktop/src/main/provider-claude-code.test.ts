@@ -25,7 +25,7 @@ describe("ClaudeCodeProviderAdapter", () => {
           claudeBinaryPath: "   ",
         },
       }),
-    ).toThrowError("Claude binary path cannot be blank when provided.");
+    ).toThrow("Claude binary path cannot be blank when provided.");
   });
 
   it("accepts local CLI settings without an API key", () => {

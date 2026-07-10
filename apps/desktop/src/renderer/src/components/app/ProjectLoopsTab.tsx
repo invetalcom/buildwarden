@@ -382,16 +382,57 @@ const LoopListRow = ({ item, onSelect }: { item: ProjectLoopListItem; onSelect: 
   );
 };
 
+const loopUnavailableReasonText = (availability: ProjectLoopAvailability): string => {
+  if (availability.reason === "not-git") {
+    return "Loops need a Git project with a GitHub or GitLab remote.";
+  }
+  if (availability.reason === "no-remote") {
+    return 'Loops need an "origin" remote pointing at GitHub or GitLab.';
+  }
+  if (availability.reason === "no-forge-token") {
+    const providerLabel = availability.provider === "gitlab" ? "GitLab" : "GitHub";
+    return `Save a ${providerLabel} access token in the MR Review tab (${availability.repoLabel ?? "repository"}) so the loop can create and merge PRs in the background.`;
+  }
+  return "Loops need at least one enabled model from a local provider (Codex CLI or Claude Code), because only they can drive the app and capture screenshots.";
+};
+
+const LOOP_UI_REVIEW_DECISION_LABELS: Partial<Record<ProjectLoopUiReviewRecord["status"], string>> = {
+  approved: "Approved by you",
+  "changes-requested": "Changes requested by you",
+  "ai-approved": "Approved by AI reviewer",
+  "ai-changes-requested": "Changes requested by AI reviewer",
+};
+
+const IMAGE_DATA_URL_EXTENSIONS: ReadonlyArray<[prefix: string, extension: string]> = [
+  ["data:image/jpeg", ".jpg"],
+  ["data:image/webp", ".webp"],
+  ["data:image/gif", ".gif"],
+];
+
+const imageDataUrlExtension = (imageDataUrl: string): string => {
+  for (const [prefix, extension] of IMAGE_DATA_URL_EXTENSIONS) {
+    if (imageDataUrl.startsWith(prefix)) {
+      return extension;
+    }
+  }
+  return ".png";
+};
+
+const trimUnderscores = (value: string): string => {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value[start] === "_") {
+    start += 1;
+  }
+  while (end > start && value[end - 1] === "_") {
+    end -= 1;
+  }
+  return value.slice(start, end);
+};
+
 const loopUiReviewDownloadFileName = (review: ProjectLoopUiReviewRecord, imageDataUrl: string): string => {
-  const base = review.pageName.replace(/[^\w.-]+/g, "_").replace(/^_+|_+$/g, "") || "screenshot";
-  const extension = imageDataUrl.startsWith("data:image/jpeg")
-    ? ".jpg"
-    : imageDataUrl.startsWith("data:image/webp")
-      ? ".webp"
-      : imageDataUrl.startsWith("data:image/gif")
-        ? ".gif"
-        : ".png";
-  return `${base}-round-${String(review.round)}${extension}`;
+  const base = trimUnderscores(review.pageName.replace(/[^\w.-]+/g, "_")) || "screenshot";
+  return `${base}-round-${String(review.round)}${imageDataUrlExtension(imageDataUrl)}`;
 };
 
 const LoopUiReviewCard = ({
@@ -430,16 +471,7 @@ const LoopUiReviewCard = ({
   }, [review.id]);
 
   const decided = review.status !== "pending";
-  const decisionLabel =
-    review.status === "approved"
-      ? "Approved by you"
-      : review.status === "changes-requested"
-        ? "Changes requested by you"
-        : review.status === "ai-approved"
-          ? "Approved by AI reviewer"
-          : review.status === "ai-changes-requested"
-            ? "Changes requested by AI reviewer"
-            : null;
+  const decisionLabel = LOOP_UI_REVIEW_DECISION_LABELS[review.status] ?? null;
 
   const submit = async (decision: "approve" | "request-changes") => {
     setSubmitting(true);
@@ -660,7 +692,8 @@ const LoopDetailView = ({
                 <Square className="mr-1.5 h-3.5 w-3.5" />
                 Cancel loop
               </Button>
-            ) : loop.status !== "completed" ? (
+            ) : null}
+            {!isActive && loop.status !== "completed" ? (
               <Button
                 type="button"
                 size="sm"
@@ -910,8 +943,12 @@ export const ProjectLoopsTab = ({
     () => loops.filter((item) => item.loop.status !== "completed" && item.loop.status !== "cancelled"),
     [loops],
   );
-  const visibleLoops =
-    loopListSection === "open" ? openLoops : loopListSection === "merged" ? mergedLoops : cancelledLoops;
+  let visibleLoops = cancelledLoops;
+  if (loopListSection === "open") {
+    visibleLoops = openLoops;
+  } else if (loopListSection === "merged") {
+    visibleLoops = mergedLoops;
+  }
   const selectedLoop = selectedLoopId ? loops.find((item) => item.loop.id === selectedLoopId) ?? null : null;
 
   useEffect(() => {
@@ -971,13 +1008,7 @@ export const ProjectLoopsTab = ({
         <RefreshCw className="mx-auto h-6 w-6 text-cyan-400" />
         <p className="mt-3 text-sm font-medium text-zinc-100">Loops are not available for this project yet</p>
         <p className="mx-auto mt-2 max-w-md text-xs text-zinc-500">
-          {availability.reason === "not-git"
-            ? "Loops need a Git project with a GitHub or GitLab remote."
-            : availability.reason === "no-remote"
-              ? 'Loops need an "origin" remote pointing at GitHub or GitLab.'
-              : availability.reason === "no-forge-token"
-                ? `Save a ${availability.provider === "gitlab" ? "GitLab" : "GitHub"} access token in the MR Review tab (${availability.repoLabel ?? "repository"}) so the loop can create and merge PRs in the background.`
-                : "Loops need at least one enabled model from a local provider (Codex CLI or Claude Code), because only they can drive the app and capture screenshots."}
+          {loopUnavailableReasonText(availability)}
         </p>
       </Card>
       </div>
@@ -1177,13 +1208,15 @@ export const ProjectLoopsTab = ({
             <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 px-4 py-10 text-center text-sm text-zinc-500">
               No loops yet. Start one and BuildWarden plans, implements, opens PRs, waits for merges, and addresses review comments on its own.
             </div>
-          ) : visibleLoops.length === 0 ? (
+          ) : null}
+          {loops.length > 0 && visibleLoops.length === 0 ? (
             <p className="rounded-lg border border-dashed border-zinc-800/70 bg-zinc-950/30 px-3 py-2 text-xs text-zinc-600">
               {LOOP_LIST_EMPTY_MESSAGES[loopListSection]}
             </p>
-          ) : (
-            visibleLoops.map((item) => <LoopListRow key={item.loop.id} item={item} onSelect={setSelectedLoopId} />)
-          )}
+          ) : null}
+          {visibleLoops.map((item) => (
+            <LoopListRow key={item.loop.id} item={item} onSelect={setSelectedLoopId} />
+          ))}
         </div>
       </Card>
       </div>

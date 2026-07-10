@@ -4,6 +4,7 @@ import {
   resolveComposerCommandPrompt,
   type AppLogDirectorySizeInfo,
   type AppSnapshot,
+  type HarnessType,
   type KeyboardShortcutId,
   type ProjectSnapshot,
   type ProviderType,
@@ -144,16 +145,15 @@ export const parseKeyboardShortcuts = (json: string | undefined): Record<Keyboar
   }
 };
 
-export const harnessTypeForProvider = (providerType: ProviderType) =>
-  providerType === "codex-cli"
-    ? "codex-app-server"
-    : providerType === "claude-code"
-      ? "claude-code"
-      : providerType === "cursor-agent"
-        ? "cursor-acp"
-      : providerType === "azure-legacy"
-        ? "azure-legacy"
-        : "ai-sdk";
+const HARNESS_TYPE_BY_PROVIDER: Partial<Record<ProviderType, HarnessType>> = {
+  "codex-cli": "codex-app-server",
+  "claude-code": "claude-code",
+  "cursor-agent": "cursor-acp",
+  "azure-legacy": "azure-legacy",
+};
+
+export const harnessTypeForProvider = (providerType: ProviderType): HarnessType =>
+  HARNESS_TYPE_BY_PROVIDER[providerType] ?? "ai-sdk";
 
 const normalizeOpenAiReasoningEffort = (value: string) => {
   const allowed = new Set(["none", "low", "medium", "high", "xhigh"]);
@@ -230,6 +230,27 @@ export const findProjectRun = (projects: ProjectSnapshot[], runId: string) => {
   }
 
   return null;
+};
+
+/** True when the snapshot still references the run anywhere (lists, lab threads, or loop iterations). */
+export const snapshotContainsRunId = (projects: ProjectSnapshot[], runId: string): boolean =>
+  projects.some(
+    (entry) =>
+      entry.runs.some((run) => run.id === runId) ||
+      entry.forLaterRuns.some((run) => run.id === runId) ||
+      entry.labThreads.some((detail) => detail.implementationRun?.id === runId || detail.thread.implementationRunId === runId) ||
+      entry.loops.some((item) => item.iterations.some((iteration) => iteration.runId === runId)),
+  );
+
+/** Picks the base branch to preselect: keep the current choice, fall back to the default branch, then the first branch. */
+export const pickProjectBranch = (branches: string[], defaultBranch: string, current?: string): string => {
+  if (current && branches.includes(current)) {
+    return current;
+  }
+  if (branches.includes(defaultBranch)) {
+    return defaultBranch;
+  }
+  return branches[0] ?? "";
 };
 
 export const getOpenRunPaneEntries = (panes: OpenRunPanes) =>

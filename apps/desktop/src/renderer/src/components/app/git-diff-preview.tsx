@@ -50,6 +50,26 @@ const diffFileKey = (file: { oldPath?: string; newPath?: string }, index: number
 
 const normalizeDiffPathSegment = (value: string) => value.replace(/\\/g, "/").replace(/^a\//, "").replace(/^b\//, "").trim();
 
+const countDiffChanges = (hunks: { changes: { type: string }[] }[], changeType: string): number => {
+  let count = 0;
+  for (const hunk of hunks) {
+    for (const change of hunk.changes) {
+      if (change.type === changeType) {
+        count += 1;
+      }
+    }
+  }
+  return count;
+};
+
+/** Height class for the diff scroll area: compact wins, then fill-container, then the default cap. */
+const diffScrollHeightClass = (compact: boolean, fillContainer: boolean, compactClass: string): string => {
+  if (compact) {
+    return compactClass;
+  }
+  return fillContainer ? "min-h-0 flex-1 max-h-none" : "max-h-[520px]";
+};
+
 export type DiffPreviewFileSummary = {
   key: string;
   path: string;
@@ -656,10 +676,9 @@ const DiffFileSection = memo(function DiffFileSection({
   const openFilePath = normalizeDiffPathSegment(filePathLabel);
   const canOpenFilePath = Boolean(openFilePath && openFilePath !== "Unknown file");
 
-  return (
-    <div className={cn("border-b border-zinc-800", isLastFile && "border-b-0")}>
-      {alwaysExpandedFileSections ? null : hideFileHeader ? (
-        hideFileHeaderInlineToggle ? (
+  const renderCollapseToggleHeader = (): ReactNode => {
+    if (hideFileHeaderInlineToggle) {
+      return (
           <button
             type="button"
             className={cn(
@@ -672,7 +691,9 @@ const DiffFileSection = memo(function DiffFileSection({
           >
             {isCollapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
           </button>
-        ) : (
+      );
+    }
+    return (
           <button
             type="button"
             className="sticky top-0 z-10 flex w-full items-center justify-end border-b border-zinc-800 bg-zinc-900/95 px-2 py-1 text-zinc-500 backdrop-blur-sm hover:text-zinc-300"
@@ -682,8 +703,18 @@ const DiffFileSection = memo(function DiffFileSection({
           >
             {isCollapsed ? <ChevronRight className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
           </button>
-        )
-      ) : onOpenFile ? (
+    );
+  };
+
+  const renderFileHeader = (): ReactNode => {
+    if (alwaysExpandedFileSections) {
+      return null;
+    }
+    if (hideFileHeader) {
+      return renderCollapseToggleHeader();
+    }
+    if (onOpenFile) {
+      return (
         <div className="sticky top-0 z-10 flex w-full items-center justify-between gap-2 border-b border-zinc-800 bg-zinc-900/95 px-3 py-1.5 text-left backdrop-blur-sm">
           <button
             type="button"
@@ -719,7 +750,9 @@ const DiffFileSection = memo(function DiffFileSection({
             </button>
           </div>
         </div>
-      ) : (
+      );
+    }
+    return (
         <button
           type="button"
           className="sticky top-0 z-10 flex w-full items-center justify-between gap-2 border-b border-zinc-800 bg-zinc-900/95 px-3 py-1.5 text-left backdrop-blur-sm"
@@ -732,7 +765,12 @@ const DiffFileSection = memo(function DiffFileSection({
           </div>
           {isCollapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-500" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-500" />}
         </button>
-      )}
+    );
+  };
+
+  return (
+    <div className={cn("border-b border-zinc-800", isLastFile && "border-b-0")}>
+      {renderFileHeader()}
       {!isCollapsed ? (
         <>
           <Diff
@@ -899,8 +937,8 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
         path: formatDiffPath(file.oldPath, file.newPath),
         oldPath: file.oldPath && file.oldPath !== file.newPath ? file.oldPath : null,
         type: file.type,
-        additions: file.hunks.reduce((sum, hunk) => sum + hunk.changes.filter((change) => change.type === "insert").length, 0),
-        deletions: file.hunks.reduce((sum, hunk) => sum + hunk.changes.filter((change) => change.type === "delete").length, 0),
+        additions: countDiffChanges(file.hunks, "insert"),
+        deletions: countDiffChanges(file.hunks, "delete"),
       })),
     [whitespaceFilteredFiles],
   );
@@ -1159,11 +1197,7 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     return { generalNavEntries: general, reviewEntriesByFileKey: byFileKey };
   }, [reviewNavEntries]);
 
-  const scrollAreaHeightClass = compact
-    ? "max-h-72"
-    : fillContainer
-      ? "min-h-0 flex-1 max-h-none"
-      : "max-h-[520px]";
+  const scrollAreaHeightClass = diffScrollHeightClass(compact, fillContainer, "max-h-72");
 
   if (!trimmedDiff) {
     return (
@@ -1199,7 +1233,7 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
         className={cn(
           "app-scrollbar overflow-auto rounded-xl border border-zinc-800 bg-zinc-950/70 p-3 text-xs text-zinc-300",
           className,
-          compact ? "max-h-64" : fillContainer ? "min-h-0 flex-1 max-h-none" : "max-h-[520px]",
+          diffScrollHeightClass(compact, fillContainer, "max-h-64"),
         )}
       >
         {diffText}

@@ -44,6 +44,26 @@ const ACTIVE_RUN_STATUSES = new Set<RunRecord["status"]>(["queued", "preparing",
 const PR_POLL_INTERVAL_MS = 45_000;
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 
+const describeUiChangePolicy = (policy: string): string => {
+  if (policy === "auto") {
+    return "merged without review";
+  }
+  if (policy === "manual-approval") {
+    return "each affected page needs your approval";
+  }
+  return "each affected page is reviewed by an AI model";
+};
+
+const imageMimeForExtension = (ext: string): string => {
+  if (ext === ".jpg" || ext === ".jpeg") {
+    return "image/jpeg";
+  }
+  if (ext === ".webp") {
+    return "image/webp";
+  }
+  return ext === ".gif" ? "image/gif" : "image/png";
+};
+
 class LoopCancelledError extends Error {
   constructor() {
     super("The loop was cancelled.");
@@ -228,13 +248,7 @@ export class ProjectLoopRunner {
       [
         `Target branch: ${baseBranch}`,
         `Merge policy: ${loop.mergePolicy === "auto-merge" ? "merge automatically" : "wait for approval / manual merge"}`,
-        `UI changes: ${
-          loop.uiChangePolicy === "auto"
-            ? "merged without review"
-            : loop.uiChangePolicy === "manual-approval"
-              ? "each affected page needs your approval"
-              : "each affected page is reviewed by an AI model"
-        }`,
+        `UI changes: ${describeUiChangePolicy(loop.uiChangePolicy)}`,
         `PR review: ${
           loop.prReviewPolicy === "ai-review"
             ? "the review model posts a visible code review on each PR/MR, and the loop then addresses its findings"
@@ -405,8 +419,7 @@ export class ProjectLoopRunner {
       return null;
     }
     const ext = extname(review.imagePath).toLowerCase();
-    const mime =
-      ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : ext === ".webp" ? "image/webp" : ext === ".gif" ? "image/gif" : "image/png";
+    const mime = imageMimeForExtension(ext);
     const bytes = readFileSync(review.imagePath);
     return `data:${mime};base64,${bytes.toString("base64")}`;
   }
@@ -541,7 +554,6 @@ export class ProjectLoopRunner {
         if (!created) {
           return; // Iteration produced no commits and was marked skipped.
         }
-        iteration = this.deps.db.getProjectLoopIteration(iterationId);
       }
     }
 
@@ -1287,7 +1299,10 @@ export class ProjectLoopRunner {
             "### BuildWarden Loop AI review",
             review.summary,
             "",
-            ...leftoverFindings.map((finding) => `- \`${finding.path}\`${finding.line ? `:${String(finding.line)}` : ""} - ${findingBody(finding)}`),
+            ...leftoverFindings.map((finding) => {
+              const lineSuffix = finding.line ? `:${String(finding.line)}` : "";
+              return `- \`${finding.path}\`${lineSuffix} - ${findingBody(finding)}`;
+            }),
           ]
             .filter(Boolean)
             .join("\n"),

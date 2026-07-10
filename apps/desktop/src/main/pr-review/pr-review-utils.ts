@@ -22,7 +22,13 @@ export const recordObject = (record: Record<string, unknown>, key: string): Reco
   return isRecord(value) ? value : null;
 };
 
-export const normalizeWebBaseForApiCompare = (value: string) => value.trim().replace(/\/+$/g, "").toLowerCase();
+export const normalizeWebBaseForApiCompare = (value: string) => {
+  let normalized = value.trim();
+  while (normalized.endsWith("/")) {
+    normalized = normalized.slice(0, -1);
+  }
+  return normalized.toLowerCase();
+};
 
 export const parseAndValidatePrMrUrl = (prUrl: string, context: ProjectPrReviewRemoteContext) => {
   const parsed = parsePrMrBrowserUrl(prUrl);

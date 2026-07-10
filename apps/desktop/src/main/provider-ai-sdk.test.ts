@@ -18,7 +18,7 @@ describe("AiSdkProviderAdapter", () => {
         apiKey: "",
         config: { providerFamily: "openai" },
       }),
-    ).toThrowError("An API key is required for AI SDK providers.");
+    ).toThrow("An API key is required for AI SDK providers.");
   });
 
   it("accepts missing api keys for openai-compatible family", () => {
