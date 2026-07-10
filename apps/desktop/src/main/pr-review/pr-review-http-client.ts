@@ -15,7 +15,12 @@ const formatApiErrorValue = (value: unknown, path = ""): string[] => {
   }
   if (isRecord(value)) {
     return Object.entries(value).flatMap(([key, entry]) => {
-      const nextPath = key === "message" || key === "error" || key === "error_description" ? path : path ? `${path}.${key}` : key;
+      let nextPath = key;
+      if (key === "message" || key === "error" || key === "error_description") {
+        nextPath = path;
+      } else if (path) {
+        nextPath = `${path}.${key}`;
+      }
       return formatApiErrorValue(entry, nextPath);
     });
   }
@@ -96,11 +101,7 @@ export class PrReviewHttpClient {
       headers,
     });
     if (!response.ok) {
-      const message = await responseErrorMessage(response);
-      const hint = prReviewErrorHint(this.context.provider, path, response.status);
-      throw new Error(
-        `${this.context.provider === "github" ? "GitHub" : "GitLab"} API ${String(response.status)}: ${hint ? `${message}. ${hint}` : message}`,
-      );
+      throw await this.buildApiError(response, path);
     }
     return {
       payload: await readJsonResponse(response),
@@ -128,12 +129,16 @@ export class PrReviewHttpClient {
       headers,
     });
     if (!response.ok) {
-      const message = await responseErrorMessage(response);
-      const hint = prReviewErrorHint(this.context.provider, path, response.status);
-      throw new Error(
-        `${this.context.provider === "github" ? "GitHub" : "GitLab"} API ${String(response.status)}: ${hint ? `${message}. ${hint}` : message}`,
-      );
+      throw await this.buildApiError(response, path);
     }
     return response.text();
+  }
+
+  private async buildApiError(response: Response, path: string): Promise<Error> {
+    const message = await responseErrorMessage(response);
+    const hint = prReviewErrorHint(this.context.provider, path, response.status);
+    const providerName = this.context.provider === "github" ? "GitHub" : "GitLab";
+    const detail = hint ? `${message}. ${hint}` : message;
+    return new Error(`${providerName} API ${String(response.status)}: ${detail}`);
   }
 }

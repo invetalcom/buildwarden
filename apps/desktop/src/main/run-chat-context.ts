@@ -53,6 +53,14 @@ const takeLatestWithinBudget = (entries: string[], budget: number): string[] => 
 };
 
 /** Splits a unified diff into per-file sections, keeping "diff --git" headers with their hunks. */
+const buildCodeChangesSection = (diffSection: string, diffUnavailableReason: string | null): string => {
+  if (diffSection) {
+    return `<code_changes>\nUnified git diff of the run's workspace:\n\n${diffSection}\n</code_changes>`;
+  }
+  const reasonSuffix = diffUnavailableReason ? ` (${diffUnavailableReason})` : "";
+  return `<code_changes>\nNo diff is available${reasonSuffix}. The run may not have changed any files.\n</code_changes>`;
+};
+
 const truncateDiff = (diff: string): string => {
   const trimmed = diff.trim();
   if (!trimmed) {
@@ -126,9 +134,7 @@ export const buildRunChatContext = (input: RunChatContextInput): string => {
     `<run_info>\nProject: ${projectName}\nBranch: ${run.branchName}\nMode: ${run.mode}\nStatus: ${run.status}\nStarted: ${run.startedAt ?? "unknown"}\nFinished: ${run.finishedAt ?? "not finished"}\n</run_info>`,
     promptSection ? `<run_instructions>\nUser prompts given to the agent:\n${promptSection}\n</run_instructions>` : "",
     outputSection ? `<agent_output>\n${outputSection}\n</agent_output>` : "",
-    diffSection
-      ? `<code_changes>\nUnified git diff of the run's workspace:\n\n${diffSection}\n</code_changes>`
-      : `<code_changes>\nNo diff is available${input.diffUnavailableReason ? ` (${input.diffUnavailableReason})` : ""}. The run may not have changed any files.\n</code_changes>`,
+    buildCodeChangesSection(diffSection, input.diffUnavailableReason ?? null),
   ];
 
   return parts.filter(Boolean).join("\n\n");

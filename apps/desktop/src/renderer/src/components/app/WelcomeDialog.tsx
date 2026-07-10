@@ -109,24 +109,31 @@ export const WelcomeDialog = ({
     : null;
   const missingCheckList = formatCheckList(missingChecks);
   const completedCheckList = formatCheckList(completedChecks);
-  const introTitle =
-    missingChecks.length === WELCOME_CHECK_DEFINITIONS.length
-      ? "Tiny setup, then the fun part."
-      : missingChecks.length === 1
-        ? "Nice, just one thing left."
-        : "Nice, a few bits are already ready.";
-  const introDescription =
-    missingChecks.length === WELCOME_CHECK_DEFINITIONS.length
-      ? "Connect a model, pick a project folder, and BuildWarden can get out of checklist mode."
-      : missingChecks.length > 0
-        ? `Already done: ${completedCheckList}. Still needed: ${missingCheckList}.`
-        : "Everything is already wired up. BuildWarden is ready when you are.";
-  const introSubtitle =
-    missingChecks.length === WELCOME_CHECK_DEFINITIONS.length
-      ? "Two quick choices and you are ready for your first run."
-      : missingChecks.length > 0
-        ? `You already handled ${completedCheckList}. Let's finish ${missingCheckList}.`
-        : "Everything looks ready. No extra homework today.";
+  const nothingCompletedYet = missingChecks.length === WELCOME_CHECK_DEFINITIONS.length;
+  let introTitle = "Nice, a few bits are already ready.";
+  let introDescription = "Everything is already wired up. BuildWarden is ready when you are.";
+  let introSubtitle = "Everything looks ready. No extra homework today.";
+  if (nothingCompletedYet) {
+    introTitle = "Tiny setup, then the fun part.";
+    introDescription = "Connect a model, pick a project folder, and BuildWarden can get out of checklist mode.";
+    introSubtitle = "Two quick choices and you are ready for your first run.";
+  } else if (missingChecks.length > 0) {
+    introTitle = missingChecks.length === 1 ? "Nice, just one thing left." : "Nice, a few bits are already ready.";
+    introDescription = `Already done: ${completedCheckList}. Still needed: ${missingCheckList}.`;
+    introSubtitle = `You already handled ${completedCheckList}. Let's finish ${missingCheckList}.`;
+  }
+
+  let headerTitle: string | undefined = currentCheck?.title;
+  let headerSubtitle: string | undefined = currentCheck?.description;
+  if (stepKey === "intro") {
+    headerTitle = "Welcome to BuildWarden";
+    headerSubtitle = introSubtitle;
+  } else if (stepKey === "done") {
+    headerTitle = allChecksComplete ? "All set & done" : "Done for now";
+    headerSubtitle = allChecksComplete
+      ? "Provider, model, and project have all existed once. This hello screen will stop popping by."
+      : "You skipped the remaining bits. No drama; BuildWarden will ask again on a later startup.";
+  }
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -244,17 +251,9 @@ export const WelcomeDialog = ({
               tabIndex={-1}
               className="mt-0.5 text-xl font-semibold tracking-tight text-[var(--ec-text)] outline-none"
             >
-              {stepKey === "intro" ? "Welcome to BuildWarden" : stepKey === "done" ? (allChecksComplete ? "All set & done" : "Done for now") : currentCheck?.title}
+              {headerTitle}
             </h2>
-            <p className="mt-0.5 max-w-3xl text-sm leading-5 text-[var(--ec-muted)]">
-              {stepKey === "intro"
-                ? introSubtitle
-                : stepKey === "done"
-                  ? allChecksComplete
-                    ? "Provider, model, and project have all existed once. This hello screen will stop popping by."
-                    : "You skipped the remaining bits. No drama; BuildWarden will ask again on a later startup."
-                  : currentCheck?.description}
-            </p>
+            <p className="mt-0.5 max-w-3xl text-sm leading-5 text-[var(--ec-muted)]">{headerSubtitle}</p>
           </header>
 
           <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto p-4">
@@ -350,15 +349,17 @@ export const WelcomeDialog = ({
                 <Button type="button" onClick={onIntroNext}>
                   Get started
                 </Button>
-              ) : currentCheck ? (
+              ) : null}
+              {stepKey !== "intro" && currentCheck ? (
                 <Button type="button" onClick={() => onSkipCheck(currentCheck.id)}>
                   Skip this step
                 </Button>
-              ) : (
+              ) : null}
+              {stepKey !== "intro" && !currentCheck ? (
                 <Button type="button" onClick={onFinish}>
                   Finish
                 </Button>
-              )}
+              ) : null}
             </div>
           </footer>
         </section>

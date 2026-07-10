@@ -161,7 +161,7 @@ export const listDependencySourceFilesForProjectGraph = (repoPath: string): stri
 };
 
 const detectJavaPackage = (content: string): string | null => {
-  const match = content.match(/^\s*package\s+([A-Za-z_][\w.]*)\s*;/m);
+  const match = /^[ \t]*package[ \t]+([A-Za-z_][\w.]*)[ \t]*;/m.exec(content);
   return match?.[1]?.trim() || null;
 };
 
@@ -192,7 +192,7 @@ const readGoModulePath = (repoPath: string): string | null => {
     return null;
   }
   const content = readFileSync(goModPath, "utf8");
-  const match = content.match(/^\s*module\s+(\S+)\s*$/m);
+  const match = /^[ \t]*module[ \t]+(\S+)[ \t]*$/m.exec(content);
   return match?.[1]?.trim() || null;
 };
 
@@ -342,7 +342,7 @@ const extractJsLikeLocalDependencies = (repoPath: string, absoluteSource: string
 
 const extractJavaDependencies = (content: string, indexes: JavaGraphIndexes): string[] => {
   const resolved = new Set<string>();
-  const importPattern = /^\s*import\s+(?:static\s+)?([A-Za-z_][\w$]*(?:\.[\w$*]+)+)\s*;/gm;
+  const importPattern = /^[ \t]*import\s+(?:static\s+)?([A-Za-z_][\w$]*(?:\.[\w$*]+)+)[ \t]*;/gm;
   for (const match of content.matchAll(importPattern)) {
     const specifier = match[1]?.trim();
     if (!specifier) {
@@ -366,7 +366,7 @@ const extractJavaDependencies = (content: string, indexes: JavaGraphIndexes): st
 
 const extractGoImportPaths = (content: string): string[] => {
   const importPaths = new Set<string>();
-  const blockPattern = /^\s*import\s*\(([\s\S]*?)^\s*\)/gm;
+  const blockPattern = /^[ \t]*import[ \t]*\(([\s\S]*?)^[ \t]*\)/gm;
   for (const match of content.matchAll(blockPattern)) {
     const block = match[1] ?? "";
     for (const pathMatch of block.matchAll(/"([^"]+)"/g)) {
@@ -376,7 +376,7 @@ const extractGoImportPaths = (content: string): string[] => {
       }
     }
   }
-  const singlePattern = /^\s*import\s+(?:[.\w_]+\s+)?"([^"]+)"/gm;
+  const singlePattern = /^[ \t]*import[ \t]+(?:[.\w]+[ \t]+)?"([^"]+)"/gm;
   for (const match of content.matchAll(singlePattern)) {
     const importPath = match[1]?.trim();
     if (importPath) {
@@ -402,26 +402,32 @@ const resolveGoDependencies = (content: string, indexes: GoGraphIndexes): string
   return [...resolved];
 };
 
+/** Strips a trailing ` as alias` clause from an import segment without regex backtracking. */
+const stripImportAlias = (value: string): string => {
+  const match = /\s+as\s+\S/i.exec(value);
+  return match ? value.slice(0, match.index) : value;
+};
+
 const parsePythonImports = (content: string): PythonImportEntry[] => {
   const entries: PythonImportEntry[] = [];
-  const importPattern = /^\s*import\s+([^\n#]+)/gm;
+  const importPattern = /^[ \t]*import[ \t]+([^\n#]+)/gm;
   for (const match of content.matchAll(importPattern)) {
     const rawModules = match[1] ?? "";
     for (const part of rawModules.split(",")) {
-      const moduleName = part.replace(/\s+as\s+.+$/i, "").trim();
+      const moduleName = stripImportAlias(part).trim();
       if (moduleName) {
         entries.push({ kind: "import", module: moduleName });
       }
     }
   }
 
-  const fromPattern = /^\s*from\s+(\.*)([A-Za-z_][\w.]*)?\s+import\s+([^\n#]+)/gm;
+  const fromPattern = /^[ \t]*from[ \t]+(\.*)([A-Za-z_][\w.]*)?[ \t]+import[ \t]+([^\n#]+)/gm;
   for (const match of content.matchAll(fromPattern)) {
     const dots = match[1] ?? "";
     const moduleName = match[2]?.trim() || null;
     const importedNames = (match[3] ?? "")
       .split(",")
-      .map((part) => part.replace(/[()]/g, "").replace(/\s+as\s+.+$/i, "").trim())
+      .map((part) => stripImportAlias(part.replace(/[()]/g, "")).trim())
       .filter(Boolean);
     entries.push({
       kind: "from",
@@ -503,14 +509,17 @@ const resolveRustModulePath = (candidate: string, indexes: RustGraphIndexes): st
 };
 
 const expandRustUseExpression = (expression: string): string[] => {
-  const trimmed = expression.trim().replace(/\s+as\s+\w+$/i, "");
+  const trimmed = stripImportAlias(expression.trim());
   const braceStart = trimmed.indexOf("{");
   const braceEnd = trimmed.lastIndexOf("}");
   if (braceStart === -1 || braceEnd === -1 || braceEnd < braceStart) {
     return [trimmed];
   }
 
-  const prefix = trimmed.slice(0, braceStart).replace(/:+$/, "");
+  let prefix = trimmed.slice(0, braceStart);
+  while (prefix.endsWith(":")) {
+    prefix = prefix.slice(0, -1);
+  }
   const inner = trimmed.slice(braceStart + 1, braceEnd);
   return inner
     .split(",")
@@ -550,7 +559,7 @@ const resolveRustDependencies = (source: string, content: string, indexes: RustG
   const resolved = new Set<string>();
   const currentModulePath = canonicalRustModulePath(source);
 
-  const usePattern = /(?:^|\n)\s*(?:pub\s+)?use\s+([^;]+);/g;
+  const usePattern = /(?:^|\n)[ \t]*(?:pub\s+)?use\s+([^;]+);/g;
   for (const match of content.matchAll(usePattern)) {
     for (const expandedPath of expandRustUseExpression(match[1] ?? "")) {
       const normalizedPath = normalizeRustPath(currentModulePath, expandedPath) ?? expandedPath.trim();
@@ -561,17 +570,16 @@ const resolveRustDependencies = (source: string, content: string, indexes: RustG
     }
   }
 
-  const modPattern = /^\s*(?:pub\s+)?mod\s+([A-Za-z_][\w]*)\s*;/gm;
+  const modPattern = /^[ \t]*(?:pub\s+)?mod[ \t]+([A-Za-z_]\w*)[ \t]*;/gm;
   for (const match of content.matchAll(modPattern)) {
     const modName = match[1]?.trim();
     if (!modName) {
       continue;
     }
-    const basePath = currentModulePath === "crate"
-      ? `crate::${modName}`
-      : currentModulePath
-        ? `${currentModulePath}::${modName}`
-        : `crate::${modName}`;
+    let basePath = `crate::${modName}`;
+    if (currentModulePath && currentModulePath !== "crate") {
+      basePath = `${currentModulePath}::${modName}`;
+    }
     const target = resolveRustModulePath(basePath, indexes);
     if (target) {
       resolved.add(target);

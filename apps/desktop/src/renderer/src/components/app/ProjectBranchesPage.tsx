@@ -30,6 +30,69 @@ interface ProjectBranchesPageProps {
   onBranchesChanged: () => void | Promise<void>;
 }
 
+const checkoutButtonLabel = (branch: ProjectGitBranchInfo): string => {
+  if (branch.isCurrent) {
+    return "Checked out";
+  }
+  return branch.hasLocal ? "Checkout" : "Track";
+};
+
+const BranchDeleteImpactNotice = ({
+  branchName,
+  checking,
+  impact,
+}: Readonly<{
+  branchName: string;
+  checking: boolean;
+  impact: ProjectBranchDeleteImpact | null;
+}>) => {
+  if (checking) {
+    return <p className="mt-1 text-[11px] text-[var(--ec-muted)]">Checking linked agent runs...</p>;
+  }
+  if (impact?.branchName !== branchName) {
+    return null;
+  }
+  if (impact.linkedRuns.length === 0) {
+    return (
+      <p className="mt-1 text-[11px] text-[var(--ec-muted)]">No linked agent runs were found. Confirm to delete only the local branch.</p>
+    );
+  }
+  return (
+    <div className="mt-1.5 space-y-1 text-[11px] text-[var(--ec-muted)]">
+      <p>
+        This will also delete {impact.linkedRuns.length} linked agent run
+        {impact.linkedRuns.length === 1 ? "" : "s"} and any BuildWarden worktrees for them.
+      </p>
+      <div className="max-h-20 overflow-auto rounded border border-[var(--ec-danger-ring)] bg-black/10">
+        {impact.linkedRuns.slice(0, 4).map((run) => (
+          <div key={run.id} className="flex min-w-0 items-center justify-between gap-2 px-2 py-1">
+            <span className="min-w-0 truncate text-[var(--ec-text)]">{compactRunPrompt(run.prompt)}</span>
+            <span className="shrink-0 rounded-full border border-[var(--ec-border)] px-1.5 py-px text-[9px] uppercase text-[var(--ec-muted)]">
+              {run.status}
+            </span>
+          </div>
+        ))}
+        {impact.linkedRuns.length > 4 ? (
+          <div className="px-2 py-1 text-[var(--ec-faint)]">+{impact.linkedRuns.length - 4} more</div>
+        ) : null}
+      </div>
+    </div>
+  );
+};
+
+const resolveHostingLabel = (authProvider: string | null, overviewProvider: string | null): string => {
+  if (authProvider) {
+    return authProvider === "gitlab" ? "GitLab" : "GitHub";
+  }
+  if (overviewProvider === "gitlab") {
+    return "GitLab";
+  }
+  if (overviewProvider === "github") {
+    return "GitHub";
+  }
+  return "Remote";
+};
+
 const formatBranchDate = (value: string | null) => {
   if (!value) return "";
   const date = new Date(value);
@@ -125,7 +188,11 @@ export const ProjectBranchesPage = ({
   const sourceOptions = useMemo(() => branchRows.map(branchSourceLabel), [branchRows]);
   const currentBranchInfo = branchRows.find((branch) => branch.name === current) ?? null;
   const hasHostingToken = authStatus?.hasToken === true;
-  const hostingLabel = authStatus ? (authStatus.provider === "gitlab" ? "GitLab" : "GitHub") : overview?.provider === "gitlab" ? "GitLab" : overview?.provider === "github" ? "GitHub" : "Remote";
+  const hostingLabel = resolveHostingLabel(authStatus?.provider ?? null, overview?.provider ?? null);
+  let hostingTokenSuffix = "";
+  if (authStatus) {
+    hostingTokenSuffix = hasHostingToken ? " token" : " no token";
+  }
 
   const runBranchAction = async (key: string, action: () => Promise<ProjectGitBranchOverview | void>, success: string): Promise<boolean> => {
     setActionBusy(key);
@@ -218,13 +285,19 @@ export const ProjectBranchesPage = ({
       });
   };
 
+  const describeBranchDeletion = (branch: string): string => {
+    if (deleteImpact?.branchName === branch && deleteImpact.linkedRuns.length > 0) {
+      const runCount = deleteImpact.linkedRuns.length;
+      return `Deleted local branch ${branch} and ${runCount} linked agent run${runCount === 1 ? "" : "s"}.`;
+    }
+    return `Deleted local branch ${branch}.`;
+  };
+
   const deleteSelectedBranch = (branch: string) =>
     runBranchAction(
       `delete:${branch}`,
       () => window.buildwarden.deleteProjectBranch(projectId, { branchName: branch, force: forceDelete }),
-      deleteImpact?.branchName === branch && deleteImpact.linkedRuns.length > 0
-        ? `Deleted local branch ${branch} and ${deleteImpact.linkedRuns.length} linked agent run${deleteImpact.linkedRuns.length === 1 ? "" : "s"}.`
-        : `Deleted local branch ${branch}.`,
+      describeBranchDeletion(branch),
     ).then((ok) => {
       if (ok) {
         setDeleteBranch(null);
@@ -254,7 +327,7 @@ export const ProjectBranchesPage = ({
                   <p className="text-sm font-semibold text-[var(--ec-text)]">Branches</p>
                   <span className="rounded-full border border-[var(--ec-border)] px-2 py-0.5 text-[10px] text-[var(--ec-muted)]">
                     {hostingLabel}
-                    {authStatus ? (hasHostingToken ? " token" : " no token") : ""}
+                    {hostingTokenSuffix}
                   </span>
                 </div>
                 <p className="mt-1 truncate text-xs text-[var(--ec-muted)]" title={repoPath}>
@@ -382,7 +455,7 @@ export const ProjectBranchesPage = ({
                         onClick={() => void checkoutBranch(branch)}
                       >
                         {actionBusy === `checkout:${branch.name}` ? <Loader2 className="mr-1 size-3 animate-spin" /> : null}
-                        {branch.isCurrent ? "Checked out" : branch.hasLocal ? "Checkout" : "Track"}
+                        {checkoutButtonLabel(branch)}
                       </Button>
                       {canPush ? (
                         <Button
@@ -453,31 +526,11 @@ export const ProjectBranchesPage = ({
                           <p className="text-xs text-[var(--ec-text)]">
                             Delete local branch <span className="font-mono font-semibold">{branch.name}</span>?
                           </p>
-                          {deleteImpactBusy === branch.name ? (
-                            <p className="mt-1 text-[11px] text-[var(--ec-muted)]">Checking linked agent runs...</p>
-                          ) : deleteImpact?.branchName === branch.name && deleteImpact.linkedRuns.length > 0 ? (
-                            <div className="mt-1.5 space-y-1 text-[11px] text-[var(--ec-muted)]">
-                              <p>
-                                This will also delete {deleteImpact.linkedRuns.length} linked agent run
-                                {deleteImpact.linkedRuns.length === 1 ? "" : "s"} and any BuildWarden worktrees for them.
-                              </p>
-                              <div className="max-h-20 overflow-auto rounded border border-[var(--ec-danger-ring)] bg-black/10">
-                                {deleteImpact.linkedRuns.slice(0, 4).map((run) => (
-                                  <div key={run.id} className="flex min-w-0 items-center justify-between gap-2 px-2 py-1">
-                                    <span className="min-w-0 truncate text-[var(--ec-text)]">{compactRunPrompt(run.prompt)}</span>
-                                    <span className="shrink-0 rounded-full border border-[var(--ec-border)] px-1.5 py-px text-[9px] uppercase text-[var(--ec-muted)]">
-                                      {run.status}
-                                    </span>
-                                  </div>
-                                ))}
-                                {deleteImpact.linkedRuns.length > 4 ? (
-                                  <div className="px-2 py-1 text-[var(--ec-faint)]">+{deleteImpact.linkedRuns.length - 4} more</div>
-                                ) : null}
-                              </div>
-                            </div>
-                          ) : deleteImpact?.branchName === branch.name ? (
-                            <p className="mt-1 text-[11px] text-[var(--ec-muted)]">No linked agent runs were found. Confirm to delete only the local branch.</p>
-                          ) : null}
+                          <BranchDeleteImpactNotice
+                            branchName={branch.name}
+                            checking={deleteImpactBusy === branch.name}
+                            impact={deleteImpact}
+                          />
                         </div>
                         <label className="flex items-center gap-1.5 text-xs text-[var(--ec-muted)]">
                           <input type="checkbox" checked={forceDelete} onChange={(event) => setForceDelete(event.target.checked)} />

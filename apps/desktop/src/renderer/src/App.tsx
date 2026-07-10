@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type ReactNode } from "react";
 import {
   APP_SETTING_KEYS,
   cycleUiTheme,
@@ -9,23 +9,10 @@ import {
   getAiSdkProviderFamilyFromConfigJson,
   DEFAULT_ADD_MODEL_DRAFT,
   DEFAULT_SHELL_ALLOWLIST_PATTERN_SOURCES,
-  parseIntegratedSkillsDisabledSetting,
-  parseProjectLabSettingsSetting,
-  parseProjectActiveSkillsSetting,
   parseRecentRunDaysSetting,
   parseRunTimelineDensitySetting,
   parseRunWorkspaceLayoutsSetting,
-  parseWelcomeCompletedCheckIdsSetting,
   parseUiTheme,
-  PROVIDER_CONFIG_AI_SDK_PROVIDER_FAMILY_KEY,
-  PROVIDER_CONFIG_AZURE_API_VERSION_KEY,
-  PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY,
-  PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY,
-  PROVIDER_CONFIG_CODEX_BINARY_PATH_KEY,
-  PROVIDER_CONFIG_CODEX_HOME_PATH_KEY,
-  PROVIDER_CONFIG_CURSOR_API_ENDPOINT_KEY,
-  PROVIDER_CONFIG_CURSOR_BINARY_PATH_KEY,
-  serializeWelcomeCompletedCheckIdsSetting,
   SUPPORTED_IDE_KINDS,
   parseIdePathConfig,
   parseShellAllowlistExtraSetting,
@@ -35,8 +22,6 @@ import {
   type ChatAttachmentPayload,
   type ChatDetail,
   type ChatRecord,
-  type ContinueRunInput,
-  type ProjectLabSettings,
   type KeyboardShortcutId,
   type NetworkProxySettingsSnapshot,
   type ProjectFolderGitStatus,
@@ -47,7 +32,6 @@ import {
   type ProviderType,
   type RunDetail,
   type RunMode,
-  type RunPublishOptions,
   type RunRecord,
   type RunTokenUsage,
   type RunTimelineDensity,
@@ -57,25 +41,16 @@ import {
   type RunWorkspaceType,
   type ShellApprovalDecision,
   type SupportedIdeKind,
-  type IntegratedSkillMetadata,
   type UiTheme,
   type UnifiedProviderFamily,
   uiThemeToLegacyDarkMode,
 } from "@buildwarden/shared";
 import {
-  Bot,
-  Bookmark,
-  Command as CommandIcon,
-  FolderOpen,
   Globe,
   GitBranch,
-  GitPullRequest,
-  Home,
   Loader2,
   MessageSquareText,
   MessagesSquare,
-  Settings,
-  Sparkles,
   SquareTerminal,
   StickyNote,
 } from "lucide-react";
@@ -102,7 +77,6 @@ import {
   RUN_PANE_IDS,
   buildRunReasoningInput,
   cloneDefaultRunWorkspaceLayoutPreference,
-  eventToKeyString,
   findProjectRun,
   firstOpenRunId,
   getOpenRunPaneEntries,
@@ -112,9 +86,11 @@ import {
   paneForOpenRunId,
   parseKeyboardShortcuts,
   parseRunDragPayload,
+  pickProjectBranch,
   readRunTokenUsage,
   resolveProviderComposerPrompt,
   runIdIsOpenInPanes,
+  snapshotContainsRunId,
   type ConfirmDialogState,
   type OpenRunPanes,
   type RunBrowserSessionState,
@@ -126,20 +102,19 @@ import {
   type ProjectForgeRequestToast,
   type ShellApprovalRequestState,
 } from "./components/app/AppNotifications";
+import { createAppKeyboardShortcutHandler } from "./components/app/app-keyboard-shortcuts";
+import { buildCommandPaletteItems } from "./components/app/command-palette-items";
+import { useRunActionDialogs } from "./components/app/use-run-action-dialogs";
+import { useSkillsSettings } from "./components/app/use-skills-settings";
+import { useWelcomeFlow } from "./components/app/use-welcome-flow";
+import { buildProviderAccountConfig } from "./lib/provider-account-config";
 import { RunActionDialogs } from "./components/app/RunActionDialogs";
-import { RunDetailHeader, RunPaneDropPreviewOverlay } from "./components/app/RunDetailHeader";
+import { RunDetailHeader, RunPaneDropPreviewOverlay, type RunPanelToggleItem } from "./components/app/RunDetailHeader";
 const RunDetailPage = lazy(() => import("./components/app/RunDetailPage").then((m) => ({ default: m.RunDetailPage })));
 const SettingsPage = lazy(() => import("./components/app/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 import { Sidebar } from "./components/app/Sidebar";
 import { DEFAULT_SIDEBAR_WIDTH, clampSidebarWidth, parseSidebarWidthSetting } from "./components/app/sidebar-width";
-import { WelcomeDialog, type WelcomeStepKey } from "./components/app/WelcomeDialog";
-import {
-  WELCOME_CHECK_DEFINITIONS,
-  getSatisfiedWelcomeCheckIds,
-  orderWelcomeCheckIds,
-  type WelcomeCheckId,
-} from "./components/app/welcome-checks";
-import type { ProviderModelsOpenPanel } from "./components/app/settings-provider-models-tab";
+import { WelcomeDialog } from "./components/app/WelcomeDialog";
 import { Button } from "./components/ui/button";
 import { Card } from "./components/ui/card";
 import { cn } from "./lib/cn";
@@ -169,27 +144,104 @@ interface SettingsPreviousPageState {
   runDetailsById: Record<string, RunDetail>;
 }
 
-const formatRunWorkspaceLabel = (run: RunRecord): string => {
-  if (run.workspaceVcs === "folder") {
-    return run.workspaceType === "copy" ? "Folder copy" : "Project folder";
-  }
-  return run.branchName;
-};
-
 const isLocalProviderType = (type: ProviderType): boolean =>
   type === "codex-cli" || type === "claude-code" || type === "cursor-agent";
 
+const panelVisibilitySubtitle = (visible: boolean, hiddenSubtitle: string): string =>
+  visible ? "Visible" : hiddenSubtitle;
+
+const appendShellApprovalRequest = (
+  current: ShellApprovalRequestState[],
+  request: ShellApprovalRequestState,
+): ShellApprovalRequestState[] => {
+  if (current.some((item) => item.requestId === request.requestId && item.runId === request.runId)) {
+    return current;
+  }
+  return [...current, request];
+};
+
+const removeShellApprovalsByRequestId = (current: ShellApprovalRequestState[], requestId: string): ShellApprovalRequestState[] =>
+  current.filter((item) => item.requestId !== requestId);
+
+const removeShellApprovalsByRunId = (current: ShellApprovalRequestState[], runId: string): ShellApprovalRequestState[] =>
+  current.filter((item) => item.runId !== runId);
+
+const computeProjectFolderGitWarning = (status: ProjectFolderGitStatus | null): string | null => {
+  if (status?.exists === true && status.isDirectory && !status.isGitRepo) {
+    return "The selected folder is not a Git repository. It will be added as a plain folder project; Git-only features like branches, commits, worktrees, and PR/MR tools will be unavailable.";
+  }
+  return null;
+};
+
+interface MainViewFlagInput {
+  settingsOpen: boolean;
+  landingSelected: boolean;
+  allRunsSelected: boolean;
+  bookmarksSelected: boolean;
+  chatsSelected: boolean;
+  selectedRunId: string | null | undefined;
+  hasSelectedProject: boolean;
+  hasRunDetail: boolean;
+  openRunPaneCount: number;
+  hasChatDetail: boolean;
+}
+
+/**
+ * Derives which top-level view the main area shows and its layout class.
+ * Agent run detail and chat detail use a flex column so the composer stays at
+ * the bottom; the project workspace uses a flex column so the PR/MR tab diff
+ * can grow to the bottom of the viewport.
+ */
+const computeMainViewFlags = (input: MainViewFlagInput) => {
+  const onLandingOrEmptySelection =
+    input.landingSelected || input.allRunsSelected || (!input.selectedRunId && !input.hasSelectedProject);
+  const noOverlaySelected = !input.settingsOpen && !input.allRunsSelected && !input.bookmarksSelected;
+  const isAgentRunDetailView =
+    noOverlaySelected &&
+    !input.chatsSelected &&
+    !onLandingOrEmptySelection &&
+    Boolean(input.selectedRunId && (input.hasRunDetail || input.openRunPaneCount > 0));
+  const isChatDetailView = noOverlaySelected && input.chatsSelected && input.hasChatDetail;
+  const isProjectWorkspaceView =
+    noOverlaySelected && !input.chatsSelected && !input.landingSelected && !input.selectedRunId && input.hasSelectedProject;
+
+  let sectionLayoutClassName = "space-y-4";
+  if (isAgentRunDetailView || isChatDetailView) {
+    sectionLayoutClassName = "flex min-h-0 min-w-0 flex-1 flex-col gap-2";
+  } else if (isProjectWorkspaceView) {
+    sectionLayoutClassName = "flex min-h-0 min-w-0 flex-1 flex-col gap-4";
+  }
+
+  return { onLandingOrEmptySelection, isAgentRunDetailView, isChatDetailView, isProjectWorkspaceView, sectionLayoutClassName };
+};
+
+interface RunPanelToggleDefinition {
+  key: RunWorkspacePanelId;
+  label: string;
+  icon: RunPanelToggleItem["icon"];
+  hiddenSubtitle: string;
+  requiresWorktree: boolean;
+}
+
+const RUN_PANEL_TOGGLE_DEFINITIONS: readonly RunPanelToggleDefinition[] = [
+  { key: "activity", label: "Activity Log", icon: MessageSquareText, hiddenSubtitle: "Show agent activity", requiresWorktree: false },
+  { key: "diff", label: "Diff View", icon: GitBranch, hiddenSubtitle: "Show changes", requiresWorktree: true },
+  { key: "terminal", label: "Terminal", icon: SquareTerminal, hiddenSubtitle: "Show terminal", requiresWorktree: true },
+  { key: "browser", label: "Browser", icon: Globe, hiddenSubtitle: "Show in-app browser", requiresWorktree: false },
+  { key: "notes", label: "Notes", icon: StickyNote, hiddenSubtitle: "Show run notes", requiresWorktree: false },
+  { key: "chat", label: "Chat", icon: MessagesSquare, hiddenSubtitle: "Ask about this run", requiresWorktree: false },
+];
+
+const addProjectForgeRequestToast = (
+  current: ProjectForgeRequestToast[],
+  toast: ProjectForgeRequestToast,
+): ProjectForgeRequestToast[] => [toast, ...current.filter((existing) => existing.id !== toast.id)].slice(0, 4);
+
 export const App = () => {
   const buildwarden = window.buildwarden;
-  const showCustomWindowsTitleBar = typeof navigator !== "undefined" && navigator.platform.toLowerCase().startsWith("win");
+  const showCustomWindowsTitleBar = typeof navigator !== "undefined" && navigator.userAgent.includes("Windows");
   const [snapshot, setSnapshot] = useState<AppSnapshot>(EMPTY_SNAPSHOT);
   const [snapshotLoaded, setSnapshotLoaded] = useState(false);
-  const [welcomeOpen, setWelcomeOpen] = useState(false);
-  const [welcomeFinishedForSession, setWelcomeFinishedForSession] = useState(false);
-  const [welcomeStepIndex, setWelcomeStepIndex] = useState(0);
-  const [welcomeSkippedCheckIds, setWelcomeSkippedCheckIds] = useState<WelcomeCheckId[]>([]);
-  const [welcomeProviderModelsOpenPanel, setWelcomeProviderModelsOpenPanel] =
-    useState<ProviderModelsOpenPanel>("connection");
   const [runDetail, setRunDetail] = useState<RunDetail | null>(null);
   const [openRunPanes, setOpenRunPanes] = useState<OpenRunPanes>({});
   const [focusedRunPane, setFocusedRunPane] = useState<RunPaneId>("left");
@@ -297,24 +349,6 @@ export const App = () => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [landingPageJoke] = useState(() => pickRandomLandingJoke());
-  const [commitDialogRun, setCommitDialogRun] = useState<RunRecord | null>(null);
-  const [continueDialogRun, setContinueDialogRun] = useState<RunRecord | null>(null);
-  const [continuePrompt, setContinuePrompt] = useState("");
-  const [continueModelId, setContinueModelId] = useState("");
-  const [continueIncludeWorkspaceChanges, setContinueIncludeWorkspaceChanges] = useState(true);
-  const [commitMessage, setCommitMessage] = useState("");
-  const [commitSuggestBusy, setCommitSuggestBusy] = useState(false);
-  const [publishDialogRun, setPublishDialogRun] = useState<RunRecord | null>(null);
-  const [publishOptions, setPublishOptions] = useState<RunPublishOptions | null>(null);
-  const [branchPublishDialogRun, setBranchPublishDialogRun] = useState<RunRecord | null>(null);
-  const [branchPublishName, setBranchPublishName] = useState("");
-  const [branchPublishMode, setBranchPublishMode] = useState<"publish" | "local">("publish");
-  const [pullRequestTitle, setPullRequestTitle] = useState("");
-  const [pullRequestTargetBranch, setPullRequestTargetBranch] = useState("");
-  const [pullRequestSourceBranchMode, setPullRequestSourceBranchMode] = useState<"worktree" | "custom">("worktree");
-  const [pullRequestSourceBranchName, setPullRequestSourceBranchName] = useState("");
-  const [pullRequestDescription, setPullRequestDescription] = useState("");
-  const [pullRequestDescriptionBusy, setPullRequestDescriptionBusy] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const [publishMenuOpen, setPublishMenuOpen] = useState(false);
   const [runPanelsMenuOpen, setRunPanelsMenuOpen] = useState(false);
@@ -341,41 +375,35 @@ export const App = () => {
     ...DEFAULT_NETWORK_PROXY_SETTINGS,
     hasPassword: false,
   });
-  const projectFolderGitWarning =
-    projectFolderGitStatus?.exists === true && projectFolderGitStatus.isDirectory && !projectFolderGitStatus.isGitRepo
-      ? "The selected folder is not a Git repository. It will be added as a plain folder project; Git-only features like branches, commits, worktrees, and PR/MR tools will be unavailable."
-      : null;
+  const projectFolderGitWarning = computeProjectFolderGitWarning(projectFolderGitStatus);
   const preferredRunModelId = snapshot.settings[APP_SETTING_KEYS.lastUsedRunModelId] ?? "";
   const persistedSidebarWidthSetting = snapshot.settings[APP_SETTING_KEYS.sidebarWidth];
-  const welcomeCompletedCheckIds = useMemo(
-    () => orderWelcomeCheckIds(parseWelcomeCompletedCheckIdsSetting(snapshot.settings[APP_SETTING_KEYS.welcomeCompletedCheckIds])),
-    [snapshot.settings],
-  );
-  const welcomeSatisfiedCheckIds = useMemo(() => getSatisfiedWelcomeCheckIds(snapshot), [snapshot]);
-  const welcomeKnownCompletedCheckIds = useMemo(
-    () => orderWelcomeCheckIds([...welcomeCompletedCheckIds, ...welcomeSatisfiedCheckIds]),
-    [welcomeCompletedCheckIds, welcomeSatisfiedCheckIds],
-  );
-  const welcomeKnownCompletedSet = useMemo(() => new Set(welcomeKnownCompletedCheckIds), [welcomeKnownCompletedCheckIds]);
-  const welcomePendingChecks = useMemo(
-    () => WELCOME_CHECK_DEFINITIONS.filter((check) => !welcomeKnownCompletedSet.has(check.id)),
-    [welcomeKnownCompletedSet],
-  );
-  const welcomeStepKeys = useMemo<WelcomeStepKey[]>(
-    () => ["intro", ...welcomePendingChecks.map((check) => check.id), "done"],
-    [welcomePendingChecks],
-  );
-  const welcomeStepKey = welcomeStepKeys[Math.min(welcomeStepIndex, welcomeStepKeys.length - 1)] ?? "intro";
+  const {
+    welcomeOpen,
+    welcomeStepIndex,
+    welcomeStepKey,
+    welcomeStepKeys,
+    welcomeKnownCompletedCheckIds,
+    welcomeSkippedCheckIds,
+    welcomeProviderModelsOpenPanel,
+    setWelcomeProviderModelsOpenPanel,
+    handleWelcomeIntroNext,
+    handleWelcomeBack,
+    handleWelcomeSkipCheck,
+    handleWelcomeFinish,
+  } = useWelcomeFlow({ buildwarden, snapshot, snapshotLoaded });
   const shouldCheckProjectFolderGitStatus = settingsOpen || (welcomeOpen && welcomeStepKey === "project");
   const selectedProviderAccount = snapshot.providerAccounts.find((provider) => provider.id === selectedProviderId) ?? null;
-  const openAiPresetsGroupedForSelectedProvider = selectedProviderAccount
-    ? getModelPresetsByGroupForProvider(
-        selectedProviderAccount.providerType,
-        selectedProviderAccount.providerType === "ai-sdk"
-          ? getAiSdkProviderFamilyFromConfigJson(selectedProviderAccount.configJson)
-          : undefined,
-      )
-    : emptyModelPresetsByGroup();
+  const openAiPresetsGroupedForSelectedProvider = useMemo(() => {
+    if (!selectedProviderAccount) {
+      return emptyModelPresetsByGroup();
+    }
+    const family =
+      selectedProviderAccount.providerType === "ai-sdk"
+        ? getAiSdkProviderFamilyFromConfigJson(selectedProviderAccount.configJson)
+        : undefined;
+    return getModelPresetsByGroupForProvider(selectedProviderAccount.providerType, family);
+  }, [selectedProviderAccount]);
   const ensureAvailableModels = useCallback(
     (providerAccountId: string) => {
       if (!providerAccountId) {
@@ -461,31 +489,23 @@ export const App = () => {
         ? current
         : next.providerAccounts[0]?.id || "",
     );
-    setRunModelId((current) =>
-      current && next.models.some((entry) => entry.id === current)
-        ? current
-        : next.settings[APP_SETTING_KEYS.lastUsedRunModelId] && next.models.some((entry) => entry.id === next.settings[APP_SETTING_KEYS.lastUsedRunModelId])
-          ? (next.settings[APP_SETTING_KEYS.lastUsedRunModelId] as string)
-          : next.models[0]?.id || "",
-    );
+    setRunModelId((current) => {
+      if (current && next.models.some((entry) => entry.id === current)) {
+        return current;
+      }
+      const preferred = next.settings[APP_SETTING_KEYS.lastUsedRunModelId];
+      if (preferred && next.models.some((entry) => entry.id === preferred)) {
+        return preferred;
+      }
+      return next.models[0]?.id || "";
+    });
     setSelectedRunId((current) => {
       if (current === null) {
         return null;
       }
-
-      const hasCurrentRun =
-        current &&
-        next.projects.some(
-          (entry) =>
-            entry.runs.some((run) => run.id === current) ||
-            entry.forLaterRuns.some((run) => run.id === current) ||
-            entry.labThreads.some((detail) => detail.implementationRun?.id === current || detail.thread.implementationRunId === current) ||
-            entry.loops.some((item) => item.iterations.some((iteration) => iteration.runId === current)),
-        );
-      if (hasCurrentRun) {
+      if (current && snapshotContainsRunId(next.projects, current)) {
         return current;
       }
-
       return next.selectedRunId || next.projects[0]?.recentRuns[0]?.id || null;
     });
   }, [buildwarden]);
@@ -587,46 +607,6 @@ export const App = () => {
   }, [persistedSidebarWidthSetting]);
 
   useEffect(() => {
-    if (!buildwarden || !snapshotLoaded) {
-      return;
-    }
-    const serializedCurrent = serializeWelcomeCompletedCheckIdsSetting(welcomeCompletedCheckIds);
-    const serializedNext = serializeWelcomeCompletedCheckIdsSetting(welcomeKnownCompletedCheckIds);
-    if (serializedCurrent === serializedNext) {
-      return;
-    }
-    void buildwarden.setAppSetting(APP_SETTING_KEYS.welcomeCompletedCheckIds, serializedNext).catch((caught) => {
-      reportRendererError("renderer.welcome.persist-completed-checks", caught);
-    });
-  }, [buildwarden, snapshotLoaded, welcomeCompletedCheckIds, welcomeKnownCompletedCheckIds]);
-
-  useEffect(() => {
-    if (!snapshotLoaded || welcomeFinishedForSession || welcomeOpen || welcomePendingChecks.length === 0) {
-      return;
-    }
-    setWelcomeSkippedCheckIds([]);
-    setWelcomeStepIndex(0);
-    setWelcomeOpen(true);
-  }, [snapshotLoaded, welcomeFinishedForSession, welcomeOpen, welcomePendingChecks.length]);
-
-  useEffect(() => {
-    if (welcomeStepIndex < welcomeStepKeys.length) {
-      return;
-    }
-    setWelcomeStepIndex(Math.max(0, welcomeStepKeys.length - 1));
-  }, [welcomeStepIndex, welcomeStepKeys.length]);
-
-  useEffect(() => {
-    if (snapshot.providerAccounts.length === 0) {
-      setWelcomeProviderModelsOpenPanel("connection");
-      return;
-    }
-    if (snapshot.models.length === 0) {
-      setWelcomeProviderModelsOpenPanel("model");
-    }
-  }, [snapshot.models.length, snapshot.providerAccounts.length]);
-
-  useEffect(() => {
     setWelcomeOpenAiPresetUserChoseCustom(false);
   }, [selectedProviderId]);
 
@@ -697,12 +677,12 @@ export const App = () => {
       if (next.length > 0) {
         return next;
       }
-      const fallback =
-        runModelId && validSet.has(runModelId)
-          ? runModelId
-          : preferredRunModelId && validSet.has(preferredRunModelId)
-            ? preferredRunModelId
-            : snapshot.models[0]?.id;
+      let fallback = snapshot.models[0]?.id;
+      if (runModelId && validSet.has(runModelId)) {
+        fallback = runModelId;
+      } else if (preferredRunModelId && validSet.has(preferredRunModelId)) {
+        fallback = preferredRunModelId;
+      }
       return fallback ? [fallback] : [];
     });
   }, [preferredRunModelId, snapshot.models, runModelId, runWorkspaceType]);
@@ -827,6 +807,29 @@ export const App = () => {
     [loadRunDetailForRun],
   );
 
+  const loadDiffForOpenRun = useCallback(
+    async (eventRunId: string) => {
+      const shouldLoadDiff =
+        selectedRunIdRef.current === eventRunId || runIdIsOpenInPanes(openRunPanesRef.current, eventRunId);
+      if (!buildwarden || !shouldLoadDiff) {
+        return;
+      }
+      const d = await buildwarden.getRunWorktreeDiff(eventRunId);
+      const stillShouldApply =
+        selectedRunIdRef.current === eventRunId || runIdIsOpenInPanes(openRunPanesRef.current, eventRunId);
+      if (!stillShouldApply) {
+        return;
+      }
+      mergeRunDetailForRun(eventRunId, (prev) => ({
+        ...prev,
+        diff: d.diff,
+        worktreeUnavailable: d.worktreeUnavailable,
+        diffPending: false,
+      }));
+    },
+    [buildwarden, mergeRunDetailForRun],
+  );
+
   const refreshOpenRunDetailForEvent = useCallback(
     async (eventRunId: string) => {
       const shouldRefresh =
@@ -853,28 +856,10 @@ export const App = () => {
       clearDiffRefreshTimer(eventRunId);
       diffRefreshTimersRef.current[eventRunId] = setTimeout(() => {
         delete diffRefreshTimersRef.current[eventRunId];
-        void (async () => {
-          const shouldLoadDiff =
-            selectedRunIdRef.current === eventRunId || runIdIsOpenInPanes(openRunPanesRef.current, eventRunId);
-          if (!buildwarden || !shouldLoadDiff) {
-            return;
-          }
-          const d = await buildwarden.getRunWorktreeDiff(eventRunId);
-          const stillShouldApply =
-            selectedRunIdRef.current === eventRunId || runIdIsOpenInPanes(openRunPanesRef.current, eventRunId);
-          if (!stillShouldApply) {
-            return;
-          }
-          mergeRunDetailForRun(eventRunId, (prev) => ({
-            ...prev,
-            diff: d.diff,
-            worktreeUnavailable: d.worktreeUnavailable,
-            diffPending: false,
-          }));
-        })();
+        void loadDiffForOpenRun(eventRunId);
       }, 500);
     },
-    [buildwarden, clearDiffRefreshTimer, mergeRunDetailForRun, replaceRunDetailForRun],
+    [buildwarden, clearDiffRefreshTimer, loadDiffForOpenRun, replaceRunDetailForRun],
   );
 
   /**
@@ -882,7 +867,7 @@ export const App = () => {
    * event is O(n²) over a run's lifetime. Trail-throttle per run and flush
    * immediately on terminal events so the final state is never delayed.
    */
-  const runDetailRefreshTimersRef = useRef<Record<string, number>>({});
+  const runDetailRefreshTimersRef = useRef<Partial<Record<string, number>>>({});
   const refreshRunDetailForActiveRunEvent = useCallback(
     async (eventRunId: string, options?: { immediate?: boolean }) => {
       if (options?.immediate) {
@@ -958,29 +943,21 @@ export const App = () => {
       }
 
       if (event.metadata?.shellApprovalRequest === true && approvalRequestId && approvalCommand) {
-        setShellApprovalQueue((current) => {
-          if (current.some((item) => item.requestId === approvalRequestId && item.runId === event.runId)) {
-            return current;
-          }
-
-          return [
-            ...current,
-            {
-              runId: event.runId,
-              requestId: approvalRequestId,
-              command: approvalCommand,
-              requestedAt: Date.now(),
-            },
-          ];
-        });
+        const request: ShellApprovalRequestState = {
+          runId: event.runId,
+          requestId: approvalRequestId,
+          command: approvalCommand,
+          requestedAt: Date.now(),
+        };
+        setShellApprovalQueue((current) => appendShellApprovalRequest(current, request));
       }
 
       if (approvalRequestId && event.metadata?.shellApprovalDecision) {
-        setShellApprovalQueue((current) => current.filter((item) => item.requestId !== approvalRequestId));
+        setShellApprovalQueue((current) => removeShellApprovalsByRequestId(current, approvalRequestId));
       }
 
       if (event.title === "Run cancelled") {
-        setShellApprovalQueue((current) => current.filter((item) => item.runId !== event.runId));
+        setShellApprovalQueue((current) => removeShellApprovalsByRunId(current, event.runId));
       }
 
       scheduleSnapshotRefresh();
@@ -1214,6 +1191,28 @@ export const App = () => {
     [persistRunWorkspaceLayouts],
   );
 
+  const removeRunWorkspaceLayoutsForRuns = useCallback(
+    (runIds: string[]) => {
+      setRunWorkspaceLayoutsByRunId((current) => {
+        const next = { ...current };
+        let changed = false;
+        for (const runId of runIds) {
+          if (runId in next) {
+            delete next[runId];
+            changed = true;
+          }
+        }
+        if (changed) {
+          void persistRunWorkspaceLayouts(next).catch((caught) => {
+            setError(caught instanceof Error ? caught.message : "Could not remove deleted project layouts.");
+          });
+        }
+        return changed ? next : current;
+      });
+    },
+    [persistRunWorkspaceLayouts],
+  );
+
   const loadProjectBranches = useCallback(async () => {
     if (!buildwarden || !selectedProjectId) {
       setAvailableRunBranches([]);
@@ -1234,6 +1233,14 @@ export const App = () => {
     const projectId = selectedProjectId;
     const defaultBranch = selectedProjectDefaultBranch;
 
+    const applyDetachedHeadBranchState = (nextBranches: string[]) => {
+      setAvailableRunBranches(nextBranches);
+      setRunBaseBranch((current) => pickProjectBranch(nextBranches, defaultBranch, current));
+      setCurrentProjectBranch("");
+      setError(GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE);
+      setDetachedCheckoutBranch(pickProjectBranch(nextBranches, defaultBranch));
+    };
+
     try {
       const branches = await buildwarden.getProjectBranches(projectId);
       const nextBranches = branches.length > 0 ? branches : [defaultBranch];
@@ -1241,51 +1248,20 @@ export const App = () => {
       try {
         const currentBranch = await buildwarden.getProjectCurrentBranch(projectId);
         if (!currentBranch) {
-          setAvailableRunBranches(nextBranches);
-          setRunBaseBranch((current) =>
-            current && nextBranches.includes(current)
-              ? current
-              : nextBranches.includes(defaultBranch)
-                ? defaultBranch
-                : nextBranches[0] ?? "",
-          );
-          setCurrentProjectBranch("");
-          setError(GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE);
-          setDetachedCheckoutBranch(
-            nextBranches.includes(defaultBranch) ? defaultBranch : nextBranches[0] ?? "",
-          );
+          applyDetachedHeadBranchState(nextBranches);
           return;
         }
         setDetachedCheckoutBranch("");
         setCurrentProjectBranch(currentBranch);
         setAvailableRunBranches(nextBranches);
-        setRunBaseBranch((current) =>
-          current && nextBranches.includes(current)
-            ? current
-            : nextBranches.includes(defaultBranch)
-              ? defaultBranch
-              : nextBranches[0] ?? "",
-        );
+        setRunBaseBranch((current) => pickProjectBranch(nextBranches, defaultBranch, current));
         setError((prev) => (prev && isDetachedHeadProjectErrorMessage(prev) ? null : prev));
       } catch (inner) {
         const msg = inner instanceof Error ? inner.message : String(inner);
-        if (isDetachedHeadProjectErrorMessage(msg)) {
-          setAvailableRunBranches(nextBranches);
-          setRunBaseBranch((current) =>
-            current && nextBranches.includes(current)
-              ? current
-              : nextBranches.includes(defaultBranch)
-                ? defaultBranch
-                : nextBranches[0] ?? "",
-          );
-          setCurrentProjectBranch("");
-          setError(GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE);
-          setDetachedCheckoutBranch(
-            nextBranches.includes(defaultBranch) ? defaultBranch : nextBranches[0] ?? "",
-          );
-          return;
+        if (!isDetachedHeadProjectErrorMessage(msg)) {
+          throw inner;
         }
-        throw inner;
+        applyDetachedHeadBranchState(nextBranches);
       }
     } catch (caught) {
       reportRendererError("renderer.project-branches.load", caught, {
@@ -1415,7 +1391,7 @@ export const App = () => {
   const pendingShellApproval = shellApprovalQueue[0] ?? null;
   const visibleShellApprovals = useMemo(() => shellApprovalQueue.slice(0, 3), [shellApprovalQueue]);
   const queuedShellApprovalCount = Math.max(0, shellApprovalQueue.length - visibleShellApprovals.length);
-  const [visibleShellApprovalStartedAtById, setVisibleShellApprovalStartedAtById] = useState<Record<string, number>>({});
+  const [visibleShellApprovalStartedAtById, setVisibleShellApprovalStartedAtById] = useState<Partial<Record<string, number>>>({});
   const getShellApprovalTarget = useCallback(
     (request: ShellApprovalRequestState) =>
       findProjectRun(snapshot.projects, request.runId) ??
@@ -1428,19 +1404,23 @@ export const App = () => {
     [runDetail?.run, snapshot.projects],
   );
   const runWorktreeUnavailable = runDetail?.worktreeUnavailable === true;
-  const runWorkspaceVisiblePanelCount =
-    (runWorkspaceShowActivity ? 1 : 0) +
-    (runWorkspaceShowDiff ? 1 : 0) +
-    (runWorkspaceShowTerminal ? 1 : 0) +
-    (runWorkspaceShowBrowser ? 1 : 0) +
-    (runWorkspaceShowNotes ? 1 : 0) +
-    (runWorkspaceShowChat ? 1 : 0);
-  const canHideRunWorkspaceActivity = !(runWorkspaceShowActivity && runWorkspaceVisiblePanelCount === 1);
-  const canHideRunWorkspaceDiff = !(runWorkspaceShowDiff && runWorkspaceVisiblePanelCount === 1);
-  const canHideRunWorkspaceTerminal = !(runWorkspaceShowTerminal && runWorkspaceVisiblePanelCount === 1);
-  const canHideRunWorkspaceBrowser = !(runWorkspaceShowBrowser && runWorkspaceVisiblePanelCount === 1);
-  const canHideRunWorkspaceNotes = !(runWorkspaceShowNotes && runWorkspaceVisiblePanelCount === 1);
-  const canHideRunWorkspaceChat = !(runWorkspaceShowChat && runWorkspaceVisiblePanelCount === 1);
+  const runWorkspacePanelVisibility: Record<RunWorkspacePanelId, boolean> = {
+    activity: runWorkspaceShowActivity,
+    diff: runWorkspaceShowDiff,
+    terminal: runWorkspaceShowTerminal,
+    browser: runWorkspaceShowBrowser,
+    notes: runWorkspaceShowNotes,
+    chat: runWorkspaceShowChat,
+  };
+  const runWorkspacePanelSetters: Record<RunWorkspacePanelId, (visible: boolean) => void> = {
+    activity: setRunWorkspaceShowActivity,
+    diff: setRunWorkspaceShowDiff,
+    terminal: setRunWorkspaceShowTerminal,
+    browser: setRunWorkspaceShowBrowser,
+    notes: setRunWorkspaceShowNotes,
+    chat: setRunWorkspaceShowChat,
+  };
+  const runWorkspaceVisiblePanelCount = Object.values(runWorkspacePanelVisibility).filter(Boolean).length;
 
   const setSelectedRunWorkspacePanelVisibility = (panelId: RunWorkspacePanelId, visible: boolean) => {
     if (!selectedRunId || typeof selectedRunId !== "string") {
@@ -1478,110 +1458,30 @@ export const App = () => {
     }));
   };
 
-  const toggleRunWorkspaceActivity = () => {
-    if (runWorkspaceShowActivity && runWorkspaceVisiblePanelCount === 1) {
+  const toggleSelectedRunWorkspacePanel = (panelId: RunWorkspacePanelId) => {
+    const visible = runWorkspacePanelVisibility[panelId];
+    if (visible && runWorkspaceVisiblePanelCount === 1) {
       return;
     }
-    const next = !runWorkspaceShowActivity;
-    setRunWorkspaceShowActivity(next);
-    setSelectedRunWorkspacePanelVisibility("activity", next);
+    const next = !visible;
+    runWorkspacePanelSetters[panelId](next);
+    setSelectedRunWorkspacePanelVisibility(panelId, next);
   };
-  const toggleRunWorkspaceDiff = () => {
-    if (runWorkspaceShowDiff && runWorkspaceVisiblePanelCount === 1) {
-      return;
-    }
-    const next = !runWorkspaceShowDiff;
-    setRunWorkspaceShowDiff(next);
-    setSelectedRunWorkspacePanelVisibility("diff", next);
-  };
-  const toggleRunWorkspaceTerminal = () => {
-    if (runWorkspaceShowTerminal && runWorkspaceVisiblePanelCount === 1) {
-      return;
-    }
-    const next = !runWorkspaceShowTerminal;
-    setRunWorkspaceShowTerminal(next);
-    setSelectedRunWorkspacePanelVisibility("terminal", next);
-  };
-  const toggleRunWorkspaceBrowser = () => {
-    if (runWorkspaceShowBrowser && runWorkspaceVisiblePanelCount === 1) {
-      return;
-    }
-    const next = !runWorkspaceShowBrowser;
-    setRunWorkspaceShowBrowser(next);
-    setSelectedRunWorkspacePanelVisibility("browser", next);
-  };
-  const toggleRunWorkspaceNotes = () => {
-    if (runWorkspaceShowNotes && runWorkspaceVisiblePanelCount === 1) {
-      return;
-    }
-    const next = !runWorkspaceShowNotes;
-    setRunWorkspaceShowNotes(next);
-    setSelectedRunWorkspacePanelVisibility("notes", next);
-  };
-  const toggleRunWorkspaceChat = () => {
-    if (runWorkspaceShowChat && runWorkspaceVisiblePanelCount === 1) {
-      return;
-    }
-    const next = !runWorkspaceShowChat;
-    setRunWorkspaceShowChat(next);
-    setSelectedRunWorkspacePanelVisibility("chat", next);
-  };
-  const runPanelToggleItems = [
-    {
-      key: "activity",
-      label: "Activity Log",
-      icon: MessageSquareText,
-      active: runWorkspaceShowActivity,
-      disabled: runWorkspaceShowActivity && !canHideRunWorkspaceActivity,
-      subtitle: runWorkspaceShowActivity ? "Visible" : "Show agent activity",
-      onClick: toggleRunWorkspaceActivity,
-    },
-    {
-      key: "diff",
-      label: "Diff View",
-      icon: GitBranch,
-      active: runWorkspaceShowDiff,
-      disabled: runWorktreeUnavailable || (runWorkspaceShowDiff && !canHideRunWorkspaceDiff),
-      subtitle: runWorktreeUnavailable ? "Worktree unavailable" : runWorkspaceShowDiff ? "Visible" : "Show changes",
-      onClick: toggleRunWorkspaceDiff,
-    },
-    {
-      key: "terminal",
-      label: "Terminal",
-      icon: SquareTerminal,
-      active: runWorkspaceShowTerminal,
-      disabled: runWorktreeUnavailable || (runWorkspaceShowTerminal && !canHideRunWorkspaceTerminal),
-      subtitle: runWorktreeUnavailable ? "Worktree unavailable" : runWorkspaceShowTerminal ? "Visible" : "Show terminal",
-      onClick: toggleRunWorkspaceTerminal,
-    },
-    {
-      key: "browser",
-      label: "Browser",
-      icon: Globe,
-      active: runWorkspaceShowBrowser,
-      disabled: runWorkspaceShowBrowser && !canHideRunWorkspaceBrowser,
-      subtitle: runWorkspaceShowBrowser ? "Visible" : "Show in-app browser",
-      onClick: toggleRunWorkspaceBrowser,
-    },
-    {
-      key: "notes",
-      label: "Notes",
-      icon: StickyNote,
-      active: runWorkspaceShowNotes,
-      disabled: runWorkspaceShowNotes && !canHideRunWorkspaceNotes,
-      subtitle: runWorkspaceShowNotes ? "Visible" : "Show run notes",
-      onClick: toggleRunWorkspaceNotes,
-    },
-    {
-      key: "chat",
-      label: "Chat",
-      icon: MessagesSquare,
-      active: runWorkspaceShowChat,
-      disabled: runWorkspaceShowChat && !canHideRunWorkspaceChat,
-      subtitle: runWorkspaceShowChat ? "Visible" : "Ask about this run",
-      onClick: toggleRunWorkspaceChat,
-    },
-  ] as const;
+
+  const runPanelToggleItems = RUN_PANEL_TOGGLE_DEFINITIONS.map((definition): RunPanelToggleItem => {
+    const active = runWorkspacePanelVisibility[definition.key];
+    const cannotHide = active && runWorkspaceVisiblePanelCount === 1;
+    const unavailable = definition.requiresWorktree && runWorktreeUnavailable;
+    return {
+      key: definition.key,
+      label: definition.label,
+      icon: definition.icon,
+      active,
+      disabled: unavailable || cannotHide,
+      subtitle: unavailable ? "Worktree unavailable" : panelVisibilitySubtitle(active, definition.hiddenSubtitle),
+      onClick: () => toggleSelectedRunWorkspacePanel(definition.key),
+    };
+  });
 
   const openRunBrowserUrl = (runId: string, url: string) => {
     setRunBrowserSessions((current) => {
@@ -1621,19 +1521,19 @@ export const App = () => {
     openRunBrowserUrl(runDetail.run.id, url);
   };
 
-  /** Agent run detail uses a flex column so the composer stays at the bottom without overlapping scroll content. */
-  const onLandingOrEmptySelection = landingSelected || allRunsSelected || (!selectedRunId && !selectedProject);
-  const isAgentRunDetailView =
-    !settingsOpen &&
-    !allRunsSelected &&
-    !bookmarksSelected &&
-    !chatsSelected &&
-    !onLandingOrEmptySelection &&
-    Boolean(selectedRunId && (runDetail?.run || openRunPaneCount > 0));
-  const isChatDetailView = !settingsOpen && !allRunsSelected && !bookmarksSelected && chatsSelected && Boolean(selectedChat && chatDetail);
-  /** Project page (no run open) uses a flex column so the PR/MR tab diff can grow to the bottom of the viewport. */
-  const isProjectWorkspaceView =
-    !settingsOpen && !allRunsSelected && !bookmarksSelected && !chatsSelected && !landingSelected && !selectedRunId && Boolean(selectedProject);
+  const { onLandingOrEmptySelection, isAgentRunDetailView, isChatDetailView, isProjectWorkspaceView, sectionLayoutClassName } =
+    computeMainViewFlags({
+      settingsOpen,
+      landingSelected,
+      allRunsSelected,
+      bookmarksSelected,
+      chatsSelected,
+      selectedRunId,
+      hasSelectedProject: Boolean(selectedProject),
+      hasRunDetail: Boolean(runDetail?.run),
+      openRunPaneCount,
+      hasChatDetail: Boolean(selectedChat && chatDetail),
+    });
 
   useEffect(() => {
     setPublishMenuOpen(false);
@@ -1683,6 +1583,15 @@ export const App = () => {
     [buildwarden, loadRunDetailForRun, loadSnapshot, selectedRunId],
   );
 
+  const denyShellApprovalRequest = useCallback(
+    (request: ShellApprovalRequestState) => {
+      void submitShellApprovalDecision(request, "deny").catch((caught) => {
+        setError(caught instanceof Error ? caught.message : "Unexpected error");
+      });
+    },
+    [submitShellApprovalDecision],
+  );
+
   useEffect(() => {
     if (visibleShellApprovals.length === 0) {
       return;
@@ -1690,11 +1599,7 @@ export const App = () => {
 
     const timeoutIds = visibleShellApprovals.map((request) =>
       window.setTimeout(
-        () => {
-          void submitShellApprovalDecision(request, "deny").catch((caught) => {
-            setError(caught instanceof Error ? caught.message : "Unexpected error");
-          });
-        },
+        () => denyShellApprovalRequest(request),
         Math.max(0, (visibleShellApprovalStartedAtById[request.requestId] ?? Date.now()) + 30_000 - Date.now()),
       ),
     );
@@ -1702,7 +1607,7 @@ export const App = () => {
     return () => {
       timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId));
     };
-  }, [submitShellApprovalDecision, visibleShellApprovalStartedAtById, visibleShellApprovals]);
+  }, [denyShellApprovalRequest, visibleShellApprovalStartedAtById, visibleShellApprovals]);
 
   useEffect(() => {
     const visibleRequestIds = new Set(visibleShellApprovals.map((request) => request.requestId));
@@ -1710,7 +1615,7 @@ export const App = () => {
     const now = Date.now();
     setVisibleShellApprovalStartedAtById((current) => {
       let changed = false;
-      const next: Record<string, number> = {};
+      const next: Partial<Record<string, number>> = {};
 
       for (const requestId of queuedRequestIds) {
         const existing = current[requestId];
@@ -1894,72 +1799,21 @@ export const App = () => {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
 
-      let parsedConfig: Record<string, unknown> = {};
-      if (providerType === "ai-sdk") {
-        try {
-          parsedConfig = JSON.parse(providerConfigJson.trim() || "{}") as Record<string, unknown>;
-        } catch {
-          throw new Error("Provider configuration (JSON) is invalid.");
-        }
-      }
-
-      const config: Record<string, unknown> = { ...parsedConfig };
-      if (providerType === "ai-sdk") {
-        config[PROVIDER_CONFIG_AI_SDK_PROVIDER_FAMILY_KEY] = providerFamily;
-      }
-      if (providerType === "azure-legacy") {
-        config[PROVIDER_CONFIG_AZURE_API_VERSION_KEY] = providerAzureApiVersion.trim() || "2024-06-01";
-      } else {
-        delete config[PROVIDER_CONFIG_AZURE_API_VERSION_KEY];
-      }
-      if (providerType === "codex-cli") {
-        const effectiveCodexBinaryPath = codexBinaryPath.trim() || detectedCodexBinaryPath?.trim() || "";
-        if (effectiveCodexBinaryPath) {
-          config[PROVIDER_CONFIG_CODEX_BINARY_PATH_KEY] = effectiveCodexBinaryPath;
-        } else {
-          delete config[PROVIDER_CONFIG_CODEX_BINARY_PATH_KEY];
-        }
-        if (codexHomePath.trim()) {
-          config[PROVIDER_CONFIG_CODEX_HOME_PATH_KEY] = codexHomePath.trim();
-        } else {
-          delete config[PROVIDER_CONFIG_CODEX_HOME_PATH_KEY];
-        }
-      } else {
-        delete config[PROVIDER_CONFIG_CODEX_BINARY_PATH_KEY];
-        delete config[PROVIDER_CONFIG_CODEX_HOME_PATH_KEY];
-      }
-      if (providerType === "claude-code") {
-        const effectiveClaudeBinaryPath = claudeBinaryPath.trim() || detectedClaudeBinaryPath?.trim() || "";
-        if (effectiveClaudeBinaryPath) {
-          config[PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY] = effectiveClaudeBinaryPath;
-        } else {
-          delete config[PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY];
-        }
-        if (claudeLaunchArgs.trim()) {
-          config[PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY] = claudeLaunchArgs.trim();
-        } else {
-          delete config[PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY];
-        }
-      } else {
-        delete config[PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY];
-        delete config[PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY];
-      }
-      if (providerType === "cursor-agent") {
-        const effectiveCursorBinaryPath = cursorBinaryPath.trim() || detectedCursorBinaryPath?.trim() || "";
-        if (effectiveCursorBinaryPath) {
-          config[PROVIDER_CONFIG_CURSOR_BINARY_PATH_KEY] = effectiveCursorBinaryPath;
-        } else {
-          delete config[PROVIDER_CONFIG_CURSOR_BINARY_PATH_KEY];
-        }
-        if (cursorApiEndpoint.trim()) {
-          config[PROVIDER_CONFIG_CURSOR_API_ENDPOINT_KEY] = cursorApiEndpoint.trim();
-        } else {
-          delete config[PROVIDER_CONFIG_CURSOR_API_ENDPOINT_KEY];
-        }
-      } else {
-        delete config[PROVIDER_CONFIG_CURSOR_BINARY_PATH_KEY];
-        delete config[PROVIDER_CONFIG_CURSOR_API_ENDPOINT_KEY];
-      }
+      const config = buildProviderAccountConfig({
+        providerType,
+        providerFamily,
+        providerConfigJson,
+        providerAzureApiVersion,
+        codexBinaryPath,
+        codexHomePath,
+        detectedCodexBinaryPath,
+        claudeBinaryPath,
+        claudeLaunchArgs,
+        detectedClaudeBinaryPath,
+        cursorBinaryPath,
+        cursorApiEndpoint,
+        detectedCursorBinaryPath,
+      });
 
       const provider = await buildwarden.addProviderAccount({
         providerType,
@@ -2030,68 +1884,146 @@ export const App = () => {
     [focusedRunPane],
   );
 
+  const {
+    commitDialogRun,
+    commitMessage,
+    setCommitMessage,
+    commitSuggestBusy,
+    openCommitDialog: commitRun,
+    closeCommitDialog,
+    handleCommitDialogKeyDown,
+    suggestCommitMessageWithAi,
+    submitCommitRun,
+    continueDialogRun,
+    continuePrompt,
+    setContinuePrompt,
+    continueModelId,
+    setContinueModelId,
+    continueIncludeWorkspaceChanges,
+    setContinueIncludeWorkspaceChanges,
+    openContinueRunDialog,
+    closeContinueRunDialog,
+    submitContinueRun,
+    publishDialogRun,
+    publishOptions,
+    pullRequestTitle,
+    setPullRequestTitle,
+    pullRequestTargetBranch,
+    setPullRequestTargetBranch,
+    pullRequestSourceBranchMode,
+    setPullRequestSourceBranchMode,
+    pullRequestSourceBranchName,
+    setPullRequestSourceBranchName,
+    pullRequestDescription,
+    setPullRequestDescription,
+    pullRequestDescriptionBusy,
+    openPublishDialog,
+    closePublishDialog,
+    handlePublishDialogKeyDown,
+    generatePullRequestDescription,
+    submitPullRequest,
+    branchPublishDialogRun,
+    branchPublishName,
+    setBranchPublishName,
+    branchPublishMode,
+    openBranchPublishDialog,
+    closeBranchPublishDialog,
+    handleBranchPublishDialogKeyDown,
+    publishBranch,
+  } = useRunActionDialogs({
+    buildwarden,
+    snapshot,
+    runYoloMode,
+    handleAction,
+    setError,
+    onRunMutated: async (runId, projectId) => {
+      await loadSnapshot();
+      await loadRunDetail(runId);
+      focusRunInPaneState(runId, projectId);
+    },
+    onRunContinued: async (newRunId, projectId) => {
+      await loadSnapshot();
+      setLandingSelected(false);
+      setBookmarksSelected(false);
+      setChatsSelected(false);
+      focusRunInPaneState(newRunId, projectId, focusedRunPane);
+      await loadRunDetail(newRunId);
+    },
+  });
+
+  /** Creates one run for the model id using the shared composer settings; returns the new run id or null for stale model ids. */
+  const createRunForModel = async (mid: string, prompt: string, attachments?: ChatAttachmentPayload[]): Promise<string | null> => {
+    if (!buildwarden) {
+      throw new Error("The Electron desktop bridge is unavailable.");
+    }
+    const selectedModel = snapshot.models.find((model) => model.id === mid);
+    if (!selectedModel) {
+      return null;
+    }
+    const selectedProvider = snapshot.providerAccounts.find((provider) => provider.id === selectedModel.providerAccountId);
+    if (!selectedProvider) {
+      return null;
+    }
+    const providerFamilyForModel =
+      selectedProvider.providerType === "ai-sdk" ? getAiSdkProviderFamilyFromConfigJson(selectedProvider.configJson) : null;
+    const reasoningInput = buildRunReasoningInput(
+      selectedProvider.providerType,
+      providerFamilyForModel,
+      runReasoningEffort,
+      runAnthropicEffort,
+    );
+    const commandInput = resolveProviderComposerPrompt(prompt, selectedProvider.providerType, "run");
+    if (commandInput.goalText !== undefined && !commandInput.prompt.trim() && !(attachments?.length ?? 0)) {
+      throw new Error("Add a task on the next line after /goal when starting a new run.");
+    }
+    const run = await buildwarden.createRun({
+      projectId: runProjectId,
+      providerAccountId: selectedModel.providerAccountId,
+      modelId: mid,
+      harnessType: harnessTypeForProvider(selectedProvider.providerType),
+      mode: commandInput.mode ?? runMode,
+      workspaceType: runWorkspaceType,
+      baseBranch: runBaseBranch,
+      prompt: commandInput.prompt,
+      ...(commandInput.goalText !== undefined ? { goalText: commandInput.goalText } : {}),
+      attachments,
+      ...reasoningInput,
+      yoloMode: runYoloMode,
+    });
+    return run.id;
+  };
+
+  const startRunsForModels = async (modelIds: string[], prompt: string, attachments?: ChatAttachmentPayload[]) => {
+    let lastRunId: string | null = null;
+    for (const mid of modelIds) {
+      lastRunId = (await createRunForModel(mid, prompt, attachments)) ?? lastRunId;
+    }
+    await loadSnapshot();
+    setLandingSelected(false);
+    if (lastRunId) {
+      setSelectedRunId(lastRunId);
+    }
+  };
+
+  const filterConfiguredModelIds = (ids: string[]) => ids.filter((id) => snapshot.models.some((m) => m.id === id));
+
   const submitRun = async (payload?: { attachments?: ChatAttachmentPayload[] }) => {
     await handleAction(async () => {
       if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
 
-      const modelIds =
-        runWorkspaceType === "worktree" || runWorkspaceType === "copy"
-          ? runWorktreeModelIds.filter((id) => snapshot.models.some((m) => m.id === id))
-          : [runModelId].filter((id) => snapshot.models.some((m) => m.id === id));
+      const selectedIds = runWorkspaceType === "worktree" || runWorkspaceType === "copy" ? runWorktreeModelIds : [runModelId];
+      const modelIds = filterConfiguredModelIds(selectedIds);
       if (modelIds.length === 0) {
         throw new Error("Select at least one configured model before starting a run.");
       }
 
-      const trimmedPrompt = runPrompt.trim();
-      if (!trimmedPrompt && !(payload?.attachments?.length ?? 0)) {
+      if (!runPrompt.trim() && !(payload?.attachments?.length ?? 0)) {
         throw new Error("Enter a task description or attach at least one file.");
       }
 
-      let lastRunId: string | null = null;
-      for (const mid of modelIds) {
-        const selectedModel = snapshot.models.find((model) => model.id === mid);
-        if (!selectedModel) {
-          continue;
-        }
-        const selectedProvider = snapshot.providerAccounts.find((provider) => provider.id === selectedModel.providerAccountId);
-        if (!selectedProvider) {
-          continue;
-        }
-        const providerFamily =
-          selectedProvider.providerType === "ai-sdk" ? getAiSdkProviderFamilyFromConfigJson(selectedProvider.configJson) : null;
-        const reasoningInput = buildRunReasoningInput(
-          selectedProvider.providerType,
-          providerFamily,
-          runReasoningEffort,
-          runAnthropicEffort,
-        );
-        const commandInput = resolveProviderComposerPrompt(runPrompt, selectedProvider.providerType, "run");
-        if (commandInput.goalText !== undefined && !commandInput.prompt.trim() && !(payload?.attachments?.length ?? 0)) {
-          throw new Error("Add a task on the next line after /goal when starting a new run.");
-        }
-        const run = await buildwarden.createRun({
-          projectId: runProjectId,
-          providerAccountId: selectedModel.providerAccountId,
-          modelId: mid,
-          harnessType: harnessTypeForProvider(selectedProvider.providerType),
-          mode: commandInput.mode ?? runMode,
-          workspaceType: runWorkspaceType,
-          baseBranch: runBaseBranch,
-          prompt: commandInput.prompt,
-          ...(commandInput.goalText !== undefined ? { goalText: commandInput.goalText } : {}),
-          attachments: payload?.attachments,
-          ...reasoningInput,
-          yoloMode: runYoloMode,
-        });
-        lastRunId = run.id;
-      }
-      await loadSnapshot();
-      setLandingSelected(false);
-      if (lastRunId) {
-        setSelectedRunId(lastRunId);
-      }
+      await startRunsForModels(modelIds, runPrompt, payload?.attachments);
     });
   };
 
@@ -2104,125 +2036,20 @@ export const App = () => {
           throw new Error("The Electron desktop bridge is unavailable.");
         }
 
-        const modelIds = [modelId].filter((id) => snapshot.models.some((m) => m.id === id));
+        const modelIds = filterConfiguredModelIds([modelId]);
         if (modelIds.length === 0) {
           throw new Error("Select a configured model before starting a run.");
         }
 
-        const trimmedPrompt = prompt.trim();
-        if (!trimmedPrompt) {
+        if (!prompt.trim()) {
           throw new Error("Enter a task description before starting a run.");
         }
 
-        let lastRunId: string | null = null;
-        for (const mid of modelIds) {
-          const selectedModel = snapshot.models.find((model) => model.id === mid);
-          if (!selectedModel) {
-            continue;
-          }
-          const selectedProvider = snapshot.providerAccounts.find((provider) => provider.id === selectedModel.providerAccountId);
-          if (!selectedProvider) {
-            continue;
-          }
-          const providerFamily =
-            selectedProvider.providerType === "ai-sdk" ? getAiSdkProviderFamilyFromConfigJson(selectedProvider.configJson) : null;
-          const reasoningInput = buildRunReasoningInput(
-            selectedProvider.providerType,
-            providerFamily,
-            runReasoningEffort,
-            runAnthropicEffort,
-          );
-          const commandInput = resolveProviderComposerPrompt(prompt, selectedProvider.providerType, "run");
-          if (commandInput.goalText !== undefined && !commandInput.prompt.trim()) {
-            throw new Error("Add a task on the next line after /goal when starting a new run.");
-          }
-          const run = await buildwarden.createRun({
-            projectId: runProjectId,
-            providerAccountId: selectedModel.providerAccountId,
-            modelId: mid,
-            harnessType: harnessTypeForProvider(selectedProvider.providerType),
-            mode: commandInput.mode ?? runMode,
-            workspaceType: runWorkspaceType,
-            baseBranch: runBaseBranch,
-            prompt: commandInput.prompt,
-            ...(commandInput.goalText !== undefined ? { goalText: commandInput.goalText } : {}),
-            ...reasoningInput,
-            yoloMode: runYoloMode,
-          });
-          lastRunId = run.id;
-        }
-        await loadSnapshot();
-        setLandingSelected(false);
-        if (lastRunId) {
-          setSelectedRunId(lastRunId);
-        }
+        await startRunsForModels(modelIds, prompt);
       });
     } finally {
       setRunPrompt(previousPrompt);
     }
-  };
-
-  const openContinueRunDialog = (run: RunRecord) => {
-    if (!isRunContinuable(run)) {
-      return;
-    }
-    setContinueDialogRun(run);
-    setContinuePrompt("");
-    setContinueModelId(run.modelId);
-    setContinueIncludeWorkspaceChanges(true);
-  };
-
-  const closeContinueRunDialog = () => {
-    setContinueDialogRun(null);
-    setContinuePrompt("");
-    setContinueModelId("");
-    setContinueIncludeWorkspaceChanges(true);
-  };
-
-  const submitContinueRun = async () => {
-    const sourceRun = continueDialogRun;
-    if (!sourceRun) {
-      return;
-    }
-
-    await handleAction(async () => {
-      if (!buildwarden) {
-        throw new Error("The Electron desktop bridge is unavailable.");
-      }
-      if (!isRunContinuable(sourceRun)) {
-        throw new Error("Wait for this run to finish before starting a continuation.");
-      }
-
-      const selectedModel = snapshot.models.find((model) => model.id === continueModelId);
-      if (!selectedModel) {
-        throw new Error("Select a configured model before starting a continuation.");
-      }
-
-      const selectedProvider = snapshot.providerAccounts.find((provider) => provider.id === selectedModel.providerAccountId);
-      if (!selectedProvider) {
-        throw new Error("The selected model is missing its provider configuration.");
-      }
-
-      const payload: ContinueRunInput = {
-        sourceRunId: sourceRun.id,
-        providerAccountId: selectedModel.providerAccountId,
-        modelId: selectedModel.id,
-        harnessType: harnessTypeForProvider(selectedProvider.providerType),
-        mode: sourceRun.mode,
-        prompt: continuePrompt.trim(),
-        goalText: sourceRun.goalText,
-        includeWorkspaceChanges: continueIncludeWorkspaceChanges,
-        yoloMode: runYoloMode,
-      };
-      const newRun = await buildwarden.continueRun(payload);
-      closeContinueRunDialog();
-      await loadSnapshot();
-      setLandingSelected(false);
-      setBookmarksSelected(false);
-      setChatsSelected(false);
-      focusRunInPaneState(newRun.id, sourceRun.projectId, focusedRunPane);
-      await loadRunDetail(newRun.id);
-    });
   };
 
   const createProjectTask = async (projectId: string, input: { title: string; prompt: string }) => {
@@ -2388,12 +2215,10 @@ export const App = () => {
       }
       const commandInput = resolveProviderComposerPrompt(prompt, selectedProvider.providerType, "follow-up");
       const hasExplicitGoalText = Object.prototype.hasOwnProperty.call(options, "goalText");
-      const goalText =
-        commandInput.goalText !== undefined
-          ? commandInput.goalText
-          : hasExplicitGoalText
-            ? options.goalText
-            : undefined;
+      let goalText = commandInput.goalText;
+      if (goalText === undefined && hasExplicitGoalText) {
+        goalText = options.goalText;
+      }
       if (!commandInput.prompt.trim() && !(options.attachments?.length ?? 0) && goalText === undefined) {
         throw new Error("Enter a follow-up command or attach at least one file.");
       }
@@ -2444,239 +2269,6 @@ export const App = () => {
       await loadSnapshot();
       await loadRunDetail(run.id);
       focusRunInPaneState(run.id, run.projectId);
-    });
-  };
-
-  const commitRun = async (run: RunRecord) => {
-    const normalizedPrompt = run.prompt.replace(/\s+/g, " ").trim();
-    const suggestedMessage = `buildwarden: ${normalizedPrompt.slice(0, 60) || "apply run changes"}${normalizedPrompt.length > 60 ? "..." : ""}`;
-    setCommitDialogRun(run);
-    setCommitMessage(suggestedMessage);
-  };
-
-  const closeCommitDialog = () => {
-    setCommitDialogRun(null);
-    setCommitMessage("");
-  };
-
-  const closePublishDialog = () => {
-    setPublishDialogRun(null);
-    setPublishOptions(null);
-    setPullRequestTitle("");
-    setPullRequestTargetBranch("");
-    setPullRequestSourceBranchMode("worktree");
-    setPullRequestSourceBranchName("");
-    setPullRequestDescription("");
-    setPullRequestDescriptionBusy(false);
-  };
-
-  const closeBranchPublishDialog = () => {
-    setBranchPublishDialogRun(null);
-    setBranchPublishName("");
-    setBranchPublishMode("publish");
-  };
-
-  const handleCommitDialogKeyDown = (event: React.KeyboardEvent<HTMLDivElement | HTMLTextAreaElement>) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      closeCommitDialog();
-      return;
-    }
-
-    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-      event.preventDefault();
-      void submitCommitRun();
-    }
-  };
-
-  const suggestCommitMessageWithAi = async () => {
-    if (!commitDialogRun || !buildwarden) {
-      return;
-    }
-
-    setCommitSuggestBusy(true);
-    setError(null);
-    try {
-      const text = await buildwarden.suggestCommitMessage(commitDialogRun.id);
-      setCommitMessage(text);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not generate commit message.");
-    } finally {
-      setCommitSuggestBusy(false);
-    }
-  };
-
-  const submitCommitRun = async () => {
-    if (!commitDialogRun) {
-      return;
-    }
-
-    await handleAction(async () => {
-      if (!buildwarden) {
-        throw new Error("The Electron desktop bridge is unavailable.");
-      }
-
-      const trimmedMessage = commitMessage.trim();
-      if (!trimmedMessage) {
-        throw new Error("Enter a commit message.");
-      }
-
-      await buildwarden.commitRun(commitDialogRun.id, trimmedMessage);
-      await loadSnapshot();
-      await loadRunDetail(commitDialogRun.id);
-      focusRunInPaneState(commitDialogRun.id, commitDialogRun.projectId);
-      closeCommitDialog();
-    });
-  };
-
-  const openPublishDialog = async (run: RunRecord) => {
-    await handleAction(async () => {
-      if (!buildwarden) {
-        throw new Error("The Electron desktop bridge is unavailable.");
-      }
-
-      const options = await buildwarden.getRunPublishOptions(run.id);
-      setPublishDialogRun(run);
-      setPublishOptions(options);
-      setPullRequestTitle(options.suggestedTitle);
-      setPullRequestTargetBranch(options.defaultTargetBranch);
-      setPullRequestSourceBranchMode("worktree");
-      setPullRequestSourceBranchName(options.defaultSourceBranch);
-      setPullRequestDescription(options.defaultDescription);
-    });
-  };
-
-  const generatePullRequestDescription = async () => {
-    if (!publishDialogRun || !buildwarden) {
-      return;
-    }
-
-    setPullRequestDescriptionBusy(true);
-    setError(null);
-    try {
-      const description = await buildwarden.suggestRunPullRequestDescription(
-        publishDialogRun.id,
-        pullRequestTargetBranch.trim(),
-        pullRequestTitle.trim(),
-      );
-      setPullRequestDescription(description);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not generate a merge request or pull request description.");
-    } finally {
-      setPullRequestDescriptionBusy(false);
-    }
-  };
-
-  const handlePublishDialogKeyDown = (
-    event: React.KeyboardEvent<HTMLInputElement | HTMLButtonElement | HTMLDivElement | HTMLSelectElement | HTMLTextAreaElement>,
-  ) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      closePublishDialog();
-      return;
-    }
-
-    if (event.target instanceof HTMLTextAreaElement) {
-      return;
-    }
-
-    if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
-      event.preventDefault();
-      void submitPullRequest();
-    }
-  };
-
-  const submitPullRequest = async () => {
-    if (!publishDialogRun) {
-      return;
-    }
-
-    await handleAction(async () => {
-      if (!buildwarden) {
-        throw new Error("The Electron desktop bridge is unavailable.");
-      }
-
-      const trimmedTitle = pullRequestTitle.trim();
-      const trimmedTargetBranch = pullRequestTargetBranch.trim();
-      const trimmedSourceBranch = pullRequestSourceBranchName.trim();
-
-      if (!trimmedTitle) {
-        throw new Error("Enter a merge request or pull request title.");
-      }
-
-      if (!trimmedTargetBranch) {
-        throw new Error("Select a target branch.");
-      }
-
-      if (pullRequestSourceBranchMode === "custom") {
-        if (!trimmedSourceBranch) {
-          throw new Error("Enter a custom source branch name.");
-        }
-        if (trimmedSourceBranch === publishOptions?.defaultSourceBranch) {
-          throw new Error("The custom source branch must differ from the current worktree branch.");
-        }
-      }
-
-      await buildwarden.createRunPullRequest(
-        publishDialogRun.id,
-        trimmedTargetBranch,
-        trimmedTitle,
-        pullRequestSourceBranchMode === "custom" ? trimmedSourceBranch : undefined,
-        pullRequestDescription.trim(),
-      );
-      await loadSnapshot();
-      await loadRunDetail(publishDialogRun.id);
-      focusRunInPaneState(publishDialogRun.id, publishDialogRun.projectId);
-      closePublishDialog();
-    });
-  };
-
-  const openBranchPublishDialog = (run: RunRecord, mode: "publish" | "local") => {
-    setBranchPublishDialogRun(run);
-    setBranchPublishName(run.branchName);
-    setBranchPublishMode(mode);
-  };
-
-  const handleBranchPublishDialogKeyDown = (event: React.KeyboardEvent<HTMLInputElement | HTMLDivElement>) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      closeBranchPublishDialog();
-      return;
-    }
-
-    if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
-      event.preventDefault();
-      void publishBranch();
-    }
-  };
-
-  const publishBranch = async () => {
-    if (!branchPublishDialogRun) {
-      return;
-    }
-
-    await handleAction(async () => {
-      if (!buildwarden) {
-        throw new Error("The Electron desktop bridge is unavailable.");
-      }
-
-      const trimmedBranchName = branchPublishName.trim();
-      if (!trimmedBranchName) {
-        throw new Error("Enter a branch name.");
-      }
-
-      if (branchPublishMode === "local") {
-        if (branchPublishDialogRun.workspaceType !== "worktree" && trimmedBranchName === branchPublishDialogRun.branchName) {
-          throw new Error("The new local branch must differ from the current worktree branch.");
-        }
-        await buildwarden.createRunLocalBranch(branchPublishDialogRun.id, trimmedBranchName);
-      } else {
-        await buildwarden.publishRunBranch(branchPublishDialogRun.id, trimmedBranchName);
-      }
-      await loadSnapshot();
-      await loadRunDetail(branchPublishDialogRun.id);
-      focusRunInPaneState(branchPublishDialogRun.id, branchPublishDialogRun.projectId);
-      closeBranchPublishDialog();
     });
   };
 
@@ -2998,6 +2590,20 @@ export const App = () => {
     setChatsSelected(false);
   }, [setFocusedRunSelection, settingsPreviousPage]);
 
+  const toggleUiTheme = useCallback(
+    () =>
+      handleAction(async () => {
+        if (!buildwarden) {
+          throw new Error("The Electron desktop bridge is unavailable.");
+        }
+        const next = cycleUiTheme(parseUiTheme(snapshot.settings));
+        await buildwarden.setAppSetting(APP_SETTING_KEYS.uiTheme, next);
+        await buildwarden.setAppSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next));
+        await loadSnapshot();
+      }),
+    [buildwarden, handleAction, loadSnapshot, snapshot.settings],
+  );
+
   useEffect(() => {
     if (!buildwarden) {
       return;
@@ -3020,15 +2626,7 @@ export const App = () => {
       }
 
       if (command === "toggle-dark-mode") {
-        void handleAction(async () => {
-          if (!buildwarden) {
-            throw new Error("The Electron desktop bridge is unavailable.");
-          }
-          const next = cycleUiTheme(parseUiTheme(snapshot.settings));
-          await buildwarden.setAppSetting(APP_SETTING_KEYS.uiTheme, next);
-          await buildwarden.setAppSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next));
-          await loadSnapshot();
-        });
+        void toggleUiTheme();
         return;
       }
 
@@ -3045,7 +2643,7 @@ export const App = () => {
         }
       }
     });
-  }, [buildwarden, handleAction, handleChatsSelect, handleLandingSelect, handleProjectSelect, loadSnapshot, openSettingsPage, runProjectId, selectedProject, snapshot.projects, snapshot.settings]);
+  }, [buildwarden, handleChatsSelect, handleLandingSelect, handleProjectSelect, openSettingsPage, runProjectId, selectedProject, snapshot.projects, toggleUiTheme]);
 
   useEffect(() => {
     if (!buildwarden) {
@@ -3068,10 +2666,7 @@ export const App = () => {
         return;
       }
       const id = `${payload.projectId}:${payload.prUrl}`;
-      setProjectForgeRequestToasts((current) => [
-        { ...payload, id },
-        ...current.filter((toast) => toast.id !== id),
-      ].slice(0, 4));
+      setProjectForgeRequestToasts((current) => addProjectForgeRequestToast(current, { ...payload, id }));
     });
   }, [buildwarden]);
 
@@ -3354,177 +2949,38 @@ export const App = () => {
     }
   }, [buildwarden, focusRunPane, getShellApprovalTarget, handleRunSelect]);
 
-  const commandPaletteItems = useMemo<CommandPaletteItem[]>(() => {
-    const targetProjectId = runProjectId || selectedProject?.project.id || snapshot.projects[0]?.project.id || "";
-    const newestRuns = snapshot.projects
-      .flatMap((entry) =>
-        [...entry.runs, ...entry.forLaterRuns].map((run) => ({
-          projectId: entry.project.id,
-          projectName: entry.project.name,
-          run,
-        })),
-      )
-      .sort((left, right) => new Date(right.run.updatedAt).getTime() - new Date(left.run.updatedAt).getTime())
-      .slice(0, 10);
-    const newestChats = [...snapshot.chats]
-      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
-      .slice(0, 8);
-
-    const items: CommandPaletteItem[] = [
-      {
-        id: "workspace-home",
-        title: "Go home",
-        subtitle: "Open the workspace overview",
-        section: "Navigate",
-        icon: Home,
-        keywords: ["dashboard", "landing"],
-        onSelect: () => handleLandingSelect(),
-      },
-      {
-        id: "workspace-all-runs",
-        title: "Open all runs",
-        subtitle: "Search and browse runs across projects",
-        section: "Navigate",
-        icon: Bot,
-        keywords: ["history", "agent"],
-        onSelect: () => handleAllRunsSelect(),
-      },
-      {
-        id: "workspace-chats",
-        title: "Open chats",
-        subtitle: "Start or continue a chat",
-        section: "Navigate",
-        icon: MessageSquareText,
-        keywords: ["conversation"],
-        onSelect: handleChatsSelect,
-      },
-      {
-        id: "workspace-bookmarks",
-        title: "Open bookmarks",
-        subtitle: "Saved chats and agent runs",
-        section: "Navigate",
-        icon: Bookmark,
-        keywords: ["saved"],
-        onSelect: handleBookmarksSelect,
-      },
-      {
-        id: "workspace-settings",
-        title: "Open settings",
-        subtitle: "Providers, workspace behavior, shortcuts, and app settings",
-        section: "Navigate",
-        icon: Settings,
-        keywords: ["preferences", "config"],
-        onSelect: openSettingsPage,
-      },
-      {
-        id: "workspace-new-run",
-        title: "New agent run",
-        subtitle: targetProjectId ? "Open the selected project run composer" : "Add a project first",
-        section: "Action",
-        icon: Sparkles,
-        disabled: !targetProjectId,
-        keywords: ["agent", "composer", "start"],
-        onSelect: () => (targetProjectId ? handleProjectSelect(targetProjectId) : undefined),
-      },
-      {
-        id: "workspace-toggle-theme",
-        title: "Toggle theme",
-        subtitle: "Toggle dark and light mode",
-        section: "Action",
-        icon: CommandIcon,
-        keywords: ["appearance", "light", "dark"],
-        onSelect: () =>
-          handleAction(async () => {
-            if (!buildwarden) {
-              throw new Error("The Electron desktop bridge is unavailable.");
-            }
-            const next = cycleUiTheme(parseUiTheme(snapshot.settings));
-            await buildwarden.setAppSetting(APP_SETTING_KEYS.uiTheme, next);
-            await buildwarden.setAppSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next));
-            await loadSnapshot();
-          }),
-      },
-    ];
-
-    for (const entry of snapshot.projects) {
-      items.push({
-          id: `project-${entry.project.id}`,
-          title: `Open ${entry.project.name}`,
-          subtitle: entry.project.repoPath,
-          section: "Project",
-          icon: FolderOpen,
-          keywords: ["overview", entry.project.kind === "git" ? entry.project.defaultBranch : "folder"],
-          onSelect: () => handleProjectSelect(entry.project.id),
-        });
-      if (entry.project.kind === "git") {
-        items.push(
-          {
-          id: `project-${entry.project.id}-branches`,
-          title: `${entry.project.name}: Branches`,
-          subtitle: "Manage local and remote branches",
-          section: "Project",
-          icon: GitBranch,
-          keywords: ["git", "checkout", "fetch", "pull"],
-          onSelect: () => handleProjectFeatureSelect(entry.project.id, "branches"),
-        },
-        {
-          id: `project-${entry.project.id}-reviews`,
-          title: `${entry.project.name}: Pull / merge requests`,
-          subtitle: "Review PRs and MRs",
-          section: "Project",
-          icon: GitPullRequest,
-          keywords: ["review", "mr", "pr"],
-          onSelect: () => handleProjectFeatureSelect(entry.project.id, "reviews"),
-          },
-        );
-      }
-    }
-
-    for (const item of newestRuns) {
-      const workspaceLabel = formatRunWorkspaceLabel(item.run);
-      items.push({
-        id: `run-${item.run.id}`,
-        title: item.run.prompt,
-        subtitle: `${item.projectName} - ${item.run.status} - ${workspaceLabel}`,
-        section: "Run",
-        icon: Bot,
-        keywords: [item.run.id, item.run.status, item.projectName, workspaceLabel],
-        onSelect: () => handleRunSelect(item.projectId, item.run.id),
-      });
-    }
-
-    for (const chat of newestChats) {
-      items.push({
-        id: `chat-${chat.id}`,
-        title: chat.prompt,
-        subtitle: `Chat - ${chat.status} - ${new Date(chat.createdAt).toLocaleString()}`,
-        section: "Chat",
-        icon: MessageSquareText,
-        keywords: [chat.id, chat.status],
-        onSelect: () => handleChatSelect(chat),
-      });
-    }
-
-    return items;
-  }, [
-    buildwarden,
-    handleAction,
-    handleAllRunsSelect,
-    handleBookmarksSelect,
-    handleChatSelect,
-    handleChatsSelect,
-    handleProjectFeatureSelect,
-    handleProjectSelect,
-    handleRunSelect,
-    handleLandingSelect,
-    loadSnapshot,
-    openSettingsPage,
-    runProjectId,
-    selectedProject?.project.id,
-    snapshot.chats,
-    snapshot.projects,
-    snapshot.settings,
-  ]);
+  const commandPaletteItems = useMemo<CommandPaletteItem[]>(
+    () =>
+      buildCommandPaletteItems({
+        snapshot,
+        targetProjectId: runProjectId || selectedProject?.project.id || snapshot.projects[0]?.project.id || "",
+        onSelectLanding: handleLandingSelect,
+        onSelectAllRuns: handleAllRunsSelect,
+        onSelectChats: handleChatsSelect,
+        onSelectBookmarks: handleBookmarksSelect,
+        onOpenSettings: openSettingsPage,
+        onSelectProject: handleProjectSelect,
+        onSelectProjectFeature: handleProjectFeatureSelect,
+        onSelectRun: handleRunSelect,
+        onSelectChat: handleChatSelect,
+        onToggleTheme: toggleUiTheme,
+      }),
+    [
+      handleAllRunsSelect,
+      handleBookmarksSelect,
+      handleChatSelect,
+      handleChatsSelect,
+      handleProjectFeatureSelect,
+      handleProjectSelect,
+      handleRunSelect,
+      handleLandingSelect,
+      openSettingsPage,
+      runProjectId,
+      selectedProject?.project.id,
+      snapshot,
+      toggleUiTheme,
+    ],
+  );
 
   const updateBooleanSetting = async (key: string, value: boolean) => {
     await handleAction(async () => {
@@ -3560,46 +3016,16 @@ export const App = () => {
     () => parseShellAllowlistExtraSetting(snapshot.settings[APP_SETTING_KEYS.shellAllowlistExtra]).join("\n"),
     [snapshot.settings],
   );
-  const [integratedSkillsCatalog, setIntegratedSkillsCatalog] = useState<IntegratedSkillMetadata[]>([]);
-
-  useEffect(() => {
-    if (!buildwarden) {
-      return;
-    }
-    let cancelled = false;
-    void buildwarden
-      .listIntegratedSkills()
-      .then((skills) => {
-        if (!cancelled) {
-          setIntegratedSkillsCatalog(skills);
-        }
-      })
-      .catch(() => {
-        // Skills are non-critical at boot; settings/composer surfaces handle an empty list.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [buildwarden]);
-
-  const globallyDisabledIntegratedSkillIds = useMemo(
-    () => parseIntegratedSkillsDisabledSetting(snapshot.settings[APP_SETTING_KEYS.integratedSkillsDisabled]),
-    [snapshot.settings],
-  );
-
-  const projectActiveSkillsByProjectId = useMemo(
-    () => parseProjectActiveSkillsSetting(snapshot.settings[APP_SETTING_KEYS.projectActiveSkills]),
-    [snapshot.settings],
-  );
-  const projectLabSettingsByProjectId = useMemo(
-    () => parseProjectLabSettingsSetting(snapshot.settings[APP_SETTING_KEYS.projectLabSettings]),
-    [snapshot.settings],
-  );
-
-  const enabledIntegratedSkills = useMemo(() => {
-    const disabledIds = new Set(globallyDisabledIntegratedSkillIds);
-    return integratedSkillsCatalog.filter((skill) => !disabledIds.has(skill.id));
-  }, [globallyDisabledIntegratedSkillIds, integratedSkillsCatalog]);
+  const {
+    integratedSkillsCatalog,
+    globallyDisabledIntegratedSkillIds,
+    projectActiveSkillsByProjectId,
+    projectLabSettingsByProjectId,
+    enabledIntegratedSkills,
+    updateGloballyDisabledIntegratedSkills,
+    updateProjectActiveSkills,
+    updateProjectLabSettings,
+  } = useSkillsSettings({ buildwarden, snapshotSettings: snapshot.settings, loadSnapshot });
 
   const updateShellAllowlistExtra = useCallback(
     async (text: string) => {
@@ -3622,53 +3048,6 @@ export const App = () => {
       const current = parseKeyboardShortcuts(snapshot.settings[APP_SETTING_KEYS.keyboardShortcuts]);
       const next = { ...current, [id]: value };
       await buildwarden.setAppSetting(APP_SETTING_KEYS.keyboardShortcuts, JSON.stringify(next));
-      await loadSnapshot();
-    },
-    [buildwarden, loadSnapshot, snapshot.settings],
-  );
-
-  const updateGloballyDisabledIntegratedSkills = useCallback(
-    async (skillIds: string[]) => {
-      if (!buildwarden) {
-        return;
-      }
-      const validIds = new Set(integratedSkillsCatalog.map((skill) => skill.id));
-      await buildwarden.setAppSetting(
-        APP_SETTING_KEYS.integratedSkillsDisabled,
-        JSON.stringify([...new Set(skillIds.filter((skillId) => validIds.has(skillId)))].sort()),
-      );
-      await loadSnapshot();
-    },
-    [buildwarden, integratedSkillsCatalog, loadSnapshot],
-  );
-
-  const updateProjectActiveSkills = useCallback(
-    async (projectId: string, skillIds: string[]) => {
-      if (!buildwarden) {
-        return;
-      }
-      const current = parseProjectActiveSkillsSetting(snapshot.settings[APP_SETTING_KEYS.projectActiveSkills]);
-      const next = { ...current };
-      const normalized = [...new Set(skillIds)].sort();
-      if (normalized.length > 0) {
-        next[projectId] = normalized;
-      } else {
-        delete next[projectId];
-      }
-      await buildwarden.setAppSetting(APP_SETTING_KEYS.projectActiveSkills, JSON.stringify(next));
-      await loadSnapshot();
-    },
-    [buildwarden, loadSnapshot, snapshot.settings],
-  );
-
-  const updateProjectLabSettings = useCallback(
-    async (projectId: string, settings: ProjectLabSettings) => {
-      if (!buildwarden) {
-        return;
-      }
-      const current = parseProjectLabSettingsSetting(snapshot.settings[APP_SETTING_KEYS.projectLabSettings]);
-      const next = { ...current, [projectId]: settings };
-      await buildwarden.setAppSetting(APP_SETTING_KEYS.projectLabSettings, JSON.stringify(next));
       await loadSnapshot();
     },
     [buildwarden, loadSnapshot, snapshot.settings],
@@ -3721,23 +3100,8 @@ export const App = () => {
         }
         return next;
       });
-      setRunWorkspaceLayoutsByRunId((current) => {
-        const next = { ...current };
-        let changed = false;
-        for (const runId of deletedRunIds) {
-          if (runId in next) {
-            delete next[runId];
-            changed = true;
-          }
-        }
-        if (changed) {
-          void persistRunWorkspaceLayouts(next).catch((caught) => {
-            setError(caught instanceof Error ? caught.message : "Could not remove deleted project layouts.");
-          });
-        }
-        return changed ? next : current;
-      });
-      clearRunSelectionState(undefined);
+      removeRunWorkspaceLayoutsForRuns(deletedRunIds);
+      clearRunSelectionState();
       await loadSnapshot();
     });
   };
@@ -3878,103 +3242,27 @@ export const App = () => {
   };
 
   useEffect(() => {
-    const shortcuts = parseKeyboardShortcuts(snapshot.settings[APP_SETTING_KEYS.keyboardShortcuts]);
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (welcomeOpen) {
-        return;
-      }
-
-      const keyStr = eventToKeyString(e);
-
-      if (keyStr === shortcuts.openCommandPalette) {
-        e.preventDefault();
-        setCommandPaletteOpen(true);
-        return;
-      }
-
-      if (commandPaletteOpen) {
-        return;
-      }
-
-      if (settingsOpen) {
-        if (keyStr === shortcuts.closeSettings) {
-          e.preventDefault();
-          handleSettingsBack();
-        }
-        return;
-      }
-
-      if (keyStr === shortcuts.openSettings) {
-        e.preventDefault();
-        openSettingsPage();
-        return;
-      }
-
-      if (keyStr === shortcuts.goHome) {
-        e.preventDefault();
-        void handleLandingSelect();
-        return;
-      }
-
-      if (keyStr === shortcuts.toggleSidebar) {
-        e.preventDefault();
-        setSidebarCollapsed((current) => !current);
-        return;
-      }
-
-      const recentRunShortcuts = [
-        shortcuts.switchToRecentRun1,
-        shortcuts.switchToRecentRun2,
-        shortcuts.switchToRecentRun3,
-        shortcuts.switchToRecentRun4,
-        shortcuts.switchToRecentRun5,
-      ];
-      const recentRunIndex = recentRunShortcuts.findIndex((s) => s === keyStr);
-      if (recentRunIndex !== -1) {
-        if (bookmarksSelected || chatsSelected) {
-          return;
-        }
-        const allRunsNewestFirst = snapshot.projects
-          .flatMap((entry) => entry.runs.map((run) => ({ projectId: entry.project.id, run })))
-          .sort((a, b) => new Date(b.run.updatedAt).getTime() - new Date(a.run.updatedAt).getTime());
-        const picked = allRunsNewestFirst[recentRunIndex];
-        if (picked) {
-          e.preventDefault();
-          void handleRunSelect(picked.projectId, picked.run.id);
-        }
-        return;
-      }
-
-      if (selectedRunId && runDetail?.run) {
-        const run = runDetail.run;
-        const isRunActive = ["queued", "preparing", "running"].includes(run.status);
-
-        if (keyStr === shortcuts.newAgentRun) {
-          e.preventDefault();
-          void handleProjectSelect(runProjectId);
-          return;
-        }
-
-        if (keyStr === shortcuts.deleteRun) {
-          e.preventDefault();
-          void deleteRun(run);
-          return;
-        }
-
-        if (keyStr === shortcuts.cancelRun && isRunActive) {
-          e.preventDefault();
-          void cancelRun(run);
-          return;
-        }
-
-        if (keyStr === shortcuts.backToProject) {
-          e.preventDefault();
-          void handleProjectSelect(runProjectId);
-          return;
-        }
-      }
-    };
+    const handleKeyDown = createAppKeyboardShortcutHandler({
+      shortcuts: parseKeyboardShortcuts(snapshot.settings[APP_SETTING_KEYS.keyboardShortcuts]),
+      snapshotProjects: snapshot.projects,
+      welcomeOpen,
+      commandPaletteOpen,
+      settingsOpen,
+      bookmarksSelected,
+      chatsSelected,
+      selectedRunId,
+      runDetailRun: runDetail?.run ?? null,
+      runProjectId,
+      openCommandPalette: () => setCommandPaletteOpen(true),
+      closeSettings: handleSettingsBack,
+      openSettings: openSettingsPage,
+      goHome: () => void handleLandingSelect(),
+      toggleSidebar: () => setSidebarCollapsed((current) => !current),
+      selectRun: (projectId, runId) => void handleRunSelect(projectId, runId),
+      openProject: (projectId) => void handleProjectSelect(projectId),
+      deleteRun: (run) => void deleteRun(run),
+      cancelRun: (run) => void cancelRun(run),
+    });
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
@@ -4220,108 +3508,7 @@ export const App = () => {
     }
     void handleProjectFeatureSelect(selectedProject.project.id, "settings");
   });
-  const handleWelcomeIntroNext = useStableCallback(() => {
-    setWelcomeStepIndex((current) => Math.min(current + 1, welcomeStepKeys.length - 1));
-  });
-  const handleWelcomeBack = useStableCallback(() => {
-    setWelcomeStepIndex((current) => Math.max(0, current - 1));
-  });
-  const handleWelcomeSkipCheck = useStableCallback((checkId: WelcomeCheckId) => {
-    setWelcomeSkippedCheckIds((current) => (current.includes(checkId) ? current : [...current, checkId]));
-    setWelcomeStepIndex((current) => Math.min(current + 1, welcomeStepKeys.length - 1));
-  });
-  const handleWelcomeFinish = useStableCallback(() => {
-    setWelcomeOpen(false);
-    setWelcomeFinishedForSession(true);
-  });
-
-  return (
-    <div
-      className={cn(
-        "app-shell flex h-screen min-h-0 flex-col overflow-hidden",
-        uiTheme === "light" ? "theme-light" : "theme-dark",
-      )}
-    >
-      {showCustomWindowsTitleBar ? (
-        <AppTitleBar
-          uiTheme={uiTheme}
-          syncWindowsCaptionStrip
-          onOpenMenu={(section, anchor) => void openAppMenuSection(section, anchor)}
-        />
-      ) : null}
-
-      <div className="flex min-h-0 flex-1 text-[var(--ec-text)]">
-        <CommandPalette
-          open={commandPaletteOpen}
-          items={commandPaletteItems}
-          onClose={() => setCommandPaletteOpen(false)}
-        />
-        <Sidebar
-        projects={snapshot.projects}
-        landingSelected={landingSelected}
-        allRunsSelected={allRunsSelected}
-        bookmarksSelected={bookmarksSelected}
-        chatsSelected={chatsSelected}
-        settingsSelected={settingsOpen}
-        selectedProjectId={selectedProject?.project.id ?? null}
-        projectView={projectPageTab}
-        highlightedRunId={
-          !landingSelected && !allRunsSelected && !bookmarksSelected && !chatsSelected && !settingsOpen && typeof selectedRunId === "string" ? selectedRunId : null
-        }
-        collapsed={sidebarCollapsed}
-        width={sidebarWidth}
-        recentRunDays={recentRunDays}
-        bookmarksCount={snapshot.bookmarks.length + snapshot.chatBookmarks.length}
-        chatsCount={snapshot.chats.length}
-        bookmarkedRunIds={sidebarBookmarkedRunIds}
-        onSelectLanding={sidebarOnSelectLanding}
-        onSelectAllRuns={sidebarOnSelectAllRuns}
-        onSelectBookmarks={sidebarOnSelectBookmarks}
-        onSelectChats={sidebarOnSelectChats}
-        onSelectProject={sidebarOnSelectProject}
-        onSelectProjectFeature={sidebarOnSelectProjectFeature}
-        onSelectRun={sidebarOnSelectRun}
-        onRunDragStart={sidebarOnRunDragStart}
-        onReorderProjects={sidebarOnReorderProjects}
-        onAddRunToBookmarks={sidebarOnAddRunToBookmarks}
-        onRemoveRunFromBookmarks={sidebarOnRemoveRunFromBookmarks}
-        onContinueRun={sidebarOnContinueRun}
-        onDeleteRun={sidebarOnDeleteRun}
-        onSetRunForLater={sidebarOnSetRunForLater}
-        pendingDeleteRunIds={pendingDeleteRunIds}
-        onOpenSettings={sidebarOnOpenSettings}
-        onWidthCommit={sidebarOnWidthCommit}
-        onToggleCollapsed={sidebarOnToggleCollapsed}
-        loopEnabledProjectIds={loopEnabledProjectIds}
-      />
-
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--ec-bg)]">
-        <main
-          className={cn(
-            "min-h-0 min-w-0 flex-1 p-3",
-            isAgentRunDetailView || isChatDetailView || isProjectWorkspaceView
-              ? "flex min-h-0 flex-col overflow-hidden"
-              : "overflow-y-auto",
-          )}
-        >
-        <section
-          className={cn(
-            "w-full",
-            isAgentRunDetailView || isChatDetailView
-              ? "flex min-h-0 min-w-0 flex-1 flex-col gap-2"
-              : isProjectWorkspaceView
-                ? "flex min-h-0 min-w-0 flex-1 flex-col gap-4"
-                : "space-y-4",
-          )}
-        >
-          <Suspense
-            fallback={
-              <div className="flex min-h-[200px] flex-1 items-center justify-center">
-                <Loader2 className="h-6 w-6 animate-spin text-[var(--ec-accent)]" />
-              </div>
-            }
-          >
-          {settingsOpen ? (
+  const renderSettingsContent = (): ReactNode => (
             <SettingsPage
               busy={busy}
               projects={snapshot.projects}
@@ -4464,8 +3651,48 @@ export const App = () => {
               globallyDisabledIntegratedSkillIds={globallyDisabledIntegratedSkillIds}
               onGloballyDisabledIntegratedSkillIdsChange={(skillIds) => void updateGloballyDisabledIntegratedSkills(skillIds)}
             />
-          ) : bookmarksSelected ? selectedBookmark ? (
-            "originalChatId" in selectedBookmark ? (
+  );
+
+  const renderAllRunsContent = (): ReactNode => (
+    <AllRunsPage
+      projects={snapshot.projects}
+      onSelectRun={(projectId, runId) => void handleRunSelect(projectId, runId)}
+    />
+  );
+
+  const renderLandingContent = (): ReactNode => (
+    <LandingPage
+      snapshot={snapshot}
+      sessionJoke={landingPageJoke}
+      onSelectProject={(projectId) => void handleProjectSelect(projectId)}
+      onSelectRun={(projectId, runId) => void handleRunSelect(projectId, runId)}
+      onOpenChats={handleChatsSelect}
+      onOpenSettings={openSettingsPage}
+    />
+  );
+
+  const renderMainContent = (): ReactNode => {
+    if (settingsOpen) {
+      return renderSettingsContent();
+    }
+    if (bookmarksSelected) {
+      return renderBookmarksContent();
+    }
+    if (chatsSelected) {
+      return renderChatsContent();
+    }
+    if (allRunsSelected) {
+      return renderAllRunsContent();
+    }
+    if (onLandingOrEmptySelection) {
+      return renderLandingContent();
+    }
+    return renderRunWorkspaceContent();
+  };
+
+  const renderBookmarksContent = (): ReactNode => {
+    if (selectedBookmark) {
+              return "originalChatId" in selectedBookmark ? (
               <ChatBookmarkDetailPage
                 bookmark={selectedBookmark}
                 models={snapshot.models}
@@ -4477,14 +3704,20 @@ export const App = () => {
                 models={snapshot.models}
                 onBack={() => setSelectedBookmark(null)}
               />
-            )
-          ) : (
+            );
+            }
+              return (
             <BookmarksPage
               onSelectBookmark={(bookmark) => setSelectedBookmark(bookmark)}
               onRemoveRunBookmarkById={(bookmarkId) => void removeBookmarkById(bookmarkId)}
               onRemoveChatBookmarkById={(bookmarkId) => void removeChatBookmarkById(bookmarkId)}
             />
-          ) : chatsSelected ? selectedChat && chatDetail ? (
+              );
+  };
+
+  const renderChatsContent = (): ReactNode => {
+    if (selectedChat && chatDetail) {
+              return (
             <ChatDetailPage
               chatDetail={chatDetail}
               modelOptions={configuredChatModelOptions}
@@ -4513,7 +3746,9 @@ export const App = () => {
                 await loadSnapshot();
               }}
             />
-          ) : (
+              );
+            }
+              return (
             <ChatPage
               modelOptions={configuredChatModelOptions}
               defaultModelId={configuredChatModelOptions.some((option) => option.id === runModelId) ? runModelId : (configuredChatModelOptions[0]?.id ?? "")}
@@ -4526,29 +3761,166 @@ export const App = () => {
               onAnthropicEffortChange={setChatAnthropicEffort}
               onDeleteChat={(chatId) => void deleteChat(chatId)}
             />
-          ) : allRunsSelected ? (
-            <AllRunsPage
-              projects={snapshot.projects}
-              onSelectRun={(projectId, runId) => void handleRunSelect(projectId, runId)}
-            />
-          ) : landingSelected || (!selectedRunId && !selectedProject) ? (
-            <LandingPage
-              snapshot={snapshot}
-              sessionJoke={landingPageJoke}
-              onSelectProject={(projectId) => void handleProjectSelect(projectId)}
-              onSelectRun={(projectId, runId) => void handleRunSelect(projectId, runId)}
-              onOpenChats={handleChatsSelect}
-              onOpenSettings={openSettingsPage}
-            />
-          ) : (
-            <div
-              className={
-                isAgentRunDetailView || isProjectWorkspaceView
-                  ? "flex min-h-0 min-w-0 flex-1 flex-col gap-1.5"
-                  : "contents"
+              );
+  };
+
+  const renderSelectedRunDetailPage = (detail: RunDetail): ReactNode => (
+            <RunDetailPage
+              className="min-h-0 min-w-0 flex-1"
+              runDetail={detail}
+              busy={busy}
+              modelOptions={configuredRunModelOptions}
+              keyboardShortcuts={keyboardShortcuts}
+              pendingShellApproval={null}
+              timelineDensity={runTimelineDensity}
+              subagentFocus={subagentFocusRequest?.runId === detail.run.id ? subagentFocusRequest : null}
+              showActivity={runWorkspaceShowActivity}
+              showDiff={runWorkspaceShowDiff}
+              showTerminal={runWorkspaceShowTerminal}
+              showBrowser={runWorkspaceShowBrowser}
+              showNotes={runWorkspaceShowNotes}
+              showChat={runWorkspaceShowChat}
+              onTogglePanel={toggleSelectedRunWorkspacePanel}
+              secondaryPanelPosition={runWorkspaceSecondaryPosition}
+              onSecondaryPanelPositionChange={(position) => {
+                if (!detail.run.id) return;
+                setRunWorkspaceSecondaryPosition(position);
+                updateRunWorkspaceLayout(detail.run.id, (current) => ({
+                  ...current,
+                  secondaryPanelPosition: position,
+                }));
+              }}
+              tileOrder={selectedRunWorkspaceLayout.tileOrder}
+              tileLayout={selectedRunWorkspaceLayout.tileLayout}
+              onTileOrderChange={(next) => {
+                if (!detail.run.id) {
+                  return;
+                }
+                updateRunWorkspaceLayout(detail.run.id, (current) => ({
+                  ...current,
+                  tileOrder: next,
+                }));
+              }}
+              onTileLayoutChange={(next) => {
+                if (!detail.run.id) {
+                  return;
+                }
+                updateRunWorkspaceLayout(detail.run.id, (current) => ({
+                  ...current,
+                  tileLayout: next,
+                }));
+              }}
+              browserSession={runBrowserSessions[detail.run.id] ?? DEFAULT_RUN_BROWSER_SESSION}
+              terminalOpenLinksInApp={runTerminalOpenLinksInApp[detail.run.id] !== false}
+              onTerminalOpenLinksInAppChange={(enabled) =>
+                setRunTerminalOpenLinksInApp((current) => ({
+                  ...current,
+                  [detail.run.id]: enabled,
+                }))
               }
-            >
-              {selectedRunId && openRunPaneCount > 0 ? (
+              onBrowserSessionChange={(session) =>
+                setRunBrowserSessions((current) => ({
+                  ...current,
+                  [detail.run.id]: session,
+                }))
+              }
+              onOpenBrowserUrl={openSelectedRunBrowserUrl}
+              onRespondToShellApproval={(decision) => respondToPendingShellApproval(decision)}
+              onCancelRunShell={(run, toolCallId) => void cancelRunShell(run, toolCallId)}
+              onCancelRun={(run) => void cancelRun(run)}
+              onUndoRunToLastPrompt={(run) => void undoRunToLastPrompt(run)}
+              onRecoverInterruptedRun={(run) => void recoverInterruptedRun(run)}
+              onCreateProjectTask={(projectId, input) => createProjectTask(projectId, input)}
+              onFollowUpRun={(run, prompt, options) => followUpRun(run, prompt, options)}
+            />
+  );
+
+  const renderSelectedProjectPage = (project: ProjectSnapshot): ReactNode => (
+            <ProjectPage
+              project={project}
+              activeTab={projectPageTab}
+              modelOptions={configuredRunModelOptions}
+              configuredIdeKinds={configuredIdeKinds}
+              availableBranches={availableRunBranches}
+              currentProjectBranch={currentProjectBranch}
+              runPrompt={runPrompt}
+              runMode={runMode}
+              runWorkspaceType={runWorkspaceType}
+              runBaseBranch={runBaseBranch}
+              runModelId={runModelId}
+              runWorktreeModelIds={runWorktreeModelIds}
+              submitShortcut={keyboardShortcuts.submitComposer}
+              projectRunStats={projectRunStats}
+              busy={busy}
+              onSubmitRun={(payload) => void submitRun(payload)}
+              onCreateTask={(input) => createProjectTask(project.project.id, input)}
+              onUpdateTask={(taskId, input) => updateProjectTask(taskId, input)}
+              onDeleteTask={(taskId) => deleteProjectTask(taskId)}
+              onStartTask={(prompt, modelId) => submitRunFromPrompt(prompt, modelId)}
+              onGenerateInsight={(kind, modelId) => generateProjectInsight(project.project.id, kind, modelId)}
+              onSetRunForLater={(runId) => void setRunForLater(runId)}
+              onRestoreRunFromForLater={(runId) => void restoreRunFromForLater(runId)}
+              reasoningEffort={runReasoningEffort}
+              anthropicEffort={runAnthropicEffort}
+              yoloMode={runYoloMode}
+              onReasoningEffortChange={changeRunReasoningEffort}
+              onAnthropicEffortChange={changeRunAnthropicEffort}
+              onYoloModeChange={changeRunYoloMode}
+              onSelectRun={(runId) => void handleRunSelect(project.project.id, runId)}
+              onRunPromptChange={setRunPrompt}
+              onRunModeChange={changeRunMode}
+              onRunWorkspaceTypeChange={changeRunWorkspaceType}
+              onRunBaseBranchChange={changeRunBaseBranch}
+              onRunModelChange={changeRunModel}
+              onRunWorktreeModelIdsChange={changeRunWorktreeModelIds}
+              availableIntegratedSkills={enabledIntegratedSkills}
+              activeIntegratedSkillIds={projectActiveSkillsByProjectId[project.project.id] ?? []}
+              onActiveIntegratedSkillIdsChange={(skillIds) => void updateProjectActiveSkills(project.project.id, skillIds)}
+              labSettings={projectLabSettingsByProjectId[project.project.id] ?? buildDefaultProjectLabSettings()}
+              onLabSettingsChange={(settings) => void updateProjectLabSettings(project.project.id, settings)}
+              onRunProjectLab={(input) =>
+                void handleAction(async () => {
+                  if (!buildwarden) {
+                    throw new Error("The Electron desktop bridge is unavailable.");
+                  }
+                  await buildwarden.runProjectLab({
+                    projectId: project.project.id,
+                    mode: input.mode,
+                    baseBranch: input.baseBranch,
+                    implementationModelId: input.implementationModelId,
+                    reviewModelId: input.reviewModelId,
+                    origin: "manual",
+                  });
+                  await loadSnapshot();
+                })
+              }
+              onDeleteProjectLabThread={(threadId) =>
+                void handleAction(async () => {
+                  if (!buildwarden) {
+                    throw new Error("The Electron desktop bridge is unavailable.");
+                  }
+                  await buildwarden.deleteProjectLabThread(threadId);
+                  await loadSnapshot();
+                })
+              }
+              onOpenProjectLabImplementation={(runId) => void handleRunSelect(project.project.id, runId)}
+              loopAvailability={loopAvailabilityByProjectId[project.project.id] ?? null}
+              onOpenLoopRun={(runId) => void handleRunSelect(project.project.id, runId)}
+              onLoopsChanged={loadSnapshot}
+              onBranchesChanged={loadProjectBranches}
+              onDeleteProject={() => void deleteProject(project.project.id)}
+              onOpenProjectSettings={projectPageOnOpenProjectSettings}
+              reviewRequestTarget={reviewRequestTarget?.projectId === project.project.id ? reviewRequestTarget : null}
+            />
+  );
+
+  const renderRunWorkspaceContent = (): ReactNode => {
+            const workspaceWrapperClassName =
+              isAgentRunDetailView || isProjectWorkspaceView ? "flex min-h-0 min-w-0 flex-1 flex-col gap-1.5" : "contents";
+
+            if (selectedRunId && openRunPaneCount > 0) {
+              return (
+            <div className={workspaceWrapperClassName}>
                 <div
                   className={cn(
                     "min-h-0 min-w-0 flex-1 gap-2",
@@ -4569,7 +3941,11 @@ export const App = () => {
                     return null;
                   })}
                 </div>
-              ) : selectedRun ? (
+            </div>
+              );
+            }
+
+            const workspaceHeader = selectedRun ? (
                 <RunDetailHeader
                   run={selectedRun}
                   runDetail={runDetail}
@@ -4600,167 +3976,33 @@ export const App = () => {
                   onDeleteRun={deleteRun}
                   onFocusSubagent={(subagentId) => setSubagentFocusRequest({ runId: selectedRun.id, subagentId, nonce: Date.now() })}
                 />
-              ) : null}
+            ) : null;
+            const renderWorkspaceView = (content: ReactNode) => (
+              <div className={workspaceWrapperClassName}>
+                {workspaceHeader}
+                {content}
+              </div>
+            );
 
-              {selectedRunId && openRunPaneCount > 0 ? null : selectedRunId && runDetail?.run ? (
-            <RunDetailPage
-              className="min-h-0 min-w-0 flex-1"
-              runDetail={runDetail}
-              busy={busy}
-              modelOptions={configuredRunModelOptions}
-              keyboardShortcuts={keyboardShortcuts}
-              pendingShellApproval={null}
-              timelineDensity={runTimelineDensity}
-              subagentFocus={subagentFocusRequest?.runId === runDetail.run.id ? subagentFocusRequest : null}
-              showActivity={runWorkspaceShowActivity}
-              showDiff={runWorkspaceShowDiff}
-              showTerminal={runWorkspaceShowTerminal}
-              showBrowser={runWorkspaceShowBrowser}
-              showNotes={runWorkspaceShowNotes}
-              showChat={runWorkspaceShowChat}
-              onTogglePanel={(panelId) => {
-                if (panelId === "activity") toggleRunWorkspaceActivity();
-                else if (panelId === "diff") toggleRunWorkspaceDiff();
-                else if (panelId === "terminal") toggleRunWorkspaceTerminal();
-                else if (panelId === "browser") toggleRunWorkspaceBrowser();
-                else if (panelId === "notes") toggleRunWorkspaceNotes();
-                else if (panelId === "chat") toggleRunWorkspaceChat();
-              }}
-              secondaryPanelPosition={runWorkspaceSecondaryPosition}
-              onSecondaryPanelPositionChange={(position) => {
-                if (!runDetail?.run.id) return;
-                setRunWorkspaceSecondaryPosition(position);
-                updateRunWorkspaceLayout(runDetail.run.id, (current) => ({
-                  ...current,
-                  secondaryPanelPosition: position,
-                }));
-              }}
-              tileOrder={selectedRunWorkspaceLayout.tileOrder}
-              tileLayout={selectedRunWorkspaceLayout.tileLayout}
-              onTileOrderChange={(next) => {
-                if (!runDetail?.run.id) {
-                  return;
-                }
-                updateRunWorkspaceLayout(runDetail.run.id, (current) => ({
-                  ...current,
-                  tileOrder: next,
-                }));
-              }}
-              onTileLayoutChange={(next) => {
-                if (!runDetail?.run.id) {
-                  return;
-                }
-                updateRunWorkspaceLayout(runDetail.run.id, (current) => ({
-                  ...current,
-                  tileLayout: next,
-                }));
-              }}
-              browserSession={runBrowserSessions[runDetail.run.id] ?? DEFAULT_RUN_BROWSER_SESSION}
-              terminalOpenLinksInApp={runTerminalOpenLinksInApp[runDetail.run.id] !== false}
-              onTerminalOpenLinksInAppChange={(enabled) =>
-                setRunTerminalOpenLinksInApp((current) => ({
-                  ...current,
-                  [runDetail.run.id]: enabled,
-                }))
-              }
-              onBrowserSessionChange={(session) =>
-                setRunBrowserSessions((current) => ({
-                  ...current,
-                  [runDetail.run.id]: session,
-                }))
-              }
-              onOpenBrowserUrl={openSelectedRunBrowserUrl}
-              onRespondToShellApproval={(decision) => respondToPendingShellApproval(decision)}
-              onCancelRunShell={(run, toolCallId) => void cancelRunShell(run, toolCallId)}
-              onCancelRun={(run) => void cancelRun(run)}
-              onUndoRunToLastPrompt={(run) => void undoRunToLastPrompt(run)}
-              onRecoverInterruptedRun={(run) => void recoverInterruptedRun(run)}
-              onCreateProjectTask={(projectId, input) => createProjectTask(projectId, input)}
-              onFollowUpRun={(run, prompt, options) => followUpRun(run, prompt, options)}
-            />
-          ) : selectedRunId ? (
+            if (selectedRunId && runDetail?.run) {
+              return renderWorkspaceView(
+                renderSelectedRunDetailPage(runDetail),
+              );
+            }
+            if (selectedRunId) {
+              return renderWorkspaceView(
             <Card className="flex min-h-[400px] flex-col items-center justify-center gap-4 p-8">
               <Loader2 className="h-10 w-10 animate-spin text-cyan-400" />
               <p className="text-sm text-zinc-500">Loading run...</p>
-            </Card>
-          ) : selectedProject ? (
-            <ProjectPage
-              project={selectedProject}
-              activeTab={projectPageTab}
-              modelOptions={configuredRunModelOptions}
-              configuredIdeKinds={configuredIdeKinds}
-              availableBranches={availableRunBranches}
-              currentProjectBranch={currentProjectBranch}
-              runPrompt={runPrompt}
-              runMode={runMode}
-              runWorkspaceType={runWorkspaceType}
-              runBaseBranch={runBaseBranch}
-              runModelId={runModelId}
-              runWorktreeModelIds={runWorktreeModelIds}
-              submitShortcut={keyboardShortcuts.submitComposer}
-              projectRunStats={projectRunStats}
-              busy={busy}
-              onSubmitRun={(payload) => void submitRun(payload)}
-              onCreateTask={(input) => createProjectTask(selectedProject.project.id, input)}
-              onUpdateTask={(taskId, input) => updateProjectTask(taskId, input)}
-              onDeleteTask={(taskId) => deleteProjectTask(taskId)}
-              onStartTask={(prompt, modelId) => submitRunFromPrompt(prompt, modelId)}
-              onGenerateInsight={(kind, modelId) => generateProjectInsight(selectedProject.project.id, kind, modelId)}
-              onSetRunForLater={(runId) => void setRunForLater(runId)}
-              onRestoreRunFromForLater={(runId) => void restoreRunFromForLater(runId)}
-              reasoningEffort={runReasoningEffort}
-              anthropicEffort={runAnthropicEffort}
-              yoloMode={runYoloMode}
-              onReasoningEffortChange={changeRunReasoningEffort}
-              onAnthropicEffortChange={changeRunAnthropicEffort}
-              onYoloModeChange={changeRunYoloMode}
-              onSelectRun={(runId) => void handleRunSelect(selectedProject.project.id, runId)}
-              onRunPromptChange={setRunPrompt}
-              onRunModeChange={changeRunMode}
-              onRunWorkspaceTypeChange={changeRunWorkspaceType}
-              onRunBaseBranchChange={changeRunBaseBranch}
-              onRunModelChange={changeRunModel}
-              onRunWorktreeModelIdsChange={changeRunWorktreeModelIds}
-              availableIntegratedSkills={enabledIntegratedSkills}
-              activeIntegratedSkillIds={projectActiveSkillsByProjectId[selectedProject.project.id] ?? []}
-              onActiveIntegratedSkillIdsChange={(skillIds) => void updateProjectActiveSkills(selectedProject.project.id, skillIds)}
-              labSettings={projectLabSettingsByProjectId[selectedProject.project.id] ?? buildDefaultProjectLabSettings()}
-              onLabSettingsChange={(settings) => void updateProjectLabSettings(selectedProject.project.id, settings)}
-              onRunProjectLab={(input) =>
-                void handleAction(async () => {
-                  if (!buildwarden) {
-                    throw new Error("The Electron desktop bridge is unavailable.");
-                  }
-                  await buildwarden.runProjectLab({
-                    projectId: selectedProject.project.id,
-                    mode: input.mode,
-                    baseBranch: input.baseBranch,
-                    implementationModelId: input.implementationModelId,
-                    reviewModelId: input.reviewModelId,
-                    origin: "manual",
-                  });
-                  await loadSnapshot();
-                })
-              }
-              onDeleteProjectLabThread={(threadId) =>
-                void handleAction(async () => {
-                  if (!buildwarden) {
-                    throw new Error("The Electron desktop bridge is unavailable.");
-                  }
-                  await buildwarden.deleteProjectLabThread(threadId);
-                  await loadSnapshot();
-                })
-              }
-              onOpenProjectLabImplementation={(runId) => void handleRunSelect(selectedProject.project.id, runId)}
-              loopAvailability={loopAvailabilityByProjectId[selectedProject.project.id] ?? null}
-              onOpenLoopRun={(runId) => void handleRunSelect(selectedProject.project.id, runId)}
-              onLoopsChanged={loadSnapshot}
-              onBranchesChanged={loadProjectBranches}
-              onDeleteProject={() => void deleteProject(selectedProject.project.id)}
-              onOpenProjectSettings={projectPageOnOpenProjectSettings}
-              reviewRequestTarget={reviewRequestTarget?.projectId === selectedProject.project.id ? reviewRequestTarget : null}
-            />
-              ) : (
+            </Card>,
+              );
+            }
+            if (selectedProject) {
+              return renderWorkspaceView(
+                renderSelectedProjectPage(selectedProject),
+              );
+            }
+            return renderWorkspaceView(
                 <Card className="p-8 text-center">
                   <p className="text-lg font-medium">No project selected</p>
                   <p className="mt-2 text-sm text-zinc-500">Open Settings to add your first project, provider, and model.</p>
@@ -4774,10 +4016,88 @@ export const App = () => {
                   >
                     Open settings
                   </Button>
-                </Card>
-              )}
-            </div>
+                </Card>,
+            );
+  };
+
+  return (
+    <div
+      className={cn(
+        "app-shell flex h-screen min-h-0 flex-col overflow-hidden",
+        uiTheme === "light" ? "theme-light" : "theme-dark",
+      )}
+    >
+      {showCustomWindowsTitleBar ? (
+        <AppTitleBar
+          uiTheme={uiTheme}
+          syncWindowsCaptionStrip
+          onOpenMenu={(section, anchor) => void openAppMenuSection(section, anchor)}
+        />
+      ) : null}
+
+      <div className="flex min-h-0 flex-1 text-[var(--ec-text)]">
+        <CommandPalette
+          open={commandPaletteOpen}
+          items={commandPaletteItems}
+          onClose={() => setCommandPaletteOpen(false)}
+        />
+        <Sidebar
+        projects={snapshot.projects}
+        landingSelected={landingSelected}
+        allRunsSelected={allRunsSelected}
+        bookmarksSelected={bookmarksSelected}
+        chatsSelected={chatsSelected}
+        settingsSelected={settingsOpen}
+        selectedProjectId={selectedProject?.project.id ?? null}
+        projectView={projectPageTab}
+        highlightedRunId={
+          !landingSelected && !allRunsSelected && !bookmarksSelected && !chatsSelected && !settingsOpen && typeof selectedRunId === "string" ? selectedRunId : null
+        }
+        collapsed={sidebarCollapsed}
+        width={sidebarWidth}
+        recentRunDays={recentRunDays}
+        bookmarksCount={snapshot.bookmarks.length + snapshot.chatBookmarks.length}
+        chatsCount={snapshot.chats.length}
+        bookmarkedRunIds={sidebarBookmarkedRunIds}
+        onSelectLanding={sidebarOnSelectLanding}
+        onSelectAllRuns={sidebarOnSelectAllRuns}
+        onSelectBookmarks={sidebarOnSelectBookmarks}
+        onSelectChats={sidebarOnSelectChats}
+        onSelectProject={sidebarOnSelectProject}
+        onSelectProjectFeature={sidebarOnSelectProjectFeature}
+        onSelectRun={sidebarOnSelectRun}
+        onRunDragStart={sidebarOnRunDragStart}
+        onReorderProjects={sidebarOnReorderProjects}
+        onAddRunToBookmarks={sidebarOnAddRunToBookmarks}
+        onRemoveRunFromBookmarks={sidebarOnRemoveRunFromBookmarks}
+        onContinueRun={sidebarOnContinueRun}
+        onDeleteRun={sidebarOnDeleteRun}
+        onSetRunForLater={sidebarOnSetRunForLater}
+        pendingDeleteRunIds={pendingDeleteRunIds}
+        onOpenSettings={sidebarOnOpenSettings}
+        onWidthCommit={sidebarOnWidthCommit}
+        onToggleCollapsed={sidebarOnToggleCollapsed}
+        loopEnabledProjectIds={loopEnabledProjectIds}
+      />
+
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--ec-bg)]">
+        <main
+          className={cn(
+            "min-h-0 min-w-0 flex-1 p-3",
+            isAgentRunDetailView || isChatDetailView || isProjectWorkspaceView
+              ? "flex min-h-0 flex-col overflow-hidden"
+              : "overflow-y-auto",
           )}
+        >
+        <section className={cn("w-full", sectionLayoutClassName)}>
+          <Suspense
+            fallback={
+              <div className="flex min-h-[200px] flex-1 items-center justify-center">
+                <Loader2 className="h-6 w-6 animate-spin text-[var(--ec-accent)]" />
+              </div>
+            }
+          >
+          {renderMainContent()}
 
           </Suspense>
         </section>

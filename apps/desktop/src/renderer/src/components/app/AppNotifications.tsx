@@ -34,7 +34,7 @@ interface AppNotificationsProps {
   visibleShellApprovals: ShellApprovalRequestState[];
   shellApprovalQueueLength: number;
   queuedShellApprovalCount: number;
-  visibleShellApprovalStartedAtById: Record<string, number>;
+  visibleShellApprovalStartedAtById: Partial<Record<string, number>>;
   getShellApprovalTarget: (request: ShellApprovalRequestState) => ShellApprovalTarget;
   onOpenShellApprovalRun: (request: ShellApprovalRequestState) => void;
   onRespondToShellApproval: (request: ShellApprovalRequestState, decision: ShellApprovalDecision) => void;

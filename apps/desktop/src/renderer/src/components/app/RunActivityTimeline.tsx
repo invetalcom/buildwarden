@@ -132,6 +132,22 @@ type ToolBatchSummarizedRow = {
   createdAt: string;
 };
 
+const APPROVAL_DECISION_LABELS: Record<string, string> = {
+  deny: "Denied",
+  "allow-for-run": "Allowed for run",
+  "allow-always": "Always allowed",
+  "allow-once": "Allowed once",
+};
+
+const firstMetadataString = (...candidates: unknown[]): string | null => {
+  for (const candidate of candidates) {
+    if (typeof candidate === "string") {
+      return candidate;
+    }
+  }
+  return null;
+};
+
 type SingleActivityEntry =
   | {
       kind: "single";
@@ -208,8 +224,8 @@ const getActivityEntryKey = (entry: ActivityEntry, index: number) => {
     return `${id}-tools-${entry.items.length}`;
   }
   if (entry.kind === "diff-batch") {
-    const first = entry.items[0];
-    return `${first?.step.id ?? `diff-batch-${index}`}-diffs-${entry.items.length}`;
+    const firstId = entry.items[0]?.step.id ?? `diff-batch-${index}`;
+    return `${firstId}-diffs-${entry.items.length}`;
   }
   if (entry.kind === "single-group") {
     const first = entry.items[0]?.step.id ?? `single-group-${index}`;
@@ -317,16 +333,15 @@ const measureTimelineRowElement = (element: HTMLElement) => {
   return Math.max(1, Math.ceil(element.getBoundingClientRect().height));
 };
 
-const describeActivityDetail = (metadata: Record<string, unknown> | undefined) =>
-  ((metadata?.source === "user"
-    ? metadata.commandType === "follow-up"
-      ? "User follow-up command"
-      : "Initial user command"
-    : null) ??
-    metadata?.path ??
-    metadata?.command ??
-    metadata?.query ??
-    metadata?.toolName) as string | null;
+const describeUserCommand = (metadata: Record<string, unknown>): string =>
+  metadata.commandType === "follow-up" ? "User follow-up command" : "Initial user command";
+
+const describeActivityDetail = (metadata: Record<string, unknown> | undefined) => {
+  if (metadata?.source === "user") {
+    return describeUserCommand(metadata);
+  }
+  return (metadata?.path ?? metadata?.command ?? metadata?.query ?? metadata?.toolName) as string | null;
+};
 
 const normalizeShellCommandForActivity = (value: unknown) =>
   typeof value === "string" ? value.replace(/\s+/g, " ").trim() : null;
@@ -697,7 +712,8 @@ const ActivitySubagentCard = ({
   const badge = subagentStatusBadge(info.status);
   const durationLabel = formatSubagentDurationLabel(info);
   const heading = info.description?.trim() || info.prompt?.trim().split("\n")[0] || "Delegated task";
-  const liveActivity = isRunning ? info.activity ?? (info.lastToolName ? `Using ${info.lastToolName}` : null) : null;
+  const lastToolActivity = info.lastToolName ? `Using ${info.lastToolName}` : null;
+  const liveActivity = isRunning ? info.activity ?? lastToolActivity : null;
   const hasExpandableContent = entry.entries.length > 0 || Boolean(info.summary?.trim()) || Boolean(info.prompt?.trim());
   const stats: string[] = [];
   if (durationLabel) {
@@ -742,13 +758,7 @@ const ActivitySubagentCard = ({
           {stats.length > 0 ? (
             <span className="agent-density-meta shrink-0 text-[10px] text-zinc-500 tabular-nums">{stats.join(" · ")}</span>
           ) : null}
-          {hasExpandableContent ? (
-            expanded ? (
-              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
-            ) : (
-              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
-            )
-          ) : null}
+          {hasExpandableContent ? <ExpandChevron expanded={expanded} /> : null}
         </button>
         {liveActivity ? (
           <p className="mt-1 truncate pl-5 text-[10px] text-sky-300/80" title={liveActivity}>
@@ -811,6 +821,70 @@ const ActivityFilePathButton = ({
   );
 };
 
+const summarizeToolPreview = (
+  toolName: string,
+  failed: boolean,
+  item: Extract<SingleActivityEntry, { kind: "tool" }>,
+): string | null => {
+  if (failed) {
+    return item.resultStep?.content ?? item.callStep?.content ?? null;
+  }
+  if (toolName === "run_shell") {
+    return (item.resultStep?.content ?? "").trim() || null;
+  }
+  if (item.resultStep?.content && looksLikeGitDiff(item.resultStep.content)) {
+    return item.resultStep.content;
+  }
+  return null;
+};
+
+const ExpandChevron = ({ expanded }: Readonly<{ expanded: boolean }>) =>
+  expanded ? (
+    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+  ) : (
+    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+  );
+
+const toolStatusColor = (failed: boolean | undefined, streaming: boolean | undefined): string => {
+  if (failed) {
+    return "var(--ec-danger)";
+  }
+  if (streaming) {
+    return "var(--ec-accent)";
+  }
+  return "var(--ec-faint)";
+};
+
+const toolStatusLabel = (failed: boolean | undefined, streaming: boolean | undefined): string => {
+  if (failed) {
+    return "failed";
+  }
+  if (streaming) {
+    return "running";
+  }
+  return "finished";
+};
+
+const ToolDetailCell = ({
+  item,
+  canOpenDetailPath,
+  onOpenWorkspaceFile,
+  fallback,
+}: Readonly<{
+  item: ToolBatchSummarizedRow;
+  canOpenDetailPath: boolean;
+  onOpenWorkspaceFile?: (path: string) => void;
+  fallback: string;
+}>) => {
+  if (item.command) {
+    return <span className="min-w-0 flex-1 truncate font-mono text-[color:var(--ec-muted)]">{item.command}</span>;
+  }
+  if (canOpenDetailPath && item.detail) {
+    return <ActivityFilePathButton path={item.detail} onOpenWorkspaceFile={onOpenWorkspaceFile} className="flex-1" />;
+  }
+  return <span className="min-w-0 flex-1 truncate font-mono text-[color:var(--ec-muted)]">{fallback}</span>;
+};
+
 const ActivityToolBatchRow = ({
   item,
   itemIndex,
@@ -845,6 +919,38 @@ const ActivityToolBatchRow = ({
     typeof item.toolCallId === "string" &&
     ["queued", "preparing", "running"].includes(run.status) &&
     Boolean(onCancelRunShell);
+  let expandableDetailFallback = "";
+  if (item.detail) {
+    expandableDetailFallback = item.detail;
+  } else if (item.paths?.length) {
+    expandableDetailFallback = `${item.paths.length} files`;
+  }
+
+  const detachedShellPreview =
+    item.toolName === "run_shell" ? (
+      <details className="group mt-1 w-full max-w-full">
+        <summary className="flex cursor-pointer list-none items-center gap-1 text-[10px] text-[color:var(--ec-faint)] hover:text-[color:var(--ec-text)] [&::-webkit-details-marker]:hidden">
+          <ChevronDown className="h-3 w-3 shrink-0 transition group-open:rotate-180" />
+          <Terminal className="h-3 w-3 shrink-0" aria-hidden />
+          <span className="font-medium text-[color:var(--ec-muted)]">{item.shellStreaming ? "Live output" : "Console output"}</span>
+          <span>
+            - {shellLineCount} line{shellLineCount === 1 ? "" : "s"}
+          </span>
+        </summary>
+        <pre
+          className={cn(
+            "agent-pre app-scrollbar mt-1 max-h-[min(70vh,36rem)] overflow-auto whitespace-pre-wrap break-words text-[10px] leading-snug",
+            item.failed ? "border-[color:var(--ec-danger-ring)]" : null,
+          )}
+        >
+          {item.preview}
+        </pre>
+      </details>
+    ) : (
+      <pre className="agent-pre app-scrollbar mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-words border-[color:var(--ec-danger-ring)] text-[10px] leading-snug">
+        {item.preview}
+      </pre>
+    );
 
   return (
     <div
@@ -859,18 +965,15 @@ const ActivityToolBatchRow = ({
                 <ChevronDown className="h-3 w-3 shrink-0 text-[color:var(--ec-faint)] transition group-open:rotate-180" />
                 <span
                   className="h-1.5 w-1.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: item.failed ? "var(--ec-danger)" : item.shellStreaming ? "var(--ec-accent)" : "var(--ec-faint)" }}
+                  style={{ backgroundColor: toolStatusColor(item.failed, item.shellStreaming) }}
                 />
                 <span className="shrink-0 font-semibold text-[color:var(--ec-text)]">{item.toolName}</span>
-                {item.command ? (
-                  <span className="min-w-0 flex-1 truncate font-mono text-[color:var(--ec-muted)]">{item.command}</span>
-                ) : canOpenDetailPath && item.detail ? (
-                  <ActivityFilePathButton path={item.detail} onOpenWorkspaceFile={onOpenWorkspaceFile} className="flex-1" />
-                ) : (
-                  <span className="min-w-0 flex-1 truncate font-mono text-[color:var(--ec-muted)]">
-                    {item.detail ?? (item.paths?.length ? `${item.paths.length} files` : "")}
-                  </span>
-                )}
+                <ToolDetailCell
+                  item={item}
+                  canOpenDetailPath={canOpenDetailPath}
+                  onOpenWorkspaceFile={onOpenWorkspaceFile}
+                  fallback={expandableDetailFallback}
+                />
                 {item.count > 1 ? <span className="shrink-0 text-[10px] text-[color:var(--ec-faint)]">x{item.count}</span> : null}
                 {item.toolName === "run_shell" && item.preview && !isCompact ? (
                   <span className="agent-tool-extra shrink-0 text-[10px] text-[color:var(--ec-faint)]">
@@ -901,7 +1004,7 @@ const ActivityToolBatchRow = ({
               {isDetailed ? (
                 <div className="agent-tool-meta">
                   <span>{new Date(item.createdAt).toLocaleTimeString()}</span>
-                  <span>{item.failed ? "failed" : item.shellStreaming ? "running" : "finished"}</span>
+                  <span>{toolStatusLabel(item.failed, item.shellStreaming)}</span>
                   {item.toolCallId ? <span className="truncate">call {item.toolCallId}</span> : null}
                 </div>
               ) : null}
@@ -911,16 +1014,15 @@ const ActivityToolBatchRow = ({
               <span className="h-3 w-3 shrink-0" aria-hidden />
               <span
                 className="h-1.5 w-1.5 shrink-0 rounded-full"
-                style={{ backgroundColor: item.failed ? "var(--ec-danger)" : item.shellStreaming ? "var(--ec-accent)" : "var(--ec-faint)" }}
+                style={{ backgroundColor: toolStatusColor(item.failed, item.shellStreaming) }}
               />
               <span className="shrink-0 font-semibold text-[color:var(--ec-text)]">{item.toolName}</span>
-              {item.command ? (
-                <span className="min-w-0 flex-1 truncate font-mono text-[color:var(--ec-muted)]">{item.command}</span>
-              ) : canOpenDetailPath && item.detail ? (
-                <ActivityFilePathButton path={item.detail} onOpenWorkspaceFile={onOpenWorkspaceFile} className="flex-1" />
-              ) : (
-                <span className="min-w-0 flex-1 truncate font-mono text-[color:var(--ec-muted)]">{item.detail}</span>
-              )}
+              <ToolDetailCell
+                item={item}
+                canOpenDetailPath={canOpenDetailPath}
+                onOpenWorkspaceFile={onOpenWorkspaceFile}
+                fallback={item.detail ?? ""}
+              />
               {item.count > 1 ? <span className="shrink-0 text-[10px] text-[color:var(--ec-faint)]">x{item.count}</span> : null}
               {item.shellStreaming ? <span className="agent-tool-live-dots" aria-hidden /> : null}
             </div>
@@ -928,7 +1030,7 @@ const ActivityToolBatchRow = ({
           {!hasExpandableContent && isDetailed ? (
             <div className="agent-tool-meta">
               <span>{new Date(item.createdAt).toLocaleTimeString()}</span>
-              <span>{item.failed ? "failed" : item.shellStreaming ? "running" : "finished"}</span>
+              <span>{toolStatusLabel(item.failed, item.shellStreaming)}</span>
               {item.toolCallId ? <span className="truncate">call {item.toolCallId}</span> : null}
             </div>
           ) : null}
@@ -961,32 +1063,7 @@ const ActivityToolBatchRow = ({
           </div>
         ) : null}
       </div>
-      {renderDetachedPreview ? (
-        item.toolName === "run_shell" ? (
-          <details className="group mt-1 w-full max-w-full">
-            <summary className="flex cursor-pointer list-none items-center gap-1 text-[10px] text-[color:var(--ec-faint)] hover:text-[color:var(--ec-text)] [&::-webkit-details-marker]:hidden">
-              <ChevronDown className="h-3 w-3 shrink-0 transition group-open:rotate-180" />
-              <Terminal className="h-3 w-3 shrink-0" aria-hidden />
-              <span className="font-medium text-[color:var(--ec-muted)]">{item.shellStreaming ? "Live output" : "Console output"}</span>
-              <span>
-                - {shellLineCount} line{shellLineCount === 1 ? "" : "s"}
-              </span>
-            </summary>
-            <pre
-              className={cn(
-                "agent-pre app-scrollbar mt-1 max-h-[min(70vh,36rem)] overflow-auto whitespace-pre-wrap break-words text-[10px] leading-snug",
-                item.failed ? "border-[color:var(--ec-danger-ring)]" : null,
-              )}
-            >
-              {item.preview}
-            </pre>
-          </details>
-        ) : (
-          <pre className="agent-pre app-scrollbar mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-words border-[color:var(--ec-danger-ring)] text-[10px] leading-snug">
-            {item.preview}
-          </pre>
-        )
-      ) : null}
+      {renderDetachedPreview ? detachedShellPreview : null}
       {hasInlineDiff && writeFileDiffExpanded && item.writeFileDiff ? (
         <div className="mt-1.5 min-w-0 w-full">
           <GitDiffPreview
@@ -1104,7 +1181,7 @@ export function RunActivityTimeline({
   onSubmitUserInputAnswers,
   onOpenWorkspaceFile,
   onToggleReasoningStep,
-}: {
+}: Readonly<{
   steps: RunActivityStep[];
   run: RunActivityRun;
   className?: string;
@@ -1130,7 +1207,7 @@ export function RunActivityTimeline({
   onSubmitUserInputAnswers?: (run: RunActivityRun, requestId: string, answers: RunUserInputAnswers) => Promise<void> | void;
   onOpenWorkspaceFile?: (path: string) => void;
   onToggleReasoningStep?: (stepId: string) => void;
-}) {
+}>) {
   const [internalCopiedStepId, setInternalCopiedStepId] = useState<string | null>(null);
   const [internalExpandedReasoningStepIds, setInternalExpandedReasoningStepIds] = useState<Record<string, boolean>>({});
   const isRunActive = ["queued", "preparing", "running"].includes(run.status);
@@ -1385,25 +1462,9 @@ export function RunActivityTimeline({
             const detail = describeActivityDetail(resultMetadata) ?? describeActivityDetail(callMetadata);
             const failed = resultMetadata.ok === false;
             const shellStreaming = resultMetadata.shellStreaming === true;
-            const toolCallId =
-              typeof resultMetadata.callId === "string"
-                ? resultMetadata.callId
-                : typeof callMetadata.callId === "string"
-                  ? callMetadata.callId
-                  : null;
-            const command =
-              typeof resultMetadata.command === "string"
-                ? resultMetadata.command
-                : typeof callMetadata.command === "string"
-                  ? callMetadata.command
-                  : null;
-            const preview = failed
-              ? item.resultStep?.content ?? item.callStep?.content ?? null
-              : toolName === "run_shell"
-                ? (item.resultStep?.content ?? "").trim() || null
-                : item.resultStep?.content && looksLikeGitDiff(item.resultStep.content)
-                  ? item.resultStep.content
-                  : null;
+            const toolCallId = firstMetadataString(resultMetadata.callId, callMetadata.callId);
+            const command = firstMetadataString(resultMetadata.command, callMetadata.command);
+            const preview = summarizeToolPreview(toolName, failed, item);
             const writeFileDiff =
               !failed && toolName === "write_file" && typeof resultMetadata.writeFileUnifiedDiff === "string"
                 ? resultMetadata.writeFileUnifiedDiff
@@ -1725,24 +1786,15 @@ export function RunActivityTimeline({
         }
 
         if (isRequestEntry) {
-          const requestKind =
-            typeof entry.metadata.requestKind === "string"
-              ? entry.metadata.requestKind
-              : entry.step.eventType.startsWith("approval")
-                ? "approval"
-                : "user-input";
+          const fallbackRequestKind = entry.step.eventType.startsWith("approval") ? "approval" : "user-input";
+          const requestKind = firstMetadataString(entry.metadata.requestKind) ?? fallbackRequestKind;
           const requestResolved = entry.step.eventType === "approval-resolved" || entry.metadata.requestStatus === "resolved";
           const approvalDecision =
             typeof entry.metadata.shellApprovalDecision === "string" ? entry.metadata.shellApprovalDecision : null;
           const approvalMessage =
             typeof entry.metadata.approvalResolutionMessage === "string" ? entry.metadata.approvalResolutionMessage : null;
           const isShellApproval = requestKind === "approval" && typeof entry.metadata.approvalRequestId === "string";
-          const userInputRequestId =
-            typeof entry.metadata.userInputRequestId === "string"
-              ? entry.metadata.userInputRequestId
-              : typeof entry.metadata.requestId === "string"
-                ? entry.metadata.requestId
-                : null;
+          const userInputRequestId = firstMetadataString(entry.metadata.userInputRequestId, entry.metadata.requestId);
           const userInputQuestions = readUserInputQuestions(entry.metadata);
           if (!readOnly && requestKind === "user-input" && userInputRequestId && userInputQuestions.length > 0) {
             return (
@@ -1765,16 +1817,7 @@ export function RunActivityTimeline({
               />
             );
           }
-          const decisionLabel =
-            approvalDecision === "deny"
-              ? "Denied"
-              : approvalDecision === "allow-for-run"
-                ? "Allowed for run"
-                : approvalDecision === "allow-always"
-                  ? "Always allowed"
-                  : approvalDecision === "allow-once"
-                    ? "Allowed once"
-                    : null;
+          const decisionLabel = approvalDecision ? APPROVAL_DECISION_LABELS[approvalDecision] ?? null : null;
           const requestIconClass = requestResolved
             ? "h-3.5 w-3.5 shrink-0 text-[color:var(--ec-faint)]"
             : "h-3.5 w-3.5 shrink-0 text-[color:var(--ec-info)]";

@@ -412,7 +412,7 @@ export const buildInitialRepoContext = async (
     sections.push({
       key: "entrypoints",
       priority: 30,
-      text: `Key entrypoints:\n${entrypoints.map((entry) => `- ${entry}`).join("\n")}`,
+      text: ["Key entrypoints:", ...entrypoints.map((entry) => `- ${entry}`)].join("\n"),
     });
   }
 
@@ -420,7 +420,7 @@ export const buildInitialRepoContext = async (
     sections.push({
       key: "changed-files",
       priority: 40,
-      text: `Recently changed files:\n${changedFiles.map((entry) => `- ${entry}`).join("\n")}`,
+      text: ["Recently changed files:", ...changedFiles.map((entry) => `- ${entry}`)].join("\n"),
     });
   }
 
@@ -428,7 +428,7 @@ export const buildInitialRepoContext = async (
     sections.push({
       key: "prompt-hints",
       priority: 50,
-      text: `Files or paths mentioned in the prompt:\n${promptHints.map((entry) => `- ${entry}`).join("\n")}`,
+      text: ["Files or paths mentioned in the prompt:", ...promptHints.map((entry) => `- ${entry}`)].join("\n"),
     });
   }
 

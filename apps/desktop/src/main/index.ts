@@ -1017,7 +1017,7 @@ app.whenReady().then(async () => {
       type: "error",
       title: "Startup Error",
       message: "Failed to start BuildWarden",
-      detail: `${message}${stack ? `\n\n${stack}` : ""}`,
+      detail: [message, stack].filter(Boolean).join("\n\n"),
       noLink: true,
     });
     app.quit();

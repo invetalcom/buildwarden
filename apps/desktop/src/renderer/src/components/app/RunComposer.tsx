@@ -7,6 +7,7 @@ import {
   type ComponentType,
   type KeyboardEvent,
   type ReactNode,
+  type RefObject,
 } from "react";
 import {
   parseLeadingComposerCommand,
@@ -23,6 +24,28 @@ import { Textarea } from "../ui/textarea";
 import { ContextWindowBadge } from "./ContextWindowBadge";
 
 const RUN_MODES: RunMode[] = ["code", "plan", "ask"];
+
+/** Closes a popover-style menu when the pointer goes down outside its root element. */
+const useCloseOnOutsidePointerDown = <T extends HTMLElement>(
+  rootRef: RefObject<T | null>,
+  open: boolean,
+  setOpen: (open: boolean) => void,
+) => {
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handlePointerDown);
+    return () => window.removeEventListener("mousedown", handlePointerDown);
+  }, [open, rootRef, setOpen]);
+};
 const MAX_VISIBLE_COMPOSER_COMMANDS = 5;
 const MAX_COMPOSER_COMMAND_SECONDARY_CHARS = 60;
 
@@ -108,20 +131,7 @@ export const ComposerSelect = ({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const selectedOption = options.find((option) => option.value === value) ?? options[0];
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-
-    window.addEventListener("mousedown", handlePointerDown);
-    return () => window.removeEventListener("mousedown", handlePointerDown);
-  }, [open]);
+  useCloseOnOutsidePointerDown(rootRef, open, setOpen);
 
   return (
     <div ref={rootRef} className={`relative ${open ? "z-[80]" : "z-10"}`}>
@@ -209,20 +219,7 @@ const ComposerMultiModelSelect = ({
     return `${selectedIds.length} models`;
   })();
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-
-    window.addEventListener("mousedown", handlePointerDown);
-    return () => window.removeEventListener("mousedown", handlePointerDown);
-  }, [open]);
+  useCloseOnOutsidePointerDown(rootRef, open, setOpen);
 
   const toggleId = (id: string) => {
     const next = new Set(selectedIds);
@@ -323,20 +320,7 @@ const ComposerRunSettingsButton = ({
   const workspaceLabel = selectedWorkspaceType ? (workspaceLabels?.[selectedWorkspaceType] ?? WORKSPACE_LABELS[selectedWorkspaceType]) : null;
   const summary = [MODE_LABELS[selectedMode], workspaceLabel, selectedBranch].filter(Boolean).join(" · ");
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-
-    window.addEventListener("mousedown", handlePointerDown);
-    return () => window.removeEventListener("mousedown", handlePointerDown);
-  }, [open]);
+  useCloseOnOutsidePointerDown(rootRef, open, setOpen);
 
   const modeOptions = RUN_MODES.map((mode) => ({
     value: mode,
@@ -692,11 +676,12 @@ export const RunComposer = ({
     return () => window.clearTimeout(timerId);
   }, [canLoadComposerCommands, commandModelId, effectiveCommandContext, projectId, slashCommandQuery]);
 
-  const visibleComposerCommands = canLoadComposerCommands
-    ? showAllComposerCommands
+  let visibleComposerCommands: ComposerCommandDescriptor[] = [];
+  if (canLoadComposerCommands) {
+    visibleComposerCommands = showAllComposerCommands
       ? availableComposerCommands
-      : availableComposerCommands.slice(0, MAX_VISIBLE_COMPOSER_COMMANDS)
-    : [];
+      : availableComposerCommands.slice(0, MAX_VISIBLE_COMPOSER_COMMANDS);
+  }
   const hasMoreComposerCommands =
     canLoadComposerCommands && !showAllComposerCommands && availableComposerCommands.length > MAX_VISIBLE_COMPOSER_COMMANDS;
   const hasSupportedLeadingCommand = Boolean(
@@ -722,7 +707,8 @@ export const RunComposer = ({
     }
 
     const argument = parsed?.argument ?? "";
-    onPromptChange(`${command.command}${argument ? ` ${argument}` : " "}`);
+    const argumentSuffix = argument ? ` ${argument}` : " ";
+    onPromptChange(`${command.command}${argumentSuffix}`);
     setShowAllComposerCommands(false);
     textareaRef.current?.focus();
   };
@@ -740,11 +726,12 @@ export const RunComposer = ({
     (option.providerType === "ai-sdk" && (option.providerFamily === "openai" || option.providerFamily === "anthropic"));
   const showMultiReasoningControl =
     useMultiModel && selectedModelOptions.some(supportsReasoning) && (onReasoningEffortChange || onAnthropicEffortChange);
-  const normalizedMultiReasoning = ["low", "medium", "high"].includes(reasoningEffort)
-    ? reasoningEffort
-    : ["low", "medium", "high"].includes(anthropicEffort)
-      ? anthropicEffort
-      : "medium";
+  let normalizedMultiReasoning = "medium";
+  if (["low", "medium", "high"].includes(reasoningEffort)) {
+    normalizedMultiReasoning = reasoningEffort;
+  } else if (["low", "medium", "high"].includes(anthropicEffort)) {
+    normalizedMultiReasoning = anthropicEffort;
+  }
   const showReasoningControl =
     !useMultiModel &&
     (activeModelOption?.providerType === "codex-cli" ||
@@ -802,7 +789,10 @@ export const RunComposer = ({
     onAddAttachmentFiles(pasted);
   };
 
-  const textareaMinClass = isChat ? (dense ? "min-h-28 sm:min-h-32" : "min-h-36 sm:min-h-44") : dense ? "min-h-24" : "min-h-32";
+  let textareaMinClass = dense ? "min-h-24" : "min-h-32";
+  if (isChat) {
+    textareaMinClass = dense ? "min-h-28 sm:min-h-32" : "min-h-36 sm:min-h-44";
+  }
 
   useEffect(() => {
     if (!autoFocus || busy || isRunActive) {
@@ -868,7 +858,8 @@ export const RunComposer = ({
                 </button>
               ) : null}
             </div>
-          ) : showUnsupportedSlashCommand ? (
+          ) : null}
+          {visibleComposerCommands.length === 0 && showUnsupportedSlashCommand ? (
             <div className="mx-2 mb-1 border-t border-[var(--ec-border)] px-1 pt-1.5 text-[11px] text-[var(--ec-danger)]">
               Slash command is not available for the selected model provider.
             </div>

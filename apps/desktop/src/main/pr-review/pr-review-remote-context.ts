@@ -3,8 +3,20 @@ import { parseGitRemoteToWebBase } from "@buildwarden/git-service";
 import type { GitService } from "@buildwarden/git-service";
 import type { ProjectPrReviewRemoteContext } from "./pr-review-types";
 
+const trimSlashes = (value: string): string => {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value[start] === "/") {
+    start += 1;
+  }
+  while (end > start && value[end - 1] === "/") {
+    end -= 1;
+  }
+  return value.slice(start, end);
+};
+
 const normalizeProjectPath = (pathName: string): string => {
-  const trimmed = pathName.replace(/^\/+|\/+$/g, "");
+  const trimmed = trimSlashes(pathName);
   try {
     return decodeURIComponent(trimmed);
   } catch {

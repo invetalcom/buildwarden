@@ -60,13 +60,14 @@ export const parseLoopPlan = (raw: string): LoopPlan | null => {
     if (!isRecord(parsed)) {
       return null;
     }
-    const rawIterations = Array.isArray(parsed.iterations)
-      ? parsed.iterations
-      : Array.isArray(parsed.prs)
-        ? parsed.prs
-        : Array.isArray(parsed.steps)
-          ? parsed.steps
-          : [];
+    let rawIterations: unknown[] = [];
+    if (Array.isArray(parsed.iterations)) {
+      rawIterations = parsed.iterations;
+    } else if (Array.isArray(parsed.prs)) {
+      rawIterations = parsed.prs;
+    } else if (Array.isArray(parsed.steps)) {
+      rawIterations = parsed.steps;
+    }
     const iterations = rawIterations
       .map((entry): LoopPlanIteration | null => {
         if (typeof entry === "string") {
@@ -99,7 +100,12 @@ export const parseLoopPlan = (raw: string): LoopPlan | null => {
 export const parseLoopUiManifest = (raw: string): LoopUiManifestPage[] | null => {
   try {
     const parsed = JSON.parse(normalizeJsonResponse(raw)) as unknown;
-    const rawPages = isRecord(parsed) ? parsed.pages : Array.isArray(parsed) ? parsed : null;
+    let rawPages: unknown = null;
+    if (isRecord(parsed)) {
+      rawPages = parsed.pages;
+    } else if (Array.isArray(parsed)) {
+      rawPages = parsed;
+    }
     if (!Array.isArray(rawPages)) {
       return null;
     }
@@ -205,10 +211,15 @@ export const buildLoopIterationPrompt = (args: {
   planSummary: string | null;
 }): string => {
   const { project, loop, iteration, allIterations, planSummary } = args;
-  const planLines = allIterations.map(
-    (entry) =>
-      `${String(entry.iterationIndex + 1)}. ${entry.title}${entry.id === iteration.id ? "  <-- YOU IMPLEMENT THIS ONE" : entry.status === "merged" ? " (already merged)" : ""}`,
-  );
+  const planLines = allIterations.map((entry) => {
+    let marker = "";
+    if (entry.id === iteration.id) {
+      marker = "  <-- YOU IMPLEMENT THIS ONE";
+    } else if (entry.status === "merged") {
+      marker = " (already merged)";
+    }
+    return `${String(entry.iterationIndex + 1)}. ${entry.title}${marker}`;
+  });
   return [
     "You are the implementation agent of a BuildWarden Loop: an automated pipeline that turns a user request into merged pull/merge requests.",
     "Implement exactly one plan iteration in this workspace. BuildWarden will commit remaining changes, push the branch, and open the PR afterwards - focus on a complete, high-quality implementation.",
@@ -309,7 +320,9 @@ export const buildLoopCommentsFixPrompt = (args: {
   if (args.threads.length > 0) {
     lines.push("Review threads on the diff:");
     for (const [index, thread] of args.threads.entries()) {
-      lines.push(`Thread ${String(index + 1)}${thread.path ? ` - ${thread.path}${thread.line ? `:${String(thread.line)}` : ""}` : ""}:`);
+      const lineSuffix = thread.line ? `:${String(thread.line)}` : "";
+      const pathSuffix = thread.path ? ` - ${thread.path}${lineSuffix}` : "";
+      lines.push(`Thread ${String(index + 1)}${pathSuffix}:`);
       for (const comment of thread.comments) {
         lines.push(`  ${comment.author ?? "reviewer"} wrote:`, quoteCommentBody(comment.body));
       }
@@ -413,9 +426,10 @@ export const buildLoopAuditPrompt = (args: {
     args.loop.prompt,
     "",
     "Merged iterations:",
-    ...args.iterations.map(
-      (iteration) => `- ${iteration.title}${iteration.prUrl ? ` (${iteration.prUrl})` : ""} [${iteration.status}]`,
-    ),
+    ...args.iterations.map((iteration) => {
+      const prSuffix = iteration.prUrl ? ` (${iteration.prUrl})` : "";
+      return `- ${iteration.title}${prSuffix} [${iteration.status}]`;
+    }),
     "",
     "Return concise Markdown with sections: Outcome, Risks / Follow-ups, Verification Suggestions. Keep it under 300 words.",
   ].join("\n");

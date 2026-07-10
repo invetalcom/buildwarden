@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { randomInt } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, statSync, type Dirent } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
@@ -209,6 +210,17 @@ const CANONICAL_RUN_CHUNK_TYPES = new Set<string>([
 ]);
 
 const isCanonicalRunChunkType = (value: string): value is RunEvent["type"] => CANONICAL_RUN_CHUNK_TYPES.has(value);
+
+/** Maps a provider chunk type onto the persisted run step event type. */
+const runChunkEventType = (chunkType: string): RunEvent["type"] | "output" | "error" | "status" => {
+  if (chunkType === "message") {
+    return "output";
+  }
+  if (isCanonicalRunChunkType(chunkType)) {
+    return chunkType;
+  }
+  return chunkType === "error" ? "error" : "status";
+};
 
 const isDuplicateFinalSummaryStep = (
   step: {
@@ -424,8 +436,83 @@ const clampReviewScore = (value: unknown): number => {
   return Math.min(100, Math.max(0, Math.round(score)));
 };
 
+const resolveRecoveryKind = (
+  providerRecoverySupported: boolean,
+  hasCheckpoint: boolean,
+  hasResumeCursor: boolean,
+): "checkpoint" | "provider-session" | null => {
+  if (!providerRecoverySupported) {
+    return null;
+  }
+  if (hasCheckpoint) {
+    return "checkpoint";
+  }
+  return hasResumeCursor ? "provider-session" : null;
+};
+
+const firstNonEmptyLine = (output: string): string | null => {
+  for (const line of output.split(/\r?\n/g)) {
+    const trimmed = line.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+  return null;
+};
+
+const describeInterruptedRecoveryDetail = (hasCheckpoint: boolean, providerSessionAvailable: boolean): string => {
+  if (hasCheckpoint) {
+    return "BuildWarden saved a checkpoint from the last completed tool round and can start a deliberate recovery turn.";
+  }
+  if (providerSessionAvailable) {
+    return "BuildWarden saved the provider session cursor and can continue from the current workspace state.";
+  }
+  return "No checkpoint or provider session cursor was saved before the application closed.";
+};
+
+const ideExecutableDialogFilters = (platform: NodeJS.Platform): { name: string; extensions: string[] }[] => {
+  if (platform === "win32") {
+    return [
+      { name: "Executable", extensions: ["exe", "bat", "cmd"] },
+      { name: "All files", extensions: ["*"] },
+    ];
+  }
+  if (platform === "darwin") {
+    return [
+      { name: "Application", extensions: ["app"] },
+      { name: "All files", extensions: ["*"] },
+    ];
+  }
+  return [{ name: "All files", extensions: ["*"] }];
+};
+
+const SHELL_APPROVAL_DECISION_MESSAGES: Record<string, { title: string; content: string }> = {
+  deny: { title: "Shell command denied", content: "The requested shell command was denied." },
+  "allow-for-run": {
+    title: "Shell command allowed for run",
+    content: "The requested shell command was allowed and will stay allowed for this run.",
+  },
+  "allow-always": {
+    title: "Shell command allowed and saved to settings",
+    content:
+      "The requested shell command was allowed. An exact-match pattern was added to Settings > Projects & Workspace > Shell allowlist.",
+  },
+  "allow-once": { title: "Shell command allowed once", content: "The requested shell command was allowed once." },
+};
+
+/** Human-readable lab kickoff message; `baseBranch` is null for plain folder projects. */
+const describeLabStart = (modeLabel: string, baseBranch: string | null, topic: string | null): string => {
+  const origin = baseBranch ? `Started ${modeLabel} mode from base branch \`${baseBranch}\`` : `Started ${modeLabel} mode for this project folder`;
+  return topic ? `${origin} with user direction: ${topic}` : `${origin}.`;
+};
+
 const parseReviewLineNumber = (value: unknown, fallbackReference: unknown): number | null => {
-  const numericValue = typeof value === "number" ? value : typeof value === "string" ? Number.parseInt(value.trim(), 10) : Number.NaN;
+  let numericValue = Number.NaN;
+  if (typeof value === "number") {
+    numericValue = value;
+  } else if (typeof value === "string") {
+    numericValue = Number.parseInt(value.trim(), 10);
+  }
   if (Number.isInteger(numericValue) && numericValue > 0) {
     return numericValue;
   }
@@ -434,7 +521,7 @@ const parseReviewLineNumber = (value: unknown, fallbackReference: unknown): numb
     return null;
   }
 
-  const match = fallbackReference.match(/\b(?:line|lines|L)?\s*(\d{1,7})\b/i);
+  const match = /\b(?:line|lines|L)?\s*(\d{1,7})\b/i.exec(fallbackReference);
   if (!match?.[1]) {
     return null;
   }
@@ -963,7 +1050,7 @@ export class AppController
   }
 
   private chooseProjectLabMode(): ProjectLabMode {
-    return PROJECT_LAB_MODES[Math.floor(Math.random() * PROJECT_LAB_MODES.length)] ?? "new-feature";
+    return PROJECT_LAB_MODES[randomInt(PROJECT_LAB_MODES.length)] ?? "new-feature";
   }
 
   private normalizeProjectLabMode(value: ProjectLabMode | undefined): ProjectLabMode {
@@ -1378,13 +1465,7 @@ export class AppController
         {
           sessionInterrupted: true,
           canRecoverInterruptedSession: providerRecoverySupported && Boolean(checkpoint || providerRuntime?.resumeCursor),
-          recoveryKind: providerRecoverySupported
-            ? checkpoint
-              ? "checkpoint"
-              : providerRuntime?.resumeCursor
-                ? "provider-session"
-                : null
-            : null,
+          recoveryKind: resolveRecoveryKind(providerRecoverySupported, Boolean(checkpoint), Boolean(providerRuntime?.resumeCursor)),
         },
       );
     }
@@ -3040,14 +3121,7 @@ export class AppController
       threadId: thread.id,
       role: "system",
       label: "Project Lab",
-      content:
-        input.topic?.trim()
-          ? project.kind === "git"
-            ? `Started ${modeLabel} mode from base branch \`${baseBranch}\` with user direction: ${input.topic.trim()}`
-            : `Started ${modeLabel} mode for this project folder with user direction: ${input.topic.trim()}`
-          : project.kind === "git"
-            ? `Started ${modeLabel} mode from base branch \`${baseBranch}\`.`
-            : `Started ${modeLabel} mode for this project folder.`,
+      content: describeLabStart(modeLabel, project.kind === "git" ? baseBranch : null, input.topic?.trim() || null),
     });
 
     if (mode === "rfc-only") {
@@ -3864,10 +3938,10 @@ export class AppController
       : [];
 
     const fallbackHeadline = "Reviewer simulation ready";
-    const fallbackSummary =
-      findings.length > 0
-        ? `Generated ${String(findings.length)} review finding${findings.length === 1 ? "" : "s"} from the current diff.`
-        : "No concrete findings were returned. Review the diff manually before committing.";
+    let fallbackSummary = "No concrete findings were returned. Review the diff manually before committing.";
+    if (findings.length > 0) {
+      fallbackSummary = `Generated ${String(findings.length)} review finding${findings.length === 1 ? "" : "s"} from the current diff.`;
+    }
 
     return {
       headline: typeof parsed.headline === "string" && parsed.headline.trim() ? parsed.headline.trim() : fallbackHeadline,
@@ -4482,7 +4556,10 @@ export class AppController
       .join("\n");
     const hotspots = architecture.hotspots
       .slice(0, 5)
-      .map((item) => `- ${item.path} (${String(item.commitCount)} recent commits${item.ownerLabel ? `, owner ${item.ownerLabel}` : ""})`)
+      .map((item) => {
+        const ownerSuffix = item.ownerLabel ? `, owner ${item.ownerLabel}` : "";
+        return `- ${item.path} (${String(item.commitCount)} recent commits${ownerSuffix})`;
+      })
       .join("\n");
     return [
       `Total modules: ${String(gravity.summaryStats.totalModules)}`,
@@ -5081,7 +5158,7 @@ export class AppController
     const providerSessionAvailable = Boolean(providerRuntime?.resumeCursor);
     const canRecoverInterruptedSession =
       providerRecoverySupported && sessionInterrupted && !this.runWorkers.has(runId) && (Boolean(checkpoint) || providerSessionAvailable);
-    const recoveryKind = checkpoint ? "checkpoint" : providerSessionAvailable ? "provider-session" : null;
+    const recoveryKind = resolveRecoveryKind(true, Boolean(checkpoint), providerSessionAvailable);
     return {
       ...detail,
       workspacePath,
@@ -5096,11 +5173,7 @@ export class AppController
             available: canRecoverInterruptedSession,
             kind: recoveryKind ?? "provider-session",
             title: canRecoverInterruptedSession ? "Recovery path available" : "Session interrupted",
-            detail: checkpoint
-              ? "BuildWarden saved a checkpoint from the last completed tool round and can start a deliberate recovery turn."
-              : providerSessionAvailable
-                ? "BuildWarden saved the provider session cursor and can continue from the current workspace state."
-                : "No checkpoint or provider session cursor was saved before the application closed.",
+            detail: describeInterruptedRecoveryDetail(Boolean(checkpoint), providerSessionAvailable),
             providerType: providerRuntime?.providerType,
             checkpointRound: checkpoint?.round,
             providerSessionAvailable,
@@ -5453,11 +5526,7 @@ export class AppController
               resolve(null);
               return;
             }
-            const firstLine = stdout
-              .split(/\r?\n/g)
-              .map((line) => line.trim())
-              .find(Boolean);
-            resolve(firstLine ?? null);
+            resolve(firstNonEmptyLine(stdout));
           });
         } catch {
           this.logControllerWarn(`${label} detection strategy failed; continuing to next lookup.`, {
@@ -5602,17 +5671,7 @@ export class AppController
 
   async pickIdeExecutable(): Promise<string | null> {
     const filters =
-      process.platform === "win32"
-        ? [
-            { name: "Executable", extensions: ["exe", "bat", "cmd"] },
-            { name: "All files", extensions: ["*"] },
-          ]
-        : process.platform === "darwin"
-          ? [
-              { name: "Application", extensions: ["app"] },
-              { name: "All files", extensions: ["*"] },
-            ]
-          : [{ name: "All files", extensions: ["*"] }];
+      ideExecutableDialogFilters(process.platform);
 
     const result = await dialog.showOpenDialog({
       title: "Select IDE executable",
@@ -5718,22 +5777,7 @@ export class AppController
       decision,
     });
 
-    const title =
-      decision === "deny"
-        ? "Shell command denied"
-        : decision === "allow-for-run"
-          ? "Shell command allowed for run"
-          : decision === "allow-always"
-            ? "Shell command allowed and saved to settings"
-            : "Shell command allowed once";
-    const content =
-      decision === "deny"
-        ? "The requested shell command was denied."
-        : decision === "allow-for-run"
-          ? "The requested shell command was allowed and will stay allowed for this run."
-          : decision === "allow-always"
-            ? "The requested shell command was allowed. An exact-match pattern was added to Settings > Projects & Workspace > Shell allowlist."
-            : "The requested shell command was allowed once.";
+    const { title, content } = SHELL_APPROVAL_DECISION_MESSAGES[decision] ?? SHELL_APPROVAL_DECISION_MESSAGES["allow-once"];
 
     const metadata = {
       requestKind: "approval",
@@ -5976,14 +6020,7 @@ export class AppController
       }
 
       if (payload.type === "chunk") {
-        const eventType =
-          payload.chunk.type === "message"
-            ? "output"
-            : isCanonicalRunChunkType(payload.chunk.type)
-              ? payload.chunk.type
-              : payload.chunk.type === "error"
-                ? "error"
-                : "status";
+        const eventType = runChunkEventType(payload.chunk.type);
         const usageTotals =
           typeof payload.chunk.metadata?.usageTotals === "object" && payload.chunk.metadata?.usageTotals
             ? (payload.chunk.metadata.usageTotals as Partial<RunTokenUsage>)
@@ -6078,14 +6115,12 @@ export class AppController
               payload.chunk.metadata,
             );
             streamingStepIds.set(streamId, step.id);
-            streamingStepKinds.set(
-              streamId,
-              payload.chunk.type === "tool-result" || payload.chunk.type === "tool-progress"
-                ? payload.chunk.type
-                : payload.chunk.metadata?.assistantKind === "reasoning"
-                  ? "reasoning"
-                  : "assistant",
-            );
+            let streamingStepKind: "tool-result" | "tool-progress" | "assistant" | "reasoning" =
+              payload.chunk.metadata?.assistantKind === "reasoning" ? "reasoning" : "assistant";
+            if (payload.chunk.type === "tool-result" || payload.chunk.type === "tool-progress") {
+              streamingStepKind = payload.chunk.type;
+            }
+            streamingStepKinds.set(streamId, streamingStepKind);
           }
         } else {
           await this.appendRunEvent(
@@ -6356,7 +6391,10 @@ export class AppController
     return questions
       .map((question, index) => {
         const heading = question.header || `Question ${String(index + 1)}`;
-        const options = question.options.map((option) => `- ${option.label}${option.description ? `: ${option.description}` : ""}`);
+        const options = question.options.map((option) => {
+          const descriptionSuffix = option.description ? `: ${option.description}` : "";
+          return `- ${option.label}${descriptionSuffix}`;
+        });
         return [heading, question.question, ...options].filter(Boolean).join("\n");
       })
       .filter(Boolean)
@@ -6803,14 +6841,7 @@ export class AppController
         | { type: "error"; error: string };
 
       if (payload.type === "chunk") {
-        const eventType =
-          payload.chunk.type === "message"
-            ? "output"
-            : isCanonicalRunChunkType(payload.chunk.type)
-              ? payload.chunk.type
-            : payload.chunk.type === "error"
-              ? "error"
-              : "status";
+        const eventType = runChunkEventType(payload.chunk.type);
         if (payload.chunk.metadata?.providerSessionRuntime) {
           this.upsertProviderSessionRuntime(
             "chat",
