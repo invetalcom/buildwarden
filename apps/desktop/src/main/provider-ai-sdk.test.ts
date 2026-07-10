@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { AI_SDK_RECOMMENDED_MODEL_IDS, getModelPresetsForProvider } from "@buildwarden/shared";
+import { generateText } from "../../../../packages/provider-ai-sdk/node_modules/ai/dist/index";
+import { MockLanguageModelV4 } from "../../../../packages/provider-ai-sdk/node_modules/ai/dist/test/index";
 import {
   AiSdkProviderAdapter,
   buildAiSdkPlanProgressChunk,
   parseAiSdkModelsApiAvailableModels,
   requestAiSdkModelsApiAvailableModels,
+  splitSystemMessagesIntoInstructions,
 } from "../../../../packages/provider-ai-sdk/src";
 
 describe("AiSdkProviderAdapter", () => {
@@ -154,5 +157,75 @@ describe("AiSdkProviderAdapter", () => {
     expect(buildAiSdkPlanProgressChunk({ steps: [] })).toBeNull();
     expect(buildAiSdkPlanProgressChunk({})).toBeNull();
     expect(buildAiSdkPlanProgressChunk({ steps: "not an array" })).toBeNull();
+  });
+});
+
+describe("splitSystemMessagesIntoInstructions", () => {
+  const makeMockModel = () =>
+    new MockLanguageModelV4({
+      doGenerate: async () => ({
+        content: [{ type: "text", text: "Hello, world!" }],
+        finishReason: { unified: "stop" as const, raw: undefined },
+        usage: {
+          inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
+          outputTokens: { total: 20, text: 20, reasoning: undefined },
+        },
+        warnings: [],
+      }),
+    });
+
+  it("joins system messages into instructions and drops them from the message list", () => {
+    expect(
+      splitSystemMessagesIntoInstructions([
+        { role: "system", content: "First." },
+        { role: "user", content: "hi" },
+        { role: "system", content: "Second." },
+        { role: "system", content: "   " },
+        { role: "assistant", content: "hello" },
+      ]),
+    ).toEqual({
+      instructions: "First.\n\nSecond.",
+      messages: [
+        { role: "user", content: "hi" },
+        { role: "assistant", content: "hello" },
+      ],
+    });
+  });
+
+  it("omits instructions when no system messages are present", () => {
+    expect(splitSystemMessagesIntoInstructions([{ role: "user", content: "hi" }])).toEqual({
+      messages: [{ role: "user", content: "hi" }],
+    });
+  });
+
+  it("regression: AI SDK 7 rejects system roles inside messages", async () => {
+    await expect(
+      generateText({
+        model: makeMockModel(),
+        messages: [
+          { role: "system", content: "You are BuildWarden." },
+          { role: "user", content: "hi" },
+        ] as never,
+      }),
+    ).rejects.toThrowError(/System messages are not allowed/);
+  });
+
+  it("split output passes AI SDK 7 validation and reaches the model as a system prompt", async () => {
+    const model = makeMockModel();
+    const { instructions, messages } = splitSystemMessagesIntoInstructions([
+      { role: "system", content: "You are BuildWarden." },
+      { role: "user", content: "hi" },
+    ]);
+
+    const result = await generateText({
+      model,
+      ...(instructions ? { instructions } : {}),
+      messages: messages as never,
+    });
+
+    expect(result.text).toBe("Hello, world!");
+    const prompt = model.doGenerateCalls[0]?.prompt as Array<{ role: string; content: unknown }>;
+    expect(prompt[0]).toMatchObject({ role: "system", content: "You are BuildWarden." });
+    expect(prompt[1]).toMatchObject({ role: "user" });
   });
 });

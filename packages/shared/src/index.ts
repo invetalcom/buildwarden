@@ -1254,6 +1254,7 @@ export interface ProviderAvailableModelsContext {
   providerType: ProviderType;
   config: Record<string, unknown>;
   apiBaseUrl?: string | null;
+  networkProxy?: NetworkProxyRuntimeConfig;
 }
 
 export const MODEL_CONFIG_OPENAI_REASONING_EFFORT_KEY = "openaiReasoningEffort";

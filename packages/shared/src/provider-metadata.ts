@@ -173,17 +173,25 @@ export const UNIFIED_MODEL_PRESETS: readonly UnifiedModelPreset[] = [
   },
   {
     group: "openai",
-    modelId: "gpt-5.5",
-    displayName: "GPT-5.5",
+    modelId: "gpt-5.6-sol",
+    displayName: "GPT-5.6 Sol",
     tags: ["ai-sdk:openai", "codex-cli", "azure-legacy", "ai-sdk-adapter-curated"],
   },
+  { group: "openai", modelId: "gpt-5.6-terra", displayName: "GPT-5.6 Terra", tags: ["ai-sdk:openai", "codex-cli", "azure-legacy"] },
+  {
+    group: "openai",
+    modelId: "gpt-5.6-luna",
+    displayName: "GPT-5.6 Luna",
+    tags: ["ai-sdk:openai", "codex-cli", "azure-legacy", "ai-sdk-adapter-curated"],
+  },
+  { group: "openai", modelId: "gpt-5.5", displayName: "GPT-5.5", tags: ["ai-sdk:openai", "codex-cli", "azure-legacy"] },
   { group: "openai", modelId: "gpt-5.5-pro", displayName: "GPT-5.5 Pro", tags: ["ai-sdk:openai", "codex-cli", "azure-legacy"] },
   { group: "openai", modelId: "gpt-5.4", displayName: "GPT-5.4", tags: ["ai-sdk:openai", "codex-cli", "azure-legacy"] },
   {
     group: "openai",
     modelId: "gpt-5.4-mini",
     displayName: "GPT-5.4 Mini",
-    tags: ["ai-sdk:openai", "codex-cli", "azure-legacy", "ai-sdk-adapter-curated"],
+    tags: ["ai-sdk:openai", "codex-cli", "azure-legacy"],
   },
   { group: "openai", modelId: "gpt-5-mini", displayName: "GPT-5 mini", tags: ["ai-sdk:openai", "codex-cli", "azure-legacy"] },
   {
@@ -212,9 +220,27 @@ export const UNIFIED_MODEL_PRESETS: readonly UnifiedModelPreset[] = [
   },
   {
     group: "anthropic",
+    modelId: "fable",
+    displayName: "Claude Code Fable (auto)",
+    tags: ["claude-code"],
+  },
+  {
+    group: "anthropic",
+    modelId: "claude-fable-5",
+    displayName: "Claude Fable 5",
+    tags: ["claude-code", "ai-sdk:anthropic"],
+  },
+  {
+    group: "anthropic",
+    modelId: "claude-sonnet-5",
+    displayName: "Claude Sonnet 5",
+    tags: ["claude-code", "ai-sdk:anthropic", "ai-sdk-adapter-curated"],
+  },
+  {
+    group: "anthropic",
     modelId: "claude-sonnet-4-6",
     displayName: "Claude Sonnet 4.6",
-    tags: ["claude-code", "ai-sdk:anthropic", "ai-sdk-adapter-curated"],
+    tags: ["claude-code", "ai-sdk:anthropic"],
   },
   {
     group: "anthropic",
@@ -234,15 +260,19 @@ export const UNIFIED_MODEL_PRESETS: readonly UnifiedModelPreset[] = [
     displayName: "Claude Haiku 4.5",
     tags: ["claude-code", "ai-sdk:anthropic"],
   },
-  { group: "google", modelId: "gemini-2.5-pro", displayName: "Gemini 2.5 Pro", tags: ["ai-sdk:google"] },
+  { group: "google", modelId: "gemini-3.1-pro-preview", displayName: "Gemini 3.1 Pro Preview", tags: ["ai-sdk:google"] },
   {
     group: "google",
-    modelId: "gemini-2.5-flash",
-    displayName: "Gemini 2.5 Flash",
+    modelId: "gemini-3.5-flash",
+    displayName: "Gemini 3.5 Flash",
     tags: ["ai-sdk:google", "ai-sdk-adapter-curated"],
   },
-  { group: "xai", modelId: "grok-4", displayName: "Grok 4", tags: ["ai-sdk:xai"] },
-  { group: "xai", modelId: "grok-4-fast", displayName: "Grok 4 Fast", tags: ["ai-sdk:xai"] },
+  { group: "google", modelId: "gemini-3.1-flash-lite", displayName: "Gemini 3.1 Flash Lite", tags: ["ai-sdk:google"] },
+  { group: "google", modelId: "gemini-2.5-pro", displayName: "Gemini 2.5 Pro", tags: ["ai-sdk:google"] },
+  { group: "xai", modelId: "grok-4.5", displayName: "Grok 4.5", tags: ["ai-sdk:xai"] },
+  { group: "xai", modelId: "grok-4.3", displayName: "Grok 4.3", tags: ["ai-sdk:xai"] },
+  { group: "xai", modelId: "grok-4.1-fast-reasoning", displayName: "Grok 4.1 Fast (Reasoning)", tags: ["ai-sdk:xai"] },
+  { group: "xai", modelId: "grok-4.1-fast-non-reasoning", displayName: "Grok 4.1 Fast (Non-Reasoning)", tags: ["ai-sdk:xai"] },
   {
     group: "coding",
     modelId: "gpt-5.3-codex",
@@ -266,7 +296,7 @@ export const AI_SDK_RECOMMENDED_MODEL_IDS: readonly string[] = UNIFIED_MODEL_PRE
  * Default “Add model” form + App settings draft. Point at an existing `modelId` in {@link UNIFIED_MODEL_PRESETS}.
  * When a new model becomes the product default, add it to the catalog and set this to its id.
  */
-export const DEFAULT_ADD_MODEL_DRAFT_PRESET_ID: string = "gpt-5.5";
+export const DEFAULT_ADD_MODEL_DRAFT_PRESET_ID: string = "gpt-5.6-sol";
 
 export const DEFAULT_ADD_MODEL_DRAFT: { modelId: string; displayName: string } = (() => {
   const preset = UNIFIED_MODEL_PRESETS.find((p) => p.modelId === DEFAULT_ADD_MODEL_DRAFT_PRESET_ID);

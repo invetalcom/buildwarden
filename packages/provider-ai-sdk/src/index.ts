@@ -889,6 +889,32 @@ const buildRunMessages = (input: RunExecutionRequest): Array<Record<string, unkn
   ];
 };
 
+/**
+ * AI SDK 7 rejects `role: "system"` entries inside `messages` — the system
+ * prompt moves to the `instructions` option. Persisted chat histories and
+ * resume checkpoints from earlier versions still contain system messages, so
+ * every prompt array is split here before it reaches generateText/streamText.
+ */
+export const splitSystemMessagesIntoInstructions = (
+  messages: ReadonlyArray<Record<string, unknown>>,
+): { instructions?: string; messages: Array<Record<string, unknown>> } => {
+  const instructionTexts: string[] = [];
+  const rest: Array<Record<string, unknown>> = [];
+  for (const message of messages) {
+    if (message.role === "system") {
+      if (typeof message.content === "string" && message.content.trim()) {
+        instructionTexts.push(message.content);
+      }
+      continue;
+    }
+    rest.push(message);
+  }
+  return {
+    ...(instructionTexts.length > 0 ? { instructions: instructionTexts.join("\n\n") } : {}),
+    messages: rest,
+  };
+};
+
 type GenerateAskTextWithAiSdkInput = {
   modelId: string;
   apiKey: string;
@@ -938,11 +964,8 @@ export const generateAskTextResultWithAiSdk = async (input: GenerateAskTextWithA
 
   const result = await generateText({
     model,
+    instructions: input.systemPrompt,
     messages: [
-      {
-        role: "system",
-        content: input.systemPrompt,
-      },
       {
         role: "user",
         content: input.prompt,
@@ -1234,15 +1257,19 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
       activeReasoningText = "";
     };
 
+    const { instructions: promptInstructions, messages: promptMessages } = splitSystemMessagesIntoInstructions(
+      startingMessages as Array<Record<string, unknown>>,
+    );
     const result = await withProviderRetry(isChat ? "chat request" : "agent run", signal, onChunk, () =>
       streamText({
         model,
-        messages: startingMessages as never,
+        ...(promptInstructions ? { instructions: promptInstructions } : {}),
+        messages: promptMessages as never,
         tools,
         ...(providerOptions ? { providerOptions: providerOptions as never } : {}),
         stopWhen: stepCountIs(isChat ? (openAiChatTools ? 6 : 1) : MODE_POLICIES[input.mode].maxToolRounds),
         abortSignal: signal,
-        onStepFinish: async (stepResult) => {
+        onStepEnd: async (stepResult) => {
           accumulatedUsage = addUsage(accumulatedUsage, normalizeAiSdkTokenUsage(stepResult.usage));
 
           if (!streamedReasoningSinceLastStep && stepResult.reasoningText?.trim()) {
@@ -1324,7 +1351,8 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
       }),
     );
 
-    for await (const part of result.fullStream as AsyncIterable<Record<string, unknown>>) {
+    const streamingToolNamesById = new Map<string, string>();
+    for await (const part of result.stream as AsyncIterable<Record<string, unknown>>) {
       collectOpenAiContainerFileReferences(part, openAiContainerFileReferences);
 
       if (part.type === "text-delta" || part.type === "text") {
@@ -1396,9 +1424,12 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
         continue;
       }
 
-      if (part.type === "tool-call-streaming-start") {
+      if (part.type === "tool-input-start") {
         resetReasoningSegment();
         const toolName = typeof part.toolName === "string" ? part.toolName : "tool";
+        if (typeof part.id === "string") {
+          streamingToolNamesById.set(part.id, toolName);
+        }
         onChunk({
           type: "status",
           value: `Preparing tool call: ${toolName}`,
@@ -1409,9 +1440,9 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
         continue;
       }
 
-      if (part.type === "tool-call-delta") {
+      if (part.type === "tool-input-delta") {
         resetReasoningSegment();
-        const toolName = typeof part.toolName === "string" ? part.toolName : "tool";
+        const toolName = (typeof part.id === "string" ? streamingToolNamesById.get(part.id) : undefined) ?? "tool";
         onChunk({
           type: "status",
           value: `Streaming arguments for tool call: ${toolName}`,
@@ -1422,7 +1453,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
         continue;
       }
 
-      if (part.type === "reasoning-part-finish" || part.type === "finish") {
+      if (part.type === "reasoning-end" || part.type === "finish") {
         resetReasoningSegment();
       }
     }

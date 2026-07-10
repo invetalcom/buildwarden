@@ -7,6 +7,7 @@ import {
   getClaudeCodeAvailableModelsForVersion,
   mergeClaudeUsageUpdate,
   normalizeClaudeCodeModelId,
+  parseClaudeCodeSupportedModels,
   parseClaudeCodeVersion,
   parseClaudeCodeStreamEvent,
   resolveClaudeCodeProcessLaunch,
@@ -109,6 +110,24 @@ describe("ClaudeCodeProviderAdapter", () => {
     expect(ids).toContain("claude-opus-4-8");
     expect(ids).toContain("claude-opus-4-7");
     expect(ids).toContain("claude-haiku-4-5");
+    expect(ids).toContain("fable");
+    expect(ids).toContain("claude-fable-5");
+  });
+
+  it("maps SDK supported models to provider models and dedupes by id", () => {
+    const models = parseClaudeCodeSupportedModels([
+      { value: "fable", displayName: "Fable", description: "Most capable" },
+      { value: "opus", displayName: "Opus", description: "" },
+      { value: "Opus", displayName: "Opus duplicate", description: "" },
+      { value: "  ", displayName: "Blank id", description: "" },
+      { value: "sonnet", displayName: "", description: "" },
+    ]);
+
+    expect(models).toEqual([
+      { modelId: "fable", displayName: "Fable", source: "provider" },
+      { modelId: "opus", displayName: "Opus", source: "provider" },
+      { modelId: "sonnet", displayName: "sonnet", source: "provider" },
+    ]);
   });
 
   it("adds Claude resume arguments when a durable session id is available", () => {

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   query,
   type CanUseTool,
+  type ModelInfo,
   type Options as ClaudeAgentOptions,
   type PermissionResult,
   type PermissionUpdate,
@@ -46,6 +47,7 @@ import {
 
 const CLAUDE_DEFAULT_MODEL = "sonnet";
 const TURN_TIMEOUT_MS = 20 * 60 * 1_000;
+const MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
 
 type ClaudeCodeModelCatalogEntry = {
   modelId: string;
@@ -53,13 +55,20 @@ type ClaudeCodeModelCatalogEntry = {
   minimumCliVersion?: string;
 };
 
+/**
+ * Fallback list used only when live discovery via the Claude Agent SDK fails
+ * (see {@link listAvailableModelsWithClaudeCode}); the CLI has no list-models
+ * command, so this cannot be derived from the binary directly.
+ */
 const CLAUDE_CODE_MODEL_CATALOG: readonly ClaudeCodeModelCatalogEntry[] = [
   { modelId: "sonnet", displayName: "Claude Code Sonnet (auto)" },
   { modelId: "opus", displayName: "Claude Code Opus (auto)" },
   { modelId: "haiku", displayName: "Claude Code Haiku (auto)" },
   { modelId: "opusplan", displayName: "Claude Code Opus Plan (auto)" },
+  { modelId: "fable", displayName: "Claude Code Fable (auto)" },
   { modelId: "sonnet[1m]", displayName: "Claude Code Sonnet 1M (auto)" },
   { modelId: "opus[1m]", displayName: "Claude Code Opus 1M (auto)" },
+  { modelId: "claude-fable-5", displayName: "Claude Fable 5" },
   { modelId: "claude-sonnet-4-6", displayName: "Claude Sonnet 4.6" },
   { modelId: "claude-opus-4-8", displayName: "Claude Opus 4.8", minimumCliVersion: "2.1.154" },
   { modelId: "claude-opus-4-7", displayName: "Claude Opus 4.7", minimumCliVersion: "2.1.111" },
@@ -370,9 +379,77 @@ const readClaudeVersionOutput = (command: string, args: string[], timeoutMs: num
     });
   });
 
+export const parseClaudeCodeSupportedModels = (models: readonly ModelInfo[]): ProviderAvailableModel[] => {
+  const seen = new Set<string>();
+  const result: ProviderAvailableModel[] = [];
+  for (const model of models) {
+    const modelId = model.value?.trim();
+    if (!modelId || seen.has(modelId.toLowerCase())) {
+      continue;
+    }
+    seen.add(modelId.toLowerCase());
+    result.push({
+      modelId,
+      displayName: model.displayName?.trim() || modelId,
+      source: "provider",
+    });
+  }
+  return result;
+};
+
+export async function discoverClaudeCodeModels(input: {
+  config?: Record<string, unknown>;
+  networkProxy?: NetworkProxyRuntimeConfig;
+  timeoutMs?: number;
+}): Promise<ProviderAvailableModel[]> {
+  const { binaryPath, launchArgs } = resolveClaudeCodeConfig(input.config);
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), Math.max(1_000, input.timeoutMs ?? MODEL_DISCOVERY_TIMEOUT_MS));
+  const prompt = (async function* (): AsyncGenerator<SDKUserMessage> {
+    await waitForAbortSignal(abortController.signal);
+  })();
+  const claudeQuery = query({
+    prompt,
+    options: {
+      persistSession: false,
+      pathToClaudeCodeExecutable: binaryPath,
+      abortController,
+      settingSources: ["user", "project", "local"],
+      allowedTools: [],
+      env: buildClaudeProcessEnv(input.networkProxy),
+      stderr: () => {},
+      ...launchArgsToSdkOptions(launchArgs),
+    },
+  });
+
+  try {
+    return parseClaudeCodeSupportedModels(await claudeQuery.supportedModels());
+  } finally {
+    clearTimeout(timeout);
+    if (!abortController.signal.aborted) {
+      abortController.abort();
+    }
+    claudeQuery.close();
+  }
+}
+
 export const listAvailableModelsWithClaudeCode = async (
   config: Record<string, unknown> | undefined,
+  networkProxy?: NetworkProxyRuntimeConfig,
 ): Promise<ProviderAvailableModel[]> => {
+  try {
+    const discovered = await discoverClaudeCodeModels({ config, networkProxy });
+    if (discovered.length > 0) {
+      return discovered;
+    }
+  } catch (error) {
+    // Discovery needs a CLI recent enough to answer the supported-models
+    // control request; fall back to the curated catalog below.
+    console.warn(
+      "[buildwarden:provider-claude-code] Live model discovery failed; falling back to the curated catalog.",
+      error,
+    );
+  }
   const { binaryPath } = resolveClaudeCodeConfig(config);
   const launch = resolveClaudeCodeProcessLaunch(binaryPath, ["--version"]);
   const version = parseClaudeCodeVersion(await readClaudeVersionOutput(launch.command, launch.args, 4_000));
@@ -1685,7 +1762,7 @@ export class ClaudeCodeProviderAdapter implements ProviderAdapter {
   }
 
   async listAvailableModels(context: ProviderAvailableModelsContext): Promise<ProviderAvailableModel[]> {
-    return listAvailableModelsWithClaudeCode(context.config);
+    return listAvailableModelsWithClaudeCode(context.config, context.networkProxy);
   }
 
   validateConfiguration(input: ProviderAccountInput): void {
