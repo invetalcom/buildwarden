@@ -43,7 +43,7 @@ export const ProjectTasksTab = ({
 }: ProjectTasksTabProps) => {
   const [createOpen, setCreateOpen] = useState(false);
   const [taskBusy, setTaskBusy] = useState(false);
-  const [savedTaskBusyId, setSavedTaskBusyId] = useState<string | null>(null);
+  const [pendingTaskIds, setPendingTaskIds] = useState<Set<string>>(() => new Set());
   const [viewingTaskId, setViewingTaskId] = useState<string | null>(null);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [taskEditTitle, setTaskEditTitle] = useState("");
@@ -65,9 +65,11 @@ export const ProjectTasksTab = ({
     () => tasks.map((task) => ({ ...task, status: statusOverrides[task.id] ?? task.status })),
     [statusOverrides, tasks],
   );
+  const editingTaskBusy = editingTask ? pendingTaskIds.has(editingTask.id) : false;
+  const taskFormBusy = taskBusy || editingTaskBusy;
 
   useEffect(() => {
-    setSavedTaskBusyId(null);
+    setPendingTaskIds(new Set());
     setViewingTaskId(null);
     setEditingTaskId(null);
     setCreateOpen(false);
@@ -89,7 +91,7 @@ export const ProjectTasksTab = ({
   useEffect(() => {
     if (!viewingTask && !editingTask && !createOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || savedTaskBusyId || taskBusy) return;
+      if (event.key !== "Escape" || taskFormBusy) return;
       setViewingTaskId(null);
       setCreateOpen(false);
       setEditingTaskId(null);
@@ -98,7 +100,7 @@ export const ProjectTasksTab = ({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [createOpen, editingTask, savedTaskBusyId, taskBusy, viewingTask]);
+  }, [createOpen, editingTask, taskFormBusy, viewingTask]);
 
   useEffect(() => {
     setTaskModelById((current) => {
@@ -151,7 +153,7 @@ export const ProjectTasksTab = ({
   };
 
   const closeTaskForm = () => {
-    if (taskBusy || savedTaskBusyId) return;
+    if (taskFormBusy) return;
     setCreateOpen(false);
     cancelEditingTask();
   };
@@ -160,12 +162,16 @@ export const ProjectTasksTab = ({
     const title = taskEditTitle.trim();
     const prompt = taskEditPrompt.trim();
     if (!title || !prompt) return;
-    setSavedTaskBusyId(task.id);
+    setPendingTaskIds((current) => new Set(current).add(task.id));
     try {
       await onUpdateTask(task.id, { title, prompt, status: taskEditStatus });
       cancelEditingTask();
     } finally {
-      setSavedTaskBusyId(null);
+      setPendingTaskIds((current) => {
+        const next = new Set(current);
+        next.delete(task.id);
+        return next;
+      });
     }
   };
 
@@ -178,9 +184,9 @@ export const ProjectTasksTab = ({
   };
 
   const moveTask = async (task: ProjectTaskRecord, status: ProjectTaskStatus) => {
-    if (task.status === status || savedTaskBusyId === task.id) return;
+    if (task.status === status || pendingTaskIds.has(task.id)) return;
     setStatusOverrides((current) => ({ ...current, [task.id]: status }));
-    setSavedTaskBusyId(task.id);
+    setPendingTaskIds((current) => new Set(current).add(task.id));
     try {
       await onUpdateTask(task.id, { status });
     } catch {
@@ -190,7 +196,11 @@ export const ProjectTasksTab = ({
         return next;
       });
     } finally {
-      setSavedTaskBusyId(null);
+      setPendingTaskIds((current) => {
+        const next = new Set(current);
+        next.delete(task.id);
+        return next;
+      });
     }
   };
 
@@ -283,7 +293,7 @@ export const ProjectTasksTab = ({
                 </div>
                 <div className="space-y-2 p-2">
                   {laneTasks.map((task) => {
-                    const isTaskBusy = savedTaskBusyId === task.id;
+                    const isTaskBusy = pendingTaskIds.has(task.id);
                     return (
                       <article
                         key={task.id}
@@ -385,7 +395,7 @@ export const ProjectTasksTab = ({
                 <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-zinc-500">{createOpen ? "New task" : "Edit task"}</p>
                 <h3 id="task-form-title" className="mt-1 text-lg font-semibold text-zinc-100">Task details</h3>
               </div>
-              <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" title="Close" aria-label="Close task form" disabled={taskBusy || Boolean(savedTaskBusyId)} onClick={closeTaskForm}><X className="h-4 w-4" /></Button>
+              <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" title="Close" aria-label="Close task form" disabled={taskFormBusy} onClick={closeTaskForm}><X className="h-4 w-4" /></Button>
             </div>
             <div className="app-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
               <label className="block">
@@ -404,9 +414,9 @@ export const ProjectTasksTab = ({
               ) : null}
             </div>
             <div className="flex shrink-0 justify-end gap-2 border-t border-zinc-800 px-5 py-3">
-              <Button type="button" size="sm" variant="ghost" className="h-8 px-3 text-xs" disabled={taskBusy || Boolean(savedTaskBusyId)} onClick={closeTaskForm}>Cancel</Button>
-              <Button type="button" size="sm" className="h-8 px-3 text-xs" disabled={taskBusy || Boolean(savedTaskBusyId) || !taskEditTitle.trim() || !taskEditPrompt.trim()} onClick={() => void handleSubmitTaskForm()}>
-                {taskBusy || savedTaskBusyId ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}{createOpen ? "Save task" : "Save changes"}
+              <Button type="button" size="sm" variant="ghost" className="h-8 px-3 text-xs" disabled={taskFormBusy} onClick={closeTaskForm}>Cancel</Button>
+              <Button type="button" size="sm" className="h-8 px-3 text-xs" disabled={taskFormBusy || !taskEditTitle.trim() || !taskEditPrompt.trim()} onClick={() => void handleSubmitTaskForm()}>
+                {taskFormBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}{createOpen ? "Save task" : "Save changes"}
               </Button>
             </div>
           </Card>
