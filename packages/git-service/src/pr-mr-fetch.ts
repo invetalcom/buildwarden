@@ -40,7 +40,7 @@ export function parsePrMrBrowserUrl(urlString: string): ParsedPrMrLink | null {
 
   const path = url.pathname.replace(/\/$/, "") || url.pathname;
 
-  const githubPull = path.match(/^\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/|$)/);
+  const githubPull = /^\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/|$)/.exec(path);
   if (githubPull?.[1] && githubPull[2] && githubPull[3]) {
     const number = Number.parseInt(githubPull[3], 10);
     if (!Number.isFinite(number) || number < 1) {
@@ -58,7 +58,7 @@ export function parsePrMrBrowserUrl(urlString: string): ParsedPrMrLink | null {
   const mrIdx = path.indexOf(mrMarker);
   if (mrIdx !== -1) {
     const rest = path.slice(mrIdx + mrMarker.length);
-    const numMatch = rest.match(/^(\d+)/);
+    const numMatch = /^(\d+)/.exec(rest);
     if (!numMatch?.[1]) {
       return null;
     }
@@ -94,7 +94,7 @@ async function resolveDefaultBaseRef(git: SimpleGit): Promise<string> {
   try {
     const sym = await git.raw(["symbolic-ref", "-q", "refs/remotes/origin/HEAD"]);
     const line = sym.trim();
-    const m = line.match(/^refs\/remotes\/(origin\/.+)$/);
+    const m = /^refs\/remotes\/(origin\/.+)$/.exec(line);
     if (m?.[1]) {
       return m[1];
     }

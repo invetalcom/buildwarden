@@ -8,11 +8,11 @@ export function RunPlanDecisionCard({
   disabled,
   onImplement,
   onSubmitFeedback,
-}: {
+}: Readonly<{
   disabled?: boolean;
   onImplement: () => void;
   onSubmitFeedback: (feedback: string) => Promise<void>;
-}) {
+}>) {
   const [feedback, setFeedback] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);

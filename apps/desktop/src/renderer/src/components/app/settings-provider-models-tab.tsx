@@ -1,6 +1,6 @@
 import type { AppSnapshot, ProviderType, UnifiedModelPresetGroup, UnifiedProviderFamily } from "@buildwarden/shared";
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, ChevronDown, KeyRound, Loader2, Plus, Terminal, Trash2 } from "lucide-react";
+import { KeyRound, Loader2, Plus, Terminal } from "lucide-react";
 import {
   DEFAULT_ADD_MODEL_DRAFT,
   MODEL_PRESET_CUSTOM,
@@ -22,14 +22,8 @@ import {
   shouldRequestAvailableProviderModels,
   type AvailableProviderModelsState,
 } from "../../lib/available-provider-models";
-
-const PROVIDER_TYPE_LABELS: Record<ProviderType, string> = {
-  "ai-sdk": "AI SDK",
-  "azure-legacy": "Azure Legacy",
-  "codex-cli": "Codex CLI",
-  "claude-code": "Claude Code",
-  "cursor-agent": "Cursor Agent",
-};
+import { PROVIDER_TYPE_LABELS } from "./provider-model-labels";
+import { ProviderModelPanelButtons, ProviderModelsOverview } from "./provider-models-overview";
 
 const DEFAULT_LABEL_BY_TYPE: Record<ProviderType, string> = {
   "ai-sdk": "AI SDK",
@@ -44,6 +38,121 @@ type ModelQuickPick = {
   displayName: string;
   description: string;
   disabled?: boolean;
+};
+
+const selectModelQuickPicks = (
+  status: AvailableProviderModelsState["status"],
+  providerQuickPicks: ModelQuickPick[],
+  fallbackQuickPicks: ModelQuickPick[],
+) => {
+  if (status === "loaded" || (status === "error" && providerQuickPicks.length > 0)) {
+    return providerQuickPicks;
+  }
+  return fallbackQuickPicks;
+};
+
+const getProviderBaseUrlHint = (providerType: ProviderType, providerFamily: UnifiedProviderFamily) => {
+  if (providerType === "azure-legacy") {
+    return "Deployment URL (includes deployment segment).";
+  }
+  if (providerFamily === "openai-compatible") {
+    return "Root URL for the compatible server.";
+  }
+  return "Gateway or proxy, optional.";
+};
+
+const ModelQuickPickChooser = ({
+  state,
+  quickPicks,
+  sourceLabel,
+  lookupPending,
+  selectedProviderId,
+  selectValue,
+  welcome,
+  onEnsureAvailableModels,
+  onSelectCustom,
+  onModelIdChange,
+  onModelDisplayNameChange,
+}: {
+  state: AvailableProviderModelsState;
+  quickPicks: ModelQuickPick[];
+  sourceLabel: string;
+  lookupPending: boolean;
+  selectedProviderId: string;
+  selectValue: string;
+  welcome: boolean;
+  onEnsureAvailableModels: (providerAccountId: string) => void;
+  onSelectCustom: (value: boolean) => void;
+  onModelIdChange: (value: string) => void;
+  onModelDisplayNameChange: (value: string) => void;
+}) => {
+  if (lookupPending) {
+    return (
+      <div
+        className={cn(
+          "mt-2 flex h-11 items-center gap-2 border border-zinc-800 bg-black/30 px-3 text-sm text-zinc-400",
+          welcome ? "rounded-lg" : "rounded-xl",
+        )}
+      >
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+        Loading models...
+      </div>
+    );
+  }
+
+  if (state.status === "loaded" && quickPicks.length === 0) {
+    return (
+      <p className={cn("mt-2 border border-zinc-800/90 px-3 py-2 text-xs text-zinc-500", welcome ? "rounded-lg" : "rounded-xl")}>
+        No models reported; enter a model ID manually.
+      </p>
+    );
+  }
+
+  return (
+    <>
+      {state.status === "error" ? (
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-amber-300/90">Could not load live models. Showing curated quick picks.</p>
+          <Button
+            type="button"
+            variant="secondary"
+            className={cn("h-7 px-2.5 text-xs", welcome ? "rounded-md" : "rounded-lg")}
+            onClick={() => onEnsureAvailableModels(selectedProviderId)}
+          >
+            Retry
+          </Button>
+        </div>
+      ) : null}
+      <Select
+        className="mt-2"
+        triggerClassName={cn("h-11", welcome ? "rounded-lg" : "rounded-xl")}
+        maxMenuHeightPx={320}
+        value={selectValue}
+        onValueChange={(value) => {
+          if (value === MODEL_PRESET_CUSTOM) {
+            onSelectCustom(true);
+            return;
+          }
+          onSelectCustom(false);
+          const preset = quickPicks.find((item) => item.modelId === value);
+          if (preset) {
+            onModelIdChange(preset.modelId);
+            onModelDisplayNameChange(preset.displayName);
+          }
+        }}
+        options={[
+          { value: MODEL_PRESET_CUSTOM, label: "Custom" },
+          ...quickPicks.map((preset) => ({
+            value: preset.modelId,
+            label: `${preset.displayName} - ${preset.modelId}`,
+            description: preset.description,
+            disabled: preset.disabled,
+          })),
+        ]}
+      />
+      <span className="sr-only">{sourceLabel}</span>
+    </>
+  );
 };
 
 const SettingsField = ({
@@ -67,7 +176,7 @@ const SettingsField = ({
 );
 
 export type ProviderModelsOpenPanel = "connection" | "model" | null;
-export type ProviderModelsPresentation = "settings" | "welcome";
+type ProviderModelsPresentation = "settings" | "welcome";
 
 export type ProviderModelsSettingsTabProps = {
   busy: boolean;
@@ -248,12 +357,7 @@ export const ProviderModelsSettingsTab = ({
     [availableModelsState.models],
   );
   const quickPicks = useMemo<ModelQuickPick[]>(
-    () =>
-      availableModelsState.status === "loaded"
-        ? providerQuickPicks
-        : availableModelsState.status === "error" && providerQuickPicks.length > 0
-          ? providerQuickPicks
-          : fallbackQuickPicks,
+    () => selectModelQuickPicks(availableModelsState.status, providerQuickPicks, fallbackQuickPicks),
     [availableModelsState.status, fallbackQuickPicks, providerQuickPicks],
   );
   const quickPickSourceLabel = quickPicks.some((model) => model.description === "Provider")
@@ -264,6 +368,7 @@ export const ProviderModelsSettingsTab = ({
     quickPicks.length === 0 || openAiPresetUserChoseCustom || !quickPickMatch ? MODEL_PRESET_CUSTOM : quickPickMatch.modelId;
   const modelLookupPending =
     selectedProviderId !== "" && (availableModelsState.status === "idle" || availableModelsState.status === "loading");
+  const providerBaseUrlHint = getProviderBaseUrlHint(providerType, providerFamily);
 
   useEffect(() => {
     if (shouldRequestAvailableProviderModels(openPanel, selectedProviderId, availableModelsState)) {
@@ -304,190 +409,20 @@ export const ProviderModelsSettingsTab = ({
 
   return (
     <div className={cn(isWelcomePresentation ? "space-y-3" : "space-y-4")}>
-      {isWelcomePresentation ? (
-        <div className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-2.5">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm leading-5 text-[var(--ec-muted)]">
-              Add one provider and one model to get started. You can add more anytime in Settings.
-            </p>
-            <div className="flex shrink-0 flex-wrap gap-1.5">
-              <span
-                className={cn(
-                  "inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs",
-                  providerReady
-                    ? "border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] text-[var(--ec-success)]"
-                    : "border-[var(--ec-border)] bg-[var(--ec-control)] text-[var(--ec-muted)]",
-                )}
-              >
-                {providerReady ? <CheckCircle2 className="h-3.5 w-3.5" aria-hidden /> : null}
-                Connection {providerReady ? "ready" : "needed"}
-              </span>
-              <span
-                className={cn(
-                  "inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs",
-                  modelReady
-                    ? "border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] text-[var(--ec-success)]"
-                    : "border-[var(--ec-border)] bg-[var(--ec-control)] text-[var(--ec-muted)]",
-                )}
-              >
-                {modelReady ? <CheckCircle2 className="h-3.5 w-3.5" aria-hidden /> : null}
-                Model {modelReady ? "ready" : "needed"}
-              </span>
-            </div>
-          </div>
-        </div>
-      ) : (
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="app-surface-inset-soft border-white/8 p-4">
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <p className="text-[11px] uppercase tracking-[0.28em] text-cyan-300/60">Saved connections</p>
-              <p className="mt-0.5 text-sm text-zinc-400">Provider accounts on this device</p>
-            </div>
-            <span className="rounded-full border border-white/8 bg-white/[0.04] px-2.5 py-0.5 text-xs text-zinc-400">
-              {providerAccounts.length}
-            </span>
-          </div>
-          <div className="mt-3 max-h-48 space-y-2 overflow-y-auto pr-0.5">
-            {providerAccounts.length > 0 ? (
-              providerAccounts.map((provider) => (
-                <div
-                  key={provider.id}
-                  className="app-settings-list-row flex items-center justify-between gap-2 rounded-xl border border-zinc-800/90 px-3 py-2.5"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-zinc-100">{provider.label}</p>
-                    <p className="mt-0.5 truncate text-xs text-zinc-500">{PROVIDER_TYPE_LABELS[provider.providerType]}</p>
-                  </div>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="shrink-0 rounded-lg border border-zinc-800 bg-zinc-900/80 px-2 text-rose-400 hover:border-rose-500/25 hover:bg-zinc-900 hover:text-rose-300"
-                    onClick={() => onDeleteProviderAccount(provider.id)}
-                    title="Delete provider"
-                    aria-label={`Delete provider ${provider.label}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              ))
-            ) : (
-              <p className="rounded-xl border border-dashed border-zinc-800/80 px-3 py-4 text-center text-sm text-zinc-500">
-                No connections yet. Add one below.
-              </p>
-            )}
-          </div>
-        </Card>
-
-        <Card className="app-surface-inset-soft border-white/8 p-4">
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <p className="text-[11px] uppercase tracking-[0.28em] text-fuchsia-300/50">Model registry</p>
-              <p className="mt-0.5 text-sm text-zinc-400">Registered for runs and chat</p>
-            </div>
-            <span className="rounded-full border border-white/8 bg-white/[0.04] px-2.5 py-0.5 text-xs text-zinc-400">
-              {models.length}
-            </span>
-          </div>
-          <div className="mt-3 max-h-48 space-y-2 overflow-y-auto pr-0.5">
-            {models.length > 0 ? (
-              models.map((model) => {
-                const provider = providerAccounts.find((entry) => entry.id === model.providerAccountId);
-                return (
-                  <div
-                    key={model.id}
-                    className="app-settings-list-row flex items-center justify-between gap-2 rounded-xl border border-zinc-800/90 px-3 py-2.5"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-zinc-100">{model.displayName}</p>
-                      <p className="mt-0.5 truncate text-xs text-zinc-500">
-                        {model.modelId}
-                        {provider ? ` · ${provider.label}` : ""}
-                      </p>
-                    </div>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      className="shrink-0 rounded-lg border border-zinc-800 bg-zinc-900/80 px-2 text-rose-400 hover:border-rose-500/25 hover:bg-zinc-900 hover:text-rose-300"
-                      onClick={() => onDeleteModel(model.id)}
-                      title="Delete model"
-                      aria-label={`Delete model ${model.displayName}`}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                );
-              })
-            ) : (
-              <p className="rounded-xl border border-dashed border-zinc-800/80 px-3 py-4 text-center text-sm text-zinc-500">
-                No models yet. Add one to pick it in the composer.
-              </p>
-            )}
-          </div>
-        </Card>
-      </div>
-      )}
-
-      <div className={cn("grid sm:grid-cols-2", isWelcomePresentation ? "gap-2" : "gap-3")}>
-        <button
-          type="button"
-          onClick={() => {
-            if (isWelcomePresentation) {
-              setOpenPanel("connection");
-              return;
-            }
-            setOpenPanel((p) => (p === "connection" ? null : "connection"));
-          }}
-          className={cn(
-            "flex w-full items-center justify-between gap-3 border text-left transition",
-            isWelcomePresentation ? "rounded-lg px-3 py-2.5" : "rounded-2xl px-4 py-3.5",
-            openPanel === "connection"
-              ? "border-cyan-400/35 bg-cyan-500/[0.08] text-cyan-100"
-              : "border-white/8 bg-white/[0.02] text-zinc-200 hover:border-white/12 hover:bg-white/[0.04]",
-          )}
-        >
-          <div className="space-y-0.5">
-            <p className="text-sm font-semibold">{isWelcomePresentation ? "1. Connection" : "Add a connection"}</p>
-            <p className="text-xs text-zinc-500">Local SDK/CLI or bring your own API key</p>
-          </div>
-          {isWelcomePresentation && providerReady ? (
-            <CheckCircle2 className="h-4 w-4 shrink-0 text-[var(--ec-success)]" aria-hidden />
-          ) : (
-            <ChevronDown className={cn("h-4 w-4 shrink-0 transition", openPanel === "connection" ? "rotate-180" : "")} />
-          )}
-        </button>
-        <button
-          type="button"
-          disabled={isWelcomePresentation && !providerReady}
-          onClick={() => {
-            if (isWelcomePresentation) {
-              setOpenPanel("model");
-              return;
-            }
-            setOpenPanel((p) => (p === "model" ? null : "model"));
-          }}
-          className={cn(
-            "flex w-full items-center justify-between gap-3 border text-left transition",
-            isWelcomePresentation ? "rounded-lg px-3 py-2.5 disabled:cursor-not-allowed disabled:opacity-55" : "rounded-2xl px-4 py-3.5",
-            openPanel === "model"
-              ? "border-fuchsia-400/30 bg-fuchsia-500/[0.07] text-fuchsia-100"
-              : "border-white/8 bg-white/[0.02] text-zinc-200 hover:border-white/12 hover:bg-white/[0.04]",
-          )}
-        >
-          <div className="space-y-0.5">
-            <p className="text-sm font-semibold">{isWelcomePresentation ? "2. Model" : "Add a model"}</p>
-            <p className="text-xs text-zinc-500">
-              {isWelcomePresentation && !providerReady ? "Unlocks after the connection" : "Tied to a connection; presets match your account"}
-            </p>
-          </div>
-          {isWelcomePresentation && modelReady ? (
-            <CheckCircle2 className="h-4 w-4 shrink-0 text-[var(--ec-success)]" aria-hidden />
-          ) : (
-            <ChevronDown className={cn("h-4 w-4 shrink-0 transition", openPanel === "model" ? "rotate-180" : "")} />
-          )}
-        </button>
-      </div>
-
+      <ProviderModelsOverview
+        welcome={isWelcomePresentation}
+        accounts={providerAccounts}
+        models={models}
+        onDeleteProvider={onDeleteProviderAccount}
+        onDeleteModel={onDeleteModel}
+      />
+      <ProviderModelPanelButtons
+        welcome={isWelcomePresentation}
+        providerReady={providerReady}
+        modelReady={modelReady}
+        openPanel={openPanel}
+        onOpenPanelChange={setOpenPanel}
+      />
       {openPanel === "connection" ? (
         <Card
           className={cn(
@@ -680,13 +615,7 @@ export const ProviderModelsSettingsTab = ({
                   {showProviderBaseUrlField ? (
                     <SettingsField
                       label="Base URL"
-                      hint={
-                        providerType === "azure-legacy"
-                          ? "Deployment URL (includes deployment segment)."
-                          : providerFamily === "openai-compatible"
-                            ? "Root URL for the compatible server."
-                            : "Gateway or proxy, optional."
-                      }
+                      hint={providerBaseUrlHint}
                       compact={isWelcomePresentation}
                     >
                       <Input
@@ -811,64 +740,19 @@ export const ProviderModelsSettingsTab = ({
                     ? quickPickSourceLabel
                     : "Only models that apply to the selected account."}
                 </p>
-                {modelLookupPending ? (
-                  <div
-                    className={cn(
-                      "mt-2 flex h-11 items-center gap-2 border border-zinc-800 bg-black/30 px-3 text-sm text-zinc-400",
-                      isWelcomePresentation ? "rounded-lg" : "rounded-xl",
-                    )}
-                  >
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                    Loading models...
-                  </div>
-                ) : availableModelsState.status === "loaded" && quickPicks.length === 0 ? (
-                  <p className={cn("mt-2 border border-zinc-800/90 px-3 py-2 text-xs text-zinc-500", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}>
-                    No models reported; enter a model ID manually.
-                  </p>
-                ) : (
-                  <>
-                    {availableModelsState.status === "error" ? (
-                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-xs text-amber-300/90">Could not load live models. Showing curated quick picks.</p>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          className={cn("h-7 px-2.5 text-xs", isWelcomePresentation ? "rounded-md" : "rounded-lg")}
-                          onClick={() => onEnsureAvailableModels(selectedProviderId)}
-                        >
-                          Retry
-                        </Button>
-                      </div>
-                    ) : null}
-                    <Select
-                      className="mt-2"
-                      triggerClassName={cn("h-11", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}
-                      maxMenuHeightPx={320}
-                      value={quickPickSelectValue}
-                      onValueChange={(value) => {
-                        if (value === MODEL_PRESET_CUSTOM) {
-                          onSetOpenAiPresetUserChoseCustom(true);
-                          return;
-                        }
-                        onSetOpenAiPresetUserChoseCustom(false);
-                        const preset = quickPicks.find((p) => p.modelId === value);
-                        if (preset) {
-                          onModelIdChange(preset.modelId);
-                          onModelDisplayNameChange(preset.displayName);
-                        }
-                      }}
-                      options={[
-                        { value: MODEL_PRESET_CUSTOM, label: "Custom" },
-                        ...quickPicks.map((preset) => ({
-                          value: preset.modelId,
-                          label: `${preset.displayName} - ${preset.modelId}`,
-                          description: preset.description,
-                          disabled: preset.disabled,
-                        })),
-                      ]}
-                    />
-                  </>
-                )}
+                <ModelQuickPickChooser
+                  state={availableModelsState}
+                  quickPicks={quickPicks}
+                  sourceLabel={quickPickSourceLabel}
+                  lookupPending={modelLookupPending}
+                  selectedProviderId={selectedProviderId}
+                  selectValue={quickPickSelectValue}
+                  welcome={isWelcomePresentation}
+                  onEnsureAvailableModels={onEnsureAvailableModels}
+                  onSelectCustom={onSetOpenAiPresetUserChoseCustom}
+                  onModelIdChange={onModelIdChange}
+                  onModelDisplayNameChange={onModelDisplayNameChange}
+                />
               </div>
             ) : null}
 

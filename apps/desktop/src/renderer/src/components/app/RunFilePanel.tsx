@@ -36,7 +36,8 @@ const referenceToInputPath = (target: RunWorkspaceFileReference) => {
   if (!target.line) {
     return target.path;
   }
-  return `${target.path}:${String(target.line)}${target.column ? `:${String(target.column)}` : ""}`;
+  const columnSuffix = target.column ? `:${String(target.column)}` : "";
+  return `${target.path}:${String(target.line)}${columnSuffix}`;
 };
 
 const truncatedPreviewBytes = (sizeBytes: number | null) =>
@@ -70,6 +71,92 @@ const unavailableMessage = (result: RunWorkspaceFileResult | null, loading: bool
     default:
       return "Could not open this file.";
   }
+};
+
+const FilePreviewContent = ({
+  loading,
+  message,
+  result,
+}: {
+  loading: boolean;
+  message: string | null;
+  result: RunWorkspaceFileResult | null;
+}) => {
+  if (loading) {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-xs text-zinc-500" role="status">
+        <Loader2 className="h-4 w-4 animate-spin text-cyan-400" aria-hidden />
+        Opening file...
+      </div>
+    );
+  }
+  if (message) {
+    return <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-center text-xs text-zinc-500">{message}</div>;
+  }
+  if (result?.content == null) {
+    return null;
+  }
+  return (
+    <>
+      {result.truncated ? (
+        <div className="shrink-0 border-b border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-200">
+          Preview truncated at {formatBytes(truncatedPreviewBytes(result.sizeBytes))} of {formatBytes(result.sizeBytes)}.
+        </div>
+      ) : null}
+      <CodeMirrorFileViewer
+        className="min-h-0 flex-1 overflow-hidden"
+        content={result.content}
+        filePath={result.path}
+        line={result.line}
+        column={result.column}
+      />
+    </>
+  );
+};
+
+const FilePanelBody = ({
+  view,
+  loading,
+  message,
+  result,
+  diffPending,
+  diffText,
+  displayPath,
+}: {
+  view: FilePanelView;
+  loading: boolean;
+  message: string | null;
+  result: RunWorkspaceFileResult | null;
+  diffPending: boolean;
+  diffText: string;
+  displayPath: string;
+}) => {
+  if (view === "file") {
+    return (
+      <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950/60">
+        <FilePreviewContent loading={loading} message={message} result={result} />
+      </div>
+    );
+  }
+  if (diffPending) {
+    return (
+      <div className="flex h-full items-center justify-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950/60 text-xs text-zinc-500">
+        <Loader2 className="h-4 w-4 animate-spin text-cyan-400" aria-hidden />
+        Computing file diff...
+      </div>
+    );
+  }
+  return (
+    <GitDiffPreview
+      diffText={diffText}
+      activeFilePath={displayPath}
+      emptyMessage="No diff is available for this file."
+      activityEmphasis
+      defaultCollapsedFileSections={false}
+      alwaysExpandedFileSections
+      fillContainer
+    />
+  );
 };
 
 export interface RunFilePanelProps {
@@ -220,50 +307,15 @@ export const RunFilePanel = ({ runId, target, diffText, diffPending }: RunFilePa
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden p-2">
-        {view === "file" ? (
-          <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950/60">
-            {loading ? (
-              <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-xs text-zinc-500" role="status">
-                <Loader2 className="h-4 w-4 animate-spin text-cyan-400" aria-hidden />
-                Opening file...
-              </div>
-            ) : message ? (
-              <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-center text-xs text-zinc-500">
-                {message}
-              </div>
-            ) : result?.content != null ? (
-              <>
-                {result.truncated ? (
-                  <div className="shrink-0 border-b border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-200">
-                    Preview truncated at {formatBytes(truncatedPreviewBytes(result.sizeBytes))} of {formatBytes(result.sizeBytes)}.
-                  </div>
-                ) : null}
-                <CodeMirrorFileViewer
-                  className="min-h-0 flex-1 overflow-hidden"
-                  content={result.content}
-                  filePath={result.path}
-                  line={result.line}
-                  column={result.column}
-                />
-              </>
-            ) : null}
-          </div>
-        ) : diffPending ? (
-          <div className="flex h-full items-center justify-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950/60 text-xs text-zinc-500">
-            <Loader2 className="h-4 w-4 animate-spin text-cyan-400" aria-hidden />
-            Computing file diff...
-          </div>
-        ) : (
-          <GitDiffPreview
-            diffText={diffText}
-            activeFilePath={displayPath}
-            emptyMessage="No diff is available for this file."
-            activityEmphasis
-            defaultCollapsedFileSections={false}
-            alwaysExpandedFileSections
-            fillContainer
-          />
-        )}
+        <FilePanelBody
+          view={view}
+          loading={loading}
+          message={message}
+          result={result}
+          diffPending={diffPending}
+          diffText={diffText}
+          displayPath={displayPath}
+        />
       </div>
     </div>
   );

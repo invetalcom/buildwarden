@@ -289,8 +289,8 @@ export const extractCodexAgentNickname = (prompt: string | undefined): string | 
   }
   const head = prompt.slice(0, 240);
   const match =
-    head.match(/(?:sub-?agent|agent|worker)\s+["'“„]([^"'”“]{1,48})["'”]/i) ??
-    head.match(/^you are\s+["'“„]([^"'”“]{1,48})["'”]/i);
+    /(?:sub-?agent|agent|worker)\s+["'“„]([^"'”“]{1,48})["'”]/i.exec(head) ??
+    /^you are\s+["'“„]([^"'”“]{1,48})["'”]/i.exec(head);
   const nickname = match?.[1]?.trim();
   return nickname || undefined;
 };
@@ -809,7 +809,7 @@ const buildCodexProcessEnv = (
 const killChildTree = (child: ChildProcessWithoutNullStreams): void => {
   if (process.platform === "win32" && child.pid !== undefined) {
     try {
-      spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+      spawnSync("C:\\Windows\\System32\\taskkill.exe", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
       return;
     } catch {
       // fall through
@@ -974,7 +974,6 @@ class CodexAppServerProbeClient implements CodexModelListClient {
     try {
       parsed = JSON.parse(line);
     } catch {
-      return;
     }
 
     if (this.isServerRequest(parsed)) {
@@ -985,7 +984,6 @@ class CodexAppServerProbeClient implements CodexModelListClient {
           message: `Unsupported request during model discovery: ${parsed.method}`,
         },
       });
-      return;
     }
 
     if (this.isResponse(parsed)) {
@@ -1018,7 +1016,7 @@ class CodexAppServerProbeClient implements CodexModelListClient {
 
   private writeMessage(message: unknown): void {
     if (!this.child.stdin.writable) {
-      throw new Error("Cannot write to Codex app-server stdin.");
+      throw new Error("Cannot write to the active Codex app-server session stdin.");
     }
     this.child.stdin.write(`${JSON.stringify(message)}\n`);
   }
@@ -1562,371 +1560,326 @@ export class CodexAppServerSession {
       } finally {
         this.activeSubagentId = null;
       }
-      return;
     }
     // Remaining child-thread lifecycle noise (status changes, MCP startup,
     // plan updates) has no bearing on the parent run.
   }
 
   private handleThreadNotificationBody(notification: JsonRpcNotification, params: Record<string, unknown> | undefined): void {
-    if (notification.method === "thread/started") {
-      this.threadId = this.readThreadId(params) ?? this.threadId;
-      return;
-    }
-
-    if (notification.method === "thread/tokenUsage/updated") {
-      this.usage = normalizeCodexTokenUsage(asRecord(params?.tokenUsage) ?? params);
-      this.onChunk?.({
-        type: "status",
-        value: "Usage updated.",
-        metadata: {
-          silent: true,
-          usageTotals: this.usage,
-        },
-      });
-      return;
-    }
-
-    if (notification.method === "turn/completed") {
-      const turn = asRecord(params?.turn);
-      const errorMessage = asString(asRecord(turn?.error)?.message);
-      this.usage = normalizeCodexTokenUsage(asRecord(turn?.usage) ?? turn?.usage);
-      this.onChunk?.({
-        type: "status",
-        value: "Usage updated.",
-        metadata: {
-          silent: true,
-          usageTotals: this.usage,
-        },
-      });
-      const pendingTurn = this.pending.get("__turn_complete__");
-      if (pendingTurn) {
-        clearTimeout(pendingTurn.timeout);
-        if ((asString(turn?.status) ?? "").toLowerCase() === "failed") {
-          pendingTurn.reject(new Error(errorMessage || "Codex turn failed."));
-        } else {
-          pendingTurn.resolve(null);
-        }
-      }
-      return;
-    }
-
-    if (notification.method === "error") {
-      const message = asString(asRecord(params?.error)?.message) ?? "Codex app-server reported an error.";
-      const willRetry = params?.willRetry === true;
-      this.onChunk?.({
-        type: willRetry ? "status" : "error",
-        title: willRetry ? "Codex retrying" : "Codex error",
-        value: message,
-      });
-      if (!willRetry) {
-        const pendingTurn = this.pending.get("__turn_complete__");
-        if (pendingTurn) {
-          clearTimeout(pendingTurn.timeout);
-          pendingTurn.reject(new Error(message));
-        }
-      }
-      return;
-    }
-
-    if (notification.method === "item/agentMessage/delta") {
-      const itemId = asString(params?.itemId) ?? `codex-agent:${this.turnId ?? "turn"}`;
-      const delta = asString(params?.delta) ?? asString(asRecord(params?.content)?.text) ?? "";
-      if (!delta) {
+    switch (notification.method) {
+      case "thread/started":
+        this.threadId = this.readThreadId(params) ?? this.threadId;
         return;
-      }
-      const nextValue = `${this.agentMessages.get(itemId) ?? ""}${delta}`;
-      this.agentMessages.set(itemId, nextValue);
-      if (!this.activeSubagentId && this.itemPhases.get(itemId) === "final_answer") {
-        this.assistantText = nextValue;
-      }
-      this.emit({
-        type: "message",
-        title: "Agent output",
-        value: nextValue,
-        metadata: {
-          streamId: itemId,
-          replace: true,
-        },
-      });
-      return;
-    }
-
-    if (notification.method === "item/reasoning/summaryTextDelta") {
-      const itemId = asString(params?.itemId) ?? `codex-reasoning:${this.turnId ?? "turn"}`;
-      const delta = asString(params?.delta) ?? "";
-      if (!delta) {
+      case "thread/tokenUsage/updated":
+        this.handleTokenUsageUpdated(params);
         return;
-      }
-      const nextValue = `${this.reasoningMessages.get(itemId) ?? ""}${delta}`;
-      this.reasoningMessages.set(itemId, nextValue);
-      this.emit({
-        type: "message",
-        title: "Reasoning",
-        value: nextValue,
-        metadata: {
-          streamId: itemId,
-          replace: true,
-          assistantKind: "reasoning",
-        },
-      });
-      return;
-    }
-
-    if (notification.method === "item/plan/delta") {
-      const itemId = asString(params?.itemId) ?? `codex-plan:${this.turnId ?? "turn"}`;
-      const delta = asString(params?.delta) ?? asString(asRecord(params?.content)?.text) ?? "";
-      if (!delta) {
+      case "turn/completed":
+        this.handleTurnCompleted(params);
         return;
-      }
-      const nextValue = `${this.planMessages.get(itemId) ?? ""}${delta}`;
-      this.planMessages.set(itemId, nextValue);
-      this.onChunk?.({
-        type: "plan-updated",
-        title: "Proposed plan",
-        value: nextValue,
-        metadata: {
-          provider: "codex-cli",
-          planKind: "proposal",
-          streamId: itemId,
-          replace: true,
-        },
-      });
-      return;
-    }
-
-    if (notification.method === "turn/plan/updated") {
-      const chunk = buildCodexPlanProgressChunk(params);
-      if (chunk) {
-        this.onChunk?.(chunk);
-      }
-      return;
-    }
-
-    if (
-      notification.method === "item/commandExecution/outputDelta" ||
-      notification.method === "item/fileChange/outputDelta"
-    ) {
-      const itemId = asString(params?.itemId) ?? asString(asRecord(params?.item)?.id) ?? "item";
-      const delta = asString(params?.delta) ?? "";
-      if (!delta) {
+      case "error":
+        this.handleThreadError(params);
         return;
-      }
-      const existingType = this.activeItemTypes.get(itemId);
-      const nextValue = `${this.itemOutputs.get(itemId) ?? ""}${delta}`;
-      this.itemOutputs.set(itemId, nextValue);
-      if (existingType === "commandExecution") {
-        const commandExecution = this.commandExecutions.get(itemId);
-        if (commandExecution?.toolName !== "run_shell") {
-          return;
-        }
-        this.emit({
-          type: "tool-progress",
-          title: "Tool progress: run_shell",
-          value: nextValue,
-          metadata: {
-            toolName: "run_shell",
-            callId: itemId,
-            command: commandExecution?.command,
-            cwd: commandExecution?.cwd,
-            streamId: runShellActivityStreamId(itemId),
-            shellStreaming: true,
-            replace: true,
-          },
-        });
-      }
-      return;
+      case "item/agentMessage/delta":
+        this.handleAgentMessageDelta(params);
+        return;
+      case "item/reasoning/summaryTextDelta":
+        this.handleReasoningDelta(params);
+        return;
+      case "item/plan/delta":
+        this.handlePlanDelta(params);
+        return;
+      case "turn/plan/updated":
+        this.handlePlanProgress(params);
+        return;
+      case "item/commandExecution/outputDelta":
+      case "item/fileChange/outputDelta":
+        this.handleItemOutputDelta(params);
+        return;
+      case "item/started":
+      case "item/completed":
+        this.handleItemLifecycle(notification.method, params);
     }
+  }
 
-    if (notification.method === "item/started" || notification.method === "item/completed") {
-      const item = asRecord(params?.item) ?? params ?? {};
-      const itemId = asString(item?.id);
-      const itemType = asString(item?.type) ?? asString(item?.kind) ?? "item";
-      if (itemId) {
-        this.activeItemTypes.set(itemId, itemType);
-      }
+  private emitUsageUpdated(): void {
+    this.onChunk?.({ type: "status", value: "Usage updated.", metadata: { silent: true, usageTotals: this.usage } });
+  }
 
-      if (itemType === "agentMessage" && itemId) {
-        const phase = asString(item?.phase);
-        if (phase) {
-          this.itemPhases.set(itemId, phase);
-        }
-        if (notification.method === "item/completed" && phase === "final_answer") {
-          const text = asString(item?.text)?.trim();
-          if (text) {
-            if (this.activeSubagentId) {
-              this.emitSubagentUpdate(this.activeSubagentId, { summary: text });
-            } else {
-              this.assistantText = text;
-            }
-          }
-        }
+  private handleTokenUsageUpdated(params: Record<string, unknown> | undefined): void {
+    this.usage = normalizeCodexTokenUsage(asRecord(params?.tokenUsage) ?? params);
+    this.emitUsageUpdated();
+  }
+
+  private handleTurnCompleted(params: Record<string, unknown> | undefined): void {
+    const turn = asRecord(params?.turn);
+    const errorMessage = asString(asRecord(turn?.error)?.message);
+    this.usage = normalizeCodexTokenUsage(asRecord(turn?.usage) ?? turn?.usage);
+    this.emitUsageUpdated();
+    const pendingTurn = this.pending.get("__turn_complete__");
+    if (!pendingTurn) return;
+    clearTimeout(pendingTurn.timeout);
+    if ((asString(turn?.status) ?? "").toLowerCase() === "failed") {
+      pendingTurn.reject(new Error(errorMessage || "Codex turn failed."));
+    } else {
+      pendingTurn.resolve(null);
+    }
+  }
+
+  private handleThreadError(params: Record<string, unknown> | undefined): void {
+    const message = asString(asRecord(params?.error)?.message) ?? "Codex app-server reported an error.";
+    const willRetry = params?.willRetry === true;
+    this.onChunk?.({
+      type: willRetry ? "status" : "error",
+      title: willRetry ? "Codex retrying" : "Codex error",
+      value: message,
+    });
+    if (willRetry) return;
+    const pendingTurn = this.pending.get("__turn_complete__");
+    if (pendingTurn) {
+      clearTimeout(pendingTurn.timeout);
+      pendingTurn.reject(new Error(message));
+    }
+  }
+
+  private handleAgentMessageDelta(params: Record<string, unknown> | undefined): void {
+    const itemId = asString(params?.itemId) ?? `codex-agent:${this.turnId ?? "turn"}`;
+    const delta = asString(params?.delta) ?? asString(asRecord(params?.content)?.text) ?? "";
+    if (!delta) return;
+    const nextValue = `${this.agentMessages.get(itemId) ?? ""}${delta}`;
+    this.agentMessages.set(itemId, nextValue);
+    if (!this.activeSubagentId && this.itemPhases.get(itemId) === "final_answer") this.assistantText = nextValue;
+    this.emit({ type: "message", title: "Agent output", value: nextValue, metadata: { streamId: itemId, replace: true } });
+  }
+
+  private handleReasoningDelta(params: Record<string, unknown> | undefined): void {
+    const itemId = asString(params?.itemId) ?? `codex-reasoning:${this.turnId ?? "turn"}`;
+    const delta = asString(params?.delta) ?? "";
+    if (!delta) return;
+    const nextValue = `${this.reasoningMessages.get(itemId) ?? ""}${delta}`;
+    this.reasoningMessages.set(itemId, nextValue);
+    this.emit({
+      type: "message",
+      title: "Reasoning",
+      value: nextValue,
+      metadata: { streamId: itemId, replace: true, assistantKind: "reasoning" },
+    });
+  }
+
+  private handlePlanDelta(params: Record<string, unknown> | undefined): void {
+    const itemId = asString(params?.itemId) ?? `codex-plan:${this.turnId ?? "turn"}`;
+    const delta = asString(params?.delta) ?? asString(asRecord(params?.content)?.text) ?? "";
+    if (!delta) return;
+    const nextValue = `${this.planMessages.get(itemId) ?? ""}${delta}`;
+    this.planMessages.set(itemId, nextValue);
+    this.onChunk?.({
+      type: "plan-updated",
+      title: "Proposed plan",
+      value: nextValue,
+      metadata: { provider: "codex-cli", planKind: "proposal", streamId: itemId, replace: true },
+    });
+  }
+
+  private handlePlanProgress(params: Record<string, unknown> | undefined): void {
+    const chunk = buildCodexPlanProgressChunk(params);
+    if (chunk) this.onChunk?.(chunk);
+  }
+
+  private handleItemOutputDelta(params: Record<string, unknown> | undefined): void {
+    const itemId = asString(params?.itemId) ?? asString(asRecord(params?.item)?.id) ?? "item";
+    const delta = asString(params?.delta) ?? "";
+    if (!delta) return;
+    const nextValue = `${this.itemOutputs.get(itemId) ?? ""}${delta}`;
+    this.itemOutputs.set(itemId, nextValue);
+    if (this.activeItemTypes.get(itemId) !== "commandExecution") return;
+    const commandExecution = this.commandExecutions.get(itemId);
+    if (commandExecution?.toolName !== "run_shell") return;
+    this.emit({
+      type: "tool-progress",
+      title: "Tool progress: run_shell",
+      value: nextValue,
+      metadata: {
+        toolName: "run_shell",
+        callId: itemId,
+        command: commandExecution.command,
+        cwd: commandExecution.cwd,
+        streamId: runShellActivityStreamId(itemId),
+        shellStreaming: true,
+        replace: true,
+      },
+    });
+  }
+
+  private handleItemLifecycle(method: "item/started" | "item/completed", params: Record<string, unknown> | undefined): void {
+    const item = asRecord(params?.item) ?? params ?? {};
+    const itemId = asString(item.id);
+    const itemType = asString(item.type) ?? asString(item.kind) ?? "item";
+    if (itemId) this.activeItemTypes.set(itemId, itemType);
+
+    switch (itemType) {
+      case "agentMessage":
+        this.handleAgentMessageItem(method, item, itemId);
         return;
-      }
-
-      if (itemType === "reasoning" || itemType === "userMessage") {
+      case "reasoning":
+      case "userMessage":
         return;
-      }
-
-      if (itemType === "collabAgentToolCall") {
+      case "collabAgentToolCall":
         this.handleCollabAgentToolCallItem(item);
         return;
-      }
-
-      if (itemType === "subAgentActivity") {
-        const agentThreadId = asString(item?.agentThreadId);
-        if (agentThreadId) {
-          const kind = asString(item?.kind);
-          this.emitSubagentUpdate(agentThreadId, {
-            ...(asString(item?.agentPath) ? { name: asString(item?.agentPath) } : {}),
-            status: kind === "interrupted" ? "cancelled" : "running",
-          });
-        }
+      case "subAgentActivity":
+        this.handleSubagentActivityItem(item);
         return;
-      }
-
-      if (itemType === "plan" && itemId) {
-        if (this.activeSubagentId) {
-          // A subagent's internal plan should not surface as the run's plan.
-          return;
-        }
-        const planText =
-          asString(item?.text)?.trim() ??
-          asString(item?.plan)?.trim() ??
-          asString(item?.content)?.trim() ??
-          "";
-        if (notification.method === "item/completed" && planText) {
-          this.planMessages.set(itemId, planText);
-          this.onChunk?.({
-            type: "plan-updated",
-            title: "Proposed plan",
-            value: planText,
-            metadata: {
-              provider: "codex-cli",
-              planKind: "proposal",
-              streamId: itemId,
-              replace: true,
-            },
-          });
-        }
+      case "plan":
+        this.handlePlanItem(method, item, itemId);
         return;
-      }
-
-      if (itemType === "commandExecution") {
-        const fullCommand = asString(item?.command) ?? asString(params?.command) ?? "Command";
-        const simplifiedCommand = asString(asRecord(asArray(item?.commandActions)?.[0])?.command) ?? undefined;
-        const cwd = asString(item?.cwd);
-        const executionContext = inferCommandExecutionContext(this.cwd, fullCommand, simplifiedCommand);
-        if (itemId) {
-          this.commandExecutions.set(itemId, {
-            ...executionContext,
-            cwd,
-          });
-        }
-        if (notification.method === "item/started") {
-          this.emit({
-            type: "tool-call",
-            title: `Tool call: ${executionContext.toolName}`,
-            value: executionContext.path ?? executionContext.command,
-            metadata: {
-              toolName: executionContext.toolName,
-              callId: itemId ?? `codex-command:${executionContext.command}`,
-              command: executionContext.command,
-              cwd,
-              ...(executionContext.path ? { path: executionContext.path } : {}),
-            },
-          });
-          return;
-        }
-
-        const output = asString(item?.aggregatedOutput)?.trim() || "";
-        const exitCode = asNumber(item?.exitCode);
-        this.emit({
-          type: "tool-result",
-          title: `Tool result: ${executionContext.toolName}`,
-          value:
-            executionContext.toolName === "read_file"
-              ? output || "File read completed with no output."
-              : buildShellResultContent(output, exitCode),
-          metadata: {
-            toolName: executionContext.toolName,
-            callId: itemId ?? `codex-command:${executionContext.command}`,
-            ok: exitCode === 0,
-            command: executionContext.command,
-            cwd,
-            exitCode,
-            ...(executionContext.path ? { path: executionContext.path } : {}),
-            ...(itemId && executionContext.toolName === "run_shell"
-              ? { streamId: runShellActivityStreamId(itemId), replace: true }
-              : {}),
-          },
-        });
+      case "commandExecution":
+        this.handleCommandExecutionItem(method, params, item, itemId);
         return;
-      }
-
-      if (itemType === "fileChange") {
-        const filePaths = extractPathCandidates(this.cwd, item);
-        if (notification.method === "item/started") {
-          if (itemId) {
-            const beforeByPath = new Map<string, string | null>();
-            this.fileChangeSnapshots.set(itemId, { paths: filePaths, beforeByPath });
-            void Promise.all(
-              filePaths.map(async (filePath) => {
-                beforeByPath.set(filePath, await readDiffableFile(this.cwd, filePath));
-              }),
-            );
-          }
-          if (filePaths.length > 0) {
-            for (const [index, filePath] of filePaths.entries()) {
-              this.emit({
-                type: "tool-call",
-                title: "Tool call: write_file",
-                value: filePath,
-                metadata: {
-                  toolName: "write_file",
-                  callId: `${itemId ?? "codex-file-change"}:${String(index)}`,
-                  path: filePath,
-                },
-              });
-            }
-          } else {
-            this.emit({
-              type: "tool-call",
-              title: "Tool call: write_file",
-              value: "Applying file changes.",
-              metadata: {
-                toolName: "write_file",
-                callId: itemId ?? "codex-file-change",
-              },
-            });
-          }
-          return;
-        }
-
-        void this.emitFileChangeResults({
-          item,
-          itemId,
-          filePaths,
-          subagentId: this.activeSubagentId ?? undefined,
-        });
+      case "fileChange":
+        this.handleFileChangeItem(method, item, itemId);
         return;
-      }
+      default:
+        this.emitGenericItemUpdate(params, item, itemId, itemType);
+    }
+  }
 
-      const detail =
-        asString(item?.detail) ??
-        asString(item?.title) ??
-        asString(item?.text) ??
-        asString(params?.command) ??
-        asString(params?.reason) ??
-        humanizeCodexItemType(itemType);
+  private handleAgentMessageItem(
+    method: "item/started" | "item/completed",
+    item: Record<string, unknown>,
+    itemId: string | undefined,
+  ): void {
+    if (!itemId) return;
+    const phase = asString(item.phase);
+    if (phase) this.itemPhases.set(itemId, phase);
+    if (method !== "item/completed" || phase !== "final_answer") return;
+    const text = asString(item.text)?.trim();
+    if (!text) return;
+    if (this.activeSubagentId) this.emitSubagentUpdate(this.activeSubagentId, { summary: text });
+    else this.assistantText = text;
+  }
 
+  private handleSubagentActivityItem(item: Record<string, unknown>): void {
+    const agentThreadId = asString(item.agentThreadId);
+    if (!agentThreadId) return;
+    this.emitSubagentUpdate(agentThreadId, {
+      ...(asString(item.agentPath) ? { name: asString(item.agentPath) } : {}),
+      status: asString(item.kind) === "interrupted" ? "cancelled" : "running",
+    });
+  }
+
+  private handlePlanItem(
+    method: "item/started" | "item/completed",
+    item: Record<string, unknown>,
+    itemId: string | undefined,
+  ): void {
+    if (!itemId || this.activeSubagentId) return;
+    const planText = asString(item.text)?.trim() ?? asString(item.plan)?.trim() ?? asString(item.content)?.trim() ?? "";
+    if (method !== "item/completed" || !planText) return;
+    this.planMessages.set(itemId, planText);
+    this.onChunk?.({
+      type: "plan-updated",
+      title: "Proposed plan",
+      value: planText,
+      metadata: { provider: "codex-cli", planKind: "proposal", streamId: itemId, replace: true },
+    });
+  }
+
+  private handleCommandExecutionItem(
+    method: "item/started" | "item/completed",
+    params: Record<string, unknown> | undefined,
+    item: Record<string, unknown>,
+    itemId: string | undefined,
+  ): void {
+    const fullCommand = asString(item.command) ?? asString(params?.command) ?? "Command";
+    const simplifiedCommand = asString(asRecord(asArray(item.commandActions)?.[0])?.command) ?? undefined;
+    const cwd = asString(item.cwd);
+    const executionContext = inferCommandExecutionContext(this.cwd, fullCommand, simplifiedCommand);
+    if (itemId) this.commandExecutions.set(itemId, { ...executionContext, cwd });
+    const callId = itemId ?? `codex-command:${executionContext.command}`;
+    if (method === "item/started") {
       this.emit({
-        type: notification.method === "item/started" ? "status" : "status",
-        title: "Codex update",
-        value: detail,
-        metadata: itemId ? { itemId, itemType } : { itemType },
+        type: "tool-call",
+        title: `Tool call: ${executionContext.toolName}`,
+        value: executionContext.path ?? executionContext.command,
+        metadata: {
+          toolName: executionContext.toolName,
+          callId,
+          command: executionContext.command,
+          cwd,
+          ...(executionContext.path ? { path: executionContext.path } : {}),
+        },
+      });
+      return;
+    }
+    const output = asString(item.aggregatedOutput)?.trim() || "";
+    const exitCode = asNumber(item.exitCode);
+    this.emit({
+      type: "tool-result",
+      title: `Tool result: ${executionContext.toolName}`,
+      value: executionContext.toolName === "read_file" ? output || "File read completed with no output." : buildShellResultContent(output, exitCode),
+      metadata: {
+        toolName: executionContext.toolName,
+        callId,
+        ok: exitCode === 0,
+        command: executionContext.command,
+        cwd,
+        exitCode,
+        ...(executionContext.path ? { path: executionContext.path } : {}),
+        ...(itemId && executionContext.toolName === "run_shell"
+          ? { streamId: runShellActivityStreamId(itemId), replace: true }
+          : {}),
+      },
+    });
+  }
+
+  private handleFileChangeItem(
+    method: "item/started" | "item/completed",
+    item: Record<string, unknown>,
+    itemId: string | undefined,
+  ): void {
+    const filePaths = extractPathCandidates(this.cwd, item);
+    if (method === "item/completed") {
+      void this.emitFileChangeResults({ item, itemId, filePaths, subagentId: this.activeSubagentId ?? undefined });
+      return;
+    }
+    if (itemId) {
+      const beforeByPath = new Map<string, string | null>();
+      this.fileChangeSnapshots.set(itemId, { paths: filePaths, beforeByPath });
+      void Promise.all(filePaths.map(async (filePath) => beforeByPath.set(filePath, await readDiffableFile(this.cwd, filePath))));
+    }
+    if (filePaths.length === 0) {
+      this.emit({
+        type: "tool-call",
+        title: "Tool call: write_file",
+        value: "Applying file changes.",
+        metadata: { toolName: "write_file", callId: itemId ?? "codex-file-change" },
+      });
+      return;
+    }
+    for (const [index, filePath] of filePaths.entries()) {
+      this.emit({
+        type: "tool-call",
+        title: "Tool call: write_file",
+        value: filePath,
+        metadata: { toolName: "write_file", callId: `${itemId ?? "codex-file-change"}:${String(index)}`, path: filePath },
       });
     }
+  }
+
+  private emitGenericItemUpdate(
+    params: Record<string, unknown> | undefined,
+    item: Record<string, unknown>,
+    itemId: string | undefined,
+    itemType: string,
+  ): void {
+    const detail =
+      asString(item.detail) ?? asString(item.title) ?? asString(item.text) ??
+      asString(params?.command) ?? asString(params?.reason) ?? humanizeCodexItemType(itemType);
+    this.emit({
+      type: "status",
+      title: "Codex update",
+      value: detail,
+      metadata: itemId ? { itemId, itemType } : { itemType },
+    });
   }
 
   private async emitFileChangeResults(input: {

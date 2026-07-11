@@ -22,6 +22,7 @@ import { ArrowUp, Bot, BrainCircuit, Check, ChevronDown, GitBranch, ShieldOff, S
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { ContextWindowBadge } from "./ContextWindowBadge";
+import { AnchorDropdownPortal } from "../ui/dropdown-portal";
 
 const RUN_MODES: RunMode[] = ["code", "plan", "ask"];
 
@@ -111,6 +112,7 @@ interface ComposerSelectProps {
   disabled?: boolean;
   buttonClassName?: string;
   menuClassName?: string;
+  menuWidthPx?: number;
   menuSide?: "top" | "bottom";
   selectedIconClassName?: string;
 }
@@ -124,18 +126,18 @@ export const ComposerSelect = ({
   disabled = false,
   buttonClassName = "",
   menuClassName = "",
+  menuWidthPx = 208,
   menuSide = "top",
   selectedIconClassName = "text-[var(--ec-accent)]",
 }: ComposerSelectProps) => {
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement | null>(null);
+  const anchorRef = useRef<HTMLButtonElement | null>(null);
   const selectedOption = options.find((option) => option.value === value) ?? options[0];
 
-  useCloseOnOutsidePointerDown(rootRef, open, setOpen);
-
   return (
-    <div ref={rootRef} className={`relative ${open ? "z-[80]" : "z-10"}`}>
+    <div className="relative z-10">
       <button
+        ref={anchorRef}
         type="button"
         className={`${composerTriggerClass} ${buttonClassName}`}
         onClick={() => setOpen((current) => !current)}
@@ -145,12 +147,17 @@ export const ComposerSelect = ({
         <span className="max-w-[16rem] truncate text-[var(--ec-text)]">{selectedOption?.displayLabel ?? selectedOption?.label ?? "Select"}</span>
         <ChevronDown className={`h-3.5 w-3.5 text-[var(--ec-faint)] transition ${open ? "rotate-180" : ""}`} />
       </button>
-      {open ? (
-        <div
-          className={`glass-popover app-scrollbar absolute left-0 z-[90] max-h-72 min-w-full overflow-auto p-1.5 ${
-            menuSide === "top" ? "bottom-[calc(100%+0.5rem)]" : "top-[calc(100%+0.5rem)]"
-          } ${menuClassName}`}
-        >
+      <AnchorDropdownPortal
+        open={open}
+        anchorRef={anchorRef}
+        onClose={() => setOpen(false)}
+        align="end"
+        placement={menuSide}
+        widthPx={menuWidthPx}
+        maxHeightPx={288}
+        className={`glass-popover overflow-hidden ${menuClassName}`}
+      >
+        <div className="app-scrollbar app-dropdown-scrollbar overflow-y-auto p-1.5" style={{ maxHeight: "inherit" }}>
           {options.map((option) => {
             const isSelected = option.value === value;
 
@@ -174,7 +181,7 @@ export const ComposerSelect = ({
             );
           })}
         </div>
-      ) : null}
+      </AnchorDropdownPortal>
     </div>
   );
 };
@@ -188,6 +195,7 @@ interface ComposerMultiModelSelectProps {
   disabled?: boolean;
   buttonClassName?: string;
   menuClassName?: string;
+  menuWidthPx?: number;
   menuSide?: "top" | "bottom";
   selectedIconClassName?: string;
 }
@@ -201,11 +209,12 @@ const ComposerMultiModelSelect = ({
   disabled = false,
   buttonClassName = "",
   menuClassName = "",
+  menuWidthPx = 352,
   menuSide = "top",
   selectedIconClassName = "text-[var(--ec-accent)]",
 }: ComposerMultiModelSelectProps) => {
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement | null>(null);
+  const anchorRef = useRef<HTMLButtonElement | null>(null);
   const selectedSet = new Set(selectedIds);
 
   const summaryLabel = (() => {
@@ -218,8 +227,6 @@ const ComposerMultiModelSelect = ({
     }
     return `${selectedIds.length} models`;
   })();
-
-  useCloseOnOutsidePointerDown(rootRef, open, setOpen);
 
   const toggleId = (id: string) => {
     const next = new Set(selectedIds);
@@ -236,8 +243,9 @@ const ComposerMultiModelSelect = ({
   };
 
   return (
-    <div ref={rootRef} className={`relative ${open ? "z-[80]" : "z-10"}`}>
+    <div className="relative z-10">
       <button
+        ref={anchorRef}
         type="button"
         className={`${composerTriggerClass} ${buttonClassName}`}
         onClick={() => setOpen((current) => !current)}
@@ -247,12 +255,17 @@ const ComposerMultiModelSelect = ({
         <span className="max-w-[16rem] truncate text-[var(--ec-text)]">{summaryLabel}</span>
         <ChevronDown className={`h-3.5 w-3.5 text-[var(--ec-faint)] transition ${open ? "rotate-180" : ""}`} />
       </button>
-      {open ? (
-        <div
-          className={`glass-popover app-scrollbar absolute left-0 z-[90] max-h-72 min-w-full overflow-auto p-1.5 ${
-            menuSide === "top" ? "bottom-[calc(100%+0.5rem)]" : "top-[calc(100%+0.5rem)]"
-          } ${menuClassName}`}
-        >
+      <AnchorDropdownPortal
+        open={open}
+        anchorRef={anchorRef}
+        onClose={() => setOpen(false)}
+        align="end"
+        placement={menuSide}
+        widthPx={menuWidthPx}
+        maxHeightPx={288}
+        className={`glass-popover overflow-hidden ${menuClassName}`}
+      >
+        <div className="app-scrollbar app-dropdown-scrollbar overflow-y-auto p-1.5" style={{ maxHeight: "inherit" }}>
           <p className="px-2 pb-1 text-[11px] uppercase tracking-wide text-[var(--ec-faint)]">Select one or more</p>
           {options.map((option) => {
             const isSelected = selectedSet.has(option.value);
@@ -277,7 +290,7 @@ const ComposerMultiModelSelect = ({
             );
           })}
         </div>
-      ) : null}
+      </AnchorDropdownPortal>
     </div>
   );
 };
@@ -774,7 +787,7 @@ export const RunComposer = ({
       return;
     }
     event.preventDefault();
-    void onSubmit();
+    onSubmit();
   };
 
   const handlePromptPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
@@ -916,7 +929,7 @@ export const RunComposer = ({
                   options={modelSelectOptions}
                   onChange={multiModelChange}
                   disabled={busy}
-                  menuClassName="w-[22rem]"
+                  menuWidthPx={352}
                   menuSide={dropdownSide}
                   selectedIconClassName="text-[var(--ec-accent)]"
                 />
@@ -928,7 +941,7 @@ export const RunComposer = ({
                   options={modelSelectOptions}
                   onChange={onModelChange}
                   disabled={busy}
-                  menuClassName="w-[22rem]"
+                  menuWidthPx={352}
                   menuSide={dropdownSide}
                   selectedIconClassName="text-[var(--ec-accent)]"
                 />
@@ -941,7 +954,7 @@ export const RunComposer = ({
                   options={reasoningSelectOptions}
                   onChange={onReasoningEffortChange}
                   disabled={busy}
-                  menuClassName="w-52"
+                  menuWidthPx={208}
                   menuSide={dropdownSide}
                   selectedIconClassName="text-[var(--ec-accent)]"
                 />
@@ -961,7 +974,7 @@ export const RunComposer = ({
                     onAnthropicEffortChange?.(value);
                   }}
                   disabled={busy}
-                  menuClassName="w-48"
+                  menuWidthPx={192}
                   menuSide={dropdownSide}
                   selectedIconClassName="text-[var(--ec-accent)]"
                 />
@@ -984,7 +997,7 @@ export const RunComposer = ({
                   ]}
                   onChange={onAnthropicEffortChange}
                   disabled={busy}
-                  menuClassName="w-48"
+                  menuWidthPx={192}
                   menuSide={dropdownSide}
                   selectedIconClassName="text-[var(--ec-accent)]"
                 />
@@ -1007,7 +1020,7 @@ export const RunComposer = ({
                 size="sm"
                 className="app-composer-send h-9 w-9 shrink-0 rounded-full p-0 text-sm shadow-[var(--ec-action-shadow)] [&_svg]:m-0 [&_svg]:h-5 [&_svg]:w-5"
                 disabled={isSubmitDisabled}
-                onClick={() => void onSubmit()}
+                onClick={onSubmit}
                 title={submitLabel}
                 aria-label={submitLabel}
               >

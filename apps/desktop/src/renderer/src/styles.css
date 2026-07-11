@@ -429,6 +429,16 @@ pre {
     linear-gradient(180deg, var(--app-scrollbar-thumb-hover-start), var(--app-scrollbar-thumb-hover-end));
 }
 
+/* Dropdowns are clipped to a rounded popover. Keep their scrollbar inside the
+   straight section of that shape so Chromium does not crop either end. */
+.app-dropdown-scrollbar {
+  scrollbar-gutter: stable;
+}
+
+.app-dropdown-scrollbar::-webkit-scrollbar-track {
+  margin-block: 0.4rem;
+}
+
 .diff-viewer {
   --diff-background-color: transparent;
   --diff-text-color: #e4e4e7;

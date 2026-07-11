@@ -9,7 +9,7 @@ import {
 import { cn } from "../../lib/cn";
 import { AnchorDropdownPortal, type AnchorDropdownAlign, type AnchorDropdownPlacement } from "./dropdown-portal";
 
-export type SelectOption = {
+type SelectOption = {
   value: string;
   label: string;
   description?: string;
@@ -143,7 +143,7 @@ export const Select = ({
           menuClassName,
         )}
       >
-        <div id={listboxId} role="listbox" className="app-scrollbar overflow-y-auto p-1" style={{ maxHeight: "inherit" }}>
+        <div id={listboxId} role="listbox" className="app-scrollbar app-dropdown-scrollbar overflow-y-auto p-1" style={{ maxHeight: "inherit" }}>
           {options.length === 0 ? (
             <div className="px-3 py-2 text-sm text-[var(--ec-muted)]">{emptyMessage}</div>
           ) : (

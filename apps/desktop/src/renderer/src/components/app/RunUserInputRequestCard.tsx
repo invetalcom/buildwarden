@@ -94,7 +94,7 @@ export function RunUserInputRequestCard({
   resolved,
   disabled,
   onSubmitAnswers,
-}: {
+}: Readonly<{
   runId: string;
   requestId: string;
   title: string;
@@ -105,7 +105,7 @@ export function RunUserInputRequestCard({
   resolved: boolean;
   disabled?: boolean;
   onSubmitAnswers?: (answers: RunUserInputAnswers) => Promise<void> | void;
-}) {
+}>) {
   const [drafts, setDrafts] = useState<DraftAnswers>(() => buildInitialDrafts(questions, answers));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);

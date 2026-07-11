@@ -3,7 +3,7 @@ import { copyFile, lstat, mkdir, readdir, readlink, rm, symlink } from "node:fs/
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { FOLDER_WORKSPACE_IGNORED_NAMES, MANAGED_WORKSPACE_DIR } from "./folder-workspace-constants";
 
-export const sanitizeWorkspaceSegment = (value: string): string =>
+const sanitizeWorkspaceSegment = (value: string): string =>
   value
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
@@ -11,7 +11,7 @@ export const sanitizeWorkspaceSegment = (value: string): string =>
     .replace(/^-|-$/g, "")
     .slice(0, 48);
 
-export const getManagedFolderWorkspaceRoot = (
+const getManagedFolderWorkspaceRoot = (
   sourcePath: string,
   projectName: string,
   configuredWorkspaceRoot?: string | null,

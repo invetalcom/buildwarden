@@ -39,7 +39,6 @@ import {
   StickyNote,
   Target,
   Terminal,
-  Trash2,
   X,
 } from "lucide-react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
@@ -50,6 +49,7 @@ import { RunChatPanel } from "./RunChatPanel";
 import { RunEmbeddedBrowser } from "./RunEmbeddedBrowser";
 import { RunActivityTimeline } from "./RunActivityTimeline";
 import { RunFilePanel } from "./RunFilePanel";
+import { RunNotesPanel } from "./RunNoteCard";
 import { RunWorktreeTerminal } from "./RunWorktreeTerminal";
 import { DiffReviewPanel, type DiffReviewPanelState } from "./diff-review-panel";
 import {
@@ -148,7 +148,7 @@ export interface RunBrowserSessionState {
   reloadKey: number;
 }
 
-interface RunDetailPageProps {
+export interface RunDetailPageProps {
   /** When used inside a flex main column, pass `min-h-0 min-w-0 flex-1` so the scroll region can shrink. */
   className?: string;
   runDetail: RunDetail;
@@ -935,161 +935,24 @@ export const RunDetailPage = ({
     />
   );
 
-  const renderNoteCard = (note: RunNoteRecord) => {
-    const isClosed = note.status === "closed";
-    const isBusy = noteBusyId === note.id;
-    const isEditing = editingNoteId === note.id;
-    const trimmedEditDraft = noteEditDraft.trim();
-    const createdLabel = new Date(note.createdAt).toLocaleString();
-    return (
-      <div
-        key={note.id}
-        className={cn(
-          "rounded-lg border px-3 py-2.5",
-          isClosed ? "border-zinc-800/60 bg-zinc-950/25" : "border-cyan-500/20 bg-cyan-500/[0.04]",
-          isClosed && !isEditing ? "opacity-75" : "",
-        )}
-      >
-        <div className="mb-2 flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5">
-              <Badge tone={isClosed ? "neutral" : "completed"} className="px-1.5 py-0 text-[9px] uppercase tracking-[0.14em]">
-                {note.status}
-              </Badge>
-              <span className="truncate text-[10px] text-zinc-500">{createdLabel}</span>
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
-            {isEditing ? (
-              <>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 px-2 text-[11px] text-cyan-200 hover:bg-cyan-500/10 hover:text-cyan-100"
-                  disabled={isBusy || !trimmedEditDraft}
-                  onClick={() => void saveRunNoteContent(note)}
-                >
-                  {isBusy ? (
-                    <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden />
-                  ) : (
-                    <Check className="mr-1 h-3 w-3" aria-hidden />
-                  )}
-                  Save
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 px-2 text-[11px] text-zinc-400 hover:text-zinc-100"
-                  disabled={isBusy}
-                  onClick={cancelEditingRunNote}
-                >
-                  <X className="mr-1 h-3 w-3" aria-hidden />
-                  Cancel
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 px-2 text-[11px] text-zinc-400 hover:text-zinc-100"
-                  disabled={isBusy}
-                  onClick={() => startEditingRunNote(note)}
-                  title="Edit note"
-                  aria-label="Edit note"
-                >
-                  <Pencil className="h-3 w-3" aria-hidden />
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 px-2 text-[11px] text-zinc-400 hover:text-zinc-100"
-                  disabled={isBusy}
-                  onClick={() => void updateRunNoteStatus(note, isClosed ? "open" : "closed")}
-                >
-                  <Check className="mr-1 h-3 w-3" aria-hidden />
-                  {isClosed ? "Reopen" : "Close"}
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 px-2 text-[11px] text-red-300/80 hover:bg-red-500/10 hover:text-red-200"
-                  disabled={isBusy}
-                  onClick={() => void deleteRunNote(note.id)}
-                  title="Delete note"
-                >
-                  <Trash2 className="h-3 w-3" aria-hidden />
-                </Button>
-              </>
-            )}
-          </div>
-        </div>
-        {isEditing ? (
-          <textarea
-            value={noteEditDraft}
-            onChange={(event) => setNoteEditDraft(event.target.value)}
-            className="min-h-24 w-full resize-y rounded-md border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-sm leading-relaxed text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-cyan-500/60"
-            autoFocus
-          />
-        ) : (
-          <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-100">{note.content}</p>
-        )}
-      </div>
-    );
-  };
-
   const notesPanelContent = (
-    <div className="app-scrollbar flex h-full min-h-0 flex-col overflow-y-auto px-3 py-3">
-      <div className="mb-3 rounded-lg border border-zinc-800/80 bg-zinc-950/45 p-3">
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-zinc-100">Run notes</p>
-            <p className="text-[11px] text-zinc-500">
-              {openNotes.length} open, {closedNotes.length} closed
-            </p>
-          </div>
-          <StickyNote className="h-4 w-4 shrink-0 text-cyan-300/80" aria-hidden />
-        </div>
-        <textarea
-          value={noteDraft}
-          onChange={(event) => setNoteDraft(event.target.value)}
-          className="min-h-20 w-full resize-y rounded-md border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-cyan-500/60"
-          placeholder="Add a note for this run"
-        />
-        <div className="mt-2 flex justify-end">
-          <Button
-            type="button"
-            size="sm"
-            className="h-8 px-3 text-xs"
-            disabled={!noteDraft.trim()}
-            onClick={() => void addRunNote(noteDraft)}
-          >
-            <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-            Add note
-          </Button>
-        </div>
-      </div>
-      {runNotes.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-zinc-800/80 px-4 py-8 text-center text-sm text-zinc-500">
-          Select text in the activity log, right-click, and add it to notes.
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {openNotes.length > 0 ? <div className="space-y-2">{openNotes.map(renderNoteCard)}</div> : null}
-          {closedNotes.length > 0 ? (
-            <div className="space-y-2">
-              <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-600">Closed</p>
-              {closedNotes.map(renderNoteCard)}
-            </div>
-          ) : null}
-        </div>
-      )}
-    </div>
+    <RunNotesPanel
+      notes={runNotes}
+      openNotes={openNotes}
+      closedNotes={closedNotes}
+      draft={noteDraft}
+      editDraft={noteEditDraft}
+      busyNoteId={noteBusyId}
+      editingNoteId={editingNoteId}
+      onDraftChange={setNoteDraft}
+      onEditDraftChange={setNoteEditDraft}
+      onAdd={addRunNote}
+      onStartEditing={startEditingRunNote}
+      onCancelEditing={cancelEditingRunNote}
+      onSave={saveRunNoteContent}
+      onStatusChange={updateRunNoteStatus}
+      onDelete={deleteRunNote}
+    />
   );
 
   return (
@@ -1499,7 +1362,7 @@ export const RunDetailPage = ({
                                   providerType: option.providerType,
                                   providerFamily: option.providerFamily,
                                 }))}
-                                menuClassName="w-[22rem]"
+                                menuWidthPx={352}
                                 menuSide="bottom"
                               />
                               <Button

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, lstatSync } from "node:fs";
 import { createRequire } from "node:module";
+import { isAbsolute } from "node:path";
 import { ipcMain, type WebContents } from "electron";
 import {
   IPC_CHANNELS,
@@ -30,7 +31,7 @@ type RunTerminalSession = { proc: IPty; wc: WebContents; cwd: string };
 const sessions = new Map<string, RunTerminalSession>();
 
 /** Session id format must match the renderer (`RunWorktreeTerminal`). */
-export const runTerminalSessionIdForRun = (runId: string): string => `buildwarden-run-terminal:${runId}`;
+const runTerminalSessionIdForRun = (runId: string): string => `buildwarden-run-terminal:${runId}`;
 
 export const killRunTerminalForRunId = (runId: string): void => {
   const sessionId = runTerminalSessionIdForRun(runId);
@@ -103,16 +104,25 @@ const openSystemTerminalAtPathImpl = (dirPath: string): { ok: boolean; error?: s
   }
   try {
     if (process.platform === "win32") {
-      spawn("cmd.exe", ["/c", "start", "cmd.exe", "/k"], {
+      const configuredCommandProcessor = process.env.ComSpec;
+      const commandProcessor =
+        configuredCommandProcessor && isAbsolute(configuredCommandProcessor) && existsSync(configuredCommandProcessor)
+          ? configuredCommandProcessor
+          : "C:\\Windows\\System32\\cmd.exe";
+      spawn(commandProcessor, ["/c", "start", "", commandProcessor, "/k"], {
         cwd: dirPath,
         detached: true,
         stdio: "ignore",
         windowsHide: false,
       }).unref();
     } else if (process.platform === "darwin") {
-      spawn("open", ["-a", "Terminal", "."], { cwd: dirPath, detached: true, stdio: "ignore" }).unref();
+      spawn("/usr/bin/open", ["-a", "Terminal", "."], { cwd: dirPath, detached: true, stdio: "ignore" }).unref();
     } else {
-      spawn("x-terminal-emulator", [], {
+      const terminalExecutable = ["/usr/bin/x-terminal-emulator", "/bin/x-terminal-emulator"].find(existsSync);
+      if (!terminalExecutable) {
+        return { ok: false, error: "No supported system terminal executable was found." };
+      }
+      spawn(terminalExecutable, [], {
         cwd: dirPath,
         detached: true,
         stdio: "ignore",

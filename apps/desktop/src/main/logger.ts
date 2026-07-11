@@ -131,7 +131,6 @@ export const initializeAppLogger = (logDirPath: string) => {
 
 export const getAppLogDirPath = () => currentLogDirPath;
 
-export const getAppLogFilePath = () => currentLogFilePath;
 
 export const logInfo = (message: string, metadata?: LogMetadata) => {
   writeLogLine("info", message, metadata);

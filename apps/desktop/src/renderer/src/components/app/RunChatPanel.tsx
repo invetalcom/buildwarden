@@ -23,7 +23,7 @@ const safeParseMetadata = (value: string) => {
   }
 };
 
-export interface RunChatPanelModelOption {
+interface RunChatPanelModelOption {
   id: string;
   label: string;
   modelId: string;

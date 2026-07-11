@@ -81,7 +81,7 @@ interface LoopRuntimeState {
   uiReviewWaiter: (() => void) | null;
 }
 
-export interface ProjectLoopAskTextInput {
+interface ProjectLoopAskTextInput {
   prompt: string;
   systemPrompt: string;
   maxTokens: number;

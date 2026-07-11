@@ -93,7 +93,12 @@ const formatByteSize = (bytes: number): string => {
     unitIndex += 1;
   }
 
-  const maximumFractionDigits = unitIndex === 0 || value >= 100 ? 0 : value >= 10 ? 1 : 2;
+  let maximumFractionDigits = 2;
+  if (unitIndex === 0 || value >= 100) {
+    maximumFractionDigits = 0;
+  } else if (value >= 10) {
+    maximumFractionDigits = 1;
+  }
   return `${value.toLocaleString(undefined, { maximumFractionDigits })} ${units[unitIndex]}`;
 };
 

@@ -334,7 +334,7 @@ const parseContextWindowTokenCount = (value: unknown): number | undefined => {
     return undefined;
   }
   const normalized = value.trim().toLowerCase().replace(/,/g, "");
-  const match = normalized.match(/(\d+(?:\.\d+)?)\s*([km])?/);
+  const match = /(\d+(?:\.\d+)?)\s*([km])?/.exec(normalized);
   if (!match) {
     return undefined;
   }
@@ -1879,8 +1879,9 @@ export async function assertCursorAgentAvailable(config?: Record<string, unknown
     return;
   }
 
+  const detailSuffix = lastDetail ? `\n\n${lastDetail}` : "";
   throw new Error(
-    `Cursor Agent CLI was not found or is not available at "${lastBinaryPath}". Install Cursor CLI, expose \`agent\` or \`cursor-agent\` on PATH, run "agent login", and ensure "agent about" works.${lastDetail ? `\n\n${lastDetail}` : ""}`,
+    `Cursor Agent CLI was not found or is not available at "${lastBinaryPath}". Install Cursor CLI, expose \`agent\` or \`cursor-agent\` on PATH, run "agent login", and ensure "agent about" works.${detailSuffix}`,
   );
 }
 

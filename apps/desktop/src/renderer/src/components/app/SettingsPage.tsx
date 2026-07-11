@@ -244,12 +244,14 @@ export const SettingsPage = ({
   const [networkProxySaving, setNetworkProxySaving] = useState(false);
 
   const selectedProviderAccount = providerAccounts.find((provider) => provider.id === selectedProviderId) ?? null;
+  let selectedProviderFamily: ReturnType<typeof getAiSdkProviderFamilyFromConfigJson> | undefined;
+  if (selectedProviderAccount?.providerType === "ai-sdk") {
+    selectedProviderFamily = getAiSdkProviderFamilyFromConfigJson(selectedProviderAccount.configJson);
+  }
   const openAiPresetsGrouped = selectedProviderAccount
     ? getModelPresetsByGroupForProvider(
         selectedProviderAccount.providerType,
-        selectedProviderAccount.providerType === "ai-sdk"
-          ? getAiSdkProviderFamilyFromConfigJson(selectedProviderAccount.configJson)
-          : undefined,
+        selectedProviderFamily,
       )
     : emptyModelPresetsByGroup();
   const availableModelsState = selectedProviderId ? availableModelsByProviderId[selectedProviderId] : undefined;

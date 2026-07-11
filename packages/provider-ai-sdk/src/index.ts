@@ -37,6 +37,7 @@ import {
   estimateBase64ByteLength,
   formatRunPlanProgressContent,
   getModelPresetsForProvider,
+  isTextLikeFileName,
   normalizeRunPlanProgressPayload,
   runShellActivityStreamId,
   shouldBypassNetworkProxyForUrl,
@@ -85,9 +86,6 @@ const TEXTISH_MIME_PREFIXES = [
   "application/yaml",
   "application/x-yaml",
 ] as const;
-
-const CODE_LIKE_EXT =
-  /\.(txt|md|mdx|ts|tsx|js|jsx|mjs|cjs|json|yaml|yml|xml|html|htm|css|scss|less|rs|go|py|java|kt|swift|c|h|cpp|hpp|cs|rb|php|sh|sql|toml|ini|env|log|vue|svelte)$/i;
 
 const GENERATED_FILE_EXTENSIONS: Record<string, string> = {
   "application/pdf": "pdf",
@@ -356,7 +354,7 @@ const isTextishAttachment = (mime: string, fileName: string): boolean => {
     }
   }
   if (loweredMime === "application/octet-stream" || loweredMime === "") {
-    return CODE_LIKE_EXT.test(fileName);
+    return isTextLikeFileName(fileName);
   }
   return false;
 };
@@ -818,7 +816,10 @@ const downloadOpenAiContainerFile = async (
   index: number,
   devLogger?: { createLoggedFetch: (baseFetch?: typeof fetch) => typeof fetch },
 ): Promise<ChatAttachmentPayload> => {
-  const baseURL = (input.apiBaseUrl?.trim() || "https://api.openai.com/v1").replace(/\/+$/, "");
+  let baseURL = input.apiBaseUrl?.trim() || "https://api.openai.com/v1";
+  while (baseURL.endsWith("/")) {
+    baseURL = baseURL.slice(0, -1);
+  }
   const headers = getDefaultHeaders(input.config);
   const customFetch = createProxyAwareFetch(input.networkProxy);
   const loggedFetch = devLogger?.createLoggedFetch(customFetch ?? fetch);

@@ -1,7 +1,7 @@
 import type { ProviderAvailableModel } from "@buildwarden/shared";
 import type { ProviderModelsOpenPanel } from "../components/app/settings-provider-models-tab";
 
-export type AvailableProviderModelsStatus = "idle" | "loading" | "loaded" | "error";
+type AvailableProviderModelsStatus = "idle" | "loading" | "loaded" | "error";
 
 export interface AvailableProviderModelsState {
   status: AvailableProviderModelsStatus;

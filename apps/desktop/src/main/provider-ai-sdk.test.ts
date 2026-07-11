@@ -207,7 +207,7 @@ describe("splitSystemMessagesIntoInstructions", () => {
           { role: "user", content: "hi" },
         ] as never,
       }),
-    ).rejects.toThrowError(/System messages are not allowed/);
+    ).rejects.toThrow(/System messages are not allowed/);
   });
 
   it("split output passes AI SDK 7 validation and reaches the model as a system prompt", async () => {

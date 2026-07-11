@@ -1,4 +1,4 @@
-export const LANDING_PAGE_JOKES: Record<string, string> = {
+const LANDING_PAGE_JOKES: Record<string, string> = {
   darkMode: "Why do programmers prefer dark mode? Because light attracts bugs.",
   sqlBar: "A SQL query walks into a bar, walks up to two tables, and asks: can I join you?",
   stackOverflow: "What do you call a programmer who does not use Stack Overflow? A very confident liar.",
@@ -60,6 +60,7 @@ export const pickRandomLandingJoke = () => {
     return "";
   }
 
-  const index = Math.floor(Math.random() * jokes.length);
+  const randomValue = globalThis.crypto.getRandomValues(new Uint32Array(1))[0] ?? 0;
+  const index = randomValue % jokes.length;
   return jokes[index] ?? jokes[0] ?? "";
 };

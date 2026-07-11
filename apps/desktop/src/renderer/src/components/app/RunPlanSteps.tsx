@@ -18,6 +18,26 @@ const parsePlanSteps = (content: string): ParsedPlanStep[] => {
 
 const planStepStatusLabel = (status: RunPlanStepStatus): string => (status === "inProgress" ? "in progress" : status);
 
+const planStepStatusClass = (status: RunPlanStepStatus) => {
+  if (status === "completed") {
+    return "bg-[color:var(--ec-success-soft)] text-[color:var(--ec-success)]";
+  }
+  if (status === "inProgress") {
+    return "bg-[color:var(--ec-info-soft)] text-[color:var(--ec-info)]";
+  }
+  return "bg-[color:var(--ec-control)] text-[color:var(--ec-muted)]";
+};
+
+const PlanStepIcon = ({ status }: Readonly<{ status: RunPlanStepStatus }>) => {
+  if (status === "completed") {
+    return <Check className="h-2.5 w-2.5" />;
+  }
+  if (status === "inProgress") {
+    return <Loader2 className="h-2.5 w-2.5 animate-spin" />;
+  }
+  return <Circle className="h-2 w-2 fill-current" />;
+};
+
 export function RunPlanSteps({ content }: { content: string }) {
   const steps = parsePlanSteps(content);
   if (steps.length < 2) {
@@ -43,20 +63,10 @@ export function RunPlanSteps({ content }: { content: string }) {
               <span
                 className={cn(
                   "inline-flex items-center gap-1 whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-medium",
-                  step.status === "completed"
-                    ? "bg-[color:var(--ec-success-soft)] text-[color:var(--ec-success)]"
-                    : step.status === "inProgress"
-                      ? "bg-[color:var(--ec-info-soft)] text-[color:var(--ec-info)]"
-                      : "bg-[color:var(--ec-control)] text-[color:var(--ec-muted)]",
+                  planStepStatusClass(step.status),
                 )}
               >
-                {step.status === "completed" ? (
-                  <Check className="h-2.5 w-2.5" />
-                ) : step.status === "inProgress" ? (
-                  <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                ) : (
-                  <Circle className="h-2 w-2 fill-current" />
-                )}
+                <PlanStepIcon status={step.status} />
                 {planStepStatusLabel(step.status)}
               </span>
             </div>

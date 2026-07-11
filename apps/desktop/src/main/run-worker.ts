@@ -1,4 +1,5 @@
 import { parentPort, workerData } from "node:worker_threads";
+import { randomUUID } from "node:crypto";
 import {
   type HarnessRunChunk,
   type RunExecutionRequest,
@@ -91,7 +92,7 @@ const requestShellApproval = async (command: string): Promise<ShellApprovalDecis
     return "allow-for-run";
   }
 
-  const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const requestId = randomUUID();
   port.postMessage({
     type: "shell-approval-request",
     requestId,
@@ -110,7 +111,7 @@ const requestShellApproval = async (command: string): Promise<ShellApprovalDecis
 };
 
 const requestUserInput = async (request: RunUserInputRequest): Promise<RunUserInputAnswers> => {
-  const requestId = request.requestId?.trim() || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const requestId = request.requestId?.trim() || randomUUID();
   port.postMessage({
     type: "user-input-request",
     requestId,

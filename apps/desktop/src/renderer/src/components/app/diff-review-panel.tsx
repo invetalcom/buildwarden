@@ -16,7 +16,7 @@ const REVIEWER_SIMULATOR_PANEL_COPY = {
   busy: "Simulating likely reviewer comments…",
 } as const;
 
-export const REVIEW_PRIORITY_STYLES = {
+const REVIEW_PRIORITY_STYLES = {
   high: "border-rose-500/30 bg-rose-500/[0.08] text-rose-200",
   medium: "border-amber-500/30 bg-amber-500/[0.08] text-amber-200",
   low: "border-emerald-500/30 bg-emerald-500/[0.08] text-emerald-200",

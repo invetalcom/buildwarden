@@ -11,7 +11,10 @@ interface ProjectForLaterTabProps {
 }
 
 const formatRunMeta = (run: RunRecord) => {
-  const workspaceLabel = run.workspaceVcs === "folder" ? (run.workspaceType === "copy" ? "Folder copy" : "Project folder") : run.branchName;
+  let workspaceLabel = run.branchName;
+  if (run.workspaceVcs === "folder") {
+    workspaceLabel = run.workspaceType === "copy" ? "Folder copy" : "Project folder";
+  }
   return `${workspaceLabel} - ${new Date(run.createdAt).toLocaleString()}`;
 };
 

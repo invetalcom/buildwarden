@@ -82,31 +82,6 @@ export const addUsage = (left: RunTokenUsage, right: RunTokenUsage): RunTokenUsa
   totalTokens: (left.totalTokens ?? left.inputTokens + left.outputTokens) + (right.totalTokens ?? right.inputTokens + right.outputTokens),
 });
 
-const TEXTISH_MIME_PREFIXES = [
-  "text/",
-  "application/json",
-  "application/javascript",
-  "application/xml",
-  "application/yaml",
-  "application/x-yaml",
-] as const;
-
-const CODE_LIKE_EXT =
-  /\.(txt|md|mdx|ts|tsx|js|jsx|mjs|cjs|json|yaml|yml|xml|html|htm|css|scss|less|rs|go|py|java|kt|swift|c|h|cpp|hpp|cs|rb|php|sh|sql|toml|ini|env|log|vue|svelte)$/i;
-
-export const isTextishAttachment = (mime: string, fileName: string): boolean => {
-  const loweredMime = mime.toLowerCase();
-  for (const prefix of TEXTISH_MIME_PREFIXES) {
-    if (loweredMime === prefix || loweredMime.startsWith(prefix)) {
-      return true;
-    }
-  }
-  if (loweredMime === "application/octet-stream" || loweredMime === "") {
-    return CODE_LIKE_EXT.test(fileName);
-  }
-  return false;
-};
-
 export const decodeAttachmentText = (attachment: ChatAttachmentPayload): string => {
   try {
     return Buffer.from(attachment.dataBase64, "base64").toString("utf8");
@@ -135,7 +110,7 @@ const shouldRetryProviderRequest = (error: unknown): boolean => {
   );
 };
 
-export const extractErrorText = (error: unknown): string => {
+const extractErrorText = (error: unknown): string => {
   if (error instanceof Error) {
     return error.message;
   }

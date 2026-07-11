@@ -15,7 +15,7 @@ type ModelOption = {
   providerFamily: UnifiedProviderFamily | null;
 };
 
-type ProjectLabTabProps = {
+export type ProjectLabTabProps = {
   project: ProjectSnapshot;
   modelOptions: ModelOption[];
   settings: ProjectLabSettings;

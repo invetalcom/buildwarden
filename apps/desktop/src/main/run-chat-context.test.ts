@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   buildPriorChatCompletionMessagesFromSteps,
@@ -47,7 +48,7 @@ const makeRun = (overrides: Partial<RunRecord> = {}): RunRecord =>
   }) as RunRecord;
 
 const makeStep = (overrides: Partial<RunStepRecord>): RunStepRecord => ({
-  id: `step-${Math.random().toString(36).slice(2)}`,
+  id: `step-${randomUUID()}`,
   runId: "run-1",
   eventType: "log",
   title: "",

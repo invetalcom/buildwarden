@@ -1,7 +1,18 @@
 import { parseRunWorkspaceFileReference } from "@buildwarden/shared";
 
 const LINE_SUFFIX_RE = /(?::\d+(?::\d+)?|#L\d+(?:C\d+)?)$/i;
-const FILE_WITH_EXTENSION_RE = /(?:^|[\\/])?[^\\/<>:"|?*\r\n]+\.[A-Za-z0-9][A-Za-z0-9_-]{0,15}$/;
+const hasSupportedFileExtension = (value: string): boolean => {
+  const fileName = value.replace(/\\/g, "/").split("/").at(-1) ?? "";
+  if (!fileName || /[<>:"|?*\r\n]/.test(fileName)) {
+    return false;
+  }
+  const extensionSeparator = fileName.lastIndexOf(".");
+  if (extensionSeparator <= 0 || extensionSeparator === fileName.length - 1) {
+    return false;
+  }
+  const extension = fileName.slice(extensionSeparator + 1);
+  return extension.length > 0 && extension.length <= 16 && /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(extension);
+};
 
 const COMMON_FILE_REFERENCES = new Set([
   ".env",
@@ -54,7 +65,7 @@ export const looksLikeRunWorkspaceFilePath = (path: string): boolean => {
   const normalized = pathWithoutLineTarget.replace(/\\/g, "/");
   const basename = normalized.split("/").filter(Boolean).at(-1)?.toLowerCase() ?? "";
   const hasPathSeparator = /[\\/]/.test(pathWithoutLineTarget);
-  const hasFileExtension = FILE_WITH_EXTENSION_RE.test(pathWithoutLineTarget);
+  const hasFileExtension = hasSupportedFileExtension(pathWithoutLineTarget);
   const hasCommonFileName = COMMON_FILE_REFERENCES.has(basename);
 
   return hasCommonFileName || (hasPathSeparator && hasFileExtension);

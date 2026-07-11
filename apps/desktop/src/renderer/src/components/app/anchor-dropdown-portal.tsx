@@ -1,5 +1,1 @@
-export {
-  AnchorDropdownPortal,
-  type AnchorDropdownAlign,
-  type AnchorDropdownPlacement,
-} from "../ui/dropdown-portal";
+export { AnchorDropdownPortal } from "../ui/dropdown-portal";

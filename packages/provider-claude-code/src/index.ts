@@ -283,12 +283,12 @@ type ParsedClaudeCodeVersion = {
 };
 
 export const parseClaudeCodeVersion = (output: string): string | null => {
-  const match = output.match(/(\d+)\.(\d+)\.(\d+)/);
+  const match = /(\d{1,10})\.(\d{1,10})\.(\d{1,10})/.exec(output);
   return match ? `${match[1]}.${match[2]}.${match[3]}` : null;
 };
 
 const parseVersionParts = (version: string): ParsedClaudeCodeVersion | null => {
-  const match = version.match(/^(\d+)\.(\d+)\.(\d+)$/);
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
   if (!match) {
     return null;
   }
@@ -405,9 +405,7 @@ export async function discoverClaudeCodeModels(input: {
   const { binaryPath, launchArgs } = resolveClaudeCodeConfig(input.config);
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), Math.max(1_000, input.timeoutMs ?? MODEL_DISCOVERY_TIMEOUT_MS));
-  const prompt = (async function* (): AsyncGenerator<SDKUserMessage> {
-    await waitForAbortSignal(abortController.signal);
-  })();
+  const prompt = createAbortablePrompt(abortController.signal);
   const claudeQuery = query({
     prompt,
     options: {
@@ -489,12 +487,14 @@ const launchArgsToSdkOptions = (launchArgs: string[]): Pick<ClaudeAgentOptions, 
       continue;
     }
 
-    const value =
-      equalsIndex >= 0
-        ? current.slice(equalsIndex + 1)
-        : launchArgs[index + 1] && !launchArgs[index + 1]!.startsWith("--")
-          ? launchArgs[++index]!
-          : null;
+    const followingArgument = launchArgs[index + 1];
+    let value: string | null = null;
+    if (equalsIndex >= 0) {
+      value = current.slice(equalsIndex + 1);
+    } else if (followingArgument && !followingArgument.startsWith("--")) {
+      value = followingArgument;
+      index += 1;
+    }
     extraArgs[rawName] = value;
 
     if ((rawName === "add-dir" || rawName === "addDir") && value) {
@@ -515,6 +515,11 @@ const waitForAbortSignal = (signal: AbortSignal): Promise<void> => {
   return new Promise((resolve) => {
     signal.addEventListener("abort", () => resolve(), { once: true });
   });
+};
+
+const createAbortablePrompt = async function* (signal: AbortSignal): AsyncGenerator<SDKUserMessage> {
+  await waitForAbortSignal(signal);
+  yield* [] as SDKUserMessage[];
 };
 
 const normalizeClaudeSlashCommands = (commands: readonly SlashCommand[] | undefined): ClaudeCodeSlashCommand[] => {
@@ -555,9 +560,7 @@ export async function listClaudeCodeSlashCommands(input: {
   const { binaryPath, launchArgs } = resolveClaudeCodeConfig(input.config);
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), Math.max(1_000, input.timeoutMs ?? 6_000));
-  const prompt = (async function* (): AsyncGenerator<SDKUserMessage> {
-    await waitForAbortSignal(abortController.signal);
-  })();
+  const prompt = createAbortablePrompt(abortController.signal);
   const claudeQuery = query({
     prompt,
     options: {

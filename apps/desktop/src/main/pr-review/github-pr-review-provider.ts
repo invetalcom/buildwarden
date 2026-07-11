@@ -66,12 +66,13 @@ const githubNextPageFromLinkHeader = (linkHeader: string | null): number | null 
     if (!/\brel="next"/.test(part)) {
       continue;
     }
-    const match = /<([^>]+)>/.exec(part);
-    if (!match?.[1]) {
+    const urlStart = part.indexOf("<");
+    const urlEnd = part.indexOf(">", urlStart + 1);
+    if (urlStart < 0 || urlEnd < 0) {
       continue;
     }
     try {
-      const page = Number(new URL(match[1]).searchParams.get("page"));
+      const page = Number(new URL(part.slice(urlStart + 1, urlEnd)).searchParams.get("page"));
       return Number.isInteger(page) && page > 0 ? page : null;
     } catch {
       return null;

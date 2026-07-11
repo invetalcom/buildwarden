@@ -2,7 +2,7 @@ import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { createTwoFilesPatch, FILE_HEADERS_ONLY } from "diff";
-import type { HarnessToolContext, RunMode, RunToolCall, RunToolDefinition, RunToolName, RunToolResult, ShellApprovalDecision } from "@buildwarden/shared";
+import { isTextLikeFileName, type HarnessToolContext, type RunMode, type RunToolCall, type RunToolDefinition, type RunToolName, type RunToolResult, type ShellApprovalDecision } from "@buildwarden/shared";
 import { compileShellAllowlistRegExes } from "./shell-allowlist";
 
 const MAX_FILE_BYTES = 120_000;
@@ -13,7 +13,6 @@ const SEARCH_CONTEXT_RADIUS = 2;
 /** Cap in-memory shell capture so very chatty commands do not grow without bound while streaming. */
 const MAX_SHELL_STREAM_RAW_CHARS = MAX_OUTPUT_CHARS * 2;
 const SHELL_STREAM_THROTTLE_MS = 75;
-const TEXT_FILE_EXTENSIONS = /\.(cjs|css|go|html|java|js|json|jsx|md|mjs|py|rb|rs|sh|sql|toml|ts|tsx|txt|xml|yaml|yml)$/i;
 const SUSPICIOUS_WRITE_PLACEHOLDER_PATTERNS = [
   /^<updated>$/i,
   /^<insert.*>$/i,
@@ -199,7 +198,7 @@ const buildWriteFileUnifiedDiff = (
 const truncate = (value: string, maxChars = MAX_OUTPUT_CHARS) =>
   value.length <= maxChars ? value : `${value.slice(0, maxChars)}\n... output truncated ...`;
 
-const isTextFile = (path: string) => TEXT_FILE_EXTENSIONS.test(path);
+const isTextFile = (path: string) => isTextLikeFileName(path);
 
 const toPosix = (value: string) => value.replaceAll("\\", "/");
 

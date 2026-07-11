@@ -53,7 +53,7 @@ export const normalizeRequestDetailTab = (value: unknown): RequestDetailTab => {
 };
 
 const parseHunkHeader = (line: string): { oldLine: number; newLine: number } | null => {
-  const match = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+  const match = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
   if (!match?.[1] || !match[2]) {
     return null;
   }
