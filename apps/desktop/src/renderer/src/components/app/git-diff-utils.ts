@@ -1,8 +1,17 @@
-import { parseDiff } from "react-diff-view";
+import { parsePatchFiles, type FileDiffMetadata } from "@pierre/diffs";
 
 export const looksLikeGitDiff = (value: string) => {
   const trimmed = value.trimStart();
   return trimmed.startsWith("diff --git ") || trimmed.startsWith("--- ") || trimmed.startsWith("@@ ");
+};
+
+export const parseGitDiffFiles = (diffText: string): FileDiffMetadata[] => {
+  const trimmed = diffText.trim();
+  if (!trimmed || !looksLikeGitDiff(trimmed)) {
+    return [];
+  }
+  const patchText = trimmed.startsWith("@@ ") ? `--- a/changes.diff\n+++ b/changes.diff\n${trimmed}\n` : trimmed;
+  return parsePatchFiles(patchText, undefined, true).flatMap((patch) => patch.files);
 };
 
 /** Number of distinct files in a unified/git diff (0 if empty or unparseable). */
@@ -13,7 +22,7 @@ export const countChangedFilesInDiff = (diffText: string): number => {
   }
   if (looksLikeGitDiff(trimmed)) {
     try {
-      return parseDiff(trimmed, { nearbySequences: "zip" }).length;
+      return parseGitDiffFiles(trimmed).length;
     } catch {
       /* fall through */
     }
@@ -28,17 +37,7 @@ export type GitDiffFileStat = {
   deletions: number;
 };
 
-const formatDiffPath = (oldPath?: string, newPath?: string) => {
-  if (newPath && newPath !== "/dev/null") {
-    return newPath;
-  }
-
-  if (oldPath && oldPath !== "/dev/null") {
-    return oldPath;
-  }
-
-  return "Unknown file";
-};
+const formatDiffPath = (file: FileDiffMetadata) => file.name || "Unknown file";
 
 export const summarizeDiffStats = (
   diffText: string,
@@ -54,21 +53,12 @@ export const summarizeDiffStats = (
   }
 
   try {
-    const parsedFiles = parseDiff(trimmed, { nearbySequences: "zip" });
+    const parsedFiles = parseGitDiffFiles(trimmed);
     const files = parsedFiles.map((file) => {
-      let additions = 0;
-      let deletions = 0;
-      for (const hunk of file.hunks) {
-        for (const change of hunk.changes) {
-          if (change.type === "insert") {
-            additions += 1;
-          } else if (change.type === "delete") {
-            deletions += 1;
-          }
-        }
-      }
+      const additions = file.hunks.reduce((count, hunk) => count + hunk.additionLines, 0);
+      const deletions = file.hunks.reduce((count, hunk) => count + hunk.deletionLines, 0);
       return {
-        path: formatDiffPath(file.oldPath, file.newPath),
+        path: formatDiffPath(file),
         additions,
         deletions,
       };
