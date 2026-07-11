@@ -66,7 +66,7 @@ import {
   type ReviewThreadCodeLine,
 } from "./project-pr-mr-review-helpers";
 
-interface ProjectPrMrTabProps {
+export interface ProjectPrMrTabProps {
   projectId: string;
   modelOptions: Array<{ id: string; label: string; modelId: string; providerType: ProviderType; providerFamily: UnifiedProviderFamily | null }>;
   defaultModelId: string;

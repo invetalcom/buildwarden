@@ -37,10 +37,10 @@ export default defineConfig({
         "../../packages/shared/src/integrated-skills-catalog.ts"
       ],
       thresholds: {
-        statements: 17,
-        branches: 12,
-        functions: 10,
-        lines: 17
+        statements: 26,
+        branches: 18,
+        functions: 20,
+        lines: 26
       }
     }
   }

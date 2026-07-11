@@ -70,32 +70,26 @@ export function getAiSdkProviderFamilyFromConfigJson(configJson: string): Unifie
   }
 }
 
+const DIRECT_PROVIDER_BY_PRESET_TAG: Partial<Record<ModelPresetTag, ProviderType>> = {
+  "azure-legacy": "azure-legacy",
+  "claude-code": "claude-code",
+  "codex-cli": "codex-cli",
+  "cursor-agent": "cursor-agent",
+};
+
 function modelPresetTagMatches(
   tag: ModelPresetTag,
   providerType: ProviderType,
   aiSdkFamily: UnifiedProviderFamily | undefined,
 ): boolean {
-  if (tag === "codex-cli") return providerType === "codex-cli";
-  if (tag === "claude-code") return providerType === "claude-code";
-  if (tag === "cursor-agent") return providerType === "cursor-agent";
-  if (tag === "azure-legacy") return providerType === "azure-legacy";
-  if (tag === "ai-sdk:openai") {
-    if (providerType !== "ai-sdk") return false;
-    return resolvedAiSdkFamilyForPresets(aiSdkFamily) === "openai";
+  const directProvider = DIRECT_PROVIDER_BY_PRESET_TAG[tag];
+  if (directProvider) {
+    return providerType === directProvider;
   }
-  if (tag === "ai-sdk:anthropic") {
-    if (providerType !== "ai-sdk") return false;
-    return resolvedAiSdkFamilyForPresets(aiSdkFamily) === "anthropic";
+  if (providerType !== "ai-sdk" || !tag.startsWith("ai-sdk:")) {
+    return false;
   }
-  if (tag === "ai-sdk:google") {
-    if (providerType !== "ai-sdk") return false;
-    return resolvedAiSdkFamilyForPresets(aiSdkFamily) === "google";
-  }
-  if (tag === "ai-sdk:xai") {
-    if (providerType !== "ai-sdk") return false;
-    return resolvedAiSdkFamilyForPresets(aiSdkFamily) === "xai";
-  }
-  return false;
+  return resolvedAiSdkFamilyForPresets(aiSdkFamily) === tag.slice("ai-sdk:".length);
 }
 
 export function modelPresetAppliesToProvider(

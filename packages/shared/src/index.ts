@@ -268,6 +268,57 @@ export type RunEventType =
 
 export type RunToolName = "read_file" | "write_file" | "edit_file" | "delete_file" | "list_files" | "search_repo" | "run_shell";
 
+const TEXT_LIKE_FILE_EXTENSIONS = new Set([
+  "c",
+  "cjs",
+  "cpp",
+  "cs",
+  "css",
+  "env",
+  "go",
+  "h",
+  "hpp",
+  "htm",
+  "html",
+  "ini",
+  "java",
+  "js",
+  "json",
+  "jsx",
+  "kt",
+  "less",
+  "log",
+  "md",
+  "mdx",
+  "mjs",
+  "php",
+  "py",
+  "rb",
+  "rs",
+  "scss",
+  "sh",
+  "sql",
+  "svelte",
+  "swift",
+  "toml",
+  "ts",
+  "tsx",
+  "txt",
+  "vue",
+  "xml",
+  "yaml",
+  "yml",
+]);
+
+export const isTextLikeFileName = (value: string): boolean => {
+  const fileName = value.replaceAll("\\", "/").split("/").at(-1) ?? "";
+  const dotIndex = fileName.lastIndexOf(".");
+  if (dotIndex < 0 || dotIndex === fileName.length - 1) {
+    return false;
+  }
+  return TEXT_LIKE_FILE_EXTENSIONS.has(fileName.slice(dotIndex + 1).toLowerCase());
+};
+
 export type RunPlanStepStatus = "pending" | "inProgress" | "completed";
 
 // Provider-specific plan and task updates normalize into this shared contract,
@@ -2356,29 +2407,35 @@ export interface ChatStepRecord {
  * Builds ordered user/assistant text turns for Chat Completions. Drops the trailing user turn
  * (the current message is sent via {@link RunExecutionRequest.prompt}).
  */
+const parseChatStepMetadata = (metadataJson: string): Record<string, unknown> => {
+  try {
+    return JSON.parse(metadataJson || "{}") as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+};
+
+const priorChatMessageFromStep = (step: ChatStepRecord): ChatCompletionHistoryMessage | null => {
+  const metadata = parseChatStepMetadata(step.metadataJson);
+  if (typeof metadata.subagentId === "string" && metadata.subagentId) {
+    return null;
+  }
+  if (step.eventType === "log" && (metadata.source === "user" || metadata.source === RUN_CHAT_CONTEXT_SOURCE)) {
+    return { role: "user", content: step.content };
+  }
+  if (step.eventType !== "output" || metadata.assistantKind === "reasoning" || step.title === "Reasoning") {
+    return null;
+  }
+  return { role: "assistant", content: step.content };
+};
+
 export const buildPriorChatCompletionMessagesFromSteps = (steps: ChatStepRecord[]): ChatCompletionHistoryMessage[] => {
   const sorted = [...steps].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const out: ChatCompletionHistoryMessage[] = [];
   for (const step of sorted) {
-    let meta: Record<string, unknown> = {};
-    try {
-      meta = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
-    } catch {
-      /* ignore */
-    }
-    if (typeof meta.subagentId === "string" && meta.subagentId) {
-      // Subagent-internal messages are not part of the parent conversation.
-      continue;
-    }
-    if (step.eventType === "log" && (meta.source === "user" || meta.source === RUN_CHAT_CONTEXT_SOURCE)) {
-      out.push({ role: "user", content: step.content });
-      continue;
-    }
-    if (step.eventType === "output") {
-      if (meta.assistantKind === "reasoning" || step.title === "Reasoning") {
-        continue;
-      }
-      out.push({ role: "assistant", content: step.content });
+    const message = priorChatMessageFromStep(step);
+    if (message) {
+      out.push(message);
     }
   }
   if (out.length > 0 && out[out.length - 1]!.role === "user") {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildActivityEntries, buildTimelineRenderItems, deriveRunSubagents, isOpenableToolPath, type RunActivityStep } from "./RunActivityTimeline";
+import { renderToStaticMarkup } from "react-dom/server";
+import { RunActivityTimeline, buildActivityEntries, buildTimelineRenderItems, deriveRunSubagents, isOpenableToolPath, type RunActivityStep } from "./RunActivityTimeline";
 
 const step = (
   id: string,
@@ -16,6 +17,62 @@ const step = (
 });
 
 describe("run activity timeline shaping", () => {
+  it("renders the major workflow event families", () => {
+    const steps = [
+      step("prompt", "log", { source: "user", mode: "code", attachmentNames: ["spec.md"] }, "Implement the plan"),
+      step("status", "status", {}, "Run completed successfully"),
+      step("reason", "output", { assistantKind: "reasoning" }, "Reasoning\n".repeat(10)),
+      step("answer", "output", {}, "Implemented the change"),
+      step("plan-progress", "plan-progress", { planProgress: { steps: [{ title: "Inspect", status: "completed" }] } }, "Inspect"),
+      step("plan", "plan", {}, "1. [x] Inspect\n2. [ ] Implement"),
+      step("approval", "approval-requested", { requestKind: "approval", approvalRequestId: "approval-1" }, "pnpm test"),
+      step("input", "user-input-requested", {
+        requestKind: "user-input",
+        userInputRequestId: "request-1",
+        userInputQuestions: [{ id: "scope", header: "Scope", question: "Which scope?", options: [{ label: "All", description: "Everything" }] }],
+      }, "Choose scope"),
+      step("diff", "diff-updated", { toolName: "write_file", path: "src/App.tsx" }, "diff --git a/src/App.tsx b/src/App.tsx\n+change"),
+      step("tool-call", "tool-call", { callId: "call-1", toolName: "run_shell", command: "pnpm test" }, "pnpm test"),
+      step("tool-result", "tool-result", { callId: "call-1", toolName: "run_shell", command: "pnpm test", ok: true }, "passed"),
+      step("error", "error", {}, "Failure detail"),
+    ];
+
+    const markup = renderToStaticMarkup(
+      <RunActivityTimeline
+        steps={steps}
+        run={{ id: "run-1", status: "completed", mode: "code" }}
+        density="detailed"
+        runDurationLabel="2m 3s"
+        restorablePromptStepId="prompt"
+        onCopyStepContent={async () => undefined}
+        onUndoRunToLastPrompt={() => undefined}
+        onCancelRunShell={() => undefined}
+        onPreparePlanContinuation={() => undefined}
+        onSubmitPlanFeedback={async () => undefined}
+        onSubmitUserInputAnswers={async () => undefined}
+        onOpenWorkspaceFile={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain("Implemented the change");
+    expect(markup).toContain("Which scope?");
+    expect(markup).toContain("pnpm test");
+    expect(markup).toContain("Failure detail");
+  });
+
+  it("renders active, compact, and empty timeline states", () => {
+    const active = renderToStaticMarkup(
+      <RunActivityTimeline
+        steps={[step("prompt", "log", { source: "user" }, "Continue"), step("answer", "output", {}, "Working")]}
+        run={{ id: "run-active", status: "running", mode: "plan" }}
+        density="compact"
+        showLoading
+      />,
+    );
+    expect(active).toContain("Agent is working");
+    expect(renderToStaticMarkup(<RunActivityTimeline steps={[]} run={{ id: "empty", status: "completed", mode: "code" }} />)).toContain("No activity recorded");
+  });
+
   it("keeps adjacent tool calls grouped as one tool batch", () => {
     const entries = buildActivityEntries([
       step("call-1", "tool-call", { callId: "1", toolName: "read_file", path: "a.ts" }),

@@ -5508,7 +5508,7 @@ export class AppController
   private launchIdeWithFolder(exePath: string, folderPath: string): Promise<void> {
     return new Promise((resolve, reject) => {
       if (process.platform === "darwin" && exePath.endsWith(".app")) {
-        const child = spawn("open", ["-a", exePath, folderPath], {
+        const child = spawn("/usr/bin/open", ["-a", exePath, folderPath], {
           detached: true,
           stdio: "ignore",
         });

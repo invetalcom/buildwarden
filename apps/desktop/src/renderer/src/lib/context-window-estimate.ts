@@ -1,4 +1,4 @@
-import { CHAT_ATTACHMENT_LIMITS } from "@buildwarden/shared";
+import { CHAT_ATTACHMENT_LIMITS, isTextLikeFileName } from "@buildwarden/shared";
 import { countTokens } from "gpt-tokenizer";
 
 const IMAGE_ATTACHMENT_TOKENS = 1_200;
@@ -6,8 +6,6 @@ const PDF_ATTACHMENT_TOKENS = 2_200;
 const BINARY_ATTACHMENT_TOKENS = 700;
 const CHAT_OVERHEAD_TOKENS = 300;
 const RUN_OVERHEAD_TOKENS = 1_400;
-
-const TEXT_LIKE_FILE_EXT = /\.(txt|md|mdx|ts|tsx|js|jsx|mjs|cjs|json|yaml|yml|xml|html|htm|css|scss|less|rs|go|py|java|kt|swift|c|h|cpp|hpp|cs|rb|php|sh|sql|toml|ini|env|log|vue|svelte)$/i;
 
 const MODEL_CONTEXT_WINDOWS: Array<{ match: RegExp; maxTokens: number }> = [
   { match: /^gpt-5(?:$|[.-])/i, maxTokens: 400_000 },
@@ -56,7 +54,7 @@ const isTextLikeAttachment = (file: File): boolean => {
   if (mime === "application/json" || mime === "application/xml" || mime === "application/yaml" || mime === "application/x-yaml") {
     return true;
   }
-  return TEXT_LIKE_FILE_EXT.test(file.name);
+  return isTextLikeFileName(file.name);
 };
 
 const estimateAttachmentTokens = (files: File[]): number =>

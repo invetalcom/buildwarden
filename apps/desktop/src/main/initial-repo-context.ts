@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { countTokens } from "gpt-tokenizer";
-import type { RunMode, RunWorkspaceVcs } from "@buildwarden/shared";
+import { isTextLikeFileName, type RunMode, type RunWorkspaceVcs } from "@buildwarden/shared";
 import { createRunToolContext } from "./run-tools";
 
 /** Rough token estimate if `countTokens` fails (rare). */
@@ -200,9 +200,43 @@ const listTopLevelEntries = async (worktreePath: string, maxEntries: number): Pr
   return lines.length > 0 ? lines.join("\n") : "(empty worktree)";
 };
 
-const extractPromptPathHints = (prompt: string): string[] => {
-  const tokens = prompt.match(/(?:[\w.-]+\/)+[\w.-]+|[\w.-]+\.(?:ts|tsx|js|jsx|json|md|py|go|rs|java|css|html|sql|yml|yaml|toml)/gi) ?? [];
-  return [...new Set(tokens.map((token) => token.replace(/^\.?\//, "").trim()).filter(Boolean))].slice(0, 12);
+const isPromptPathCharacter = (character: string): boolean => {
+  const code = character.codePointAt(0) ?? 0;
+  return (
+    (code >= 48 && code <= 57) ||
+    (code >= 65 && code <= 90) ||
+    (code >= 97 && code <= 122) ||
+    character === "_" ||
+    character === "." ||
+    character === "/" ||
+    character === "-"
+  );
+};
+
+const normalizePromptPathToken = (rawToken: string): string => {
+  let token = rawToken;
+  while (token && !isPromptPathCharacter(token[0] ?? "")) {
+    token = token.slice(1);
+  }
+  while (token && !isPromptPathCharacter(token.at(-1) ?? "")) {
+    token = token.slice(0, -1);
+  }
+  while (token.endsWith(".")) {
+    token = token.slice(0, -1);
+  }
+  const lineSuffixIndex = token.lastIndexOf(":");
+  if (lineSuffixIndex > 0 && [...token.slice(lineSuffixIndex + 1)].every((character) => character >= "0" && character <= "9")) {
+    token = token.slice(0, lineSuffixIndex);
+  }
+  return token.startsWith("./") ? token.slice(2) : token;
+};
+
+export const extractPromptPathHints = (prompt: string): string[] => {
+  const hints = prompt
+    .split(/\s+/)
+    .map(normalizePromptPathToken)
+    .filter((token) => token.includes("/") || isTextLikeFileName(token));
+  return [...new Set(hints)].slice(0, 12);
 };
 
 const parseChangedFiles = (gitStatusOutput: string, maxFiles: number): string[] => {

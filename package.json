@@ -10,6 +10,7 @@
     "analyze:duplicates": "jscpd --config .jscpd.json apps packages",
     "analyze:eslint": "node scripts/analyze-eslint.mjs",
     "analyze:unused": "knip --config knip.json",
+    "quality:score": "pnpm typecheck && pnpm lint && pnpm test:coverage && pnpm --filter @buildwarden/desktop exec electron-vite build && pnpm analyze:unused && pnpm analyze:deps && node scripts/quality-score.mjs",
     "build": "pnpm --filter @buildwarden/desktop build",
     "build:win": "pnpm --filter @buildwarden/desktop build:win",
     "build:win:portable": "pnpm --filter @buildwarden/desktop build:win:portable",

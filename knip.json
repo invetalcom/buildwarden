@@ -20,6 +20,5 @@
     "simple-git",
     "sql.js",
     "tailwindcss"
-  ],
-  "ignoreBinaries": ["taskkill", "x-terminal-emulator"]
+  ]
 }

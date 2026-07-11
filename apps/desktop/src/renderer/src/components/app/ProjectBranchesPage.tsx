@@ -20,7 +20,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Input } from "../ui/input";
 import { Select } from "../ui/select";
 
-interface ProjectBranchesPageProps {
+export interface ProjectBranchesPageProps {
   projectId: string;
   repoPath: string;
   defaultBranch: string;

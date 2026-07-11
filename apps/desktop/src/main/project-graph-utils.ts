@@ -295,7 +295,8 @@ const buildDependencyGraphIndexes = (repoPath: string, sourceFiles: string[]): D
 const extractJsLikeLocalDependencies = (repoPath: string, absoluteSource: string, sourceSet: Set<string>): string[] => {
   const content = readFileSync(absoluteSource, "utf8");
   const patterns = [
-    /(?:import|export)\s+(?:[^"'`]+\s+from\s+)?["'`]([^"'`]+)["'`]/g,
+    /\bfrom\s*["'`]([^"'`\r\n]{1,1000})["'`]/g,
+    /\bimport\s*["'`]([^"'`\r\n]{1,1000})["'`]/g,
     /require\(\s*["'`]([^"'`]+)["'`]\s*\)/g,
     /import\(\s*["'`]([^"'`]+)["'`]\s*\)/g,
   ];
@@ -422,11 +423,25 @@ const parsePythonImports = (content: string): PythonImportEntry[] => {
     }
   }
 
-  const fromPattern = /^[ \t]*from[ \t]+(\.*)([A-Za-z_][\w.]*)?[ \t]+import[ \t]+([^\n#]+)/gm;
-  for (const match of content.matchAll(fromPattern)) {
-    const dots = match[1] ?? "";
-    const moduleName = match[2]?.trim() || null;
-    const importedNames = (match[3] ?? "")
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trimStart();
+    if (!trimmed.startsWith("from ")) {
+      continue;
+    }
+    const importMarkerIndex = trimmed.indexOf(" import ", "from ".length);
+    if (importMarkerIndex < 0) {
+      continue;
+    }
+    const sourceModule = trimmed.slice("from ".length, importMarkerIndex).trim();
+    let dotCount = 0;
+    while (sourceModule[dotCount] === ".") {
+      dotCount += 1;
+    }
+    const dots = sourceModule.slice(0, dotCount);
+    const moduleName = sourceModule.slice(dots.length).trim() || null;
+    const importedNames = trimmed
+      .slice(importMarkerIndex + " import ".length)
+      .split("#", 1)[0]!
       .split(",")
       .map((part) => stripImportAlias(part.replace(/[()]/g, "")).trim())
       .filter(Boolean);
@@ -560,7 +575,7 @@ const resolveRustDependencies = (source: string, content: string, indexes: RustG
   const resolved = new Set<string>();
   const currentModulePath = canonicalRustModulePath(source);
 
-  const usePattern = /(?:^|\n)[ \t]*(?:pub\s+)?use\s+([^;]+);/g;
+  const usePattern = /(?:^|\n)[ \t]*(?:pub\s+)?use\s+([^;]{1,4000});/g;
   for (const match of content.matchAll(usePattern)) {
     for (const expandedPath of expandRustUseExpression(match[1] ?? "")) {
       const normalizedPath = normalizeRustPath(currentModulePath, expandedPath) ?? expandedPath.trim();

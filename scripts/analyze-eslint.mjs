@@ -77,6 +77,20 @@ const complexityHotspots = findings
   .sort((left, right) => right.score - left.score)
   .slice(0, 15);
 
+if (process.argv.includes("--json")) {
+  console.log(
+    JSON.stringify({
+      analyzedFiles: results.length,
+      totalFindings: findings.length,
+      errors: findings.filter((item) => item.severity === 2).length,
+      warnings: findings.filter((item) => item.severity === 1).length,
+      byRule: Object.fromEntries(byRule.map(({ rule, count }) => [rule, count])),
+      highestCognitiveComplexity: complexityHotspots[0]?.score ?? 0,
+    }),
+  );
+  process.exit(0);
+}
+
 console.log(`Analyzed ${results.length} files; ${findings.length} findings (${findings.filter((item) => item.severity === 2).length} errors, ${findings.filter((item) => item.severity === 1).length} warnings).`);
 console.table(byRule);
 const parserFindings = findings.filter((finding) => finding.rule === "parser");
