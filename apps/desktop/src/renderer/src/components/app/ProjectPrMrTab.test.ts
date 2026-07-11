@@ -190,6 +190,21 @@ describe("ProjectPrMrTab review helpers", () => {
     ]);
   });
 
+  it("limits commit-scoped file navigation to files present in the parsed commit diff", () => {
+    const details = baseDetails();
+    details.files = [
+      { path: "src/first.ts", oldPath: null, status: "modified", additions: 4, deletions: 1, patchAvailable: true, commentCount: 0 },
+      { path: "src/second.ts", oldPath: null, status: "modified", additions: 2, deletions: 2, patchAvailable: true, commentCount: 1 },
+    ];
+    const parsedFiles: DiffPreviewFileSummary[] = [
+      { key: "parsed-second", path: "src/second.ts", oldPath: null, type: "modify", additions: 1, deletions: 1 },
+    ];
+
+    expect(buildPrMrFileNavItems(details, parsedFiles, [], { restrictToParsedDiff: true })).toMatchObject([
+      { path: "src/second.ts", additions: 1, deletions: 1 },
+    ]);
+  });
+
   it("builds compact code context for a review thread from the loaded diff", () => {
     const details = baseDetails();
     const thread = {

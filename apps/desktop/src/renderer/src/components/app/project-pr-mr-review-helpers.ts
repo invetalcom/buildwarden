@@ -267,8 +267,14 @@ export const buildPrMrFileNavItems = (
   details: ProjectForgeRequestDetailsResult | null,
   parsedDiffFiles: DiffPreviewFileSummary[],
   draftComments: DraftDiffComment[],
+  options: { restrictToParsedDiff?: boolean } = {},
 ): ProjectPrMrFileNavItem[] => {
   const items = new Map<string, ProjectPrMrFileNavItem>();
+  const parsedPaths = new Set(
+    parsedDiffFiles.flatMap((file) => [normalizeReviewPath(file.path), normalizeReviewPath(file.oldPath)]).filter(Boolean),
+  );
+  const pathIsInActiveDiff = (path: string | null | undefined, oldPath?: string | null) =>
+    !options.restrictToParsedDiff || parsedPaths.has(normalizeReviewPath(path)) || parsedPaths.has(normalizeReviewPath(oldPath));
   const upsert = (input: Omit<ProjectPrMrFileNavItem, "key" | "draftCount">) => {
     const key = normalizeReviewPath(input.path);
     if (!key) return;
@@ -288,6 +294,7 @@ export const buildPrMrFileNavItems = (
   };
 
   (details?.files ?? []).forEach((file, index) => {
+    if (!pathIsInActiveDiff(file.path, file.oldPath)) return;
     upsert({
       path: file.path,
       oldPath: file.oldPath,
@@ -329,7 +336,7 @@ export const buildPrMrFileNavItems = (
     const existing = items.get(key);
     if (existing) {
       existing.commentCount = Math.max(existing.commentCount, value.count);
-    } else {
+    } else if (!options.restrictToParsedDiff) {
       items.set(key, {
         key,
         path: value.path,
@@ -350,7 +357,7 @@ export const buildPrMrFileNavItems = (
     const existing = items.get(key);
     if (existing) {
       existing.draftCount += 1;
-    } else if (key) {
+    } else if (key && !options.restrictToParsedDiff) {
       items.set(key, {
         key,
         path: draft.newPath || draft.oldPath,

@@ -278,10 +278,24 @@ const formatAppErrorMessage = (error: unknown, fallback: string) => {
 
 export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initialRequest = null, onOpenProjectSettings }: ProjectPrMrTabProps) => {
   const initialSession = getProjectPrMrSession(projectId);
+  const initialDetailTab = normalizeRequestDetailTab(initialSession?.activeDetailTab);
+  const initialRequestUrl = initialSession?.selectedRequest?.url ?? initialSession?.prUrl ?? "";
+  const initialFullDiff =
+    initialDetailTab !== "files" && initialSession?.selectedCommitSha
+      ? (initialSession.diffCache.get(requestDiffCacheKey(initialRequestUrl)) ?? null)
+      : null;
   const [prUrl, setPrUrl] = useState(() => initialSession?.prUrl ?? "");
   const [baseBranch, setBaseBranch] = useState(() => initialSession?.baseBranch ?? "");
-  const [diffText, setDiffText] = useState(() => initialSession?.diffText ?? "");
-  const [meta, setMeta] = useState<ProjectPrMrMeta | null>(() => initialSession?.meta ?? null);
+  const [diffText, setDiffText] = useState(() =>
+    initialFullDiff?.diff ?? (initialDetailTab !== "files" && initialSession?.selectedCommitSha ? "" : (initialSession?.diffText ?? "")),
+  );
+  const [meta, setMeta] = useState<ProjectPrMrMeta | null>(() =>
+    initialFullDiff
+      ? { provider: initialFullDiff.provider, number: initialFullDiff.number, baseRef: initialFullDiff.baseRef }
+      : initialDetailTab !== "files" && initialSession?.selectedCommitSha
+        ? null
+        : (initialSession?.meta ?? null),
+  );
   const [loadBusy, setLoadBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reviewModelId, setReviewModelId] = useState(defaultModelId);
@@ -317,8 +331,8 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const gitDiffPanelRef = useRef<GitDiffPreviewHandle>(null);
   const aiReviewMenuAnchorRef = useRef<HTMLDivElement>(null);
   const [allDiffFilesExpanded, setAllDiffFilesExpanded] = useState(false);
-  const [activeDetailTab, setActiveDetailTab] = useState<RequestDetailTab>(() => normalizeRequestDetailTab(initialSession?.activeDetailTab));
-  const [selectedCommitSha, setSelectedCommitSha] = useState<string | null>(() => initialSession?.selectedCommitSha ?? null);
+  const [activeDetailTab, setActiveDetailTab] = useState<RequestDetailTab>(initialDetailTab);
+  const [selectedCommitSha, setSelectedCommitSha] = useState<string | null>(() => (initialDetailTab === "files" ? (initialSession?.selectedCommitSha ?? null) : null));
   const [diffViewType, setDiffViewType] = useState<"unified" | "split">(() => initialSession?.diffViewType ?? "unified");
   const [hideWhitespaceChanges, setHideWhitespaceChanges] = useState(() => initialSession?.hideWhitespaceChanges ?? false);
   const [activeDiffFilePath, setActiveDiffFilePath] = useState<string | null>(() => initialSession?.activeDiffFilePath ?? null);
@@ -329,6 +343,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const requestDetailsInFlightRef = useRef(new Map<string, Promise<ProjectForgeRequestDetailsResult>>());
   const requestDiffCacheRef = useRef(initialSession?.diffCache ?? new Map<string, ProjectPrMrDiffResult>());
   const requestDiffInFlightRef = useRef(new Map<string, Promise<ProjectPrMrDiffResult>>());
+  const diffLoadGenerationRef = useRef(0);
   const requestPreloadGenerationRef = useRef(0);
   const activeRequestUrlRef = useRef(initialSession?.selectedRequest?.url ?? initialSession?.prUrl.trim() ?? "");
   const hydratedProjectIdRef = useRef(projectId);
@@ -559,8 +574,15 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     requestPreloadGenerationRef.current += 1;
     requestDetailsInFlightRef.current.clear();
     requestDiffInFlightRef.current.clear();
+    diffLoadGenerationRef.current += 1;
 
     if (cached) {
+      const restoredTab = normalizeRequestDetailTab(cached.activeDetailTab);
+      const restoredUrl = cached.selectedRequest?.url ?? cached.prUrl.trim();
+      const restoredFullDiff =
+        restoredTab !== "files" && cached.selectedCommitSha
+          ? (cached.diffCache.get(requestDiffCacheKey(restoredUrl)) ?? null)
+          : null;
       requestDetailsCacheRef.current = cached.detailsCache;
       requestDiffCacheRef.current = cached.diffCache;
       activeRequestUrlRef.current = cached.selectedRequest?.url ?? cached.prUrl.trim();
@@ -572,10 +594,16 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
       setRequestDetails(cached.requestDetails);
       setPrUrl(cached.prUrl);
       setBaseBranch(cached.baseBranch);
-      setDiffText(cached.diffText);
-      setMeta(cached.meta);
-      setActiveDetailTab(normalizeRequestDetailTab(cached.activeDetailTab));
-      setSelectedCommitSha(cached.selectedCommitSha ?? null);
+      setDiffText(restoredFullDiff?.diff ?? (restoredTab !== "files" && cached.selectedCommitSha ? "" : cached.diffText));
+      setMeta(
+        restoredFullDiff
+          ? { provider: restoredFullDiff.provider, number: restoredFullDiff.number, baseRef: restoredFullDiff.baseRef }
+          : restoredTab !== "files" && cached.selectedCommitSha
+            ? null
+            : cached.meta,
+      );
+      setActiveDetailTab(restoredTab);
+      setSelectedCommitSha(restoredTab === "files" ? (cached.selectedCommitSha ?? null) : null);
       setDiffViewType(cached.diffViewType ?? "unified");
       setHideWhitespaceChanges(cached.hideWhitespaceChanges ?? false);
       setActiveDiffFilePath(cached.activeDiffFilePath ?? null);
@@ -715,7 +743,8 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     () => [...remoteDiffComments, ...draftComments],
     [draftComments, remoteDiffComments],
   );
-  const loadedOrReportedFileCount = diffChangedFileCount || visibleRequestDetails?.request.changedFiles || 0;
+  const activeDiffFileCount = parsedDiffFiles.length || diffChangedFileCount;
+  const loadedOrReportedFileCount = activeDiffFileCount || (selectedCommitSha ? 0 : (visibleRequestDetails?.request.changedFiles ?? 0));
   const totalActivityCount = visibleRequestDetails?.activity.length ?? visibleRequestDetails?.request.commentCount ?? 0;
   const commitCount = visibleRequestDetails?.commits.length ?? 0;
   const shouldShowForgeTokenHint = forgeAuthStatus?.hasToken === false;
@@ -727,13 +756,15 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   }, []);
 
   const fileNavItems = useMemo(
-    () => buildPrMrFileNavItems(visibleRequestDetails, parsedDiffFiles, draftComments),
-    [draftComments, parsedDiffFiles, visibleRequestDetails],
+    () => buildPrMrFileNavItems(visibleRequestDetails, parsedDiffFiles, draftComments, { restrictToParsedDiff: Boolean(selectedCommitSha) }),
+    [draftComments, parsedDiffFiles, selectedCommitSha, visibleRequestDetails],
   );
 
   const resetLoadedDiff = useCallback(() => {
+    diffLoadGenerationRef.current += 1;
     setDiffText("");
     setMeta(null);
+    setLoadBusy(false);
     setLoadError(null);
     setReviewPanel(emptyReviewPanel());
     setAiReviewMenuOpen(false);
@@ -969,6 +1000,8 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
       return;
     }
     const commitSha = options.commitSha?.trim() || null;
+    const loadGeneration = diffLoadGenerationRef.current + 1;
+    diffLoadGenerationRef.current = loadGeneration;
     setActiveDetailTab("files");
     setAiReviewMenuOpen(false);
     setSelectedCommitSha(commitSha);
@@ -996,12 +1029,16 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
         setDetailsError(null);
       }
       const result = await fetchRequestDiff(targetUrl, activeBaseBranch.trim() || undefined, commitSha);
+      if (diffLoadGenerationRef.current !== loadGeneration) return;
       setPrUrl(targetUrl);
       applyDiffResult(result);
     } catch (error) {
+      if (diffLoadGenerationRef.current !== loadGeneration) return;
       setLoadError(formatAppErrorMessage(error, "Could not load the PR/MR diff."));
     } finally {
-      setLoadBusy(false);
+      if (diffLoadGenerationRef.current === loadGeneration) {
+        setLoadBusy(false);
+      }
     }
   };
 
@@ -1084,6 +1121,25 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     if (!hasDiff && activeUrl.trim() && !loadBusy) {
       void loadDiff({ commitSha: selectedCommitSha ?? null });
     }
+  };
+
+  const leaveCommitDiffScope = () => {
+    if (!selectedCommitSha) return;
+    const fullRequestDiff = requestDiffCacheRef.current.get(requestDiffCacheKey(activeUrl));
+    resetLoadedDiff();
+    if (fullRequestDiff) {
+      applyDiffResult(fullRequestDiff);
+    }
+  };
+
+  const showConversation = () => {
+    leaveCommitDiffScope();
+    setActiveDetailTab("conversation");
+  };
+
+  const showCommits = () => {
+    leaveCommitDiffScope();
+    setActiveDetailTab("commits");
   };
 
   const showFiles = () => {
@@ -1946,7 +2002,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
           />
           Ignore whitespace
         </label>
-        {diffChangedFileCount > 0 ? (
+        {activeDiffFileCount > 0 ? (
           <Button
             type="button"
             variant="ghost"
@@ -2397,7 +2453,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                 "flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium transition-colors",
                 activeDetailTab === "conversation" ? "bg-zinc-800/75 text-zinc-100" : "text-zinc-500 hover:bg-zinc-900/70 hover:text-zinc-300",
               )}
-              onClick={() => setActiveDetailTab("conversation")}
+              onClick={showConversation}
             >
               Conversation
               <span className="font-mono text-[9px] text-zinc-500">{String(totalActivityCount)}</span>
@@ -2411,7 +2467,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
               )}
               onClick={() => {
                 if (canUseForgeApi) {
-                  setActiveDetailTab("commits");
+                  showCommits();
                 }
               }}
               disabled={!canUseForgeApi}
@@ -2470,10 +2526,10 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
             {meta ? (
               <span className="text-[9px] text-zinc-500">
                 {activeKind} #{meta.number} - <span className="font-mono text-zinc-400">{meta.baseRef}</span>
-                {diffChangedFileCount > 0 ? (
+                {activeDiffFileCount > 0 ? (
                   <span className="text-zinc-600">
                     {" "}
-                    - {String(diffChangedFileCount)} file{diffChangedFileCount === 1 ? "" : "s"}
+                    - {String(activeDiffFileCount)} file{activeDiffFileCount === 1 ? "" : "s"}
                   </span>
                 ) : null}
               </span>
