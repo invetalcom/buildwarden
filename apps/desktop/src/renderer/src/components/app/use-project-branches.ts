@@ -4,7 +4,7 @@ import {
   type DesktopApi,
   type ProjectSnapshot,
 } from "@buildwarden/shared";
-import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { reportRendererError } from "../../lib/report-renderer-error";
 import { pickProjectBranch } from "./app-model";
 
@@ -20,8 +20,17 @@ export const useProjectBranches = ({ buildwarden, selectedProject, setError }: U
   const [detachedCheckoutBranch, setDetachedCheckoutBranch] = useState("");
   const [projectCheckoutBusy, setProjectCheckoutBusy] = useState(false);
   const [runBaseBranch, setRunBaseBranch] = useState("");
+  const selectedProjectId = selectedProject?.project.id ?? null;
+  const selectedProjectIdRef = useRef(selectedProjectId);
+  const branchLoadRequestRef = useRef(0);
+  selectedProjectIdRef.current = selectedProjectId;
 
   const loadProjectBranches = useCallback(async () => {
+    const requestId = ++branchLoadRequestRef.current;
+    const requestedProjectId = selectedProject?.project.id ?? null;
+    const isLatestRequest = () =>
+      requestId === branchLoadRequestRef.current && requestedProjectId === selectedProjectIdRef.current;
+
     if (!buildwarden || !selectedProject) {
       setAvailableRunBranches([]);
       setRunBaseBranch("");
@@ -50,9 +59,15 @@ export const useProjectBranches = ({ buildwarden, selectedProject, setError }: U
 
     try {
       const branches = await buildwarden.getProjectBranches(projectId);
+      if (!isLatestRequest()) {
+        return;
+      }
       const nextBranches = branches.length > 0 ? branches : [defaultBranch];
       try {
         const currentBranch = await buildwarden.getProjectCurrentBranch(projectId);
+        if (!isLatestRequest()) {
+          return;
+        }
         if (!currentBranch) {
           applyDetachedHeadState(nextBranches);
           return;
@@ -63,6 +78,9 @@ export const useProjectBranches = ({ buildwarden, selectedProject, setError }: U
         setRunBaseBranch((current) => pickProjectBranch(nextBranches, defaultBranch, current));
         setError((previous) => (previous && isDetachedHeadProjectErrorMessage(previous) ? null : previous));
       } catch (caught) {
+        if (!isLatestRequest()) {
+          return;
+        }
         const message = caught instanceof Error ? caught.message : String(caught);
         if (!isDetachedHeadProjectErrorMessage(message)) {
           throw caught;
@@ -70,6 +88,9 @@ export const useProjectBranches = ({ buildwarden, selectedProject, setError }: U
         applyDetachedHeadState(nextBranches);
       }
     } catch (caught) {
+      if (!isLatestRequest()) {
+        return;
+      }
       reportRendererError("renderer.project-branches.load", caught, { projectId });
       setDetachedCheckoutBranch("");
       setAvailableRunBranches([defaultBranch]);
