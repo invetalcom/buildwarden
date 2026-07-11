@@ -206,6 +206,8 @@ export const ProjectTasksTab = ({
     try {
       await onUpdateTask(task.id, { status });
     } catch {
+      // App reports the rejection through its existing error banner before
+      // rethrowing; the board owns restoring the optimistic lane locally.
       setStatusOverrides((current) => {
         const next = { ...current };
         delete next[task.id];

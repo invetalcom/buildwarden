@@ -1266,7 +1266,7 @@ export const App = () => {
     return () => window.clearTimeout(timeoutId);
   }, [appWarning]);
 
-  const handleAction = useCallback(async (action: () => Promise<void>) => {
+  const handleAction = useCallback(async (action: () => Promise<void>, options: { rethrow?: boolean } = {}) => {
     setBusy(true);
     setError(null);
 
@@ -1274,6 +1274,9 @@ export const App = () => {
       await action();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unexpected error");
+      if (options.rethrow) {
+        throw caught;
+      }
     } finally {
       setBusy(false);
     }
@@ -1715,7 +1718,7 @@ export const App = () => {
       }
       await buildwarden.updateProjectTask(taskId, input);
       await loadSnapshot();
-    });
+    }, { rethrow: true });
   };
 
   const deleteProjectTask = async (taskId: string) => {
