@@ -384,7 +384,7 @@ export const App = () => {
   /**
    * Loop availability (Git remote + saved forge token + local-provider models) gates the
    * Loops entry in the sidebar. Keyed on project ids and the active tab so it refreshes
-   * after e.g. saving a hosting token in MR Review, without re-running on every
+   * after e.g. saving a hosting token in PR Review, without re-running on every
    * streaming snapshot refresh.
    */
   const snapshotProjectsRef = useRef(snapshot.projects);

@@ -83,7 +83,7 @@ interface SidebarProps {
 const projectTools: Array<{ tab: ProjectPageTab; label: string; icon: typeof Bot; count?: (project: AppSnapshot["projects"][number]) => number }> = [
   { tab: "overview", label: "Agent Runs", icon: Bot, count: (project) => project.runs.length },
   { tab: "branches", label: "Branches", icon: GitBranch },
-  { tab: "reviews", label: "MR Review", icon: GitPullRequest },
+  { tab: "reviews", label: "PR Review", icon: GitPullRequest },
   { tab: "graphs", label: "Graphs", icon: GitGraph },
   { tab: "ai-insights-history", label: "AI Insights", icon: BrainCircuit },
   { tab: "tasks", label: "Task Board", icon: ListChecks, count: (project) => project.tasks.length },
