@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import "react-diff-view/style/index.css";
 
 /*
  * Liquid glass design system. Two themes (dark, light) rendered as frosted,
@@ -439,118 +438,36 @@ pre {
   margin-block: 0.4rem;
 }
 
-.diff-viewer {
-  --diff-background-color: transparent;
-  --diff-text-color: #e4e4e7;
-  --diff-font-family:
-    "JetBrains Mono",
-    "SFMono-Regular",
-    Consolas,
-    "Liberation Mono",
-    Menlo,
-    monospace;
-  --diff-selection-background-color: rgba(96, 168, 255, 0.25);
-  --diff-selection-text-color: #f4f4f5;
-  --diff-gutter-insert-background-color: rgba(34, 197, 94, 0.16);
-  --diff-gutter-insert-text-color: #d4d4d8;
-  --diff-gutter-delete-background-color: rgba(244, 63, 94, 0.16);
-  --diff-gutter-delete-text-color: #d4d4d8;
-  --diff-gutter-selected-background-color: rgba(250, 204, 21, 0.14);
-  --diff-gutter-selected-text-color: #f4f4f5;
-  --diff-code-insert-background-color: rgba(34, 197, 94, 0.12);
-  --diff-code-insert-text-color: #e4e4e7;
-  --diff-code-delete-background-color: rgba(244, 63, 94, 0.12);
-  --diff-code-delete-text-color: #e4e4e7;
-  --diff-code-insert-edit-background-color: rgba(34, 197, 94, 0.28);
-  --diff-code-insert-edit-text-color: #f4f4f5;
-  --diff-code-delete-edit-background-color: rgba(244, 63, 94, 0.28);
-  --diff-code-delete-edit-text-color: #f4f4f5;
-  --diff-code-selected-background-color: rgba(250, 204, 21, 0.14);
-  --diff-code-selected-text-color: #f4f4f5;
-  --diff-omit-gutter-line-color: rgba(161, 161, 170, 0.8);
-}
-
-.diff-viewer .diff {
+.diff-viewer diffs-container {
+  --diffs-font-family: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --diffs-font-size: 0.75rem;
+  --diffs-line-height: 1.1rem;
+  --diffs-gap-inline: 0;
+  --diffs-gap-block: 0;
+  --diffs-dark-bg: #09090b;
+  --diffs-light-bg: #ffffff;
+  --diffs-dark: #e4e4e7;
+  --diffs-light: #27272a;
+  display: block;
   min-width: 100%;
 }
 
-.diff-viewer .diff-line {
-  font-size: 0.75rem;
-  line-height: 1.45;
+.diff-viewer--activity diffs-container {
+  --diffs-font-size: 0.6875rem;
+  --diffs-line-height: 1rem;
+  --diffs-dark-addition-color: #4ade80;
+  --diffs-dark-deletion-color: #fb7185;
 }
 
-.diff-viewer .diff-gutter {
-  min-width: 3.75rem;
-  color: #71717a;
+.diff-viewer diffs-container::part(annotation) {
+  font-family: var(--font-sans, system-ui, sans-serif);
 }
 
-.diff-viewer .diff-code {
-  padding-right: 0.75rem;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.diff-viewer .diff-code-insert,
-.diff-viewer .diff-code-delete,
-.diff-viewer .diff-gutter-insert,
-.diff-viewer .diff-gutter-delete {
-  transition: background-color 120ms ease;
-}
-
-/* Stronger red/green for inline activity diffs (agent run chat) */
-.diff-viewer--activity {
-  --diff-gutter-insert-background-color: rgba(22, 163, 74, 0.35);
-  --diff-gutter-delete-background-color: rgba(220, 38, 38, 0.35);
-  --diff-code-insert-background-color: rgba(22, 163, 74, 0.28);
-  --diff-code-delete-background-color: rgba(220, 38, 38, 0.28);
-  --diff-code-insert-text-color: #ecfccb;
-  --diff-code-delete-text-color: #fecaca;
-}
-
-.diff-viewer--activity .diff-line {
-  font-size: 0.6875rem;
-  line-height: 1.4;
-}
-
-body[data-theme="light"] .diff-viewer {
-  --diff-background-color: transparent;
-  --diff-text-color: var(--ec-text);
-  --diff-selection-background-color: rgba(10, 111, 222, 0.18);
-  --diff-selection-text-color: var(--ec-text);
-  --diff-gutter-insert-background-color: rgba(8, 127, 77, 0.12);
-  --diff-gutter-insert-text-color: var(--ec-success);
-  --diff-gutter-delete-background-color: rgba(201, 42, 63, 0.12);
-  --diff-gutter-delete-text-color: var(--ec-danger);
-  --diff-gutter-selected-background-color: rgba(154, 103, 0, 0.12);
-  --diff-gutter-selected-text-color: var(--ec-text);
-  --diff-code-insert-background-color: rgba(8, 127, 77, 0.1);
-  --diff-code-insert-text-color: #0d5e3c;
-  --diff-code-delete-background-color: rgba(201, 42, 63, 0.1);
-  --diff-code-delete-text-color: #9f1f32;
-  --diff-code-insert-edit-background-color: rgba(8, 127, 77, 0.2);
-  --diff-code-insert-edit-text-color: #073b26;
-  --diff-code-delete-edit-background-color: rgba(201, 42, 63, 0.2);
-  --diff-code-delete-edit-text-color: #7d1726;
-  --diff-code-selected-background-color: rgba(154, 103, 0, 0.12);
-  --diff-code-selected-text-color: var(--ec-text);
-  --diff-omit-gutter-line-color: rgba(91, 103, 119, 0.75);
-}
-
-body[data-theme="light"] .diff-viewer .diff-gutter {
-  color: var(--ec-faint);
-}
-
-body[data-theme="light"] .diff-viewer .diff-code {
-  color: var(--ec-text);
-}
-
-body[data-theme="light"] .diff-viewer--activity {
-  --diff-gutter-insert-background-color: rgba(8, 127, 77, 0.16);
-  --diff-gutter-delete-background-color: rgba(201, 42, 63, 0.16);
-  --diff-code-insert-background-color: rgba(8, 127, 77, 0.13);
-  --diff-code-delete-background-color: rgba(201, 42, 63, 0.13);
-  --diff-code-insert-text-color: #0d5e3c;
-  --diff-code-delete-text-color: #9f1f32;
+body[data-theme="light"] .diff-viewer diffs-container {
+  --diffs-light-bg: #ffffff;
+  --diffs-light: var(--ec-text);
+  --diffs-light-addition-color: var(--ec-success);
+  --diffs-light-deletion-color: var(--ec-danger);
 }
 
 @keyframes run-activity-shimmer {
