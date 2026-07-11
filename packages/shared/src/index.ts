@@ -786,6 +786,8 @@ export interface RunRecord {
   parentRunId: string | null;
   rootRunId: string | null;
   lineageTitle: string | null;
+  /** Project-board task that launched this run, when applicable. */
+  projectTaskId: string | null;
   createdAt: string;
   updatedAt: string;
   startedAt: string | null;
@@ -813,11 +815,18 @@ export interface UpdateRunNoteInput {
   status?: RunNoteStatus;
 }
 
+export type ProjectTaskStatus = "open" | "in_progress" | "in_review" | "done";
+
 export interface ProjectTaskRecord {
   id: string;
   projectId: string;
   title: string;
   prompt: string;
+  status: ProjectTaskStatus;
+  /** Most recent run launched from this task. */
+  runId: string | null;
+  /** PR/MR created from the linked run, used for merged-state reconciliation. */
+  pullRequestUrl: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -830,6 +839,13 @@ export interface ProjectTaskInput {
 export interface UpdateProjectTaskInput {
   title?: string;
   prompt?: string;
+  status?: ProjectTaskStatus;
+}
+
+export interface ProjectTaskChangedPayload {
+  projectId: string;
+  taskId: string;
+  status: ProjectTaskStatus;
 }
 
 export type ProjectLabThreadKind = "implementation" | "rfc";
@@ -1361,6 +1377,7 @@ export interface RunInput {
   anthropicEffort?: string;
   kind?: RunKind;
   labThreadId?: string | null;
+  projectTaskId?: string | null;
 }
 
 export interface ContinueRunInput {
@@ -2646,6 +2663,7 @@ export interface DesktopApi {
   createProjectTask(projectId: string, input: ProjectTaskInput): Promise<ProjectTaskRecord>;
   updateProjectTask(taskId: string, input: UpdateProjectTaskInput): Promise<ProjectTaskRecord>;
   deleteProjectTask(taskId: string): Promise<void>;
+  onProjectTaskChanged(listener: (payload: ProjectTaskChangedPayload) => void): () => void;
   runProjectLab(input: RunProjectLabInput): Promise<ProjectLabThreadRecord[]>;
   deleteProjectLabThread(threadId: string): Promise<void>;
   createProjectLoop(input: CreateProjectLoopInput): Promise<ProjectLoopRecord>;
@@ -2827,6 +2845,7 @@ export const IPC_CHANNELS = {
   createProjectTask: "buildwarden:create-project-task",
   updateProjectTask: "buildwarden:update-project-task",
   deleteProjectTask: "buildwarden:delete-project-task",
+  projectTaskChanged: "buildwarden:project-task-changed",
   runProjectLab: "buildwarden:run-project-lab",
   deleteProjectLabThread: "buildwarden:delete-project-lab-thread",
   createProjectLoop: "buildwarden:create-project-loop",

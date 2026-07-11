@@ -5,6 +5,7 @@ import type {
   ProjectLabSettings,
   ProjectLoopAvailability,
   ProjectSnapshot,
+  ProjectTaskStatus,
   ProviderType,
   RunMode,
   RunWorkspaceType,
@@ -45,9 +46,9 @@ interface ProjectPageProps {
   busy: boolean;
   onSubmitRun: (payload: { attachments?: import("@buildwarden/shared").ChatAttachmentPayload[] }) => void | Promise<void>;
   onCreateTask: (input: { title: string; prompt: string }) => void | Promise<void>;
-  onUpdateTask: (taskId: string, input: { title: string; prompt: string }) => void | Promise<void>;
+  onUpdateTask: (taskId: string, input: { title?: string; prompt?: string; status?: ProjectTaskStatus }) => void | Promise<void>;
   onDeleteTask: (taskId: string) => void | Promise<void>;
-  onStartTask: (prompt: string, modelId: string) => void | Promise<void>;
+  onStartTask: (taskId: string, prompt: string, modelId: string) => void | Promise<void>;
   onGenerateInsight: (kind: ProjectInsightKind, modelId?: string) => Promise<void>;
   onSetRunForLater: (runId: string) => void | Promise<void>;
   onRestoreRunFromForLater: (runId: string) => void | Promise<void>;
@@ -145,7 +146,7 @@ export const ProjectPage = ({
         className={cn(
           "flex min-h-0 flex-1 flex-col",
           // Overview, Reviews, and Loops manage their own internal scrolling (Overview scrolls its run history, Loops pins its explainer footer).
-          activeTab === "overview" || activeTab === "reviews" || activeTab === "loops" ? "overflow-hidden" : "overflow-y-auto",
+          activeTab === "overview" || activeTab === "tasks" || activeTab === "reviews" || activeTab === "loops" ? "overflow-hidden" : "overflow-y-auto",
         )}
       >
       {activeTab === "overview" ? (

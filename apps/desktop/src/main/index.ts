@@ -229,6 +229,14 @@ const runProjectForgeMonitorCheck = async (
   state.inFlight = true;
   try {
     const result = await controller.listProjectForgeRequests(config.projectId, { state: "open" });
+    const changedTasks = await controller.syncProjectTaskPullRequestStatuses(config.projectId);
+    for (const task of changedTasks) {
+      mainWindow?.webContents.send(IPC_CHANNELS.projectTaskChanged, {
+        projectId: task.projectId,
+        taskId: task.id,
+        status: task.status,
+      });
+    }
     const openRequests = result.items.filter((item) => item.state === "open");
     const currentKeys = new Set(openRequests.map(projectForgeRequestKey));
 

@@ -42,6 +42,9 @@ const task = {
   projectId: project.id,
   title: "Task",
   prompt: "Prompt",
+  status: "open",
+  runId: null,
+  pullRequestUrl: null,
 } as ProjectTaskRecord;
 
 type DbOverrides = Partial<Record<keyof BuildWardenDatabase, unknown>>;
@@ -149,6 +152,8 @@ describe("AppController settings and lightweight workflows", () => {
     await expect(harness.controller.createProjectTask(project.id, { title: "title", prompt: " " })).rejects.toThrow("prompt");
     await expect(harness.controller.createProjectTask(project.id, { title: " Title ", prompt: " Prompt " })).resolves.toMatchObject({ title: "Title", prompt: "Prompt" });
     await expect(harness.controller.updateProjectTask(task.id, { title: " Updated " })).resolves.toMatchObject({ title: "Updated", prompt: task.prompt });
+    await expect(harness.controller.updateProjectTask(task.id, { status: "in_progress" })).resolves.toMatchObject({ status: "in_progress" });
+    await expect(harness.controller.updateProjectTask(task.id, { status: "invalid" as "open" })).rejects.toThrow("Unsupported");
     await expect(harness.controller.updateProjectTask(task.id, { title: " " })).rejects.toThrow("title");
     await expect(harness.controller.updateProjectTask(task.id, { prompt: " " })).rejects.toThrow("prompt");
     await harness.controller.deleteProjectTask(task.id);

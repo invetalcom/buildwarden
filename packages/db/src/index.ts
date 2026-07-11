@@ -451,8 +451,8 @@ export class BuildWardenDatabase {
     const createdAt = nowIso();
     this.run(
       `
-      insert into project_tasks (id, project_id, title, prompt, created_at, updated_at)
-      values (?, ?, ?, ?, ?, ?)
+      insert into project_tasks (id, project_id, title, prompt, status, run_id, pull_request_url, created_at, updated_at)
+      values (?, ?, ?, ?, 'open', null, null, ?, ?)
       `,
       [id, projectId, input.title, input.prompt, createdAt, createdAt],
     );
@@ -470,15 +470,19 @@ export class BuildWardenDatabase {
     if (!nextPrompt) {
       throw new Error("Project task prompt cannot be empty.");
     }
+    const nextStatus = input.status ?? existing.status;
+    if (!(["open", "in_progress", "in_review", "done"] as const).includes(nextStatus)) {
+      throw new Error(`Unsupported project task status: ${String(nextStatus)}`);
+    }
 
     const updatedAt = nowIso();
     this.run(
       `
       update project_tasks
-      set title = ?, prompt = ?, updated_at = ?
+      set title = ?, prompt = ?, status = ?, updated_at = ?
       where id = ?
       `,
-      [nextTitle, nextPrompt, updatedAt, taskId],
+      [nextTitle, nextPrompt, nextStatus, updatedAt, taskId],
     );
     this.persist();
     return this.getProjectTask(taskId);
@@ -492,6 +496,9 @@ export class BuildWardenDatabase {
         project_id as projectId,
         title,
         prompt,
+        status,
+        run_id as runId,
+        pull_request_url as pullRequestUrl,
         created_at as createdAt,
         updated_at as updatedAt
       from project_tasks
@@ -513,6 +520,9 @@ export class BuildWardenDatabase {
         project_id as projectId,
         title,
         prompt,
+        status,
+        run_id as runId,
+        pull_request_url as pullRequestUrl,
         created_at as createdAt,
         updated_at as updatedAt
       from project_tasks
@@ -524,8 +534,38 @@ export class BuildWardenDatabase {
   }
 
   deleteProjectTask(taskId: string): void {
+    this.run("update runs set project_task_id = null where project_task_id = ?", [taskId]);
     this.run("delete from project_tasks where id = ?", [taskId]);
     this.persist();
+  }
+
+  linkProjectTaskToRun(taskId: string, runId: string): ProjectTaskRecord {
+    const task = this.getProjectTask(taskId);
+    const run = this.getRun(runId);
+    if (task.projectId !== run.projectId) {
+      throw new Error("Project task and run must belong to the same project.");
+    }
+    this.run(
+      "update project_tasks set status = 'in_progress', run_id = ?, pull_request_url = null, updated_at = ? where id = ?",
+      [runId, nowIso(), taskId],
+    );
+    this.persist();
+    return this.getProjectTask(taskId);
+  }
+
+  markProjectTaskInReview(taskId: string, pullRequestUrl?: string | null): ProjectTaskRecord {
+    this.getProjectTask(taskId);
+    const updatedAt = nowIso();
+    if (pullRequestUrl === undefined) {
+      this.run("update project_tasks set status = 'in_review', updated_at = ? where id = ?", [updatedAt, taskId]);
+    } else {
+      this.run(
+        "update project_tasks set status = 'in_review', pull_request_url = ?, updated_at = ? where id = ?",
+        [pullRequestUrl, updatedAt, taskId],
+      );
+    }
+    this.persist();
+    return this.getProjectTask(taskId);
   }
 
   getProjectInsight(projectId: string, kind: ProjectInsightKind): ProjectInsightRecord | null {
@@ -1758,8 +1798,8 @@ export class BuildWardenDatabase {
       insert into runs (
         id, project_id, provider_account_id, model_id, harness_type, run_mode, workspace_type, prompt, status,
         workspace_vcs, goal_text, branch_name, worktree_path, summary, error_message, last_provider_response_id, input_tokens, output_tokens, list_visibility, run_kind, lab_thread_id,
-        parent_run_id, root_run_id, lineage_title, created_at, updated_at, started_at, finished_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        parent_run_id, root_run_id, lineage_title, project_task_id, created_at, updated_at, started_at, finished_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         id,
@@ -1786,6 +1826,7 @@ export class BuildWardenDatabase {
         input.parentRunId ?? null,
         input.rootRunId ?? null,
         input.lineageTitle ?? null,
+        input.projectTaskId ?? null,
         createdAt,
         createdAt,
         null,
@@ -1912,6 +1953,7 @@ export class BuildWardenDatabase {
         parent_run_id as parentRunId,
         root_run_id as rootRunId,
         lineage_title as lineageTitle,
+        project_task_id as projectTaskId,
         created_at as createdAt,
         updated_at as updatedAt,
         started_at as startedAt,
@@ -1930,6 +1972,7 @@ export class BuildWardenDatabase {
   }
 
   deleteRun(runId: string): void {
+    this.run("update project_tasks set run_id = null, updated_at = ? where run_id = ?", [nowIso(), runId]);
     this.run("delete from run_notes where run_id = ?", [runId]);
     this.run("delete from run_steps where run_id = ?", [runId]);
     this.run("delete from worktrees where run_id = ?", [runId]);
@@ -2063,6 +2106,7 @@ export class BuildWardenDatabase {
         parent_run_id as parentRunId,
         root_run_id as rootRunId,
         lineage_title as lineageTitle,
+        project_task_id as projectTaskId,
         created_at as createdAt,
         updated_at as updatedAt,
         started_at as startedAt,
@@ -2112,6 +2156,7 @@ export class BuildWardenDatabase {
             parent_run_id as parentRunId,
             root_run_id as rootRunId,
             lineage_title as lineageTitle,
+            project_task_id as projectTaskId,
             created_at as createdAt,
             updated_at as updatedAt,
             started_at as startedAt,
@@ -2160,6 +2205,7 @@ export class BuildWardenDatabase {
         parent_run_id as parentRunId,
         root_run_id as rootRunId,
         lineage_title as lineageTitle,
+        project_task_id as projectTaskId,
         created_at as createdAt,
         updated_at as updatedAt,
         started_at as startedAt,
@@ -2749,6 +2795,7 @@ export class BuildWardenDatabase {
         parent_run_id text,
         root_run_id text,
         lineage_title text,
+        project_task_id text,
         created_at text not null,
         updated_at text not null,
         started_at text,
@@ -2878,6 +2925,9 @@ export class BuildWardenDatabase {
         project_id text not null,
         title text not null,
         prompt text not null,
+        status text not null default 'open',
+        run_id text,
+        pull_request_url text,
         created_at text not null,
         updated_at text not null,
         foreign key(project_id) references projects(id)
@@ -3047,6 +3097,10 @@ export class BuildWardenDatabase {
     this.ensureColumn("project_loops", "pr_review_policy", "text not null default 'none'");
     this.ensureColumn("project_loop_iterations", "ai_review_posted", "integer not null default 0");
     this.ensureColumn("chats", "run_id", "text");
+    this.ensureColumn("runs", "project_task_id", "text");
+    this.ensureColumn("project_tasks", "status", "text not null default 'open'");
+    this.ensureColumn("project_tasks", "run_id", "text");
+    this.ensureColumn("project_tasks", "pull_request_url", "text");
   }
 
   private ensureColumn(tableName: string, columnName: string, definition: string): void {

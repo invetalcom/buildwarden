@@ -26,6 +26,7 @@ import {
   type ProjectForgeRequestOpenPayload,
   type ProjectLoopAvailability,
   type ProjectSnapshot,
+  type ProjectTaskStatus,
   type ProjectInsightKind,
   type ProviderType,
   type RunDetail,
@@ -1583,7 +1584,12 @@ export const App = () => {
   });
 
   /** Creates one run for the model id using the shared composer settings; returns the new run id or null for stale model ids. */
-  const createRunForModel = async (mid: string, prompt: string, attachments?: ChatAttachmentPayload[]): Promise<string | null> => {
+  const createRunForModel = async (
+    mid: string,
+    prompt: string,
+    attachments?: ChatAttachmentPayload[],
+    projectTaskId?: string,
+  ): Promise<string | null> => {
     if (!buildwarden) {
       throw new Error("The Electron desktop bridge is unavailable.");
     }
@@ -1618,16 +1624,22 @@ export const App = () => {
       prompt: commandInput.prompt,
       ...(commandInput.goalText !== undefined ? { goalText: commandInput.goalText } : {}),
       attachments,
+      projectTaskId,
       ...reasoningInput,
       yoloMode: runYoloMode,
     });
     return run.id;
   };
 
-  const startRunsForModels = async (modelIds: string[], prompt: string, attachments?: ChatAttachmentPayload[]) => {
+  const startRunsForModels = async (
+    modelIds: string[],
+    prompt: string,
+    attachments?: ChatAttachmentPayload[],
+    projectTaskId?: string,
+  ) => {
     let lastRunId: string | null = null;
     for (const mid of modelIds) {
-      lastRunId = (await createRunForModel(mid, prompt, attachments)) ?? lastRunId;
+      lastRunId = (await createRunForModel(mid, prompt, attachments, projectTaskId)) ?? lastRunId;
     }
     await loadSnapshot();
     setLandingSelected(false);
@@ -1658,7 +1670,7 @@ export const App = () => {
     });
   };
 
-  const submitRunFromPrompt = async (prompt: string, modelId: string) => {
+  const submitRunFromPrompt = async (prompt: string, modelId: string, projectTaskId?: string) => {
     const previousPrompt = runPrompt;
     setRunPrompt(prompt);
     try {
@@ -1676,7 +1688,7 @@ export const App = () => {
           throw new Error("Enter a task description before starting a run.");
         }
 
-        await startRunsForModels(modelIds, prompt);
+        await startRunsForModels(modelIds, prompt, undefined, projectTaskId);
       });
     } finally {
       setRunPrompt(previousPrompt);
@@ -1693,7 +1705,10 @@ export const App = () => {
     });
   };
 
-  const updateProjectTask = async (taskId: string, input: { title: string; prompt: string }) => {
+  const updateProjectTask = async (
+    taskId: string,
+    input: { title?: string; prompt?: string; status?: ProjectTaskStatus },
+  ) => {
     await handleAction(async () => {
       if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
@@ -2297,6 +2312,15 @@ export const App = () => {
       setProjectForgeRequestToasts((current) => addProjectForgeRequestToast(current, { ...payload, id }));
     });
   }, [buildwarden]);
+
+  useEffect(() => {
+    if (!buildwarden) {
+      return;
+    }
+    return buildwarden.onProjectTaskChanged(() => {
+      void loadSnapshot();
+    });
+  }, [buildwarden, loadSnapshot]);
 
   useEffect(() => {
     if (!buildwarden) {
@@ -3484,7 +3508,7 @@ export const App = () => {
               onCreateTask={(input) => createProjectTask(project.project.id, input)}
               onUpdateTask={(taskId, input) => updateProjectTask(taskId, input)}
               onDeleteTask={(taskId) => deleteProjectTask(taskId)}
-              onStartTask={(prompt, modelId) => submitRunFromPrompt(prompt, modelId)}
+              onStartTask={(taskId, prompt, modelId) => submitRunFromPrompt(prompt, modelId, taskId)}
               onGenerateInsight={(kind, modelId) => generateProjectInsight(project.project.id, kind, modelId)}
               onSetRunForLater={(runId) => void setRunForLater(runId)}
               onRestoreRunFromForLater={(runId) => void restoreRunFromForLater(runId)}

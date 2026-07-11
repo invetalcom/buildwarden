@@ -93,6 +93,7 @@ const runRecord = (overrides: Partial<RunRecord> = {}): RunRecord => ({
   labThreadId: null,
   parentRunId: null,
   rootRunId: null,
+  projectTaskId: null,
   lineageTitle: null,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:05:00.000Z",
@@ -291,7 +292,7 @@ describe("renderer component states", () => {
     const taskMarkup = renderToStaticMarkup(
       <ProjectTasksTab
         projectId="project-1"
-        tasks={[{ id: "task-1", projectId: "project-1", title: "Raise quality", prompt: "Add tests", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" }]}
+        tasks={[{ id: "task-1", projectId: "project-1", title: "Raise quality", prompt: "Add tests", status: "open", runId: null, pullRequestUrl: null, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" }]}
         modelOptions={modelOptions}
         defaultTaskModelId="model-1"
         busy={false}
@@ -302,6 +303,11 @@ describe("renderer component states", () => {
       />,
     );
     expect(taskMarkup).toContain("Raise quality");
+    expect(taskMarkup).toContain("Beta");
+    expect(taskMarkup).toContain("View task");
+    expect(taskMarkup).toContain("In Progress");
+    expect(taskMarkup).toContain("In Review");
+    expect(taskMarkup).toContain("Done");
   });
 
   it("renders loading chat and bookmark pages", () => {
