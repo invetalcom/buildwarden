@@ -29,7 +29,13 @@ import {
   type DiffPreviewManualComment,
 } from "./git-diff-preview-comment-index";
 import { filterWhitespaceOnlyChanges } from "./git-diff-whitespace";
-import { looksLikeGitDiff, parseGitDiffFiles } from "./git-diff-utils";
+import {
+  diffFileMatchesPath,
+  diffFileMatchesQuery,
+  looksLikeGitDiff,
+  normalizeDiffPathSegment,
+  parseGitDiffFiles,
+} from "./git-diff-utils";
 
 export type { DiffLineCommentTarget, DiffPreviewManualComment } from "./git-diff-preview-comment-index";
 
@@ -37,8 +43,6 @@ const formatDiffPath = (file: Pick<FileDiffMetadata, "name">) => file.name || "U
 
 const diffFileKey = (file: Pick<FileDiffMetadata, "name" | "prevName">, index: number) =>
   `${file.prevName ?? "old"}-${file.name || "new"}-${index}`;
-
-const normalizeDiffPathSegment = (value: string) => value.replace(/\\/g, "/").replace(/^a\//, "").replace(/^b\//, "").trim();
 
 const countDiffChanges = (hunks: Hunk[], changeType: "insert" | "delete"): number =>
   hunks.reduce((count, hunk) => count + (changeType === "insert" ? hunk.additionLines : hunk.deletionLines), 0);
@@ -58,17 +62,6 @@ export type DiffPreviewFileSummary = {
   type: string;
   additions: number;
   deletions: number;
-};
-
-/** Whether a review finding applies to this diff file path. */
-const findingMatchesDiffFile = (filePath: string, findingPath: string | null | undefined): boolean => {
-  const raw = findingPath?.trim();
-  if (!raw) {
-    return false;
-  }
-  const fp = normalizeDiffPathSegment(filePath);
-  const cf = normalizeDiffPathSegment(raw);
-  return fp === cf || fp.endsWith(`/${cf}`) || cf.endsWith(`/${fp}`);
 };
 
 const FINDING_PRIORITY_BORDER: Record<RunDiffReviewFinding["priority"], string> = {
@@ -518,7 +511,7 @@ const DiffFileSection = memo(function DiffFileSection({
     if (activeCommentTarget && onSaveDraftComment && onCancelDraftComment) {
       const targetPath = activeCommentTarget.newPath || activeCommentTarget.oldPath || activeCommentTarget.displayPath;
       const lineNumber = activeCommentTarget.side === "old" ? activeCommentTarget.oldLineNumber : activeCommentTarget.newLineNumber;
-      if (lineNumber && findingMatchesDiffFile(filePathLabel, targetPath)) {
+      if (lineNumber && diffFileMatchesPath(file, targetPath)) {
         const info = getDiffLineInfo(file, activeCommentTarget.side, lineNumber);
         if (info) {
           addAnnotation(
@@ -558,7 +551,6 @@ const DiffFileSection = memo(function DiffFileSection({
     file,
     fileKey,
     fileNavEntries,
-    filePathLabel,
     highlightedCommentId,
     manualCommentIndex,
     onCancelDraftComment,
@@ -876,17 +868,16 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
   }, [fileSummaries, onParsedFilesChange]);
 
   const files = useMemo(() => {
-    const active = normalizeDiffPathSegment(activeFilePath ?? "");
-    const query = normalizeDiffPathSegment(filePathQuery).toLowerCase();
+    const active = activeFilePath?.trim();
+    const query = filePathQuery.trim();
     if (!active && !query) {
       return whitespaceFilteredFiles;
     }
     return whitespaceFilteredFiles.filter((file) => {
-      const label = normalizeDiffPathSegment(formatDiffPath(file));
       if (active) {
-        return label === active || label.endsWith(`/${active}`) || active.endsWith(`/${label}`);
+        return diffFileMatchesPath(file, active);
       }
-      return label.toLowerCase().includes(query);
+      return diffFileMatchesQuery(file, query);
     });
   }, [activeFilePath, filePathQuery, whitespaceFilteredFiles]);
 
@@ -1002,9 +993,8 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     for (let fileIdx = 0; fileIdx < files.length; fileIdx++) {
       const file = files[fileIdx];
       const fk = diffFileKey(file, fileIdx);
-      const filePathLabel = formatDiffPath(file);
       const scoped = reviewFindingBuckets.list.filter(
-        (f) => f.filePath?.trim() && findingMatchesDiffFile(filePathLabel, f.filePath),
+        (f) => f.filePath?.trim() && diffFileMatchesPath(file, f.filePath),
       );
       for (const finding of scoped) {
         entries.push({ finding, fileKey: fk, globalIndex: i });

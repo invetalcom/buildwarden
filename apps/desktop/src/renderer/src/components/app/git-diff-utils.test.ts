@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { countChangedFilesInDiff, parseGitDiffFiles, summarizeDiffStats } from "./git-diff-utils";
+import {
+  countChangedFilesInDiff,
+  diffFileMatchesPath,
+  diffFileMatchesQuery,
+  parseGitDiffFiles,
+  summarizeDiffStats,
+} from "./git-diff-utils";
 
 const PATCH = `diff --git a/src/old.ts b/src/new.ts
 similarity index 80%
@@ -33,6 +39,16 @@ describe("git diff utilities", () => {
     const [file] = parseGitDiffFiles("@@ -1 +1 @@\n-old\n+new  \t");
 
     expect(file.additionLines).toEqual(["new  \t"]);
+  });
+
+  it("matches renamed files by both their current and previous paths", () => {
+    const file = { name: "src/new-name.ts", prevName: "src/old-name.ts" };
+
+    expect(diffFileMatchesPath(file, "a/src/old-name.ts")).toBe(true);
+    expect(diffFileMatchesPath(file, "workspace/src/new-name.ts")).toBe(true);
+    expect(diffFileMatchesQuery(file, "old-name")).toBe(true);
+    expect(diffFileMatchesQuery(file, "new-name")).toBe(true);
+    expect(diffFileMatchesPath(file, "src/unrelated.ts")).toBe(false);
   });
 
   it("summarizes renamed and deleted files", () => {

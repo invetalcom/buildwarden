@@ -1,5 +1,34 @@
 import { parsePatchFiles, type FileDiffMetadata } from "@pierre/diffs";
 
+export const normalizeDiffPathSegment = (value: string) =>
+  value.replace(/\\/g, "/").replace(/^a\//, "").replace(/^b\//, "").trim();
+
+const diffFilePaths = (file: Pick<FileDiffMetadata, "name" | "prevName">) =>
+  [file.name, file.prevName]
+    .filter((path): path is string => Boolean(path))
+    .map(normalizeDiffPathSegment);
+
+export const diffFileMatchesPath = (
+  file: Pick<FileDiffMetadata, "name" | "prevName">,
+  targetPath: string | null | undefined,
+): boolean => {
+  const target = targetPath ? normalizeDiffPathSegment(targetPath) : "";
+  if (!target) {
+    return false;
+  }
+  return diffFilePaths(file).some(
+    (path) => path === target || path.endsWith(`/${target}`) || target.endsWith(`/${path}`),
+  );
+};
+
+export const diffFileMatchesQuery = (
+  file: Pick<FileDiffMetadata, "name" | "prevName">,
+  query: string,
+): boolean => {
+  const normalizedQuery = normalizeDiffPathSegment(query).toLowerCase();
+  return Boolean(normalizedQuery) && diffFilePaths(file).some((path) => path.toLowerCase().includes(normalizedQuery));
+};
+
 export const looksLikeGitDiff = (value: string) => {
   const trimmed = value.trimStart();
   return trimmed.startsWith("diff --git ") || trimmed.startsWith("--- ") || trimmed.startsWith("@@ ");
