@@ -28,6 +28,7 @@ import {
   type DiffLineCommentTarget,
   type DiffPreviewManualComment,
 } from "./git-diff-preview-comment-index";
+import { filterWhitespaceOnlyChanges } from "./git-diff-whitespace";
 import { looksLikeGitDiff, parseGitDiffFiles } from "./git-diff-utils";
 
 export type { DiffLineCommentTarget, DiffPreviewManualComment } from "./git-diff-preview-comment-index";
@@ -80,49 +81,6 @@ type ReviewNavEntry = { finding: RunDiffReviewFinding; fileKey: string | null; g
 
 const reviewFindingDraftKey = (finding: RunDiffReviewFinding, globalIndex: number) =>
   [globalIndex, finding.filePath ?? "", finding.lineNumber ?? "", finding.title, finding.detail.slice(0, 80)].join("\0");
-
-const normalizeWhitespaceForCompare = (value: string) => value.replace(/\s+/g, "");
-
-const filterWhitespaceOnlyChanges = (file: FileDiffMetadata): FileDiffMetadata | null => {
-  const hunks = file.hunks
-    .map((hunk) => {
-      let hiddenAdditions = 0;
-      let hiddenDeletions = 0;
-      const hunkContent = hunk.hunkContent.map((content) => {
-        if (content.type !== "change" || content.additions === 0 || content.additions !== content.deletions) {
-          return content;
-        }
-        const deletedLines = file.deletionLines.slice(content.deletionLineIndex, content.deletionLineIndex + content.deletions);
-        const addedLines = file.additionLines.slice(content.additionLineIndex, content.additionLineIndex + content.additions);
-        const whitespaceOnly = deletedLines.every(
-          (line, index) => line !== addedLines[index] && normalizeWhitespaceForCompare(line) === normalizeWhitespaceForCompare(addedLines[index] ?? ""),
-        );
-        if (!whitespaceOnly) {
-          return content;
-        }
-        hiddenAdditions += content.additions;
-        hiddenDeletions += content.deletions;
-        return {
-          type: "context" as const,
-          lines: content.additions,
-          additionLineIndex: content.additionLineIndex,
-          deletionLineIndex: content.deletionLineIndex,
-        };
-      });
-      const hasVisibleChanges = hunkContent.some((content) => content.type === "change");
-      if (!hasVisibleChanges) {
-        return null;
-      }
-      return {
-        ...hunk,
-        hunkContent,
-        additionLines: hunk.additionLines - hiddenAdditions,
-        deletionLines: hunk.deletionLines - hiddenDeletions,
-      };
-    })
-    .filter((hunk): hunk is Hunk => hunk !== null);
-  return hunks.length > 0 ? { ...file, hunks } : null;
-};
 
 const useAppThemeType = (): Exclude<ThemeTypes, "system"> => {
   const readTheme = () => (typeof document !== "undefined" && document.body.dataset.theme === "light" ? "light" : "dark");
