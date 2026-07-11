@@ -1,6 +1,6 @@
 import type { ProjectTaskRecord, ProjectTaskStatus, ProviderType, UnifiedProviderFamily } from "@buildwarden/shared";
 import { Check, ExternalLink, Eye, GripVertical, ListTodo, Loader2, Pencil, Play, Plus, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type DragEvent } from "react";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -67,6 +67,11 @@ export const ProjectTasksTab = ({
   );
   const editingTaskBusy = editingTask ? pendingTaskIds.has(editingTask.id) : false;
   const taskFormBusy = taskBusy || editingTaskBusy;
+  const closeLaunchDialog = useCallback(() => {
+    if (launchGenerateBusy || launchStartBusy) return;
+    setLaunchTaskId(null);
+    setLaunchPromptDraft("");
+  }, [launchGenerateBusy, launchStartBusy]);
 
   useEffect(() => {
     setPendingTaskIds(new Set());
@@ -99,18 +104,19 @@ export const ProjectTasksTab = ({
   }, [editingTaskId, tasks, viewingTaskId]);
 
   useEffect(() => {
-    if (!viewingTask && !editingTask && !createOpen) return;
+    if (!viewingTask && !editingTask && !createOpen && !launchTask) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || taskFormBusy) return;
+      if (event.key !== "Escape" || taskFormBusy || launchGenerateBusy || launchStartBusy) return;
       setViewingTaskId(null);
       setCreateOpen(false);
       setEditingTaskId(null);
       setTaskEditTitle("");
       setTaskEditPrompt("");
+      closeLaunchDialog();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [createOpen, editingTask, taskFormBusy, viewingTask]);
+  }, [closeLaunchDialog, createOpen, editingTask, launchGenerateBusy, launchStartBusy, launchTask, taskFormBusy, viewingTask]);
 
   useEffect(() => {
     setTaskModelById((current) => {
@@ -434,11 +440,16 @@ export const ProjectTasksTab = ({
       ) : null}
 
       {launchTask ? (
-        <div className="task-modal-backdrop absolute inset-0 z-50 flex items-center justify-center p-6">
-          <Card className="task-modal-surface w-full max-w-2xl p-4">
+        <div
+          className="task-modal-backdrop absolute inset-0 z-50 flex items-center justify-center p-6"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeLaunchDialog();
+          }}
+        >
+          <Card className="task-modal-surface w-full max-w-2xl p-4" role="dialog" aria-modal="true" aria-labelledby="launch-task-title">
             <div className="flex items-start justify-between gap-3">
-              <div><p className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Start task run</p><h3 className="mt-1 text-base font-semibold text-zinc-100">{launchTask.title}</h3></div>
-              <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" disabled={launchGenerateBusy || launchStartBusy} onClick={() => setLaunchTaskId(null)}><X className="h-4 w-4" /></Button>
+              <div><p className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Start task run</p><h3 id="launch-task-title" className="mt-1 text-base font-semibold text-zinc-100">{launchTask.title}</h3></div>
+              <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" title="Close" aria-label="Close task run dialog" disabled={launchGenerateBusy || launchStartBusy} onClick={closeLaunchDialog}><X className="h-4 w-4" /></Button>
             </div>
             <div className="mt-3 flex items-center gap-2">
               <Select value={taskModelById[launchTask.id] ?? defaultTaskModelId} onValueChange={(value) => setTaskModelById((current) => ({ ...current, [launchTask.id]: value }))} options={modelOptions.map((option) => ({ value: option.id, label: option.label }))} className="min-w-0 flex-1" />
@@ -446,7 +457,7 @@ export const ProjectTasksTab = ({
             </div>
             <Textarea className="mt-3 min-h-52 resize-y" value={launchPromptDraft} onChange={(event) => setLaunchPromptDraft(event.target.value)} autoFocus />
             <div className="mt-3 flex justify-end gap-2">
-              <Button type="button" variant="outline" size="sm" disabled={launchGenerateBusy || launchStartBusy} onClick={() => setLaunchTaskId(null)}>Cancel</Button>
+              <Button type="button" variant="outline" size="sm" disabled={launchGenerateBusy || launchStartBusy} onClick={closeLaunchDialog}>Cancel</Button>
               <Button type="button" size="sm" disabled={launchGenerateBusy || launchStartBusy || !launchPromptDraft.trim()} onClick={() => void handleStartTask()}>{launchStartBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}Start run</Button>
             </div>
           </Card>
