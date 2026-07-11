@@ -1126,9 +1126,29 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const leaveCommitDiffScope = () => {
     if (!selectedCommitSha) return;
     const fullRequestDiff = requestDiffCacheRef.current.get(requestDiffCacheKey(activeUrl));
-    resetLoadedDiff();
+    diffLoadGenerationRef.current += 1;
+    setSelectedCommitSha(null);
+    setLoadBusy(false);
+    setLoadError(null);
+    setAiReviewMenuOpen(false);
+    setAllDiffFilesExpanded(false);
+    setActiveDiffFilePath(null);
+    setDiffFileQuery("");
+    setParsedDiffFiles([]);
+    setHighlightedCommentId(null);
+    setReviewPanel(emptyReviewPanel());
+    setPostMessage(null);
+    setPostError(null);
+    setReplyThreadId(null);
+    setReplyThreadText("");
+    setThreadActionBusyId(null);
+    setConfirmResolveThreadId(null);
+    clearDraftEditor();
     if (fullRequestDiff) {
       applyDiffResult(fullRequestDiff);
+    } else {
+      setDiffText("");
+      setMeta(null);
     }
   };
 
