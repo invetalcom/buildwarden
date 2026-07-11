@@ -109,7 +109,7 @@ const openSystemTerminalAtPathImpl = (dirPath: string): { ok: boolean; error?: s
         configuredCommandProcessor && isAbsolute(configuredCommandProcessor) && existsSync(configuredCommandProcessor)
           ? configuredCommandProcessor
           : "C:\\Windows\\System32\\cmd.exe";
-      spawn(commandProcessor, ["/c", "start", commandProcessor, "/k"], {
+      spawn(commandProcessor, ["/c", "start", "", commandProcessor, "/k"], {
         cwd: dirPath,
         detached: true,
         stdio: "ignore",
