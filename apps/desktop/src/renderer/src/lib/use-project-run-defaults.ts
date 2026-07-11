@@ -107,15 +107,20 @@ export const useProjectRunDefaults = ({
     // loadSnapshot does (setting "" would leave local-mode runs without a model until the next
     // snapshot refresh, because the reconciliation effect never writes runModelId back).
     const validModelIds = new Set(models.map((model) => model.id));
-    const resolvedModelId =
-      stored?.modelId && validModelIds.has(stored.modelId)
-        ? stored.modelId
-        : preferredRunModelId && validModelIds.has(preferredRunModelId)
-          ? preferredRunModelId
-          : models[0]?.id ?? "";
+    let resolvedModelId = models[0]?.id ?? "";
+    if (preferredRunModelId && validModelIds.has(preferredRunModelId)) {
+      resolvedModelId = preferredRunModelId;
+    }
+    if (stored?.modelId && validModelIds.has(stored.modelId)) {
+      resolvedModelId = stored.modelId;
+    }
     setRunModelId(resolvedModelId);
     const storedWorktreeModelIds = (stored?.worktreeModelIds ?? []).filter((id) => validModelIds.has(id));
-    setRunWorktreeModelIds(storedWorktreeModelIds.length > 0 ? storedWorktreeModelIds : resolvedModelId ? [resolvedModelId] : []);
+    let resolvedWorktreeModelIds = storedWorktreeModelIds;
+    if (resolvedWorktreeModelIds.length === 0) {
+      resolvedWorktreeModelIds = resolvedModelId ? [resolvedModelId] : [];
+    }
+    setRunWorktreeModelIds(resolvedWorktreeModelIds);
   }, [
     models,
     preferredRunModelId,

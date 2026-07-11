@@ -818,7 +818,10 @@ const downloadOpenAiContainerFile = async (
   index: number,
   devLogger?: { createLoggedFetch: (baseFetch?: typeof fetch) => typeof fetch },
 ): Promise<ChatAttachmentPayload> => {
-  const baseURL = (input.apiBaseUrl?.trim() || "https://api.openai.com/v1").replace(/\/+$/, "");
+  let baseURL = input.apiBaseUrl?.trim() || "https://api.openai.com/v1";
+  while (baseURL.endsWith("/")) {
+    baseURL = baseURL.slice(0, -1);
+  }
   const headers = getDefaultHeaders(input.config);
   const customFetch = createProxyAwareFetch(input.networkProxy);
   const loggedFetch = devLogger?.createLoggedFetch(customFetch ?? fetch);

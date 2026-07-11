@@ -3,6 +3,17 @@ export interface ParsedGitRemote {
   webBaseUrl: string;
 }
 
+const stripGitSuffixAndTrailingSlashes = (value: string): string => {
+  let normalized = value;
+  if (normalized.toLowerCase().endsWith(".git")) {
+    normalized = normalized.slice(0, -4);
+  }
+  while (normalized.endsWith("/")) {
+    normalized = normalized.slice(0, -1);
+  }
+  return normalized;
+};
+
 const normalizeGithubRemoteUrl = (remoteUrl: string): string | null => {
   const trimmed = remoteUrl.trim();
 
@@ -14,14 +25,14 @@ const normalizeGithubRemoteUrl = (remoteUrl: string): string | null => {
     try {
       const parsed = new URL(trimmed);
       if (parsed.hostname === "github.com") {
-        return `https://github.com${parsed.pathname.replace(/\.git$/i, "").replace(/\/+$/g, "")}`;
+        return `https://github.com${stripGitSuffixAndTrailingSlashes(parsed.pathname)}`;
       }
     } catch {
       return null;
     }
   }
 
-  const sshMatch = trimmed.match(/^git@github\.com:(.+?)(?:\.git)?$/i);
+  const sshMatch = /^git@github\.com:(.+?)(?:\.git)?$/i.exec(trimmed);
   if (sshMatch?.[1]) {
     return `https://github.com/${sshMatch[1]}`;
   }
@@ -48,7 +59,7 @@ export function parseGitRemoteToWebBase(remoteUrl: string): ParsedGitRemote | nu
   if (/^https?:\/\//i.test(trimmed) || /^ssh:\/\//i.test(trimmed)) {
     try {
       const parsed = new URL(trimmed);
-      const path = parsed.pathname.replace(/\.git$/i, "").replace(/\/+$/g, "");
+      const path = stripGitSuffixAndTrailingSlashes(parsed.pathname);
       if (!path || path === "/") {
         return null;
       }
@@ -62,7 +73,7 @@ export function parseGitRemoteToWebBase(remoteUrl: string): ParsedGitRemote | nu
     }
   }
 
-  const sshMatch = trimmed.match(/^(?:[^@]+@)?([^:]+):(.+?)(?:\.git)?$/);
+  const sshMatch = /^(?:[^@]+@)?([^:]+):(.+?)(?:\.git)?$/.exec(trimmed);
   if (!sshMatch?.[1] || !sshMatch[2]) {
     return null;
   }

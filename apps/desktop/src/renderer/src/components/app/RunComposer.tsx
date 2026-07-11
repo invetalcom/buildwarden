@@ -774,7 +774,7 @@ export const RunComposer = ({
       return;
     }
     event.preventDefault();
-    void onSubmit();
+    onSubmit();
   };
 
   const handlePromptPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
@@ -1007,7 +1007,7 @@ export const RunComposer = ({
                 size="sm"
                 className="app-composer-send h-9 w-9 shrink-0 rounded-full p-0 text-sm shadow-[var(--ec-action-shadow)] [&_svg]:m-0 [&_svg]:h-5 [&_svg]:w-5"
                 disabled={isSubmitDisabled}
-                onClick={() => void onSubmit()}
+                onClick={onSubmit}
                 title={submitLabel}
                 aria-label={submitLabel}
               >

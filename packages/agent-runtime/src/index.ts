@@ -1,5 +1,55 @@
 import { EventEmitter } from "node:events";
-import type { HarnessAdapter, HarnessToolContext, RunEvent, RunExecutionRequest, RunRecord, RunStatus, RunTokenUsage } from "@buildwarden/shared";
+import type {
+  HarnessAdapter,
+  HarnessToolContext,
+  RunEvent,
+  RunEventType,
+  RunExecutionRequest,
+  RunRecord,
+  RunStatus,
+  RunTokenUsage,
+} from "@buildwarden/shared";
+
+const CANONICAL_CHUNK_TYPES = new Set<RunEventType>([
+  "tool-call",
+  "tool-result",
+  "approval-requested",
+  "approval-resolved",
+  "user-input-requested",
+  "plan-updated",
+  "plan-progress",
+  "diff-updated",
+  "tool-progress",
+  "request",
+  "plan",
+]);
+
+const DEFAULT_CHUNK_TITLES: Readonly<Record<string, string>> = {
+  message: "Agent Output",
+  "tool-call": "Tool Call",
+  "tool-result": "Tool Result",
+  "tool-progress": "Tool Progress",
+  "approval-requested": "Approval Requested",
+  "approval-resolved": "Approval Resolved",
+  "user-input-requested": "User Input Requested",
+  request: "User Input Requested",
+  "plan-updated": "Plan Updated",
+  plan: "Plan Updated",
+  "plan-progress": "Plan Progress",
+  "diff-updated": "Diff Updated",
+};
+
+const normalizeChunkType = (type: string): RunEventType => {
+  if (type === "message") {
+    return "output";
+  }
+  if (CANONICAL_CHUNK_TYPES.has(type as RunEventType)) {
+    return type as RunEventType;
+  }
+  return type === "error" ? "error" : "status";
+};
+
+const resolveChunkTitle = (type: string, title: string | undefined) => title ?? DEFAULT_CHUNK_TITLES[type] ?? "Run Status";
 
 export interface RuntimeRunHandle {
   run: RunRecord;
@@ -59,52 +109,9 @@ export class DefaultRuntimeExecutor implements RuntimeExecutor {
       request,
       toolContext,
       async (chunk) => {
-        const canonicalChunkTypes = new Set([
-          "tool-call",
-          "tool-result",
-          "approval-requested",
-          "approval-resolved",
-          "user-input-requested",
-          "plan-updated",
-          "plan-progress",
-          "diff-updated",
-          "tool-progress",
-          "request",
-          "plan",
-        ]);
-        const type =
-          chunk.type === "message"
-            ? "output"
-            : canonicalChunkTypes.has(chunk.type)
-              ? chunk.type
-              : chunk.type === "error"
-                ? "error"
-                : "status";
         await onEvent({
-          type,
-          title:
-            chunk.title ??
-            (chunk.type === "message"
-              ? "Agent Output"
-              : chunk.type === "tool-call"
-                ? "Tool Call"
-                : chunk.type === "tool-result"
-                  ? "Tool Result"
-                  : chunk.type === "tool-progress"
-                    ? "Tool Progress"
-                    : chunk.type === "approval-requested"
-                      ? "Approval Requested"
-                      : chunk.type === "approval-resolved"
-                        ? "Approval Resolved"
-                        : chunk.type === "user-input-requested" || chunk.type === "request"
-                          ? "User Input Requested"
-                          : chunk.type === "plan-updated" || chunk.type === "plan"
-                            ? "Plan Updated"
-                            : chunk.type === "plan-progress"
-                              ? "Plan Progress"
-                            : chunk.type === "diff-updated"
-                              ? "Diff Updated"
-                              : "Run Status"),
+          type: normalizeChunkType(chunk.type),
+          title: resolveChunkTitle(chunk.type, chunk.title),
           content: chunk.value,
           metadata: chunk.metadata,
         });

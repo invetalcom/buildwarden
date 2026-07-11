@@ -108,6 +108,93 @@ export const RunPaneDropPreviewOverlay = ({ paneId, mode }: { paneId: string; mo
   </div>
 );
 
+type RunSubagent = ReturnType<typeof deriveRunSubagents>[number];
+
+const subagentStatusDotClass = (subagent: RunSubagent) => {
+  if (subagent.status === "running" || subagent.status === "pending") {
+    return "animate-pulse bg-sky-400";
+  }
+  if (subagent.status === "completed") {
+    return "bg-emerald-400";
+  }
+  return subagent.status === "failed" ? "bg-red-400" : "bg-amber-400";
+};
+
+const subagentMenuTitle = (runningCount: number, totalCount: number) => {
+  const noun = totalCount === 1 ? "subagent" : "subagents";
+  return runningCount > 0 ? `${String(runningCount)} of ${String(totalCount)} ${noun} running` : `${String(totalCount)} ${noun}`;
+};
+
+const RunSubagentMenu = ({
+  subagents,
+  onFocusSubagent,
+}: {
+  subagents: RunSubagent[];
+  onFocusSubagent?: (subagentId: string) => void;
+}) => {
+  const [open, setOpen] = useState(false);
+  const anchorRef = useRef<HTMLSpanElement | null>(null);
+  if (subagents.length === 0) {
+    return null;
+  }
+  const runningCount = subagents.filter((subagent) => subagent.status === "running" || subagent.status === "pending").length;
+  return (
+    <span ref={anchorRef} className="relative shrink-0">
+      <button
+        type="button"
+        className={cn(
+          "inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition hover:brightness-125",
+          runningCount > 0
+            ? "border-sky-400/30 bg-sky-500/10 text-sky-300"
+            : "border-[var(--ec-border)] bg-[var(--ec-panel-soft)] text-[var(--ec-muted)]",
+        )}
+        title={subagentMenuTitle(runningCount, subagents.length)}
+        onClick={() => setOpen((current) => !current)}
+        aria-expanded={open}
+        aria-haspopup="menu"
+      >
+        {runningCount > 0 ? <Loader2 className="size-3 animate-spin" /> : <Bot className="size-3" />}
+        {subagents.length} subagent{subagents.length === 1 ? "" : "s"}
+        <ChevronDown className="size-3" />
+      </button>
+      <AnchorDropdownPortal
+        open={open}
+        anchorRef={anchorRef}
+        onClose={() => setOpen(false)}
+        widthPx={288}
+        maxHeightPx={320}
+        className="glass-popover overflow-hidden py-1"
+      >
+        <div role="menu" aria-label="Run subagents" className="app-scrollbar max-h-72 overflow-y-auto">
+          {subagents.map((subagent) => {
+            const label = subagent.name ?? subagent.description ?? subagent.prompt?.split("\n")[0] ?? subagent.id;
+            const detail = subagent.name ? subagent.description ?? subagent.prompt?.split("\n")[0] : undefined;
+            return (
+              <button
+                key={subagent.id}
+                type="button"
+                role="menuitem"
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--ec-text)] transition hover:bg-[var(--ec-hover)]"
+                onClick={() => {
+                  setOpen(false);
+                  onFocusSubagent?.(subagent.id);
+                }}
+              >
+                <span className={cn("size-1.5 shrink-0 rounded-full", subagentStatusDotClass(subagent))} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{label}</span>
+                  {detail ? <span className="block truncate text-[10px] text-[var(--ec-muted)]">{detail}</span> : null}
+                </span>
+                <span className="shrink-0 text-[10px] text-[var(--ec-muted)]">{subagent.status}</span>
+              </button>
+            );
+          })}
+        </div>
+      </AnchorDropdownPortal>
+    </span>
+  );
+};
+
 export const RunDetailHeader = ({
   run,
   runDetail,
@@ -142,11 +229,12 @@ export const RunDetailHeader = ({
   onClosePane,
   onFocusSubagent,
 }: RunDetailHeaderProps) => {
-  const [subagentMenuOpen, setSubagentMenuOpen] = useState(false);
-  const subagentMenuAnchorRef = useRef<HTMLSpanElement | null>(null);
   const stackedHeader = splitView && focused;
   const isGitRun = run.workspaceVcs === "git";
-  const workspaceLabel = isGitRun ? run.branchName : run.workspaceType === "copy" ? "Folder copy" : "Project folder";
+  let workspaceLabel = run.branchName;
+  if (!isGitRun) {
+    workspaceLabel = run.workspaceType === "copy" ? "Folder copy" : "Project folder";
+  }
   const workspaceCopyValue = isGitRun ? run.branchName : run.worktreePath;
   const hasCommit = runDetail?.steps.some((step) => Boolean(safeParseMetadata(step.metadataJson).commitHash)) ?? false;
   const hasOpenChanges = Boolean(runDetail?.diff.trim());
@@ -163,7 +251,6 @@ export const RunDetailHeader = ({
     () => deriveRunSubagents(runDetail?.steps ?? [], { runActive: isRunActive }),
     [isRunActive, runDetail?.steps],
   );
-  const runningSubagentCount = subagents.filter((subagent) => subagent.status === "running" || subagent.status === "pending").length;
 
   return (
     <Card className={cn("relative z-30 shrink-0", splitView ? "px-3 py-2" : "px-4 py-3")}>
@@ -206,77 +293,7 @@ export const RunDetailHeader = ({
                 usage={tokenUsage}
               />
               <RunPlanProgressPill progress={planProgress} />
-              {subagents.length > 0 ? (
-                <span ref={subagentMenuAnchorRef} className="relative shrink-0">
-                  <button
-                    type="button"
-                    className={cn(
-                      "inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition hover:brightness-125",
-                      runningSubagentCount > 0
-                        ? "border-sky-400/30 bg-sky-500/10 text-sky-300"
-                        : "border-[var(--ec-border)] bg-[var(--ec-panel-soft)] text-[var(--ec-muted)]",
-                    )}
-                    title={
-                      runningSubagentCount > 0
-                        ? `${String(runningSubagentCount)} of ${String(subagents.length)} subagent${subagents.length === 1 ? "" : "s"} running`
-                        : `${String(subagents.length)} subagent${subagents.length === 1 ? "" : "s"}`
-                    }
-                    onClick={() => setSubagentMenuOpen((current) => !current)}
-                    aria-expanded={subagentMenuOpen}
-                    aria-haspopup="menu"
-                  >
-                    {runningSubagentCount > 0 ? <Loader2 className="size-3 animate-spin" /> : <Bot className="size-3" />}
-                    {subagents.length} subagent{subagents.length === 1 ? "" : "s"}
-                    <ChevronDown className="size-3" />
-                  </button>
-                  <AnchorDropdownPortal
-                    open={subagentMenuOpen}
-                    anchorRef={subagentMenuAnchorRef}
-                    onClose={() => setSubagentMenuOpen(false)}
-                    widthPx={288}
-                    maxHeightPx={320}
-                    className="glass-popover overflow-hidden py-1"
-                  >
-                    <div role="menu" aria-label="Run subagents" className="app-scrollbar max-h-72 overflow-y-auto">
-                      {subagents.map((subagent) => {
-                        const isSubagentRunning = subagent.status === "running" || subagent.status === "pending";
-                        const label = subagent.name ?? subagent.description ?? subagent.prompt?.split("\n")[0] ?? subagent.id;
-                        const detail = subagent.name ? subagent.description ?? subagent.prompt?.split("\n")[0] : undefined;
-                        return (
-                          <button
-                            key={subagent.id}
-                            type="button"
-                            role="menuitem"
-                            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--ec-text)] transition hover:bg-[var(--ec-hover)]"
-                            onClick={() => {
-                              setSubagentMenuOpen(false);
-                              onFocusSubagent?.(subagent.id);
-                            }}
-                          >
-                            <span
-                              className={cn(
-                                "size-1.5 shrink-0 rounded-full",
-                                isSubagentRunning
-                                  ? "animate-pulse bg-sky-400"
-                                  : subagent.status === "completed"
-                                    ? "bg-emerald-400"
-                                    : subagent.status === "failed"
-                                      ? "bg-red-400"
-                                      : "bg-amber-400",
-                              )}
-                            />
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate font-medium">{label}</span>
-                              {detail ? <span className="block truncate text-[10px] text-[var(--ec-muted)]">{detail}</span> : null}
-                            </span>
-                            <span className="shrink-0 text-[10px] text-[var(--ec-muted)]">{subagent.status}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </AnchorDropdownPortal>
-                </span>
-              ) : null}
+              <RunSubagentMenu subagents={subagents} onFocusSubagent={onFocusSubagent} />
             </>
           ) : null}
         </div>

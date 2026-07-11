@@ -14,12 +14,12 @@ const normalizeBrowserUrl = (value: string): string | null => {
     return null;
   }
 
-  const withProtocol =
-    /^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed) || trimmed.startsWith("about:")
-      ? trimmed
-      : /^(localhost|127(?:\.\d{1,3}){3})(?::\d+)?(?:[/?#].*)?$/i.test(trimmed)
-        ? `http://${trimmed}`
-        : `https://${trimmed}`;
+  let withProtocol = trimmed;
+  const hasProtocol = /^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed) || trimmed.startsWith("about:");
+  if (!hasProtocol) {
+    const isLocalAddress = /^(localhost|127(?:\.\d{1,3}){3})(?::\d+)?(?:[/?#].*)?$/i.test(trimmed);
+    withProtocol = isLocalAddress ? `http://${trimmed}` : `https://${trimmed}`;
+  }
 
   try {
     const url = new URL(withProtocol);

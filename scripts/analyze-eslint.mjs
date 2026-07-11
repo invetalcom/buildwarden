@@ -62,6 +62,8 @@ const findings = results.flatMap((result) =>
     severity: message.severity,
   })),
 );
+const requestedRule = process.argv.find((argument) => argument.startsWith("--rule="))?.slice("--rule=".length);
+const reportedFindings = requestedRule ? findings.filter((finding) => finding.rule === requestedRule) : findings;
 
 const byRule = Object.entries(Object.groupBy(findings, (finding) => finding.rule))
   .map(([rule, entries]) => ({ rule, count: entries.length }))
@@ -85,6 +87,26 @@ if (parserFindings.length > 0) {
 if (complexityHotspots.length > 0) {
   console.log("Highest cognitive-complexity findings:");
   console.table(complexityHotspots.map(({ file, line, score }) => ({ score, file, line })));
+}
+
+if (process.argv.includes("--details")) {
+  console.log("All findings:");
+  console.table(
+    reportedFindings
+      .toSorted((left, right) =>
+        left.file.localeCompare(right.file) || left.line - right.line || left.rule.localeCompare(right.rule),
+      )
+      .map(({ file, line, rule, message }) => ({ file, line, rule, message })),
+  );
+}
+
+if (process.argv.includes("--locations")) {
+  console.log("Findings by file:");
+  console.table(
+    Object.entries(Object.groupBy(reportedFindings, (finding) => finding.file))
+      .map(([file, entries]) => ({ file, count: entries.length }))
+      .sort((left, right) => right.count - left.count || left.file.localeCompare(right.file)),
+  );
 }
 
 if (process.argv.includes("--strict") && findings.length > 0) {

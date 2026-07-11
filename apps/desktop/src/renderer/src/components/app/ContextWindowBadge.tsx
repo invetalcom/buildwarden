@@ -9,6 +9,16 @@ interface ContextWindowBadgeProps {
   isRun?: boolean;
 }
 
+const contextToneClasses = (usedPercent: number) => {
+  if (usedPercent >= 85) {
+    return { text: "text-[var(--ec-danger)]", ring: "stroke-rose-400" };
+  }
+  if (usedPercent >= 65) {
+    return { text: "text-[var(--ec-warning)]", ring: "stroke-amber-300" };
+  }
+  return { text: "text-[var(--ec-text)]", ring: "stroke-cyan-300" };
+};
+
 export const ContextWindowBadge = ({
   modelIds,
   prompt,
@@ -39,18 +49,7 @@ export const ContextWindowBadge = ({
     return null;
   }
 
-  const toneClass =
-    estimate.usedPercent >= 85
-      ? "text-[var(--ec-danger)]"
-      : estimate.usedPercent >= 65
-        ? "text-[var(--ec-warning)]"
-        : "text-[var(--ec-text)]";
-  const ringClass =
-    estimate.usedPercent >= 85
-      ? "stroke-rose-400"
-      : estimate.usedPercent >= 65
-        ? "stroke-amber-300"
-        : "stroke-cyan-300";
+  const { text: toneClass, ring: ringClass } = contextToneClasses(estimate.usedPercent);
   const dashOffset = circumference - (estimate.usedPercent / 100) * circumference;
 
   return (

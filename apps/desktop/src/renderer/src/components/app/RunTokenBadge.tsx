@@ -17,6 +17,13 @@ const formatCompactNumber = (value: number) => {
   return value.toLocaleString();
 };
 
+const tokenCenterTextClass = (length: number) => {
+  if (length >= 4) {
+    return "text-[6.5px]";
+  }
+  return length >= 3 ? "text-[7px]" : "text-[8px]";
+};
+
 export const RunTokenBadge = ({ inputTokens, outputTokens, usage }: RunTokenBadgeProps) => {
   const [open, setOpen] = useState(false);
 
@@ -58,12 +65,7 @@ export const RunTokenBadge = ({ inputTokens, outputTokens, usage }: RunTokenBadg
   const contextLength = metrics.contextRatio !== null ? Math.max(0, circumference * metrics.contextRatio) : 0;
   const inputOffset = 0;
   const outputOffset = -(inputLength + gap);
-  const centerTextClass =
-    metrics.totalCompact.length >= 4
-      ? "text-[6.5px]"
-      : metrics.totalCompact.length >= 3
-        ? "text-[7px]"
-        : "text-[8px]";
+  const centerTextClass = tokenCenterTextClass(metrics.totalCompact.length);
 
   return (
     <div className="relative shrink-0" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
@@ -96,7 +98,8 @@ export const RunTokenBadge = ({ inputTokens, outputTokens, usage }: RunTokenBadg
               strokeLinecap="round"
               strokeDasharray={`${contextLength} ${circumference}`}
             />
-          ) : inputLength > 0 ? (
+          ) : null}
+          {metrics.contextRatio === null && inputLength > 0 ? (
             <circle
               cx={size / 2}
               cy={size / 2}

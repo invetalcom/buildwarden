@@ -36,8 +36,76 @@ const formatRunDuration = (run: RunRecord) => {
   return `${seconds}s`;
 };
 
-const formatRunWorkspaceLabel = (run: RunRecord) =>
-  run.workspaceVcs === "folder" ? (run.workspaceType === "copy" ? "Folder copy" : "Project folder") : run.branchName;
+const formatRunWorkspaceLabel = (run: RunRecord) => {
+  if (run.workspaceVcs !== "folder") {
+    return run.branchName;
+  }
+  return run.workspaceType === "copy" ? "Folder copy" : "Project folder";
+};
+
+type AllRunRow = {
+  project: AppSnapshot["projects"][number]["project"];
+  run: RunRecord;
+};
+
+const AllRunsContent = ({
+  rows,
+  allRowsCount,
+  hasSearch,
+  onSelectRun,
+}: {
+  rows: AllRunRow[];
+  allRowsCount: number;
+  hasSearch: boolean;
+  onSelectRun: (projectId: string, runId: string) => void;
+}) => {
+  if (rows.length === 0) {
+    const searchIsEmpty = hasSearch && allRowsCount > 0;
+    return (
+      <Empty>
+        <EmptyHeader>
+          {searchIsEmpty ? <Search className="size-10 text-[var(--ec-muted)]" /> : <PlayCircle className="size-10 text-[var(--ec-muted)]" />}
+          <EmptyTitle>{searchIsEmpty ? "No matching runs" : "No agent runs yet"}</EmptyTitle>
+          <EmptyDescription>
+            {searchIsEmpty
+              ? "Search checks only user prompts, follow-ups, run goals, and submitted answers."
+              : "Start a run from a project and it will appear here with cross-project history."}
+          </EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    );
+  }
+
+  return (
+    <div className="divide-y divide-[var(--ec-border)]">
+      {rows.map(({ project, run }) => (
+        <button
+          key={run.id}
+          type="button"
+          className="flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left transition hover:bg-[var(--ec-hover)]"
+          onClick={() => onSelectRun(project.id, run.id)}
+        >
+          <span className="size-2 shrink-0 rounded-full bg-[var(--ec-accent)]" aria-hidden />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold text-[var(--ec-text)]">{run.prompt}</p>
+            <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--ec-muted)]">
+              <span className="inline-flex min-w-0 items-center gap-1">
+                <FolderGit2 className="size-3 shrink-0" />
+                <span className="truncate">{project.name}</span>
+              </span>
+              <span className="inline-flex items-center gap-1 font-mono">
+                <Clock3 className="size-3" />
+                {formatRelativeTime(run.finishedAt ?? run.updatedAt)} - {formatRunDuration(run)}
+              </span>
+              <span className="truncate font-mono">{formatRunWorkspaceLabel(run)}</span>
+            </div>
+          </div>
+          <Badge dot tone={run.status}>{run.status}</Badge>
+        </button>
+      ))}
+    </div>
+  );
+};
 
 export const AllRunsPage = ({ projects, onSelectRun }: AllRunsPageProps) => {
   const [searchQuery, setSearchQuery] = useState("");
@@ -107,51 +175,12 @@ export const AllRunsPage = ({ projects, onSelectRun }: AllRunsPageProps) => {
 
       <Card>
         <CardContent className="p-0">
-          {visibleRows.length > 0 ? (
-            <div className="divide-y divide-[var(--ec-border)]">
-              {visibleRows.map(({ project, run }) => (
-                <button
-                  key={run.id}
-                  type="button"
-                  className="flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left transition hover:bg-[var(--ec-hover)]"
-                  onClick={() => onSelectRun(project.id, run.id)}
-                >
-                  <span className="size-2 shrink-0 rounded-full bg-[var(--ec-accent)]" aria-hidden />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-[var(--ec-text)]">{run.prompt}</p>
-                    <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--ec-muted)]">
-                      <span className="inline-flex min-w-0 items-center gap-1">
-                        <FolderGit2 className="size-3 shrink-0" />
-                        <span className="truncate">{project.name}</span>
-                      </span>
-                      <span className="inline-flex items-center gap-1 font-mono">
-                        <Clock3 className="size-3" />
-                        {formatRelativeTime(run.finishedAt ?? run.updatedAt)} - {formatRunDuration(run)}
-                      </span>
-                      <span className="truncate font-mono">{formatRunWorkspaceLabel(run)}</span>
-                    </div>
-                  </div>
-                  <Badge dot tone={run.status}>{run.status}</Badge>
-                </button>
-              ))}
-            </div>
-          ) : hasSearch && rows.length > 0 ? (
-            <Empty>
-              <EmptyHeader>
-                <Search className="size-10 text-[var(--ec-muted)]" />
-                <EmptyTitle>No matching runs</EmptyTitle>
-                <EmptyDescription>Search checks only user prompts, follow-ups, run goals, and submitted answers.</EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          ) : (
-            <Empty>
-              <EmptyHeader>
-                <PlayCircle className="size-10 text-[var(--ec-muted)]" />
-                <EmptyTitle>No agent runs yet</EmptyTitle>
-                <EmptyDescription>Start a run from a project and it will appear here with cross-project history.</EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          )}
+          <AllRunsContent
+            rows={visibleRows}
+            allRowsCount={rows.length}
+            hasSearch={hasSearch}
+            onSelectRun={onSelectRun}
+          />
         </CardContent>
       </Card>
     </div>

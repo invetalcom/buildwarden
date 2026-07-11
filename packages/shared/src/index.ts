@@ -270,7 +270,7 @@ export type RunToolName = "read_file" | "write_file" | "edit_file" | "delete_fil
 
 export type RunPlanStepStatus = "pending" | "inProgress" | "completed";
 
-// Provider-specific plan and todo updates normalize into this shared contract,
+// Provider-specific plan and task updates normalize into this shared contract,
 // including Cursor ACP session/update payloads and cursor/update_todos notifications.
 export type RunPlanProgressSource = "codex" | "claude" | "ai-sdk" | "cursor-acp";
 
@@ -334,7 +334,12 @@ export const normalizeRunPlanProgressPayload = (
     return null;
   }
   const record = value as Record<string, unknown>;
-  const rawSteps = Array.isArray(record.steps) ? record.steps : Array.isArray(record.plan) ? record.plan : [];
+  let rawSteps: unknown[] = [];
+  if (Array.isArray(record.steps)) {
+    rawSteps = record.steps;
+  } else if (Array.isArray(record.plan)) {
+    rawSteps = record.plan;
+  }
   const steps = rawSteps
     .map(readRunPlanProgressRecord)
     .filter((step): step is RunPlanProgressStep => step !== null)
@@ -342,7 +347,12 @@ export const normalizeRunPlanProgressPayload = (
   if (steps.length === 0) {
     return null;
   }
-  const explanation = typeof record.explanation === "string" ? record.explanation.trim() : record.explanation === null ? null : undefined;
+  let explanation: string | null | undefined;
+  if (typeof record.explanation === "string") {
+    explanation = record.explanation.trim();
+  } else if (record.explanation === null) {
+    explanation = null;
+  }
   const rawSource = record.source;
   const source =
     rawSource === "codex" || rawSource === "claude" || rawSource === "ai-sdk" || rawSource === "cursor-acp"
@@ -361,7 +371,12 @@ export const formatRunPlanProgressContent = (progress: RunPlanProgressPayload): 
     lines.push(progress.explanation.trim(), "");
   }
   for (const [index, step] of progress.steps.entries()) {
-    const marker = step.status === "completed" ? "[x]" : step.status === "inProgress" ? "[-]" : "[ ]";
+    let marker = "[ ]";
+    if (step.status === "completed") {
+      marker = "[x]";
+    } else if (step.status === "inProgress") {
+      marker = "[-]";
+    }
     lines.push(`${String(index + 1)}. ${marker} ${step.title}`);
   }
   return lines.join("\n").trim();
@@ -559,6 +574,16 @@ export const parseRunPlanProgressStepsFromMarkdown = (
     return "pending";
   };
 
+  const statusFromCheckbox = (marker: string | undefined): RunPlanStepStatus => {
+    if (!inferStatus) {
+      return "pending";
+    }
+    if (marker === "x" || marker === "X") {
+      return "completed";
+    }
+    return marker === "-" ? "inProgress" : "pending";
+  };
+
   for (const line of content.split(/\r?\n/)) {
     const trimmedLine = line.trim();
     const tableCells = trimmedLine
@@ -583,25 +608,20 @@ export const parseRunPlanProgressStepsFromMarkdown = (
       continue;
     }
 
-    const checkbox = line.match(/^\s*(?:[-*]|\d+[.)])\s+\[([ xX-])\]\s+(.+)$/);
+    const checkbox = /^\s*(?:[-*]|\d{1,6}[.)])\s+\[([ xX-])\]\s+([^\r\n]{1,4000})$/.exec(line);
     if (checkbox) {
       const marker = checkbox[1];
       const title = cleanRunPlanStepTitle(checkbox[2] ?? "");
       if (title) {
         steps.push({
           title,
-          status:
-            inferStatus && (marker === "x" || marker === "X")
-              ? "completed"
-              : inferStatus && marker === "-"
-                ? "inProgress"
-                : "pending",
+          status: statusFromCheckbox(marker),
         });
       }
       continue;
     }
 
-    const numbered = line.match(/^\s*(?:#{1,6}\s*)?(\d+)[.)]\s+(.+)$/);
+    const numbered = /^\s*(?:#{1,6}\s*)?(\d{1,6})[.)]\s+([^\r\n]{1,4000})$/.exec(line);
     if (numbered) {
       const title = cleanRunPlanStepTitle(numbered[2] ?? "");
       if (title) {
@@ -1971,6 +1991,13 @@ export const isNetworkProxyProtocol = (value: unknown): value is NetworkProxyPro
 
 const normalizeNoProxyHost = (value: string): string => value.trim().toLowerCase().replace(/^\[(.*)\]$/, "$1");
 
+const parseNetworkProxyPort = (value: unknown): string => {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  return typeof value === "number" ? String(value) : "";
+};
+
 export const parseNetworkProxySettings = (raw: string | undefined | null): NetworkProxySettings => {
   if (raw == null || !String(raw).trim()) {
     return { ...DEFAULT_NETWORK_PROXY_SETTINGS };
@@ -1985,7 +2012,7 @@ export const parseNetworkProxySettings = (raw: string | undefined | null): Netwo
       enabled: record.enabled === true,
       protocol: isNetworkProxyProtocol(record.protocol) ? record.protocol : DEFAULT_NETWORK_PROXY_SETTINGS.protocol,
       host: typeof record.host === "string" ? record.host.trim() : "",
-      port: typeof record.port === "string" ? record.port.trim() : typeof record.port === "number" ? String(record.port) : "",
+      port: parseNetworkProxyPort(record.port),
       username: typeof record.username === "string" ? record.username.trim() : "",
     };
   } catch {
@@ -2027,12 +2054,12 @@ export const buildNetworkProxyRuntimeConfig = (
 };
 
 export const buildNetworkProxyUrl = (value: NetworkProxyRuntimeConfig): string => {
-  const auth =
-    value.username && value.password !== undefined
-      ? `${encodeURIComponent(value.username)}:${encodeURIComponent(value.password)}@`
-      : value.username
-        ? `${encodeURIComponent(value.username)}@`
-        : "";
+  let auth = "";
+  if (value.username && value.password !== undefined) {
+    auth = `${encodeURIComponent(value.username)}:${encodeURIComponent(value.password)}@`;
+  } else if (value.username) {
+    auth = `${encodeURIComponent(value.username)}@`;
+  }
   return `${value.protocol}://${auth}${value.host}:${String(value.port)}`;
 };
 
@@ -2104,7 +2131,12 @@ export function estimateBase64ByteLength(base64: string): number {
   if (t.length === 0) {
     return 0;
   }
-  const pad = t.endsWith("==") ? 2 : t.endsWith("=") ? 1 : 0;
+  let pad = 0;
+  if (t.endsWith("==")) {
+    pad = 2;
+  } else if (t.endsWith("=")) {
+    pad = 1;
+  }
   return Math.floor((t.length * 3) / 4) - pad;
 }
 
@@ -2938,7 +2970,9 @@ export const parseWelcomeCompletedCheckIdsSetting = (raw: string | undefined | n
 };
 
 export const serializeWelcomeCompletedCheckIdsSetting = (ids: Iterable<string>): string =>
-  JSON.stringify(Array.from(new Set(Array.from(ids).map((id) => id.trim()).filter(Boolean))).sort());
+  JSON.stringify(
+    Array.from(new Set(Array.from(ids).map((id) => id.trim()).filter(Boolean))).sort((left, right) => left.localeCompare(right)),
+  );
 
 export const parseRunTimelineDensitySetting = (raw: string | undefined): RunTimelineDensity => {
   const normalized = raw?.trim().toLowerCase();
@@ -3413,7 +3447,9 @@ export const parseIntegratedSkillsDisabledSetting = (raw: string | undefined | n
 };
 
 export const serializeIntegratedSkillsDisabledSetting = (skillIds: readonly string[]): string =>
-  JSON.stringify([...new Set(skillIds.map((id) => id.trim()).filter(Boolean))].sort());
+  JSON.stringify(
+    [...new Set(skillIds.map((id) => id.trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right)),
+  );
 
 export type ProjectActiveSkillsByProjectId = Record<string, string[]>;
 
@@ -3446,7 +3482,9 @@ export const parseProjectActiveSkillsSetting = (raw: string | undefined | null):
 export const serializeProjectActiveSkillsSetting = (value: ProjectActiveSkillsByProjectId): string => {
   const normalized: ProjectActiveSkillsByProjectId = {};
   for (const [projectId, skillIds] of Object.entries(value)) {
-    const normalizedSkillIds = [...new Set(skillIds.map((id) => id.trim()).filter(Boolean))].sort();
+    const normalizedSkillIds = [...new Set(skillIds.map((id) => id.trim()).filter(Boolean))].sort((left, right) =>
+      left.localeCompare(right),
+    );
     if (projectId.trim() && normalizedSkillIds.length > 0) {
       normalized[projectId] = normalizedSkillIds;
     }

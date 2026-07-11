@@ -404,8 +404,9 @@ const resolveGoDependencies = (content: string, indexes: GoGraphIndexes): string
 
 /** Strips a trailing ` as alias` clause from an import segment without regex backtracking. */
 const stripImportAlias = (value: string): string => {
-  const match = /\s+as\s+\S/i.exec(value);
-  return match ? value.slice(0, match.index) : value;
+  const parts = value.trim().split(/\s+/);
+  const aliasIndex = parts.findIndex((part) => part.toLowerCase() === "as");
+  return aliasIndex >= 0 ? parts.slice(0, aliasIndex).join(" ") : value;
 };
 
 const parsePythonImports = (content: string): PythonImportEntry[] => {

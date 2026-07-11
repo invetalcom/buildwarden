@@ -220,12 +220,12 @@ export const ChatTranscript = forwardRef<
           }
 
           if (isRequestEntry) {
-            const requestKind =
-              typeof metadata.requestKind === "string"
-                ? metadata.requestKind
-                : item.eventType.startsWith("approval")
-                  ? "approval"
-                  : "user-input";
+            let requestKind = "user-input";
+            if (typeof metadata.requestKind === "string") {
+              requestKind = metadata.requestKind;
+            } else if (item.eventType.startsWith("approval")) {
+              requestKind = "approval";
+            }
             return (
               <section key={item.id} className="chat-inline-panel chat-inline-panel--request">
                 <div className="chat-panel-header">

@@ -83,8 +83,8 @@ type PublishRequestKind = "pull-request" | "merge-request";
 type ParsedRemote = ParsedGitRemote;
 
 const parseAheadBehind = (track: string): { ahead: number; behind: number } => {
-  const ahead = Number.parseInt(track.match(/ahead\s+(\d+)/i)?.[1] ?? "0", 10);
-  const behind = Number.parseInt(track.match(/behind\s+(\d+)/i)?.[1] ?? "0", 10);
+  const ahead = Number.parseInt(/ahead\s+(\d+)/i.exec(track)?.[1] ?? "0", 10);
+  const behind = Number.parseInt(/behind\s+(\d+)/i.exec(track)?.[1] ?? "0", 10);
   return {
     ahead: Number.isFinite(ahead) ? ahead : 0,
     behind: Number.isFinite(behind) ? behind : 0,

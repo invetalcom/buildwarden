@@ -10,6 +10,16 @@ export type ProjectSkillSelectorProps = {
   onChange: (skillIds: string[]) => void | Promise<void>;
 };
 
+const selectedSkillsSummary = (skills: IntegratedSkillMetadata[]) => {
+  if (skills.length === 0) {
+    return "No project skills selected";
+  }
+  if (skills.length <= 2) {
+    return skills.map((skill) => skill.title).join(", ");
+  }
+  return `${skills.length} skills selected`;
+};
+
 export const ProjectSkillSelector = ({
   skills,
   selectedSkillIds,
@@ -20,12 +30,7 @@ export const ProjectSkillSelector = ({
   const anchorRef = useRef<HTMLDivElement>(null);
   const selectedSet = useMemo(() => new Set(selectedSkillIds), [selectedSkillIds]);
   const selectedSkills = skills.filter((skill) => selectedSet.has(skill.id));
-  const summary =
-    selectedSkills.length === 0
-      ? "No project skills selected"
-      : selectedSkills.length <= 2
-        ? selectedSkills.map((skill) => skill.title).join(", ")
-        : `${selectedSkills.length} skills selected`;
+  const summary = selectedSkillsSummary(selectedSkills);
 
   const toggleSkill = (skillId: string) => {
     const next = new Set(selectedSkillIds);
@@ -34,7 +39,7 @@ export const ProjectSkillSelector = ({
     } else {
       next.add(skillId);
     }
-    void onChange([...next].sort());
+    void onChange([...next].sort((left, right) => left.localeCompare(right)));
   };
 
   return (

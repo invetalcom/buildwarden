@@ -8,7 +8,21 @@ import { AnchorDropdownPortal } from "./anchor-dropdown-portal";
 const statusLabel = (status: string) => (status === "inProgress" ? "in progress" : status);
 const MAX_SEGMENTED_STEPS = 5;
 
-const StepIcon = ({ status }: { status: string }) => {
+const segmentedStepClass = (status: string) => {
+  if (status === "completed") {
+    return "bg-[var(--ec-success)]";
+  }
+  return status === "inProgress" ? "bg-[var(--ec-info)]" : "bg-[var(--ec-border-strong)]";
+};
+
+const stepTitleClass = (status: string) => {
+  if (status === "completed") {
+    return "text-[var(--ec-muted)] line-through decoration-[var(--ec-faint)]";
+  }
+  return status === "inProgress" ? "text-[var(--ec-text)]" : "text-[var(--ec-muted)]";
+};
+
+const StepIcon = ({ status }: Readonly<{ status: string }>) => {
   if (status === "completed") {
     return (
       <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--ec-success-soft)] text-[var(--ec-success)]">
@@ -78,11 +92,7 @@ export function RunPlanProgressPill({ progress }: { progress: DerivedRunPlanProg
                 key={`${step.status}:${index}:${step.title}`}
                 className={cn(
                   "min-w-0 flex-1 border-r border-[var(--ec-bg)] last:border-r-0",
-                  step.status === "completed"
-                    ? "bg-[var(--ec-success)]"
-                    : step.status === "inProgress"
-                      ? "bg-[var(--ec-info)]"
-                      : "bg-[var(--ec-border-strong)]",
+                  segmentedStepClass(step.status),
                 )}
               />
             ))}
@@ -132,11 +142,7 @@ export function RunPlanProgressPill({ progress }: { progress: DerivedRunPlanProg
                   <p
                     className={cn(
                       "break-words text-[12px] leading-snug",
-                      step.status === "completed"
-                        ? "text-[var(--ec-muted)] line-through decoration-[var(--ec-faint)]"
-                        : step.status === "inProgress"
-                          ? "text-[var(--ec-text)]"
-                          : "text-[var(--ec-muted)]",
+                      stepTitleClass(step.status),
                     )}
                   >
                     {step.title}

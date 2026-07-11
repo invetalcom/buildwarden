@@ -21,7 +21,7 @@ type ConfirmDialogState = {
   message: string;
   confirmLabel: string;
   cancelLabel?: string;
-  confirmVariant?: ComponentProps<typeof Button>["variant"];
+  confirmVariant?: Exclude<ComponentProps<typeof Button>["variant"], undefined>;
 };
 
 interface RunActionDialogsProps {

@@ -289,8 +289,8 @@ export const extractCodexAgentNickname = (prompt: string | undefined): string | 
   }
   const head = prompt.slice(0, 240);
   const match =
-    head.match(/(?:sub-?agent|agent|worker)\s+["'“„]([^"'”“]{1,48})["'”]/i) ??
-    head.match(/^you are\s+["'“„]([^"'”“]{1,48})["'”]/i);
+    /(?:sub-?agent|agent|worker)\s+["'“„]([^"'”“]{1,48})["'”]/i.exec(head) ??
+    /^you are\s+["'“„]([^"'”“]{1,48})["'”]/i.exec(head);
   const nickname = match?.[1]?.trim();
   return nickname || undefined;
 };
@@ -974,7 +974,6 @@ class CodexAppServerProbeClient implements CodexModelListClient {
     try {
       parsed = JSON.parse(line);
     } catch {
-      return;
     }
 
     if (this.isServerRequest(parsed)) {
@@ -985,7 +984,6 @@ class CodexAppServerProbeClient implements CodexModelListClient {
           message: `Unsupported request during model discovery: ${parsed.method}`,
         },
       });
-      return;
     }
 
     if (this.isResponse(parsed)) {
@@ -1018,7 +1016,7 @@ class CodexAppServerProbeClient implements CodexModelListClient {
 
   private writeMessage(message: unknown): void {
     if (!this.child.stdin.writable) {
-      throw new Error("Cannot write to Codex app-server stdin.");
+      throw new Error("Cannot write to the active Codex app-server session stdin.");
     }
     this.child.stdin.write(`${JSON.stringify(message)}\n`);
   }
@@ -1562,7 +1560,6 @@ export class CodexAppServerSession {
       } finally {
         this.activeSubagentId = null;
       }
-      return;
     }
     // Remaining child-thread lifecycle noise (status changes, MCP startup,
     // plan updates) has no bearing on the parent run.
@@ -1921,7 +1918,7 @@ export class CodexAppServerSession {
         humanizeCodexItemType(itemType);
 
       this.emit({
-        type: notification.method === "item/started" ? "status" : "status",
+        type: "status",
         title: "Codex update",
         value: detail,
         metadata: itemId ? { itemId, itemType } : { itemType },
