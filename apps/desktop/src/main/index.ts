@@ -229,12 +229,21 @@ const runProjectForgeMonitorCheck = async (
   state.inFlight = true;
   try {
     const result = await controller.listProjectForgeRequests(config.projectId, { state: "open" });
-    const changedTasks = await controller.syncProjectTaskPullRequestStatuses(config.projectId);
-    for (const task of changedTasks) {
-      mainWindow?.webContents.send(IPC_CHANNELS.projectTaskChanged, {
-        projectId: task.projectId,
-        taskId: task.id,
-        status: task.status,
+    try {
+      const changedTasks = await controller.syncProjectTaskPullRequestStatuses(config.projectId);
+      for (const task of changedTasks) {
+        mainWindow?.webContents.send(IPC_CHANNELS.projectTaskChanged, {
+          projectId: task.projectId,
+          taskId: task.id,
+          status: task.status,
+        });
+      }
+    } catch (error) {
+      logWarn("Failed to reconcile task statuses; continuing PR/MR notification check.", {
+        projectId: config.projectId,
+        projectName: config.projectName,
+        provider: config.provider,
+        error,
       });
     }
     const openRequests = result.items.filter((item) => item.state === "open");
