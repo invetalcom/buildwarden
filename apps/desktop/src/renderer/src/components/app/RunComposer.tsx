@@ -157,7 +157,7 @@ export const ComposerSelect = ({
         maxHeightPx={288}
         className={`glass-popover overflow-hidden ${menuClassName}`}
       >
-        <div className="app-scrollbar overflow-y-auto p-1.5" style={{ maxHeight: "inherit" }}>
+        <div className="app-scrollbar app-dropdown-scrollbar overflow-y-auto p-1.5" style={{ maxHeight: "inherit" }}>
           {options.map((option) => {
             const isSelected = option.value === value;
 
@@ -265,7 +265,7 @@ const ComposerMultiModelSelect = ({
         maxHeightPx={288}
         className={`glass-popover overflow-hidden ${menuClassName}`}
       >
-        <div className="app-scrollbar overflow-y-auto p-1.5" style={{ maxHeight: "inherit" }}>
+        <div className="app-scrollbar app-dropdown-scrollbar overflow-y-auto p-1.5" style={{ maxHeight: "inherit" }}>
           <p className="px-2 pb-1 text-[11px] uppercase tracking-wide text-[var(--ec-faint)]">Select one or more</p>
           {options.map((option) => {
             const isSelected = selectedSet.has(option.value);
