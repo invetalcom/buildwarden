@@ -2321,9 +2321,9 @@ export const App = () => {
       return;
     }
     return buildwarden.onProjectTaskChanged(() => {
-      void loadSnapshot();
+      scheduleSnapshotRefresh();
     });
-  }, [buildwarden, loadSnapshot]);
+  }, [buildwarden, scheduleSnapshotRefresh]);
 
   useEffect(() => {
     if (!buildwarden) {
