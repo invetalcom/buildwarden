@@ -6,7 +6,7 @@ import {
   type RunWorkspaceLayoutPreference,
   type RunWorkspaceLayoutPreferencesByRunId,
 } from "@buildwarden/shared";
-import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { reportRendererError } from "../../lib/report-renderer-error";
 import { cloneDefaultRunWorkspaceLayoutPreference } from "./app-model";
 
@@ -26,9 +26,12 @@ export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, settings, s
   const [runWorkspaceShowChat, setRunWorkspaceShowChat] = useState(false);
   const [runWorkspaceSecondaryPosition, setRunWorkspaceSecondaryPosition] = useState<"right" | "bottom">("right");
   const [runWorkspaceLayoutsByRunId, setRunWorkspaceLayoutsByRunId] = useState<RunWorkspaceLayoutPreferencesByRunId>({});
+  const runWorkspaceLayoutsByRunIdRef = useRef<RunWorkspaceLayoutPreferencesByRunId>({});
 
   useEffect(() => {
-    setRunWorkspaceLayoutsByRunId(parseRunWorkspaceLayoutsSetting(settings[APP_SETTING_KEYS.runWorkspaceLayouts]));
+    const next = parseRunWorkspaceLayoutsSetting(settings[APP_SETTING_KEYS.runWorkspaceLayouts]);
+    runWorkspaceLayoutsByRunIdRef.current = next;
+    setRunWorkspaceLayoutsByRunId(next);
   }, [settings]);
 
   const selectedLayout = useMemo<RunWorkspaceLayoutPreference>(() => {
@@ -60,13 +63,13 @@ export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, settings, s
 
   const updateRunWorkspaceLayout = useCallback(
     (runId: string, updater: (current: RunWorkspaceLayoutPreference) => RunWorkspaceLayoutPreference) => {
-      setRunWorkspaceLayoutsByRunId((current) => {
-        const next = { ...current, [runId]: updater(current[runId] ?? cloneDefaultRunWorkspaceLayoutPreference()) };
-        void persistLayouts(next).catch((caught) => {
-          reportRendererError("renderer.run-layout.persist", caught, { runId });
-          setError(caught instanceof Error ? caught.message : "Could not save run layout.");
-        });
-        return next;
+      const current = runWorkspaceLayoutsByRunIdRef.current;
+      const next = { ...current, [runId]: updater(current[runId] ?? cloneDefaultRunWorkspaceLayoutPreference()) };
+      runWorkspaceLayoutsByRunIdRef.current = next;
+      setRunWorkspaceLayoutsByRunId(next);
+      void persistLayouts(next).catch((caught) => {
+        reportRendererError("renderer.run-layout.persist", caught, { runId });
+        setError(caught instanceof Error ? caught.message : "Could not save run layout.");
       });
     },
     [persistLayouts, setError],
@@ -74,17 +77,17 @@ export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, settings, s
 
   const removeRunWorkspaceLayout = useCallback(
     (runId: string) => {
-      setRunWorkspaceLayoutsByRunId((current) => {
-        if (!(runId in current)) {
-          return current;
-        }
-        const next = { ...current };
-        delete next[runId];
-        void persistLayouts(next).catch((caught) => {
-          reportRendererError("renderer.run-layout.remove", caught, { runId });
-          setError(caught instanceof Error ? caught.message : "Could not remove run layout.");
-        });
-        return next;
+      const current = runWorkspaceLayoutsByRunIdRef.current;
+      if (!(runId in current)) {
+        return;
+      }
+      const next = { ...current };
+      delete next[runId];
+      runWorkspaceLayoutsByRunIdRef.current = next;
+      setRunWorkspaceLayoutsByRunId(next);
+      void persistLayouts(next).catch((caught) => {
+        reportRendererError("renderer.run-layout.remove", caught, { runId });
+        setError(caught instanceof Error ? caught.message : "Could not remove run layout.");
       });
     },
     [persistLayouts, setError],
@@ -92,21 +95,23 @@ export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, settings, s
 
   const removeRunWorkspaceLayoutsForRuns = useCallback(
     (runIds: string[]) => {
-      setRunWorkspaceLayoutsByRunId((current) => {
-        const next = { ...current };
-        const changed = runIds.reduce((didChange, runId) => {
-          if (!(runId in next)) {
-            return didChange;
-          }
-          delete next[runId];
-          return true;
-        }, false);
-        if (changed) {
-          void persistLayouts(next).catch((caught) => {
-            setError(caught instanceof Error ? caught.message : "Could not remove deleted project layouts.");
-          });
+      const current = runWorkspaceLayoutsByRunIdRef.current;
+      const next = { ...current };
+      const changed = runIds.reduce((didChange, runId) => {
+        if (!(runId in next)) {
+          return didChange;
         }
-        return changed ? next : current;
+        delete next[runId];
+        return true;
+      }, false);
+      if (!changed) {
+        return;
+      }
+      runWorkspaceLayoutsByRunIdRef.current = next;
+      setRunWorkspaceLayoutsByRunId(next);
+      void persistLayouts(next).catch((caught) => {
+        reportRendererError("renderer.run-layout.remove-many", caught, { runIds });
+        setError(caught instanceof Error ? caught.message : "Could not remove deleted project layouts.");
       });
     },
     [persistLayouts, setError],
