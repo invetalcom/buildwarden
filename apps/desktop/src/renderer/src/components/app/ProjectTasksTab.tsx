@@ -70,9 +70,19 @@ export const ProjectTasksTab = ({
 
   useEffect(() => {
     setPendingTaskIds(new Set());
+    setTaskBusy(false);
     setViewingTaskId(null);
     setEditingTaskId(null);
     setCreateOpen(false);
+    setTaskEditTitle("");
+    setTaskEditPrompt("");
+    setTaskEditStatus("open");
+    setLaunchTaskId(null);
+    setLaunchPromptDraft("");
+    setLaunchGenerateBusy(false);
+    setLaunchStartBusy(false);
+    setDraggedTaskId(null);
+    setDragOverStatus(null);
     setStatusOverrides({});
   }, [projectId]);
 
