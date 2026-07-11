@@ -65,10 +65,10 @@ const findings = results.flatMap((result) =>
 const requestedRule = process.argv.find((argument) => argument.startsWith("--rule="))?.slice("--rule=".length);
 const reportedFindings = requestedRule ? findings.filter((finding) => finding.rule === requestedRule) : findings;
 
-const byRule = Object.entries(Object.groupBy(findings, (finding) => finding.rule))
+const byRule = Object.entries(Object.groupBy(reportedFindings, (finding) => finding.rule))
   .map(([rule, entries]) => ({ rule, count: entries.length }))
   .sort((left, right) => right.count - left.count || left.rule.localeCompare(right.rule));
-const complexityHotspots = findings
+const complexityHotspots = reportedFindings
   .filter((finding) => finding.rule === "sonarjs/cognitive-complexity")
   .map((finding) => ({
     ...finding,
@@ -81,9 +81,9 @@ if (process.argv.includes("--json")) {
   console.log(
     JSON.stringify({
       analyzedFiles: results.length,
-      totalFindings: findings.length,
-      errors: findings.filter((item) => item.severity === 2).length,
-      warnings: findings.filter((item) => item.severity === 1).length,
+      totalFindings: reportedFindings.length,
+      errors: reportedFindings.filter((item) => item.severity === 2).length,
+      warnings: reportedFindings.filter((item) => item.severity === 1).length,
       byRule: Object.fromEntries(byRule.map(({ rule, count }) => [rule, count])),
       highestCognitiveComplexity: complexityHotspots[0]?.score ?? 0,
     }),
@@ -91,9 +91,9 @@ if (process.argv.includes("--json")) {
   process.exit(0);
 }
 
-console.log(`Analyzed ${results.length} files; ${findings.length} findings (${findings.filter((item) => item.severity === 2).length} errors, ${findings.filter((item) => item.severity === 1).length} warnings).`);
+console.log(`Analyzed ${results.length} files; ${reportedFindings.length} findings (${reportedFindings.filter((item) => item.severity === 2).length} errors, ${reportedFindings.filter((item) => item.severity === 1).length} warnings).`);
 console.table(byRule);
-const parserFindings = findings.filter((finding) => finding.rule === "parser");
+const parserFindings = reportedFindings.filter((finding) => finding.rule === "parser");
 if (parserFindings.length > 0) {
   console.log("Parser findings:");
   console.table(parserFindings.map(({ file, line, message }) => ({ file, line, message })));
@@ -123,6 +123,6 @@ if (process.argv.includes("--locations")) {
   );
 }
 
-if (process.argv.includes("--strict") && findings.length > 0) {
+if (process.argv.includes("--strict") && reportedFindings.length > 0) {
   process.exitCode = 1;
 }
