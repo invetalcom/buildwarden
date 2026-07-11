@@ -231,6 +231,26 @@ type ProjectPrMrSessionState = {
   diffCache: Map<string, ProjectPrMrDiffResult>;
 };
 
+const restoreProjectPrMrDiffScope = (session: ProjectPrMrSessionState) => {
+  const activeDetailTab = normalizeRequestDetailTab(session.activeDetailTab);
+  const hadCommitScope = Boolean(session.selectedCommitSha);
+  const shouldRestoreFullDiff = activeDetailTab !== "files" && hadCommitScope;
+  const requestUrl = (session.selectedRequest?.url ?? session.prUrl).trim();
+  const fullDiff = shouldRestoreFullDiff ? (session.diffCache.get(requestDiffCacheKey(requestUrl)) ?? null) : null;
+  const meta = fullDiff
+    ? { provider: fullDiff.provider, number: fullDiff.number, baseRef: fullDiff.baseRef }
+    : shouldRestoreFullDiff
+      ? null
+      : session.meta;
+
+  return {
+    activeDetailTab,
+    selectedCommitSha: activeDetailTab === "files" ? session.selectedCommitSha : null,
+    diffText: fullDiff?.diff ?? (shouldRestoreFullDiff ? "" : session.diffText),
+    meta,
+  };
+};
+
 const projectPrMrSessionCache = new Map<string, ProjectPrMrSessionState>();
 
 const hasProjectPrMrSessionData = (session: ProjectPrMrSessionState) =>
@@ -278,24 +298,11 @@ const formatAppErrorMessage = (error: unknown, fallback: string) => {
 
 export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initialRequest = null, onOpenProjectSettings }: ProjectPrMrTabProps) => {
   const initialSession = getProjectPrMrSession(projectId);
-  const initialDetailTab = normalizeRequestDetailTab(initialSession?.activeDetailTab);
-  const initialRequestUrl = initialSession?.selectedRequest?.url ?? initialSession?.prUrl ?? "";
-  const initialFullDiff =
-    initialDetailTab !== "files" && initialSession?.selectedCommitSha
-      ? (initialSession.diffCache.get(requestDiffCacheKey(initialRequestUrl)) ?? null)
-      : null;
+  const initialDiffScope = initialSession ? restoreProjectPrMrDiffScope(initialSession) : null;
   const [prUrl, setPrUrl] = useState(() => initialSession?.prUrl ?? "");
   const [baseBranch, setBaseBranch] = useState(() => initialSession?.baseBranch ?? "");
-  const [diffText, setDiffText] = useState(() =>
-    initialFullDiff?.diff ?? (initialDetailTab !== "files" && initialSession?.selectedCommitSha ? "" : (initialSession?.diffText ?? "")),
-  );
-  const [meta, setMeta] = useState<ProjectPrMrMeta | null>(() =>
-    initialFullDiff
-      ? { provider: initialFullDiff.provider, number: initialFullDiff.number, baseRef: initialFullDiff.baseRef }
-      : initialDetailTab !== "files" && initialSession?.selectedCommitSha
-        ? null
-        : (initialSession?.meta ?? null),
-  );
+  const [diffText, setDiffText] = useState(() => initialDiffScope?.diffText ?? "");
+  const [meta, setMeta] = useState<ProjectPrMrMeta | null>(() => initialDiffScope?.meta ?? null);
   const [loadBusy, setLoadBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reviewModelId, setReviewModelId] = useState(defaultModelId);
@@ -331,8 +338,8 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const gitDiffPanelRef = useRef<GitDiffPreviewHandle>(null);
   const aiReviewMenuAnchorRef = useRef<HTMLDivElement>(null);
   const [allDiffFilesExpanded, setAllDiffFilesExpanded] = useState(false);
-  const [activeDetailTab, setActiveDetailTab] = useState<RequestDetailTab>(initialDetailTab);
-  const [selectedCommitSha, setSelectedCommitSha] = useState<string | null>(() => (initialDetailTab === "files" ? (initialSession?.selectedCommitSha ?? null) : null));
+  const [activeDetailTab, setActiveDetailTab] = useState<RequestDetailTab>(() => initialDiffScope?.activeDetailTab ?? "conversation");
+  const [selectedCommitSha, setSelectedCommitSha] = useState<string | null>(() => initialDiffScope?.selectedCommitSha ?? null);
   const [diffViewType, setDiffViewType] = useState<"unified" | "split">(() => initialSession?.diffViewType ?? "unified");
   const [hideWhitespaceChanges, setHideWhitespaceChanges] = useState(() => initialSession?.hideWhitespaceChanges ?? false);
   const [activeDiffFilePath, setActiveDiffFilePath] = useState<string | null>(() => initialSession?.activeDiffFilePath ?? null);
@@ -577,12 +584,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     diffLoadGenerationRef.current += 1;
 
     if (cached) {
-      const restoredTab = normalizeRequestDetailTab(cached.activeDetailTab);
-      const restoredUrl = cached.selectedRequest?.url ?? cached.prUrl.trim();
-      const restoredFullDiff =
-        restoredTab !== "files" && cached.selectedCommitSha
-          ? (cached.diffCache.get(requestDiffCacheKey(restoredUrl)) ?? null)
-          : null;
+      const restoredDiffScope = restoreProjectPrMrDiffScope(cached);
       requestDetailsCacheRef.current = cached.detailsCache;
       requestDiffCacheRef.current = cached.diffCache;
       activeRequestUrlRef.current = cached.selectedRequest?.url ?? cached.prUrl.trim();
@@ -594,16 +596,10 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
       setRequestDetails(cached.requestDetails);
       setPrUrl(cached.prUrl);
       setBaseBranch(cached.baseBranch);
-      setDiffText(restoredFullDiff?.diff ?? (restoredTab !== "files" && cached.selectedCommitSha ? "" : cached.diffText));
-      setMeta(
-        restoredFullDiff
-          ? { provider: restoredFullDiff.provider, number: restoredFullDiff.number, baseRef: restoredFullDiff.baseRef }
-          : restoredTab !== "files" && cached.selectedCommitSha
-            ? null
-            : cached.meta,
-      );
-      setActiveDetailTab(restoredTab);
-      setSelectedCommitSha(restoredTab === "files" ? (cached.selectedCommitSha ?? null) : null);
+      setDiffText(restoredDiffScope.diffText);
+      setMeta(restoredDiffScope.meta);
+      setActiveDetailTab(restoredDiffScope.activeDetailTab);
+      setSelectedCommitSha(restoredDiffScope.selectedCommitSha);
       setDiffViewType(cached.diffViewType ?? "unified");
       setHideWhitespaceChanges(cached.hideWhitespaceChanges ?? false);
       setActiveDiffFilePath(cached.activeDiffFilePath ?? null);
