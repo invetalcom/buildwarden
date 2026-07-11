@@ -199,9 +199,47 @@ describe("ProjectPrMrTab review helpers", () => {
     const parsedFiles: DiffPreviewFileSummary[] = [
       { key: "parsed-second", path: "src/second.ts", oldPath: null, type: "modify", additions: 1, deletions: 1 },
     ];
+    details.reviewThreads = ["src/first.ts", "src/second.ts"].map((path, index) => ({
+      id: `thread-${String(index)}`,
+      providerThreadId: `provider-thread-${String(index)}`,
+      replyToCommentId: null,
+      provider: "github" as const,
+      path,
+      oldPath: path,
+      side: "new" as const,
+      oldLineNumber: null,
+      newLineNumber: 4,
+      commitSha: "head",
+      diffHunk: null,
+      resolved: false,
+      comments: Array.from({ length: index + 1 }, (_, commentIndex) => ({
+        id: `comment-${String(index)}-${String(commentIndex)}`,
+        providerCommentId: `${String(index)}-${String(commentIndex)}`,
+        body: "Review note",
+        author: null,
+        createdAt: null,
+        updatedAt: null,
+        url: null,
+      })),
+    }));
+    const drafts: DraftDiffComment[] = ["src/first.ts", "src/second.ts"].map((path, index) => ({
+      id: `draft-${String(index)}`,
+      oldPath: path,
+      newPath: path,
+      side: "new" as const,
+      oldLineNumber: null,
+      newLineNumber: 4,
+      changeType: "insert" as const,
+      body: "Draft note",
+      displayPath: path,
+      lineLabel: `${path}:4 new`,
+    }));
 
-    expect(buildPrMrFileNavItems(details, parsedFiles, [], { restrictToParsedDiff: true })).toMatchObject([
-      { path: "src/second.ts", additions: 1, deletions: 1 },
+    const result = buildPrMrFileNavItems(details, parsedFiles, drafts, { restrictToParsedDiff: true });
+
+    expect(result).toHaveLength(1);
+    expect(result).toMatchObject([
+      { path: "src/second.ts", additions: 1, deletions: 1, commentCount: 2, draftCount: 1 },
     ]);
   });
 
