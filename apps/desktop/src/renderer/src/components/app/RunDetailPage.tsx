@@ -1362,7 +1362,7 @@ export const RunDetailPage = ({
                                   providerType: option.providerType,
                                   providerFamily: option.providerFamily,
                                 }))}
-                                menuClassName="w-[22rem]"
+                                menuWidthPx={352}
                                 menuSide="bottom"
                               />
                               <Button
