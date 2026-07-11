@@ -182,6 +182,9 @@ export const ProjectTasksTab = ({
     try {
       await onUpdateTask(task.id, { title, prompt, status: taskEditStatus });
       cancelEditingTask();
+    } catch {
+      // App already surfaces the bridge error. Keep the form open for retry and
+      // consume the propagated rejection so the click handler stays handled.
     } finally {
       setPendingTaskIds((current) => {
         const next = new Set(current);
