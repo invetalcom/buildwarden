@@ -1374,8 +1374,9 @@ export const App = () => {
   }, [buildwarden, loadProjectBranches, loadSnapshot, requestConfirmation, selectedProject]);
 
   useEffect(() => {
-    if (selectedProject?.project.kind === "folder" && (projectPageTab === "branches" || projectPageTab === "reviews")) {
-      setProjectPageTab("overview");
+    const normalizedTab = normalizeProjectFeatureTab(selectedProject?.project.kind, projectPageTab);
+    if (normalizedTab !== projectPageTab) {
+      setProjectPageTab(normalizedTab);
     }
   }, [projectPageTab, selectedProject]);
 
