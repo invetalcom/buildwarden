@@ -1,0 +1,17 @@
+{
+  "threshold": 3,
+  "minLines": 5,
+  "minTokens": 50,
+  "mode": "mild",
+  "reporters": ["console", "threshold"],
+  "ignore": [
+    "**/build/**",
+    "**/dist/**",
+    "**/node_modules/**",
+    "**/out/**",
+    "**/release/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "packages/shared/src/integrated-skills-catalog.ts"
+  ]
+}

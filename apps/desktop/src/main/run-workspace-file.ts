@@ -3,14 +3,14 @@ import { open, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { parseRunWorkspaceFileReference, type RunWorkspaceFileResult } from "@buildwarden/shared";
 
-export const MAX_RUN_WORKSPACE_FILE_PREVIEW_BYTES = 1_000_000;
+const MAX_RUN_WORKSPACE_FILE_PREVIEW_BYTES = 1_000_000;
 
 export const isPathInsideRoot = (root: string, target: string): boolean => {
   const rel = relative(root, target);
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 };
 
-export const normalizeWorkspaceRelativePath = (root: string, target: string): string =>
+const normalizeWorkspaceRelativePath = (root: string, target: string): string =>
   (relative(root, target).replace(/\\/g, "/") || ".").replace(/^\.\//, "");
 
 export const readRunWorkspaceFileForPreview = async ({

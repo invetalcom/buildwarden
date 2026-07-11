@@ -15,7 +15,6 @@ const estimateContextTokens = (text: string): number => {
     return charsToApproxTokens(text.length);
   }
 };
-
 const logContextStats = (mode: RunMode, text: string): void => {
   if (process.env.BUILDWARDEN_LOG_REPO_CONTEXT !== "1") {
     return;
@@ -495,5 +494,3 @@ export const buildInitialRepoContext = async (
   logContextStats(mode, assembled);
   return assembled;
 };
-
-export const estimateRepoContextTokens = (text: string): number => estimateContextTokens(text);

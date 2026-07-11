@@ -4,14 +4,12 @@ import {
   cycleUiTheme,
   DEFAULT_NETWORK_PROXY_SETTINGS,
   buildDefaultProjectLabSettings,
-  GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE,
   isDetachedHeadProjectErrorMessage,
   getAiSdkProviderFamilyFromConfigJson,
   DEFAULT_ADD_MODEL_DRAFT,
   DEFAULT_SHELL_ALLOWLIST_PATTERN_SOURCES,
   parseRecentRunDaysSetting,
   parseRunTimelineDensitySetting,
-  parseRunWorkspaceLayoutsSetting,
   parseUiTheme,
   SUPPORTED_IDE_KINDS,
   parseIdePathConfig,
@@ -35,8 +33,6 @@ import {
   type RunRecord,
   type RunTokenUsage,
   type RunTimelineDensity,
-  type RunWorkspaceLayoutPreference,
-  type RunWorkspaceLayoutPreferencesByRunId,
   type RunWorkspacePanelId,
   type RunWorkspaceType,
   type ShellApprovalDecision,
@@ -86,7 +82,6 @@ import {
   paneForOpenRunId,
   parseKeyboardShortcuts,
   parseRunDragPayload,
-  pickProjectBranch,
   readRunTokenUsage,
   resolveProviderComposerPrompt,
   runIdIsOpenInPanes,
@@ -103,8 +98,16 @@ import {
   type ShellApprovalRequestState,
 } from "./components/app/AppNotifications";
 import { createAppKeyboardShortcutHandler } from "./components/app/app-keyboard-shortcuts";
+import {
+  computeMainViewFlags,
+  normalizeProjectFeatureTab,
+  type SettingsPreviousPageState,
+} from "./components/app/app-navigation";
 import { buildCommandPaletteItems } from "./components/app/command-palette-items";
 import { useRunActionDialogs } from "./components/app/use-run-action-dialogs";
+import { useProjectBranches } from "./components/app/use-project-branches";
+import { useRunWorkspaceLayouts } from "./components/app/use-run-workspace-layouts";
+import { useShellApprovalQueue } from "./components/app/use-shell-approval-queue";
 import { useSkillsSettings } from "./components/app/use-skills-settings";
 import { useWelcomeFlow } from "./components/app/use-welcome-flow";
 import { buildProviderAccountConfig } from "./lib/provider-account-config";
@@ -123,26 +126,11 @@ import {
   getModelPresetsByGroupForProvider,
   getModelPresetsForProvider,
 } from "./lib/openai-model-presets";
-import type { AvailableProviderModelsState } from "./lib/available-provider-models";
+import { useAvailableProviderModels } from "./lib/use-available-provider-models";
 import { useProjectRunDefaults } from "./lib/use-project-run-defaults";
+import { useRendererErrorReporting } from "./lib/use-renderer-error-reporting";
 import { useStableCallback } from "./lib/use-stable-callback";
 import { reportRendererError, reportRendererLog } from "./lib/report-renderer-error";
-
-interface SettingsPreviousPageState {
-  landingSelected: boolean;
-  allRunsSelected: boolean;
-  bookmarksSelected: boolean;
-  chatsSelected: boolean;
-  projectPageTab: ProjectPageTab;
-  selectedBookmark: BookmarkItem | null;
-  selectedChat: ChatRecord | null;
-  chatDetail: ChatDetail | null;
-  selectedRunId: string | null | undefined;
-  runDetail: RunDetail | null;
-  openRunPanes: OpenRunPanes;
-  focusedRunPane: RunPaneId;
-  runDetailsById: Record<string, RunDetail>;
-}
 
 const isLocalProviderType = (type: ProviderType): boolean =>
   type === "codex-cli" || type === "claude-code" || type === "cursor-agent";
@@ -150,69 +138,11 @@ const isLocalProviderType = (type: ProviderType): boolean =>
 const panelVisibilitySubtitle = (visible: boolean, hiddenSubtitle: string): string =>
   visible ? "Visible" : hiddenSubtitle;
 
-const appendShellApprovalRequest = (
-  current: ShellApprovalRequestState[],
-  request: ShellApprovalRequestState,
-): ShellApprovalRequestState[] => {
-  if (current.some((item) => item.requestId === request.requestId && item.runId === request.runId)) {
-    return current;
-  }
-  return [...current, request];
-};
-
-const removeShellApprovalsByRequestId = (current: ShellApprovalRequestState[], requestId: string): ShellApprovalRequestState[] =>
-  current.filter((item) => item.requestId !== requestId);
-
-const removeShellApprovalsByRunId = (current: ShellApprovalRequestState[], runId: string): ShellApprovalRequestState[] =>
-  current.filter((item) => item.runId !== runId);
-
 const computeProjectFolderGitWarning = (status: ProjectFolderGitStatus | null): string | null => {
   if (status?.exists === true && status.isDirectory && !status.isGitRepo) {
     return "The selected folder is not a Git repository. It will be added as a plain folder project; Git-only features like branches, commits, worktrees, and PR/MR tools will be unavailable.";
   }
   return null;
-};
-
-interface MainViewFlagInput {
-  settingsOpen: boolean;
-  landingSelected: boolean;
-  allRunsSelected: boolean;
-  bookmarksSelected: boolean;
-  chatsSelected: boolean;
-  selectedRunId: string | null | undefined;
-  hasSelectedProject: boolean;
-  hasRunDetail: boolean;
-  openRunPaneCount: number;
-  hasChatDetail: boolean;
-}
-
-/**
- * Derives which top-level view the main area shows and its layout class.
- * Agent run detail and chat detail use a flex column so the composer stays at
- * the bottom; the project workspace uses a flex column so the PR/MR tab diff
- * can grow to the bottom of the viewport.
- */
-const computeMainViewFlags = (input: MainViewFlagInput) => {
-  const onLandingOrEmptySelection =
-    input.landingSelected || input.allRunsSelected || (!input.selectedRunId && !input.hasSelectedProject);
-  const noOverlaySelected = !input.settingsOpen && !input.allRunsSelected && !input.bookmarksSelected;
-  const isAgentRunDetailView =
-    noOverlaySelected &&
-    !input.chatsSelected &&
-    !onLandingOrEmptySelection &&
-    Boolean(input.selectedRunId && (input.hasRunDetail || input.openRunPaneCount > 0));
-  const isChatDetailView = noOverlaySelected && input.chatsSelected && input.hasChatDetail;
-  const isProjectWorkspaceView =
-    noOverlaySelected && !input.chatsSelected && !input.landingSelected && !input.selectedRunId && input.hasSelectedProject;
-
-  let sectionLayoutClassName = "space-y-4";
-  if (isAgentRunDetailView || isChatDetailView) {
-    sectionLayoutClassName = "flex min-h-0 min-w-0 flex-1 flex-col gap-2";
-  } else if (isProjectWorkspaceView) {
-    sectionLayoutClassName = "flex min-h-0 min-w-0 flex-1 flex-col gap-4";
-  }
-
-  return { onLandingOrEmptySelection, isAgentRunDetailView, isChatDetailView, isProjectWorkspaceView, sectionLayoutClassName };
 };
 
 interface RunPanelToggleDefinition {
@@ -239,6 +169,7 @@ const addProjectForgeRequestToast = (
 
 export const App = () => {
   const buildwarden = window.buildwarden;
+  useRendererErrorReporting();
   const showCustomWindowsTitleBar = typeof navigator !== "undefined" && navigator.userAgent.includes("Windows");
   const [snapshot, setSnapshot] = useState<AppSnapshot>(EMPTY_SNAPSHOT);
   const [snapshotLoaded, setSnapshotLoaded] = useState(false);
@@ -279,39 +210,14 @@ export const App = () => {
   const [modelDisplayName, setModelDisplayName] = useState(() => DEFAULT_ADD_MODEL_DRAFT.displayName);
   const [modelBaseUrl, setModelBaseUrl] = useState("");
   const [welcomeOpenAiPresetUserChoseCustom, setWelcomeOpenAiPresetUserChoseCustom] = useState(false);
-  const [availableModelsByProviderId, setAvailableModelsByProviderId] = useState<Record<string, AvailableProviderModelsState>>({});
-  const availableModelsByProviderIdRef = useRef<Record<string, AvailableProviderModelsState>>({});
-  const availableModelRequestsInFlightRef = useRef<Set<string>>(new Set());
-  availableModelsByProviderIdRef.current = availableModelsByProviderId;
+  const { availableModelsByProviderId, availableModelsByProviderIdRef, ensureAvailableModels } = useAvailableProviderModels({
+    buildwarden,
+  });
   const [runProjectId, setRunProjectId] = useState("");
   const [runModelId, setRunModelId] = useState("");
   const [runWorktreeModelIds, setRunWorktreeModelIds] = useState<string[]>([]);
   const [runMode, setRunMode] = useState<RunMode>("code");
   const [runWorkspaceType, setRunWorkspaceType] = useState<RunWorkspaceType>("worktree");
-  const [runBaseBranch, setRunBaseBranch] = useState("");
-  const [currentProjectBranch, setCurrentProjectBranch] = useState("");
-  const [availableRunBranches, setAvailableRunBranches] = useState<string[]>([]);
-  const [detachedCheckoutBranch, setDetachedCheckoutBranch] = useState("");
-
-  useEffect(() => {
-    const handleError = (event: ErrorEvent) => {
-      reportRendererError("renderer.window.error", event.error ?? event.message, {
-        filename: event.filename,
-        line: event.lineno,
-        column: event.colno,
-      });
-    };
-    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
-      reportRendererError("renderer.window.unhandledrejection", event.reason);
-    };
-    window.addEventListener("error", handleError);
-    window.addEventListener("unhandledrejection", handleUnhandledRejection);
-    return () => {
-      window.removeEventListener("error", handleError);
-      window.removeEventListener("unhandledrejection", handleUnhandledRejection);
-    };
-  }, []);
-  const [projectCheckoutBusy, setProjectCheckoutBusy] = useState(false);
   const [runPrompt, setRunPrompt] = useState("");
   const [runReasoningEffort, setRunReasoningEffort] = useState("medium");
   const [runAnthropicEffort, setRunAnthropicEffort] = useState("medium");
@@ -358,15 +264,6 @@ export const App = () => {
   const runPanelsMenuAnchorRef = useRef<HTMLDivElement>(null);
   const runDensityMenuAnchorRef = useRef<HTMLDivElement>(null);
   const confirmDialogResolverRef = useRef<((value: boolean) => void) | null>(null);
-  const [shellApprovalQueue, setShellApprovalQueue] = useState<ShellApprovalRequestState[]>([]);
-  const [runWorkspaceShowActivity, setRunWorkspaceShowActivity] = useState(true);
-  const [runWorkspaceShowDiff, setRunWorkspaceShowDiff] = useState(false);
-  const [runWorkspaceShowTerminal, setRunWorkspaceShowTerminal] = useState(false);
-  const [runWorkspaceShowBrowser, setRunWorkspaceShowBrowser] = useState(false);
-  const [runWorkspaceShowNotes, setRunWorkspaceShowNotes] = useState(false);
-  const [runWorkspaceShowChat, setRunWorkspaceShowChat] = useState(false);
-  const [runWorkspaceSecondaryPosition, setRunWorkspaceSecondaryPosition] = useState<"right" | "bottom">("right");
-  const [runWorkspaceLayoutsByRunId, setRunWorkspaceLayoutsByRunId] = useState<RunWorkspaceLayoutPreferencesByRunId>({});
   const [runBrowserSessions, setRunBrowserSessions] = useState<Record<string, RunBrowserSessionState>>({});
   const [runTerminalOpenLinksInApp, setRunTerminalOpenLinksInApp] = useState<Record<string, boolean>>({});
   const [appLogDirPath, setAppLogDirPath] = useState("");
@@ -404,72 +301,6 @@ export const App = () => {
         : undefined;
     return getModelPresetsByGroupForProvider(selectedProviderAccount.providerType, family);
   }, [selectedProviderAccount]);
-  const ensureAvailableModels = useCallback(
-    (providerAccountId: string) => {
-      if (!providerAccountId) {
-        return;
-      }
-      const current = availableModelsByProviderIdRef.current[providerAccountId];
-      if (
-        current?.status === "loading" ||
-        current?.status === "loaded" ||
-        availableModelRequestsInFlightRef.current.has(providerAccountId)
-      ) {
-        return;
-      }
-      if (!buildwarden) {
-        setAvailableModelsByProviderId((previous) => ({
-          ...previous,
-          [providerAccountId]: {
-            status: "error",
-            models: [],
-            errorMessage: "The Electron desktop bridge is unavailable.",
-          },
-        }));
-        return;
-      }
-
-      availableModelRequestsInFlightRef.current.add(providerAccountId);
-      setAvailableModelsByProviderId((previous) => ({
-        ...previous,
-        [providerAccountId]: {
-          status: "loading",
-          models: previous[providerAccountId]?.models ?? [],
-          errorMessage: null,
-        },
-      }));
-
-      void buildwarden
-        .listAvailableProviderModels({ providerAccountId })
-        .then((result) => {
-          setAvailableModelsByProviderId((previous) => ({
-            ...previous,
-            [providerAccountId]: {
-              status: result.errorMessage ? "error" : "loaded",
-              models: result.models,
-              errorMessage: result.errorMessage ?? null,
-            },
-          }));
-        })
-        .catch((caught) => {
-          reportRendererError("renderer.provider-models.available-models", caught, { providerAccountId });
-          const message = caught instanceof Error ? caught.message : "Available models could not be loaded.";
-          setAvailableModelsByProviderId((previous) => ({
-            ...previous,
-            [providerAccountId]: {
-              status: "error",
-              models: [],
-              errorMessage: message,
-            },
-          }));
-        })
-        .finally(() => {
-          availableModelRequestsInFlightRef.current.delete(providerAccountId);
-        });
-    },
-    [buildwarden],
-  );
-
   const loadSnapshot = useCallback(async () => {
     if (!buildwarden) {
       setError("The Electron desktop bridge is unavailable. Restart the app with `pnpm dev`.");
@@ -889,6 +720,17 @@ export const App = () => {
     },
     [refreshOpenRunDetailForEvent],
   );
+  const {
+    enqueue: enqueueShellApproval,
+    pending: pendingShellApproval,
+    queuedCount: queuedShellApprovalCount,
+    queue: shellApprovalQueue,
+    removeByRequestId: removeShellApprovalByRequestId,
+    removeByRunId: removeShellApprovalsByRunId,
+    submitDecision: submitShellApprovalDecision,
+    visible: visibleShellApprovals,
+    visibleStartedAtById: visibleShellApprovalStartedAtById,
+  } = useShellApprovalQueue({ buildwarden, loadRunDetailForRun, loadSnapshot, selectedRunId, setError });
 
   useEffect(
     () => () => {
@@ -949,15 +791,15 @@ export const App = () => {
           command: approvalCommand,
           requestedAt: Date.now(),
         };
-        setShellApprovalQueue((current) => appendShellApprovalRequest(current, request));
+        enqueueShellApproval(request);
       }
 
       if (approvalRequestId && event.metadata?.shellApprovalDecision) {
-        setShellApprovalQueue((current) => removeShellApprovalsByRequestId(current, approvalRequestId));
+        removeShellApprovalByRequestId(approvalRequestId);
       }
 
       if (event.title === "Run cancelled") {
-        setShellApprovalQueue((current) => removeShellApprovalsByRunId(current, event.runId));
+        removeShellApprovalsByRunId(event.runId);
       }
 
       scheduleSnapshotRefresh();
@@ -987,7 +829,10 @@ export const App = () => {
     loadDetectedCursorInstallation,
     loadNetworkProxySettings,
     loadSnapshot,
+    enqueueShellApproval,
     refreshRunDetailForActiveRunEvent,
+    removeShellApprovalByRequestId,
+    removeShellApprovalsByRunId,
     scheduleSnapshotRefresh,
   ]);
 
@@ -1071,7 +916,43 @@ export const App = () => {
     return snapshot.projects.find((entry) => entry.project.id === runProjectId) ?? snapshot.projects[0] ?? null;
   }, [runProjectId, snapshot.projects]);
   const selectedProjectId = selectedProject?.project.id ?? "";
-  const selectedProjectDefaultBranch = selectedProject?.project.defaultBranch ?? "";
+  const {
+    availableRunBranches,
+    currentProjectBranch,
+    detachedCheckoutBranch,
+    loadProjectBranches,
+    projectCheckoutBusy,
+    runBaseBranch,
+    setDetachedCheckoutBranch,
+    setRunBaseBranch,
+    submitCheckoutDetachedProjectBranch,
+  } = useProjectBranches({ buildwarden, selectedProject, setError });
+  const {
+    removeRunWorkspaceLayout,
+    removeRunWorkspaceLayoutsForRuns,
+    runWorkspaceLayoutsByRunId,
+    selectedRunWorkspaceLayout,
+    runWorkspaceSecondaryPosition,
+    runWorkspaceShowActivity,
+    runWorkspaceShowBrowser,
+    runWorkspaceShowChat,
+    runWorkspaceShowDiff,
+    runWorkspaceShowNotes,
+    runWorkspaceShowTerminal,
+    setRunWorkspaceSecondaryPosition,
+    setRunWorkspaceShowActivity,
+    setRunWorkspaceShowBrowser,
+    setRunWorkspaceShowChat,
+    setRunWorkspaceShowDiff,
+    setRunWorkspaceShowNotes,
+    setRunWorkspaceShowTerminal,
+    updateRunWorkspaceLayout,
+  } = useRunWorkspaceLayouts({
+    buildwarden,
+    selectedRunId,
+    settings: snapshot.settings,
+    setError,
+  });
 
   const {
     changeRunMode,
@@ -1126,179 +1007,6 @@ export const App = () => {
     }, 2000);
     return () => window.clearInterval(intervalId);
   }, [loadSnapshot, selectedProject]);
-
-  useEffect(() => {
-    setRunWorkspaceLayoutsByRunId(parseRunWorkspaceLayoutsSetting(snapshot.settings[APP_SETTING_KEYS.runWorkspaceLayouts]));
-  }, [snapshot.settings]);
-
-  const selectedRunWorkspaceLayout = useMemo<RunWorkspaceLayoutPreference>(() => {
-    if (!selectedRunId || typeof selectedRunId !== "string") {
-      return cloneDefaultRunWorkspaceLayoutPreference();
-    }
-    return runWorkspaceLayoutsByRunId[selectedRunId] ?? cloneDefaultRunWorkspaceLayoutPreference();
-  }, [runWorkspaceLayoutsByRunId, selectedRunId]);
-
-  useEffect(() => {
-    setRunWorkspaceShowActivity(selectedRunWorkspaceLayout.visiblePanels.activity);
-    setRunWorkspaceShowDiff(selectedRunWorkspaceLayout.visiblePanels.diff);
-    setRunWorkspaceShowTerminal(selectedRunWorkspaceLayout.visiblePanels.terminal);
-    setRunWorkspaceShowBrowser(selectedRunWorkspaceLayout.visiblePanels.browser);
-    setRunWorkspaceShowNotes(selectedRunWorkspaceLayout.visiblePanels.notes);
-    setRunWorkspaceShowChat(selectedRunWorkspaceLayout.visiblePanels.chat);
-    setRunWorkspaceSecondaryPosition(selectedRunWorkspaceLayout.secondaryPanelPosition);
-  }, [selectedRunWorkspaceLayout]);
-
-  const persistRunWorkspaceLayouts = useCallback(
-    async (next: RunWorkspaceLayoutPreferencesByRunId) => {
-      if (!buildwarden) {
-        throw new Error("The Electron desktop bridge is unavailable.");
-      }
-      await buildwarden.setAppSetting(APP_SETTING_KEYS.runWorkspaceLayouts, JSON.stringify(next));
-    },
-    [buildwarden],
-  );
-
-  const updateRunWorkspaceLayout = useCallback(
-    (runId: string, updater: (current: RunWorkspaceLayoutPreference) => RunWorkspaceLayoutPreference) => {
-      setRunWorkspaceLayoutsByRunId((current) => {
-        const nextPreference = updater(current[runId] ?? cloneDefaultRunWorkspaceLayoutPreference());
-        const next = { ...current, [runId]: nextPreference };
-        void persistRunWorkspaceLayouts(next).catch((caught) => {
-          reportRendererError("renderer.run-layout.persist", caught, { runId });
-          setError(caught instanceof Error ? caught.message : "Could not save run layout.");
-        });
-        return next;
-      });
-    },
-    [persistRunWorkspaceLayouts],
-  );
-
-  const removeRunWorkspaceLayout = useCallback(
-    (runId: string) => {
-      setRunWorkspaceLayoutsByRunId((current) => {
-        if (!(runId in current)) {
-          return current;
-        }
-        const next = { ...current };
-        delete next[runId];
-        void persistRunWorkspaceLayouts(next).catch((caught) => {
-          reportRendererError("renderer.run-layout.remove", caught, { runId });
-          setError(caught instanceof Error ? caught.message : "Could not remove run layout.");
-        });
-        return next;
-      });
-    },
-    [persistRunWorkspaceLayouts],
-  );
-
-  const removeRunWorkspaceLayoutsForRuns = useCallback(
-    (runIds: string[]) => {
-      setRunWorkspaceLayoutsByRunId((current) => {
-        const next = { ...current };
-        let changed = false;
-        for (const runId of runIds) {
-          if (runId in next) {
-            delete next[runId];
-            changed = true;
-          }
-        }
-        if (changed) {
-          void persistRunWorkspaceLayouts(next).catch((caught) => {
-            setError(caught instanceof Error ? caught.message : "Could not remove deleted project layouts.");
-          });
-        }
-        return changed ? next : current;
-      });
-    },
-    [persistRunWorkspaceLayouts],
-  );
-
-  const loadProjectBranches = useCallback(async () => {
-    if (!buildwarden || !selectedProjectId) {
-      setAvailableRunBranches([]);
-      setRunBaseBranch("");
-      setCurrentProjectBranch("");
-      setDetachedCheckoutBranch("");
-      return;
-    }
-    if (selectedProject?.project.kind === "folder") {
-      setAvailableRunBranches([]);
-      setRunBaseBranch("");
-      setCurrentProjectBranch("");
-      setDetachedCheckoutBranch("");
-      setError((prev) => (prev && isDetachedHeadProjectErrorMessage(prev) ? null : prev));
-      return;
-    }
-
-    const projectId = selectedProjectId;
-    const defaultBranch = selectedProjectDefaultBranch;
-
-    const applyDetachedHeadBranchState = (nextBranches: string[]) => {
-      setAvailableRunBranches(nextBranches);
-      setRunBaseBranch((current) => pickProjectBranch(nextBranches, defaultBranch, current));
-      setCurrentProjectBranch("");
-      setError(GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE);
-      setDetachedCheckoutBranch(pickProjectBranch(nextBranches, defaultBranch));
-    };
-
-    try {
-      const branches = await buildwarden.getProjectBranches(projectId);
-      const nextBranches = branches.length > 0 ? branches : [defaultBranch];
-
-      try {
-        const currentBranch = await buildwarden.getProjectCurrentBranch(projectId);
-        if (!currentBranch) {
-          applyDetachedHeadBranchState(nextBranches);
-          return;
-        }
-        setDetachedCheckoutBranch("");
-        setCurrentProjectBranch(currentBranch);
-        setAvailableRunBranches(nextBranches);
-        setRunBaseBranch((current) => pickProjectBranch(nextBranches, defaultBranch, current));
-        setError((prev) => (prev && isDetachedHeadProjectErrorMessage(prev) ? null : prev));
-      } catch (inner) {
-        const msg = inner instanceof Error ? inner.message : String(inner);
-        if (!isDetachedHeadProjectErrorMessage(msg)) {
-          throw inner;
-        }
-        applyDetachedHeadBranchState(nextBranches);
-      }
-    } catch (caught) {
-      reportRendererError("renderer.project-branches.load", caught, {
-        projectId,
-      });
-      setDetachedCheckoutBranch("");
-      setAvailableRunBranches([defaultBranch]);
-      setRunBaseBranch(defaultBranch);
-      setCurrentProjectBranch(defaultBranch);
-      const msg = caught instanceof Error ? caught.message : String(caught);
-      setError(msg || "Unexpected error");
-    }
-  }, [buildwarden, selectedProject, selectedProjectDefaultBranch, selectedProjectId]);
-
-  useEffect(() => {
-    void loadProjectBranches();
-  }, [loadProjectBranches]);
-
-  const submitCheckoutDetachedProjectBranch = useCallback(async () => {
-    if (!buildwarden || !selectedProject?.project.id || !detachedCheckoutBranch.trim()) {
-      return;
-    }
-
-    setProjectCheckoutBusy(true);
-    try {
-      await buildwarden.checkoutProjectBranch(selectedProject.project.id, detachedCheckoutBranch.trim());
-      await loadProjectBranches();
-    } catch (caught) {
-      reportRendererError("renderer.project-branch.checkout", caught, {
-        projectId: selectedProject.project.id,
-        branchName: detachedCheckoutBranch.trim(),
-      });
-      setError(caught instanceof Error ? caught.message : "Checkout failed");
-    } finally {
-      setProjectCheckoutBusy(false);
-    }
-  }, [buildwarden, selectedProject, detachedCheckoutBranch, loadProjectBranches]);
 
   const projectRunStats = useMemo(() => {
     const runs = [...(selectedProject?.runs ?? []), ...(selectedProject?.forLaterRuns ?? [])];
@@ -1388,10 +1096,6 @@ export const App = () => {
     return SUPPORTED_IDE_KINDS.filter((k) => (cfg[k]?.trim() ?? "").length > 0);
   }, [snapshot.settings]);
 
-  const pendingShellApproval = shellApprovalQueue[0] ?? null;
-  const visibleShellApprovals = useMemo(() => shellApprovalQueue.slice(0, 3), [shellApprovalQueue]);
-  const queuedShellApprovalCount = Math.max(0, shellApprovalQueue.length - visibleShellApprovals.length);
-  const [visibleShellApprovalStartedAtById, setVisibleShellApprovalStartedAtById] = useState<Partial<Record<string, number>>>({});
   const getShellApprovalTarget = useCallback(
     (request: ShellApprovalRequestState) =>
       findProjectRun(snapshot.projects, request.runId) ??
@@ -1560,80 +1264,6 @@ export const App = () => {
     const timeoutId = window.setTimeout(() => setAppWarning(null), 12000);
     return () => window.clearTimeout(timeoutId);
   }, [appWarning]);
-
-  const submitShellApprovalDecision = useCallback(
-    async (request: ShellApprovalRequestState, decision: ShellApprovalDecision) => {
-      if (!buildwarden) {
-        throw new Error("The Electron desktop bridge is unavailable.");
-      }
-
-      await buildwarden.respondToShellApproval(
-        request.runId,
-        request.requestId,
-        decision,
-        decision === "allow-always" ? { command: request.command } : undefined,
-      );
-      setShellApprovalQueue((current) => current.filter((item) => item.requestId !== request.requestId));
-      await loadSnapshot();
-      await loadRunDetailForRun(request.runId);
-      if (selectedRunId && selectedRunId !== request.runId) {
-        await loadRunDetailForRun(selectedRunId);
-      }
-    },
-    [buildwarden, loadRunDetailForRun, loadSnapshot, selectedRunId],
-  );
-
-  const denyShellApprovalRequest = useCallback(
-    (request: ShellApprovalRequestState) => {
-      void submitShellApprovalDecision(request, "deny").catch((caught) => {
-        setError(caught instanceof Error ? caught.message : "Unexpected error");
-      });
-    },
-    [submitShellApprovalDecision],
-  );
-
-  useEffect(() => {
-    if (visibleShellApprovals.length === 0) {
-      return;
-    }
-
-    const timeoutIds = visibleShellApprovals.map((request) =>
-      window.setTimeout(
-        () => denyShellApprovalRequest(request),
-        Math.max(0, (visibleShellApprovalStartedAtById[request.requestId] ?? Date.now()) + 30_000 - Date.now()),
-      ),
-    );
-
-    return () => {
-      timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId));
-    };
-  }, [denyShellApprovalRequest, visibleShellApprovalStartedAtById, visibleShellApprovals]);
-
-  useEffect(() => {
-    const visibleRequestIds = new Set(visibleShellApprovals.map((request) => request.requestId));
-    const queuedRequestIds = new Set(shellApprovalQueue.map((request) => request.requestId));
-    const now = Date.now();
-    setVisibleShellApprovalStartedAtById((current) => {
-      let changed = false;
-      const next: Partial<Record<string, number>> = {};
-
-      for (const requestId of queuedRequestIds) {
-        const existing = current[requestId];
-        if (visibleRequestIds.has(requestId)) {
-          next[requestId] = existing ?? now;
-          changed = changed || existing === undefined;
-        } else if (existing !== undefined) {
-          changed = true;
-        }
-      }
-
-      if (Object.keys(current).length !== Object.keys(next).length) {
-        changed = true;
-      }
-
-      return changed ? next : current;
-    });
-  }, [shellApprovalQueue, visibleShellApprovals]);
 
   const handleAction = useCallback(async (action: () => Promise<void>) => {
     setBusy(true);
@@ -2415,10 +2045,7 @@ export const App = () => {
       }
 
       const targetProject = snapshot.projects.find((entry) => entry.project.id === projectId);
-      const nextTab =
-        targetProject?.project.kind === "folder" && (tab === "branches" || tab === "reviews" || tab === "loops")
-          ? "overview"
-          : tab;
+      const nextTab = normalizeProjectFeatureTab(targetProject?.project.kind, tab);
       await leaveSelectedRun();
       await buildwarden.selectProject(projectId);
       await loadSnapshot();

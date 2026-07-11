@@ -30,7 +30,3 @@ export const CardAction = ({ className, ...props }: HTMLAttributes<HTMLDivElemen
 export const CardContent = ({ className, ...props }: HTMLAttributes<HTMLDivElement>) => (
   <div className={cn("p-4 pt-0", className)} {...props} />
 );
-
-export const CardFooter = ({ className, ...props }: HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("flex items-center gap-2 p-4 pt-0", className)} {...props} />
-);

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/*.mjs"],
+      "project": ["scripts/*.mjs"]
+    },
+    "apps/desktop": {
+      "entry": ["src/**/*.test.ts"],
+      "project": ["src/**/*.ts", "src/**/*.tsx"]
+    },
+    "packages/*": {
+      "project": ["src/**/*.ts"]
+    }
+  },
+  "ignoreDependencies": [
+    "@buildwarden/agent-runtime",
+    "eslint-plugin-sonarjs",
+    "openai",
+    "simple-git",
+    "sql.js",
+    "tailwindcss"
+  ],
+  "ignoreBinaries": ["taskkill", "x-terminal-emulator"]
+}

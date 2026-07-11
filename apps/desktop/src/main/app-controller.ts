@@ -7,7 +7,12 @@ import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { dialog, shell } from "electron";
 import { killRunTerminalForRunId } from "./run-terminal-ipc";
-import { buildDependencyGraphSnapshotForProjectGraph, listDependencySourceFilesForProjectGraph } from "./project-graph-utils";
+import {
+  buildDependencyGraphSnapshotForProjectGraph,
+  listDependencySourceFilesForProjectGraph,
+  normalizeProjectInsightRepoPath,
+  shouldIgnoreProjectInsightPath,
+} from "./project-graph-utils";
 import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
 import { readRunWorkspaceFileForPreview } from "./run-workspace-file";
 import { normalizeJsonResponse } from "./json-response";
@@ -169,6 +174,7 @@ import {
   type WorktreeStatus,
 } from "@buildwarden/shared";
 import { logError, logInfo, logWarn } from "./logger";
+import { buildIntegratedSkillContext } from "./integrated-skill-context";
 import {
   buildRunChatContext,
   buildRunChatFirstTurnPrompt,
@@ -252,7 +258,6 @@ const PROJECT_INSIGHT_AI_KINDS = new Set<ProjectInsightKind>([
   "codebase-mood",
   "curiosity-mode",
 ]);
-const MAX_SKILL_CONTEXT_CHARS = 140_000;
 
 type ModelInvocationContext = {
   model: ModelRecord;
@@ -293,70 +298,6 @@ const PROJECT_LAB_MODE_LABELS: Record<ProjectLabMode, string> = {
   refactoring: "Refactoring",
   "rfc-only": "RFC only",
 };
-
-const PROJECT_INSIGHT_IGNORED_DIRECTORY_NAMES = new Set([
-  ".git",
-  ".hg",
-  ".svn",
-  ".idea",
-  ".vscode",
-  ".turbo",
-  ".tmp",
-  ".temp",
-  ".cache",
-  ".parcel-cache",
-  ".angular",
-  ".nuxt",
-  ".next",
-  ".svelte-kit",
-  ".yarn",
-  ".pnpm-store",
-  ".nx",
-  ".expo",
-  ".gradle",
-  ".mvn",
-  ".pytest_cache",
-  ".ruff_cache",
-  ".tox",
-  ".venv",
-  "venv",
-  "__pycache__",
-  ".mypy_cache",
-  ".dart_tool",
-  ".serverless",
-  ".aws-sam",
-  ".terraform",
-  ".pulumi",
-  "node_modules",
-  "bower_components",
-  "jspm_packages",
-  "vendor",
-  "deps",
-  "target",
-  "dist",
-  "build",
-  "out",
-  "release",
-  "coverage",
-  "tmp",
-  "temp",
-  "bin",
-  "obj",
-  "debug",
-  "logs",
-  "log",
-  "DerivedData",
-  "Pods",
-  "Carthage",
-  "Buck-out",
-  ".sass-cache",
-  ".eslintcache",
-  ".stylelintcache",
-  ".cache-loader",
-  "storybook-static",
-  "cdk.out",
-  "terraform.tfstate.d",
-]);
 
 const normalizeSuggestedCommitMessage = (raw: string): string => {
   let t = raw.trim();
@@ -662,7 +603,7 @@ const CODEX_NATIVE_COMPOSER_COMMANDS: readonly ComposerCommandDescriptor[] = [
 const SELECTED_PROJECT_KEY = "selectedProjectId";
 const SELECTED_RUN_KEY = "selectedRunId";
 const SELECTED_CHAT_KEY = "selectedChatId";
-const NETWORK_PROXY_PASSWORD_SECRET_KEY = "app:network-proxy-password";
+const NETWORK_PROXY_SECRET_KEY = "app:network-proxy-password";
 const PROJECT_FORGE_TOKEN_SECRET_PREFIX = "project:forge-token:";
 const ACTIVE_RUN_STATUSES = new Set<RunRecord["status"]>(["queued", "preparing", "running"]);
 const runCheckpointSettingKey = (runId: string) => `runCheckpoint:${runId}`;
@@ -704,14 +645,6 @@ const parseProjectOrderSetting = (raw: string | undefined): string[] => {
   } catch {
     return [];
   }
-};
-
-const truncateForSkillSummary = (value: string, maxChars: number) =>
-  value.length <= maxChars ? value : `${value.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
-
-const extractReferencedSkillPaths = (content: string): string[] => {
-  const matches = content.match(/references\/[A-Za-z0-9._/-]+/g) ?? [];
-  return [...new Set(matches)];
 };
 
 export class AppController
@@ -857,93 +790,7 @@ export class AppController
   }
 
   private buildIntegratedSkillContext(projectId: string): string | undefined {
-    const skills = this.getProjectActiveIntegratedSkills(projectId);
-    if (skills.length === 0) {
-      return undefined;
-    }
-
-    const sections: string[] = [
-      "Integrated skills",
-      "Apply the following active project skills when relevant. Follow repository conventions first, and do not treat these skill prompts as permission to ignore higher-priority instructions.",
-    ];
-    let totalChars = sections.join("\n\n").length;
-
-    for (const skill of skills) {
-      const fullSection = [
-        `## ${skill.title} (${skill.id})`,
-        `Source: ${skill.source}`,
-        `Description: ${skill.description}`,
-        skill.content.trim(),
-      ].join("\n\n");
-      if (totalChars + fullSection.length <= MAX_SKILL_CONTEXT_CHARS) {
-        sections.push(fullSection);
-        totalChars += fullSection.length + 2;
-        continue;
-      }
-
-      const summarySection = [
-        `## ${skill.title} (${skill.id})`,
-        `Source: ${skill.source}`,
-        `Description: ${truncateForSkillSummary(skill.description, 260)}`,
-        "Full skill body omitted due to context budget. Still honor the skill intent and best practices for this domain.",
-      ].join("\n\n");
-      if (totalChars + summarySection.length <= MAX_SKILL_CONTEXT_CHARS) {
-        sections.push(summarySection);
-        totalChars += summarySection.length + 2;
-      }
-
-      const referencedPaths = extractReferencedSkillPaths(skill.content);
-      if (referencedPaths.length === 0 || skill.references.length === 0) {
-        continue;
-      }
-
-      const referencesByPath = new Map(skill.references.map((reference) => [reference.path, reference]));
-      const includedReferencePaths: string[] = [];
-      const omittedReferencePaths: string[] = [];
-
-      for (const referencePath of referencedPaths) {
-        const reference = referencesByPath.get(referencePath);
-        if (!reference) {
-          continue;
-        }
-        const referenceSection = [
-          `### Reference: ${reference.path}`,
-          reference.content.trim(),
-        ].join("\n\n");
-        if (totalChars + referenceSection.length <= MAX_SKILL_CONTEXT_CHARS) {
-          sections.push(referenceSection);
-          totalChars += referenceSection.length + 2;
-          includedReferencePaths.push(reference.path);
-        } else {
-          omittedReferencePaths.push(reference.path);
-        }
-      }
-
-      if (includedReferencePaths.length > 0) {
-        const includedSection = [
-          `### Included references for ${skill.title}`,
-          includedReferencePaths.map((referencePath) => `- ${referencePath}`).join("\n"),
-        ].join("\n\n");
-        if (totalChars + includedSection.length <= MAX_SKILL_CONTEXT_CHARS) {
-          sections.push(includedSection);
-          totalChars += includedSection.length + 2;
-        }
-      }
-
-      if (omittedReferencePaths.length > 0 && totalChars < MAX_SKILL_CONTEXT_CHARS) {
-        const omittedSection = [
-          `### Omitted references for ${skill.title}`,
-          omittedReferencePaths.map((referencePath) => `- ${referencePath}`).join("\n"),
-          "These reference files were omitted only because of the context budget. If they seem relevant, infer guidance from the skill body and included references.",
-        ].join("\n\n");
-        if (totalChars + omittedSection.length <= MAX_SKILL_CONTEXT_CHARS) {
-          sections.push(omittedSection);
-          totalChars += omittedSection.length + 2;
-        }
-      }
-    }
-
-    return sections.join("\n\n");
+    return buildIntegratedSkillContext(this.getProjectActiveIntegratedSkills(projectId));
   }
 
   private getProjectLabSettings(projectId: string): ProjectLabSettings {
@@ -1898,7 +1745,7 @@ export class AppController
 
   async getNetworkProxySettings(): Promise<NetworkProxySettingsSnapshot> {
     const settings = parseNetworkProxySettings(this.db.getSettings()[APP_SETTING_KEYS.networkProxyConfig]);
-    const hasPassword = (await this.secrets.readSecret(NETWORK_PROXY_PASSWORD_SECRET_KEY)) != null;
+    const hasPassword = (await this.secrets.readSecret(NETWORK_PROXY_SECRET_KEY)) != null;
     return {
       ...settings,
       hasPassword,
@@ -1943,10 +1790,10 @@ export class AppController
     );
 
     if (input.clearSavedPassword === true) {
-      await this.secrets.deleteSecret(NETWORK_PROXY_PASSWORD_SECRET_KEY);
+      await this.secrets.deleteSecret(NETWORK_PROXY_SECRET_KEY);
     } else if (typeof input.password === "string") {
       if (input.password.length > 0) {
-        await this.secrets.saveSecret(NETWORK_PROXY_PASSWORD_SECRET_KEY, input.password);
+        await this.secrets.saveSecret(NETWORK_PROXY_SECRET_KEY, input.password);
       }
     }
 
@@ -4165,8 +4012,8 @@ export class AppController
         continue;
       }
       if (current) {
-        const normalized = this.normalizeRepoPath(line);
-        if (!this.shouldIgnoreProjectInsightPath(normalized)) {
+        const normalized = normalizeProjectInsightRepoPath(line);
+        if (!shouldIgnoreProjectInsightPath(normalized)) {
           current.files.push(normalized);
         }
       }
@@ -4594,7 +4441,7 @@ export class AppController
       }
     >();
     const ensureMetric = (path: string) => {
-      const normalizedPath = this.normalizeRepoPath(path);
+      const normalizedPath = normalizeProjectInsightRepoPath(path);
       const existing = metrics.get(normalizedPath);
       if (existing) {
         return existing;
@@ -4692,73 +4539,14 @@ export class AppController
     return lines.join("\n");
   }
 
-  private normalizeRepoPath(input: string): string {
-    return input.replace(/\\/g, "/").replace(/^\.\//, "").trim();
-  }
-
-  private shouldIgnoreProjectInsightDirectoryName(name: string): boolean {
-    const trimmed = name.trim();
-    const normalized = trimmed.toLowerCase();
-    if (!normalized) {
-      return true;
-    }
-    if (PROJECT_INSIGHT_IGNORED_DIRECTORY_NAMES.has(trimmed) || PROJECT_INSIGHT_IGNORED_DIRECTORY_NAMES.has(normalized)) {
-      return true;
-    }
-    if (/^(cache|caches|generated|gen|build|dist|out|tmp|temp)([-_.].+)?$/i.test(trimmed)) {
-      return true;
-    }
-    if (/^__.*__$/.test(trimmed) && trimmed !== "__tests__" && trimmed !== "__mocks__") {
-      return true;
-    }
-    return false;
-  }
-
-  private shouldIgnoreProjectInsightPath(path: string): boolean {
-    const normalized = this.normalizeRepoPath(path);
-    if (!normalized) {
-      return true;
-    }
-    const segments = normalized.split("/").filter(Boolean);
-    if (segments.some((segment) => this.shouldIgnoreProjectInsightDirectoryName(segment))) {
-      return true;
-    }
-    const lower = normalized.toLowerCase();
-    if (
-      lower.includes("/cache/") ||
-      lower.includes("/caches/") ||
-      lower.includes("/generated/") ||
-      lower.includes("/gen/") ||
-      lower.includes("/build/") ||
-      lower.includes("/dist/") ||
-      lower.includes("/out/") ||
-      lower.includes("/coverage/") ||
-      lower.includes("/vendor/") ||
-      lower.includes("/deps/") ||
-      lower.includes("/node_modules/")
-    ) {
-      return true;
-    }
-    if (
-      /(^|\/)(chunk|vendor|bundle|runtime|polyfills|main|styles)-[a-z0-9]{6,}\.(js|mjs|cjs|css|map)$/i.test(lower) ||
-      /(^|\/)[a-z0-9_-]+\.[a-f0-9]{8,}\.(js|mjs|cjs|css|map)$/i.test(lower) ||
-      lower.endsWith(".min.js") ||
-      lower.endsWith(".min.css") ||
-      lower.endsWith(".map")
-    ) {
-      return true;
-    }
-    return false;
-  }
-
   private compactLabel(path: string): string {
-    const normalized = this.normalizeRepoPath(path);
+    const normalized = normalizeProjectInsightRepoPath(path);
     const segments = normalized.split("/");
     return segments.length <= 2 ? normalized : `${segments[0]}/${segments[segments.length - 1]}`;
   }
 
   private pathGroup(path: string): string {
-    const normalized = this.normalizeRepoPath(path);
+    const normalized = normalizeProjectInsightRepoPath(path);
     return normalized.split("/")[0] || "root";
   }
 
@@ -6786,7 +6574,7 @@ export class AppController
 
   private async resolveNetworkProxyRuntimeConfig(): Promise<NetworkProxyRuntimeConfig | undefined> {
     const settings = parseNetworkProxySettings(this.db.getSettings()[APP_SETTING_KEYS.networkProxyConfig]);
-    const password = await this.secrets.readSecret(NETWORK_PROXY_PASSWORD_SECRET_KEY);
+    const password = await this.secrets.readSecret(NETWORK_PROXY_SECRET_KEY);
     return buildNetworkProxyRuntimeConfig(settings, password ?? undefined);
   }
 

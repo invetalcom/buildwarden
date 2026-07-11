@@ -75,7 +75,7 @@ type PythonImportEntry =
 
 export const normalizeProjectInsightRepoPath = (input: string): string => input.replace(/\\/g, "/").replace(/^\.\//, "").trim();
 
-export const shouldIgnoreProjectInsightDirectoryName = (name: string): boolean => {
+const shouldIgnoreProjectInsightDirectoryName = (name: string): boolean => {
   const trimmed = name.trim();
   const normalized = trimmed.toLowerCase();
   if (!normalized) {

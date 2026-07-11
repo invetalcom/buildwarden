@@ -9,7 +9,7 @@ import {
 import { cn } from "../../lib/cn";
 import { AnchorDropdownPortal, type AnchorDropdownAlign, type AnchorDropdownPlacement } from "./dropdown-portal";
 
-export type SelectOption = {
+type SelectOption = {
   value: string;
   label: string;
   description?: string;

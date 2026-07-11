@@ -67,7 +67,7 @@ const SettingsField = ({
 );
 
 export type ProviderModelsOpenPanel = "connection" | "model" | null;
-export type ProviderModelsPresentation = "settings" | "welcome";
+type ProviderModelsPresentation = "settings" | "welcome";
 
 export type ProviderModelsSettingsTabProps = {
   busy: boolean;

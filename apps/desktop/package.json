@@ -24,6 +24,7 @@
     "lint": "eslint . --ext .ts,.tsx",
     "pack": "electron-builder --dir",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -58,9 +59,7 @@
     "@xterm/xterm": "^6.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "dependency-cruiser": "^17.1.0",
     "diff": "^8.0.3",
-    "electron-updater": "^6.8.9",
     "gpt-tokenizer": "^3.4.0",
     "lucide-react": "^0.511.0",
     "mermaid": "^11.16.0",
@@ -76,8 +75,7 @@
     "simple-git": "^3.36.0",
     "sql.js": "^1.13.0",
     "tailwind-merge": "^3.3.0",
-    "tailwindcss": "^4.3.2",
-    "zustand": "^5.0.3"
+    "tailwindcss": "^4.3.2"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
@@ -86,6 +84,8 @@
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
     "@vitejs/plugin-react": "^5.2.0",
+    "@vitest/coverage-istanbul": "4.1.9",
+    "ai": "7.0.20",
     "electron": "^41.9.2",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",

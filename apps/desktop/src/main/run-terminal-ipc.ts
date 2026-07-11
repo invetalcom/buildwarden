@@ -30,7 +30,7 @@ type RunTerminalSession = { proc: IPty; wc: WebContents; cwd: string };
 const sessions = new Map<string, RunTerminalSession>();
 
 /** Session id format must match the renderer (`RunWorktreeTerminal`). */
-export const runTerminalSessionIdForRun = (runId: string): string => `buildwarden-run-terminal:${runId}`;
+const runTerminalSessionIdForRun = (runId: string): string => `buildwarden-run-terminal:${runId}`;
 
 export const killRunTerminalForRunId = (runId: string): void => {
   const sessionId = runTerminalSessionIdForRun(runId);

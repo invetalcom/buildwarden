@@ -27,7 +27,7 @@ export const WELCOME_CHECK_DEFINITIONS = [
   },
 ] as const satisfies readonly WelcomeCheckDefinition[];
 
-export const isWelcomeCheckSatisfied = (checkId: WelcomeCheckId, snapshot: AppSnapshot): boolean => {
+const isWelcomeCheckSatisfied = (checkId: WelcomeCheckId, snapshot: AppSnapshot): boolean => {
   switch (checkId) {
     case "provider-models":
       return snapshot.providerAccounts.length > 0 && snapshot.models.length > 0;

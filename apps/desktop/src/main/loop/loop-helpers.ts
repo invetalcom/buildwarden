@@ -21,11 +21,11 @@ export const LOOP_MAX_MANUAL_UI_REVIEW_ROUNDS = 8;
 /** Bounded comment-addressing rounds per PR. */
 export const LOOP_MAX_COMMENT_ROUNDS = 12;
 /** Maximum inline findings the AI PR review posts per PR. */
-export const LOOP_MAX_PR_REVIEW_FINDINGS = 12;
+const LOOP_MAX_PR_REVIEW_FINDINGS = 12;
 /** Character budget for the PR diff passed to the AI PR reviewer. */
 export const LOOP_PR_REVIEW_DIFF_CHAR_LIMIT = 30_000;
 
-export interface LoopPlanIteration {
+interface LoopPlanIteration {
   title: string;
   objective: string;
 }
@@ -340,7 +340,7 @@ export const buildLoopCommentsFixPrompt = (args: {
   return lines.join("\n");
 };
 
-export interface LoopPrReviewFinding {
+interface LoopPrReviewFinding {
   path: string;
   /** Line number in the NEW version of the file; null when the finding is not tied to a specific line. */
   line: number | null;
