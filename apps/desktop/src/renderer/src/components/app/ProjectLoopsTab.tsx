@@ -391,7 +391,7 @@ const loopUnavailableReasonText = (availability: ProjectLoopAvailability): strin
   }
   if (availability.reason === "no-forge-token") {
     const providerLabel = availability.provider === "gitlab" ? "GitLab" : "GitHub";
-    return `Save a ${providerLabel} access token in the MR Review tab (${availability.repoLabel ?? "repository"}) so the loop can create and merge PRs in the background.`;
+    return `Save a ${providerLabel} access token in the PR Review tab (${availability.repoLabel ?? "repository"}) so the loop can create and merge PRs in the background.`;
   }
   return "Loops need at least one enabled model from a local provider (Codex CLI or Claude Code), because only they can drive the app and capture screenshots.";
 };

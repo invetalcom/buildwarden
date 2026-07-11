@@ -190,6 +190,59 @@ describe("ProjectPrMrTab review helpers", () => {
     ]);
   });
 
+  it("limits commit-scoped file navigation to files present in the parsed commit diff", () => {
+    const details = baseDetails();
+    details.files = [
+      { path: "src/first.ts", oldPath: null, status: "modified", additions: 4, deletions: 1, patchAvailable: true, commentCount: 0 },
+      { path: "src/second.ts", oldPath: null, status: "modified", additions: 2, deletions: 2, patchAvailable: true, commentCount: 1 },
+    ];
+    const parsedFiles: DiffPreviewFileSummary[] = [
+      { key: "parsed-second", path: "src/second.ts", oldPath: null, type: "modify", additions: 1, deletions: 1 },
+    ];
+    details.reviewThreads = ["src/first.ts", "src/second.ts"].map((path, index) => ({
+      id: `thread-${String(index)}`,
+      providerThreadId: `provider-thread-${String(index)}`,
+      replyToCommentId: null,
+      provider: "github" as const,
+      path,
+      oldPath: path,
+      side: "new" as const,
+      oldLineNumber: null,
+      newLineNumber: 4,
+      commitSha: "head",
+      diffHunk: null,
+      resolved: false,
+      comments: Array.from({ length: index + 1 }, (_, commentIndex) => ({
+        id: `comment-${String(index)}-${String(commentIndex)}`,
+        providerCommentId: `${String(index)}-${String(commentIndex)}`,
+        body: "Review note",
+        author: null,
+        createdAt: null,
+        updatedAt: null,
+        url: null,
+      })),
+    }));
+    const drafts: DraftDiffComment[] = ["src/first.ts", "src/second.ts"].map((path, index) => ({
+      id: `draft-${String(index)}`,
+      oldPath: path,
+      newPath: path,
+      side: "new" as const,
+      oldLineNumber: null,
+      newLineNumber: 4,
+      changeType: "insert" as const,
+      body: "Draft note",
+      displayPath: path,
+      lineLabel: `${path}:4 new`,
+    }));
+
+    const result = buildPrMrFileNavItems(details, parsedFiles, drafts, { restrictToParsedDiff: true });
+
+    expect(result).toHaveLength(1);
+    expect(result).toMatchObject([
+      { path: "src/second.ts", additions: 1, deletions: 1, commentCount: 2, draftCount: 1 },
+    ]);
+  });
+
   it("builds compact code context for a review thread from the loaded diff", () => {
     const details = baseDetails();
     const thread = {

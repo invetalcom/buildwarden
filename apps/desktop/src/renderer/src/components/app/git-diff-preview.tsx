@@ -221,8 +221,10 @@ const DraftCommentCard = ({
   return (
     <div
       className={cn(
-        "rounded-md border px-2.5 py-1.5 text-[11px] text-zinc-300",
-        comment.remote ? "border-zinc-700/80 bg-zinc-900/55" : "border-cyan-500/20 bg-cyan-500/[0.055]",
+        "relative rounded-md border px-2.5 py-2 text-[11px] text-zinc-300 shadow-sm",
+        comment.remote
+          ? "border-zinc-800 bg-zinc-950/75"
+          : "border-zinc-700/80 bg-zinc-950/90 before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-cyan-300",
         editing && "border-cyan-400/60 ring-1 ring-cyan-400/40",
         highlighted && "border-cyan-300/80 ring-2 ring-cyan-300/40",
       )}
@@ -230,8 +232,8 @@ const DraftCommentCard = ({
       <div className="flex min-w-0 items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className={cn("text-[11px] font-semibold", comment.remote ? "text-zinc-100" : "text-cyan-100")}>
-              {comment.remote ? (comment.author ?? "Reviewer") : "Draft comment"}
+            <span className={cn("text-[10px] font-semibold", comment.remote ? "text-zinc-100" : "text-zinc-200")}>
+              {comment.remote ? (comment.author ?? "Reviewer") : "Pending review"}
             </span>
             {comment.remote && comment.resolved ? (
               <span className="rounded-full border border-emerald-500/25 bg-emerald-500/[0.08] px-1.5 py-px text-[8px] font-semibold uppercase text-emerald-200">
@@ -315,29 +317,29 @@ const InlineDraftCommentEditor = ({
 
   return (
     <div
-      className="rounded-md border border-cyan-500/30 bg-cyan-500/[0.075] px-2.5 py-2 text-[11px]"
+      className="overflow-hidden rounded-md border border-zinc-700/90 bg-zinc-950 text-[11px] shadow-xl shadow-black/25 ring-1 ring-cyan-400/10"
       onClick={(event) => event.stopPropagation()}
     >
-      <div className="flex min-w-0 items-center justify-between gap-2">
-        <p className="min-w-0 truncate font-mono text-[10px] text-cyan-100">{target.lineLabel}</p>
-        <Button type="button" size="sm" variant="ghost" className="h-5 shrink-0 px-1.5 text-[9px] text-zinc-400" onClick={onCancel}>
+      <div className="flex min-w-0 items-center justify-between gap-2 border-b border-zinc-800/80 px-2.5 py-1.5">
+        <p className="min-w-0 truncate font-mono text-[9px] text-zinc-500">Comment on {target.lineLabel}</p>
+        <Button type="button" size="sm" variant="ghost" className="h-5 shrink-0 px-1.5 text-[9px] text-zinc-500 hover:text-zinc-200" onClick={onCancel}>
           Cancel
         </Button>
       </div>
       <textarea
         value={value}
         onChange={(event) => setValue(event.target.value)}
-        className="mt-1.5 h-16 w-full resize-none rounded-md border border-zinc-700 bg-zinc-950/80 px-2 py-1.5 text-[11px] text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-cyan-500/70"
+        className="h-20 w-full resize-none border-0 bg-transparent px-2.5 py-2 text-[11px] leading-relaxed text-zinc-100 outline-none placeholder:text-zinc-600 focus:bg-zinc-900/20"
         placeholder="Write a diff comment..."
         autoFocus
       />
-      <div className="mt-1.5 flex flex-wrap justify-end gap-1.5">
+      <div className="flex flex-wrap justify-end gap-1.5 border-t border-zinc-800/80 bg-zinc-900/35 px-2 py-1.5">
         {onSaveSingle ? (
-          <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-[10px]" onClick={() => onSaveSingle(value)} disabled={!value.trim() || singleSaveBusy}>
+          <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-[10px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200" onClick={() => onSaveSingle(value)} disabled={!value.trim() || singleSaveBusy}>
             {singleSaveBusy ? "Posting..." : singleSaveLabel}
           </Button>
         ) : null}
-        <Button type="button" size="sm" className="h-7 px-2 text-[10px]" onClick={() => onSave(value)} disabled={!value.trim()}>
+        <Button type="button" size="sm" className="h-7 bg-cyan-500/90 px-2 text-[10px] font-semibold text-zinc-950 hover:bg-cyan-300" onClick={() => onSave(value)} disabled={!value.trim()}>
           {saveLabel}
         </Button>
       </div>
@@ -692,7 +694,7 @@ const DiffFileSection = memo(function DiffFileSection({
                     return (
                       <button
                         type="button"
-                        className="flex h-[1.1rem] min-w-[1.1rem] items-center justify-center rounded bg-cyan-500 px-1 text-[9px] font-semibold text-zinc-950 shadow-sm hover:bg-cyan-400"
+                        className="flex h-[1.1rem] min-w-[1.1rem] items-center justify-center rounded border border-cyan-400/40 bg-zinc-950 px-1 text-[9px] font-semibold text-cyan-200 shadow-sm transition-colors hover:bg-cyan-400 hover:text-zinc-950"
                         aria-label="Add diff comment"
                         title="Add diff comment"
                         onClick={(event) => {

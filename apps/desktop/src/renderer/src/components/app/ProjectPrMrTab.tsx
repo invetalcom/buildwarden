@@ -18,10 +18,8 @@ import {
   ChevronDown,
   CheckCircle2,
   Columns2,
-  ClipboardList,
   Eye,
   ExternalLink,
-  FileText,
   GitPullRequest,
   Info,
   KeyRound,
@@ -45,7 +43,6 @@ import { Input } from "../ui/input";
 import { Select } from "../ui/select";
 import { ActivityRichText } from "../ui/activity-rich-text";
 import { DiffReviewPanel, type DiffReviewPanelState } from "./diff-review-panel";
-import { AgentLogRow, AgentWorklog, type AgentWorklogTone } from "./agent-worklog";
 import { AnchorDropdownPortal } from "./anchor-dropdown-portal";
 import {
   GitDiffPreview,
@@ -174,14 +171,6 @@ const requestStateTone = (state: string) => {
   return "border-cyan-500/30 bg-cyan-500/[0.08] text-cyan-100";
 };
 
-const activityKindTone = (kind: ProjectForgeActivityItem["kind"]) => {
-  if (kind === "review") return "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]";
-  if (kind === "diff-comment") return "border-cyan-500/25 bg-cyan-500/[0.08] text-cyan-100";
-  if (kind === "state") return "border-emerald-500/25 bg-emerald-500/[0.08] text-emerald-200";
-  if (kind === "event") return "border-zinc-700 bg-zinc-800/45 text-zinc-300";
-  return "border-blue-500/25 bg-blue-500/[0.08] text-blue-100";
-};
-
 const formatReviewBody = (review: RunDiffReviewResult): string => {
   const lines = [
     "## BuildWarden AI review",
@@ -218,6 +207,9 @@ const formatReviewBody = (review: RunDiffReviewResult): string => {
 };
 
 type ProjectPrMrMeta = { provider: "github" | "gitlab"; number: number; baseRef: string };
+type ConversationEntry =
+  | { type: "item"; item: ProjectForgeActivityItem }
+  | { type: "event-group"; items: ProjectForgeActivityItem[] };
 type ProjectPrMrSessionState = {
   prUrl: string;
   baseBranch: string;
@@ -237,6 +229,26 @@ type ProjectPrMrSessionState = {
   diffFileQuery: string;
   detailsCache: Map<string, ProjectForgeRequestDetailsResult>;
   diffCache: Map<string, ProjectPrMrDiffResult>;
+};
+
+const restoreProjectPrMrDiffScope = (session: ProjectPrMrSessionState) => {
+  const activeDetailTab = normalizeRequestDetailTab(session.activeDetailTab);
+  const hadCommitScope = Boolean(session.selectedCommitSha);
+  const shouldRestoreFullDiff = activeDetailTab !== "files" && hadCommitScope;
+  const requestUrl = (session.selectedRequest?.url ?? session.prUrl).trim();
+  const fullDiff = shouldRestoreFullDiff ? (session.diffCache.get(requestDiffCacheKey(requestUrl)) ?? null) : null;
+  const meta = fullDiff
+    ? { provider: fullDiff.provider, number: fullDiff.number, baseRef: fullDiff.baseRef }
+    : shouldRestoreFullDiff
+      ? null
+      : session.meta;
+
+  return {
+    activeDetailTab,
+    selectedCommitSha: activeDetailTab === "files" ? session.selectedCommitSha : null,
+    diffText: fullDiff?.diff ?? (shouldRestoreFullDiff ? "" : session.diffText),
+    meta,
+  };
 };
 
 const projectPrMrSessionCache = new Map<string, ProjectPrMrSessionState>();
@@ -286,10 +298,11 @@ const formatAppErrorMessage = (error: unknown, fallback: string) => {
 
 export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initialRequest = null, onOpenProjectSettings }: ProjectPrMrTabProps) => {
   const initialSession = getProjectPrMrSession(projectId);
+  const initialDiffScope = initialSession ? restoreProjectPrMrDiffScope(initialSession) : null;
   const [prUrl, setPrUrl] = useState(() => initialSession?.prUrl ?? "");
   const [baseBranch, setBaseBranch] = useState(() => initialSession?.baseBranch ?? "");
-  const [diffText, setDiffText] = useState(() => initialSession?.diffText ?? "");
-  const [meta, setMeta] = useState<ProjectPrMrMeta | null>(() => initialSession?.meta ?? null);
+  const [diffText, setDiffText] = useState(() => initialDiffScope?.diffText ?? "");
+  const [meta, setMeta] = useState<ProjectPrMrMeta | null>(() => initialDiffScope?.meta ?? null);
   const [loadBusy, setLoadBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reviewModelId, setReviewModelId] = useState(defaultModelId);
@@ -325,8 +338,8 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const gitDiffPanelRef = useRef<GitDiffPreviewHandle>(null);
   const aiReviewMenuAnchorRef = useRef<HTMLDivElement>(null);
   const [allDiffFilesExpanded, setAllDiffFilesExpanded] = useState(false);
-  const [activeDetailTab, setActiveDetailTab] = useState<RequestDetailTab>(() => normalizeRequestDetailTab(initialSession?.activeDetailTab));
-  const [selectedCommitSha, setSelectedCommitSha] = useState<string | null>(() => initialSession?.selectedCommitSha ?? null);
+  const [activeDetailTab, setActiveDetailTab] = useState<RequestDetailTab>(() => initialDiffScope?.activeDetailTab ?? "conversation");
+  const [selectedCommitSha, setSelectedCommitSha] = useState<string | null>(() => initialDiffScope?.selectedCommitSha ?? null);
   const [diffViewType, setDiffViewType] = useState<"unified" | "split">(() => initialSession?.diffViewType ?? "unified");
   const [hideWhitespaceChanges, setHideWhitespaceChanges] = useState(() => initialSession?.hideWhitespaceChanges ?? false);
   const [activeDiffFilePath, setActiveDiffFilePath] = useState<string | null>(() => initialSession?.activeDiffFilePath ?? null);
@@ -337,6 +350,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const requestDetailsInFlightRef = useRef(new Map<string, Promise<ProjectForgeRequestDetailsResult>>());
   const requestDiffCacheRef = useRef(initialSession?.diffCache ?? new Map<string, ProjectPrMrDiffResult>());
   const requestDiffInFlightRef = useRef(new Map<string, Promise<ProjectPrMrDiffResult>>());
+  const diffLoadGenerationRef = useRef(0);
   const requestPreloadGenerationRef = useRef(0);
   const activeRequestUrlRef = useRef(initialSession?.selectedRequest?.url ?? initialSession?.prUrl.trim() ?? "");
   const hydratedProjectIdRef = useRef(projectId);
@@ -567,8 +581,10 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     requestPreloadGenerationRef.current += 1;
     requestDetailsInFlightRef.current.clear();
     requestDiffInFlightRef.current.clear();
+    diffLoadGenerationRef.current += 1;
 
     if (cached) {
+      const restoredDiffScope = restoreProjectPrMrDiffScope(cached);
       requestDetailsCacheRef.current = cached.detailsCache;
       requestDiffCacheRef.current = cached.diffCache;
       activeRequestUrlRef.current = cached.selectedRequest?.url ?? cached.prUrl.trim();
@@ -580,10 +596,10 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
       setRequestDetails(cached.requestDetails);
       setPrUrl(cached.prUrl);
       setBaseBranch(cached.baseBranch);
-      setDiffText(cached.diffText);
-      setMeta(cached.meta);
-      setActiveDetailTab(normalizeRequestDetailTab(cached.activeDetailTab));
-      setSelectedCommitSha(cached.selectedCommitSha ?? null);
+      setDiffText(restoredDiffScope.diffText);
+      setMeta(restoredDiffScope.meta);
+      setActiveDetailTab(restoredDiffScope.activeDetailTab);
+      setSelectedCommitSha(restoredDiffScope.selectedCommitSha);
       setDiffViewType(cached.diffViewType ?? "unified");
       setHideWhitespaceChanges(cached.hideWhitespaceChanges ?? false);
       setActiveDiffFilePath(cached.activeDiffFilePath ?? null);
@@ -693,6 +709,28 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
       }),
     [findReviewThreadForActivity, timelineActivity],
   );
+  const conversationEntries = useMemo<ConversationEntry[]>(() => {
+    const entries: ConversationEntry[] = [];
+    for (const item of conversationActivity) {
+      const isQuietEvent = (item.kind === "event" || item.kind === "state") && !item.body?.trim() && !findReviewThreadForActivity(item);
+      const previous = entries.at(-1);
+      const previousItems = previous?.type === "event-group" ? previous.items : null;
+      const sameGroup =
+        isQuietEvent &&
+        previousItems &&
+        previousItems[0]?.author?.username === item.author?.username &&
+        previousItems[0]?.title === item.title;
+
+      if (sameGroup) {
+        previousItems.push(item);
+      } else if (isQuietEvent) {
+        entries.push({ type: "event-group", items: [item] });
+      } else {
+        entries.push({ type: "item", item });
+      }
+    }
+    return entries;
+  }, [conversationActivity, findReviewThreadForActivity]);
   const remoteDiffComments = useMemo<DiffPreviewManualComment[]>(
     () => buildRemoteDiffComments(visibleRequestDetails),
     [visibleRequestDetails],
@@ -701,7 +739,8 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     () => [...remoteDiffComments, ...draftComments],
     [draftComments, remoteDiffComments],
   );
-  const loadedOrReportedFileCount = diffChangedFileCount || visibleRequestDetails?.request.changedFiles || 0;
+  const activeDiffFileCount = parsedDiffFiles.length || diffChangedFileCount;
+  const loadedOrReportedFileCount = activeDiffFileCount || (selectedCommitSha ? 0 : (visibleRequestDetails?.request.changedFiles ?? 0));
   const totalActivityCount = visibleRequestDetails?.activity.length ?? visibleRequestDetails?.request.commentCount ?? 0;
   const commitCount = visibleRequestDetails?.commits.length ?? 0;
   const shouldShowForgeTokenHint = forgeAuthStatus?.hasToken === false;
@@ -713,13 +752,15 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   }, []);
 
   const fileNavItems = useMemo(
-    () => buildPrMrFileNavItems(visibleRequestDetails, parsedDiffFiles, draftComments),
-    [draftComments, parsedDiffFiles, visibleRequestDetails],
+    () => buildPrMrFileNavItems(visibleRequestDetails, parsedDiffFiles, draftComments, { restrictToParsedDiff: Boolean(selectedCommitSha) }),
+    [draftComments, parsedDiffFiles, selectedCommitSha, visibleRequestDetails],
   );
 
   const resetLoadedDiff = useCallback(() => {
+    diffLoadGenerationRef.current += 1;
     setDiffText("");
     setMeta(null);
+    setLoadBusy(false);
     setLoadError(null);
     setReviewPanel(emptyReviewPanel());
     setAiReviewMenuOpen(false);
@@ -955,6 +996,8 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
       return;
     }
     const commitSha = options.commitSha?.trim() || null;
+    const loadGeneration = diffLoadGenerationRef.current + 1;
+    diffLoadGenerationRef.current = loadGeneration;
     setActiveDetailTab("files");
     setAiReviewMenuOpen(false);
     setSelectedCommitSha(commitSha);
@@ -982,12 +1025,16 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
         setDetailsError(null);
       }
       const result = await fetchRequestDiff(targetUrl, activeBaseBranch.trim() || undefined, commitSha);
+      if (diffLoadGenerationRef.current !== loadGeneration) return;
       setPrUrl(targetUrl);
       applyDiffResult(result);
     } catch (error) {
+      if (diffLoadGenerationRef.current !== loadGeneration) return;
       setLoadError(formatAppErrorMessage(error, "Could not load the PR/MR diff."));
     } finally {
-      setLoadBusy(false);
+      if (diffLoadGenerationRef.current === loadGeneration) {
+        setLoadBusy(false);
+      }
     }
   };
 
@@ -1070,6 +1117,45 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     if (!hasDiff && activeUrl.trim() && !loadBusy) {
       void loadDiff({ commitSha: selectedCommitSha ?? null });
     }
+  };
+
+  const leaveCommitDiffScope = () => {
+    if (!selectedCommitSha) return;
+    const fullRequestDiff = requestDiffCacheRef.current.get(requestDiffCacheKey(activeUrl));
+    diffLoadGenerationRef.current += 1;
+    setSelectedCommitSha(null);
+    setLoadBusy(false);
+    setLoadError(null);
+    setAiReviewMenuOpen(false);
+    setAllDiffFilesExpanded(false);
+    setActiveDiffFilePath(null);
+    setDiffFileQuery("");
+    setParsedDiffFiles([]);
+    setHighlightedCommentId(null);
+    setReviewPanel(emptyReviewPanel());
+    setPostMessage(null);
+    setPostError(null);
+    setReplyThreadId(null);
+    setReplyThreadText("");
+    setThreadActionBusyId(null);
+    setConfirmResolveThreadId(null);
+    clearDraftEditor();
+    if (fullRequestDiff) {
+      applyDiffResult(fullRequestDiff);
+    } else {
+      setDiffText("");
+      setMeta(null);
+    }
+  };
+
+  const showConversation = () => {
+    leaveCommitDiffScope();
+    setActiveDetailTab("conversation");
+  };
+
+  const showCommits = () => {
+    leaveCommitDiffScope();
+    setActiveDetailTab("commits");
   };
 
   const showFiles = () => {
@@ -1381,36 +1467,12 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const prLoadHelp =
     "Paste a GitHub PR or GitLab MR link, or fetch requests from the hosting API. Files changed loads the diff without running AI review.";
 
-  const conversationItemTone = (item: ProjectForgeActivityItem): AgentWorklogTone => {
-    if (item.kind === "diff-comment") {
-      return "diff";
-    }
-    if (item.kind === "review") {
-      return "request";
-    }
-    if (item.commitSha) {
-      return "tools";
-    }
-    if (item.kind === "comment") {
-      return "answer";
-    }
-    return "status";
-  };
-
-  const conversationItemLabel = (item: ProjectForgeActivityItem) => {
-    if (item.kind === "diff-comment") {
-      return "Comment";
-    }
-    if (item.commitSha) {
-      return "Commit";
-    }
-    if (item.kind === "review") {
-      return "Review";
-    }
-    if (item.kind === "comment") {
-      return "Note";
-    }
-    return "Event";
+  const conversationKindLabel = (item: ProjectForgeActivityItem) => {
+    if (item.kind === "review") return "Review";
+    if (item.kind === "comment") return "Comment";
+    if (item.commitSha) return "Commit";
+    if (item.kind === "state") return "Status";
+    return "Update";
   };
 
   const renderThreadCodeLines = (lines: ReviewThreadCodeLine[]) => {
@@ -1454,6 +1516,41 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     );
   };
 
+  const renderConversationAvatar = (name: string, avatarUrl?: string | null, accent = false) =>
+    avatarUrl ? (
+      <img src={avatarUrl} alt="" className="h-7 w-7 rounded-full bg-zinc-900 object-cover ring-1 ring-zinc-800" />
+    ) : (
+      <span
+        className={cn(
+          "flex h-7 w-7 items-center justify-center rounded-full text-[9px] font-semibold ring-1 ring-inset",
+          accent ? "bg-cyan-500/10 text-cyan-200 ring-cyan-500/25" : "bg-zinc-900 text-zinc-400 ring-zinc-800",
+        )}
+      >
+        {name.slice(0, 2).toUpperCase()}
+      </span>
+    );
+
+  const renderEventGroup = (items: ProjectForgeActivityItem[]) => {
+    const first = items[0];
+    if (!first) return null;
+    const author = first.author?.username ?? (first.provider === "gitlab" ? "GitLab" : "GitHub");
+    const repeated = items.length > 1;
+    return (
+      <div key={`event-group-${first.id}`} className="group flex items-center gap-3 border-b border-zinc-900/80 py-2.5 last:border-b-0">
+        <span className="ml-3 h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-700 transition-colors group-hover:bg-cyan-400" aria-hidden />
+        <p className="min-w-0 flex-1 truncate text-[10px] text-zinc-500">
+          <span className="font-medium text-zinc-300">{author}</span>{" "}
+          {first.title}
+          {repeated ? <span className="ml-1.5 text-zinc-600">· {String(items.length)} updates</span> : null}
+          {first.commitSha ? <span className="ml-1.5 font-mono text-zinc-600">{first.commitSha.slice(0, 8)}</span> : null}
+        </p>
+        <span className="shrink-0 text-[9px] text-zinc-700 transition-colors group-hover:text-zinc-500">
+          {formatActivityDate(items.at(-1)?.createdAt ?? first.createdAt)}
+        </span>
+      </div>
+    );
+  };
+
   const renderReviewThreadTimelineItem = (item: ProjectForgeActivityItem, thread: ProjectForgeReviewThread) => {
     const codeLines = buildReviewThreadCodeLines(thread, diffText);
     const isReplying = replyThreadId === thread.id;
@@ -1461,37 +1558,33 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     const busyResolve = threadActionBusyId === `resolve:${thread.id}`;
     const confirmResolve = confirmResolveThreadId === thread.id;
     const resolveButton = resolveThreadButtonPresentation(thread.resolved === true, confirmResolve);
+    const author = thread.comments[0]?.author?.username ?? item.author?.username ?? (item.provider === "gitlab" ? "GitLab" : "GitHub");
     return (
-      <AgentLogRow key={item.id} tone="diff" label="Comment" time={formatActivityDate(item.createdAt)}>
-        <div className={cn("min-w-0 pr-2 py-0.5", thread.resolved && "opacity-80")}>
-          <div className="flex min-w-0 items-start justify-between gap-3">
+      <article key={item.id} className="grid grid-cols-[1.75rem_minmax(0,1fr)] gap-3 border-b border-zinc-900 py-5 last:border-b-0">
+        <div className="pt-0.5">{renderConversationAvatar(author, thread.comments[0]?.author?.avatarUrl, true)}</div>
+        <div className={cn("min-w-0 overflow-hidden rounded-lg border border-zinc-800/80 bg-zinc-950/55", thread.resolved && "opacity-75")}>
+          <div className="flex min-w-0 items-start justify-between gap-3 px-3 py-2.5">
             <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[11px] font-semibold text-zinc-200">
-                  {thread.comments[0]?.author?.username ?? item.author?.username ?? (item.provider === "gitlab" ? "GitLab" : "GitHub")}
-                </span>
-                <span className={cn("rounded-full border px-1.5 py-px text-[8px] font-semibold uppercase", activityKindTone(item.kind))}>
-                  Diff comment
-                </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-semibold text-zinc-100">{author}</span>
+                <span className="text-[9px] font-medium text-cyan-300/80">Line comment</span>
                 {thread.resolved ? (
-                  <span className="rounded-full border border-zinc-700 bg-zinc-900/70 px-1.5 py-px text-[8px] font-semibold uppercase text-zinc-400">
-                    Closed
-                  </span>
+                  <span className="text-[9px] text-zinc-600">Resolved</span>
                 ) : null}
               </div>
-              <p className="mt-0.5 truncate font-mono text-[10px] text-zinc-500">
+              <p className="mt-1 truncate font-mono text-[9px] text-zinc-600">
                 {thread.path}:{String(thread.newLineNumber ?? thread.oldLineNumber ?? "")}
                 {thread.commitSha ? ` ${thread.commitSha.slice(0, 8)}` : ""}
               </p>
             </div>
-            <div className="flex shrink-0 items-center gap-1.5">
-              <span className="text-[9px] text-zinc-600">{formatActivityDate(item.createdAt)}</span>
+            <div className="flex shrink-0 items-center gap-2">
+              <span className="text-[9px] text-zinc-700">{formatActivityDate(item.createdAt)}</span>
               {canUseForgeApi ? (
                 <Button
                   type="button"
                   size="sm"
                   variant="ghost"
-                  className={cn("h-6 px-2 text-[10px]", resolveButton.className)}
+                  className={cn("h-6 px-1.5 text-[9px] opacity-70 transition-opacity hover:opacity-100", resolveButton.className)}
                   onClick={() => {
                     if (thread.resolved !== true && !confirmResolve) {
                       setConfirmResolveThreadId(thread.id);
@@ -1510,24 +1603,24 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
               ) : null}
             </div>
           </div>
-          <div className="mt-2">{renderThreadCodeLines(codeLines)}</div>
-          <div className="mt-2 divide-y divide-zinc-800/70">
+          <div className="border-y border-zinc-800/70">{renderThreadCodeLines(codeLines)}</div>
+          <div className="divide-y divide-zinc-800/60 px-3">
             {thread.comments.map((comment) => (
-              <div key={comment.id} className="py-2 first:pt-0 last:pb-0">
+              <div key={comment.id} className="py-3">
                 <div className="flex min-w-0 items-center justify-between gap-2">
                   <span className="truncate text-[11px] font-semibold text-zinc-200">{comment.author?.username ?? "Reviewer"}</span>
-                  <span className="shrink-0 text-[9px] text-zinc-600">{formatActivityDate(comment.createdAt)}</span>
+                  <span className="shrink-0 text-[9px] text-zinc-700">{formatActivityDate(comment.createdAt)}</span>
                 </div>
-                <ActivityRichText content={comment.body} compact className="mt-1 break-words text-zinc-300" />
+                <ActivityRichText content={comment.body} compact className="mt-1.5 break-words text-zinc-300" />
               </div>
             ))}
           </div>
         {isReplying ? (
-          <div className="mt-2 rounded-md border border-cyan-500/25 bg-cyan-500/[0.055] p-2">
+          <div className="border-t border-zinc-800/70 bg-zinc-900/30 p-2.5">
             <textarea
               value={replyThreadText}
               onChange={(event) => setReplyThreadText(event.target.value)}
-              className="h-16 w-full resize-none rounded-md border border-zinc-700 bg-zinc-950/80 px-2 py-1.5 text-[11px] text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-cyan-500/70"
+              className="h-20 w-full resize-none rounded-md border border-zinc-700 bg-zinc-950 px-2.5 py-2 text-[11px] text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-cyan-500/60"
               placeholder="Reply to this thread..."
               autoFocus
             />
@@ -1557,12 +1650,12 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
             </div>
           </div>
         ) : (
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-1.5">
+          <div className="flex flex-wrap items-center justify-between gap-1.5 border-t border-zinc-800/70 px-3 py-2">
             <Button
               type="button"
               size="sm"
-              variant="secondary"
-              className="h-6 px-2 text-[10px]"
+              variant="ghost"
+              className="h-6 px-1.5 text-[9px] text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200"
               onClick={() => {
                 setReplyThreadId(thread.id);
                 setReplyThreadText("");
@@ -1579,50 +1672,51 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
           </div>
         )}
         </div>
-      </AgentLogRow>
+      </article>
     );
   };
 
   const renderConversationActivityItem = (item: ProjectForgeActivityItem) => {
     const itemCommit = item.commitSha ? (visibleRequestDetails?.commits.find((commit) => commit.sha === item.commitSha) ?? null) : null;
+    const author = item.author?.username ?? (item.provider === "gitlab" ? "GitLab" : "GitHub");
+    const emphasized = item.kind === "review" || item.kind === "comment";
     return (
-      <AgentLogRow key={item.id} tone={conversationItemTone(item)} label={conversationItemLabel(item)} time={formatActivityDate(item.createdAt)}>
-        <div className="min-w-0 pr-2 py-0.5">
+      <article key={item.id} className="grid grid-cols-[1.75rem_minmax(0,1fr)] gap-3 border-b border-zinc-900 py-4 last:border-b-0">
+        <div className="pt-0.5">{renderConversationAvatar(author, item.author?.avatarUrl, item.kind === "review")}</div>
+        <div className={cn("min-w-0", emphasized && "rounded-lg bg-zinc-900/25 px-3 py-2.5 ring-1 ring-inset ring-zinc-800/70")}>
           <div className="flex min-w-0 items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[11px] font-semibold text-zinc-200">
-                  {item.author?.username ?? (item.provider === "gitlab" ? "GitLab" : "GitHub")}
-                </span>
-                <span className={cn("rounded-full border px-1.5 py-px text-[8px] font-semibold uppercase", activityKindTone(item.kind))}>
-                  {item.kind}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-semibold text-zinc-100">{author}</span>
+                <span className={cn("text-[9px] font-medium", item.kind === "review" ? "text-cyan-300/80" : "text-zinc-600")}>
+                  {conversationKindLabel(item)}
                 </span>
               </div>
-              <p className="mt-0.5 text-[11px] leading-snug text-zinc-400">
+              <p className="mt-1 text-[10px] leading-snug text-zinc-500">
                 {item.title}
                 {item.path ? (
-                  <span className="font-mono text-zinc-500">
+                  <span className="font-mono text-zinc-600">
                     {" "}
                     in {item.path}
                     {item.line ? `:${String(item.line)}` : ""}
                   </span>
                 ) : null}
                 {itemCommit ? (
-                  <span className="font-mono text-zinc-500">
+                  <span className="font-mono text-zinc-600">
                     {" "}
                     {itemCommit.shortSha} {commitTitleForActivity(itemCommit, itemCommit.sha)}
                   </span>
                 ) : null}
                 {!itemCommit && item.commitSha ? (
-                  <span className="font-mono text-zinc-500"> {item.commitSha.slice(0, 12)}</span>
+                  <span className="font-mono text-zinc-600"> {item.commitSha.slice(0, 12)}</span>
                 ) : null}
               </p>
             </div>
-            <span className="shrink-0 text-[9px] text-zinc-600">{formatActivityDate(item.createdAt)}</span>
+            <span className="shrink-0 text-[9px] text-zinc-700">{formatActivityDate(item.createdAt)}</span>
           </div>
-          {item.body ? <ActivityRichText content={item.body} compact className="mt-1.5 break-words text-zinc-300" /> : null}
+          {item.body ? <ActivityRichText content={item.body} compact className="mt-2.5 break-words text-zinc-300" /> : null}
         </div>
-      </AgentLogRow>
+      </article>
     );
   };
 
@@ -1635,82 +1729,74 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     const description = details?.description?.trim() || "";
     const labels = details?.labels ?? [];
     const authorName = details?.authorUser?.username ?? overviewRequest?.author ?? "Unknown author";
-    const avatarFallback = authorName.slice(0, 2).toUpperCase();
 
     return (
-      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-zinc-800/80 bg-zinc-950/35 p-0">
-        <AgentWorklog className="agent-worklog-density--comfortable app-scrollbar min-h-0 flex-1 overflow-y-auto">
-          <AgentLogRow tone="prompt" label="Opened" time={formatActivityDate(details?.createdAt ?? overviewRequest?.updatedAt ?? null)}>
-            <div className="min-w-0 pr-2 py-0.5">
-              <div className="flex min-w-0 items-start justify-between gap-3">
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg bg-zinc-950/20 ring-1 ring-inset ring-zinc-800/60">
+        <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto w-full max-w-5xl px-5 pb-5 pt-4 lg:px-8 lg:pt-6">
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-5 gap-y-3">
+              <div className="flex min-w-0 items-center gap-2">
+                {renderConversationAvatar(authorName, details?.authorUser?.avatarUrl)}
                 <div className="min-w-0">
-                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                    {details?.authorUser?.avatarUrl ? (
-                      <img src={details.authorUser.avatarUrl} alt="" className="h-5 w-5 shrink-0 rounded-full bg-zinc-900" />
-                    ) : (
-                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-[9px] font-semibold text-zinc-400">
-                        {avatarFallback}
-                      </span>
-                    )}
-                    <span className="text-[11px] font-semibold text-zinc-100">{authorName}</span>
-                    <span className="text-[10px] text-zinc-500">opened this {activeKind}</span>
-                    {details?.createdAt ? <span className="text-[10px] text-zinc-600">{formatActivityDate(details.createdAt)}</span> : null}
-                  </div>
-                  <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[10px] text-zinc-500">
-                    <span>{details?.changedFiles != null ? `${String(details.changedFiles)} files` : `${String(loadedOrReportedFileCount)} files`}</span>
-                    {details?.additions != null || details?.deletions != null ? (
-                      <span>
-                        <span className="text-emerald-300">+{String(details.additions ?? 0)}</span>{" "}
-                        <span className="text-rose-300">-{String(details.deletions ?? 0)}</span>
-                      </span>
-                    ) : null}
-                    <span>{String(conversationActivity.length)} events</span>
-                    {detailsBusy ? (
-                      <span className="inline-flex items-center gap-1 text-zinc-500">
-                        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-                        loading
-                      </span>
-                    ) : null}
-                  </div>
+                  <p className="truncate text-[11px] text-zinc-500">
+                    <span className="font-semibold text-zinc-100">{authorName}</span> opened this {activeKind}
+                  </p>
+                  <p className="mt-0.5 text-[9px] text-zinc-700">{formatActivityDate(details?.createdAt ?? overviewRequest?.updatedAt ?? null)}</p>
                 </div>
               </div>
-              {labels.length > 0 ? (
-                <div className="mt-1.5 flex flex-wrap gap-1">
-                  {labels.map((label) => (
-                    <span key={label} className="rounded-full border border-zinc-700/80 bg-zinc-900/55 px-1.5 py-px text-[9px] text-zinc-300">
-                      {label}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-              <div className="mt-2 max-w-none break-words text-[12px] leading-relaxed text-zinc-300">
-                {description ? <ActivityRichText content={description} compact /> : <p className="text-xs text-zinc-600">No description provided.</p>}
+              <div className="flex items-center gap-3 font-mono text-[9px] text-zinc-600">
+                <span>{details?.changedFiles != null ? `${String(details.changedFiles)} files` : `${String(loadedOrReportedFileCount)} files`}</span>
+                {details?.additions != null || details?.deletions != null ? (
+                  <span>
+                    <span className="text-emerald-300">+{String(details.additions ?? 0)}</span>{" "}
+                    <span className="text-rose-300">-{String(details.deletions ?? 0)}</span>
+                  </span>
+                ) : null}
+                <span>{String(conversationActivity.length)} updates</span>
+                {detailsBusy ? <Loader2 className="h-3 w-3 animate-spin text-zinc-500" aria-label="Loading details" /> : null}
               </div>
-              {detailsError ? <p className="mt-2 text-[10px] text-rose-300">{detailsError}</p> : null}
-              {visibleRequestDetails?.warnings.length ? (
-                <div className="mt-2 space-y-1">
-                  {visibleRequestDetails.warnings.map((warning) => (
-                    <p key={warning} className="text-[10px] text-amber-200/90">
-                      {warning}
-                    </p>
-                  ))}
-                </div>
-              ) : null}
             </div>
-          </AgentLogRow>
+            <div className="mt-4 max-w-4xl break-words text-[13px] leading-[1.65] text-zinc-300">
+              {description ? <ActivityRichText content={description} compact /> : <p className="text-zinc-600">No description provided.</p>}
+            </div>
+            {labels.length > 0 ? (
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {labels.map((label) => (
+                  <span key={label} className="rounded bg-zinc-900/70 px-1.5 py-0.5 text-[9px] text-zinc-500 ring-1 ring-inset ring-zinc-800/70">
+                    {label}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {detailsError ? <p className="mt-2 text-[10px] text-rose-300">{detailsError}</p> : null}
+            {visibleRequestDetails?.warnings.length ? (
+              <div className="mt-2 space-y-1">
+                {visibleRequestDetails.warnings.map((warning) => (
+                  <p key={warning} className="text-[10px] text-amber-200/90">{warning}</p>
+                ))}
+              </div>
+            ) : null}
+          </div>
 
-          {conversationActivity.length > 0 ? (
-            conversationActivity.map((item) => {
-              const thread = item.kind === "diff-comment" ? findReviewThreadForActivity(item) : null;
-              return thread ? renderReviewThreadTimelineItem(item, thread) : renderConversationActivityItem(item);
-            })
-          ) : (
-            <AgentLogRow tone="status" label="Timeline" time={null}>
-              <p className="py-1 text-xs text-zinc-600">{detailsBusy ? "Loading activity..." : "No timeline events were returned."}</p>
-            </AgentLogRow>
-          )}
-        </AgentWorklog>
-      </Card>
+          <div className="border-y border-zinc-800/60 bg-zinc-950/35">
+            <div className="mx-auto flex w-full max-w-5xl items-center justify-between px-5 py-2.5 lg:px-8">
+              <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Conversation</p>
+              <span className="font-mono text-[9px] text-zinc-700">{String(conversationActivity.length)} updates</span>
+            </div>
+          </div>
+          <div className="mx-auto w-full max-w-5xl px-5 pb-8 lg:px-8">
+            {conversationEntries.length > 0 ? (
+              conversationEntries.map((entry) => {
+                if (entry.type === "event-group") return renderEventGroup(entry.items);
+                const thread = entry.item.kind === "diff-comment" ? findReviewThreadForActivity(entry.item) : null;
+                return thread ? renderReviewThreadTimelineItem(entry.item, thread) : renderConversationActivityItem(entry.item);
+              })
+            ) : (
+              <p className="py-8 text-center text-xs text-zinc-600">{detailsBusy ? "Loading conversation..." : "No conversation activity yet."}</p>
+            )}
+          </div>
+        </div>
+      </section>
     );
   };
 
@@ -1801,8 +1887,8 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     }
 
     return (
-      <aside className="flex min-h-0 flex-col overflow-hidden rounded-md border border-zinc-800 bg-zinc-950/65">
-        <div className="border-b border-zinc-800 p-1.5">
+      <aside className="flex min-h-0 flex-col overflow-hidden rounded-md border border-zinc-800/70 bg-zinc-950/45">
+        <div className="border-b border-zinc-800/70 p-1.5">
           <div className="flex items-center gap-1.5">
             <div className="relative min-w-0 flex-1">
               <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-zinc-600" aria-hidden />
@@ -1845,7 +1931,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
             <span className="font-mono text-[9px] text-zinc-500">{String(fileNavItems.length)}</span>
           </button>
         </div>
-        <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto p-1.5">
+        <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto">
           {visibleFiles.length > 0 ? (
             visibleFiles.map((file) => {
               const selected = activeDiffFilePath ? pathsMatch(file.path, activeDiffFilePath) : false;
@@ -1854,10 +1940,10 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                   key={file.key}
                   type="button"
                   className={cn(
-                    "mb-1 flex w-full min-w-0 flex-col rounded border p-1.5 text-left transition last:mb-0",
+                    "relative flex w-full min-w-0 flex-col border-b border-zinc-800/60 px-2 py-2 text-left transition-colors last:border-b-0",
                     selected
-                      ? "border-cyan-500/45 bg-cyan-500/[0.09] shadow-[inset_2px_0_0_rgba(34,211,238,0.8)]"
-                      : "border-zinc-800 bg-zinc-900/35 hover:border-zinc-700 hover:bg-zinc-900/60",
+                      ? "bg-cyan-500/[0.075] before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-cyan-300"
+                      : "hover:bg-zinc-900/55",
                   )}
                   onClick={() => {
                     setActiveDiffFilePath(file.path);
@@ -1867,16 +1953,16 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                 >
                   <span className="flex min-w-0 items-center justify-between gap-1.5">
                     <span className="truncate font-mono text-[10px] text-zinc-200">{file.path}</span>
-                    <span className="shrink-0 rounded border border-zinc-700 px-1 py-px text-[8px] uppercase text-zinc-500">{file.status}</span>
+                    <span className="shrink-0 text-[8px] uppercase tracking-wide text-zinc-600">{file.status}</span>
                   </span>
                   <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[9px]">
                     {file.additions != null ? <span className="font-mono text-emerald-300">+{String(file.additions)}</span> : null}
                     {file.deletions != null ? <span className="font-mono text-rose-300">-{String(file.deletions)}</span> : null}
                     {file.commentCount > 0 ? (
-                      <span className="rounded-full bg-cyan-500/15 px-1.5 py-px text-cyan-100">{String(file.commentCount)} comment</span>
+                      <span className="text-cyan-200">{String(file.commentCount)} comment</span>
                     ) : null}
                     {file.draftCount > 0 ? (
-                      <span className="rounded-full bg-amber-500/15 px-1.5 py-px text-amber-100">{String(file.draftCount)} draft</span>
+                      <span className="text-amber-200">{String(file.draftCount)} draft</span>
                     ) : null}
                     {!file.patchAvailable ? <span className="text-zinc-600">no patch</span> : null}
                   </span>
@@ -1932,7 +2018,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
           />
           Ignore whitespace
         </label>
-        {diffChangedFileCount > 0 ? (
+        {activeDiffFileCount > 0 ? (
           <Button
             type="button"
             variant="ghost"
@@ -1944,24 +2030,33 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
             {allDiffFilesExpanded ? "Collapse all" : "Expand all"}
           </Button>
         ) : null}
-        <div ref={aiReviewMenuAnchorRef} className="relative">
+        <div ref={aiReviewMenuAnchorRef} className="relative ml-1 border-l border-zinc-800/80 pl-2">
           <Button
             type="button"
             size="sm"
             variant="ghost"
             className={cn(
-              "h-8 border border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-2 text-[10px] font-semibold text-[var(--ec-accent)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-accent-strong)]",
-              aiReviewMenuOpen && "bg-[var(--ec-accent-soft)] text-[var(--ec-accent-strong)]",
+              "h-7 border border-zinc-700/80 bg-zinc-900/70 px-2.5 text-[10px] font-semibold text-zinc-200 shadow-sm hover:border-cyan-500/40 hover:bg-zinc-800/90 hover:text-white",
+              aiReviewMenuOpen && "border-cyan-500/45 bg-cyan-500/[0.08] text-cyan-100",
             )}
             onClick={() => setAiReviewMenuOpen((open) => !open)}
             disabled={!hasDiff}
-            title="Choose a model and start an AI review."
+            title="AI review, draft comments, and submission"
             aria-haspopup="dialog"
             aria-expanded={aiReviewMenuOpen}
           >
-            {reviewBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Sparkles className="mr-1 h-3.5 w-3.5" aria-hidden />}
-            AI review
-            <ChevronDown className={cn("ml-0.5 h-3.5 w-3.5 transition", aiReviewMenuOpen && "rotate-180")} aria-hidden />
+            {reviewBusy || manualSubmitBusy ? (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-cyan-300" aria-hidden />
+            ) : (
+              <Sparkles className="mr-1.5 h-3.5 w-3.5 text-cyan-300" aria-hidden />
+            )}
+            Review
+            {reviewModeActive ? (
+              <span className="ml-1 rounded-full bg-amber-300/15 px-1.5 py-px font-mono text-[9px] text-amber-100">
+                {String(draftComments.length)}
+              </span>
+            ) : null}
+            <ChevronDown className={cn("ml-1 h-3.5 w-3.5 text-zinc-500 transition-transform duration-150", aiReviewMenuOpen && "rotate-180")} aria-hidden />
           </Button>
         </div>
         <AnchorDropdownPortal
@@ -1969,18 +2064,30 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
           anchorRef={aiReviewMenuAnchorRef}
           align="end"
           placement="bottom"
-          widthPx={292}
+          widthPx={320}
           onClose={() => setAiReviewMenuOpen(false)}
-          className="glass-popover overflow-hidden rounded-md border border-[var(--ec-accent-ring)] bg-zinc-950/95 p-2 shadow-xl"
+          className="glass-popover overflow-hidden rounded-lg border border-zinc-700/80 bg-zinc-950/95 p-0 shadow-2xl shadow-black/45"
         >
-          <div className="space-y-2">
-            <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--ec-accent)]">
-              <Sparkles className="h-3.5 w-3.5" aria-hidden />
-              AI review
+          <div>
+            <div className="border-b border-zinc-800/80 px-3 py-2.5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-semibold text-zinc-100">Review changes</p>
+                  <p className="mt-0.5 text-[9px] leading-snug text-zinc-500">Run AI analysis or collect line comments for one submission.</p>
+                </div>
+                {reviewModeActive ? (
+                  <span className="shrink-0 rounded-full bg-amber-400/10 px-2 py-1 text-[9px] font-medium text-amber-200 ring-1 ring-inset ring-amber-400/20">
+                    {String(draftComments.length)} draft{draftComments.length === 1 ? "" : "s"}
+                  </span>
+                ) : null}
+              </div>
             </div>
-            <div>
-              <span className="mb-1 block text-[10px] font-medium text-zinc-500">Model</span>
-              <div className="app-scrollbar max-h-44 space-y-1 overflow-y-auto pr-0.5" role="listbox" aria-label="AI review model">
+            <div className="px-3 py-2.5">
+              <div className="mb-2 flex items-center gap-1.5">
+                <Sparkles className="h-3.5 w-3.5 text-cyan-300" aria-hidden />
+                <span className="text-[10px] font-semibold text-zinc-200">AI review</span>
+              </div>
+              <div className="app-scrollbar max-h-40 space-y-0.5 overflow-y-auto" role="listbox" aria-label="AI review model">
                 {reviewModelSelectOptions.length > 0 ? (
                   reviewModelSelectOptions.map((option) => {
                     const selected = option.value === reviewModelId;
@@ -1991,120 +2098,125 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                         role="option"
                         aria-selected={selected}
                         className={cn(
-                          "flex w-full min-w-0 items-center gap-2 rounded-md border px-2 py-1.5 text-left transition",
+                          "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
                           selected
-                            ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-text)]"
-                            : "border-zinc-800 bg-zinc-900/70 text-zinc-300 hover:border-[var(--ec-accent-ring)] hover:bg-[var(--ec-accent-soft)]",
+                            ? "bg-cyan-500/[0.1] text-zinc-100"
+                            : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200",
                         )}
                         onClick={() => setReviewModelId(option.value)}
                         disabled={reviewBusy}
                       >
-                        <Sparkles className={cn("h-3.5 w-3.5 shrink-0", selected ? "text-[var(--ec-accent)]" : "text-zinc-500")} aria-hidden />
+                        <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", selected ? "bg-cyan-300" : "bg-zinc-700")} />
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[11px] font-semibold">{option.label}</span>
+                          <span className="block truncate text-[10px] font-medium">{option.label}</span>
                           {option.description ? <span className="block truncate text-[9px] text-zinc-500">{option.description}</span> : null}
                         </span>
-                        {selected ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" aria-hidden /> : null}
+                        {selected ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-cyan-300" aria-hidden /> : null}
                       </button>
                     );
                   })
                 ) : (
-                  <p className="rounded-md border border-dashed border-zinc-800 px-2 py-2 text-[11px] text-zinc-500">No review models configured.</p>
+                  <p className="py-2 text-[10px] text-zinc-500">No review models configured.</p>
                 )}
               </div>
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              className="h-8 w-full px-2 text-[11px]"
-              onClick={() => void runPrMrReview()}
-              disabled={reviewBusy || !hasDiff || !reviewModelId.trim()}
-            >
-              {reviewBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Sparkles className="mr-1 h-3.5 w-3.5" aria-hidden />}
-              Start AI review
-            </Button>
-          </div>
-        </AnchorDropdownPortal>
-        {canUseForgeApi && reviewModeActive ? (
-            <div
-              className="flex h-8 items-center overflow-hidden rounded-md border border-amber-500/30 bg-amber-500/[0.07] shadow-[inset_2px_0_0_rgba(245,158,11,0.62)]"
-              title="Manual review: collect line comments as drafts, then submit them together."
-            >
-              <span
-                className="flex h-full shrink-0 items-center gap-1 border-r border-amber-500/20 px-2 text-[10px] font-semibold text-amber-100"
-                title="Review comments are kept as drafts until the review is submitted."
+              <Button
+                type="button"
+                size="sm"
+                className="mt-2 h-7 w-full bg-cyan-500/90 px-2 text-[10px] font-semibold text-zinc-950 hover:bg-cyan-300"
+                onClick={() => void runPrMrReview()}
+                disabled={reviewBusy || !hasDiff || !reviewModelId.trim()}
               >
-                <ClipboardList className="h-3.5 w-3.5" aria-hidden />
-                Drafts
-                <span className="rounded-full bg-amber-300/15 px-1.5 py-px font-mono text-[9px] text-amber-50">{String(draftComments.length)}</span>
-              </span>
-              {reviewDraftMode && draftComments.length === 0 ? (
+                {reviewBusy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Sparkles className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
+                {reviewPanel.result ? "Run AI review again" : "Run AI review"}
+              </Button>
+            </div>
+            {canUseForgeApi ? (
+              <div className="border-t border-zinc-800/80 px-3 py-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <SquarePen className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
+                      <span className="text-[10px] font-semibold text-zinc-200">Line comments</span>
+                    </div>
+                    <p className="mt-0.5 text-[9px] text-zinc-500">
+                      {reviewModeActive ? "Comments stay private until submitted." : "Batch comments into a single review."}
+                    </p>
+                  </div>
+                  {!reviewModeActive ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 shrink-0 border border-zinc-700 px-2 text-[10px] text-zinc-200 hover:border-cyan-500/35 hover:bg-zinc-900"
+                      onClick={() => {
+                        startReviewMode();
+                        setAiReviewMenuOpen(false);
+                      }}
+                      disabled={!activeUrl.trim()}
+                    >
+                      Start review
+                    </Button>
+                  ) : null}
+                </div>
+                {reviewModeActive ? (
+                  <div className="mt-2 flex items-center gap-1.5">
+                    {reviewDraftMode && draftComments.length === 0 ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-[10px] text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200"
+                        onClick={() => {
+                          setReviewDraftMode(false);
+                          clearDraftEditor();
+                          setAiReviewMenuOpen(false);
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-7 flex-1 bg-amber-300 px-2 text-[10px] font-semibold text-zinc-950 hover:bg-amber-200"
+                      onClick={() => void submitDraftDiffComments()}
+                      disabled={manualSubmitBusy || draftComments.length === 0 || !activeUrl.trim()}
+                    >
+                      {manualSubmitBusy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <ArrowUpRight className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
+                      Submit {String(draftComments.length)} draft{draftComments.length === 1 ? "" : "s"}
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {!overviewRequest && canUseForgeApi ? (
+              <div className="flex items-center gap-1.5 border-t border-zinc-800/80 px-3 py-2.5">
                 <Button
                   type="button"
                   size="sm"
                   variant="ghost"
-                  className="h-8 rounded-none border-r border-amber-500/20 px-2 text-[10px] text-amber-200/80 hover:bg-amber-500/[0.12] hover:text-amber-50"
-                  onClick={() => {
-                    setReviewDraftMode(false);
-                    clearDraftEditor();
-                  }}
+                  className="h-7 flex-1 border border-zinc-800 px-2 text-[10px] text-zinc-300 hover:bg-zinc-900"
+                  onClick={() => void postReview("comment")}
+                  disabled={postBusy || !reviewPanel.result || !activeUrl.trim()}
                 >
-                  Stop
+                  {postBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <MessageSquarePlus className="mr-1 h-3.5 w-3.5" aria-hidden />}
+                  Post AI result
                 </Button>
-              ) : null}
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className="h-8 rounded-none px-2 text-[10px] font-semibold text-amber-100 hover:bg-amber-500/[0.14] hover:text-amber-50"
-                onClick={() => void submitDraftDiffComments()}
-                disabled={manualSubmitBusy || draftComments.length === 0 || !activeUrl.trim()}
-              >
-                {manualSubmitBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <SquarePen className="mr-1 h-3.5 w-3.5" aria-hidden />}
-                Submit
-              </Button>
-            </div>
-        ) : null}
-        {canUseForgeApi && !reviewModeActive ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="h-8 border border-amber-500/30 bg-amber-500/[0.08] px-2 text-[10px] font-semibold text-amber-100 hover:bg-amber-500/[0.14] hover:text-amber-50"
-              onClick={startReviewMode}
-              disabled={!activeUrl.trim()}
-              title="Start a manual review and batch line comments as drafts."
-            >
-              <SquarePen className="mr-1 h-3.5 w-3.5" aria-hidden />
-              Draft review
-            </Button>
-        ) : null}
-        {!overviewRequest && canUseForgeApi ? (
-          <>
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              className="h-7 px-2 text-[10px]"
-              onClick={() => void postReview("comment")}
-              disabled={postBusy || !reviewPanel.result || !activeUrl.trim()}
-            >
-              {postBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <MessageSquarePlus className="mr-1 h-3.5 w-3.5" aria-hidden />}
-              Comment
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              className="h-7 px-2 text-[10px] text-emerald-200"
-              onClick={() => void postReview("approve")}
-              disabled={postBusy || !activeUrl.trim()}
-            >
-              {postBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <CheckCircle2 className="mr-1 h-3.5 w-3.5" aria-hidden />}
-              Approve
-            </Button>
-          </>
-        ) : null}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 flex-1 border border-emerald-500/20 px-2 text-[10px] text-emerald-200 hover:bg-emerald-500/[0.08]"
+                  onClick={() => void postReview("approve")}
+                  disabled={postBusy || !activeUrl.trim()}
+                >
+                  <CheckCircle2 className="mr-1 h-3.5 w-3.5" aria-hidden />
+                  Approve
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        </AnchorDropdownPortal>
       </div>
     );
   };
@@ -2307,8 +2419,8 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     }
 
     return (
-      <Card className="shrink-0 overflow-hidden border-zinc-800/80 bg-zinc-950/40 p-0">
-        <div className="flex flex-wrap items-start justify-between gap-2 px-3 py-2">
+      <section className="shrink-0 overflow-hidden rounded-lg border border-zinc-800/70 bg-zinc-950/25">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1.5">
               <span className={cn("rounded-full border px-1.5 py-px text-[8px] font-semibold uppercase", requestStateTone(overviewRequest.state))}>
@@ -2319,28 +2431,28 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
               </span>
               {overviewRequest.draft ? <span className="text-[10px] text-amber-200">draft</span> : null}
             </div>
-            <p className="mt-1 line-clamp-2 text-sm font-semibold leading-snug text-zinc-100">{overviewRequest.title}</p>
-            <p className="mt-0.5 truncate font-mono text-[10px] text-zinc-500">
+            <p className="mt-1 truncate text-sm font-semibold leading-snug text-zinc-100">{overviewRequest.title}</p>
+            <p className="mt-0.5 truncate font-mono text-[9px] text-zinc-600">
               {overviewRequest.sourceBranch || "head"} -&gt; {overviewRequest.targetBranch || "base"}
             </p>
           </div>
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+          <div className="flex shrink-0 items-center gap-1">
             <Button
               type="button"
-              size="sm"
-              variant="secondary"
-              className="h-7 px-2 text-[10px]"
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7 text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200"
               onClick={() => void window.buildwarden.openExternalUrl(overviewRequest.url)}
               title="Open in browser"
+              aria-label="Open in browser"
             >
-              <ExternalLink className="mr-1 h-3.5 w-3.5" aria-hidden />
-              Open
+              <ExternalLink className="h-3.5 w-3.5" aria-hidden />
             </Button>
             <Button
               type="button"
               size="sm"
-              variant="secondary"
-              className="h-7 px-2 text-[10px] text-emerald-200"
+              variant="ghost"
+              className="h-7 border border-emerald-500/20 bg-emerald-500/[0.05] px-2 text-[10px] text-emerald-200 hover:bg-emerald-500/[0.1]"
               onClick={() => void postReview("approve")}
               disabled={postBusy || !activeUrl.trim()}
             >
@@ -2349,53 +2461,51 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
             </Button>
           </div>
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-zinc-800/80 px-3">
-          <div className="flex min-w-0 flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-zinc-800/70 px-2 py-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-0.5">
             <button
               type="button"
               className={cn(
-                "flex h-9 items-center gap-1.5 border-b-2 px-0.5 text-xs font-medium transition",
-                activeDetailTab === "conversation" ? "border-cyan-400 text-zinc-100" : "border-transparent text-zinc-500 hover:text-zinc-300",
+                "flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium transition-colors",
+                activeDetailTab === "conversation" ? "bg-zinc-800/75 text-zinc-100" : "text-zinc-500 hover:bg-zinc-900/70 hover:text-zinc-300",
               )}
-              onClick={() => setActiveDetailTab("conversation")}
+              onClick={showConversation}
             >
-              <FileText className="h-3.5 w-3.5" aria-hidden />
               Conversation
-              <span className="rounded-full bg-zinc-800 px-1.5 py-px font-mono text-[10px] text-zinc-400">{String(totalActivityCount)}</span>
+              <span className="font-mono text-[9px] text-zinc-500">{String(totalActivityCount)}</span>
             </button>
             <button
               type="button"
               className={cn(
-                "flex h-9 items-center gap-1.5 border-b-2 px-0.5 text-xs font-medium transition",
-                activeDetailTab === "commits" ? "border-cyan-400 text-zinc-100" : "border-transparent text-zinc-500 hover:text-zinc-300",
+                "flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium transition-colors",
+                activeDetailTab === "commits" ? "bg-zinc-800/75 text-zinc-100" : "text-zinc-500 hover:bg-zinc-900/70 hover:text-zinc-300",
                 !canUseForgeApi && "cursor-not-allowed opacity-60 hover:text-zinc-500",
               )}
               onClick={() => {
                 if (canUseForgeApi) {
-                  setActiveDetailTab("commits");
+                  showCommits();
                 }
               }}
               disabled={!canUseForgeApi}
               title={canUseForgeApi ? "View commits" : "Commits require a Git hosting token"}
             >
-              <GitPullRequest className="h-3.5 w-3.5" aria-hidden />
               Commits
               {commitCount > 0 ? (
-                <span className="rounded-full bg-zinc-800 px-1.5 py-px font-mono text-[10px] text-zinc-400">{String(commitCount)}</span>
+                <span className="font-mono text-[9px] text-zinc-500">{String(commitCount)}</span>
               ) : null}
             </button>
             <button
               type="button"
               className={cn(
-                "flex h-9 items-center gap-1.5 border-b-2 px-0.5 text-xs font-medium transition",
-                activeDetailTab === "files" ? "border-cyan-400 text-zinc-100" : "border-transparent text-zinc-500 hover:text-zinc-300",
+                "flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium transition-colors",
+                activeDetailTab === "files" ? "bg-zinc-800/75 text-zinc-100" : "text-zinc-500 hover:bg-zinc-900/70 hover:text-zinc-300",
               )}
               onClick={showFiles}
             >
-              {loadBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Eye className="h-3.5 w-3.5" aria-hidden />}
+              {loadBusy ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
               Files changed
               {loadedOrReportedFileCount > 0 ? (
-                <span className="rounded-full bg-zinc-800 px-1.5 py-px font-mono text-[10px] text-zinc-400">
+                <span className="font-mono text-[9px] text-zinc-500">
                   {String(loadedOrReportedFileCount)}
                 </span>
               ) : null}
@@ -2405,7 +2515,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
         </div>
         {postMessage ? <p className="border-t border-zinc-800/80 px-3 py-1 text-[9px] text-emerald-300">{postMessage}</p> : null}
         {postError ? <p className="border-t border-zinc-800/80 px-3 py-1 text-[9px] text-rose-300">{postError}</p> : null}
-      </Card>
+      </section>
     );
   };
 
@@ -2432,10 +2542,10 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
             {meta ? (
               <span className="text-[9px] text-zinc-500">
                 {activeKind} #{meta.number} - <span className="font-mono text-zinc-400">{meta.baseRef}</span>
-                {diffChangedFileCount > 0 ? (
+                {activeDiffFileCount > 0 ? (
                   <span className="text-zinc-600">
                     {" "}
-                    - {String(diffChangedFileCount)} file{diffChangedFileCount === 1 ? "" : "s"}
+                    - {String(activeDiffFileCount)} file{activeDiffFileCount === 1 ? "" : "s"}
                   </span>
                 ) : null}
               </span>
@@ -2545,9 +2655,9 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
             </Card>
         ) : null}
         {requestItems.length > 0 && !requestListCollapsed ? (
-            <Card className="relative flex min-h-0 flex-col overflow-hidden border-zinc-800/80 bg-zinc-950/40 p-0">
-              <div className="flex items-center justify-between gap-2 border-b border-zinc-800/80 px-2 py-1.5">
-                <p className="text-[11px] font-semibold text-zinc-100">Requests</p>
+            <Card className="relative flex min-h-0 flex-col overflow-hidden border-zinc-800/70 bg-zinc-950/25 p-0">
+              <div className="flex items-center justify-between gap-2 border-b border-zinc-800/70 px-2.5 py-2">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Requests</p>
                 <div className="flex shrink-0 items-center gap-1">
                   <span className="font-mono text-[9px] text-zinc-500">{String(requestItems.length)}</span>
                   <Button
@@ -2563,7 +2673,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                   </Button>
                 </div>
               </div>
-              <div className="app-scrollbar max-h-72 min-h-0 flex-1 overflow-y-auto p-1.5 lg:max-h-none">
+              <div className="app-scrollbar max-h-72 min-h-0 flex-1 overflow-y-auto lg:max-h-none">
                 {requestItems.map((request) => {
                   const selected = selectedRequest?.url === request.url;
                   return (
@@ -2571,15 +2681,15 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                       key={`${request.provider}-${String(request.number)}`}
                       type="button"
                       className={cn(
-                        "mb-1.5 flex w-full min-w-0 flex-col rounded-md border p-2 text-left transition last:mb-0",
+                        "relative flex w-full min-w-0 flex-col border-b border-zinc-800/60 px-2.5 py-2.5 text-left transition-colors last:border-b-0",
                         selected
-                          ? "border-cyan-500/50 bg-cyan-500/[0.09] shadow-[inset_2px_0_0_rgba(34,211,238,0.85)]"
-                          : "border-zinc-800/80 bg-zinc-900/45 hover:border-zinc-700 hover:bg-zinc-900/70",
+                          ? "bg-cyan-500/[0.075] before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-cyan-300"
+                          : "hover:bg-zinc-900/55",
                       )}
                       onClick={() => selectRequest(request)}
                     >
                       <span className="flex min-w-0 items-center gap-1.5">
-                        <span className={cn("rounded-full border px-1.5 py-px text-[8px] font-semibold uppercase", requestStateTone(request.state))}>
+                        <span className={cn("rounded border px-1.5 py-px text-[8px] font-semibold uppercase", requestStateTone(request.state))}>
                           {request.state}
                         </span>
                         <span className="font-mono text-[9px] text-zinc-500">#{String(request.number)}</span>
