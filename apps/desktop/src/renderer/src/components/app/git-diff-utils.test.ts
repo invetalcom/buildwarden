@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countChangedFilesInDiff, summarizeDiffStats } from "./git-diff-utils";
+import { countChangedFilesInDiff, parseGitDiffFiles, summarizeDiffStats } from "./git-diff-utils";
 
 const PATCH = `diff --git a/src/old.ts b/src/new.ts
 similarity index 80%
@@ -27,6 +27,12 @@ describe("git diff utilities", () => {
 
   it("renders a headerless hunk through a synthetic Diffs.com patch file", () => {
     expect(countChangedFilesInDiff("@@ -1 +1 @@\n-old\n+new")).toBe(1);
+  });
+
+  it("preserves trailing whitespace on the final changed line", () => {
+    const [file] = parseGitDiffFiles("@@ -1 +1 @@\n-old\n+new  \t");
+
+    expect(file.additionLines).toEqual(["new  \t"]);
   });
 
   it("summarizes renamed and deleted files", () => {

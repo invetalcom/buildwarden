@@ -843,11 +843,11 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     }
 
     try {
-      return parseGitDiffFiles(trimmedDiff);
+      return parseGitDiffFiles(diffText);
     } catch {
       return [];
     }
-  }, [trimmedDiff]);
+  }, [diffText, trimmedDiff]);
 
   const whitespaceFilteredFiles = useMemo(() => {
     if (!hideWhitespaceChanges) {

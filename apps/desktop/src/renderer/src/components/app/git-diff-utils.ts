@@ -6,11 +6,11 @@ export const looksLikeGitDiff = (value: string) => {
 };
 
 export const parseGitDiffFiles = (diffText: string): FileDiffMetadata[] => {
-  const trimmed = diffText.trim();
-  if (!trimmed || !looksLikeGitDiff(trimmed)) {
+  const patchStart = diffText.trimStart();
+  if (!patchStart || !looksLikeGitDiff(patchStart)) {
     return [];
   }
-  const patchText = trimmed.startsWith("@@ ") ? `--- a/changes.diff\n+++ b/changes.diff\n${trimmed}\n` : trimmed;
+  const patchText = patchStart.startsWith("@@ ") ? `--- a/changes.diff\n+++ b/changes.diff\n${patchStart}` : diffText;
   return parsePatchFiles(patchText, undefined, true).flatMap((patch) => patch.files);
 };
 
@@ -22,7 +22,7 @@ export const countChangedFilesInDiff = (diffText: string): number => {
   }
   if (looksLikeGitDiff(trimmed)) {
     try {
-      return parseGitDiffFiles(trimmed).length;
+      return parseGitDiffFiles(diffText).length;
     } catch {
       /* fall through */
     }
@@ -53,7 +53,7 @@ export const summarizeDiffStats = (
   }
 
   try {
-    const parsedFiles = parseGitDiffFiles(trimmed);
+    const parsedFiles = parseGitDiffFiles(diffText);
     const files = parsedFiles.map((file) => {
       const additions = file.hunks.reduce((count, hunk) => count + hunk.additionLines, 0);
       const deletions = file.hunks.reduce((count, hunk) => count + hunk.deletionLines, 0);
