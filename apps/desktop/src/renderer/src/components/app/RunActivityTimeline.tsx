@@ -382,7 +382,11 @@ const estimateTextContentSize = (content: string, density: RunTimelineDensity) =
   return Math.min(1200, 44 + lines * lineHeight);
 };
 
-const estimateTimelineItemSize = (item: TimelineRenderItem | undefined, density: RunTimelineDensity) => {
+const estimateTimelineItemSize = (
+  item: TimelineRenderItem | undefined,
+  density: RunTimelineDensity,
+  expandedReasoningStepIds: Record<string, boolean>,
+) => {
   if (!item) return 80;
   if (item.kind === "end") return density === "compact" ? 8 : 18;
   if (item.kind === "loading") return 62;
@@ -416,7 +420,11 @@ const estimateTimelineItemSize = (item: TimelineRenderItem | undefined, density:
   }
   if (entry.step.eventType === "error") return 120;
 
-  if (entry.metadata.assistantKind === "reasoning" && shouldAutoCollapseReasoning(entry.step.content)) {
+  if (
+    entry.metadata.assistantKind === "reasoning" &&
+    shouldAutoCollapseReasoning(entry.step.content) &&
+    !expandedReasoningStepIds[entry.step.id]
+  ) {
     return 56;
   }
   return estimateTextContentSize(entry.step.content, density);
@@ -1998,7 +2006,7 @@ export function RunActivityTimeline({
     enabled: virtualized,
     count: timelineItems.length,
     getScrollElement: () => scrollElementRef.current,
-    estimateSize: (index) => estimateTimelineItemSize(timelineItems[index], density),
+    estimateSize: (index) => estimateTimelineItemSize(timelineItems[index], density, activeReasoningStepIds),
     getItemKey: (index) => timelineItems[index]?.key ?? index,
     useAnimationFrameWithResizeObserver: true,
     initialOffset: virtualized ? () => Number.MAX_SAFE_INTEGER : undefined,
