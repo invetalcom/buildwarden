@@ -553,6 +553,7 @@ const buildOpenAiProviderOptions = (
   modelId: string,
   requestProviderOptions: { reasoningEffort?: string } | undefined,
   modelConfig: Record<string, unknown> | undefined,
+  promptCacheKey?: string,
 ): Record<string, unknown> | undefined => {
   let reasoningEffort = typeof modelConfig?.[MODEL_CONFIG_OPENAI_REASONING_EFFORT_KEY] === "string"
     ? String(modelConfig[MODEL_CONFIG_OPENAI_REASONING_EFFORT_KEY]).trim()
@@ -561,10 +562,16 @@ const buildOpenAiProviderOptions = (
     reasoningEffort = requestProviderOptions.reasoningEffort.trim();
   }
   const reasoningSummary = supportsOpenAiReasoningSummary(modelId);
-  if (!reasoningEffort && !reasoningSummary) {
+  if (!reasoningEffort && !reasoningSummary && !promptCacheKey) {
     return undefined;
   }
-  return { openai: { ...(reasoningEffort ? { reasoningEffort } : {}), ...(reasoningSummary ? { reasoningSummary: "auto" } : {}) } };
+  return {
+    openai: {
+      ...(reasoningEffort ? { reasoningEffort } : {}),
+      ...(reasoningSummary ? { reasoningSummary: "auto" } : {}),
+      ...(promptCacheKey ? { promptCacheKey } : {}),
+    },
+  };
 };
 
 const buildAnthropicProviderOptions = (
@@ -580,18 +587,19 @@ const buildAnthropicProviderOptions = (
   return effort ? { anthropic: { effort } } : undefined;
 };
 
-const buildAiSdkProviderOptions = (
+export const buildAiSdkProviderOptions = (
   family: UnifiedProviderFamily,
   modelId: string,
   requestProviderOptions: { reasoningEffort?: string; anthropicEffort?: string } | undefined,
   modelConfig: Record<string, unknown> | undefined,
+  promptCacheKey?: string,
 ): Record<string, unknown> | undefined => {
-  if (!requestProviderOptions && !modelConfig) {
+  if (!requestProviderOptions && !modelConfig && !promptCacheKey) {
     return undefined;
   }
 
   if (family === "openai") {
-    return buildOpenAiProviderOptions(modelId, requestProviderOptions, modelConfig);
+    return buildOpenAiProviderOptions(modelId, requestProviderOptions, modelConfig, promptCacheKey);
   }
 
   if (family === "anthropic") {
@@ -928,6 +936,165 @@ export const splitSystemMessagesIntoInstructions = (
   };
 };
 
+const APPROX_CHARS_PER_TOKEN = 4;
+/** Tool outputs inside this most-recent budget are never pruned. */
+const PRUNE_PROTECTED_RECENT_TOOL_OUTPUT_CHARS = 40_000 * APPROX_CHARS_PER_TOKEN;
+/**
+ * Pruning rewrites earlier messages, which invalidates the provider prompt
+ * cache prefix once per prune. Only prune when enough is reclaimed to be
+ * worth that cache reset.
+ */
+const PRUNE_MINIMUM_SAVINGS_CHARS = 20_000 * APPROX_CHARS_PER_TOKEN;
+export const PRUNED_TOOL_OUTPUT_TEXT =
+  "[Old tool output removed to conserve context. If this information is needed again, inspect the current state with read-only tools (read_file, list_files, search_repo); do not repeat side-effecting operations.]";
+
+const toolOutputChars = (output: unknown): number => {
+  try {
+    return JSON.stringify(output)?.length ?? 0;
+  } catch {
+    return 0;
+  }
+};
+
+const isPrunedToolOutput = (output: unknown): boolean =>
+  isRecord(output) && output.type === "text" && output.value === PRUNED_TOOL_OUTPUT_TEXT;
+
+/**
+ * Replaces the outputs of old tool results with a short marker so long agent
+ * runs do not resend every historical tool output on every round. The most
+ * recent tool outputs are always kept intact, and nothing changes unless the
+ * prune frees a substantial amount of context (so the provider prompt cache
+ * is reset rarely, in large steps). Returns the input array unchanged (same
+ * reference) when nothing was pruned. Checkpoint history is unaffected; this
+ * only shapes what is sent to the model.
+ */
+export const pruneOldToolOutputs = (
+  messages: ReadonlyArray<Record<string, unknown>>,
+): { messages: Array<Record<string, unknown>>; prunedToolOutputs: number; prunedChars: number } => {
+  let protectedChars = 0;
+  let prunedChars = 0;
+  let prunedToolOutputs = 0;
+  const pruneMessageIndices = new Set<number>();
+
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message?.role !== "tool" || !Array.isArray(message.content)) {
+      continue;
+    }
+    let messageChars = 0;
+    let messageOutputs = 0;
+    for (const part of message.content as unknown[]) {
+      if (!isRecord(part) || part.type !== "tool-result" || isPrunedToolOutput(part.output)) {
+        continue;
+      }
+      messageChars += toolOutputChars(part.output);
+      messageOutputs += 1;
+    }
+    if (messageOutputs === 0) {
+      continue;
+    }
+    if (protectedChars < PRUNE_PROTECTED_RECENT_TOOL_OUTPUT_CHARS) {
+      protectedChars += messageChars;
+      continue;
+    }
+    pruneMessageIndices.add(index);
+    prunedChars += messageChars;
+    prunedToolOutputs += messageOutputs;
+  }
+
+  if (pruneMessageIndices.size === 0 || prunedChars < PRUNE_MINIMUM_SAVINGS_CHARS) {
+    return { messages: messages as Array<Record<string, unknown>>, prunedToolOutputs: 0, prunedChars: 0 };
+  }
+
+  const pruned = messages.map((message, index) => {
+    if (!pruneMessageIndices.has(index)) {
+      return message;
+    }
+    return {
+      ...message,
+      content: (message.content as unknown[]).map((part) =>
+        isRecord(part) && part.type === "tool-result" && !isPrunedToolOutput(part.output)
+          ? { ...part, output: { type: "text", value: PRUNED_TOOL_OUTPUT_TEXT } }
+          : part,
+      ),
+    };
+  });
+  return { messages: pruned, prunedToolOutputs, prunedChars };
+};
+
+const ANTHROPIC_EPHEMERAL_CACHE_CONTROL = { cacheControl: { type: "ephemeral" as const } };
+
+/** Roles that safely accept a message-level cache breakpoint (never lands on a thinking block). */
+const ANTHROPIC_CACHEABLE_ROLES = new Set(["user", "tool"]);
+
+/**
+ * Anthropic only caches prompt prefixes at explicit cache_control breakpoints
+ * (max 4 per request). Marks the last two user/tool messages so each agent
+ * round writes a new cache entry and reads the previous round's entry, and
+ * removes stale marks from earlier messages so the loop never exceeds the
+ * breakpoint budget. The system prompt carries its own breakpoint separately.
+ */
+export const applyAnthropicCacheBreakpoints = (
+  messages: ReadonlyArray<Record<string, unknown>>,
+): Array<Record<string, unknown>> => {
+  const breakpointIndices = new Set<number>();
+  for (let index = messages.length - 1; index >= 0 && breakpointIndices.size < 2; index--) {
+    if (ANTHROPIC_CACHEABLE_ROLES.has(String(messages[index]?.role))) {
+      breakpointIndices.add(index);
+    }
+  }
+  if (breakpointIndices.size === 0) {
+    return messages as Array<Record<string, unknown>>;
+  }
+
+  return messages.map((message, index) => {
+    const providerOptions = isRecord(message.providerOptions) ? message.providerOptions : undefined;
+    const anthropicOptions = providerOptions && isRecord(providerOptions.anthropic) ? providerOptions.anthropic : undefined;
+    const hasBreakpoint = anthropicOptions !== undefined && "cacheControl" in anthropicOptions;
+
+    if (breakpointIndices.has(index)) {
+      if (hasBreakpoint) {
+        return message;
+      }
+      return {
+        ...message,
+        providerOptions: {
+          ...providerOptions,
+          anthropic: { ...anthropicOptions, ...ANTHROPIC_EPHEMERAL_CACHE_CONTROL },
+        },
+      };
+    }
+
+    if (!hasBreakpoint) {
+      return message;
+    }
+    const restAnthropic = Object.fromEntries(Object.entries(anthropicOptions).filter(([key]) => key !== "cacheControl"));
+    const restProviderOptions: Record<string, unknown> = { ...providerOptions };
+    if (Object.keys(restAnthropic).length > 0) {
+      restProviderOptions.anthropic = restAnthropic;
+    } else {
+      delete restProviderOptions.anthropic;
+    }
+    if (Object.keys(restProviderOptions).length === 0) {
+      return Object.fromEntries(Object.entries(message).filter(([key]) => key !== "providerOptions"));
+    }
+    return { ...message, providerOptions: restProviderOptions };
+  });
+};
+
+/**
+ * For Anthropic models the instructions are sent as a system message object
+ * with a cache breakpoint, so the static system prompt and tool definitions
+ * prefix is cached across every round of the run.
+ */
+export const buildInstructionsForFamily = (
+  family: UnifiedProviderFamily,
+  instructions: string,
+): string | Record<string, unknown> =>
+  family === "anthropic"
+    ? { role: "system", content: instructions, providerOptions: { anthropic: ANTHROPIC_EPHEMERAL_CACHE_CONTROL } }
+    : instructions;
+
 type GenerateAskTextWithAiSdkInput = {
   modelId: string;
   apiKey: string;
@@ -1060,7 +1227,13 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
       sessionType: isChat ? "chat" : "run",
     });
     const model = createLanguageModel(input, devLogger.enabled ? devLogger : undefined);
-    const providerOptions = buildAiSdkProviderOptions(providerFamily, input.modelId, input.providerOptions, input.modelConfig);
+    const providerOptions = buildAiSdkProviderOptions(
+      providerFamily,
+      input.modelId,
+      input.providerOptions,
+      input.modelConfig,
+      input.runId,
+    );
     const openAiChatTools =
       isChat && providerFamily === "openai"
         ? {
@@ -1149,10 +1322,18 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
               },
             });
 
+            // The model only needs the outcome; the rest of result.metadata is
+            // UI-oriented (diffs, paths, stream ids) and would be resent on
+            // every subsequent round. exitCode is the one field with no
+            // equivalent in content.
+            const exitCode =
+              isRecord(result.metadata) && typeof result.metadata.exitCode === "number"
+                ? result.metadata.exitCode
+                : undefined;
             return {
               ok: result.ok,
               content: result.content,
-              metadata: result.metadata,
+              ...(exitCode !== undefined ? { exitCode } : {}),
             };
           },
         }),
@@ -1269,17 +1450,39 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
     const { instructions: promptInstructions, messages: promptMessages } = splitSystemMessagesIntoInstructions(
       startingMessages as Array<Record<string, unknown>>,
     );
+    const requestInstructions = promptInstructions
+      ? buildInstructionsForFamily(providerFamily, promptInstructions)
+      : undefined;
     let maxSteps: number = MODE_POLICIES[input.mode].maxToolRounds;
     if (isChat) maxSteps = openAiChatTools ? 6 : 1;
     const result = await withProviderRetry(isChat ? "chat request" : "agent run", signal, onChunk, () =>
       streamText({
         model,
-        ...(promptInstructions ? { instructions: promptInstructions } : {}),
+        ...(requestInstructions ? { instructions: requestInstructions as never } : {}),
         messages: promptMessages as never,
         tools,
         ...(providerOptions ? { providerOptions: providerOptions as never } : {}),
         stopWhen: stepCountIs(maxSteps),
         abortSignal: signal,
+        prepareStep: ({ messages: stepMessages }) => {
+          const currentMessages = stepMessages as unknown as Array<Record<string, unknown>>;
+          const pruneResult = pruneOldToolOutputs(currentMessages);
+          if (pruneResult.prunedToolOutputs > 0) {
+            onChunk({
+              type: "status",
+              value: `Compacted ${String(pruneResult.prunedToolOutputs)} old tool output${
+                pruneResult.prunedToolOutputs === 1 ? "" : "s"
+              } (~${String(Math.round(pruneResult.prunedChars / APPROX_CHARS_PER_TOKEN))} tokens) to conserve context.`,
+              metadata: { silent: true },
+            });
+          }
+          const nextMessages =
+            providerFamily === "anthropic" ? applyAnthropicCacheBreakpoints(pruneResult.messages) : pruneResult.messages;
+          if (nextMessages === currentMessages) {
+            return undefined;
+          }
+          return { messages: nextMessages as never };
+        },
         onStepEnd: async (stepResult) => {
           accumulatedUsage = addUsage(accumulatedUsage, normalizeAiSdkTokenUsage(stepResult.usage));
 
