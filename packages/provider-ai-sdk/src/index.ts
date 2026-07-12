@@ -946,7 +946,7 @@ const PRUNE_PROTECTED_RECENT_TOOL_OUTPUT_CHARS = 40_000 * APPROX_CHARS_PER_TOKEN
  */
 const PRUNE_MINIMUM_SAVINGS_CHARS = 20_000 * APPROX_CHARS_PER_TOKEN;
 export const PRUNED_TOOL_OUTPUT_TEXT =
-  "[Old tool output removed to conserve context. Re-run the tool if this output is needed again.]";
+  "[Old tool output removed to conserve context. If this information is needed again, inspect the current state with read-only tools (read_file, list_files, search_repo); do not repeat side-effecting operations.]";
 
 const toolOutputChars = (output: unknown): number => {
   try {
