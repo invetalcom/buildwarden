@@ -73,6 +73,18 @@ describe("run activity timeline shaping", () => {
     expect(renderToStaticMarkup(<RunActivityTimeline steps={[]} run={{ id: "empty", status: "completed", mode: "code" }} />)).toContain("No activity recorded");
   });
 
+  it("renders the virtualized timeline shell without crashing", () => {
+    const virtualized = renderToStaticMarkup(
+      <RunActivityTimeline
+        steps={[step("prompt", "log", { source: "user" }, "Continue"), step("answer", "output", {}, "Working")]}
+        run={{ id: "run-virtual", status: "running", mode: "code" }}
+        virtualized
+        showLoading
+      />,
+    );
+    expect(virtualized).toContain("agent-virtual-spacer");
+  });
+
   it("keeps adjacent tool calls grouped as one tool batch", () => {
     const entries = buildActivityEntries([
       step("call-1", "tool-call", { callId: "1", toolName: "read_file", path: "a.ts" }),

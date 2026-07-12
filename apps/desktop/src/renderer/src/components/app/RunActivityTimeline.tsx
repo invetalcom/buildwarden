@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Ref, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Ref, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   extractAttachmentNamesFromMetadata,
@@ -370,7 +370,23 @@ export const buildTimelineRenderItems = ({
   return items;
 };
 
-const estimateTimelineItemSize = (item: TimelineRenderItem | undefined, density: RunTimelineDensity) => {
+// Rough per-line estimate for markdown-ish text content. Estimates only need
+// to be near reality: the closer they are, the smaller the layout shift when a
+// row scrolls into view and receives its first real measurement.
+const estimateTextContentSize = (content: string, density: RunTimelineDensity) => {
+  const lineHeight = density === "detailed" ? 20 : 18;
+  let lines = 0;
+  for (const line of content.split("\n")) {
+    lines += Math.max(1, Math.ceil(line.length / 90));
+  }
+  return Math.min(1200, 44 + lines * lineHeight);
+};
+
+const estimateTimelineItemSize = (
+  item: TimelineRenderItem | undefined,
+  density: RunTimelineDensity,
+  expandedReasoningStepIds: Record<string, boolean>,
+) => {
   if (!item) return 80;
   if (item.kind === "end") return density === "compact" ? 8 : 18;
   if (item.kind === "loading") return 62;
@@ -392,7 +408,7 @@ const estimateTimelineItemSize = (item: TimelineRenderItem | undefined, density:
   if (entry.kind === "single-group") {
     if (entry.groupKey === "status") return 42 + entry.items.length * 22;
     if (entry.groupKey === "user") return 104 + entry.items.length * 48;
-    return density === "detailed" ? 260 : 190;
+    return Math.min(1600, 24 + entry.items.reduce((total, groupItem) => total + estimateTextContentSize(groupItem.step.content, density), 0));
   }
 
   if (entry.step.eventType === "status") return 64;
@@ -404,18 +420,14 @@ const estimateTimelineItemSize = (item: TimelineRenderItem | undefined, density:
   }
   if (entry.step.eventType === "error") return 120;
 
-  return density === "detailed" ? 240 : 170;
-};
-
-const measureTimelineRowElement = (element: HTMLElement) => {
-  const child = element.firstElementChild;
-  if (child instanceof HTMLElement) {
-    const childStyle = window.getComputedStyle(child);
-    const marginTop = Number.parseFloat(childStyle.marginTop) || 0;
-    const marginBottom = Number.parseFloat(childStyle.marginBottom) || 0;
-    return Math.max(1, Math.ceil(child.getBoundingClientRect().height + marginTop + marginBottom));
+  if (
+    entry.metadata.assistantKind === "reasoning" &&
+    shouldAutoCollapseReasoning(entry.step.content) &&
+    !expandedReasoningStepIds[entry.step.id]
+  ) {
+    return 56;
   }
-  return Math.max(1, Math.ceil(element.getBoundingClientRect().height));
+  return estimateTextContentSize(entry.step.content, density);
 };
 
 const describeUserCommand = (metadata: Record<string, unknown>): string =>
@@ -1719,6 +1731,152 @@ return (
 );
 };
 
+// Everything a timeline row needs to render, bundled so rows can be memoized:
+// while the bundle is referentially stable (i.e. during scrolling), rows skip
+// re-rendering their markdown/diff content entirely.
+type TimelineRenderContext = ActivityRenderContext & {
+  density: RunTimelineDensity;
+  activeSubagentFocus: { subagentId: string; nonce: number } | null;
+  onCancelRunShell?: (run: RunActivityRun, toolCallId: string) => void;
+  onSubmitPlanFeedback?: (feedback: string) => Promise<void>;
+  endRef?: Ref<HTMLDivElement>;
+  endClassName?: string;
+};
+
+const renderActivityEntry = (entry: ActivityEntry, context: TimelineRenderContext): ReactNode => {
+  const { run, density, busy, readOnly, rowTime, compactContent, activeSubagentFocus, onCancelRunShell, onOpenWorkspaceFile } = context;
+
+  if (entry.kind === "diff-batch") {
+    const summarizedItems = entry.items.map<DiffBatchSummarizedRow>(({ step, metadata }) => {
+      const toolName = typeof metadata.toolName === "string" ? metadata.toolName : step.title.replace(/^Diff updated:\s*/i, "") || "diff";
+      const path = typeof metadata.path === "string" ? metadata.path : null;
+      const content = typeof metadata.writeFileUnifiedDiff === "string" ? metadata.writeFileUnifiedDiff : step.content;
+      return {
+        id: step.id,
+        title: step.title,
+        toolName,
+        path,
+        content,
+        createdAt: step.createdAt,
+      };
+    });
+    const latestTimestamp = summarizedItems[summarizedItems.length - 1]?.createdAt ?? entry.items[0]?.step.createdAt;
+
+    return (
+      <AgentLogRow
+        key={`${entry.items[0]?.step.id ?? "diff-batch"}-${entry.items.length}`}
+        tone="diff"
+        label={`Diffs (${entry.items.length})`}
+        time={rowTime(latestTimestamp ? new Date(latestTimestamp).toLocaleTimeString() : null)}
+      >
+        <div className="agent-tool-stack agent-tool-stack--bare">
+          {summarizedItems.map((item) => (
+            <ActivityDiffBatchRow key={item.id} item={item} density={density} onOpenWorkspaceFile={onOpenWorkspaceFile} />
+          ))}
+        </div>
+      </AgentLogRow>
+    );
+  }
+
+  if (entry.kind === "tool-batch") {
+    const summarizedItems = summarizeToolBatchItems(entry.items);
+    const latestTimestamp = summarizedItems[summarizedItems.length - 1]?.createdAt ?? entry.items[0]?.callStep?.createdAt;
+
+    return (
+      <AgentLogRow
+        key={`${entry.items[0]?.callStep?.id ?? entry.items[0]?.resultStep?.id ?? "tool-batch"}-${entry.items.length}`}
+        tone="tools"
+        label={`Tools (${entry.items.length})`}
+        time={rowTime(latestTimestamp ? new Date(latestTimestamp).toLocaleTimeString() : null)}
+      >
+        <div className="agent-tool-stack agent-tool-stack--bare">
+          {summarizedItems.map((item, index) => (
+            <ActivityToolBatchRow
+              key={`${item.toolName}-${item.detail ?? "detail"}-${index}`}
+              item={item}
+              itemIndex={index}
+              run={run}
+              density={density}
+              busy={busy}
+              readOnly={readOnly}
+              onCancelRunShell={onCancelRunShell}
+              onOpenWorkspaceFile={onOpenWorkspaceFile}
+            />
+          ))}
+        </div>
+      </AgentLogRow>
+    );
+  }
+
+  if (entry.kind === "tool") {
+    return null;
+  }
+
+  if (entry.kind === "subagent") {
+    return (
+      <ActivitySubagentCard
+        key={`subagent-${entry.info.id}`}
+        entry={entry}
+        compactContent={compactContent}
+        focusNonce={activeSubagentFocus?.subagentId === entry.info.id ? activeSubagentFocus.nonce : 0}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        renderEntry={(nested, index) => (
+          <div key={`subagent-${entry.info.id}-nested-${String(index)}`}>{renderActivityEntry(nested, context)}</div>
+        )}
+        rowTime={rowTime}
+      />
+    );
+  }
+
+  if (entry.kind === "single-group") {
+    return renderSingleGroupEntry(entry, context);
+  }
+
+  return renderSingleActivityEntry(entry, context);
+};
+
+const renderTimelineItem = (item: TimelineRenderItem, context: TimelineRenderContext): ReactNode => {
+  if (item.kind === "entry") {
+    return renderActivityEntry(item.entry, context);
+  }
+
+  if (item.kind === "plan-decision") {
+    return (
+      <AgentLogRow key={item.key} tone="answer" label="Plan decision" time={null}>
+        <RunPlanDecisionCard
+          disabled={context.busy || context.isRunActive}
+          onImplement={() => context.onPreparePlanContinuation?.(item.planText)}
+          onSubmitFeedback={context.onSubmitPlanFeedback!}
+        />
+      </AgentLogRow>
+    );
+  }
+
+  if (item.kind === "loading") {
+    return (
+      <div key={item.key} className="agent-loading">
+        <div className="run-activity-loading-bar mb-2" />
+        <div className="flex items-center gap-2 text-[11px] text-zinc-500">
+          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[color:var(--ec-accent)]" aria-hidden />
+          <span className="animate-pulse">Agent is working...</span>
+        </div>
+      </div>
+    );
+  }
+
+  return <div key={item.key} ref={context.endRef} className={context.endClassName} aria-hidden="true" />;
+};
+
+const TimelineItemRow = memo(function TimelineItemRow({
+  item,
+  context,
+}: Readonly<{
+  item: TimelineRenderItem;
+  context: TimelineRenderContext;
+}>) {
+  return <>{renderTimelineItem(item, context)}</>;
+});
+
 export function RunActivityTimeline({
   steps,
   run,
@@ -1787,34 +1945,40 @@ export function RunActivityTimeline({
     !isRunActive &&
     Boolean(onPreparePlanContinuation && onSubmitPlanFeedback && latestPlanDecisionText?.trim());
   const compactContent = density !== "detailed";
-  const rowTime = (time: string | null | undefined) => (density === "compact" ? null : time);
+  const rowTime = useCallback((time: string | null | undefined) => (density === "compact" ? null : time), [density]);
   const stepMeasurementSignature = useMemo(
     () => steps.map((step) => `${step.id}:${step.eventType}:${step.title.length}:${step.content.length}:${step.metadataJson.length}`).join("|"),
     [steps],
   );
 
-  const copyStepContent = async (text: string, stepId: string) => {
-    if (onCopyStepContent) {
-      await onCopyStepContent(text, stepId);
-      return;
-    }
-    await navigator.clipboard.writeText(text);
-    setInternalCopiedStepId(stepId);
-    window.setTimeout(() => {
-      setInternalCopiedStepId((current) => (current === stepId ? null : current));
-    }, 1500);
-  };
+  const copyStepContent = useCallback(
+    async (text: string, stepId: string) => {
+      if (onCopyStepContent) {
+        await onCopyStepContent(text, stepId);
+        return;
+      }
+      await navigator.clipboard.writeText(text);
+      setInternalCopiedStepId(stepId);
+      window.setTimeout(() => {
+        setInternalCopiedStepId((current) => (current === stepId ? null : current));
+      }, 1500);
+    },
+    [onCopyStepContent],
+  );
 
-  const toggleReasoningStep = (stepId: string) => {
-    if (onToggleReasoningStep) {
-      onToggleReasoningStep(stepId);
-      return;
-    }
-    setInternalExpandedReasoningStepIds((current) => ({
-      ...current,
-      [stepId]: !current[stepId],
-    }));
-  };
+  const toggleReasoningStep = useCallback(
+    (stepId: string) => {
+      if (onToggleReasoningStep) {
+        onToggleReasoningStep(stepId);
+        return;
+      }
+      setInternalExpandedReasoningStepIds((current) => ({
+        ...current,
+        [stepId]: !current[stepId],
+      }));
+    },
+    [onToggleReasoningStep],
+  );
 
   const timelineItems = useMemo(
     () =>
@@ -1839,18 +2003,16 @@ export function RunActivityTimeline({
     [containerRef],
   );
   const rowVirtualizer = useVirtualizer({
+    enabled: virtualized,
     count: timelineItems.length,
     getScrollElement: () => scrollElementRef.current,
-    estimateSize: (index) => estimateTimelineItemSize(timelineItems[index], density),
+    estimateSize: (index) => estimateTimelineItemSize(timelineItems[index], density, activeReasoningStepIds),
     getItemKey: (index) => timelineItems[index]?.key ?? index,
-    measureElement: (element) => {
-      return element instanceof HTMLElement ? measureTimelineRowElement(element) : 1;
-    },
     useAnimationFrameWithResizeObserver: true,
     initialOffset: virtualized ? () => Number.MAX_SAFE_INTEGER : undefined,
     anchorTo: "end",
     scrollEndThreshold: 140,
-    overscan: 10,
+    overscan: 4,
   });
   const scrollTimelineToEnd = useCallback(() => {
     const container = scrollElementRef.current;
@@ -1921,39 +2083,6 @@ export function RunActivityTimeline({
     return () => container.removeEventListener("scroll", updateStickiness);
   }, [virtualized]);
 
-  const measureVisibleVirtualRows = useCallback(() => {
-    const container = scrollElementRef.current;
-    if (!container) {
-      return;
-    }
-    container.querySelectorAll<HTMLElement>(".agent-virtual-row[data-index]").forEach((row) => {
-      const index = Number(row.dataset.index);
-      if (!Number.isFinite(index)) {
-        return;
-      }
-      rowVirtualizer.resizeItem(index, measureTimelineRowElement(row));
-    });
-  }, [rowVirtualizer]);
-
-  useLayoutEffect(() => {
-    if (!virtualized) {
-      return;
-    }
-    rowVirtualizer.measure();
-    measureVisibleVirtualRows();
-    const frame = window.requestAnimationFrame(measureVisibleVirtualRows);
-    return () => window.cancelAnimationFrame(frame);
-  }, [density, measureVisibleVirtualRows, rowVirtualizer, run.id, virtualized]);
-
-  useLayoutEffect(() => {
-    if (!virtualized) {
-      return;
-    }
-    measureVisibleVirtualRows();
-    const frame = window.requestAnimationFrame(measureVisibleVirtualRows);
-    return () => window.cancelAnimationFrame(frame);
-  }, [activeReasoningStepIds, measureVisibleVirtualRows, stepMeasurementSignature, timelineItems.length, virtualized]);
-
   useLayoutEffect(() => {
     if (initiallyScrolledRunIdRef.current === run.id || !hasRenderableActivity || !scrollElementRef.current) {
       return;
@@ -1987,146 +2116,56 @@ export function RunActivityTimeline({
 
 
 
-  const activityRenderContext: ActivityRenderContext = {
-    run,
-    runDurationLabel,
-    rowTime,
-    readOnly,
-    restorablePromptStepId,
-    onUndoRunToLastPrompt,
-    activeCopiedStepId,
-    copyStepContent,
-    busy,
-    isRunActive,
-    compactContent,
-    onOpenWorkspaceFile,
-    onPreparePlanContinuation,
-    onSubmitUserInputAnswers,
-    activeReasoningStepIds,
-    toggleReasoningStep,
-  };
-
-  const renderActivityEntry = (entry: ActivityEntry): ReactNode => {
-        if (entry.kind === "diff-batch") {
-          const summarizedItems = entry.items.map<DiffBatchSummarizedRow>(({ step, metadata }) => {
-            const toolName = typeof metadata.toolName === "string" ? metadata.toolName : step.title.replace(/^Diff updated:\s*/i, "") || "diff";
-            const path = typeof metadata.path === "string" ? metadata.path : null;
-            const content = typeof metadata.writeFileUnifiedDiff === "string" ? metadata.writeFileUnifiedDiff : step.content;
-            return {
-              id: step.id,
-              title: step.title,
-              toolName,
-              path,
-              content,
-              createdAt: step.createdAt,
-            };
-          });
-          const latestTimestamp = summarizedItems[summarizedItems.length - 1]?.createdAt ?? entry.items[0]?.step.createdAt;
-
-          return (
-            <AgentLogRow
-              key={`${entry.items[0]?.step.id ?? "diff-batch"}-${entry.items.length}`}
-              tone="diff"
-              label={`Diffs (${entry.items.length})`}
-              time={rowTime(latestTimestamp ? new Date(latestTimestamp).toLocaleTimeString() : null)}
-            >
-              <div className="agent-tool-stack agent-tool-stack--bare">
-                {summarizedItems.map((item) => (
-                  <ActivityDiffBatchRow key={item.id} item={item} density={density} onOpenWorkspaceFile={onOpenWorkspaceFile} />
-                ))}
-              </div>
-            </AgentLogRow>
-          );
-        }
-
-        if (entry.kind === "tool-batch") {
-          const summarizedItems = summarizeToolBatchItems(entry.items);
-          const latestTimestamp = summarizedItems[summarizedItems.length - 1]?.createdAt ?? entry.items[0]?.callStep?.createdAt;
-
-          return (
-            <AgentLogRow
-              key={`${entry.items[0]?.callStep?.id ?? entry.items[0]?.resultStep?.id ?? "tool-batch"}-${entry.items.length}`}
-              tone="tools"
-              label={`Tools (${entry.items.length})`}
-              time={rowTime(latestTimestamp ? new Date(latestTimestamp).toLocaleTimeString() : null)}
-            >
-              <div className="agent-tool-stack agent-tool-stack--bare">
-                {summarizedItems.map((item, index) => (
-                  <ActivityToolBatchRow
-                    key={`${item.toolName}-${item.detail ?? "detail"}-${index}`}
-                    item={item}
-                    itemIndex={index}
-                    run={run}
-                    density={density}
-                    busy={busy}
-                    readOnly={readOnly}
-                    onCancelRunShell={onCancelRunShell}
-                    onOpenWorkspaceFile={onOpenWorkspaceFile}
-                  />
-                ))}
-              </div>
-            </AgentLogRow>
-          );
-        }
-
-        if (entry.kind === "tool") {
-          return null;
-        }
-
-        if (entry.kind === "subagent") {
-          return (
-            <ActivitySubagentCard
-              key={`subagent-${entry.info.id}`}
-              entry={entry}
-              compactContent={compactContent}
-              focusNonce={activeSubagentFocus?.subagentId === entry.info.id ? activeSubagentFocus.nonce : 0}
-              onOpenWorkspaceFile={onOpenWorkspaceFile}
-              renderEntry={(nested, index) => (
-                <div key={`subagent-${entry.info.id}-nested-${String(index)}`}>{renderActivityEntry(nested)}</div>
-              )}
-              rowTime={rowTime}
-            />
-          );
-        }
-
-        if (entry.kind === "single-group") {
-          return renderSingleGroupEntry(entry, activityRenderContext);
-        }
-
-        return renderSingleActivityEntry(entry, activityRenderContext);
-  };
-
-  const renderTimelineItem = (item: TimelineRenderItem): ReactNode => {
-    if (item.kind === "entry") {
-      return renderActivityEntry(item.entry);
-    }
-
-    if (item.kind === "plan-decision") {
-      return (
-        <AgentLogRow key={item.key} tone="answer" label="Plan decision" time={null}>
-          <RunPlanDecisionCard
-            disabled={busy || isRunActive}
-            onImplement={() => onPreparePlanContinuation?.(item.planText)}
-            onSubmitFeedback={onSubmitPlanFeedback!}
-          />
-        </AgentLogRow>
-      );
-    }
-
-    if (item.kind === "loading") {
-      return (
-        <div key={item.key} className="agent-loading">
-          <div className="run-activity-loading-bar mb-2" />
-          <div className="flex items-center gap-2 text-[11px] text-zinc-500">
-            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[color:var(--ec-accent)]" aria-hidden />
-            <span className="animate-pulse">Agent is working...</span>
-          </div>
-        </div>
-      );
-    }
-
-    return <div key={item.key} ref={endRef} className={endClassName} aria-hidden="true" />;
-  };
+  const timelineRenderContext: TimelineRenderContext = useMemo(
+    () => ({
+      run,
+      runDurationLabel,
+      rowTime,
+      readOnly,
+      restorablePromptStepId,
+      onUndoRunToLastPrompt,
+      activeCopiedStepId,
+      copyStepContent,
+      busy,
+      isRunActive,
+      compactContent,
+      onOpenWorkspaceFile,
+      onPreparePlanContinuation,
+      onSubmitUserInputAnswers,
+      activeReasoningStepIds,
+      toggleReasoningStep,
+      density,
+      activeSubagentFocus,
+      onCancelRunShell,
+      onSubmitPlanFeedback,
+      endRef,
+      endClassName,
+    }),
+    [
+      run,
+      runDurationLabel,
+      rowTime,
+      readOnly,
+      restorablePromptStepId,
+      onUndoRunToLastPrompt,
+      activeCopiedStepId,
+      copyStepContent,
+      busy,
+      isRunActive,
+      compactContent,
+      onOpenWorkspaceFile,
+      onPreparePlanContinuation,
+      onSubmitUserInputAnswers,
+      activeReasoningStepIds,
+      toggleReasoningStep,
+      density,
+      activeSubagentFocus,
+      onCancelRunShell,
+      onSubmitPlanFeedback,
+      endRef,
+      endClassName,
+    ],
+  );
 
   const worklogClassName = cn(className, `agent-worklog-density--${density}`, virtualized ? "agent-worklog--virtualized" : null);
   const isEmpty = activityEntries.length === 0 && !showLoading;
@@ -2144,17 +2183,12 @@ export function RunActivityTimeline({
             return (
               <div
                 key={virtualRow.key}
-                ref={(node) => {
-                  rowVirtualizer.measureElement(node);
-                  if (node) {
-                    rowVirtualizer.resizeItem(virtualRow.index, measureTimelineRowElement(node));
-                  }
-                }}
+                ref={rowVirtualizer.measureElement}
                 data-index={virtualRow.index}
                 className="agent-virtual-row"
                 style={{ transform: `translateY(${virtualRow.start}px)` }}
               >
-                {renderTimelineItem(item)}
+                <TimelineItemRow item={item} context={timelineRenderContext} />
               </div>
             );
           })}
@@ -2166,7 +2200,9 @@ export function RunActivityTimeline({
   return (
     <AgentWorklog ref={setWorklogRef} className={worklogClassName}>
       {isEmpty ? <div className="agent-worklog-empty">{emptyMessage}</div> : null}
-      {timelineItems.map((item) => renderTimelineItem(item))}
+      {timelineItems.map((item) => (
+        <TimelineItemRow key={item.key} item={item} context={timelineRenderContext} />
+      ))}
     </AgentWorklog>
   );
 }
