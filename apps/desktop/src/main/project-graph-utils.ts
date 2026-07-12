@@ -464,6 +464,27 @@ const canonicalPythonModulePath = (source: string): string => {
   return normalized.replace(/\.py$/i, "").replace(/\//g, ".");
 };
 
+const pythonModuleBase = (entry: Extract<PythonImportEntry, { kind: "from" }>, currentContainer: string): string => {
+  let baseParts = entry.level > 0 && currentContainer ? currentContainer.split(".") : [];
+  if (entry.level > 0) baseParts = baseParts.slice(0, Math.max(0, baseParts.length - (entry.level - 1)));
+  return entry.module ? [...baseParts, ...entry.module.split(".").filter(Boolean)].join(".") : baseParts.join(".");
+};
+
+const resolvePythonImportEntry = (entry: PythonImportEntry, currentContainer: string, indexes: PythonGraphIndexes): string[] => {
+  if (entry.kind === "import") {
+    const target = indexes.moduleToFile.get(entry.module);
+    return target ? [target] : [];
+  }
+  const moduleBase = pythonModuleBase(entry, currentContainer);
+  const resolved = entry.names
+    .filter((name) => name !== "*")
+    .map((name) => indexes.moduleToFile.get(moduleBase ? `${moduleBase}.${name}` : name))
+    .filter((target): target is string => Boolean(target));
+  const moduleTarget = moduleBase ? indexes.moduleToFile.get(moduleBase) : null;
+  if (moduleTarget) resolved.push(moduleTarget);
+  return resolved;
+};
+
 const resolvePythonDependencies = (source: string, content: string, indexes: PythonGraphIndexes): string[] => {
   const resolved = new Set<string>();
   const currentModulePath = canonicalPythonModulePath(source);
@@ -472,35 +493,7 @@ const resolvePythonDependencies = (source: string, content: string, indexes: Pyt
     : currentModulePath.split(".").slice(0, -1).join(".");
 
   for (const entry of parsePythonImports(content)) {
-    if (entry.kind === "import") {
-      const target = indexes.moduleToFile.get(entry.module);
-      if (target) {
-        resolved.add(target);
-      }
-      continue;
-    }
-
-    let baseParts = entry.level > 0 && currentContainer ? currentContainer.split(".") : [];
-    if (entry.level > 0) {
-      baseParts = baseParts.slice(0, Math.max(0, baseParts.length - (entry.level - 1)));
-    }
-    const moduleBase = entry.module ? [...baseParts, ...entry.module.split(".").filter(Boolean)].join(".") : baseParts.join(".");
-    for (const importedName of entry.names) {
-      if (importedName === "*") {
-        continue;
-      }
-      const directCandidate = moduleBase ? `${moduleBase}.${importedName}` : importedName;
-      const directTarget = indexes.moduleToFile.get(directCandidate);
-      if (directTarget) {
-        resolved.add(directTarget);
-      }
-    }
-    if (moduleBase) {
-      const moduleTarget = indexes.moduleToFile.get(moduleBase);
-      if (moduleTarget) {
-        resolved.add(moduleTarget);
-      }
-    }
+    for (const target of resolvePythonImportEntry(entry, currentContainer, indexes)) resolved.add(target);
   }
 
   return [...resolved];

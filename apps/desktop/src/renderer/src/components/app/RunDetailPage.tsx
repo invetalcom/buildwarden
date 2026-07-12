@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import {
   appendChatAttachmentFiles,
   parseRunWorkspaceFileReference,
@@ -71,6 +71,15 @@ type TileLayoutState = Record<TilePanelId, RunWorkspaceTileSize>;
 
 type SecondaryPanelId = "diff" | "terminal" | "browser" | "notes" | "chat" | "file";
 type SecondaryPanelPosition = "right" | "bottom";
+
+const pickVisibleSecondaryTab = (
+  previous: SecondaryPanelId | null,
+  visibility: Record<SecondaryPanelId, boolean>,
+): SecondaryPanelId | null => {
+  if (previous && visibility[previous]) return previous;
+  const order: SecondaryPanelId[] = ["file", "diff", "terminal", "browser", "notes", "chat"];
+  return order.find((tab) => visibility[tab]) ?? null;
+};
 
 type RunDetailModelOption = {
   id: string;
@@ -418,21 +427,14 @@ export const RunDetailPage = ({
 
   // Keep the active secondary tab in sync with panel visibility changes
   useEffect(() => {
-    setActiveSecondaryTab((prev) => {
-      if (prev === "file" && filePanelTarget) return prev;
-      if (prev === "diff" && showDiff) return prev;
-      if (prev === "terminal" && showTerminal) return prev;
-      if (prev === "browser" && showBrowser) return prev;
-      if (prev === "notes" && showNotes) return prev;
-      if (prev === "chat" && showChat) return prev;
-      if (filePanelTarget) return "file";
-      if (showDiff) return "diff";
-      if (showTerminal) return "terminal";
-      if (showBrowser) return "browser";
-      if (showNotes) return "notes";
-      if (showChat) return "chat";
-      return null;
-    });
+    setActiveSecondaryTab((previous) => pickVisibleSecondaryTab(previous, {
+      file: Boolean(filePanelTarget),
+      diff: showDiff,
+      terminal: showTerminal,
+      browser: showBrowser,
+      notes: showNotes,
+      chat: showChat,
+    }));
   }, [filePanelTarget, showDiff, showTerminal, showBrowser, showNotes, showChat]);
 
   // Split-pane resize (works for both right and bottom positions)
@@ -892,6 +894,24 @@ export const RunDetailPage = ({
     </div>
   ) : null;
 
+  let activityTimelineFloatingClass = "agent-worklog--flush-end";
+  if (showModifiedFilesSummary) {
+    activityTimelineFloatingClass = modifiedFilesExpanded ? "agent-worklog--floating-diff-expanded" : "agent-worklog--floating-diff";
+  }
+  let recoveryBadge: ReactNode = null;
+  if (recovery?.providerSessionAvailable) {
+    recoveryBadge = <Badge className="border-cyan-500/20 bg-cyan-500/10 text-[10px] text-cyan-100">provider session</Badge>;
+  }
+  if (recovery?.kind === "checkpoint" && recovery.checkpointRound) {
+    recoveryBadge = <Badge className="border-cyan-500/20 bg-cyan-500/10 text-[10px] text-cyan-100">checkpoint {recovery.checkpointRound}</Badge>;
+  }
+  let activityPaneStyle: CSSProperties = { flex: 1 };
+  if (hasSecondaryPanels) {
+    activityPaneStyle = secondaryPanelPosition === "right"
+      ? { width: `${splitPct}%`, flexShrink: 0 }
+      : { flexBasis: `${splitPct}%`, flexShrink: 0 };
+  }
+
   const activityContent = (
     <RunActivityTimeline
       key={runDetail.run.id}
@@ -900,11 +920,7 @@ export const RunDetailPage = ({
       busy={busy}
       className={cn(
         "app-scrollbar min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-0 pt-1",
-        showModifiedFilesSummary
-          ? modifiedFilesExpanded
-            ? "agent-worklog--floating-diff-expanded"
-            : "agent-worklog--floating-diff"
-          : "agent-worklog--flush-end",
+        activityTimelineFloatingClass,
       )}
       containerRef={activityContainerRef}
       endRef={activityEndRef}
@@ -1012,13 +1028,7 @@ export const RunDetailPage = ({
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="text-xs font-semibold text-zinc-100">{recovery.title}</p>
-                  {recovery.kind === "checkpoint" && recovery.checkpointRound ? (
-                    <Badge className="border-cyan-500/20 bg-cyan-500/10 text-[10px] text-cyan-100">
-                      checkpoint {recovery.checkpointRound}
-                    </Badge>
-                  ) : recovery.providerSessionAvailable ? (
-                    <Badge className="border-cyan-500/20 bg-cyan-500/10 text-[10px] text-cyan-100">provider session</Badge>
-                  ) : null}
+                  {recoveryBadge}
                 </div>
                 <p className="mt-0.5 text-[11px] leading-5 text-zinc-400">{recovery.detail}</p>
               </div>
@@ -1131,13 +1141,7 @@ export const RunDetailPage = ({
         {showActivity ? (
           <div
             className="relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-zinc-800/60"
-            style={
-              hasSecondaryPanels
-                ? secondaryPanelPosition === "right"
-                  ? { width: `${splitPct}%`, flexShrink: 0 }
-                  : { flexBasis: `${splitPct}%`, flexShrink: 0 }
-                : { flex: 1 }
-            }
+            style={activityPaneStyle}
           >
             {activityContent}
             {modifiedFilesSummary}

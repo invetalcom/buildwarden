@@ -195,7 +195,7 @@ export const ChatPage = ({
             <div className="flex flex-col items-center justify-center gap-3 p-12 text-center">
               <p className="text-sm text-zinc-400">Loading chats…</p>
             </div>
-          ) : filteredChats.length === 0 ? (
+          ) : <>{filteredChats.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-3 p-12 text-center">
               <MessageSquare className="size-12 text-[var(--ec-muted)]" />
               <p className="text-sm text-[var(--ec-muted)]">
@@ -242,7 +242,7 @@ export const ChatPage = ({
                 </div>
               ))}
             </div>
-          )}
+          )}</>}
         </div>
       </Card>
     </div>

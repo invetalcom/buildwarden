@@ -30,6 +30,203 @@ const LANES: Array<{ status: ProjectTaskStatus; label: string; dot: string }> = 
 
 const statusOptions = LANES.map((lane) => ({ value: lane.status, label: lane.label }));
 
+const buildTaskModelSelections = (
+  tasks: ProjectTaskRecord[],
+  current: Record<string, string>,
+  validModelIds: Set<string>,
+  defaultTaskModelId: string,
+): Record<string, string> => Object.fromEntries(tasks.map((task) => {
+  const candidate = current[task.id];
+  return [task.id, candidate && validModelIds.has(candidate) ? candidate : defaultTaskModelId];
+}));
+
+const isTaskPending = (task: ProjectTaskRecord | null, pendingTaskIds: Set<string>) =>
+  task ? pendingTaskIds.has(task.id) : false;
+
+const useTaskModelSelections = (
+  tasks: ProjectTaskRecord[],
+  modelOptions: ProjectTasksTabProps["modelOptions"],
+  defaultTaskModelId: string,
+) => {
+  const [selections, setSelections] = useState<Record<string, string>>({});
+  const validModelIds = useMemo(() => new Set(modelOptions.map((option) => option.id)), [modelOptions]);
+  useEffect(() => {
+    setSelections((current) => buildTaskModelSelections(tasks, current, validModelIds, defaultTaskModelId));
+  }, [defaultTaskModelId, tasks, validModelIds]);
+  return [selections, setSelections] as const;
+};
+
+interface TaskBoardCardProps {
+  task: ProjectTaskRecord;
+  busy: boolean;
+  isTaskBusy: boolean;
+  hasModels: boolean;
+  isDragged: boolean;
+  onView: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onLaunch: () => void;
+  onDragStart: (event: DragEvent<HTMLElement>) => void;
+  onDragEnd: () => void;
+}
+
+const TaskBoardCard = ({
+  task, busy, isTaskBusy, hasModels, isDragged,
+  onView, onEdit, onDelete, onLaunch, onDragStart, onDragEnd,
+}: TaskBoardCardProps) => (
+  <article draggable={!isTaskBusy} onDragStart={onDragStart} onDragEnd={onDragEnd} className={cn("task-board-card group rounded-md border p-2.5 transition", isDragged && "opacity-45")}>
+    <div className="flex items-start gap-1.5">
+      <GripVertical className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-grab text-zinc-700 group-hover:text-zinc-500" />
+      <div className="min-w-0 flex-1 overflow-hidden">
+        <h5 className="max-h-10 overflow-hidden break-words text-xs font-semibold leading-5 text-zinc-100">{task.title}</h5>
+        <p className="mt-1 max-h-12 overflow-hidden break-words whitespace-pre-wrap text-[11px] leading-4 text-zinc-400">{task.prompt}</p>
+      </div>
+      {isTaskBusy ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-zinc-500" /> : null}
+    </div>
+    <div className="mt-2 flex items-center justify-between gap-1 border-t border-zinc-800/80 pt-2">
+      <div className="flex items-center gap-0.5">
+        <Button type="button" size="sm" variant="ghost" className="task-card-action h-7 w-7 p-0" title="View task" aria-label={`View ${task.title}`} onClick={onView}><Eye className="h-3.5 w-3.5" /></Button>
+        {task.pullRequestUrl ? <Button type="button" size="sm" variant="ghost" className="task-card-action h-7 w-7 p-0" title="Open linked PR/MR" onClick={() => void window.buildwarden.openExternalUrl(task.pullRequestUrl!)}><ExternalLink className="h-3.5 w-3.5" /></Button> : null}
+        <Button type="button" size="sm" variant="ghost" className="task-card-action h-7 w-7 p-0" title="Edit task" onClick={onEdit}><Pencil className="h-3.5 w-3.5" /></Button>
+        <Button type="button" size="sm" variant="ghost" className="task-card-action task-card-action--danger h-7 w-7 p-0" title="Delete task" disabled={isTaskBusy} onClick={onDelete}><Trash2 className="h-3.5 w-3.5" /></Button>
+      </div>
+      <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-[11px]" disabled={busy || isTaskBusy || !hasModels} onClick={onLaunch}><Play className="h-3 w-3" />Start run</Button>
+    </div>
+  </article>
+);
+
+interface TaskBoardProps {
+  tasks: ProjectTaskRecord[];
+  pendingTaskIds: Set<string>;
+  busy: boolean;
+  hasModels: boolean;
+  draggedTaskId: string | null;
+  dragOverStatus: ProjectTaskStatus | null;
+  onView: (taskId: string) => void;
+  onEdit: (task: ProjectTaskRecord) => void;
+  onDelete: (taskId: string) => void | Promise<void>;
+  onLaunch: (task: ProjectTaskRecord) => void;
+  onDraggedTaskChange: (taskId: string | null) => void;
+  onDragOverStatusChange: (status: ProjectTaskStatus | null) => void;
+  onDrop: (event: DragEvent<HTMLDivElement>, status: ProjectTaskStatus) => void;
+}
+
+const confirmTaskDeletion = (task: ProjectTaskRecord, onDelete: TaskBoardProps["onDelete"]) => {
+  if (window.confirm(`Delete “${task.title}”?`)) {
+    void onDelete(task.id);
+  }
+};
+
+const handleTaskLaneDragLeave = (
+  event: DragEvent<HTMLDivElement>,
+  onDragOverStatusChange: TaskBoardProps["onDragOverStatusChange"],
+) => {
+  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+    onDragOverStatusChange(null);
+  }
+};
+
+const getEmptyTaskLaneText = (draggedTaskId: string | null, laneLabel: string) =>
+  draggedTaskId ? `Move to ${laneLabel}` : "No tasks";
+
+interface TaskBoardLaneProps extends Omit<TaskBoardProps, "tasks"> {
+  lane: (typeof LANES)[number];
+  tasks: ProjectTaskRecord[];
+}
+
+interface ConnectedTaskBoardCardProps extends Omit<TaskBoardLaneProps, "lane" | "tasks" | "dragOverStatus" | "onDrop"> {
+  task: ProjectTaskRecord;
+}
+
+const ConnectedTaskBoardCard = ({
+  task, pendingTaskIds, busy, hasModels, draggedTaskId,
+  onView, onEdit, onDelete, onLaunch, onDraggedTaskChange, onDragOverStatusChange,
+}: ConnectedTaskBoardCardProps) => {
+  const handleDragStart = (event: DragEvent<HTMLElement>) => {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/buildwarden-project-task", task.id);
+    onDraggedTaskChange(task.id);
+  };
+  const handleDragEnd = () => {
+    onDraggedTaskChange(null);
+    onDragOverStatusChange(null);
+  };
+  return <TaskBoardCard task={task} busy={busy} isTaskBusy={pendingTaskIds.has(task.id)} hasModels={hasModels} isDragged={draggedTaskId === task.id} onView={() => onView(task.id)} onEdit={() => onEdit(task)} onDelete={() => confirmTaskDeletion(task, onDelete)} onLaunch={() => onLaunch(task)} onDragStart={handleDragStart} onDragEnd={handleDragEnd} />;
+};
+
+const TaskBoardLane = ({
+  lane, tasks, pendingTaskIds, busy, hasModels, draggedTaskId, dragOverStatus,
+  onView, onEdit, onDelete, onLaunch, onDraggedTaskChange, onDragOverStatusChange, onDrop,
+}: TaskBoardLaneProps) => {
+  const laneTasks = tasks.filter((task) => task.status === lane.status);
+  const isDropTarget = dragOverStatus === lane.status;
+  return (
+    <div key={lane.status} className={cn("task-board-lane flex min-h-[360px] min-w-0 flex-col rounded-lg transition-colors", isDropTarget && "task-board-lane--drop ring-1 ring-cyan-500/40")} onDragOver={(event) => { event.preventDefault(); onDragOverStatusChange(lane.status); }} onDragLeave={(event) => handleTaskLaneDragLeave(event, onDragOverStatusChange)} onDrop={(event) => onDrop(event, lane.status)}>
+      <div className="flex h-10 shrink-0 items-center justify-between border-b border-zinc-800/80 px-3">
+        <div className="flex items-center gap-2"><span className={cn("h-2 w-2 rounded-full", lane.dot)} /><h4 className="text-xs font-semibold text-zinc-300">{lane.label}</h4></div>
+        <span className="rounded bg-zinc-900 px-1.5 py-0.5 font-mono text-[10px] text-zinc-500">{laneTasks.length}</span>
+      </div>
+      <div className="space-y-2 p-2">
+        {laneTasks.map((task) => <ConnectedTaskBoardCard key={task.id} task={task} pendingTaskIds={pendingTaskIds} busy={busy} hasModels={hasModels} draggedTaskId={draggedTaskId} onView={onView} onEdit={onEdit} onDelete={onDelete} onLaunch={onLaunch} onDraggedTaskChange={onDraggedTaskChange} onDragOverStatusChange={onDragOverStatusChange} />)}
+        {laneTasks.length === 0 ? <div className={cn("flex min-h-24 items-center justify-center rounded-md border border-dashed border-zinc-800 px-3 text-center text-[11px] text-zinc-600", isDropTarget && "border-cyan-500/50 text-cyan-400/70")}>{getEmptyTaskLaneText(draggedTaskId, lane.label)}</div> : null}
+      </div>
+    </div>
+  );
+};
+
+const TaskBoard = ({
+  tasks, pendingTaskIds, busy, hasModels, draggedTaskId, dragOverStatus,
+  onView, onEdit, onDelete, onLaunch, onDraggedTaskChange, onDragOverStatusChange, onDrop,
+}: TaskBoardProps) => (
+  <div className="app-scrollbar min-h-0 flex-1 overflow-auto pb-1">
+    <div className="grid min-h-full min-w-[1080px] grid-cols-4 gap-3">
+      {LANES.map((lane) => <TaskBoardLane key={lane.status} lane={lane} tasks={tasks} pendingTaskIds={pendingTaskIds} busy={busy} hasModels={hasModels} draggedTaskId={draggedTaskId} dragOverStatus={dragOverStatus} onView={onView} onEdit={onEdit} onDelete={onDelete} onLaunch={onLaunch} onDraggedTaskChange={onDraggedTaskChange} onDragOverStatusChange={onDragOverStatusChange} onDrop={onDrop} />)}
+    </div>
+  </div>
+);
+
+interface TaskViewDialogProps {
+  task: ProjectTaskRecord | null;
+  busy: boolean;
+  hasModels: boolean;
+  onClose: () => void;
+  onEdit: (task: ProjectTaskRecord) => void;
+  onLaunch: (task: ProjectTaskRecord) => void;
+}
+
+const TaskViewDialog = ({ task, busy, hasModels, onClose, onEdit, onLaunch }: TaskViewDialogProps) => {
+  if (!task) return null;
+  const lane = LANES.find((candidate) => candidate.status === task.status);
+  return (
+    <div className="task-modal-backdrop absolute inset-0 z-50 flex items-center justify-center p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <Card className="task-modal-surface flex max-h-[calc(100vh-3rem)] w-full max-w-3xl flex-col overflow-hidden p-0" role="dialog" aria-modal="true" aria-labelledby="view-task-title">
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-zinc-800 px-5 py-4">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={cn("h-2 w-2 rounded-full", lane?.dot)} />
+              <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-zinc-500">{lane?.label}</p>
+            </div>
+            <h3 id="view-task-title" className="mt-2 break-words text-lg font-semibold leading-7 text-zinc-100">{task.title}</h3>
+            <p className="mt-1 text-[11px] text-zinc-500">Updated {new Date(task.updatedAt).toLocaleString()}</p>
+          </div>
+          <Button type="button" variant="ghost" size="sm" className="h-8 w-8 shrink-0 p-0" title="Close" aria-label="Close task details" onClick={onClose}><X className="h-4 w-4" /></Button>
+        </div>
+        <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          <p className="mb-2 text-[10px] font-medium uppercase tracking-[0.16em] text-zinc-500">Agent prompt</p>
+          <div className="break-words whitespace-pre-wrap text-sm leading-6 text-zinc-300">{task.prompt}</div>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-zinc-800 px-5 py-3">
+          <div>{task.pullRequestUrl ? <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs text-zinc-400" onClick={() => void window.buildwarden.openExternalUrl(task.pullRequestUrl!)}><ExternalLink className="h-3.5 w-3.5" />Open linked PR/MR</Button> : null}</div>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="secondary" size="sm" className="h-8 px-3 text-xs" onClick={() => onEdit(task)}><Pencil className="h-3.5 w-3.5" />Edit</Button>
+            <Button type="button" size="sm" className="h-8 px-3 text-xs" disabled={busy || !hasModels} onClick={() => onLaunch(task)}><Play className="h-3.5 w-3.5" />Start run</Button>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+};
+
 export const ProjectTasksTab = ({
   projectId,
   tasks,
@@ -49,7 +246,7 @@ export const ProjectTasksTab = ({
   const [taskEditTitle, setTaskEditTitle] = useState("");
   const [taskEditPrompt, setTaskEditPrompt] = useState("");
   const [taskEditStatus, setTaskEditStatus] = useState<ProjectTaskStatus>("open");
-  const [taskModelById, setTaskModelById] = useState<Record<string, string>>({});
+  const [taskModelById, setTaskModelById] = useTaskModelSelections(tasks, modelOptions, defaultTaskModelId);
   const [launchTaskId, setLaunchTaskId] = useState<string | null>(null);
   const [launchPromptDraft, setLaunchPromptDraft] = useState("");
   const [launchGenerateBusy, setLaunchGenerateBusy] = useState(false);
@@ -65,7 +262,7 @@ export const ProjectTasksTab = ({
     () => tasks.map((task) => ({ ...task, status: statusOverrides[task.id] ?? task.status })),
     [statusOverrides, tasks],
   );
-  const editingTaskBusy = editingTask ? pendingTaskIds.has(editingTask.id) : false;
+  const editingTaskBusy = isTaskPending(editingTask, pendingTaskIds);
   const taskFormBusy = taskBusy || editingTaskBusy;
   const closeLaunchDialog = useCallback(() => {
     if (launchGenerateBusy || launchStartBusy) return;
@@ -117,17 +314,6 @@ export const ProjectTasksTab = ({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [closeLaunchDialog, createOpen, editingTask, launchGenerateBusy, launchStartBusy, launchTask, taskFormBusy, viewingTask]);
-
-  useEffect(() => {
-    setTaskModelById((current) => {
-      const next: Record<string, string> = {};
-      for (const task of tasks) {
-        const candidate = current[task.id];
-        next[task.id] = modelOptions.some((option) => option.id === candidate) ? candidate : defaultTaskModelId;
-      }
-      return next;
-    });
-  }, [defaultTaskModelId, modelOptions, tasks]);
 
   const handleCreateTask = async () => {
     const title = taskEditTitle.trim();
@@ -292,116 +478,30 @@ export const ProjectTasksTab = ({
         </Button>
       </div>
 
-      <div className="app-scrollbar min-h-0 flex-1 overflow-auto pb-1">
-        <div className="grid min-h-full min-w-[1080px] grid-cols-4 gap-3">
-          {LANES.map((lane) => {
-            const laneTasks = visibleTasks.filter((task) => task.status === lane.status);
-            const isDropTarget = dragOverStatus === lane.status;
-            return (
-              <div
-                key={lane.status}
-                className={cn("task-board-lane flex min-h-[360px] min-w-0 flex-col rounded-lg transition-colors", isDropTarget && "task-board-lane--drop ring-1 ring-cyan-500/40")}
-                onDragOver={(event) => { event.preventDefault(); setDragOverStatus(lane.status); }}
-                onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOverStatus(null); }}
-                onDrop={(event) => handleDrop(event, lane.status)}
-              >
-                <div className="flex h-10 shrink-0 items-center justify-between border-b border-zinc-800/80 px-3">
-                  <div className="flex items-center gap-2">
-                    <span className={cn("h-2 w-2 rounded-full", lane.dot)} />
-                    <h4 className="text-xs font-semibold text-zinc-300">{lane.label}</h4>
-                  </div>
-                  <span className="rounded bg-zinc-900 px-1.5 py-0.5 font-mono text-[10px] text-zinc-500">{laneTasks.length}</span>
-                </div>
-                <div className="space-y-2 p-2">
-                  {laneTasks.map((task) => {
-                    const isTaskBusy = pendingTaskIds.has(task.id);
-                    return (
-                      <article
-                        key={task.id}
-                        draggable={!isTaskBusy}
-                        onDragStart={(event) => {
-                          event.dataTransfer.effectAllowed = "move";
-                          event.dataTransfer.setData("text/buildwarden-project-task", task.id);
-                          setDraggedTaskId(task.id);
-                        }}
-                        onDragEnd={() => { setDraggedTaskId(null); setDragOverStatus(null); }}
-                        className={cn("task-board-card group rounded-md border p-2.5 transition", draggedTaskId === task.id && "opacity-45")}
-                      >
-                        <div className="flex items-start gap-1.5">
-                          <GripVertical className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-grab text-zinc-700 group-hover:text-zinc-500" />
-                          <div className="min-w-0 flex-1 overflow-hidden">
-                            <h5 className="max-h-10 overflow-hidden break-words text-xs font-semibold leading-5 text-zinc-100">{task.title}</h5>
-                            <p className="mt-1 max-h-12 overflow-hidden break-words whitespace-pre-wrap text-[11px] leading-4 text-zinc-400">{task.prompt}</p>
-                          </div>
-                          {isTaskBusy ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-zinc-500" /> : null}
-                        </div>
-                        <div className="mt-2 flex items-center justify-between gap-1 border-t border-zinc-800/80 pt-2">
-                          <div className="flex items-center gap-0.5">
-                            <Button type="button" size="sm" variant="ghost" className="task-card-action h-7 w-7 p-0" title="View task" aria-label={`View ${task.title}`} onClick={() => setViewingTaskId(task.id)}><Eye className="h-3.5 w-3.5" /></Button>
-                            {task.pullRequestUrl ? (
-                              <Button type="button" size="sm" variant="ghost" className="task-card-action h-7 w-7 p-0" title="Open linked PR/MR" onClick={() => void window.buildwarden.openExternalUrl(task.pullRequestUrl!)}>
-                                <ExternalLink className="h-3.5 w-3.5" />
-                              </Button>
-                            ) : null}
-                            <Button type="button" size="sm" variant="ghost" className="task-card-action h-7 w-7 p-0" title="Edit task" onClick={() => startEditingTask(task)}><Pencil className="h-3.5 w-3.5" /></Button>
-                            <Button type="button" size="sm" variant="ghost" className="task-card-action task-card-action--danger h-7 w-7 p-0" title="Delete task" disabled={isTaskBusy} onClick={() => { if (window.confirm(`Delete “${task.title}”?`)) void onDeleteTask(task.id); }}><Trash2 className="h-3.5 w-3.5" /></Button>
-                          </div>
-                          <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-[11px]" disabled={busy || isTaskBusy || modelOptions.length === 0} onClick={() => openLaunchDialog(task)}><Play className="h-3 w-3" />Start run</Button>
-                        </div>
-                      </article>
-                    );
-                  })}
-                  {laneTasks.length === 0 ? (
-                    <div className={cn("flex min-h-24 items-center justify-center rounded-md border border-dashed border-zinc-800 px-3 text-center text-[11px] text-zinc-600", isDropTarget && "border-cyan-500/50 text-cyan-400/70")}>
-                      {draggedTaskId ? `Move to ${lane.label}` : "No tasks"}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      <TaskBoard
+        tasks={visibleTasks}
+        pendingTaskIds={pendingTaskIds}
+        busy={busy}
+        hasModels={modelOptions.length > 0}
+        draggedTaskId={draggedTaskId}
+        dragOverStatus={dragOverStatus}
+        onView={setViewingTaskId}
+        onEdit={startEditingTask}
+        onDelete={onDeleteTask}
+        onLaunch={openLaunchDialog}
+        onDraggedTaskChange={setDraggedTaskId}
+        onDragOverStatusChange={setDragOverStatus}
+        onDrop={handleDrop}
+      />
 
-      {viewingTask ? (
-        <div
-          className="task-modal-backdrop absolute inset-0 z-50 flex items-center justify-center p-6"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setViewingTaskId(null);
-          }}
-        >
-          <Card className="task-modal-surface flex max-h-[calc(100vh-3rem)] w-full max-w-3xl flex-col overflow-hidden p-0" role="dialog" aria-modal="true" aria-labelledby="view-task-title">
-            <div className="flex shrink-0 items-start justify-between gap-4 border-b border-zinc-800 px-5 py-4">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={cn("h-2 w-2 rounded-full", LANES.find((lane) => lane.status === viewingTask.status)?.dot)} />
-                  <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-zinc-500">
-                    {LANES.find((lane) => lane.status === viewingTask.status)?.label}
-                  </p>
-                </div>
-                <h3 id="view-task-title" className="mt-2 break-words text-lg font-semibold leading-7 text-zinc-100">{viewingTask.title}</h3>
-                <p className="mt-1 text-[11px] text-zinc-500">Updated {new Date(viewingTask.updatedAt).toLocaleString()}</p>
-              </div>
-              <Button type="button" variant="ghost" size="sm" className="h-8 w-8 shrink-0 p-0" title="Close" aria-label="Close task details" onClick={() => setViewingTaskId(null)}><X className="h-4 w-4" /></Button>
-            </div>
-            <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto px-5 py-4">
-              <p className="mb-2 text-[10px] font-medium uppercase tracking-[0.16em] text-zinc-500">Agent prompt</p>
-              <div className="break-words whitespace-pre-wrap text-sm leading-6 text-zinc-300">{viewingTask.prompt}</div>
-            </div>
-            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-zinc-800 px-5 py-3">
-              <div>
-                {viewingTask.pullRequestUrl ? (
-                  <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs text-zinc-400" onClick={() => void window.buildwarden.openExternalUrl(viewingTask.pullRequestUrl!)}><ExternalLink className="h-3.5 w-3.5" />Open linked PR/MR</Button>
-                ) : null}
-              </div>
-              <div className="flex items-center gap-2">
-                <Button type="button" variant="secondary" size="sm" className="h-8 px-3 text-xs" onClick={() => startEditingTask(viewingTask)}><Pencil className="h-3.5 w-3.5" />Edit</Button>
-                <Button type="button" size="sm" className="h-8 px-3 text-xs" disabled={busy || modelOptions.length === 0} onClick={() => { setViewingTaskId(null); openLaunchDialog(viewingTask); }}><Play className="h-3.5 w-3.5" />Start run</Button>
-              </div>
-            </div>
-          </Card>
-        </div>
-      ) : null}
+      <TaskViewDialog
+        task={viewingTask}
+        busy={busy}
+        hasModels={modelOptions.length > 0}
+        onClose={() => setViewingTaskId(null)}
+        onEdit={startEditingTask}
+        onLaunch={(task) => { setViewingTaskId(null); openLaunchDialog(task); }}
+      />
 
       {createOpen || editingTask ? (
         <div

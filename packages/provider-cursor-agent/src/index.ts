@@ -342,7 +342,9 @@ const parseContextWindowTokenCount = (value: unknown): number | undefined => {
   if (!Number.isFinite(base) || base <= 0) {
     return undefined;
   }
-  const multiplier = match[2] === "m" ? 1_000_000 : match[2] === "k" ? 1_000 : 1;
+  let multiplier = 1;
+  if (match[2] === "k") multiplier = 1_000;
+  if (match[2] === "m") multiplier = 1_000_000;
   return Math.round(base * multiplier);
 };
 
@@ -974,6 +976,21 @@ class CursorAcpJsonRpcConnection {
     child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
+  private handleResponse(message: JsonRpcMessage): boolean {
+    if (message.id === undefined || message.method) return false;
+    this.devLogger?.log("cursor.rpc.response", message);
+    const pending = this.pending.get(message.id);
+    if (!pending) return true;
+    this.pending.delete(message.id);
+    if (pending.timeout) clearTimeout(pending.timeout);
+    if (message.error) {
+      pending.reject(new Error(message.error.message || `Cursor Agent ACP request failed: ${pending.method}`));
+    } else {
+      pending.resolve(message.result);
+    }
+    return true;
+  }
+
   private handleLine(line: string): void {
     const trimmed = line.trim();
     if (!trimmed) {
@@ -987,21 +1004,7 @@ class CursorAcpJsonRpcConnection {
       return;
     }
 
-    if (message.id !== undefined && !message.method) {
-      this.devLogger?.log("cursor.rpc.response", message);
-      const pending = this.pending.get(message.id);
-      if (!pending) {
-        return;
-      }
-      this.pending.delete(message.id);
-      if (pending.timeout) clearTimeout(pending.timeout);
-      if (message.error) {
-        pending.reject(new Error(message.error.message || `Cursor Agent ACP request failed: ${pending.method}`));
-      } else {
-        pending.resolve(message.result);
-      }
-      return;
-    }
+    if (this.handleResponse(message)) return;
 
     if (message.method && message.id !== undefined) {
       this.devLogger?.log("cursor.rpc.request", message);
@@ -1181,26 +1184,20 @@ const questionFromCursor = (value: unknown): ParsedCursorQuestion | null => {
   };
 };
 
-const mapCursorAnswerValue = (
-  value: string | string[],
-  answersByLabel: Record<string, string> | undefined,
-): string | string[] => {
-  if (!answersByLabel) {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.map((entry) => answersByLabel[entry] ?? entry);
-  }
-  return answersByLabel[value] ?? value;
-};
-
 export const mapCursorUserInputAnswers = (
   answers: RunUserInputAnswers,
   answerMapsByQuestionId: Record<string, Record<string, string>>,
 ): RunUserInputAnswers => {
   const mapped: RunUserInputAnswers = {};
   for (const [questionId, value] of Object.entries(answers)) {
-    mapped[questionId] = mapCursorAnswerValue(value, answerMapsByQuestionId[questionId]);
+    const answersByLabel = answerMapsByQuestionId[questionId];
+    if (!answersByLabel) {
+      mapped[questionId] = value;
+      continue;
+    }
+    mapped[questionId] = Array.isArray(value)
+      ? value.map((entry) => answersByLabel[entry] ?? entry)
+      : answersByLabel[value] ?? value;
   }
   return mapped;
 };

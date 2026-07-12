@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomInt } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, statSync, type Dirent } from "node:fs";
 import { homedir } from "node:os";
@@ -24,7 +24,7 @@ import { resolveProjectPrReviewRemoteContext } from "./pr-review/pr-review-remot
 import type { ProjectPrReviewProvider, ProjectPrReviewRemoteContext } from "./pr-review/pr-review-types";
 import { ProjectLoopRunner } from "./loop/loop-runner";
 import { BuildWardenDatabase } from "@buildwarden/db";
-import { computePrMrDiffViaFetch, GitService } from "@buildwarden/git-service";
+import { computePrMrDiffViaFetch, GitService, readRecentCommitLog } from "@buildwarden/git-service";
 import { AiSdkProviderAdapter, generateAskTextResultWithAiSdk, suggestCommitMessageWithAiSdk } from "@buildwarden/provider-ai-sdk";
 import {
   ClaudeCodeProviderAdapter,
@@ -274,6 +274,62 @@ type RepoCommitInfo = {
   date: string;
   title: string;
   files: string[];
+};
+
+const parseRecentCommitLog = (output: string): RepoCommitInfo[] => {
+  const commits: RepoCommitInfo[] = [];
+  let current: RepoCommitInfo | null = null;
+  for (const rawLine of output.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (line.startsWith("__EC__")) {
+      if (current) commits.push(current);
+      const [, sha = "", author = "", date = "", title = ""] = line.split("\t");
+      current = { sha: sha.replace(/^__EC__/, ""), author: author.trim(), date: date.trim(), title: title.trim(), files: [] };
+      continue;
+    }
+    if (current) {
+      const normalized = normalizeProjectInsightRepoPath(line);
+      if (!shouldIgnoreProjectInsightPath(normalized)) current.files.push(normalized);
+    }
+  }
+  if (current) commits.push(current);
+  return commits;
+};
+
+const parseMetadataRecord = (metadataJson: string): Record<string, unknown> => {
+  try {
+    return JSON.parse(metadataJson || "{}") as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+};
+
+const findInterruptionTimestamps = (steps: RunDetail["steps"]): { latestInterruptedAt: string; latestRecoveryAt: string } => {
+  let latestInterruptedAt = "";
+  let latestRecoveryAt = "";
+  for (const step of steps) {
+    const metadata = parseMetadataRecord(step.metadataJson);
+    if (metadata.sessionInterrupted === true && step.createdAt > latestInterruptedAt) latestInterruptedAt = step.createdAt;
+    const recovered = metadata.recoveredInterruptedSession === true || metadata.resumedFromCheckpoint === true;
+    if (recovered && step.createdAt > latestRecoveryAt) latestRecoveryAt = step.createdAt;
+  }
+  return { latestInterruptedAt, latestRecoveryAt };
+};
+
+const measureDirectoryEntry = (currentDir: string, entry: Dirent, pendingDirs: string[]): { bytes: number; files: number; unreadable: number } => {
+  if (entry.isSymbolicLink()) return { bytes: 0, files: 0, unreadable: 0 };
+  const entryPath = join(currentDir, entry.name);
+  if (entry.isDirectory()) {
+    pendingDirs.push(entryPath);
+    return { bytes: 0, files: 0, unreadable: 0 };
+  }
+  if (!entry.isFile()) return { bytes: 0, files: 0, unreadable: 0 };
+  try {
+    return { bytes: lstatSync(entryPath).size, files: 1, unreadable: 0 };
+  } catch {
+    return { bytes: 0, files: 0, unreadable: 1 };
+  }
 };
 
 type RepoFileHotspot = {
@@ -600,6 +656,41 @@ const CODEX_NATIVE_COMPOSER_COMMANDS: readonly ComposerCommandDescriptor[] = [
   makeNativeComposerCommand("codex-cli", "/vim", "Toggle Vim keybindings."),
 ];
 
+type ClaudeSlashCommand = Awaited<ReturnType<typeof listClaudeCodeSlashCommands>>[number];
+
+const normalizeProviderSlashCommandName = (value: string): `/${string}` | null => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const withSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return /^\/[A-Za-z][A-Za-z0-9_.:-]*$/.test(withSlash) ? (withSlash.toLowerCase() as `/${string}`) : null;
+};
+
+const buildClaudeComposerCommandDescriptors = (
+  commands: ClaudeSlashCommand[],
+  providerType: ProviderAccountRecord["providerType"],
+): ComposerCommandDescriptor[] => commands.flatMap((command) =>
+  [command.name, ...(command.aliases ?? [])].flatMap((name) => {
+    const normalized = normalizeProviderSlashCommandName(name);
+    if (!normalized) {
+      return [];
+    }
+    return [{
+      id: `${providerType}:${normalized.slice(1)}`,
+      command: normalized,
+      label: normalized.slice(1),
+      description: command.description || command.argumentHint || "Run this Claude Code slash command.",
+      providerType,
+      effect: "native-prompt" as const,
+      ...(command.argumentHint ? { argumentHint: command.argumentHint } : {}),
+      source: "provider" as const,
+      supportsRun: true,
+      supportsFollowUp: true,
+    }];
+  }),
+);
+
 const SELECTED_PROJECT_KEY = "selectedProjectId";
 const SELECTED_RUN_KEY = "selectedRunId";
 const SELECTED_CHAT_KEY = "selectedChatId";
@@ -634,6 +725,13 @@ type WorkerDoneResult = {
     status?: ProviderSessionRuntimeInput["status"];
   };
 };
+
+type ChatWorkerChunkPayload = {
+  type: "chunk";
+  chunk: { type: string; value: string; title?: string; metadata?: Record<string, unknown> };
+};
+
+type ChatWorkerPayload = ChatWorkerChunkPayload | { type: "done"; result: WorkerDoneResult } | { type: "error"; error: string };
 
 const parseProjectOrderSetting = (raw: string | undefined): string[] => {
   if (!raw) {
@@ -824,14 +922,14 @@ export class AppController
     this.db.setSetting(APP_SETTING_KEYS.projectForgePrMonitorSettings, serialized);
   }
 
-  private buildProjectLabRepoBrief(project: ProjectRecord): string {
+  private async buildProjectLabRepoBrief(project: ProjectRecord): Promise<string> {
     const tasks = this.db.listProjectTasks(project.id).slice(0, 5);
     const insights = this.db.listProjectInsights(project.id).slice(0, 4);
     const recentRuns = this.db
       .listRunsForProject(project.id)
       .filter((run) => run.kind === "standard")
       .slice(0, 6);
-    const recentCommits = this.readRecentCommitInfo(project.repoPath, 18).slice(0, 8);
+    const recentCommits = (await this.readRecentCommitInfo(project.repoPath, 18)).slice(0, 8);
 
     return [
       `Repository path: ${project.repoPath}`,
@@ -988,8 +1086,8 @@ export class AppController
     ].join("\n");
   }
 
-  private buildProjectLabImplementationPrompt(input: RunProjectLabInput, project: ProjectRecord, mode: ProjectLabMode, threadId: string): string {
-    const repoBrief = this.buildProjectLabRepoBrief(project);
+  private async buildProjectLabImplementationPrompt(input: RunProjectLabInput, project: ProjectRecord, mode: ProjectLabMode, threadId: string): Promise<string> {
+    const repoBrief = await this.buildProjectLabRepoBrief(project);
     const avoidanceBrief = this.buildProjectLabAvoidanceBrief(project.id, threadId);
     const sameModePriorWorkBrief = this.buildProjectLabSameModePriorWorkBrief(project.id, mode, threadId);
     const opportunityInstruction = this.buildProjectLabOpportunityInstruction(input, mode);
@@ -1195,7 +1293,7 @@ export class AppController
     implementationModelId: string,
     reviewModelId: string,
   ): Promise<void> {
-    const repoBrief = this.buildProjectLabRepoBrief(project);
+    const repoBrief = await this.buildProjectLabRepoBrief(project);
     const avoidanceBrief = this.buildProjectLabAvoidanceBrief(project.id, threadId);
     const sameModePriorWorkBrief = this.buildProjectLabSameModePriorWorkBrief(project.id, mode, threadId);
     const implementationContext = await this.resolveModelInvocationContext(implementationModelId);
@@ -2157,55 +2255,34 @@ export class AppController
     context: ComposerCommandContext,
   ): Promise<ComposerCommandDescriptor[]> {
     const staticCommands = listComposerCommandsForProvider(provider.providerType, context);
-    const providerCommands: ComposerCommandDescriptor[] = [];
-
-    if (provider.providerType === "codex-cli") {
-      providerCommands.push(...CODEX_NATIVE_COMPOSER_COMMANDS);
-    } else if (provider.providerType === "claude-code") {
-      try {
-        const commands = await listClaudeCodeSlashCommands({
-          cwd: projectPath,
-          config: parseProviderConfigJson(provider.configJson),
-          networkProxy: await this.resolveNetworkProxyRuntimeConfig(),
-        });
-        for (const command of commands) {
-          const names = [command.name, ...(command.aliases ?? [])];
-          for (const name of names) {
-            const normalized = this.normalizeProviderSlashCommandName(name);
-            if (!normalized) {
-              continue;
-            }
-            providerCommands.push({
-              id: `${provider.providerType}:${normalized.slice(1)}`,
-              command: normalized,
-              label: normalized.slice(1),
-              description: command.description || command.argumentHint || "Run this Claude Code slash command.",
-              providerType: provider.providerType,
-              effect: "native-prompt",
-              ...(command.argumentHint ? { argumentHint: command.argumentHint } : {}),
-              source: "provider",
-              supportsRun: true,
-              supportsFollowUp: true,
-            });
-          }
-        }
-      } catch (error) {
-        this.logControllerWarn("Failed to probe Claude Code slash commands.", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
+    const providerCommands = await this.loadNativeComposerCommands(provider, projectPath);
 
     return mergeComposerCommandDescriptors([...staticCommands, ...providerCommands], context);
   }
 
-  private normalizeProviderSlashCommandName(value: string): `/${string}` | null {
-    const trimmed = value.trim();
-    if (!trimmed) {
-      return null;
+  private async loadNativeComposerCommands(
+    provider: ProviderAccountRecord,
+    projectPath: string | undefined,
+  ): Promise<ComposerCommandDescriptor[]> {
+    if (provider.providerType === "codex-cli") {
+      return [...CODEX_NATIVE_COMPOSER_COMMANDS];
     }
-    const withSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
-    return /^\/[A-Za-z][A-Za-z0-9_.:-]*$/.test(withSlash) ? (withSlash.toLowerCase() as `/${string}`) : null;
+    if (provider.providerType !== "claude-code") {
+      return [];
+    }
+    try {
+      const commands = await listClaudeCodeSlashCommands({
+        cwd: projectPath,
+        config: parseProviderConfigJson(provider.configJson),
+        networkProxy: await this.resolveNetworkProxyRuntimeConfig(),
+      });
+      return buildClaudeComposerCommandDescriptors(commands, provider.providerType);
+    } catch (error) {
+      this.logControllerWarn("Failed to probe Claude Code slash commands.", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
   }
 
   async deleteProviderAccount(providerAccountId: string): Promise<void> {
@@ -2412,51 +2489,13 @@ export class AppController
       throw new Error("Enter a continuation prompt.");
     }
 
-    if (sourceRun.workspaceVcs === "git" && sourceRun.workspaceType === "local" && input.includeWorkspaceChanges !== false) {
-      const currentBranch = await this.gitService.getCurrentBranch(project.repoPath);
-      if (currentBranch !== sourceRun.branchName) {
-        throw new Error(
-          `The project repository is currently on "${currentBranch}", but this run is tied to "${sourceRun.branchName}". Check out the run branch or turn off workspace changes before continuing.`,
-        );
-      }
-    }
-
     const configuredWorktreeRoot = this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
-    let workspaceType: RunRecord["workspaceType"] = "worktree";
-    let workspaceVcs: RunWorkspaceVcs = sourceRun.workspaceVcs;
-    let branchName: string;
-    let worktreePath: string;
-
-    if (sourceRun.workspaceVcs === "folder") {
-      workspaceType = "copy";
-      workspaceVcs = "folder";
-      if (sourceRun.workspaceType === "local" && input.includeWorkspaceChanges === false) {
-        throw new Error("Folder continuations from the project folder cannot exclude workspace changes yet.");
-      }
-      const sourcePath = input.includeWorkspaceChanges !== false ? sourceRun.worktreePath : project.repoPath;
-      const folderWorkspace = await createFolderWorkspaceCopy({
-        sourcePath,
-        projectName: project.name,
-        runId: crypto.randomUUID(),
-        configuredWorkspaceRoot: configuredWorktreeRoot,
-      });
-      branchName = folderWorkspace.branchName;
-      worktreePath = folderWorkspace.worktreePath;
-    } else {
-      const gitWorkspace = await this.gitService.createWorktreeForContinuation(
-        project.repoPath,
-        project.name,
-        crypto.randomUUID(),
-        sourceRun.branchName,
-        configuredWorktreeRoot,
-      );
-      branchName = gitWorkspace.branchName;
-      worktreePath = gitWorkspace.worktreePath;
-
-      if (input.includeWorkspaceChanges !== false) {
-        await this.gitService.cloneWorkspaceChanges(sourceRun.worktreePath, worktreePath);
-      }
-    }
+    const { workspaceType, workspaceVcs, branchName, worktreePath } = await this.prepareContinuationWorkspace(
+      sourceRun,
+      project,
+      input.includeWorkspaceChanges !== false,
+      configuredWorktreeRoot,
+    );
 
     const goalText = input.goalText === undefined ? sourceRun.goalText : normalizeRunGoalText(input.goalText);
     const promptForHarness = buildPromptWithRunGoal(userText, goalText);
@@ -2553,6 +2592,48 @@ export class AppController
     this.runWorkers.set(run.id, { worker, cancelled: false });
 
     return this.db.getRun(run.id);
+  }
+
+  private async prepareContinuationWorkspace(
+    sourceRun: RunRecord,
+    project: ProjectRecord,
+    includeWorkspaceChanges: boolean,
+    configuredWorkspaceRoot: string | undefined,
+  ): Promise<Pick<RunRecord, "workspaceType" | "workspaceVcs" | "branchName" | "worktreePath">> {
+    if (sourceRun.workspaceVcs === "folder") {
+      if (sourceRun.workspaceType === "local" && !includeWorkspaceChanges) {
+        throw new Error("Folder continuations from the project folder cannot exclude workspace changes yet.");
+      }
+      const sourcePath = includeWorkspaceChanges ? sourceRun.worktreePath : project.repoPath;
+      const workspace = await createFolderWorkspaceCopy({
+        sourcePath,
+        projectName: project.name,
+        runId: crypto.randomUUID(),
+        configuredWorkspaceRoot,
+      });
+      return { workspaceType: "copy", workspaceVcs: "folder", ...workspace };
+    }
+
+    if (sourceRun.workspaceType === "local" && includeWorkspaceChanges) {
+      const currentBranch = await this.gitService.getCurrentBranch(project.repoPath);
+      if (currentBranch !== sourceRun.branchName) {
+        throw new Error(
+          `The project repository is currently on "${currentBranch}", but this run is tied to "${sourceRun.branchName}". Check out the run branch or turn off workspace changes before continuing.`,
+        );
+      }
+    }
+
+    const workspace = await this.gitService.createWorktreeForContinuation(
+      project.repoPath,
+      project.name,
+      crypto.randomUUID(),
+      sourceRun.branchName,
+      configuredWorkspaceRoot,
+    );
+    if (includeWorkspaceChanges) {
+      await this.gitService.cloneWorkspaceChanges(sourceRun.worktreePath, workspace.worktreePath);
+    }
+    return { workspaceType: "worktree", workspaceVcs: "git", ...workspace };
   }
 
   async followUpRun(runId: string, prompt: string, options?: RunFollowUpOptions): Promise<RunRecord> {
@@ -2660,18 +2741,23 @@ export class AppController
     return this.db.getRun(run.id);
   }
 
+  private shouldAutoCheckoutRunBranch(run: RunRecord): boolean {
+    return run.workspaceVcs === "git" && run.workspaceType === "worktree" &&
+      this.isSettingEnabled(APP_SETTING_KEYS.autoCheckoutRunBranchOnOpen, true);
+  }
+
+  private async canCheckoutRunWorktree(run: RunRecord): Promise<boolean> {
+    return this.shouldAutoCheckoutRunBranch(run) && existsSync(run.worktreePath) &&
+      await this.gitService.hasWorktreeGitMetadata(run.worktreePath);
+  }
+
   async activateRun(runId: string): Promise<void> {
     let run = this.db.getRun(runId);
     const project = this.db.getProject(run.projectId);
     const branchPromotedToProject = this.wasRunPromotedToProject(run.id);
+    const autoCheckoutWorktree = this.shouldAutoCheckoutRunBranch(run);
 
-    if (
-      run.workspaceVcs === "git" &&
-      run.workspaceType === "worktree" &&
-      this.isSettingEnabled(APP_SETTING_KEYS.autoCheckoutRunBranchOnOpen, true) &&
-      existsSync(run.worktreePath) &&
-      (await this.gitService.hasWorktreeGitMetadata(run.worktreePath))
-    ) {
+    if (await this.canCheckoutRunWorktree(run)) {
       try {
         await this.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
         this.updateWorktreeStatus(run, ACTIVE_RUN_STATUSES.has(run.status) ? "busy" : "ready");
@@ -2687,10 +2773,8 @@ export class AppController
         );
       }
     } else if (
-      run.workspaceVcs === "git" &&
-      run.workspaceType === "worktree" &&
-      branchPromotedToProject &&
-      this.isSettingEnabled(APP_SETTING_KEYS.autoCheckoutRunBranchOnOpen, true)
+      autoCheckoutWorktree &&
+      branchPromotedToProject
     ) {
       try {
         await this.gitService.checkoutProjectBranch(project.repoPath, run.branchName);
@@ -3054,7 +3138,7 @@ export class AppController
       return [this.db.getProjectLabThread(thread.id)];
     }
 
-    const implementationPrompt = this.buildProjectLabImplementationPrompt(input, project, mode, thread.id);
+    const implementationPrompt = await this.buildProjectLabImplementationPrompt(input, project, mode, thread.id);
     const implementationRun = await this.createProjectLabImplementationRun(
       project.id,
       thread.id,
@@ -3291,7 +3375,7 @@ export class AppController
     try {
       if (kind === "architecture-graph") {
         const dependencyGraph = this.readDependencyGraphSnapshot(project.repoPath);
-        const commits = this.readRecentCommitInfo(project.repoPath, 120);
+        const commits = await this.readRecentCommitInfo(project.repoPath, 120);
         const insight = this.buildArchitectureGraphInsight(project.repoPath, dependencyGraph, commits);
         if (insight.nodes.length === 0) {
           this.logControllerWarn("Architecture graph generated with zero nodes.", {
@@ -3319,7 +3403,8 @@ export class AppController
 
       if (kind === "dependency-gravity") {
         const dependencyGraph = this.readDependencyGraphSnapshot(project.repoPath);
-        const insight = this.buildDependencyGravityInsight(project.repoPath, dependencyGraph);
+        const commits = await this.readRecentCommitInfo(project.repoPath, 120);
+        const insight = this.buildDependencyGravityInsight(dependencyGraph, commits);
         if (insight.nodes.length === 0) {
           this.logControllerWarn("Dependency gravity graph generated with zero nodes.", {
             projectId: project.id,
@@ -3373,7 +3458,7 @@ export class AppController
 
       const context = await this.resolveModelInvocationContext(modelId);
       const dependencyGraph = this.readDependencyGraphSnapshot(project.repoPath);
-      const commits = this.readRecentCommitInfo(project.repoPath, 120);
+      const commits = await this.readRecentCommitInfo(project.repoPath, 120);
       const runs = this.db.listRunsForProject(project.id);
       const prompt = this.buildProjectInsightPrompt(project, kind, {
         dependencyGraph,
@@ -4024,59 +4109,20 @@ export class AppController
     return snapshot;
   }
 
-  private readRecentCommitInfo(repoPath: string, limit: number): RepoCommitInfo[] {
-    const result = spawnSync(
-      "git",
-      ["log", `-n${String(limit)}`, "--date=short", "--pretty=format:__EC__%H%x09%an%x09%ad%x09%s", "--name-only", "--no-merges"],
-      {
-        cwd: repoPath,
-        encoding: "utf8",
-        windowsHide: true,
-        maxBuffer: 16 * 1024 * 1024,
-      },
-    );
-    if (result.status !== 0) {
+  private async readRecentCommitInfo(repoPath: string, limit: number): Promise<RepoCommitInfo[]> {
+    let output: string;
+    try {
+      output = await readRecentCommitLog(repoPath, limit);
+    } catch (error) {
       this.logControllerWarn("git log failed while collecting project insight commit history.", {
         repoPath,
         limit,
-        status: result.status,
-        stderr: result.stderr,
+        error: error instanceof Error ? error.message : String(error),
       });
       return [];
     }
 
-    const lines = (result.stdout || "").split(/\r?\n/);
-    const commits: RepoCommitInfo[] = [];
-    let current: RepoCommitInfo | null = null;
-    for (const rawLine of lines) {
-      const line = rawLine.trim();
-      if (!line) {
-        continue;
-      }
-      if (line.startsWith("__EC__")) {
-        if (current) {
-          commits.push(current);
-        }
-        const [, sha = "", author = "", date = "", title = ""] = line.split("\t");
-        current = {
-          sha: sha.replace(/^__EC__/, ""),
-          author: author.trim(),
-          date: date.trim(),
-          title: title.trim(),
-          files: [],
-        };
-        continue;
-      }
-      if (current) {
-        const normalized = normalizeProjectInsightRepoPath(line);
-        if (!shouldIgnoreProjectInsightPath(normalized)) {
-          current.files.push(normalized);
-        }
-      }
-    }
-    if (current) {
-      commits.push(current);
-    }
+    const commits = parseRecentCommitLog(output);
     logInfo("Collected recent commit info for project insight generation.", {
       repoPath,
       limit,
@@ -4090,7 +4136,7 @@ export class AppController
     dependencyGraph: DependencyGraphSnapshot,
     commits: RepoCommitInfo[],
   ): ArchitectureGraphInsightData {
-    const moduleMetrics = this.buildModuleMetrics(repoPath, dependencyGraph);
+    const moduleMetrics = this.buildModuleMetrics(dependencyGraph, commits);
     const topNodes = [...moduleMetrics.values()]
       .sort((left, right) => right.totalConnections - left.totalConnections || right.hotspotCommits - left.hotspotCommits)
       .slice(0, 14);
@@ -4140,10 +4186,10 @@ export class AppController
   }
 
   private buildDependencyGravityInsight(
-    repoPath: string,
     dependencyGraph: DependencyGraphSnapshot,
+    commits: RepoCommitInfo[],
   ): DependencyGravityInsightData {
-    const moduleMetrics = this.buildModuleMetrics(repoPath, dependencyGraph);
+    const moduleMetrics = this.buildModuleMetrics(dependencyGraph, commits);
     const ranked = [...moduleMetrics.values()]
       .sort((left, right) => right.gravityScore - left.gravityScore || right.inbound - left.inbound)
       .slice(0, 12);
@@ -4258,7 +4304,7 @@ export class AppController
       runs: RunRecord[];
     },
   ): string {
-    const dependencySummary = this.buildDependencySummaryText(project.repoPath, context.dependencyGraph);
+    const dependencySummary = this.buildDependencySummaryText(project.repoPath, context.dependencyGraph, context.commits);
     const commitSummary = context.commits
       .slice(0, 18)
       .map((commit) => `- ${commit.date} ${commit.sha.slice(0, 7)} ${commit.author}: ${commit.title} (${commit.files.slice(0, 4).join(", ") || "no files"})`)
@@ -4452,9 +4498,9 @@ export class AppController
     };
   }
 
-  private buildDependencySummaryText(repoPath: string, dependencyGraph: DependencyGraphSnapshot): string {
-    const gravity = this.buildDependencyGravityInsight(repoPath, dependencyGraph);
-    const architecture = this.buildArchitectureGraphInsight(repoPath, dependencyGraph, []);
+  private buildDependencySummaryText(repoPath: string, dependencyGraph: DependencyGraphSnapshot, commits: RepoCommitInfo[]): string {
+    const gravity = this.buildDependencyGravityInsight(dependencyGraph, commits);
+    const architecture = this.buildArchitectureGraphInsight(repoPath, dependencyGraph, commits);
     const topGravity = gravity.nodes
       .slice(0, 6)
       .map((node) => `- ${node.path} (gravity ${String(node.gravityScore)}, inbound ${String(node.inbound)}, outbound ${String(node.outbound)})`)
@@ -4479,8 +4525,8 @@ export class AppController
       .slice(0, MAX_PROJECT_INSIGHT_PROMPT_CHARS);
   }
 
-  private buildModuleMetrics(repoPath: string, dependencyGraph: DependencyGraphSnapshot) {
-    const hotspotMap = this.buildHotspotMap(this.readRecentCommitInfo(repoPath, 120));
+  private buildModuleMetrics(dependencyGraph: DependencyGraphSnapshot, commits: RepoCommitInfo[]) {
+    const hotspotMap = this.buildHotspotMap(commits);
     const metrics = new Map<
       string,
       {
@@ -4984,24 +5030,7 @@ export class AppController
     const promptRestorePoint = this.getRunPromptRestorePoint(runId);
     const detail = this.db.getRunDetail(runId, "");
     const providerRuntime = this.db.getProviderSessionRuntime(runId, "run");
-    let latestInterruptedAt = "";
-    let latestRecoveryAt = "";
-    for (const step of detail.steps) {
-      try {
-        const metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
-        if (metadata.sessionInterrupted === true && step.createdAt > latestInterruptedAt) {
-          latestInterruptedAt = step.createdAt;
-        }
-        if (
-          (metadata.recoveredInterruptedSession === true || metadata.resumedFromCheckpoint === true) &&
-          step.createdAt > latestRecoveryAt
-        ) {
-          latestRecoveryAt = step.createdAt;
-        }
-      } catch {
-        /* ignore malformed legacy metadata */
-      }
-    }
+    const { latestInterruptedAt, latestRecoveryAt } = findInterruptionTimestamps(detail.steps);
     const sessionInterrupted = Boolean(latestInterruptedAt) && latestInterruptedAt > latestRecoveryAt;
     const providerSessionAvailable = Boolean(providerRuntime?.resumeCursor);
     const canRecoverInterruptedSession =
@@ -5327,26 +5356,10 @@ export class AppController
       }
 
       for (const entry of entries) {
-        if (entry.isSymbolicLink()) {
-          continue;
-        }
-
-        const entryPath = join(currentDir, entry.name);
-        if (entry.isDirectory()) {
-          pendingDirs.push(entryPath);
-          continue;
-        }
-
-        if (!entry.isFile()) {
-          continue;
-        }
-
-        try {
-          totalBytes += lstatSync(entryPath).size;
-          fileCount += 1;
-        } catch {
-          unreadableEntryCount += 1;
-        }
+        const measured = measureDirectoryEntry(currentDir, entry, pendingDirs);
+        totalBytes += measured.bytes;
+        fileCount += measured.files;
+        unreadableEntryCount += measured.unreadable;
       }
     }
 
@@ -6366,12 +6379,7 @@ export class AppController
     const messages: Array<Record<string, unknown>> = [];
     let previousAssistantContent: string | null = null;
     for (const step of this.db.getRunSteps(runId)) {
-      let metadata: Record<string, unknown> = {};
-      try {
-        metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
-      } catch {
-        /* ignore */
-      }
+      const metadata = parseMetadataRecord(step.metadataJson);
 
       if (step.eventType === "log" && metadata.source === "user") {
         messages.push({ role: "user", content: step.content });
@@ -6636,6 +6644,56 @@ export class AppController
     return buildNetworkProxyRuntimeConfig(settings, password ?? undefined);
   }
 
+  private async handleChatWorkerChunk(
+    chat: ChatRecord,
+    provider: ProviderAccountRecord,
+    model: ModelRecord,
+    payload: ChatWorkerChunkPayload,
+    streamingStepIds: Map<string, string>,
+  ): Promise<void> {
+    const eventType = runChunkEventType(payload.chunk.type);
+    if (payload.chunk.metadata?.providerSessionRuntime) {
+      this.upsertProviderSessionRuntime(
+        "chat",
+        chat.id,
+        provider,
+        model.modelId,
+        payload.chunk.metadata.providerSessionRuntime as Omit<
+          ProviderSessionRuntimeInput,
+          "ownerId" | "ownerKind" | "providerType" | "harnessType"
+        >,
+      );
+    }
+    const streamId = payload.chunk.type === "message" && typeof payload.chunk.metadata?.streamId === "string"
+      ? payload.chunk.metadata.streamId
+      : null;
+    const shouldReplace = payload.chunk.type === "message" && payload.chunk.metadata?.replace === true && streamId;
+
+    if (shouldReplace) {
+      const existingStepId = streamingStepIds.get(streamId);
+      if (existingStepId) {
+        this.db.updateChatStep(existingStepId, {
+          title: payload.chunk.title ?? "Agent output",
+          content: payload.chunk.value,
+          metadataJson: JSON.stringify(payload.chunk.metadata ?? {}),
+        });
+      } else {
+        const step = await this.appendChatEvent(chat.id, eventType, payload.chunk.title ?? "Agent output", payload.chunk.value, payload.chunk.metadata);
+        streamingStepIds.set(streamId, step.id);
+      }
+    } else {
+      await this.appendChatEvent(chat.id, eventType, payload.chunk.title ?? "Agent output", payload.chunk.value, payload.chunk.metadata);
+    }
+    this.emitChatEvent(chat.id, {
+      runId: chat.id,
+      type: eventType,
+      title: payload.chunk.title ?? "Agent output",
+      content: payload.chunk.value,
+      metadata: payload.chunk.metadata,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
   private startChatWorker(
     chat: ChatRecord,
     provider: ProviderAccountRecord,
@@ -6683,54 +6741,10 @@ export class AppController
     this.db.updateChatStatus(chat.id, "running");
 
     worker.on("message", async (message: unknown) => {
-      const payload = message as
-        | { type: "chunk"; chunk: { type: string; value: string; title?: string; metadata?: Record<string, unknown> } }
-        | { type: "done"; result: WorkerDoneResult }
-        | { type: "error"; error: string };
+      const payload = message as ChatWorkerPayload;
 
       if (payload.type === "chunk") {
-        const eventType = runChunkEventType(payload.chunk.type);
-        if (payload.chunk.metadata?.providerSessionRuntime) {
-          this.upsertProviderSessionRuntime(
-            "chat",
-            chat.id,
-            provider,
-            model.modelId,
-            payload.chunk.metadata.providerSessionRuntime as Omit<
-              ProviderSessionRuntimeInput,
-              "ownerId" | "ownerKind" | "providerType" | "harnessType"
-            >,
-          );
-        }
-        const streamId =
-          payload.chunk.type === "message" && typeof payload.chunk.metadata?.streamId === "string"
-            ? payload.chunk.metadata.streamId
-            : null;
-        const shouldReplace = payload.chunk.type === "message" && payload.chunk.metadata?.replace === true && streamId;
-
-        if (shouldReplace) {
-          const existingStepId = streamingStepIds.get(streamId);
-          if (existingStepId) {
-            this.db.updateChatStep(existingStepId, {
-              title: payload.chunk.title ?? "Agent output",
-              content: payload.chunk.value,
-              metadataJson: JSON.stringify(payload.chunk.metadata ?? {}),
-            });
-          } else {
-            const step = await this.appendChatEvent(chat.id, eventType, payload.chunk.title ?? "Agent output", payload.chunk.value, payload.chunk.metadata);
-            streamingStepIds.set(streamId, step.id);
-          }
-        } else {
-          await this.appendChatEvent(chat.id, eventType, payload.chunk.title ?? "Agent output", payload.chunk.value, payload.chunk.metadata);
-        }
-        this.emitChatEvent(chat.id, {
-          runId: chat.id,
-          type: eventType,
-          title: payload.chunk.title ?? "Agent output",
-          content: payload.chunk.value,
-          metadata: payload.chunk.metadata,
-          createdAt: new Date().toISOString(),
-        });
+        await this.handleChatWorkerChunk(chat, provider, model, payload, streamingStepIds);
         return;
       }
 

@@ -57,6 +57,34 @@ interface ChatDetailPageProps {
   onRemoveBookmark: () => void | Promise<void>;
 }
 
+const ChatDetailHeader = ({
+  chat,
+  isBookmarked,
+  onBack,
+  onAddBookmark,
+  onRemoveBookmark,
+}: Pick<ChatDetailPageProps, "isBookmarked" | "onBack" | "onAddBookmark" | "onRemoveBookmark"> & { chat: ChatDetail["chat"] }) => (
+  <Card className="app-surface-chat-hero overflow-hidden border px-4 py-3">
+    <div className="flex min-w-0 items-center gap-3">
+      <button type="button" className="shrink-0 text-[11px] uppercase tracking-[0.28em] text-cyan-400 transition hover:text-cyan-300" onClick={onBack}>
+        &larr; Back to chats
+      </button>
+      <Badge dot tone={chat.status} className="shrink-0">{chat.status}</Badge>
+      <span className="truncate text-xs text-zinc-500">{new Date(chat.updatedAt).toLocaleString()}</span>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="ml-auto h-8 w-8 shrink-0 p-0 text-zinc-400 hover:text-cyan-300"
+        onClick={() => void (isBookmarked ? onRemoveBookmark() : onAddBookmark())}
+        title={isBookmarked ? "Remove from bookmarks" : "Add to bookmarks"}
+        aria-label={isBookmarked ? "Remove from bookmarks" : "Add to bookmarks"}
+      >
+        {isBookmarked ? <BookmarkCheck className="h-3.5 w-3.5 fill-current" /> : <Bookmark className="h-3.5 w-3.5" />}
+      </Button>
+    </div>
+  </Card>
+);
+
 export const ChatDetailPage = ({
   chatDetail,
   modelOptions,
@@ -201,35 +229,13 @@ export const ChatDetailPage = ({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
-      <Card className="app-surface-chat-hero overflow-hidden border px-4 py-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <button
-            type="button"
-            className="shrink-0 text-[11px] uppercase tracking-[0.28em] text-cyan-400 transition hover:text-cyan-300"
-            onClick={onBack}
-          >
-            &larr; Back to chats
-          </button>
-          <Badge dot tone={chat.status} className="shrink-0">
-            {chat.status}
-          </Badge>
-          <span className="truncate text-xs text-zinc-500">{new Date(chat.updatedAt).toLocaleString()}</span>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="ml-auto h-8 w-8 shrink-0 p-0 text-zinc-400 hover:text-cyan-300"
-            onClick={() => void (isBookmarked ? onRemoveBookmark() : onAddBookmark())}
-            title={isBookmarked ? "Remove from bookmarks" : "Add to bookmarks"}
-            aria-label={isBookmarked ? "Remove from bookmarks" : "Add to bookmarks"}
-          >
-            {isBookmarked ? (
-              <BookmarkCheck className="h-3.5 w-3.5 fill-current" />
-            ) : (
-              <Bookmark className="h-3.5 w-3.5" />
-            )}
-          </Button>
-        </div>
-      </Card>
+      <ChatDetailHeader
+        chat={chat}
+        isBookmarked={isBookmarked}
+        onBack={onBack}
+        onAddBookmark={onAddBookmark}
+        onRemoveBookmark={onRemoveBookmark}
+      />
 
       <ChatTranscript
         ref={activityContainerRef}

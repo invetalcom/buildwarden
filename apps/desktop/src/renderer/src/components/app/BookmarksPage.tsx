@@ -107,7 +107,7 @@ export const BookmarksPage = ({
             <div className="flex flex-col items-center justify-center gap-3 p-12 text-center">
               <p className="text-sm text-zinc-400">Loading bookmarks…</p>
             </div>
-          ) : filteredBookmarks.length === 0 ? (
+          ) : <>{filteredBookmarks.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-3 p-12 text-center">
               <Bookmark className="h-12 w-12 text-zinc-600" />
               <p className="text-sm text-zinc-400">
@@ -160,7 +160,7 @@ export const BookmarksPage = ({
                 </div>
               ))}
             </div>
-          )}
+          )}</>}
         </div>
       </Card>
     </div>

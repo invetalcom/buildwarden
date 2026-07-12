@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal } from "@xterm/xterm";
@@ -20,6 +20,56 @@ type Props = {
   openLinksInApp?: boolean;
   onOpenUrlInApp?: (url: string) => void;
   className?: string;
+};
+
+const TerminalSurface = ({ disabled, error, cwd, containerRef, className }: Pick<Props, "disabled" | "cwd" | "className"> & {
+  error: string | null;
+  containerRef: RefObject<HTMLDivElement | null>;
+}) => {
+  if (disabled) {
+    return (
+      <div className={cn("rounded-lg border border-zinc-800 bg-zinc-950/50 p-4 text-sm text-zinc-500", className)}>
+        Workspace path is not available. Open the project folder in your system terminal instead.
+      </div>
+    );
+  }
+
+  return (
+    <div className={cn("flex min-h-0 flex-col overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-terminal-bg)]", className)}>
+      {error && (
+        <div className="flex flex-col gap-2 border-b border-rose-500/20 bg-rose-500/5 px-3 py-2">
+          <p className="text-xs text-rose-200">{error}</p>
+          <Button type="button" variant="secondary" size="sm" className="self-start" onClick={() => void window.buildwarden.openSystemTerminalAtPath(cwd)}>
+            Open system terminal here
+          </Button>
+        </div>
+      )}
+      <div ref={containerRef} className="min-h-0 min-w-0 flex-1 overflow-hidden p-1" />
+    </div>
+  );
+};
+
+const configureTerminalClipboard = (term: Terminal): void => {
+  term.attachCustomKeyEventHandler((event) => {
+    if (event.type !== "keydown") {
+      return true;
+    }
+    const mod = event.ctrlKey || event.metaKey;
+    if (mod && event.key.toLowerCase() === "c" && term.hasSelection()) {
+      void navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+      return false;
+    }
+    const pasteFromClipboard = (event.shiftKey && event.key === "Insert" && !mod) || (mod && event.key.toLowerCase() === "v");
+    if (pasteFromClipboard) {
+      void navigator.clipboard.readText().then((text) => {
+        if (text) {
+          term.paste(text);
+        }
+      });
+      return false;
+    }
+    return true;
+  });
 };
 
 export const RunWorktreeTerminal = ({
@@ -79,37 +129,7 @@ export const RunWorktreeTerminal = ({
     termRef.current = term;
     fitRef.current = fit;
 
-    term.attachCustomKeyEventHandler((ev) => {
-      if (ev.type !== "keydown") {
-        return true;
-      }
-      const mod = ev.ctrlKey || ev.metaKey;
-      if (mod && ev.shiftKey && ev.key.toLowerCase() === "c" && term.hasSelection()) {
-        void navigator.clipboard.writeText(term.getSelection()).catch(() => {});
-        return false;
-      }
-      if (mod && ev.key.toLowerCase() === "c" && term.hasSelection()) {
-        void navigator.clipboard.writeText(term.getSelection()).catch(() => {});
-        return false;
-      }
-      if (mod && ev.key.toLowerCase() === "v") {
-        void navigator.clipboard.readText().then((text) => {
-          if (text) {
-            term.paste(text);
-          }
-        });
-        return false;
-      }
-      if (ev.shiftKey && ev.key === "Insert" && !mod) {
-        void navigator.clipboard.readText().then((text) => {
-          if (text) {
-            term.paste(text);
-          }
-        });
-        return false;
-      }
-      return true;
-    });
+    configureTerminalClipboard(term);
 
     const dataSub = term.onData((data) => {
       if (!ptyStarted) {
@@ -252,31 +272,5 @@ export const RunWorktreeTerminal = ({
     };
   }, [uiActive, disabled, runId]);
 
-  if (disabled) {
-    return (
-      <div className={cn("rounded-lg border border-zinc-800 bg-zinc-950/50 p-4 text-sm text-zinc-500", className)}>
-        Workspace path is not available. Open the project folder in your system terminal instead.
-      </div>
-    );
-  }
-
-  return (
-    <div className={cn("flex min-h-0 flex-col overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-terminal-bg)]", className)}>
-      {error ? (
-        <div className="flex flex-col gap-2 border-b border-rose-500/20 bg-rose-500/5 px-3 py-2">
-          <p className="text-xs text-rose-200">{error}</p>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            className="self-start"
-            onClick={() => void window.buildwarden.openSystemTerminalAtPath(cwd)}
-          >
-            Open system terminal here
-          </Button>
-        </div>
-      ) : null}
-      <div ref={containerRef} className="min-h-0 min-w-0 flex-1 overflow-hidden p-1" />
-    </div>
-  );
+  return <TerminalSurface disabled={disabled} error={error} cwd={cwd} containerRef={containerRef} className={className} />;
 };

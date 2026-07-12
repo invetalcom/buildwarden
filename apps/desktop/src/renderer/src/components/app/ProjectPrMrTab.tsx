@@ -35,7 +35,7 @@ import {
   Settings,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode } from "react";
+import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -237,11 +237,9 @@ const restoreProjectPrMrDiffScope = (session: ProjectPrMrSessionState) => {
   const shouldRestoreFullDiff = activeDetailTab !== "files" && hadCommitScope;
   const requestUrl = (session.selectedRequest?.url ?? session.prUrl).trim();
   const fullDiff = shouldRestoreFullDiff ? (session.diffCache.get(requestDiffCacheKey(requestUrl)) ?? null) : null;
-  const meta = fullDiff
-    ? { provider: fullDiff.provider, number: fullDiff.number, baseRef: fullDiff.baseRef }
-    : shouldRestoreFullDiff
-      ? null
-      : session.meta;
+  let meta = session.meta;
+  if (shouldRestoreFullDiff) meta = null;
+  if (fullDiff) meta = { provider: fullDiff.provider, number: fullDiff.number, baseRef: fullDiff.baseRef };
 
   return {
     activeDetailTab,
@@ -294,6 +292,281 @@ const formatFindingDraftCommentBody = (finding: RunDiffReviewFinding): string =>
 const formatAppErrorMessage = (error: unknown, fallback: string) => {
   const message = error instanceof Error ? error.message : fallback;
   return message.replace(/^Error invoking remote method '[^']+': Error: /, "");
+};
+
+type ReviewModelOption = { value: string; label: string; description?: string };
+
+const AiReviewModelPicker = ({
+  options,
+  modelId,
+  busy,
+  hasDiff,
+  hasResult,
+  onModelChange,
+  onRunReview,
+}: Readonly<{
+  options: ReviewModelOption[];
+  modelId: string;
+  busy: boolean;
+  hasDiff: boolean;
+  hasResult: boolean;
+  onModelChange: (value: string) => void;
+  onRunReview: () => void;
+}>) => (
+  <div className="px-3 py-2.5">
+    <div className="mb-2 flex items-center gap-1.5">
+      <Sparkles className="h-3.5 w-3.5 text-cyan-300" aria-hidden />
+      <span className="text-[10px] font-semibold text-zinc-200">AI review</span>
+    </div>
+    <div className="app-scrollbar max-h-40 space-y-0.5 overflow-y-auto" role="listbox" aria-label="AI review model">
+      {options.length > 0 ? options.map((option) => {
+        const selected = option.value === modelId;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="option"
+            aria-selected={selected}
+            className={cn(
+              "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
+              selected ? "bg-cyan-500/[0.1] text-zinc-100" : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200",
+            )}
+            onClick={() => onModelChange(option.value)}
+            disabled={busy}
+          >
+            <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", selected ? "bg-cyan-300" : "bg-zinc-700")} />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[10px] font-medium">{option.label}</span>
+              {option.description ? <span className="block truncate text-[9px] text-zinc-500">{option.description}</span> : null}
+            </span>
+            {selected ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-cyan-300" aria-hidden /> : null}
+          </button>
+        );
+      }) : <p className="py-2 text-[10px] text-zinc-500">No review models configured.</p>}
+    </div>
+    <Button
+      type="button"
+      size="sm"
+      className="mt-2 h-7 w-full bg-cyan-500/90 px-2 text-[10px] font-semibold text-zinc-950 hover:bg-cyan-300"
+      onClick={onRunReview}
+      disabled={busy || !hasDiff || !modelId.trim()}
+    >
+      {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Sparkles className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
+      {hasResult ? "Run AI review again" : "Run AI review"}
+    </Button>
+  </div>
+);
+
+const ReviewDraftActions = ({
+  active,
+  draftMode,
+  draftCount,
+  busy,
+  activeUrl,
+  onStart,
+  onCancel,
+  onSubmit,
+}: Readonly<{
+  active: boolean;
+  draftMode: boolean;
+  draftCount: number;
+  busy: boolean;
+  activeUrl: string;
+  onStart: () => void;
+  onCancel: () => void;
+  onSubmit: () => void;
+}>) => (
+  <div className="border-t border-zinc-800/80 px-3 py-2.5">
+    <div className="flex items-center justify-between gap-2">
+      <div className="min-w-0">
+        <div className="flex items-center gap-1.5">
+          <SquarePen className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
+          <span className="text-[10px] font-semibold text-zinc-200">Line comments</span>
+        </div>
+        <p className="mt-0.5 text-[9px] text-zinc-500">{active ? "Comments stay private until submitted." : "Batch comments into a single review."}</p>
+      </div>
+      {!active ? (
+        <Button type="button" size="sm" variant="ghost" className="h-7 shrink-0 border border-zinc-700 px-2 text-[10px] text-zinc-200 hover:border-cyan-500/35 hover:bg-zinc-900" onClick={onStart} disabled={!activeUrl.trim()}>
+          Start review
+        </Button>
+      ) : null}
+    </div>
+    {active ? (
+      <div className="mt-2 flex items-center gap-1.5">
+        {draftMode && draftCount === 0 ? (
+          <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-[10px] text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200" onClick={onCancel}>
+            Cancel
+          </Button>
+        ) : null}
+        <Button type="button" size="sm" className="h-7 flex-1 bg-amber-300 px-2 text-[10px] font-semibold text-zinc-950 hover:bg-amber-200" onClick={onSubmit} disabled={busy || draftCount === 0 || !activeUrl.trim()}>
+          {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <ArrowUpRight className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
+          Submit {String(draftCount)} draft{draftCount === 1 ? "" : "s"}
+        </Button>
+      </div>
+    ) : null}
+  </div>
+);
+
+const ManualReviewPostActions = ({
+  postBusy,
+  hasResult,
+  activeUrl,
+  onPost,
+}: Readonly<{
+  postBusy: boolean;
+  hasResult: boolean;
+  activeUrl: string;
+  onPost: (event: "comment" | "approve") => void;
+}>) => (
+  <div className="flex items-center gap-1.5 border-t border-zinc-800/80 px-3 py-2.5">
+    <Button type="button" size="sm" variant="ghost" className="h-7 flex-1 border border-zinc-800 px-2 text-[10px] text-zinc-300 hover:bg-zinc-900" onClick={() => onPost("comment")} disabled={postBusy || !hasResult || !activeUrl.trim()}>
+      {postBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <MessageSquarePlus className="mr-1 h-3.5 w-3.5" aria-hidden />}
+      Post AI result
+    </Button>
+    <Button type="button" size="sm" variant="ghost" className="h-7 flex-1 border border-emerald-500/20 px-2 text-[10px] text-emerald-200 hover:bg-emerald-500/[0.08]" onClick={() => onPost("approve")} disabled={postBusy || !activeUrl.trim()}>
+      <CheckCircle2 className="mr-1 h-3.5 w-3.5" aria-hidden />
+      Approve
+    </Button>
+  </div>
+);
+
+type PrMrReviewMenuProps = Readonly<{
+  open: boolean;
+  anchorRef: RefObject<HTMLDivElement | null>;
+  reviewBusy: boolean;
+  submitBusy: boolean;
+  draftMode: boolean;
+  draftCount: number;
+  hasDiff: boolean;
+  options: ReviewModelOption[];
+  modelId: string;
+  hasReviewResult: boolean;
+  canUseForgeApi: boolean;
+  activeUrl: string;
+  postBusy: boolean;
+  hasOverviewRequest: boolean;
+  onOpenChange: (open: boolean) => void;
+  onModelChange: (value: string) => void;
+  onRunReview: () => void;
+  onStartReview: () => void;
+  onCancelReview: () => void;
+  onSubmitDrafts: () => void;
+  onPost: (event: "comment" | "approve") => void;
+}>;
+
+const PrMrReviewMenu = (props: PrMrReviewMenuProps) => {
+  const reviewModeActive = props.draftMode || props.draftCount > 0;
+  const busy = props.reviewBusy || props.submitBusy;
+  return (
+    <>
+      <div ref={props.anchorRef} className="relative ml-1 border-l border-zinc-800/80 pl-2">
+        <Button type="button" size="sm" variant="ghost" className={cn("h-7 border border-zinc-700/80 bg-zinc-900/70 px-2.5 text-[10px] font-semibold text-zinc-200 shadow-sm hover:border-cyan-500/40 hover:bg-zinc-800/90 hover:text-white", props.open && "border-cyan-500/45 bg-cyan-500/[0.08] text-cyan-100")} onClick={() => props.onOpenChange(!props.open)} disabled={!props.hasDiff} title="AI review, draft comments, and submission" aria-haspopup="dialog" aria-expanded={props.open}>
+          {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-cyan-300" aria-hidden /> : <Sparkles className="mr-1.5 h-3.5 w-3.5 text-cyan-300" aria-hidden />}
+          Review
+          {reviewModeActive ? <span className="ml-1 rounded-full bg-amber-300/15 px-1.5 py-px font-mono text-[9px] text-amber-100">{String(props.draftCount)}</span> : null}
+          <ChevronDown className={cn("ml-1 h-3.5 w-3.5 text-zinc-500 transition-transform duration-150", props.open && "rotate-180")} aria-hidden />
+        </Button>
+      </div>
+      <AnchorDropdownPortal open={props.open} anchorRef={props.anchorRef} align="end" placement="bottom" widthPx={320} onClose={() => props.onOpenChange(false)} className="glass-popover overflow-hidden rounded-lg border border-zinc-700/80 bg-zinc-950/95 p-0 shadow-2xl shadow-black/45">
+        <div>
+          <div className="border-b border-zinc-800/80 px-3 py-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <div><p className="text-[11px] font-semibold text-zinc-100">Review changes</p><p className="mt-0.5 text-[9px] leading-snug text-zinc-500">Run AI analysis or collect line comments for one submission.</p></div>
+              {reviewModeActive ? <span className="shrink-0 rounded-full bg-amber-400/10 px-2 py-1 text-[9px] font-medium text-amber-200 ring-1 ring-inset ring-amber-400/20">{String(props.draftCount)} draft{props.draftCount === 1 ? "" : "s"}</span> : null}
+            </div>
+          </div>
+          <AiReviewModelPicker options={props.options} modelId={props.modelId} busy={props.reviewBusy} hasDiff={props.hasDiff} hasResult={props.hasReviewResult} onModelChange={props.onModelChange} onRunReview={props.onRunReview} />
+          {props.canUseForgeApi ? <ReviewDraftActions active={reviewModeActive} draftMode={props.draftMode} draftCount={props.draftCount} busy={props.submitBusy} activeUrl={props.activeUrl} onStart={props.onStartReview} onCancel={props.onCancelReview} onSubmit={props.onSubmitDrafts} /> : null}
+          {!props.hasOverviewRequest && props.canUseForgeApi ? <ManualReviewPostActions postBusy={props.postBusy} hasResult={props.hasReviewResult} activeUrl={props.activeUrl} onPost={props.onPost} /> : null}
+        </div>
+      </AnchorDropdownPortal>
+    </>
+  );
+};
+
+const diffFileNavigatorGridClass = (hasNavigator: boolean, collapsed: boolean) => {
+  if (!hasNavigator) return "lg:grid-cols-1";
+  return collapsed ? "grid-cols-[2.25rem_minmax(0,1fr)]" : "lg:grid-cols-[minmax(12rem,17rem)_minmax(0,1fr)]";
+};
+
+const DiffReviewState = ({
+  visible,
+  state,
+  busy,
+  hasDiff,
+  onRun,
+}: Readonly<{
+  visible: boolean;
+  state: DiffReviewPanelState;
+  busy: boolean;
+  hasDiff: boolean;
+  onRun: () => void;
+}>) => {
+  if (!visible) return null;
+  return (
+    <div className="app-scrollbar max-h-[34%] min-h-0 w-full min-w-0 overflow-y-auto overscroll-y-contain">
+      <DiffReviewPanel
+        state={state}
+        onRun={onRun}
+        disabled={busy || !hasDiff}
+        compact
+        defaultExpanded={Boolean(state.error) || Boolean(state.result)}
+      />
+    </div>
+  );
+};
+
+const ManualDiffToolbar = ({ visible, children }: Readonly<{ visible: boolean; children: ReactNode }>) => {
+  if (!visible) return null;
+  return <div className="shrink-0 border-b border-zinc-800/80 px-2 py-1.5">{children}</div>;
+};
+
+const ManualDiffMessages = ({ visible, message, error }: Readonly<{ visible: boolean; message: string | null; error: string | null }>) => {
+  if (!visible) return null;
+  return (
+    <>
+      {message ? <p className="shrink-0 text-[9px] text-emerald-300">{message}</p> : null}
+      {error ? <p className="shrink-0 text-[9px] text-rose-300">{error}</p> : null}
+    </>
+  );
+};
+
+type DiffPreviewActions = {
+  onAddDiffComment?: (target: DiffLineCommentTarget) => void;
+  onSaveSingleComment?: (value: string) => void;
+  onEditDraftComment?: (commentId: string) => void;
+  onRemoveDraftComment?: (commentId: string) => void;
+  onDraftReviewFinding?: (target: DiffLineCommentTarget, finding: RunDiffReviewFinding, findingKey: string) => void;
+};
+
+const buildDiffPreviewActions = ({
+  canUseForgeApi,
+  editingDraftCommentId,
+  reviewModeActive,
+  onAddDiffComment,
+  onSaveSingleComment,
+  onEditDraftComment,
+  onRemoveDraftComment,
+  onDraftReviewFinding,
+}: Readonly<{
+  canUseForgeApi: boolean;
+  editingDraftCommentId: string | null;
+  reviewModeActive: boolean;
+  onAddDiffComment: (target: DiffLineCommentTarget) => void;
+  onSaveSingleComment: (value: string) => void;
+  onEditDraftComment: (commentId: string) => void;
+  onRemoveDraftComment: (commentId: string) => void;
+  onDraftReviewFinding: (target: DiffLineCommentTarget, finding: RunDiffReviewFinding, findingKey: string) => void;
+}>): DiffPreviewActions => {
+  if (!canUseForgeApi) return {};
+  const actions: DiffPreviewActions = {
+    onAddDiffComment,
+    onEditDraftComment,
+    onRemoveDraftComment,
+    onDraftReviewFinding,
+  };
+  if (!editingDraftCommentId && !reviewModeActive) actions.onSaveSingleComment = onSaveSingleComment;
+  return actions;
 };
 
 export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initialRequest = null, onOpenProjectSettings }: ProjectPrMrTabProps) => {
@@ -886,15 +1159,14 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const loadRequestDetails = useCallback(
     async (targetUrl: string, options: { silent?: boolean } = {}) => {
       const url = targetUrl.trim();
+      const shouldUpdateView = () => !options.silent && activeRequestUrlRef.current === url;
       if (!url) {
-        if (!options.silent) {
-          setRequestDetails(null);
-        }
+        if (!options.silent) setRequestDetails(null);
         return;
       }
       const cached = requestDetailsCacheRef.current.get(url);
       if (cached) {
-        if (!options.silent && activeRequestUrlRef.current === url) {
+        if (shouldUpdateView()) {
           setRequestDetails(cached);
           setDetailsError(null);
         }
@@ -906,18 +1178,14 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
       }
       try {
         const result = await fetchRequestDetails(url);
-        if (!options.silent && activeRequestUrlRef.current === url) {
-          setRequestDetails(result);
-        }
+        if (shouldUpdateView()) setRequestDetails(result);
       } catch (error) {
-        if (!options.silent && activeRequestUrlRef.current === url) {
+        if (shouldUpdateView()) {
           setRequestDetails(null);
           setDetailsError(formatAppErrorMessage(error, "Could not load PR/MR description and activity."));
         }
       } finally {
-        if (!options.silent && activeRequestUrlRef.current === url) {
-          setDetailsBusy(false);
-        }
+        if (shouldUpdateView()) setDetailsBusy(false);
       }
     },
     [fetchRequestDetails],
@@ -1982,7 +2250,6 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
       return null;
     }
 
-    const reviewModeActive = reviewDraftMode || draftComments.length > 0;
     const nextDiffViewType = diffViewType === "unified" ? "split" : "unified";
     const DiffViewIcon = diffViewType === "unified" ? Rows2 : Columns2;
     const diffViewLabel = diffViewType === "unified" ? "Unified diff view" : "Split diff view";
@@ -2030,227 +2297,70 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
             {allDiffFilesExpanded ? "Collapse all" : "Expand all"}
           </Button>
         ) : null}
-        <div ref={aiReviewMenuAnchorRef} className="relative ml-1 border-l border-zinc-800/80 pl-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className={cn(
-              "h-7 border border-zinc-700/80 bg-zinc-900/70 px-2.5 text-[10px] font-semibold text-zinc-200 shadow-sm hover:border-cyan-500/40 hover:bg-zinc-800/90 hover:text-white",
-              aiReviewMenuOpen && "border-cyan-500/45 bg-cyan-500/[0.08] text-cyan-100",
-            )}
-            onClick={() => setAiReviewMenuOpen((open) => !open)}
-            disabled={!hasDiff}
-            title="AI review, draft comments, and submission"
-            aria-haspopup="dialog"
-            aria-expanded={aiReviewMenuOpen}
-          >
-            {reviewBusy || manualSubmitBusy ? (
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-cyan-300" aria-hidden />
-            ) : (
-              <Sparkles className="mr-1.5 h-3.5 w-3.5 text-cyan-300" aria-hidden />
-            )}
-            Review
-            {reviewModeActive ? (
-              <span className="ml-1 rounded-full bg-amber-300/15 px-1.5 py-px font-mono text-[9px] text-amber-100">
-                {String(draftComments.length)}
-              </span>
-            ) : null}
-            <ChevronDown className={cn("ml-1 h-3.5 w-3.5 text-zinc-500 transition-transform duration-150", aiReviewMenuOpen && "rotate-180")} aria-hidden />
-          </Button>
-        </div>
-        <AnchorDropdownPortal
+        <PrMrReviewMenu
           open={aiReviewMenuOpen}
           anchorRef={aiReviewMenuAnchorRef}
-          align="end"
-          placement="bottom"
-          widthPx={320}
-          onClose={() => setAiReviewMenuOpen(false)}
-          className="glass-popover overflow-hidden rounded-lg border border-zinc-700/80 bg-zinc-950/95 p-0 shadow-2xl shadow-black/45"
-        >
-          <div>
-            <div className="border-b border-zinc-800/80 px-3 py-2.5">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-[11px] font-semibold text-zinc-100">Review changes</p>
-                  <p className="mt-0.5 text-[9px] leading-snug text-zinc-500">Run AI analysis or collect line comments for one submission.</p>
-                </div>
-                {reviewModeActive ? (
-                  <span className="shrink-0 rounded-full bg-amber-400/10 px-2 py-1 text-[9px] font-medium text-amber-200 ring-1 ring-inset ring-amber-400/20">
-                    {String(draftComments.length)} draft{draftComments.length === 1 ? "" : "s"}
-                  </span>
-                ) : null}
-              </div>
-            </div>
-            <div className="px-3 py-2.5">
-              <div className="mb-2 flex items-center gap-1.5">
-                <Sparkles className="h-3.5 w-3.5 text-cyan-300" aria-hidden />
-                <span className="text-[10px] font-semibold text-zinc-200">AI review</span>
-              </div>
-              <div className="app-scrollbar max-h-40 space-y-0.5 overflow-y-auto" role="listbox" aria-label="AI review model">
-                {reviewModelSelectOptions.length > 0 ? (
-                  reviewModelSelectOptions.map((option) => {
-                    const selected = option.value === reviewModelId;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        role="option"
-                        aria-selected={selected}
-                        className={cn(
-                          "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
-                          selected
-                            ? "bg-cyan-500/[0.1] text-zinc-100"
-                            : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200",
-                        )}
-                        onClick={() => setReviewModelId(option.value)}
-                        disabled={reviewBusy}
-                      >
-                        <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", selected ? "bg-cyan-300" : "bg-zinc-700")} />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[10px] font-medium">{option.label}</span>
-                          {option.description ? <span className="block truncate text-[9px] text-zinc-500">{option.description}</span> : null}
-                        </span>
-                        {selected ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-cyan-300" aria-hidden /> : null}
-                      </button>
-                    );
-                  })
-                ) : (
-                  <p className="py-2 text-[10px] text-zinc-500">No review models configured.</p>
-                )}
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                className="mt-2 h-7 w-full bg-cyan-500/90 px-2 text-[10px] font-semibold text-zinc-950 hover:bg-cyan-300"
-                onClick={() => void runPrMrReview()}
-                disabled={reviewBusy || !hasDiff || !reviewModelId.trim()}
-              >
-                {reviewBusy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Sparkles className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
-                {reviewPanel.result ? "Run AI review again" : "Run AI review"}
-              </Button>
-            </div>
-            {canUseForgeApi ? (
-              <div className="border-t border-zinc-800/80 px-3 py-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <SquarePen className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
-                      <span className="text-[10px] font-semibold text-zinc-200">Line comments</span>
-                    </div>
-                    <p className="mt-0.5 text-[9px] text-zinc-500">
-                      {reviewModeActive ? "Comments stay private until submitted." : "Batch comments into a single review."}
-                    </p>
-                  </div>
-                  {!reviewModeActive ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 shrink-0 border border-zinc-700 px-2 text-[10px] text-zinc-200 hover:border-cyan-500/35 hover:bg-zinc-900"
-                      onClick={() => {
-                        startReviewMode();
-                        setAiReviewMenuOpen(false);
-                      }}
-                      disabled={!activeUrl.trim()}
-                    >
-                      Start review
-                    </Button>
-                  ) : null}
-                </div>
-                {reviewModeActive ? (
-                  <div className="mt-2 flex items-center gap-1.5">
-                    {reviewDraftMode && draftComments.length === 0 ? (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 px-2 text-[10px] text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200"
-                        onClick={() => {
-                          setReviewDraftMode(false);
-                          clearDraftEditor();
-                          setAiReviewMenuOpen(false);
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                    ) : null}
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="h-7 flex-1 bg-amber-300 px-2 text-[10px] font-semibold text-zinc-950 hover:bg-amber-200"
-                      onClick={() => void submitDraftDiffComments()}
-                      disabled={manualSubmitBusy || draftComments.length === 0 || !activeUrl.trim()}
-                    >
-                      {manualSubmitBusy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <ArrowUpRight className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
-                      Submit {String(draftComments.length)} draft{draftComments.length === 1 ? "" : "s"}
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-            {!overviewRequest && canUseForgeApi ? (
-              <div className="flex items-center gap-1.5 border-t border-zinc-800/80 px-3 py-2.5">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 flex-1 border border-zinc-800 px-2 text-[10px] text-zinc-300 hover:bg-zinc-900"
-                  onClick={() => void postReview("comment")}
-                  disabled={postBusy || !reviewPanel.result || !activeUrl.trim()}
-                >
-                  {postBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <MessageSquarePlus className="mr-1 h-3.5 w-3.5" aria-hidden />}
-                  Post AI result
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 flex-1 border border-emerald-500/20 px-2 text-[10px] text-emerald-200 hover:bg-emerald-500/[0.08]"
-                  onClick={() => void postReview("approve")}
-                  disabled={postBusy || !activeUrl.trim()}
-                >
-                  <CheckCircle2 className="mr-1 h-3.5 w-3.5" aria-hidden />
-                  Approve
-                </Button>
-              </div>
-            ) : null}
-          </div>
-        </AnchorDropdownPortal>
+          reviewBusy={reviewBusy}
+          submitBusy={manualSubmitBusy}
+          draftMode={reviewDraftMode}
+          draftCount={draftComments.length}
+          hasDiff={hasDiff}
+          options={reviewModelSelectOptions}
+          modelId={reviewModelId}
+          hasReviewResult={Boolean(reviewPanel.result)}
+          canUseForgeApi={canUseForgeApi}
+          activeUrl={activeUrl}
+          postBusy={postBusy}
+          hasOverviewRequest={Boolean(overviewRequest)}
+          onOpenChange={setAiReviewMenuOpen}
+          onModelChange={setReviewModelId}
+          onRunReview={() => void runPrMrReview()}
+          onStartReview={() => {
+            startReviewMode();
+            setAiReviewMenuOpen(false);
+          }}
+          onCancelReview={() => {
+            setReviewDraftMode(false);
+            clearDraftEditor();
+            setAiReviewMenuOpen(false);
+          }}
+          onSubmitDrafts={() => void submitDraftDiffComments()}
+          onPost={(event) => void postReview(event)}
+        />
       </div>
     );
   };
 
   const renderDiffCard = () => {
-    if (!diffText.trim()) {
-      return null;
-    }
+    if (!diffText.trim()) return null;
     const fileNavigator = renderFileNavigator();
-    let fileNavigatorGridClass = "lg:grid-cols-1";
-    if (fileNavigator) {
-      fileNavigatorGridClass = fileNavigatorCollapsed
-        ? "grid-cols-[2.25rem_minmax(0,1fr)]"
-        : "lg:grid-cols-[minmax(12rem,17rem)_minmax(0,1fr)]";
-    }
+    const fileNavigatorGridClass = diffFileNavigatorGridClass(Boolean(fileNavigator), fileNavigatorCollapsed);
     const reviewModeActive = reviewDraftMode || draftComments.length > 0;
+    const showManualControls = !overviewRequest;
+    const diffPreviewActions = buildDiffPreviewActions({
+      canUseForgeApi,
+      editingDraftCommentId,
+      reviewModeActive,
+      onAddDiffComment: (target) => {
+        setActiveCommentTarget(target);
+        setDraftCommentText("");
+        setEditingDraftCommentId(null);
+        setHighlightedCommentId(null);
+        setPostMessage(null);
+        setPostError(null);
+      },
+      onSaveSingleComment: (value) => void submitSingleDiffComment(value),
+      onEditDraftComment: editDraftDiffComment,
+      onRemoveDraftComment: removeDraftDiffComment,
+      onDraftReviewFinding: draftAiFindingComment,
+    });
 
     return (
       <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-zinc-800/80 bg-zinc-950/40 p-0">
-        {!overviewRequest ? <div className="shrink-0 border-b border-zinc-800/80 px-2 py-1.5">{renderFilesChangedToolbar()}</div> : null}
+        <ManualDiffToolbar visible={showManualControls}>{renderFilesChangedToolbar()}</ManualDiffToolbar>
         <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-hidden px-2 pb-2 pt-1.5">
-          {!overviewRequest && postMessage ? <p className="shrink-0 text-[9px] text-emerald-300">{postMessage}</p> : null}
-          {!overviewRequest && postError ? <p className="shrink-0 text-[9px] text-rose-300">{postError}</p> : null}
-          {hasReviewState ? (
-            <div className="app-scrollbar max-h-[34%] min-h-0 w-full min-w-0 overflow-y-auto overscroll-y-contain">
-              <DiffReviewPanel
-                state={reviewPanel}
-                onRun={() => void runPrMrReview()}
-                disabled={reviewBusy || !hasDiff}
-                compact
-                defaultExpanded={Boolean(reviewPanel.error) || Boolean(reviewPanel.result)}
-              />
-            </div>
-          ) : null}
+          <ManualDiffMessages visible={showManualControls} message={postMessage} error={postError} />
+          <DiffReviewState visible={hasReviewState} state={reviewPanel} busy={reviewBusy} hasDiff={hasDiff} onRun={() => void runPrMrReview()} />
           <div
             className={cn("grid min-h-0 flex-1 gap-2 overflow-hidden", fileNavigatorGridClass)}
           >
@@ -2277,24 +2387,13 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
               singleCommentBusy={singleSubmitBusy}
               editingDraftCommentId={editingDraftCommentId}
               draftedReviewFindingKeys={draftedReviewFindingKeys}
-              onAddDiffComment={
-                canUseForgeApi
-                  ? (target) => {
-                      setActiveCommentTarget(target);
-                      setDraftCommentText("");
-                      setEditingDraftCommentId(null);
-                      setHighlightedCommentId(null);
-                      setPostMessage(null);
-                      setPostError(null);
-                    }
-                  : undefined
-              }
+              onAddDiffComment={diffPreviewActions.onAddDiffComment}
               onSaveDraftComment={saveDraftDiffComment}
-              onSaveSingleComment={canUseForgeApi && !editingDraftCommentId && !reviewModeActive ? (value) => void submitSingleDiffComment(value) : undefined}
+              onSaveSingleComment={diffPreviewActions.onSaveSingleComment}
               onCancelDraftComment={clearDraftEditor}
-              onEditDraftComment={canUseForgeApi ? editDraftDiffComment : undefined}
-              onRemoveDraftComment={canUseForgeApi ? removeDraftDiffComment : undefined}
-              onDraftReviewFinding={canUseForgeApi ? draftAiFindingComment : undefined}
+              onEditDraftComment={diffPreviewActions.onEditDraftComment}
+              onRemoveDraftComment={diffPreviewActions.onRemoveDraftComment}
+              onDraftReviewFinding={diffPreviewActions.onDraftReviewFinding}
               onParsedFilesChange={handleParsedDiffFilesChange}
               defaultCollapsedFileSections={false}
               virtualizeFileSections

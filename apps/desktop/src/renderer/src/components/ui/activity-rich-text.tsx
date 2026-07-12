@@ -27,7 +27,56 @@ const markdownSanitizeSchema = {
   },
 };
 
+const markdownTableComponents = (compact: boolean): Components => ({
+  pre: ({ children, ...props }) => (
+    <pre
+      className={cn(
+        "app-scrollbar my-2 overflow-x-auto rounded-lg border border-[color:var(--ec-border)] bg-[color:var(--ec-input)] p-2.5 font-mono text-[color:var(--ec-text)]",
+        compact ? "text-[11px] leading-relaxed" : "text-xs leading-relaxed",
+      )}
+      {...props}
+    >
+      {children}
+    </pre>
+  ),
+  table: ({ children, ...props }) => (
+    <div className="app-scrollbar my-2 max-w-full overflow-x-auto rounded-lg border border-[color:var(--ec-border)]">
+      <table className={cn("w-full border-collapse text-left text-[color:var(--ec-text)]", compact ? "text-[11px]" : "text-xs")} {...props}>
+        {children}
+      </table>
+    </div>
+  ),
+  thead: ({ children, ...props }) => <thead className="border-b border-[color:var(--ec-border)] bg-[color:var(--ec-panel-soft)]" {...props}>{children}</thead>,
+  tbody: ({ children, ...props }) => <tbody className="divide-y divide-[color:var(--ec-border)]" {...props}>{children}</tbody>,
+  tr: ({ children, ...props }) => <tr {...props}>{children}</tr>,
+  th: ({ children, ...props }) => <th className="px-2 py-1.5 font-medium text-[color:var(--ec-text)]" {...props}>{children}</th>,
+  td: ({ children, ...props }) => <td className="px-2 py-1.5 text-[color:var(--ec-muted)]" {...props}>{children}</td>,
+});
+
+const MarkdownImage: NonNullable<Components["img"]> = ({ src, alt, title, ...props }) => {
+  const href = typeof src === "string" ? src : "";
+  const openImage = (event: MouseEvent<HTMLImageElement>) => {
+    if (!href || (!href.startsWith("http://") && !href.startsWith("https://"))) {
+      return;
+    }
+    event.preventDefault();
+    void window.buildwarden.openExternalUrl(href);
+  };
+  return (
+    <img
+      src={href}
+      alt={alt ?? ""}
+      title={title}
+      className="my-2 max-h-80 max-w-full cursor-zoom-in rounded-md border border-[color:var(--ec-border)] bg-[color:var(--ec-input)] object-contain"
+      loading="lazy"
+      {...props}
+      onClick={openImage}
+    />
+  );
+};
+
 const mdComponents = (compact: boolean, onOpenWorkspaceFile?: (path: string) => void): Components => ({
+  ...markdownTableComponents(compact),
   p: ({ children, ...props }) => (
     <p className={cn("mb-2 text-[color:var(--ec-text)] last:mb-0", compact ? "leading-snug" : "leading-relaxed")} {...props}>
       {children}
@@ -149,27 +198,7 @@ const mdComponents = (compact: boolean, onOpenWorkspaceFile?: (path: string) => 
   ),
   br: (props) => <br {...props} />,
   hr: (props) => <hr className="my-3 border-[color:var(--ec-border)]" {...props} />,
-  img: ({ src, alt, title, ...props }) => {
-    const href = typeof src === "string" ? src : "";
-    const openImage = (event: MouseEvent<HTMLImageElement>) => {
-      if (!href || (!href.startsWith("http://") && !href.startsWith("https://"))) {
-        return;
-      }
-      event.preventDefault();
-      void window.buildwarden.openExternalUrl(href);
-    };
-    return (
-      <img
-        src={href}
-        alt={alt ?? ""}
-        title={title}
-        className="my-2 max-h-80 max-w-full cursor-zoom-in rounded-md border border-[color:var(--ec-border)] bg-[color:var(--ec-input)] object-contain"
-        loading="lazy"
-        {...props}
-        onClick={openImage}
-      />
-    );
-  },
+  img: MarkdownImage,
   input: ({ type, checked, ...props }) => {
     if (type !== "checkbox") {
       return null;
@@ -234,37 +263,6 @@ const mdComponents = (compact: boolean, onOpenWorkspaceFile?: (path: string) => 
       </>
     );
   },
-  pre: ({ children, ...props }) => (
-    <pre
-      className={cn(
-        "app-scrollbar my-2 overflow-x-auto rounded-lg border border-[color:var(--ec-border)] bg-[color:var(--ec-input)] p-2.5 font-mono text-[color:var(--ec-text)]",
-        compact ? "text-[11px] leading-relaxed" : "text-xs leading-relaxed",
-      )}
-      {...props}
-    >
-      {children}
-    </pre>
-  ),
-  table: ({ children, ...props }) => (
-    <div className="app-scrollbar my-2 max-w-full overflow-x-auto rounded-lg border border-[color:var(--ec-border)]">
-      <table className={cn("w-full border-collapse text-left text-[color:var(--ec-text)]", compact ? "text-[11px]" : "text-xs")} {...props}>
-        {children}
-      </table>
-    </div>
-  ),
-  thead: ({ children, ...props }) => <thead className="border-b border-[color:var(--ec-border)] bg-[color:var(--ec-panel-soft)]" {...props}>{children}</thead>,
-  tbody: ({ children, ...props }) => <tbody className="divide-y divide-[color:var(--ec-border)]" {...props}>{children}</tbody>,
-  tr: ({ children, ...props }) => <tr {...props}>{children}</tr>,
-  th: ({ children, ...props }) => (
-    <th className="px-2 py-1.5 font-medium text-[color:var(--ec-text)]" {...props}>
-      {children}
-    </th>
-  ),
-  td: ({ children, ...props }) => (
-    <td className="px-2 py-1.5 text-[color:var(--ec-muted)]" {...props}>
-      {children}
-    </td>
-  ),
 });
 
 export interface ActivityRichTextProps {

@@ -1,297 +1,32 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Ref, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
-  extractAttachmentNamesFromMetadata,
-  extractAttachmentPayloadsFromMetadata,
-  formatRunPlanProgressContent,
-  isTerminalRunSubagentStatus,
   type RunEventType,
-  type RunMode,
-  type RunStatus,
-  type RunSubagentInfo,
   type RunTimelineDensity,
   type RunUserInputAnswers,
-  type RunUserInputQuestion,
-  normalizeRunPlanProgressPayload,
-  normalizeRunSubagentInfo,
 } from "@buildwarden/shared";
-import {
-  Bot,
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Copy,
-  ListTodo,
-  Loader2,
-  MessageSquareText,
-  RotateCcw,
-  ShieldCheck,
-  Terminal,
-} from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { cn } from "../../lib/cn";
-import { ActivityMarkdownOrGitDiff } from "./activity-message-body";
-import { AgentChip, AgentLogRow, AgentPanel, AgentWorklog } from "./agent-worklog";
-import { GitDiffPreview } from "./git-diff-preview";
-import { looksLikeGitDiff } from "./git-diff-utils";
+import { AgentLogRow, AgentWorklog } from "./agent-worklog";
 import { RunPlanDecisionCard } from "./RunPlanDecisionCard";
-import { RunPlanSteps } from "./RunPlanSteps";
-import { RunUserInputRequestCard } from "./RunUserInputRequestCard";
-import { StoredChatAttachments } from "./StoredChatAttachments";
-import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
-
-export type RunActivityStep = {
-  id: string;
-  eventType: RunEventType;
-  title: string;
-  content: string;
-  metadataJson: string;
-  createdAt: string;
-};
-
-export type RunActivityRun = {
-  id: string;
-  status: RunStatus;
-  mode: RunMode;
-};
-
-const safeParseMetadata = (value: string) => {
-  try {
-    return JSON.parse(value) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
-};
-
-const isUserInputQuestion = (value: unknown): value is RunUserInputQuestion => {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const record = value as Partial<RunUserInputQuestion>;
-  return (
-    typeof record.id === "string" &&
-    typeof record.header === "string" &&
-    typeof record.question === "string" &&
-    Array.isArray(record.options)
-  );
-};
-
-const readUserInputQuestions = (metadata: Record<string, unknown>): RunUserInputQuestion[] => {
-  const questions = metadata.userInputQuestions;
-  return Array.isArray(questions) ? questions.filter(isUserInputQuestion) : [];
-};
-
-const readUserInputAnswers = (metadata: Record<string, unknown>): RunUserInputAnswers | null => {
-  const answers = metadata.userInputAnswers;
-  if (typeof answers !== "object" || answers === null || Array.isArray(answers)) {
-    return null;
-  }
-  const normalized: RunUserInputAnswers = {};
-  for (const [key, value] of Object.entries(answers as Record<string, unknown>)) {
-    if (typeof value === "string") {
-      normalized[key] = value;
-      continue;
-    }
-    if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) {
-      normalized[key] = value;
-    }
-  }
-  return Object.keys(normalized).length > 0 ? normalized : null;
-};
-
-const shouldAutoCollapseReasoning = (content: string) => {
-  const lineCount = content.split(/\r?\n/).length;
-  return lineCount > 7 || content.trim().length > 700;
-};
-
-const isRunCompletionStatus = (step: RunActivityStep) => {
-  if (step.eventType !== "status") return false;
-  const text = `${step.title} ${step.content}`.toLowerCase();
-  return text.includes("run completed") || text.includes("completed successfully");
-};
-
-const TOOL_BATCH_MERGE_BY_PATH = new Set(["read_file"]);
-const FILE_LINK_TOOL_NAMES = new Set(["read_file", "write_file", "edit_file", "delete_file", "list_files", "search_repo"]);
-
-// Exported for focused renderer behavior tests.
-// eslint-disable-next-line react-refresh/only-export-components
-export const isOpenableToolPath = (toolName: string, path: string | null | undefined): boolean =>
-  FILE_LINK_TOOL_NAMES.has(toolName) && Boolean(path?.trim());
-
-type ToolBatchSummarizedRow = {
-  toolName: string;
-  detail: string | null;
-  toolCallId?: string | null;
-  command?: string | null;
-  paths?: string[];
-  count: number;
-  failed: boolean;
-  shellStreaming?: boolean;
-  preview: string | null;
-  writeFileDiff: string | null;
-  createdAt: string;
-};
-
-const summarizeToolBatchItems = (
-  items: Extract<SingleActivityEntry, { kind: "tool" }>[],
-): ToolBatchSummarizedRow[] =>
-  items.reduce<ToolBatchSummarizedRow[]>((rows, item) => {
-    const callMetadata = item.callMetadata ?? {};
-    const resultMetadata = item.resultMetadata ?? {};
-    const toolName = String(callMetadata.toolName ?? resultMetadata.toolName ?? "tool");
-    const detail = describeActivityDetail(resultMetadata) ?? describeActivityDetail(callMetadata);
-    const failed = resultMetadata.ok === false;
-    const shellStreaming = resultMetadata.shellStreaming === true;
-    const toolCallId = firstMetadataString(resultMetadata.callId, callMetadata.callId);
-    const command = firstMetadataString(resultMetadata.command, callMetadata.command);
-    const preview = summarizeToolPreview(toolName, failed, item);
-    const writeFileDiff =
-      !failed && toolName === "write_file" && typeof resultMetadata.writeFileUnifiedDiff === "string"
-        ? resultMetadata.writeFileUnifiedDiff
-        : null;
-    const createdAt = (item.resultStep ?? item.callStep)?.createdAt ?? new Date().toISOString();
-    const previousRow = rows[rows.length - 1];
-    const pathKey = detail?.trim() ?? "";
-    const canMergeSamePath =
-      toolName !== "write_file" &&
-      toolName !== "run_shell" &&
-      previousRow &&
-      previousRow.toolName === toolName &&
-      previousRow.detail === detail &&
-      previousRow.failed === failed &&
-      !previousRow.paths?.length;
-    const canMergeReadFileRun =
-      TOOL_BATCH_MERGE_BY_PATH.has(toolName) &&
-      pathKey.length > 0 &&
-      previousRow &&
-      previousRow.toolName === toolName &&
-      previousRow.failed === failed;
-
-    if (canMergeSamePath || canMergeReadFileRun) {
-      if (canMergeReadFileRun) {
-        const existingPaths = previousRow.paths ?? (previousRow.detail ? [previousRow.detail] : []);
-        previousRow.paths = [...existingPaths, pathKey];
-        previousRow.detail = null;
-      }
-      previousRow.count += 1;
-      previousRow.createdAt = createdAt;
-      previousRow.toolCallId = toolCallId ?? previousRow.toolCallId;
-      previousRow.command = command ?? previousRow.command;
-      previousRow.shellStreaming = shellStreaming || previousRow.shellStreaming;
-      previousRow.preview = preview ?? previousRow.preview;
-      previousRow.writeFileDiff = writeFileDiff ?? previousRow.writeFileDiff;
-      return rows;
-    }
-
-    rows.push({
-      toolName,
-      detail: pathKey ? detail : null,
-      toolCallId,
-      count: 1,
-      failed,
-      command,
-      shellStreaming,
-      preview,
-      writeFileDiff,
-      createdAt,
-    });
-    return rows;
-  }, []);
-
-const APPROVAL_DECISION_LABELS: Record<string, string> = {
-  deny: "Denied",
-  "allow-for-run": "Allowed for run",
-  "allow-always": "Always allowed",
-  "allow-once": "Allowed once",
-};
-
-const firstMetadataString = (...candidates: unknown[]): string | null => {
-  for (const candidate of candidates) {
-    if (typeof candidate === "string") {
-      return candidate;
-    }
-  }
-  return null;
-};
-
-type SingleActivityEntry =
-  | {
-      kind: "single";
-      step: RunActivityStep;
-      metadata: Record<string, unknown>;
-    }
-  | {
-      kind: "tool";
-      callStep?: RunActivityStep;
-      callMetadata?: Record<string, unknown>;
-      resultStep?: RunActivityStep;
-      resultMetadata?: Record<string, unknown>;
-    };
-
-type ActivityGroupKey = "user" | "status" | "assistant";
-
-type ActivityEntry =
-  | SingleActivityEntry
-  | {
-      kind: "tool-batch";
-      items: Extract<SingleActivityEntry, { kind: "tool" }>[];
-    }
-  | {
-      kind: "diff-batch";
-      items: Extract<SingleActivityEntry, { kind: "single" }>[];
-    }
-  | {
-      kind: "single-group";
-      groupKey: ActivityGroupKey;
-      items: Extract<SingleActivityEntry, { kind: "single" }>[];
-    }
-  | {
-      kind: "subagent";
-      step: RunActivityStep;
-      info: RunSubagentInfo;
-      entries: ActivityEntry[];
-    };
-
-type ActivityEntryPreMerge = Exclude<ActivityEntry, { kind: "single-group" }>;
-
-type TimelineRenderItem =
-  | {
-      kind: "entry";
-      key: string;
-      entry: ActivityEntry;
-    }
-  | {
-      kind: "plan-decision";
-      key: string;
-      planText: string;
-    }
-  | {
-      kind: "loading";
-      key: string;
-    }
-  | {
-      kind: "end";
-      key: string;
-    };
-
-type ActivityRenderContext = {
-  run: RunActivityRun;
-  runDurationLabel: string | null;
-  rowTime: (time: string | null | undefined) => string | null | undefined;
-  readOnly: boolean;
-  restorablePromptStepId: string | null;
-  onUndoRunToLastPrompt?: (run: RunActivityRun) => void;
-  activeCopiedStepId: string | null;
-  copyStepContent: (text: string, stepId: string) => Promise<void>;
-  busy: boolean;
-  isRunActive: boolean;
-  compactContent: boolean;
-  onOpenWorkspaceFile?: (path: string) => void;
-  onPreparePlanContinuation?: (plan: string) => void;
-  onSubmitUserInputAnswers?: (run: RunActivityRun, requestId: string, answers: RunUserInputAnswers) => Promise<void> | void;
-  activeReasoningStepIds: Record<string, boolean>;
-  toggleReasoningStep: (stepId: string) => void;
-};
+import { ActivitySubagentCard } from "./run-activity-subagent-card";
+import { SingleActivityEntryView, SingleGroupActivityEntry, type ActivityRenderContext } from "./run-activity-entry-views";
+import {
+  ActivityDiffBatchRow,
+  ActivityToolBatchRow,
+  type DiffBatchSummarizedRow,
+} from "./run-activity-tool-rows";
+import { summarizeToolBatchItems } from "./run-activity-tool-model";
+import {
+  buildActivityEntries,
+  buildTimelineRenderItems,
+  getLatestPlanDecisionText,
+  shouldAutoCollapseReasoning,
+  type ActivityEntry,
+  type RunActivityRun,
+  type RunActivityStep,
+  type TimelineRenderItem,
+} from "./run-activity-model";
 
 const assignTimelineRef = (ref: Ref<HTMLDivElement> | undefined, node: HTMLDivElement | null) => {
   if (!ref) return;
@@ -302,77 +37,6 @@ const assignTimelineRef = (ref: Ref<HTMLDivElement> | undefined, node: HTMLDivEl
   (ref as { current: HTMLDivElement | null }).current = node;
 };
 
-const getActivityEntryKey = (entry: ActivityEntry, index: number) => {
-  if (entry.kind === "tool-batch") {
-    const first = entry.items[0];
-    const id = first?.callStep?.id ?? first?.resultStep?.id ?? `tool-batch-${index}`;
-    return `${id}-tools-${entry.items.length}`;
-  }
-  if (entry.kind === "diff-batch") {
-    const firstId = entry.items[0]?.step.id ?? `diff-batch-${index}`;
-    return `${firstId}-diffs-${entry.items.length}`;
-  }
-  if (entry.kind === "single-group") {
-    const first = entry.items[0]?.step.id ?? `single-group-${index}`;
-    return `${first}-${entry.groupKey}-${entry.items.length}`;
-  }
-  if (entry.kind === "tool") {
-    return entry.callStep?.id ?? entry.resultStep?.id ?? `tool-${index}`;
-  }
-  if (entry.kind === "subagent") {
-    return `subagent-${entry.info.id}`;
-  }
-  return entry.step.id;
-};
-
-// Exported for focused virtualization model tests.
-// eslint-disable-next-line react-refresh/only-export-components
-export const buildTimelineRenderItems = ({
-  entries,
-  density,
-  canShowPlanDecision,
-  latestPlanDecisionText,
-  showLoading,
-}: {
-  entries: ActivityEntry[];
-  density: RunTimelineDensity;
-  canShowPlanDecision: boolean;
-  latestPlanDecisionText: string | null;
-  showLoading: boolean;
-}): TimelineRenderItem[] => {
-  const visibleEntries = density === "compact" ? entries.filter((entry) => entry.kind !== "tool-batch" && entry.kind !== "tool") : entries;
-  const items: TimelineRenderItem[] = visibleEntries.map((entry, index) => ({
-    kind: "entry",
-    key: `entry-${density}-${getActivityEntryKey(entry, index)}`,
-    entry,
-  }));
-
-  if (canShowPlanDecision && latestPlanDecisionText) {
-    items.push({
-      kind: "plan-decision",
-      key: `plan-decision-${density}-${items.length}`,
-      planText: latestPlanDecisionText,
-    });
-  }
-
-  if (showLoading) {
-    items.push({
-      kind: "loading",
-      key: `loading-${density}-${items.length}`,
-    });
-  }
-
-  items.push({
-    kind: "end",
-    key: `timeline-end-spacer-${density}`,
-  });
-
-  return items;
-};
-
-// Rough per-line estimate for markdown-ish text content. Estimates only need
-// to be near reality: the closer they are, the smaller the layout shift when a
-// row scrolls into view and receives its first real measurement.
 const estimateTextContentSize = (content: string, density: RunTimelineDensity) => {
   const lineHeight = density === "detailed" ? 20 : 18;
   let lines = 0;
@@ -380,6 +44,59 @@ const estimateTextContentSize = (content: string, density: RunTimelineDensity) =
     lines += Math.max(1, Math.ceil(line.length / 90));
   }
   return Math.min(1200, 44 + lines * lineHeight);
+};
+
+const estimateGroupedEntrySize = (
+  entry: Extract<ActivityEntry, { kind: "single-group" }>,
+  density: RunTimelineDensity,
+) => {
+  if (entry.groupKey === "status") return 42 + entry.items.length * 22;
+  if (entry.groupKey === "user") return 104 + entry.items.length * 48;
+  const contentSize = entry.items.reduce(
+    (total, groupItem) => total + estimateTextContentSize(groupItem.step.content, density),
+    0,
+  );
+  return Math.min(1600, 24 + contentSize);
+};
+
+const estimateSingleEntrySize = (
+  entry: Extract<ActivityEntry, { kind: "single" }>,
+  density: RunTimelineDensity,
+  expandedReasoningStepIds: Record<string, boolean>,
+) => {
+  const fixedSizes: Partial<Record<RunEventType, number>> = {
+    status: 64,
+    request: 190,
+    "user-input-requested": 190,
+    "approval-requested": 130,
+    "approval-resolved": 130,
+    "plan-progress": 150,
+    plan: 260,
+    "plan-updated": 260,
+    "diff-updated": 260,
+    error: 120,
+  };
+  const fixedSize = fixedSizes[entry.step.eventType];
+  if (fixedSize !== undefined) return fixedSize;
+
+  const isCollapsedReasoning =
+    entry.metadata.assistantKind === "reasoning" &&
+    shouldAutoCollapseReasoning(entry.step.content) &&
+    !expandedReasoningStepIds[entry.step.id];
+  return isCollapsedReasoning ? 56 : estimateTextContentSize(entry.step.content, density);
+};
+
+const estimateActivityEntrySize = (
+  entry: ActivityEntry,
+  density: RunTimelineDensity,
+  expandedReasoningStepIds: Record<string, boolean>,
+) => {
+  if (entry.kind === "tool-batch") return Math.min(420, 42 + entry.items.length * (density === "detailed" ? 34 : 24));
+  if (entry.kind === "diff-batch") return Math.min(360, 42 + entry.items.length * 34);
+  if (entry.kind === "tool") return 48;
+  if (entry.kind === "subagent") return 96;
+  if (entry.kind === "single-group") return estimateGroupedEntrySize(entry, density);
+  return estimateSingleEntrySize(entry, density, expandedReasoningStepIds);
 };
 
 const estimateTimelineItemSize = (
@@ -391,1349 +108,9 @@ const estimateTimelineItemSize = (
   if (item.kind === "end") return density === "compact" ? 8 : 18;
   if (item.kind === "loading") return 62;
   if (item.kind === "plan-decision") return 170;
-
-  const { entry } = item;
-  if (entry.kind === "tool-batch") {
-    return Math.min(420, 42 + entry.items.length * (density === "detailed" ? 34 : 24));
-  }
-  if (entry.kind === "diff-batch") {
-    return Math.min(360, 42 + entry.items.length * 34);
-  }
-  if (entry.kind === "tool") {
-    return 48;
-  }
-  if (entry.kind === "subagent") {
-    return 96;
-  }
-  if (entry.kind === "single-group") {
-    if (entry.groupKey === "status") return 42 + entry.items.length * 22;
-    if (entry.groupKey === "user") return 104 + entry.items.length * 48;
-    return Math.min(1600, 24 + entry.items.reduce((total, groupItem) => total + estimateTextContentSize(groupItem.step.content, density), 0));
-  }
-
-  if (entry.step.eventType === "status") return 64;
-  if (entry.step.eventType === "request" || entry.step.eventType === "user-input-requested") return 190;
-  if (entry.step.eventType === "approval-requested" || entry.step.eventType === "approval-resolved") return 130;
-  if (entry.step.eventType === "plan-progress") return 150;
-  if (entry.step.eventType === "plan" || entry.step.eventType === "plan-updated" || entry.step.eventType === "diff-updated") {
-    return 260;
-  }
-  if (entry.step.eventType === "error") return 120;
-
-  if (
-    entry.metadata.assistantKind === "reasoning" &&
-    shouldAutoCollapseReasoning(entry.step.content) &&
-    !expandedReasoningStepIds[entry.step.id]
-  ) {
-    return 56;
-  }
-  return estimateTextContentSize(entry.step.content, density);
+  return estimateActivityEntrySize(item.entry, density, expandedReasoningStepIds);
 };
 
-const describeUserCommand = (metadata: Record<string, unknown>): string =>
-  metadata.commandType === "follow-up" ? "User follow-up command" : "Initial user command";
-
-const describeActivityDetail = (metadata: Record<string, unknown> | undefined) => {
-  if (metadata?.source === "user") {
-    return describeUserCommand(metadata);
-  }
-  return (metadata?.path ?? metadata?.command ?? metadata?.query ?? metadata?.toolName) as string | null;
-};
-
-const normalizeShellCommandForActivity = (value: unknown) =>
-  typeof value === "string" ? value.replace(/\s+/g, " ").trim() : null;
-
-const getToolShellCommand = (entry: Extract<SingleActivityEntry, { kind: "tool" }>) =>
-  normalizeShellCommandForActivity(entry.callMetadata?.command) ?? normalizeShellCommandForActivity(entry.resultMetadata?.command);
-
-const getApprovalShellCommand = (entry: Extract<SingleActivityEntry, { kind: "single" }>) =>
-  normalizeShellCommandForActivity(entry.metadata.command) ?? normalizeShellCommandForActivity(entry.step.content);
-
-const getConsecutiveMergeKey = (entry: Extract<SingleActivityEntry, { kind: "single" }>): ActivityGroupKey | null => {
-  const { step, metadata } = entry;
-  if (step.eventType === "error") return null;
-  if (metadata.source === "user") return "user";
-  if (step.eventType === "status") return "status";
-  if (metadata.assistantKind === "reasoning") return null;
-  const isAssistant = step.eventType === "output" || (step.eventType === "log" && metadata.source !== "user");
-  if (isAssistant) return "assistant";
-  return null;
-};
-
-type SubagentActivityEntry = Extract<ActivityEntry, { kind: "subagent" }>;
-
-const moveShellApprovalsBeforeMatchingTools = (
-  entries: (SingleActivityEntry | SubagentActivityEntry)[],
-): (SingleActivityEntry | SubagentActivityEntry)[] => {
-  const out: (SingleActivityEntry | SubagentActivityEntry)[] = [];
-
-  for (const entry of entries) {
-    if (entry.kind !== "single" || entry.metadata.requestKind !== "approval") {
-      out.push(entry);
-      continue;
-    }
-
-    const approvalCommand = getApprovalShellCommand(entry);
-    if (!approvalCommand) {
-      out.push(entry);
-      continue;
-    }
-
-    const matchingToolIndex = out.findLastIndex((candidate) => {
-      if (candidate.kind !== "tool") return false;
-      const toolName = candidate.callMetadata?.toolName ?? candidate.resultMetadata?.toolName;
-      return toolName === "run_shell" && getToolShellCommand(candidate) === approvalCommand;
-    });
-
-    if (matchingToolIndex === -1) {
-      out.push(entry);
-      continue;
-    }
-
-    out.splice(matchingToolIndex, 0, entry);
-  }
-
-  return out;
-};
-
-const mergeConsecutiveSingles = (entries: ActivityEntryPreMerge[]): ActivityEntry[] => {
-  const out: ActivityEntry[] = [];
-  let run: Extract<SingleActivityEntry, { kind: "single" }>[] = [];
-  let runKey: ActivityGroupKey | null = null;
-
-  const flush = () => {
-    if (run.length === 0) return;
-    if (run.length === 1) {
-      out.push(run[0]!);
-    } else {
-      out.push({ kind: "single-group", groupKey: runKey!, items: [...run] });
-    }
-    run = [];
-    runKey = null;
-  };
-
-  for (const e of entries) {
-    if (e.kind === "tool-batch") {
-      flush();
-      out.push(e);
-      continue;
-    }
-    if (e.kind === "diff-batch") {
-      flush();
-      out.push(e);
-      continue;
-    }
-    if (e.kind === "tool") {
-      flush();
-      out.push(e);
-      continue;
-    }
-    if (e.kind === "subagent") {
-      flush();
-      out.push(e);
-      continue;
-    }
-    const k = getConsecutiveMergeKey(e);
-    if (k === null) {
-      flush();
-      out.push(e);
-      continue;
-    }
-    if (runKey !== null && k !== runKey) {
-      flush();
-    }
-    runKey = k;
-    run.push(e);
-  }
-  flush();
-  return out;
-};
-
-const getLatestPlanDecisionText = (entries: ActivityEntry[], fallbackMode: RunMode) => {
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index];
-    if (!entry) {
-      continue;
-    }
-
-    if (entry.kind === "single-group" && entry.groupKey === "assistant") {
-      const planItems = entry.items.filter(({ step, metadata }) => {
-        const mode = (metadata.mode as RunMode) ?? fallbackMode;
-        return mode === "plan" && metadata.assistantKind !== "reasoning" && step.content.trim().length > 0;
-      });
-      const content = planItems.map(({ step }) => step.content.trim()).filter(Boolean).join("\n\n");
-      if (content) {
-        return content;
-      }
-      continue;
-    }
-
-    if (entry.kind === "single") {
-      const mode = (entry.metadata.mode as RunMode) ?? fallbackMode;
-      const isAssistant = entry.step.eventType === "output" || (entry.step.eventType === "log" && entry.metadata.source !== "user");
-      if (mode === "plan" && isAssistant && entry.metadata.assistantKind !== "reasoning" && entry.step.content.trim()) {
-        return entry.step.content.trim();
-      }
-    }
-  }
-
-  return null;
-};
-
-const runModeBadgeClassName = (mode: RunMode) => {
-  if (mode === "code") {
-    return "bg-cyan-500/10 text-cyan-300 ring-cyan-400/30";
-  }
-
-  if (mode === "plan") {
-    return "bg-violet-500/10 text-violet-300 ring-violet-400/30";
-  }
-
-  return "bg-zinc-500/10 text-zinc-300 ring-zinc-400/30";
-};
-
-// A subagent can never keep working once its run has stopped: the CLI process
-// that hosted it is gone. Treat any non-terminal status as cancelled then.
-const coerceStoppedSubagentInfo = (info: RunSubagentInfo, runActive: boolean | undefined): RunSubagentInfo =>
-  runActive === false && !isTerminalRunSubagentStatus(info.status) ? { ...info, status: "cancelled" } : info;
-
-// Exported for focused virtualization model tests.
-// eslint-disable-next-line react-refresh/only-export-components
-export const buildActivityEntries = (
-  steps: RunActivityStep[],
-  options: { extractSubagents?: boolean; runActive?: boolean } = {},
-): ActivityEntry[] => {
-  const extractSubagents = options.extractSubagents !== false;
-  // Steps stamped with `subagentId` are a subagent's internal activity and nest
-  // inside that subagent's card; steps carrying `metadata.subagent` are the
-  // card's lifecycle updates and anchor its position in the timeline.
-  const innerStepsBySubagent = new Map<string, RunActivityStep[]>();
-  const subagentInfoByStepId = new Map<string, RunSubagentInfo>();
-  const mainSteps: RunActivityStep[] = [];
-  if (extractSubagents) {
-    const anchorStepIdBySubagent = new Map<string, string>();
-    for (const step of steps) {
-      const metadata = safeParseMetadata(step.metadataJson);
-      const subagentId = typeof metadata.subagentId === "string" && metadata.subagentId ? metadata.subagentId : null;
-      if (subagentId) {
-        const list = innerStepsBySubagent.get(subagentId) ?? [];
-        list.push(step);
-        innerStepsBySubagent.set(subagentId, list);
-        continue;
-      }
-      const rawInfo = normalizeRunSubagentInfo(metadata.subagent);
-      if (rawInfo) {
-        const info = coerceStoppedSubagentInfo(rawInfo, options.runActive);
-        const anchorStepId = anchorStepIdBySubagent.get(info.id);
-        if (anchorStepId === undefined) {
-          anchorStepIdBySubagent.set(info.id, step.id);
-          mainSteps.push(step);
-          subagentInfoByStepId.set(step.id, info);
-        } else {
-          // Follow-up lifecycle steps refresh the already-anchored card.
-          subagentInfoByStepId.set(anchorStepId, info);
-        }
-        continue;
-      }
-      mainSteps.push(step);
-    }
-  } else {
-    mainSteps.push(...steps);
-  }
-
-  const entries: (SingleActivityEntry | SubagentActivityEntry)[] = [];
-  const pendingToolEntries = new Map<string, number>();
-  const latestPlanProgressStepId = mainSteps.findLast((step) => step.eventType === "plan-progress")?.id;
-
-  for (const step of mainSteps) {
-    if (step.eventType === "plan-progress" && step.id !== latestPlanProgressStepId) {
-      continue;
-    }
-
-    const subagentInfo = subagentInfoByStepId.get(step.id);
-    if (subagentInfo) {
-      entries.push({
-        kind: "subagent",
-        step,
-        info: subagentInfo,
-        entries: buildActivityEntries(innerStepsBySubagent.get(subagentInfo.id) ?? [], { extractSubagents: false }),
-      });
-      continue;
-    }
-
-    const metadata = safeParseMetadata(step.metadataJson);
-    const callId = typeof metadata.callId === "string" ? metadata.callId : null;
-
-    if (step.eventType === "tool-call") {
-      if (callId) {
-        pendingToolEntries.set(callId, entries.length);
-      }
-      entries.push({
-        kind: "tool",
-        callStep: step,
-        callMetadata: metadata,
-      });
-      continue;
-    }
-
-    if ((step.eventType === "tool-result" || step.eventType === "tool-progress") && callId) {
-      const entryIndex = pendingToolEntries.get(callId);
-      const existing = entryIndex == null ? null : entries[entryIndex];
-      if (entryIndex != null && existing?.kind === "tool") {
-        entries[entryIndex] = {
-          ...existing,
-          resultStep: step,
-          resultMetadata: metadata,
-        };
-        if (step.eventType === "tool-result") {
-          pendingToolEntries.delete(callId);
-        }
-        continue;
-      }
-    }
-
-    if (step.eventType === "tool-result" || step.eventType === "tool-progress") {
-      entries.push({
-        kind: "tool",
-        resultStep: step,
-        resultMetadata: metadata,
-      });
-      continue;
-    }
-
-    entries.push({
-      kind: "single",
-      step,
-      metadata,
-    });
-  }
-
-  const groupedEntries: ActivityEntryPreMerge[] = [];
-  for (const entry of moveShellApprovalsBeforeMatchingTools(entries)) {
-    const previousEntry = groupedEntries[groupedEntries.length - 1];
-    if (entry.kind === "tool") {
-      if (previousEntry?.kind === "tool-batch") {
-        previousEntry.items.push(entry);
-      } else {
-        groupedEntries.push({
-          kind: "tool-batch",
-          items: [entry],
-        });
-      }
-      continue;
-    }
-    if (entry.kind === "single" && entry.step.eventType === "diff-updated") {
-      if (previousEntry?.kind === "diff-batch") {
-        previousEntry.items.push(entry);
-      } else {
-        groupedEntries.push({
-          kind: "diff-batch",
-          items: [entry],
-        });
-      }
-      continue;
-    }
-    groupedEntries.push(entry);
-  }
-
-  return mergeConsecutiveSingles(groupedEntries);
-};
-
-// Derives the latest state of every subagent in a run, for header badges.
-// Exported for focused renderer behavior tests.
-// eslint-disable-next-line react-refresh/only-export-components
-export const deriveRunSubagents = (
-  steps: Pick<RunActivityStep, "metadataJson">[],
-  options: { runActive?: boolean } = {},
-): RunSubagentInfo[] => {
-  const byId = new Map<string, RunSubagentInfo>();
-  for (const step of steps) {
-    const info = normalizeRunSubagentInfo(safeParseMetadata(step.metadataJson).subagent);
-    if (info) {
-      byId.set(info.id, coerceStoppedSubagentInfo(info, options.runActive));
-    }
-  }
-  return [...byId.values()];
-};
-
-const formatSubagentDurationLabel = (info: RunSubagentInfo): string | null => {
-  const durationMs =
-    info.usage?.durationMs ??
-    (info.startedAtMs !== undefined && info.endedAtMs !== undefined && info.endedAtMs > info.startedAtMs
-      ? info.endedAtMs - info.startedAtMs
-      : undefined);
-  if (durationMs === undefined || durationMs <= 0) {
-    return null;
-  }
-  if (durationMs < 1_000) {
-    return "<1s";
-  }
-  const totalSeconds = Math.round(durationMs / 1_000);
-  if (totalSeconds < 60) {
-    return `${String(totalSeconds)}s`;
-  }
-  return `${String(Math.floor(totalSeconds / 60))}m ${String(totalSeconds % 60)}s`;
-};
-
-const subagentStatusBadge = (status: RunSubagentInfo["status"]): { label: string; className: string } => {
-  if (status === "completed") return { label: "done", className: "bg-emerald-500/10 text-emerald-300 ring-emerald-400/30" };
-  if (status === "failed") return { label: "failed", className: "bg-red-500/10 text-red-300 ring-red-400/30" };
-  if (status === "cancelled") return { label: "cancelled", className: "bg-amber-500/10 text-amber-300 ring-amber-400/30" };
-  if (status === "running") return { label: "running", className: "bg-sky-500/10 text-sky-300 ring-sky-400/30" };
-  return { label: "pending", className: "bg-zinc-500/10 text-zinc-300 ring-zinc-400/30" };
-};
-
-const ActivitySubagentCard = ({
-  entry,
-  compactContent,
-  focusNonce = 0,
-  onOpenWorkspaceFile,
-  renderEntry,
-  rowTime,
-}: {
-  entry: SubagentActivityEntry;
-  compactContent: boolean;
-  focusNonce?: number;
-  onOpenWorkspaceFile?: (path: string) => void;
-  renderEntry: (nested: ActivityEntry, index: number) => ReactNode;
-  rowTime: (time: string | null | undefined) => string | null | undefined;
-}) => {
-  const [expanded, setExpanded] = useState(false);
-  useEffect(() => {
-    if (focusNonce > 0) {
-      setExpanded(true);
-    }
-  }, [focusNonce]);
-  const { info } = entry;
-  const isRunning = info.status === "running";
-  const badge = subagentStatusBadge(info.status);
-  const durationLabel = formatSubagentDurationLabel(info);
-  const heading = info.description?.trim() || info.prompt?.trim().split("\n")[0] || "Delegated task";
-  const lastToolActivity = info.lastToolName ? `Using ${info.lastToolName}` : null;
-  const liveActivity = isRunning ? info.activity ?? lastToolActivity : null;
-  const hasExpandableContent = entry.entries.length > 0 || Boolean(info.summary?.trim()) || Boolean(info.prompt?.trim());
-  const stats: string[] = [];
-  if (durationLabel) {
-    stats.push(durationLabel);
-  }
-  if (info.usage?.totalTokens) {
-    stats.push(`${info.usage.totalTokens.toLocaleString()} tok`);
-  }
-  if (info.usage?.toolUses) {
-    stats.push(`${String(info.usage.toolUses)} ${info.usage.toolUses === 1 ? "tool" : "tools"}`);
-  }
-  if (info.model) {
-    stats.push(info.model);
-  }
-  if (info.isBackground) {
-    stats.push("background");
-  }
-
-  return (
-    <div data-subagent-id={info.id}>
-      <AgentLogRow tone="tools" label="Subagent" time={rowTime(new Date(entry.step.createdAt).toLocaleTimeString())}>
-        <AgentPanel tone="tools" className="px-2.5 py-1.5">
-        <button
-          type="button"
-          className="flex w-full min-w-0 items-center gap-1.5 text-left"
-          onClick={() => setExpanded((current) => !current)}
-          disabled={!hasExpandableContent}
-          aria-expanded={expanded}
-        >
-          {isRunning ? (
-            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-sky-400" />
-          ) : (
-            <Bot className="h-3.5 w-3.5 shrink-0 text-[color:var(--ec-muted)]" />
-          )}
-          <span className="shrink-0 text-[11px] font-medium text-zinc-200">{info.name ?? "agent"}</span>
-          <Badge tone="queued" className={`shrink-0 px-1.5 py-0 text-[10px] ${badge.className}`}>
-            {badge.label}
-          </Badge>
-          <span className="min-w-0 flex-1 truncate text-[11px] text-zinc-400" title={heading}>
-            {heading}
-          </span>
-          {stats.length > 0 ? (
-            <span className="agent-density-meta shrink-0 text-[10px] text-zinc-500 tabular-nums">{stats.join(" · ")}</span>
-          ) : null}
-          {hasExpandableContent ? <ExpandChevron expanded={expanded} /> : null}
-        </button>
-        {liveActivity ? (
-          <p className="mt-1 truncate pl-5 text-[10px] text-sky-300/80" title={liveActivity}>
-            {liveActivity}
-          </p>
-        ) : null}
-        {expanded ? (
-          <div className="mt-1.5 space-y-1.5 border-l border-zinc-800/60 pl-2">
-            {info.prompt?.trim() && info.prompt.trim() !== heading ? (
-              <p className="whitespace-pre-wrap text-[10px] leading-snug text-zinc-500">{info.prompt.trim()}</p>
-            ) : null}
-            {entry.entries.length > 0 ? (
-              <div className="agent-worklog agent-worklog--nested">
-                {entry.entries.map((nested, index) => renderEntry(nested, index))}
-              </div>
-            ) : null}
-            {info.summary?.trim() ? (
-              <div className="agent-panel agent-panel--answer px-2 py-1.5">
-                <ActivityMarkdownOrGitDiff
-                  content={info.summary.trim()}
-                  compact={compactContent}
-                  className="agent-response-text"
-                  onOpenWorkspaceFile={onOpenWorkspaceFile}
-                />
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-        </AgentPanel>
-      </AgentLogRow>
-    </div>
-  );
-};
-
-const ActivityFilePathButton = ({
-  path,
-  onOpenWorkspaceFile,
-  className,
-}: {
-  path: string;
-  onOpenWorkspaceFile?: (path: string) => void;
-  className?: string;
-}) => {
-  if (!onOpenWorkspaceFile) {
-    return <span className={className}>{path}</span>;
-  }
-  return (
-    <button
-      type="button"
-      className={cn("min-w-0 truncate text-left font-mono text-[color:var(--ec-muted)] hover:text-[color:var(--ec-accent)]", className)}
-      title={`Open ${path}`}
-      onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        onOpenWorkspaceFile(path);
-      }}
-    >
-      {path}
-    </button>
-  );
-};
-
-const summarizeToolPreview = (
-  toolName: string,
-  failed: boolean,
-  item: Extract<SingleActivityEntry, { kind: "tool" }>,
-): string | null => {
-  if (failed) {
-    return item.resultStep?.content ?? item.callStep?.content ?? null;
-  }
-  if (toolName === "run_shell") {
-    return (item.resultStep?.content ?? "").trim() || null;
-  }
-  if (item.resultStep?.content && looksLikeGitDiff(item.resultStep.content)) {
-    return item.resultStep.content;
-  }
-  return null;
-};
-
-const ExpandChevron = ({ expanded }: Readonly<{ expanded: boolean }>) =>
-  expanded ? (
-    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
-  ) : (
-    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
-  );
-
-const toolStatusColor = (failed: boolean | undefined, streaming: boolean | undefined): string => {
-  if (failed) {
-    return "var(--ec-danger)";
-  }
-  if (streaming) {
-    return "var(--ec-accent)";
-  }
-  return "var(--ec-faint)";
-};
-
-const toolStatusLabel = (failed: boolean | undefined, streaming: boolean | undefined): string => {
-  if (failed) {
-    return "failed";
-  }
-  if (streaming) {
-    return "running";
-  }
-  return "finished";
-};
-
-const ToolDetailCell = ({
-  item,
-  canOpenDetailPath,
-  onOpenWorkspaceFile,
-  fallback,
-}: Readonly<{
-  item: ToolBatchSummarizedRow;
-  canOpenDetailPath: boolean;
-  onOpenWorkspaceFile?: (path: string) => void;
-  fallback: string;
-}>) => {
-  if (item.command) {
-    return <span className="min-w-0 flex-1 truncate font-mono text-[color:var(--ec-muted)]">{item.command}</span>;
-  }
-  if (canOpenDetailPath && item.detail) {
-    return <ActivityFilePathButton path={item.detail} onOpenWorkspaceFile={onOpenWorkspaceFile} className="flex-1" />;
-  }
-  return <span className="min-w-0 flex-1 truncate font-mono text-[color:var(--ec-muted)]">{fallback}</span>;
-};
-
-const ActivityToolBatchRow = ({
-  item,
-  itemIndex,
-  run,
-  density,
-  busy,
-  readOnly,
-  onCancelRunShell,
-  onOpenWorkspaceFile,
-}: {
-  item: ToolBatchSummarizedRow;
-  itemIndex: number;
-  run: RunActivityRun;
-  density: RunTimelineDensity;
-  busy: boolean;
-  readOnly: boolean;
-  onCancelRunShell?: (run: RunActivityRun, toolCallId: string) => void;
-  onOpenWorkspaceFile?: (path: string) => void;
-}) => {
-  const [writeFileDiffExpanded, setWriteFileDiffExpanded] = useState(false);
-  const isCompact = density === "compact";
-  const isDetailed = density === "detailed";
-  const shellLineCount = item.toolName === "run_shell" && item.preview ? item.preview.split(/\r?\n/).length : 0;
-  const hasInlineDiff = !item.failed && Boolean(item.writeFileDiff) && looksLikeGitDiff(item.writeFileDiff ?? "");
-  const hasExpandableContent = Boolean(item.preview) || Boolean(item.paths?.length);
-  const renderDetachedPreview = Boolean(item.preview) && !hasExpandableContent;
-  const canOpenDetailPath = isOpenableToolPath(item.toolName, item.detail);
-  const canCancelShell =
-    !readOnly &&
-    item.toolName === "run_shell" &&
-    item.shellStreaming === true &&
-    typeof item.toolCallId === "string" &&
-    ["queued", "preparing", "running"].includes(run.status) &&
-    Boolean(onCancelRunShell);
-  let expandableDetailFallback = "";
-  if (item.detail) {
-    expandableDetailFallback = item.detail;
-  } else if (item.paths?.length) {
-    expandableDetailFallback = `${item.paths.length} files`;
-  }
-
-  const detachedShellPreview =
-    item.toolName === "run_shell" ? (
-      <details className="group mt-1 w-full max-w-full">
-        <summary className="flex cursor-pointer list-none items-center gap-1 text-[10px] text-[color:var(--ec-faint)] hover:text-[color:var(--ec-text)] [&::-webkit-details-marker]:hidden">
-          <ChevronDown className="h-3 w-3 shrink-0 transition group-open:rotate-180" />
-          <Terminal className="h-3 w-3 shrink-0" aria-hidden />
-          <span className="font-medium text-[color:var(--ec-muted)]">{item.shellStreaming ? "Live output" : "Console output"}</span>
-          <span>
-            - {shellLineCount} line{shellLineCount === 1 ? "" : "s"}
-          </span>
-        </summary>
-        <pre
-          className={cn(
-            "agent-pre app-scrollbar mt-1 max-h-[min(70vh,36rem)] overflow-auto whitespace-pre-wrap break-words text-[10px] leading-snug",
-            item.failed ? "border-[color:var(--ec-danger-ring)]" : null,
-          )}
-        >
-          {item.preview}
-        </pre>
-      </details>
-    ) : (
-      <pre className="agent-pre app-scrollbar mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-words border-[color:var(--ec-danger-ring)] text-[10px] leading-snug">
-        {item.preview}
-      </pre>
-    );
-
-  return (
-    <div
-      key={`${item.toolName}-${item.detail ?? "detail"}-${itemIndex}`}
-      className={cn("agent-tool-row min-w-0 w-full", item.failed ? "agent-tool-row--failed" : null)}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          {hasExpandableContent ? (
-            <details className="agent-tool-details group w-full max-w-full">
-              <summary className={cn("agent-tool-trigger", item.shellStreaming && "agent-tool-trigger--live")}>
-                <ChevronDown className="h-3 w-3 shrink-0 text-[color:var(--ec-faint)] transition group-open:rotate-180" />
-                <span
-                  className="h-1.5 w-1.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: toolStatusColor(item.failed, item.shellStreaming) }}
-                />
-                <span className="shrink-0 font-semibold text-[color:var(--ec-text)]">{item.toolName}</span>
-                <ToolDetailCell
-                  item={item}
-                  canOpenDetailPath={canOpenDetailPath}
-                  onOpenWorkspaceFile={onOpenWorkspaceFile}
-                  fallback={expandableDetailFallback}
-                />
-                {item.count > 1 ? <span className="shrink-0 text-[10px] text-[color:var(--ec-faint)]">x{item.count}</span> : null}
-                {item.toolName === "run_shell" && item.preview && !isCompact ? (
-                  <span className="agent-tool-extra shrink-0 text-[10px] text-[color:var(--ec-faint)]">
-                    {item.shellStreaming ? "live" : "output"} - {shellLineCount} line{shellLineCount === 1 ? "" : "s"}
-                  </span>
-                ) : null}
-                {item.shellStreaming ? <span className="agent-tool-live-dots" aria-hidden /> : null}
-              </summary>
-              {item.paths && item.paths.length > 0 ? (
-                <ul className="app-scrollbar mt-1 grid max-h-40 list-none grid-cols-1 gap-x-4 gap-y-0.5 overflow-y-auto border-l border-[color:var(--ec-border)] py-0.5 pl-3 font-mono text-[10px] leading-snug text-[color:var(--ec-muted)] sm:max-h-48 sm:grid-cols-2 xl:grid-cols-3">
-                  {item.paths.map((p, pi) => (
-                    <li key={`${String(pi)}-${p.slice(0, 80)}`} className="min-w-0 break-words" title={p}>
-                      <ActivityFilePathButton path={p} onOpenWorkspaceFile={onOpenWorkspaceFile} className="max-w-full break-words" />
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              {item.preview ? (
-                <pre
-                  className={cn(
-                    "agent-pre app-scrollbar mt-1 max-h-[min(70vh,36rem)] overflow-auto whitespace-pre-wrap break-words text-[10px] leading-snug",
-                    item.failed ? "border-[color:var(--ec-danger-ring)]" : null,
-                  )}
-                >
-                  {item.preview}
-                </pre>
-              ) : null}
-              {isDetailed ? (
-                <div className="agent-tool-meta">
-                  <span>{new Date(item.createdAt).toLocaleTimeString()}</span>
-                  <span>{toolStatusLabel(item.failed, item.shellStreaming)}</span>
-                  {item.toolCallId ? <span className="truncate">call {item.toolCallId}</span> : null}
-                </div>
-              ) : null}
-            </details>
-          ) : (
-            <div className={cn("agent-tool-trigger agent-tool-trigger--static", item.shellStreaming && "agent-tool-trigger--live")}>
-              <span className="h-3 w-3 shrink-0" aria-hidden />
-              <span
-                className="h-1.5 w-1.5 shrink-0 rounded-full"
-                style={{ backgroundColor: toolStatusColor(item.failed, item.shellStreaming) }}
-              />
-              <span className="shrink-0 font-semibold text-[color:var(--ec-text)]">{item.toolName}</span>
-              <ToolDetailCell
-                item={item}
-                canOpenDetailPath={canOpenDetailPath}
-                onOpenWorkspaceFile={onOpenWorkspaceFile}
-                fallback={item.detail ?? ""}
-              />
-              {item.count > 1 ? <span className="shrink-0 text-[10px] text-[color:var(--ec-faint)]">x{item.count}</span> : null}
-              {item.shellStreaming ? <span className="agent-tool-live-dots" aria-hidden /> : null}
-            </div>
-          )}
-          {!hasExpandableContent && isDetailed ? (
-            <div className="agent-tool-meta">
-              <span>{new Date(item.createdAt).toLocaleTimeString()}</span>
-              <span>{toolStatusLabel(item.failed, item.shellStreaming)}</span>
-              {item.toolCallId ? <span className="truncate">call {item.toolCallId}</span> : null}
-            </div>
-          ) : null}
-        </div>
-        {canCancelShell || hasInlineDiff ? (
-          <div className="flex shrink-0 flex-col items-end gap-1">
-            {canCancelShell ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-6 border-[color:var(--ec-danger-ring)] bg-[color:var(--ec-danger-soft)] px-2 text-[10px] text-[color:var(--ec-danger)] hover:bg-[color:var(--ec-danger-soft)]"
-                disabled={busy}
-                onClick={() => onCancelRunShell?.(run, item.toolCallId!)}
-              >
-                Cancel
-              </Button>
-            ) : null}
-            {hasInlineDiff ? (
-              <button
-                type="button"
-                className="rounded px-0.5 py-0.5 text-[color:var(--ec-muted)] transition hover:bg-[color:var(--ec-hover)] hover:text-[color:var(--ec-text)]"
-                onClick={() => setWriteFileDiffExpanded((current) => !current)}
-                aria-label={writeFileDiffExpanded ? "Collapse diff" : "Expand diff"}
-                title={writeFileDiffExpanded ? "Collapse diff" : "Expand diff"}
-              >
-                {writeFileDiffExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-              </button>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-      {renderDetachedPreview ? detachedShellPreview : null}
-      {hasInlineDiff && writeFileDiffExpanded && item.writeFileDiff ? (
-        <div className="mt-1.5 min-w-0 w-full">
-          <GitDiffPreview
-            diffText={item.writeFileDiff}
-            emptyMessage="Could not parse file diff."
-            compact={density !== "detailed"}
-            viewType="unified"
-            activityEmphasis
-            hideFileHeader
-            alwaysExpandedFileSections
-            onOpenFile={onOpenWorkspaceFile}
-          />
-        </div>
-      ) : null}
-    </div>
-  );
-};
-
-type DiffBatchSummarizedRow = {
-  id: string;
-  title: string;
-  toolName: string;
-  path: string | null;
-  content: string;
-  createdAt: string;
-};
-
-const ActivityDiffBatchRow = ({
-  item,
-  density,
-  onOpenWorkspaceFile,
-}: {
-  item: DiffBatchSummarizedRow;
-  density: RunTimelineDensity;
-  onOpenWorkspaceFile?: (path: string) => void;
-}) => {
-  const hasContent = item.content.trim().length > 0;
-  const detail = item.path ?? item.title.replace(/^Diff updated:\s*/i, "");
-
-  return (
-    <div className="agent-tool-row min-w-0 w-full">
-      {hasContent ? (
-        <details className="agent-tool-details group w-full max-w-full">
-          <summary className="agent-tool-trigger">
-            <ChevronDown className="h-3 w-3 shrink-0 text-[color:var(--ec-faint)] transition group-open:rotate-180" />
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[color:var(--ec-info)]" />
-            <span className="shrink-0 font-semibold text-[color:var(--ec-text)]">{item.toolName}</span>
-            {item.path ? (
-              <ActivityFilePathButton path={item.path} onOpenWorkspaceFile={onOpenWorkspaceFile} className="flex-1" />
-            ) : (
-              <span className="min-w-0 flex-1 truncate font-mono text-[color:var(--ec-muted)]">{detail}</span>
-            )}
-          </summary>
-          <div className="mt-1.5 rounded-md border border-[color:var(--ec-border)] bg-[color:var(--ec-panel-muted)] px-2 py-1.5">
-            {looksLikeGitDiff(item.content) ? (
-              <GitDiffPreview
-                diffText={item.content}
-                emptyMessage="Could not parse file diff."
-                compact={density !== "detailed"}
-                viewType="unified"
-                activityEmphasis
-                hideFileHeader
-                alwaysExpandedFileSections
-                onOpenFile={onOpenWorkspaceFile}
-              />
-            ) : (
-              <ActivityMarkdownOrGitDiff
-                content={item.content}
-                compact={density !== "detailed"}
-                className="text-[color:var(--ec-text)]"
-                onOpenWorkspaceFile={onOpenWorkspaceFile}
-              />
-            )}
-          </div>
-        </details>
-      ) : (
-        <div className="agent-tool-trigger agent-tool-trigger--static">
-          <span className="h-3 w-3 shrink-0" aria-hidden />
-          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[color:var(--ec-info)]" />
-          <span className="shrink-0 font-semibold text-[color:var(--ec-text)]">{item.toolName}</span>
-          {item.path ? (
-            <ActivityFilePathButton path={item.path} onOpenWorkspaceFile={onOpenWorkspaceFile} className="flex-1" />
-          ) : (
-            <span className="min-w-0 flex-1 truncate font-mono text-[color:var(--ec-muted)]">{detail}</span>
-          )}
-        </div>
-      )}
-    </div>
-  );
-};
-
-const renderSingleGroupEntry = (entry: Extract<ActivityEntry, { kind: "single-group" }>, context: ActivityRenderContext): ReactNode => {
-  const { run, runDurationLabel, rowTime, readOnly, restorablePromptStepId, onUndoRunToLastPrompt, activeCopiedStepId, copyStepContent, busy, isRunActive, compactContent, onOpenWorkspaceFile } = context;
-  const first = entry.items[0]!;
-  const last = entry.items[entry.items.length - 1]!;
-  const t0 = new Date(first.step.createdAt).toLocaleTimeString();
-  const t1 = new Date(last.step.createdAt).toLocaleTimeString();
-  const timeRange = entry.items.length > 1 && t0 !== t1 ? `${t0}-${t1}` : t0;
-  const groupKey = `sg-${first.step.id}-${entry.groupKey}-${entry.items.length}`;
-
-  if (entry.groupKey === "status") {
-    return (
-      <AgentLogRow key={groupKey} tone="status" label="Status" time={rowTime(timeRange)}>
-        <AgentPanel tone="status" className="px-2.5 py-1.5">
-          <ul className="space-y-0.5">
-            {entry.items.map(({ step }) => (
-              <li
-                key={step.id}
-                className="flex items-start justify-between gap-2 border-t border-zinc-800/30 pt-0.5 first:border-t-0 first:pt-0"
-              >
-                <span className="min-w-0 flex-1 text-[10px] leading-snug text-zinc-400">
-                  <span className="text-zinc-500">{step.title}</span>
-                  {step.content ? <span className="text-zinc-500"> - {step.content}</span> : null}
-                  {isRunCompletionStatus(step) && runDurationLabel ? (
-                    <span className="text-[color:var(--ec-muted)]"> - Duration {runDurationLabel}</span>
-                  ) : null}
-                </span>
-                <span className="agent-density-meta shrink-0 text-[10px] text-zinc-600 tabular-nums">
-                  {new Date(step.createdAt).toLocaleTimeString()}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </AgentPanel>
-      </AgentLogRow>
-    );
-  }
-
-  if (entry.groupKey === "user") {
-    return (
-      <AgentLogRow key={groupKey} tone="prompt" label="Prompt" time={rowTime(timeRange)}>
-        <div className="space-y-1">
-          {entry.items.map(({ step, metadata }) => {
-            const mode = (metadata.mode as RunMode) ?? run.mode;
-            const att = extractAttachmentNamesFromMetadata(metadata);
-            const attachments = extractAttachmentPayloadsFromMetadata(metadata);
-            const canUndoPrompt = !readOnly && step.id === restorablePromptStepId && Boolean(onUndoRunToLastPrompt);
-            return (
-              <div key={step.id} className="agent-panel agent-panel--prompt px-2.5 py-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex min-w-0 items-center gap-1">
-                    <Badge tone="queued" className="agent-chip--prompt px-1.5 py-0 text-[10px]">
-                      {metadata.commandType === "follow-up" ? "follow-up" : "you"}
-                    </Badge>
-                    <Badge tone="queued" className={`agent-density-meta px-1.5 py-0 text-[10px] ${runModeBadgeClassName(mode)}`}>
-                      {mode}
-                    </Badge>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 w-6 shrink-0 p-0 text-[color:var(--ec-muted)] hover:text-[color:var(--ec-text)]"
-                      onClick={() => void copyStepContent(step.content, step.id)}
-                      title={activeCopiedStepId === step.id ? "Copied" : "Copy prompt"}
-                      aria-label="Copy prompt"
-                    >
-                      {activeCopiedStepId === step.id ? (
-                        <Check className="h-3.5 w-3.5 text-emerald-400" />
-                      ) : (
-                        <Copy className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
-                    {canUndoPrompt ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 w-6 shrink-0 p-0 text-[color:var(--ec-muted)] hover:bg-[color:var(--ec-hover)] hover:text-[color:var(--ec-text)]"
-                        title="Undo changes since this prompt"
-                        aria-label="Undo changes since this prompt"
-                        onClick={() => onUndoRunToLastPrompt?.(run)}
-                        disabled={busy || isRunActive}
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" />
-                      </Button>
-                    ) : null}
-                    <span className="agent-density-meta text-[10px] text-zinc-500">{new Date(step.createdAt).toLocaleTimeString()}</span>
-                  </div>
-                </div>
-                <StoredChatAttachments attachments={attachments} fallbackNames={att} compact={compactContent} />
-                <ActivityMarkdownOrGitDiff content={step.content} compact={compactContent} className="mt-1" onOpenWorkspaceFile={onOpenWorkspaceFile} />
-              </div>
-            );
-          })}
-        </div>
-      </AgentLogRow>
-    );
-  }
-
-  const combinedAnswerText = entry.items.map(({ step }) => step.content).join("\n\n");
-
-  return (
-    <AgentLogRow key={groupKey} tone="answer" label="Answer" time={rowTime(timeRange)}>
-      <div className="agent-panel agent-panel--answer relative space-y-1.5 px-2 py-1.5">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="absolute right-1 top-1 z-10 h-6 w-6 shrink-0 p-0 text-[color:var(--ec-muted)] hover:bg-[color:var(--ec-hover)] hover:text-[color:var(--ec-text)]"
-          onClick={() => void copyStepContent(combinedAnswerText, groupKey)}
-          title={activeCopiedStepId === groupKey ? "Copied" : "Copy response"}
-          aria-label="Copy response"
-        >
-          {activeCopiedStepId === groupKey ? (
-            <Check className="h-3.5 w-3.5 text-emerald-400" />
-          ) : (
-            <Copy className="h-3.5 w-3.5" />
-          )}
-        </Button>
-        {entry.items.map(({ step, metadata }, i) => {
-          const detail = describeActivityDetail(metadata);
-          const itemMode = (metadata.mode as RunMode) ?? run.mode;
-          const shouldShowPlanSteps = itemMode === "plan" && metadata.assistantKind !== "reasoning";
-          return (
-            <div key={step.id} className={i === 0 ? "pr-8" : undefined}>
-              {i > 0 ? <div className="mb-1.5 pt-1.5" /> : null}
-              {detail && detail !== step.title ? (
-                <p className="agent-density-detail mb-1 truncate text-[10px] text-zinc-500">{String(detail)}</p>
-              ) : null}
-              {shouldShowPlanSteps ? <RunPlanSteps content={step.content} /> : null}
-              <ActivityMarkdownOrGitDiff content={step.content} compact={compactContent} className="agent-response-text" onOpenWorkspaceFile={onOpenWorkspaceFile} />
-            </div>
-          );
-        })}
-      </div>
-    </AgentLogRow>
-  );
-}
-
-const renderUserActivityEntry = (entry: Extract<ActivityEntry, { kind: "single" }>, context: ActivityRenderContext): ReactNode => {
-  const { run, rowTime, readOnly, restorablePromptStepId, onUndoRunToLastPrompt, activeCopiedStepId, copyStepContent, busy, isRunActive, compactContent, onOpenWorkspaceFile } = context;
-  const mode = (entry.metadata.mode as RunMode) ?? run.mode;
-  const timestamp = new Date(entry.step.createdAt).toLocaleTimeString();
-  const att = extractAttachmentNamesFromMetadata(entry.metadata);
-  const attachments = extractAttachmentPayloadsFromMetadata(entry.metadata);
-  const canUndoPrompt = !readOnly && entry.step.id === restorablePromptStepId && Boolean(onUndoRunToLastPrompt);
-  return (
-    <AgentLogRow key={entry.step.id} tone="prompt" label="Prompt" time={rowTime(timestamp)}>
-      <div className="agent-panel agent-panel--prompt px-2.5 py-1.5">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-1">
-            <Badge tone="queued" className="agent-chip--prompt px-1.5 py-0 text-[10px]">
-              {entry.metadata.commandType === "follow-up" ? "follow-up" : "you"}
-            </Badge>
-            <Badge tone="queued" className={`agent-density-meta px-1.5 py-0 text-[10px] ${runModeBadgeClassName(mode)}`}>
-              {mode}
-            </Badge>
-          </div>
-          <div className="flex items-center gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-6 w-6 shrink-0 p-0 text-[color:var(--ec-muted)] hover:text-[color:var(--ec-text)]"
-              onClick={() => void copyStepContent(entry.step.content, entry.step.id)}
-              title={activeCopiedStepId === entry.step.id ? "Copied" : "Copy prompt"}
-              aria-label="Copy prompt"
-            >
-              {activeCopiedStepId === entry.step.id ? (
-                <Check className="h-3.5 w-3.5 text-emerald-400" />
-              ) : (
-                <Copy className="h-3.5 w-3.5" />
-              )}
-            </Button>
-            {canUndoPrompt ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-6 w-6 shrink-0 p-0 text-[color:var(--ec-muted)] hover:bg-[color:var(--ec-hover)] hover:text-[color:var(--ec-text)]"
-                title="Undo changes since this prompt"
-                aria-label="Undo changes since this prompt"
-                onClick={() => onUndoRunToLastPrompt?.(run)}
-                disabled={busy || isRunActive}
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-              </Button>
-            ) : null}
-            <span className="agent-density-meta text-[10px] text-zinc-500">{timestamp}</span>
-          </div>
-        </div>
-        <StoredChatAttachments attachments={attachments} fallbackNames={att} compact={compactContent} />
-        <ActivityMarkdownOrGitDiff content={entry.step.content} compact={compactContent} className="mt-1 text-zinc-200" onOpenWorkspaceFile={onOpenWorkspaceFile} />
-      </div>
-    </AgentLogRow>
-  );
-}
-
-const renderRequestActivityEntry = (entry: Extract<ActivityEntry, { kind: "single" }>, context: ActivityRenderContext): ReactNode => {
-  const { run, readOnly, busy, isRunActive, compactContent, onOpenWorkspaceFile, onSubmitUserInputAnswers } = context;
-  const timestamp = new Date(entry.step.createdAt).toLocaleTimeString();
-  const fallbackRequestKind = entry.step.eventType.startsWith("approval") ? "approval" : "user-input";
-  const requestKind = firstMetadataString(entry.metadata.requestKind) ?? fallbackRequestKind;
-  const requestResolved = entry.step.eventType === "approval-resolved" || entry.metadata.requestStatus === "resolved";
-  const approvalDecision =
-    typeof entry.metadata.shellApprovalDecision === "string" ? entry.metadata.shellApprovalDecision : null;
-  const approvalMessage =
-    typeof entry.metadata.approvalResolutionMessage === "string" ? entry.metadata.approvalResolutionMessage : null;
-  const isShellApproval = requestKind === "approval" && typeof entry.metadata.approvalRequestId === "string";
-  const userInputRequestId = firstMetadataString(entry.metadata.userInputRequestId, entry.metadata.requestId);
-  const userInputQuestions = readUserInputQuestions(entry.metadata);
-  if (!readOnly && requestKind === "user-input" && userInputRequestId && userInputQuestions.length > 0) {
-    return (
-      <RunUserInputRequestCard
-        key={entry.step.id}
-        runId={run.id}
-        requestId={userInputRequestId}
-        title={entry.step.title}
-        content={entry.step.content}
-        timestamp={timestamp}
-        questions={userInputQuestions}
-        answers={readUserInputAnswers(entry.metadata)}
-        resolved={requestResolved}
-        disabled={busy || !isRunActive}
-        onSubmitAnswers={
-          onSubmitUserInputAnswers
-            ? (answers) => onSubmitUserInputAnswers(run, userInputRequestId, answers)
-            : undefined
-        }
-      />
-    );
-  }
-  const decisionLabel = approvalDecision ? APPROVAL_DECISION_LABELS[approvalDecision] ?? null : null;
-  const requestIconClass = requestResolved
-    ? "h-3.5 w-3.5 shrink-0 text-[color:var(--ec-faint)]"
-    : "h-3.5 w-3.5 shrink-0 text-[color:var(--ec-info)]";
-  return (
-    <AgentPanel key={entry.step.id} tone="request" className="px-2.5 py-2">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-1.5">
-          {isShellApproval ? <Terminal className={requestIconClass} /> : <MessageSquareText className={requestIconClass} />}
-          <p className="truncate text-[11px] font-medium text-[color:var(--ec-text)]">{entry.step.title}</p>
-          <Badge tone="queued" className="px-1.5 py-0 text-[10px] bg-[color:var(--ec-info-soft)] text-[color:var(--ec-info)] ring-[color:var(--ec-info-ring)]">
-            {requestKind}
-          </Badge>
-          {decisionLabel ? (
-            <Badge tone={approvalDecision === "deny" ? "failed" : "completed"} className="px-1.5 py-0 text-[10px]">
-              {decisionLabel}
-            </Badge>
-          ) : null}
-        </div>
-        <span className="agent-density-meta shrink-0 text-[10px] text-[color:var(--ec-faint)]">{timestamp}</span>
-      </div>
-      {isShellApproval ? (
-        <>
-          <pre className="agent-pre app-scrollbar mt-1.5 max-h-28 overflow-auto text-[11px] leading-relaxed">
-            {entry.step.content}
-          </pre>
-          {!requestResolved ? (
-            <div className="mt-1.5 flex items-start gap-1.5 text-[11px] leading-relaxed text-[color:var(--ec-muted)]">
-              <MessageSquareText className="mt-0.5 h-3 w-3 shrink-0 text-[color:var(--ec-info)]" />
-              <span>{approvalMessage ?? "Waiting for a shell approval decision."}</span>
-            </div>
-          ) : null}
-        </>
-      ) : (
-        <ActivityMarkdownOrGitDiff content={entry.step.content} compact={compactContent} className="mt-1.5 text-[color:var(--ec-text)]" onOpenWorkspaceFile={onOpenWorkspaceFile} />
-      )}
-    </AgentPanel>
-  );
-}
-
-const renderSingleActivityEntry = (entry: Extract<ActivityEntry, { kind: "single" }>, context: ActivityRenderContext): ReactNode => {
-  const { run, runDurationLabel, rowTime, readOnly, activeCopiedStepId, copyStepContent, busy, isRunActive, compactContent, onOpenWorkspaceFile, onPreparePlanContinuation, activeReasoningStepIds, toggleReasoningStep } = context;
-const detail = describeActivityDetail(entry.metadata);
-const isUserEntry = entry.metadata.source === "user";
-const isAssistantEntry = entry.step.eventType === "output" || (entry.step.eventType === "log" && !isUserEntry);
-const isStatusEntry = entry.step.eventType === "status";
-const isErrorEntry = entry.step.eventType === "error";
-const isRequestEntry =
-  entry.step.eventType === "request" ||
-  entry.step.eventType === "user-input-requested" ||
-  entry.step.eventType === "approval-requested" ||
-  entry.step.eventType === "approval-resolved";
-const isPlanProgressEntry = entry.step.eventType === "plan-progress";
-const isPlanEntry = entry.step.eventType === "plan" || entry.step.eventType === "plan-updated";
-const isDiffEntry = entry.step.eventType === "diff-updated";
-const mode = (entry.metadata.mode as RunMode) ?? run.mode;
-const timestamp = new Date(entry.step.createdAt).toLocaleTimeString();
-
-if (isUserEntry) return renderUserActivityEntry(entry, context);
-
-if (isRequestEntry) return renderRequestActivityEntry(entry, context);
-
-if (isPlanProgressEntry) {
-  const progress = normalizeRunPlanProgressPayload(entry.metadata.planProgress);
-  const completed = progress?.steps.filter((step) => step.status === "completed").length ?? 0;
-  const total = progress?.steps.length ?? null;
-  const planContent = progress ? formatRunPlanProgressContent(progress) : entry.step.content;
-  return (
-    <AgentLogRow key={entry.step.id} tone="plan" label="Plan" time={rowTime(timestamp)}>
-      <AgentPanel tone="plan" className="px-2.5 py-2">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <ListTodo className="h-3.5 w-3.5 shrink-0 text-[var(--ec-info)]" />
-            <p className="truncate text-[11px] font-medium text-[color:var(--ec-text)]">{entry.step.title}</p>
-          </div>
-          {total !== null ? (
-            <AgentChip className="shrink-0">
-              {completed}/{total}
-            </AgentChip>
-          ) : null}
-        </div>
-        <RunPlanSteps content={planContent} />
-      </AgentPanel>
-    </AgentLogRow>
-  );
-}
-
-if (isPlanEntry) {
-  const canContinue = !readOnly && Boolean(onPreparePlanContinuation);
-  return (
-    <AgentPanel key={entry.step.id} tone="plan" className="px-2.5 py-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-1.5">
-          <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-[color:var(--ec-success)]" />
-          <p className="truncate text-[11px] font-medium text-[color:var(--ec-text)]">{entry.step.title}</p>
-        </div>
-        <div className="flex items-center gap-1.5">
-          {canContinue ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-6 rounded-md px-2 text-[10px] text-[color:var(--ec-success)] hover:bg-[color:var(--ec-success-soft)] hover:text-[color:var(--ec-success)]"
-              disabled={busy || isRunActive}
-              onClick={() => onPreparePlanContinuation?.(entry.step.content)}
-            >
-              Continue in code mode
-            </Button>
-          ) : null}
-          <span className="agent-density-meta shrink-0 text-[10px] text-[color:var(--ec-faint)]">{timestamp}</span>
-        </div>
-      </div>
-      <RunPlanSteps content={entry.step.content} />
-      <ActivityMarkdownOrGitDiff content={entry.step.content} compact={compactContent} className="mt-1.5 text-[color:var(--ec-text)]" onOpenWorkspaceFile={onOpenWorkspaceFile} />
-    </AgentPanel>
-  );
-}
-
-if (isDiffEntry) {
-  return (
-    <AgentLogRow key={entry.step.id} tone="diff" label="Diff" time={rowTime(timestamp)}>
-      <AgentPanel tone="diff" className="px-2.5 py-2">
-        <div className="flex items-center justify-between gap-2">
-          <p className="truncate text-[11px] font-medium text-[color:var(--ec-text)]">{entry.step.title}</p>
-        </div>
-        {entry.step.content.trim() ? (
-          <ActivityMarkdownOrGitDiff content={entry.step.content} compact={compactContent} className="mt-1.5 text-[color:var(--ec-text)]" onOpenWorkspaceFile={onOpenWorkspaceFile} />
-        ) : null}
-      </AgentPanel>
-    </AgentLogRow>
-  );
-}
-
-if (isStatusEntry) {
-  const statusDurationLabel = isRunCompletionStatus(entry.step) ? runDurationLabel : null;
-  return (
-    <AgentLogRow key={entry.step.id} tone="status" label="Status" time={rowTime(timestamp)}>
-      <AgentPanel tone="status" className="px-2.5 py-1.5">
-        <div className="flex items-start justify-between gap-3">
-          <p className="text-[11px] font-medium leading-snug text-[color:var(--ec-text)]">{entry.step.title}</p>
-          {statusDurationLabel ? <AgentChip className="shrink-0">Duration {statusDurationLabel}</AgentChip> : null}
-        </div>
-        {entry.step.content ? (
-          <p className="mt-0.5 break-words text-[11px] leading-snug text-[color:var(--ec-muted)]">{entry.step.content}</p>
-        ) : null}
-      </AgentPanel>
-    </AgentLogRow>
-  );
-}
-
-if (isErrorEntry) {
-  return (
-    <AgentPanel key={entry.step.id} tone="error" className="px-2 py-1.5">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-[11px] font-medium text-[color:var(--ec-danger)]">{entry.step.title}</p>
-        <span className="agent-density-meta text-[10px] text-[color:var(--ec-faint)]">{timestamp}</span>
-      </div>
-      <pre className="agent-pre app-scrollbar mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words text-[10px]">
-        {entry.step.content}
-      </pre>
-    </AgentPanel>
-  );
-}
-
-if (isAssistantEntry) {
-  const isReasoning = entry.metadata.assistantKind === "reasoning";
-  const shouldShowPlanSteps = mode === "plan" && !isReasoning;
-  const reasoningAutoCollapsed = isReasoning && shouldAutoCollapseReasoning(entry.step.content);
-  const reasoningExpanded = Boolean(activeReasoningStepIds[entry.step.id]);
-  return (
-    <AgentLogRow
-      key={entry.step.id}
-      tone={isReasoning ? "reasoning" : "answer"}
-      label={isReasoning ? "Reason" : "Answer"}
-      time={rowTime(timestamp)}
-    >
-      <div
-        className={
-          isReasoning
-            ? "agent-panel agent-panel--reasoning px-2 py-1.5"
-            : "agent-panel agent-panel--answer relative space-y-1.5 px-2 py-1.5"
-        }
-      >
-        {!isReasoning ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="absolute right-1 top-1 z-10 h-6 w-6 shrink-0 p-0 text-[color:var(--ec-muted)] hover:bg-[color:var(--ec-hover)] hover:text-[color:var(--ec-text)]"
-            onClick={() => void copyStepContent(entry.step.content, entry.step.id)}
-            title={activeCopiedStepId === entry.step.id ? "Copied" : "Copy response"}
-            aria-label="Copy response"
-          >
-            {activeCopiedStepId === entry.step.id ? (
-              <Check className="h-3.5 w-3.5 text-emerald-400" />
-            ) : (
-              <Copy className="h-3.5 w-3.5" />
-            )}
-          </Button>
-        ) : null}
-        {isReasoning && reasoningAutoCollapsed ? (
-          <button
-            type="button"
-            className="absolute right-1 top-0 flex h-6 w-6 shrink-0 items-center justify-center rounded text-[color:var(--ec-muted)] transition-colors hover:bg-[color:var(--ec-hover)] hover:text-[color:var(--ec-text)]"
-            onClick={() => toggleReasoningStep(entry.step.id)}
-            title={reasoningExpanded ? "Collapse reasoning" : "Expand reasoning"}
-          >
-            {reasoningExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-          </button>
-        ) : null}
-        {detail && detail !== entry.step.title ? (
-          <p className="agent-density-detail mb-1 truncate text-[10px] text-zinc-500">{String(detail)}</p>
-        ) : null}
-        <div className={!isReasoning ? "pr-8" : undefined}>
-          {isReasoning && reasoningAutoCollapsed && !reasoningExpanded ? (
-            <p className="text-[11px] leading-relaxed text-[color:var(--ec-muted)]">
-              Long reasoning digest collapsed. Expand it when you want the full note.
-            </p>
-          ) : (
-            <>
-              {shouldShowPlanSteps ? <RunPlanSteps content={entry.step.content} /> : null}
-              <ActivityMarkdownOrGitDiff content={entry.step.content} compact={compactContent} className="agent-response-text" onOpenWorkspaceFile={onOpenWorkspaceFile} />
-            </>
-          )}
-        </div>
-      </div>
-    </AgentLogRow>
-  );
-}
-
-return (
-  <div key={entry.step.id} className="rounded-lg border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5">
-    <div className="flex items-center justify-between gap-2">
-      <div className="min-w-0">
-        <p className="truncate text-[11px] font-medium text-zinc-200">{entry.step.title}</p>
-        {detail ? <p className="mt-0.5 truncate text-[10px] text-zinc-400">{String(detail)}</p> : null}
-      </div>
-      <span className="agent-density-meta shrink-0 text-[10px] text-zinc-500">{timestamp}</span>
-    </div>
-    <div className="mt-1">
-      <ActivityMarkdownOrGitDiff content={entry.step.content} compact={compactContent} className="text-zinc-300" onOpenWorkspaceFile={onOpenWorkspaceFile} />
-    </div>
-  </div>
-);
-};
-
-// Everything a timeline row needs to render, bundled so rows can be memoized:
-// while the bundle is referentially stable (i.e. during scrolling), rows skip
-// re-rendering their markdown/diff content entirely.
 type TimelineRenderContext = ActivityRenderContext & {
   density: RunTimelineDensity;
   activeSubagentFocus: { subagentId: string; nonce: number } | null;
@@ -1743,7 +120,7 @@ type TimelineRenderContext = ActivityRenderContext & {
   endClassName?: string;
 };
 
-const renderActivityEntry = (entry: ActivityEntry, context: TimelineRenderContext): ReactNode => {
+const ActivityEntryView = ({ entry, context }: Readonly<{ entry: ActivityEntry; context: TimelineRenderContext }>) => {
   const { run, density, busy, readOnly, rowTime, compactContent, activeSubagentFocus, onCancelRunShell, onOpenWorkspaceFile } = context;
 
   if (entry.kind === "diff-batch") {
@@ -1809,7 +186,7 @@ const renderActivityEntry = (entry: ActivityEntry, context: TimelineRenderContex
   }
 
   if (entry.kind === "tool") {
-    return null;
+    return <></>;
   }
 
   if (entry.kind === "subagent") {
@@ -1821,7 +198,7 @@ const renderActivityEntry = (entry: ActivityEntry, context: TimelineRenderContex
         focusNonce={activeSubagentFocus?.subagentId === entry.info.id ? activeSubagentFocus.nonce : 0}
         onOpenWorkspaceFile={onOpenWorkspaceFile}
         renderEntry={(nested, index) => (
-          <div key={`subagent-${entry.info.id}-nested-${String(index)}`}>{renderActivityEntry(nested, context)}</div>
+          <div key={`subagent-${entry.info.id}-nested-${String(index)}`}><ActivityEntryView entry={nested} context={context} /></div>
         )}
         rowTime={rowTime}
       />
@@ -1829,15 +206,15 @@ const renderActivityEntry = (entry: ActivityEntry, context: TimelineRenderContex
   }
 
   if (entry.kind === "single-group") {
-    return renderSingleGroupEntry(entry, context);
+    return <SingleGroupActivityEntry entry={entry} context={context} />;
   }
 
-  return renderSingleActivityEntry(entry, context);
+  return <SingleActivityEntryView entry={entry} context={context} />;
 };
 
-const renderTimelineItem = (item: TimelineRenderItem, context: TimelineRenderContext): ReactNode => {
+const TimelineItemView = ({ item, context }: Readonly<{ item: TimelineRenderItem; context: TimelineRenderContext }>) => {
   if (item.kind === "entry") {
-    return renderActivityEntry(item.entry, context);
+    return <ActivityEntryView entry={item.entry} context={context} />;
   }
 
   if (item.kind === "plan-decision") {
@@ -1874,8 +251,191 @@ const TimelineItemRow = memo(function TimelineItemRow({
   item: TimelineRenderItem;
   context: TimelineRenderContext;
 }>) {
-  return <>{renderTimelineItem(item, context)}</>;
+  return <TimelineItemView item={item} context={context} />;
 });
+
+type TimelineScrollOptions = {
+  timelineItems: TimelineRenderItem[];
+  density: RunTimelineDensity;
+  activeReasoningStepIds: Record<string, boolean>;
+  virtualized: boolean;
+  containerRef?: Ref<HTMLDivElement>;
+  hasRenderableActivity: boolean;
+  runId: string;
+  runStatus: RunActivityRun["status"];
+  isRunActive: boolean;
+  stepMeasurementSignature: string;
+  stepsLength: number;
+  subagentFocus: { subagentId: string; nonce: number } | null;
+};
+
+const useTimelineScroll = ({
+  timelineItems,
+  density,
+  activeReasoningStepIds,
+  virtualized,
+  containerRef,
+  hasRenderableActivity,
+  runId,
+  runStatus,
+  isRunActive,
+  stepMeasurementSignature,
+  stepsLength,
+  subagentFocus,
+}: TimelineScrollOptions) => {const scrollElementRef = useRef<HTMLDivElement | null>(null);
+const shouldStickToBottomRef = useRef(true);
+const initiallyScrolledRunIdRef = useRef<string | null>(null);
+const setWorklogRef = useCallback(
+  (node: HTMLDivElement | null) => {
+    scrollElementRef.current = node;
+    assignTimelineRef(containerRef, node);
+  },
+  [containerRef],
+);
+const rowVirtualizer = useVirtualizer({
+  enabled: virtualized,
+  count: timelineItems.length,
+  getScrollElement: () => scrollElementRef.current,
+  estimateSize: (index) => estimateTimelineItemSize(timelineItems[index], density, activeReasoningStepIds),
+  getItemKey: (index) => timelineItems[index]?.key ?? index,
+  useAnimationFrameWithResizeObserver: true,
+  initialOffset: virtualized ? () => Number.MAX_SAFE_INTEGER : undefined,
+  anchorTo: "end",
+  scrollEndThreshold: 140,
+  overscan: 4,
+});
+const scrollTimelineToEnd = useCallback(() => {
+  const container = scrollElementRef.current;
+  if (!container || !hasRenderableActivity) {
+    return false;
+  }
+
+  if (virtualized) {
+    rowVirtualizer.scrollToEnd({ behavior: "auto" });
+  } else {
+    container.scrollTop = container.scrollHeight;
+  }
+  shouldStickToBottomRef.current = true;
+  return true;
+}, [hasRenderableActivity, rowVirtualizer, virtualized]);
+
+useEffect(() => {
+  shouldStickToBottomRef.current = true;
+}, [runId]);
+
+const timelineItemsRef = useRef(timelineItems);
+timelineItemsRef.current = timelineItems;
+// A focus request outlives this component in App state, so a remount (e.g.
+// reopening the same run) would otherwise replay the last jump. Seed the
+// handled nonce from the mount-time prop and only act on nonces that arrive
+// after mounting; cards likewise only see the focus while it is active.
+const handledSubagentFocusNonceRef = useRef(subagentFocus?.nonce ?? 0);
+const [activeSubagentFocus, setActiveSubagentFocus] = useState<{ subagentId: string; nonce: number } | null>(null);
+useEffect(() => {
+  if (!subagentFocus || subagentFocus.nonce === handledSubagentFocusNonceRef.current) {
+    return;
+  }
+  handledSubagentFocusNonceRef.current = subagentFocus.nonce;
+  setActiveSubagentFocus(subagentFocus);
+  const index = timelineItemsRef.current.findIndex(
+    (item) => item.kind === "entry" && item.entry.kind === "subagent" && item.entry.info.id === subagentFocus.subagentId,
+  );
+  if (index === -1) {
+    return;
+  }
+  // Jumping to a card means the user left the live tail on purpose.
+  shouldStickToBottomRef.current = false;
+  if (virtualized) {
+    rowVirtualizer.scrollToIndex(index, { align: "start", behavior: "auto" });
+  }
+  const frame = window.requestAnimationFrame(() => {
+    scrollElementRef.current
+      ?.querySelector(`[data-subagent-id="${CSS.escape(subagentFocus.subagentId)}"]`)
+      ?.scrollIntoView({ block: "start", behavior: "smooth" });
+  });
+  return () => window.cancelAnimationFrame(frame);
+}, [rowVirtualizer, subagentFocus, virtualized]);
+
+useEffect(() => {
+  if (!virtualized) {
+    return;
+  }
+  const container = scrollElementRef.current;
+  if (!container) {
+    return;
+  }
+  const updateStickiness = () => {
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    shouldStickToBottomRef.current = distanceFromBottom < 140;
+  };
+  updateStickiness();
+  container.addEventListener("scroll", updateStickiness, { passive: true });
+  return () => container.removeEventListener("scroll", updateStickiness);
+}, [virtualized]);
+
+useLayoutEffect(() => {
+  if (initiallyScrolledRunIdRef.current === runId || !hasRenderableActivity || !scrollElementRef.current) {
+    return;
+  }
+
+  if (scrollTimelineToEnd()) {
+    initiallyScrolledRunIdRef.current = runId;
+    return;
+  }
+
+  const frame = window.requestAnimationFrame(() => {
+    if (scrollTimelineToEnd()) {
+      initiallyScrolledRunIdRef.current = runId;
+    }
+  });
+
+  return () => {
+    window.cancelAnimationFrame(frame);
+  };
+}, [hasRenderableActivity, runId, scrollTimelineToEnd]);
+
+useEffect(() => {
+  if (!virtualized || !isRunActive || !shouldStickToBottomRef.current || !hasRenderableActivity) {
+    return;
+  }
+  const frame = window.requestAnimationFrame(() => {
+    scrollTimelineToEnd();
+  });
+  return () => window.cancelAnimationFrame(frame);
+}, [hasRenderableActivity, isRunActive, runStatus, runId, scrollTimelineToEnd, stepMeasurementSignature, stepsLength, virtualized]);
+
+
+
+  return { activeSubagentFocus, rowVirtualizer, setWorklogRef };
+};
+
+type RunActivityTimelineProps = Readonly<{
+  steps: RunActivityStep[];
+  run: RunActivityRun;
+  className?: string;
+  endClassName?: string;
+  emptyMessage?: string;
+  readOnly?: boolean;
+  density?: RunTimelineDensity;
+  busy?: boolean;
+  showLoading?: boolean;
+  runDurationLabel?: string | null;
+  restorablePromptStepId?: string | null;
+  copiedStepId?: string | null;
+  expandedReasoningStepIds?: Record<string, boolean>;
+  containerRef?: Ref<HTMLDivElement>;
+  endRef?: Ref<HTMLDivElement>;
+  virtualized?: boolean;
+  subagentFocus?: { subagentId: string; nonce: number } | null;
+  onCopyStepContent?: (text: string, stepId: string) => void | Promise<void>;
+  onUndoRunToLastPrompt?: (run: RunActivityRun) => void;
+  onCancelRunShell?: (run: RunActivityRun, toolCallId: string) => void;
+  onPreparePlanContinuation?: (plan: string) => void;
+  onSubmitPlanFeedback?: (feedback: string) => Promise<void>;
+  onSubmitUserInputAnswers?: (run: RunActivityRun, requestId: string, answers: RunUserInputAnswers) => Promise<void> | void;
+  onOpenWorkspaceFile?: (path: string) => void;
+  onToggleReasoningStep?: (stepId: string) => void;
+}>;
 
 export function RunActivityTimeline({
   steps,
@@ -1903,33 +463,7 @@ export function RunActivityTimeline({
   onSubmitUserInputAnswers,
   onOpenWorkspaceFile,
   onToggleReasoningStep,
-}: Readonly<{
-  steps: RunActivityStep[];
-  run: RunActivityRun;
-  className?: string;
-  endClassName?: string;
-  emptyMessage?: string;
-  readOnly?: boolean;
-  density?: RunTimelineDensity;
-  busy?: boolean;
-  showLoading?: boolean;
-  runDurationLabel?: string | null;
-  restorablePromptStepId?: string | null;
-  copiedStepId?: string | null;
-  expandedReasoningStepIds?: Record<string, boolean>;
-  containerRef?: Ref<HTMLDivElement>;
-  endRef?: Ref<HTMLDivElement>;
-  virtualized?: boolean;
-  subagentFocus?: { subagentId: string; nonce: number } | null;
-  onCopyStepContent?: (text: string, stepId: string) => void | Promise<void>;
-  onUndoRunToLastPrompt?: (run: RunActivityRun) => void;
-  onCancelRunShell?: (run: RunActivityRun, toolCallId: string) => void;
-  onPreparePlanContinuation?: (plan: string) => void;
-  onSubmitPlanFeedback?: (feedback: string) => Promise<void>;
-  onSubmitUserInputAnswers?: (run: RunActivityRun, requestId: string, answers: RunUserInputAnswers) => Promise<void> | void;
-  onOpenWorkspaceFile?: (path: string) => void;
-  onToggleReasoningStep?: (stepId: string) => void;
-}>) {
+}: RunActivityTimelineProps) {
   const [internalCopiedStepId, setInternalCopiedStepId] = useState<string | null>(null);
   const [internalExpandedReasoningStepIds, setInternalExpandedReasoningStepIds] = useState<Record<string, boolean>>({});
   const isRunActive = ["queued", "preparing", "running"].includes(run.status);
@@ -1992,130 +526,20 @@ export function RunActivityTimeline({
     [activityEntries, canShowPlanDecision, density, latestPlanDecisionText, showLoading],
   );
   const hasRenderableActivity = activityEntries.length > 0 || showLoading;
-  const scrollElementRef = useRef<HTMLDivElement | null>(null);
-  const shouldStickToBottomRef = useRef(true);
-  const initiallyScrolledRunIdRef = useRef<string | null>(null);
-  const setWorklogRef = useCallback(
-    (node: HTMLDivElement | null) => {
-      scrollElementRef.current = node;
-      assignTimelineRef(containerRef, node);
-    },
-    [containerRef],
-  );
-  const rowVirtualizer = useVirtualizer({
-    enabled: virtualized,
-    count: timelineItems.length,
-    getScrollElement: () => scrollElementRef.current,
-    estimateSize: (index) => estimateTimelineItemSize(timelineItems[index], density, activeReasoningStepIds),
-    getItemKey: (index) => timelineItems[index]?.key ?? index,
-    useAnimationFrameWithResizeObserver: true,
-    initialOffset: virtualized ? () => Number.MAX_SAFE_INTEGER : undefined,
-    anchorTo: "end",
-    scrollEndThreshold: 140,
-    overscan: 4,
+  const { activeSubagentFocus, rowVirtualizer, setWorklogRef } = useTimelineScroll({
+    timelineItems,
+    density,
+    activeReasoningStepIds,
+    virtualized,
+    containerRef,
+    hasRenderableActivity,
+    runId: run.id,
+    runStatus: run.status,
+    isRunActive,
+    stepMeasurementSignature,
+    stepsLength: steps.length,
+    subagentFocus,
   });
-  const scrollTimelineToEnd = useCallback(() => {
-    const container = scrollElementRef.current;
-    if (!container || !hasRenderableActivity) {
-      return false;
-    }
-
-    if (virtualized) {
-      rowVirtualizer.scrollToEnd({ behavior: "auto" });
-    } else {
-      container.scrollTop = container.scrollHeight;
-    }
-    shouldStickToBottomRef.current = true;
-    return true;
-  }, [hasRenderableActivity, rowVirtualizer, virtualized]);
-
-  useEffect(() => {
-    shouldStickToBottomRef.current = true;
-  }, [run.id]);
-
-  const timelineItemsRef = useRef(timelineItems);
-  timelineItemsRef.current = timelineItems;
-  // A focus request outlives this component in App state, so a remount (e.g.
-  // reopening the same run) would otherwise replay the last jump. Seed the
-  // handled nonce from the mount-time prop and only act on nonces that arrive
-  // after mounting; cards likewise only see the focus while it is active.
-  const handledSubagentFocusNonceRef = useRef(subagentFocus?.nonce ?? 0);
-  const [activeSubagentFocus, setActiveSubagentFocus] = useState<{ subagentId: string; nonce: number } | null>(null);
-  useEffect(() => {
-    if (!subagentFocus || subagentFocus.nonce === handledSubagentFocusNonceRef.current) {
-      return;
-    }
-    handledSubagentFocusNonceRef.current = subagentFocus.nonce;
-    setActiveSubagentFocus(subagentFocus);
-    const index = timelineItemsRef.current.findIndex(
-      (item) => item.kind === "entry" && item.entry.kind === "subagent" && item.entry.info.id === subagentFocus.subagentId,
-    );
-    if (index === -1) {
-      return;
-    }
-    // Jumping to a card means the user left the live tail on purpose.
-    shouldStickToBottomRef.current = false;
-    if (virtualized) {
-      rowVirtualizer.scrollToIndex(index, { align: "start", behavior: "auto" });
-    }
-    const frame = window.requestAnimationFrame(() => {
-      scrollElementRef.current
-        ?.querySelector(`[data-subagent-id="${CSS.escape(subagentFocus.subagentId)}"]`)
-        ?.scrollIntoView({ block: "start", behavior: "smooth" });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [rowVirtualizer, subagentFocus, virtualized]);
-
-  useEffect(() => {
-    if (!virtualized) {
-      return;
-    }
-    const container = scrollElementRef.current;
-    if (!container) {
-      return;
-    }
-    const updateStickiness = () => {
-      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-      shouldStickToBottomRef.current = distanceFromBottom < 140;
-    };
-    updateStickiness();
-    container.addEventListener("scroll", updateStickiness, { passive: true });
-    return () => container.removeEventListener("scroll", updateStickiness);
-  }, [virtualized]);
-
-  useLayoutEffect(() => {
-    if (initiallyScrolledRunIdRef.current === run.id || !hasRenderableActivity || !scrollElementRef.current) {
-      return;
-    }
-
-    if (scrollTimelineToEnd()) {
-      initiallyScrolledRunIdRef.current = run.id;
-      return;
-    }
-
-    const frame = window.requestAnimationFrame(() => {
-      if (scrollTimelineToEnd()) {
-        initiallyScrolledRunIdRef.current = run.id;
-      }
-    });
-
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
-  }, [hasRenderableActivity, run.id, scrollTimelineToEnd]);
-
-  useEffect(() => {
-    if (!virtualized || !isRunActive || !shouldStickToBottomRef.current || !hasRenderableActivity) {
-      return;
-    }
-    const frame = window.requestAnimationFrame(() => {
-      scrollTimelineToEnd();
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [hasRenderableActivity, isRunActive, run.status, run.id, scrollTimelineToEnd, stepMeasurementSignature, steps.length, virtualized]);
-
-
-
   const timelineRenderContext: TimelineRenderContext = useMemo(
     () => ({
       run,

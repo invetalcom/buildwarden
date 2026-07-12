@@ -82,6 +82,35 @@ interface ProjectPageProps {
   reviewRequestTarget?: { url: string; requestId: number } | null;
 }
 
+interface ProjectInsightsTabsProps {
+  activeTab: ProjectPageTab;
+  project: ProjectSnapshot;
+  modelOptions: ProjectPageProps["modelOptions"];
+  defaultModelId: string;
+  onGenerateInsight: ProjectPageProps["onGenerateInsight"];
+  onSelectRun: ProjectPageProps["onSelectRun"];
+  onRestoreRunFromForLater: ProjectPageProps["onRestoreRunFromForLater"];
+}
+
+const ProjectInsightsTabs = ({ activeTab, project, modelOptions, defaultModelId, onGenerateInsight, onSelectRun, onRestoreRunFromForLater }: ProjectInsightsTabsProps) => (
+  <>
+    {activeTab === "graphs" && (
+      <Suspense fallback={<div className="px-3 py-2 text-xs text-zinc-500">Loading graphs...</div>}>
+        <ProjectGraphsTab project={project} onGenerateInsight={onGenerateInsight} />
+      </Suspense>
+    )}
+    {activeTab === "ai-insights-history" && (
+      <ProjectAiInsightsHistoryPage project={project} modelOptions={modelOptions} defaultModelId={defaultModelId} onGenerateInsight={onGenerateInsight} onSelectRun={onSelectRun} />
+    )}
+    {activeTab === "for-later" && (
+      <ProjectForLaterTab runs={project.forLaterRuns} onSelectRun={onSelectRun} onRestoreRunFromForLater={onRestoreRunFromForLater} />
+    )}
+  </>
+);
+
+const pickDefaultModelId = (modelOptions: ProjectPageProps["modelOptions"], runModelId: string): string =>
+  modelOptions.some((option) => option.id === runModelId) ? runModelId : (modelOptions[0]?.id ?? "");
+
 export const ProjectPage = ({
   project,
   activeTab,
@@ -130,16 +159,11 @@ export const ProjectPage = ({
   loopAvailability,
   onOpenLoopRun,
   onLoopsChanged,
-  onBranchesChanged,
-  onDeleteProject,
+  onBranchesChanged, onDeleteProject,
   onOpenProjectSettings,
   reviewRequestTarget = null,
 }: ProjectPageProps) => {
-  const defaultTaskModelId = useMemo(
-    () => (modelOptions.some((option) => option.id === runModelId) ? runModelId : (modelOptions[0]?.id ?? "")),
-    [modelOptions, runModelId],
-  );
-
+  const defaultTaskModelId = useMemo(() => pickDefaultModelId(modelOptions, runModelId), [modelOptions, runModelId]);
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div
@@ -251,25 +275,15 @@ export const ProjectPage = ({
         />
       ) : null}
 
-      {activeTab === "graphs" ? (
-        <Suspense fallback={<div className="px-3 py-2 text-xs text-zinc-500">Loading graphs...</div>}>
-          <ProjectGraphsTab project={project} onGenerateInsight={onGenerateInsight} />
-        </Suspense>
-      ) : null}
-
-      {activeTab === "ai-insights-history" ? (
-        <ProjectAiInsightsHistoryPage
-          project={project}
-          modelOptions={modelOptions}
-          defaultModelId={defaultTaskModelId}
-          onGenerateInsight={onGenerateInsight}
-          onSelectRun={onSelectRun}
-        />
-      ) : null}
-
-      {activeTab === "for-later" ? (
-        <ProjectForLaterTab runs={project.forLaterRuns} onSelectRun={onSelectRun} onRestoreRunFromForLater={onRestoreRunFromForLater} />
-      ) : null}
+      <ProjectInsightsTabs
+        activeTab={activeTab}
+        project={project}
+        modelOptions={modelOptions}
+        defaultModelId={defaultTaskModelId}
+        onGenerateInsight={onGenerateInsight}
+        onSelectRun={onSelectRun}
+        onRestoreRunFromForLater={onRestoreRunFromForLater}
+      />
 
       {activeTab === "settings" ? (
         <ProjectSettingsPage

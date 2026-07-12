@@ -109,6 +109,85 @@ const implementationStatusToneClass = (status: NonNullable<ProjectSnapshot["labT
   };
 };
 
+const implementationWorkspaceLabel = (run: ProjectSnapshot["labThreads"][number]["implementationRun"]): string => {
+  if (!run) return "";
+  if (run.workspaceVcs !== "folder") return run.branchName;
+  return run.workspaceType === "copy" ? "Folder copy" : "Project folder";
+};
+
+const ProjectLabRunCard = ({ detail, expanded, onToggle, onDelete, onOpenImplementationRun }: {
+  detail: ProjectSnapshot["labThreads"][number];
+  expanded: boolean;
+  onToggle: () => void;
+  onDelete: () => void;
+  onOpenImplementationRun: ProjectLabTabProps["onOpenImplementationRun"];
+}) => {
+  const implementationRun = detail.implementationRun;
+  const workspaceLabel = implementationWorkspaceLabel(implementationRun);
+  const implementationStatus = implementationRun ? implementationStatusLabel(implementationRun.status) : null;
+  const implementationTone = implementationRun ? implementationStatusToneClass(implementationRun.status) : null;
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onToggle();
+    }
+  };
+  return (
+    <div className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-3">
+      <div className="flex cursor-pointer flex-wrap items-start justify-between gap-3" role="button" tabIndex={0} onClick={onToggle} onKeyDown={handleKeyDown}>
+        <div className="min-w-0 flex-1 text-left">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-[11px] text-cyan-100">{modeLabel(detail.thread.mode)}</span>
+            <span className="rounded-full border border-zinc-800 bg-zinc-900/80 px-2.5 py-1 text-[11px] text-zinc-300">{detail.thread.status}</span>
+            {detail.thread.baseBranch && <span className="rounded-full border border-zinc-800 bg-zinc-900/80 px-2.5 py-1 font-mono text-[11px] text-zinc-300">{detail.thread.baseBranch}</span>}
+            <span className="ml-1 text-zinc-500">{expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</span>
+          </div>
+          <h4 className="mt-2 text-sm font-medium text-zinc-100">{detail.thread.title}</h4>
+          <p className="mt-1 text-xs text-zinc-400">{renderLabText(detail.thread.summary)}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {implementationRun && (
+            <Button type="button" size="sm" variant="ghost" className="h-8 w-8 px-0 text-zinc-500 hover:text-cyan-200" title="Open implementation run" aria-label="Open implementation run" onClick={(event) => { event.stopPropagation(); onOpenImplementationRun(implementationRun.id); }}>
+              <ExternalLink className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          <Button type="button" size="sm" variant="ghost" className="text-zinc-500 hover:text-rose-200" onClick={(event) => { event.stopPropagation(); onDelete(); }}><Trash2 className="mr-2 h-3.5 w-3.5" />Delete</Button>
+        </div>
+      </div>
+      {expanded && (
+        <div className="mt-3 space-y-2">
+          {implementationStatus && (
+            <div className={`rounded-lg border px-3 py-2 ${implementationTone?.panel ?? ""}`}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <span className={`rounded-full border px-2.5 py-1 text-[11px] ${implementationTone?.pill ?? ""}`}>{implementationStatus}</span>
+                  {implementationRun && <span className="ml-2 font-mono text-xs text-zinc-500">{workspaceLabel}</span>}
+                  {implementationRun?.errorMessage && <p className="mt-2 text-xs text-rose-300">{renderLabText(implementationRun.errorMessage)}</p>}
+                </div>
+                {implementationRun && <Button type="button" size="sm" variant="secondary" onClick={() => onOpenImplementationRun(implementationRun.id)}><ExternalLink className="mr-2 h-3.5 w-3.5" />Open run</Button>}
+              </div>
+            </div>
+          )}
+          {detail.events.map((event) => (
+            <div key={event.id} className={`rounded-lg border px-3 py-2 text-sm leading-relaxed ${eventToneClass(event.role)}`}>
+              <div className="mb-1 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.18em] text-zinc-500">
+                <span className="flex min-w-0 items-center gap-1.5">
+                  {event.role === "rfc" && <FileText className="h-3.5 w-3.5 text-violet-300" />}
+                  {event.role === "review" && <ShieldCheck className="h-3.5 w-3.5 text-[var(--ec-success)]" />}
+                  {event.role === "implementation" && <Rocket className="h-3.5 w-3.5 text-[var(--ec-info)]" />}
+                  <span className="truncate">{event.label}</span>
+                </span>
+                <span className="shrink-0 font-normal normal-case tracking-normal text-zinc-600">{new Date(event.createdAt).toLocaleString()}</span>
+              </div>
+              <div className="text-zinc-300">{renderLabText(event.content)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const ProjectLabTab = ({
   project,
   modelOptions,
@@ -285,145 +364,20 @@ export const ProjectLabTab = ({
         </p>
 
         <div className="mt-4 space-y-3">
-          {sortedThreads.length > 0 ? (
-            sortedThreads.map((detail) => {
-              const isExpanded = expandedThreadIds[detail.thread.id] ?? false;
-              const implementationRun = detail.implementationRun;
-              const implementationStatus = implementationRun ? implementationStatusLabel(implementationRun.status) : null;
-              const implementationStatusTone = implementationRun ? implementationStatusToneClass(implementationRun.status) : null;
-              return (
-                <div key={detail.thread.id} className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-3">
-                  <div
-                    className="flex cursor-pointer flex-wrap items-start justify-between gap-3"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() =>
-                      setExpandedThreadIds((current) => ({
-                        ...current,
-                        [detail.thread.id]: !isExpanded,
-                      }))
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        setExpandedThreadIds((current) => ({
-                          ...current,
-                          [detail.thread.id]: !isExpanded,
-                        }));
-                      }
-                    }}
-                  >
-                    <div className="min-w-0 flex-1 text-left">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-[11px] text-cyan-100">
-                          {modeLabel(detail.thread.mode)}
-                        </span>
-                        <span className="rounded-full border border-zinc-800 bg-zinc-900/80 px-2.5 py-1 text-[11px] text-zinc-300">
-                          {detail.thread.status}
-                        </span>
-                        {detail.thread.baseBranch ? (
-                          <span className="rounded-full border border-zinc-800 bg-zinc-900/80 px-2.5 py-1 font-mono text-[11px] text-zinc-300">
-                            {detail.thread.baseBranch}
-                          </span>
-                        ) : null}
-                        <span className="ml-1 text-zinc-500">
-                          {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                        </span>
-                      </div>
-                      <h4 className="mt-2 text-sm font-medium text-zinc-100">{detail.thread.title}</h4>
-                      <p className="mt-1 text-xs text-zinc-400">{renderLabText(detail.thread.summary)}</p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1">
-                      {implementationRun ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          className="h-8 w-8 px-0 text-zinc-500 hover:text-cyan-200"
-                          title="Open implementation run"
-                          aria-label="Open implementation run"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onOpenImplementationRun(implementationRun.id);
-                          }}
-                        >
-                          <ExternalLink className="h-3.5 w-3.5" />
-                        </Button>
-                      ) : null}
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="text-zinc-500 hover:text-rose-200"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void onDeleteThread(detail.thread.id);
-                        }}
-                      >
-                        <Trash2 className="mr-2 h-3.5 w-3.5" />
-                        Delete
-                      </Button>
-                    </div>
-                  </div>
-
-                  {isExpanded ? (
-                    <div className="mt-3 space-y-2">
-                      {implementationStatus ? (
-                        <div className={`rounded-lg border px-3 py-2 ${implementationStatusTone?.panel ?? ""}`}>
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <span className={`rounded-full border px-2.5 py-1 text-[11px] ${implementationStatusTone?.pill ?? ""}`}>
-                                {implementationStatus}
-                              </span>
-                              {implementationRun ? (
-                                <span className="ml-2 font-mono text-xs text-zinc-500">
-                                  {implementationRun.workspaceVcs === "folder"
-                                    ? implementationRun.workspaceType === "copy"
-                                      ? "Folder copy"
-                                      : "Project folder"
-                                    : implementationRun.branchName}
-                                </span>
-                              ) : null}
-                              {implementationRun?.errorMessage ? (
-                                <p className="mt-2 text-xs text-rose-300">{renderLabText(implementationRun.errorMessage)}</p>
-                              ) : null}
-                            </div>
-                            {implementationRun ? (
-                              <Button type="button" size="sm" variant="secondary" onClick={() => onOpenImplementationRun(implementationRun.id)}>
-                                <ExternalLink className="mr-2 h-3.5 w-3.5" />
-                                Open run
-                              </Button>
-                            ) : null}
-                          </div>
-                        </div>
-                      ) : null}
-
-                      {detail.events.map((event) => (
-                        <div key={event.id} className={`rounded-lg border px-3 py-2 text-sm leading-relaxed ${eventToneClass(event.role)}`}>
-                          <div className="mb-1 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.18em] text-zinc-500">
-                            <span className="flex min-w-0 items-center gap-1.5">
-                              {event.role === "rfc" ? <FileText className="h-3.5 w-3.5 text-violet-300" /> : null}
-                              {event.role === "review" ? <ShieldCheck className="h-3.5 w-3.5 text-[var(--ec-success)]" /> : null}
-                              {event.role === "implementation" ? <Rocket className="h-3.5 w-3.5 text-[var(--ec-info)]" /> : null}
-                              <span className="truncate">{event.label}</span>
-                            </span>
-                            <span className="shrink-0 font-normal normal-case tracking-normal text-zinc-600">
-                              {new Date(event.createdAt).toLocaleString()}
-                            </span>
-                          </div>
-                          <div className="text-zinc-300">{renderLabText(event.content)}</div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })
-          ) : (
+          {sortedThreads.length === 0 ? (
             <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 px-4 py-10 text-center text-sm text-zinc-500">
               No Project Lab runs yet. Enable the lab, choose implementation and review models, then start one.
             </div>
-          )}
+          ) : sortedThreads.map((detail) => (
+            <ProjectLabRunCard
+              key={detail.thread.id}
+              detail={detail}
+              expanded={expandedThreadIds[detail.thread.id] ?? false}
+              onToggle={() => setExpandedThreadIds((current) => ({ ...current, [detail.thread.id]: !(current[detail.thread.id] ?? false) }))}
+              onDelete={() => void onDeleteThread(detail.thread.id)}
+              onOpenImplementationRun={onOpenImplementationRun}
+            />
+          ))}
         </div>
       </Card>
     </div>

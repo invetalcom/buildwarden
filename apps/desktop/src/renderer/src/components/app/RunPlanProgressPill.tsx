@@ -44,7 +44,7 @@ const StepIcon = ({ status }: Readonly<{ status: string }>) => {
   );
 };
 
-export function RunPlanProgressPill({ progress }: { progress: DerivedRunPlanProgress | null }) {
+export function RunPlanProgressPill({ progress }: Readonly<{ progress: DerivedRunPlanProgress | null }>) {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLDivElement | null>(null);
 

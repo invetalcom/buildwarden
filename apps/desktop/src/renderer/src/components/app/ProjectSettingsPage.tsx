@@ -226,14 +226,11 @@ export const ProjectSettingsPage = ({
 }: ProjectSettingsPageProps) => {
   const isFolderProject = project.project.kind === "folder";
   const workspaceModeChoices = isFolderProject ? folderWorkspaceModes : workspaceModes;
-  const selectedModelIds =
-    runWorkspaceType === "worktree" || runWorkspaceType === "copy"
-      ? runWorktreeModelIds
-      : runModelId
-        ? [runModelId]
-        : [];
+  let selectedModelIds = runModelId ? [runModelId] : [];
+  if (runWorkspaceType === "worktree" || runWorkspaceType === "copy") selectedModelIds = runWorktreeModelIds;
   const activeSkillCount = activeIntegratedSkillIds.length;
-  const branchChoices = isFolderProject ? [] : (runWorkspaceType === "local" ? [currentProjectBranch] : availableBranches).filter(Boolean);
+  let branchChoices: string[] = [];
+  if (!isFolderProject) branchChoices = (runWorkspaceType === "local" ? [currentProjectBranch] : availableBranches).filter(Boolean);
   const formatTokens = (value: number) => value.toLocaleString();
   const outcomeSummary = `${projectRunStats.completed} done / ${projectRunStats.failed} failed / ${projectRunStats.cancelled} stopped`;
   const totalRunsLabel =
@@ -241,6 +238,12 @@ export const ProjectSettingsPage = ({
       ? `${projectRunStats.total.toLocaleString()} (${projectRunStats.active.toLocaleString()} active)`
       : projectRunStats.total.toLocaleString();
   const [forgeStatus, setForgeStatus] = useState<ProjectForgeAuthStatus | null>(null);
+  let forgeProviderLabel = "Detecting";
+  if (forgeStatus?.provider === "github") forgeProviderLabel = "GitHub";
+  if (forgeStatus?.provider === "gitlab") forgeProviderLabel = "GitLab";
+  let forgeTokenPlaceholder = "GitHub personal access token";
+  if (forgeStatus?.provider === "gitlab") forgeTokenPlaceholder = "GitLab personal or project access token";
+  if (forgeStatus?.hasToken) forgeTokenPlaceholder = "................";
   const [forgeToken, setForgeToken] = useState("");
   const [forgeBusy, setForgeBusy] = useState(false);
   const [forgeError, setForgeError] = useState<string | null>(null);
@@ -666,7 +669,7 @@ export const ProjectSettingsPage = ({
                 <div className="min-w-0">
                   <div className="flex min-w-0 items-center gap-2 text-xs text-[var(--ec-muted)]">
                     <KeyRound className="size-3.5 shrink-0 text-[var(--ec-accent)]" />
-                    <span className="shrink-0">{forgeStatus?.provider === "gitlab" ? "GitLab" : forgeStatus?.provider === "github" ? "GitHub" : "Detecting"}</span>
+                    <span className="shrink-0">{forgeProviderLabel}</span>
                     <span className="min-w-0 truncate font-mono text-[var(--ec-text)]">{forgeStatus?.repoLabel ?? project.project.name}</span>
                   </div>
                   {forgeStatus?.webBaseUrl ? (
@@ -684,13 +687,7 @@ export const ProjectSettingsPage = ({
                   type="password"
                   value={forgeToken}
                   onChange={(event) => setForgeToken(event.target.value)}
-                  placeholder={
-                    forgeStatus?.hasToken
-                      ? "................"
-                      : forgeStatus?.provider === "gitlab"
-                        ? "GitLab personal or project access token"
-                        : "GitHub personal access token"
-                  }
+                  placeholder={forgeTokenPlaceholder}
                   className="h-8 font-mono text-xs"
                   disabled={busy || forgeBusy}
                 />

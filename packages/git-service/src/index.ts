@@ -31,6 +31,18 @@ const withLongPathSupport = (args: string[]): string[] =>
 
 const runGitRaw = (git: SimpleGit, args: string[]): Promise<string> => git.raw(withLongPathSupport(args));
 
+export const readRecentCommitLog = async (repoPath: string, limit: number): Promise<string> => {
+  const normalizedLimit = Math.max(1, Math.floor(limit));
+  return runGitRaw(simpleGit(repoPath), [
+    "log",
+    `-n${String(normalizedLimit)}`,
+    "--date=short",
+    "--pretty=format:__EC__%H%x09%an%x09%ad%x09%s",
+    "--name-only",
+    "--no-merges",
+  ]);
+};
+
 const ensureGitLongPathSupport = async (git: SimpleGit): Promise<void> => {
   if (process.platform !== "win32") {
     return;
@@ -911,12 +923,10 @@ export class GitService {
           };
         }
 
-        const message =
-          typeof error === "object" && error && "stderr" in error
-            ? String((error as { stderr?: string }).stderr ?? "").trim()
-            : error instanceof Error
-              ? error.message
-              : String(error);
+          let message = error instanceof Error ? error.message : String(error);
+          if (typeof error === "object" && error && "stderr" in error) {
+            message = String((error as { stderr?: string }).stderr ?? "").trim();
+          }
         throw new Error(message || "Failed to create merge request for this GitLab repository.");
       }
     }
@@ -948,12 +958,10 @@ export class GitService {
         }
       }
 
-      const message =
-        typeof error === "object" && error && "stderr" in error
-          ? String((error as { stderr?: string }).stderr ?? "").trim()
-          : error instanceof Error
-            ? error.message
-            : String(error);
+      let message = error instanceof Error ? error.message : String(error);
+      if (typeof error === "object" && error && "stderr" in error) {
+        message = String((error as { stderr?: string }).stderr ?? "").trim();
+      }
       throw new Error(message || "Failed to create pull request with GitHub CLI.");
     }
   }

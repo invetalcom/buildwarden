@@ -131,6 +131,26 @@ async function resolveBaseRef(git: SimpleGit, baseBranch?: string): Promise<stri
   return resolveDefaultBaseRef(git);
 }
 
+type ParsedPrMrUrl = NonNullable<ReturnType<typeof parsePrMrBrowserUrl>>;
+
+const validatePrMrOrigin = async (git: SimpleGit, parsed: ParsedPrMrUrl): Promise<void> => {
+  if (!(await git.checkIsRepo())) throw new Error("Project path is not a git repository.");
+  const originRemote = parseGitRemoteToWebBase(await resolveOriginRemoteUrl(git));
+  if (!originRemote) throw new Error('Could not interpret "origin" as a GitHub or GitLab remote URL.');
+  if (originRemote.provider !== parsed.provider) {
+    throw new Error(`The PR/MR link is for ${parsed.provider}, but "origin" looks like ${originRemote.provider}.`);
+  }
+  if (normalizeWebBaseForCompare(originRemote.webBaseUrl) !== normalizeWebBaseForCompare(parsed.expectedWebBase)) {
+    throw new Error("The PR/MR URL does not match this project’s origin repository. Open the project that owns that URL, or fix origin.");
+  }
+};
+
+const fetchRequestHead = async (git: SimpleGit, parsed: ParsedPrMrUrl, headRef: string): Promise<void> => {
+  await git.fetch("origin");
+  const remoteRef = parsed.provider === "github" ? `pull/${parsed.number}/head:${headRef}` : `merge-requests/${parsed.number}/head:${headRef}`;
+  await git.raw(["fetch", "origin", remoteRef]);
+};
+
 /**
  * Fetches PR/MR head from `origin` and returns the unified diff from the merge base with the base ref to that head.
  * Does not use hosting HTTP APIs — only `git fetch` and `git diff`.
@@ -145,38 +165,12 @@ export async function computePrMrDiffViaFetch(
   }
 
   const git = simpleGit(repoPath);
-  const isRepo = await git.checkIsRepo();
-  if (!isRepo) {
-    throw new Error("Project path is not a git repository.");
-  }
-
-  const originUrl = await resolveOriginRemoteUrl(git);
-  const originRemote = parseGitRemoteToWebBase(originUrl);
-  if (!originRemote) {
-    throw new Error('Could not interpret "origin" as a GitHub or GitLab remote URL.');
-  }
-
-  if (originRemote.provider !== parsed.provider) {
-    throw new Error(`The PR/MR link is for ${parsed.provider}, but "origin" looks like ${originRemote.provider}.`);
-  }
-
-  if (normalizeWebBaseForCompare(originRemote.webBaseUrl) !== normalizeWebBaseForCompare(parsed.expectedWebBase)) {
-    throw new Error(
-      "The PR/MR URL does not match this project’s origin repository. Open the project that owns that URL, or fix origin.",
-    );
-  }
-
+  await validatePrMrOrigin(git, parsed);
   const headRef = `refs/buildwarden/pr-mr-${parsed.provider}-${parsed.number}`;
   let baseRef = "";
 
   try {
-    await git.fetch("origin");
-
-    if (parsed.provider === "github") {
-      await git.raw(["fetch", "origin", `pull/${parsed.number}/head:${headRef}`]);
-    } else {
-      await git.raw(["fetch", "origin", `merge-requests/${parsed.number}/head:${headRef}`]);
-    }
+    await fetchRequestHead(git, parsed, headRef);
 
     baseRef = await resolveBaseRef(git, options.baseBranch);
     const mergeBase = (await git.raw(["merge-base", baseRef, headRef])).trim();

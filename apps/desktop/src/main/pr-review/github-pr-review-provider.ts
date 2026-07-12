@@ -81,6 +81,49 @@ const githubNextPageFromLinkHeader = (linkHeader: string | null): number | null 
   return null;
 };
 
+const loadGithubDetailCollection = async <T>(
+  loader: () => Promise<T[]>,
+  warnings: string[],
+  fallbackWarning: string,
+): Promise<T[]> => {
+  try {
+    return await loader();
+  } catch (error) {
+    warnings.push(error instanceof Error ? error.message : fallbackWarning);
+    return [];
+  }
+};
+
+const appendGithubTimelineActivity = (
+  entries: unknown[],
+  activity: ProjectForgeActivityItem[],
+  commentIds: Set<string>,
+) => {
+  for (const entry of onlyRecords(entries)) {
+    const event = recordString(entry, "event");
+    const id = recordNumber(entry, "id") ?? recordNumber(entry, "node_id");
+    const commentId = recordNumber(entry, "id");
+    if (!event || event === "commented" || event === "reviewed" || (commentId && commentIds.has(String(commentId)))) {
+      continue;
+    }
+    activity.push({
+      id: `github-event-${event}-${String(id ?? activity.length)}`,
+      provider: "github",
+      kind: "event",
+      title: githubActivityTitle(event),
+      body: githubTimelineEventBody(entry),
+      state: event,
+      path: null,
+      line: null,
+      url: recordString(entry, "html_url"),
+      createdAt: recordString(entry, "created_at"),
+      updatedAt: null,
+      author: githubTimelineAuthor(entry),
+      commitSha: event === "committed" ? recordString(entry, "commit_id") : null,
+    });
+  }
+};
+
 const mapGithubRequestSummary = (record: Record<string, unknown>): ProjectForgeRequestSummary | null => {
   const number = recordNumber(record, "number");
   const title = recordString(record, "title");
@@ -466,35 +509,14 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
 
     const pullRequestNodeId = recordString(pullRequest, "node_id");
     const [issueComments, reviews, reviewComments, timeline, commits, files, graphqlReviewThreads] = await Promise.all([
-      this.getPagedArray(`/repos/${owner}/${repo}/issues/${number}/comments?per_page=100`).catch((error) => {
-        warnings.push(error instanceof Error ? error.message : "Could not load pull request comments.");
-        return [];
-      }),
-      this.getPagedArray(`/repos/${owner}/${repo}/pulls/${number}/reviews?per_page=100`).catch((error) => {
-        warnings.push(error instanceof Error ? error.message : "Could not load pull request reviews.");
-        return [];
-      }),
-      this.getPagedArray(`/repos/${owner}/${repo}/pulls/${number}/comments?per_page=100`).catch((error) => {
-        warnings.push(error instanceof Error ? error.message : "Could not load pull request diff comments.");
-        return [];
-      }),
-      this.getPagedArray(`/repos/${owner}/${repo}/issues/${number}/timeline?per_page=100`).catch((error) => {
-        warnings.push(error instanceof Error ? error.message : "Could not load pull request timeline events.");
-        return [];
-      }),
-      this.getPagedArray(`/repos/${owner}/${repo}/pulls/${number}/commits?per_page=100`).catch((error) => {
-        warnings.push(error instanceof Error ? error.message : "Could not load pull request commits.");
-        return [];
-      }),
-      this.getPagedArray(`/repos/${owner}/${repo}/pulls/${number}/files?per_page=100`).catch((error) => {
-        warnings.push(error instanceof Error ? error.message : "Could not load changed files.");
-        return [];
-      }),
+      loadGithubDetailCollection(() => this.getPagedArray(`/repos/${owner}/${repo}/issues/${number}/comments?per_page=100`), warnings, "Could not load pull request comments."),
+      loadGithubDetailCollection(() => this.getPagedArray(`/repos/${owner}/${repo}/pulls/${number}/reviews?per_page=100`), warnings, "Could not load pull request reviews."),
+      loadGithubDetailCollection(() => this.getPagedArray(`/repos/${owner}/${repo}/pulls/${number}/comments?per_page=100`), warnings, "Could not load pull request diff comments."),
+      loadGithubDetailCollection(() => this.getPagedArray(`/repos/${owner}/${repo}/issues/${number}/timeline?per_page=100`), warnings, "Could not load pull request timeline events."),
+      loadGithubDetailCollection(() => this.getPagedArray(`/repos/${owner}/${repo}/pulls/${number}/commits?per_page=100`), warnings, "Could not load pull request commits."),
+      loadGithubDetailCollection(() => this.getPagedArray(`/repos/${owner}/${repo}/pulls/${number}/files?per_page=100`), warnings, "Could not load changed files."),
       pullRequestNodeId
-        ? this.getGraphqlReviewThreads(pullRequestNodeId).catch((error) => {
-            warnings.push(error instanceof Error ? error.message : "Could not load pull request review threads.");
-            return [];
-          })
+        ? loadGithubDetailCollection(() => this.getGraphqlReviewThreads(pullRequestNodeId), warnings, "Could not load pull request review threads.")
         : Promise.resolve([]),
     ]);
 
@@ -569,29 +591,7 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
       reviewThreads.push(...graphqlReviewThreads);
     }
 
-    for (const entry of onlyRecords(timeline)) {
-      const event = recordString(entry, "event");
-      const id = recordNumber(entry, "id") ?? recordNumber(entry, "node_id");
-      const commentId = recordNumber(entry, "id");
-      if (!event || event === "commented" || event === "reviewed" || (commentId && commentIds.has(String(commentId)))) {
-        continue;
-      }
-      activity.push({
-        id: `github-event-${event}-${String(id ?? activity.length)}`,
-        provider: "github",
-        kind: "event",
-        title: githubActivityTitle(event),
-        body: githubTimelineEventBody(entry),
-        state: event,
-        path: null,
-        line: null,
-        url: recordString(entry, "html_url"),
-        createdAt: recordString(entry, "created_at"),
-        updatedAt: null,
-        author: githubTimelineAuthor(entry),
-        commitSha: event === "committed" ? recordString(entry, "commit_id") : null,
-      });
-    }
+    appendGithubTimelineActivity(timeline, activity, commentIds);
 
     const commitSummaries = onlyRecords(commits).map(mapGithubCommitSummary).filter((entry): entry is ProjectForgeCommitSummary => Boolean(entry));
     const fileSummaries = onlyRecords(files).map(mapGithubChangedFileSummary).filter((entry): entry is ProjectForgeChangedFileSummary => Boolean(entry));

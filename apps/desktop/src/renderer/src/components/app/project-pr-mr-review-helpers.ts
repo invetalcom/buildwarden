@@ -70,6 +70,30 @@ const codeLineMatchesThread = (line: ReviewThreadCodeLine, thread: ProjectForgeR
   return line.newLineNumber != null && line.newLineNumber === thread.newLineNumber;
 };
 
+const createChangedReviewLine = (
+  type: "add" | "delete",
+  content: string,
+  index: number,
+  oldLine: number,
+  newLine: number,
+  thread: ProjectForgeReviewThread,
+): ReviewThreadCodeLine => {
+  const isAddition = type === "add";
+  const line: ReviewThreadCodeLine = {
+    key: `${isAddition ? "new" : "old"}-${String(isAddition ? newLine : oldLine)}-${String(index)}`,
+    type,
+    oldLineNumber: isAddition ? null : oldLine,
+    newLineNumber: isAddition ? newLine : null,
+    content,
+    highlighted: false,
+  };
+  line.highlighted = codeLineMatchesThread(line, thread);
+  return line;
+};
+
+const shouldSkipHunkLine = (line: string, oldLine: number, newLine: number): boolean =>
+  (!oldLine && !newLine) || line.startsWith("\\");
+
 const parseHunkLines = (hunkText: string, thread: ProjectForgeReviewThread): ReviewThreadCodeLine[] => {
   const rawLines = hunkText.split(/\r?\n/);
   if (rawLines[rawLines.length - 1] === "" && /\r?\n$/.test(hunkText)) {
@@ -95,41 +119,19 @@ const parseHunkLines = (hunkText: string, thread: ProjectForgeReviewThread): Rev
       continue;
     }
 
-    if (!oldLine && !newLine) {
-      continue;
-    }
-
-    if (line.startsWith("\\")) {
+    if (shouldSkipHunkLine(line, oldLine, newLine)) {
       continue;
     }
 
     const prefix = line[0];
     const content = line.slice(1);
     if (prefix === "+") {
-      const next: ReviewThreadCodeLine = {
-        key: `new-${String(newLine)}-${String(index)}`,
-        type: "add",
-        oldLineNumber: null,
-        newLineNumber: newLine,
-        content,
-        highlighted: false,
-      };
-      next.highlighted = codeLineMatchesThread(next, thread);
-      parsed.push(next);
+      parsed.push(createChangedReviewLine("add", content, index, oldLine, newLine, thread));
       newLine += 1;
       continue;
     }
     if (prefix === "-") {
-      const next: ReviewThreadCodeLine = {
-        key: `old-${String(oldLine)}-${String(index)}`,
-        type: "delete",
-        oldLineNumber: oldLine,
-        newLineNumber: null,
-        content,
-        highlighted: false,
-      };
-      next.highlighted = codeLineMatchesThread(next, thread);
-      parsed.push(next);
+      parsed.push(createChangedReviewLine("delete", content, index, oldLine, newLine, thread));
       oldLine += 1;
       continue;
     }
@@ -166,6 +168,40 @@ const fileSectionMatchesThread = (section: string[], thread: ProjectForgeReviewT
   return pathsMatch(filePath, thread.path) || pathsMatch(oldPath, thread.oldPath ?? thread.path);
 };
 
+const splitDiffHunks = (section: string[]): string[][] => {
+  const hunks: string[][] = [];
+  let current: string[] = [];
+  for (const line of section) {
+    if (line.startsWith("@@ ")) {
+      if (current.length > 0) {
+        hunks.push(current);
+      }
+      current = [line];
+    } else if (current.length > 0) {
+      current.push(line);
+    }
+  }
+  if (current.length > 0) {
+    hunks.push(current);
+  }
+  return hunks;
+};
+
+const findThreadHunkLines = (thread: ProjectForgeReviewThread, sections: string[][]): ReviewThreadCodeLine[] => {
+  for (const section of sections) {
+    if (!fileSectionMatchesThread(section, thread)) {
+      continue;
+    }
+    for (const hunk of splitDiffHunks(section)) {
+      const parsed = parseHunkLines(hunk.join("\n"), thread);
+      if (parsed.some((line) => line.highlighted)) {
+        return parsed;
+      }
+    }
+  }
+  return [];
+};
+
 export const buildReviewThreadCodeLines = (thread: ProjectForgeReviewThread, diffText: string, contextLines = 3): ReviewThreadCodeLine[] => {
   if (thread.diffHunk?.trim()) {
     return trimCodeContext(parseHunkLines(thread.diffHunk, thread), contextLines);
@@ -176,36 +212,7 @@ export const buildReviewThreadCodeLines = (thread: ProjectForgeReviewThread, dif
     .map((section) => section.split(/\r?\n/))
     .filter((section) => section.length > 0);
 
-  for (const section of sections) {
-    if (!fileSectionMatchesThread(section, thread)) {
-      continue;
-    }
-    const hunks: string[][] = [];
-    let current: string[] = [];
-    for (const line of section) {
-      if (line.startsWith("@@ ")) {
-        if (current.length > 0) {
-          hunks.push(current);
-        }
-        current = [line];
-        continue;
-      }
-      if (current.length > 0) {
-        current.push(line);
-      }
-    }
-    if (current.length > 0) {
-      hunks.push(current);
-    }
-    for (const hunk of hunks) {
-      const parsed = parseHunkLines(hunk.join("\n"), thread);
-      if (parsed.some((line) => line.highlighted)) {
-        return trimCodeContext(parsed, contextLines);
-      }
-    }
-  }
-
-  return [];
+  return trimCodeContext(findThreadHunkLines(thread, sections), contextLines);
 };
 
 export const buildRemoteDiffComments = (details: ProjectForgeRequestDetailsResult | null): DiffPreviewManualComment[] => {
@@ -213,7 +220,8 @@ export const buildRemoteDiffComments = (details: ProjectForgeRequestDetailsResul
     const oldPath = thread.oldPath || thread.path;
     const newPath = thread.path;
     const line = thread.side === "old" ? thread.oldLineNumber : thread.newLineNumber;
-    const changeType = thread.oldLineNumber && thread.newLineNumber ? ("normal" as const) : thread.side === "old" ? ("delete" as const) : ("insert" as const);
+    let changeType: "normal" | "delete" | "insert" = thread.side === "old" ? "delete" : "insert";
+    if (thread.oldLineNumber && thread.newLineNumber) changeType = "normal";
     return thread.comments.map((comment) => ({
       id: comment.id,
       oldPath,

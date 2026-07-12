@@ -36,8 +36,17 @@ export default tseslint.config(
   {
     files: ["**/*.test.ts", "**/*.test.tsx"],
     rules: {
+      "max-lines": "off",
       "max-lines-per-function": "off",
       "sonarjs/no-duplicate-string": "off",
     },
+  },
+  {
+    files: ["../../packages/shared/src/integrated-skills-catalog.ts"],
+    rules: { "max-lines": "off" },
+  },
+  {
+    files: ["src/main/provider-ai-sdk.test.ts"],
+    rules: { "sonarjs/no-internal-api-use": "off" },
   },
 );

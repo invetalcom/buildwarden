@@ -38,7 +38,7 @@ const PlanStepIcon = ({ status }: Readonly<{ status: RunPlanStepStatus }>) => {
   return <Circle className="h-2 w-2 fill-current" />;
 };
 
-export function RunPlanSteps({ content }: { content: string }) {
+export function RunPlanSteps({ content }: Readonly<{ content: string }>) {
   const steps = parsePlanSteps(content);
   if (steps.length < 2) {
     return null;

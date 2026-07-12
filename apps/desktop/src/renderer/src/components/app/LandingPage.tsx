@@ -33,6 +33,44 @@ const formatRunDate = (value: string) =>
     minute: "2-digit",
   });
 
+type LandingMetric = {
+  label: string;
+  value: string | number;
+  detail: string;
+  icon: typeof FolderGit2;
+};
+
+const LandingMetrics = ({ metrics }: { metrics: LandingMetric[] }) => (
+  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    {metrics.map((metric) => {
+      const Icon = metric.icon;
+      return (
+        <Card key={metric.label}>
+          <CardHeader className="p-4">
+            <div className="flex items-center justify-between gap-2">
+              <CardDescription className="font-semibold uppercase tracking-[0.22em]">{metric.label}</CardDescription>
+              <Icon className="size-4 text-[var(--ec-accent)]" />
+            </div>
+            <CardTitle className="text-2xl">{metric.value}</CardTitle>
+            <CardDescription>{metric.detail}</CardDescription>
+          </CardHeader>
+        </Card>
+      );
+    })}
+  </div>
+);
+
+const buildTodayActivity = (runs: Array<{ createdAt: string; status: string; inputTokens: number; outputTokens: number }>) => {
+  const today = new Date().toDateString();
+  const todaysRuns = runs.filter((run) => new Date(run.createdAt).toDateString() === today);
+  return {
+    runsStarted: todaysRuns.length,
+    completedRuns: todaysRuns.filter((run) => run.status === "completed").length,
+    activeRuns: todaysRuns.filter((run) => ["queued", "preparing", "running"].includes(run.status)).length,
+    tokensUsed: todaysRuns.reduce((sum, run) => sum + run.inputTokens + run.outputTokens, 0),
+  };
+};
+
 export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRun, onOpenChats, onOpenSettings }: LandingPageProps) => {
   const allRuns = useMemo(
     () =>
@@ -74,19 +112,9 @@ export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRu
   );
 
   const latestRun = recentRuns[0] ?? null;
-  const todayActivity = useMemo(() => {
-    const today = new Date().toDateString();
-    const todaysRuns = allRuns.filter((run) => new Date(run.createdAt).toDateString() === today);
+  const todayActivity = useMemo(() => buildTodayActivity(allRuns), [allRuns]);
 
-    return {
-      runsStarted: todaysRuns.length,
-      completedRuns: todaysRuns.filter((run) => run.status === "completed").length,
-      activeRuns: todaysRuns.filter((run) => ["queued", "preparing", "running"].includes(run.status)).length,
-      tokensUsed: todaysRuns.reduce((sum, run) => sum + run.inputTokens + run.outputTokens, 0),
-    };
-  }, [allRuns]);
-
-  const metrics = [
+  const metrics: LandingMetric[] = [
     {
       label: "Projects",
       value: totals.projects,
@@ -153,23 +181,7 @@ export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRu
           </CardContent>
         </Card>
 
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {metrics.map((metric) => {
-            const Icon = metric.icon;
-            return (
-              <Card key={metric.label}>
-                <CardHeader className="p-4">
-                  <div className="flex items-center justify-between gap-2">
-                    <CardDescription className="font-semibold uppercase tracking-[0.22em]">{metric.label}</CardDescription>
-                    <Icon className="size-4 text-[var(--ec-accent)]" />
-                  </div>
-                  <CardTitle className="text-2xl">{metric.value}</CardTitle>
-                  <CardDescription>{metric.detail}</CardDescription>
-                </CardHeader>
-              </Card>
-            );
-          })}
-        </div>
+        <LandingMetrics metrics={metrics} />
       </section>
 
       <section className="grid gap-3 xl:grid-cols-2">

@@ -370,7 +370,7 @@ const decodeAttachmentText = (attachment: ChatAttachmentPayload): string => {
 const buildAttachmentUserContent = (
   promptText: string,
   attachments: ChatAttachmentPayload[] | undefined,
-): Array<Record<string, unknown>> | string => {
+): Array<Record<string, unknown>> => {
   const textParts: string[] = [];
   const trimmedPrompt = promptText.trim();
   if (trimmedPrompt) {
@@ -411,9 +411,6 @@ const buildAttachmentUserContent = (
   }
 
   const combined = textParts.join("").trim() || (attachments?.length ? "The user attached files. Use them to answer the request." : "");
-  if (parts.length === 0) {
-    return combined;
-  }
   if (combined) {
     parts.unshift({ type: "text", text: combined });
   }
@@ -552,6 +549,37 @@ const supportsOpenAiReasoningSummary = (modelId: string): boolean => {
   return normalized.startsWith("gpt-5") || normalized.startsWith("o1") || normalized.startsWith("o3") || normalized.startsWith("o4");
 };
 
+const buildOpenAiProviderOptions = (
+  modelId: string,
+  requestProviderOptions: { reasoningEffort?: string } | undefined,
+  modelConfig: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined => {
+  let reasoningEffort = typeof modelConfig?.[MODEL_CONFIG_OPENAI_REASONING_EFFORT_KEY] === "string"
+    ? String(modelConfig[MODEL_CONFIG_OPENAI_REASONING_EFFORT_KEY]).trim()
+    : "";
+  if (typeof requestProviderOptions?.reasoningEffort === "string" && requestProviderOptions.reasoningEffort.trim()) {
+    reasoningEffort = requestProviderOptions.reasoningEffort.trim();
+  }
+  const reasoningSummary = supportsOpenAiReasoningSummary(modelId);
+  if (!reasoningEffort && !reasoningSummary) {
+    return undefined;
+  }
+  return { openai: { ...(reasoningEffort ? { reasoningEffort } : {}), ...(reasoningSummary ? { reasoningSummary: "auto" } : {}) } };
+};
+
+const buildAnthropicProviderOptions = (
+  requestProviderOptions: { anthropicEffort?: string } | undefined,
+  modelConfig: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined => {
+  let effort = typeof modelConfig?.[MODEL_CONFIG_ANTHROPIC_EFFORT_KEY] === "string"
+    ? String(modelConfig[MODEL_CONFIG_ANTHROPIC_EFFORT_KEY]).trim()
+    : "";
+  if (typeof requestProviderOptions?.anthropicEffort === "string" && requestProviderOptions.anthropicEffort.trim()) {
+    effort = requestProviderOptions.anthropicEffort.trim();
+  }
+  return effort ? { anthropic: { effort } } : undefined;
+};
+
 const buildAiSdkProviderOptions = (
   family: UnifiedProviderFamily,
   modelId: string,
@@ -563,42 +591,11 @@ const buildAiSdkProviderOptions = (
   }
 
   if (family === "openai") {
-    const reasoningEffort = typeof requestProviderOptions?.reasoningEffort === "string" && requestProviderOptions.reasoningEffort.trim()
-      ? requestProviderOptions.reasoningEffort.trim()
-      : typeof modelConfig?.[MODEL_CONFIG_OPENAI_REASONING_EFFORT_KEY] === "string"
-        ? String(modelConfig[MODEL_CONFIG_OPENAI_REASONING_EFFORT_KEY]).trim()
-      : "";
-    if (reasoningEffort) {
-      return {
-        openai: {
-          reasoningEffort,
-          ...(supportsOpenAiReasoningSummary(modelId) ? { reasoningSummary: "auto" } : {}),
-        },
-      };
-    }
-    if (supportsOpenAiReasoningSummary(modelId)) {
-      return {
-        openai: {
-          reasoningSummary: "auto",
-        },
-      };
-    }
-    return undefined;
+    return buildOpenAiProviderOptions(modelId, requestProviderOptions, modelConfig);
   }
 
   if (family === "anthropic") {
-    const effort = typeof requestProviderOptions?.anthropicEffort === "string" && requestProviderOptions.anthropicEffort.trim()
-      ? requestProviderOptions.anthropicEffort.trim()
-      : typeof modelConfig?.[MODEL_CONFIG_ANTHROPIC_EFFORT_KEY] === "string"
-        ? String(modelConfig[MODEL_CONFIG_ANTHROPIC_EFFORT_KEY]).trim()
-      : "";
-    if (effort) {
-      return {
-        anthropic: {
-          effort,
-        },
-      };
-    }
+    return buildAnthropicProviderOptions(requestProviderOptions, modelConfig);
   }
 
   return undefined;
@@ -642,11 +639,12 @@ const createConfiguredOpenAiProvider = (
   const headers = getDefaultHeaders(input.config);
   const customFetch = createProxyAwareFetch(input.networkProxy);
   const loggedFetch = devLogger?.createLoggedFetch(customFetch ?? fetch);
+  const selectedFetch = loggedFetch ?? customFetch;
   const commonOptions = {
     apiKey: input.apiKey,
     ...(baseURL ? { baseURL } : {}),
     ...(headers ? { headers } : {}),
-    ...(loggedFetch ? { fetch: loggedFetch } : customFetch ? { fetch: customFetch } : {}),
+    ...(selectedFetch ? { fetch: selectedFetch } : {}),
   } satisfies OpenAIProviderSettings;
 
   return createOpenAI(commonOptions);
@@ -658,6 +656,7 @@ const createLanguageModel = (input: RunExecutionRequest, devLogger?: { createLog
   const headers = getDefaultHeaders(input.config);
   const customFetch = createProxyAwareFetch(input.networkProxy);
   const loggedFetch = devLogger?.createLoggedFetch(customFetch ?? fetch);
+  const selectedFetch = loggedFetch ?? customFetch;
 
   if (family === "openai-compatible") {
     if (!baseURL) {
@@ -668,7 +667,7 @@ const createLanguageModel = (input: RunExecutionRequest, devLogger?: { createLog
       baseURL: baseURL,
       apiKey: input.apiKey || "none",
       headers,
-      ...(loggedFetch ? { fetch: loggedFetch } : customFetch ? { fetch: customFetch } : {}),
+      ...(selectedFetch ? { fetch: selectedFetch } : {}),
     });
     return provider(input.modelId);
   }
@@ -681,7 +680,7 @@ const createLanguageModel = (input: RunExecutionRequest, devLogger?: { createLog
     apiKey: input.apiKey,
     ...(baseURL ? { baseURL } : {}),
     ...(headers ? { headers } : {}),
-    ...(loggedFetch ? { fetch: loggedFetch } : customFetch ? { fetch: customFetch } : {}),
+    ...(selectedFetch ? { fetch: selectedFetch } : {}),
   } as Record<string, unknown>;
 
   if (family === "openai") {
@@ -737,44 +736,57 @@ const rememberOpenAiContainerFileReference = (
   references.set(`${reference.containerId}:${reference.fileId}`, reference);
 };
 
+const collectTextContainerFileReferences = (
+  providerMetadata: Record<string, unknown>,
+  references: Map<string, OpenAiContainerFileReference>,
+): void => {
+  const metadata = providerMetadata as OpenaiResponsesTextProviderMetadata;
+  for (const annotation of metadata.openai.annotations ?? []) {
+    if (annotation.type !== "container_file_citation") continue;
+    const raw = annotation as unknown as Record<string, unknown>;
+    rememberOpenAiContainerFileReference(references, {
+      containerId: stringField(raw, "container_id") ?? "",
+      fileId: stringField(raw, "file_id") ?? "",
+      filename: stringField(raw, "filename"),
+    });
+  }
+};
+
+const collectSourceContainerFileReference = (
+  part: Record<string, unknown>,
+  providerMetadata: Record<string, unknown>,
+  references: Map<string, OpenAiContainerFileReference>,
+): void => {
+  const annotation = (providerMetadata as OpenaiResponsesSourceDocumentProviderMetadata).openai;
+  if (annotation.type !== "container_file_citation") return;
+  let filename: string | undefined;
+  if (typeof part.filename === "string") filename = part.filename;
+  else if (typeof part.title === "string") filename = part.title;
+  rememberOpenAiContainerFileReference(references, {
+    containerId: annotation.containerId,
+    fileId: annotation.fileId,
+    filename,
+    mediaType: typeof part.mediaType === "string" ? part.mediaType : undefined,
+  });
+};
+
 const collectOpenAiContainerFileReferences = (
   part: Record<string, unknown>,
   references: Map<string, OpenAiContainerFileReference>,
 ): void => {
   const providerMetadata = isRecord(part.providerMetadata) ? part.providerMetadata : undefined;
   const openaiMetadata = providerMetadata && isRecord(providerMetadata.openai) ? providerMetadata.openai : undefined;
-  if (!openaiMetadata) {
+  if (!providerMetadata || !openaiMetadata) {
     return;
   }
 
   if (part.type === "text") {
-    const metadata = providerMetadata as OpenaiResponsesTextProviderMetadata;
-    for (const annotation of metadata.openai.annotations ?? []) {
-      if (annotation.type !== "container_file_citation") {
-        continue;
-      }
-      const raw = annotation as unknown as Record<string, unknown>;
-      rememberOpenAiContainerFileReference(references, {
-        containerId: stringField(raw, "container_id") ?? "",
-        fileId: stringField(raw, "file_id") ?? "",
-        filename: stringField(raw, "filename"),
-      });
-    }
+    collectTextContainerFileReferences(providerMetadata, references);
     return;
   }
 
   if (part.type === "source" && part.sourceType === "document") {
-    const metadata = providerMetadata as OpenaiResponsesSourceDocumentProviderMetadata;
-    const annotation = metadata.openai;
-    if (annotation.type !== "container_file_citation") {
-      return;
-    }
-    rememberOpenAiContainerFileReference(references, {
-      containerId: annotation.containerId,
-      fileId: annotation.fileId,
-      filename: typeof part.filename === "string" ? part.filename : typeof part.title === "string" ? part.title : undefined,
-      mediaType: typeof part.mediaType === "string" ? part.mediaType : undefined,
-    });
+    collectSourceContainerFileReference(part, providerMetadata, references);
   }
 };
 
@@ -1056,12 +1068,8 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
           }
         : undefined;
     const checkpointMessages = Array.isArray(input.resumeCheckpoint?.messages) ? [...input.resumeCheckpoint.messages] : [];
-    const startingMessages =
-      checkpointMessages.length > 0
-        ? checkpointMessages
-        : isChat
-          ? []
-          : buildRunMessages(input);
+    let startingMessages = isChat ? [] : buildRunMessages(input);
+    if (checkpointMessages.length > 0) startingMessages = checkpointMessages;
 
     if (isChat) {
       startingMessages.push({
@@ -1261,6 +1269,8 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
     const { instructions: promptInstructions, messages: promptMessages } = splitSystemMessagesIntoInstructions(
       startingMessages as Array<Record<string, unknown>>,
     );
+    let maxSteps: number = MODE_POLICIES[input.mode].maxToolRounds;
+    if (isChat) maxSteps = openAiChatTools ? 6 : 1;
     const result = await withProviderRetry(isChat ? "chat request" : "agent run", signal, onChunk, () =>
       streamText({
         model,
@@ -1268,7 +1278,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
         messages: promptMessages as never,
         tools,
         ...(providerOptions ? { providerOptions: providerOptions as never } : {}),
-        stopWhen: stepCountIs(isChat ? (openAiChatTools ? 6 : 1) : MODE_POLICIES[input.mode].maxToolRounds),
+        stopWhen: stepCountIs(maxSteps),
         abortSignal: signal,
         onStepEnd: async (stepResult) => {
           accumulatedUsage = addUsage(accumulatedUsage, normalizeAiSdkTokenUsage(stepResult.usage));
@@ -1358,12 +1368,8 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
 
       if (part.type === "text-delta" || part.type === "text") {
         resetReasoningSegment();
-        const delta =
-          typeof part.textDelta === "string"
-            ? part.textDelta
-            : typeof part.text === "string"
-              ? part.text
-              : "";
+        let delta = typeof part.text === "string" ? part.text : "";
+        if (typeof part.textDelta === "string") delta = part.textDelta;
         if (!delta) {
           continue;
         }
@@ -1382,12 +1388,8 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
       }
 
       if (part.type === "reasoning" || part.type === "reasoning-delta") {
-        const reasoningChunk =
-          typeof part.textDelta === "string"
-            ? part.textDelta
-            : typeof part.text === "string"
-              ? part.text
-              : "";
+        let reasoningChunk = typeof part.text === "string" ? part.text : "";
+        if (typeof part.textDelta === "string") reasoningChunk = part.textDelta;
         if (!reasoningChunk) {
           continue;
         }
@@ -1531,9 +1533,10 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
       );
     }
 
+    const generatedFileNoun = generatedFileAttachments.length === 1 ? "file" : "files";
     const generatedFileSummary =
       generatedFileAttachments.length > 0
-        ? `Generated ${String(generatedFileAttachments.length)} file${generatedFileAttachments.length === 1 ? "" : "s"}.`
+        ? `Generated ${String(generatedFileAttachments.length)} ${generatedFileNoun}.`
         : "";
     const summary = streamedText.trim() || finalText || generatedFileSummary || "No output returned from the provider.";
 

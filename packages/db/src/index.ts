@@ -73,6 +73,35 @@ const chunkValues = <T>(values: readonly T[], size = SQLITE_VARIABLE_BATCH_SIZE)
   return chunks;
 };
 
+type DerivedRunState = {
+  parts: Set<string>;
+  lastUserInputAt: string;
+  pendingUserInputRequest: boolean;
+};
+
+const createDerivedRunState = (run: RunRecord): DerivedRunState => {
+  const parts = new Set<string>();
+  if (run.prompt.trim()) parts.add(run.prompt.trim());
+  if (run.goalText?.trim()) parts.add(run.goalText.trim());
+  return { parts, lastUserInputAt: run.createdAt, pendingUserInputRequest: false };
+};
+
+const applyDerivedRunStep = (
+  derived: DerivedRunState,
+  step: { eventType: string; content: string; createdAt: string },
+  metadata: Record<string, unknown> | null,
+): void => {
+  const isUserInputRequest = metadata?.requestKind === "user-input";
+  if (step.eventType === "user-input-requested" && isUserInputRequest && metadata.requestStatus === "opened") {
+    derived.pendingUserInputRequest = true;
+  }
+  const isSubmittedUserInput = isUserInputRequest && metadata?.requestStatus === "resolved";
+  if ((metadata?.source === "user" || isSubmittedUserInput) && step.content.trim()) {
+    derived.parts.add(step.content.trim());
+    derived.lastUserInputAt = step.createdAt;
+  }
+};
+
 export class BuildWardenDatabase {
   private sql: SqlJsStatic | null = null;
   private db: Database | null = null;
@@ -222,8 +251,8 @@ export class BuildWardenDatabase {
     const steps = this.getRunSteps(runId);
     const bookmarkId = createId();
     const bookmarkedAt = nowIso();
-    const branchName =
-      run.workspaceVcs === "folder" ? (run.workspaceType === "copy" ? "Folder copy" : "Project folder") : run.branchName;
+    let branchName = run.branchName;
+    if (run.workspaceVcs === "folder") branchName = run.workspaceType === "copy" ? "Folder copy" : "Project folder";
 
     this.run(
       `
@@ -1153,6 +1182,7 @@ export class BuildWardenDatabase {
     },
   ): ProjectLoopIterationRecord {
     const existing = this.getProjectLoopIteration(iterationId);
+    const aiReviewPosted = fields.aiReviewPosted === undefined ? existing.aiReviewPosted : Number(fields.aiReviewPosted);
     this.run(
       `
       update project_loop_iterations
@@ -1170,7 +1200,7 @@ export class BuildWardenDatabase {
         fields.prNumber !== undefined ? fields.prNumber : existing.prNumber,
         fields.targetBranch !== undefined ? fields.targetBranch : existing.targetBranch,
         fields.errorMessage !== undefined ? fields.errorMessage : existing.errorMessage,
-        fields.aiReviewPosted !== undefined ? (fields.aiReviewPosted ? 1 : 0) : existing.aiReviewPosted,
+        aiReviewPosted,
         fields.processedCommentIdsJson ?? existing.processedCommentIdsJson,
         nowIso(),
         iterationId,
@@ -1842,27 +1872,9 @@ export class BuildWardenDatabase {
       return [];
     }
 
-    const derivedByRunId = new Map<
-      string,
-      {
-        parts: Set<string>;
-        lastUserInputAt: string;
-        pendingUserInputRequest: boolean;
-      }
-    >();
+    const derivedByRunId = new Map<string, DerivedRunState>();
     for (const run of runs) {
-      const parts = new Set<string>();
-      if (run.prompt.trim()) {
-        parts.add(run.prompt.trim());
-      }
-      if (run.goalText?.trim()) {
-        parts.add(run.goalText.trim());
-      }
-      derivedByRunId.set(run.id, {
-        parts,
-        lastUserInputAt: run.createdAt,
-        pendingUserInputRequest: false,
-      });
+      derivedByRunId.set(run.id, createDerivedRunState(run));
     }
 
     const runIds = runs.map((run) => run.id);
@@ -1895,18 +1907,7 @@ export class BuildWardenDatabase {
           continue;
         }
 
-        const metadata = this.parseJsonObject(step.metadataJson);
-        const isUserInputRequest = metadata?.requestKind === "user-input";
-        if (step.eventType === "user-input-requested" && isUserInputRequest && metadata.requestStatus === "opened") {
-          derived.pendingUserInputRequest = true;
-        }
-
-        const isUserCommand = metadata?.source === "user";
-        const isSubmittedUserInput = isUserInputRequest && metadata.requestStatus === "resolved";
-        if ((isUserCommand || isSubmittedUserInput) && step.content.trim()) {
-          derived.parts.add(step.content.trim());
-          derived.lastUserInputAt = step.createdAt;
-        }
+        applyDerivedRunStep(derived, step, this.parseJsonObject(step.metadataJson));
       }
     }
 

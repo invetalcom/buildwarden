@@ -428,6 +428,23 @@ export class ProjectLoopRunner {
     return this.deps.db.listProjectLoopUiReviews(loopId).some((review) => review.status === "pending");
   }
 
+  private handleLoopFailure(loopId: string, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    this.deps.logError("Project loop failed.", error, { loopId });
+    try {
+      const loop = this.deps.db.getProjectLoop(loopId);
+      if (!isActiveProjectLoopStatus(loop.status)) return;
+      this.deps.db.updateProjectLoop(loopId, {
+        status: "failed",
+        errorMessage: message,
+        finishedAt: new Date().toISOString(),
+      });
+      this.appendEvent(loop, "system", "Loop failed", message);
+    } catch {
+      /* the loop may have been deleted while failing */
+    }
+  }
+
   private async driveLoop(loopId: string): Promise<void> {
     const state = this.state(loopId);
     if (state.driverActive) {
@@ -466,21 +483,7 @@ export class ProjectLoopRunner {
       if (error instanceof LoopCancelledError) {
         return;
       }
-      const message = error instanceof Error ? error.message : String(error);
-      this.deps.logError("Project loop failed.", error, { loopId });
-      try {
-        const loop = this.deps.db.getProjectLoop(loopId);
-        if (isActiveProjectLoopStatus(loop.status)) {
-          this.deps.db.updateProjectLoop(loopId, {
-            status: "failed",
-            errorMessage: message,
-            finishedAt: new Date().toISOString(),
-          });
-          this.appendEvent(loop, "system", "Loop failed", message);
-        }
-      } catch {
-        /* the loop may have been deleted while failing */
-      }
+      this.handleLoopFailure(loopId, error);
     } finally {
       state.driverActive = false;
     }
@@ -1310,13 +1313,17 @@ export class ProjectLoopRunner {
         });
       }
 
+      const inlineCommentNoun = postedInline === 1 ? "comment" : "comments";
+      const postedInlineSummary = postedInline > 0
+        ? `${String(postedInline)} inline ${inlineCommentNoun} posted on the diff.`
+        : null;
       this.appendEvent(
         loop,
         "forge",
         `AI PR review posted (${String(review.findings.length)} finding${review.findings.length === 1 ? "" : "s"})`,
         [
           review.summary,
-          postedInline > 0 ? `${String(postedInline)} inline comment${postedInline === 1 ? "" : "s"} posted on the diff.` : null,
+          postedInlineSummary,
           leftoverFindings.length > 0 ? `${String(leftoverFindings.length)} finding(s) posted as a PR comment.` : null,
           "The loop now addresses these findings like regular review comments.",
         ]

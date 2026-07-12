@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { RunActivityTimeline, buildActivityEntries, buildTimelineRenderItems, deriveRunSubagents, isOpenableToolPath, type RunActivityStep } from "./RunActivityTimeline";
+import { RunActivityTimeline } from "./RunActivityTimeline";
+import { buildActivityEntries, buildTimelineRenderItems, deriveRunSubagents, type RunActivityStep } from "./run-activity-model";
+import { isOpenableToolPath } from "./run-activity-tool-model";
 
 const step = (
   id: string,

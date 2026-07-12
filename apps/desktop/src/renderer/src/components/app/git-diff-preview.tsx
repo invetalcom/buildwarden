@@ -98,26 +98,39 @@ type DiffLineInfo = {
   changeType: "normal" | "insert" | "delete";
 };
 
+const lineFallsWithin = (lineNumber: number, start: number, length: number) =>
+  lineNumber >= start && lineNumber < start + length;
+
+const getDiffLineInfoFromHunk = (
+  hunk: Hunk,
+  side: "old" | "new",
+  lineNumber: number,
+): DiffLineInfo | null => {
+  for (const content of hunk.hunkContent) {
+    const oldStart = hunk.deletionStart + content.deletionLineIndex - hunk.deletionLineIndex;
+    const newStart = hunk.additionStart + content.additionLineIndex - hunk.additionLineIndex;
+    if (content.type === "context") {
+      const start = side === "old" ? oldStart : newStart;
+      if (lineFallsWithin(lineNumber, start, content.lines)) {
+        const offset = lineNumber - start;
+        return { side, oldLineNumber: oldStart + offset, newLineNumber: newStart + offset, changeType: "normal" };
+      }
+      continue;
+    }
+    if (side === "old" && lineFallsWithin(lineNumber, oldStart, content.deletions)) {
+      return { side, oldLineNumber: lineNumber, newLineNumber: null, changeType: "delete" };
+    }
+    if (side === "new" && lineFallsWithin(lineNumber, newStart, content.additions)) {
+      return { side, oldLineNumber: null, newLineNumber: lineNumber, changeType: "insert" };
+    }
+  }
+  return null;
+};
+
 const getDiffLineInfo = (file: FileDiffMetadata, side: "old" | "new", lineNumber: number): DiffLineInfo | null => {
   for (const hunk of file.hunks) {
-    for (const content of hunk.hunkContent) {
-      const oldStart = hunk.deletionStart + content.deletionLineIndex - hunk.deletionLineIndex;
-      const newStart = hunk.additionStart + content.additionLineIndex - hunk.additionLineIndex;
-      if (content.type === "context") {
-        const start = side === "old" ? oldStart : newStart;
-        if (lineNumber >= start && lineNumber < start + content.lines) {
-          const offset = lineNumber - start;
-          return { side, oldLineNumber: oldStart + offset, newLineNumber: newStart + offset, changeType: "normal" };
-        }
-        continue;
-      }
-      if (side === "old" && lineNumber >= oldStart && lineNumber < oldStart + content.deletions) {
-        return { side, oldLineNumber: lineNumber, newLineNumber: null, changeType: "delete" };
-      }
-      if (side === "new" && lineNumber >= newStart && lineNumber < newStart + content.additions) {
-        return { side, oldLineNumber: null, newLineNumber: lineNumber, changeType: "insert" };
-      }
-    }
+    const info = getDiffLineInfoFromHunk(hunk, side, lineNumber);
+    if (info) return info;
   }
   return null;
 };
@@ -136,6 +149,9 @@ const buildDiffLineCommentTarget = (
     return null;
   }
   const displayPath = formatDiffPath(file);
+  let changeKeyPrefix = "N";
+  if (info.changeType === "insert") changeKeyPrefix = "I";
+  if (info.changeType === "delete") changeKeyPrefix = "D";
   return {
     oldPath,
     newPath,
@@ -144,7 +160,7 @@ const buildDiffLineCommentTarget = (
     newLineNumber: info.newLineNumber,
     changeType: info.changeType,
     displayPath,
-    changeKey: `${info.changeType === "insert" ? "I" : info.changeType === "delete" ? "D" : "N"}${String(lineNumber)}`,
+    changeKey: `${changeKeyPrefix}${String(lineNumber)}`,
     lineLabel: `${displayPath}:${String(lineNumber)} ${info.side}`,
   };
 };
@@ -389,6 +405,18 @@ type DiffFileSectionProps = {
   onDraftReviewFinding?: (target: DiffLineCommentTarget, finding: RunDiffReviewFinding, findingKey: string) => void;
 };
 
+const appendContextLineInfos = (infos: DiffLineInfo[], oldStart: number, newStart: number, lines: number): void => {
+  for (let offset = 0; offset < lines; offset += 1) {
+    infos.push({ side: "old", oldLineNumber: oldStart + offset, newLineNumber: newStart + offset, changeType: "normal" });
+    infos.push({ side: "new", oldLineNumber: oldStart + offset, newLineNumber: newStart + offset, changeType: "normal" });
+  }
+};
+
+const appendChangedLineInfos = (infos: DiffLineInfo[], oldStart: number, newStart: number, deletions: number, additions: number): void => {
+  for (let offset = 0; offset < deletions; offset += 1) infos.push({ side: "old", oldLineNumber: oldStart + offset, newLineNumber: null, changeType: "delete" });
+  for (let offset = 0; offset < additions; offset += 1) infos.push({ side: "new", oldLineNumber: null, newLineNumber: newStart + offset, changeType: "insert" });
+};
+
 const listDiffLineInfos = (file: FileDiffMetadata): DiffLineInfo[] => {
   const infos: DiffLineInfo[] = [];
   for (const hunk of file.hunks) {
@@ -396,18 +424,10 @@ const listDiffLineInfos = (file: FileDiffMetadata): DiffLineInfo[] => {
       const oldStart = hunk.deletionStart + content.deletionLineIndex - hunk.deletionLineIndex;
       const newStart = hunk.additionStart + content.additionLineIndex - hunk.additionLineIndex;
       if (content.type === "context") {
-        for (let offset = 0; offset < content.lines; offset += 1) {
-          infos.push({ side: "old", oldLineNumber: oldStart + offset, newLineNumber: newStart + offset, changeType: "normal" });
-          infos.push({ side: "new", oldLineNumber: oldStart + offset, newLineNumber: newStart + offset, changeType: "normal" });
-        }
+        appendContextLineInfos(infos, oldStart, newStart, content.lines);
         continue;
       }
-      for (let offset = 0; offset < content.deletions; offset += 1) {
-        infos.push({ side: "old", oldLineNumber: oldStart + offset, newLineNumber: null, changeType: "delete" });
-      }
-      for (let offset = 0; offset < content.additions; offset += 1) {
-        infos.push({ side: "new", oldLineNumber: null, newLineNumber: newStart + offset, changeType: "insert" });
-      }
+      appendChangedLineInfos(infos, oldStart, newStart, content.deletions, content.additions);
     }
   }
   return infos;
@@ -630,12 +650,12 @@ const DiffFileSection = memo(function DiffFileSection({
     );
   };
 
-  const renderFileHeader = (): ReactNode => {
+  const FileHeader = () => {
     if (alwaysExpandedFileSections) {
-      return null;
+      return <></>;
     }
     if (hideFileHeader) {
-      return renderCollapseToggleHeader();
+      return <>{renderCollapseToggleHeader()}</>;
     }
     return (
       <div className="sticky top-0 z-10 flex w-full items-center justify-between gap-2 border-b border-zinc-800 bg-zinc-900/95 px-3 py-1.5 text-left backdrop-blur-sm">
@@ -676,7 +696,7 @@ const DiffFileSection = memo(function DiffFileSection({
 
   return (
     <div className={cn("border-b border-zinc-800", isLastFile && "border-b-0")}>
-      {renderFileHeader()}
+      <FileHeader />
       {!isCollapsed ? (
         <>
           <FileDiff<DiffAnnotationMetadata>

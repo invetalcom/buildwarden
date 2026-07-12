@@ -162,6 +162,24 @@ const makePatch = (relativePath: string, oldText: string, newText: string): stri
   return patch.trim();
 };
 
+const diffBaselineEntry = async (entry: SnapshotEntry, current: CurrentFile | undefined, snapshotPath: string): Promise<string | null> => {
+  if (!current) {
+    if (entry.kind !== "text" || !entry.textSnapshotPath) return `# Deleted ${entry.kind} file: ${entry.path}`;
+    const oldText = await readFile(join(snapshotPath, entry.textSnapshotPath), "utf8");
+    return makePatch(entry.path, oldText, "") || null;
+  }
+  if (entry.kind === "text" && current.kind === "text" && entry.textSnapshotPath && entry.hash !== current.hash) {
+    const oldText = await readFile(join(snapshotPath, entry.textSnapshotPath), "utf8");
+    return makePatch(entry.path, oldText, current.text ?? "") || null;
+  }
+  return hasNonTextChange(entry, current) ? `# Changed ${current.kind} file: ${entry.path}` : null;
+};
+
+const diffCreatedFile = (current: CurrentFile): string => {
+  if (current.kind === "text") return makePatch(current.path, "", current.text ?? "");
+  return `# Created ${current.kind} file: ${current.path}`;
+};
+
 export const diffFolderAgainstSnapshot = async (input: {
   runId: string;
   workspacePath: string;
@@ -176,42 +194,19 @@ export const diffFolderAgainstSnapshot = async (input: {
   const currentByPath = new Map(currentFiles.map((file) => [file.path, file]));
   const baselineByPath = new Map(manifest.entries.map((entry) => [entry.path, entry]));
   const chunks: string[] = [];
+  const snapshotPath = snapshotDir(input.snapshotsRoot, input.runId);
 
   for (const entry of manifest.entries) {
-    const current = currentByPath.get(entry.path);
-    if (!current) {
-      if (entry.kind === "text" && entry.textSnapshotPath) {
-        const oldText = await readFile(join(snapshotDir(input.snapshotsRoot, input.runId), entry.textSnapshotPath), "utf8");
-        const patch = makePatch(entry.path, oldText, "");
-        if (patch) chunks.push(patch);
-      } else {
-        chunks.push(`# Deleted ${entry.kind} file: ${entry.path}`);
-      }
-      continue;
-    }
-
-    if (entry.kind === "text" && current.kind === "text" && entry.textSnapshotPath && entry.hash !== current.hash) {
-      const oldText = await readFile(join(snapshotDir(input.snapshotsRoot, input.runId), entry.textSnapshotPath), "utf8");
-      const patch = makePatch(entry.path, oldText, current.text ?? "");
-      if (patch) chunks.push(patch);
-      continue;
-    }
-
-    if (hasNonTextChange(entry, current)) {
-      chunks.push(`# Changed ${current.kind} file: ${entry.path}`);
-    }
+    const chunk = await diffBaselineEntry(entry, currentByPath.get(entry.path), snapshotPath);
+    if (chunk) chunks.push(chunk);
   }
 
   for (const current of currentFiles) {
     if (baselineByPath.has(current.path)) {
       continue;
     }
-    if (current.kind === "text") {
-      const patch = makePatch(current.path, "", current.text ?? "");
-      if (patch) chunks.push(patch);
-    } else {
-      chunks.push(`# Created ${current.kind} file: ${current.path}`);
-    }
+    const chunk = diffCreatedFile(current);
+    if (chunk) chunks.push(chunk);
   }
 
   return { diff: chunks.filter(Boolean).join("\n\n"), missingSnapshot: false };

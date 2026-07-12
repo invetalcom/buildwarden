@@ -45,6 +45,14 @@ const MAX_WRITE_FILE_DIFF_CHARS = 100_000;
 const CODEX_SANDBOX_MODE = process.platform === "win32" ? "danger-full-access" : "workspace-write";
 const CODEX_APPROVAL_POLICY = "on-request";
 const CODEX_YOLO_SANDBOX_MODE = "danger-full-access";
+const CODEX_CHILD_ACTIVITY_NOTIFICATIONS = new Set([
+  "item/agentMessage/delta",
+  "item/reasoning/summaryTextDelta",
+  "item/commandExecution/outputDelta",
+  "item/fileChange/outputDelta",
+  "item/started",
+  "item/completed",
+]);
 const CODEX_YOLO_APPROVAL_POLICY = "never";
 const CODEX_YOLO_FLAG = "--dangerously-bypass-approvals-and-sandbox";
 
@@ -305,6 +313,25 @@ const toPosix = (value: string): string => value.replaceAll("\\", "/");
 const normalizeTextForDiff = (value: string): string =>
   value.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 
+const prefixedDiffLines = (content: string, prefix: "+" | "-"): string =>
+  content.split("\n").map((line) => `${prefix}${line}\n`).join("");
+
+const buildCreatedFileDiff = (path: string, content: string): string => {
+  const lineCount = content.split("\n").length;
+  return `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1,${lineCount} @@\n${prefixedDiffLines(content, "+")}`;
+};
+
+const buildDeletedFileDiff = (path: string, content: string): string => {
+  const lineCount = content.split("\n").length;
+  return `diff --git a/${path} b/${path}\ndeleted file mode 100644\n--- a/${path}\n+++ /dev/null\n@@ -1,${lineCount} +0,0 @@\n${prefixedDiffLines(content, "-")}`;
+};
+
+const buildModifiedFileDiff = (path: string, oldContent: string, newContent: string): string => {
+  const oldCount = oldContent.split("\n").length;
+  const newCount = newContent.split("\n").length;
+  return `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1,${oldCount} +1,${newCount} @@\n${prefixedDiffLines(oldContent, "-")}${prefixedDiffLines(newContent, "+")}`;
+};
+
 const buildWriteFileUnifiedDiff = (
   posixPath: string,
   oldContent: string | null,
@@ -318,43 +345,15 @@ const buildWriteFileUnifiedDiff = (
     return null;
   }
 
-  let diff: string;
+  let diff: string | null = null;
   if (normalizedOld === null && normalizedNew !== null) {
-    const newLines = normalizedNew.split("\n");
-    diff = `diff --git a/${path} b/${path}\n`;
-    diff += "new file mode 100644\n";
-    diff += "--- /dev/null\n";
-    diff += `+++ b/${path}\n`;
-    diff += `@@ -0,0 +1,${newLines.length} @@\n`;
-    for (const line of newLines) {
-      diff += `+${line}\n`;
-    }
+    diff = buildCreatedFileDiff(path, normalizedNew);
   } else if (normalizedOld !== null && normalizedNew === null) {
-    const oldLines = normalizedOld.split("\n");
-    diff = `diff --git a/${path} b/${path}\n`;
-    diff += "deleted file mode 100644\n";
-    diff += `--- a/${path}\n`;
-    diff += "+++ /dev/null\n";
-    diff += `@@ -1,${oldLines.length} +0,0 @@\n`;
-    for (const line of oldLines) {
-      diff += `-${line}\n`;
-    }
+    diff = buildDeletedFileDiff(path, normalizedOld);
   } else if (normalizedOld !== null && normalizedNew !== null) {
-    const oldLines = normalizedOld.split("\n");
-    const newLines = normalizedNew.split("\n");
-    diff = `diff --git a/${path} b/${path}\n`;
-    diff += `--- a/${path}\n`;
-    diff += `+++ b/${path}\n`;
-    diff += `@@ -1,${oldLines.length} +1,${newLines.length} @@\n`;
-    for (const line of oldLines) {
-      diff += `-${line}\n`;
-    }
-    for (const line of newLines) {
-      diff += `+${line}\n`;
-    }
-  } else {
-    return null;
+    diff = buildModifiedFileDiff(path, normalizedOld, normalizedNew);
   }
+  if (!diff) return null;
 
   if (diff.length > MAX_WRITE_FILE_DIFF_CHARS) {
     return `${diff.slice(0, MAX_WRITE_FILE_DIFF_CHARS)}\n# ... diff truncated for display\n`;
@@ -396,12 +395,19 @@ const normalizePathCandidate = (cwd: string, value: string): string | null => {
   return toPosix(rel);
 };
 
+const addPathCandidate = (cwd: string, value: string, seen: Set<string>): void => {
+  const normalized = normalizePathCandidate(cwd, value);
+  if (normalized) seen.add(normalized);
+};
+
+const isPathLikeKey = (key: string): boolean => {
+  const normalized = key.toLowerCase();
+  return normalized === "path" || normalized.endsWith("path") || normalized === "file" || normalized === "filepath" || normalized === "relativepath";
+};
+
 const extractPathCandidates = (cwd: string, value: unknown, seen = new Set<string>()): string[] => {
   if (typeof value === "string") {
-    const normalized = normalizePathCandidate(cwd, value);
-    if (normalized) {
-      seen.add(normalized);
-    }
+    addPathCandidate(cwd, value, seen);
     return [...seen];
   }
 
@@ -418,18 +424,8 @@ const extractPathCandidates = (cwd: string, value: unknown, seen = new Set<strin
   }
 
   for (const [key, child] of Object.entries(record)) {
-    const lowerKey = key.toLowerCase();
-    const looksPathLike =
-      lowerKey === "path" ||
-      lowerKey.endsWith("path") ||
-      lowerKey === "file" ||
-      lowerKey === "filepath" ||
-      lowerKey === "relativepath";
-    if (looksPathLike && typeof child === "string") {
-      const normalized = normalizePathCandidate(cwd, child);
-      if (normalized) {
-        seen.add(normalized);
-      }
+    if (isPathLikeKey(key) && typeof child === "string") {
+      addPathCandidate(cwd, child, seen);
     } else if (typeof child === "object" && child !== null) {
       extractPathCandidates(cwd, child, seen);
     }
@@ -733,6 +729,39 @@ const resolveCodexCliConfig = (config: Record<string, unknown> | undefined): Cod
   };
 };
 
+const applyProxyEnvironment = (env: NodeJS.ProcessEnv, networkProxy?: NetworkProxyRuntimeConfig): void => {
+  if (!networkProxy) return;
+  const proxyUrl = buildNetworkProxyUrl(networkProxy);
+  env.HTTP_PROXY = proxyUrl;
+  env.HTTPS_PROXY = proxyUrl;
+  env.http_proxy = proxyUrl;
+  env.https_proxy = proxyUrl;
+  const noProxy = networkProxy.noProxyHosts.join(",");
+  env.NO_PROXY = noProxy;
+  env.no_proxy = noProxy;
+};
+
+const preferredCodexPathEntries = (cwd: string): string[] => {
+  const entries = [resolve(cwd, "node_modules", ".bin")];
+  if (process.platform !== "win32") return entries;
+  if (process.env.APPDATA) entries.push(resolve(process.env.APPDATA, "npm"));
+  entries.push(resolve(process.execPath, ".."));
+  if (process.env.LOCALAPPDATA) entries.push(resolve(process.env.LOCALAPPDATA, "Programs", "nodejs"));
+  if (process.env.ProgramFiles) entries.push(resolve(process.env.ProgramFiles, "nodejs"));
+  if (process.env["ProgramFiles(x86)"]) entries.push(resolve(process.env["ProgramFiles(x86)"], "nodejs"));
+  return entries;
+};
+
+const uniquePathEntries = (entries: string[]): string[] => {
+  const seen = new Set<string>();
+  return entries.filter((entry) => {
+    const normalized = entry.trim().toLowerCase();
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
+};
+
 const buildCodexProcessEnv = (
   cwd: string,
   homePath?: string,
@@ -743,16 +772,7 @@ const buildCodexProcessEnv = (
     ...(homePath ? { CODEX_HOME: homePath } : {}),
   };
 
-  if (networkProxy) {
-    const proxyUrl = buildNetworkProxyUrl(networkProxy);
-    env.HTTP_PROXY = proxyUrl;
-    env.HTTPS_PROXY = proxyUrl;
-    env.http_proxy = proxyUrl;
-    env.https_proxy = proxyUrl;
-    const noProxy = networkProxy.noProxyHosts.join(",");
-    env.NO_PROXY = noProxy;
-    env.no_proxy = noProxy;
-  }
+  applyProxyEnvironment(env, networkProxy);
 
   const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path") ?? "PATH";
   const delimiter = process.platform === "win32" ? ";" : ":";
@@ -761,34 +781,7 @@ const buildCodexProcessEnv = (
     .map((entry) => entry.trim())
     .filter(Boolean);
 
-  const preferredEntries = [resolve(cwd, "node_modules", ".bin")];
-  if (process.platform === "win32") {
-    if (process.env.APPDATA) {
-      preferredEntries.push(resolve(process.env.APPDATA, "npm"));
-    }
-    preferredEntries.push(resolve(process.execPath, ".."));
-    if (process.env.LOCALAPPDATA) {
-      preferredEntries.push(resolve(process.env.LOCALAPPDATA, "Programs", "nodejs"));
-    }
-    if (process.env.ProgramFiles) {
-      preferredEntries.push(resolve(process.env.ProgramFiles, "nodejs"));
-    }
-    if (process.env["ProgramFiles(x86)"]) {
-      preferredEntries.push(resolve(process.env["ProgramFiles(x86)"], "nodejs"));
-    }
-  }
-
-  const nextPathEntries: string[] = [];
-  for (const entry of [...preferredEntries, ...existingEntries]) {
-    const normalized = entry.trim();
-    if (!normalized) {
-      continue;
-    }
-    if (nextPathEntries.some((current) => current.toLowerCase() === normalized.toLowerCase())) {
-      continue;
-    }
-    nextPathEntries.push(normalized);
-  }
+  const nextPathEntries = uniquePathEntries([...preferredCodexPathEntries(cwd), ...existingEntries]);
 
   const nextPath = nextPathEntries.join(delimiter);
   env[pathKey] = nextPath;
@@ -1170,25 +1163,8 @@ export class CodexAppServerSession {
       // Older/newer Codex builds may vary here. The app server still works without this call.
     }
 
-    if (previousThreadId) {
-      try {
-        const resumed = await this.sendRequest("thread/resume", {
-          threadId: previousThreadId,
-          model: modelId,
-          cwd,
-          approvalPolicy: yoloMode ? CODEX_YOLO_APPROVAL_POLICY : CODEX_APPROVAL_POLICY,
-          sandbox: yoloMode ? CODEX_YOLO_SANDBOX_MODE : CODEX_SANDBOX_MODE,
-        });
-        const threadId = this.readThreadId(resumed);
-        if (threadId) {
-          this.threadId = threadId;
-          return;
-        }
-      } catch (error) {
-        if (!isRecoverableThreadResumeError(error)) {
-          throw error;
-        }
-      }
+    if (previousThreadId && await this.resumeThread(previousThreadId, modelId, cwd, yoloMode)) {
+      return;
     }
 
     const started = await this.sendRequest("thread/start", {
@@ -1203,6 +1179,29 @@ export class CodexAppServerSession {
       throw new Error("Codex thread/start did not return a thread id.");
     }
     this.threadId = threadId;
+  }
+
+  private async resumeThread(threadId: string, modelId: string, cwd: string, yoloMode: boolean): Promise<boolean> {
+    try {
+      const resumed = await this.sendRequest("thread/resume", {
+        threadId,
+        model: modelId,
+        cwd,
+        approvalPolicy: yoloMode ? CODEX_YOLO_APPROVAL_POLICY : CODEX_APPROVAL_POLICY,
+        sandbox: yoloMode ? CODEX_YOLO_SANDBOX_MODE : CODEX_SANDBOX_MODE,
+      });
+      const resumedThreadId = this.readThreadId(resumed);
+      if (!resumedThreadId) {
+        return false;
+      }
+      this.threadId = resumedThreadId;
+      return true;
+    } catch (error) {
+      if (!isRecoverableThreadResumeError(error)) {
+        throw error;
+      }
+      return false;
+    }
   }
 
   async startTurn(input: {
@@ -1511,6 +1510,25 @@ export class CodexAppServerSession {
     this.handleThreadNotificationBody(notification, params);
   }
 
+  private handleChildTurnCompleted(childThreadId: string, params: Record<string, unknown> | undefined): void {
+    const turn = asRecord(params?.turn);
+    const failed = (asString(turn?.status) ?? "").toLowerCase() === "failed";
+    const errorMessage = asString(asRecord(turn?.error)?.message);
+    this.emitSubagentUpdate(childThreadId, {
+      status: failed ? "failed" : "completed",
+      ...(failed && errorMessage ? { summary: errorMessage } : {}),
+      endedAtMs: Date.now(),
+    });
+  }
+
+  private handleChildError(childThreadId: string, params: Record<string, unknown> | undefined): void {
+    if (params?.willRetry === true) {
+      return;
+    }
+    const message = asString(asRecord(params?.error)?.message);
+    this.emitSubagentUpdate(childThreadId, { status: "failed", ...(message ? { summary: message } : {}) });
+  }
+
   private handleChildThreadNotification(
     childThreadId: string,
     notification: JsonRpcNotification,
@@ -1522,14 +1540,7 @@ export class CodexAppServerSession {
       return;
     }
     if (method === "turn/completed") {
-      const turn = asRecord(params?.turn);
-      const failed = (asString(turn?.status) ?? "").toLowerCase() === "failed";
-      const errorMessage = asString(asRecord(turn?.error)?.message);
-      this.emitSubagentUpdate(childThreadId, {
-        status: failed ? "failed" : "completed",
-        ...(failed && errorMessage ? { summary: errorMessage } : {}),
-        endedAtMs: Date.now(),
-      });
+      this.handleChildTurnCompleted(childThreadId, params);
       return;
     }
     if (method === "thread/tokenUsage/updated") {
@@ -1540,20 +1551,10 @@ export class CodexAppServerSession {
       return;
     }
     if (method === "error") {
-      const message = asString(asRecord(params?.error)?.message);
-      if (params?.willRetry !== true) {
-        this.emitSubagentUpdate(childThreadId, { status: "failed", ...(message ? { summary: message } : {}) });
-      }
+      this.handleChildError(childThreadId, params);
       return;
     }
-    if (
-      method === "item/agentMessage/delta" ||
-      method === "item/reasoning/summaryTextDelta" ||
-      method === "item/commandExecution/outputDelta" ||
-      method === "item/fileChange/outputDelta" ||
-      method === "item/started" ||
-      method === "item/completed"
-    ) {
+    if (CODEX_CHILD_ACTIVITY_NOTIFICATIONS.has(method)) {
       this.activeSubagentId = childThreadId;
       try {
         this.handleThreadNotificationBody(notification, params);
@@ -1927,12 +1928,9 @@ export class CodexAppServerSession {
       const after = newContents[index] ?? null;
       const before = snapshot?.beforeByPath.get(filePath) ?? null;
       const toolName = after === null && before !== null ? "delete_file" : "write_file";
-      const content =
-        toolName === "delete_file"
-          ? `Deleted ${filePath}.`
-          : output === "File changes applied."
-            ? `Updated ${filePath}.`
-            : output;
+      let content = output;
+      if (output === "File changes applied.") content = `Updated ${filePath}.`;
+      if (toolName === "delete_file") content = `Deleted ${filePath}.`;
 
       emitChunk({
         type: "diff-updated",
@@ -1978,15 +1976,14 @@ export class CodexAppServerSession {
       const state = asRecord(agentsStates[childThreadId]);
       const rawStatus = asString(state?.status);
       const message = asString(state?.message)?.trim();
+      let statusUpdate: { status?: RunSubagentInfo["status"] } = {};
+      if (isSpawn) statusUpdate = { status: "pending" };
+      if (rawStatus) statusUpdate = { status: normalizeRunSubagentStatus(rawStatus) };
       this.emitSubagentUpdate(childThreadId, {
         ...(isSpawn && prompt ? { prompt, description: prompt.split("\n")[0]?.slice(0, 120) } : {}),
         ...(isSpawn && nickname ? { name: nickname } : {}),
         ...(model ? { model } : {}),
-        ...(rawStatus
-          ? { status: normalizeRunSubagentStatus(rawStatus) }
-          : isSpawn
-            ? { status: "pending" as const }
-            : {}),
+        ...statusUpdate,
         ...(message ? { summary: message } : {}),
       });
     }

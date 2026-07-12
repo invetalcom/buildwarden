@@ -242,33 +242,29 @@ const buildGitlabReviewThread = (
 
 const quoteDiffPath = (path: string) => path.replace(/\\/g, "/");
 
+const gitlabDiffRowToUnifiedDiff = (row: Record<string, unknown>): string | null => {
+  const oldPath = recordString(row, "old_path") ?? recordString(row, "new_path") ?? "unknown";
+  const newPath = recordString(row, "new_path") ?? oldPath;
+  const diff = recordString(row, "diff") ?? "";
+  if (!diff.trim()) return null;
+  if (diff.startsWith("diff --git")) return diff.trimEnd();
+  const renamed = recordBoolean(row, "renamed_file") && oldPath !== newPath;
+  const oldDisplay = recordBoolean(row, "new_file") ? "/dev/null" : `a/${quoteDiffPath(oldPath)}`;
+  const newDisplay = recordBoolean(row, "deleted_file") ? "/dev/null" : `b/${quoteDiffPath(newPath)}`;
+  const header = [
+    `diff --git a/${quoteDiffPath(oldPath)} b/${quoteDiffPath(newPath)}`,
+    recordBoolean(row, "new_file") ? "new file mode 100644" : null,
+    recordBoolean(row, "deleted_file") ? "deleted file mode 100644" : null,
+    renamed ? `rename from ${quoteDiffPath(oldPath)}` : null,
+    renamed ? `rename to ${quoteDiffPath(newPath)}` : null,
+    `--- ${oldDisplay}`,
+    `+++ ${newDisplay}`,
+  ].filter((line): line is string => Boolean(line));
+  return `${header.join("\n")}\n${diff.trimEnd()}`;
+};
+
 const gitlabDiffRowsToUnifiedDiff = (rows: Record<string, unknown>[]): string => {
-  const sections: string[] = [];
-  for (const row of rows) {
-    const oldPath = recordString(row, "old_path") ?? recordString(row, "new_path") ?? "unknown";
-    const newPath = recordString(row, "new_path") ?? oldPath;
-    const diff = recordString(row, "diff") ?? "";
-    if (!diff.trim()) {
-      continue;
-    }
-    if (diff.startsWith("diff --git")) {
-      sections.push(diff.trimEnd());
-      continue;
-    }
-    const oldDisplay = recordBoolean(row, "new_file") ? "/dev/null" : `a/${quoteDiffPath(oldPath)}`;
-    const newDisplay = recordBoolean(row, "deleted_file") ? "/dev/null" : `b/${quoteDiffPath(newPath)}`;
-    const header = [
-      `diff --git a/${quoteDiffPath(oldPath)} b/${quoteDiffPath(newPath)}`,
-      recordBoolean(row, "new_file") ? "new file mode 100644" : null,
-      recordBoolean(row, "deleted_file") ? "deleted file mode 100644" : null,
-      recordBoolean(row, "renamed_file") && oldPath !== newPath ? `rename from ${quoteDiffPath(oldPath)}` : null,
-      recordBoolean(row, "renamed_file") && oldPath !== newPath ? `rename to ${quoteDiffPath(newPath)}` : null,
-      `--- ${oldDisplay}`,
-      `+++ ${newDisplay}`,
-    ].filter((line): line is string => Boolean(line));
-    sections.push(`${header.join("\n")}\n${diff.trimEnd()}`);
-  }
-  return sections.join("\n");
+  return rows.map(gitlabDiffRowToUnifiedDiff).filter((section): section is string => Boolean(section)).join("\n");
 };
 
 const toGitlabDiscussionPosition = (comment: ProjectPrMrDiffComment, refs: GitlabDiffRefs): Record<string, unknown> => {

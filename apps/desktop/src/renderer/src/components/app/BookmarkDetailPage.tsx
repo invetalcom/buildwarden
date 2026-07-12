@@ -1,7 +1,8 @@
 import { useMemo } from "react";
 import { type BookmarkRecord, type ModelRecord } from "@buildwarden/shared";
 import { bookmarkModelDisplay } from "../../lib/bookmark-model";
-import { RunActivityTimeline, type RunActivityRun } from "./RunActivityTimeline";
+import { RunActivityTimeline } from "./RunActivityTimeline";
+import type { RunActivityRun } from "./run-activity-model";
 import { Badge } from "../ui/badge";
 import { Card } from "../ui/card";
 

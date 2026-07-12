@@ -361,49 +361,43 @@ const buildDisallowedShellOperatorsMessage = (command: string) => {
   return guidance.join(" ");
 };
 
-const findDisallowedShellOperator = (command: string): { operator: string; index: number } | null => {
-  let quote: "'" | '"' | null = null;
-  let escaped = false;
+type ShellScanState = { quote: "'" | '"' | null; escaped: boolean };
+type ShellScanResult = { state: ShellScanState; operator?: string };
 
-  for (let index = 0; index < command.length; index += 1) {
-    const char = command[index];
-    const next = command[index + 1];
-
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-
-    if (char === "\\") {
-      escaped = true;
-      continue;
-    }
-
-    if (quote) {
-      if (char === quote) {
-        quote = null;
-      }
-      continue;
-    }
-
-    if (char === "'" || char === '"') {
-      quote = char;
-      continue;
-    }
-
-    if ((char === "&" && next === "&") || (char === "|" && next === "|")) {
-      return { operator: `${char}${next}`, index };
-    }
-
-    if (char === "$" && next === "(") {
-      return { operator: "$(", index };
-    }
-
-    if (char === "|" || char === ";" || char === ">" || char === "<" || char === "`") {
-      return { operator: char, index };
-    }
+const scanShellCharacter = (state: ShellScanState, char: string, next: string | undefined): ShellScanResult => {
+  if (state.escaped) {
+    return { state: { ...state, escaped: false } };
   }
+  if (char === "\\") {
+    return { state: { ...state, escaped: true } };
+  }
+  if (state.quote) {
+    return { state: { ...state, quote: char === state.quote ? null : state.quote } };
+  }
+  if (char === "'" || char === '"') {
+    return { state: { ...state, quote: char } };
+  }
+  if ((char === "&" && next === "&") || (char === "|" && next === "|")) {
+    return { state, operator: `${char}${next}` };
+  }
+  if (char === "$" && next === "(") {
+    return { state, operator: "$(" };
+  }
+  if (["|", ";", ">", "<", "`"].includes(char)) {
+    return { state, operator: char };
+  }
+  return { state };
+};
 
+const findDisallowedShellOperator = (command: string): { operator: string; index: number } | null => {
+  let state: ShellScanState = { quote: null, escaped: false };
+  for (let index = 0; index < command.length; index += 1) {
+    const result = scanShellCharacter(state, command[index], command[index + 1]);
+    if (result.operator) {
+      return { operator: result.operator, index };
+    }
+    state = result.state;
+  }
   return null;
 };
 
@@ -507,6 +501,30 @@ const listFilesRecursive = async (root: string, currentPath: string, entries: st
   }
 };
 
+type SearchRepoHit = { lineNumber: number; excerpt: string };
+
+const searchRepoFile = async (fullPath: string, matcher: RegExp, maxMatches: number): Promise<SearchRepoHit[]> => {
+  const fileStat = await stat(fullPath);
+  if (fileStat.size > MAX_FILE_BYTES) {
+    return [];
+  }
+  const lines = (await readFile(fullPath, "utf8")).split(/\r?\n/);
+  const hits: SearchRepoHit[] = [];
+  for (let index = 0; index < lines.length && hits.length < maxMatches; index += 1) {
+    if (!matcher.test(lines[index] ?? "")) {
+      continue;
+    }
+    const start = Math.max(0, index - SEARCH_CONTEXT_RADIUS);
+    const end = Math.min(lines.length - 1, index + SEARCH_CONTEXT_RADIUS);
+    const excerpt = lines
+      .slice(start, end + 1)
+      .map((line, excerptIndex) => `${start + excerptIndex + 1}|${line}`)
+      .join("\n");
+    hits.push({ lineNumber: index + 1, excerpt });
+  }
+  return hits;
+};
+
 const buildSearchRepoStructuredResult = async (root: string, query: string, maxMatches: number) => {
   const matcher = createSearchMatcher(query);
   const fileHits = new Map<string, Array<{ lineNumber: number; excerpt: string }>>();
@@ -535,32 +553,9 @@ const buildSearchRepoStructuredResult = async (root: string, query: string, maxM
         continue;
       }
 
-      const fileStat = await stat(fullPath);
-      if (fileStat.size > MAX_FILE_BYTES) {
-        continue;
-      }
-
-      const content = await readFile(fullPath, "utf8");
-      const lines = content.split(/\r?\n/);
       const rel = toPosix(relative(root, fullPath));
-      const hits: Array<{ lineNumber: number; excerpt: string }> = [];
-
-      for (let index = 0; index < lines.length; index += 1) {
-        if (!matcher.test(lines[index] ?? "")) {
-          continue;
-        }
-        const start = Math.max(0, index - SEARCH_CONTEXT_RADIUS);
-        const end = Math.min(lines.length - 1, index + SEARCH_CONTEXT_RADIUS);
-        const excerpt = lines
-          .slice(start, end + 1)
-          .map((line, excerptIndex) => `${start + excerptIndex + 1}|${line}`)
-          .join("\n");
-        hits.push({ lineNumber: index + 1, excerpt });
-        totalMatches += 1;
-        if (totalMatches >= maxMatches) {
-          break;
-        }
-      }
+      const hits = await searchRepoFile(fullPath, matcher, maxMatches - totalMatches);
+      totalMatches += hits.length;
 
       if (hits.length > 0) {
         fileHits.set(rel, hits);

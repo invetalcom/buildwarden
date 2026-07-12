@@ -207,6 +207,8 @@ const SidebarComponent = ({
   const resizeFrameRef = useRef<number | null>(null);
 
   const selectedProject = projects.find((entry) => entry.project.id === selectedProjectId) ?? projects[0] ?? null;
+  let selectedProjectContext = "No project selected";
+  if (selectedProject) selectedProjectContext = selectedProject.project.kind === "folder" ? "Folder" : selectedProject.project.defaultBranch;
   const totalActiveRuns = projects.reduce((sum, project) => sum + project.activeRuns.length, 0);
   const recentRunWindowMs = recentRunDays * 24 * 60 * 60 * 1000;
   const recentRunWindowLabel = formatRecentRunWindowLabel(recentRunDays);
@@ -423,7 +425,7 @@ const SidebarComponent = ({
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-semibold text-[var(--ec-text)]">{selectedProject?.project.name ?? "Select project"}</span>
               <span className="block truncate font-mono text-[10px] text-[var(--ec-muted)]">
-                {selectedProject ? (selectedProject.project.kind === "folder" ? "Folder" : selectedProject.project.defaultBranch) : "No project selected"}
+                {selectedProjectContext}
               </span>
             </span>
             <ChevronDown className={cn("size-3.5 shrink-0 text-[var(--ec-muted)] transition", projectMenuOpen && "rotate-180")} />

@@ -119,11 +119,12 @@ export function RunUserInputRequestCard({
     }
     setDrafts((current) => {
       const existing = current[question.id] ?? { selected: [], custom: "" };
-      const selected = question.multiSelect
-        ? existing.selected.includes(label)
+      let selected = [label];
+      if (question.multiSelect) {
+        selected = existing.selected.includes(label)
           ? existing.selected.filter((entry) => entry !== label)
-          : [...existing.selected, label]
-        : [label];
+          : [...existing.selected, label];
+      }
       return {
         ...current,
         [question.id]: {

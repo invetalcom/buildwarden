@@ -186,7 +186,7 @@ describe("AppController settings and lightweight workflows", () => {
     tempDirs.push(harness.logDir);
     const listener = vi.fn();
     const remove = harness.controller.onChatEvent(listener);
-    remove();
-    remove();
+    expect(() => remove()).not.toThrow();
+    expect(() => remove()).not.toThrow();
   });
 });

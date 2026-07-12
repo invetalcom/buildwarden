@@ -28,7 +28,7 @@ import { Card } from "../ui/card";
 import { AnchorDropdownPortal } from "./anchor-dropdown-portal";
 import { OpenInIdeControl } from "./open-in-ide-control";
 import { deriveLatestRunPlanProgress } from "../../lib/run-plan-progress";
-import { deriveRunSubagents } from "./RunActivityTimeline";
+import { deriveRunSubagents } from "./run-activity-model";
 import { RunPlanProgressPill } from "./RunPlanProgressPill";
 import { RunTokenBadge } from "./RunTokenBadge";
 

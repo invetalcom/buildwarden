@@ -6,6 +6,7 @@ import type {
   ProjectLoopListItem,
   ProjectLoopMergePolicy,
   ProjectLoopPrReviewPolicy,
+  ProjectLoopRecord,
   ProjectLoopStatus,
   ProjectLoopUiChangePolicy,
   ProjectLoopUiReviewRecord,
@@ -561,6 +562,116 @@ const LoopUiReviewCard = ({
   );
 };
 
+const useLoopDetailSubscription = (loopId: string, reloadDetail: () => Promise<void>): void => {
+  const reloadTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    void reloadDetail();
+    const unsubscribe = window.buildwarden.onProjectLoopChanged((payload) => {
+      if (payload.loopId !== loopId || reloadTimerRef.current !== null) return;
+      reloadTimerRef.current = window.setTimeout(() => {
+        reloadTimerRef.current = null;
+        void reloadDetail();
+      }, 250);
+    });
+    return () => {
+      unsubscribe();
+      if (reloadTimerRef.current !== null) window.clearTimeout(reloadTimerRef.current);
+      reloadTimerRef.current = null;
+    };
+  }, [loopId, reloadDetail]);
+};
+
+const useLoopAction = (
+  reloadDetail: () => Promise<void>,
+  onLoopsChanged: () => void | Promise<void>,
+  setError: (value: string | null) => void,
+) => {
+  const [pending, setPending] = useState(false);
+  const runAction = useCallback(async (action: () => Promise<void>, options?: { reloadAfter?: boolean }) => {
+    setPending(true);
+    setError(null);
+    try {
+      await action();
+      if (options?.reloadAfter !== false) await reloadDetail();
+      await onLoopsChanged();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The loop action failed.");
+    } finally {
+      setPending(false);
+    }
+  }, [onLoopsChanged, reloadDetail, setError]);
+  return { pending, runAction };
+};
+
+const LoopDetailHeader = ({ loop, busy, actionPending, error, mergedCount, iterationCount, onBack, runAction }: {
+  loop: ProjectLoopRecord;
+  busy: boolean;
+  actionPending: boolean;
+  error: string | null;
+  mergedCount: number;
+  iterationCount: number;
+  onBack: () => void;
+  runAction: (action: () => Promise<void>, options?: { reloadAfter?: boolean }) => Promise<void>;
+}) => {
+  const isActive = ACTIVE_LOOP_STATUSES.has(loop.status);
+  const deleteLoop = () => {
+    if (!window.confirm("Delete this loop, its runs, and its screenshots? Created PRs/MRs stay on the Git host.")) return;
+    void runAction(async () => {
+      await window.buildwarden.deleteProjectLoop(loop.id);
+      onBack();
+    }, { reloadAfter: false });
+  };
+  return (
+    <Card className="p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <Button type="button" size="sm" variant="ghost" className="h-8 w-8 shrink-0 px-0" onClick={onBack} title="Back to loops"><ArrowLeft className="h-4 w-4" /></Button>
+          {isActive ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-cyan-400" /> : <RefreshCw className="h-4 w-4 shrink-0 text-cyan-400" />}
+          <h3 className="truncate text-sm font-medium text-zinc-100">{loop.name}</h3>
+          <StatusPill kind="loop" status={loop.status} />
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {isActive && <Button type="button" size="sm" variant="secondary" disabled={busy || actionPending} onClick={() => void runAction(() => window.buildwarden.cancelProjectLoop(loop.id))}><Square className="mr-1.5 h-3.5 w-3.5" />Cancel loop</Button>}
+          {!isActive && loop.status !== "completed" && <Button type="button" size="sm" disabled={busy || actionPending} onClick={() => void runAction(() => window.buildwarden.resumeProjectLoop(loop.id))}><Play className="mr-1.5 h-3.5 w-3.5" />Resume</Button>}
+          <Button type="button" size="sm" variant="ghost" className="text-zinc-500 hover:text-rose-200" disabled={busy || actionPending} onClick={deleteLoop}><Trash2 className="h-3.5 w-3.5" /></Button>
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-zinc-500">
+        <span>Target <span className="font-mono text-zinc-300">{loop.baseBranch}</span></span>
+        <span>{MERGE_POLICY_OPTIONS.find((option) => option.value === loop.mergePolicy)?.label}</span>
+        <span>UI: {UI_POLICY_OPTIONS.find((option) => option.value === loop.uiChangePolicy)?.label}</span>
+        <span>Review: {PR_REVIEW_POLICY_OPTIONS.find((option) => option.value === loop.prReviewPolicy)?.label ?? "No automatic review"}</span>
+        <span>{mergedCount}/{iterationCount || "?"} PRs merged</span>
+        <span>{new Date(loop.createdAt).toLocaleString()}</span>
+      </div>
+      <p className="mt-2 whitespace-pre-wrap break-words rounded-lg border border-zinc-800 bg-zinc-950/50 px-2.5 py-1.5 text-xs text-zinc-400">{loop.prompt}</p>
+      {loop.planSummary && <p className="mt-2 text-xs text-zinc-500">{loop.planSummary}</p>}
+      {loop.errorMessage && <p className="mt-2 text-xs text-rose-300">{loop.errorMessage}</p>}
+      {error && <p className="mt-2 text-xs text-rose-300">{error}</p>}
+    </Card>
+  );
+};
+
+const PendingLoopReviews = ({ reviews, busy, onDecision }: {
+  reviews: ProjectLoopUiReviewRecord[];
+  busy: boolean;
+  onDecision: (reviewId: string, decision: "approve" | "request-changes", feedback: string) => Promise<void>;
+}) => {
+  if (reviews.length === 0) return null;
+  return (
+    <Card className="border-[var(--ec-warning)]/40 p-3">
+      <div className="flex items-center gap-2">
+        <ImageIcon className="h-4 w-4 text-[var(--ec-warning)]" />
+        <h4 className="text-sm font-medium text-zinc-100">UI approval required ({reviews.length} page{reviews.length === 1 ? "" : "s"})</h4>
+      </div>
+      <p className="mt-1 text-xs text-zinc-500">The loop pauses until every page is approved. Requesting changes sends your feedback back to the implementation agent.</p>
+      <div className="mt-3 grid gap-3 xl:grid-cols-2">
+        {reviews.map((review) => <LoopUiReviewCard key={review.id} review={review} busy={busy} onDecision={onDecision} />)}
+      </div>
+    </Card>
+  );
+};
+
 const LoopDetailView = ({
   loopId,
   busy,
@@ -576,10 +687,8 @@ const LoopDetailView = ({
 }) => {
   const [detail, setDetail] = useState<ProjectLoopDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [actionPending, setActionPending] = useState(false);
   const [showAllEvents, setShowAllEvents] = useState(false);
   const [expandedIterationIds, setExpandedIterationIds] = useState<Record<string, boolean>>({});
-  const reloadTimerRef = useRef<number | null>(null);
 
   const reloadDetail = useCallback(async () => {
     try {
@@ -590,47 +699,8 @@ const LoopDetailView = ({
     }
   }, [loopId]);
 
-  useEffect(() => {
-    void reloadDetail();
-    const unsubscribe = window.buildwarden.onProjectLoopChanged((payload) => {
-      if (payload.loopId !== loopId) {
-        return;
-      }
-      if (reloadTimerRef.current !== null) {
-        return;
-      }
-      reloadTimerRef.current = window.setTimeout(() => {
-        reloadTimerRef.current = null;
-        void reloadDetail();
-      }, 250);
-    });
-    return () => {
-      unsubscribe();
-      if (reloadTimerRef.current !== null) {
-        window.clearTimeout(reloadTimerRef.current);
-        reloadTimerRef.current = null;
-      }
-    };
-  }, [loopId, reloadDetail]);
-
-  const runAction = useCallback(
-    async (action: () => Promise<void>, options?: { reloadAfter?: boolean }) => {
-      setActionPending(true);
-      setError(null);
-      try {
-        await action();
-        if (options?.reloadAfter !== false) {
-          await reloadDetail();
-        }
-        await onLoopsChanged();
-      } catch (caught) {
-        setError(caught instanceof Error ? caught.message : "The loop action failed.");
-      } finally {
-        setActionPending(false);
-      }
-    },
-    [onLoopsChanged, reloadDetail],
-  );
+  useLoopDetailSubscription(loopId, reloadDetail);
+  const { pending: actionPending, runAction } = useLoopAction(reloadDetail, onLoopsChanged, setError);
 
   const handleUiDecision = useCallback(
     async (reviewId: string, decision: "approve" | "request-changes", feedback: string) => {
@@ -659,107 +729,23 @@ const LoopDetailView = ({
   const { loop, iterations, events, uiReviews, runs } = detail;
   const runsById = new Map(runs.map((run) => [run.id, run]));
   const pendingReviews = uiReviews.filter((review) => review.status === "pending");
-  const isActive = ACTIVE_LOOP_STATUSES.has(loop.status);
   const visibleEvents = showAllEvents ? events : events.slice(-14);
   const mergedCount = iterations.filter((iteration) => iteration.status === "merged").length;
 
   return (
     <div className="space-y-3 pb-2">
-      <Card className="p-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-2">
-            <Button type="button" size="sm" variant="ghost" className="h-8 w-8 shrink-0 px-0" onClick={onBack} title="Back to loops">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-            {isActive ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-cyan-400" /> : <RefreshCw className="h-4 w-4 shrink-0 text-cyan-400" />}
-            <h3 className="truncate text-sm font-medium text-zinc-100">{loop.name}</h3>
-            <StatusPill kind="loop" status={loop.status} />
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            {isActive ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                disabled={busy || actionPending}
-                onClick={() => void runAction(() => window.buildwarden.cancelProjectLoop(loop.id))}
-              >
-                <Square className="mr-1.5 h-3.5 w-3.5" />
-                Cancel loop
-              </Button>
-            ) : null}
-            {!isActive && loop.status !== "completed" ? (
-              <Button
-                type="button"
-                size="sm"
-                disabled={busy || actionPending}
-                onClick={() => void runAction(() => window.buildwarden.resumeProjectLoop(loop.id))}
-              >
-                <Play className="mr-1.5 h-3.5 w-3.5" />
-                Resume
-              </Button>
-            ) : null}
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="text-zinc-500 hover:text-rose-200"
-              disabled={busy || actionPending}
-              onClick={() => {
-                if (window.confirm("Delete this loop, its runs, and its screenshots? Created PRs/MRs stay on the Git host.")) {
-                  // The loop is gone after this action; reloading its detail would just fail.
-                  void runAction(
-                    async () => {
-                      await window.buildwarden.deleteProjectLoop(loop.id);
-                      onBack();
-                    },
-                    { reloadAfter: false },
-                  );
-                }
-              }}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-        </div>
-        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-zinc-500">
-          <span>
-            Target <span className="font-mono text-zinc-300">{loop.baseBranch}</span>
-          </span>
-          <span>{MERGE_POLICY_OPTIONS.find((option) => option.value === loop.mergePolicy)?.label}</span>
-          <span>UI: {UI_POLICY_OPTIONS.find((option) => option.value === loop.uiChangePolicy)?.label}</span>
-          <span>Review: {PR_REVIEW_POLICY_OPTIONS.find((option) => option.value === loop.prReviewPolicy)?.label ?? "No automatic review"}</span>
-          <span>
-            {mergedCount}/{iterations.length || "?"} PRs merged
-          </span>
-          <span>{new Date(loop.createdAt).toLocaleString()}</span>
-        </div>
-        <p className="mt-2 whitespace-pre-wrap break-words rounded-lg border border-zinc-800 bg-zinc-950/50 px-2.5 py-1.5 text-xs text-zinc-400">
-          {loop.prompt}
-        </p>
-        {loop.planSummary ? <p className="mt-2 text-xs text-zinc-500">{loop.planSummary}</p> : null}
-        {loop.errorMessage ? <p className="mt-2 text-xs text-rose-300">{loop.errorMessage}</p> : null}
-        {error ? <p className="mt-2 text-xs text-rose-300">{error}</p> : null}
-      </Card>
+      <LoopDetailHeader
+        loop={loop}
+        busy={busy}
+        actionPending={actionPending}
+        error={error}
+        mergedCount={mergedCount}
+        iterationCount={iterations.length}
+        onBack={onBack}
+        runAction={runAction}
+      />
 
-      {pendingReviews.length > 0 ? (
-        <Card className="border-[var(--ec-warning)]/40 p-3">
-          <div className="flex items-center gap-2">
-            <ImageIcon className="h-4 w-4 text-[var(--ec-warning)]" />
-            <h4 className="text-sm font-medium text-zinc-100">
-              UI approval required ({pendingReviews.length} page{pendingReviews.length === 1 ? "" : "s"})
-            </h4>
-          </div>
-          <p className="mt-1 text-xs text-zinc-500">
-            The loop pauses until every page is approved. Requesting changes sends your feedback back to the implementation agent.
-          </p>
-          <div className="mt-3 grid gap-3 xl:grid-cols-2">
-            {pendingReviews.map((review) => (
-              <LoopUiReviewCard key={review.id} review={review} busy={busy || actionPending} onDecision={handleUiDecision} />
-            ))}
-          </div>
-        </Card>
-      ) : null}
+      <PendingLoopReviews reviews={pendingReviews} busy={busy || actionPending} onDecision={handleUiDecision} />
 
       <Card className="p-3">
         <div className="flex items-center gap-2">

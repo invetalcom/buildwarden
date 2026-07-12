@@ -23,6 +23,45 @@ const SOURCE_LABELS: Record<IntegratedSkillMetadata["source"], string> = {
   angular: "Angular",
 };
 
+const ExpandedSkillModal = ({ state, onClose }: { state: ExpandedSkillState | null; onClose: () => void }) => {
+  if (!state) {
+    return null;
+  }
+  return createPortal(
+    <>
+      <div className="fixed inset-0 z-[24999] bg-black/35 backdrop-blur-md" onClick={onClose} />
+      <div className="fixed inset-0 z-[25000] flex items-center justify-center p-4" onClick={onClose}>
+        <Card className="app-scrollbar flex max-h-[min(78vh,720px)] w-full max-w-5xl flex-col overflow-y-auto p-0 shadow-[var(--ec-popover-shadow)]" onClick={(event) => event.stopPropagation()}>
+          <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-zinc-800/90 bg-zinc-950/95 px-5 py-4 backdrop-blur">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-base font-semibold text-zinc-100">{state.skill.title}</h3>
+                <span className="rounded-full border border-zinc-700 bg-zinc-900/70 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-zinc-400">{state.skill.source}</span>
+                <span className="rounded-full border border-zinc-700 bg-zinc-900/70 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-zinc-400">{state.skill.category}</span>
+              </div>
+              <p className="mt-1 text-xs text-zinc-500">{state.skill.id}</p>
+            </div>
+            <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={onClose}><X className="h-4 w-4" /></Button>
+          </div>
+          <div className="space-y-4 px-5 py-4">
+            <div>
+              <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Description</p>
+              <p className="mt-2 text-sm leading-relaxed text-zinc-300">{state.skill.description}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Skill body</p>
+              <pre className="app-scrollbar mt-2 overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-950/70 p-4 text-xs leading-6 text-zinc-300 whitespace-pre-wrap break-words">
+                {state.content ?? "Loading skill body..."}
+              </pre>
+            </div>
+          </div>
+        </Card>
+      </div>
+    </>,
+    document.body,
+  );
+};
+
 export const SkillsSettingsTab = ({
   skills,
   globallyDisabledSkillIds,
@@ -219,47 +258,7 @@ export const SkillsSettingsTab = ({
         </Card>
       ))}
     </div>
-    {expandedSkill ? createPortal(
-      <>
-      <div className="fixed inset-0 z-[24999] bg-black/35 backdrop-blur-md" onClick={() => setExpandedSkill(null)} />
-      <div className="fixed inset-0 z-[25000] flex items-center justify-center p-4" onClick={() => setExpandedSkill(null)}>
-        <Card
-          className="app-scrollbar flex max-h-[min(78vh,720px)] w-full max-w-5xl flex-col overflow-y-auto p-0 shadow-[var(--ec-popover-shadow)]"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-zinc-800/90 bg-zinc-950/95 px-5 py-4 backdrop-blur">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-base font-semibold text-zinc-100">{expandedSkill.skill.title}</h3>
-                <span className="rounded-full border border-zinc-700 bg-zinc-900/70 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-zinc-400">
-                  {expandedSkill.skill.source}
-                </span>
-                <span className="rounded-full border border-zinc-700 bg-zinc-900/70 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-zinc-400">
-                  {expandedSkill.skill.category}
-                </span>
-              </div>
-              <p className="mt-1 text-xs text-zinc-500">{expandedSkill.skill.id}</p>
-            </div>
-            <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => setExpandedSkill(null)}>
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-          <div className="space-y-4 px-5 py-4">
-            <div>
-              <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Description</p>
-              <p className="mt-2 text-sm leading-relaxed text-zinc-300">{expandedSkill.skill.description}</p>
-            </div>
-            <div>
-              <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Skill body</p>
-              <pre className="app-scrollbar mt-2 overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-950/70 p-4 text-xs leading-6 text-zinc-300 whitespace-pre-wrap break-words">
-                {expandedSkill.content ?? "Loading skill body..."}
-              </pre>
-            </div>
-          </div>
-        </Card>
-      </div>
-      </>
-    , document.body) : null}
+    <ExpandedSkillModal state={expandedSkill} onClose={() => setExpandedSkill(null)} />
     </>
   );
 };

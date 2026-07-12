@@ -143,7 +143,7 @@ export type AzureLegacyCompletionState = {
 const buildAzureLegacyUserContent = (
   promptText: string,
   attachments: ChatAttachmentPayload[] | undefined,
-): string | ChatContentPart[] => {
+): ChatContentPart[] => {
   const textParts: string[] = [];
   const trimmed = promptText.trim();
   if (trimmed) {
@@ -174,9 +174,6 @@ const buildAzureLegacyUserContent = (
   }
 
   const combined = textParts.join("").trim() || (attachments?.length ? "See attachments." : "");
-  if (parts.length === 0) {
-    return combined;
-  }
   if (combined) {
     parts.unshift({ type: "text", text: combined });
   }
@@ -219,6 +216,34 @@ export const createCompletionState = (): AzureLegacyCompletionState => ({
 export const isLikelyValidationCommand = (command: string): boolean =>
   /\b(test|typecheck|lint|build|tsc|gradle|gradlew|mvn|pytest|vitest|jest|cargo test|go test)\b/i.test(command);
 
+const trackReadFile = (state: AzureLegacyCompletionState, path: string): void => {
+  state.filesRead.add(path);
+  if (state.filesChanged.has(path)) state.latestRoundHadFollowupInspection = true;
+};
+
+const trackChangedFile = (state: AzureLegacyCompletionState, path: string): void => {
+  state.filesChanged.add(path);
+  state.latestRoundHadEdits = true;
+};
+
+const trackRepoSearch = (state: AzureLegacyCompletionState): void => {
+  state.repoSearches += 1;
+  if (state.filesChanged.size > 0) state.latestRoundHadFollowupInspection = true;
+};
+
+const trackShellValidation = (state: AzureLegacyCompletionState, toolResult: { ok: boolean; metadata?: Record<string, unknown> }): void => {
+  const command = typeof toolResult.metadata?.command === "string" ? toolResult.metadata.command : "";
+  if (!isLikelyValidationCommand(command)) return;
+  state.shellValidationsAttempted.push(command);
+  if (toolResult.ok) state.shellValidationSucceeded = true;
+  else state.shellValidationFailed = true;
+};
+
+const completionHasFailure = (state: AzureLegacyCompletionState): boolean => state.toolFailures > 0 || state.shellValidationFailed;
+const completionNeedsInspection = (state: AzureLegacyCompletionState): boolean => state.latestRoundHadEdits && !state.latestRoundHadFollowupInspection;
+const completionLacksEvidence = (state: AzureLegacyCompletionState): boolean =>
+  !state.latestRoundHadFollowupInspection && state.repoSearches === 0 && state.filesRead.size <= state.filesChanged.size;
+
 export const updateCompletionStateFromToolResult = (
   state: AzureLegacyCompletionState,
   toolName: string,
@@ -230,37 +255,22 @@ export const updateCompletionStateFromToolResult = (
   }
 
   if (toolName === "read_file" && path) {
-    state.filesRead.add(path);
-    if (state.filesChanged.has(path)) {
-      state.latestRoundHadFollowupInspection = true;
-    }
+    trackReadFile(state, path);
     return;
   }
 
   if ((toolName === "write_file" || toolName === "edit_file" || toolName === "delete_file") && path) {
-    state.filesChanged.add(path);
-    state.latestRoundHadEdits = true;
+    trackChangedFile(state, path);
     return;
   }
 
   if (toolName === "search_repo") {
-    state.repoSearches += 1;
-    if (state.filesChanged.size > 0) {
-      state.latestRoundHadFollowupInspection = true;
-    }
+    trackRepoSearch(state);
     return;
   }
 
   if (toolName === "run_shell") {
-    const command = typeof toolResult.metadata?.command === "string" ? toolResult.metadata.command : "";
-    if (isLikelyValidationCommand(command)) {
-      state.shellValidationsAttempted.push(command);
-      if (toolResult.ok) {
-        state.shellValidationSucceeded = true;
-      } else {
-        state.shellValidationFailed = true;
-      }
-    }
+    trackShellValidation(state, toolResult);
   }
 };
 
@@ -274,16 +284,16 @@ export const shouldForceContinuation = (
   if (state.filesChanged.size === 0) {
     return false;
   }
-  if (state.toolFailures > 0 || state.shellValidationFailed) {
+  if (completionHasFailure(state)) {
     return true;
   }
   if (state.shellValidationSucceeded) {
     return false;
   }
-  if (state.latestRoundHadEdits && !state.latestRoundHadFollowupInspection) {
+  if (completionNeedsInspection(state)) {
     return true;
   }
-  if (!state.latestRoundHadFollowupInspection && state.repoSearches === 0 && state.filesRead.size <= state.filesChanged.size) {
+  if (completionLacksEvidence(state)) {
     return true;
   }
   return false;
@@ -302,58 +312,31 @@ export const buildContinuationPrompt = (state: AzureLegacyCompletionState): stri
   return "You are not done yet. In code mode, after modifying files you must verify the result before finishing. Run relevant validation if available, or inspect changed files and affected references before concluding.";
 };
 
+const serializeCheckpointMessage = (message: OpenAI.Chat.ChatCompletionMessageParam): AzureLegacyResumeCheckpointMessage => {
+  if (message.role === "tool") return {
+    role: "tool",
+    content: typeof message.content === "string" ? message.content : JSON.stringify(message.content ?? ""),
+    toolCallId: message.tool_call_id,
+  };
+  if (message.role === "assistant") return {
+    role: "assistant",
+    content: typeof message.content === "string" ? message.content : "",
+    toolCalls: (message.tool_calls ?? []).flatMap((toolCall) => toolCall.type === "function" ? [{
+      id: toolCall.id,
+      type: "function" as const,
+      function: { name: toolCall.function.name, arguments: toolCall.function.arguments },
+    }] : []),
+  };
+  if (message.role === "system" || message.role === "user") return {
+    role: message.role,
+    content: typeof message.content === "string" ? message.content : null,
+  };
+  return { role: "system", content: typeof message.content === "string" ? message.content : null };
+};
+
 const serializeCheckpointMessages = (
   messages: OpenAI.Chat.ChatCompletionMessageParam[],
-): AzureLegacyResumeCheckpointMessage[] => {
-  const serialized: AzureLegacyResumeCheckpointMessage[] = [];
-  for (const message of messages) {
-    if (message.role === "tool") {
-      serialized.push({
-        role: "tool",
-        content: typeof message.content === "string" ? message.content : JSON.stringify(message.content ?? ""),
-        toolCallId: message.tool_call_id,
-      });
-      continue;
-    }
-
-    if (message.role === "assistant") {
-      const toolCalls = (message.tool_calls ?? []).flatMap((toolCall) =>
-        toolCall.type === "function"
-          ? [
-              {
-                id: toolCall.id,
-                type: "function" as const,
-                function: {
-                  name: toolCall.function.name,
-                  arguments: toolCall.function.arguments,
-                },
-              },
-            ]
-          : [],
-      );
-      serialized.push({
-        role: "assistant",
-        content: typeof message.content === "string" ? message.content : "",
-        toolCalls,
-      });
-      continue;
-    }
-
-    if (message.role === "system" || message.role === "user") {
-      serialized.push({
-        role: message.role,
-        content: typeof message.content === "string" ? message.content : null,
-      });
-      continue;
-    }
-
-    serialized.push({
-      role: "system",
-      content: typeof message.content === "string" ? message.content : null,
-    });
-  }
-  return serialized;
-};
+): AzureLegacyResumeCheckpointMessage[] => messages.map(serializeCheckpointMessage);
 
 const restoreCheckpointMessages = (
   messages: AzureLegacyResumeCheckpointMessage[] | undefined,
@@ -536,20 +519,10 @@ const runAzureLegacyChat = async (
   return { summary: output.slice(0, 4000), responseId: null, usage };
 };
 
-const runAzureLegacyAgent = async (
-  client: OpenAI,
-  input: RunExecutionRequest,
-  toolContext: HarnessToolContext,
-  onChunk: (chunk: HarnessRunChunk) => void,
-  signal: AbortSignal,
-  devLogger?: { log: (event: string, data: unknown) => void },
-): Promise<{ summary: string; responseId: string | null; usage: RunTokenUsage }> => {
+const buildAzureAgentSetup = (input: RunExecutionRequest, toolContext: HarnessToolContext) => {
   const systemPrompt = `${SYSTEM_PROMPT}\n\n${MODE_INSTRUCTIONS[input.mode]}\n\nPolicy: ${MODE_POLICIES[input.mode].completionStyle}`;
   const userContent: ChatContentPart[] = [
-    {
-      type: "text",
-      text: `<task>\n${input.prompt.trim() || "(no task provided)"}\n</task>`,
-    },
+    { type: "text", text: `<task>\n${input.prompt.trim() || "(no task provided)"}\n</task>` },
     {
       type: "text",
       text: [
@@ -562,16 +535,10 @@ const runAzureLegacyAgent = async (
       ].join("\n"),
     },
   ];
-
-  const openAITools: OpenAI.Chat.ChatCompletionTool[] = toolContext.tools.map((tool) => ({
+  const tools: OpenAI.Chat.ChatCompletionTool[] = toolContext.tools.map((tool) => ({
     type: "function" as const,
-    function: {
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.inputSchema as Record<string, unknown>,
-    },
+    function: { name: tool.name, description: tool.description, parameters: tool.inputSchema as Record<string, unknown> },
   }));
-
   const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
     ...(restoreCheckpointMessages(input.resumeCheckpoint?.chatMessages) ?? [
       { role: "system", content: systemPrompt },
@@ -579,6 +546,18 @@ const runAzureLegacyAgent = async (
     ]),
   ];
   const startingRound = input.resumeCheckpoint?.chatMessages?.length ? input.resumeCheckpoint.round : 0;
+  return { messages, startingRound, tools };
+};
+
+const runAzureLegacyAgent = async (
+  client: OpenAI,
+  input: RunExecutionRequest,
+  toolContext: HarnessToolContext,
+  onChunk: (chunk: HarnessRunChunk) => void,
+  signal: AbortSignal,
+  devLogger?: { log: (event: string, data: unknown) => void },
+): Promise<{ summary: string; responseId: string | null; usage: RunTokenUsage }> => {
+  const { messages, startingRound, tools: openAITools } = buildAzureAgentSetup(input, toolContext);
 
   let accumulatedUsage: RunTokenUsage = { inputTokens: 0, outputTokens: 0 };
   const streamOutId = crypto.randomUUID();

@@ -316,6 +316,10 @@ const readPriorityFilePreview = async (
   return `${relativePath}:\n${await minimizePreviewText(preview.content, maxBodyTokens)}`;
 };
 
+const pushNonEmpty = (values: string[], value: string): void => {
+  if (value.trim()) values.push(value);
+};
+
 const assembleSectionsWithinBudget = (sections: ContextSection[], maxTotalTokens: number): string => {
   const sorted = [...sections].sort((left, right) => left.priority - right.priority);
   const selected: string[] = [];
@@ -340,13 +344,60 @@ const assembleSectionsWithinBudget = (sections: ContextSection[], maxTotalTokens
       break;
     }
     const truncated = truncateToTokenBudget(sectionText, remainingTokens);
-    if (truncated.trim()) {
-      selected.push(truncated);
-    }
+    pushNonEmpty(selected, truncated);
     break;
   }
 
   return selected.join("\n\n");
+};
+
+type InitialToolResult = { ok: boolean; content: string } | null;
+
+const buildInitialSections = (input: {
+  workspaceVcs: RunWorkspaceVcs;
+  mode: RunMode;
+  modelId?: string;
+  gitStatus: InitialToolResult;
+  packageJsonPreview: InitialToolResult;
+  workspaceYamlPreview: InitialToolResult;
+  entrypoints: string[];
+  changedFiles: string[];
+  promptHints: string[];
+  listStyle: "recursive" | "top_level" | "none";
+  recursiveListing: InitialToolResult;
+  topLevelListing: string | null;
+}): ContextSection[] => {
+  const gitStatusText = input.gitStatus?.content ?? "Git history unavailable: this run uses a plain project folder.";
+  const sections: ContextSection[] = [{
+    key: "facts",
+    priority: 10,
+    text: [
+      input.workspaceVcs === "git" ? "Repository facts:" : "Project folder facts:",
+      "- Workspace root: .",
+      `- Mode: ${input.mode}`,
+      `- Model: ${input.modelId ?? "(unknown)"}`,
+      "",
+      input.workspaceVcs === "git" ? "Git (branch + short status):" : "Git:",
+      gitStatusText,
+    ].join("\n"),
+  }];
+  if (input.packageJsonPreview?.ok) sections.push({
+    key: "workspace",
+    priority: 20,
+    text: [
+      "Package / workspace map:",
+      parseWorkspaceSummary(input.packageJsonPreview.content, input.workspaceYamlPreview?.ok ? input.workspaceYamlPreview.content : null),
+      "",
+      "Likely commands:",
+      parsePackageScriptsSummary(input.packageJsonPreview.content),
+    ].join("\n"),
+  });
+  if (input.entrypoints.length > 0) sections.push({ key: "entrypoints", priority: 30, text: ["Key entrypoints:", ...input.entrypoints.map((entry) => `- ${entry}`)].join("\n") });
+  if (input.changedFiles.length > 0) sections.push({ key: "changed-files", priority: 40, text: ["Recently changed files:", ...input.changedFiles.map((entry) => `- ${entry}`)].join("\n") });
+  if (input.promptHints.length > 0) sections.push({ key: "prompt-hints", priority: 50, text: ["Files or paths mentioned in the prompt:", ...input.promptHints.map((entry) => `- ${entry}`)].join("\n") });
+  if (input.listStyle === "top_level" && input.topLevelListing) sections.push({ key: "top-level", priority: 60, text: `Top-level files and folders:\n${input.topLevelListing}` });
+  if (input.listStyle === "recursive" && input.recursiveListing?.ok) sections.push({ key: "file-map", priority: 60, text: `Workspace file map:\n${input.recursiveListing.content}` });
+  return sections;
 };
 
 /**
@@ -409,77 +460,21 @@ export const buildInitialRepoContext = async (
     topLevelListingPromise ?? Promise.resolve(null),
   ]);
 
-  const gitStatusText = gitStatus?.content ?? "Git history unavailable: this run uses a plain project folder.";
   const changedFiles = gitStatus?.content ? parseChangedFiles(gitStatus.content, profile.changedFilesMax) : [];
-  const sections: ContextSection[] = [
-    {
-      key: "facts",
-      priority: 10,
-      text: [
-        workspaceVcs === "git" ? "Repository facts:" : "Project folder facts:",
-        "- Workspace root: .",
-        `- Mode: ${mode}`,
-        `- Model: ${normalizedOptions.modelId ?? "(unknown)"}`,
-        "",
-        workspaceVcs === "git" ? "Git (branch + short status):" : "Git:",
-        gitStatusText,
-      ].join("\n"),
-    },
-  ];
-
-  if (packageJsonPreview?.ok) {
-    sections.push({
-      key: "workspace",
-      priority: 20,
-      text: [
-        "Package / workspace map:",
-        parseWorkspaceSummary(packageJsonPreview.content, workspaceYamlPreview?.ok ? workspaceYamlPreview.content : null),
-        "",
-        "Likely commands:",
-        parsePackageScriptsSummary(packageJsonPreview.content),
-      ].join("\n"),
-    });
-  }
-
-  if (entrypoints.length > 0) {
-    sections.push({
-      key: "entrypoints",
-      priority: 30,
-      text: ["Key entrypoints:", ...entrypoints.map((entry) => `- ${entry}`)].join("\n"),
-    });
-  }
-
-  if (changedFiles.length > 0) {
-    sections.push({
-      key: "changed-files",
-      priority: 40,
-      text: ["Recently changed files:", ...changedFiles.map((entry) => `- ${entry}`)].join("\n"),
-    });
-  }
-
-  if (promptHints.length > 0) {
-    sections.push({
-      key: "prompt-hints",
-      priority: 50,
-      text: ["Files or paths mentioned in the prompt:", ...promptHints.map((entry) => `- ${entry}`)].join("\n"),
-    });
-  }
-
-  if (profile.listStyle === "top_level" && topLevelListing) {
-    sections.push({
-      key: "top-level",
-      priority: 60,
-      text: `Top-level files and folders:\n${topLevelListing}`,
-    });
-  }
-
-  if (profile.listStyle === "recursive" && recursiveListing?.ok) {
-    sections.push({
-      key: "file-map",
-      priority: 60,
-      text: `Workspace file map:\n${recursiveListing.content}`,
-    });
-  }
+  const sections = buildInitialSections({
+    workspaceVcs,
+    mode,
+    modelId: normalizedOptions.modelId,
+    gitStatus,
+    packageJsonPreview,
+    workspaceYamlPreview,
+    entrypoints,
+    changedFiles,
+    promptHints,
+    listStyle: profile.listStyle,
+    recursiveListing,
+    topLevelListing,
+  });
 
   const priorityPreviewPaths = [...changedFiles, ...promptHints]
     .filter((value, index, list) => list.indexOf(value) === index)

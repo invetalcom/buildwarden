@@ -471,20 +471,17 @@ export interface RunSubagentInfo {
   endedAtMs?: number;
 }
 
+const COMPLETED_SUBAGENT_STATUSES = new Set(["completed", "complete", "done", "success"]);
+const FAILED_SUBAGENT_STATUSES = new Set(["failed", "errored", "error", "failure"]);
+const CANCELLED_SUBAGENT_STATUSES = new Set(["cancelled", "canceled", "interrupted", "shutdown"]);
+const RUNNING_SUBAGENT_STATUSES = new Set(["running", "inprogress", "active", "started"]);
+
 export const normalizeRunSubagentStatus = (value: unknown): RunSubagentStatus => {
   const normalized = typeof value === "string" ? value.trim().toLowerCase().replace(/[\s_-]+/g, "") : "";
-  if (normalized === "completed" || normalized === "complete" || normalized === "done" || normalized === "success") {
-    return "completed";
-  }
-  if (normalized === "failed" || normalized === "errored" || normalized === "error" || normalized === "failure") {
-    return "failed";
-  }
-  if (normalized === "cancelled" || normalized === "canceled" || normalized === "interrupted" || normalized === "shutdown") {
-    return "cancelled";
-  }
-  if (normalized === "running" || normalized === "inprogress" || normalized === "active" || normalized === "started") {
-    return "running";
-  }
+  if (COMPLETED_SUBAGENT_STATUSES.has(normalized)) return "completed";
+  if (FAILED_SUBAGENT_STATUSES.has(normalized)) return "failed";
+  if (CANCELLED_SUBAGENT_STATUSES.has(normalized)) return "cancelled";
+  if (RUNNING_SUBAGENT_STATUSES.has(normalized)) return "running";
   return "pending";
 };
 
@@ -496,6 +493,24 @@ const asSharedFiniteNumber = (value: unknown): number | undefined => {
   return Number.isFinite(number) ? number : undefined;
 };
 
+const normalizeRunSubagentUsage = (value: unknown): RunSubagentUsage => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  const raw = value as Record<string, unknown>;
+  const usage: RunSubagentUsage = {};
+  const totalTokens = asSharedFiniteNumber(raw.totalTokens ?? raw.total_tokens);
+  const toolUses = asSharedFiniteNumber(raw.toolUses ?? raw.tool_uses);
+  const durationMs = asSharedFiniteNumber(raw.durationMs ?? raw.duration_ms);
+  if (totalTokens !== undefined) usage.totalTokens = totalTokens;
+  if (toolUses !== undefined) usage.toolUses = toolUses;
+  if (durationMs !== undefined) usage.durationMs = durationMs;
+  return usage;
+};
+
+const normalizeRunSubagentSource = (value: unknown): RunSubagentSource => {
+  if (value === "claude-code" || value === "codex-cli" || value === "cursor-acp") return value;
+  return "claude-code";
+};
+
 export const normalizeRunSubagentInfo = (value: unknown): RunSubagentInfo | null => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return null;
@@ -505,20 +520,8 @@ export const normalizeRunSubagentInfo = (value: unknown): RunSubagentInfo | null
   if (!id) {
     return null;
   }
-  const rawSource = record.source;
-  const source: RunSubagentSource =
-    rawSource === "claude-code" || rawSource === "codex-cli" || rawSource === "cursor-acp" ? rawSource : "claude-code";
-  const rawUsage =
-    typeof record.usage === "object" && record.usage !== null && !Array.isArray(record.usage)
-      ? (record.usage as Record<string, unknown>)
-      : null;
-  const usage: RunSubagentUsage = {};
-  const totalTokens = asSharedFiniteNumber(rawUsage?.totalTokens ?? rawUsage?.total_tokens);
-  const toolUses = asSharedFiniteNumber(rawUsage?.toolUses ?? rawUsage?.tool_uses);
-  const durationMs = asSharedFiniteNumber(rawUsage?.durationMs ?? rawUsage?.duration_ms);
-  if (totalTokens !== undefined) usage.totalTokens = totalTokens;
-  if (toolUses !== undefined) usage.toolUses = toolUses;
-  if (durationMs !== undefined) usage.durationMs = durationMs;
+  const source = normalizeRunSubagentSource(record.source);
+  const usage = normalizeRunSubagentUsage(record.usage);
   const name = asSharedString(record.name);
   const model = asSharedString(record.model);
   const description = asSharedString(record.description);
@@ -3210,6 +3213,26 @@ const RUN_DEFAULT_MODES: readonly RunMode[] = ["code", "plan", "ask"];
 const RUN_DEFAULT_WORKSPACE_TYPES: readonly RunWorkspaceType[] = ["worktree", "local", "copy"];
 const RUN_DEFAULT_EFFORTS: readonly string[] = ["low", "medium", "high", "xhigh"];
 
+const parseProjectRunDefaultsRecord = (value: unknown): ProjectRunDefaults | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const defaults = buildDefaultProjectRunDefaults();
+  return {
+    mode: RUN_DEFAULT_MODES.includes(record.mode as RunMode) ? (record.mode as RunMode) : defaults.mode,
+    workspaceType: RUN_DEFAULT_WORKSPACE_TYPES.includes(record.workspaceType as RunWorkspaceType)
+      ? (record.workspaceType as RunWorkspaceType)
+      : defaults.workspaceType,
+    baseBranch: typeof record.baseBranch === "string" ? record.baseBranch.trim() : defaults.baseBranch,
+    modelId: typeof record.modelId === "string" ? record.modelId.trim() : defaults.modelId,
+    worktreeModelIds: Array.isArray(record.worktreeModelIds)
+      ? [...new Set(record.worktreeModelIds.filter((item): item is string => typeof item === "string" && item.trim().length > 0))]
+      : defaults.worktreeModelIds,
+    reasoningEffort: RUN_DEFAULT_EFFORTS.includes(record.reasoningEffort as string) ? (record.reasoningEffort as string) : defaults.reasoningEffort,
+    anthropicEffort: RUN_DEFAULT_EFFORTS.includes(record.anthropicEffort as string) ? (record.anthropicEffort as string) : defaults.anthropicEffort,
+    yoloMode: record.yoloMode === true,
+  };
+};
+
 export const parseProjectRunDefaultsSetting = (raw: string | undefined | null): ProjectRunDefaultsByProjectId => {
   if (raw == null || !String(raw).trim()) {
     return {};
@@ -3221,29 +3244,8 @@ export const parseProjectRunDefaultsSetting = (raw: string | undefined | null): 
     }
     const result: ProjectRunDefaultsByProjectId = {};
     for (const [projectId, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (!projectId.trim() || !value || typeof value !== "object" || Array.isArray(value)) {
-        continue;
-      }
-      const record = value as Record<string, unknown>;
-      const defaults = buildDefaultProjectRunDefaults();
-      result[projectId] = {
-        mode: RUN_DEFAULT_MODES.includes(record.mode as RunMode) ? (record.mode as RunMode) : defaults.mode,
-        workspaceType: RUN_DEFAULT_WORKSPACE_TYPES.includes(record.workspaceType as RunWorkspaceType)
-          ? (record.workspaceType as RunWorkspaceType)
-          : defaults.workspaceType,
-        baseBranch: typeof record.baseBranch === "string" ? record.baseBranch.trim() : defaults.baseBranch,
-        modelId: typeof record.modelId === "string" ? record.modelId.trim() : defaults.modelId,
-        worktreeModelIds: Array.isArray(record.worktreeModelIds)
-          ? [...new Set(record.worktreeModelIds.filter((x): x is string => typeof x === "string" && x.trim().length > 0))]
-          : defaults.worktreeModelIds,
-        reasoningEffort: RUN_DEFAULT_EFFORTS.includes(record.reasoningEffort as string)
-          ? (record.reasoningEffort as string)
-          : defaults.reasoningEffort,
-        anthropicEffort: RUN_DEFAULT_EFFORTS.includes(record.anthropicEffort as string)
-          ? (record.anthropicEffort as string)
-          : defaults.anthropicEffort,
-        yoloMode: record.yoloMode === true,
-      };
+      const defaults = parseProjectRunDefaultsRecord(value);
+      if (projectId.trim() && defaults) result[projectId] = defaults;
     }
     return result;
   } catch {

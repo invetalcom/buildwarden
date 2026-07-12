@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ComponentType } from "react";
+import { useEffect, useRef, type ComponentType, type RefObject } from "react";
 import { Check, Circle, Cpu, FolderOpen, Sparkles } from "lucide-react";
 import { Button } from "../ui/button";
 import {
@@ -81,6 +81,94 @@ const isWithinWelcomeFocusScope = (dialog: HTMLElement, target: EventTarget | nu
   return target instanceof Element && Boolean(target.closest(welcomeDialogPortalSelector));
 };
 
+const useWelcomeDialogFocusTrap = (dialogRef: RefObject<HTMLDivElement | null>, titleRef: RefObject<HTMLHeadingElement | null>) => {
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    titleRef.current?.focus();
+
+    const focusWithinDialog = (event: FocusEvent) => {
+      if (!isWithinWelcomeFocusScope(dialog, event.target)) {
+        (getWelcomeFocusScopeElements(dialog)[0] ?? titleRef.current ?? dialog).focus();
+      }
+    };
+    const trapTabKey = (event: KeyboardEvent) => {
+      if (event.key !== "Tab" || !isWithinWelcomeFocusScope(dialog, event.target)) return;
+      const focusableElements = getWelcomeFocusScopeElements(dialog);
+      if (focusableElements.length === 0) {
+        event.preventDefault();
+        (titleRef.current ?? dialog).focus();
+        return;
+      }
+      const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const activeIndex = activeElement ? focusableElements.indexOf(activeElement) : -1;
+      let focusTarget: HTMLElement | null | undefined;
+      if (event.shiftKey && activeIndex <= 0) {
+        focusTarget = focusableElements.at(-1);
+      } else if (!event.shiftKey && (activeIndex === -1 || activeIndex === focusableElements.length - 1)) {
+        focusTarget = focusableElements[0];
+      }
+      if (focusTarget) {
+        event.preventDefault();
+        focusTarget.focus();
+      }
+    };
+    document.addEventListener("focusin", focusWithinDialog);
+    document.addEventListener("keydown", trapTabKey);
+    return () => {
+      document.removeEventListener("focusin", focusWithinDialog);
+      document.removeEventListener("keydown", trapTabKey);
+      previouslyFocused?.focus();
+    };
+  }, [dialogRef, titleRef]);
+};
+
+const buildWelcomeCopy = (stepKey: WelcomeStepKey, completedChecks: Array<{ navLabel: string }>, missingChecks: Array<{ navLabel: string }>, allChecksComplete: boolean) => {
+  const completedList = formatCheckList(completedChecks);
+  const missingList = formatCheckList(missingChecks);
+  const nothingCompleted = missingChecks.length === WELCOME_CHECK_DEFINITIONS.length;
+  let introTitle = "Nice, a few bits are already ready.";
+  let introDescription = "Everything is already wired up. BuildWarden is ready when you are.";
+  let introSubtitle = "Everything looks ready. No extra homework today.";
+  if (nothingCompleted) {
+    introTitle = "Tiny setup, then the fun part.";
+    introDescription = "Connect a model, pick a project folder, and BuildWarden can get out of checklist mode.";
+    introSubtitle = "Two quick choices and you are ready for your first run.";
+  } else if (missingChecks.length > 0) {
+    introTitle = missingChecks.length === 1 ? "Nice, just one thing left." : introTitle;
+    introDescription = `Already done: ${completedList}. Still needed: ${missingList}.`;
+    introSubtitle = `You already handled ${completedList}. Let's finish ${missingList}.`;
+  }
+  if (stepKey === "intro") return { introTitle, introDescription, headerTitle: "Welcome to BuildWarden", headerSubtitle: introSubtitle };
+  if (stepKey === "done") return {
+    introTitle,
+    introDescription,
+    headerTitle: allChecksComplete ? "All set & done" : "Done for now",
+    headerSubtitle: allChecksComplete
+      ? "Provider, model, and project have all existed once. This hello screen will stop popping by."
+      : "You skipped the remaining bits. No drama; BuildWarden will ask again on a later startup.",
+  };
+  const check = WELCOME_CHECK_DEFINITIONS.find((entry) => entry.id === stepKey);
+  return { introTitle, introDescription, headerTitle: check?.title, headerSubtitle: check?.description };
+};
+
+const WelcomeDialogFooter = ({ stepKey, stepIndex, steps, currentCheck, onBack, onIntroNext, onSkipCheck, onFinish }: Pick<WelcomeDialogProps,
+  "stepKey" | "stepIndex" | "steps" | "onBack" | "onIntroNext" | "onSkipCheck" | "onFinish"
+> & { currentCheck: (typeof WELCOME_CHECK_DEFINITIONS)[number] | null }) => (
+  <footer className="flex items-center justify-between gap-3 border-t border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-4 py-3">
+    <div className="flex items-center gap-1 md:hidden">
+      {steps.map((step) => <span key={step} className={cn("h-1.5 w-5 rounded-full", step === stepKey ? "bg-[var(--ec-accent)]" : "bg-[var(--ec-border-strong)]")} />)}
+    </div>
+    <div className="ml-auto flex items-center gap-2">
+      {stepIndex > 0 && <Button type="button" variant="secondary" onClick={onBack}>Back</Button>}
+      {stepKey === "intro" && <Button type="button" onClick={onIntroNext}>Get started</Button>}
+      {stepKey !== "intro" && currentCheck && <Button type="button" onClick={() => onSkipCheck(currentCheck.id)}>Skip this step</Button>}
+      {stepKey !== "intro" && !currentCheck && <Button type="button" onClick={onFinish}>Finish</Button>}
+    </div>
+  </footer>
+);
+
 export const WelcomeDialog = ({
   stepKey,
   stepIndex,
@@ -107,87 +195,8 @@ export const WelcomeDialog = ({
   const currentCheck = stepKey !== "intro" && stepKey !== "done"
     ? WELCOME_CHECK_DEFINITIONS.find((check) => check.id === stepKey) ?? null
     : null;
-  const missingCheckList = formatCheckList(missingChecks);
-  const completedCheckList = formatCheckList(completedChecks);
-  const nothingCompletedYet = missingChecks.length === WELCOME_CHECK_DEFINITIONS.length;
-  let introTitle = "Nice, a few bits are already ready.";
-  let introDescription = "Everything is already wired up. BuildWarden is ready when you are.";
-  let introSubtitle = "Everything looks ready. No extra homework today.";
-  if (nothingCompletedYet) {
-    introTitle = "Tiny setup, then the fun part.";
-    introDescription = "Connect a model, pick a project folder, and BuildWarden can get out of checklist mode.";
-    introSubtitle = "Two quick choices and you are ready for your first run.";
-  } else if (missingChecks.length > 0) {
-    introTitle = missingChecks.length === 1 ? "Nice, just one thing left." : "Nice, a few bits are already ready.";
-    introDescription = `Already done: ${completedCheckList}. Still needed: ${missingCheckList}.`;
-    introSubtitle = `You already handled ${completedCheckList}. Let's finish ${missingCheckList}.`;
-  }
-
-  let headerTitle: string | undefined = currentCheck?.title;
-  let headerSubtitle: string | undefined = currentCheck?.description;
-  if (stepKey === "intro") {
-    headerTitle = "Welcome to BuildWarden";
-    headerSubtitle = introSubtitle;
-  } else if (stepKey === "done") {
-    headerTitle = allChecksComplete ? "All set & done" : "Done for now";
-    headerSubtitle = allChecksComplete
-      ? "Provider, model, and project have all existed once. This hello screen will stop popping by."
-      : "You skipped the remaining bits. No drama; BuildWarden will ask again on a later startup.";
-  }
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-
-    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    titleRef.current?.focus();
-
-    const focusWithinDialog = (event: FocusEvent) => {
-      if (isWithinWelcomeFocusScope(dialog, event.target)) {
-        return;
-      }
-      (getWelcomeFocusScopeElements(dialog)[0] ?? titleRef.current ?? dialog).focus();
-    };
-
-    const trapTabKey = (event: KeyboardEvent) => {
-      if (event.key !== "Tab") {
-        return;
-      }
-      if (!isWithinWelcomeFocusScope(dialog, event.target)) {
-        return;
-      }
-
-      const focusableElements = getWelcomeFocusScopeElements(dialog);
-      if (focusableElements.length === 0) {
-        event.preventDefault();
-        (titleRef.current ?? dialog).focus();
-        return;
-      }
-
-      const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      const activeIndex = activeElement ? focusableElements.indexOf(activeElement) : -1;
-      const firstElement = focusableElements[0]!;
-      const lastElement = focusableElements[focusableElements.length - 1]!;
-
-      if (event.shiftKey && activeIndex <= 0) {
-        event.preventDefault();
-        lastElement.focus();
-        return;
-      }
-      if (!event.shiftKey && (activeIndex === -1 || activeIndex === focusableElements.length - 1)) {
-        event.preventDefault();
-        firstElement.focus();
-      }
-    };
-
-    document.addEventListener("focusin", focusWithinDialog);
-    document.addEventListener("keydown", trapTabKey);
-    return () => {
-      document.removeEventListener("focusin", focusWithinDialog);
-      document.removeEventListener("keydown", trapTabKey);
-      previouslyFocused?.focus();
-    };
-  }, []);
+  const { introTitle, introDescription, headerTitle, headerSubtitle } = buildWelcomeCopy(stepKey, completedChecks, missingChecks, allChecksComplete);
+  useWelcomeDialogFocusTrap(dialogRef, titleRef);
 
   return (
     <div className="absolute inset-0 z-[70] flex items-center justify-center bg-zinc-950/70 p-4 backdrop-blur-md">
@@ -330,38 +339,16 @@ export const WelcomeDialog = ({
             ) : null}
           </div>
 
-          <footer className="flex items-center justify-between gap-3 border-t border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-4 py-3">
-            <div className="flex items-center gap-1 md:hidden">
-              {steps.map((step) => (
-                <span
-                  key={step}
-                  className={cn("h-1.5 w-5 rounded-full", step === stepKey ? "bg-[var(--ec-accent)]" : "bg-[var(--ec-border-strong)]")}
-                />
-              ))}
-            </div>
-            <div className="ml-auto flex items-center gap-2">
-              {stepIndex > 0 ? (
-                <Button type="button" variant="secondary" onClick={onBack}>
-                  Back
-                </Button>
-              ) : null}
-              {stepKey === "intro" ? (
-                <Button type="button" onClick={onIntroNext}>
-                  Get started
-                </Button>
-              ) : null}
-              {stepKey !== "intro" && currentCheck ? (
-                <Button type="button" onClick={() => onSkipCheck(currentCheck.id)}>
-                  Skip this step
-                </Button>
-              ) : null}
-              {stepKey !== "intro" && !currentCheck ? (
-                <Button type="button" onClick={onFinish}>
-                  Finish
-                </Button>
-              ) : null}
-            </div>
-          </footer>
+          <WelcomeDialogFooter
+            stepKey={stepKey}
+            stepIndex={stepIndex}
+            steps={steps}
+            currentCheck={currentCheck}
+            onBack={onBack}
+            onIntroNext={onIntroNext}
+            onSkipCheck={onSkipCheck}
+            onFinish={onFinish}
+          />
         </section>
       </div>
     </div>

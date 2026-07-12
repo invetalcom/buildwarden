@@ -14,6 +14,20 @@ interface UseProjectBranchesInput {
   setError: Dispatch<SetStateAction<string | null>>;
 }
 
+const readCurrentProjectBranch = async (buildwarden: DesktopApi, projectId: string): Promise<string | null> => {
+  try {
+    return await buildwarden.getProjectCurrentBranch(projectId);
+  } catch (caught) {
+    const message = caught instanceof Error ? caught.message : String(caught);
+    if (isDetachedHeadProjectErrorMessage(message)) {
+      return null;
+    }
+    throw caught;
+  }
+};
+
+const errorMessage = (caught: unknown): string => caught instanceof Error ? caught.message : String(caught) || "Unexpected error";
+
 export const useProjectBranches = ({ buildwarden, selectedProject, setError }: UseProjectBranchesInput) => {
   const [availableRunBranches, setAvailableRunBranches] = useState<string[]>([]);
   const [currentProjectBranch, setCurrentProjectBranch] = useState("");
@@ -63,30 +77,19 @@ export const useProjectBranches = ({ buildwarden, selectedProject, setError }: U
         return;
       }
       const nextBranches = branches.length > 0 ? branches : [defaultBranch];
-      try {
-        const currentBranch = await buildwarden.getProjectCurrentBranch(projectId);
-        if (!isLatestRequest()) {
-          return;
-        }
-        if (!currentBranch) {
-          applyDetachedHeadState(nextBranches);
-          return;
-        }
-        setDetachedCheckoutBranch("");
-        setCurrentProjectBranch(currentBranch);
-        setAvailableRunBranches(nextBranches);
-        setRunBaseBranch((current) => pickProjectBranch(nextBranches, defaultBranch, current));
-        setError((previous) => (previous && isDetachedHeadProjectErrorMessage(previous) ? null : previous));
-      } catch (caught) {
-        if (!isLatestRequest()) {
-          return;
-        }
-        const message = caught instanceof Error ? caught.message : String(caught);
-        if (!isDetachedHeadProjectErrorMessage(message)) {
-          throw caught;
-        }
-        applyDetachedHeadState(nextBranches);
+      const currentBranch = await readCurrentProjectBranch(buildwarden, projectId);
+      if (!isLatestRequest()) {
+        return;
       }
+      if (!currentBranch) {
+        applyDetachedHeadState(nextBranches);
+        return;
+      }
+      setDetachedCheckoutBranch("");
+      setCurrentProjectBranch(currentBranch);
+      setAvailableRunBranches(nextBranches);
+      setRunBaseBranch((current) => pickProjectBranch(nextBranches, defaultBranch, current));
+      setError((previous) => (previous && isDetachedHeadProjectErrorMessage(previous) ? null : previous));
     } catch (caught) {
       if (!isLatestRequest()) {
         return;
@@ -96,7 +99,7 @@ export const useProjectBranches = ({ buildwarden, selectedProject, setError }: U
       setAvailableRunBranches([defaultBranch]);
       setRunBaseBranch(defaultBranch);
       setCurrentProjectBranch(defaultBranch);
-      setError(caught instanceof Error ? caught.message : String(caught) || "Unexpected error");
+      setError(errorMessage(caught));
     }
   }, [buildwarden, selectedProject, setError]);
 
