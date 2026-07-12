@@ -17,6 +17,7 @@ import {
   type ProjectInput,
   type ProjectLoopChangedPayload,
   type ProjectLoopUiReviewDecisionInput,
+  type ProjectTaskChangedPayload,
   type ProviderAccountInput,
   type RunChatInput,
   type RunEvent,
@@ -60,6 +61,11 @@ const api: DesktopApi = {
   createProjectTask: (projectId: string, input) => invoke(IPC_CHANNELS.createProjectTask, projectId, input),
   updateProjectTask: (taskId: string, input) => invoke(IPC_CHANNELS.updateProjectTask, taskId, input),
   deleteProjectTask: (taskId: string) => invoke(IPC_CHANNELS.deleteProjectTask, taskId),
+  onProjectTaskChanged: (listener: (payload: ProjectTaskChangedPayload) => void) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, payload: ProjectTaskChangedPayload) => listener(payload);
+    ipcRenderer.on(IPC_CHANNELS.projectTaskChanged, wrapped);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.projectTaskChanged, wrapped);
+  },
   runProjectLab: (input) => invoke(IPC_CHANNELS.runProjectLab, input),
   deleteProjectLabThread: (threadId: string) => invoke(IPC_CHANNELS.deleteProjectLabThread, threadId),
   createProjectLoop: (input) => invoke(IPC_CHANNELS.createProjectLoop, input),

@@ -104,4 +104,38 @@ describe("folder project persistence", () => {
       branchName: "folder-copy",
     });
   });
+
+  it("persists Kanban status and links tasks to agent runs and pull requests", async () => {
+    const db = await makeDb();
+    const project = db.addProject({
+      repoPath: "C:\\repo",
+      defaultBranch: "main",
+      resolvedName: "Repo",
+    });
+    const { provider, model } = addModelFixture(db);
+    const task = db.createProjectTask(project.id, { title: "Ship Kanban", prompt: "Build the board" });
+
+    expect(task).toMatchObject({ status: "open", runId: null, pullRequestUrl: null });
+
+    const run = db.createRun({
+      projectId: project.id,
+      providerAccountId: provider.id,
+      modelId: model.id,
+      harnessType: "codex-app-server",
+      mode: "code",
+      workspaceType: "worktree",
+      prompt: task.prompt,
+      branchName: "feat/kanban",
+      worktreePath: "C:\\repo\\.buildwarden-worktrees\\kanban",
+      projectTaskId: task.id,
+    });
+
+    expect(run.projectTaskId).toBe(task.id);
+    expect(db.linkProjectTaskToRun(task.id, run.id)).toMatchObject({ status: "in_progress", runId: run.id });
+    expect(db.markProjectTaskInReview(task.id, "https://github.com/acme/repo/pull/42")).toMatchObject({
+      status: "in_review",
+      pullRequestUrl: "https://github.com/acme/repo/pull/42",
+    });
+    expect(db.updateProjectTask(task.id, { status: "done" }).status).toBe("done");
+  });
 });

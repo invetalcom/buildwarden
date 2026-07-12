@@ -43,6 +43,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
+import { BetaBadge } from "./BetaBadge";
 import { ImageLightbox } from "../ui/image-lightbox";
 import { Input } from "../ui/input";
 import { Select } from "../ui/select";
@@ -207,12 +208,6 @@ const StatusPill = (
 ) => (
   <span className={cn("rounded-full border px-2.5 py-0.5 text-[11px]", statusToneClass(props.status))}>
     {props.kind === "loop" ? LOOP_STATUS_LABELS[props.status] : ITERATION_STATUS_LABELS[props.status]}
-  </span>
-);
-
-const BetaBadge = () => (
-  <span className="shrink-0 rounded-full border border-amber-400/35 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-300">
-    Beta
   </span>
 );
 

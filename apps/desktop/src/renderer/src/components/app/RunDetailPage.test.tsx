@@ -40,6 +40,7 @@ const run = (overrides: Partial<RunRecord> = {}): RunRecord => ({
   parentRunId: null,
   rootRunId: null,
   lineageTitle: null,
+  projectTaskId: null,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:05:00.000Z",
   startedAt: "2026-01-01T00:00:10.000Z",

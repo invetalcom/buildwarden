@@ -1886,3 +1886,81 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
     margin-top: 0;
   }
 }
+
+/* Task board uses semantic surfaces because literal dark opacity utilities do
+   not translate cleanly to the bright glass theme. */
+body .task-board-lane {
+  border: 1px solid var(--ec-border);
+  background: var(--ec-panel-soft);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ec-text) 5%, transparent);
+}
+
+body .task-board-lane--drop {
+  background: var(--ec-accent-soft);
+}
+
+body .task-board-card {
+  border-color: var(--ec-border-strong);
+  background: var(--ec-panel-strong);
+  color: var(--ec-text);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--ec-shadow) 28%, transparent);
+}
+
+body .task-card-action {
+  background: transparent;
+  color: var(--ec-muted) !important;
+}
+
+body .task-card-action:hover {
+  background: var(--ec-accent-soft) !important;
+  color: var(--ec-accent) !important;
+}
+
+body .task-card-action--danger:hover {
+  background: var(--ec-danger-soft) !important;
+  color: var(--ec-danger) !important;
+}
+
+body .task-modal-backdrop {
+  background: rgba(3, 7, 12, 0.64);
+  backdrop-filter: blur(5px) saturate(82%);
+  -webkit-backdrop-filter: blur(5px) saturate(82%);
+}
+
+body .task-modal-surface {
+  border-color: var(--ec-border-strong);
+  background: var(--ec-bg-elevated) !important;
+  box-shadow: var(--ec-popover-shadow);
+}
+
+body[data-theme="light"] .task-board-lane {
+  border-color: rgba(30, 58, 82, 0.13);
+  background: rgba(248, 251, 254, 0.82);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+
+body[data-theme="light"] .task-board-lane--drop {
+  background: rgba(10, 111, 222, 0.1);
+}
+
+body[data-theme="light"] .task-board-card {
+  border-color: rgba(30, 58, 82, 0.2);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 1px 2px rgba(31, 55, 78, 0.12), 0 5px 14px rgba(31, 55, 78, 0.08);
+}
+
+body[data-theme="light"] .task-card-action {
+  color: #40576b !important;
+}
+
+body[data-theme="light"] .task-modal-backdrop {
+  background: rgba(36, 55, 72, 0.2);
+  backdrop-filter: blur(2px) saturate(88%);
+  -webkit-backdrop-filter: blur(2px) saturate(88%);
+}
+
+body[data-theme="light"] .task-modal-surface {
+  border-color: rgba(30, 58, 82, 0.22);
+  background: #ffffff !important;
+  box-shadow: 0 24px 70px rgba(25, 47, 68, 0.24), 0 3px 12px rgba(25, 47, 68, 0.12);
+}

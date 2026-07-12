@@ -662,6 +662,7 @@ export class AppController
       | "onAppSettingsChanged"
       | "onProjectForgeRequestOpen"
       | "onProjectForgeRequestNotification"
+      | "onProjectTaskChanged"
       | "showAppMenu"
       | "openSystemTerminalAtPath"
       | "openExternalUrl"
@@ -721,6 +722,13 @@ export class AppController
     if (run.workspaceVcs !== "git") {
       throw new Error(`${featureLabel} is only available for Git-backed runs.`);
     }
+  }
+
+  private markLinkedRunTaskInReview(run: RunRecord, pullRequestUrl?: string): ProjectTaskRecord | null {
+    if (!run.projectTaskId) {
+      return null;
+    }
+    return this.db.markProjectTaskInReview(run.projectTaskId, pullRequestUrl);
   }
 
   private getRunWorkspaceLabel(run: RunRecord): string {
@@ -2224,6 +2232,12 @@ export class AppController
 
   async createRun(input: RunInput): Promise<RunRecord> {
     const project = this.db.getProject(input.projectId);
+    if (input.projectTaskId) {
+      const task = this.db.getProjectTask(input.projectTaskId);
+      if (task.projectId !== project.id) {
+        throw new Error("The selected task does not belong to this project.");
+      }
+    }
     const provider = this.db.getProviderAccount(input.providerAccountId);
     const model = this.db.getModel(input.modelId);
     const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
@@ -2297,6 +2311,10 @@ export class AppController
       branchName,
       worktreePath,
     });
+
+    if (run.projectTaskId) {
+      this.db.linkProjectTaskToRun(run.projectTaskId, run.id);
+    }
 
     if (workspaceType === "worktree" || workspaceType === "copy") {
       this.db.upsertWorktree({
@@ -2458,7 +2476,12 @@ export class AppController
       parentRunId: sourceRun.id,
       rootRunId: sourceRun.rootRunId ?? sourceRun.id,
       lineageTitle: sourceRun.prompt || sourceRun.branchName,
+      projectTaskId: sourceRun.projectTaskId,
     });
+
+    if (run.projectTaskId) {
+      this.db.linkProjectTaskToRun(run.projectTaskId, run.id);
+    }
 
     this.db.upsertWorktree({
       id: run.id,
@@ -2722,6 +2745,7 @@ export class AppController
       },
       createdAt: new Date().toISOString(),
     });
+    this.markLinkedRunTaskInReview(run);
   }
 
   async suggestCommitMessage(runId: string): Promise<string> {
@@ -2901,7 +2925,39 @@ export class AppController
     if (!prompt) {
       throw new Error("Enter a task prompt.");
     }
-    return this.db.updateProjectTask(taskId, { title, prompt });
+    const status = input.status ?? existing.status;
+    if (!(status === "open" || status === "in_progress" || status === "in_review" || status === "done")) {
+      throw new Error(`Unsupported project task status: ${String(status)}`);
+    }
+    return this.db.updateProjectTask(taskId, { title, prompt, status });
+  }
+
+  async syncProjectTaskPullRequestStatuses(projectId: string): Promise<ProjectTaskRecord[]> {
+    const tasks = this.db
+      .listProjectTasks(projectId)
+      .filter((task) => task.status === "in_review" && Boolean(task.pullRequestUrl));
+    if (tasks.length === 0) {
+      return [];
+    }
+
+    const provider = await this.createProjectPrReviewProvider(projectId);
+    const changed: ProjectTaskRecord[] = [];
+    for (const task of tasks) {
+      try {
+        const details = await provider.getRequestDetails({ prUrl: task.pullRequestUrl! });
+        if (details.request.state === "merged") {
+          changed.push(this.db.updateProjectTask(task.id, { status: "done" }));
+        }
+      } catch (error) {
+        logWarn("Failed to reconcile a project task with its linked PR/MR.", {
+          projectId,
+          taskId: task.id,
+          pullRequestUrl: task.pullRequestUrl,
+          error,
+        });
+      }
+    }
+    return changed;
   }
 
   async deleteProjectTask(taskId: string): Promise<void> {
@@ -4640,6 +4696,7 @@ export class AppController
       },
       createdAt: new Date().toISOString(),
     });
+    this.markLinkedRunTaskInReview(run, url);
 
     if (createdCustomSourceBranch) {
       await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedSourceBranch);
@@ -4773,6 +4830,7 @@ export class AppController
       },
       createdAt: new Date().toISOString(),
     });
+    this.markLinkedRunTaskInReview(run);
 
     return content;
   }
