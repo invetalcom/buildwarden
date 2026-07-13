@@ -917,6 +917,8 @@ export const App = () => {
     return snapshot.projects.find((entry) => entry.project.id === runProjectId) ?? snapshot.projects[0] ?? null;
   }, [runProjectId, snapshot.projects]);
   const selectedProjectId = selectedProject?.project.id ?? "";
+  const selectedProjectIdRef = useRef(selectedProjectId);
+  selectedProjectIdRef.current = selectedProjectId;
   const {
     availableRunBranches,
     currentProjectBranch,
@@ -1434,7 +1436,9 @@ export const App = () => {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
       const project = await buildwarden.updateProjectBaseBranch(projectId, branchName);
-      setRunBaseBranch(project.baseBranch);
+      if (selectedProjectIdRef.current === projectId) {
+        setRunBaseBranch(project.baseBranch);
+      }
       await loadSnapshot();
     });
   };
