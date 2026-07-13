@@ -115,6 +115,24 @@ describe("AppController settings and lightweight workflows", () => {
     expect(harness.settings[APP_SETTING_KEYS.projectBaseBranchMigrationVersion]).toBe("1");
   });
 
+  it("retains legacy base-branch settings and retries after a project migration fails", async () => {
+    const harness = createHarness({
+      updateProjectBaseBranch: vi.fn(() => {
+        throw new Error("database unavailable");
+      }),
+    });
+    tempDirs.push(harness.logDir);
+    const legacySettings = JSON.stringify({
+      [project.id]: { mode: "code", workspaceType: "worktree", baseBranch: "release/next", modelId: "" },
+    });
+    harness.settings[APP_SETTING_KEYS.projectRunDefaults] = legacySettings;
+
+    await expect(harness.controller.migrateProjectBaseBranches()).rejects.toThrow("Could not migrate the base branch for 1 project.");
+
+    expect(harness.settings[APP_SETTING_KEYS.projectRunDefaults]).toBe(legacySettings);
+    expect(harness.settings[APP_SETTING_KEYS.projectBaseBranchMigrationVersion]).toBeUndefined();
+  });
+
   it("validates, persists, reads, and clears network proxy credentials", async () => {
     const harness = createHarness();
     tempDirs.push(harness.logDir);

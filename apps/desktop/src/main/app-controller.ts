@@ -1439,6 +1439,7 @@ export class AppController
     }
 
     const legacy = readLegacyProjectRunBaseBranches(settings[APP_SETTING_KEYS.projectRunDefaults]);
+    let failedProjectCount = 0;
     for (const project of this.db.listProjects()) {
       if (project.kind !== "git") {
         continue;
@@ -1452,6 +1453,7 @@ export class AppController
           this.db.updateProjectBaseBranch(project.id, baseBranch);
         }
       } catch (error) {
+        failedProjectCount += 1;
         this.logControllerError("Could not migrate a project's base branch; retaining its previous value.", error, {
           projectId: project.id,
           repoPath: project.repoPath,
@@ -1459,6 +1461,9 @@ export class AppController
       }
     }
 
+    if (failedProjectCount > 0) {
+      throw new Error(`Could not migrate the base branch for ${failedProjectCount} project${failedProjectCount === 1 ? "" : "s"}.`);
+    }
     if (legacy.cleaned !== null) {
       this.db.setSetting(APP_SETTING_KEYS.projectRunDefaults, legacy.cleaned);
     }
