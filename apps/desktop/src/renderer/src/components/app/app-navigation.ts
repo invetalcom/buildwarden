@@ -30,6 +30,7 @@ export interface MainViewFlagInput {
   hasRunDetail: boolean;
   openRunPaneCount: number;
   hasChatDetail: boolean;
+  hasBookmarkDetail: boolean;
 }
 
 export const computeMainViewFlags = (input: MainViewFlagInput) => {
@@ -42,17 +43,25 @@ export const computeMainViewFlags = (input: MainViewFlagInput) => {
     !onLandingOrEmptySelection &&
     Boolean(input.selectedRunId && (input.hasRunDetail || input.openRunPaneCount > 0));
   const isChatDetailView = noOverlaySelected && input.chatsSelected && input.hasChatDetail;
+  const isBookmarkDetailView = !input.settingsOpen && input.bookmarksSelected && input.hasBookmarkDetail;
   const isProjectWorkspaceView =
     noOverlaySelected && !input.chatsSelected && !input.landingSelected && !input.selectedRunId && input.hasSelectedProject;
 
   let sectionLayoutClassName = "space-y-4";
-  if (isAgentRunDetailView || isChatDetailView) {
+  if (isAgentRunDetailView || isChatDetailView || isBookmarkDetailView) {
     sectionLayoutClassName = "flex min-h-0 min-w-0 flex-1 flex-col gap-2";
   } else if (isProjectWorkspaceView) {
     sectionLayoutClassName = "flex min-h-0 min-w-0 flex-1 flex-col gap-4";
   }
 
-  return { onLandingOrEmptySelection, isAgentRunDetailView, isChatDetailView, isProjectWorkspaceView, sectionLayoutClassName };
+  return {
+    onLandingOrEmptySelection,
+    isAgentRunDetailView,
+    isChatDetailView,
+    isBookmarkDetailView,
+    isProjectWorkspaceView,
+    sectionLayoutClassName,
+  };
 };
 
 export const normalizeProjectFeatureTab = (

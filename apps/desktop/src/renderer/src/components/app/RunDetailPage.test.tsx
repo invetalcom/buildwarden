@@ -129,6 +129,8 @@ describe("RunDetailPage workflows", () => {
     const markup = renderToStaticMarkup(<RunDetailPage {...baseProps(detail())} />);
     expect(markup).toContain("Reach a quality score of 80");
     expect(markup).toContain("1 file changed");
+    expect(markup).toContain('aria-label="Scroll to top"');
+    expect(markup).toContain('aria-label="Scroll to bottom"');
   });
 
   it("renders active approval and interrupted recovery states", () => {

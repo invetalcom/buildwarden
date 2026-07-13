@@ -12,6 +12,7 @@ const baseInput = (overrides: Partial<MainViewFlagInput> = {}): MainViewFlagInpu
   hasRunDetail: false,
   openRunPaneCount: 0,
   hasChatDetail: false,
+  hasBookmarkDetail: false,
   ...overrides,
 });
 
@@ -32,6 +33,15 @@ describe("computeMainViewFlags", () => {
     expect(computeMainViewFlags(baseInput()).isProjectWorkspaceView).toBe(true);
     expect(computeMainViewFlags(baseInput({ settingsOpen: true })).isProjectWorkspaceView).toBe(false);
     expect(computeMainViewFlags(baseInput({ bookmarksSelected: true })).isProjectWorkspaceView).toBe(false);
+  });
+
+  it("uses the fixed detail layout only while a bookmark is open", () => {
+    const listFlags = computeMainViewFlags(baseInput({ bookmarksSelected: true }));
+    const detailFlags = computeMainViewFlags(baseInput({ bookmarksSelected: true, hasBookmarkDetail: true }));
+
+    expect(listFlags.isBookmarkDetailView).toBe(false);
+    expect(detailFlags.isBookmarkDetailView).toBe(true);
+    expect(detailFlags.sectionLayoutClassName).toContain("flex-1 flex-col");
   });
 });
 

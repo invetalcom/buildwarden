@@ -24,8 +24,8 @@ export const BookmarkDetailPage = ({ bookmark, models, onBack }: BookmarkDetailP
   );
 
   return (
-    <div className="space-y-4">
-      <Card className="app-surface-chat-hero overflow-hidden border px-4 py-3">
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
+      <Card className="app-surface-chat-hero shrink-0 overflow-hidden border px-4 py-3">
         <button
           type="button"
           className="text-[11px] uppercase tracking-[0.28em] text-cyan-400 transition hover:text-cyan-300"
@@ -74,13 +74,18 @@ export const BookmarkDetailPage = ({ bookmark, models, onBack }: BookmarkDetailP
         </div>
       </Card>
 
-      <RunActivityTimeline
-        steps={bookmark.steps}
-        run={runForTimeline}
-        readOnly
-        className="app-scrollbar px-0 py-1"
-        emptyMessage="No activity recorded."
-      />
+      <div className="relative flex min-h-0 flex-1 overflow-hidden rounded-xl border border-zinc-800/60">
+        <RunActivityTimeline
+          steps={bookmark.steps}
+          run={runForTimeline}
+          readOnly
+          className="app-scrollbar min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-1 pr-10"
+          emptyMessage="No activity recorded."
+          virtualized
+          showBoundaryControls
+          initialScrollPosition="start"
+        />
+      </div>
     </div>
   );
 };

@@ -919,12 +919,13 @@ export const RunDetailPage = ({
       run={runDetail.run}
       busy={busy}
       className={cn(
-        "app-scrollbar min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-0 pt-1",
+        "app-scrollbar min-h-0 flex-1 overflow-y-auto overflow-x-hidden pt-1 pr-10",
         activityTimelineFloatingClass,
       )}
       containerRef={activityContainerRef}
       endRef={activityEndRef}
       virtualized
+      showBoundaryControls
       endClassName={cn("shrink-0", showModifiedFilesSummary ? "h-2" : "h-px")}
       showLoading={isRunActive}
       density={timelineDensity}

@@ -11,6 +11,7 @@ import { buildVisibleConversationHistory } from "../../lib/context-window-estima
 import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
 import { ChatTranscript } from "./ChatTranscript";
 import { RunComposer } from "./RunComposer";
+import { ScrollBoundaryControls } from "./ScrollBoundaryControls";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -237,14 +238,17 @@ export const ChatDetailPage = ({
         onRemoveBookmark={onRemoveBookmark}
       />
 
-      <ChatTranscript
-        ref={activityContainerRef}
-        endRef={activityEndRef}
-        className="app-scrollbar min-h-0 flex-1 overflow-auto px-0 py-1"
-        items={activityEntries.map(({ step }) => step)}
-        emptyMessage="No messages yet."
-        showLoading={showPreResponseLoading}
-      />
+      <div className="relative min-h-0 flex-1">
+        <ChatTranscript
+          ref={activityContainerRef}
+          endRef={activityEndRef}
+          className="app-scrollbar h-full min-h-0 overflow-auto py-1 pr-10"
+          items={activityEntries.map(({ step }) => step)}
+          emptyMessage="No messages yet."
+          showLoading={showPreResponseLoading}
+        />
+        <ScrollBoundaryControls key={chat.id} scrollElementRef={activityContainerRef} />
+      </div>
       <RunComposer
         variant="chat"
         attachments={
