@@ -133,7 +133,7 @@ export const useProjectBranches = ({ buildwarden, selectedProject, setError }: U
       setAvailableRunBranches([baseBranch]);
       setRunBaseBranch(baseBranch);
       runBaseBranchProjectIdRef.current = projectId;
-      setCurrentProjectBranchState({ projectId, branch: baseBranch, status: "unavailable" });
+      setCurrentProjectBranchState({ projectId, branch: "", status: "unavailable" });
       setError(errorMessage(caught));
     }
   }, [buildwarden, selectedProject, setError]);
