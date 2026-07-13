@@ -50,4 +50,15 @@ describe("project base branch detection", () => {
 
     expect(validation.baseBranch).toBe("main");
   });
+
+  it("ignores origin/HEAD when its target branch no longer exists", async () => {
+    const repoPath = createRepository();
+    git(repoPath, "update-ref", "refs/remotes/origin/main", "HEAD");
+    git(repoPath, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/deleted-default");
+    git(repoPath, "checkout", "-b", "feature/active-work");
+
+    const validation = await new GitService().validateProject(repoPath);
+
+    expect(validation.baseBranch).toBe("main");
+  });
 });

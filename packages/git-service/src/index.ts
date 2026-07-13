@@ -36,10 +36,11 @@ const detectProjectBaseBranch = async (git: SimpleGit, currentBranch: string): P
     const symbolicRef = (await git.raw(["symbolic-ref", "-q", "refs/remotes/origin/HEAD"])).trim();
     const match = /^refs\/remotes\/origin\/(.+)$/.exec(symbolicRef);
     if (match?.[1]) {
+      await git.raw(["show-ref", "--verify", `refs/remotes/origin/${match[1]}`]);
       return match[1];
     }
   } catch {
-    // Repositories without an origin/HEAD still get deterministic local fallbacks below.
+    // Repositories without a valid origin/HEAD still get deterministic fallbacks below.
   }
 
   for (const candidate of ["main", "master", "develop"]) {
