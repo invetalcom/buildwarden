@@ -345,7 +345,7 @@ const SidebarComponent = ({
 
   if (collapsed) {
     return (
-      <aside className="flex min-h-0 w-[50px] shrink-0 flex-col border-r border-[var(--ec-border)] bg-[var(--ec-sidebar)]">
+      <aside className="flex min-h-0 w-[50px] shrink-0 flex-col border-r border-[var(--ec-border)] bg-[var(--ec-sidebar)] transition-colors duration-150">
         <div className="flex h-12 items-center justify-center border-b border-[var(--ec-border)]">
           <button
             className="flex size-8 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
@@ -412,7 +412,11 @@ const SidebarComponent = ({
   }
 
   return (
-    <aside ref={sidebarRef} className="relative flex min-h-0 shrink-0 flex-col border-r border-[var(--ec-border)] bg-[var(--ec-sidebar)] text-[var(--ec-text)]" style={{ width }}>
+    <aside
+      ref={sidebarRef}
+      className="relative flex min-h-0 shrink-0 flex-col border-r border-[var(--ec-border)] bg-[var(--ec-sidebar)] text-[var(--ec-text)] transition-colors duration-150"
+      style={{ width }}
+    >
       <div ref={projectMenuRef} className="relative shrink-0 border-b border-[var(--ec-border)] p-1.5">
         <div className="flex items-center gap-1.5">
           <button

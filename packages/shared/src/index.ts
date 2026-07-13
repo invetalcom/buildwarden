@@ -2986,6 +2986,8 @@ export const APP_SETTING_KEYS = {
    * `"dark"` | `"light"`. When unset, {@link parseUiTheme} falls back to legacy {@link APP_SETTING_KEYS.darkMode}.
    */
   uiTheme: "uiTheme",
+  /** `"true"` gives the app sidebar a distinct theme-aware surface color. */
+  sidebarContrast: "sidebarContrast",
   /** Persisted app sidebar width in CSS pixels. */
   sidebarWidth: "sidebarWidth",
   /** Number of days shown in the sidebar Recent Runs section. */

@@ -68,6 +68,7 @@ interface SettingsPageProps {
   autoReleaseRunBranchOnLeave: boolean;
   recentRunDays: number;
   uiTheme: UiTheme;
+  sidebarContrast: boolean;
   worktreeRootOverrideSettingValue: string;
   enableDevMode: boolean;
   appLogDirPath: string;
@@ -90,6 +91,7 @@ interface SettingsPageProps {
   onAutoReleaseRunBranchOnLeaveChange: (value: boolean) => void;
   onRecentRunDaysChange: (value: number) => void | Promise<void>;
   onUiThemeChange: (theme: UiTheme) => void;
+  onSidebarContrastChange: (value: boolean) => void;
   onSaveWorktreeRootOverride: (value: string) => void | Promise<void>;
   onEnableDevModeChange: (value: boolean) => void;
   onProjectNameChange: (value: string) => void;
@@ -169,6 +171,7 @@ export const SettingsPage = ({
   autoReleaseRunBranchOnLeave,
   recentRunDays,
   uiTheme,
+  sidebarContrast,
   worktreeRootOverrideSettingValue,
   enableDevMode,
   appLogDirPath,
@@ -191,6 +194,7 @@ export const SettingsPage = ({
   onAutoReleaseRunBranchOnLeaveChange,
   onRecentRunDaysChange,
   onUiThemeChange,
+  onSidebarContrastChange,
   onSaveWorktreeRootOverride,
   onEnableDevModeChange,
   onProjectNameChange,
@@ -516,6 +520,7 @@ export const SettingsPage = ({
         <UserSettingsTab
           busy={busy}
           uiTheme={uiTheme}
+          sidebarContrast={sidebarContrast}
           enableDevMode={enableDevMode}
           appLogDirPath={appLogDirPath}
           appLogDirectorySize={appLogDirectorySize}
@@ -524,6 +529,7 @@ export const SettingsPage = ({
           idePathsSaving={idePathsSaving}
           keyboardShortcuts={keyboardShortcuts}
           onUiThemeChange={onUiThemeChange}
+          onSidebarContrastChange={onSidebarContrastChange}
           onEnableDevModeChange={onEnableDevModeChange}
           onKeyboardShortcutChange={onKeyboardShortcutChange}
           onOpenAppLogDirectory={onOpenAppLogDirectory}

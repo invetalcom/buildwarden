@@ -215,6 +215,7 @@ const EditorPathCard = ({
 export type UserSettingsTabProps = {
   busy: boolean;
   uiTheme: UiTheme;
+  sidebarContrast: boolean;
   enableDevMode: boolean;
   appLogDirPath: string;
   appLogDirectorySize: AppLogDirectorySizeInfo;
@@ -223,6 +224,7 @@ export type UserSettingsTabProps = {
   idePathsSaving: boolean;
   keyboardShortcuts: Record<KeyboardShortcutId, string>;
   onUiThemeChange: (theme: UiTheme) => void;
+  onSidebarContrastChange: (value: boolean) => void;
   onEnableDevModeChange: (value: boolean) => void;
   onKeyboardShortcutChange: (id: KeyboardShortcutId, value: string) => void;
   onOpenAppLogDirectory: () => void | Promise<void>;
@@ -236,6 +238,7 @@ export type UserSettingsTabProps = {
 export const UserSettingsTab = ({
   busy,
   uiTheme,
+  sidebarContrast,
   enableDevMode,
   appLogDirPath,
   appLogDirectorySize,
@@ -244,6 +247,7 @@ export const UserSettingsTab = ({
   idePathsSaving,
   keyboardShortcuts,
   onUiThemeChange,
+  onSidebarContrastChange,
   onEnableDevModeChange,
   onKeyboardShortcutChange,
   onOpenAppLogDirectory,
@@ -278,6 +282,20 @@ export const UserSettingsTab = ({
               </label>
             );
           })}
+        </div>
+      </SettingsRow>
+      <SettingsRow
+        title="Sidebar contrast"
+        description="Give the sidebar its own surface color: slightly brighter and blue-tinted in dark mode, and slightly darker in light mode."
+      >
+        <div className={`${rowControlClass} flex items-center justify-end gap-3`}>
+          <span className="text-xs font-medium text-[var(--ec-muted)]">{sidebarContrast ? "On" : "Off"}</span>
+          <Switch
+            checked={sidebarContrast}
+            onCheckedChange={onSidebarContrastChange}
+            disabled={busy}
+            aria-label="Use contrasting sidebar surface"
+          />
         </div>
       </SettingsRow>
     </SettingsSection>

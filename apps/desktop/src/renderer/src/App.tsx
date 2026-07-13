@@ -1033,6 +1033,7 @@ export const App = () => {
   const autoReleaseRunBranchOnLeave = snapshot.settings[APP_SETTING_KEYS.autoReleaseRunBranchOnLeave] !== "false";
   const recentRunDays = parseRecentRunDaysSetting(snapshot.settings[APP_SETTING_KEYS.recentRunDays]);
   const uiTheme = parseUiTheme(snapshot.settings);
+  const sidebarContrast = snapshot.settings[APP_SETTING_KEYS.sidebarContrast] === "true";
   const runTimelineDensity = parseRunTimelineDensitySetting(snapshot.settings[APP_SETTING_KEYS.runTimelineDensity]);
   const updateRunTimelineDensity = useCallback(
     (density: RunTimelineDensity) => {
@@ -3195,6 +3196,7 @@ export const App = () => {
               autoReleaseRunBranchOnLeave={autoReleaseRunBranchOnLeave}
               recentRunDays={recentRunDays}
               uiTheme={uiTheme}
+              sidebarContrast={sidebarContrast}
               enableDevMode={snapshot.settings[APP_SETTING_KEYS.enableDevMode] === "true"}
               appLogDirPath={appLogDirPath}
               appLogDirectorySize={appLogDirectorySize}
@@ -3233,6 +3235,7 @@ export const App = () => {
                   await loadSnapshot();
                 })
               }
+              onSidebarContrastChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.sidebarContrast, value)}
               worktreeRootOverrideSettingValue={snapshot.settings[APP_SETTING_KEYS.worktreeRootOverride] ?? ""}
               onSaveWorktreeRootOverride={(value) =>
                 void handleAction(async () => {
@@ -3680,6 +3683,7 @@ export const App = () => {
       className={cn(
         "app-shell flex h-screen min-h-0 flex-col overflow-hidden",
         uiTheme === "light" ? "theme-light" : "theme-dark",
+        sidebarContrast && "sidebar-contrast",
       )}
     >
       {showCustomWindowsTitleBar ? (
