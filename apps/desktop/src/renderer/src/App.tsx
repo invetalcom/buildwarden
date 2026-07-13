@@ -959,7 +959,6 @@ export const App = () => {
   const {
     changeRunMode,
     changeRunWorkspaceType,
-    changeRunBaseBranch,
     changeRunReasoningEffort,
     changeRunAnthropicEffort,
     changeRunYoloMode,
@@ -974,7 +973,6 @@ export const App = () => {
     selectedProjectId,
     setRunMode,
     setRunWorkspaceType,
-    setRunBaseBranch,
     setRunReasoningEffort,
     setRunAnthropicEffort,
     setRunYoloMode,
@@ -1427,6 +1425,17 @@ export const App = () => {
       setProjectFolderGitStatus(null);
       await loadSnapshot();
       setRunProjectId(project.id);
+    });
+  };
+
+  const updateProjectBaseBranch = async (projectId: string, branchName: string) => {
+    await handleAction(async () => {
+      if (!buildwarden) {
+        throw new Error("The Electron desktop bridge is unavailable.");
+      }
+      const project = await buildwarden.updateProjectBaseBranch(projectId, branchName);
+      setRunBaseBranch(project.baseBranch);
+      await loadSnapshot();
     });
   };
 
@@ -3529,7 +3538,8 @@ export const App = () => {
               onRunPromptChange={setRunPrompt}
               onRunModeChange={changeRunMode}
               onRunWorkspaceTypeChange={changeRunWorkspaceType}
-              onRunBaseBranchChange={changeRunBaseBranch}
+              onRunBaseBranchChange={setRunBaseBranch}
+              onProjectBaseBranchChange={(branchName) => updateProjectBaseBranch(project.project.id, branchName)}
               onRunModelChange={changeRunModel}
               onRunWorktreeModelIdsChange={changeRunWorktreeModelIds}
               availableIntegratedSkills={enabledIntegratedSkills}

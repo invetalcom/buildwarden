@@ -242,13 +242,13 @@ export const snapshotContainsRunId = (projects: ProjectSnapshot[], runId: string
       entry.loops.some((item) => item.iterations.some((iteration) => iteration.runId === runId)),
   );
 
-/** Picks the base branch to preselect: keep the current choice, fall back to the default branch, then the first branch. */
-export const pickProjectBranch = (branches: string[], defaultBranch: string, current?: string): string => {
+/** Picks the branch to preselect: keep the current choice, fall back to the project base, then the first branch. */
+export const pickProjectBranch = (branches: string[], baseBranch: string, current?: string): string => {
   if (current && branches.includes(current)) {
     return current;
   }
-  if (branches.includes(defaultBranch)) {
-    return defaultBranch;
+  if (branches.includes(baseBranch)) {
+    return baseBranch;
   }
   return branches[0] ?? "";
 };

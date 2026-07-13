@@ -31,6 +31,36 @@ const withLongPathSupport = (args: string[]): string[] =>
 
 const runGitRaw = (git: SimpleGit, args: string[]): Promise<string> => git.raw(withLongPathSupport(args));
 
+const detectProjectBaseBranch = async (git: SimpleGit, currentBranch: string): Promise<string> => {
+  try {
+    const symbolicRef = (await git.raw(["symbolic-ref", "-q", "refs/remotes/origin/HEAD"])).trim();
+    const match = /^refs\/remotes\/origin\/(.+)$/.exec(symbolicRef);
+    if (match?.[1]) {
+      return match[1];
+    }
+  } catch {
+    // Repositories without an origin/HEAD still get deterministic local fallbacks below.
+  }
+
+  for (const candidate of ["main", "master", "develop"]) {
+    try {
+      await git.raw(["show-ref", "--verify", "--quiet", `refs/remotes/origin/${candidate}`]);
+      return candidate;
+    } catch {
+      // Try the next conventional remote branch.
+    }
+  }
+
+  const localBranches = await git.branchLocal().catch(() => null);
+  for (const candidate of ["main", "master", "develop"]) {
+    if (localBranches?.all.includes(candidate)) {
+      return candidate;
+    }
+  }
+
+  return currentBranch || localBranches?.current || localBranches?.all[0] || "main";
+};
+
 export const readRecentCommitLog = async (repoPath: string, limit: number): Promise<string> => {
   const normalizedLimit = Math.max(1, Math.floor(limit));
   return runGitRaw(simpleGit(repoPath), [
@@ -334,7 +364,7 @@ export class GitService {
     await git.checkout(trimmedBranchName);
   }
 
-  async getProjectBranchOverview(repoPath: string, defaultBranch: string): Promise<ProjectGitBranchOverview> {
+  async getProjectBranchOverview(repoPath: string, baseBranch: string): Promise<ProjectGitBranchOverview> {
     const git = simpleGit(repoPath);
     await ensureGitLongPathSupport(git);
 
@@ -368,7 +398,7 @@ export class GitService {
       const created: ProjectGitBranchInfo = {
         name,
         isCurrent: name === currentBranch,
-        isDefault: name === defaultBranch,
+        isBase: name === baseBranch,
         hasLocal: false,
         hasRemote: false,
         upstream: null,
@@ -428,13 +458,13 @@ export class GitService {
 
     return {
       repoPath,
-      defaultBranch,
+      baseBranch,
       currentBranch,
       provider,
       webBaseUrl,
       branches: [...branches.values()].sort((left, right) => {
         if (left.isCurrent !== right.isCurrent) return left.isCurrent ? -1 : 1;
-        if (left.isDefault !== right.isDefault) return left.isDefault ? -1 : 1;
+        if (left.isBase !== right.isBase) return left.isBase ? -1 : 1;
         if (left.hasLocal !== right.hasLocal) return left.hasLocal ? -1 : 1;
         return left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: "base" });
       }),
@@ -449,7 +479,7 @@ export class GitService {
       return {
         repoPath,
         repoName: basename(repoPath),
-        defaultBranch: "main",
+        baseBranch: "main",
         isGitRepo: false,
         isWorktree: false,
         isDirty: false,
@@ -461,10 +491,12 @@ export class GitService {
     const revParse = await git.raw(["rev-parse", "--git-common-dir"]);
     const gitDir = revParse.trim();
 
+    const baseBranch = await detectProjectBaseBranch(git, branchSummary.current);
+
     return {
       repoPath,
       repoName: basename(repoPath),
-      defaultBranch: branchSummary.current || "main",
+      baseBranch,
       isGitRepo: true,
       isWorktree: gitDir !== ".git",
       isDirty: !status.isClean(),

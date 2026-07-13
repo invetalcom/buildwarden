@@ -900,7 +900,7 @@ export const ProjectLoopsTab = ({
   const [uiChangePolicy, setUiChangePolicy] = useState<ProjectLoopUiChangePolicy>("manual-approval");
   const [prReviewPolicy, setPrReviewPolicy] = useState<ProjectLoopPrReviewPolicy>("none");
   const [uiReviewInstructions, setUiReviewInstructions] = useState("");
-  const [baseBranch, setBaseBranch] = useState(project.project.defaultBranch);
+  const [baseBranch, setBaseBranch] = useState(project.project.baseBranch);
   const [createError, setCreateError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -947,9 +947,9 @@ export const ProjectLoopsTab = ({
     setName("");
     setPrompt("");
     setUiReviewInstructions("");
-    setBaseBranch(project.project.defaultBranch);
+    setBaseBranch(project.project.baseBranch);
     setCreateError(null);
-  }, [project.project.id, project.project.defaultBranch]);
+  }, [project.project.baseBranch, project.project.id]);
 
   const normalizedBranchOptions = branchOptions.filter(Boolean);
 
@@ -967,7 +967,7 @@ export const ProjectLoopsTab = ({
         uiChangePolicy,
         prReviewPolicy,
         uiReviewInstructions: uiReviewInstructions.trim() || null,
-        baseBranch: baseBranch || project.project.defaultBranch,
+        baseBranch: baseBranch || project.project.baseBranch,
       });
       setName("");
       setPrompt("");
@@ -1052,9 +1052,9 @@ export const ProjectLoopsTab = ({
               <label className="space-y-1.5">
                 <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Target branch</span>
                 <Select
-                  value={baseBranch || project.project.defaultBranch}
+                  value={baseBranch || project.project.baseBranch}
                   onValueChange={setBaseBranch}
-                  options={(normalizedBranchOptions.length ? normalizedBranchOptions : [project.project.defaultBranch]).map((branch) => ({
+                  options={(normalizedBranchOptions.length ? normalizedBranchOptions : [project.project.baseBranch]).map((branch) => ({
                     value: branch,
                     label: branch,
                   }))}

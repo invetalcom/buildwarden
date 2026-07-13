@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BuildWardenDatabase } from "@buildwarden/db";
+import { APP_SETTING_KEYS } from "@buildwarden/shared";
 import type { ModelRecord, ProjectRecord, ProjectTaskRecord, ProviderAccountRecord, RunRecord } from "@buildwarden/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppController } from "./app-controller";
@@ -12,7 +13,7 @@ const project = {
   name: "Project",
   kind: "git",
   repoPath: "C:\\repo",
-  defaultBranch: "main",
+  baseBranch: "main",
 } as ProjectRecord;
 
 const provider = {
@@ -54,6 +55,7 @@ const createHarness = (overrides: DbOverrides = {}) => {
   const calls = {
     setSetting: vi.fn((key: string, value: string) => { settings[key] = value; }),
     deleteSetting: vi.fn((key: string) => { delete settings[key]; }),
+    updateProjectBaseBranch: vi.fn((_projectId: string, baseBranch: string) => ({ ...project, baseBranch })),
   };
   const defaults: DbOverrides = {
     getSettings: vi.fn(() => ({ ...settings })),
@@ -61,6 +63,7 @@ const createHarness = (overrides: DbOverrides = {}) => {
     getProject: vi.fn(() => project),
     listProjects: vi.fn(() => [project]),
     touchProject: vi.fn(),
+    updateProjectBaseBranch: calls.updateProjectBaseBranch,
     setSetting: calls.setSetting,
     deleteSetting: calls.deleteSetting,
     getProviderAccount: vi.fn(() => provider),
@@ -96,6 +99,22 @@ afterEach(() => {
 });
 
 describe("AppController settings and lightweight workflows", () => {
+  it("migrates the former run base into the single project base branch", async () => {
+    const harness = createHarness();
+    tempDirs.push(harness.logDir);
+    harness.settings[APP_SETTING_KEYS.projectRunDefaults] = JSON.stringify({
+      [project.id]: { mode: "code", workspaceType: "worktree", baseBranch: "release/next", modelId: "" },
+    });
+
+    await harness.controller.migrateProjectBaseBranches();
+
+    expect(harness.calls.updateProjectBaseBranch).toHaveBeenCalledWith(project.id, "release/next");
+    expect(JSON.parse(harness.settings[APP_SETTING_KEYS.projectRunDefaults]!)).toEqual({
+      [project.id]: { mode: "code", workspaceType: "worktree", modelId: "" },
+    });
+    expect(harness.settings[APP_SETTING_KEYS.projectBaseBranchMigrationVersion]).toBe("1");
+  });
+
   it("validates, persists, reads, and clears network proxy credentials", async () => {
     const harness = createHarness();
     tempDirs.push(harness.logDir);

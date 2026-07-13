@@ -725,7 +725,8 @@ export interface ProjectRecord {
   id: string;
   name: string;
   repoPath: string;
-  defaultBranch: string;
+  /** Project-wide branch used for new worktrees and as the default merge / PR target. */
+  baseBranch: string;
   kind: ProjectKind;
   cumulativeInputTokens: number;
   cumulativeOutputTokens: number;
@@ -1595,7 +1596,7 @@ export interface ProjectGitConversionCandidate {
   projectId: string;
   repoPath: string;
   repoName: string;
-  defaultBranch: string;
+  baseBranch: string;
   currentBranch: string;
   isWorktree: boolean;
   isDirty: boolean;
@@ -1633,7 +1634,7 @@ export type ProjectGitBranchProvider = ProjectForgeProvider | "unknown";
 export interface ProjectGitBranchInfo {
   name: string;
   isCurrent: boolean;
-  isDefault: boolean;
+  isBase: boolean;
   hasLocal: boolean;
   hasRemote: boolean;
   upstream: string | null;
@@ -1646,7 +1647,7 @@ export interface ProjectGitBranchInfo {
 
 export interface ProjectGitBranchOverview {
   repoPath: string;
-  defaultBranch: string;
+  baseBranch: string;
   currentBranch: string;
   provider: ProjectGitBranchProvider;
   webBaseUrl: string | null;
@@ -2150,7 +2151,7 @@ export const shouldBypassNetworkProxyForUrl = (url: string, config: NetworkProxy
 export interface GitProjectValidation {
   repoPath: string;
   repoName: string;
-  defaultBranch: string;
+  baseBranch: string;
   isGitRepo: boolean;
   isWorktree: boolean;
   isDirty: boolean;
@@ -2648,6 +2649,7 @@ export interface DesktopApi {
   getProjectBranchOverview(projectId: string): Promise<ProjectGitBranchOverview>;
   checkProjectGitConversion(projectId: string): Promise<ProjectGitConversionCandidate | null>;
   convertProjectToGit(projectId: string): Promise<ProjectRecord>;
+  updateProjectBaseBranch(projectId: string, branchName: string): Promise<ProjectRecord>;
   checkProjectFolderGitStatus(repoPath: string): Promise<ProjectFolderGitStatus>;
   /** Check out a local branch on the project’s main repository (fixes detached HEAD). */
   checkoutProjectBranch(projectId: string, branchName: string): Promise<void>;
@@ -2910,6 +2912,7 @@ export const IPC_CHANNELS = {
   getProjectBranchOverview: "buildwarden:get-project-branch-overview",
   checkProjectGitConversion: "buildwarden:check-project-git-conversion",
   convertProjectToGit: "buildwarden:convert-project-to-git",
+  updateProjectBaseBranch: "buildwarden:update-project-base-branch",
   checkProjectFolderGitStatus: "buildwarden:check-project-folder-git-status",
   checkoutProjectBranch: "buildwarden:checkout-project-branch",
   fetchProjectBranches: "buildwarden:fetch-project-branches",
@@ -3015,8 +3018,10 @@ export const APP_SETTING_KEYS = {
   projectActiveSkills: "projectActiveSkills",
   /** JSON object keyed by project id containing Project Lab automation settings. */
   projectLabSettings: "projectLabSettings",
-  /** JSON object keyed by project id with persisted run defaults (mode, workspace, base branch, models, efforts, full access). */
+  /** JSON object keyed by project id with persisted run defaults (mode, workspace, models, efforts, full access). */
   projectRunDefaults: "projectRunDefaults",
+  /** Internal one-time migration marker for consolidating the former run-base setting into each project. */
+  projectBaseBranchMigrationVersion: "projectBaseBranchMigrationVersion",
   /** JSON object keyed by project id with PR/MR background polling intervals. */
   projectForgePrMonitorSettings: "projectForgePrMonitorSettings",
   /** JSON object with app-wide outbound proxy host/port/user settings (password stored in secure storage). */
@@ -3186,8 +3191,6 @@ export const serializeProjectLabSettingsSetting = (value: ProjectLabSettingsByPr
 export interface ProjectRunDefaults {
   mode: RunMode;
   workspaceType: RunWorkspaceType;
-  /** Base branch for worktree runs. Empty string = use the project default branch. */
-  baseBranch: string;
   /** Default model for direct (local) workspace runs. Empty string = last used / first available. */
   modelId: string;
   /** Models used for isolated workspace (worktree/copy) runs. Empty = fall back to {@link modelId}. */
@@ -3203,7 +3206,6 @@ export type ProjectRunDefaultsByProjectId = Record<string, ProjectRunDefaults>;
 export const buildDefaultProjectRunDefaults = (): ProjectRunDefaults => ({
   mode: "code",
   workspaceType: "worktree",
-  baseBranch: "",
   modelId: "",
   worktreeModelIds: [],
   reasoningEffort: "medium",
@@ -3224,7 +3226,6 @@ const parseProjectRunDefaultsRecord = (value: unknown): ProjectRunDefaults | nul
     workspaceType: RUN_DEFAULT_WORKSPACE_TYPES.includes(record.workspaceType as RunWorkspaceType)
       ? (record.workspaceType as RunWorkspaceType)
       : defaults.workspaceType,
-    baseBranch: typeof record.baseBranch === "string" ? record.baseBranch.trim() : defaults.baseBranch,
     modelId: typeof record.modelId === "string" ? record.modelId.trim() : defaults.modelId,
     worktreeModelIds: Array.isArray(record.worktreeModelIds)
       ? [...new Set(record.worktreeModelIds.filter((item): item is string => typeof item === "string" && item.trim().length > 0))]

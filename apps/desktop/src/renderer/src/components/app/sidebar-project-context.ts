@@ -8,7 +8,7 @@ export const projectSidebarContext = (
 ): string => {
   if (!project) return "No project selected";
   if (project.kind === "folder") return "Folder";
-  if (branchStatus === "loading") return "Loading branch…";
+  if (branchStatus === "loading") return currentBranch || "Git repository";
   if (branchStatus === "detached") return "Detached HEAD";
   if (branchStatus === "unavailable") return "Branch unavailable";
   return currentBranch || "Branch unavailable";

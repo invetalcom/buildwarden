@@ -1518,7 +1518,7 @@ export class BuildWardenDatabase {
     this.persist();
   }
 
-  addProject(input: ProjectInput & { defaultBranch: string; resolvedName: string; kind?: ProjectRecord["kind"] }): ProjectRecord {
+  addProject(input: ProjectInput & { baseBranch: string; resolvedName: string; kind?: ProjectRecord["kind"] }): ProjectRecord {
     const id = createId();
     const createdAt = nowIso();
     const kind = input.kind ?? "git";
@@ -1527,7 +1527,7 @@ export class BuildWardenDatabase {
       insert into projects (id, name, repo_path, default_branch, project_kind, cumulative_input_tokens, cumulative_output_tokens, created_at, updated_at, last_opened_at)
       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
-      [id, input.resolvedName, input.repoPath, input.defaultBranch, kind, 0, 0, createdAt, createdAt, createdAt],
+      [id, input.resolvedName, input.repoPath, input.baseBranch, kind, 0, 0, createdAt, createdAt, createdAt],
     );
     this.persist();
     return this.getProject(id);
@@ -1540,7 +1540,7 @@ export class BuildWardenDatabase {
         id,
         name,
         repo_path as repoPath,
-        default_branch as defaultBranch,
+        default_branch as baseBranch,
         project_kind as kind,
         cumulative_input_tokens as cumulativeInputTokens,
         cumulative_output_tokens as cumulativeOutputTokens,
@@ -1560,7 +1560,7 @@ export class BuildWardenDatabase {
         id,
         name,
         repo_path as repoPath,
-        default_branch as defaultBranch,
+        default_branch as baseBranch,
         project_kind as kind,
         cumulative_input_tokens as cumulativeInputTokens,
         cumulative_output_tokens as cumulativeOutputTokens,
@@ -1589,7 +1589,7 @@ export class BuildWardenDatabase {
     this.persist();
   }
 
-  updateProjectKind(projectId: string, kind: ProjectRecord["kind"], defaultBranch: string): ProjectRecord {
+  updateProjectKind(projectId: string, kind: ProjectRecord["kind"], baseBranch: string): ProjectRecord {
     const timestamp = nowIso();
     this.run(
       `
@@ -1597,7 +1597,21 @@ export class BuildWardenDatabase {
       set project_kind = ?, default_branch = ?, updated_at = ?
       where id = ?
       `,
-      [kind, defaultBranch, timestamp, projectId],
+      [kind, baseBranch, timestamp, projectId],
+    );
+    this.persist();
+    return this.getProject(projectId);
+  }
+
+  updateProjectBaseBranch(projectId: string, baseBranch: string): ProjectRecord {
+    const timestamp = nowIso();
+    this.run(
+      `
+      update projects
+      set default_branch = ?, updated_at = ?
+      where id = ?
+      `,
+      [baseBranch, timestamp, projectId],
     );
     this.persist();
     return this.getProject(projectId);

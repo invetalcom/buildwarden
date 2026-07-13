@@ -63,6 +63,7 @@ interface ProjectPageProps {
   onRunModeChange: (value: RunMode) => void;
   onRunWorkspaceTypeChange: (value: RunWorkspaceType) => void;
   onRunBaseBranchChange: (value: string) => void;
+  onProjectBaseBranchChange: (value: string) => void | Promise<void>;
   onRunModelChange: (modelId: string) => void;
   onRunWorktreeModelIdsChange: (modelIds: string[]) => void;
   availableIntegratedSkills: IntegratedSkillMetadata[];
@@ -146,6 +147,7 @@ export const ProjectPage = ({
   onRunModeChange,
   onRunWorkspaceTypeChange,
   onRunBaseBranchChange,
+  onProjectBaseBranchChange,
   onRunModelChange,
   onRunWorktreeModelIdsChange,
   availableIntegratedSkills,
@@ -229,7 +231,7 @@ export const ProjectPage = ({
         <ProjectBranchesPage
           projectId={project.project.id}
           repoPath={project.project.repoPath}
-          defaultBranch={project.project.defaultBranch}
+          baseBranch={project.project.baseBranch}
           currentBranch={currentProjectBranch}
           branches={availableBranches}
           busy={busy}
@@ -293,7 +295,6 @@ export const ProjectPage = ({
           currentProjectBranch={currentProjectBranch}
           runMode={runMode}
           runWorkspaceType={runWorkspaceType}
-          runBaseBranch={runBaseBranch}
           runModelId={runModelId}
           runWorktreeModelIds={runWorktreeModelIds}
           projectRunStats={projectRunStats}
@@ -305,7 +306,7 @@ export const ProjectPage = ({
           activeIntegratedSkillIds={activeIntegratedSkillIds}
           onRunModeChange={onRunModeChange}
           onRunWorkspaceTypeChange={onRunWorkspaceTypeChange}
-          onRunBaseBranchChange={onRunBaseBranchChange}
+          onProjectBaseBranchChange={onProjectBaseBranchChange}
           onRunModelChange={onRunModelChange}
           onRunWorktreeModelIdsChange={onRunWorktreeModelIdsChange}
           onReasoningEffortChange={onReasoningEffortChange}

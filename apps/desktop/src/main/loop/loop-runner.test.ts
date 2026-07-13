@@ -218,7 +218,7 @@ describe("ProjectLoopRunner", () => {
     tempRoot = mkdtempSync(join(tmpdir(), "buildwarden-loop-test-"));
     db = new BuildWardenDatabase(join(tempRoot, "test.sqlite"));
     await db.init();
-    project = db.addProject({ repoPath: join(tempRoot, "repo"), resolvedName: "Repo", defaultBranch: "main", kind: "git" });
+    project = db.addProject({ repoPath: join(tempRoot, "repo"), resolvedName: "Repo", baseBranch: "main", kind: "git" });
     provider = db.addProviderAccount({
       providerType: "claude-code",
       label: "Claude",

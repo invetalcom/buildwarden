@@ -44,7 +44,6 @@ interface ProjectSettingsPageProps {
   currentProjectBranch: string;
   runMode: RunMode;
   runWorkspaceType: RunWorkspaceType;
-  runBaseBranch: string;
   runModelId: string;
   runWorktreeModelIds: string[];
   projectRunStats: ProjectRunStats;
@@ -56,7 +55,7 @@ interface ProjectSettingsPageProps {
   activeIntegratedSkillIds: string[];
   onRunModeChange: (value: RunMode) => void;
   onRunWorkspaceTypeChange: (value: RunWorkspaceType) => void;
-  onRunBaseBranchChange: (value: string) => void;
+  onProjectBaseBranchChange: (value: string) => void | Promise<void>;
   onRunModelChange: (modelId: string) => void;
   onRunWorktreeModelIdsChange: (modelIds: string[]) => void;
   onReasoningEffortChange: (value: string) => void;
@@ -203,7 +202,6 @@ export const ProjectSettingsPage = ({
   currentProjectBranch,
   runMode,
   runWorkspaceType,
-  runBaseBranch,
   runModelId,
   runWorktreeModelIds,
   projectRunStats,
@@ -215,7 +213,7 @@ export const ProjectSettingsPage = ({
   activeIntegratedSkillIds,
   onRunModeChange,
   onRunWorkspaceTypeChange,
-  onRunBaseBranchChange,
+  onProjectBaseBranchChange,
   onRunModelChange,
   onRunWorktreeModelIdsChange,
   onReasoningEffortChange,
@@ -230,7 +228,7 @@ export const ProjectSettingsPage = ({
   if (runWorkspaceType === "worktree" || runWorkspaceType === "copy") selectedModelIds = runWorktreeModelIds;
   const activeSkillCount = activeIntegratedSkillIds.length;
   let branchChoices: string[] = [];
-  if (!isFolderProject) branchChoices = (runWorkspaceType === "local" ? [currentProjectBranch] : availableBranches).filter(Boolean);
+  if (!isFolderProject) branchChoices = availableBranches.filter(Boolean);
   const formatTokens = (value: number) => value.toLocaleString();
   const outcomeSummary = `${projectRunStats.completed} done / ${projectRunStats.failed} failed / ${projectRunStats.cancelled} stopped`;
   const totalRunsLabel =
@@ -481,7 +479,7 @@ export const ProjectSettingsPage = ({
                 icon={<GitBranch className="size-3.5 text-[var(--ec-accent)]" />}
                 label="Current branch"
                 value={currentProjectBranch || "unknown"}
-                detail={`Default: ${project.project.defaultBranch || "unknown"}`}
+                detail={`Base: ${project.project.baseBranch || "unknown"}`}
               />
               <SummaryTile
                 icon={<GitBranch className="size-3.5 text-[var(--ec-accent)]" />}
@@ -513,7 +511,7 @@ export const ProjectSettingsPage = ({
       </Card>
 
       <div className="space-y-5">
-        <SettingsSection title="Run defaults">
+        <SettingsSection title="Project defaults">
           <SettingsRow title="Mode" description="Default behavior used when starting new agent runs from this project.">
             <div className={`${rowControlClass} grid gap-2 md:grid-cols-3`}>
               {runModes.map((mode) => (
@@ -550,7 +548,7 @@ export const ProjectSettingsPage = ({
           {!isFolderProject ? (
             <SettingsRow
               title="Base branch"
-              description={runWorkspaceType === "local" ? "Local runs use the current checkout branch." : "Worktree runs branch from this selected base."}
+              description="Used for new worktrees, Project Lab, Loops, and as the default PR or merge target. Local runs still use the current checkout."
               align="start"
             >
               <div className={`${rowControlClass} min-w-0 overflow-hidden rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)]`}>
@@ -563,7 +561,7 @@ export const ProjectSettingsPage = ({
                 </div>
                 <div className="app-scrollbar max-h-56 overflow-y-auto p-1.5">
                   {branchChoices.map((branch) => {
-                    const selected = (runWorkspaceType === "local" ? currentProjectBranch : runBaseBranch) === branch;
+                    const selected = project.project.baseBranch === branch;
                     return (
                       <button
                         key={branch}
@@ -574,8 +572,8 @@ export const ProjectSettingsPage = ({
                             ? "bg-[var(--ec-accent-soft)] text-[var(--ec-text)]"
                             : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
                         )}
-                        disabled={busy || runWorkspaceType === "local"}
-                        onClick={() => onRunBaseBranchChange(branch)}
+                        disabled={busy}
+                        onClick={() => void onProjectBaseBranchChange(branch)}
                       >
                         <GitBranch className="size-3.5 shrink-0" />
                         <span className="truncate">{branch}</span>
