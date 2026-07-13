@@ -112,7 +112,7 @@ const buildProjectItems = (deps: CommandPaletteItemDeps): CommandPaletteItem[] =
       subtitle: entry.project.repoPath,
       section: "Project",
       icon: FolderOpen,
-      keywords: ["overview", entry.project.kind === "git" ? entry.project.defaultBranch : "folder"],
+      keywords: ["overview", entry.project.kind === "git" ? entry.project.baseBranch : "folder"],
       onSelect: () => deps.onSelectProject(entry.project.id),
     });
     if (entry.project.kind === "git") {

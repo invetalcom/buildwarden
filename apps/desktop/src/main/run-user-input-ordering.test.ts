@@ -28,7 +28,7 @@ afterEach(async () => {
 const createRunFixture = (db: BuildWardenDatabase) => {
   const project = db.addProject({
     repoPath: "C:\\repo",
-    defaultBranch: "main",
+    baseBranch: "main",
     resolvedName: "Repo",
   });
   const provider = db.addProviderAccount({

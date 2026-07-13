@@ -227,7 +227,7 @@ export class ProjectLoopRunner {
     // Fails fast when no forge token / unsupported remote is configured.
     await this.deps.createForgeProvider(project.id);
 
-    const baseBranch = input.baseBranch?.trim() || project.defaultBranch;
+    const baseBranch = input.baseBranch?.trim() || project.baseBranch;
     const loop = this.deps.db.createProjectLoop({
       projectId: project.id,
       name: input.name.trim() || prompt.slice(0, 80),

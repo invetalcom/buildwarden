@@ -14,7 +14,6 @@ describe("parseProjectRunDefaultsSetting", () => {
       "project-1": {
         mode: "plan",
         workspaceType: "local",
-        baseBranch: "feat/agent_loop_test_3",
         modelId: "model-a",
         worktreeModelIds: ["model-a", "model-b"],
         reasoningEffort: "high",
@@ -33,7 +32,6 @@ describe("parseProjectRunDefaultsSetting", () => {
         "project-1": {
           mode: "yeet",
           workspaceType: 42,
-          baseBranch: null,
           modelId: 7,
           worktreeModelIds: ["ok", "", 3, "ok"],
           reasoningEffort: "extreme",
@@ -55,5 +53,14 @@ describe("parseProjectRunDefaultsSetting", () => {
       JSON.stringify({ "project-1": "nope", "project-2": null, "project-3": buildDefaultProjectRunDefaults() }),
     );
     expect(Object.keys(parsed)).toEqual(["project-3"]);
+  });
+
+  it("ignores the legacy per-run base branch after consolidation into the project", () => {
+    const parsed = parseProjectRunDefaultsSetting(
+      JSON.stringify({ "project-1": { ...buildDefaultProjectRunDefaults(), baseBranch: "legacy-base" } }),
+    );
+
+    expect(parsed["project-1"]).toEqual(buildDefaultProjectRunDefaults());
+    expect(parsed["project-1"]).not.toHaveProperty("baseBranch");
   });
 });

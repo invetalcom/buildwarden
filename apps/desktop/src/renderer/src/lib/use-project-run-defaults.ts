@@ -22,7 +22,6 @@ interface UseProjectRunDefaultsInput {
   selectedProjectId: string;
   setRunMode: (value: RunMode) => void;
   setRunWorkspaceType: (value: RunWorkspaceType) => void;
-  setRunBaseBranch: (value: string) => void;
   setRunReasoningEffort: (value: string) => void;
   setRunAnthropicEffort: (value: string) => void;
   setRunYoloMode: (value: boolean) => void;
@@ -36,7 +35,7 @@ interface UseProjectRunDefaultsInput {
 }
 
 /**
- * Persists the project settings "Run defaults" (mode, workspace, base branch, models, efforts,
+ * Persists the project settings "Run defaults" (mode, workspace, models, efforts,
  * Full Access) per project id and restores them whenever the selected project changes,
  * including on app start.
  */
@@ -49,7 +48,6 @@ export const useProjectRunDefaults = ({
   selectedProjectId,
   setRunMode,
   setRunWorkspaceType,
-  setRunBaseBranch,
   setRunReasoningEffort,
   setRunAnthropicEffort,
   setRunYoloMode,
@@ -101,7 +99,6 @@ export const useProjectRunDefaults = ({
     setRunReasoningEffort(defaults.reasoningEffort);
     setRunAnthropicEffort(defaults.anthropicEffort);
     setRunYoloMode(defaults.yoloMode);
-    setRunBaseBranch(defaults.baseBranch);
     // Always reset model selections so a project without stored defaults does not inherit the
     // previous project's models. Without a stored value, fall back to the last used model like
     // loadSnapshot does (setting "" would leave local-mode runs without a model until the next
@@ -127,7 +124,6 @@ export const useProjectRunDefaults = ({
     projectRunDefaultsByProjectId,
     selectedProjectId,
     setRunAnthropicEffort,
-    setRunBaseBranch,
     setRunMode,
     setRunModelId,
     setRunReasoningEffort,
@@ -151,14 +147,6 @@ export const useProjectRunDefaults = ({
       persistProjectRunDefaults({ workspaceType: value });
     },
     [persistProjectRunDefaults, setRunWorkspaceType],
-  );
-
-  const changeRunBaseBranch = useCallback(
-    (value: string) => {
-      setRunBaseBranch(value);
-      persistProjectRunDefaults({ baseBranch: value });
-    },
-    [persistProjectRunDefaults, setRunBaseBranch],
   );
 
   const changeRunReasoningEffort = useCallback(
@@ -204,7 +192,6 @@ export const useProjectRunDefaults = ({
   return {
     changeRunMode,
     changeRunWorkspaceType,
-    changeRunBaseBranch,
     changeRunReasoningEffort,
     changeRunAnthropicEffort,
     changeRunYoloMode,

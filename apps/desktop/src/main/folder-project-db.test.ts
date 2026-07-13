@@ -49,7 +49,7 @@ describe("folder project persistence", () => {
     const db = await makeDb();
     const project = db.addProject({
       repoPath: "C:\\repo",
-      defaultBranch: "main",
+      baseBranch: "main",
       resolvedName: "Repo",
     });
     const { provider, model } = addModelFixture(db);
@@ -70,11 +70,23 @@ describe("folder project persistence", () => {
     expect(db.getRun(run.id).workspaceVcs).toBe("git");
   });
 
+  it("updates the single persisted project base branch", async () => {
+    const db = await makeDb();
+    const project = db.addProject({
+      repoPath: "C:\\repo-base",
+      baseBranch: "main",
+      resolvedName: "Repo",
+    });
+
+    expect(db.updateProjectBaseBranch(project.id, "release/next").baseBranch).toBe("release/next");
+    expect(db.getProject(project.id).baseBranch).toBe("release/next");
+  });
+
   it("persists folder projects and folder-capability runs", async () => {
     const db = await makeDb();
     const project = db.addProject({
       repoPath: "C:\\plain-folder",
-      defaultBranch: "",
+      baseBranch: "",
       resolvedName: "Plain Folder",
       kind: "folder",
     });
@@ -95,7 +107,7 @@ describe("folder project persistence", () => {
 
     expect(db.getProject(project.id)).toMatchObject({
       kind: "folder",
-      defaultBranch: "",
+      baseBranch: "",
       repoPath: "C:\\plain-folder",
     });
     expect(db.getRun(run.id)).toMatchObject({
@@ -109,7 +121,7 @@ describe("folder project persistence", () => {
     const db = await makeDb();
     const project = db.addProject({
       repoPath: "C:\\repo",
-      defaultBranch: "main",
+      baseBranch: "main",
       resolvedName: "Repo",
     });
     const { provider, model } = addModelFixture(db);

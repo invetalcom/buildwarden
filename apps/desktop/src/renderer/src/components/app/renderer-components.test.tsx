@@ -173,7 +173,7 @@ describe("renderer component states", () => {
         id: "project-1",
         name: "BuildWarden",
         repoPath: "C:/repo",
-        defaultBranch: "main",
+        baseBranch: "main",
         kind: "git",
         cumulativeInputTokens: 0,
         cumulativeOutputTokens: 0,
@@ -489,7 +489,7 @@ describe("renderer component states", () => {
       <ProjectBranchesPage
         projectId="project-1"
         repoPath="C:/repo"
-        defaultBranch="main"
+        baseBranch="main"
         currentBranch="main"
         branches={["main", "feat/quality"]}
         busy={false}
@@ -516,7 +516,7 @@ describe("renderer component states", () => {
         id: "project-1",
         name: "BuildWarden",
         repoPath: "C:/repo",
-        defaultBranch: "main",
+        baseBranch: "main",
         kind: "git",
         cumulativeInputTokens: 0,
         cumulativeOutputTokens: 0,

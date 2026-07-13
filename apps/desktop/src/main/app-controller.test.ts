@@ -2,8 +2,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BuildWardenDatabase } from "@buildwarden/db";
+import { APP_SETTING_KEYS } from "@buildwarden/shared";
 import type { ModelRecord, ProjectRecord, ProjectTaskRecord, ProviderAccountRecord, RunRecord } from "@buildwarden/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { GitService } from "@buildwarden/git-service";
 import { AppController } from "./app-controller";
 import type { ElectronSecretStore } from "./secret-store";
 
@@ -12,7 +14,7 @@ const project = {
   name: "Project",
   kind: "git",
   repoPath: "C:\\repo",
-  defaultBranch: "main",
+  baseBranch: "main",
 } as ProjectRecord;
 
 const provider = {
@@ -54,6 +56,7 @@ const createHarness = (overrides: DbOverrides = {}) => {
   const calls = {
     setSetting: vi.fn((key: string, value: string) => { settings[key] = value; }),
     deleteSetting: vi.fn((key: string) => { delete settings[key]; }),
+    updateProjectBaseBranch: vi.fn((_projectId: string, baseBranch: string) => ({ ...project, baseBranch })),
   };
   const defaults: DbOverrides = {
     getSettings: vi.fn(() => ({ ...settings })),
@@ -61,6 +64,7 @@ const createHarness = (overrides: DbOverrides = {}) => {
     getProject: vi.fn(() => project),
     listProjects: vi.fn(() => [project]),
     touchProject: vi.fn(),
+    updateProjectBaseBranch: calls.updateProjectBaseBranch,
     setSetting: calls.setSetting,
     deleteSetting: calls.deleteSetting,
     getProviderAccount: vi.fn(() => provider),
@@ -92,10 +96,126 @@ const createHarness = (overrides: DbOverrides = {}) => {
 
 const tempDirs: string[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const path of tempDirs.splice(0)) rmSync(path, { recursive: true, force: true });
 });
 
+const deferred = <T>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+};
+
+const createMutableProjectHarness = () => {
+  let currentProject = { ...project };
+  const harness = createHarness({
+    getProject: vi.fn(() => currentProject),
+    updateProjectBaseBranch: vi.fn((_projectId: string, baseBranch: string) => {
+      currentProject = { ...currentProject, baseBranch };
+      return currentProject;
+    }),
+  });
+  return { ...harness, getCurrentProject: () => currentProject };
+};
+
 describe("AppController settings and lightweight workflows", () => {
+  it("migrates the former run base into the single project base branch", async () => {
+    const harness = createHarness();
+    tempDirs.push(harness.logDir);
+    harness.settings[APP_SETTING_KEYS.projectRunDefaults] = JSON.stringify({
+      [project.id]: { mode: "code", workspaceType: "worktree", baseBranch: "release/next", modelId: "" },
+    });
+
+    await harness.controller.migrateProjectBaseBranches();
+
+    expect(harness.calls.updateProjectBaseBranch).toHaveBeenCalledWith(project.id, "release/next");
+    expect(JSON.parse(harness.settings[APP_SETTING_KEYS.projectRunDefaults]!)).toEqual({
+      [project.id]: { mode: "code", workspaceType: "worktree", modelId: "" },
+    });
+    expect(harness.settings[APP_SETTING_KEYS.projectBaseBranchMigrationVersion]).toBe("1");
+  });
+
+  it("retains legacy base-branch settings and retries after a project migration fails", async () => {
+    const harness = createHarness({
+      updateProjectBaseBranch: vi.fn(() => {
+        throw new Error("database unavailable");
+      }),
+    });
+    tempDirs.push(harness.logDir);
+    const legacySettings = JSON.stringify({
+      [project.id]: { mode: "code", workspaceType: "worktree", baseBranch: "release/next", modelId: "" },
+    });
+    harness.settings[APP_SETTING_KEYS.projectRunDefaults] = legacySettings;
+
+    await expect(harness.controller.migrateProjectBaseBranches()).rejects.toThrow("Could not migrate the base branch for 1 project.");
+
+    expect(harness.settings[APP_SETTING_KEYS.projectRunDefaults]).toBe(legacySettings);
+    expect(harness.settings[APP_SETTING_KEYS.projectBaseBranchMigrationVersion]).toBeUndefined();
+  });
+
+  it("serializes project base-branch updates in request order", async () => {
+    const harness = createMutableProjectHarness();
+    tempDirs.push(harness.logDir);
+    const firstBranchList = deferred<string[]>();
+    const listTargetBranches = vi
+      .spyOn(GitService.prototype, "listTargetBranches")
+      .mockImplementationOnce(() => firstBranchList.promise)
+      .mockResolvedValue(["main", "release/next", "develop"]);
+
+    const firstUpdate = harness.controller.updateProjectBaseBranch(project.id, "release/next");
+    await vi.waitFor(() => expect(listTargetBranches).toHaveBeenCalledTimes(1));
+    const secondUpdate = harness.controller.updateProjectBaseBranch(project.id, "develop");
+    await Promise.resolve();
+
+    expect(listTargetBranches).toHaveBeenCalledTimes(1);
+    firstBranchList.resolve(["main", "release/next", "develop"]);
+    await Promise.all([firstUpdate, secondUpdate]);
+
+    expect(harness.getCurrentProject().baseBranch).toBe("develop");
+  });
+
+  it("rechecks the latest base branch before a queued rename", async () => {
+    const harness = createMutableProjectHarness();
+    tempDirs.push(harness.logDir);
+    const branchList = deferred<string[]>();
+    vi.spyOn(GitService.prototype, "listTargetBranches").mockReturnValue(branchList.promise);
+    const renameProjectBranch = vi.spyOn(GitService.prototype, "renameProjectBranch").mockResolvedValue(undefined);
+
+    const update = harness.controller.updateProjectBaseBranch(project.id, "release/next");
+    await vi.waitFor(() => expect(GitService.prototype.listTargetBranches).toHaveBeenCalledTimes(1));
+    const rename = harness.controller.renameProjectBranch(project.id, {
+      oldName: "release/next",
+      newName: "release/renamed",
+    });
+    branchList.resolve(["main", "release/next"]);
+
+    await update;
+    await expect(rename).rejects.toThrow("Choose a different project base branch");
+    expect(renameProjectBranch).not.toHaveBeenCalled();
+  });
+
+  it("rechecks the latest base branch before a queued deletion", async () => {
+    const harness = createMutableProjectHarness();
+    tempDirs.push(harness.logDir);
+    const branchList = deferred<string[]>();
+    vi.spyOn(GitService.prototype, "listTargetBranches").mockReturnValue(branchList.promise);
+    const deleteProjectBranch = vi.spyOn(GitService.prototype, "deleteProjectBranch").mockResolvedValue(undefined);
+
+    const update = harness.controller.updateProjectBaseBranch(project.id, "release/next");
+    await vi.waitFor(() => expect(GitService.prototype.listTargetBranches).toHaveBeenCalledTimes(1));
+    const deletion = harness.controller.deleteProjectBranch(project.id, {
+      branchName: "release/next",
+      force: false,
+    });
+    branchList.resolve(["main", "release/next"]);
+
+    await update;
+    await expect(deletion).rejects.toThrow("Choose a different project base branch");
+    expect(deleteProjectBranch).not.toHaveBeenCalled();
+  });
+
   it("validates, persists, reads, and clears network proxy credentials", async () => {
     const harness = createHarness();
     tempDirs.push(harness.logDir);

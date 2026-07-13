@@ -23,7 +23,7 @@ import { Select } from "../ui/select";
 export interface ProjectBranchesPageProps {
   projectId: string;
   repoPath: string;
-  defaultBranch: string;
+  baseBranch: string;
   currentBranch: string;
   branches: string[];
   busy: boolean;
@@ -123,7 +123,7 @@ const compactRunPrompt = (value: string) => {
 export const ProjectBranchesPage = ({
   projectId,
   repoPath,
-  defaultBranch,
+  baseBranch,
   currentBranch,
   branches,
   busy,
@@ -154,7 +154,7 @@ export const ProjectBranchesPage = ({
       ]);
       setOverview(nextOverview);
       setAuthStatus(nextAuthStatus);
-      setNewBranchSource((current) => current || nextOverview.currentBranch || nextOverview.defaultBranch || nextOverview.branches[0]?.name || "");
+      setNewBranchSource((current) => current || nextOverview.currentBranch || nextOverview.baseBranch || nextOverview.branches[0]?.name || "");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not load branch information.");
     } finally {
@@ -171,7 +171,7 @@ export const ProjectBranchesPage = ({
       [...new Set(branches.filter(Boolean))].map((branch) => ({
         name: branch,
         isCurrent: branch === currentBranch,
-        isDefault: branch === defaultBranch,
+        isBase: branch === baseBranch,
         hasLocal: true,
         hasRemote: false,
         upstream: null,
@@ -181,7 +181,7 @@ export const ProjectBranchesPage = ({
         updatedAt: null,
         subject: null,
       })),
-    [branches, currentBranch, defaultBranch],
+    [baseBranch, branches, currentBranch],
   );
   const branchRows = overview?.branches.length ? overview.branches : fallbackBranches;
   const current = overview?.currentBranch ?? currentBranch;
@@ -202,7 +202,7 @@ export const ProjectBranchesPage = ({
       const result = await action();
       if (result) {
         setOverview(result);
-        setNewBranchSource((currentSource) => currentSource || result.currentBranch || result.defaultBranch || result.branches[0]?.name || "");
+        setNewBranchSource((currentSource) => currentSource || result.currentBranch || result.baseBranch || result.branches[0]?.name || "");
       } else {
         await loadOverview();
       }
@@ -233,7 +233,7 @@ export const ProjectBranchesPage = ({
       () =>
         window.buildwarden.createProjectBranch(projectId, {
           branchName: newBranchName,
-          startPoint: newBranchSource || current || defaultBranch,
+          startPoint: newBranchSource || current || baseBranch,
           checkout: true,
         }),
       `Created and checked out ${newBranchName.trim()}.`,
@@ -413,8 +413,8 @@ export const ProjectBranchesPage = ({
           <div className="divide-y divide-[var(--ec-border)]">
             {branchRows.map((branch) => {
               const isBusy = actionBusy?.endsWith(`:${branch.name}`) ?? false;
-              const canRename = branch.hasLocal && !branch.isDefault;
-              const canDelete = branch.hasLocal && !branch.isCurrent && !branch.isDefault;
+              const canRename = branch.hasLocal && !branch.isBase;
+              const canDelete = branch.hasLocal && !branch.isCurrent && !branch.isBase;
               const canPush = branch.hasLocal;
               const canOpenRemote = Boolean(branchWebUrl(overview, branch.name)) && branch.hasRemote;
               return (
@@ -426,7 +426,7 @@ export const ProjectBranchesPage = ({
                     <div className="min-w-0 flex-1">
                       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                         <p className="truncate font-mono text-sm font-semibold text-[var(--ec-text)]">{branch.name}</p>
-                        {branch.isDefault ? <span className="rounded-full border border-[var(--ec-border)] px-1.5 py-px text-[9px] text-[var(--ec-muted)]">default</span> : null}
+                        {branch.isBase ? <span className="rounded-full border border-[var(--ec-border)] px-1.5 py-px text-[9px] text-[var(--ec-muted)]">base</span> : null}
                         {branch.hasLocal ? <span className="rounded-full border border-emerald-500/25 bg-emerald-500/[0.08] px-1.5 py-px text-[9px] text-emerald-200">local</span> : null}
                         {branch.hasRemote ? <span className="rounded-full border border-cyan-500/25 bg-cyan-500/[0.08] px-1.5 py-px text-[9px] text-cyan-100">remote</span> : null}
                         {branch.ahead > 0 ? <span className="rounded-full border border-amber-500/25 px-1.5 py-px text-[9px] text-amber-200">ahead {branch.ahead}</span> : null}
