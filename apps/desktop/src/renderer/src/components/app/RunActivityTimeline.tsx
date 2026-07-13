@@ -27,6 +27,8 @@ import {
   type RunActivityStep,
   type TimelineRenderItem,
 } from "./run-activity-model";
+import { scrollVirtualTimelineToBoundary } from "./run-activity-scroll";
+import { ScrollBoundaryControls } from "./ScrollBoundaryControls";
 
 const assignTimelineRef = (ref: Ref<HTMLDivElement> | undefined, node: HTMLDivElement | null) => {
   if (!ref) return;
@@ -267,6 +269,7 @@ type TimelineScrollOptions = {
   stepMeasurementSignature: string;
   stepsLength: number;
   subagentFocus: { subagentId: string; nonce: number } | null;
+  initialScrollPosition: "start" | "end";
 };
 
 const useTimelineScroll = ({
@@ -282,6 +285,7 @@ const useTimelineScroll = ({
   stepMeasurementSignature,
   stepsLength,
   subagentFocus,
+  initialScrollPosition,
 }: TimelineScrollOptions) => {const scrollElementRef = useRef<HTMLDivElement | null>(null);
 const shouldStickToBottomRef = useRef(true);
 const initiallyScrolledRunIdRef = useRef<string | null>(null);
@@ -299,7 +303,7 @@ const rowVirtualizer = useVirtualizer({
   estimateSize: (index) => estimateTimelineItemSize(timelineItems[index], density, activeReasoningStepIds),
   getItemKey: (index) => timelineItems[index]?.key ?? index,
   useAnimationFrameWithResizeObserver: true,
-  initialOffset: virtualized ? () => Number.MAX_SAFE_INTEGER : undefined,
+  initialOffset: virtualized ? () => (initialScrollPosition === "start" ? 0 : Number.MAX_SAFE_INTEGER) : undefined,
   anchorTo: "end",
   scrollEndThreshold: 140,
   overscan: 4,
@@ -311,7 +315,7 @@ const scrollTimelineToEnd = useCallback(() => {
   }
 
   if (virtualized) {
-    rowVirtualizer.scrollToEnd({ behavior: "auto" });
+    scrollVirtualTimelineToBoundary(rowVirtualizer, "bottom");
   } else {
     container.scrollTop = container.scrollHeight;
   }
@@ -319,9 +323,24 @@ const scrollTimelineToEnd = useCallback(() => {
   return true;
 }, [hasRenderableActivity, rowVirtualizer, virtualized]);
 
+const scrollTimelineToStart = useCallback((behavior: ScrollBehavior = "smooth") => {
+  const container = scrollElementRef.current;
+  if (!container || !hasRenderableActivity) {
+    return false;
+  }
+
+  shouldStickToBottomRef.current = false;
+  if (virtualized) {
+    scrollVirtualTimelineToBoundary(rowVirtualizer, "top");
+  } else {
+    container.scrollTo({ top: 0, behavior });
+  }
+  return true;
+}, [hasRenderableActivity, rowVirtualizer, virtualized]);
+
 useEffect(() => {
-  shouldStickToBottomRef.current = true;
-}, [runId]);
+  shouldStickToBottomRef.current = initialScrollPosition === "end";
+}, [initialScrollPosition, runId]);
 
 const timelineItemsRef = useRef(timelineItems);
 timelineItemsRef.current = timelineItems;
@@ -378,13 +397,16 @@ useLayoutEffect(() => {
     return;
   }
 
-  if (scrollTimelineToEnd()) {
+  const scrollToInitialPosition = () =>
+    initialScrollPosition === "start" ? scrollTimelineToStart("auto") : scrollTimelineToEnd();
+
+  if (scrollToInitialPosition()) {
     initiallyScrolledRunIdRef.current = runId;
     return;
   }
 
   const frame = window.requestAnimationFrame(() => {
-    if (scrollTimelineToEnd()) {
+    if (scrollToInitialPosition()) {
       initiallyScrolledRunIdRef.current = runId;
     }
   });
@@ -392,7 +414,7 @@ useLayoutEffect(() => {
   return () => {
     window.cancelAnimationFrame(frame);
   };
-}, [hasRenderableActivity, runId, scrollTimelineToEnd]);
+}, [hasRenderableActivity, initialScrollPosition, runId, scrollTimelineToEnd, scrollTimelineToStart]);
 
 useEffect(() => {
   if (!virtualized || !isRunActive || !shouldStickToBottomRef.current || !hasRenderableActivity) {
@@ -406,7 +428,14 @@ useEffect(() => {
 
 
 
-  return { activeSubagentFocus, rowVirtualizer, setWorklogRef };
+  return {
+    activeSubagentFocus,
+    rowVirtualizer,
+    scrollElementRef,
+    scrollTimelineToEnd,
+    scrollTimelineToStart,
+    setWorklogRef,
+  };
 };
 
 type RunActivityTimelineProps = Readonly<{
@@ -426,6 +455,8 @@ type RunActivityTimelineProps = Readonly<{
   containerRef?: Ref<HTMLDivElement>;
   endRef?: Ref<HTMLDivElement>;
   virtualized?: boolean;
+  showBoundaryControls?: boolean;
+  initialScrollPosition?: "start" | "end";
   subagentFocus?: { subagentId: string; nonce: number } | null;
   onCopyStepContent?: (text: string, stepId: string) => void | Promise<void>;
   onUndoRunToLastPrompt?: (run: RunActivityRun) => void;
@@ -454,6 +485,8 @@ export function RunActivityTimeline({
   containerRef,
   endRef,
   virtualized = false,
+  showBoundaryControls = false,
+  initialScrollPosition = "end",
   subagentFocus = null,
   onCopyStepContent,
   onUndoRunToLastPrompt,
@@ -526,7 +559,14 @@ export function RunActivityTimeline({
     [activityEntries, canShowPlanDecision, density, latestPlanDecisionText, showLoading],
   );
   const hasRenderableActivity = activityEntries.length > 0 || showLoading;
-  const { activeSubagentFocus, rowVirtualizer, setWorklogRef } = useTimelineScroll({
+  const {
+    activeSubagentFocus,
+    rowVirtualizer,
+    scrollElementRef,
+    scrollTimelineToEnd,
+    scrollTimelineToStart,
+    setWorklogRef,
+  } = useTimelineScroll({
     timelineItems,
     density,
     activeReasoningStepIds,
@@ -539,6 +579,7 @@ export function RunActivityTimeline({
     stepMeasurementSignature,
     stepsLength: steps.length,
     subagentFocus,
+    initialScrollPosition,
   });
   const timelineRenderContext: TimelineRenderContext = useMemo(
     () => ({
@@ -596,28 +637,37 @@ export function RunActivityTimeline({
 
   if (virtualized) {
     return (
-      <AgentWorklog ref={setWorklogRef} className={worklogClassName}>
-        {isEmpty ? <div className="agent-worklog-empty">{emptyMessage}</div> : null}
-        <div className="agent-virtual-spacer" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
-          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-            const item = timelineItems[virtualRow.index];
-            if (!item) {
-              return null;
-            }
-            return (
-              <div
-                key={virtualRow.key}
-                ref={rowVirtualizer.measureElement}
-                data-index={virtualRow.index}
-                className="agent-virtual-row"
-                style={{ transform: `translateY(${virtualRow.start}px)` }}
-              >
-                <TimelineItemRow item={item} context={timelineRenderContext} />
-              </div>
-            );
-          })}
-        </div>
-      </AgentWorklog>
+      <>
+        <AgentWorklog ref={setWorklogRef} className={worklogClassName}>
+          {isEmpty ? <div className="agent-worklog-empty">{emptyMessage}</div> : null}
+          <div className="agent-virtual-spacer" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
+            {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+              const item = timelineItems[virtualRow.index];
+              if (!item) {
+                return null;
+              }
+              return (
+                <div
+                  key={virtualRow.key}
+                  ref={rowVirtualizer.measureElement}
+                  data-index={virtualRow.index}
+                  className="agent-virtual-row"
+                  style={{ transform: `translateY(${virtualRow.start}px)` }}
+                >
+                  <TimelineItemRow item={item} context={timelineRenderContext} />
+                </div>
+              );
+            })}
+          </div>
+        </AgentWorklog>
+        {showBoundaryControls ? (
+          <ScrollBoundaryControls
+            scrollElementRef={scrollElementRef}
+            onScrollToTop={() => void scrollTimelineToStart()}
+            onScrollToBottom={() => void scrollTimelineToEnd()}
+          />
+        ) : null}
+      </>
     );
   }
 

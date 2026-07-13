@@ -1,7 +1,8 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { type ChatBookmarkRecord, type ModelRecord } from "@buildwarden/shared";
 import { bookmarkModelDisplay } from "../../lib/bookmark-model";
 import { ChatTranscript } from "./ChatTranscript";
+import { ScrollBoundaryControls } from "./ScrollBoundaryControls";
 import { Badge } from "../ui/badge";
 import { Card } from "../ui/card";
 
@@ -13,10 +14,11 @@ interface ChatBookmarkDetailPageProps {
 
 export const ChatBookmarkDetailPage = ({ bookmark, models, onBack }: ChatBookmarkDetailPageProps) => {
   const modelLabel = useMemo(() => bookmarkModelDisplay(models, bookmark.modelId), [models, bookmark.modelId]);
+  const transcriptRef = useRef<HTMLDivElement>(null);
 
   return (
-    <div className="space-y-4">
-      <Card className="app-surface-chat-hero overflow-hidden border px-4 py-3">
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
+      <Card className="app-surface-chat-hero shrink-0 overflow-hidden border px-4 py-3">
         <button
           type="button"
           className="text-[11px] uppercase tracking-[0.28em] text-cyan-400 transition hover:text-cyan-300"
@@ -61,12 +63,16 @@ export const ChatBookmarkDetailPage = ({ bookmark, models, onBack }: ChatBookmar
         </div>
       </Card>
 
-      <ChatTranscript
-        className="app-scrollbar px-0 py-1"
-        items={bookmark.steps}
-        emptyMessage="No messages recorded."
-        readOnly
-      />
+      <div className="relative min-h-0 flex-1">
+        <ChatTranscript
+          ref={transcriptRef}
+          className="app-scrollbar h-full min-h-0 overflow-auto py-1 pr-10"
+          items={bookmark.steps}
+          emptyMessage="No messages recorded."
+          readOnly
+        />
+        <ScrollBoundaryControls key={bookmark.id} scrollElementRef={transcriptRef} />
+      </div>
     </div>
   );
 };

@@ -1228,7 +1228,14 @@ export const App = () => {
     openRunBrowserUrl(runDetail.run.id, url);
   };
 
-  const { onLandingOrEmptySelection, isAgentRunDetailView, isChatDetailView, isProjectWorkspaceView, sectionLayoutClassName } =
+  const {
+    onLandingOrEmptySelection,
+    isAgentRunDetailView,
+    isChatDetailView,
+    isBookmarkDetailView,
+    isProjectWorkspaceView,
+    sectionLayoutClassName,
+  } =
     computeMainViewFlags({
       settingsOpen,
       landingSelected,
@@ -1240,6 +1247,7 @@ export const App = () => {
       hasRunDetail: Boolean(runDetail?.run),
       openRunPaneCount,
       hasChatDetail: Boolean(selectedChat && chatDetail),
+      hasBookmarkDetail: Boolean(selectedBookmark),
     });
 
   useEffect(() => {
@@ -3760,7 +3768,7 @@ export const App = () => {
         <main
           className={cn(
             "min-h-0 min-w-0 flex-1 p-3",
-            isAgentRunDetailView || isChatDetailView || isProjectWorkspaceView
+            isAgentRunDetailView || isChatDetailView || isBookmarkDetailView || isProjectWorkspaceView
               ? "flex min-h-0 flex-col overflow-hidden"
               : "overflow-y-auto",
           )}

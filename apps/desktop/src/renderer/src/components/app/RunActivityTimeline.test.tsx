@@ -81,10 +81,13 @@ describe("run activity timeline shaping", () => {
         steps={[step("prompt", "log", { source: "user" }, "Continue"), step("answer", "output", {}, "Working")]}
         run={{ id: "run-virtual", status: "running", mode: "code" }}
         virtualized
+        showBoundaryControls
         showLoading
       />,
     );
     expect(virtualized).toContain("agent-virtual-spacer");
+    expect(virtualized).toContain('aria-label="Scroll to top"');
+    expect(virtualized).toContain('aria-label="Scroll to bottom"');
   });
 
   it("keeps adjacent tool calls grouped as one tool batch", () => {
