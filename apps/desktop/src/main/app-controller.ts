@@ -819,6 +819,8 @@ export class AppController
   private readonly chatWorkers = new Map<string, ActiveWorker>();
   /** In-flight run-chat creations by run id; serializes concurrent first sends for the same run. */
   private readonly runChatCreations = new Map<string, Promise<ChatRecord>>();
+  /** Serializes Git branch mutations per project while allowing different projects to proceed independently. */
+  private readonly projectBranchMutations = new Map<string, Promise<unknown>>();
   private readonly cancelledProjectLabThreadIds = new Set<string>();
   private readonly loopChangedListeners = new Set<(payload: ProjectLoopChangedPayload) => void>();
   private loopRunnerInstance: ProjectLoopRunner | null = null;
@@ -851,6 +853,17 @@ export class AppController
     if (project.kind !== "git") {
       throw new Error(`${featureLabel} is only available for Git projects.`);
     }
+  }
+
+  private serializeProjectBranchMutation<T>(projectId: string, mutation: () => Promise<T>): Promise<T> {
+    const previous = this.projectBranchMutations.get(projectId) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(mutation);
+    this.projectBranchMutations.set(projectId, current);
+    return current.finally(() => {
+      if (this.projectBranchMutations.get(projectId) === current) {
+        this.projectBranchMutations.delete(projectId);
+      }
+    });
   }
 
   private requireGitRun(run: RunRecord, featureLabel: string): void {
@@ -2070,17 +2083,19 @@ export class AppController
   }
 
   async updateProjectBaseBranch(projectId: string, branchName: string): Promise<ProjectRecord> {
-    const project = this.db.getProject(projectId);
-    this.requireGitProject(project, "Base branch selection");
-    const baseBranch = branchName.trim();
-    if (!baseBranch) {
-      throw new Error("Select a base branch.");
-    }
-    const availableBranches = await this.gitService.listTargetBranches(project.repoPath);
-    if (!availableBranches.includes(baseBranch)) {
-      throw new Error(`Base branch "${baseBranch}" is not available for this project. Refresh branches and choose an existing branch.`);
-    }
-    return this.db.updateProjectBaseBranch(projectId, baseBranch);
+    return this.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.db.getProject(projectId);
+      this.requireGitProject(project, "Base branch selection");
+      const baseBranch = branchName.trim();
+      if (!baseBranch) {
+        throw new Error("Select a base branch.");
+      }
+      const availableBranches = await this.gitService.listTargetBranches(project.repoPath);
+      if (!availableBranches.includes(baseBranch)) {
+        throw new Error(`Base branch "${baseBranch}" is not available for this project. Refresh branches and choose an existing branch.`);
+      }
+      return this.db.updateProjectBaseBranch(projectId, baseBranch);
+    });
   }
 
   async checkProjectFolderGitStatus(repoPath: string): Promise<ProjectFolderGitStatus> {
@@ -2126,73 +2141,87 @@ export class AppController
   }
 
   async checkoutProjectBranch(projectId: string, branchName: string): Promise<void> {
-    const project = this.db.getProject(projectId);
-    this.requireGitProject(project, "Branch checkout");
-    await this.gitService.checkoutProjectBranch(project.repoPath, branchName);
+    return this.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.db.getProject(projectId);
+      this.requireGitProject(project, "Branch checkout");
+      await this.gitService.checkoutProjectBranch(project.repoPath, branchName);
+    });
   }
 
   async fetchProjectBranches(projectId: string): Promise<ProjectGitBranchOverview> {
-    const project = this.db.getProject(projectId);
-    this.requireGitProject(project, "Branch fetching");
-    await this.gitService.fetchProjectBranches(project.repoPath);
-    return this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
+    return this.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.db.getProject(projectId);
+      this.requireGitProject(project, "Branch fetching");
+      await this.gitService.fetchProjectBranches(project.repoPath);
+      return this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
+    });
   }
 
   async createProjectBranch(projectId: string, input: CreateProjectBranchInput): Promise<ProjectGitBranchOverview> {
-    const project = this.db.getProject(projectId);
-    this.requireGitProject(project, "Branch creation");
-    await this.gitService.createProjectBranch(project.repoPath, input.branchName, input.startPoint, input.checkout !== false);
-    return this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
+    return this.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.db.getProject(projectId);
+      this.requireGitProject(project, "Branch creation");
+      await this.gitService.createProjectBranch(project.repoPath, input.branchName, input.startPoint, input.checkout !== false);
+      return this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
+    });
   }
 
   async renameProjectBranch(projectId: string, input: RenameProjectBranchInput): Promise<ProjectGitBranchOverview> {
-    const project = this.db.getProject(projectId);
-    this.requireGitProject(project, "Branch renaming");
-    if (input.oldName.trim() === project.baseBranch) {
-      throw new Error("Choose a different project base branch before renaming this branch.");
-    }
-    await this.gitService.renameProjectBranch(project.repoPath, input.oldName, input.newName);
-    return this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
+    return this.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.db.getProject(projectId);
+      this.requireGitProject(project, "Branch renaming");
+      if (input.oldName.trim() === project.baseBranch) {
+        throw new Error("Choose a different project base branch before renaming this branch.");
+      }
+      await this.gitService.renameProjectBranch(project.repoPath, input.oldName, input.newName);
+      return this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
+    });
   }
 
   async deleteProjectBranch(projectId: string, input: DeleteProjectBranchInput): Promise<ProjectGitBranchOverview> {
-    const project = this.db.getProject(projectId);
-    this.requireGitProject(project, "Branch deletion");
-    const branchName = input.branchName.trim();
-    if (!branchName) {
-      throw new Error("Select a branch.");
-    }
-    if (branchName === project.baseBranch) {
-      throw new Error("Choose a different project base branch before deleting this branch.");
-    }
-    const currentBranch = await this.gitService.getCurrentBranch(project.repoPath).catch(() => "");
-    if (branchName === currentBranch) {
-      throw new Error("You cannot delete the currently checked out branch.");
-    }
+    return this.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.db.getProject(projectId);
+      this.requireGitProject(project, "Branch deletion");
+      const branchName = input.branchName.trim();
+      if (!branchName) {
+        throw new Error("Select a branch.");
+      }
+      if (branchName === project.baseBranch) {
+        throw new Error("Choose a different project base branch before deleting this branch.");
+      }
+      const currentBranch = await this.gitService.getCurrentBranch(project.repoPath).catch(() => "");
+      if (branchName === currentBranch) {
+        throw new Error("You cannot delete the currently checked out branch.");
+      }
 
-    const linkedRuns = this.listRunsLinkedToProjectBranch(projectId, branchName);
-    for (const run of linkedRuns) {
-      await this.deleteRun(run.id);
-    }
+      const linkedRuns = this.listRunsLinkedToProjectBranch(projectId, branchName);
+      for (const run of linkedRuns) {
+        await this.deleteRun(run.id);
+      }
 
-    if (await this.gitService.hasLocalBranch(project.repoPath, branchName)) {
-      await this.gitService.deleteProjectBranch(project.repoPath, branchName, input.force === true);
-    }
-    return this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
+      if (await this.gitService.hasLocalBranch(project.repoPath, branchName)) {
+        await this.gitService.deleteProjectBranch(project.repoPath, branchName, input.force === true);
+      }
+      return this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
+    });
   }
 
   async pullProjectBranch(projectId: string): Promise<ProjectGitBranchOverview> {
-    const project = this.db.getProject(projectId);
-    this.requireGitProject(project, "Git pull");
-    await this.gitService.pullProjectBranch(project.repoPath);
-    return this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
+    return this.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.db.getProject(projectId);
+      this.requireGitProject(project, "Git pull");
+      await this.gitService.pullProjectBranch(project.repoPath);
+      return this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
+    });
   }
 
   async pushProjectBranch(projectId: string, input: PushProjectBranchInput): Promise<ProjectGitBranchOverview> {
-    const project = this.db.getProject(projectId);
-    this.requireGitProject(project, "Git push");
-    await this.gitService.pushProjectBranch(project.repoPath, input.branchName, input.setUpstream !== false);
-    return this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
+    return this.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.db.getProject(projectId);
+      this.requireGitProject(project, "Git push");
+      await this.gitService.pushProjectBranch(project.repoPath, input.branchName, input.setUpstream !== false);
+      return this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
+    });
   }
 
   private listRunsLinkedToProjectBranch(projectId: string, branchName: string): RunRecord[] {
