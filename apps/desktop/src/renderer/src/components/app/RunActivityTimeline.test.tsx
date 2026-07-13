@@ -88,6 +88,7 @@ describe("run activity timeline shaping", () => {
     expect(virtualized).toContain("agent-virtual-spacer");
     expect(virtualized).toContain('aria-label="Scroll to top"');
     expect(virtualized).toContain('aria-label="Scroll to bottom"');
+    expect(virtualized.indexOf('aria-label="Scroll controls"')).toBeLessThan(virtualized.indexOf('class="agent-worklog'));
   });
 
   it("keeps adjacent tool calls grouped as one tool batch", () => {

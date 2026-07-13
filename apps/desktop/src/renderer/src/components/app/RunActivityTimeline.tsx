@@ -638,6 +638,13 @@ export function RunActivityTimeline({
   if (virtualized) {
     return (
       <>
+        {showBoundaryControls ? (
+          <ScrollBoundaryControls
+            scrollElementRef={scrollElementRef}
+            onScrollToTop={() => void scrollTimelineToStart()}
+            onScrollToBottom={() => void scrollTimelineToEnd()}
+          />
+        ) : null}
         <AgentWorklog ref={setWorklogRef} className={worklogClassName}>
           {isEmpty ? <div className="agent-worklog-empty">{emptyMessage}</div> : null}
           <div className="agent-virtual-spacer" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
@@ -660,13 +667,6 @@ export function RunActivityTimeline({
             })}
           </div>
         </AgentWorklog>
-        {showBoundaryControls ? (
-          <ScrollBoundaryControls
-            scrollElementRef={scrollElementRef}
-            onScrollToTop={() => void scrollTimelineToStart()}
-            onScrollToBottom={() => void scrollTimelineToEnd()}
-          />
-        ) : null}
       </>
     );
   }
