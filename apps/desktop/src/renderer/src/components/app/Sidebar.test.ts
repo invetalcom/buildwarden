@@ -1,5 +1,25 @@
 import { describe, expect, it } from "vitest";
+import type { ProjectRecord } from "@buildwarden/shared";
+import { projectSidebarContext } from "./sidebar-project-context";
 import { recentRunOrderTimestamp } from "./sidebar-run-ordering";
+
+const gitProject = {
+  id: "project-1",
+  name: "Project",
+  repoPath: "C:/repo",
+  kind: "git",
+  defaultBranch: "stale-default",
+} as ProjectRecord;
+
+describe("Sidebar project context", () => {
+  it("shows the checked-out branch instead of the persisted default branch", () => {
+    expect(projectSidebarContext(gitProject, "current-branch", "attached")).toBe("current-branch");
+  });
+
+  it("does not present the default branch as checked out for a detached repository", () => {
+    expect(projectSidebarContext(gitProject, "", "detached")).toBe("Detached HEAD");
+  });
+});
 
 describe("Sidebar recent run ordering", () => {
   it("uses the latest user input timestamp instead of run activity updates", () => {

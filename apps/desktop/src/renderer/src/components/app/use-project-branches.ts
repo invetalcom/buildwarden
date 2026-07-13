@@ -14,6 +14,14 @@ interface UseProjectBranchesInput {
   setError: Dispatch<SetStateAction<string | null>>;
 }
 
+export type CurrentProjectBranchStatus = "not-applicable" | "loading" | "attached" | "detached" | "unavailable";
+
+interface CurrentProjectBranchState {
+  projectId: string | null;
+  branch: string;
+  status: CurrentProjectBranchStatus;
+}
+
 const readCurrentProjectBranch = async (buildwarden: DesktopApi, projectId: string): Promise<string | null> => {
   try {
     return await buildwarden.getProjectCurrentBranch(projectId);
@@ -30,7 +38,11 @@ const errorMessage = (caught: unknown): string => caught instanceof Error ? caug
 
 export const useProjectBranches = ({ buildwarden, selectedProject, setError }: UseProjectBranchesInput) => {
   const [availableRunBranches, setAvailableRunBranches] = useState<string[]>([]);
-  const [currentProjectBranch, setCurrentProjectBranch] = useState("");
+  const [currentProjectBranchState, setCurrentProjectBranchState] = useState<CurrentProjectBranchState>({
+    projectId: null,
+    branch: "",
+    status: "not-applicable",
+  });
   const [detachedCheckoutBranch, setDetachedCheckoutBranch] = useState("");
   const [projectCheckoutBusy, setProjectCheckoutBusy] = useState(false);
   const [runBaseBranch, setRunBaseBranch] = useState("");
@@ -38,6 +50,13 @@ export const useProjectBranches = ({ buildwarden, selectedProject, setError }: U
   const selectedProjectIdRef = useRef(selectedProjectId);
   const branchLoadRequestRef = useRef(0);
   selectedProjectIdRef.current = selectedProjectId;
+  const currentProjectBranchMatchesSelection = currentProjectBranchState.projectId === selectedProjectId;
+  const currentProjectBranch = currentProjectBranchMatchesSelection ? currentProjectBranchState.branch : "";
+  const currentProjectBranchStatus: CurrentProjectBranchStatus = currentProjectBranchMatchesSelection
+    ? currentProjectBranchState.status
+    : selectedProject?.project.kind === "git"
+      ? "loading"
+      : "not-applicable";
 
   const loadProjectBranches = useCallback(async () => {
     const requestId = ++branchLoadRequestRef.current;
@@ -48,14 +67,14 @@ export const useProjectBranches = ({ buildwarden, selectedProject, setError }: U
     if (!buildwarden || !selectedProject) {
       setAvailableRunBranches([]);
       setRunBaseBranch("");
-      setCurrentProjectBranch("");
+      setCurrentProjectBranchState({ projectId: null, branch: "", status: "not-applicable" });
       setDetachedCheckoutBranch("");
       return;
     }
     if (selectedProject.project.kind === "folder") {
       setAvailableRunBranches([]);
       setRunBaseBranch("");
-      setCurrentProjectBranch("");
+      setCurrentProjectBranchState({ projectId: selectedProject.project.id, branch: "", status: "not-applicable" });
       setDetachedCheckoutBranch("");
       setError((previous) => (previous && isDetachedHeadProjectErrorMessage(previous) ? null : previous));
       return;
@@ -63,10 +82,11 @@ export const useProjectBranches = ({ buildwarden, selectedProject, setError }: U
 
     const projectId = selectedProject.project.id;
     const defaultBranch = selectedProject.project.defaultBranch;
+    setCurrentProjectBranchState({ projectId, branch: "", status: "loading" });
     const applyDetachedHeadState = (branches: string[]) => {
       setAvailableRunBranches(branches);
       setRunBaseBranch((current) => pickProjectBranch(branches, defaultBranch, current));
-      setCurrentProjectBranch("");
+      setCurrentProjectBranchState({ projectId, branch: "", status: "detached" });
       setError(GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE);
       setDetachedCheckoutBranch(pickProjectBranch(branches, defaultBranch));
     };
@@ -86,7 +106,7 @@ export const useProjectBranches = ({ buildwarden, selectedProject, setError }: U
         return;
       }
       setDetachedCheckoutBranch("");
-      setCurrentProjectBranch(currentBranch);
+      setCurrentProjectBranchState({ projectId, branch: currentBranch, status: "attached" });
       setAvailableRunBranches(nextBranches);
       setRunBaseBranch((current) => pickProjectBranch(nextBranches, defaultBranch, current));
       setError((previous) => (previous && isDetachedHeadProjectErrorMessage(previous) ? null : previous));
@@ -98,7 +118,7 @@ export const useProjectBranches = ({ buildwarden, selectedProject, setError }: U
       setDetachedCheckoutBranch("");
       setAvailableRunBranches([defaultBranch]);
       setRunBaseBranch(defaultBranch);
-      setCurrentProjectBranch(defaultBranch);
+      setCurrentProjectBranchState({ projectId, branch: defaultBranch, status: "unavailable" });
       setError(errorMessage(caught));
     }
   }, [buildwarden, selectedProject, setError]);
@@ -129,6 +149,7 @@ export const useProjectBranches = ({ buildwarden, selectedProject, setError }: U
   return {
     availableRunBranches,
     currentProjectBranch,
+    currentProjectBranchStatus,
     detachedCheckoutBranch,
     loadProjectBranches,
     projectCheckoutBusy,

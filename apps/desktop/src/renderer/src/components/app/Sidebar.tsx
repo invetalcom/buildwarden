@@ -26,8 +26,10 @@ import {
   Trash2,
 } from "lucide-react";
 import type { ProjectPageTab } from "./project-page-tabs";
+import { projectSidebarContext } from "./sidebar-project-context";
 import { recentRunOrderTimestamp } from "./sidebar-run-ordering";
 import { clampSidebarWidth } from "./sidebar-width";
+import type { CurrentProjectBranchStatus } from "./use-project-branches";
 import { Separator } from "../ui/separator";
 import { cn } from "../../lib/cn";
 
@@ -50,6 +52,8 @@ interface SidebarProps {
   chatsSelected: boolean;
   settingsSelected: boolean;
   selectedProjectId: string | null;
+  currentProjectBranch: string;
+  currentProjectBranchStatus: CurrentProjectBranchStatus;
   projectView: ProjectPageTab;
   highlightedRunId: string | null;
   collapsed: boolean;
@@ -167,6 +171,8 @@ const SidebarComponent = ({
   chatsSelected,
   settingsSelected,
   selectedProjectId,
+  currentProjectBranch,
+  currentProjectBranchStatus,
   projectView,
   highlightedRunId,
   collapsed,
@@ -207,8 +213,11 @@ const SidebarComponent = ({
   const resizeFrameRef = useRef<number | null>(null);
 
   const selectedProject = projects.find((entry) => entry.project.id === selectedProjectId) ?? projects[0] ?? null;
-  let selectedProjectContext = "No project selected";
-  if (selectedProject) selectedProjectContext = selectedProject.project.kind === "folder" ? "Folder" : selectedProject.project.defaultBranch;
+  const selectedProjectContext = projectSidebarContext(
+    selectedProject?.project ?? null,
+    currentProjectBranch,
+    currentProjectBranchStatus,
+  );
   const totalActiveRuns = projects.reduce((sum, project) => sum + project.activeRuns.length, 0);
   const recentRunWindowMs = recentRunDays * 24 * 60 * 60 * 1000;
   const recentRunWindowLabel = formatRecentRunWindowLabel(recentRunDays);
@@ -462,7 +471,9 @@ const SidebarComponent = ({
                     <span className={cn("size-2 shrink-0 rounded-full", entry.activeRuns.length > 0 ? "bg-[var(--ec-accent)]" : "bg-[var(--ec-faint)]")} />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-xs font-medium text-[var(--ec-text)]">{entry.project.name}</span>
-                      <span className="block truncate font-mono text-[10px] text-[var(--ec-muted)]">{entry.project.kind === "folder" ? "Folder" : entry.project.defaultBranch}</span>
+                      <span className="block truncate font-mono text-[10px] text-[var(--ec-muted)]">
+                        {selected ? selectedProjectContext : entry.project.kind === "folder" ? "Folder" : "Git repository"}
+                      </span>
                     </span>
                     {selected ? <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--ec-accent)]">Active</span> : null}
                   </button>

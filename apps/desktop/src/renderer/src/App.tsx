@@ -920,6 +920,7 @@ export const App = () => {
   const {
     availableRunBranches,
     currentProjectBranch,
+    currentProjectBranchStatus,
     detachedCheckoutBranch,
     loadProjectBranches,
     projectCheckoutBusy,
@@ -3708,6 +3709,8 @@ export const App = () => {
         chatsSelected={chatsSelected}
         settingsSelected={settingsOpen}
         selectedProjectId={selectedProject?.project.id ?? null}
+        currentProjectBranch={currentProjectBranch}
+        currentProjectBranchStatus={currentProjectBranchStatus}
         projectView={projectPageTab}
         highlightedRunId={
           !landingSelected && !allRunsSelected && !bookmarksSelected && !chatsSelected && !settingsOpen && typeof selectedRunId === "string" ? selectedRunId : null
