@@ -189,6 +189,14 @@ body[data-theme="light"] {
   color: var(--ec-text);
 }
 
+.app-shell.theme-dark.sidebar-contrast {
+  --ec-sidebar: rgba(29, 39, 57, 0.82);
+}
+
+.app-shell.theme-light.sidebar-contrast {
+  --ec-sidebar: rgba(204, 218, 231, 0.78);
+}
+
 /* ---------------------------------------------------------------------------
  * Glass surfaces
  * ------------------------------------------------------------------------- */
