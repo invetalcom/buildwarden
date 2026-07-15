@@ -56,6 +56,17 @@ const createDatabase = async (): Promise<BuildWardenDatabase> => {
   return db;
 };
 
+const reopenDatabase = async (db: BuildWardenDatabase): Promise<BuildWardenDatabase> => {
+  const tracked = databases.find((entry) => entry.db === db);
+  await db.close();
+  const reopened = new BuildWardenDatabase(db.getFilePath());
+  await reopened.init();
+  if (tracked) {
+    tracked.db = reopened;
+  }
+  return reopened;
+};
+
 const rpcBody = (requestId = "snapshot") => JSON.stringify({
   protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
   requestId,
@@ -127,7 +138,7 @@ describe("remote operation registry", () => {
   });
 
   it("persists mutation idempotency and replays a completed command only for the same payload", async () => {
-    const db = await createDatabase();
+    let db = await createDatabase();
     const mutation = vi.fn(async () => emptySnapshot);
     const registry = new RemoteOperationRegistry(undefined, db);
     registry.register("refreshSnapshot", mutation, validateNoRemoteArgs, "admin", true);
@@ -141,11 +152,16 @@ describe("remote operation registry", () => {
     };
 
     await expect(registry.dispatch(request, ["admin"], "session-1")).resolves.toMatchObject({ ok: true });
-    await expect(registry.dispatch({ ...request, requestId: "mutation-retry" }, ["admin"], "session-1"))
+    db = await reopenDatabase(db);
+    const replayRegistry = new RemoteOperationRegistry(undefined, db);
+    replayRegistry.register("refreshSnapshot", mutation, validateNoRemoteArgs, "admin", true);
+    replayRegistry.register("getSnapshot", mutation, validateNoRemoteArgs, "admin", true);
+
+    await expect(replayRegistry.dispatch({ ...request, requestId: "mutation-retry" }, ["admin"], "session-1"))
       .resolves.toMatchObject({ ok: true, requestId: "mutation-retry" });
-    await expect(registry.dispatch({ ...request, requestId: "mutation-conflict", method: "getSnapshot" }, ["admin"], "session-1"))
+    await expect(replayRegistry.dispatch({ ...request, requestId: "mutation-conflict", method: "getSnapshot" }, ["admin"], "session-1"))
       .resolves.toMatchObject({ ok: false, error: { code: "idempotency-conflict" } });
-    await expect(registry.dispatch({ ...request, requestId: "mutation-missing", idempotencyKey: undefined }, ["admin"], "session-1"))
+    await expect(replayRegistry.dispatch({ ...request, requestId: "mutation-missing", idempotencyKey: undefined }, ["admin"], "session-1"))
       .resolves.toMatchObject({ ok: false, error: { code: "idempotency-required" } });
 
     expect(mutation).toHaveBeenCalledOnce();
