@@ -3,7 +3,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, ipcMain } from "electron";
 import { getDefaultDatabasePath, BuildWardenDatabase } from "@buildwarden/db";
-import { RemoteAccessServer, RemoteOperationRegistry } from "@buildwarden/remote-server";
+import {
+  RemoteAccessServer,
+  RemoteOperationRegistry,
+  validateNoRemoteArgs,
+  type RemoteHostEventSource,
+} from "@buildwarden/remote-server";
 import {
   APP_SETTING_KEYS,
   IPC_CHANNELS,
@@ -351,15 +356,29 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("getSnapshot", async () => {
     await startupReconciliation;
     return controller.getSnapshot();
-  });
+  }, validateNoRemoteArgs);
   remoteOperations.register("refreshSnapshot", async () => {
     await startupReconciliation;
     return controller.refreshSnapshot();
-  });
+  }, validateNoRemoteArgs);
+
+  const remoteEventSource: RemoteHostEventSource = {
+    subscribe(listener) {
+      const disposers = [
+        hostEvents.subscribe("run", (payload) => listener({ event: "run", payload })),
+        hostEvents.subscribe("chat", (payload) => listener({ event: "chat", payload })),
+        hostEvents.subscribe("warning", (payload) => listener({ event: "warning", payload })),
+        hostEvents.subscribe("loop", (payload) => listener({ event: "loop", payload })),
+        hostEvents.subscribe("task", (payload) => listener({ event: "task", payload })),
+      ];
+      return () => disposers.forEach((dispose) => dispose());
+    },
+  };
 
   const remoteAccessServer = new RemoteAccessServer({
     appVersion: app.getVersion(),
     operations: remoteOperations,
+    events: remoteEventSource,
     onServerError: (error) => logError("Remote access server request failed.", { error }),
   });
   let remoteAccessSync = Promise.resolve();
