@@ -239,7 +239,7 @@ const RemoteAccessSettings = ({
             disabled={!enabled || working}
             onChange={(event) => setAllowRemoteControl(event.target.checked)}
           />
-          Allow runs, approvals, Git, projects, and terminal
+          Allow runs, chats, approvals, Git, projects, and terminal
         </label>
         <span className="text-xs text-zinc-500">Codes expire after five minutes and work once.</span>
       </div>
