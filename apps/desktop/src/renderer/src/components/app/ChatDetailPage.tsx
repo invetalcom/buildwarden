@@ -111,7 +111,7 @@ export const ChatDetailPage = ({
   const activityEndRef = useRef<HTMLDivElement>(null);
 
   const buildwarden = useBuildWardenClient();
-  const readOnly = !buildwarden.capabilities.mutations;
+  const readOnly = !buildwarden.capabilities.chatMutations;
 
   const isChatActive = ["queued", "preparing", "running"].includes(chat.status);
 

@@ -68,7 +68,7 @@ export const ChatPage = ({
   const [newChatFiles, setNewChatFiles] = useState<File[]>([]);
   const [selectedModelId, setSelectedModelId] = useState(defaultModelId);
   const buildwarden = useBuildWardenClient();
-  const readOnly = !buildwarden.capabilities.mutations;
+  const readOnly = !buildwarden.capabilities.chatMutations;
   const hasChatModels = modelOptions.length > 0;
 
   const loadChats = useCallback(async () => {

@@ -87,6 +87,36 @@ describe("remote BuildWarden client", () => {
     expect(expired).toHaveBeenCalledOnce();
   });
 
+  it("derives mutation capabilities from scopes and retries commands with the same persisted key", async () => {
+    const fetcher = vi.fn()
+      .mockRejectedValueOnce(new TypeError("connection reset"))
+      .mockResolvedValueOnce(rpcResponse(undefined));
+    const client = createRemoteBuildWardenClient({
+      fetch: fetcher as typeof fetch,
+      scopes: ["state:read", "run:operate"],
+    });
+
+    expect(client.capabilities).toMatchObject({
+      mutations: true,
+      runMutations: true,
+      chatMutations: false,
+      gitMutations: false,
+      embeddedTerminal: false,
+    });
+    await expect(client.cancelRun("run-1")).resolves.toBeUndefined();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    const firstBody = (fetcher.mock.calls[0]?.[1] as RequestInit | undefined)?.body;
+    const retryBody = (fetcher.mock.calls[1]?.[1] as RequestInit | undefined)?.body;
+    expect(retryBody).toBe(firstBody);
+    expect(JSON.parse(String(firstBody))).toMatchObject({
+      method: "cancelRun",
+      args: ["run-1"],
+      idempotencyKey: "request-id",
+    });
+    await expect(client.createChat({ prompt: "no", modelId: "model", providerAccountId: "provider" }))
+      .rejects.toThrow("not available for this remote session");
+  });
+
   it("publishes validated live events from the authenticated WebSocket", () => {
     type SocketListener = (event: { data?: string; code?: number }) => void;
     const handlers = new Map<string, SocketListener[]>();
@@ -127,5 +157,50 @@ describe("remote BuildWarden client", () => {
     expect(onRunEvent).toHaveBeenCalledOnce();
     unsubscribe();
     expect(socket.close).toHaveBeenCalledWith(1000, "No active subscriptions");
+  });
+
+  it("subscribes to validated terminal events only for terminal-enabled sessions", () => {
+    type SocketListener = (event: { data?: string; code?: number }) => void;
+    const handlers = new Map<string, SocketListener[]>();
+    const sent: string[] = [];
+    const socket = {
+      readyState: 0,
+      addEventListener: (type: string, listener: SocketListener) => {
+        handlers.set(type, [...(handlers.get(type) ?? []), listener]);
+      },
+      send: (message: string) => sent.push(message),
+      close: vi.fn(),
+    };
+    const emit = (type: string, event: { data?: string; code?: number } = {}) =>
+      handlers.get(type)?.forEach((handler) => handler(event));
+    const client = createRemoteBuildWardenClient({
+      fetch: vi.fn(async () => rpcResponse(snapshot)) as typeof fetch,
+      scopes: ["state:read", "terminal:operate"],
+      webSocketFactory: () => socket as unknown as WebSocket,
+    });
+    const onTerminalData = vi.fn();
+    const unsubscribe = client.onRunTerminalData(onTerminalData);
+
+    socket.readyState = 1;
+    emit("open");
+    expect(JSON.parse(sent[0] ?? "{}")).toMatchObject({ events: ["terminal-data"] });
+    emit("message", { data: JSON.stringify({
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "event",
+      sequence: 1,
+      event: "terminal-data",
+      payload: { sessionId: "buildwarden-run-terminal:run-1", data: "ready\r\n" },
+    }) });
+    emit("message", { data: JSON.stringify({
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "event",
+      sequence: 2,
+      event: "terminal-data",
+      payload: { sessionId: 12, data: "invalid" },
+    }) });
+
+    expect(client.capabilities.embeddedTerminal).toBe(true);
+    expect(onTerminalData).toHaveBeenCalledOnce();
+    unsubscribe();
   });
 });

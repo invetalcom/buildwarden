@@ -301,7 +301,7 @@ describe("remote access authentication", () => {
       protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
       minProtocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
       maxProtocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
-      capabilities: ["rpc", "events:run", "events:chat", "events:warning", "events:loop", "events:task"],
+      capabilities: ["rpc", "events:run", "events:chat", "events:warning", "events:loop", "events:task", "events:terminal"],
       endpoints: { health: REMOTE_ACCESS_HEALTH_PATH, info: REMOTE_ACCESS_INFO_PATH, events: REMOTE_ACCESS_WEBSOCKET_PATH },
     });
 
@@ -380,6 +380,21 @@ describe("remote access authentication", () => {
       type: "error",
       requestId: "invalid-subscription",
       code: "invalid-message",
+    });
+
+    const forbidden = new Promise<Record<string, unknown>>((resolve) => {
+      socket.addEventListener("message", (event) => resolve(JSON.parse(String(event.data)) as Record<string, unknown>), { once: true });
+    });
+    socket.send(JSON.stringify({
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "subscribe",
+      requestId: "terminal-without-scope",
+      events: ["terminal-data", "terminal-exit"],
+    }));
+    await expect(forbidden).resolves.toMatchObject({
+      type: "error",
+      requestId: "terminal-without-scope",
+      code: "forbidden",
     });
     socket.close();
   });

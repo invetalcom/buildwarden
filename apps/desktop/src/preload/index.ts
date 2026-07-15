@@ -158,6 +158,7 @@ const api: DesktopApi = {
   getRunPublishOptions: (runId: string) => invoke(IPC_CHANNELS.getRunPublishOptions, runId),
   getSnapshot: () => invoke(IPC_CHANNELS.getSnapshot),
   getRemoteAccessStatus: () => invoke(IPC_CHANNELS.getRemoteAccessStatus),
+  listHostDirectories: (input) => invoke(IPC_CHANNELS.listHostDirectories, input),
   createRemoteAccessPairing: (input) => invoke(IPC_CHANNELS.createRemoteAccessPairing, input),
   listRemoteAccessSessions: () => invoke(IPC_CHANNELS.listRemoteAccessSessions),
   revokeRemoteAccessSession: (sessionId: string) => invoke(IPC_CHANNELS.revokeRemoteAccessSession, sessionId),

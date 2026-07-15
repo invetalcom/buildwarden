@@ -27,11 +27,17 @@ describe("BuildWarden client boundary", () => {
       directoryPicker: true,
       ideIntegration: true,
       fileManager: true,
-    systemTerminal: true,
-    embeddedTerminal: true,
-    settings: true,
-    mutations: true,
-    liveEvents: true,
+      systemTerminal: true,
+      embeddedTerminal: true,
+      settings: true,
+      mutations: true,
+      runMutations: true,
+      chatMutations: true,
+      approvalResponses: true,
+      gitMutations: true,
+      projectCreation: true,
+      hostDirectoryBrowser: false,
+      liveEvents: true,
     };
     expect(client.capabilities).toEqual(expectedCapabilities);
   });

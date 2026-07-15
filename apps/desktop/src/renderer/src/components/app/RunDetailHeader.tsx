@@ -231,7 +231,6 @@ export const RunDetailHeader = ({
   onFocusSubagent,
 }: RunDetailHeaderProps) => {
   const buildwarden = useBuildWardenClient();
-  const readOnly = !buildwarden.capabilities.mutations;
   const stackedHeader = splitView && focused;
   const isGitRun = run.workspaceVcs === "git";
   let workspaceLabel = run.branchName;
@@ -241,8 +240,8 @@ export const RunDetailHeader = ({
   const workspaceCopyValue = isGitRun ? run.branchName : run.worktreePath;
   const hasCommit = runDetail?.steps.some((step) => Boolean(safeParseMetadata(step.metadataJson).commitHash)) ?? false;
   const hasOpenChanges = Boolean(runDetail?.diff.trim());
-  const canManageChanges = !readOnly && isGitRun && run.status === "completed" && runDetail?.worktreeUnavailable !== true;
-  const canCommit = !readOnly && run.status === "completed" && hasOpenChanges;
+  const canManageChanges = buildwarden.capabilities.gitMutations && isGitRun && run.status === "completed" && runDetail?.worktreeUnavailable !== true;
+  const canCommit = buildwarden.capabilities.gitMutations && run.status === "completed" && hasOpenChanges;
   const canPublish = canManageChanges && !hasOpenChanges && hasCommit;
   const canCreateLocalBranch = canManageChanges && (hasOpenChanges || hasCommit);
   const planProgress = useMemo(
@@ -523,7 +522,7 @@ export const RunDetailHeader = ({
               onOpen={(ideKind) => onOpenInIde(runDetail, ideKind)}
             />
           ) : null}
-          {focused && !readOnly && canContinueRun ? (
+          {focused && buildwarden.capabilities.runMutations && canContinueRun ? (
             <Button
               type="button"
               variant="secondary"
@@ -556,7 +555,7 @@ export const RunDetailHeader = ({
               <span className="sr-only">Open in file explorer</span>
             </Button>
           ) : null}
-          {focused && !readOnly ? (
+          {focused && buildwarden.capabilities.runMutations ? (
             <Button
               variant="secondary"
               size="sm"

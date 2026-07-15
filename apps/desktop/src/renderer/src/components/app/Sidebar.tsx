@@ -202,7 +202,8 @@ const SidebarComponent = ({
   loopEnabledProjectIds,
 }: SidebarProps) => {
   const buildwarden = useBuildWardenClient();
-  const readOnly = !buildwarden.capabilities.mutations;
+  const remoteWeb = buildwarden.capabilities.platform === "web";
+  const readOnly = remoteWeb || !buildwarden.capabilities.mutations;
   const mobileWeb = buildwarden.capabilities.platform === "web";
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [projectToolsExpanded, setProjectToolsExpanded] = useState(true);
@@ -354,9 +355,10 @@ const SidebarComponent = ({
     { label: "Bookmarks", icon: Bookmark, selected: bookmarksSelected, onClick: onSelectBookmarks, count: bookmarksCount ? `${bookmarksCount}` : "" },
     ...(!readOnly ? [{ label: "Settings", icon: Settings, selected: settingsSelected, onClick: onOpenSettings, count: "" }] : []),
   ];
-  const visibleProjectTools = projectTools.filter(
-    (tool) => (!readOnly || tool.tab === "overview") && projectToolVisible(selectedProject, tool.tab, loopEnabledProjectIds),
-  );
+  const visibleProjectTools = projectTools.filter((tool) => {
+    if (remoteWeb && tool.tab !== "overview" && !(tool.tab === "branches" && buildwarden.capabilities.gitMutations)) return false;
+    return (!readOnly || remoteWeb || tool.tab === "overview") && projectToolVisible(selectedProject, tool.tab, loopEnabledProjectIds);
+  });
 
   if (collapsed) {
     return (

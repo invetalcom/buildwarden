@@ -1357,6 +1357,22 @@ export interface ProjectInput {
   repoPath: string;
 }
 
+export interface HostDirectoryBrowseInput {
+  /** Absolute host path. Omit to list filesystem roots. */
+  path?: string;
+}
+
+export interface HostDirectoryEntry {
+  name: string;
+  path: string;
+}
+
+export interface HostDirectoryListing {
+  path: string | null;
+  parentPath: string | null;
+  entries: HostDirectoryEntry[];
+}
+
 export interface ProjectFolderGitStatus {
   path: string;
   exists: boolean;
@@ -2642,6 +2658,7 @@ export interface RendererLogPayload {
 export interface DesktopApi {
   getSnapshot(): Promise<AppSnapshot>;
   getRemoteAccessStatus(): Promise<RemoteAccessStatus>;
+  listHostDirectories(input?: HostDirectoryBrowseInput): Promise<HostDirectoryListing>;
   createRemoteAccessPairing(input?: RemoteAccessPairingInput): Promise<RemoteAccessPairingGrant>;
   listRemoteAccessSessions(): Promise<RemoteAccessSession[]>;
   revokeRemoteAccessSession(sessionId: string): Promise<void>;
@@ -2867,10 +2884,11 @@ export const REMOTE_ACCESS_SERVER_CAPABILITIES = [
   "events:warning",
   "events:loop",
   "events:task",
+  "events:terminal",
 ] as const;
 
 export type RemoteAccessServerCapability = (typeof REMOTE_ACCESS_SERVER_CAPABILITIES)[number];
-export type RemoteStreamEventType = "run" | "chat" | "warning" | "loop" | "task";
+export type RemoteStreamEventType = "run" | "chat" | "warning" | "loop" | "task" | "terminal-data" | "terminal-exit";
 
 export interface RemoteStreamEventPayloadMap {
   run: RunEvent;
@@ -2878,6 +2896,8 @@ export interface RemoteStreamEventPayloadMap {
   warning: AppWarning;
   loop: ProjectLoopChangedPayload;
   task: ProjectTaskChangedPayload;
+  "terminal-data": RunTerminalDataPayload;
+  "terminal-exit": RunTerminalExitPayload;
 }
 
 export type RemoteStreamEvent = {
@@ -3112,7 +3132,7 @@ export type RemoteWebSocketServerMessage =
       protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
       type: "error";
       requestId: string;
-      code: "invalid-message" | "protocol-mismatch";
+      code: "invalid-message" | "protocol-mismatch" | "forbidden";
       message: string;
     };
 
@@ -3197,6 +3217,7 @@ export const IPC_CHANNELS = {
   pushProjectBranch: "buildwarden:push-project-branch",
   getSnapshot: "buildwarden:get-snapshot",
   getRemoteAccessStatus: "buildwarden:get-remote-access-status",
+  listHostDirectories: "buildwarden:list-host-directories",
   createRemoteAccessPairing: "buildwarden:create-remote-access-pairing",
   listRemoteAccessSessions: "buildwarden:list-remote-access-sessions",
   revokeRemoteAccessSession: "buildwarden:revoke-remote-access-session",

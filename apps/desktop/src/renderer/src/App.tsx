@@ -1197,7 +1197,8 @@ export const App = () => {
 
   const runPanelToggleItems = RUN_PANEL_TOGGLE_DEFINITIONS.filter((definition) => {
     if (definition.key === "terminal") return buildwarden.capabilities.embeddedTerminal;
-    if (definition.key === "notes" || definition.key === "chat") return buildwarden.capabilities.mutations;
+    if (definition.key === "notes") return buildwarden.capabilities.platform === "electron";
+    if (definition.key === "chat") return buildwarden.capabilities.chatMutations;
     if (definition.key === "browser") return buildwarden.capabilities.platform === "electron";
     return true;
   }).map((definition): RunPanelToggleItem => {
@@ -1357,7 +1358,7 @@ export const App = () => {
   }, []);
 
   useEffect(() => {
-    if (!buildwarden || !selectedProject || selectedProject.project.kind !== "folder") {
+    if (!buildwarden || !buildwarden.capabilities.gitMutations || !selectedProject || selectedProject.project.kind !== "folder") {
       return;
     }
     let cancelled = false;
@@ -3116,8 +3117,8 @@ export const App = () => {
             showDiff={paneVisiblePanels.diff}
               showTerminal={paneVisiblePanels.terminal && buildwarden.capabilities.embeddedTerminal}
               showBrowser={paneVisiblePanels.browser && buildwarden.capabilities.platform === "electron"}
-              showNotes={paneVisiblePanels.notes && buildwarden.capabilities.mutations}
-              showChat={paneVisiblePanels.chat && buildwarden.capabilities.mutations}
+              showNotes={paneVisiblePanels.notes && buildwarden.capabilities.platform === "electron"}
+              showChat={paneVisiblePanels.chat && buildwarden.capabilities.chatMutations}
             onTogglePanel={(panelId) => toggleRunWorkspacePanelForRun(paneDetail.run.id, panelId, paneDetail.worktreeUnavailable === true)}
             secondaryPanelPosition={paneSecondaryPosition}
             onSecondaryPanelPositionChange={(position) => {
@@ -3517,8 +3518,8 @@ export const App = () => {
               showDiff={runWorkspaceShowDiff}
               showTerminal={runWorkspaceShowTerminal && buildwarden.capabilities.embeddedTerminal}
               showBrowser={runWorkspaceShowBrowser && buildwarden.capabilities.platform === "electron"}
-              showNotes={runWorkspaceShowNotes && buildwarden.capabilities.mutations}
-              showChat={runWorkspaceShowChat && buildwarden.capabilities.mutations}
+              showNotes={runWorkspaceShowNotes && buildwarden.capabilities.platform === "electron"}
+              showChat={runWorkspaceShowChat && buildwarden.capabilities.chatMutations}
               onTogglePanel={toggleSelectedRunWorkspacePanel}
               secondaryPanelPosition={runWorkspaceSecondaryPosition}
               onSecondaryPanelPositionChange={(position) => {
