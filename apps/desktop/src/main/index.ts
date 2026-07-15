@@ -462,6 +462,10 @@ const bootstrap = async (): Promise<void> => {
     if (!enabled) {
       throw new Error("Enable remote access before creating a pairing code.");
     }
+    await syncRemoteAccessServer();
+    if (!remoteAccessServer?.getInfo()) {
+      throw new Error("Remote access could not be started.");
+    }
     return (await ensureRemoteAuthService()).createPairingGrant(input);
   });
   ipcMain.handle(IPC_CHANNELS.listRemoteAccessSessions, () => db.listRemoteAccessSessions());
