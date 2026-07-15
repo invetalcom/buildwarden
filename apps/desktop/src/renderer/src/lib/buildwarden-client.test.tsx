@@ -31,6 +31,13 @@ describe("BuildWarden client boundary", () => {
       embeddedTerminal: true,
       settings: true,
       mutations: true,
+      runMutations: true,
+      chatMutations: true,
+      bookmarkMutations: true,
+      approvalResponses: true,
+      gitMutations: true,
+      projectCreation: true,
+      hostDirectoryBrowser: false,
       liveEvents: true,
     };
     expect(client.capabilities).toEqual(expectedCapabilities);

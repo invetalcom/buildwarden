@@ -52,7 +52,15 @@ const DEFAULT_REMOTE_RECORD_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 const PAIRING_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const PAIRING_RATE_LIMIT_WINDOW_MS = 60_000;
 const PAIRING_RATE_LIMIT_ATTEMPTS = 5;
-const REMOTE_STREAM_EVENTS = ["run", "chat", "warning", "loop", "task"] as const satisfies readonly RemoteStreamEventType[];
+const REMOTE_STREAM_EVENTS = [
+  "run",
+  "chat",
+  "warning",
+  "loop",
+  "task",
+  "terminal-data",
+  "terminal-exit",
+] as const satisfies readonly RemoteStreamEventType[];
 const REMOTE_STREAM_EVENT_SET = new Set<string>(REMOTE_STREAM_EVENTS);
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
@@ -79,6 +87,11 @@ type RemoteOperationHandler<Method extends RemoteApiMethod> = (
 type RemoteOperationArgsValidator<Method extends RemoteApiMethod> = (
   args: unknown[],
 ) => args is RemoteApiMethodArgs<Method>;
+
+export const defineRemoteArgsValidator = <Method extends RemoteApiMethod>(
+  predicate: (args: unknown[]) => boolean,
+): RemoteOperationArgsValidator<Method> =>
+  (args): args is RemoteApiMethodArgs<Method> => predicate(args);
 
 type UntypedRemoteOperationHandler = (...args: unknown[]) => Promise<unknown>;
 type UntypedRemoteOperationArgsValidator = (args: unknown[]) => boolean;
@@ -754,6 +767,12 @@ const isRemoteEventPayload = (event: RemoteStreamEventType, payload: unknown): b
   if (event === "loop") {
     return isPlainObject(payload) && typeof payload.loopId === "string" && typeof payload.projectId === "string";
   }
+  if (event === "terminal-data") {
+    return isPlainObject(payload) && typeof payload.sessionId === "string" && typeof payload.data === "string";
+  }
+  if (event === "terminal-exit") {
+    return isPlainObject(payload) && typeof payload.sessionId === "string" && Number.isInteger(payload.exitCode);
+  }
   return isPlainObject(payload) && typeof payload.projectId === "string" && typeof payload.taskId === "string" &&
     (payload.status === "open" || payload.status === "in_progress" || payload.status === "in_review" || payload.status === "done");
 };
@@ -1194,7 +1213,8 @@ export class RemoteAccessServer {
         return;
       }
       const session = this.options.auth.authenticate(token, remoteAddress, { audit: false, touch: false });
-      if (!session?.scopes.includes("state:read")) {
+      const terminalEvent = event.event === "terminal-data" || event.event === "terminal-exit";
+      if (!session?.scopes.includes("state:read") || (terminalEvent && !session.scopes.includes("terminal:operate"))) {
         socket.close(1008, "Session is no longer authorized");
         return;
       }
@@ -1272,6 +1292,18 @@ export class RemoteAccessServer {
         protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
         type: "pong",
         requestId: parsed.message.requestId,
+      });
+      return;
+    }
+
+    if (parsed.message.events.some((event) =>
+      (event === "terminal-data" || event === "terminal-exit") && !session.scopes.includes("terminal:operate"))) {
+      this.sendWebSocketMessage(socket, {
+        protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+        type: "error",
+        requestId: parsed.message.requestId,
+        code: "forbidden",
+        message: "The session cannot subscribe to terminal events.",
       });
       return;
     }

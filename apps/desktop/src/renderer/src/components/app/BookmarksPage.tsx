@@ -39,7 +39,7 @@ export const BookmarksPage = ({
   const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([]);
   const [loading, setLoading] = useState(true);
   const buildwarden = useBuildWardenClient();
-  const readOnly = !buildwarden.capabilities.mutations;
+  const readOnly = !buildwarden.capabilities.bookmarkMutations;
 
   const loadBookmarks = useCallback(async () => {
     if (!buildwarden) return;

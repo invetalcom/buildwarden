@@ -245,7 +245,7 @@ export const RunDetailPage = ({
   onFollowUpRun,
 }: RunDetailPageProps) => {
   const buildwarden = useBuildWardenClient();
-  const readOnly = !buildwarden.capabilities.mutations;
+  const readOnly = !buildwarden.capabilities.runMutations;
   const [followUpPrompt, setFollowUpPrompt] = useState("");
   const [followUpFiles, setFollowUpFiles] = useState<File[]>([]);
   const [goalDraft, setGoalDraft] = useState(runDetail.run.goalText ?? "");
@@ -998,7 +998,7 @@ export const RunDetailPage = ({
             <Copy className="h-3.5 w-3.5 text-zinc-500" aria-hidden />
             Copy text
           </button>
-          {!readOnly ? <button
+          {buildwarden.capabilities.platform === "electron" ? <button
             type="button"
             className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-200 transition hover:bg-zinc-800/80"
             onClick={() => void addRunNote(selectionMenu.text)}
@@ -1006,7 +1006,7 @@ export const RunDetailPage = ({
             <StickyNote className="h-3.5 w-3.5 text-cyan-300" aria-hidden />
             Add to notes
           </button> : null}
-          {!readOnly ? <button
+          {buildwarden.capabilities.platform === "electron" ? <button
             type="button"
             className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-200 transition hover:bg-zinc-800/80"
             onClick={() => void addSelectionToTask(selectionMenu.text)}
@@ -1356,7 +1356,7 @@ export const RunDetailPage = ({
                                 {allDiffFilesExpanded ? "Collapse file diffs" : "Expand file diffs"}
                               </p>
                             </button>
-                            {!readOnly ? <div className="flex items-center gap-1 border-l border-zinc-800/80 px-2">
+                            {buildwarden.capabilities.platform === "electron" ? <div className="flex items-center gap-1 border-l border-zinc-800/80 px-2">
                               <ComposerSelect
                                 value={selectedReviewModelId}
                                 onChange={setSelectedReviewModelId}

@@ -4,6 +4,12 @@ type TilePanelId = RunWorkspacePanelId;
 
 type TileLayoutState = Record<TilePanelId, RunWorkspaceTileSize>;
 
+export interface RunWorkspacePanelCapabilities {
+  embeddedTerminal: boolean;
+  chatMutations: boolean;
+  platform: "electron" | "web";
+}
+
 export const DEFAULT_TILE_ORDER: TilePanelId[] = ["activity", "diff", "terminal", "browser", "notes", "chat"];
 
 export const DEFAULT_TILE_LAYOUT: TileLayoutState = {
@@ -27,4 +33,26 @@ export const DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE: RunWorkspaceLayoutPreferen
   tileOrder: DEFAULT_TILE_ORDER,
   tileLayout: DEFAULT_TILE_LAYOUT,
   secondaryPanelPosition: "right",
+};
+
+export const isRunWorkspacePanelAvailable = (
+  panelId: RunWorkspacePanelId,
+  capabilities: RunWorkspacePanelCapabilities,
+): boolean => {
+  if (panelId === "terminal") return capabilities.embeddedTerminal;
+  if (panelId === "browser" || panelId === "notes") return capabilities.platform === "electron";
+  if (panelId === "chat") return capabilities.chatMutations;
+  return true;
+};
+
+export const resolveRunWorkspacePanelVisibility = (
+  visibility: Record<RunWorkspacePanelId, boolean>,
+  capabilities: RunWorkspacePanelCapabilities,
+): Record<RunWorkspacePanelId, boolean> => {
+  const resolved = Object.fromEntries(
+    DEFAULT_TILE_ORDER.map((panelId) => [panelId, visibility[panelId] && isRunWorkspacePanelAvailable(panelId, capabilities)]),
+  ) as Record<RunWorkspacePanelId, boolean>;
+
+  if (!Object.values(resolved).some(Boolean)) resolved.activity = true;
+  return resolved;
 };

@@ -178,7 +178,7 @@ export const ProjectOverviewTab = ({
   onYoloModeChange,
 }: ProjectOverviewTabProps) => {
   const buildwarden = useBuildWardenClient();
-  const readOnly = !buildwarden.capabilities.mutations;
+  const readOnly = !buildwarden.capabilities.runMutations;
   const [runAttachmentFiles, setRunAttachmentFiles] = useState<File[]>([]);
   const [runSearchQuery, setRunSearchQuery] = useState("");
   const runSearchTerms = useMemo(() => parseSearchTerms(runSearchQuery), [runSearchQuery]);

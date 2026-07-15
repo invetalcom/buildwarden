@@ -772,6 +772,7 @@ export class AppController
     Omit<
       DesktopApi,
       | "getRemoteAccessStatus"
+      | "listHostDirectories"
       | "createRemoteAccessPairing"
       | "listRemoteAccessSessions"
       | "revokeRemoteAccessSession"

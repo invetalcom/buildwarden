@@ -5,8 +5,9 @@ import {
   type RemoteAccessPairingExchangeResponse,
   type RemoteAccessSession,
 } from "@buildwarden/shared";
-import { KeyRound, Loader2, LockKeyhole, LogOut, MonitorDot } from "lucide-react";
+import { FolderPlus, KeyRound, Loader2, LockKeyhole, LogOut, MonitorDot } from "lucide-react";
 import { App } from "./App";
+import { RemoteHostProjectDialog } from "./components/app/RemoteHostProjectDialog";
 import { BuildWardenClientProvider } from "./lib/buildwarden-client";
 import { setActiveBuildWardenClient } from "./lib/buildwarden-client-core";
 import { createRemoteBuildWardenClient } from "./lib/remote-buildwarden-client";
@@ -126,6 +127,7 @@ const PairingGate = ({ initialError, onPaired }: { initialError?: string; onPair
 
 export const RemoteWebApp = () => {
   const [state, setState] = useState<RemoteWebState>({ status: "checking" });
+  const [showHostProjectDialog, setShowHostProjectDialog] = useState(false);
 
   useEffect(() => {
     let disposed = false;
@@ -154,9 +156,10 @@ export const RemoteWebApp = () => {
   const client = useMemo(() => {
     if (state.status !== "authenticated") return null;
     return createRemoteBuildWardenClient({
+      scopes: state.session.scopes,
       onSessionExpired: () => setState({ status: "pairing", error: "Your remote session expired or was revoked." }),
     });
-  }, [state.status]);
+  }, [state]);
 
   useEffect(() => {
     if (client) setActiveBuildWardenClient(client);
@@ -183,13 +186,27 @@ export const RemoteWebApp = () => {
     }
   };
 
+  const controlEnabled = client.capabilities.mutations;
+
   return (
     <BuildWardenClientProvider client={client}>
       <div className="remote-app-entry h-[100svh]">
         <App />
+        <RemoteHostProjectDialog
+          client={client}
+          open={showHostProjectDialog}
+          onClose={() => setShowHostProjectDialog(false)}
+          onProjectAdded={() => window.location.reload()}
+        />
         <div className="remote-session-chip fixed right-2 bottom-2 z-30 flex items-center gap-1.5 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)]/95 px-2 py-1.5 text-[10px] shadow-lg backdrop-blur sm:right-3 sm:bottom-3 sm:gap-2 sm:px-2.5">
           <MonitorDot className="size-3.5 text-[var(--ec-accent)]" />
-          <span className="hidden font-semibold uppercase tracking-[0.16em] text-[var(--ec-muted)] sm:inline">Read-only remote</span>
+          <span className="hidden font-semibold uppercase tracking-[0.16em] text-[var(--ec-muted)] sm:inline">{controlEnabled ? "Remote control" : "Read-only remote"}</span>
+          {client.capabilities.hostDirectoryBrowser ? (
+            <button type="button" className="ml-1 inline-flex items-center gap-1 text-[var(--ec-faint)] transition hover:text-[var(--ec-text)]" onClick={() => setShowHostProjectDialog(true)}>
+              <FolderPlus className="size-3" />
+              <span className="hidden sm:inline">Add host project</span>
+            </button>
+          ) : null}
           <button type="button" className="ml-1 inline-flex items-center gap-1 text-[var(--ec-faint)] transition hover:text-[var(--ec-text)]" onClick={() => void disconnect()}>
             <LogOut className="size-3" />
             <span className="hidden sm:inline">Disconnect</span>

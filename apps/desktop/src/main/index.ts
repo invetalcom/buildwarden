@@ -8,6 +8,7 @@ import {
   RemoteAccessServer,
   RemoteAuthService,
   RemoteOperationRegistry,
+  defineRemoteArgsValidator,
   validateNoRemoteArgs,
   type RemoteHostEventSource,
 } from "@buildwarden/remote-server";
@@ -46,6 +47,7 @@ import { HostEventBus } from "./host-events";
 import { registerHostEventIpc } from "./host-events-ipc";
 import { HostTerminalService } from "./host-terminal-service";
 import { TailscaleServeService } from "./tailscale-serve-service";
+import { HostDirectoryService } from "./host-directory-service";
 
 const mainDir = dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
@@ -314,6 +316,7 @@ const bootstrap = async (): Promise<void> => {
     hostTerminal,
     hostEvents,
   );
+  const hostDirectory = new HostDirectoryService();
   const startupReconciliation = controller
     .migrateProjectBaseBranches()
     .then(() => controller.reconcileOrphanedActiveSessions())
@@ -387,6 +390,184 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("getBookmarksWithSteps", () => controller.getBookmarksWithSteps(), validateNoRemoteArgs);
   remoteOperations.register("getChatBookmarksWithSteps", () => controller.getChatBookmarksWithSteps(), validateNoRemoteArgs);
 
+  const isRemoteRecord = (value: unknown): value is Record<string, unknown> =>
+    value != null && typeof value === "object" && !Array.isArray(value);
+  const hasRemoteStringFields = (value: unknown, fields: string[]): boolean =>
+    isRemoteRecord(value) && fields.every((field) => typeof value[field] === "string");
+  const optionalRemoteRecord = (value: unknown): boolean => value === undefined || isRemoteRecord(value);
+  const validateTwoRemoteStrings = defineRemoteArgsValidator<"commitRun">(
+    (args) => args.length === 2 && args.every((value) => typeof value === "string"),
+  );
+  const validateRunInput = defineRemoteArgsValidator<"createRun">(
+    (args) => args.length === 1 && hasRemoteStringFields(
+      args[0],
+      ["projectId", "providerAccountId", "modelId", "harnessType", "mode", "workspaceType", "prompt"],
+    ),
+  );
+  const validateContinueRunInput = defineRemoteArgsValidator<"continueRun">(
+    (args) => args.length === 1 && hasRemoteStringFields(
+      args[0],
+      ["sourceRunId", "providerAccountId", "modelId", "harnessType", "mode", "prompt"],
+    ),
+  );
+  const validateFollowUpRun = defineRemoteArgsValidator<"followUpRun">(
+    (args) => (args.length === 2 || args.length === 3) && typeof args[0] === "string" &&
+      typeof args[1] === "string" && optionalRemoteRecord(args[2]),
+  );
+  const validateFollowUpChat = defineRemoteArgsValidator<"followUpChat">(
+    (args) => (args.length === 2 || args.length === 3) && typeof args[0] === "string" &&
+      typeof args[1] === "string" && optionalRemoteRecord(args[2]),
+  );
+  const validateShellApproval = defineRemoteArgsValidator<"respondToShellApproval">((args) => {
+    // Persistent allowlist changes remain a trusted desktop-only operation.
+    const decisions = new Set(["allow-once", "allow-for-run", "deny"]);
+    return (args.length === 3 || args.length === 4) && typeof args[0] === "string" &&
+      typeof args[1] === "string" && typeof args[2] === "string" && decisions.has(args[2]) && optionalRemoteRecord(args[3]);
+  });
+  const validateUserInput = defineRemoteArgsValidator<"respondToRunUserInput">((args) =>
+    args.length === 3 && typeof args[0] === "string" && typeof args[1] === "string" && isRemoteRecord(args[2]) &&
+    Object.values(args[2]).every((answer) => typeof answer === "string" ||
+      (Array.isArray(answer) && answer.every((item) => typeof item === "string"))));
+  const validateChatInput = defineRemoteArgsValidator<"createChat">(
+    (args) => args.length === 1 && hasRemoteStringFields(args[0], ["providerAccountId", "modelId", "prompt"]),
+  );
+  const validateOptionalSecondString = defineRemoteArgsValidator<"publishRunBranch">(
+    (args) => (args.length === 1 || args.length === 2) && typeof args[0] === "string" &&
+      (args[1] === undefined || typeof args[1] === "string"),
+  );
+  const validatePullRequest = defineRemoteArgsValidator<"createRunPullRequest">(
+    (args) => args.length >= 3 && args.length <= 5 && args.slice(0, 3).every((value) => typeof value === "string") &&
+      args.slice(3).every((value) => value === undefined || typeof value === "string"),
+  );
+  const validateProjectInput = defineRemoteArgsValidator<"addProject">(
+    (args) => args.length === 1 && hasRemoteStringFields(args[0], ["repoPath"]) &&
+      (!isRemoteRecord(args[0]) || args[0].name === undefined || typeof args[0].name === "string"),
+  );
+  const validateHostDirectoryInput = defineRemoteArgsValidator<"listHostDirectories">(
+    (args) => args.length === 0 || (args.length === 1 && (args[0] === undefined ||
+      (isRemoteRecord(args[0]) && (args[0].path === undefined || typeof args[0].path === "string")))),
+  );
+  const validateProjectAndBranchInput = <Method extends
+    "createProjectBranch" | "renameProjectBranch" | "deleteProjectBranch" | "pushProjectBranch" | "getProjectBranchDeleteImpact">(
+    fields: string[],
+  ) => defineRemoteArgsValidator<Method>(
+    (args) => args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], fields),
+  );
+  const validateTerminalStart = defineRemoteArgsValidator<"runTerminalStart">(
+    (args) => args.length === 1 && hasRemoteStringFields(args[0], ["sessionId", "cwd"]),
+  );
+  const validateTerminalWrite = defineRemoteArgsValidator<"runTerminalWrite">(
+    (args) => args.length === 1 && hasRemoteStringFields(args[0], ["sessionId", "data"]) &&
+      isRemoteRecord(args[0]) && String(args[0].data).length <= 65_536,
+  );
+  const validateTerminalResize = defineRemoteArgsValidator<"runTerminalResize">(
+    (args) => args.length === 1 && isRemoteRecord(args[0]) && typeof args[0].sessionId === "string" &&
+      Number.isInteger(args[0].cols) && Number.isInteger(args[0].rows) && Number(args[0].cols) >= 10 &&
+      Number(args[0].cols) <= 500 && Number(args[0].rows) >= 2 && Number(args[0].rows) <= 300,
+  );
+
+  remoteOperations.register("getRunPublishOptions", (runId) => controller.getRunPublishOptions(runId), validateSingleRemoteStringArg);
+  remoteOperations.register("getProjectBranchOverview", (projectId) => controller.getProjectBranchOverview(projectId), validateSingleRemoteStringArg);
+  remoteOperations.register("getProjectForgeAuthStatus", (projectId) => controller.getProjectForgeAuthStatus(projectId), validateSingleRemoteStringArg);
+  remoteOperations.register("checkProjectGitConversion", (projectId) => controller.checkProjectGitConversion(projectId), validateSingleRemoteStringArg);
+  remoteOperations.register(
+    "getProjectBranchDeleteImpact",
+    (projectId, input) => controller.getProjectBranchDeleteImpact(projectId, input),
+    validateProjectAndBranchInput<"getProjectBranchDeleteImpact">(["branchName"]),
+  );
+  remoteOperations.register("listHostDirectories", (input) => hostDirectory.list(input), validateHostDirectoryInput, "admin");
+
+  remoteOperations.register("createRun", (input) => controller.createRun(input), validateRunInput, "run:operate", true);
+  remoteOperations.register("continueRun", (input) => controller.continueRun(input), validateContinueRunInput, "run:operate", true);
+  remoteOperations.register("followUpRun", (runId, prompt, options) => controller.followUpRun(runId, prompt, options), validateFollowUpRun, "run:operate", true);
+  remoteOperations.register("cancelRun", (runId) => controller.cancelRun(runId), validateSingleRemoteStringArg, "run:operate", true);
+  remoteOperations.register("cancelRunShell", (runId, toolCallId) => controller.cancelRunShell(runId, toolCallId), validateTwoRemoteStrings, "run:operate", true);
+  remoteOperations.register("resumeRunFromCheckpoint", (runId) => controller.resumeRunFromCheckpoint(runId), validateSingleRemoteStringArg, "run:operate", true);
+  remoteOperations.register("recoverInterruptedRun", (runId) => controller.recoverInterruptedRun(runId), validateSingleRemoteStringArg, "run:operate", true);
+  remoteOperations.register("undoRunToLastPrompt", (runId) => controller.undoRunToLastPrompt(runId), validateSingleRemoteStringArg, "run:operate", true);
+  remoteOperations.register("deleteRun", (runId) => controller.deleteRun(runId), validateSingleRemoteStringArg, "run:operate", true);
+  remoteOperations.register(
+    "respondToShellApproval",
+    (runId, requestId, decision, options) => controller.respondToShellApproval(runId, requestId, decision, options),
+    validateShellApproval,
+    "approval:respond",
+    true,
+  );
+  remoteOperations.register(
+    "respondToRunUserInput",
+    (runId, requestId, answers) => controller.respondToRunUserInput(runId, requestId, answers),
+    validateUserInput,
+    "approval:respond",
+    true,
+  );
+  remoteOperations.register("createChat", (input) => controller.createChat(input), validateChatInput, "chat:operate", true);
+  remoteOperations.register("followUpChat", (chatId, prompt, options) => controller.followUpChat(chatId, prompt, options), validateFollowUpChat, "chat:operate", true);
+  remoteOperations.register("cancelChat", (chatId) => controller.cancelChat(chatId), validateSingleRemoteStringArg, "chat:operate", true);
+  remoteOperations.register("deleteChat", (chatId) => controller.deleteChat(chatId), validateSingleRemoteStringArg, "chat:operate", true);
+
+  remoteOperations.register("commitRun", (runId, message) => controller.commitRun(runId, message), validateTwoRemoteStrings, "git:write", true);
+  remoteOperations.register("createRunLocalBranch", (runId, branchName) => controller.createRunLocalBranch(runId, branchName), validateTwoRemoteStrings, "git:write", true);
+  remoteOperations.register("publishRunBranch", (runId, branchName) => controller.publishRunBranch(runId, branchName), validateOptionalSecondString, "git:write", true);
+  remoteOperations.register(
+    "createRunPullRequest",
+    (runId, targetBranch, title, sourceBranchName, description) =>
+      controller.createRunPullRequest(runId, targetBranch, title, sourceBranchName, description),
+    validatePullRequest,
+    "git:write",
+    true,
+  );
+  remoteOperations.register("checkoutProjectBranch", (projectId, branchName) => controller.checkoutProjectBranch(projectId, branchName), validateTwoRemoteStrings, "git:write", true);
+  remoteOperations.register("fetchProjectBranches", (projectId) => controller.fetchProjectBranches(projectId), validateSingleRemoteStringArg, "git:write", true);
+  remoteOperations.register(
+    "createProjectBranch",
+    (projectId, input) => controller.createProjectBranch(projectId, input),
+    validateProjectAndBranchInput<"createProjectBranch">(["branchName", "startPoint"]),
+    "git:write",
+    true,
+  );
+  remoteOperations.register(
+    "renameProjectBranch",
+    (projectId, input) => controller.renameProjectBranch(projectId, input),
+    validateProjectAndBranchInput<"renameProjectBranch">(["oldName", "newName"]),
+    "git:write",
+    true,
+  );
+  remoteOperations.register(
+    "deleteProjectBranch",
+    (projectId, input) => controller.deleteProjectBranch(projectId, input),
+    validateProjectAndBranchInput<"deleteProjectBranch">(["branchName"]),
+    "git:write",
+    true,
+  );
+  remoteOperations.register("pullProjectBranch", (projectId) => controller.pullProjectBranch(projectId), validateSingleRemoteStringArg, "git:write", true);
+  remoteOperations.register(
+    "pushProjectBranch",
+    (projectId, input) => controller.pushProjectBranch(projectId, input),
+    validateProjectAndBranchInput<"pushProjectBranch">(["branchName"]),
+    "git:write",
+    true,
+  );
+  remoteOperations.register("convertProjectToGit", (projectId) => controller.convertProjectToGit(projectId), validateSingleRemoteStringArg, "git:write", true);
+  remoteOperations.register(
+    "updateProjectBaseBranch",
+    (projectId, branchName) => controller.updateProjectBaseBranch(projectId, branchName),
+    validateTwoRemoteStrings,
+    "git:write",
+    true,
+  );
+  remoteOperations.register("addProject", (input) => controller.addProject(input), validateProjectInput, "admin", true);
+
+  remoteOperations.register("runTerminalStart", async (input) => {
+    const prefix = "buildwarden-run-terminal:";
+    const runId = input.sessionId.startsWith(prefix) ? input.sessionId.slice(prefix.length) : "";
+    if (!runId) return { ok: false, error: "Invalid remote terminal session." };
+    const detail = await controller.getRunDetail(runId);
+    return hostTerminal.start({ ...input, cwd: detail.workspacePath ?? "" });
+  }, validateTerminalStart, "terminal:operate", true);
+  remoteOperations.register("runTerminalWrite", async (input) => hostTerminal.write(input), validateTerminalWrite, "terminal:operate", true);
+  remoteOperations.register("runTerminalResize", async (input) => hostTerminal.resize(input), validateTerminalResize, "terminal:operate", true);
+  remoteOperations.register("runTerminalKill", async (sessionId) => hostTerminal.kill(sessionId), validateSingleRemoteStringArg, "terminal:operate", true);
+
   const remoteEventSource: RemoteHostEventSource = {
     subscribe(listener) {
       const disposers = [
@@ -395,6 +576,8 @@ const bootstrap = async (): Promise<void> => {
         hostEvents.subscribe("warning", (payload) => listener({ event: "warning", payload })),
         hostEvents.subscribe("loop", (payload) => listener({ event: "loop", payload })),
         hostEvents.subscribe("task", (payload) => listener({ event: "task", payload })),
+        hostTerminal.onData((payload) => listener({ event: "terminal-data", payload })),
+        hostTerminal.onExit((payload) => listener({ event: "terminal-exit", payload })),
       ];
       return () => disposers.forEach((dispose) => dispose());
     },
@@ -524,6 +707,7 @@ const bootstrap = async (): Promise<void> => {
       tailscale: await tailscaleServe.getStatus(info?.port ?? null),
     };
   });
+  ipcMain.handle(IPC_CHANNELS.listHostDirectories, (_, input) => hostDirectory.list(input));
   ipcMain.handle(IPC_CHANNELS.createRemoteAccessPairing, async (_, input?: RemoteAccessPairingInput) => {
     const enabled = parseRemoteAccessEnabledSetting(db.getSettings()[APP_SETTING_KEYS.remoteAccessEnabled]);
     if (!enabled) {

@@ -11,6 +11,13 @@ export interface BuildWardenClientCapabilities {
   embeddedTerminal: boolean;
   settings: boolean;
   mutations: boolean;
+  runMutations: boolean;
+  chatMutations: boolean;
+  bookmarkMutations: boolean;
+  approvalResponses: boolean;
+  gitMutations: boolean;
+  projectCreation: boolean;
+  hostDirectoryBrowser: boolean;
   liveEvents: boolean;
 }
 
@@ -29,6 +36,13 @@ const ELECTRON_CAPABILITIES: Readonly<BuildWardenClientCapabilities> = Object.fr
   embeddedTerminal: true,
   settings: true,
   mutations: true,
+  runMutations: true,
+  chatMutations: true,
+  bookmarkMutations: true,
+  approvalResponses: true,
+  gitMutations: true,
+  projectCreation: true,
+  hostDirectoryBrowser: false,
   liveEvents: true,
 });
 

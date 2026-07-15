@@ -9,6 +9,7 @@ import {
   type RemoteApiMethod,
   type RemoteApiMethodArgs,
   type RemoteApiMethodResult,
+  type RemoteAccessScope,
   type RemoteRpcResponse,
   type RemoteStreamEventPayloadMap,
   type RemoteStreamEventType,
@@ -16,19 +17,35 @@ import {
 } from "@buildwarden/shared";
 import type { BuildWardenClient, BuildWardenClientCapabilities } from "./buildwarden-client-core";
 
-const WEB_CAPABILITIES: Readonly<BuildWardenClientCapabilities> = Object.freeze({
-  platform: "web",
-  nativeTitleBar: false,
-  nativeAppMenu: false,
-  directoryPicker: false,
-  ideIntegration: false,
-  fileManager: false,
-  systemTerminal: false,
-  embeddedTerminal: false,
-  settings: false,
-  mutations: false,
-  liveEvents: true,
-});
+const webCapabilities = (scopes: readonly RemoteAccessScope[]): Readonly<BuildWardenClientCapabilities> => {
+  const has = (scope: RemoteAccessScope) => scopes.includes(scope);
+  const runMutations = has("run:operate");
+  const chatMutations = has("chat:operate");
+  const approvalResponses = has("approval:respond");
+  const gitMutations = has("git:write");
+  const projectCreation = has("admin");
+  const terminalOperations = has("terminal:operate");
+  return Object.freeze({
+    platform: "web" as const,
+    nativeTitleBar: false,
+    nativeAppMenu: false,
+    directoryPicker: false,
+    ideIntegration: false,
+    fileManager: false,
+    systemTerminal: false,
+    embeddedTerminal: terminalOperations,
+    settings: false,
+    mutations: runMutations || chatMutations || approvalResponses || gitMutations || projectCreation || terminalOperations,
+    runMutations,
+    chatMutations,
+    bookmarkMutations: false,
+    approvalResponses,
+    gitMutations,
+    projectCreation,
+    hostDirectoryBrowser: projectCreation,
+    liveEvents: true,
+  });
+};
 
 const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
   "getSnapshot",
@@ -43,6 +60,67 @@ const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
   "listChatsWithSteps",
   "getBookmarksWithSteps",
   "getChatBookmarksWithSteps",
+  "getRunPublishOptions",
+  "getProjectBranchOverview",
+  "getProjectBranchDeleteImpact",
+  "getProjectForgeAuthStatus",
+  "checkProjectGitConversion",
+  "listHostDirectories",
+]);
+
+const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
+  "createRun",
+  "continueRun",
+  "followUpRun",
+  "respondToShellApproval",
+  "respondToRunUserInput",
+  "cancelRunShell",
+  "cancelRun",
+  "resumeRunFromCheckpoint",
+  "recoverInterruptedRun",
+  "undoRunToLastPrompt",
+  "deleteRun",
+  "createChat",
+  "followUpChat",
+  "cancelChat",
+  "deleteChat",
+  "commitRun",
+  "createRunLocalBranch",
+  "publishRunBranch",
+  "createRunPullRequest",
+  "checkoutProjectBranch",
+  "fetchProjectBranches",
+  "createProjectBranch",
+  "renameProjectBranch",
+  "deleteProjectBranch",
+  "pullProjectBranch",
+  "pushProjectBranch",
+  "convertProjectToGit",
+  "updateProjectBaseBranch",
+  "addProject",
+  "runTerminalStart",
+  "runTerminalWrite",
+  "runTerminalResize",
+  "runTerminalKill",
+]);
+
+const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, RemoteAccessScope>([
+  ...[
+    "createRun", "continueRun", "followUpRun", "cancelRunShell", "cancelRun", "resumeRunFromCheckpoint",
+    "recoverInterruptedRun", "undoRunToLastPrompt", "deleteRun",
+  ].map((method) => [method as RemoteApiMethod, "run:operate" as const] as const),
+  ...["respondToShellApproval", "respondToRunUserInput"]
+    .map((method) => [method as RemoteApiMethod, "approval:respond" as const] as const),
+  ...["createChat", "followUpChat", "cancelChat", "deleteChat"]
+    .map((method) => [method as RemoteApiMethod, "chat:operate" as const] as const),
+  ...[
+    "commitRun", "createRunLocalBranch", "publishRunBranch", "createRunPullRequest", "checkoutProjectBranch",
+    "fetchProjectBranches", "createProjectBranch", "renameProjectBranch", "deleteProjectBranch", "pullProjectBranch",
+    "pushProjectBranch", "convertProjectToGit", "updateProjectBaseBranch",
+  ].map((method) => [method as RemoteApiMethod, "git:write" as const] as const),
+  ["addProject", "admin"],
+  ...["runTerminalStart", "runTerminalWrite", "runTerminalResize", "runTerminalKill"]
+    .map((method) => [method as RemoteApiMethod, "terminal:operate" as const] as const),
 ]);
 
 const REMOTE_LOCAL_SETTING_KEYS = new Set<string>([
@@ -98,10 +176,19 @@ export interface RemoteBuildWardenClientOptions {
   baseUrl?: string;
   fetch?: typeof globalThis.fetch;
   webSocketFactory?: (url: string) => WebSocket;
+  scopes?: readonly RemoteAccessScope[];
   onSessionExpired?: () => void;
 }
 
-const REMOTE_EVENT_TYPES = new Set<RemoteStreamEventType>(["run", "chat", "warning", "loop", "task"]);
+const REMOTE_EVENT_TYPES = new Set<RemoteStreamEventType>([
+  "run",
+  "chat",
+  "warning",
+  "loop",
+  "task",
+  "terminal-data",
+  "terminal-exit",
+]);
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   value != null && typeof value === "object" && !Array.isArray(value);
@@ -119,6 +206,8 @@ const isRemoteEventPayload = (event: RemoteStreamEventType, payload: unknown): b
   }
   if (event === "warning") return typeof payload.title === "string" && typeof payload.message === "string";
   if (event === "loop") return typeof payload.loopId === "string" && typeof payload.projectId === "string";
+  if (event === "terminal-data") return typeof payload.sessionId === "string" && typeof payload.data === "string";
+  if (event === "terminal-exit") return typeof payload.sessionId === "string" && Number.isInteger(payload.exitCode);
   return typeof payload.projectId === "string" && typeof payload.taskId === "string" &&
     (payload.status === "open" || payload.status === "in_progress" || payload.status === "in_review" || payload.status === "done");
 };
@@ -151,6 +240,8 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
   let selectedProjectId: string | null = null;
   let selectedRunId: string | null = null;
   let localSettings = readLocalSettings();
+  const scopes = options.scopes ?? ["state:read"];
+  const capabilities = webCapabilities(scopes);
   const listeners = new Map<RemoteStreamEventType, Set<(payload: unknown) => void>>();
   let eventSocket: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -239,17 +330,30 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     method: Method,
     args: RemoteApiMethodArgs<Method>,
   ): Promise<RemoteApiMethodResult<Method>> => {
-    const response = await fetcher(`${baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
+    const idempotencyKey = REMOTE_MUTATION_METHODS.has(method) ? crypto.randomUUID() : undefined;
+    const requestBody = JSON.stringify({
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      requestId: crypto.randomUUID(),
+      method,
+      args,
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+    });
+    const send = () => fetcher(`${baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
-        requestId: crypto.randomUUID(),
-        method,
-        args,
-      }),
+      body: requestBody,
     });
+    let response: Response;
+    try {
+      response = await send();
+    } catch (firstError) {
+      if (!idempotencyKey) throw firstError;
+      // A transport failure can happen after the host completed a command. Retry
+      // once with the exact same persisted key so the host replays the result
+      // instead of executing the mutation twice.
+      response = await send();
+    }
     if (response.status === 401) {
       options.onSessionExpired?.();
       throw new RemoteSessionExpiredError();
@@ -275,7 +379,7 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
   };
 
   const localApi: Partial<DesktopApi> & { capabilities: Readonly<BuildWardenClientCapabilities> } = {
-    capabilities: WEB_CAPABILITIES,
+    capabilities,
     getSnapshot: () => loadSnapshot("getSnapshot"),
     refreshSnapshot: () => loadSnapshot("refreshSnapshot"),
     selectProject: async (projectId) => {
@@ -315,6 +419,8 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     onAppWarning: (listener) => subscribe("warning", listener),
     onProjectLoopChanged: (listener) => subscribe("loop", listener),
     onProjectTaskChanged: (listener) => subscribe("task", listener),
+    onRunTerminalData: (listener) => subscribe("terminal-data", listener),
+    onRunTerminalExit: (listener) => subscribe("terminal-exit", listener),
   };
 
   const client = new Proxy(localApi as BuildWardenClient, {
@@ -324,6 +430,16 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
       if (typeof property !== "string") return undefined;
       if (property.startsWith("on")) return () => () => {};
       if (REMOTE_READ_METHODS.has(property as RemoteApiMethod)) {
+        return (...args: unknown[]) => invoke(property as RemoteApiMethod, args as never);
+      }
+      if (REMOTE_MUTATION_METHODS.has(property as RemoteApiMethod)) {
+        const requiredScope = REMOTE_MUTATION_SCOPES.get(property as RemoteApiMethod);
+        if (requiredScope && !scopes.includes(requiredScope)) {
+          return async () => {
+            const reason = capabilities.mutations ? "this remote session" : "the read-only remote client";
+            throw new Error(`"${property}" is not available for ${reason}.`);
+          };
+        }
         return (...args: unknown[]) => invoke(property as RemoteApiMethod, args as never);
       }
       return async () => {

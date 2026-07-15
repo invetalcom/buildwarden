@@ -67,6 +67,7 @@ const RemoteAccessSettings = ({
   const [pairing, setPairing] = useState<RemoteAccessPairingGrant | null>(null);
   const [pairingQrCode, setPairingQrCode] = useState<string | null>(null);
   const [remoteStatus, setRemoteStatus] = useState<RemoteAccessStatus | null>(null);
+  const [allowRemoteControl, setAllowRemoteControl] = useState(false);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const buildwarden = useBuildWardenClient();
@@ -220,7 +221,9 @@ const RemoteAccessSettings = ({
           size="sm"
           disabled={!enabled || working}
           onClick={() => void run(async () => {
-            setPairing(await onCreatePairing({ scopes: ["state:read"] }));
+            setPairing(await onCreatePairing({ scopes: allowRemoteControl
+              ? ["state:read", "run:operate", "chat:operate", "approval:respond", "git:write", "terminal:operate", "admin"]
+              : ["state:read"] }));
             await refreshSessions();
             await refreshRemoteStatus();
           })}
@@ -228,6 +231,16 @@ const RemoteAccessSettings = ({
           {working ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <KeyRound className="mr-2 h-4 w-4" />}
           Create pairing code
         </Button>
+        <label className="flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950/50 px-2.5 py-1.5 text-xs text-zinc-300">
+          <input
+            className="size-3.5 accent-[var(--ec-accent)]"
+            type="checkbox"
+            checked={allowRemoteControl}
+            disabled={!enabled || working}
+            onChange={(event) => setAllowRemoteControl(event.target.checked)}
+          />
+          Allow runs, chats, approvals, Git, projects, and terminal
+        </label>
         <span className="text-xs text-zinc-500">Codes expire after five minutes and work once.</span>
       </div>
 
@@ -276,6 +289,7 @@ const RemoteAccessSettings = ({
                     <p className="mt-0.5 text-[11px] text-zinc-500">
                       {active ? `Last used ${formatTimestamp(session.lastUsedAt)}` : session.revokedAt ? "Revoked" : "Expired"}
                     </p>
+                    <p className="mt-0.5 text-[10px] text-zinc-600">{session.scopes.join(" · ")}</p>
                   </div>
                   {active ? (
                     <Button type="button" variant="secondary" size="sm" disabled={working} onClick={() => void run(async () => {
