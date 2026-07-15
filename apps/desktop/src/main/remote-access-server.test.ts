@@ -12,9 +12,10 @@ import {
   REMOTE_ACCESS_RPC_PATH,
   REMOTE_ACCESS_WEBSOCKET_PATH,
   type AppSnapshot,
+  type RemoteApiMethod,
   type RemoteStreamEvent,
 } from "@buildwarden/shared";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 const emptySnapshot = {
   projects: [],
@@ -34,6 +35,10 @@ afterEach(async () => {
 });
 
 describe("remote operation registry", () => {
+  it("limits the typed transport contract to explicitly supported operations", () => {
+    expectTypeOf<RemoteApiMethod>().toEqualTypeOf<"getSnapshot" | "refreshSnapshot">();
+  });
+
   it("dispatches registered DesktopApi operations through the versioned envelope", async () => {
     const registry = new RemoteOperationRegistry();
     const getSnapshot = vi.fn(async () => emptySnapshot);

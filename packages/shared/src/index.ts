@@ -2877,19 +2877,19 @@ export type RemoteStreamEvent = {
   [Event in RemoteStreamEventType]: { event: Event; payload: RemoteStreamEventPayloadMap[Event] };
 }[RemoteStreamEventType];
 
-type AsyncDesktopApiMethodName = {
-  [Method in keyof DesktopApi]-?: DesktopApi[Method] extends (...args: never[]) => Promise<unknown>
-    ? Method
-    : never;
-}[keyof DesktopApi];
+/** Explicit transport contract. Desktop methods are not remotely callable unless listed here. */
+export type RemoteOperationMap = {
+  getSnapshot: DesktopApi["getSnapshot"];
+  refreshSnapshot: DesktopApi["refreshSnapshot"];
+};
 
-export type RemoteApiMethod = Extract<AsyncDesktopApiMethodName, string>;
+export type RemoteApiMethod = keyof RemoteOperationMap;
 
 export type RemoteApiMethodArgs<Method extends RemoteApiMethod> =
-  DesktopApi[Method] extends (...args: infer Args) => Promise<unknown> ? Args : never;
+  RemoteOperationMap[Method] extends (...args: infer Args) => Promise<unknown> ? Args : never;
 
 export type RemoteApiMethodResult<Method extends RemoteApiMethod> =
-  DesktopApi[Method] extends (...args: never[]) => Promise<infer Result> ? Result : never;
+  RemoteOperationMap[Method] extends (...args: never[]) => Promise<infer Result> ? Result : never;
 
 export interface RemoteRpcRequest {
   protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
