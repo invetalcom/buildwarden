@@ -20,9 +20,10 @@ import {
   REMOTE_ACCESS_SESSION_PATH,
   REMOTE_ACCESS_WEBSOCKET_PATH,
   type AppSnapshot,
+  type RemoteApiMethod,
   type RemoteStreamEvent,
 } from "@buildwarden/shared";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 const emptySnapshot = {
   projects: [],
@@ -62,6 +63,10 @@ const rpcBody = (requestId = "snapshot") => JSON.stringify({
 });
 
 describe("remote operation registry", () => {
+  it("limits the typed transport contract to explicitly supported operations", () => {
+    expectTypeOf<RemoteApiMethod>().toEqualTypeOf<"getSnapshot" | "refreshSnapshot">();
+  });
+
   it("dispatches registered DesktopApi operations through the versioned scoped envelope", async () => {
     const registry = new RemoteOperationRegistry();
     const getSnapshot = vi.fn(async () => emptySnapshot);
@@ -122,23 +127,22 @@ describe("remote operation registry", () => {
 
   it("persists mutation idempotency and replays a completed command only for the same payload", async () => {
     const db = await createDatabase();
-    const mutation = vi.fn(async () => undefined);
+    const mutation = vi.fn(async () => emptySnapshot);
     const registry = new RemoteOperationRegistry(undefined, db);
-    const validateArgs = (args: unknown[]): args is [string, string] =>
-      args.length === 2 && args.every((value) => typeof value === "string");
-    registry.register("setAppSetting", mutation, validateArgs, "admin", true);
+    registry.register("refreshSnapshot", mutation, validateNoRemoteArgs, "admin", true);
+    registry.register("getSnapshot", mutation, validateNoRemoteArgs, "admin", true);
     const request = {
       protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
       requestId: "mutation-1",
       idempotencyKey: "command-0001",
-      method: "setAppSetting" as const,
-      args: ["setting", "enabled"],
+      method: "refreshSnapshot" as const,
+      args: [],
     };
 
     await expect(registry.dispatch(request, ["admin"], "session-1")).resolves.toMatchObject({ ok: true });
     await expect(registry.dispatch({ ...request, requestId: "mutation-retry" }, ["admin"], "session-1"))
       .resolves.toMatchObject({ ok: true, requestId: "mutation-retry" });
-    await expect(registry.dispatch({ ...request, requestId: "mutation-conflict", args: ["setting", "disabled"] }, ["admin"], "session-1"))
+    await expect(registry.dispatch({ ...request, requestId: "mutation-conflict", method: "getSnapshot" }, ["admin"], "session-1"))
       .resolves.toMatchObject({ ok: false, error: { code: "idempotency-conflict" } });
     await expect(registry.dispatch({ ...request, requestId: "mutation-missing", idempotencyKey: undefined }, ["admin"], "session-1"))
       .resolves.toMatchObject({ ok: false, error: { code: "idempotency-required" } });
@@ -153,17 +157,18 @@ describe("remote operation registry", () => {
     const pending = new Promise<void>((resolve) => {
       finish = resolve;
     });
-    const mutation = vi.fn(() => pending);
+    const mutation = vi.fn(async () => {
+      await pending;
+      return emptySnapshot;
+    });
     const registry = new RemoteOperationRegistry(undefined, db);
-    const validateArgs = (args: unknown[]): args is [string, string] =>
-      args.length === 2 && args.every((value) => typeof value === "string");
-    registry.register("setAppSetting", mutation, validateArgs, "admin", true);
+    registry.register("refreshSnapshot", mutation, validateNoRemoteArgs, "admin", true);
     const request = {
       protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
       requestId: "pending-1",
       idempotencyKey: "command-pending",
-      method: "setAppSetting" as const,
-      args: ["setting", "enabled"],
+      method: "refreshSnapshot" as const,
+      args: [],
     };
 
     const first = registry.dispatch(request, ["admin"], "session-1");
@@ -249,6 +254,32 @@ describe("remote access authentication", () => {
     await expect(rpcResponse.json()).resolves.toMatchObject({ ok: true, requestId: "snapshot", result: emptySnapshot });
   });
 
+  it("serializes concurrent lifecycle transitions without orphaning an ephemeral server", async () => {
+    const db = await createDatabase();
+    const auth = new RemoteAuthService({ store: db, credentialKey: new Uint8Array(32).fill(13) });
+    const operations = new RemoteOperationRegistry();
+    operations.register("getSnapshot", async () => emptySnapshot, validateNoRemoteArgs);
+    const server = new RemoteAccessServer({ appVersion: "0.5.5-test", operations, auth, port: 0 });
+    startedServers.push(server);
+
+    const firstStart = server.start();
+    const concurrentStart = server.start();
+    expect(concurrentStart).toBe(firstStart);
+    const [firstInfo, concurrentInfo] = await Promise.all([firstStart, concurrentStart]);
+    expect(concurrentInfo).toBe(firstInfo);
+
+    const stopping = server.stop();
+    const concurrentStop = server.stop();
+    const restartAfterStop = server.start();
+    expect(concurrentStop).toBe(stopping);
+    await stopping;
+    const restartedInfo = await restartAfterStop;
+
+    expect(server.getInfo()).toBe(restartedInfo);
+    expect(restartedInfo.port).toBeGreaterThan(0);
+    await expect(fetch(`${restartedInfo.baseUrl}${REMOTE_ACCESS_HEALTH_PATH}`)).resolves.toMatchObject({ status: 200 });
+  });
+
   it("negotiates protocol versions and advertises host capabilities", async () => {
     const { auth, info } = await startServer();
     const { cookie } = await pair(info.baseUrl, auth);
@@ -294,6 +325,56 @@ describe("remote access authentication", () => {
     });
 
     await expect(response.json()).resolves.toMatchObject({ ok: false, error: { code: "invalid-request" } });
+  });
+
+  it("separates malformed and oversized request bodies from internal failures", async () => {
+    const { auth, info } = await startServer();
+    const { cookie } = await pair(info.baseUrl, auth);
+
+    const malformed = await fetch(`${info.baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: "{",
+    });
+    expect(malformed.status).toBe(400);
+    await expect(malformed.json()).resolves.toEqual({ error: "Invalid JSON request body." });
+
+    const oversized = await fetch(`${info.baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: "x".repeat(1_048_577),
+    });
+    expect(oversized.status).toBe(413);
+    await expect(oversized.json()).resolves.toEqual({ error: "Request body is too large." });
+
+    const internalError = new Error("unexpected dispatch failure");
+    const onServerError = vi.fn();
+    const db = await createDatabase();
+    const internalAuth = new RemoteAuthService({ store: db, credentialKey: new Uint8Array(32).fill(17) });
+    const operations = new RemoteOperationRegistry(() => {
+      throw internalError;
+    });
+    operations.register("getSnapshot", async () => {
+      throw new Error("operation failure");
+    }, validateNoRemoteArgs);
+    const server = new RemoteAccessServer({
+      appVersion: "0.5.5-test",
+      operations,
+      auth: internalAuth,
+      onServerError,
+      port: 0,
+    });
+    startedServers.push(server);
+    const internalInfo = await server.start();
+    const { cookie: internalCookie } = await pair(internalInfo.baseUrl, internalAuth);
+    const failed = await fetch(`${internalInfo.baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: internalCookie },
+      body: rpcBody("internal-failure"),
+    });
+    expect(failed.status).toBe(500);
+    await expect(failed.json()).resolves.toEqual({ error: "Internal server error." });
+    expect(onServerError).toHaveBeenCalledWith(internalError);
   });
 
   it("streams validated host events over a version-negotiated WebSocket", async () => {

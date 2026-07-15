@@ -718,6 +718,9 @@ export class RemoteAccessServer {
   private server: Server | null = null;
   private webSocketServer: WebSocketServer | null = null;
   private info: RemoteAccessServerInfo | null = null;
+  private lifecycleTail: Promise<void> = Promise.resolve();
+  private startPromise: Promise<RemoteAccessServerInfo> | null = null;
+  private stopPromise: Promise<void> | null = null;
   private readonly pairingAttempts = new Map<string, number[]>();
   private sequence = 0;
 
@@ -727,11 +730,32 @@ export class RemoteAccessServer {
     return this.info;
   }
 
-  async start(): Promise<RemoteAccessServerInfo> {
+  start(): Promise<RemoteAccessServerInfo> {
+    if (this.stopPromise) {
+      return this.stopPromise.then(() => this.start());
+    }
     if (this.info) {
-      return this.info;
+      return Promise.resolve(this.info);
+    }
+    if (this.startPromise) {
+      return this.startPromise;
     }
 
+    const startPromise = this.lifecycleTail.then(() => this.info ?? this.startNow());
+    this.startPromise = startPromise;
+    this.lifecycleTail = startPromise.then(() => undefined, () => undefined);
+    void startPromise.then(
+      () => {
+        if (this.startPromise === startPromise) this.startPromise = null;
+      },
+      () => {
+        if (this.startPromise === startPromise) this.startPromise = null;
+      },
+    );
+    return startPromise;
+  }
+
+  private async startNow(): Promise<RemoteAccessServerInfo> {
     const startedAt = new Date().toISOString();
     const server = createServer((request, response) => {
       void this.handleRequest(request, response, startedAt).catch((error) => {
@@ -746,8 +770,6 @@ export class RemoteAccessServer {
     const webSocketServer = new WebSocketServer({ noServer: true, clientTracking: true, maxPayload: MAX_WEBSOCKET_MESSAGE_BYTES });
     webSocketServer.on("error", (error) => this.options.onServerError?.(error));
     server.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket, head, webSocketServer, startedAt));
-    this.server = server;
-    this.webSocketServer = webSocketServer;
 
     try {
       await new Promise<void>((resolve, reject) => {
@@ -764,13 +786,13 @@ export class RemoteAccessServer {
         server.listen(this.options.port ?? DEFAULT_REMOTE_ACCESS_PORT, REMOTE_ACCESS_LOOPBACK_HOST);
       });
     } catch (error) {
-      this.server = null;
-      this.webSocketServer = null;
       webSocketServer.close();
       throw error;
     }
 
     const address = server.address() as AddressInfo;
+    this.server = server;
+    this.webSocketServer = webSocketServer;
     this.info = {
       host: REMOTE_ACCESS_LOOPBACK_HOST,
       port: address.port,
@@ -780,7 +802,25 @@ export class RemoteAccessServer {
     return this.info;
   }
 
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
+    if (this.stopPromise) {
+      return this.stopPromise;
+    }
+    const stopPromise = this.lifecycleTail.then(() => this.stopNow());
+    this.stopPromise = stopPromise;
+    this.lifecycleTail = stopPromise.then(() => undefined, () => undefined);
+    void stopPromise.then(
+      () => {
+        if (this.stopPromise === stopPromise) this.stopPromise = null;
+      },
+      () => {
+        if (this.stopPromise === stopPromise) this.stopPromise = null;
+      },
+    );
+    return stopPromise;
+  }
+
+  private async stopNow(): Promise<void> {
     const server = this.server;
     const webSocketServer = this.webSocketServer;
     this.server = null;
@@ -889,8 +929,11 @@ export class RemoteAccessServer {
           { "Set-Cookie": sessionCookie(authenticated.token, authenticated.session.expiresAt, secureCookie) },
         );
       } catch (error) {
-        const statusCode = error instanceof RequestBodyError ? error.statusCode : 400;
-        writeJson(response, statusCode, { error: error instanceof Error ? error.message : "Invalid JSON request body." });
+        if (error instanceof RequestBodyError) {
+          writeJson(response, error.statusCode, { error: error.message });
+          return;
+        }
+        throw error;
       }
       return;
     }
@@ -932,8 +975,11 @@ export class RemoteAccessServer {
         const payload = await readJsonBody(request);
         writeJson(response, 200, await this.options.operations.dispatch(payload, session.scopes, session.id));
       } catch (error) {
-        const statusCode = error instanceof RequestBodyError ? error.statusCode : 400;
-        writeJson(response, statusCode, { error: error instanceof Error ? error.message : "Invalid JSON request body." });
+        if (error instanceof RequestBodyError) {
+          writeJson(response, error.statusCode, { error: error.message });
+          return;
+        }
+        throw error;
       }
       return;
     }
