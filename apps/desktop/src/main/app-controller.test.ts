@@ -4,10 +4,12 @@ import { join } from "node:path";
 import type { BuildWardenDatabase } from "@buildwarden/db";
 import { APP_SETTING_KEYS } from "@buildwarden/shared";
 import type { ModelRecord, ProjectRecord, ProjectTaskRecord, ProviderAccountRecord, RunRecord } from "@buildwarden/shared";
+import type { SecretStore } from "@buildwarden/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GitService } from "@buildwarden/git-service";
 import { AppController } from "./app-controller";
-import type { ElectronSecretStore } from "./secret-store";
+import type { AppControllerDesktopServices } from "./desktop-platform-services";
+import { HostEventBus } from "./host-events";
 
 const project = {
   id: "project-1",
@@ -89,9 +91,28 @@ const createHarness = (overrides: DbOverrides = {}) => {
     readSecret: vi.fn(async () => null),
     saveSecret: vi.fn(async () => undefined),
     deleteSecret: vi.fn(async () => undefined),
-  } as unknown as ElectronSecretStore;
+  } satisfies SecretStore;
+  const desktop = {
+    pickProjectDirectory: vi.fn(async () => null),
+    pickIdeExecutable: vi.fn(async () => null),
+    openPathInFileManager: vi.fn(async () => ({ ok: true })),
+    openExternalUrl: vi.fn(async () => ({ ok: true })),
+    launchIdeWithFolder: vi.fn(async () => undefined),
+  } satisfies AppControllerDesktopServices;
+  const terminal = { killForRunId: vi.fn() };
+  const events = new HostEventBus();
   const logDir = mkdtempSync(join(tmpdir(), "buildwarden-controller-"));
-  return { controller: new AppController(db, secrets, logDir), db, secrets, settings, calls, logDir };
+  return {
+    controller: new AppController(db, secrets, logDir, desktop, terminal, events),
+    db,
+    secrets,
+    desktop,
+    terminal,
+    events,
+    settings,
+    calls,
+    logDir,
+  };
 };
 
 const tempDirs: string[] = [];
