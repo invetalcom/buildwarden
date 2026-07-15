@@ -627,6 +627,69 @@ describe("remote access authentication", () => {
     expect(auth.authenticate(authenticated?.token ?? "", "127.0.0.1")).toBeNull();
   });
 
+  it("periodically prunes retained remote-access records without reclaiming incomplete commands", async () => {
+    const db = await createDatabase();
+    let now = new Date("2026-07-15T10:00:00.000Z");
+    const oldTimestamp = "2025-01-01T00:00:00.000Z";
+    const addOldRecords = (suffix: string) => {
+      db.createRemoteAccessPairingGrant({
+        id: `pairing-${suffix}`,
+        tokenHash: `pairing-hash-${suffix}`,
+        scopes: ["state:read"],
+        expiresAt: oldTimestamp,
+        usedAt: oldTimestamp,
+        createdAt: oldTimestamp,
+      });
+      db.addRemoteAccessAuditRecord({
+        id: `audit-${suffix}`,
+        event: "pairing-failed",
+        outcome: "failure",
+        sessionId: null,
+        pairingGrantId: null,
+        remoteAddress: null,
+        details: null,
+        createdAt: oldTimestamp,
+      });
+      db.createRemoteCommandIdempotency({
+        sessionId: "session-retention",
+        idempotencyKey: `completed-${suffix}`,
+        method: "refreshSnapshot",
+        requestHash: `completed-hash-${suffix}`,
+        responseJson: "{}",
+        createdAt: oldTimestamp,
+        completedAt: oldTimestamp,
+      });
+    };
+    addOldRecords("startup");
+    db.createRemoteCommandIdempotency({
+      sessionId: "session-retention",
+      idempotencyKey: "incomplete-command",
+      method: "refreshSnapshot",
+      requestHash: "incomplete-hash",
+      responseJson: null,
+      createdAt: oldTimestamp,
+      completedAt: null,
+    });
+
+    const auth = new RemoteAuthService({
+      store: db,
+      credentialKey: new Uint8Array(32).fill(19),
+      now: () => now,
+      cleanupIntervalMs: 60_000,
+    });
+    expect(db.listRemoteAccessAuditRecords()).toEqual([]);
+    expect(db.getRemoteCommandIdempotency("session-retention", "completed-startup")).toBeNull();
+    expect(db.getRemoteCommandIdempotency("session-retention", "incomplete-command")).not.toBeNull();
+
+    addOldRecords("periodic");
+    expect(db.listRemoteAccessAuditRecords()).toHaveLength(1);
+    now = new Date("2026-07-15T10:02:00.000Z");
+    auth.listSessions();
+    expect(db.listRemoteAccessAuditRecords()).toEqual([]);
+    expect(db.getRemoteCommandIdempotency("session-retention", "completed-periodic")).toBeNull();
+    expect(db.getRemoteCommandIdempotency("session-retention", "incomplete-command")).not.toBeNull();
+  });
+
   it("rate limits repeated pairing attempts", async () => {
     const { info } = await startServer();
     const statuses: number[] = [];

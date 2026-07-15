@@ -45,6 +45,8 @@ const MAX_REQUEST_BODY_BYTES = 1_048_576;
 const MAX_WEBSOCKET_MESSAGE_BYTES = 65_536;
 const DEFAULT_PAIRING_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+const DEFAULT_REMOTE_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+const DEFAULT_REMOTE_RECORD_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 const PAIRING_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const PAIRING_RATE_LIMIT_WINDOW_MS = 60_000;
 const PAIRING_RATE_LIMIT_ATTEMPTS = 5;
@@ -82,6 +84,11 @@ export interface RemoteAuthStore {
   touchRemoteAccessSession(sessionId: string, lastUsedAt: string): void;
   revokeRemoteAccessSession(sessionId: string, revokedAt: string): boolean;
   addRemoteAccessAuditRecord(record: RemoteAccessAuditRecord): void;
+  pruneRemoteAccessRecords(cutoffs: {
+    expiredPairingGrantBefore: string;
+    securityAuditBefore: string;
+    completedCommandBefore: string;
+  }): number;
 }
 
 export interface RemoteAuthServiceOptions {
@@ -90,6 +97,8 @@ export interface RemoteAuthServiceOptions {
   now?: () => Date;
   pairingTtlMs?: number;
   sessionTtlMs?: number;
+  cleanupIntervalMs?: number;
+  recordRetentionMs?: number;
 }
 
 export interface RemoteAccessAuthenticatedSession {
@@ -126,6 +135,9 @@ export class RemoteAuthService {
   private readonly now: () => Date;
   private readonly pairingTtlMs: number;
   private readonly sessionTtlMs: number;
+  private readonly cleanupIntervalMs: number;
+  private readonly recordRetentionMs: number;
+  private lastCleanupAt = Number.NEGATIVE_INFINITY;
 
   constructor(private readonly options: RemoteAuthServiceOptions) {
     if (options.credentialKey.byteLength < 32) {
@@ -134,10 +146,14 @@ export class RemoteAuthService {
     this.now = options.now ?? (() => new Date());
     this.pairingTtlMs = options.pairingTtlMs ?? DEFAULT_PAIRING_TTL_MS;
     this.sessionTtlMs = options.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
+    this.cleanupIntervalMs = options.cleanupIntervalMs ?? DEFAULT_REMOTE_CLEANUP_INTERVAL_MS;
+    this.recordRetentionMs = options.recordRetentionMs ?? DEFAULT_REMOTE_RECORD_RETENTION_MS;
+    this.maybePrune(this.now());
   }
 
   createPairingGrant(input: RemoteAccessPairingInput = {}): RemoteAccessPairingGrant {
     const createdAt = this.now();
+    this.maybePrune(createdAt);
     const code = createPairingCode();
     const grant: RemoteAccessPairingGrant = {
       id: randomUUID(),
@@ -161,6 +177,7 @@ export class RemoteAuthService {
   exchangePairingCode(code: string, label: string | undefined, remoteAddress: string | null): RemoteAccessAuthenticatedSession | null {
     const normalizedCode = normalizePairingCode(code);
     const consumedAt = this.now();
+    this.maybePrune(consumedAt);
     const grant = normalizedCode
       ? this.options.store.consumeRemoteAccessPairingGrant(
           this.hashCredential("pairing", normalizedCode),
@@ -202,6 +219,7 @@ export class RemoteAuthService {
     }
     const session = this.options.store.getRemoteAccessSessionByTokenHash(this.hashCredential("session", token));
     const authenticatedAt = this.now();
+    this.maybePrune(authenticatedAt);
     if (!session || session.revokedAt || session.expiresAt <= authenticatedAt.toISOString()) {
       if (options.audit !== false) {
         this.audit("session-authentication-failed", "failure", { remoteAddress });
@@ -218,15 +236,32 @@ export class RemoteAuthService {
   }
 
   listSessions(): RemoteAccessSession[] {
+    this.maybePrune(this.now());
     return this.options.store.listRemoteAccessSessions();
   }
 
   revokeSession(sessionId: string, remoteAddress: string | null = null): boolean {
-    const revoked = this.options.store.revokeRemoteAccessSession(sessionId, this.now().toISOString());
+    const revokedAt = this.now();
+    this.maybePrune(revokedAt);
+    const revoked = this.options.store.revokeRemoteAccessSession(sessionId, revokedAt.toISOString());
     if (revoked) {
       this.audit("session-revoked", "success", { sessionId, remoteAddress });
     }
     return revoked;
+  }
+
+  private maybePrune(now: Date): void {
+    const nowMs = now.getTime();
+    if (nowMs - this.lastCleanupAt < this.cleanupIntervalMs) {
+      return;
+    }
+    this.lastCleanupAt = nowMs;
+    const retainedAfter = new Date(nowMs - this.recordRetentionMs).toISOString();
+    this.options.store.pruneRemoteAccessRecords({
+      expiredPairingGrantBefore: now.toISOString(),
+      securityAuditBefore: retainedAfter,
+      completedCommandBefore: retainedAfter,
+    });
   }
 
   private hashCredential(kind: "pairing" | "session", credential: string): string {

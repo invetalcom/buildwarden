@@ -2809,6 +2809,31 @@ export class BuildWardenDatabase {
     return completed;
   }
 
+  pruneRemoteAccessRecords(cutoffs: {
+    expiredPairingGrantBefore: string;
+    securityAuditBefore: string;
+    completedCommandBefore: string;
+  }): number {
+    let removed = 0;
+    this.run(
+      "delete from remote_pairing_grants where used_at is not null or expires_at <= ?",
+      [cutoffs.expiredPairingGrantBefore],
+    );
+    removed += this.first<{ count: number }>("select changes() as count")?.count ?? 0;
+    this.run("delete from remote_security_audit where created_at < ?", [cutoffs.securityAuditBefore]);
+    removed += this.first<{ count: number }>("select changes() as count")?.count ?? 0;
+    this.run(
+      `delete from remote_command_idempotency
+       where completed_at is not null and completed_at < ?`,
+      [cutoffs.completedCommandBefore],
+    );
+    removed += this.first<{ count: number }>("select changes() as count")?.count ?? 0;
+    if (removed > 0) {
+      this.schedulePersist();
+    }
+    return removed;
+  }
+
   addRemoteAccessAuditRecord(record: RemoteAccessAuditRecord): void {
     this.run(
       `insert into remote_security_audit (
