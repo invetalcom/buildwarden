@@ -1,4 +1,4 @@
-import { createRef } from "react";
+import { createRef, type ComponentProps } from "react";
 import { renderWithBuildWardenClient as renderToStaticMarkup } from "../../lib/buildwarden-client-test-utils";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import {
@@ -656,34 +656,35 @@ describe("renderer component states", () => {
     expect(remoteGraphsMarkup).toContain("No saved architecture graph is available on the host.");
     expect(remoteGraphsMarkup).not.toContain("Refresh");
 
+    const projectSettingsProps = {
+      project: projectSnapshot,
+      modelOptions: [{ id: "model-1", label: "GPT-5", modelId: "gpt-5", providerType: "ai-sdk", providerFamily: "openai" }],
+      availableBranches: ["main", "feat/remote"],
+      currentProjectBranch: "main",
+      runMode: "code",
+      runWorkspaceType: "worktree",
+      runModelId: "model-1",
+      runWorktreeModelIds: ["model-1"],
+      projectRunStats: { total: 1, active: 0, completed: 1, failed: 0, cancelled: 0, inputTokens: 1200, outputTokens: 300, totalTokens: 1500 },
+      reasoningEffort: "high",
+      anthropicEffort: "medium",
+      yoloMode: false,
+      busy: false,
+      availableIntegratedSkills: [],
+      activeIntegratedSkillIds: [],
+      onRunModeChange: vi.fn(),
+      onRunWorkspaceTypeChange: vi.fn(),
+      onProjectBaseBranchChange: vi.fn(),
+      onRunModelChange: vi.fn(),
+      onRunWorktreeModelIdsChange: vi.fn(),
+      onReasoningEffortChange: vi.fn(),
+      onAnthropicEffortChange: vi.fn(),
+      onYoloModeChange: vi.fn(),
+      onActiveIntegratedSkillIdsChange: vi.fn(),
+      onDeleteProject: vi.fn(),
+    } satisfies ComponentProps<typeof ProjectSettingsPage>;
     const remoteSettingsMarkup = renderToStaticMarkup(
-      <ProjectSettingsPage
-        project={projectSnapshot}
-        modelOptions={[{ id: "model-1", label: "GPT-5", modelId: "gpt-5", providerType: "ai-sdk", providerFamily: "openai" }]}
-        availableBranches={["main", "feat/remote"]}
-        currentProjectBranch="main"
-        runMode="code"
-        runWorkspaceType="worktree"
-        runModelId="model-1"
-        runWorktreeModelIds={["model-1"]}
-        projectRunStats={{ total: 1, active: 0, completed: 1, failed: 0, cancelled: 0, inputTokens: 1200, outputTokens: 300, totalTokens: 1500 }}
-        reasoningEffort="high"
-        anthropicEffort="medium"
-        yoloMode={false}
-        busy={false}
-        availableIntegratedSkills={[]}
-        activeIntegratedSkillIds={[]}
-        onRunModeChange={vi.fn()}
-        onRunWorkspaceTypeChange={vi.fn()}
-        onProjectBaseBranchChange={vi.fn()}
-        onRunModelChange={vi.fn()}
-        onRunWorktreeModelIdsChange={vi.fn()}
-        onReasoningEffortChange={vi.fn()}
-        onAnthropicEffortChange={vi.fn()}
-        onYoloModeChange={vi.fn()}
-        onActiveIntegratedSkillIdsChange={vi.fn()}
-        onDeleteProject={vi.fn()}
-      />,
+      <ProjectSettingsPage {...projectSettingsProps} />,
       {} as DesktopApi,
       remoteRunCapabilities,
     );
@@ -694,6 +695,21 @@ describe("renderer component states", () => {
     expect(remoteSettingsMarkup).not.toContain("Git hosting");
     expect(remoteSettingsMarkup).not.toContain("Project skills");
     expect(remoteSettingsMarkup).not.toContain("Delete project");
+
+    const remoteFolderSettingsMarkup = renderToStaticMarkup(
+      <ProjectSettingsPage
+        {...projectSettingsProps}
+        project={{
+          ...projectSnapshot,
+          project: { ...projectSnapshot.project, kind: "folder" },
+        }}
+        runWorkspaceType="copy"
+      />,
+      {} as DesktopApi,
+      remoteRunCapabilities,
+    );
+    expect(remoteFolderSettingsMarkup).toContain("limited remote settings");
+    expect(remoteFolderSettingsMarkup).not.toContain("Repository");
 
     const remoteSidebarMarkup = renderToStaticMarkup(
       <Sidebar

@@ -537,7 +537,8 @@ export const ProjectSettingsPage = ({
       </Card>
 
       <div className="space-y-5">
-        <SettingsSection title={limitedRemoteSettings ? "Repository" : "Project defaults"}>
+        {!limitedRemoteSettings || !isFolderProject ? (
+          <SettingsSection title={limitedRemoteSettings ? "Repository" : "Project defaults"}>
           {!limitedRemoteSettings ? (
             <>
               <SettingsRow title="Mode" description="Default behavior used when starting new agent runs from this project.">
@@ -688,7 +689,8 @@ export const ProjectSettingsPage = ({
               </SettingsRow>
             </>
           ) : null}
-        </SettingsSection>
+          </SettingsSection>
+        ) : null}
 
         {!isFolderProject && !limitedRemoteSettings ? <SettingsSection title="Git hosting">
           <SettingsRow
