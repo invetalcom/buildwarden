@@ -82,6 +82,16 @@ describe("remote BuildWarden client", () => {
     expect(fetcher).toHaveBeenCalledOnce();
   });
 
+  it("rejects host setting writes when the session lacks settings capability", async () => {
+    const fetcher = vi.fn(async () => rpcResponse(undefined));
+    const client = createRemoteBuildWardenClient({ fetch: fetcher as typeof fetch });
+
+    await expect(client.setAppSetting(APP_SETTING_KEYS.darkMode, "true")).resolves.toBeUndefined();
+    await expect(client.setAppSetting(APP_SETTING_KEYS.shellAllowlistExtra, "[]"))
+      .rejects.toThrow('"setAppSetting" is not available for this remote session.');
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("rejects unsupported mutations and reports revoked sessions", async () => {
     const expired = vi.fn();
     const client = createRemoteBuildWardenClient({

@@ -469,7 +469,10 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
         writeLocalSettings(localSettings);
         return;
       }
-      if (capabilities.settings) await invoke("setAppSetting", [key, value]);
+      if (!capabilities.settings) {
+        throw new Error('"setAppSetting" is not available for this remote session.');
+      }
+      await invoke("setAppSetting", [key, value]);
     },
     getNetworkProxySettings: () => capabilities.settings
       ? invoke("getNetworkProxySettings", [])
