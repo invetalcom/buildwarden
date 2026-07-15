@@ -419,7 +419,8 @@ const bootstrap = async (): Promise<void> => {
       typeof args[1] === "string" && optionalRemoteRecord(args[2]),
   );
   const validateShellApproval = defineRemoteArgsValidator<"respondToShellApproval">((args) => {
-    const decisions = new Set(["allow-once", "allow-for-run", "allow-always", "deny"]);
+    // Persistent allowlist changes remain a trusted desktop-only operation.
+    const decisions = new Set(["allow-once", "allow-for-run", "deny"]);
     return (args.length === 3 || args.length === 4) && typeof args[0] === "string" &&
       typeof args[1] === "string" && typeof args[2] === "string" && decisions.has(args[2]) && optionalRemoteRecord(args[3]);
   });
