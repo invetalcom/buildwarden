@@ -682,5 +682,39 @@ describe("remote access authentication", () => {
       headers: { Origin: info.baseUrl },
     });
     expect(sameOrigin.status).toBe(200);
+
+    const webSocketUrl = `${info.baseUrl.replace("http://", "ws://")}${REMOTE_ACCESS_WEBSOCKET_PATH}` +
+      `?protocolVersion=${String(REMOTE_ACCESS_PROTOCOL_VERSION)}`;
+    const wrongHostSocket = new WebSocket(webSocketUrl, {
+      headers: { Host: `${info.host}:1` },
+    });
+    const wrongHostUpgradeStatus = await new Promise<number>((resolve, reject) => {
+      wrongHostSocket.once("unexpected-response", (_request, response) => {
+        response.resume();
+        resolve(response.statusCode ?? 0);
+      });
+      wrongHostSocket.once("open", () => {
+        wrongHostSocket.close();
+        reject(new Error("WebSocket upgrade unexpectedly accepted the mismatched Host header."));
+      });
+      wrongHostSocket.once("error", reject);
+    });
+    expect(wrongHostUpgradeStatus).toBe(421);
+
+    const crossOriginSocket = new WebSocket(webSocketUrl, {
+      headers: { Origin: "https://attacker.example" },
+    });
+    const crossOriginUpgradeStatus = await new Promise<number>((resolve, reject) => {
+      crossOriginSocket.once("unexpected-response", (_request, response) => {
+        response.resume();
+        resolve(response.statusCode ?? 0);
+      });
+      crossOriginSocket.once("open", () => {
+        crossOriginSocket.close();
+        reject(new Error("WebSocket upgrade unexpectedly accepted the cross-origin request."));
+      });
+      crossOriginSocket.once("error", reject);
+    });
+    expect(crossOriginUpgradeStatus).toBe(403);
   });
 });
