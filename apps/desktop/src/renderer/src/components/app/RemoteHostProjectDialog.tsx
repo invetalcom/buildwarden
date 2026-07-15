@@ -1,6 +1,6 @@
 import type { HostDirectoryListing } from "@buildwarden/shared";
 import { ChevronUp, Folder, FolderPlus, HardDrive, Loader2, RefreshCw, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { BuildWardenClient } from "../../lib/buildwarden-client-core";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -15,12 +15,22 @@ interface RemoteHostProjectDialogProps {
 const suggestedName = (path: string): string =>
   path.split(/[\\/]/).filter(Boolean).at(-1)?.trim() ?? path.replace(/[\\/:]+/g, "").trim();
 
+const FOCUSABLE_SELECTOR = [
+  "button:not([disabled])",
+  "[href]",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])",
+].join(",");
+
 export const RemoteHostProjectDialog = ({ client, open, onClose, onProjectAdded }: RemoteHostProjectDialogProps) => {
   const [listing, setListing] = useState<HostDirectoryListing | null>(null);
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
+  const dialogRef = useRef<HTMLElement>(null);
 
   const load = useCallback(async (path?: string, updateName = true) => {
     setLoading(true);
@@ -46,8 +56,44 @@ export const RemoteHostProjectDialog = ({ client, open, onClose, onProjectAdded 
 
   useEffect(() => {
     if (!open) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = window.requestAnimationFrame(() => {
+      const firstFocusable = dialogRef.current?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
+      (firstFocusable ?? dialogRef.current)?.focus();
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !adding) onClose();
+      if (event.key === "Escape" && !adding) {
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusable = [...dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)];
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = focusable[0]!;
+      const last = focusable.at(-1)!;
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || !dialog.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (active === last || !dialog.contains(active))) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -78,7 +124,9 @@ export const RemoteHostProjectDialog = ({ client, open, onClose, onProjectAdded 
       }}
     >
       <section
+        ref={dialogRef}
         role="dialog"
+        tabIndex={-1}
         aria-modal="true"
         aria-labelledby="remote-host-project-title"
         className="flex max-h-[min(42rem,calc(100svh-1.5rem))] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] shadow-2xl shadow-black/40"
