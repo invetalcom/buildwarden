@@ -401,19 +401,36 @@ const bootstrap = async (): Promise<void> => {
 
   const remoteAccessAuthSecretKey = "app:remote-access-auth-key:v1";
   let remoteAuthService: RemoteAuthService | null = null;
-  const ensureRemoteAuthService = async (): Promise<RemoteAuthService> => {
+  let remoteAuthServiceInitialization: Promise<RemoteAuthService> | null = null;
+  const ensureRemoteAuthService = (): Promise<RemoteAuthService> => {
     if (remoteAuthService) {
+      return Promise.resolve(remoteAuthService);
+    }
+    if (remoteAuthServiceInitialization) {
+      return remoteAuthServiceInitialization;
+    }
+
+    const initialization = (async () => {
+      let encodedKey = await secretStore.readSecret(remoteAccessAuthSecretKey);
+      let credentialKey = encodedKey ? Buffer.from(encodedKey, "base64") : Buffer.alloc(0);
+      if (credentialKey.byteLength < 32) {
+        credentialKey = randomBytes(32);
+        encodedKey = credentialKey.toString("base64");
+        await secretStore.saveSecret(remoteAccessAuthSecretKey, encodedKey);
+      }
+      remoteAuthService = new RemoteAuthService({ store: db, credentialKey });
       return remoteAuthService;
-    }
-    let encodedKey = await secretStore.readSecret(remoteAccessAuthSecretKey);
-    let credentialKey = encodedKey ? Buffer.from(encodedKey, "base64") : Buffer.alloc(0);
-    if (credentialKey.byteLength < 32) {
-      credentialKey = randomBytes(32);
-      encodedKey = credentialKey.toString("base64");
-      await secretStore.saveSecret(remoteAccessAuthSecretKey, encodedKey);
-    }
-    remoteAuthService = new RemoteAuthService({ store: db, credentialKey });
-    return remoteAuthService;
+    })();
+    remoteAuthServiceInitialization = initialization;
+    void initialization.then(
+      () => {
+        if (remoteAuthServiceInitialization === initialization) remoteAuthServiceInitialization = null;
+      },
+      () => {
+        if (remoteAuthServiceInitialization === initialization) remoteAuthServiceInitialization = null;
+      },
+    );
+    return initialization;
   };
 
   let remoteAccessServer: RemoteAccessServer | null = null;
@@ -465,6 +482,10 @@ const bootstrap = async (): Promise<void> => {
     const enabled = parseRemoteAccessEnabledSetting(db.getSettings()[APP_SETTING_KEYS.remoteAccessEnabled]);
     if (!enabled) {
       throw new Error("Enable remote access before creating a pairing code.");
+    }
+    await syncRemoteAccessServer();
+    if (!remoteAccessServer?.getInfo()) {
+      throw new Error("Remote access could not be started.");
     }
     return (await ensureRemoteAuthService()).createPairingGrant(input);
   });

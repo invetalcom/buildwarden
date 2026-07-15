@@ -2716,7 +2716,11 @@ export class BuildWardenDatabase {
        from remote_access_sessions where token_hash = ?`,
       [tokenHash],
     );
-    return row ? { ...row, scopes: this.parseRemoteAccessScopes(row.scopesJson) } : null;
+    if (!row) {
+      return null;
+    }
+    const { scopesJson, ...session } = row;
+    return { ...session, scopes: this.parseRemoteAccessScopes(scopesJson) };
   }
 
   listRemoteAccessSessions(): RemoteAccessSession[] {
@@ -2740,7 +2744,7 @@ export class BuildWardenDatabase {
       "update remote_access_sessions set last_used_at = ? where id = ? and revoked_at is null",
       [lastUsedAt, sessionId],
     );
-    this.persist();
+    this.schedulePersist();
   }
 
   revokeRemoteAccessSession(sessionId: string, revokedAt: string): boolean {
@@ -2805,6 +2809,31 @@ export class BuildWardenDatabase {
     return completed;
   }
 
+  pruneRemoteAccessRecords(cutoffs: {
+    expiredPairingGrantBefore: string;
+    securityAuditBefore: string;
+    completedCommandBefore: string;
+  }): number {
+    let removed = 0;
+    this.run(
+      "delete from remote_pairing_grants where used_at is not null or expires_at <= ?",
+      [cutoffs.expiredPairingGrantBefore],
+    );
+    removed += this.first<{ count: number }>("select changes() as count")?.count ?? 0;
+    this.run("delete from remote_security_audit where created_at < ?", [cutoffs.securityAuditBefore]);
+    removed += this.first<{ count: number }>("select changes() as count")?.count ?? 0;
+    this.run(
+      `delete from remote_command_idempotency
+       where completed_at is not null and completed_at < ?`,
+      [cutoffs.completedCommandBefore],
+    );
+    removed += this.first<{ count: number }>("select changes() as count")?.count ?? 0;
+    if (removed > 0) {
+      this.schedulePersist();
+    }
+    return removed;
+  }
+
   addRemoteAccessAuditRecord(record: RemoteAccessAuditRecord): void {
     this.run(
       `insert into remote_security_audit (
@@ -2821,7 +2850,7 @@ export class BuildWardenDatabase {
         record.createdAt,
       ],
     );
-    this.persist();
+    this.schedulePersist();
   }
 
   listRemoteAccessAuditRecords(): RemoteAccessAuditRecord[] {

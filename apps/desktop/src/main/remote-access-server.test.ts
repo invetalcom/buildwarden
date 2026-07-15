@@ -20,9 +20,11 @@ import {
   REMOTE_ACCESS_SESSION_PATH,
   REMOTE_ACCESS_WEBSOCKET_PATH,
   type AppSnapshot,
+  type RemoteAccessPairingInput,
+  type RemoteApiMethod,
   type RemoteStreamEvent,
 } from "@buildwarden/shared";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 const emptySnapshot = {
   projects: [],
@@ -56,6 +58,17 @@ const createDatabase = async (): Promise<BuildWardenDatabase> => {
   return db;
 };
 
+const reopenDatabase = async (db: BuildWardenDatabase): Promise<BuildWardenDatabase> => {
+  const tracked = databases.find((entry) => entry.db === db);
+  await db.close();
+  const reopened = new BuildWardenDatabase(db.getFilePath());
+  await reopened.init();
+  if (tracked) {
+    tracked.db = reopened;
+  }
+  return reopened;
+};
+
 const rpcBody = (requestId = "snapshot") => JSON.stringify({
   protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
   requestId,
@@ -64,6 +77,23 @@ const rpcBody = (requestId = "snapshot") => JSON.stringify({
 });
 
 describe("remote operation registry", () => {
+  it("limits the typed transport contract to explicitly supported operations", () => {
+    expectTypeOf<RemoteApiMethod>().toEqualTypeOf<
+      | "getSnapshot"
+      | "refreshSnapshot"
+      | "getProjectBranches"
+      | "getProjectCurrentBranch"
+      | "getRunDetail"
+      | "getRunWorktreeDiff"
+      | "getRunWorkspaceFile"
+      | "getProjectLoopUiReviewImage"
+      | "getChatDetail"
+      | "listChatsWithSteps"
+      | "getBookmarksWithSteps"
+      | "getChatBookmarksWithSteps"
+    >();
+  });
+
   it("dispatches registered DesktopApi operations through the versioned scoped envelope", async () => {
     const registry = new RemoteOperationRegistry();
     const getSnapshot = vi.fn(async () => emptySnapshot);
@@ -123,26 +153,30 @@ describe("remote operation registry", () => {
   });
 
   it("persists mutation idempotency and replays a completed command only for the same payload", async () => {
-    const db = await createDatabase();
-    const mutation = vi.fn(async () => undefined);
+    let db = await createDatabase();
+    const mutation = vi.fn(async () => emptySnapshot);
     const registry = new RemoteOperationRegistry(undefined, db);
-    const validateArgs = (args: unknown[]): args is [string, string] =>
-      args.length === 2 && args.every((value) => typeof value === "string");
-    registry.register("setAppSetting", mutation, validateArgs, "admin", true);
+    registry.register("refreshSnapshot", mutation, validateNoRemoteArgs, "admin", true);
+    registry.register("getSnapshot", mutation, validateNoRemoteArgs, "admin", true);
     const request = {
       protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
       requestId: "mutation-1",
       idempotencyKey: "command-0001",
-      method: "setAppSetting" as const,
-      args: ["setting", "enabled"],
+      method: "refreshSnapshot" as const,
+      args: [],
     };
 
     await expect(registry.dispatch(request, ["admin"], "session-1")).resolves.toMatchObject({ ok: true });
-    await expect(registry.dispatch({ ...request, requestId: "mutation-retry" }, ["admin"], "session-1"))
+    db = await reopenDatabase(db);
+    const replayRegistry = new RemoteOperationRegistry(undefined, db);
+    replayRegistry.register("refreshSnapshot", mutation, validateNoRemoteArgs, "admin", true);
+    replayRegistry.register("getSnapshot", mutation, validateNoRemoteArgs, "admin", true);
+
+    await expect(replayRegistry.dispatch({ ...request, requestId: "mutation-retry" }, ["admin"], "session-1"))
       .resolves.toMatchObject({ ok: true, requestId: "mutation-retry" });
-    await expect(registry.dispatch({ ...request, requestId: "mutation-conflict", args: ["setting", "disabled"] }, ["admin"], "session-1"))
+    await expect(replayRegistry.dispatch({ ...request, requestId: "mutation-conflict", method: "getSnapshot" }, ["admin"], "session-1"))
       .resolves.toMatchObject({ ok: false, error: { code: "idempotency-conflict" } });
-    await expect(registry.dispatch({ ...request, requestId: "mutation-missing", idempotencyKey: undefined }, ["admin"], "session-1"))
+    await expect(replayRegistry.dispatch({ ...request, requestId: "mutation-missing", idempotencyKey: undefined }, ["admin"], "session-1"))
       .resolves.toMatchObject({ ok: false, error: { code: "idempotency-required" } });
 
     expect(mutation).toHaveBeenCalledOnce();
@@ -155,17 +189,18 @@ describe("remote operation registry", () => {
     const pending = new Promise<void>((resolve) => {
       finish = resolve;
     });
-    const mutation = vi.fn(() => pending);
+    const mutation = vi.fn(async () => {
+      await pending;
+      return emptySnapshot;
+    });
     const registry = new RemoteOperationRegistry(undefined, db);
-    const validateArgs = (args: unknown[]): args is [string, string] =>
-      args.length === 2 && args.every((value) => typeof value === "string");
-    registry.register("setAppSetting", mutation, validateArgs, "admin", true);
+    registry.register("refreshSnapshot", mutation, validateNoRemoteArgs, "admin", true);
     const request = {
       protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
       requestId: "pending-1",
       idempotencyKey: "command-pending",
-      method: "setAppSetting" as const,
-      args: ["setting", "enabled"],
+      method: "refreshSnapshot" as const,
+      args: [],
     };
 
     const first = registry.dispatch(request, ["admin"], "session-1");
@@ -175,6 +210,36 @@ describe("remote operation registry", () => {
     finish();
     await expect(first).resolves.toMatchObject({ ok: true });
     expect(mutation).toHaveBeenCalledOnce();
+  });
+
+  it("reports a failed idempotency completion instead of silently returning success", async () => {
+    const db = await createDatabase();
+    const completion = vi.spyOn(db, "completeRemoteCommandIdempotency").mockReturnValue(false);
+    const onOperationError = vi.fn();
+    const registry = new RemoteOperationRegistry(onOperationError, db);
+    registry.register("refreshSnapshot", async () => emptySnapshot, validateNoRemoteArgs, "admin", true);
+
+    const response = await registry.dispatch({
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      requestId: "completion-failed",
+      idempotencyKey: "command-failed-completion",
+      method: "refreshSnapshot",
+      args: [],
+    }, ["admin"], "session-1");
+
+    expect(response).toMatchObject({
+      ok: false,
+      error: {
+        code: "operation-failed",
+        message: "The command completed, but its replay result could not be persisted.",
+      },
+    });
+    expect(completion).toHaveBeenCalledOnce();
+    expect(onOperationError).toHaveBeenCalledWith(expect.objectContaining({
+      method: "refreshSnapshot",
+      requestId: "completion-failed",
+      error: expect.any(Error),
+    }));
   });
 });
 
@@ -204,8 +269,8 @@ describe("remote access authentication", () => {
     };
   };
 
-  const pair = async (baseUrl: string, auth: RemoteAuthService) => {
-    const grant = auth.createPairingGrant();
+  const pair = async (baseUrl: string, auth: RemoteAuthService, input: RemoteAccessPairingInput = {}) => {
+    const grant = auth.createPairingGrant(input);
     const response = await fetch(`${baseUrl}${REMOTE_ACCESS_PAIRING_PATH}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -238,9 +303,28 @@ describe("remote access authentication", () => {
     });
     expect(unauthorized.status).toBe(401);
 
+    const { cookie: underScopedCookie } = await pair(info.baseUrl, auth, { scopes: ["chat:operate"] });
+    const underScoped = await fetch(`${info.baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: underScopedCookie },
+      body: rpcBody("under-scoped"),
+    });
+    expect(underScoped.status).toBe(200);
+    await expect(underScoped.json()).resolves.toMatchObject({
+      ok: false,
+      requestId: "under-scoped",
+      error: { code: "forbidden" },
+    });
+
     const { response, cookie } = await pair(info.baseUrl, auth);
     expect(response.status).toBe(201);
     expect(cookie).toContain("buildwarden_session=");
+
+    const sessionResponse = await fetch(`${info.baseUrl}${REMOTE_ACCESS_SESSION_PATH}`, {
+      headers: { Cookie: cookie },
+    });
+    expect(sessionResponse.status).toBe(200);
+    await expect(sessionResponse.json()).resolves.not.toHaveProperty("session.scopesJson");
 
     const rpcResponse = await fetch(`${info.baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
       method: "POST",
@@ -272,6 +356,32 @@ describe("remote access authentication", () => {
 
     const sessionResponse = await fetch(`${info.baseUrl}${REMOTE_ACCESS_SESSION_PATH}`);
     expect(sessionResponse.status).toBe(401);
+  });
+
+  it("serializes concurrent lifecycle transitions without orphaning an ephemeral server", async () => {
+    const db = await createDatabase();
+    const auth = new RemoteAuthService({ store: db, credentialKey: new Uint8Array(32).fill(13) });
+    const operations = new RemoteOperationRegistry();
+    operations.register("getSnapshot", async () => emptySnapshot, validateNoRemoteArgs);
+    const server = new RemoteAccessServer({ appVersion: "0.5.5-test", operations, auth, port: 0 });
+    startedServers.push(server);
+
+    const firstStart = server.start();
+    const concurrentStart = server.start();
+    expect(concurrentStart).toBe(firstStart);
+    const [firstInfo, concurrentInfo] = await Promise.all([firstStart, concurrentStart]);
+    expect(concurrentInfo).toBe(firstInfo);
+
+    const stopping = server.stop();
+    const concurrentStop = server.stop();
+    const restartAfterStop = server.start();
+    expect(concurrentStop).toBe(stopping);
+    await stopping;
+    const restartedInfo = await restartAfterStop;
+
+    expect(server.getInfo()).toBe(restartedInfo);
+    expect(restartedInfo.port).toBeGreaterThan(0);
+    await expect(fetch(`${restartedInfo.baseUrl}${REMOTE_ACCESS_HEALTH_PATH}`)).resolves.toMatchObject({ status: 200 });
   });
 
   it("negotiates protocol versions and advertises host capabilities", async () => {
@@ -319,6 +429,56 @@ describe("remote access authentication", () => {
     });
 
     await expect(response.json()).resolves.toMatchObject({ ok: false, error: { code: "invalid-request" } });
+  });
+
+  it("separates malformed and oversized request bodies from internal failures", async () => {
+    const { auth, info } = await startServer();
+    const { cookie } = await pair(info.baseUrl, auth);
+
+    const malformed = await fetch(`${info.baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: "{",
+    });
+    expect(malformed.status).toBe(400);
+    await expect(malformed.json()).resolves.toEqual({ error: "Invalid JSON request body." });
+
+    const oversized = await fetch(`${info.baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: "x".repeat(1_048_577),
+    });
+    expect(oversized.status).toBe(413);
+    await expect(oversized.json()).resolves.toEqual({ error: "Request body is too large." });
+
+    const internalError = new Error("unexpected dispatch failure");
+    const onServerError = vi.fn();
+    const db = await createDatabase();
+    const internalAuth = new RemoteAuthService({ store: db, credentialKey: new Uint8Array(32).fill(17) });
+    const operations = new RemoteOperationRegistry(() => {
+      throw internalError;
+    });
+    operations.register("getSnapshot", async () => {
+      throw new Error("operation failure");
+    }, validateNoRemoteArgs);
+    const server = new RemoteAccessServer({
+      appVersion: "0.5.5-test",
+      operations,
+      auth: internalAuth,
+      onServerError,
+      port: 0,
+    });
+    startedServers.push(server);
+    const internalInfo = await server.start();
+    const { cookie: internalCookie } = await pair(internalInfo.baseUrl, internalAuth);
+    const failed = await fetch(`${internalInfo.baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: internalCookie },
+      body: rpcBody("internal-failure"),
+    });
+    expect(failed.status).toBe(500);
+    await expect(failed.json()).resolves.toEqual({ error: "Internal server error." });
+    expect(onServerError).toHaveBeenCalledWith(internalError);
   });
 
   it("streams validated host events over a version-negotiated WebSocket", async () => {
@@ -505,6 +665,69 @@ describe("remote access authentication", () => {
     expect(auth.authenticate(authenticated?.token ?? "", "127.0.0.1")).toBeNull();
   });
 
+  it("periodically prunes retained remote-access records without reclaiming incomplete commands", async () => {
+    const db = await createDatabase();
+    let now = new Date("2026-07-15T10:00:00.000Z");
+    const oldTimestamp = "2025-01-01T00:00:00.000Z";
+    const addOldRecords = (suffix: string) => {
+      db.createRemoteAccessPairingGrant({
+        id: `pairing-${suffix}`,
+        tokenHash: `pairing-hash-${suffix}`,
+        scopes: ["state:read"],
+        expiresAt: oldTimestamp,
+        usedAt: oldTimestamp,
+        createdAt: oldTimestamp,
+      });
+      db.addRemoteAccessAuditRecord({
+        id: `audit-${suffix}`,
+        event: "pairing-failed",
+        outcome: "failure",
+        sessionId: null,
+        pairingGrantId: null,
+        remoteAddress: null,
+        details: null,
+        createdAt: oldTimestamp,
+      });
+      db.createRemoteCommandIdempotency({
+        sessionId: "session-retention",
+        idempotencyKey: `completed-${suffix}`,
+        method: "refreshSnapshot",
+        requestHash: `completed-hash-${suffix}`,
+        responseJson: "{}",
+        createdAt: oldTimestamp,
+        completedAt: oldTimestamp,
+      });
+    };
+    addOldRecords("startup");
+    db.createRemoteCommandIdempotency({
+      sessionId: "session-retention",
+      idempotencyKey: "incomplete-command",
+      method: "refreshSnapshot",
+      requestHash: "incomplete-hash",
+      responseJson: null,
+      createdAt: oldTimestamp,
+      completedAt: null,
+    });
+
+    const auth = new RemoteAuthService({
+      store: db,
+      credentialKey: new Uint8Array(32).fill(19),
+      now: () => now,
+      cleanupIntervalMs: 60_000,
+    });
+    expect(db.listRemoteAccessAuditRecords()).toEqual([]);
+    expect(db.getRemoteCommandIdempotency("session-retention", "completed-startup")).toBeNull();
+    expect(db.getRemoteCommandIdempotency("session-retention", "incomplete-command")).not.toBeNull();
+
+    addOldRecords("periodic");
+    expect(db.listRemoteAccessAuditRecords()).toHaveLength(1);
+    now = new Date("2026-07-15T10:02:00.000Z");
+    auth.listSessions();
+    expect(db.listRemoteAccessAuditRecords()).toEqual([]);
+    expect(db.getRemoteCommandIdempotency("session-retention", "completed-periodic")).toBeNull();
+    expect(db.getRemoteCommandIdempotency("session-retention", "incomplete-command")).not.toBeNull();
+  });
+
   it("rate limits repeated pairing attempts", async () => {
     const { info } = await startServer();
     const statuses: number[] = [];
@@ -560,5 +783,39 @@ describe("remote access authentication", () => {
       headers: { Origin: info.baseUrl },
     });
     expect(sameOrigin.status).toBe(200);
+
+    const webSocketUrl = `${info.baseUrl.replace("http://", "ws://")}${REMOTE_ACCESS_WEBSOCKET_PATH}` +
+      `?protocolVersion=${String(REMOTE_ACCESS_PROTOCOL_VERSION)}`;
+    const wrongHostSocket = new WebSocket(webSocketUrl, {
+      headers: { Host: `${info.host}:1` },
+    });
+    const wrongHostUpgradeStatus = await new Promise<number>((resolve, reject) => {
+      wrongHostSocket.once("unexpected-response", (_request, response) => {
+        response.resume();
+        resolve(response.statusCode ?? 0);
+      });
+      wrongHostSocket.once("open", () => {
+        wrongHostSocket.close();
+        reject(new Error("WebSocket upgrade unexpectedly accepted the mismatched Host header."));
+      });
+      wrongHostSocket.once("error", reject);
+    });
+    expect(wrongHostUpgradeStatus).toBe(421);
+
+    const crossOriginSocket = new WebSocket(webSocketUrl, {
+      headers: { Origin: "https://attacker.example" },
+    });
+    const crossOriginUpgradeStatus = await new Promise<number>((resolve, reject) => {
+      crossOriginSocket.once("unexpected-response", (_request, response) => {
+        response.resume();
+        resolve(response.statusCode ?? 0);
+      });
+      crossOriginSocket.once("open", () => {
+        crossOriginSocket.close();
+        reject(new Error("WebSocket upgrade unexpectedly accepted the cross-origin request."));
+      });
+      crossOriginSocket.once("error", reject);
+    });
+    expect(crossOriginUpgradeStatus).toBe(403);
   });
 });

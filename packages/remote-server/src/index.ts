@@ -47,6 +47,8 @@ const MAX_REQUEST_BODY_BYTES = 1_048_576;
 const MAX_WEBSOCKET_MESSAGE_BYTES = 65_536;
 const DEFAULT_PAIRING_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+const DEFAULT_REMOTE_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+const DEFAULT_REMOTE_RECORD_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 const PAIRING_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const PAIRING_RATE_LIMIT_WINDOW_MS = 60_000;
 const PAIRING_RATE_LIMIT_ATTEMPTS = 5;
@@ -99,6 +101,11 @@ export interface RemoteAuthStore {
   touchRemoteAccessSession(sessionId: string, lastUsedAt: string): void;
   revokeRemoteAccessSession(sessionId: string, revokedAt: string): boolean;
   addRemoteAccessAuditRecord(record: RemoteAccessAuditRecord): void;
+  pruneRemoteAccessRecords(cutoffs: {
+    expiredPairingGrantBefore: string;
+    securityAuditBefore: string;
+    completedCommandBefore: string;
+  }): number;
 }
 
 export interface RemoteAuthServiceOptions {
@@ -107,6 +114,8 @@ export interface RemoteAuthServiceOptions {
   now?: () => Date;
   pairingTtlMs?: number;
   sessionTtlMs?: number;
+  cleanupIntervalMs?: number;
+  recordRetentionMs?: number;
 }
 
 export interface RemoteAccessAuthenticatedSession {
@@ -143,6 +152,9 @@ export class RemoteAuthService {
   private readonly now: () => Date;
   private readonly pairingTtlMs: number;
   private readonly sessionTtlMs: number;
+  private readonly cleanupIntervalMs: number;
+  private readonly recordRetentionMs: number;
+  private lastCleanupAt = Number.NEGATIVE_INFINITY;
 
   constructor(private readonly options: RemoteAuthServiceOptions) {
     if (options.credentialKey.byteLength < 32) {
@@ -151,10 +163,14 @@ export class RemoteAuthService {
     this.now = options.now ?? (() => new Date());
     this.pairingTtlMs = options.pairingTtlMs ?? DEFAULT_PAIRING_TTL_MS;
     this.sessionTtlMs = options.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
+    this.cleanupIntervalMs = options.cleanupIntervalMs ?? DEFAULT_REMOTE_CLEANUP_INTERVAL_MS;
+    this.recordRetentionMs = options.recordRetentionMs ?? DEFAULT_REMOTE_RECORD_RETENTION_MS;
+    this.maybePrune(this.now());
   }
 
   createPairingGrant(input: RemoteAccessPairingInput = {}): RemoteAccessPairingGrant {
     const createdAt = this.now();
+    this.maybePrune(createdAt);
     const code = createPairingCode();
     const grant: RemoteAccessPairingGrant = {
       id: randomUUID(),
@@ -178,6 +194,7 @@ export class RemoteAuthService {
   exchangePairingCode(code: string, label: string | undefined, remoteAddress: string | null): RemoteAccessAuthenticatedSession | null {
     const normalizedCode = normalizePairingCode(code);
     const consumedAt = this.now();
+    this.maybePrune(consumedAt);
     const grant = normalizedCode
       ? this.options.store.consumeRemoteAccessPairingGrant(
           this.hashCredential("pairing", normalizedCode),
@@ -219,6 +236,7 @@ export class RemoteAuthService {
     }
     const session = this.options.store.getRemoteAccessSessionByTokenHash(this.hashCredential("session", token));
     const authenticatedAt = this.now();
+    this.maybePrune(authenticatedAt);
     if (!session || session.revokedAt || session.expiresAt <= authenticatedAt.toISOString()) {
       if (options.audit !== false) {
         this.audit("session-authentication-failed", "failure", { remoteAddress });
@@ -235,15 +253,32 @@ export class RemoteAuthService {
   }
 
   listSessions(): RemoteAccessSession[] {
+    this.maybePrune(this.now());
     return this.options.store.listRemoteAccessSessions();
   }
 
   revokeSession(sessionId: string, remoteAddress: string | null = null): boolean {
-    const revoked = this.options.store.revokeRemoteAccessSession(sessionId, this.now().toISOString());
+    const revokedAt = this.now();
+    this.maybePrune(revokedAt);
+    const revoked = this.options.store.revokeRemoteAccessSession(sessionId, revokedAt.toISOString());
     if (revoked) {
       this.audit("session-revoked", "success", { sessionId, remoteAddress });
     }
     return revoked;
+  }
+
+  private maybePrune(now: Date): void {
+    const nowMs = now.getTime();
+    if (nowMs - this.lastCleanupAt < this.cleanupIntervalMs) {
+      return;
+    }
+    this.lastCleanupAt = nowMs;
+    const retainedAfter = new Date(nowMs - this.recordRetentionMs).toISOString();
+    this.options.store.pruneRemoteAccessRecords({
+      expiredPairingGrantBefore: now.toISOString(),
+      securityAuditBefore: retainedAfter,
+      completedCommandBefore: retainedAfter,
+    });
   }
 
   private hashCredential(kind: "pairing" | "session", credential: string): string {
@@ -415,12 +450,21 @@ export class RemoteOperationRegistry {
       response = errorResponse(request.requestId, "operation-failed", "The operation failed.");
     }
     if (persistedCommand && this.idempotencyStore) {
-      this.idempotencyStore.completeRemoteCommandIdempotency(
+      const completed = this.idempotencyStore.completeRemoteCommandIdempotency(
         persistedCommand.sessionId,
         persistedCommand.idempotencyKey,
         JSON.stringify(response),
         new Date().toISOString(),
       );
+      if (!completed) {
+        const error = new Error("The completed remote command response could not be persisted.");
+        this.onOperationError?.({ method: request.method, requestId: request.requestId, error });
+        return errorResponse(
+          request.requestId,
+          "operation-failed",
+          "The command completed, but its replay result could not be persisted.",
+        );
+      }
     }
     return response;
   }
@@ -767,6 +811,9 @@ export class RemoteAccessServer {
   private server: Server | null = null;
   private webSocketServer: WebSocketServer | null = null;
   private info: RemoteAccessServerInfo | null = null;
+  private lifecycleTail: Promise<void> = Promise.resolve();
+  private startPromise: Promise<RemoteAccessServerInfo> | null = null;
+  private stopPromise: Promise<void> | null = null;
   private readonly pairingAttempts = new Map<string, number[]>();
   private sequence = 0;
 
@@ -776,11 +823,32 @@ export class RemoteAccessServer {
     return this.info;
   }
 
-  async start(): Promise<RemoteAccessServerInfo> {
+  start(): Promise<RemoteAccessServerInfo> {
+    if (this.stopPromise) {
+      return this.stopPromise.then(() => this.start());
+    }
     if (this.info) {
-      return this.info;
+      return Promise.resolve(this.info);
+    }
+    if (this.startPromise) {
+      return this.startPromise;
     }
 
+    const startPromise = this.lifecycleTail.then(() => this.info ?? this.startNow());
+    this.startPromise = startPromise;
+    this.lifecycleTail = startPromise.then(() => undefined, () => undefined);
+    void startPromise.then(
+      () => {
+        if (this.startPromise === startPromise) this.startPromise = null;
+      },
+      () => {
+        if (this.startPromise === startPromise) this.startPromise = null;
+      },
+    );
+    return startPromise;
+  }
+
+  private async startNow(): Promise<RemoteAccessServerInfo> {
     const startedAt = new Date().toISOString();
     const server = createServer((request, response) => {
       void this.handleRequest(request, response, startedAt).catch((error) => {
@@ -795,8 +863,6 @@ export class RemoteAccessServer {
     const webSocketServer = new WebSocketServer({ noServer: true, clientTracking: true, maxPayload: MAX_WEBSOCKET_MESSAGE_BYTES });
     webSocketServer.on("error", (error) => this.options.onServerError?.(error));
     server.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket, head, webSocketServer, startedAt));
-    this.server = server;
-    this.webSocketServer = webSocketServer;
 
     try {
       await new Promise<void>((resolve, reject) => {
@@ -813,13 +879,13 @@ export class RemoteAccessServer {
         server.listen(this.options.port ?? DEFAULT_REMOTE_ACCESS_PORT, REMOTE_ACCESS_LOOPBACK_HOST);
       });
     } catch (error) {
-      this.server = null;
-      this.webSocketServer = null;
       webSocketServer.close();
       throw error;
     }
 
     const address = server.address() as AddressInfo;
+    this.server = server;
+    this.webSocketServer = webSocketServer;
     this.info = {
       host: REMOTE_ACCESS_LOOPBACK_HOST,
       port: address.port,
@@ -829,7 +895,25 @@ export class RemoteAccessServer {
     return this.info;
   }
 
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
+    if (this.stopPromise) {
+      return this.stopPromise;
+    }
+    const stopPromise = this.lifecycleTail.then(() => this.stopNow());
+    this.stopPromise = stopPromise;
+    this.lifecycleTail = stopPromise.then(() => undefined, () => undefined);
+    void stopPromise.then(
+      () => {
+        if (this.stopPromise === stopPromise) this.stopPromise = null;
+      },
+      () => {
+        if (this.stopPromise === stopPromise) this.stopPromise = null;
+      },
+    );
+    return stopPromise;
+  }
+
+  private async stopNow(): Promise<void> {
     const server = this.server;
     const webSocketServer = this.webSocketServer;
     this.server = null;
@@ -946,8 +1030,11 @@ export class RemoteAccessServer {
           { "Set-Cookie": sessionCookie(authenticated.token, authenticated.session.expiresAt, secureCookie) },
         );
       } catch (error) {
-        const statusCode = error instanceof RequestBodyError ? error.statusCode : 400;
-        writeJson(response, statusCode, { error: error instanceof Error ? error.message : "Invalid JSON request body." });
+        if (error instanceof RequestBodyError) {
+          writeJson(response, error.statusCode, { error: error.message });
+          return;
+        }
+        throw error;
       }
       return;
     }
@@ -989,8 +1076,11 @@ export class RemoteAccessServer {
         const payload = await readJsonBody(request);
         writeJson(response, 200, await this.options.operations.dispatch(payload, session.scopes, session.id));
       } catch (error) {
-        const statusCode = error instanceof RequestBodyError ? error.statusCode : 400;
-        writeJson(response, statusCode, { error: error instanceof Error ? error.message : "Invalid JSON request body." });
+        if (error instanceof RequestBodyError) {
+          writeJson(response, error.statusCode, { error: error.message });
+          return;
+        }
+        throw error;
       }
       return;
     }
