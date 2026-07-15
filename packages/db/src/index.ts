@@ -2716,7 +2716,11 @@ export class BuildWardenDatabase {
        from remote_access_sessions where token_hash = ?`,
       [tokenHash],
     );
-    return row ? { ...row, scopes: this.parseRemoteAccessScopes(row.scopesJson) } : null;
+    if (!row) {
+      return null;
+    }
+    const { scopesJson, ...session } = row;
+    return { ...session, scopes: this.parseRemoteAccessScopes(scopesJson) };
   }
 
   listRemoteAccessSessions(): RemoteAccessSession[] {

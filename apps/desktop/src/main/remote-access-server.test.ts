@@ -245,6 +245,12 @@ describe("remote access authentication", () => {
     expect(response.status).toBe(201);
     expect(cookie).toContain("buildwarden_session=");
 
+    const sessionResponse = await fetch(`${info.baseUrl}${REMOTE_ACCESS_SESSION_PATH}`, {
+      headers: { Cookie: cookie },
+    });
+    expect(sessionResponse.status).toBe(200);
+    await expect(sessionResponse.json()).resolves.not.toHaveProperty("session.scopesJson");
+
     const rpcResponse = await fetch(`${info.baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Cookie: cookie },
