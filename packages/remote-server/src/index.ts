@@ -485,8 +485,11 @@ export class RemoteAccessServer {
         const payload = await readJsonBody(request);
         writeJson(response, 200, await this.options.operations.dispatch(payload));
       } catch (error) {
-        const statusCode = error instanceof RequestBodyError ? error.statusCode : 400;
-        writeJson(response, statusCode, { error: error instanceof Error ? error.message : "Invalid JSON request body." });
+        if (error instanceof RequestBodyError) {
+          writeJson(response, error.statusCode, { error: error.message });
+          return;
+        }
+        throw error;
       }
       return;
     }

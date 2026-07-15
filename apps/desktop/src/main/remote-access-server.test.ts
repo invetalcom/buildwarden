@@ -174,6 +174,51 @@ describe("remote access loopback server", () => {
     await expect(response.json()).resolves.toMatchObject({ ok: false, error: { code: "invalid-request" } });
   });
 
+  it("separates malformed and oversized request bodies from internal failures", async () => {
+    const { info } = await startServer();
+
+    const malformed = await fetch(`${info.baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{",
+    });
+    expect(malformed.status).toBe(400);
+    await expect(malformed.json()).resolves.toEqual({ error: "Invalid JSON request body." });
+
+    const oversized = await fetch(`${info.baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "x".repeat(1_048_577),
+    });
+    expect(oversized.status).toBe(413);
+    await expect(oversized.json()).resolves.toEqual({ error: "Request body is too large." });
+
+    const internalError = new Error("unexpected dispatch failure");
+    const onServerError = vi.fn();
+    const operations = new RemoteOperationRegistry(() => {
+      throw internalError;
+    });
+    operations.register("getSnapshot", async () => {
+      throw new Error("operation failure");
+    }, validateNoRemoteArgs);
+    const server = new RemoteAccessServer({ appVersion: "0.5.5-test", operations, onServerError, port: 0 });
+    startedServers.push(server);
+    const internalInfo = await server.start();
+    const failed = await fetch(`${internalInfo.baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+        requestId: "internal-failure",
+        method: "getSnapshot",
+        args: [],
+      }),
+    });
+    expect(failed.status).toBe(500);
+    await expect(failed.json()).resolves.toEqual({ error: "Internal server error." });
+    expect(onServerError).toHaveBeenCalledWith(internalError);
+  });
+
   it("streams validated host events over a version-negotiated WebSocket", async () => {
     const { info, publishEvent } = await startServer();
     const socket = new WebSocket(
