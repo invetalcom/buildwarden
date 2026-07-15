@@ -23,6 +23,11 @@ const browserLabel = (): string => {
   return `Web · ${platform}`.slice(0, 80);
 };
 
+const pairingCodeFromFragment = (): string => {
+  const value = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("pair") ?? "";
+  return value.replace(/\s+/g, "").toUpperCase().slice(0, 64);
+};
+
 const readErrorMessage = async (response: Response, fallback: string): Promise<string> => {
   try {
     const payload = await response.json() as { error?: unknown };
@@ -33,7 +38,7 @@ const readErrorMessage = async (response: Response, fallback: string): Promise<s
 };
 
 const PairingGate = ({ initialError, onPaired }: { initialError?: string; onPaired: (session: RemoteAccessSession) => void }) => {
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState(pairingCodeFromFragment);
   const [error, setError] = useState(initialError ?? "");
   const [pairing, setPairing] = useState(false);
 
@@ -55,6 +60,7 @@ const PairingGate = ({ initialError, onPaired }: { initialError?: string; onPair
         return;
       }
       const payload = await response.json() as RemoteAccessPairingExchangeResponse;
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
       onPaired(payload.session);
     } catch {
       setError("The BuildWarden host is unavailable. Keep the desktop app running and try again.");

@@ -607,7 +607,11 @@ const writeStaticResponse = (
   response.end(headOnly ? undefined : body);
 };
 
-const isAllowedLoopbackHostHeader = (hostHeader: string | undefined, expectedPort: number | undefined): boolean => {
+const isAllowedHostHeader = (
+  hostHeader: string | undefined,
+  expectedPort: number | undefined,
+  trustedProxyHosts: readonly string[],
+): boolean => {
   if (!hostHeader) {
     return false;
   }
@@ -615,7 +619,9 @@ const isAllowedLoopbackHostHeader = (hostHeader: string | undefined, expectedPor
     const url = new URL(`http://${hostHeader}`);
     const hostname = url.hostname.toLowerCase();
     const loopback = hostname === REMOTE_ACCESS_LOOPBACK_HOST || hostname === "localhost" || hostname === "[::1]";
-    return loopback && (expectedPort === undefined || url.port === String(expectedPort));
+    if (loopback) return expectedPort === undefined || url.port === String(expectedPort);
+    const trustedProxy = trustedProxyHosts.some((candidate) => candidate.toLowerCase() === hostname);
+    return trustedProxy && (url.port === "" || url.port === "443");
   } catch {
     return false;
   }
@@ -680,6 +686,8 @@ export interface RemoteAccessServerOptions {
   port?: number;
   capabilities?: RemoteAccessServerCapability[];
   authentication?: RemoteAccessHealth["authentication"];
+  /** Exact MagicDNS hosts whose HTTPS traffic is forwarded by a verified loopback-only proxy. */
+  trustedProxyHosts?: () => readonly string[];
   onServerError?: (error: unknown) => void;
 }
 
@@ -876,7 +884,7 @@ export class RemoteAccessServer {
   }
 
   private async handleRequest(request: IncomingMessage, response: ServerResponse, startedAt: string): Promise<void> {
-    if (!isAllowedLoopbackHostHeader(request.headers.host, this.info?.port)) {
+    if (!isAllowedHostHeader(request.headers.host, this.info?.port, this.options.trustedProxyHosts?.() ?? [])) {
       writeJson(response, 421, { error: "Loopback host required." });
       return;
     }
@@ -1061,7 +1069,7 @@ export class RemoteAccessServer {
       rejectUpgrade(socket, 404, "Not Found", "WebSocket endpoint not found.");
       return;
     }
-    if (!isAllowedLoopbackHostHeader(request.headers.host, this.info?.port)) {
+    if (!isAllowedHostHeader(request.headers.host, this.info?.port, this.options.trustedProxyHosts?.() ?? [])) {
       rejectUpgrade(socket, 421, "Misdirected Request", "Loopback host required.");
       return;
     }

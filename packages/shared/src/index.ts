@@ -2641,6 +2641,7 @@ export interface RendererLogPayload {
 
 export interface DesktopApi {
   getSnapshot(): Promise<AppSnapshot>;
+  getRemoteAccessStatus(): Promise<RemoteAccessStatus>;
   createRemoteAccessPairing(input?: RemoteAccessPairingInput): Promise<RemoteAccessPairingGrant>;
   listRemoteAccessSessions(): Promise<RemoteAccessSession[]>;
   revokeRemoteAccessSession(sessionId: string): Promise<void>;
@@ -2906,9 +2907,36 @@ export interface RemoteAccessPairingGrant {
   scopes: RemoteAccessScope[];
   expiresAt: string;
   createdAt: string;
+  /** Browser URL with the one-time code in the fragment so proxies and request logs never receive it. */
+  pairingUrl?: string;
 }
 
-export interface RemoteAccessPairingGrantRecord extends Omit<RemoteAccessPairingGrant, "code"> {
+export type TailscaleServeState =
+  | "not-installed"
+  | "not-running"
+  | "available"
+  | "managed"
+  | "conflict"
+  | "error";
+
+export interface RemoteAccessStatus {
+  enabled: boolean;
+  loopbackUrl: string | null;
+  tailscale: {
+    desired: boolean;
+    state: TailscaleServeState;
+    cliPath: string | null;
+    backendState: string | null;
+    dnsName: string | null;
+    endpoint: string | null;
+    managed: boolean;
+    verified: boolean;
+    message: string;
+    enableCommand: string | null;
+  };
+}
+
+export interface RemoteAccessPairingGrantRecord extends Omit<RemoteAccessPairingGrant, "code" | "pairingUrl"> {
   tokenHash: string;
   usedAt: string | null;
 }
@@ -3168,6 +3196,7 @@ export const IPC_CHANNELS = {
   pullProjectBranch: "buildwarden:pull-project-branch",
   pushProjectBranch: "buildwarden:push-project-branch",
   getSnapshot: "buildwarden:get-snapshot",
+  getRemoteAccessStatus: "buildwarden:get-remote-access-status",
   createRemoteAccessPairing: "buildwarden:create-remote-access-pairing",
   listRemoteAccessSessions: "buildwarden:list-remote-access-sessions",
   revokeRemoteAccessSession: "buildwarden:revoke-remote-access-session",
@@ -3276,6 +3305,12 @@ export const APP_SETTING_KEYS = {
   networkProxyConfig: "networkProxyConfig",
   /** Optional remote-access host. Absent or any value other than `"true"` keeps it disabled. */
   remoteAccessEnabled: "remoteAccess.enabled",
+  /** User opt-in for a BuildWarden-owned Tailscale Serve root handler. */
+  remoteAccessTailscaleEnabled: "remoteAccess.tailscaleEnabled",
+  /** Internal ownership marker; only exact matching handlers are removed. */
+  remoteAccessTailscaleManagedHost: "remoteAccess.tailscaleManagedHost",
+  /** Internal ownership marker for the loopback proxy target. */
+  remoteAccessTailscaleManagedTarget: "remoteAccess.tailscaleManagedTarget",
   /** JSON string array of welcome/onboarding check ids that have been satisfied at least once. */
   welcomeCompletedCheckIds: "welcomeCompletedCheckIds",
 } as const;

@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
 import type {
   NetworkProxyProtocol,
+  RemoteAccessStatus,
   RemoteAccessPairingGrant,
   RemoteAccessPairingInput,
   RemoteAccessSession,
 } from "@buildwarden/shared";
-import { Copy, Globe, Info, KeyRound, Loader2, ShieldCheck, Unplug, Wifi } from "lucide-react";
+import { APP_SETTING_KEYS } from "@buildwarden/shared";
+import { Copy, ExternalLink, Globe, Info, KeyRound, Loader2, Network, ShieldCheck, Unplug, Wifi } from "lucide-react";
+import QRCode from "qrcode";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
 import { Select } from "../ui/select";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 
 export type NetworkProxyDraft = {
   enabled: boolean;
@@ -61,18 +65,44 @@ const RemoteAccessSettings = ({
 }) => {
   const [sessions, setSessions] = useState<RemoteAccessSession[]>([]);
   const [pairing, setPairing] = useState<RemoteAccessPairingGrant | null>(null);
+  const [pairingQrCode, setPairingQrCode] = useState<string | null>(null);
+  const [remoteStatus, setRemoteStatus] = useState<RemoteAccessStatus | null>(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const buildwarden = useBuildWardenClient();
 
   const refreshSessions = useCallback(async () => {
     setSessions(await onListSessions());
   }, [onListSessions]);
 
+  const refreshRemoteStatus = useCallback(async () => {
+    setRemoteStatus(await buildwarden.getRemoteAccessStatus());
+  }, [buildwarden]);
+
   useEffect(() => {
-    void refreshSessions().catch((caught) => {
+    void Promise.all([refreshSessions(), refreshRemoteStatus()]).catch((caught) => {
       setError(caught instanceof Error ? caught.message : "Could not load paired devices.");
     });
-  }, [refreshSessions]);
+  }, [refreshRemoteStatus, refreshSessions]);
+
+  useEffect(() => {
+    let disposed = false;
+    setPairingQrCode(null);
+    if (!pairing?.pairingUrl) return;
+    void QRCode.toDataURL(pairing.pairingUrl, {
+      width: 176,
+      margin: 1,
+      color: { dark: "#18181b", light: "#ffffff" },
+      errorCorrectionLevel: "M",
+    }).then((dataUrl) => {
+      if (!disposed) setPairingQrCode(dataUrl);
+    }).catch(() => {
+      if (!disposed) setPairingQrCode(null);
+    });
+    return () => {
+      disposed = true;
+    };
+  }, [pairing?.pairingUrl]);
 
   const run = async (action: () => Promise<void>) => {
     setWorking(true);
@@ -118,11 +148,70 @@ const RemoteAccessSettings = ({
             disabled={working}
             onChange={(event) => void run(async () => {
               await onEnabledChange(event.target.checked);
+              await refreshRemoteStatus();
               if (!event.target.checked) setPairing(null);
             })}
           />
           Enable
         </label>
+      </div>
+
+      <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-950/45 p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-2.5">
+            <Network className="mt-0.5 size-4 shrink-0 text-cyan-300" />
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-medium text-zinc-200">Tailscale Serve</p>
+                {remoteStatus ? (
+                  <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${
+                    remoteStatus.tailscale.verified
+                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                      : remoteStatus.tailscale.state === "error" || remoteStatus.tailscale.state === "conflict"
+                        ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
+                        : "border-zinc-700 bg-zinc-900 text-zinc-400"
+                  }`}>{remoteStatus.tailscale.state.replace("-", " ")}</span>
+                ) : <Loader2 className="size-3.5 animate-spin text-zinc-500" />}
+              </div>
+              <p className="mt-1 max-w-2xl text-xs leading-5 text-zinc-400">
+                {remoteStatus?.tailscale.message ?? "Checking the local Tailscale installation…"}
+              </p>
+            </div>
+          </div>
+          <label className="flex shrink-0 items-center gap-2 text-xs text-zinc-300">
+            <input
+              className="size-4 accent-[var(--ec-accent)]"
+              type="checkbox"
+              checked={remoteStatus?.tailscale.desired ?? false}
+              disabled={!enabled || working || !remoteStatus}
+              onChange={(event) => void run(async () => {
+                await buildwarden.setAppSetting(APP_SETTING_KEYS.remoteAccessTailscaleEnabled, String(event.target.checked));
+                await refreshRemoteStatus();
+                setPairing(null);
+              })}
+            />
+            Expose to tailnet
+          </label>
+        </div>
+
+        {remoteStatus?.tailscale.verified && remoteStatus.tailscale.endpoint ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-zinc-800 pt-3">
+            <code className="min-w-0 flex-1 truncate text-xs text-cyan-200">{remoteStatus.tailscale.endpoint}</code>
+            <Button type="button" variant="secondary" size="sm" onClick={() => void navigator.clipboard.writeText(remoteStatus.tailscale.endpoint ?? "")}>
+              <Copy className="mr-2 size-3.5" />
+              Copy URL
+            </Button>
+            <Button type="button" variant="secondary" size="sm" onClick={() => void buildwarden.openExternalUrl(remoteStatus.tailscale.endpoint ?? "")}>
+              <ExternalLink className="mr-2 size-3.5" />
+              Open
+            </Button>
+          </div>
+        ) : remoteStatus?.tailscale.enableCommand ? (
+          <div className="mt-3 border-t border-zinc-800 pt-3">
+            <p className="text-[11px] text-zinc-500">Manual command</p>
+            <code className="mt-1 block overflow-x-auto rounded bg-zinc-900 px-2 py-1.5 text-[11px] text-zinc-300">{remoteStatus.tailscale.enableCommand}</code>
+          </div>
+        ) : null}
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-zinc-800 pt-4">
@@ -133,6 +222,7 @@ const RemoteAccessSettings = ({
           onClick={() => void run(async () => {
             setPairing(await onCreatePairing({ scopes: ["state:read"] }));
             await refreshSessions();
+            await refreshRemoteStatus();
           })}
         >
           {working ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <KeyRound className="mr-2 h-4 w-4" />}
@@ -143,14 +233,26 @@ const RemoteAccessSettings = ({
 
       {pairing ? (
         <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2.5">
-          <div>
+          <div className="min-w-0 flex-1">
             <p className="font-mono text-base font-semibold tracking-wider text-emerald-100">{pairing.code}</p>
             <p className="mt-0.5 text-[11px] text-emerald-200/70">Expires {formatTimestamp(pairing.expiresAt)}</p>
+            {pairing.pairingUrl ? <p className="mt-1 truncate font-mono text-[10px] text-emerald-200/70">{pairing.pairingUrl}</p> : null}
           </div>
-          <Button type="button" variant="secondary" size="sm" onClick={() => void navigator.clipboard.writeText(pairing.code)}>
-            <Copy className="mr-2 h-3.5 w-3.5" />
-            Copy
-          </Button>
+          <div className="flex items-center gap-2">
+            {pairingQrCode ? <img className="size-24 rounded bg-white p-1" src={pairingQrCode} alt="Pair this device with BuildWarden" /> : null}
+            <div className="flex flex-col gap-2">
+              <Button type="button" variant="secondary" size="sm" onClick={() => void navigator.clipboard.writeText(pairing.code)}>
+                <Copy className="mr-2 h-3.5 w-3.5" />
+                Copy code
+              </Button>
+              {pairing.pairingUrl ? (
+                <Button type="button" variant="secondary" size="sm" onClick={() => void navigator.clipboard.writeText(pairing.pairingUrl ?? "")}>
+                  <Copy className="mr-2 h-3.5 w-3.5" />
+                  Copy link
+                </Button>
+              ) : null}
+            </div>
+          </div>
         </div>
       ) : null}
 
@@ -194,7 +296,7 @@ const RemoteAccessSettings = ({
       </div>
 
       <p className="mt-3 border-l border-amber-500/30 pl-3 text-xs leading-5 text-amber-200/75">
-        This stage is loopback-only. Tailscale/LAN exposure and browser hosting remain disabled until the following milestones.
+        The BuildWarden server always stays on loopback. Tailscale Serve is optional and BuildWarden removes only the exact root handler it created.
       </p>
     </Card>
   );

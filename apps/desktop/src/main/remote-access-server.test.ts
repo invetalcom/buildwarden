@@ -179,7 +179,7 @@ describe("remote operation registry", () => {
 });
 
 describe("remote access authentication", () => {
-  const startServer = async (staticRoot?: string) => {
+  const startServer = async (staticRoot?: string, trustedProxyHosts?: () => readonly string[]) => {
     const db = await createDatabase();
     const auth = new RemoteAuthService({ store: db, credentialKey: new Uint8Array(32).fill(7) });
     const operations = new RemoteOperationRegistry();
@@ -193,7 +193,15 @@ describe("remote access authentication", () => {
         };
       },
     };
-    const server = new RemoteAccessServer({ appVersion: "0.5.5-test", operations, events, auth, port: 0, staticRoot });
+    const server = new RemoteAccessServer({
+      appVersion: "0.5.5-test",
+      operations,
+      events,
+      auth,
+      port: 0,
+      staticRoot,
+      trustedProxyHosts,
+    });
     startedServers.push(server);
     return {
       auth,
@@ -560,5 +568,27 @@ describe("remote access authentication", () => {
       headers: { Origin: info.baseUrl },
     });
     expect(sameOrigin.status).toBe(200);
+  });
+
+  it("accepts only an explicitly trusted MagicDNS proxy Host and matching Origin", async () => {
+    const magicDnsHost = "buildwarden-host.example.ts.net";
+    const { info } = await startServer(undefined, () => [magicDnsHost]);
+    const requestHealth = (host: string, origin: string) => new Promise<number | undefined>((resolve, reject) => {
+      const req = request({
+        hostname: info.host,
+        port: info.port,
+        path: REMOTE_ACCESS_HEALTH_PATH,
+        headers: { Host: host, Origin: origin },
+      }, (response) => {
+        response.resume();
+        response.on("end", () => resolve(response.statusCode));
+      });
+      req.on("error", reject);
+      req.end();
+    });
+
+    await expect(requestHealth(magicDnsHost, `https://${magicDnsHost}`)).resolves.toBe(200);
+    await expect(requestHealth(magicDnsHost, "https://attacker.example")).resolves.toBe(403);
+    await expect(requestHealth("untracked.example.ts.net", "https://untracked.example.ts.net")).resolves.toBe(421);
   });
 });
