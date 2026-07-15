@@ -6,7 +6,7 @@
       "project": ["scripts/*.mjs"]
     },
     "apps/desktop": {
-      "entry": ["src/**/*.test.ts"],
+      "entry": ["src/**/*.test.ts", "src/renderer/src/web-main.tsx"],
       "project": ["src/**/*.ts", "src/**/*.tsx"]
     },
     "packages/*": {

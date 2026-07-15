@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,6 +27,7 @@ const emptySnapshot = {
 
 const startedServers: RemoteAccessServer[] = [];
 const databases: Array<{ db: BuildWardenDatabase; directory: string }> = [];
+const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
   await Promise.all(startedServers.splice(0).map((server) => server.stop()));
@@ -34,6 +35,7 @@ afterEach(async () => {
     await db.close();
     await rm(directory, { recursive: true, force: true });
   }));
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
 const createDatabase = async (): Promise<BuildWardenDatabase> => {
@@ -112,12 +114,12 @@ describe("remote operation registry", () => {
 });
 
 describe("remote access authentication", () => {
-  const startServer = async () => {
+  const startServer = async (staticRoot?: string) => {
     const db = await createDatabase();
     const auth = new RemoteAuthService({ store: db, credentialKey: new Uint8Array(32).fill(7) });
     const operations = new RemoteOperationRegistry();
     operations.register("getSnapshot", async () => emptySnapshot);
-    const server = new RemoteAccessServer({ appVersion: "0.5.5-test", operations, auth, port: 0 });
+    const server = new RemoteAccessServer({ appVersion: "0.5.5-test", operations, auth, port: 0, staticRoot });
     startedServers.push(server);
     return { auth, db, info: await server.start() };
   };
@@ -166,6 +168,29 @@ describe("remote access authentication", () => {
     });
     expect(rpcResponse.status).toBe(200);
     await expect(rpcResponse.json()).resolves.toMatchObject({ ok: true, requestId: "snapshot", result: emptySnapshot });
+  });
+
+  it("serves the shared web client without exposing authenticated APIs", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "buildwarden-remote-web-"));
+    temporaryDirectories.push(directory);
+    await mkdir(join(directory, "assets"), { recursive: true });
+    await writeFile(join(directory, "index.html"), "<!doctype html><title>BuildWarden Remote</title>", "utf8");
+    await writeFile(join(directory, "assets", "app.js"), "console.log('remote');", "utf8");
+    const { info } = await startServer(directory);
+
+    const indexResponse = await fetch(`${info.baseUrl}/`);
+    expect(indexResponse.status).toBe(200);
+    expect(indexResponse.headers.get("content-security-policy")).toContain("default-src 'self'");
+    expect(indexResponse.headers.get("cache-control")).toBe("no-store");
+    await expect(indexResponse.text()).resolves.toContain("BuildWarden Remote");
+
+    const assetResponse = await fetch(`${info.baseUrl}/assets/app.js`);
+    expect(assetResponse.status).toBe(200);
+    expect(assetResponse.headers.get("content-type")).toContain("text/javascript");
+    expect(assetResponse.headers.get("cache-control")).toContain("immutable");
+
+    const sessionResponse = await fetch(`${info.baseUrl}${REMOTE_ACCESS_SESSION_PATH}`);
+    expect(sessionResponse.status).toBe(401);
   });
 
   it("rejects replayed pairing codes and revoked sessions", async () => {

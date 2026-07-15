@@ -680,6 +680,16 @@ const bootstrap = async (): Promise<void> => {
     await startupReconciliation;
     return controller.refreshSnapshot();
   });
+  remoteOperations.register("getProjectBranches", (projectId) => controller.getProjectBranches(projectId));
+  remoteOperations.register("getProjectCurrentBranch", (projectId) => controller.getProjectCurrentBranch(projectId));
+  remoteOperations.register("getRunDetail", (runId) => controller.getRunDetail(runId));
+  remoteOperations.register("getRunWorktreeDiff", (runId) => controller.getRunWorktreeDiff(runId));
+  remoteOperations.register("getRunWorkspaceFile", (input) => controller.getRunWorkspaceFile(input));
+  remoteOperations.register("getProjectLoopUiReviewImage", (reviewId) => controller.getProjectLoopUiReviewImage(reviewId));
+  remoteOperations.register("getChatDetail", (chatId) => controller.getChatDetail(chatId));
+  remoteOperations.register("listChatsWithSteps", () => controller.listChatsWithSteps());
+  remoteOperations.register("getBookmarksWithSteps", () => controller.getBookmarksWithSteps());
+  remoteOperations.register("getChatBookmarksWithSteps", () => controller.getChatBookmarksWithSteps());
 
   const remoteAccessAuthSecretKey = "app:remote-access-auth-key:v1";
   let remoteAuthService: RemoteAuthService | null = null;
@@ -723,6 +733,7 @@ const bootstrap = async (): Promise<void> => {
           appVersion: app.getVersion(),
           operations: remoteOperations,
           auth: await ensureRemoteAuthService(),
+          staticRoot: join(app.getAppPath(), "out", "web"),
           onServerError: (error) => logError("Remote access server request failed.", { error }),
         });
         const info = await remoteAccessServer.start();
