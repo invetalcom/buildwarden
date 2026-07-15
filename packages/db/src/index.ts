@@ -2744,7 +2744,7 @@ export class BuildWardenDatabase {
       "update remote_access_sessions set last_used_at = ? where id = ? and revoked_at is null",
       [lastUsedAt, sessionId],
     );
-    this.persist();
+    this.schedulePersist();
   }
 
   revokeRemoteAccessSession(sessionId: string, revokedAt: string): boolean {
@@ -2825,7 +2825,7 @@ export class BuildWardenDatabase {
         record.createdAt,
       ],
     );
-    this.persist();
+    this.schedulePersist();
   }
 
   listRemoteAccessAuditRecords(): RemoteAccessAuditRecord[] {
