@@ -10,6 +10,7 @@ import { App } from "./App";
 import { BuildWardenClientProvider } from "./lib/buildwarden-client";
 import { setActiveBuildWardenClient } from "./lib/buildwarden-client-core";
 import { createRemoteBuildWardenClient } from "./lib/remote-buildwarden-client";
+import { pairingCodeFromFragment } from "./lib/remote-pairing-code";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 
@@ -21,11 +22,6 @@ type RemoteWebState =
 const browserLabel = (): string => {
   const platform = navigator.platform || "browser";
   return `Web · ${platform}`.slice(0, 80);
-};
-
-const pairingCodeFromFragment = (): string => {
-  const value = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("pair") ?? "";
-  return value.replace(/\s+/g, "").toUpperCase().slice(0, 64);
 };
 
 const readErrorMessage = async (response: Response, fallback: string): Promise<string> => {
@@ -60,7 +56,6 @@ const PairingGate = ({ initialError, onPaired }: { initialError?: string; onPair
         return;
       }
       const payload = await response.json() as RemoteAccessPairingExchangeResponse;
-      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
       onPaired(payload.session);
     } catch {
       setError("The BuildWarden host is unavailable. Keep the desktop app running and try again.");
