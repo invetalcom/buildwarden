@@ -1,4 +1,4 @@
-import { access, readdir, stat } from "node:fs/promises";
+import { access, opendir, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { dirname, isAbsolute, parse, resolve } from "node:path";
 import type { HostDirectoryBrowseInput, HostDirectoryListing } from "@buildwarden/shared";
@@ -33,10 +33,15 @@ export class HostDirectoryService {
     const path = resolve(requestedPath);
     const pathStat = await stat(path);
     if (!pathStat.isDirectory()) throw new Error("The host path is not a directory.");
-    const entries = (await readdir(path, { withFileTypes: true }))
-      .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink())
+    const childDirectories = [];
+    const directory = await opendir(path);
+    for await (const entry of directory) {
+      if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+      childDirectories.push(entry);
+      if (childDirectories.length >= MAX_DIRECTORY_ENTRIES) break;
+    }
+    const entries = childDirectories
       .sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }))
-      .slice(0, MAX_DIRECTORY_ENTRIES)
       .map((entry) => ({ name: entry.name, path: resolve(path, entry.name) }));
     const root = parse(path).root;
     return {

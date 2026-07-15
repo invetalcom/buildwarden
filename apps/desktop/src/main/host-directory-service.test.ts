@@ -35,4 +35,14 @@ describe("HostDirectoryService", () => {
     await expect(service.list({ path: "relative/path" })).rejects.toThrow("absolute");
     await expect(service.list({ path: filePath })).rejects.toThrow("not a directory");
   });
+
+  it("bounds large host directory listings", async () => {
+    const root = await mkdtemp(join(tmpdir(), "buildwarden-host-browser-"));
+    temporaryDirectories.push(root);
+    await Promise.all(Array.from({ length: 501 }, (_, index) => mkdir(join(root, `folder-${String(index).padStart(3, "0")}`))));
+
+    const listing = await new HostDirectoryService().list({ path: root });
+
+    expect(listing.entries).toHaveLength(500);
+  });
 });
