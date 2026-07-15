@@ -211,12 +211,11 @@ const SidebarComponent = ({
   loopEnabledProjectIds,
 }: SidebarProps) => {
   const buildwarden = useBuildWardenClient();
-  const remoteWeb = buildwarden.capabilities.platform === "web";
+  const isWeb = buildwarden.capabilities.platform === "web";
   const canStartRuns = buildwarden.capabilities.runMutations;
   const canManageRunBookmarks = buildwarden.capabilities.bookmarkMutations;
-  const canMoveRunsForLater = !remoteWeb;
+  const canMoveRunsForLater = buildwarden.capabilities.runListVisibilityMutations;
   const canOpenRunContextMenu = canStartRuns || canManageRunBookmarks || canMoveRunsForLater;
-  const mobileWeb = buildwarden.capabilities.platform === "web";
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [projectToolsExpanded, setProjectToolsExpanded] = useState(true);
   const [expandedRecentProjectIds, setExpandedRecentProjectIds] = useState<Record<string, boolean>>({});
@@ -368,7 +367,7 @@ const SidebarComponent = ({
     ...(buildwarden.capabilities.settings ? [{ label: "Settings", icon: Settings, selected: settingsSelected, onClick: onOpenSettings, count: "" }] : []),
   ];
   const visibleProjectTools = projectTools.filter((tool) => {
-    if (remoteWeb && !REMOTE_WEB_PROJECT_TABS.has(tool.tab) && !(tool.tab === "branches" && buildwarden.capabilities.gitMutations)) return false;
+    if (isWeb && !REMOTE_WEB_PROJECT_TABS.has(tool.tab) && !(tool.tab === "branches" && buildwarden.capabilities.gitMutations)) return false;
     return projectToolVisible(selectedProject, tool.tab, loopEnabledProjectIds);
   });
 
@@ -442,7 +441,7 @@ const SidebarComponent = ({
 
   return (
     <>
-    {mobileWeb ? (
+    {isWeb ? (
       <button
         type="button"
         className="fixed inset-0 z-40 hidden bg-black/45 backdrop-blur-[1px] max-[899px]:block"
@@ -454,7 +453,7 @@ const SidebarComponent = ({
       ref={sidebarRef}
       className={cn(
         "relative flex min-h-0 shrink-0 flex-col border-r border-[var(--ec-border)] bg-[var(--ec-sidebar)] text-[var(--ec-text)] transition-colors duration-150",
-        mobileWeb && "max-[899px]:fixed max-[899px]:inset-y-0 max-[899px]:left-0 max-[899px]:z-50 max-[899px]:max-w-[calc(100vw-3rem)] max-[899px]:shadow-2xl",
+        isWeb && "max-[899px]:fixed max-[899px]:inset-y-0 max-[899px]:left-0 max-[899px]:z-50 max-[899px]:max-w-[calc(100vw-3rem)] max-[899px]:shadow-2xl",
       )}
       style={{ width }}
     >
@@ -539,7 +538,7 @@ const SidebarComponent = ({
               className="flex size-6 shrink-0 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
               onClick={() => selectProjectFeature(selectedProject.project.id, "settings")}
               aria-label="Open project settings"
-              title={remoteWeb ? "Project settings (limited remote access)" : "Project settings"}
+              title={isWeb ? "Project settings (limited remote access)" : "Project settings"}
             >
               <Settings className="size-3.5" />
             </button>

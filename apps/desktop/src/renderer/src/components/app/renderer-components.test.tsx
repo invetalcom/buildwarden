@@ -86,6 +86,7 @@ const remoteRunCapabilities = {
   runMutations: true,
   chatMutations: false,
   bookmarkMutations: false,
+  runListVisibilityMutations: false,
   approvalResponses: false,
   gitMutations: true,
   projectCreation: false,

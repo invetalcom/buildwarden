@@ -34,6 +34,7 @@ describe("BuildWarden client boundary", () => {
       runMutations: true,
       chatMutations: true,
       bookmarkMutations: true,
+      runListVisibilityMutations: true,
       approvalResponses: true,
       gitMutations: true,
       projectCreation: true,
