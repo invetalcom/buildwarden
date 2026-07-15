@@ -2,6 +2,7 @@ import type { ProjectTaskRecord, ProjectTaskStatus, ProviderType, UnifiedProvide
 import { Check, ExternalLink, Eye, GripVertical, ListTodo, Loader2, Pencil, Play, Plus, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type DragEvent } from "react";
 import { cn } from "../../lib/cn";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
@@ -73,27 +74,30 @@ interface TaskBoardCardProps {
 const TaskBoardCard = ({
   task, busy, isTaskBusy, hasModels, isDragged,
   onView, onEdit, onDelete, onLaunch, onDragStart, onDragEnd,
-}: TaskBoardCardProps) => (
-  <article draggable={!isTaskBusy} onDragStart={onDragStart} onDragEnd={onDragEnd} className={cn("task-board-card group rounded-md border p-2.5 transition", isDragged && "opacity-45")}>
-    <div className="flex items-start gap-1.5">
-      <GripVertical className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-grab text-zinc-700 group-hover:text-zinc-500" />
-      <div className="min-w-0 flex-1 overflow-hidden">
-        <h5 className="max-h-10 overflow-hidden break-words text-xs font-semibold leading-5 text-zinc-100">{task.title}</h5>
-        <p className="mt-1 max-h-12 overflow-hidden break-words whitespace-pre-wrap text-[11px] leading-4 text-zinc-400">{task.prompt}</p>
+}: TaskBoardCardProps) => {
+  const buildwarden = useBuildWardenClient();
+  return (
+    <article draggable={!isTaskBusy} onDragStart={onDragStart} onDragEnd={onDragEnd} className={cn("task-board-card group rounded-md border p-2.5 transition", isDragged && "opacity-45")}>
+      <div className="flex items-start gap-1.5">
+        <GripVertical className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-grab text-zinc-700 group-hover:text-zinc-500" />
+        <div className="min-w-0 flex-1 overflow-hidden">
+          <h5 className="max-h-10 overflow-hidden break-words text-xs font-semibold leading-5 text-zinc-100">{task.title}</h5>
+          <p className="mt-1 max-h-12 overflow-hidden break-words whitespace-pre-wrap text-[11px] leading-4 text-zinc-400">{task.prompt}</p>
+        </div>
+        {isTaskBusy ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-zinc-500" /> : null}
       </div>
-      {isTaskBusy ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-zinc-500" /> : null}
-    </div>
-    <div className="mt-2 flex items-center justify-between gap-1 border-t border-zinc-800/80 pt-2">
-      <div className="flex items-center gap-0.5">
-        <Button type="button" size="sm" variant="ghost" className="task-card-action h-7 w-7 p-0" title="View task" aria-label={`View ${task.title}`} onClick={onView}><Eye className="h-3.5 w-3.5" /></Button>
-        {task.pullRequestUrl ? <Button type="button" size="sm" variant="ghost" className="task-card-action h-7 w-7 p-0" title="Open linked PR/MR" onClick={() => void window.buildwarden.openExternalUrl(task.pullRequestUrl!)}><ExternalLink className="h-3.5 w-3.5" /></Button> : null}
-        <Button type="button" size="sm" variant="ghost" className="task-card-action h-7 w-7 p-0" title="Edit task" onClick={onEdit}><Pencil className="h-3.5 w-3.5" /></Button>
-        <Button type="button" size="sm" variant="ghost" className="task-card-action task-card-action--danger h-7 w-7 p-0" title="Delete task" disabled={isTaskBusy} onClick={onDelete}><Trash2 className="h-3.5 w-3.5" /></Button>
+      <div className="mt-2 flex items-center justify-between gap-1 border-t border-zinc-800/80 pt-2">
+        <div className="flex items-center gap-0.5">
+          <Button type="button" size="sm" variant="ghost" className="task-card-action h-7 w-7 p-0" title="View task" aria-label={`View ${task.title}`} onClick={onView}><Eye className="h-3.5 w-3.5" /></Button>
+          {task.pullRequestUrl ? <Button type="button" size="sm" variant="ghost" className="task-card-action h-7 w-7 p-0" title="Open linked PR/MR" onClick={() => void buildwarden.openExternalUrl(task.pullRequestUrl!)}><ExternalLink className="h-3.5 w-3.5" /></Button> : null}
+          <Button type="button" size="sm" variant="ghost" className="task-card-action h-7 w-7 p-0" title="Edit task" onClick={onEdit}><Pencil className="h-3.5 w-3.5" /></Button>
+          <Button type="button" size="sm" variant="ghost" className="task-card-action task-card-action--danger h-7 w-7 p-0" title="Delete task" disabled={isTaskBusy} onClick={onDelete}><Trash2 className="h-3.5 w-3.5" /></Button>
+        </div>
+        <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-[11px]" disabled={busy || isTaskBusy || !hasModels} onClick={onLaunch}><Play className="h-3 w-3" />Start run</Button>
       </div>
-      <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-[11px]" disabled={busy || isTaskBusy || !hasModels} onClick={onLaunch}><Play className="h-3 w-3" />Start run</Button>
-    </div>
-  </article>
-);
+    </article>
+  );
+};
 
 interface TaskBoardProps {
   tasks: ProjectTaskRecord[];
@@ -195,6 +199,7 @@ interface TaskViewDialogProps {
 }
 
 const TaskViewDialog = ({ task, busy, hasModels, onClose, onEdit, onLaunch }: TaskViewDialogProps) => {
+  const buildwarden = useBuildWardenClient();
   if (!task) return null;
   const lane = LANES.find((candidate) => candidate.status === task.status);
   return (
@@ -216,7 +221,7 @@ const TaskViewDialog = ({ task, busy, hasModels, onClose, onEdit, onLaunch }: Ta
           <div className="break-words whitespace-pre-wrap text-sm leading-6 text-zinc-300">{task.prompt}</div>
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-zinc-800 px-5 py-3">
-          <div>{task.pullRequestUrl ? <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs text-zinc-400" onClick={() => void window.buildwarden.openExternalUrl(task.pullRequestUrl!)}><ExternalLink className="h-3.5 w-3.5" />Open linked PR/MR</Button> : null}</div>
+          <div>{task.pullRequestUrl ? <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs text-zinc-400" onClick={() => void buildwarden.openExternalUrl(task.pullRequestUrl!)}><ExternalLink className="h-3.5 w-3.5" />Open linked PR/MR</Button> : null}</div>
           <div className="flex items-center gap-2">
             <Button type="button" variant="secondary" size="sm" className="h-8 px-3 text-xs" onClick={() => onEdit(task)}><Pencil className="h-3.5 w-3.5" />Edit</Button>
             <Button type="button" size="sm" className="h-8 px-3 text-xs" disabled={busy || !hasModels} onClick={() => onLaunch(task)}><Play className="h-3.5 w-3.5" />Start run</Button>
@@ -238,6 +243,7 @@ export const ProjectTasksTab = ({
   onDeleteTask,
   onStartTask,
 }: ProjectTasksTabProps) => {
+  const buildwarden = useBuildWardenClient();
   const [createOpen, setCreateOpen] = useState(false);
   const [taskBusy, setTaskBusy] = useState(false);
   const [pendingTaskIds, setPendingTaskIds] = useState<Set<string>>(() => new Set());
@@ -431,7 +437,7 @@ export const ProjectTasksTab = ({
     if (!modelId) return;
     setLaunchGenerateBusy(true);
     try {
-      setLaunchPromptDraft(await window.buildwarden.generateProjectTaskRunPrompt({
+      setLaunchPromptDraft(await buildwarden.generateProjectTaskRunPrompt({
         projectId,
         title: launchTask.title,
         notes: launchPromptDraft.trim() || launchTask.prompt,

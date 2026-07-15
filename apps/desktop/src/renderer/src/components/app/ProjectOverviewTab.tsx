@@ -2,6 +2,7 @@ import { appendChatAttachmentFiles, type ChatAttachmentPayload, type ProjectKind
 import { Archive, Clock3, FolderOpen, Play, PlayCircle, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { parseSearchTerms, runMatchesSearch } from "../../lib/run-search";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -173,6 +174,7 @@ export const ProjectOverviewTab = ({
   onAnthropicEffortChange,
   onYoloModeChange,
 }: ProjectOverviewTabProps) => {
+  const buildwarden = useBuildWardenClient();
   const [runAttachmentFiles, setRunAttachmentFiles] = useState<File[]>([]);
   const [runSearchQuery, setRunSearchQuery] = useState("");
   const runSearchTerms = useMemo(() => parseSearchTerms(runSearchQuery), [runSearchQuery]);
@@ -186,7 +188,7 @@ export const ProjectOverviewTab = ({
   const canUseMultiModel = runWorkspaceType === "worktree" || runWorkspaceType === "copy";
 
   const openProjectInFileManager = async () => {
-    const result = await window.buildwarden.openPathInFileManager(repoPath);
+    const result = await buildwarden.openPathInFileManager(repoPath);
     if (!result.ok && result.error) {
       window.alert(`Could not open folder: ${result.error}`);
     }
@@ -194,7 +196,7 @@ export const ProjectOverviewTab = ({
 
   const openProjectInIde = async (ideKind: SupportedIdeKind) => {
     try {
-      await window.buildwarden.openFolderInIde(repoPath, ideKind);
+      await buildwarden.openFolderInIde(repoPath, ideKind);
     } catch (e) {
       window.alert(e instanceof Error ? e.message : "Could not open the project in the IDE.");
     }

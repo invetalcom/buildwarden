@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Copy, FileText, GitBranch, Loader2, RefreshCw } from "lucide-react";
 import type { RunWorkspaceFileReference, RunWorkspaceFileResult } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
 import { CodeMirrorFileViewer } from "./CodeMirrorFileViewer";
 import { GitDiffPreview } from "./git-diff-preview";
@@ -167,6 +168,7 @@ export interface RunFilePanelProps {
 }
 
 export const RunFilePanel = ({ runId, target, diffText, diffPending }: RunFilePanelProps) => {
+  const buildwarden = useBuildWardenClient();
   const [view, setView] = useState<FilePanelView>("file");
   const [reloadKey, setReloadKey] = useState(0);
   const [result, setResult] = useState<RunWorkspaceFileResult | null>(null);
@@ -201,7 +203,7 @@ export const RunFilePanel = ({ runId, target, diffText, diffPending }: RunFilePa
     let cancelled = false;
     setLoading(true);
     setError(null);
-    void window.buildwarden
+    void buildwarden
       .getRunWorkspaceFile({ runId, path: inputPath })
       .then((next) => {
         if (cancelled) {
@@ -224,7 +226,7 @@ export const RunFilePanel = ({ runId, target, diffText, diffPending }: RunFilePa
     return () => {
       cancelled = true;
     };
-  }, [inputPath, reloadKey, runId]);
+  }, [buildwarden, inputPath, reloadKey, runId]);
 
   const copyPath = useCallback(() => {
     setCopied(false);

@@ -23,6 +23,7 @@ import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { ContextWindowBadge } from "./ContextWindowBadge";
 import { AnchorDropdownPortal } from "../ui/dropdown-portal";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 
 const RUN_MODES: RunMode[] = ["code", "plan", "ask"];
 
@@ -581,6 +582,7 @@ export const RunComposer = ({
   yoloMode = false,
   onYoloModeChange,
 }: RunComposerProps) => {
+  const buildwarden = useBuildWardenClient();
   const isChat = variant === "chat";
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const modelSelectOptions = modelOptions;
@@ -661,7 +663,7 @@ export const RunComposer = ({
     setComposerCommandsLoading(true);
 
     const timerId = window.setTimeout(() => {
-      void window.buildwarden
+      void buildwarden
         .listComposerCommands({
           modelId: commandModelId,
           projectId,
@@ -687,7 +689,7 @@ export const RunComposer = ({
     }, 80);
 
     return () => window.clearTimeout(timerId);
-  }, [canLoadComposerCommands, commandModelId, effectiveCommandContext, projectId, slashCommandQuery]);
+  }, [buildwarden, canLoadComposerCommands, commandModelId, effectiveCommandContext, projectId, slashCommandQuery]);
 
   let visibleComposerCommands: ComposerCommandDescriptor[] = [];
   if (canLoadComposerCommands) {

@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../../lib/cn";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
 import { Card, CardContent } from "../ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
@@ -129,6 +130,7 @@ export const ProjectBranchesPage = ({
   busy,
   onBranchesChanged,
 }: ProjectBranchesPageProps) => {
+  const buildwarden = useBuildWardenClient();
   const [overview, setOverview] = useState<ProjectGitBranchOverview | null>(null);
   const [authStatus, setAuthStatus] = useState<ProjectForgeAuthStatus | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -149,8 +151,8 @@ export const ProjectBranchesPage = ({
     setError(null);
     try {
       const [nextOverview, nextAuthStatus] = await Promise.all([
-        window.buildwarden.getProjectBranchOverview(projectId),
-        window.buildwarden.getProjectForgeAuthStatus(projectId).catch(() => null),
+        buildwarden.getProjectBranchOverview(projectId),
+        buildwarden.getProjectForgeAuthStatus(projectId).catch(() => null),
       ]);
       setOverview(nextOverview);
       setAuthStatus(nextAuthStatus);
@@ -160,7 +162,7 @@ export const ProjectBranchesPage = ({
     } finally {
       setActionBusy((current) => (current === "refresh" ? null : current));
     }
-  }, [projectId]);
+  }, [buildwarden, projectId]);
 
   useEffect(() => {
     void loadOverview();
@@ -221,8 +223,8 @@ export const ProjectBranchesPage = ({
     runBranchAction(
       `checkout:${branch.name}`,
       async () => {
-        await window.buildwarden.checkoutProjectBranch(projectId, branch.name);
-        return window.buildwarden.getProjectBranchOverview(projectId);
+        await buildwarden.checkoutProjectBranch(projectId, branch.name);
+        return buildwarden.getProjectBranchOverview(projectId);
       },
       branch.hasLocal ? `Checked out ${branch.name}.` : `Created a tracking checkout for ${branch.name}.`,
     );
@@ -231,7 +233,7 @@ export const ProjectBranchesPage = ({
     runBranchAction(
       "create",
       () =>
-        window.buildwarden.createProjectBranch(projectId, {
+        buildwarden.createProjectBranch(projectId, {
           branchName: newBranchName,
           startPoint: newBranchSource || current || baseBranch,
           checkout: true,
@@ -246,7 +248,7 @@ export const ProjectBranchesPage = ({
   const renameSelectedBranch = (branch: string) =>
     runBranchAction(
       `rename:${branch}`,
-      () => window.buildwarden.renameProjectBranch(projectId, { oldName: branch, newName: renameBranchName }),
+      () => buildwarden.renameProjectBranch(projectId, { oldName: branch, newName: renameBranchName }),
       `Renamed ${branch} to ${renameBranchName.trim()}.`,
     ).then((ok) => {
       if (ok) {
@@ -264,7 +266,7 @@ export const ProjectBranchesPage = ({
     setForceDelete(false);
     setDeleteImpactBusy(branch);
     setError(null);
-    void window.buildwarden
+    void buildwarden
       .getProjectBranchDeleteImpact(projectId, { branchName: branch })
       .then((impact) => {
         if (deleteImpactRequestRef.current === requestId) {
@@ -296,7 +298,7 @@ export const ProjectBranchesPage = ({
   const deleteSelectedBranch = (branch: string) =>
     runBranchAction(
       `delete:${branch}`,
-      () => window.buildwarden.deleteProjectBranch(projectId, { branchName: branch, force: forceDelete }),
+      () => buildwarden.deleteProjectBranch(projectId, { branchName: branch, force: forceDelete }),
       describeBranchDeletion(branch),
     ).then((ok) => {
       if (ok) {
@@ -309,7 +311,7 @@ export const ProjectBranchesPage = ({
   const openBranch = async (branch: string) => {
     const url = branchWebUrl(overview, branch);
     if (!url) return;
-    const result = await window.buildwarden.openExternalUrl(url);
+    const result = await buildwarden.openExternalUrl(url);
     if (!result.ok) {
       setError(result.error ?? "Could not open remote branch.");
     }
@@ -343,7 +345,7 @@ export const ProjectBranchesPage = ({
             </div>
             <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
               {overview?.webBaseUrl ? (
-                <Button type="button" size="sm" variant="secondary" className="h-8 px-2.5 text-xs" onClick={() => void window.buildwarden.openExternalUrl(overview.webBaseUrl!)}>
+                <Button type="button" size="sm" variant="secondary" className="h-8 px-2.5 text-xs" onClick={() => void buildwarden.openExternalUrl(overview.webBaseUrl!)}>
                   <ExternalLink className="mr-1.5 size-3.5" />
                   Open remote
                 </Button>
@@ -357,7 +359,7 @@ export const ProjectBranchesPage = ({
                 size="sm"
                 className="h-8 px-2.5 text-xs"
                 disabled={busy || actionBusy !== null}
-                onClick={() => void runBranchAction("fetch", () => window.buildwarden.fetchProjectBranches(projectId), "Fetched remotes and pruned stale refs.")}
+                onClick={() => void runBranchAction("fetch", () => buildwarden.fetchProjectBranches(projectId), "Fetched remotes and pruned stale refs.")}
               >
                 {actionBusy === "fetch" ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <Cloud className="mr-1.5 size-3.5" />}
                 Fetch
@@ -368,7 +370,7 @@ export const ProjectBranchesPage = ({
                 variant="secondary"
                 className="h-8 px-2.5 text-xs"
                 disabled={busy || actionBusy !== null || !current || !currentBranchInfo?.upstream}
-                onClick={() => void runBranchAction("pull", () => window.buildwarden.pullProjectBranch(projectId), "Pulled current branch with fast-forward only.")}
+                onClick={() => void runBranchAction("pull", () => buildwarden.pullProjectBranch(projectId), "Pulled current branch with fast-forward only.")}
               >
                 {actionBusy === "pull" ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 size-3.5" />}
                 Pull
@@ -467,7 +469,7 @@ export const ProjectBranchesPage = ({
                           onClick={() =>
                             void runBranchAction(
                               `push:${branch.name}`,
-                              () => window.buildwarden.pushProjectBranch(projectId, { branchName: branch.name, setUpstream: true }),
+                              () => buildwarden.pushProjectBranch(projectId, { branchName: branch.name, setUpstream: true }),
                               `Pushed ${branch.name} to origin.`,
                             )
                           }

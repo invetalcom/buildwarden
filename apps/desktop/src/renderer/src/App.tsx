@@ -132,6 +132,7 @@ import { useProjectRunDefaults } from "./lib/use-project-run-defaults";
 import { useRendererErrorReporting } from "./lib/use-renderer-error-reporting";
 import { useStableCallback } from "./lib/use-stable-callback";
 import { reportRendererError, reportRendererLog } from "./lib/report-renderer-error";
+import { useBuildWardenClient } from "./lib/buildwarden-client";
 
 const isLocalProviderType = (type: ProviderType): boolean =>
   type === "codex-cli" || type === "claude-code" || type === "cursor-agent";
@@ -169,9 +170,11 @@ const addProjectForgeRequestToast = (
 ): ProjectForgeRequestToast[] => [toast, ...current.filter((existing) => existing.id !== toast.id)].slice(0, 4);
 
 export const App = () => {
-  const buildwarden = window.buildwarden;
+  const buildwarden = useBuildWardenClient();
   useRendererErrorReporting();
-  const showCustomWindowsTitleBar = typeof navigator !== "undefined" && navigator.userAgent.includes("Windows");
+  const showCustomWindowsTitleBar = buildwarden.capabilities.nativeTitleBar
+    && typeof navigator !== "undefined"
+    && navigator.userAgent.includes("Windows");
   const [snapshot, setSnapshot] = useState<AppSnapshot>(EMPTY_SNAPSHOT);
   const [snapshotLoaded, setSnapshotLoaded] = useState(false);
   const [runDetail, setRunDetail] = useState<RunDetail | null>(null);

@@ -1,4 +1,5 @@
 import type { RendererLogPayload } from "@buildwarden/shared";
+import { getActiveBuildWardenClient } from "./buildwarden-client-core";
 
 const toMessage = (error: unknown, fallback: string) => {
   if (error instanceof Error && error.message) {
@@ -15,7 +16,7 @@ const toStack = (error: unknown) => {
 };
 
 export const reportRendererLog = (payload: RendererLogPayload) => {
-  void window.buildwarden?.reportRendererLog(payload).catch(() => {
+  void getActiveBuildWardenClient()?.reportRendererLog(payload).catch(() => {
     // Avoid recursive renderer logging failures.
   });
 };
