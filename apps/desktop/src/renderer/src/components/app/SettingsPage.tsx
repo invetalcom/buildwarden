@@ -6,6 +6,9 @@ import type {
   NetworkProxySettingsInput,
   NetworkProxySettingsSnapshot,
   ProviderType,
+  RemoteAccessPairingGrant,
+  RemoteAccessPairingInput,
+  RemoteAccessSession,
   SupportedIdeKind,
   UiTheme,
   UnifiedProviderFamily,
@@ -74,6 +77,7 @@ interface SettingsPageProps {
   appLogDirPath: string;
   appLogDirectorySize: AppLogDirectorySizeInfo;
   networkProxySettings: NetworkProxySettingsSnapshot;
+  remoteAccessEnabled: boolean;
   providerAccounts: AppSnapshot["providerAccounts"];
   models: AppSnapshot["models"];
   availableModelsByProviderId: Record<string, AvailableProviderModelsState>;
@@ -121,6 +125,10 @@ interface SettingsPageProps {
   onOpenAppLogDirectory: () => void | Promise<void>;
   onResetDatabase: () => void | Promise<void>;
   onSaveNetworkProxySettings: (input: NetworkProxySettingsInput) => Promise<NetworkProxySettingsSnapshot>;
+  onRemoteAccessEnabledChange: (enabled: boolean) => Promise<void>;
+  onCreateRemoteAccessPairing: (input?: RemoteAccessPairingInput) => Promise<RemoteAccessPairingGrant>;
+  onListRemoteAccessSessions: () => Promise<RemoteAccessSession[]>;
+  onRevokeRemoteAccessSession: (sessionId: string) => Promise<void>;
   idePathsSettingValue: string;
   onSaveIdePaths: (serialized: string) => void | Promise<void>;
   onPickIdeExecutable: () => Promise<string | null>;
@@ -177,6 +185,7 @@ export const SettingsPage = ({
   appLogDirPath,
   appLogDirectorySize,
   networkProxySettings,
+  remoteAccessEnabled,
   providerAccounts,
   models,
   availableModelsByProviderId,
@@ -224,6 +233,10 @@ export const SettingsPage = ({
   onOpenAppLogDirectory,
   onResetDatabase,
   onSaveNetworkProxySettings,
+  onRemoteAccessEnabledChange,
+  onCreateRemoteAccessPairing,
+  onListRemoteAccessSessions,
+  onRevokeRemoteAccessSession,
   idePathsSettingValue,
   onSaveIdePaths,
   onPickIdeExecutable,
@@ -590,6 +603,11 @@ export const SettingsPage = ({
               clearSavedPassword: false,
             })
           }
+          remoteAccessEnabled={remoteAccessEnabled}
+          onRemoteAccessEnabledChange={onRemoteAccessEnabledChange}
+          onCreateRemoteAccessPairing={onCreateRemoteAccessPairing}
+          onListRemoteAccessSessions={onListRemoteAccessSessions}
+          onRevokeRemoteAccessSession={onRevokeRemoteAccessSession}
         />
       ) : null}
 

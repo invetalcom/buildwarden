@@ -2641,6 +2641,9 @@ export interface RendererLogPayload {
 
 export interface DesktopApi {
   getSnapshot(): Promise<AppSnapshot>;
+  createRemoteAccessPairing(input?: RemoteAccessPairingInput): Promise<RemoteAccessPairingGrant>;
+  listRemoteAccessSessions(): Promise<RemoteAccessSession[]>;
+  revokeRemoteAccessSession(sessionId: string): Promise<void>;
   getNetworkProxySettings(): Promise<NetworkProxySettingsSnapshot>;
   selectProject(projectId: string): Promise<void>;
   reorderProjects(projectIds: string[]): Promise<void>;
@@ -2852,6 +2855,9 @@ export const REMOTE_ACCESS_LEGACY_HEALTH_PATH = "/api/v1/health" as const;
 export const REMOTE_ACCESS_INFO_PATH = "/api/v1/info" as const;
 export const REMOTE_ACCESS_RPC_PATH = "/api/v1/rpc" as const;
 export const REMOTE_ACCESS_WEBSOCKET_PATH = "/api/v1/events" as const;
+export const REMOTE_ACCESS_PAIRING_PATH = "/api/v1/auth/pair" as const;
+export const REMOTE_ACCESS_SESSION_PATH = "/api/v1/auth/session" as const;
+export const REMOTE_ACCESS_SESSION_COOKIE = "buildwarden_session" as const;
 
 export const REMOTE_ACCESS_SERVER_CAPABILITIES = [
   "rpc",
@@ -2877,6 +2883,88 @@ export type RemoteStreamEvent = {
   [Event in RemoteStreamEventType]: { event: Event; payload: RemoteStreamEventPayloadMap[Event] };
 }[RemoteStreamEventType];
 
+export const REMOTE_ACCESS_SCOPES = [
+  "state:read",
+  "run:operate",
+  "chat:operate",
+  "approval:respond",
+  "git:write",
+  "terminal:operate",
+  "admin",
+] as const;
+
+export type RemoteAccessScope = (typeof REMOTE_ACCESS_SCOPES)[number];
+
+export interface RemoteAccessPairingInput {
+  label?: string;
+  scopes?: RemoteAccessScope[];
+}
+
+export interface RemoteAccessPairingGrant {
+  id: string;
+  code: string;
+  scopes: RemoteAccessScope[];
+  expiresAt: string;
+  createdAt: string;
+}
+
+export interface RemoteAccessPairingGrantRecord extends Omit<RemoteAccessPairingGrant, "code"> {
+  tokenHash: string;
+  usedAt: string | null;
+}
+
+export interface RemoteAccessSession {
+  id: string;
+  label: string;
+  scopes: RemoteAccessScope[];
+  createdAt: string;
+  expiresAt: string;
+  lastUsedAt: string;
+  revokedAt: string | null;
+}
+
+export interface RemoteAccessSessionRecord extends RemoteAccessSession {
+  tokenHash: string;
+}
+
+export interface RemoteCommandIdempotencyRecord {
+  sessionId: string;
+  idempotencyKey: string;
+  method: string;
+  requestHash: string;
+  responseJson: string | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export type RemoteAccessAuditEvent =
+  | "pairing-created"
+  | "pairing-failed"
+  | "pairing-consumed"
+  | "session-authenticated"
+  | "session-authentication-failed"
+  | "session-revoked";
+
+export interface RemoteAccessAuditRecord {
+  id: string;
+  event: RemoteAccessAuditEvent;
+  outcome: "success" | "failure";
+  sessionId: string | null;
+  pairingGrantId: string | null;
+  remoteAddress: string | null;
+  details: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface RemoteAccessPairingExchangeRequest {
+  code: string;
+  label?: string;
+}
+
+export interface RemoteAccessPairingExchangeResponse {
+  session: RemoteAccessSession;
+}
+
 /** Explicit transport contract. Desktop methods are not remotely callable unless listed here. */
 export type RemoteOperationMap = {
   getSnapshot: DesktopApi["getSnapshot"];
@@ -2896,12 +2984,17 @@ export interface RemoteRpcRequest {
   requestId: string;
   method: RemoteApiMethod;
   args: unknown[];
+  idempotencyKey?: string;
 }
 
 export type RemoteRpcErrorCode =
   | "invalid-request"
   | "protocol-mismatch"
   | "method-not-found"
+  | "forbidden"
+  | "idempotency-required"
+  | "idempotency-conflict"
+  | "command-in-progress"
   | "operation-failed";
 
 export type RemoteRpcResponse =
@@ -3075,6 +3168,9 @@ export const IPC_CHANNELS = {
   pullProjectBranch: "buildwarden:pull-project-branch",
   pushProjectBranch: "buildwarden:push-project-branch",
   getSnapshot: "buildwarden:get-snapshot",
+  createRemoteAccessPairing: "buildwarden:create-remote-access-pairing",
+  listRemoteAccessSessions: "buildwarden:list-remote-access-sessions",
+  revokeRemoteAccessSession: "buildwarden:revoke-remote-access-session",
   getNetworkProxySettings: "buildwarden:get-network-proxy-settings",
   selectProject: "buildwarden:select-project",
   reorderProjects: "buildwarden:reorder-projects",

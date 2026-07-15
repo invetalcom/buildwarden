@@ -9,6 +9,7 @@ import {
   DEFAULT_ADD_MODEL_DRAFT,
   DEFAULT_SHELL_ALLOWLIST_PATTERN_SOURCES,
   parseRecentRunDaysSetting,
+  parseRemoteAccessEnabledSetting,
   parseRunTimelineDensitySetting,
   parseUiTheme,
   SUPPORTED_IDE_KINDS,
@@ -3226,6 +3227,7 @@ export const App = () => {
               appLogDirPath={appLogDirPath}
               appLogDirectorySize={appLogDirectorySize}
               networkProxySettings={networkProxySettings}
+              remoteAccessEnabled={parseRemoteAccessEnabledSetting(snapshot.settings[APP_SETTING_KEYS.remoteAccessEnabled])}
               providerAccounts={snapshot.providerAccounts}
               models={snapshot.models}
               availableModelsByProviderId={availableModelsByProviderId}
@@ -3307,6 +3309,31 @@ export const App = () => {
                 setNetworkProxySettings(saved);
                 await loadSnapshot();
                 return saved;
+              }}
+              onRemoteAccessEnabledChange={async (enabled) => {
+                if (!buildwarden) {
+                  throw new Error("The Electron desktop bridge is unavailable.");
+                }
+                await buildwarden.setAppSetting(APP_SETTING_KEYS.remoteAccessEnabled, String(enabled));
+                await loadSnapshot();
+              }}
+              onCreateRemoteAccessPairing={(input) => {
+                if (!buildwarden) {
+                  throw new Error("The Electron desktop bridge is unavailable.");
+                }
+                return buildwarden.createRemoteAccessPairing(input);
+              }}
+              onListRemoteAccessSessions={() => {
+                if (!buildwarden) {
+                  throw new Error("The Electron desktop bridge is unavailable.");
+                }
+                return buildwarden.listRemoteAccessSessions();
+              }}
+              onRevokeRemoteAccessSession={async (sessionId) => {
+                if (!buildwarden) {
+                  throw new Error("The Electron desktop bridge is unavailable.");
+                }
+                await buildwarden.revokeRemoteAccessSession(sessionId);
               }}
               onOpenAppLogDirectory={() =>
                 void handleAction(async () => {

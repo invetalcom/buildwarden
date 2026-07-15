@@ -1,3 +1,4 @@
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
@@ -9,13 +10,25 @@ import {
   REMOTE_ACCESS_LEGACY_HEALTH_PATH,
   REMOTE_ACCESS_LOOPBACK_HOST,
   REMOTE_ACCESS_MIN_PROTOCOL_VERSION,
+  REMOTE_ACCESS_PAIRING_PATH,
   REMOTE_ACCESS_PROTOCOL_VERSION,
   REMOTE_ACCESS_RPC_PATH,
   REMOTE_ACCESS_SERVER_CAPABILITIES,
+  REMOTE_ACCESS_SESSION_COOKIE,
+  REMOTE_ACCESS_SESSION_PATH,
+  REMOTE_ACCESS_SCOPES,
   REMOTE_ACCESS_WEBSOCKET_PATH,
+  type RemoteAccessAuditRecord,
   type RemoteAccessHealth,
   type RemoteAccessInfo,
+  type RemoteAccessPairingGrant,
+  type RemoteAccessPairingGrantRecord,
+  type RemoteAccessPairingInput,
+  type RemoteAccessScope,
+  type RemoteAccessSession,
+  type RemoteAccessSessionRecord,
   type RemoteAccessServerCapability,
+  type RemoteCommandIdempotencyRecord,
   type RemoteApiMethod,
   type RemoteApiMethodArgs,
   type RemoteApiMethodResult,
@@ -30,9 +43,17 @@ import {
 
 const MAX_REQUEST_BODY_BYTES = 1_048_576;
 const MAX_WEBSOCKET_MESSAGE_BYTES = 65_536;
+const DEFAULT_PAIRING_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+const DEFAULT_REMOTE_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+const DEFAULT_REMOTE_RECORD_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+const PAIRING_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+const PAIRING_RATE_LIMIT_WINDOW_MS = 60_000;
+const PAIRING_RATE_LIMIT_ATTEMPTS = 5;
 const REMOTE_STREAM_EVENTS = ["run", "chat", "warning", "loop", "task"] as const satisfies readonly RemoteStreamEventType[];
 const REMOTE_STREAM_EVENT_SET = new Set<string>(REMOTE_STREAM_EVENTS);
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
 
 type RemoteOperationHandler<Method extends RemoteApiMethod> = (
   ...args: RemoteApiMethodArgs<Method>
@@ -48,9 +69,225 @@ type UntypedRemoteOperationArgsValidator = (args: unknown[]) => boolean;
 interface RegisteredRemoteOperation {
   handler: UntypedRemoteOperationHandler;
   validateArgs: UntypedRemoteOperationArgsValidator;
+  requiredScope: RemoteAccessScope;
+  mutating: boolean;
 }
 
 export const validateNoRemoteArgs = (args: unknown[]): args is [] => args.length === 0;
+
+export interface RemoteAuthStore {
+  createRemoteAccessPairingGrant(record: RemoteAccessPairingGrantRecord): void;
+  consumeRemoteAccessPairingGrant(tokenHash: string, consumedAt: string): RemoteAccessPairingGrantRecord | null;
+  createRemoteAccessSession(record: RemoteAccessSessionRecord): void;
+  getRemoteAccessSessionByTokenHash(tokenHash: string): RemoteAccessSessionRecord | null;
+  listRemoteAccessSessions(): RemoteAccessSession[];
+  touchRemoteAccessSession(sessionId: string, lastUsedAt: string): void;
+  revokeRemoteAccessSession(sessionId: string, revokedAt: string): boolean;
+  addRemoteAccessAuditRecord(record: RemoteAccessAuditRecord): void;
+  pruneRemoteAccessRecords(cutoffs: {
+    expiredPairingGrantBefore: string;
+    securityAuditBefore: string;
+    completedCommandBefore: string;
+  }): number;
+}
+
+export interface RemoteAuthServiceOptions {
+  store: RemoteAuthStore;
+  credentialKey: Uint8Array;
+  now?: () => Date;
+  pairingTtlMs?: number;
+  sessionTtlMs?: number;
+  cleanupIntervalMs?: number;
+  recordRetentionMs?: number;
+}
+
+export interface RemoteAccessAuthenticatedSession {
+  session: RemoteAccessSession;
+  token: string;
+}
+
+const publicSession = ({ tokenHash: _tokenHash, ...session }: RemoteAccessSessionRecord): RemoteAccessSession => session;
+
+const normalizePairingCode = (code: string): string => code.toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+const createPairingCode = (): string => {
+  const bytes = randomBytes(12);
+  let raw = "";
+  for (const byte of bytes) {
+    raw += PAIRING_ALPHABET[byte % PAIRING_ALPHABET.length];
+  }
+  return `BW-${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}`;
+};
+
+const sanitizeLabel = (label: string | undefined): string => {
+  const trimmed = label?.trim().replace(/[\u0000-\u001f\u007f]/g, "") ?? "";
+  return trimmed.slice(0, 80) || "Remote browser";
+};
+
+const sanitizeScopes = (scopes: RemoteAccessScope[] | undefined): RemoteAccessScope[] => {
+  const requested = scopes?.length ? scopes : ["state:read" as const];
+  const supported = new Set<RemoteAccessScope>(REMOTE_ACCESS_SCOPES);
+  const sanitized = Array.from(new Set(requested.filter((scope) => supported.has(scope))));
+  return sanitized.length ? sanitized : ["state:read"];
+};
+
+export class RemoteAuthService {
+  private readonly now: () => Date;
+  private readonly pairingTtlMs: number;
+  private readonly sessionTtlMs: number;
+  private readonly cleanupIntervalMs: number;
+  private readonly recordRetentionMs: number;
+  private lastCleanupAt = Number.NEGATIVE_INFINITY;
+
+  constructor(private readonly options: RemoteAuthServiceOptions) {
+    if (options.credentialKey.byteLength < 32) {
+      throw new Error("Remote authentication credential key must contain at least 32 bytes.");
+    }
+    this.now = options.now ?? (() => new Date());
+    this.pairingTtlMs = options.pairingTtlMs ?? DEFAULT_PAIRING_TTL_MS;
+    this.sessionTtlMs = options.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
+    this.cleanupIntervalMs = options.cleanupIntervalMs ?? DEFAULT_REMOTE_CLEANUP_INTERVAL_MS;
+    this.recordRetentionMs = options.recordRetentionMs ?? DEFAULT_REMOTE_RECORD_RETENTION_MS;
+    this.maybePrune(this.now());
+  }
+
+  createPairingGrant(input: RemoteAccessPairingInput = {}): RemoteAccessPairingGrant {
+    const createdAt = this.now();
+    this.maybePrune(createdAt);
+    const code = createPairingCode();
+    const grant: RemoteAccessPairingGrant = {
+      id: randomUUID(),
+      code,
+      scopes: sanitizeScopes(input.scopes),
+      createdAt: createdAt.toISOString(),
+      expiresAt: new Date(createdAt.getTime() + this.pairingTtlMs).toISOString(),
+    };
+    this.options.store.createRemoteAccessPairingGrant({
+      id: grant.id,
+      scopes: grant.scopes,
+      expiresAt: grant.expiresAt,
+      createdAt: grant.createdAt,
+      tokenHash: this.hashCredential("pairing", normalizePairingCode(code)),
+      usedAt: null,
+    });
+    this.audit("pairing-created", "success", { pairingGrantId: grant.id, details: { scopes: grant.scopes } });
+    return grant;
+  }
+
+  exchangePairingCode(code: string, label: string | undefined, remoteAddress: string | null): RemoteAccessAuthenticatedSession | null {
+    const normalizedCode = normalizePairingCode(code);
+    const consumedAt = this.now();
+    this.maybePrune(consumedAt);
+    const grant = normalizedCode
+      ? this.options.store.consumeRemoteAccessPairingGrant(
+          this.hashCredential("pairing", normalizedCode),
+          consumedAt.toISOString(),
+        )
+      : null;
+    if (!grant) {
+      this.audit("pairing-failed", "failure", { remoteAddress });
+      return null;
+    }
+
+    const token = randomBytes(32).toString("base64url");
+    const sessionRecord: RemoteAccessSessionRecord = {
+      id: randomUUID(),
+      tokenHash: this.hashCredential("session", token),
+      label: sanitizeLabel(label),
+      scopes: grant.scopes,
+      createdAt: consumedAt.toISOString(),
+      expiresAt: new Date(consumedAt.getTime() + this.sessionTtlMs).toISOString(),
+      lastUsedAt: consumedAt.toISOString(),
+      revokedAt: null,
+    };
+    this.options.store.createRemoteAccessSession(sessionRecord);
+    this.audit("pairing-consumed", "success", {
+      sessionId: sessionRecord.id,
+      pairingGrantId: grant.id,
+      remoteAddress,
+    });
+    return { session: publicSession(sessionRecord), token };
+  }
+
+  authenticate(
+    token: string | null,
+    remoteAddress: string | null,
+    options: { audit?: boolean; touch?: boolean } = {},
+  ): RemoteAccessSession | null {
+    if (!token) {
+      return null;
+    }
+    const session = this.options.store.getRemoteAccessSessionByTokenHash(this.hashCredential("session", token));
+    const authenticatedAt = this.now();
+    this.maybePrune(authenticatedAt);
+    if (!session || session.revokedAt || session.expiresAt <= authenticatedAt.toISOString()) {
+      if (options.audit !== false) {
+        this.audit("session-authentication-failed", "failure", { remoteAddress });
+      }
+      return null;
+    }
+    if (options.touch !== false) {
+      this.options.store.touchRemoteAccessSession(session.id, authenticatedAt.toISOString());
+    }
+    if (options.audit !== false) {
+      this.audit("session-authenticated", "success", { sessionId: session.id, remoteAddress });
+    }
+    return { ...publicSession(session), lastUsedAt: authenticatedAt.toISOString() };
+  }
+
+  listSessions(): RemoteAccessSession[] {
+    this.maybePrune(this.now());
+    return this.options.store.listRemoteAccessSessions();
+  }
+
+  revokeSession(sessionId: string, remoteAddress: string | null = null): boolean {
+    const revokedAt = this.now();
+    this.maybePrune(revokedAt);
+    const revoked = this.options.store.revokeRemoteAccessSession(sessionId, revokedAt.toISOString());
+    if (revoked) {
+      this.audit("session-revoked", "success", { sessionId, remoteAddress });
+    }
+    return revoked;
+  }
+
+  private maybePrune(now: Date): void {
+    const nowMs = now.getTime();
+    if (nowMs - this.lastCleanupAt < this.cleanupIntervalMs) {
+      return;
+    }
+    this.lastCleanupAt = nowMs;
+    const retainedAfter = new Date(nowMs - this.recordRetentionMs).toISOString();
+    this.options.store.pruneRemoteAccessRecords({
+      expiredPairingGrantBefore: now.toISOString(),
+      securityAuditBefore: retainedAfter,
+      completedCommandBefore: retainedAfter,
+    });
+  }
+
+  private hashCredential(kind: "pairing" | "session", credential: string): string {
+    return createHmac("sha256", this.options.credentialKey)
+      .update(`buildwarden:${kind}:v1:`)
+      .update(credential)
+      .digest("hex");
+  }
+
+  private audit(
+    event: RemoteAccessAuditRecord["event"],
+    outcome: RemoteAccessAuditRecord["outcome"],
+    context: Partial<Pick<RemoteAccessAuditRecord, "sessionId" | "pairingGrantId" | "remoteAddress" | "details">>,
+  ): void {
+    this.options.store.addRemoteAccessAuditRecord({
+      id: randomUUID(),
+      event,
+      outcome,
+      sessionId: context.sessionId ?? null,
+      pairingGrantId: context.pairingGrantId ?? null,
+      remoteAddress: context.remoteAddress ?? null,
+      details: context.details ?? null,
+      createdAt: this.now().toISOString(),
+    });
+  }
+}
 
 export interface RemoteOperationErrorContext {
   method: string;
@@ -58,19 +295,50 @@ export interface RemoteOperationErrorContext {
   error: unknown;
 }
 
+export interface RemoteIdempotencyStore {
+  createRemoteCommandIdempotency(record: RemoteCommandIdempotencyRecord): boolean;
+  getRemoteCommandIdempotency(sessionId: string, idempotencyKey: string): RemoteCommandIdempotencyRecord | null;
+  completeRemoteCommandIdempotency(
+    sessionId: string,
+    idempotencyKey: string,
+    responseJson: string,
+    completedAt: string,
+  ): boolean;
+}
+
+const canonicalJson = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
+  }
+  if (isPlainObject(value)) {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+};
+
+const remoteCommandRequestHash = (method: string, args: unknown[]): string =>
+  createHash("sha256").update(canonicalJson({ method, args })).digest("hex");
+
 export class RemoteOperationRegistry {
   private readonly handlers = new Map<RemoteApiMethod, RegisteredRemoteOperation>();
 
-  constructor(private readonly onOperationError?: (context: RemoteOperationErrorContext) => void) {}
+  constructor(
+    private readonly onOperationError?: (context: RemoteOperationErrorContext) => void,
+    private readonly idempotencyStore?: RemoteIdempotencyStore,
+  ) {}
 
   register<Method extends RemoteApiMethod>(
     method: Method,
     handler: RemoteOperationHandler<Method>,
     validateArgs: RemoteOperationArgsValidator<Method>,
+    requiredScope: RemoteAccessScope = "state:read",
+    mutating = false,
   ): void {
     this.handlers.set(method, {
       handler: handler as unknown as UntypedRemoteOperationHandler,
       validateArgs: validateArgs as UntypedRemoteOperationArgsValidator,
+      requiredScope,
+      mutating,
     });
   }
 
@@ -89,7 +357,11 @@ export class RemoteOperationRegistry {
     return operation.handler(...args as unknown[]) as Promise<RemoteApiMethodResult<Method>>;
   }
 
-  async dispatch(payload: unknown): Promise<RemoteRpcResponse> {
+  async dispatch(
+    payload: unknown,
+    scopes: readonly RemoteAccessScope[] = [],
+    sessionId?: string,
+  ): Promise<RemoteRpcResponse> {
     const parsed = parseRemoteRpcRequest(payload);
     if (!parsed.ok) {
       return errorResponse(parsed.requestId, parsed.code, parsed.message);
@@ -100,13 +372,57 @@ export class RemoteOperationRegistry {
     if (!operation) {
       return errorResponse(request.requestId, "method-not-found", "The requested operation is not available.");
     }
+    if (!scopes.includes(operation.requiredScope)) {
+      return errorResponse(request.requestId, "forbidden", "The session does not have permission for this operation.");
+    }
     if (!operation.validateArgs(request.args)) {
       return errorResponse(request.requestId, "invalid-request", "The operation arguments are invalid.");
     }
 
+    let persistedCommand: { sessionId: string; idempotencyKey: string } | null = null;
+    if (operation.mutating) {
+      if (!request.idempotencyKey || !sessionId || !this.idempotencyStore) {
+        return errorResponse(
+          request.requestId,
+          "idempotency-required",
+          "A persisted idempotency key is required for this command.",
+        );
+      }
+      const requestHash = remoteCommandRequestHash(request.method, request.args);
+      const created = this.idempotencyStore.createRemoteCommandIdempotency({
+        sessionId,
+        idempotencyKey: request.idempotencyKey,
+        method: request.method,
+        requestHash,
+        responseJson: null,
+        createdAt: new Date().toISOString(),
+        completedAt: null,
+      });
+      if (!created) {
+        const existing = this.idempotencyStore.getRemoteCommandIdempotency(sessionId, request.idempotencyKey);
+        if (!existing || existing.method !== request.method || existing.requestHash !== requestHash) {
+          return errorResponse(request.requestId, "idempotency-conflict", "The idempotency key belongs to another command.");
+        }
+        if (!existing.responseJson) {
+          return errorResponse(request.requestId, "command-in-progress", "The command is already in progress.");
+        }
+        try {
+          const replay = JSON.parse(existing.responseJson) as unknown;
+          if (!isRemoteRpcResponse(replay)) {
+            throw new Error("Invalid persisted response.");
+          }
+          return { ...replay, requestId: request.requestId };
+        } catch {
+          return errorResponse(request.requestId, "idempotency-conflict", "The persisted command response is invalid.");
+        }
+      }
+      persistedCommand = { sessionId, idempotencyKey: request.idempotencyKey };
+    }
+
+    let response: RemoteRpcResponse;
     try {
       const result = await operation.handler(...request.args);
-      return {
+      response = {
         protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
         requestId: request.requestId,
         ok: true,
@@ -114,8 +430,26 @@ export class RemoteOperationRegistry {
       };
     } catch (error) {
       this.onOperationError?.({ method: request.method, requestId: request.requestId, error });
-      return errorResponse(request.requestId, "operation-failed", "The operation failed.");
+      response = errorResponse(request.requestId, "operation-failed", "The operation failed.");
     }
+    if (persistedCommand && this.idempotencyStore) {
+      const completed = this.idempotencyStore.completeRemoteCommandIdempotency(
+        persistedCommand.sessionId,
+        persistedCommand.idempotencyKey,
+        JSON.stringify(response),
+        new Date().toISOString(),
+      );
+      if (!completed) {
+        const error = new Error("The completed remote command response could not be persisted.");
+        this.onOperationError?.({ method: request.method, requestId: request.requestId, error });
+        return errorResponse(
+          request.requestId,
+          "operation-failed",
+          "The command completed, but its replay result could not be persisted.",
+        );
+      }
+    }
+    return response;
   }
 }
 
@@ -132,6 +466,29 @@ const errorResponse = (requestId: string, code: RemoteRpcErrorCode, message: str
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const REMOTE_RPC_ERROR_CODES = new Set<RemoteRpcErrorCode>([
+  "invalid-request",
+  "protocol-mismatch",
+  "method-not-found",
+  "forbidden",
+  "idempotency-required",
+  "idempotency-conflict",
+  "command-in-progress",
+  "operation-failed",
+]);
+
+const isRemoteRpcResponse = (value: unknown): value is RemoteRpcResponse => {
+  if (!isPlainObject(value) || value.protocolVersion !== REMOTE_ACCESS_PROTOCOL_VERSION ||
+      typeof value.requestId !== "string" || typeof value.ok !== "boolean") {
+    return false;
+  }
+  if (value.ok) {
+    return "result" in value;
+  }
+  return isPlainObject(value.error) && typeof value.error.code === "string" &&
+    REMOTE_RPC_ERROR_CODES.has(value.error.code as RemoteRpcErrorCode) && typeof value.error.message === "string";
+};
 
 const isRequestId = (value: unknown): value is string =>
   typeof value === "string" && REQUEST_ID_PATTERN.test(value);
@@ -154,6 +511,12 @@ const parseRemoteRpcRequest = (payload: unknown): ParsedRemoteRpcRequest => {
   if (!Array.isArray(payload.args)) {
     return { ok: false, requestId, code: "invalid-request", message: "args must be an array." };
   }
+  if (
+    payload.idempotencyKey !== undefined &&
+    (typeof payload.idempotencyKey !== "string" || !IDEMPOTENCY_KEY_PATTERN.test(payload.idempotencyKey))
+  ) {
+    return { ok: false, requestId, code: "invalid-request", message: "The idempotencyKey is invalid." };
+  }
 
   return {
     ok: true,
@@ -162,27 +525,93 @@ const parseRemoteRpcRequest = (payload: unknown): ParsedRemoteRpcRequest => {
       requestId,
       method: payload.method as RemoteApiMethod,
       args: payload.args,
+      ...(typeof payload.idempotencyKey === "string" ? { idempotencyKey: payload.idempotencyKey } : {}),
     },
   };
 };
 
-const writeJson = (response: ServerResponse, statusCode: number, body: unknown): void => {
+const writeJson = (
+  response: ServerResponse,
+  statusCode: number,
+  body: unknown,
+  extraHeaders: Record<string, string> = {},
+): void => {
   response.writeHead(statusCode, {
     "Cache-Control": "no-store",
     "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
     "Content-Type": "application/json; charset=utf-8",
     "X-Content-Type-Options": "nosniff",
+    ...extraHeaders,
   });
   response.end(JSON.stringify(body));
 };
 
-const isAllowedLoopbackHostHeader = (hostHeader: string | undefined): boolean => {
+const isAllowedSameOrigin = (originHeader: string | undefined, hostHeader: string | undefined): boolean => {
+  if (!originHeader) {
+    return true;
+  }
   if (!hostHeader) {
     return false;
   }
   try {
-    const hostname = new URL(`http://${hostHeader}`).hostname.toLowerCase();
-    return hostname === REMOTE_ACCESS_LOOPBACK_HOST || hostname === "localhost" || hostname === "[::1]";
+    const origin = new URL(originHeader);
+    return (origin.protocol === "http:" || origin.protocol === "https:") && origin.host.toLowerCase() === hostHeader.toLowerCase();
+  } catch {
+    return false;
+  }
+};
+
+const getCookie = (request: IncomingMessage, name: string): string | null => {
+  const cookieHeader = request.headers.cookie;
+  if (!cookieHeader) {
+    return null;
+  }
+  for (const pair of cookieHeader.split(";")) {
+    const separatorIndex = pair.indexOf("=");
+    if (separatorIndex < 0 || pair.slice(0, separatorIndex).trim() !== name) {
+      continue;
+    }
+    try {
+      return decodeURIComponent(pair.slice(separatorIndex + 1).trim());
+    } catch {
+      return null;
+    }
+  }
+  return null;
+};
+
+const getSessionToken = (request: IncomingMessage): string | null => {
+  const authorization = request.headers.authorization;
+  if (authorization?.startsWith("Bearer ")) {
+    return authorization.slice("Bearer ".length).trim() || null;
+  }
+  return getCookie(request, REMOTE_ACCESS_SESSION_COOKIE);
+};
+
+const sessionCookie = (token: string, expiresAt: string, secure: boolean): string => {
+  const maxAgeSeconds = Math.max(0, Math.floor((Date.parse(expiresAt) - Date.now()) / 1000));
+  return [
+    `${REMOTE_ACCESS_SESSION_COOKIE}=${encodeURIComponent(token)}`,
+    "HttpOnly",
+    "SameSite=Strict",
+    "Path=/",
+    `Max-Age=${String(maxAgeSeconds)}`,
+    ...(secure ? ["Secure"] : []),
+  ].join("; ");
+};
+
+const expiredSessionCookie = (): string =>
+  `${REMOTE_ACCESS_SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`;
+
+const isAllowedLoopbackHostHeader = (hostHeader: string | undefined, expectedPort: number | undefined): boolean => {
+  if (!hostHeader) {
+    return false;
+  }
+  try {
+    const url = new URL(`http://${hostHeader}`);
+    const hostname = url.hostname.toLowerCase();
+    const loopback = hostname === REMOTE_ACCESS_LOOPBACK_HOST || hostname === "localhost" || hostname === "[::1]";
+    return loopback && (expectedPort === undefined || url.port === String(expectedPort));
   } catch {
     return false;
   }
@@ -241,6 +670,7 @@ export interface RemoteHostEventSource {
 export interface RemoteAccessServerOptions {
   appVersion: string;
   operations: RemoteOperationRegistry;
+  auth: RemoteAuthService;
   events?: RemoteHostEventSource;
   port?: number;
   capabilities?: RemoteAccessServerCapability[];
@@ -335,6 +765,7 @@ export class RemoteAccessServer {
   private lifecycleTail: Promise<void> = Promise.resolve();
   private startPromise: Promise<RemoteAccessServerInfo> | null = null;
   private stopPromise: Promise<void> | null = null;
+  private readonly pairingAttempts = new Map<string, number[]>();
   private sequence = 0;
 
   constructor(private readonly options: RemoteAccessServerOptions) {}
@@ -381,9 +812,8 @@ export class RemoteAccessServer {
       });
     });
     const webSocketServer = new WebSocketServer({ noServer: true, clientTracking: true, maxPayload: MAX_WEBSOCKET_MESSAGE_BYTES });
-    webSocketServer.on("connection", (socket) => this.handleWebSocket(socket, startedAt));
     webSocketServer.on("error", (error) => this.options.onServerError?.(error));
-    server.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket, head, webSocketServer));
+    server.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket, head, webSocketServer, startedAt));
 
     try {
       await new Promise<void>((resolve, reject) => {
@@ -468,7 +898,7 @@ export class RemoteAccessServer {
       minProtocolVersion: REMOTE_ACCESS_MIN_PROTOCOL_VERSION,
       maxProtocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
       scope: "loopback",
-      authentication: this.options.authentication ?? "not-configured",
+      authentication: "session",
       capabilities: [...new Set(capabilities)],
       endpoints: {
         health: REMOTE_ACCESS_HEALTH_PATH,
@@ -481,12 +911,12 @@ export class RemoteAccessServer {
   }
 
   private async handleRequest(request: IncomingMessage, response: ServerResponse, startedAt: string): Promise<void> {
-    if (!isAllowedLoopbackHostHeader(request.headers.host)) {
+    if (!isAllowedLoopbackHostHeader(request.headers.host, this.info?.port)) {
       writeJson(response, 421, { error: "Loopback host required." });
       return;
     }
-    if (request.headers.origin) {
-      writeJson(response, 403, { error: "Browser access is not enabled." });
+    if (!isAllowedSameOrigin(request.headers.origin, request.headers.host)) {
+      writeJson(response, 403, { error: "Origin is not allowed." });
       return;
     }
 
@@ -498,10 +928,74 @@ export class RemoteAccessServer {
         appVersion: this.options.appVersion,
         protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
         scope: "loopback",
-        authentication: this.options.authentication ?? "not-configured",
+        authentication: "session",
         startedAt,
       };
       writeJson(response, 200, health);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === REMOTE_ACCESS_PAIRING_PATH) {
+      const remoteAddress = request.socket.remoteAddress ?? "unknown";
+      if (!this.consumePairingAttempt(remoteAddress)) {
+        writeJson(response, 429, { error: "Too many pairing attempts. Try again shortly." }, { "Retry-After": "60" });
+        return;
+      }
+      if (request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
+        writeJson(response, 415, { error: "Content-Type must be application/json." });
+        return;
+      }
+      try {
+        const payload = await readJsonBody(request);
+        if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+          writeJson(response, 400, { error: "Invalid pairing request." });
+          return;
+        }
+        const input = payload as Record<string, unknown>;
+        if (typeof input.code !== "string" || (input.label != null && typeof input.label !== "string")) {
+          writeJson(response, 400, { error: "Invalid pairing request." });
+          return;
+        }
+        const authenticated = this.options.auth.exchangePairingCode(
+          input.code,
+          typeof input.label === "string" ? input.label : undefined,
+          request.socket.remoteAddress ?? null,
+        );
+        if (!authenticated) {
+          writeJson(response, 401, { error: "Pairing code is invalid or expired." });
+          return;
+        }
+        const secureCookie = request.headers.origin?.startsWith("https://") ?? false;
+        writeJson(
+          response,
+          201,
+          { session: authenticated.session },
+          { "Set-Cookie": sessionCookie(authenticated.token, authenticated.session.expiresAt, secureCookie) },
+        );
+      } catch (error) {
+        if (error instanceof RequestBodyError) {
+          writeJson(response, error.statusCode, { error: error.message });
+          return;
+        }
+        throw error;
+      }
+      return;
+    }
+
+    const session = this.options.auth.authenticate(getSessionToken(request), request.socket.remoteAddress ?? null);
+    if (!session) {
+      writeJson(response, 401, { error: "Authentication required." });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === REMOTE_ACCESS_SESSION_PATH) {
+      writeJson(response, 200, { session });
+      return;
+    }
+
+    if (request.method === "DELETE" && url.pathname === REMOTE_ACCESS_SESSION_PATH) {
+      this.options.auth.revokeSession(session.id, request.socket.remoteAddress ?? null);
+      writeJson(response, 200, { ok: true }, { "Set-Cookie": expiredSessionCookie() });
       return;
     }
 
@@ -523,7 +1017,7 @@ export class RemoteAccessServer {
       }
       try {
         const payload = await readJsonBody(request);
-        writeJson(response, 200, await this.options.operations.dispatch(payload));
+        writeJson(response, 200, await this.options.operations.dispatch(payload, session.scopes, session.id));
       } catch (error) {
         if (error instanceof RequestBodyError) {
           writeJson(response, error.statusCode, { error: error.message });
@@ -537,33 +1031,69 @@ export class RemoteAccessServer {
     writeJson(response, 404, { error: "Not found." });
   }
 
-  private handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer, webSocketServer: WebSocketServer): void {
+  private consumePairingAttempt(remoteAddress: string): boolean {
+    const now = Date.now();
+    const recentAttempts = (this.pairingAttempts.get(remoteAddress) ?? []).filter(
+      (attemptedAt) => now - attemptedAt < PAIRING_RATE_LIMIT_WINDOW_MS,
+    );
+    if (recentAttempts.length >= PAIRING_RATE_LIMIT_ATTEMPTS) {
+      this.pairingAttempts.set(remoteAddress, recentAttempts);
+      return false;
+    }
+    recentAttempts.push(now);
+    this.pairingAttempts.set(remoteAddress, recentAttempts);
+    return true;
+  }
+
+  private handleUpgrade(
+    request: IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+    webSocketServer: WebSocketServer,
+    startedAt: string,
+  ): void {
     const url = new URL(request.url ?? "/", "http://localhost");
     if (url.pathname !== REMOTE_ACCESS_WEBSOCKET_PATH) {
       rejectUpgrade(socket, 404, "Not Found", "WebSocket endpoint not found.");
       return;
     }
-    if (!isAllowedLoopbackHostHeader(request.headers.host)) {
+    if (!isAllowedLoopbackHostHeader(request.headers.host, this.info?.port)) {
       rejectUpgrade(socket, 421, "Misdirected Request", "Loopback host required.");
       return;
     }
-    if (request.headers.origin) {
-      rejectUpgrade(socket, 403, "Forbidden", "Browser access is not enabled.");
+    if (!isAllowedSameOrigin(request.headers.origin, request.headers.host)) {
+      rejectUpgrade(socket, 403, "Forbidden", "Origin is not allowed.");
       return;
     }
     if (requestedProtocolVersion(request, url) !== String(REMOTE_ACCESS_PROTOCOL_VERSION)) {
       rejectUpgrade(socket, 426, "Upgrade Required", "A supported protocolVersion is required.");
       return;
     }
+    const token = getSessionToken(request);
+    const remoteAddress = request.socket.remoteAddress ?? null;
+    const session = this.options.auth.authenticate(token, remoteAddress);
+    if (!session) {
+      rejectUpgrade(socket, 401, "Unauthorized", "Authentication required.");
+      return;
+    }
+    if (!session.scopes.includes("state:read")) {
+      rejectUpgrade(socket, 403, "Forbidden", "The session cannot read event streams.");
+      return;
+    }
     webSocketServer.handleUpgrade(request, socket, head, (client) => {
-      webSocketServer.emit("connection", client, request);
+      this.handleWebSocket(client, startedAt, token ?? "", remoteAddress);
     });
   }
 
-  private handleWebSocket(socket: WebSocket, startedAt: string): void {
+  private handleWebSocket(socket: WebSocket, startedAt: string, token: string, remoteAddress: string | null): void {
     const subscriptions = new Set<RemoteStreamEventType>();
     const eventDispose = this.options.events?.subscribe((event) => {
       if (!subscriptions.has(event.event)) {
+        return;
+      }
+      const session = this.options.auth.authenticate(token, remoteAddress, { audit: false, touch: false });
+      if (!session?.scopes.includes("state:read")) {
+        socket.close(1008, "Session is no longer authorized");
         return;
       }
       this.sendWebSocketMessage(socket, {
@@ -576,7 +1106,8 @@ export class RemoteAccessServer {
     });
     socket.once("close", () => eventDispose?.());
     socket.on("error", (error) => this.options.onServerError?.(error));
-    socket.on("message", (data, isBinary) => this.handleWebSocketMessage(socket, subscriptions, data, isBinary));
+    socket.on("message", (data, isBinary) =>
+      this.handleWebSocketMessage(socket, subscriptions, data, isBinary, token, remoteAddress));
     this.sendWebSocketMessage(socket, {
       protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
       type: "hello",
@@ -589,7 +1120,14 @@ export class RemoteAccessServer {
     subscriptions: Set<RemoteStreamEventType>,
     data: RawData,
     isBinary: boolean,
+    token: string,
+    remoteAddress: string | null,
   ): void {
+    const session = this.options.auth.authenticate(token, remoteAddress);
+    if (!session?.scopes.includes("state:read")) {
+      socket.close(1008, "Session is no longer authorized");
+      return;
+    }
     let payload: unknown;
     try {
       const buffer = Array.isArray(data)

@@ -3,6 +3,7 @@ import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import initSqlJs, { type Database, type QueryExecResult, type SqlJsStatic } from "sql.js";
+import { REMOTE_ACCESS_SCOPES } from "@buildwarden/shared";
 import type {
   AppSettingRecord,
   AppSnapshot,
@@ -45,6 +46,12 @@ import type {
   ProviderAccountRecord,
   ProviderSessionRuntimeInput,
   ProviderSessionRuntimeRecord,
+  RemoteAccessAuditRecord,
+  RemoteAccessPairingGrantRecord,
+  RemoteAccessScope,
+  RemoteAccessSession,
+  RemoteAccessSessionRecord,
+  RemoteCommandIdempotencyRecord,
   RunDetail,
   RunListVisibility,
   RunInput,
@@ -2635,6 +2642,234 @@ export class BuildWardenDatabase {
     );
   }
 
+  createRemoteAccessPairingGrant(record: RemoteAccessPairingGrantRecord): void {
+    this.run(
+      `insert into remote_pairing_grants (id, token_hash, scopes_json, expires_at, used_at, created_at)
+       values (?, ?, ?, ?, ?, ?)`,
+      [record.id, record.tokenHash, JSON.stringify(record.scopes), record.expiresAt, record.usedAt, record.createdAt],
+    );
+    this.persist();
+  }
+
+  consumeRemoteAccessPairingGrant(tokenHash: string, consumedAt: string): RemoteAccessPairingGrantRecord | null {
+    const row = this.first<{
+      id: string;
+      tokenHash: string;
+      scopesJson: string;
+      expiresAt: string;
+      usedAt: string | null;
+      createdAt: string;
+    }>(
+      `select id, token_hash as tokenHash, scopes_json as scopesJson, expires_at as expiresAt,
+              used_at as usedAt, created_at as createdAt
+       from remote_pairing_grants
+       where token_hash = ? and used_at is null and expires_at > ?`,
+      [tokenHash, consumedAt],
+    );
+    if (!row) {
+      return null;
+    }
+    this.run("update remote_pairing_grants set used_at = ? where id = ? and used_at is null", [consumedAt, row.id]);
+    this.persist();
+    return {
+      id: row.id,
+      tokenHash: row.tokenHash,
+      scopes: this.parseRemoteAccessScopes(row.scopesJson),
+      expiresAt: row.expiresAt,
+      usedAt: consumedAt,
+      createdAt: row.createdAt,
+    };
+  }
+
+  createRemoteAccessSession(record: RemoteAccessSessionRecord): void {
+    this.run(
+      `insert into remote_access_sessions (
+         id, token_hash, label, scopes_json, created_at, expires_at, last_used_at, revoked_at
+       ) values (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        record.id,
+        record.tokenHash,
+        record.label,
+        JSON.stringify(record.scopes),
+        record.createdAt,
+        record.expiresAt,
+        record.lastUsedAt,
+        record.revokedAt,
+      ],
+    );
+    this.persist();
+  }
+
+  getRemoteAccessSessionByTokenHash(tokenHash: string): RemoteAccessSessionRecord | null {
+    const row = this.first<{
+      id: string;
+      tokenHash: string;
+      label: string;
+      scopesJson: string;
+      createdAt: string;
+      expiresAt: string;
+      lastUsedAt: string;
+      revokedAt: string | null;
+    }>(
+      `select id, token_hash as tokenHash, label, scopes_json as scopesJson, created_at as createdAt,
+              expires_at as expiresAt, last_used_at as lastUsedAt, revoked_at as revokedAt
+       from remote_access_sessions where token_hash = ?`,
+      [tokenHash],
+    );
+    if (!row) {
+      return null;
+    }
+    const { scopesJson, ...session } = row;
+    return { ...session, scopes: this.parseRemoteAccessScopes(scopesJson) };
+  }
+
+  listRemoteAccessSessions(): RemoteAccessSession[] {
+    return this.all<{
+      id: string;
+      label: string;
+      scopesJson: string;
+      createdAt: string;
+      expiresAt: string;
+      lastUsedAt: string;
+      revokedAt: string | null;
+    }>(
+      `select id, label, scopes_json as scopesJson, created_at as createdAt, expires_at as expiresAt,
+              last_used_at as lastUsedAt, revoked_at as revokedAt
+       from remote_access_sessions order by created_at desc`,
+    ).map(({ scopesJson, ...row }) => ({ ...row, scopes: this.parseRemoteAccessScopes(scopesJson) }));
+  }
+
+  touchRemoteAccessSession(sessionId: string, lastUsedAt: string): void {
+    this.run(
+      "update remote_access_sessions set last_used_at = ? where id = ? and revoked_at is null",
+      [lastUsedAt, sessionId],
+    );
+    this.schedulePersist();
+  }
+
+  revokeRemoteAccessSession(sessionId: string, revokedAt: string): boolean {
+    this.run(
+      "update remote_access_sessions set revoked_at = ? where id = ? and revoked_at is null",
+      [revokedAt, sessionId],
+    );
+    const changed = (this.first<{ count: number }>("select changes() as count")?.count ?? 0) > 0;
+    if (changed) {
+      this.persist();
+    }
+    return changed;
+  }
+
+  createRemoteCommandIdempotency(record: RemoteCommandIdempotencyRecord): boolean {
+    this.run(
+      `insert or ignore into remote_command_idempotency (
+         session_id, idempotency_key, method, request_hash, response_json, created_at, completed_at
+       ) values (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        record.sessionId,
+        record.idempotencyKey,
+        record.method,
+        record.requestHash,
+        record.responseJson,
+        record.createdAt,
+        record.completedAt,
+      ],
+    );
+    const created = (this.first<{ count: number }>("select changes() as count")?.count ?? 0) > 0;
+    if (created) {
+      this.persist();
+    }
+    return created;
+  }
+
+  getRemoteCommandIdempotency(sessionId: string, idempotencyKey: string): RemoteCommandIdempotencyRecord | null {
+    return this.first<RemoteCommandIdempotencyRecord>(
+      `select session_id as sessionId, idempotency_key as idempotencyKey, method, request_hash as requestHash,
+              response_json as responseJson, created_at as createdAt, completed_at as completedAt
+       from remote_command_idempotency where session_id = ? and idempotency_key = ?`,
+      [sessionId, idempotencyKey],
+    ) ?? null;
+  }
+
+  completeRemoteCommandIdempotency(
+    sessionId: string,
+    idempotencyKey: string,
+    responseJson: string,
+    completedAt: string,
+  ): boolean {
+    this.run(
+      `update remote_command_idempotency
+       set response_json = ?, completed_at = ?
+       where session_id = ? and idempotency_key = ? and response_json is null`,
+      [responseJson, completedAt, sessionId, idempotencyKey],
+    );
+    const completed = (this.first<{ count: number }>("select changes() as count")?.count ?? 0) > 0;
+    if (completed) {
+      this.persist();
+    }
+    return completed;
+  }
+
+  pruneRemoteAccessRecords(cutoffs: {
+    expiredPairingGrantBefore: string;
+    securityAuditBefore: string;
+    completedCommandBefore: string;
+  }): number {
+    let removed = 0;
+    this.run(
+      "delete from remote_pairing_grants where used_at is not null or expires_at <= ?",
+      [cutoffs.expiredPairingGrantBefore],
+    );
+    removed += this.first<{ count: number }>("select changes() as count")?.count ?? 0;
+    this.run("delete from remote_security_audit where created_at < ?", [cutoffs.securityAuditBefore]);
+    removed += this.first<{ count: number }>("select changes() as count")?.count ?? 0;
+    this.run(
+      `delete from remote_command_idempotency
+       where completed_at is not null and completed_at < ?`,
+      [cutoffs.completedCommandBefore],
+    );
+    removed += this.first<{ count: number }>("select changes() as count")?.count ?? 0;
+    if (removed > 0) {
+      this.schedulePersist();
+    }
+    return removed;
+  }
+
+  addRemoteAccessAuditRecord(record: RemoteAccessAuditRecord): void {
+    this.run(
+      `insert into remote_security_audit (
+         id, event, outcome, session_id, pairing_grant_id, remote_address, details_json, created_at
+       ) values (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        record.id,
+        record.event,
+        record.outcome,
+        record.sessionId,
+        record.pairingGrantId,
+        record.remoteAddress,
+        record.details ? JSON.stringify(record.details) : null,
+        record.createdAt,
+      ],
+    );
+    this.schedulePersist();
+  }
+
+  listRemoteAccessAuditRecords(): RemoteAccessAuditRecord[] {
+    return this.all<{
+      id: string;
+      event: RemoteAccessAuditRecord["event"];
+      outcome: RemoteAccessAuditRecord["outcome"];
+      sessionId: string | null;
+      pairingGrantId: string | null;
+      remoteAddress: string | null;
+      detailsJson: string | null;
+      createdAt: string;
+    }>(
+      `select id, event, outcome, session_id as sessionId, pairing_grant_id as pairingGrantId,
+              remote_address as remoteAddress, details_json as detailsJson, created_at as createdAt
+       from remote_security_audit order by created_at desc`,
+    ).map(({ detailsJson, ...row }) => ({ ...row, details: this.parseJsonObject(detailsJson) }));
+  }
+
   upsertProviderSessionRuntime(input: ProviderSessionRuntimeInput): ProviderSessionRuntimeRecord {
     const existing = this.getProviderSessionRuntime(input.ownerId, input.ownerKind);
     const timestamp = nowIso();
@@ -3102,6 +3337,54 @@ export class BuildWardenDatabase {
         primary key (owner_id, owner_kind)
       );
       create index if not exists idx_provider_session_runtime_last_seen on provider_session_runtime(last_seen_at);
+
+      create table if not exists remote_pairing_grants (
+        id text primary key,
+        token_hash text not null unique,
+        scopes_json text not null,
+        expires_at text not null,
+        used_at text,
+        created_at text not null
+      );
+
+      create table if not exists remote_access_sessions (
+        id text primary key,
+        token_hash text not null unique,
+        label text not null,
+        scopes_json text not null,
+        created_at text not null,
+        expires_at text not null,
+        last_used_at text not null,
+        revoked_at text
+      );
+
+      create table if not exists remote_security_audit (
+        id text primary key,
+        event text not null,
+        outcome text not null,
+        session_id text,
+        pairing_grant_id text,
+        remote_address text,
+        details_json text,
+        created_at text not null
+      );
+
+      create table if not exists remote_command_idempotency (
+        session_id text not null,
+        idempotency_key text not null,
+        method text not null,
+        request_hash text not null,
+        response_json text,
+        created_at text not null,
+        completed_at text,
+        primary key (session_id, idempotency_key)
+      );
+
+      create index if not exists idx_remote_pairing_grants_expiry on remote_pairing_grants(expires_at);
+      create index if not exists idx_remote_access_sessions_token on remote_access_sessions(token_hash);
+      create index if not exists idx_remote_access_sessions_created on remote_access_sessions(created_at desc);
+      create index if not exists idx_remote_security_audit_created on remote_security_audit(created_at desc);
+      create index if not exists idx_remote_command_idempotency_created on remote_command_idempotency(created_at desc);
     `);
 
   }
@@ -3162,6 +3445,18 @@ export class BuildWardenDatabase {
       return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
     } catch {
       return null;
+    }
+  }
+
+  private parseRemoteAccessScopes(value: string): RemoteAccessScope[] {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      const supported = new Set<RemoteAccessScope>(REMOTE_ACCESS_SCOPES);
+      return Array.isArray(parsed)
+        ? parsed.filter((scope): scope is RemoteAccessScope => typeof scope === "string" && supported.has(scope as RemoteAccessScope))
+        : [];
+    } catch {
+      return [];
     }
   }
 
