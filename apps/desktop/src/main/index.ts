@@ -446,7 +446,13 @@ const bootstrap = async (): Promise<void> => {
       if (!enabled) {
         const tailscaleStatus = await tailscaleServe.disable();
         if (tailscaleStatus.state === "error") {
-          logWarn("BuildWarden could not remove its Tailscale Serve exposure.", { message: tailscaleStatus.message });
+          const loopbackServerBound = Boolean(remoteAccessServer?.getInfo());
+          logWarn(loopbackServerBound
+            ? "BuildWarden could not remove its Tailscale Serve exposure; the authenticated loopback server will remain bound to protect its port."
+            : "BuildWarden could not remove its Tailscale Serve exposure; ownership was retained so cleanup can be retried.", {
+            message: tailscaleStatus.message,
+          });
+          return;
         }
         if (remoteAccessServer?.getInfo()) {
           try {
@@ -479,6 +485,12 @@ const bootstrap = async (): Promise<void> => {
             authentication: "session",
           });
         } catch (error) {
+          const tailscaleStatus = await tailscaleServe.disable();
+          if (tailscaleStatus.state === "error") {
+            logWarn("Remote access server startup failed and its previous Tailscale Serve exposure could not be removed.", {
+              message: tailscaleStatus.message,
+            });
+          }
           remoteAccessServer = null;
           // Remote access is optional; a port conflict must never prevent the desktop app from starting.
           logWarn("Remote access server could not start; standalone Electron mode remains available.", { error });
