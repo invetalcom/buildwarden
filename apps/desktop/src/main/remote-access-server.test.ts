@@ -135,6 +135,30 @@ describe("remote access loopback server", () => {
     await expect(rpcResponse.json()).resolves.toMatchObject({ ok: true, requestId: "snapshot", result: emptySnapshot });
   });
 
+  it("serializes concurrent lifecycle transitions without orphaning an ephemeral server", async () => {
+    const operations = new RemoteOperationRegistry();
+    operations.register("getSnapshot", async () => emptySnapshot, validateNoRemoteArgs);
+    const server = new RemoteAccessServer({ appVersion: "0.5.5-test", operations, port: 0 });
+    startedServers.push(server);
+
+    const firstStart = server.start();
+    const concurrentStart = server.start();
+    expect(concurrentStart).toBe(firstStart);
+    const [firstInfo, concurrentInfo] = await Promise.all([firstStart, concurrentStart]);
+    expect(concurrentInfo).toBe(firstInfo);
+
+    const stopping = server.stop();
+    const concurrentStop = server.stop();
+    const restartAfterStop = server.start();
+    expect(concurrentStop).toBe(stopping);
+    await stopping;
+    const restartedInfo = await restartAfterStop;
+
+    expect(server.getInfo()).toBe(restartedInfo);
+    expect(restartedInfo.port).toBeGreaterThan(0);
+    await expect(fetch(`${restartedInfo.baseUrl}${REMOTE_ACCESS_HEALTH_PATH}`)).resolves.toMatchObject({ status: 200 });
+  });
+
   it("negotiates protocol versions and advertises host capabilities", async () => {
     const { info } = await startServer();
 
