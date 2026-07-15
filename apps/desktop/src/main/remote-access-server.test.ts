@@ -354,6 +354,11 @@ describe("remote access authentication", () => {
     expect(assetResponse.headers.get("content-type")).toContain("text/javascript");
     expect(assetResponse.headers.get("cache-control")).toContain("immutable");
 
+    const headResponse = await fetch(`${info.baseUrl}/assets/app.js`, { method: "HEAD" });
+    expect(headResponse.status).toBe(200);
+    expect(headResponse.headers.get("content-length")).toBe(String(Buffer.byteLength("console.log('remote');")));
+    await expect(headResponse.text()).resolves.toBe("");
+
     const sessionResponse = await fetch(`${info.baseUrl}${REMOTE_ACCESS_SESSION_PATH}`);
     expect(sessionResponse.status).toBe(401);
   });

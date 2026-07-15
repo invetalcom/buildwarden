@@ -624,9 +624,9 @@ const writeStaticResponse = (
   response: ServerResponse,
   statusCode: number,
   contentType: string,
-  body: Buffer,
+  contentLength: number,
+  body: Buffer | undefined,
   cacheControl: string,
-  headOnly: boolean,
 ): void => {
   response.writeHead(statusCode, {
     "Cache-Control": cacheControl,
@@ -642,13 +642,13 @@ const writeStaticResponse = (
       "base-uri 'none'",
       "form-action 'self'",
     ].join("; "),
-    "Content-Length": String(body.byteLength),
+    "Content-Length": String(contentLength),
     "Content-Type": contentType,
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
   });
-  response.end(headOnly ? undefined : body);
+  response.end(body);
 };
 
 const isAllowedLoopbackHostHeader = (hostHeader: string | undefined, expectedPort: number | undefined): boolean => {
@@ -1123,15 +1123,15 @@ export class RemoteAccessServer {
       if (!fileStat.isFile()) {
         return false;
       }
-      const body = await readFile(candidate);
+      const body = headOnly ? undefined : await readFile(candidate);
       const extension = extname(candidate).toLowerCase();
       writeStaticResponse(
         response,
         200,
         STATIC_CONTENT_TYPES[extension] ?? "application/octet-stream",
+        body?.byteLength ?? fileStat.size,
         body,
         relativePath === "index.html" ? "no-store" : "public, max-age=31536000, immutable",
-        headOnly,
       );
       return true;
     } catch {
