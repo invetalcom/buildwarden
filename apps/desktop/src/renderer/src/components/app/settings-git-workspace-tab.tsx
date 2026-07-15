@@ -173,7 +173,7 @@ export const GitWorkspaceSettingsTab = ({
   return (
     <div className="space-y-5">
       <SettingsSection title="Projects">
-        <SettingsRow
+        {canBrowseHostPaths ? <SettingsRow
           title="Add project folder"
           description="Register a local folder. Git repositories enable branches, worktrees, commits, and PR/MR review; plain folders can still run agents."
           align="start"
@@ -191,7 +191,7 @@ export const GitWorkspaceSettingsTab = ({
               canBrowseHostPaths={canBrowseHostPaths}
             />
           </div>
-        </SettingsRow>
+        </SettingsRow> : null}
         <SettingsRow title="Existing projects" description="Remove projects from BuildWarden without deleting the original folder." align="start">
           <div className={`${rowControlClass} app-scrollbar max-h-72 overflow-auto rounded-md border border-[var(--ec-border)]`}>
             {projects.length > 0 ? (
@@ -273,7 +273,7 @@ export const GitWorkspaceSettingsTab = ({
         </SettingsRow>
       </SettingsSection>
 
-      <SettingsSection title="Managed workspaces">
+      {canBrowseHostPaths ? <SettingsSection title="Managed workspaces">
         <SettingsRow
           title="Custom workspace folder"
           description="Optional absolute directory for new Git worktrees and folder copies. Leave it blank to keep the default sibling-folder behavior."
@@ -328,7 +328,7 @@ export const GitWorkspaceSettingsTab = ({
             </div>
           </div>
         </SettingsRow>
-      </SettingsSection>
+      </SettingsSection> : null}
 
       <SettingsSection title="Shell commands">
         <SettingsRow

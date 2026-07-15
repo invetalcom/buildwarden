@@ -304,7 +304,7 @@ export const UserSettingsTab = ({
       </SettingsRow>
     </SettingsSection>
 
-    <SettingsSection title="External editors">
+    {nativeActions ? <SettingsSection title="External editors">
       <SettingsRow
         title="IDE executable paths"
         description={
@@ -359,7 +359,7 @@ export const UserSettingsTab = ({
           </div>
         </div>
       </SettingsRow>
-    </SettingsSection>
+    </SettingsSection> : null}
 
     <SettingsSection title="Keyboard shortcuts">
       <SettingsRow
