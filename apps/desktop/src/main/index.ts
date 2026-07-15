@@ -588,19 +588,36 @@ const bootstrap = async (): Promise<void> => {
     write: (key, value) => db.setSetting(key, value),
   });
   let remoteAuthService: RemoteAuthService | null = null;
-  const ensureRemoteAuthService = async (): Promise<RemoteAuthService> => {
+  let remoteAuthServiceInitialization: Promise<RemoteAuthService> | null = null;
+  const ensureRemoteAuthService = (): Promise<RemoteAuthService> => {
     if (remoteAuthService) {
+      return Promise.resolve(remoteAuthService);
+    }
+    if (remoteAuthServiceInitialization) {
+      return remoteAuthServiceInitialization;
+    }
+
+    const initialization = (async () => {
+      let encodedKey = await secretStore.readSecret(remoteAccessAuthSecretKey);
+      let credentialKey = encodedKey ? Buffer.from(encodedKey, "base64") : Buffer.alloc(0);
+      if (credentialKey.byteLength < 32) {
+        credentialKey = randomBytes(32);
+        encodedKey = credentialKey.toString("base64");
+        await secretStore.saveSecret(remoteAccessAuthSecretKey, encodedKey);
+      }
+      remoteAuthService = new RemoteAuthService({ store: db, credentialKey });
       return remoteAuthService;
-    }
-    let encodedKey = await secretStore.readSecret(remoteAccessAuthSecretKey);
-    let credentialKey = encodedKey ? Buffer.from(encodedKey, "base64") : Buffer.alloc(0);
-    if (credentialKey.byteLength < 32) {
-      credentialKey = randomBytes(32);
-      encodedKey = credentialKey.toString("base64");
-      await secretStore.saveSecret(remoteAccessAuthSecretKey, encodedKey);
-    }
-    remoteAuthService = new RemoteAuthService({ store: db, credentialKey });
-    return remoteAuthService;
+    })();
+    remoteAuthServiceInitialization = initialization;
+    void initialization.then(
+      () => {
+        if (remoteAuthServiceInitialization === initialization) remoteAuthServiceInitialization = null;
+      },
+      () => {
+        if (remoteAuthServiceInitialization === initialization) remoteAuthServiceInitialization = null;
+      },
+    );
+    return initialization;
   };
 
   let remoteAccessServer: RemoteAccessServer | null = null;
@@ -611,7 +628,13 @@ const bootstrap = async (): Promise<void> => {
       if (!enabled) {
         const tailscaleStatus = await tailscaleServe.disable();
         if (tailscaleStatus.state === "error") {
-          logWarn("BuildWarden could not remove its Tailscale Serve exposure.", { message: tailscaleStatus.message });
+          const loopbackServerBound = Boolean(remoteAccessServer?.getInfo());
+          logWarn(loopbackServerBound
+            ? "BuildWarden could not remove its Tailscale Serve exposure; the authenticated loopback server will remain bound to protect its port."
+            : "BuildWarden could not remove its Tailscale Serve exposure; ownership was retained so cleanup can be retried.", {
+            message: tailscaleStatus.message,
+          });
+          return;
         }
         if (remoteAccessServer?.getInfo()) {
           try {
@@ -644,6 +667,12 @@ const bootstrap = async (): Promise<void> => {
             authentication: "session",
           });
         } catch (error) {
+          const tailscaleStatus = await tailscaleServe.disable();
+          if (tailscaleStatus.state === "error") {
+            logWarn("Remote access server startup failed and its previous Tailscale Serve exposure could not be removed.", {
+              message: tailscaleStatus.message,
+            });
+          }
           remoteAccessServer = null;
           // Remote access is optional; a port conflict must never prevent the desktop app from starting.
           logWarn("Remote access server could not start; standalone Electron mode remains available.", { error });
@@ -683,8 +712,12 @@ const bootstrap = async (): Promise<void> => {
     if (!enabled) {
       throw new Error("Enable remote access before creating a pairing code.");
     }
+    await syncRemoteAccessServer();
+    if (!remoteAccessServer?.getInfo()) {
+      throw new Error("Remote access could not be started.");
+    }
     const grant = (await ensureRemoteAuthService()).createPairingGrant(input);
-    const info = remoteAccessServer?.getInfo() ?? null;
+    const info = remoteAccessServer.getInfo();
     const tailscaleStatus = await tailscaleServe.getStatus(info?.port ?? null);
     const endpoint = tailscaleStatus.verified ? tailscaleStatus.endpoint : info?.baseUrl;
     return endpoint

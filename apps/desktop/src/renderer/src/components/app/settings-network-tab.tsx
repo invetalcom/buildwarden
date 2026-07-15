@@ -1,19 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
-import type {
-  NetworkProxyProtocol,
-  RemoteAccessStatus,
-  RemoteAccessPairingGrant,
-  RemoteAccessPairingInput,
-  RemoteAccessSession,
+import {
+  APP_SETTING_KEYS,
+  type NetworkProxyProtocol,
+  type RemoteAccessStatus,
+  type RemoteAccessPairingGrant,
+  type RemoteAccessPairingInput,
+  type RemoteAccessSession,
 } from "@buildwarden/shared";
-import { APP_SETTING_KEYS } from "@buildwarden/shared";
 import { Copy, ExternalLink, Globe, Info, KeyRound, Loader2, Network, ShieldCheck, Unplug, Wifi } from "lucide-react";
 import QRCode from "qrcode";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
 import { Select } from "../ui/select";
-import { useBuildWardenClient } from "../../lib/buildwarden-client";
 
 export type NetworkProxyDraft = {
   enabled: boolean;

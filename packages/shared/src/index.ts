@@ -3013,19 +3013,68 @@ export interface RemoteAccessPairingExchangeResponse {
   session: RemoteAccessSession;
 }
 
-type AsyncDesktopApiMethodName = {
-  [Method in keyof DesktopApi]-?: DesktopApi[Method] extends (...args: never[]) => Promise<unknown>
-    ? Method
-    : never;
-}[keyof DesktopApi];
+/** Explicit transport contract. Desktop methods are not remotely callable unless listed here. */
+export type RemoteOperationMap = {
+  getSnapshot: DesktopApi["getSnapshot"];
+  refreshSnapshot: DesktopApi["refreshSnapshot"];
+  getProjectBranches: DesktopApi["getProjectBranches"];
+  getProjectCurrentBranch: DesktopApi["getProjectCurrentBranch"];
+  getRunDetail: DesktopApi["getRunDetail"];
+  getRunWorktreeDiff: DesktopApi["getRunWorktreeDiff"];
+  getRunWorkspaceFile: DesktopApi["getRunWorkspaceFile"];
+  getProjectLoopUiReviewImage: DesktopApi["getProjectLoopUiReviewImage"];
+  getChatDetail: DesktopApi["getChatDetail"];
+  listChatsWithSteps: DesktopApi["listChatsWithSteps"];
+  getBookmarksWithSteps: DesktopApi["getBookmarksWithSteps"];
+  getChatBookmarksWithSteps: DesktopApi["getChatBookmarksWithSteps"];
+  getRunPublishOptions: DesktopApi["getRunPublishOptions"];
+  getProjectBranchOverview: DesktopApi["getProjectBranchOverview"];
+  getProjectForgeAuthStatus: DesktopApi["getProjectForgeAuthStatus"];
+  checkProjectGitConversion: DesktopApi["checkProjectGitConversion"];
+  getProjectBranchDeleteImpact: DesktopApi["getProjectBranchDeleteImpact"];
+  listHostDirectories: DesktopApi["listHostDirectories"];
+  createRun: DesktopApi["createRun"];
+  continueRun: DesktopApi["continueRun"];
+  followUpRun: DesktopApi["followUpRun"];
+  cancelRun: DesktopApi["cancelRun"];
+  cancelRunShell: DesktopApi["cancelRunShell"];
+  resumeRunFromCheckpoint: DesktopApi["resumeRunFromCheckpoint"];
+  recoverInterruptedRun: DesktopApi["recoverInterruptedRun"];
+  undoRunToLastPrompt: DesktopApi["undoRunToLastPrompt"];
+  deleteRun: DesktopApi["deleteRun"];
+  respondToShellApproval: DesktopApi["respondToShellApproval"];
+  respondToRunUserInput: DesktopApi["respondToRunUserInput"];
+  createChat: DesktopApi["createChat"];
+  followUpChat: DesktopApi["followUpChat"];
+  cancelChat: DesktopApi["cancelChat"];
+  deleteChat: DesktopApi["deleteChat"];
+  commitRun: DesktopApi["commitRun"];
+  createRunLocalBranch: DesktopApi["createRunLocalBranch"];
+  publishRunBranch: DesktopApi["publishRunBranch"];
+  createRunPullRequest: DesktopApi["createRunPullRequest"];
+  checkoutProjectBranch: DesktopApi["checkoutProjectBranch"];
+  fetchProjectBranches: DesktopApi["fetchProjectBranches"];
+  createProjectBranch: DesktopApi["createProjectBranch"];
+  renameProjectBranch: DesktopApi["renameProjectBranch"];
+  deleteProjectBranch: DesktopApi["deleteProjectBranch"];
+  pullProjectBranch: DesktopApi["pullProjectBranch"];
+  pushProjectBranch: DesktopApi["pushProjectBranch"];
+  convertProjectToGit: DesktopApi["convertProjectToGit"];
+  updateProjectBaseBranch: DesktopApi["updateProjectBaseBranch"];
+  addProject: DesktopApi["addProject"];
+  runTerminalStart: DesktopApi["runTerminalStart"];
+  runTerminalWrite: DesktopApi["runTerminalWrite"];
+  runTerminalResize: DesktopApi["runTerminalResize"];
+  runTerminalKill: DesktopApi["runTerminalKill"];
+};
 
-export type RemoteApiMethod = Extract<AsyncDesktopApiMethodName, string>;
+export type RemoteApiMethod = keyof RemoteOperationMap;
 
 export type RemoteApiMethodArgs<Method extends RemoteApiMethod> =
-  DesktopApi[Method] extends (...args: infer Args) => Promise<unknown> ? Args : never;
+  RemoteOperationMap[Method] extends (...args: infer Args) => Promise<unknown> ? Args : never;
 
 export type RemoteApiMethodResult<Method extends RemoteApiMethod> =
-  DesktopApi[Method] extends (...args: never[]) => Promise<infer Result> ? Result : never;
+  RemoteOperationMap[Method] extends (...args: never[]) => Promise<infer Result> ? Result : never;
 
 export interface RemoteRpcRequest {
   protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;

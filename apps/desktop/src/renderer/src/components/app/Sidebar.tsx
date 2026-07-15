@@ -353,7 +353,7 @@ const SidebarComponent = ({
     { label: "All Runs", icon: Clock3, selected: allRunsSelected, onClick: onSelectAllRuns, count: totalActiveRuns > 0 ? `${totalActiveRuns}` : "" },
     { label: "Chats", icon: MessageSquare, selected: chatsSelected, onClick: onSelectChats, count: chatsCount ? `${chatsCount}` : "" },
     { label: "Bookmarks", icon: Bookmark, selected: bookmarksSelected, onClick: onSelectBookmarks, count: bookmarksCount ? `${bookmarksCount}` : "" },
-    ...(!readOnly ? [{ label: "Settings", icon: Settings, selected: settingsSelected, onClick: onOpenSettings, count: "" }] : []),
+    ...(buildwarden.capabilities.settings ? [{ label: "Settings", icon: Settings, selected: settingsSelected, onClick: onOpenSettings, count: "" }] : []),
   ];
   const visibleProjectTools = projectTools.filter((tool) => {
     if (remoteWeb && tool.tab !== "overview" && !(tool.tab === "branches" && buildwarden.capabilities.gitMutations)) return false;
