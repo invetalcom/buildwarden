@@ -206,6 +206,7 @@ describe("remote BuildWarden client", () => {
     }) });
 
     expect(client.capabilities.embeddedTerminal).toBe(true);
+    expect(client.capabilities.mutations).toBe(true);
     expect(onTerminalData).toHaveBeenCalledOnce();
     unsubscribe();
   });

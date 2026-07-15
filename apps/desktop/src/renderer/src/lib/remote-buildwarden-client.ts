@@ -24,6 +24,7 @@ const webCapabilities = (scopes: readonly RemoteAccessScope[]): Readonly<BuildWa
   const approvalResponses = has("approval:respond");
   const gitMutations = has("git:write");
   const projectCreation = has("admin");
+  const terminalOperations = has("terminal:operate");
   return Object.freeze({
     platform: "web" as const,
     nativeTitleBar: false,
@@ -32,9 +33,9 @@ const webCapabilities = (scopes: readonly RemoteAccessScope[]): Readonly<BuildWa
     ideIntegration: false,
     fileManager: false,
     systemTerminal: false,
-    embeddedTerminal: has("terminal:operate"),
+    embeddedTerminal: terminalOperations,
     settings: false,
-    mutations: runMutations || chatMutations || approvalResponses || gitMutations || projectCreation,
+    mutations: runMutations || chatMutations || approvalResponses || gitMutations || projectCreation || terminalOperations,
     runMutations,
     chatMutations,
     bookmarkMutations: false,
