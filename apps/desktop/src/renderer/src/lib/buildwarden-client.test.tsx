@@ -9,6 +9,7 @@ import {
   createElectronBuildWardenClient,
   getActiveBuildWardenClient,
   setActiveBuildWardenClient,
+  type BuildWardenClientCapabilities,
 } from "./buildwarden-client-core";
 
 describe("BuildWarden client boundary", () => {
@@ -19,7 +20,7 @@ describe("BuildWarden client boundary", () => {
     await client.getSnapshot();
 
     expect(getSnapshot).toHaveBeenCalledOnce();
-    expect(client.capabilities).toEqual({
+    const expectedCapabilities: BuildWardenClientCapabilities = {
       platform: "electron",
       nativeTitleBar: true,
       nativeAppMenu: true,
@@ -28,7 +29,8 @@ describe("BuildWarden client boundary", () => {
       fileManager: true,
       systemTerminal: true,
       embeddedTerminal: true,
-    });
+    };
+    expect(client.capabilities).toEqual(expectedCapabilities);
   });
 
   it("provides the same client to React and imperative error reporting", () => {

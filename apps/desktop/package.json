@@ -36,6 +36,7 @@
     "@buildwarden/provider-claude-code": "workspace:*",
     "@buildwarden/provider-codex-cli": "workspace:*",
     "@buildwarden/provider-cursor-agent": "workspace:*",
+    "@buildwarden/remote-server": "workspace:*",
     "@buildwarden/shared": "workspace:*",
     "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-go": "^6.0.1",

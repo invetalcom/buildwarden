@@ -3,11 +3,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell, type MenuItemConstructorOptions } from "electron";
 import { getDefaultDatabasePath, BuildWardenDatabase } from "@buildwarden/db";
+import { RemoteAccessServer, RemoteOperationRegistry } from "@buildwarden/remote-server";
 import {
   APP_SETTING_KEYS,
   IPC_CHANNELS,
   isUiTheme,
   parseSupportedIdeKind,
+  parseRemoteAccessEnabledSetting,
   parseUiTheme,
   uiThemeToLegacyDarkMode,
   WINDOWS_TITLEBAR_OVERLAY_BACKGROUND,
@@ -668,10 +670,57 @@ const bootstrap = async (): Promise<void> => {
   };
   refreshAppMenu();
 
-  ipcMain.handle(IPC_CHANNELS.getSnapshot, async () => {
+  const remoteOperations = new RemoteOperationRegistry(({ method, requestId, error }) => {
+    logError("Remote operation failed.", { method, requestId, error });
+  });
+  remoteOperations.register("getSnapshot", async () => {
     await startupReconciliation;
     return controller.getSnapshot();
   });
+  remoteOperations.register("refreshSnapshot", async () => {
+    await startupReconciliation;
+    return controller.refreshSnapshot();
+  });
+
+  const remoteAccessServer = new RemoteAccessServer({
+    appVersion: app.getVersion(),
+    operations: remoteOperations,
+    onServerError: (error) => logError("Remote access server request failed.", { error }),
+  });
+  let remoteAccessSync = Promise.resolve();
+  const syncRemoteAccessServer = (): Promise<void> => {
+    remoteAccessSync = remoteAccessSync.catch(() => undefined).then(async () => {
+      const enabled = parseRemoteAccessEnabledSetting(db.getSettings()[APP_SETTING_KEYS.remoteAccessEnabled]);
+      if (!enabled) {
+        if (remoteAccessServer.getInfo()) {
+          try {
+            await remoteAccessServer.stop();
+            logInfo("Remote access server stopped.");
+          } catch (error) {
+            logWarn("Remote access server did not stop cleanly; standalone Electron mode remains available.", { error });
+          }
+        }
+        return;
+      }
+      if (remoteAccessServer.getInfo()) {
+        return;
+      }
+      try {
+        const info = await remoteAccessServer.start();
+        logInfo("Remote access server started in loopback-only mode.", {
+          baseUrl: info.baseUrl,
+          authentication: "not-configured",
+        });
+      } catch (error) {
+        // Remote access is optional; a port conflict must never prevent the desktop app from starting.
+        logWarn("Remote access server could not start; standalone Electron mode remains available.", { error });
+      }
+    });
+    return remoteAccessSync;
+  };
+  await syncRemoteAccessServer();
+
+  ipcMain.handle(IPC_CHANNELS.getSnapshot, () => remoteOperations.invoke("getSnapshot", []));
   ipcMain.handle(IPC_CHANNELS.getNetworkProxySettings, () => controller.getNetworkProxySettings());
   ipcMain.handle(IPC_CHANNELS.selectProject, (_, projectId: string) => controller.selectProject(projectId));
   ipcMain.handle(IPC_CHANNELS.reorderProjects, (_, projectIds: string[]) => controller.reorderProjects(projectIds));
@@ -696,10 +745,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.deleteProjectBranch, (_, projectId: string, input) => controller.deleteProjectBranch(projectId, input));
   ipcMain.handle(IPC_CHANNELS.pullProjectBranch, (_, projectId: string) => controller.pullProjectBranch(projectId));
   ipcMain.handle(IPC_CHANNELS.pushProjectBranch, (_, projectId: string, input) => controller.pushProjectBranch(projectId, input));
-  ipcMain.handle(IPC_CHANNELS.refreshSnapshot, async () => {
-    await startupReconciliation;
-    return controller.refreshSnapshot();
-  });
+  ipcMain.handle(IPC_CHANNELS.refreshSnapshot, () => remoteOperations.invoke("refreshSnapshot", []));
   ipcMain.handle(IPC_CHANNELS.getAppPaths, () => controller.getAppPaths());
   ipcMain.handle(IPC_CHANNELS.getDetectedCodexInstallation, () => controller.getDetectedCodexInstallation());
   ipcMain.handle(IPC_CHANNELS.getDetectedClaudeInstallation, () => controller.getDetectedClaudeInstallation());
@@ -805,6 +851,9 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.setAppSetting, async (_, key: string, value: string) => {
     await controller.setAppSetting(key, value);
     refreshAppMenu();
+    if (key === APP_SETTING_KEYS.remoteAccessEnabled) {
+      await syncRemoteAccessServer();
+    }
   });
   ipcMain.handle(IPC_CHANNELS.saveNetworkProxySettings, async (_, input: NetworkProxySettingsInput) =>
     controller.saveNetworkProxySettings(input),
@@ -903,6 +952,9 @@ const bootstrap = async (): Promise<void> => {
 
   registerRunTerminalIpc();
   app.on("before-quit", () => {
+    void remoteAccessServer.stop().catch((error) => {
+      logWarn("Remote access server did not stop cleanly.", { error });
+    });
     disposeAllRunTerminals();
     for (const state of projectForgeMonitorStates.values()) {
       clearInterval(state.timer);

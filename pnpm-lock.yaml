@@ -44,6 +44,9 @@ importers:
       '@buildwarden/provider-cursor-agent':
         specifier: workspace:*
         version: link:../../packages/provider-cursor-agent
+      '@buildwarden/remote-server':
+        specifier: workspace:*
+        version: link:../../packages/remote-server
       '@buildwarden/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -311,6 +314,12 @@ importers:
         version: link:../shared
 
   packages/provider-cursor-agent:
+    dependencies:
+      '@buildwarden/shared':
+        specifier: workspace:*
+        version: link:../shared
+
+  packages/remote-server:
     dependencies:
       '@buildwarden/shared':
         specifier: workspace:*

@@ -2843,6 +2843,66 @@ export interface RunTerminalExitPayload {
   exitCode: number;
 }
 
+export const REMOTE_ACCESS_PROTOCOL_VERSION = 1 as const;
+export const REMOTE_ACCESS_LOOPBACK_HOST = "127.0.0.1" as const;
+export const DEFAULT_REMOTE_ACCESS_PORT = 47_831;
+export const REMOTE_ACCESS_HEALTH_PATH = "/api/v1/health" as const;
+export const REMOTE_ACCESS_RPC_PATH = "/api/v1/rpc" as const;
+
+type AsyncDesktopApiMethodName = {
+  [Method in keyof DesktopApi]-?: DesktopApi[Method] extends (...args: never[]) => Promise<unknown>
+    ? Method
+    : never;
+}[keyof DesktopApi];
+
+export type RemoteApiMethod = Extract<AsyncDesktopApiMethodName, string>;
+
+export type RemoteApiMethodArgs<Method extends RemoteApiMethod> =
+  DesktopApi[Method] extends (...args: infer Args) => Promise<unknown> ? Args : never;
+
+export type RemoteApiMethodResult<Method extends RemoteApiMethod> =
+  DesktopApi[Method] extends (...args: never[]) => Promise<infer Result> ? Result : never;
+
+export interface RemoteRpcRequest {
+  protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+  requestId: string;
+  method: RemoteApiMethod;
+  args: unknown[];
+}
+
+export type RemoteRpcErrorCode =
+  | "invalid-request"
+  | "protocol-mismatch"
+  | "method-not-found"
+  | "operation-failed";
+
+export type RemoteRpcResponse =
+  | {
+      protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+      requestId: string;
+      ok: true;
+      result: unknown;
+    }
+  | {
+      protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+      requestId: string;
+      ok: false;
+      error: {
+        code: RemoteRpcErrorCode;
+        message: string;
+      };
+    };
+
+export interface RemoteAccessHealth {
+  status: "ok";
+  app: "buildwarden";
+  appVersion: string;
+  protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+  scope: "loopback";
+  authentication: "not-configured";
+  startedAt: string;
+}
+
 export const IPC_CHANNELS = {
   activateRun: "buildwarden:activate-run",
   addModel: "buildwarden:add-model",
