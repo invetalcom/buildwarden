@@ -3026,9 +3026,17 @@ export const APP_SETTING_KEYS = {
   projectForgePrMonitorSettings: "projectForgePrMonitorSettings",
   /** JSON object with app-wide outbound proxy host/port/user settings (password stored in secure storage). */
   networkProxyConfig: "networkProxyConfig",
+  /** Optional remote-access host. Absent or any value other than `"true"` keeps it disabled. */
+  remoteAccessEnabled: "remoteAccess.enabled",
   /** JSON string array of welcome/onboarding check ids that have been satisfied at least once. */
   welcomeCompletedCheckIds: "welcomeCompletedCheckIds",
 } as const;
+
+export const DEFAULT_REMOTE_ACCESS_ENABLED = false;
+
+/** Remote access is opt-in: legacy databases and malformed values always remain disabled. */
+export const parseRemoteAccessEnabledSetting = (raw: string | undefined | null): boolean =>
+  raw === "true";
 
 export const DEFAULT_RECENT_RUN_DAYS = 2;
 export const MIN_RECENT_RUN_DAYS = 1;
