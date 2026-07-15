@@ -10,6 +10,7 @@ import { App } from "./App";
 import { BuildWardenClientProvider } from "./lib/buildwarden-client";
 import { setActiveBuildWardenClient } from "./lib/buildwarden-client-core";
 import { createRemoteBuildWardenClient } from "./lib/remote-buildwarden-client";
+import { pairingCodeFromFragment } from "./lib/remote-pairing-code";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 
@@ -33,7 +34,7 @@ const readErrorMessage = async (response: Response, fallback: string): Promise<s
 };
 
 const PairingGate = ({ initialError, onPaired }: { initialError?: string; onPaired: (session: RemoteAccessSession) => void }) => {
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState(pairingCodeFromFragment);
   const [error, setError] = useState(initialError ?? "");
   const [pairing, setPairing] = useState(false);
 

@@ -45,6 +45,7 @@ import { ElectronDesktopPlatformServices, isAppNavigationUrl, isSafeExternalUrl 
 import { HostEventBus } from "./host-events";
 import { registerHostEventIpc } from "./host-events-ipc";
 import { HostTerminalService } from "./host-terminal-service";
+import { TailscaleServeService } from "./tailscale-serve-service";
 
 const mainDir = dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
@@ -400,6 +401,10 @@ const bootstrap = async (): Promise<void> => {
   };
 
   const remoteAccessAuthSecretKey = "app:remote-access-auth-key:v1";
+  const tailscaleServe = new TailscaleServeService({
+    read: (key) => db.getSettings()[key],
+    write: (key, value) => db.setSetting(key, value),
+  });
   let remoteAuthService: RemoteAuthService | null = null;
   let remoteAuthServiceInitialization: Promise<RemoteAuthService> | null = null;
   const ensureRemoteAuthService = (): Promise<RemoteAuthService> => {
@@ -439,6 +444,16 @@ const bootstrap = async (): Promise<void> => {
     remoteAccessSync = remoteAccessSync.catch(() => undefined).then(async () => {
       const enabled = parseRemoteAccessEnabledSetting(db.getSettings()[APP_SETTING_KEYS.remoteAccessEnabled]);
       if (!enabled) {
+        const tailscaleStatus = await tailscaleServe.disable();
+        if (tailscaleStatus.state === "error") {
+          const loopbackServerBound = Boolean(remoteAccessServer?.getInfo());
+          logWarn(loopbackServerBound
+            ? "BuildWarden could not remove its Tailscale Serve exposure; the authenticated loopback server will remain bound to protect its port."
+            : "BuildWarden could not remove its Tailscale Serve exposure; ownership was retained so cleanup can be retried.", {
+            message: tailscaleStatus.message,
+          });
+          return;
+        }
         if (remoteAccessServer?.getInfo()) {
           try {
             await remoteAccessServer.stop();
@@ -450,27 +465,50 @@ const bootstrap = async (): Promise<void> => {
         }
         return;
       }
-      if (remoteAccessServer?.getInfo()) {
-        return;
+      if (!remoteAccessServer?.getInfo()) {
+        try {
+          remoteAccessServer = new RemoteAccessServer({
+            appVersion: app.getVersion(),
+            operations: remoteOperations,
+            auth: await ensureRemoteAuthService(),
+            staticRoot: join(app.getAppPath(), "out", "web"),
+            events: remoteEventSource,
+            trustedProxyHosts: () => {
+              const host = tailscaleServe.getManagedHost();
+              return host ? [host] : [];
+            },
+            onServerError: (error) => logError("Remote access server request failed.", { error }),
+          });
+          const info = await remoteAccessServer.start();
+          logInfo("Remote access server started in loopback-only mode.", {
+            baseUrl: info.baseUrl,
+            authentication: "session",
+          });
+        } catch (error) {
+          const tailscaleStatus = await tailscaleServe.disable();
+          if (tailscaleStatus.state === "error") {
+            logWarn("Remote access server startup failed and its previous Tailscale Serve exposure could not be removed.", {
+              message: tailscaleStatus.message,
+            });
+          }
+          remoteAccessServer = null;
+          // Remote access is optional; a port conflict must never prevent the desktop app from starting.
+          logWarn("Remote access server could not start; standalone Electron mode remains available.", { error });
+        }
       }
-      try {
-        remoteAccessServer = new RemoteAccessServer({
-          appVersion: app.getVersion(),
-          operations: remoteOperations,
-          auth: await ensureRemoteAuthService(),
-          staticRoot: join(app.getAppPath(), "out", "web"),
-          events: remoteEventSource,
-          onServerError: (error) => logError("Remote access server request failed.", { error }),
+      const serverInfo = remoteAccessServer?.getInfo();
+      if (!serverInfo) return;
+      const tailscaleDesired = db.getSettings()[APP_SETTING_KEYS.remoteAccessTailscaleEnabled] === "true";
+      const tailscaleStatus = tailscaleDesired
+        ? await tailscaleServe.enable(serverInfo.port)
+        : await tailscaleServe.disable();
+      if (tailscaleStatus.state === "managed") {
+        logInfo("BuildWarden Tailscale Serve exposure verified.", { endpoint: tailscaleStatus.endpoint });
+      } else if (tailscaleDesired && tailscaleStatus.state !== "available") {
+        logWarn("BuildWarden Tailscale Serve exposure is unavailable.", {
+          state: tailscaleStatus.state,
+          message: tailscaleStatus.message,
         });
-        const info = await remoteAccessServer.start();
-        logInfo("Remote access server started in loopback-only mode.", {
-          baseUrl: info.baseUrl,
-          authentication: "session",
-        });
-      } catch (error) {
-        remoteAccessServer = null;
-        // Remote access is optional; a port conflict must never prevent the desktop app from starting.
-        logWarn("Remote access server could not start; standalone Electron mode remains available.", { error });
       }
     });
     return remoteAccessSync;
@@ -478,6 +516,14 @@ const bootstrap = async (): Promise<void> => {
   await syncRemoteAccessServer();
 
   ipcMain.handle(IPC_CHANNELS.getSnapshot, () => remoteOperations.invoke("getSnapshot", []));
+  ipcMain.handle(IPC_CHANNELS.getRemoteAccessStatus, async () => {
+    const info = remoteAccessServer?.getInfo() ?? null;
+    return {
+      enabled: parseRemoteAccessEnabledSetting(db.getSettings()[APP_SETTING_KEYS.remoteAccessEnabled]),
+      loopbackUrl: info?.baseUrl ?? null,
+      tailscale: await tailscaleServe.getStatus(info?.port ?? null),
+    };
+  });
   ipcMain.handle(IPC_CHANNELS.createRemoteAccessPairing, async (_, input?: RemoteAccessPairingInput) => {
     const enabled = parseRemoteAccessEnabledSetting(db.getSettings()[APP_SETTING_KEYS.remoteAccessEnabled]);
     if (!enabled) {
@@ -487,7 +533,13 @@ const bootstrap = async (): Promise<void> => {
     if (!remoteAccessServer?.getInfo()) {
       throw new Error("Remote access could not be started.");
     }
-    return (await ensureRemoteAuthService()).createPairingGrant(input);
+    const grant = (await ensureRemoteAuthService()).createPairingGrant(input);
+    const info = remoteAccessServer.getInfo();
+    const tailscaleStatus = await tailscaleServe.getStatus(info?.port ?? null);
+    const endpoint = tailscaleStatus.verified ? tailscaleStatus.endpoint : info?.baseUrl;
+    return endpoint
+      ? { ...grant, pairingUrl: `${endpoint.replace(/\/$/, "")}/#pair=${encodeURIComponent(grant.code)}` }
+      : grant;
   });
   ipcMain.handle(IPC_CHANNELS.listRemoteAccessSessions, () => db.listRemoteAccessSessions());
   ipcMain.handle(IPC_CHANNELS.revokeRemoteAccessSession, async (_, sessionId: string) => {
@@ -623,7 +675,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.setAppSetting, async (_, key: string, value: string) => {
     await controller.setAppSetting(key, value);
     refreshAppMenu();
-    if (key === APP_SETTING_KEYS.remoteAccessEnabled) {
+    if (key === APP_SETTING_KEYS.remoteAccessEnabled || key === APP_SETTING_KEYS.remoteAccessTailscaleEnabled) {
       await syncRemoteAccessServer();
     }
   });
