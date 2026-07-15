@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -222,6 +223,7 @@ export const ProjectSettingsPage = ({
   onActiveIntegratedSkillIdsChange,
   onDeleteProject,
 }: ProjectSettingsPageProps) => {
+  const buildwarden = useBuildWardenClient();
   const isFolderProject = project.project.kind === "folder";
   const workspaceModeChoices = isFolderProject ? folderWorkspaceModes : workspaceModes;
   let selectedModelIds = runModelId ? [runModelId] : [];
@@ -277,8 +279,8 @@ export const ProjectSettingsPage = ({
     setForgeBusy(true);
     setForgeMonitorBusy(true);
     void Promise.all([
-      window.buildwarden.getProjectForgeAuthStatus(project.project.id),
-      window.buildwarden.getProjectForgePrMonitorSettings(project.project.id),
+      buildwarden.getProjectForgeAuthStatus(project.project.id),
+      buildwarden.getProjectForgePrMonitorSettings(project.project.id),
     ])
       .then(([status, monitorSettings]) => {
         if (!cancelled) {
@@ -307,7 +309,7 @@ export const ProjectSettingsPage = ({
         forgeMonitorAutosaveTimerRef.current = null;
       }
     };
-  }, [project.project.id, project.project.kind]);
+  }, [buildwarden, project.project.id, project.project.kind]);
 
   const saveForgeToken = async () => {
     setForgeError(null);
@@ -316,7 +318,7 @@ export const ProjectSettingsPage = ({
     setForgeMonitorMessage(null);
     try {
       setForgeBusy(true);
-      const status = await window.buildwarden.saveProjectForgeAuthToken(project.project.id, forgeToken);
+      const status = await buildwarden.saveProjectForgeAuthToken(project.project.id, forgeToken);
       setForgeStatus(status);
       setForgeToken("");
       setForgeMessage("Token saved.");
@@ -334,7 +336,7 @@ export const ProjectSettingsPage = ({
     setForgeMonitorMessage(null);
     try {
       setForgeBusy(true);
-      const status = await window.buildwarden.deleteProjectForgeAuthToken(project.project.id);
+      const status = await buildwarden.deleteProjectForgeAuthToken(project.project.id);
       setForgeStatus(status);
       setForgeToken("");
       setForgeMonitorEnabled(false);
@@ -352,7 +354,7 @@ export const ProjectSettingsPage = ({
     setForgeMonitorMessage(null);
     try {
       setForgeMonitorBusy(true);
-      const settings = await window.buildwarden.saveProjectForgePrMonitorSettings(project.project.id, {
+      const settings = await buildwarden.saveProjectForgePrMonitorSettings(project.project.id, {
         intervalMinutes: nextInterval,
       });
       setForgeMonitorEnabled(settings.intervalMinutes > 0);
@@ -420,7 +422,7 @@ export const ProjectSettingsPage = ({
               type="button"
               className="flex h-8 min-w-0 max-w-[48rem] flex-1 items-center gap-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 text-left text-xs text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
               onClick={async () => {
-                const r = await window.buildwarden.openPathInFileManager(project.project.repoPath);
+                const r = await buildwarden.openPathInFileManager(project.project.repoPath);
                 if (!r.ok && r.error) {
                   window.alert(`Could not open folder: ${r.error}`);
                 }

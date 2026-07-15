@@ -9,6 +9,8 @@ import { isExternalRunWorkspaceHref, parseRunWorkspaceFileReference } from "@bui
 import { cn } from "../../lib/cn";
 import { getOpenableInlineCodePath } from "./activity-file-links";
 import { Button } from "./button";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import type { BuildWardenClient } from "../../lib/buildwarden-client-core";
 
 const markdownSanitizeSchema = {
   ...defaultSchema,
@@ -53,14 +55,14 @@ const markdownTableComponents = (compact: boolean): Components => ({
   td: ({ children, ...props }) => <td className="px-2 py-1.5 text-[color:var(--ec-muted)]" {...props}>{children}</td>,
 });
 
-const MarkdownImage: NonNullable<Components["img"]> = ({ src, alt, title, ...props }) => {
+const markdownImage = (buildwarden: BuildWardenClient): NonNullable<Components["img"]> => ({ src, alt, title, ...props }) => {
   const href = typeof src === "string" ? src : "";
   const openImage = (event: MouseEvent<HTMLImageElement>) => {
     if (!href || (!href.startsWith("http://") && !href.startsWith("https://"))) {
       return;
     }
     event.preventDefault();
-    void window.buildwarden.openExternalUrl(href);
+    void buildwarden.openExternalUrl(href);
   };
   return (
     <img
@@ -75,7 +77,11 @@ const MarkdownImage: NonNullable<Components["img"]> = ({ src, alt, title, ...pro
   );
 };
 
-const mdComponents = (compact: boolean, onOpenWorkspaceFile?: (path: string) => void): Components => ({
+const mdComponents = (
+  buildwarden: BuildWardenClient,
+  compact: boolean,
+  onOpenWorkspaceFile?: (path: string) => void,
+): Components => ({
   ...markdownTableComponents(compact),
   p: ({ children, ...props }) => (
     <p className={cn("mb-2 text-[color:var(--ec-text)] last:mb-0", compact ? "leading-snug" : "leading-relaxed")} {...props}>
@@ -137,7 +143,7 @@ const mdComponents = (compact: boolean, onOpenWorkspaceFile?: (path: string) => 
         return;
       }
       e.preventDefault();
-      void window.buildwarden.openExternalUrl(href);
+      void buildwarden.openExternalUrl(href);
     };
     return (
       <a
@@ -198,7 +204,7 @@ const mdComponents = (compact: boolean, onOpenWorkspaceFile?: (path: string) => 
   ),
   br: (props) => <br {...props} />,
   hr: (props) => <hr className="my-3 border-[color:var(--ec-border)]" {...props} />,
-  img: MarkdownImage,
+  img: markdownImage(buildwarden),
   input: ({ type, checked, ...props }) => {
     if (type !== "checkbox") {
       return null;
@@ -278,6 +284,7 @@ export interface ActivityRichTextProps {
  * Do not pass git diffs here — handle those separately.
  */
 export const ActivityRichText = ({ content, compact = false, className, onOpenWorkspaceFile }: ActivityRichTextProps) => {
+  const buildwarden = useBuildWardenClient();
   if (!content.trim()) {
     return null;
   }
@@ -287,7 +294,7 @@ export const ActivityRichText = ({ content, compact = false, className, onOpenWo
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeRaw, [rehypeSanitize, markdownSanitizeSchema]]}
-        components={mdComponents(compact, onOpenWorkspaceFile)}
+        components={mdComponents(buildwarden, compact, onOpenWorkspaceFile)}
       >
         {content}
       </ReactMarkdown>

@@ -13,6 +13,7 @@ import type {
   RunDiffReviewResult,
   UnifiedProviderFamily,
 } from "@buildwarden/shared";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import {
   ArrowUpRight,
   ChevronDown,
@@ -570,6 +571,7 @@ const buildDiffPreviewActions = ({
 };
 
 export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initialRequest = null, onOpenProjectSettings }: ProjectPrMrTabProps) => {
+  const buildwarden = useBuildWardenClient();
   const initialSession = getProjectPrMrSession(projectId);
   const initialDiffScope = initialSession ? restoreProjectPrMrDiffScope(initialSession) : null;
   const [prUrl, setPrUrl] = useState(() => initialSession?.prUrl ?? "");
@@ -823,7 +825,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     setForgeAuthStatus(null);
     setForgeAuthStatusError(null);
     setForgeAuthStatusBusy(true);
-    void window.buildwarden
+    void buildwarden
       .getProjectForgeAuthStatus(projectId)
       .then((status) => {
         if (!cancelled) {
@@ -843,7 +845,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, [buildwarden, projectId]);
 
   useEffect(() => {
     if (hydratedProjectIdRef.current === projectId) {
@@ -1077,7 +1079,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
       }
 
       const generation = requestPreloadGenerationRef.current;
-      const request = window.buildwarden
+      const request = buildwarden
         .getProjectForgeRequestDetails(projectId, { prUrl: url })
         .then((result) => {
           if (requestPreloadGenerationRef.current === generation) {
@@ -1098,7 +1100,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
       requestDetailsInFlightRef.current.set(url, request);
       return request;
     },
-    [projectId],
+    [buildwarden, projectId],
   );
 
   const fetchRequestDiff = useCallback(
@@ -1110,7 +1112,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
       const sha = commitSha?.trim() || null;
 
       if (!canUseForgeApi && !sha) {
-        return window.buildwarden.fetchProjectPrMrDiff(projectId, {
+        return buildwarden.fetchProjectPrMrDiff(projectId, {
           prUrl: url,
           baseBranch: targetBaseBranch?.trim() || undefined,
         });
@@ -1128,7 +1130,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
       }
 
       const generation = requestPreloadGenerationRef.current;
-      const request = window.buildwarden
+      const request = buildwarden
         .fetchProjectPrMrDiff(projectId, {
           prUrl: url,
           baseBranch: targetBaseBranch?.trim() || undefined,
@@ -1153,7 +1155,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
       requestDiffInFlightRef.current.set(cacheKey, request);
       return request;
     },
-    [canUseForgeApi, projectId],
+    [buildwarden, canUseForgeApi, projectId],
   );
 
   const loadRequestDetails = useCallback(
@@ -1238,7 +1240,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     setPostMessage(null);
     setPostError(null);
     try {
-      const result = await window.buildwarden.listProjectForgeRequests(projectId, { state: requestState });
+      const result = await buildwarden.listProjectForgeRequests(projectId, { state: requestState });
       clearRequestPreloadCaches();
       setRequestItems(result.items);
       setRequestRepoLabel(result.repoLabel);
@@ -1464,7 +1466,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     setPostMessage(null);
     setPostError(null);
     try {
-      const result = await window.buildwarden.analyzeProjectPrMrDiff(projectId, {
+      const result = await buildwarden.analyzeProjectPrMrDiff(projectId, {
         prUrl: activeUrl.trim(),
         diff: diffText,
         modelId: reviewModelId,
@@ -1492,7 +1494,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     setPostMessage(null);
     setPostError(null);
     try {
-      const result = await window.buildwarden.postProjectPrMrReview(projectId, {
+      const result = await buildwarden.postProjectPrMrReview(projectId, {
         prUrl: activeUrl.trim(),
         body: reviewPanel.result ? formatReviewBody(reviewPanel.result) : "",
         event,
@@ -1614,7 +1616,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     setPostMessage(null);
     setPostError(null);
     try {
-      const result = await window.buildwarden.submitProjectPrMrComments(projectId, {
+      const result = await buildwarden.submitProjectPrMrComments(projectId, {
         prUrl: url,
         body: `BuildWarden submitted ${String(draftComments.length)} draft diff comment${draftComments.length === 1 ? "" : "s"}.`,
         mode: "review",
@@ -1645,7 +1647,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     setPostMessage(null);
     setPostError(null);
     try {
-      const result = await window.buildwarden.submitProjectPrMrComments(projectId, {
+      const result = await buildwarden.submitProjectPrMrComments(projectId, {
         prUrl: url,
         mode: "single",
         comments: [
@@ -1690,7 +1692,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     setPostMessage(null);
     setPostError(null);
     try {
-      const result = await window.buildwarden.replyProjectPrMrReviewThread(projectId, {
+      const result = await buildwarden.replyProjectPrMrReviewThread(projectId, {
         prUrl: url,
         threadId: thread.providerThreadId,
         replyToCommentId: thread.replyToCommentId,
@@ -1717,7 +1719,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     setPostMessage(null);
     setPostError(null);
     try {
-      const result = await window.buildwarden.resolveProjectPrMrReviewThread(projectId, {
+      const result = await buildwarden.resolveProjectPrMrReviewThread(projectId, {
         prUrl: url,
         threadId: thread.providerThreadId,
         resolved: nextResolved,
@@ -2492,7 +2494,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                         title="Open commit"
                         onClick={(event) => {
                           event.stopPropagation();
-                          void window.buildwarden.openExternalUrl(commit.url ?? "");
+                          void buildwarden.openExternalUrl(commit.url ?? "");
                         }}
                       >
                         <ExternalLink className="h-3.5 w-3.5" aria-hidden />
@@ -2541,7 +2543,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
               size="icon"
               variant="ghost"
               className="h-7 w-7 text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200"
-              onClick={() => void window.buildwarden.openExternalUrl(overviewRequest.url)}
+              onClick={() => void buildwarden.openExternalUrl(overviewRequest.url)}
               title="Open in browser"
               aria-label="Open in browser"
             >

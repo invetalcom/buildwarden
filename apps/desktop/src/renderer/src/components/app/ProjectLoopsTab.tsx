@@ -50,6 +50,7 @@ import { Input } from "../ui/input";
 import { Select } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { cn } from "../../lib/cn";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 
 type ModelOption = {
   id: string;
@@ -440,6 +441,7 @@ const LoopUiReviewCard = ({
   busy: boolean;
   onDecision: (reviewId: string, decision: "approve" | "request-changes", feedback: string) => Promise<void>;
 }) => {
+  const buildwarden = useBuildWardenClient();
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
   const [imageMissing, setImageMissing] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
@@ -448,7 +450,7 @@ const LoopUiReviewCard = ({
 
   useEffect(() => {
     let disposed = false;
-    void window.buildwarden
+    void buildwarden
       .getProjectLoopUiReviewImage(review.id)
       .then((dataUrl) => {
         if (!disposed) {
@@ -464,7 +466,7 @@ const LoopUiReviewCard = ({
     return () => {
       disposed = true;
     };
-  }, [review.id]);
+  }, [buildwarden, review.id]);
 
   const decided = review.status !== "pending";
   const decisionLabel = LOOP_UI_REVIEW_DECISION_LABELS[review.status] ?? null;
@@ -563,10 +565,11 @@ const LoopUiReviewCard = ({
 };
 
 const useLoopDetailSubscription = (loopId: string, reloadDetail: () => Promise<void>): void => {
+  const buildwarden = useBuildWardenClient();
   const reloadTimerRef = useRef<number | null>(null);
   useEffect(() => {
     void reloadDetail();
-    const unsubscribe = window.buildwarden.onProjectLoopChanged((payload) => {
+    const unsubscribe = buildwarden.onProjectLoopChanged((payload) => {
       if (payload.loopId !== loopId || reloadTimerRef.current !== null) return;
       reloadTimerRef.current = window.setTimeout(() => {
         reloadTimerRef.current = null;
@@ -578,7 +581,7 @@ const useLoopDetailSubscription = (loopId: string, reloadDetail: () => Promise<v
       if (reloadTimerRef.current !== null) window.clearTimeout(reloadTimerRef.current);
       reloadTimerRef.current = null;
     };
-  }, [loopId, reloadDetail]);
+  }, [buildwarden, loopId, reloadDetail]);
 };
 
 const useLoopAction = (
@@ -613,11 +616,12 @@ const LoopDetailHeader = ({ loop, busy, actionPending, error, mergedCount, itera
   onBack: () => void;
   runAction: (action: () => Promise<void>, options?: { reloadAfter?: boolean }) => Promise<void>;
 }) => {
+  const buildwarden = useBuildWardenClient();
   const isActive = ACTIVE_LOOP_STATUSES.has(loop.status);
   const deleteLoop = () => {
     if (!window.confirm("Delete this loop, its runs, and its screenshots? Created PRs/MRs stay on the Git host.")) return;
     void runAction(async () => {
-      await window.buildwarden.deleteProjectLoop(loop.id);
+      await buildwarden.deleteProjectLoop(loop.id);
       onBack();
     }, { reloadAfter: false });
   };
@@ -631,8 +635,8 @@ const LoopDetailHeader = ({ loop, busy, actionPending, error, mergedCount, itera
           <StatusPill kind="loop" status={loop.status} />
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          {isActive && <Button type="button" size="sm" variant="secondary" disabled={busy || actionPending} onClick={() => void runAction(() => window.buildwarden.cancelProjectLoop(loop.id))}><Square className="mr-1.5 h-3.5 w-3.5" />Cancel loop</Button>}
-          {!isActive && loop.status !== "completed" && <Button type="button" size="sm" disabled={busy || actionPending} onClick={() => void runAction(() => window.buildwarden.resumeProjectLoop(loop.id))}><Play className="mr-1.5 h-3.5 w-3.5" />Resume</Button>}
+          {isActive && <Button type="button" size="sm" variant="secondary" disabled={busy || actionPending} onClick={() => void runAction(() => buildwarden.cancelProjectLoop(loop.id))}><Square className="mr-1.5 h-3.5 w-3.5" />Cancel loop</Button>}
+          {!isActive && loop.status !== "completed" && <Button type="button" size="sm" disabled={busy || actionPending} onClick={() => void runAction(() => buildwarden.resumeProjectLoop(loop.id))}><Play className="mr-1.5 h-3.5 w-3.5" />Resume</Button>}
           <Button type="button" size="sm" variant="ghost" className="text-zinc-500 hover:text-rose-200" disabled={busy || actionPending} onClick={deleteLoop}><Trash2 className="h-3.5 w-3.5" /></Button>
         </div>
       </div>
@@ -685,6 +689,7 @@ const LoopDetailView = ({
   onOpenRun: (runId: string) => void;
   onLoopsChanged: () => void | Promise<void>;
 }) => {
+  const buildwarden = useBuildWardenClient();
   const [detail, setDetail] = useState<ProjectLoopDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showAllEvents, setShowAllEvents] = useState(false);
@@ -692,12 +697,12 @@ const LoopDetailView = ({
 
   const reloadDetail = useCallback(async () => {
     try {
-      setDetail(await window.buildwarden.getProjectLoopDetail(loopId));
+      setDetail(await buildwarden.getProjectLoopDetail(loopId));
       setError(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not load the loop.");
     }
-  }, [loopId]);
+  }, [buildwarden, loopId]);
 
   useLoopDetailSubscription(loopId, reloadDetail);
   const { pending: actionPending, runAction } = useLoopAction(reloadDetail, onLoopsChanged, setError);
@@ -706,7 +711,7 @@ const LoopDetailView = ({
     async (reviewId: string, decision: "approve" | "request-changes", feedback: string) => {
       setError(null);
       try {
-        await window.buildwarden.respondToProjectLoopUiReview(reviewId, {
+        await buildwarden.respondToProjectLoopUiReview(reviewId, {
           decision,
           feedback: feedback.trim() || undefined,
         });
@@ -715,7 +720,7 @@ const LoopDetailView = ({
         setError(caught instanceof Error ? caught.message : "The review could not be submitted.");
       }
     },
-    [reloadDetail],
+    [buildwarden, reloadDetail],
   );
 
   if (!detail) {
@@ -793,7 +798,7 @@ const LoopDetailView = ({
                           className="h-7 px-2 text-xs text-zinc-400 hover:text-cyan-200"
                           onClick={(event) => {
                             event.stopPropagation();
-                            void window.buildwarden.openExternalUrl(iteration.prUrl ?? "");
+                            void buildwarden.openExternalUrl(iteration.prUrl ?? "");
                           }}
                         >
                           <GitPullRequest className="mr-1 h-3.5 w-3.5" />
@@ -889,6 +894,7 @@ export const ProjectLoopsTab = ({
   onOpenRun,
   onLoopsChanged,
 }: ProjectLoopsTabProps) => {
+  const buildwarden = useBuildWardenClient();
   const [selectedLoopId, setSelectedLoopId] = useState<string | null>(null);
   const [loopListSection, setLoopListSection] = useState<LoopListSection>("open");
   const [formOpen, setFormOpen] = useState(false);
@@ -957,7 +963,7 @@ export const ProjectLoopsTab = ({
     setCreating(true);
     setCreateError(null);
     try {
-      const loop = await window.buildwarden.createProjectLoop({
+      const loop = await buildwarden.createProjectLoop({
         projectId: project.project.id,
         name: name.trim() || prompt.trim().slice(0, 80),
         prompt: prompt.trim(),

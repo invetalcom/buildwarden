@@ -4,6 +4,7 @@ import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
 import { cn } from "../../lib/cn";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import type { RunBrowserSessionState } from "./RunDetailPage";
 
 const DEFAULT_BROWSER_URL = "about:blank";
@@ -37,6 +38,7 @@ type Props = {
 };
 
 export const RunEmbeddedBrowser = ({ className, session, onSessionChange }: Props) => {
+  const buildwarden = useBuildWardenClient();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const draftUrl = session.draftUrl || DEFAULT_BROWSER_URL;
@@ -160,7 +162,7 @@ export const RunEmbeddedBrowser = ({ className, session, onSessionChange }: Prop
               disabled={!normalizedCurrentUrl || normalizedCurrentUrl.startsWith("about:")}
               onClick={() => {
                 if (normalizedCurrentUrl && !normalizedCurrentUrl.startsWith("about:")) {
-                  void window.buildwarden.openExternalUrl(normalizedCurrentUrl);
+                  void buildwarden.openExternalUrl(normalizedCurrentUrl);
                 }
               }}
             >

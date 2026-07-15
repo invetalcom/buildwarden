@@ -1,4 +1,4 @@
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderWithBuildWardenClient as renderToStaticMarkup } from "../../lib/buildwarden-client-test-utils";
 import type { KeyboardShortcutId, RunDetail, RunRecord, RunWorkspacePanelId } from "@buildwarden/shared";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { RunDetailPage, type RunDetailPageProps } from "./RunDetailPage";

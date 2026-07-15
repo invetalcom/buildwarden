@@ -15,6 +15,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 
 const chatDetailMatchesSearch = (detail: ChatDetail, query: string): boolean => {
   if (!query.trim()) return true;
@@ -66,7 +67,7 @@ export const ChatPage = ({
   const [newChatPrompt, setNewChatPrompt] = useState("");
   const [newChatFiles, setNewChatFiles] = useState<File[]>([]);
   const [selectedModelId, setSelectedModelId] = useState(defaultModelId);
-  const buildwarden = window.buildwarden;
+  const buildwarden = useBuildWardenClient();
   const hasChatModels = modelOptions.length > 0;
 
   const loadChats = useCallback(async () => {

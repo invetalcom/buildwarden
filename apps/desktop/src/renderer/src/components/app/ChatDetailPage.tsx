@@ -15,6 +15,7 @@ import { ScrollBoundaryControls } from "./ScrollBoundaryControls";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 
 const safeParseMetadata = (value: string) => {
   try {
@@ -108,7 +109,7 @@ export const ChatDetailPage = ({
   const activityContainerRef = useRef<HTMLDivElement>(null);
   const activityEndRef = useRef<HTMLDivElement>(null);
 
-  const buildwarden = window.buildwarden;
+  const buildwarden = useBuildWardenClient();
 
   const isChatActive = ["queued", "preparing", "running"].includes(chat.status);
 

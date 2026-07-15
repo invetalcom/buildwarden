@@ -5,6 +5,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 
 export type BookmarkItem = BookmarkRecord | ChatBookmarkRecord;
 
@@ -37,7 +38,7 @@ export const BookmarksPage = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const buildwarden = window.buildwarden;
+  const buildwarden = useBuildWardenClient();
 
   const loadBookmarks = useCallback(async () => {
     if (!buildwarden) return;

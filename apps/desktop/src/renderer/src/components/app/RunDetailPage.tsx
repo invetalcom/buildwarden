@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import {
   appendChatAttachmentFiles,
   parseRunWorkspaceFileReference,
@@ -243,6 +244,7 @@ export const RunDetailPage = ({
   onCreateProjectTask,
   onFollowUpRun,
 }: RunDetailPageProps) => {
+  const buildwarden = useBuildWardenClient();
   const [followUpPrompt, setFollowUpPrompt] = useState("");
   const [followUpFiles, setFollowUpFiles] = useState<File[]>([]);
   const [goalDraft, setGoalDraft] = useState(runDetail.run.goalText ?? "");
@@ -340,7 +342,7 @@ export const RunDetailPage = ({
       error: null,
     }));
     try {
-      const result = await window.buildwarden.analyzeRunDiff(runDetail.run.id, {
+      const result = await buildwarden.analyzeRunDiff(runDetail.run.id, {
         modelId: selectedReviewModelId,
       });
       setReviewPanel({
@@ -610,7 +612,7 @@ export const RunDetailPage = ({
         return;
       }
       try {
-        const note = await window.buildwarden.addRunNote(runDetail.run.id, { content: trimmed });
+        const note = await buildwarden.addRunNote(runDetail.run.id, { content: trimmed });
         setRunNotes((current) => [note, ...current.filter((entry) => entry.id !== note.id)]);
         setNoteDraft("");
         setSelectionMenu(null);
@@ -622,7 +624,7 @@ export const RunDetailPage = ({
         window.alert(error instanceof Error ? error.message : "Could not add the note.");
       }
     },
-    [onTogglePanel, runDetail.run.id, showNotes],
+    [buildwarden, onTogglePanel, runDetail.run.id, showNotes],
   );
 
   const addSelectionToTask = useCallback(
@@ -644,7 +646,7 @@ export const RunDetailPage = ({
   const updateRunNoteStatus = async (note: RunNoteRecord, status: RunNoteStatus) => {
     setNoteBusyId(note.id);
     try {
-      const updated = await window.buildwarden.updateRunNote(note.id, { status });
+      const updated = await buildwarden.updateRunNote(note.id, { status });
       setRunNotes((current) => current.map((entry) => (entry.id === updated.id ? updated : entry)));
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "Could not update the note.");
@@ -674,7 +676,7 @@ export const RunDetailPage = ({
     }
     setNoteBusyId(note.id);
     try {
-      const updated = await window.buildwarden.updateRunNote(note.id, { content: trimmed });
+      const updated = await buildwarden.updateRunNote(note.id, { content: trimmed });
       setRunNotes((current) => current.map((entry) => (entry.id === updated.id ? updated : entry)));
       cancelEditingRunNote();
     } catch (error) {
@@ -687,7 +689,7 @@ export const RunDetailPage = ({
   const deleteRunNote = async (noteId: string) => {
     setNoteBusyId(noteId);
     try {
-      await window.buildwarden.deleteRunNote(noteId);
+      await buildwarden.deleteRunNote(noteId);
       setRunNotes((current) => current.filter((entry) => entry.id !== noteId));
       if (editingNoteId === noteId) {
         cancelEditingRunNote();
@@ -940,7 +942,7 @@ export const RunDetailPage = ({
       onPreparePlanContinuation={preparePlanContinuation}
       onSubmitPlanFeedback={submitPlanFeedback}
       onSubmitUserInputAnswers={(_, requestId: string, answers: RunUserInputAnswers) =>
-        window.buildwarden.respondToRunUserInput(runDetail.run.id, requestId, answers)
+        buildwarden.respondToRunUserInput(runDetail.run.id, requestId, answers)
       }
       onOpenWorkspaceFile={openRunFileReference}
       onToggleReasoningStep={(stepId) =>
@@ -1443,7 +1445,7 @@ export const RunDetailPage = ({
                         className="h-8 w-8 shrink-0 p-0 text-zinc-400 hover:text-zinc-100"
                         title="Open external"
                         aria-label="Open external"
-                        onClick={() => void window.buildwarden.openSystemTerminalAtPath(workspacePath)}
+                        onClick={() => void buildwarden.openSystemTerminalAtPath(workspacePath)}
                       >
                         <ExternalLink className="h-3.5 w-3.5" />
                       </Button>

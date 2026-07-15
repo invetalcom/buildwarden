@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 
 export type SkillsSettingsTabProps = {
   skills: IntegratedSkillMetadata[];
@@ -67,6 +68,7 @@ export const SkillsSettingsTab = ({
   globallyDisabledSkillIds,
   onDisabledSkillIdsChange,
 }: SkillsSettingsTabProps) => {
+  const buildwarden = useBuildWardenClient();
   const [search, setSearch] = useState("");
   const [expandedSkill, setExpandedSkill] = useState<ExpandedSkillState | null>(null);
   const visibleSkillIds = useMemo(() => new Set(skills.map((skill) => skill.id)), [skills]);
@@ -123,7 +125,7 @@ export const SkillsSettingsTab = ({
 
   const openSkillPopup = (skill: IntegratedSkillMetadata) => {
     setExpandedSkill({ skill, content: null });
-    void window.buildwarden
+    void buildwarden
       .getIntegratedSkillContent(skill.id)
       .then((content) => {
         setExpandedSkill((current) =>
