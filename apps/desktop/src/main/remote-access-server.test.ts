@@ -20,6 +20,7 @@ import {
   REMOTE_ACCESS_SESSION_PATH,
   REMOTE_ACCESS_WEBSOCKET_PATH,
   type AppSnapshot,
+  type RemoteAccessPairingInput,
   type RemoteApiMethod,
   type RemoteStreamEvent,
 } from "@buildwarden/shared";
@@ -237,8 +238,8 @@ describe("remote access authentication", () => {
     };
   };
 
-  const pair = async (baseUrl: string, auth: RemoteAuthService) => {
-    const grant = auth.createPairingGrant();
+  const pair = async (baseUrl: string, auth: RemoteAuthService, input: RemoteAccessPairingInput = {}) => {
+    const grant = auth.createPairingGrant(input);
     const response = await fetch(`${baseUrl}${REMOTE_ACCESS_PAIRING_PATH}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -270,6 +271,19 @@ describe("remote access authentication", () => {
       body: rpcBody("unauthorized"),
     });
     expect(unauthorized.status).toBe(401);
+
+    const { cookie: underScopedCookie } = await pair(info.baseUrl, auth, { scopes: ["chat:operate"] });
+    const underScoped = await fetch(`${info.baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: underScopedCookie },
+      body: rpcBody("under-scoped"),
+    });
+    expect(underScoped.status).toBe(200);
+    await expect(underScoped.json()).resolves.toMatchObject({
+      ok: false,
+      requestId: "under-scoped",
+      error: { code: "forbidden" },
+    });
 
     const { response, cookie } = await pair(info.baseUrl, auth);
     expect(response.status).toBe(201);
