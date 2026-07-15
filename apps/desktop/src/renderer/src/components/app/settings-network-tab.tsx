@@ -38,6 +38,7 @@ export type NetworkSettingsTabProps = {
   onCreateRemoteAccessPairing: (input?: RemoteAccessPairingInput) => Promise<RemoteAccessPairingGrant>;
   onListRemoteAccessSessions: () => Promise<RemoteAccessSession[]>;
   onRevokeRemoteAccessSession: (sessionId: string) => Promise<void>;
+  showRemoteAccess: boolean;
 };
 
 const PROXY_PROTOCOL_OPTIONS: Array<{ value: NetworkProxyProtocol; label: string }> = [
@@ -328,15 +329,16 @@ export const NetworkSettingsTab = ({
   onCreateRemoteAccessPairing,
   onListRemoteAccessSessions,
   onRevokeRemoteAccessSession,
+  showRemoteAccess,
 }: NetworkSettingsTabProps) => (
   <div className="grid gap-3">
-    <RemoteAccessSettings
+    {showRemoteAccess ? <RemoteAccessSettings
       enabled={remoteAccessEnabled}
       onEnabledChange={onRemoteAccessEnabledChange}
       onCreatePairing={onCreateRemoteAccessPairing}
       onListSessions={onListRemoteAccessSessions}
       onRevokeSession={onRevokeRemoteAccessSession}
-    />
+    /> : null}
 
     <Card className="p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">

@@ -235,7 +235,7 @@ export const ChatDetailPage = ({
     <div className="flex min-h-0 flex-1 flex-col gap-4">
       <ChatDetailHeader
         chat={chat}
-        canManageBookmarks={buildwarden.capabilities.bookmarkMutations}
+        canManageBookmarks={buildwarden.capabilities.chatMutations}
         isBookmarked={isBookmarked}
         onBack={onBack}
         onAddBookmark={onAddBookmark}

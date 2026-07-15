@@ -21,7 +21,7 @@ interface ProjectGraphsTabProps {
 const formatGeneratedAt = (value: string | undefined) => (value ? new Date(value).toLocaleString() : "Not generated yet");
 
 export const ProjectGraphsTab = ({ project, onGenerateInsight }: ProjectGraphsTabProps) => {
-  const canGenerateInsights = useBuildWardenClient().capabilities.platform === "electron";
+  const canGenerateInsights = useBuildWardenClient().capabilities.insightMutations;
   const [busyKind, setBusyKind] = useState<ProjectInsightKind | null>(null);
   const architectureRecord = getProjectInsight(project, "architecture-graph");
   const architecture = parseProjectInsightData<ArchitectureGraphInsightData>(architectureRecord);

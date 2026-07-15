@@ -124,6 +124,50 @@ describe("remote BuildWarden client", () => {
       .rejects.toThrow("not available for this remote session");
   });
 
+  it("enables scoped project workflows and host settings for control sessions", async () => {
+    const hostSnapshot = {
+      ...snapshot,
+      settings: { [APP_SETTING_KEYS.shellAllowlistExtra]: "[]" },
+    } as AppSnapshot;
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as { method: string; requestId: string };
+      return rpcResponse(request.method === "getSnapshot" ? hostSnapshot : undefined, request.requestId);
+    });
+    const client = createRemoteBuildWardenClient({
+      fetch: fetcher as typeof fetch,
+      scopes: ["state:read", "run:operate", "chat:operate", "git:write", "admin"],
+    });
+
+    expect(client.capabilities).toMatchObject({
+      settings: true,
+      bookmarkMutations: true,
+      runListVisibilityMutations: true,
+      taskMutations: true,
+      insightMutations: true,
+      projectLabMutations: true,
+      projectLoopMutations: true,
+      prReview: true,
+      projectSettingsMutations: true,
+    });
+    await expect(client.getSnapshot()).resolves.toMatchObject({
+      settings: { [APP_SETTING_KEYS.shellAllowlistExtra]: "[]" },
+    });
+    await client.setAppSetting(APP_SETTING_KEYS.shellAllowlistExtra, JSON.stringify(["git status"]));
+    await client.setRunListVisibility("run-1", "for-later");
+    await client.addBookmark("run-1");
+    await client.addChatBookmark("chat-1");
+    await client.generateProjectInsight({ projectId: "project-1", kind: "architecture-graph" });
+
+    expect(fetcher.mock.calls.map(([, init]) => JSON.parse(String((init as RequestInit).body)).method)).toEqual([
+      "getSnapshot",
+      "setAppSetting",
+      "setRunListVisibility",
+      "addBookmark",
+      "addChatBookmark",
+      "generateProjectInsight",
+    ]);
+  });
+
   it("publishes validated live events from the authenticated WebSocket", () => {
     type SocketListener = (event: { data?: string; code?: number }) => void;
     const handlers = new Map<string, SocketListener[]>();

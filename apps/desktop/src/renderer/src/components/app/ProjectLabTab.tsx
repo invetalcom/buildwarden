@@ -203,7 +203,7 @@ export const ProjectLabTab = ({
   onDeleteThread,
   onOpenImplementationRun,
 }: ProjectLabTabProps) => {
-  const canManageLab = useBuildWardenClient().capabilities.platform === "electron";
+  const canManageLab = useBuildWardenClient().capabilities.projectLabMutations;
   const [selectedMode, setSelectedMode] = useState<ProjectLabMode>("new-feature");
   const [expandedThreadIds, setExpandedThreadIds] = useState<Record<string, boolean>>({});
   const isFolderProject = project.project.kind === "folder";

@@ -37,6 +37,7 @@ import { GitWorkspaceSettingsTab } from "./settings-git-workspace-tab";
 import { NetworkSettingsTab, type NetworkProxyDraft } from "./settings-network-tab";
 import { SkillsSettingsTab } from "./settings-skills-tab";
 import { UserSettingsTab } from "./settings-user-tab";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 
 type SettingsTab = "provider-models" | "git-workspace" | "skills" | "network" | "user";
 
@@ -244,6 +245,8 @@ export const SettingsPage = ({
   globallyDisabledIntegratedSkillIds,
   onGloballyDisabledIntegratedSkillIdsChange,
 }: SettingsPageProps) => {
+  const buildwarden = useBuildWardenClient();
+  const nativeActions = buildwarden.capabilities.platform === "electron";
   const [activeTab, setActiveTab] = useState<SettingsTab>("user");
   const [openAiPresetUserChoseCustom, setOpenAiPresetUserChoseCustom] = useState(false);
   const [userShellPatternsDraft, setUserShellPatternsDraft] = useState(() => userShellLinesFromSavedText(shellAllowlistExtraText));
@@ -526,6 +529,7 @@ export const SettingsPage = ({
             }
           }}
           onResetShellAllowlistDraft={() => setUserShellPatternsDraft([...savedUserShellLines])}
+          canBrowseHostPaths={buildwarden.capabilities.directoryPicker}
         />
       ) : null}
 
@@ -558,6 +562,7 @@ export const SettingsPage = ({
           }}
           onResetIdeDraft={() => setIdeDraft(parseIdePathConfig(idePathsSettingValue))}
           onPickIdeExecutable={browseIdeExecutable}
+          nativeActions={nativeActions}
         />
       ) : null}
 
@@ -608,6 +613,7 @@ export const SettingsPage = ({
           onCreateRemoteAccessPairing={onCreateRemoteAccessPairing}
           onListRemoteAccessSessions={onListRemoteAccessSessions}
           onRevokeRemoteAccessSession={onRevokeRemoteAccessSession}
+          showRemoteAccess={nativeActions}
         />
       ) : null}
 

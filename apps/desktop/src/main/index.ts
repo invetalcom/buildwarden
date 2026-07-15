@@ -379,6 +379,8 @@ const bootstrap = async (): Promise<void> => {
       typeof (input as Record<string, unknown>).runId === "string" &&
       typeof (input as Record<string, unknown>).path === "string";
   };
+  const validateRemoteStringArray = (value: unknown): value is string[] =>
+    Array.isArray(value) && value.every((item) => typeof item === "string");
   remoteOperations.register("getProjectBranches", (projectId) => controller.getProjectBranches(projectId), validateSingleRemoteStringArg);
   remoteOperations.register("getProjectCurrentBranch", (projectId) => controller.getProjectCurrentBranch(projectId), validateSingleRemoteStringArg);
   remoteOperations.register("getRunDetail", (runId) => controller.getRunDetail(runId), validateSingleRemoteStringArg);
@@ -465,10 +467,159 @@ const bootstrap = async (): Promise<void> => {
       Number.isInteger(args[0].cols) && Number.isInteger(args[0].rows) && Number(args[0].cols) >= 10 &&
       Number(args[0].cols) <= 500 && Number(args[0].rows) >= 2 && Number(args[0].rows) <= 300,
   );
+  const validateProjectTaskCreate = defineRemoteArgsValidator<"createProjectTask">(
+    (args) => args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["title", "prompt"]),
+  );
+  const validateProjectTaskUpdate = defineRemoteArgsValidator<"updateProjectTask">((args) => {
+    if (args.length !== 2 || typeof args[0] !== "string" || !isRemoteRecord(args[1])) return false;
+    const input = args[1];
+    const statuses = new Set(["open", "in_progress", "in_review", "done"]);
+    return (input.title === undefined || typeof input.title === "string") &&
+      (input.prompt === undefined || typeof input.prompt === "string") &&
+      (input.status === undefined || (typeof input.status === "string" && statuses.has(input.status)));
+  });
+  const validateProjectTaskPrompt = defineRemoteArgsValidator<"generateProjectTaskRunPrompt">(
+    (args) => args.length === 1 && hasRemoteStringFields(args[0], ["projectId", "title", "notes", "modelId"]),
+  );
+  const validateProjectInsight = defineRemoteArgsValidator<"generateProjectInsight">((args) => {
+    if (args.length !== 1 || !hasRemoteStringFields(args[0], ["projectId", "kind"])) return false;
+    const input = args[0] as Record<string, unknown>;
+    const kinds = new Set([
+      "architecture-graph", "dependency-gravity", "repo-historian", "codebase-mood", "curiosity-mode", "narrative-branching",
+    ]);
+    return kinds.has(String(input.kind)) && (input.modelId === undefined || typeof input.modelId === "string");
+  });
+  const validateProjectLabRun = defineRemoteArgsValidator<"runProjectLab">((args) => {
+    if (args.length !== 1 || !hasRemoteStringFields(args[0], ["projectId"])) return false;
+    const input = args[0] as Record<string, unknown>;
+    return (input.mode === undefined || ["new-feature", "bugfix", "refactoring", "rfc-only"].includes(String(input.mode))) &&
+      (input.origin === undefined || ["manual", "idle", "task"].includes(String(input.origin))) &&
+      ["baseBranch", "topic", "implementationModelId", "reviewModelId"].every((field) =>
+        input[field] === undefined || input[field] === null || typeof input[field] === "string");
+  });
+  const validateProjectLoopCreate = defineRemoteArgsValidator<"createProjectLoop">((args) => {
+    if (args.length !== 1 || !hasRemoteStringFields(
+      args[0], ["projectId", "name", "prompt", "runnerModelId", "mergePolicy", "uiChangePolicy"],
+    )) return false;
+    const input = args[0] as Record<string, unknown>;
+    return ["auto-merge", "wait-for-approval"].includes(String(input.mergePolicy)) &&
+      ["auto", "manual-approval", "ai-review"].includes(String(input.uiChangePolicy)) &&
+      (input.prReviewPolicy === undefined || ["none", "ai-review"].includes(String(input.prReviewPolicy))) &&
+      ["reviewModelId", "uiReviewInstructions", "baseBranch"].every((field) =>
+        input[field] === undefined || input[field] === null || typeof input[field] === "string");
+  });
+  const validateLoopUiReview = defineRemoteArgsValidator<"respondToProjectLoopUiReview">((args) =>
+    args.length === 2 && typeof args[0] === "string" && isRemoteRecord(args[1]) &&
+    (args[1].decision === "approve" || args[1].decision === "request-changes") &&
+    (args[1].feedback === undefined || typeof args[1].feedback === "string"));
+  const validateForgeRequestDetails = defineRemoteArgsValidator<"getProjectForgeRequestDetails">(
+    (args) => args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["prUrl"]),
+  );
+  const validateFetchForgeDiff = defineRemoteArgsValidator<"fetchProjectPrMrDiff">((args) => {
+    if (args.length !== 2 || typeof args[0] !== "string" || !hasRemoteStringFields(args[1], ["prUrl"]) ||
+      !isRemoteRecord(args[1])) return false;
+    const input = args[1];
+    return ["baseBranch", "commitSha"].every((field) => input[field] === undefined || typeof input[field] === "string");
+  });
+  const validateAnalyzeForgeDiff = defineRemoteArgsValidator<"analyzeProjectPrMrDiff">((args) =>
+    args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["prUrl", "diff"]) &&
+    isRemoteRecord(args[1]) && (args[1].modelId === undefined || typeof args[1].modelId === "string"));
+  const validateListForgeRequests = defineRemoteArgsValidator<"listProjectForgeRequests">(
+    (args) => (args.length === 1 || args.length === 2) && typeof args[0] === "string" &&
+      (args[1] === undefined || (isRemoteRecord(args[1]) &&
+        (args[1].state === undefined || ["open", "closed", "merged", "all"].includes(String(args[1].state))))),
+  );
+  const validatePostForgeReview = defineRemoteArgsValidator<"postProjectPrMrReview">((args) =>
+    args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["prUrl", "body", "event"]) &&
+    isRemoteRecord(args[1]) && (args[1].event === "comment" || args[1].event === "approve"));
+  const validateSubmitForgeComments = defineRemoteArgsValidator<"submitProjectPrMrComments">((args) => {
+    if (args.length !== 2 || typeof args[0] !== "string" || !hasRemoteStringFields(args[1], ["prUrl"]) ||
+      !isRemoteRecord(args[1]) || !Array.isArray(args[1].comments)) return false;
+    const input = args[1];
+    const comments = input.comments;
+    const validLineNumber = (value: unknown) => value === null || Number.isInteger(value);
+    return (input.body === undefined || typeof input.body === "string") &&
+      (input.mode === undefined || input.mode === "review" || input.mode === "single") &&
+      Array.isArray(comments) && comments.length <= 500 && comments.every((comment: unknown) =>
+        hasRemoteStringFields(comment, ["oldPath", "newPath", "side", "changeType", "body"]) && isRemoteRecord(comment) &&
+        (comment.side === "old" || comment.side === "new") &&
+        ["insert", "delete", "normal"].includes(String(comment.changeType)) &&
+        validLineNumber(comment.oldLineNumber) && validLineNumber(comment.newLineNumber));
+  });
+  const validateResolveForgeThread = defineRemoteArgsValidator<"resolveProjectPrMrReviewThread">((args) =>
+    args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["prUrl", "threadId"]) &&
+    isRemoteRecord(args[1]) && typeof args[1].resolved === "boolean");
+  const validateReplyForgeThread = defineRemoteArgsValidator<"replyProjectPrMrReviewThread">((args) =>
+    args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["prUrl", "threadId", "body"]) &&
+    isRemoteRecord(args[1]) && (args[1].replyToCommentId === undefined || args[1].replyToCommentId === null ||
+      typeof args[1].replyToCommentId === "string"));
+  const validateStringArrayArg = defineRemoteArgsValidator<"reorderProjects">(
+    (args) => args.length === 1 && validateRemoteStringArray(args[0]),
+  );
+  const validateProviderAccount = defineRemoteArgsValidator<"addProviderAccount">(
+    (args) => args.length === 1 && hasRemoteStringFields(args[0], ["providerType", "label", "apiKey"]) &&
+      isRemoteRecord(args[0]) && ["ai-sdk", "azure-legacy", "codex-cli", "claude-code", "cursor-agent"].includes(String(args[0].providerType)) &&
+      (args[0].apiBaseUrl === undefined || args[0].apiBaseUrl === null || typeof args[0].apiBaseUrl === "string") &&
+      (args[0].config === undefined || isRemoteRecord(args[0].config)),
+  );
+  const validateModel = defineRemoteArgsValidator<"addModel">(
+    (args) => args.length === 1 && hasRemoteStringFields(args[0], ["providerAccountId", "modelId", "displayName"]) &&
+      isRemoteRecord(args[0]) &&
+      (args[0].baseUrlOverride === undefined || args[0].baseUrlOverride === null || typeof args[0].baseUrlOverride === "string") &&
+      (args[0].config === undefined || isRemoteRecord(args[0].config)) &&
+      (args[0].capabilities === undefined || isRemoteRecord(args[0].capabilities)) &&
+      (args[0].enabled === undefined || typeof args[0].enabled === "boolean"),
+  );
+  const validateAvailableProviderModels = defineRemoteArgsValidator<"listAvailableProviderModels">(
+    (args) => args.length === 1 && hasRemoteStringFields(args[0], ["providerAccountId"]),
+  );
+  const remoteAppSettingKeys = new Set<string>(Object.values(APP_SETTING_KEYS).filter((key) =>
+    key !== APP_SETTING_KEYS.remoteAccessEnabled && key !== APP_SETTING_KEYS.remoteAccessTailscaleEnabled));
+  const validateAppSetting = defineRemoteArgsValidator<"setAppSetting">(
+    (args) => args.length === 2 && typeof args[0] === "string" && remoteAppSettingKeys.has(args[0]) &&
+      typeof args[1] === "string" && args[1].length <= 1_000_000,
+  );
+  const validateNetworkProxySettings = defineRemoteArgsValidator<"saveNetworkProxySettings">((args) => {
+    if (args.length !== 1 || !isRemoteRecord(args[0])) return false;
+    const input = args[0];
+    return typeof input.enabled === "boolean" && (input.protocol === "http" || input.protocol === "https") &&
+      ["host", "port", "username"].every((field) => typeof input[field] === "string") &&
+      (input.password === undefined || typeof input.password === "string") &&
+      (input.clearSavedPassword === undefined || typeof input.clearSavedPassword === "boolean");
+  });
+  const validateForgeMonitorSettings = defineRemoteArgsValidator<"saveProjectForgePrMonitorSettings">((args) =>
+    args.length === 2 && typeof args[0] === "string" && isRemoteRecord(args[1]) &&
+    Number.isFinite(args[1].intervalMinutes) && Number(args[1].intervalMinutes) >= 0);
 
   remoteOperations.register("getRunPublishOptions", (runId) => controller.getRunPublishOptions(runId), validateSingleRemoteStringArg);
   remoteOperations.register("getProjectBranchOverview", (projectId) => controller.getProjectBranchOverview(projectId), validateSingleRemoteStringArg);
   remoteOperations.register("getProjectForgeAuthStatus", (projectId) => controller.getProjectForgeAuthStatus(projectId), validateSingleRemoteStringArg);
+  remoteOperations.register("getNetworkProxySettings", () => controller.getNetworkProxySettings(), validateNoRemoteArgs, "admin");
+  remoteOperations.register("checkProjectFolderGitStatus", (repoPath) => controller.checkProjectFolderGitStatus(repoPath), validateSingleRemoteStringArg, "admin");
+  remoteOperations.register("getProjectLoopDetail", (loopId) => controller.getProjectLoopDetail(loopId), validateSingleRemoteStringArg, "admin");
+  remoteOperations.register("getProjectLoopAvailability", (projectId) => controller.getProjectLoopAvailability(projectId), validateSingleRemoteStringArg, "admin");
+  remoteOperations.register("getProjectForgePrMonitorSettings", (projectId) => controller.getProjectForgePrMonitorSettings(projectId), validateSingleRemoteStringArg, "admin");
+  remoteOperations.register("listProjectForgeRequests", (projectId, input) => controller.listProjectForgeRequests(projectId, input), validateListForgeRequests, "git:write");
+  remoteOperations.register(
+    "getProjectForgeRequestDetails",
+    (projectId, input) => controller.getProjectForgeRequestDetails(projectId, input),
+    validateForgeRequestDetails,
+    "git:write",
+  );
+  remoteOperations.register(
+    "fetchProjectPrMrDiff",
+    (projectId, input) => controller.fetchProjectPrMrDiff(projectId, input),
+    validateFetchForgeDiff,
+    "git:write",
+    true,
+  );
+  remoteOperations.register("listAvailableProviderModels", (input) => controller.listAvailableProviderModels(input), validateAvailableProviderModels, "admin");
+  remoteOperations.register("getAppPaths", () => controller.getAppPaths(), validateNoRemoteArgs, "admin");
+  remoteOperations.register("getDetectedCodexInstallation", () => controller.getDetectedCodexInstallation(), validateNoRemoteArgs, "admin");
+  remoteOperations.register("getDetectedClaudeInstallation", () => controller.getDetectedClaudeInstallation(), validateNoRemoteArgs, "admin");
+  remoteOperations.register("getDetectedCursorInstallation", () => controller.getDetectedCursorInstallation(), validateNoRemoteArgs, "admin");
+  remoteOperations.register("listIntegratedSkills", () => controller.listIntegratedSkills(), validateNoRemoteArgs, "admin");
+  remoteOperations.register("getIntegratedSkillContent", (skillId) => controller.getIntegratedSkillContent(skillId), validateSingleRemoteStringArg, "admin");
   remoteOperations.register("checkProjectGitConversion", (projectId) => controller.checkProjectGitConversion(projectId), validateSingleRemoteStringArg);
   remoteOperations.register(
     "getProjectBranchDeleteImpact",
@@ -487,6 +638,17 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("undoRunToLastPrompt", (runId) => controller.undoRunToLastPrompt(runId), validateSingleRemoteStringArg, "run:operate", true);
   remoteOperations.register("deleteRun", (runId) => controller.deleteRun(runId), validateSingleRemoteStringArg, "run:operate", true);
   remoteOperations.register(
+    "setRunListVisibility",
+    (runId, visibility) => controller.setRunListVisibility(runId, visibility),
+    defineRemoteArgsValidator<"setRunListVisibility">((args) =>
+      args.length === 2 && typeof args[0] === "string" && (args[1] === "default" || args[1] === "for-later")),
+    "run:operate",
+    true,
+  );
+  for (const method of ["addBookmark", "removeBookmark", "removeBookmarkById"] as const) {
+    remoteOperations.register(method, (id) => controller[method](id), validateSingleRemoteStringArg, "run:operate", true);
+  }
+  remoteOperations.register(
     "respondToShellApproval",
     (runId, requestId, decision, options) => controller.respondToShellApproval(runId, requestId, decision, options),
     validateShellApproval,
@@ -504,6 +666,63 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("followUpChat", (chatId, prompt, options) => controller.followUpChat(chatId, prompt, options), validateFollowUpChat, "chat:operate", true);
   remoteOperations.register("cancelChat", (chatId) => controller.cancelChat(chatId), validateSingleRemoteStringArg, "chat:operate", true);
   remoteOperations.register("deleteChat", (chatId) => controller.deleteChat(chatId), validateSingleRemoteStringArg, "chat:operate", true);
+  for (const method of ["addChatBookmark", "removeChatBookmark", "removeChatBookmarkById"] as const) {
+    remoteOperations.register(method, (id) => controller[method](id), validateSingleRemoteStringArg, "chat:operate", true);
+  }
+
+  remoteOperations.register("createProjectTask", (projectId, input) => controller.createProjectTask(projectId, input), validateProjectTaskCreate, "admin", true);
+  remoteOperations.register("updateProjectTask", (taskId, input) => controller.updateProjectTask(taskId, input), validateProjectTaskUpdate, "admin", true);
+  remoteOperations.register("deleteProjectTask", (taskId) => controller.deleteProjectTask(taskId), validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register("generateProjectTaskRunPrompt", (input) => controller.generateProjectTaskRunPrompt(input), validateProjectTaskPrompt, "admin", true);
+  remoteOperations.register("generateProjectInsight", (input) => controller.generateProjectInsight(input), validateProjectInsight, "admin", true);
+  remoteOperations.register("runProjectLab", (input) => controller.runProjectLab(input), validateProjectLabRun, "admin", true);
+  remoteOperations.register("deleteProjectLabThread", (threadId) => controller.deleteProjectLabThread(threadId), validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register("createProjectLoop", (input) => controller.createProjectLoop(input), validateProjectLoopCreate, "admin", true);
+  remoteOperations.register("cancelProjectLoop", (loopId) => controller.cancelProjectLoop(loopId), validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register("resumeProjectLoop", (loopId) => controller.resumeProjectLoop(loopId), validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register("deleteProjectLoop", (loopId) => controller.deleteProjectLoop(loopId), validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register(
+    "respondToProjectLoopUiReview",
+    (reviewId, input) => controller.respondToProjectLoopUiReview(reviewId, input),
+    validateLoopUiReview,
+    "admin",
+    true,
+  );
+  remoteOperations.register(
+    "analyzeProjectPrMrDiff",
+    (projectId, input) => controller.analyzeProjectPrMrDiff(projectId, input),
+    validateAnalyzeForgeDiff,
+    "git:write",
+    true,
+  );
+  remoteOperations.register(
+    "postProjectPrMrReview",
+    (projectId, input) => controller.postProjectPrMrReview(projectId, input),
+    validatePostForgeReview,
+    "git:write",
+    true,
+  );
+  remoteOperations.register(
+    "submitProjectPrMrComments",
+    (projectId, input) => controller.submitProjectPrMrComments(projectId, input),
+    validateSubmitForgeComments,
+    "git:write",
+    true,
+  );
+  remoteOperations.register(
+    "replyProjectPrMrReviewThread",
+    (projectId, input) => controller.replyProjectPrMrReviewThread(projectId, input),
+    validateReplyForgeThread,
+    "git:write",
+    true,
+  );
+  remoteOperations.register(
+    "resolveProjectPrMrReviewThread",
+    (projectId, input) => controller.resolveProjectPrMrReviewThread(projectId, input),
+    validateResolveForgeThread,
+    "git:write",
+    true,
+  );
 
   remoteOperations.register("commitRun", (runId, message) => controller.commitRun(runId, message), validateTwoRemoteStrings, "git:write", true);
   remoteOperations.register("createRunLocalBranch", (runId, branchName) => controller.createRunLocalBranch(runId, branchName), validateTwoRemoteStrings, "git:write", true);
@@ -556,6 +775,35 @@ const bootstrap = async (): Promise<void> => {
     true,
   );
   remoteOperations.register("addProject", (input) => controller.addProject(input), validateProjectInput, "admin", true);
+  remoteOperations.register("reorderProjects", (projectIds) => controller.reorderProjects(projectIds), validateStringArrayArg, "admin", true);
+  remoteOperations.register("addProviderAccount", (input) => controller.addProviderAccount(input), validateProviderAccount, "admin", true);
+  remoteOperations.register("addModel", (input) => controller.addModel(input), validateModel, "admin", true);
+  remoteOperations.register("deleteProject", async (projectId) => {
+    await controller.deleteProject(projectId);
+    await refreshProjectForgePrMonitors(controller);
+  }, validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register("deleteProviderAccount", (providerAccountId) => controller.deleteProviderAccount(providerAccountId), validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register("deleteModel", (modelId) => controller.deleteModel(modelId), validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register("setAppSetting", async (key, value) => {
+    await controller.setAppSetting(key, value);
+    refreshAppMenu();
+  }, validateAppSetting, "admin", true);
+  remoteOperations.register("saveNetworkProxySettings", (input) => controller.saveNetworkProxySettings(input), validateNetworkProxySettings, "admin", true);
+  remoteOperations.register("saveProjectForgeAuthToken", async (projectId, token) => {
+    const result = await controller.saveProjectForgeAuthToken(projectId, token);
+    await refreshProjectForgePrMonitors(controller);
+    return result;
+  }, validateTwoRemoteStrings, "admin", true);
+  remoteOperations.register("deleteProjectForgeAuthToken", async (projectId) => {
+    const result = await controller.deleteProjectForgeAuthToken(projectId);
+    await refreshProjectForgePrMonitors(controller);
+    return result;
+  }, validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register("saveProjectForgePrMonitorSettings", async (projectId, input) => {
+    const result = await controller.saveProjectForgePrMonitorSettings(projectId, input);
+    await refreshProjectForgePrMonitors(controller);
+    return result;
+  }, validateForgeMonitorSettings, "admin", true);
 
   remoteOperations.register("runTerminalStart", async (input) => {
     const prefix = "buildwarden-run-terminal:";

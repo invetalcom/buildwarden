@@ -15,6 +15,12 @@ export interface BuildWardenClientCapabilities {
   chatMutations: boolean;
   bookmarkMutations: boolean;
   runListVisibilityMutations: boolean;
+  taskMutations: boolean;
+  insightMutations: boolean;
+  projectLabMutations: boolean;
+  projectLoopMutations: boolean;
+  prReview: boolean;
+  projectSettingsMutations: boolean;
   approvalResponses: boolean;
   gitMutations: boolean;
   projectCreation: boolean;
@@ -41,6 +47,12 @@ const ELECTRON_CAPABILITIES: Readonly<BuildWardenClientCapabilities> = Object.fr
   chatMutations: true,
   bookmarkMutations: true,
   runListVisibilityMutations: true,
+  taskMutations: true,
+  insightMutations: true,
+  projectLabMutations: true,
+  projectLoopMutations: true,
+  prReview: true,
+  projectSettingsMutations: true,
   approvalResponses: true,
   gitMutations: true,
   projectCreation: true,

@@ -87,11 +87,33 @@ const remoteRunCapabilities = {
   chatMutations: false,
   bookmarkMutations: false,
   runListVisibilityMutations: false,
+  taskMutations: false,
+  insightMutations: false,
+  projectLabMutations: false,
+  projectLoopMutations: false,
+  prReview: false,
+  projectSettingsMutations: false,
   approvalResponses: false,
   gitMutations: true,
   projectCreation: false,
   hostDirectoryBrowser: false,
   liveEvents: true,
+};
+
+const remoteControlCapabilities = {
+  ...remoteRunCapabilities,
+  settings: true,
+  chatMutations: true,
+  bookmarkMutations: true,
+  runListVisibilityMutations: true,
+  taskMutations: true,
+  insightMutations: true,
+  projectLabMutations: true,
+  projectLoopMutations: true,
+  prReview: true,
+  projectSettingsMutations: true,
+  projectCreation: true,
+  hostDirectoryBrowser: true,
 };
 
 const runRecord = (overrides: Partial<RunRecord> = {}): RunRecord => ({
@@ -763,5 +785,40 @@ describe("renderer component states", () => {
     expect(remoteSidebarMarkup).toContain("For Later");
     expect(remoteSidebarMarkup).not.toContain("PR Review");
     expect(remoteSidebarMarkup).not.toContain("Loops");
+
+    const controlLabMarkup = renderToStaticMarkup(
+      <ProjectLabTab
+        project={projectSnapshot}
+        modelOptions={[{ id: "model-1", label: "GPT-5", modelId: "gpt-5", providerType: "ai-sdk", providerFamily: "openai" }]}
+        settings={{ enabled: true, maxThreadsPerDay: 3, maxConcurrentThreads: 1, implementationModelId: "model-1", reviewModelId: "model-1" }}
+        busy={false}
+        branchOptions={["main"]}
+        selectedBaseBranch="main"
+        onBaseBranchChange={vi.fn()}
+        onSettingsChange={vi.fn()}
+        onRunProjectLab={vi.fn()}
+        onDeleteThread={vi.fn()}
+        onOpenImplementationRun={vi.fn()}
+      />,
+      {} as DesktopApi,
+      remoteControlCapabilities,
+    );
+    expect(controlLabMarkup).toContain("Start Project Lab");
+
+    const controlGraphsMarkup = renderToStaticMarkup(
+      <ProjectGraphsTab project={projectSnapshot} onGenerateInsight={vi.fn()} />,
+      {} as DesktopApi,
+      remoteControlCapabilities,
+    );
+    expect(controlGraphsMarkup).toContain("Refresh");
+
+    const controlSettingsMarkup = renderToStaticMarkup(
+      <ProjectSettingsPage {...projectSettingsProps} />,
+      {} as DesktopApi,
+      remoteControlCapabilities,
+    );
+    expect(controlSettingsMarkup).toContain("Project defaults");
+    expect(controlSettingsMarkup).toContain("Git hosting");
+    expect(controlSettingsMarkup).toContain("Delete project");
   });
 });

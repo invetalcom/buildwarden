@@ -3106,7 +3106,9 @@ export class AppController
       throw new Error("Enter a task prompt.");
     }
     this.db.getProject(projectId);
-    return this.db.createProjectTask(projectId, { title, prompt });
+    const task = this.db.createProjectTask(projectId, { title, prompt });
+    this.events.publish("task", { projectId: task.projectId, taskId: task.id, status: task.status });
+    return task;
   }
 
   async updateProjectTask(taskId: string, input: UpdateProjectTaskInput): Promise<ProjectTaskRecord> {
@@ -3123,7 +3125,9 @@ export class AppController
     if (!(status === "open" || status === "in_progress" || status === "in_review" || status === "done")) {
       throw new Error(`Unsupported project task status: ${String(status)}`);
     }
-    return this.db.updateProjectTask(taskId, { title, prompt, status });
+    const task = this.db.updateProjectTask(taskId, { title, prompt, status });
+    this.events.publish("task", { projectId: task.projectId, taskId: task.id, status: task.status });
+    return task;
   }
 
   async syncProjectTaskPullRequestStatuses(projectId: string): Promise<ProjectTaskRecord[]> {
@@ -3155,7 +3159,9 @@ export class AppController
   }
 
   async deleteProjectTask(taskId: string): Promise<void> {
+    const existing = this.db.getProjectTask(taskId);
     this.db.deleteProjectTask(taskId);
+    this.events.publish("task", { projectId: existing.projectId, taskId: existing.id, status: existing.status });
   }
 
   async runProjectLab(input: RunProjectLabInput): Promise<ProjectLabThreadRecord[]> {
