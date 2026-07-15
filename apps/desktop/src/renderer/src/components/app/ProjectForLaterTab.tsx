@@ -20,7 +20,7 @@ const formatRunMeta = (run: RunRecord) => {
 };
 
 export const ProjectForLaterTab = ({ runs, onSelectRun, onRestoreRunFromForLater }: ProjectForLaterTabProps) => {
-  const canRestoreRuns = useBuildWardenClient().capabilities.platform === "electron";
+  const canRestoreRuns = useBuildWardenClient().capabilities.runListVisibilityMutations;
   return <Card className="p-4">
     <div className="mb-3 flex items-center justify-between gap-2">
       <div className="flex items-center gap-2">

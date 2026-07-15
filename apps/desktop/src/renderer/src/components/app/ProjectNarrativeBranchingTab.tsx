@@ -18,7 +18,7 @@ interface ProjectNarrativeBranchingTabProps {
 }
 
 export const ProjectNarrativeBranchingTab = ({ project, onGenerateInsight, onSelectRun }: ProjectNarrativeBranchingTabProps) => {
-  const canGenerateInsights = useBuildWardenClient().capabilities.platform === "electron";
+  const canGenerateInsights = useBuildWardenClient().capabilities.insightMutations;
   const [busy, setBusy] = useState(false);
   const record = getProjectInsight(project, "narrative-branching");
   const narrative = parseProjectInsightData<NarrativeBranchingInsightData>(record);

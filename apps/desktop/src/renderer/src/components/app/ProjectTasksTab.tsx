@@ -256,7 +256,7 @@ export const ProjectTasksTab = ({
   onStartTask,
 }: ProjectTasksTabProps) => {
   const buildwarden = useBuildWardenClient();
-  const canManageTasks = buildwarden.capabilities.platform === "electron";
+  const canManageTasks = buildwarden.capabilities.taskMutations;
   const canStartRuns = buildwarden.capabilities.runMutations;
   const [createOpen, setCreateOpen] = useState(false);
   const [taskBusy, setTaskBusy] = useState(false);

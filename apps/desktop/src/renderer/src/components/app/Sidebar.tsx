@@ -213,7 +213,7 @@ const SidebarComponent = ({
   const buildwarden = useBuildWardenClient();
   const isWeb = buildwarden.capabilities.platform === "web";
   const canStartRuns = buildwarden.capabilities.runMutations;
-  const canManageRunBookmarks = buildwarden.capabilities.bookmarkMutations;
+  const canManageRunBookmarks = buildwarden.capabilities.runMutations;
   const canMoveRunsForLater = buildwarden.capabilities.runListVisibilityMutations;
   const canOpenRunContextMenu = canStartRuns || canManageRunBookmarks || canMoveRunsForLater;
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
@@ -367,7 +367,13 @@ const SidebarComponent = ({
     ...(buildwarden.capabilities.settings ? [{ label: "Settings", icon: Settings, selected: settingsSelected, onClick: onOpenSettings, count: "" }] : []),
   ];
   const visibleProjectTools = projectTools.filter((tool) => {
-    if (isWeb && !REMOTE_WEB_PROJECT_TABS.has(tool.tab) && !(tool.tab === "branches" && buildwarden.capabilities.gitMutations)) return false;
+    if (isWeb) {
+      const remoteTabAvailable = REMOTE_WEB_PROJECT_TABS.has(tool.tab) ||
+        (tool.tab === "branches" && buildwarden.capabilities.gitMutations) ||
+        (tool.tab === "reviews" && buildwarden.capabilities.prReview) ||
+        (tool.tab === "loops" && buildwarden.capabilities.projectLoopMutations);
+      if (!remoteTabAvailable) return false;
+    }
     return projectToolVisible(selectedProject, tool.tab, loopEnabledProjectIds);
   });
 
@@ -538,7 +544,7 @@ const SidebarComponent = ({
               className="flex size-6 shrink-0 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
               onClick={() => selectProjectFeature(selectedProject.project.id, "settings")}
               aria-label="Open project settings"
-              title={isWeb ? "Project settings (limited remote access)" : "Project settings"}
+              title={isWeb && !buildwarden.capabilities.projectSettingsMutations ? "Project settings (limited remote access)" : "Project settings"}
             >
               <Settings className="size-3.5" />
             </button>

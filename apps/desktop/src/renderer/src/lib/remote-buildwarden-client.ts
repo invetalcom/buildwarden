@@ -24,6 +24,7 @@ const webCapabilities = (scopes: readonly RemoteAccessScope[]): Readonly<BuildWa
   const approvalResponses = has("approval:respond");
   const gitMutations = has("git:write");
   const projectCreation = has("admin");
+  const adminMutations = has("admin");
   const terminalOperations = has("terminal:operate");
   return Object.freeze({
     platform: "web" as const,
@@ -34,12 +35,18 @@ const webCapabilities = (scopes: readonly RemoteAccessScope[]): Readonly<BuildWa
     fileManager: false,
     systemTerminal: false,
     embeddedTerminal: terminalOperations,
-    settings: false,
+    settings: adminMutations,
     mutations: runMutations || chatMutations || approvalResponses || gitMutations || projectCreation || terminalOperations,
     runMutations,
     chatMutations,
-    bookmarkMutations: false,
-    runListVisibilityMutations: false,
+    bookmarkMutations: runMutations || chatMutations,
+    runListVisibilityMutations: runMutations,
+    taskMutations: adminMutations,
+    insightMutations: adminMutations,
+    projectLabMutations: adminMutations,
+    projectLoopMutations: adminMutations,
+    prReview: gitMutations,
+    projectSettingsMutations: adminMutations,
     approvalResponses,
     gitMutations,
     projectCreation,
@@ -51,12 +58,16 @@ const webCapabilities = (scopes: readonly RemoteAccessScope[]): Readonly<BuildWa
 const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
   "getSnapshot",
   "refreshSnapshot",
+  "getNetworkProxySettings",
   "getProjectBranches",
   "getProjectCurrentBranch",
+  "checkProjectFolderGitStatus",
   "getRunDetail",
   "getRunWorktreeDiff",
   "getRunWorkspaceFile",
   "getProjectLoopUiReviewImage",
+  "getProjectLoopDetail",
+  "getProjectLoopAvailability",
   "getChatDetail",
   "listChatsWithSteps",
   "getBookmarksWithSteps",
@@ -65,8 +76,18 @@ const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
   "getProjectBranchOverview",
   "getProjectBranchDeleteImpact",
   "getProjectForgeAuthStatus",
+  "getProjectForgePrMonitorSettings",
+  "listProjectForgeRequests",
+  "getProjectForgeRequestDetails",
   "checkProjectGitConversion",
   "listHostDirectories",
+  "listAvailableProviderModels",
+  "getAppPaths",
+  "getDetectedCodexInstallation",
+  "getDetectedClaudeInstallation",
+  "getDetectedCursorInstallation",
+  "listIntegratedSkills",
+  "getIntegratedSkillContent",
 ]);
 
 const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
@@ -81,10 +102,35 @@ const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
   "recoverInterruptedRun",
   "undoRunToLastPrompt",
   "deleteRun",
+  "setRunListVisibility",
+  "addBookmark",
+  "removeBookmark",
+  "removeBookmarkById",
   "createChat",
   "followUpChat",
   "cancelChat",
   "deleteChat",
+  "addChatBookmark",
+  "removeChatBookmark",
+  "removeChatBookmarkById",
+  "createProjectTask",
+  "updateProjectTask",
+  "deleteProjectTask",
+  "generateProjectTaskRunPrompt",
+  "generateProjectInsight",
+  "runProjectLab",
+  "deleteProjectLabThread",
+  "createProjectLoop",
+  "cancelProjectLoop",
+  "resumeProjectLoop",
+  "deleteProjectLoop",
+  "respondToProjectLoopUiReview",
+  "fetchProjectPrMrDiff",
+  "analyzeProjectPrMrDiff",
+  "postProjectPrMrReview",
+  "submitProjectPrMrComments",
+  "replyProjectPrMrReviewThread",
+  "resolveProjectPrMrReviewThread",
   "commitRun",
   "createRunLocalBranch",
   "publishRunBranch",
@@ -99,6 +145,17 @@ const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
   "convertProjectToGit",
   "updateProjectBaseBranch",
   "addProject",
+  "reorderProjects",
+  "addProviderAccount",
+  "addModel",
+  "deleteProject",
+  "deleteProviderAccount",
+  "deleteModel",
+  "setAppSetting",
+  "saveNetworkProxySettings",
+  "saveProjectForgeAuthToken",
+  "deleteProjectForgeAuthToken",
+  "saveProjectForgePrMonitorSettings",
   "runTerminalStart",
   "runTerminalWrite",
   "runTerminalResize",
@@ -108,18 +165,27 @@ const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
 const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, RemoteAccessScope>([
   ...[
     "createRun", "continueRun", "followUpRun", "cancelRunShell", "cancelRun", "resumeRunFromCheckpoint",
-    "recoverInterruptedRun", "undoRunToLastPrompt", "deleteRun",
+    "recoverInterruptedRun", "undoRunToLastPrompt", "deleteRun", "setRunListVisibility", "addBookmark", "removeBookmark",
+    "removeBookmarkById",
   ].map((method) => [method as RemoteApiMethod, "run:operate" as const] as const),
   ...["respondToShellApproval", "respondToRunUserInput"]
     .map((method) => [method as RemoteApiMethod, "approval:respond" as const] as const),
-  ...["createChat", "followUpChat", "cancelChat", "deleteChat"]
+  ...["createChat", "followUpChat", "cancelChat", "deleteChat", "addChatBookmark", "removeChatBookmark", "removeChatBookmarkById"]
     .map((method) => [method as RemoteApiMethod, "chat:operate" as const] as const),
   ...[
     "commitRun", "createRunLocalBranch", "publishRunBranch", "createRunPullRequest", "checkoutProjectBranch",
     "fetchProjectBranches", "createProjectBranch", "renameProjectBranch", "deleteProjectBranch", "pullProjectBranch",
     "pushProjectBranch", "convertProjectToGit", "updateProjectBaseBranch",
+    "analyzeProjectPrMrDiff", "postProjectPrMrReview", "submitProjectPrMrComments", "replyProjectPrMrReviewThread",
+    "resolveProjectPrMrReviewThread", "fetchProjectPrMrDiff",
   ].map((method) => [method as RemoteApiMethod, "git:write" as const] as const),
-  ["addProject", "admin"],
+  ...[
+    "addProject", "reorderProjects", "addProviderAccount", "addModel", "deleteProject", "deleteProviderAccount", "deleteModel",
+    "setAppSetting", "saveNetworkProxySettings", "saveProjectForgeAuthToken", "deleteProjectForgeAuthToken",
+    "saveProjectForgePrMonitorSettings", "createProjectTask", "updateProjectTask", "deleteProjectTask",
+    "generateProjectTaskRunPrompt", "generateProjectInsight", "runProjectLab", "deleteProjectLabThread", "createProjectLoop",
+    "cancelProjectLoop", "resumeProjectLoop", "deleteProjectLoop", "respondToProjectLoopUiReview",
+  ].map((method) => [method as RemoteApiMethod, "admin" as const] as const),
   ...["runTerminalStart", "runTerminalWrite", "runTerminalResize", "runTerminalKill"]
     .map((method) => [method as RemoteApiMethod, "terminal:operate" as const] as const),
 ]);
@@ -157,8 +223,12 @@ const writeLocalSettings = (settings: Record<string, string>): void => {
   }
 };
 
-const remoteSettings = (snapshot: AppSnapshot, localSettings: Record<string, string>): Record<string, string> => {
-  const settings: Record<string, string> = {};
+const remoteSettings = (
+  snapshot: AppSnapshot,
+  localSettings: Record<string, string>,
+  includeHostSettings: boolean,
+): Record<string, string> => {
+  const settings: Record<string, string> = includeHostSettings ? { ...snapshot.settings } : {};
   for (const key of REMOTE_LOCAL_SETTING_KEYS) {
     const value = localSettings[key] ?? snapshot.settings[key];
     if (value != null) settings[key] = value;
@@ -375,7 +445,7 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
       ...snapshot,
       selectedProjectId: selectedProjectId ?? snapshot.selectedProjectId,
       selectedRunId,
-      settings: remoteSettings(snapshot, localSettings),
+      settings: remoteSettings(snapshot, localSettings, capabilities.settings),
     };
   };
 
@@ -394,17 +464,35 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
       if (selectedRunId === runId) selectedRunId = null;
     },
     setAppSetting: async (key, value) => {
-      if (!REMOTE_LOCAL_SETTING_KEYS.has(key)) return;
-      localSettings = { ...localSettings, [key]: value };
-      writeLocalSettings(localSettings);
+      if (REMOTE_LOCAL_SETTING_KEYS.has(key)) {
+        localSettings = { ...localSettings, [key]: value };
+        writeLocalSettings(localSettings);
+        return;
+      }
+      if (!capabilities.settings) {
+        throw new Error('"setAppSetting" is not available for this remote session.');
+      }
+      await invoke("setAppSetting", [key, value]);
     },
-    getNetworkProxySettings: async () => ({ ...DEFAULT_NETWORK_PROXY_SETTINGS, hasPassword: false }),
-    getAppPaths: async () => ({ logDirPath: "", logDirectorySize: { totalBytes: 0, fileCount: 0, unreadableEntryCount: 0 } }),
-    getDetectedCodexInstallation: async () => ({ binaryPath: null }),
-    getDetectedClaudeInstallation: async () => ({ binaryPath: null }),
-    getDetectedCursorInstallation: async () => ({ binaryPath: null }),
-    listIntegratedSkills: async () => [],
-    getIntegratedSkillContent: async () => null,
+    getNetworkProxySettings: () => capabilities.settings
+      ? invoke("getNetworkProxySettings", [])
+      : Promise.resolve({ ...DEFAULT_NETWORK_PROXY_SETTINGS, hasPassword: false }),
+    getAppPaths: () => capabilities.settings
+      ? invoke("getAppPaths", [])
+      : Promise.resolve({ logDirPath: "", logDirectorySize: { totalBytes: 0, fileCount: 0, unreadableEntryCount: 0 } }),
+    getDetectedCodexInstallation: () => capabilities.settings
+      ? invoke("getDetectedCodexInstallation", [])
+      : Promise.resolve({ binaryPath: null }),
+    getDetectedClaudeInstallation: () => capabilities.settings
+      ? invoke("getDetectedClaudeInstallation", [])
+      : Promise.resolve({ binaryPath: null }),
+    getDetectedCursorInstallation: () => capabilities.settings
+      ? invoke("getDetectedCursorInstallation", [])
+      : Promise.resolve({ binaryPath: null }),
+    listIntegratedSkills: () => capabilities.settings ? invoke("listIntegratedSkills", []) : Promise.resolve([]),
+    getIntegratedSkillContent: (skillId) => capabilities.settings
+      ? invoke("getIntegratedSkillContent", [skillId])
+      : Promise.resolve(null),
     pickProjectDirectory: async () => null,
     pickIdeExecutable: async () => null,
     reportRendererLog: async (payload) => {

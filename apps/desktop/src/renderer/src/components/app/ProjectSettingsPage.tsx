@@ -224,7 +224,7 @@ export const ProjectSettingsPage = ({
   onDeleteProject,
 }: ProjectSettingsPageProps) => {
   const buildwarden = useBuildWardenClient();
-  const limitedRemoteSettings = buildwarden.capabilities.platform === "web";
+  const limitedRemoteSettings = !buildwarden.capabilities.projectSettingsMutations;
   const canChangeBaseBranch = !limitedRemoteSettings || buildwarden.capabilities.gitMutations;
   const isFolderProject = project.project.kind === "folder";
   const workspaceModeChoices = isFolderProject ? folderWorkspaceModes : workspaceModes;

@@ -20,7 +20,7 @@ interface ProjectCodebaseMoodTabProps {
 }
 
 export const ProjectCodebaseMoodTab = ({ project, modelOptions, defaultModelId, onGenerateInsight }: ProjectCodebaseMoodTabProps) => {
-  const canGenerateInsights = useBuildWardenClient().capabilities.platform === "electron";
+  const canGenerateInsights = useBuildWardenClient().capabilities.insightMutations;
   const firstModelId = modelOptions[0]?.id ?? "";
   const [modelId, setModelId] = useState(defaultModelId || firstModelId);
   const [busy, setBusy] = useState(false);
