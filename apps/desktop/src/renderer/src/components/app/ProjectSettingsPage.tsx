@@ -224,6 +224,8 @@ export const ProjectSettingsPage = ({
   onDeleteProject,
 }: ProjectSettingsPageProps) => {
   const buildwarden = useBuildWardenClient();
+  const limitedRemoteSettings = buildwarden.capabilities.platform === "web";
+  const canChangeBaseBranch = !limitedRemoteSettings || buildwarden.capabilities.gitMutations;
   const isFolderProject = project.project.kind === "folder";
   const workspaceModeChoices = isFolderProject ? folderWorkspaceModes : workspaceModes;
   let selectedModelIds = runModelId ? [runModelId] : [];
@@ -269,6 +271,13 @@ export const ProjectSettingsPage = ({
     setForgeMonitorIntervalMinutes("0");
     setForgeMonitorError(null);
     setForgeMonitorMessage(null);
+    if (limitedRemoteSettings) {
+      setForgeBusy(false);
+      setForgeMonitorBusy(false);
+      return () => {
+        cancelled = true;
+      };
+    }
     if (project.project.kind === "folder") {
       setForgeBusy(false);
       setForgeMonitorBusy(false);
@@ -309,7 +318,7 @@ export const ProjectSettingsPage = ({
         forgeMonitorAutosaveTimerRef.current = null;
       }
     };
-  }, [buildwarden, project.project.id, project.project.kind]);
+  }, [buildwarden, limitedRemoteSettings, project.project.id, project.project.kind]);
 
   const saveForgeToken = async () => {
     setForgeError(null);
@@ -418,30 +427,42 @@ export const ProjectSettingsPage = ({
         <div className="flex min-w-0 items-center gap-3">
           <h2 className="min-w-0 flex-1 truncate text-xl font-semibold text-[var(--ec-text)]">{project.project.name}</h2>
           <div className="flex min-w-0 flex-[1.4] items-center justify-end gap-2">
-            <button
-              type="button"
-              className="flex h-8 min-w-0 max-w-[48rem] flex-1 items-center gap-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 text-left text-xs text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
-              onClick={async () => {
-                const r = await buildwarden.openPathInFileManager(project.project.repoPath);
-                if (!r.ok && r.error) {
-                  window.alert(`Could not open folder: ${r.error}`);
-                }
-              }}
-              title={project.project.repoPath}
-            >
-              <FolderGit2 className="size-3.5 shrink-0 text-[var(--ec-accent)]" />
-              <span className="truncate font-mono">{project.project.repoPath}</span>
-            </button>
-            <Button
-              variant="secondary"
-              size="sm"
-              className="h-8 px-2 text-[var(--ec-danger)] hover:text-[var(--ec-danger-strong)]"
-              onClick={() => void onDeleteProject()}
-              title="Delete project"
-              aria-label="Delete project"
-            >
-              <Trash2 className="size-3.5" aria-hidden />
-            </Button>
+            {buildwarden.capabilities.fileManager ? (
+              <button
+                type="button"
+                className="flex h-8 min-w-0 max-w-[48rem] flex-1 items-center gap-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 text-left text-xs text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+                onClick={async () => {
+                  const result = await buildwarden.openPathInFileManager(project.project.repoPath);
+                  if (!result.ok && result.error) {
+                    window.alert(`Could not open folder: ${result.error}`);
+                  }
+                }}
+                title={project.project.repoPath}
+              >
+                <FolderGit2 className="size-3.5 shrink-0 text-[var(--ec-accent)]" />
+                <span className="truncate font-mono">{project.project.repoPath}</span>
+              </button>
+            ) : (
+              <div
+                className="flex h-8 min-w-0 max-w-[48rem] flex-1 items-center gap-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 text-xs text-[var(--ec-muted)]"
+                title={project.project.repoPath}
+              >
+                <FolderGit2 className="size-3.5 shrink-0 text-[var(--ec-accent)]" />
+                <span className="truncate font-mono">{project.project.repoPath}</span>
+              </div>
+            )}
+            {!limitedRemoteSettings ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                className="h-8 px-2 text-[var(--ec-danger)] hover:text-[var(--ec-danger-strong)]"
+                onClick={() => void onDeleteProject()}
+                title="Delete project"
+                aria-label="Delete project"
+              >
+                <Trash2 className="size-3.5" aria-hidden />
+              </Button>
+            ) : null}
           </div>
         </div>
       </Card>
@@ -453,6 +474,7 @@ export const ProjectSettingsPage = ({
               <CardTitle className="text-xl">Project profile</CardTitle>
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {limitedRemoteSettings ? <Badge tone="neutral">limited remote settings</Badge> : null}
               <Badge dot tone={project.activeRuns.length > 0 ? "running" : "neutral"}>
                 {project.activeRuns.length > 0 ? `${project.activeRuns.length} active` : "idle"}
               </Badge>
@@ -491,12 +513,14 @@ export const ProjectSettingsPage = ({
               />
             </>
           )}
-          <SummaryTile
-            icon={<Sparkles className="size-3.5 text-[var(--ec-accent)]" />}
-            label="Project skills"
-            value={`${activeSkillCount} enabled`}
-            detail={availableIntegratedSkills.length > 0 ? `${availableIntegratedSkills.length} available` : "No enabled skills"}
-          />
+          {!limitedRemoteSettings ? (
+            <SummaryTile
+              icon={<Sparkles className="size-3.5 text-[var(--ec-accent)]" />}
+              label="Project skills"
+              value={`${activeSkillCount} enabled`}
+              detail={availableIntegratedSkills.length > 0 ? `${availableIntegratedSkills.length} available` : "No enabled skills"}
+            />
+          ) : null}
           <SummaryTile
             icon={<PlayCircle className="size-3.5 text-[var(--ec-accent)]" />}
             label="Total runs"
@@ -513,39 +537,43 @@ export const ProjectSettingsPage = ({
       </Card>
 
       <div className="space-y-5">
-        <SettingsSection title="Project defaults">
-          <SettingsRow title="Mode" description="Default behavior used when starting new agent runs from this project.">
-            <div className={`${rowControlClass} grid gap-2 md:grid-cols-3`}>
-              {runModes.map((mode) => (
-                <ChoiceButton
-                  key={mode.id}
-                  selected={runMode === mode.id}
-                  disabled={busy}
-                  label={mode.label}
-                  description={mode.description}
-                  onClick={() => onRunModeChange(mode.id)}
-                />
-              ))}
-            </div>
-          </SettingsRow>
+        <SettingsSection title={limitedRemoteSettings ? "Repository" : "Project defaults"}>
+          {!limitedRemoteSettings ? (
+            <>
+              <SettingsRow title="Mode" description="Default behavior used when starting new agent runs from this project.">
+                <div className={`${rowControlClass} grid gap-2 md:grid-cols-3`}>
+                  {runModes.map((mode) => (
+                    <ChoiceButton
+                      key={mode.id}
+                      selected={runMode === mode.id}
+                      disabled={busy}
+                      label={mode.label}
+                      description={mode.description}
+                      onClick={() => onRunModeChange(mode.id)}
+                    />
+                  ))}
+                </div>
+              </SettingsRow>
 
-          <SettingsRow
-            title="Workspace"
-            description={isFolderProject ? "Choose whether new runs use an isolated folder copy or edit the project folder directly." : "Choose whether new runs use isolated worktrees or the current project checkout."}
-          >
-            <div className={`${rowControlClass} grid gap-2 sm:grid-cols-2`}>
-              {workspaceModeChoices.map((mode) => (
-                <ChoiceButton
-                  key={mode.id}
-                  selected={runWorkspaceType === mode.id}
-                  disabled={busy}
-                  label={mode.label}
-                  description={mode.description}
-                  onClick={() => onRunWorkspaceTypeChange(mode.id)}
-                />
-              ))}
-            </div>
-          </SettingsRow>
+              <SettingsRow
+                title="Workspace"
+                description={isFolderProject ? "Choose whether new runs use an isolated folder copy or edit the project folder directly." : "Choose whether new runs use isolated worktrees or the current project checkout."}
+              >
+                <div className={`${rowControlClass} grid gap-2 sm:grid-cols-2`}>
+                  {workspaceModeChoices.map((mode) => (
+                    <ChoiceButton
+                      key={mode.id}
+                      selected={runWorkspaceType === mode.id}
+                      disabled={busy}
+                      label={mode.label}
+                      description={mode.description}
+                      onClick={() => onRunWorkspaceTypeChange(mode.id)}
+                    />
+                  ))}
+                </div>
+              </SettingsRow>
+            </>
+          ) : null}
 
           {!isFolderProject ? (
             <SettingsRow
@@ -574,7 +602,7 @@ export const ProjectSettingsPage = ({
                             ? "bg-[var(--ec-accent-soft)] text-[var(--ec-text)]"
                             : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
                         )}
-                        disabled={busy}
+                        disabled={busy || !canChangeBaseBranch}
                         onClick={() => void onProjectBaseBranchChange(branch)}
                       >
                         <GitBranch className="size-3.5 shrink-0" />
@@ -588,77 +616,81 @@ export const ProjectSettingsPage = ({
             </SettingsRow>
           ) : null}
 
-          <SettingsRow
-            title="Model set"
-            description={runWorkspaceType === "worktree" || runWorkspaceType === "copy" ? "Select one or more models for isolated workspace runs." : "Select the default model for direct workspace runs."}
-            align="start"
-          >
-            <div className={`${rowControlClass} min-w-0 overflow-hidden rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)]`}>
-              <div className="flex items-center justify-between gap-3 border-b border-[var(--ec-border)] px-3 py-2">
-                <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-[var(--ec-text)]">
-                  <SlidersHorizontal className="size-3.5 shrink-0 text-[var(--ec-accent)]" />
-                  <span className="truncate">Model set</span>
+          {!limitedRemoteSettings ? (
+            <>
+              <SettingsRow
+                title="Model set"
+                description={runWorkspaceType === "worktree" || runWorkspaceType === "copy" ? "Select one or more models for isolated workspace runs." : "Select the default model for direct workspace runs."}
+                align="start"
+              >
+                <div className={`${rowControlClass} min-w-0 overflow-hidden rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)]`}>
+                  <div className="flex items-center justify-between gap-3 border-b border-[var(--ec-border)] px-3 py-2">
+                    <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-[var(--ec-text)]">
+                      <SlidersHorizontal className="size-3.5 shrink-0 text-[var(--ec-accent)]" />
+                      <span className="truncate">Model set</span>
+                    </div>
+                    <span className="shrink-0 font-mono text-[11px] text-[var(--ec-faint)]">{selectedModelIds.length}</span>
+                  </div>
+                  <div className="app-scrollbar max-h-56 overflow-y-auto p-1.5">
+                    {modelOptions.map((model) => {
+                      const selected = selectedModelIds.includes(model.id);
+                      return (
+                        <button
+                          key={model.id}
+                          type="button"
+                          className={cn(
+                            "flex h-8 w-full items-center justify-between gap-2 rounded px-2 text-left text-xs transition",
+                            selected
+                              ? "bg-[var(--ec-accent-soft)] text-[var(--ec-text)]"
+                              : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
+                          )}
+                          disabled={busy}
+                          onClick={() => {
+                            if (runWorkspaceType === "worktree" || runWorkspaceType === "copy") {
+                              toggleWorktreeModel(model.id);
+                            } else {
+                              onRunModelChange(model.id);
+                            }
+                          }}
+                        >
+                          <span className="truncate">{model.label}</span>
+                          {selected ? <span className="size-1.5 shrink-0 rounded-full bg-[var(--ec-accent)]" /> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-                <span className="shrink-0 font-mono text-[11px] text-[var(--ec-faint)]">{selectedModelIds.length}</span>
-              </div>
-              <div className="app-scrollbar max-h-56 overflow-y-auto p-1.5">
-                {modelOptions.map((model) => {
-                  const selected = selectedModelIds.includes(model.id);
-                  return (
-                    <button
-                      key={model.id}
-                      type="button"
-                      className={cn(
-                        "flex h-8 w-full items-center justify-between gap-2 rounded px-2 text-left text-xs transition",
-                        selected
-                          ? "bg-[var(--ec-accent-soft)] text-[var(--ec-text)]"
-                          : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
-                      )}
-                      disabled={busy}
-                      onClick={() => {
-                        if (runWorkspaceType === "worktree" || runWorkspaceType === "copy") {
-                          toggleWorktreeModel(model.id);
-                        } else {
-                          onRunModelChange(model.id);
-                        }
-                      }}
-                    >
-                      <span className="truncate">{model.label}</span>
-                      {selected ? <span className="size-1.5 shrink-0 rounded-full bg-[var(--ec-accent)]" /> : null}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </SettingsRow>
+              </SettingsRow>
 
-          <SettingsRow title="Reasoning effort" description="Effort used when the selected provider supports reasoning controls." align="start">
-            <div className={`${rowControlClass} grid gap-2 md:grid-cols-2`}>
-              <EffortRow label="OpenAI / Codex" value={reasoningEffort} onChange={onReasoningEffortChange} disabled={busy} />
-              <EffortRow label="Claude" value={anthropicEffort} onChange={onAnthropicEffortChange} disabled={busy} />
-            </div>
-          </SettingsRow>
-
-          <SettingsRow title="Full Access" description="Skip per-tool approvals for new runs in this project.">
-            <div className={`${rowControlClass} space-y-2`}>
-              <div className="flex items-center justify-between gap-3 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-2.5">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-[var(--ec-text)]">{yoloMode ? "Full access enabled" : "Approvals required"}</p>
-                  <p className="mt-1 text-xs text-[var(--ec-muted)]">
-                    {yoloMode ? "Trusted shell and tool actions can run without prompting." : "Untrusted shell and tool actions ask first."}
-                  </p>
+              <SettingsRow title="Reasoning effort" description="Effort used when the selected provider supports reasoning controls." align="start">
+                <div className={`${rowControlClass} grid gap-2 md:grid-cols-2`}>
+                  <EffortRow label="OpenAI / Codex" value={reasoningEffort} onChange={onReasoningEffortChange} disabled={busy} />
+                  <EffortRow label="Claude" value={anthropicEffort} onChange={onAnthropicEffortChange} disabled={busy} />
                 </div>
-                <Switch checked={yoloMode} onCheckedChange={onYoloModeChange} disabled={busy} />
-              </div>
-              <div className="flex items-center gap-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-3 text-xs text-[var(--ec-muted)]">
-                <ShieldOff className="size-3.5 shrink-0 text-[var(--ec-danger)]" />
-                <span className="min-w-0">Full Access applies to future runs and should only be used for trusted project folders.</span>
-              </div>
-            </div>
-          </SettingsRow>
+              </SettingsRow>
+
+              <SettingsRow title="Full Access" description="Skip per-tool approvals for new runs in this project.">
+                <div className={`${rowControlClass} space-y-2`}>
+                  <div className="flex items-center justify-between gap-3 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-2.5">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-[var(--ec-text)]">{yoloMode ? "Full access enabled" : "Approvals required"}</p>
+                      <p className="mt-1 text-xs text-[var(--ec-muted)]">
+                        {yoloMode ? "Trusted shell and tool actions can run without prompting." : "Untrusted shell and tool actions ask first."}
+                      </p>
+                    </div>
+                    <Switch checked={yoloMode} onCheckedChange={onYoloModeChange} disabled={busy} />
+                  </div>
+                  <div className="flex items-center gap-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-3 text-xs text-[var(--ec-muted)]">
+                    <ShieldOff className="size-3.5 shrink-0 text-[var(--ec-danger)]" />
+                    <span className="min-w-0">Full Access applies to future runs and should only be used for trusted project folders.</span>
+                  </div>
+                </div>
+              </SettingsRow>
+            </>
+          ) : null}
         </SettingsSection>
 
-        {!isFolderProject ? <SettingsSection title="Git hosting">
+        {!isFolderProject && !limitedRemoteSettings ? <SettingsSection title="Git hosting">
           <SettingsRow
             title="Access token"
             description="Token used to fetch and review PRs/MRs for this project. Secrets are stored outside the app database."
@@ -754,7 +786,7 @@ export const ProjectSettingsPage = ({
           ) : null}
         </SettingsSection> : null}
 
-        <SettingsSection title="Project skills">
+        {!limitedRemoteSettings ? <SettingsSection title="Project skills">
           <SettingsRow title="Enabled skills" description="Skills selected here are prepended to new agent runs for this project." align="start">
             <div className={`${rowControlClass} space-y-3`}>
               <div className="flex justify-start md:justify-end">
@@ -770,7 +802,7 @@ export const ProjectSettingsPage = ({
               </div>
             </div>
           </SettingsRow>
-        </SettingsSection>
+        </SettingsSection> : null}
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 import type { ProjectInsightKind, ProjectSnapshot } from "@buildwarden/shared";
 import { GitBranch, Loader2, Milestone } from "lucide-react";
 import { useState } from "react";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import {
@@ -17,6 +18,7 @@ interface ProjectNarrativeBranchingTabProps {
 }
 
 export const ProjectNarrativeBranchingTab = ({ project, onGenerateInsight, onSelectRun }: ProjectNarrativeBranchingTabProps) => {
+  const canGenerateInsights = useBuildWardenClient().capabilities.platform === "electron";
   const [busy, setBusy] = useState(false);
   const record = getProjectInsight(project, "narrative-branching");
   const narrative = parseProjectInsightData<NarrativeBranchingInsightData>(record);
@@ -40,9 +42,9 @@ export const ProjectNarrativeBranchingTab = ({ project, onGenerateInsight, onSel
             <p className="text-xs text-zinc-500">{record?.summary ?? "Group project runs into implementation arcs by branch."}</p>
           </div>
         </div>
-        <Button type="button" size="sm" variant="secondary" onClick={() => void handleRefresh()} disabled={busy}>
+        {canGenerateInsights ? <Button type="button" size="sm" variant="secondary" onClick={() => void handleRefresh()} disabled={busy}>
           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Refresh"}
-        </Button>
+        </Button> : null}
       </div>
       <p className="mb-3 text-xs text-zinc-500">Updated {formatGeneratedAt(record?.generatedAt)}</p>
 
@@ -95,7 +97,7 @@ export const ProjectNarrativeBranchingTab = ({ project, onGenerateInsight, onSel
         </div>
       ) : (
         <div className="rounded-xl border border-dashed border-zinc-800/80 bg-zinc-950/40 px-4 py-10 text-center text-sm text-zinc-500">
-          Generate narrative branching to turn prior project runs into an explorable branch-by-branch timeline.
+          {canGenerateInsights ? "Generate narrative branching to turn prior project runs into an explorable branch-by-branch timeline." : "No saved narrative branching report is available on the host."}
         </div>
       )}
     </Card>

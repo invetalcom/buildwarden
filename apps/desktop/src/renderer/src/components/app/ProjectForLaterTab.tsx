@@ -1,5 +1,6 @@
 import type { RunRecord } from "@buildwarden/shared";
 import { Archive, ArchiveRestore } from "lucide-react";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -18,8 +19,9 @@ const formatRunMeta = (run: RunRecord) => {
   return `${workspaceLabel} - ${new Date(run.createdAt).toLocaleString()}`;
 };
 
-export const ProjectForLaterTab = ({ runs, onSelectRun, onRestoreRunFromForLater }: ProjectForLaterTabProps) => (
-  <Card className="p-4">
+export const ProjectForLaterTab = ({ runs, onSelectRun, onRestoreRunFromForLater }: ProjectForLaterTabProps) => {
+  const canRestoreRuns = useBuildWardenClient().capabilities.platform === "electron";
+  return <Card className="p-4">
     <div className="mb-3 flex items-center justify-between gap-2">
       <div className="flex items-center gap-2">
         <Archive className="h-4 w-4 text-cyan-400" />
@@ -40,7 +42,7 @@ export const ProjectForLaterTab = ({ runs, onSelectRun, onRestoreRunFromForLater
               </div>
               <div className="flex items-center gap-2">
                 <Badge dot tone={run.status}>{run.status}</Badge>
-                <Button
+                {canRestoreRuns ? <Button
                   type="button"
                   size="sm"
                   variant="secondary"
@@ -49,7 +51,7 @@ export const ProjectForLaterTab = ({ runs, onSelectRun, onRestoreRunFromForLater
                 >
                   <ArchiveRestore className="mr-1.5 h-3.5 w-3.5" />
                   Reactivate
-                </Button>
+                </Button> : null}
               </div>
             </div>
           </div>
@@ -60,5 +62,5 @@ export const ProjectForLaterTab = ({ runs, onSelectRun, onRestoreRunFromForLater
         </div>
       )}
     </div>
-  </Card>
-);
+  </Card>;
+};

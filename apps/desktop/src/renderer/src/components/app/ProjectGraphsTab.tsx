@@ -1,6 +1,7 @@
 import type { ProjectInsightKind, ProjectSnapshot } from "@buildwarden/shared";
 import { GitGraph, Loader2, Network } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { reportRendererError, reportRendererLog, reportRendererWarning } from "../../lib/report-renderer-error";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -20,6 +21,7 @@ interface ProjectGraphsTabProps {
 const formatGeneratedAt = (value: string | undefined) => (value ? new Date(value).toLocaleString() : "Not generated yet");
 
 export const ProjectGraphsTab = ({ project, onGenerateInsight }: ProjectGraphsTabProps) => {
+  const canGenerateInsights = useBuildWardenClient().capabilities.platform === "electron";
   const [busyKind, setBusyKind] = useState<ProjectInsightKind | null>(null);
   const architectureRecord = getProjectInsight(project, "architecture-graph");
   const architecture = parseProjectInsightData<ArchitectureGraphInsightData>(architectureRecord);
@@ -94,16 +96,16 @@ export const ProjectGraphsTab = ({ project, onGenerateInsight }: ProjectGraphsTa
               <p className="text-xs text-zinc-500">{architectureRecord?.summary ?? "Map module structure, hotspots, and likely ownership."}</p>
             </div>
           </div>
-          <Button type="button" size="sm" variant="secondary" onClick={() => void handleRefresh("architecture-graph")} disabled={busyKind !== null}>
+          {canGenerateInsights ? <Button type="button" size="sm" variant="secondary" onClick={() => void handleRefresh("architecture-graph")} disabled={busyKind !== null}>
             {busyKind === "architecture-graph" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Refresh"}
-          </Button>
+          </Button> : null}
         </div>
         <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
           <span>Updated {formatGeneratedAt(architectureRecord?.generatedAt)}</span>
           {architecture ? <span>{architecture.nodes.length} nodes</span> : null}
           {architecture ? <span>{architecture.edges.length} edges</span> : null}
         </div>
-        <ProjectInsightMermaid chart={architecture?.mermaid ?? ""} emptyLabel="Generate the architecture graph to visualize repo structure." />
+        <ProjectInsightMermaid chart={architecture?.mermaid ?? ""} emptyLabel={canGenerateInsights ? "Generate the architecture graph to visualize repo structure." : "No saved architecture graph is available on the host."} />
         {architecture?.hotspots?.length ? (
           <div className="mt-3 grid gap-2 lg:grid-cols-2">
             {architecture.hotspots.map((hotspot) => (
@@ -129,16 +131,16 @@ export const ProjectGraphsTab = ({ project, onGenerateInsight }: ProjectGraphsTa
               <p className="text-xs text-zinc-500">{gravityRecord?.summary ?? "Find the files quietly carrying the most structural weight."}</p>
             </div>
           </div>
-          <Button type="button" size="sm" variant="secondary" onClick={() => void handleRefresh("dependency-gravity")} disabled={busyKind !== null}>
+          {canGenerateInsights ? <Button type="button" size="sm" variant="secondary" onClick={() => void handleRefresh("dependency-gravity")} disabled={busyKind !== null}>
             {busyKind === "dependency-gravity" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Refresh"}
-          </Button>
+          </Button> : null}
         </div>
         <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
           <span>Updated {formatGeneratedAt(gravityRecord?.generatedAt)}</span>
           {gravity ? <span>{gravity.summaryStats.totalModules} modules</span> : null}
           {gravity ? <span>{gravity.summaryStats.totalEdges} edges</span> : null}
         </div>
-        <ProjectInsightMermaid chart={gravity?.mermaid ?? ""} emptyLabel="Generate the gravity map to see central dependency hubs." />
+        <ProjectInsightMermaid chart={gravity?.mermaid ?? ""} emptyLabel={canGenerateInsights ? "Generate the gravity map to see central dependency hubs." : "No saved dependency gravity map is available on the host."} />
         {gravity?.nodes?.length ? (
           <div className="mt-3 space-y-2">
             {gravity.nodes.slice(0, 6).map((node) => (
