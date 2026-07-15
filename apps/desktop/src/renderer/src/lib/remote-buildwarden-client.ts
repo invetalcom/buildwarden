@@ -37,6 +37,7 @@ const webCapabilities = (scopes: readonly RemoteAccessScope[]): Readonly<BuildWa
     mutations: runMutations || chatMutations || approvalResponses || gitMutations || projectCreation,
     runMutations,
     chatMutations,
+    bookmarkMutations: false,
     approvalResponses,
     gitMutations,
     projectCreation,

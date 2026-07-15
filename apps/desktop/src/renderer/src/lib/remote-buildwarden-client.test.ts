@@ -47,7 +47,13 @@ describe("remote BuildWarden client", () => {
     const client = createRemoteBuildWardenClient({ fetch: fetcher as typeof fetch });
 
     await expect(client.getSnapshot()).resolves.toMatchObject({ projects: [], selectedRunId: null });
-    expect(client.capabilities).toMatchObject({ platform: "web", mutations: false, settings: false, liveEvents: true });
+    expect(client.capabilities).toMatchObject({
+      platform: "web",
+      mutations: false,
+      bookmarkMutations: false,
+      settings: false,
+      liveEvents: true,
+    });
     expect(fetcher).toHaveBeenCalledWith("/api/v1/rpc", expect.objectContaining({
       method: "POST",
       credentials: "same-origin",
