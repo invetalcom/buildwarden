@@ -398,12 +398,21 @@ export class RemoteOperationRegistry {
       response = errorResponse(request.requestId, "operation-failed", "The operation failed.");
     }
     if (persistedCommand && this.idempotencyStore) {
-      this.idempotencyStore.completeRemoteCommandIdempotency(
+      const completed = this.idempotencyStore.completeRemoteCommandIdempotency(
         persistedCommand.sessionId,
         persistedCommand.idempotencyKey,
         JSON.stringify(response),
         new Date().toISOString(),
       );
+      if (!completed) {
+        const error = new Error("The completed remote command response could not be persisted.");
+        this.onOperationError?.({ method: request.method, requestId: request.requestId, error });
+        return errorResponse(
+          request.requestId,
+          "operation-failed",
+          "The command completed, but its replay result could not be persisted.",
+        );
+      }
     }
     return response;
   }

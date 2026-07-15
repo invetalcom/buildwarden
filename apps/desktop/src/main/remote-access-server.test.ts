@@ -179,6 +179,36 @@ describe("remote operation registry", () => {
     await expect(first).resolves.toMatchObject({ ok: true });
     expect(mutation).toHaveBeenCalledOnce();
   });
+
+  it("reports a failed idempotency completion instead of silently returning success", async () => {
+    const db = await createDatabase();
+    const completion = vi.spyOn(db, "completeRemoteCommandIdempotency").mockReturnValue(false);
+    const onOperationError = vi.fn();
+    const registry = new RemoteOperationRegistry(onOperationError, db);
+    registry.register("refreshSnapshot", async () => emptySnapshot, validateNoRemoteArgs, "admin", true);
+
+    const response = await registry.dispatch({
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      requestId: "completion-failed",
+      idempotencyKey: "command-failed-completion",
+      method: "refreshSnapshot",
+      args: [],
+    }, ["admin"], "session-1");
+
+    expect(response).toMatchObject({
+      ok: false,
+      error: {
+        code: "operation-failed",
+        message: "The command completed, but its replay result could not be persisted.",
+      },
+    });
+    expect(completion).toHaveBeenCalledOnce();
+    expect(onOperationError).toHaveBeenCalledWith(expect.objectContaining({
+      method: "refreshSnapshot",
+      requestId: "completion-failed",
+      error: expect.any(Error),
+    }));
+  });
 });
 
 describe("remote access authentication", () => {
