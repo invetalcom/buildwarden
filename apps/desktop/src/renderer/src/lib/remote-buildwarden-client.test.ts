@@ -51,6 +51,7 @@ describe("remote BuildWarden client", () => {
       platform: "web",
       mutations: false,
       bookmarkMutations: false,
+      runListVisibilityMutations: false,
       settings: false,
       liveEvents: true,
     });

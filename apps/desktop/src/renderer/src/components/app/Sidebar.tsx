@@ -97,6 +97,15 @@ const projectTools: Array<{ tab: ProjectPageTab; label: string; icon: typeof Bot
   { tab: "for-later", label: "For Later", icon: Archive, count: (project) => project.forLaterRuns.length },
 ];
 
+const REMOTE_WEB_PROJECT_TABS = new Set<ProjectPageTab>([
+  "overview",
+  "graphs",
+  "ai-insights-history",
+  "tasks",
+  "lab",
+  "for-later",
+]);
+
 const projectToolVisible = (
   project: AppSnapshot["projects"][number] | null | undefined,
   tab: ProjectPageTab,
@@ -202,9 +211,11 @@ const SidebarComponent = ({
   loopEnabledProjectIds,
 }: SidebarProps) => {
   const buildwarden = useBuildWardenClient();
-  const remoteWeb = buildwarden.capabilities.platform === "web";
-  const readOnly = remoteWeb || !buildwarden.capabilities.mutations;
-  const mobileWeb = buildwarden.capabilities.platform === "web";
+  const isWeb = buildwarden.capabilities.platform === "web";
+  const canStartRuns = buildwarden.capabilities.runMutations;
+  const canManageRunBookmarks = buildwarden.capabilities.bookmarkMutations;
+  const canMoveRunsForLater = buildwarden.capabilities.runListVisibilityMutations;
+  const canOpenRunContextMenu = canStartRuns || canManageRunBookmarks || canMoveRunsForLater;
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [projectToolsExpanded, setProjectToolsExpanded] = useState(true);
   const [expandedRecentProjectIds, setExpandedRecentProjectIds] = useState<Record<string, boolean>>({});
@@ -356,8 +367,8 @@ const SidebarComponent = ({
     ...(buildwarden.capabilities.settings ? [{ label: "Settings", icon: Settings, selected: settingsSelected, onClick: onOpenSettings, count: "" }] : []),
   ];
   const visibleProjectTools = projectTools.filter((tool) => {
-    if (remoteWeb && tool.tab !== "overview" && !(tool.tab === "branches" && buildwarden.capabilities.gitMutations)) return false;
-    return (!readOnly || remoteWeb || tool.tab === "overview") && projectToolVisible(selectedProject, tool.tab, loopEnabledProjectIds);
+    if (isWeb && !REMOTE_WEB_PROJECT_TABS.has(tool.tab) && !(tool.tab === "branches" && buildwarden.capabilities.gitMutations)) return false;
+    return projectToolVisible(selectedProject, tool.tab, loopEnabledProjectIds);
   });
 
   if (collapsed) {
@@ -430,7 +441,7 @@ const SidebarComponent = ({
 
   return (
     <>
-    {mobileWeb ? (
+    {isWeb ? (
       <button
         type="button"
         className="fixed inset-0 z-40 hidden bg-black/45 backdrop-blur-[1px] max-[899px]:block"
@@ -442,7 +453,7 @@ const SidebarComponent = ({
       ref={sidebarRef}
       className={cn(
         "relative flex min-h-0 shrink-0 flex-col border-r border-[var(--ec-border)] bg-[var(--ec-sidebar)] text-[var(--ec-text)] transition-colors duration-150",
-        mobileWeb && "max-[899px]:fixed max-[899px]:inset-y-0 max-[899px]:left-0 max-[899px]:z-50 max-[899px]:max-w-[calc(100vw-3rem)] max-[899px]:shadow-2xl",
+        isWeb && "max-[899px]:fixed max-[899px]:inset-y-0 max-[899px]:left-0 max-[899px]:z-50 max-[899px]:max-w-[calc(100vw-3rem)] max-[899px]:shadow-2xl",
       )}
       style={{ width }}
     >
@@ -511,28 +522,26 @@ const SidebarComponent = ({
           <div className="flex h-6 min-w-0 items-center gap-1 px-1">
             <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--ec-faint)]">Project</span>
             <span className="min-w-0 flex-1" />
-            {!readOnly ? (
-              <>
-                <button
-                  type="button"
-                  className="flex size-6 shrink-0 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
-                  onClick={() => selectProjectFeature(selectedProject.project.id, "overview")}
-                  aria-label="Start new agent run"
-                  title="New agent run"
-                >
-                  <Plus className="size-3.5" />
-                </button>
-                <button
-                  type="button"
-                  className="flex size-6 shrink-0 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
-                  onClick={() => selectProjectFeature(selectedProject.project.id, "settings")}
-                  aria-label="Open project settings"
-                  title="Project settings"
-                >
-                  <Settings className="size-3.5" />
-                </button>
-              </>
+            {canStartRuns ? (
+              <button
+                type="button"
+                className="flex size-6 shrink-0 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+                onClick={() => selectProjectFeature(selectedProject.project.id, "overview")}
+                aria-label="Start new agent run"
+                title="New agent run"
+              >
+                <Plus className="size-3.5" />
+              </button>
             ) : null}
+            <button
+              type="button"
+              className="flex size-6 shrink-0 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+              onClick={() => selectProjectFeature(selectedProject.project.id, "settings")}
+              aria-label="Open project settings"
+              title={isWeb ? "Project settings (limited remote access)" : "Project settings"}
+            >
+              <Settings className="size-3.5" />
+            </button>
             <button
               type="button"
               className="flex size-6 shrink-0 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
@@ -632,7 +641,7 @@ const SidebarComponent = ({
                           <button
                             key={run.id}
                             type="button"
-                            draggable={!readOnly}
+                            draggable
                             className={cn(
                               "group relative w-full min-w-0 overflow-hidden rounded-md border px-2 py-1.5 text-left transition",
                               highlighted
@@ -640,11 +649,11 @@ const SidebarComponent = ({
                                 : "border-transparent bg-[var(--ec-panel)] hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-control)]",
                             )}
                             onDragStart={(event) => {
-                              if (!readOnly) onRunDragStart(event, project.project.id, run.id);
+                              onRunDragStart(event, project.project.id, run.id);
                             }}
                             onClick={() => onSelectRun(project.project.id, run.id)}
                             onContextMenu={(event) => {
-                              if (readOnly) return;
+                              if (!canOpenRunContextMenu) return;
                               event.preventDefault();
                               setContextMenu({
                                 projectId: project.project.id,
@@ -716,7 +725,7 @@ const SidebarComponent = ({
         </div>
       </div>
 
-      {!readOnly && contextMenu
+      {contextMenu && canOpenRunContextMenu
         ? createPortal(
             <>
               <div
@@ -732,22 +741,24 @@ const SidebarComponent = ({
                 className="fixed z-[30001] min-w-[11rem] glass-popover py-1"
                 style={{ left: contextMenu.x, top: contextMenu.y }}
               >
-                <button
-                  className={cn(
-                    "flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--ec-text)] hover:bg-[var(--ec-hover)]",
-                    ACTIVE_RUN_STATUSES.has(contextMenu.runStatus) && "cursor-not-allowed opacity-50 hover:bg-transparent",
-                  )}
-                  disabled={ACTIVE_RUN_STATUSES.has(contextMenu.runStatus)}
-                  onClick={() => {
-                    onContinueRun(contextMenu.projectId, contextMenu.runId);
-                    setContextMenu(null);
-                  }}
-                  type="button"
-                >
-                  <Bot className="size-3.5" />
-                  Continue run
-                </button>
-                {bookmarkedRunIds.has(contextMenu.runId) ? (
+                {canStartRuns ? (
+                  <button
+                    className={cn(
+                      "flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--ec-text)] hover:bg-[var(--ec-hover)]",
+                      ACTIVE_RUN_STATUSES.has(contextMenu.runStatus) && "cursor-not-allowed opacity-50 hover:bg-transparent",
+                    )}
+                    disabled={ACTIVE_RUN_STATUSES.has(contextMenu.runStatus)}
+                    onClick={() => {
+                      onContinueRun(contextMenu.projectId, contextMenu.runId);
+                      setContextMenu(null);
+                    }}
+                    type="button"
+                  >
+                    <Bot className="size-3.5" />
+                    Continue run
+                  </button>
+                ) : null}
+                {canManageRunBookmarks && bookmarkedRunIds.has(contextMenu.runId) ? (
                   <button
                     className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--ec-text)] hover:bg-[var(--ec-hover)]"
                     onClick={() => {
@@ -759,7 +770,7 @@ const SidebarComponent = ({
                     <Bookmark className="size-3.5" />
                     Remove bookmark
                   </button>
-                ) : (
+                ) : canManageRunBookmarks ? (
                   <button
                     className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--ec-text)] hover:bg-[var(--ec-hover)]"
                     onClick={() => {
@@ -771,31 +782,37 @@ const SidebarComponent = ({
                     <Bookmark className="size-3.5" />
                     Add bookmark
                   </button>
-                )}
-                <button
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--ec-text)] hover:bg-[var(--ec-hover)]"
-                  onClick={() => {
-                    onSetRunForLater(contextMenu.projectId, contextMenu.runId);
-                    setContextMenu(null);
-                  }}
-                  type="button"
-                >
-                  <Archive className="size-3.5" />
-                  Move for later
-                </button>
-                <Separator className="my-1" />
-                <button
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--ec-danger)] hover:bg-[var(--ec-danger-soft)]"
-                  disabled={pendingDeleteRunIds[contextMenu.runId]}
-                  onClick={() => {
-                    onDeleteRun(contextMenu.projectId, contextMenu.runId);
-                    setContextMenu(null);
-                  }}
-                  type="button"
-                >
-                  <Trash2 className="size-3.5" />
-                  Delete run
-                </button>
+                ) : null}
+                {canMoveRunsForLater ? (
+                  <button
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--ec-text)] hover:bg-[var(--ec-hover)]"
+                    onClick={() => {
+                      onSetRunForLater(contextMenu.projectId, contextMenu.runId);
+                      setContextMenu(null);
+                    }}
+                    type="button"
+                  >
+                    <Archive className="size-3.5" />
+                    Move for later
+                  </button>
+                ) : null}
+                {canStartRuns ? (
+                  <>
+                    <Separator className="my-1" />
+                    <button
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--ec-danger)] hover:bg-[var(--ec-danger-soft)]"
+                      disabled={pendingDeleteRunIds[contextMenu.runId]}
+                      onClick={() => {
+                        onDeleteRun(contextMenu.projectId, contextMenu.runId);
+                        setContextMenu(null);
+                      }}
+                      type="button"
+                    >
+                      <Trash2 className="size-3.5" />
+                      Delete run
+                    </button>
+                  </>
+                ) : null}
               </div>
             </>,
             document.body,

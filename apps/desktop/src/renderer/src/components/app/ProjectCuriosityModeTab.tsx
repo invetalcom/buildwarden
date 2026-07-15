@@ -1,6 +1,7 @@
 import type { ProjectInsightKind, ProjectSnapshot, ProviderType, UnifiedProviderFamily } from "@buildwarden/shared";
 import { Loader2, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Select } from "../ui/select";
@@ -19,6 +20,7 @@ interface ProjectCuriosityModeTabProps {
 }
 
 export const ProjectCuriosityModeTab = ({ project, modelOptions, defaultModelId, onGenerateInsight }: ProjectCuriosityModeTabProps) => {
+  const canGenerateInsights = useBuildWardenClient().capabilities.platform === "electron";
   const firstModelId = modelOptions[0]?.id ?? "";
   const [modelId, setModelId] = useState(defaultModelId || firstModelId);
   const [busy, setBusy] = useState(false);
@@ -54,7 +56,7 @@ export const ProjectCuriosityModeTab = ({ project, modelOptions, defaultModelId,
             <p className="text-xs text-zinc-500">{record?.summary ?? "Surface interesting, confusing, or high-leverage pockets worth exploring."}</p>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        {canGenerateInsights ? <div className="flex flex-wrap items-center gap-2">
           <Select
             value={modelId}
             onValueChange={setModelId}
@@ -65,7 +67,7 @@ export const ProjectCuriosityModeTab = ({ project, modelOptions, defaultModelId,
           <Button type="button" size="sm" variant="secondary" onClick={() => void handleRefresh()} disabled={busy}>
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Refresh"}
           </Button>
-        </div>
+        </div> : null}
       </div>
       <p className="mb-3 text-xs text-zinc-500">Updated {formatGeneratedAt(record?.generatedAt)}</p>
 
@@ -101,7 +103,7 @@ export const ProjectCuriosityModeTab = ({ project, modelOptions, defaultModelId,
         </div>
       ) : (
         <div className="rounded-xl border border-dashed border-zinc-800/80 bg-zinc-950/40 px-4 py-10 text-center text-sm text-zinc-500">
-          Generate curiosity mode to surface interesting and high-leverage areas for later exploration.
+          {canGenerateInsights ? "Generate curiosity mode to surface interesting and high-leverage areas for later exploration." : "No saved curiosity report is available on the host."}
         </div>
       )}
     </Card>
