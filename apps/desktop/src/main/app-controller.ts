@@ -864,7 +864,9 @@ export class AppController
     if (!run.projectTaskId) {
       return null;
     }
-    return this.db.markProjectTaskInReview(run.projectTaskId, pullRequestUrl);
+    const task = this.db.markProjectTaskInReview(run.projectTaskId, pullRequestUrl);
+    this.events.publish("task", { projectId: task.projectId, taskId: task.id, status: task.status });
+    return task;
   }
 
   private getRunWorkspaceLabel(run: RunRecord): string {
@@ -3144,7 +3146,9 @@ export class AppController
       try {
         const details = await provider.getRequestDetails({ prUrl: task.pullRequestUrl! });
         if (details.request.state === "merged") {
-          changed.push(this.db.updateProjectTask(task.id, { status: "done" }));
+          const updated = this.db.updateProjectTask(task.id, { status: "done" });
+          this.events.publish("task", { projectId: updated.projectId, taskId: updated.id, status: updated.status });
+          changed.push(updated);
         }
       } catch (error) {
         logWarn("Failed to reconcile a project task with its linked PR/MR.", {
