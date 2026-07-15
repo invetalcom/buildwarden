@@ -39,7 +39,9 @@
       "@buildwarden/provider-openai": ["packages/provider-openai/src/index.ts"],
       "@buildwarden/provider-openai/*": ["packages/provider-openai/src/*"],
       "@buildwarden/provider-openai-compatible": ["packages/provider-openai-compatible/src/index.ts"],
-      "@buildwarden/provider-openai-compatible/*": ["packages/provider-openai-compatible/src/*"]
+      "@buildwarden/provider-openai-compatible/*": ["packages/provider-openai-compatible/src/*"],
+      "@buildwarden/remote-server": ["packages/remote-server/src/index.ts"],
+      "@buildwarden/remote-server/*": ["packages/remote-server/src/*"]
     }
   }
 }

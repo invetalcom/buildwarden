@@ -771,6 +771,9 @@ export class AppController
   implements
     Omit<
       DesktopApi,
+      | "createRemoteAccessPairing"
+      | "listRemoteAccessSessions"
+      | "revokeRemoteAccessSession"
       | "onRunEvent"
       | "runTerminalStart"
       | "runTerminalWrite"

@@ -9,6 +9,7 @@ import {
   DEFAULT_ADD_MODEL_DRAFT,
   DEFAULT_SHELL_ALLOWLIST_PATTERN_SOURCES,
   parseRecentRunDaysSetting,
+  parseRemoteAccessEnabledSetting,
   parseRunTimelineDensitySetting,
   parseUiTheme,
   SUPPORTED_IDE_KINDS,
@@ -171,6 +172,7 @@ const addProjectForgeRequestToast = (
 
 export const App = () => {
   const buildwarden = useBuildWardenClient();
+  const readOnly = !buildwarden.capabilities.mutations;
   useRendererErrorReporting();
   const showCustomWindowsTitleBar = buildwarden.capabilities.nativeTitleBar
     && typeof navigator !== "undefined"
@@ -256,7 +258,9 @@ export const App = () => {
     requestId: number;
   } | null>(null);
   const [settingsPreviousPage, setSettingsPreviousPage] = useState<SettingsPreviousPageState | null>(null);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => buildwarden.capabilities.platform === "web" && window.innerWidth < 900,
+  );
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [landingPageJoke] = useState(() => pickRandomLandingJoke());
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
@@ -292,7 +296,7 @@ export const App = () => {
     handleWelcomeBack,
     handleWelcomeSkipCheck,
     handleWelcomeFinish,
-  } = useWelcomeFlow({ buildwarden, snapshot, snapshotLoaded });
+  } = useWelcomeFlow({ buildwarden, snapshot, snapshotLoaded, disabled: !buildwarden.capabilities.settings });
   const shouldCheckProjectFolderGitStatus = settingsOpen || (welcomeOpen && welcomeStepKey === "project");
   const selectedProviderAccount = snapshot.providerAccounts.find((provider) => provider.id === selectedProviderId) ?? null;
   const openAiPresetsGroupedForSelectedProvider = useMemo(() => {
@@ -841,6 +845,19 @@ export const App = () => {
   ]);
 
   useEffect(() => {
+    if (buildwarden.capabilities.liveEvents) return;
+    const refreshRemoteView = () => {
+      void loadSnapshot();
+      const activeRunId = selectedRunIdRef.current;
+      if (typeof activeRunId === "string") {
+        void refreshOpenRunDetailForEvent(activeRunId);
+      }
+    };
+    const intervalId = window.setInterval(refreshRemoteView, 3000);
+    return () => window.clearInterval(intervalId);
+  }, [buildwarden.capabilities.liveEvents, loadSnapshot, refreshOpenRunDetailForEvent]);
+
+  useEffect(() => {
     if (!settingsOpen) {
       return;
     }
@@ -1178,7 +1195,12 @@ export const App = () => {
     setSelectedRunWorkspacePanelVisibility(panelId, next);
   };
 
-  const runPanelToggleItems = RUN_PANEL_TOGGLE_DEFINITIONS.map((definition): RunPanelToggleItem => {
+  const runPanelToggleItems = RUN_PANEL_TOGGLE_DEFINITIONS.filter((definition) => {
+    if (definition.key === "terminal") return buildwarden.capabilities.embeddedTerminal;
+    if (definition.key === "notes" || definition.key === "chat") return buildwarden.capabilities.mutations;
+    if (definition.key === "browser") return buildwarden.capabilities.platform === "electron";
+    return true;
+  }).map((definition): RunPanelToggleItem => {
     const active = runWorkspacePanelVisibility[definition.key];
     const cannotHide = active && runWorkspaceVisiblePanelCount === 1;
     const unavailable = definition.requiresWorktree && runWorktreeUnavailable;
@@ -2184,6 +2206,7 @@ export const App = () => {
   }, [clearRunSelectionState, leaveSelectedRun]);
 
   const openSettingsPage = useCallback(() => {
+    if (!buildwarden.capabilities.settings) return;
     setSettingsPreviousPage({
       landingSelected,
       allRunsSelected,
@@ -2210,6 +2233,7 @@ export const App = () => {
     setChatDetail(null);
     clearRunSelectionState(null);
   }, [
+    buildwarden.capabilities.settings,
     allRunsSelected,
     bookmarksSelected,
     chatDetail,
@@ -2645,6 +2669,11 @@ export const App = () => {
         onSelectRun: handleRunSelect,
         onSelectChat: handleChatSelect,
         onToggleTheme: toggleUiTheme,
+      }).filter((item) => {
+        if (!readOnly) return true;
+        if (item.id === "workspace-settings" || item.id === "workspace-new-run") return false;
+        if (item.section !== "Project") return true;
+        return snapshot.projects.some((entry) => item.id === `project-${entry.project.id}`);
       }),
     [
       handleAllRunsSelect,
@@ -2659,6 +2688,7 @@ export const App = () => {
       runProjectId,
       selectedProject?.project.id,
       snapshot,
+      readOnly,
       toggleUiTheme,
     ],
   );
@@ -3084,10 +3114,10 @@ export const App = () => {
             subagentFocus={subagentFocusRequest?.runId === paneDetail.run.id ? subagentFocusRequest : null}
             showActivity={paneVisiblePanels.activity}
             showDiff={paneVisiblePanels.diff}
-            showTerminal={paneVisiblePanels.terminal}
-            showBrowser={paneVisiblePanels.browser}
-            showNotes={paneVisiblePanels.notes}
-            showChat={paneVisiblePanels.chat}
+              showTerminal={paneVisiblePanels.terminal && buildwarden.capabilities.embeddedTerminal}
+              showBrowser={paneVisiblePanels.browser && buildwarden.capabilities.platform === "electron"}
+              showNotes={paneVisiblePanels.notes && buildwarden.capabilities.mutations}
+              showChat={paneVisiblePanels.chat && buildwarden.capabilities.mutations}
             onTogglePanel={(panelId) => toggleRunWorkspacePanelForRun(paneDetail.run.id, panelId, paneDetail.worktreeUnavailable === true)}
             secondaryPanelPosition={paneSecondaryPosition}
             onSecondaryPanelPositionChange={(position) => {
@@ -3226,6 +3256,7 @@ export const App = () => {
               appLogDirPath={appLogDirPath}
               appLogDirectorySize={appLogDirectorySize}
               networkProxySettings={networkProxySettings}
+              remoteAccessEnabled={parseRemoteAccessEnabledSetting(snapshot.settings[APP_SETTING_KEYS.remoteAccessEnabled])}
               providerAccounts={snapshot.providerAccounts}
               models={snapshot.models}
               availableModelsByProviderId={availableModelsByProviderId}
@@ -3307,6 +3338,31 @@ export const App = () => {
                 setNetworkProxySettings(saved);
                 await loadSnapshot();
                 return saved;
+              }}
+              onRemoteAccessEnabledChange={async (enabled) => {
+                if (!buildwarden) {
+                  throw new Error("The Electron desktop bridge is unavailable.");
+                }
+                await buildwarden.setAppSetting(APP_SETTING_KEYS.remoteAccessEnabled, String(enabled));
+                await loadSnapshot();
+              }}
+              onCreateRemoteAccessPairing={(input) => {
+                if (!buildwarden) {
+                  throw new Error("The Electron desktop bridge is unavailable.");
+                }
+                return buildwarden.createRemoteAccessPairing(input);
+              }}
+              onListRemoteAccessSessions={() => {
+                if (!buildwarden) {
+                  throw new Error("The Electron desktop bridge is unavailable.");
+                }
+                return buildwarden.listRemoteAccessSessions();
+              }}
+              onRevokeRemoteAccessSession={async (sessionId) => {
+                if (!buildwarden) {
+                  throw new Error("The Electron desktop bridge is unavailable.");
+                }
+                await buildwarden.revokeRemoteAccessSession(sessionId);
               }}
               onOpenAppLogDirectory={() =>
                 void handleAction(async () => {
@@ -3459,10 +3515,10 @@ export const App = () => {
               subagentFocus={subagentFocusRequest?.runId === detail.run.id ? subagentFocusRequest : null}
               showActivity={runWorkspaceShowActivity}
               showDiff={runWorkspaceShowDiff}
-              showTerminal={runWorkspaceShowTerminal}
-              showBrowser={runWorkspaceShowBrowser}
-              showNotes={runWorkspaceShowNotes}
-              showChat={runWorkspaceShowChat}
+              showTerminal={runWorkspaceShowTerminal && buildwarden.capabilities.embeddedTerminal}
+              showBrowser={runWorkspaceShowBrowser && buildwarden.capabilities.platform === "electron"}
+              showNotes={runWorkspaceShowNotes && buildwarden.capabilities.mutations}
+              showChat={runWorkspaceShowChat && buildwarden.capabilities.mutations}
               onTogglePanel={toggleSelectedRunWorkspacePanel}
               secondaryPanelPosition={runWorkspaceSecondaryPosition}
               onSecondaryPanelPositionChange={(position) => {
@@ -3689,8 +3745,8 @@ export const App = () => {
             return renderWorkspaceView(
                 <Card className="p-8 text-center">
                   <p className="text-lg font-medium">No project selected</p>
-                  <p className="mt-2 text-sm text-zinc-500">Open Settings to add your first project, provider, and model.</p>
-                  <Button
+                  <p className="mt-2 text-sm text-zinc-500">{readOnly ? "No projects are configured on the BuildWarden host." : "Open Settings to add your first project, provider, and model."}</p>
+                  {!readOnly ? <Button
                     className="mt-4"
                     variant="secondary"
                     onClick={() => {
@@ -3699,7 +3755,7 @@ export const App = () => {
                     }}
                   >
                     Open settings
-                  </Button>
+                  </Button> : null}
                 </Card>,
             );
   };
@@ -3770,7 +3826,7 @@ export const App = () => {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--ec-bg)]">
         <main
           className={cn(
-            "min-h-0 min-w-0 flex-1 p-3",
+            "min-h-0 min-w-0 flex-1 p-2 sm:p-3",
             isAgentRunDetailView || isChatDetailView || isBookmarkDetailView || isProjectWorkspaceView
               ? "flex min-h-0 flex-col overflow-hidden"
               : "overflow-y-auto",

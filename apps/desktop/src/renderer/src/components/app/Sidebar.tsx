@@ -32,6 +32,7 @@ import { clampSidebarWidth } from "./sidebar-width";
 import type { CurrentProjectBranchStatus } from "./use-project-branches";
 import { Separator } from "../ui/separator";
 import { cn } from "../../lib/cn";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 
 const ACTIVE_RUN_STATUSES = new Set(["queued", "preparing", "running"]);
 
@@ -200,6 +201,9 @@ const SidebarComponent = ({
   onToggleCollapsed,
   loopEnabledProjectIds,
 }: SidebarProps) => {
+  const buildwarden = useBuildWardenClient();
+  const readOnly = !buildwarden.capabilities.mutations;
+  const mobileWeb = buildwarden.capabilities.platform === "web";
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [projectToolsExpanded, setProjectToolsExpanded] = useState(true);
   const [expandedRecentProjectIds, setExpandedRecentProjectIds] = useState<Record<string, boolean>>({});
@@ -348,13 +352,15 @@ const SidebarComponent = ({
     { label: "All Runs", icon: Clock3, selected: allRunsSelected, onClick: onSelectAllRuns, count: totalActiveRuns > 0 ? `${totalActiveRuns}` : "" },
     { label: "Chats", icon: MessageSquare, selected: chatsSelected, onClick: onSelectChats, count: chatsCount ? `${chatsCount}` : "" },
     { label: "Bookmarks", icon: Bookmark, selected: bookmarksSelected, onClick: onSelectBookmarks, count: bookmarksCount ? `${bookmarksCount}` : "" },
-    { label: "Settings", icon: Settings, selected: settingsSelected, onClick: onOpenSettings, count: "" },
+    ...(buildwarden.capabilities.settings ? [{ label: "Settings", icon: Settings, selected: settingsSelected, onClick: onOpenSettings, count: "" }] : []),
   ];
-  const visibleProjectTools = projectTools.filter((tool) => projectToolVisible(selectedProject, tool.tab, loopEnabledProjectIds));
+  const visibleProjectTools = projectTools.filter(
+    (tool) => (!readOnly || tool.tab === "overview") && projectToolVisible(selectedProject, tool.tab, loopEnabledProjectIds),
+  );
 
   if (collapsed) {
     return (
-      <aside className="flex min-h-0 w-[50px] shrink-0 flex-col border-r border-[var(--ec-border)] bg-[var(--ec-sidebar)] transition-colors duration-150">
+      <aside className="flex min-h-0 w-[46px] shrink-0 flex-col border-r border-[var(--ec-border)] bg-[var(--ec-sidebar)] transition-colors duration-150 sm:w-[50px]">
         <div className="flex h-12 items-center justify-center border-b border-[var(--ec-border)]">
           <button
             className="flex size-8 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
@@ -421,9 +427,21 @@ const SidebarComponent = ({
   }
 
   return (
+    <>
+    {mobileWeb ? (
+      <button
+        type="button"
+        className="fixed inset-0 z-40 hidden bg-black/45 backdrop-blur-[1px] max-[899px]:block"
+        onClick={onToggleCollapsed}
+        aria-label="Close navigation"
+      />
+    ) : null}
     <aside
       ref={sidebarRef}
-      className="relative flex min-h-0 shrink-0 flex-col border-r border-[var(--ec-border)] bg-[var(--ec-sidebar)] text-[var(--ec-text)] transition-colors duration-150"
+      className={cn(
+        "relative flex min-h-0 shrink-0 flex-col border-r border-[var(--ec-border)] bg-[var(--ec-sidebar)] text-[var(--ec-text)] transition-colors duration-150",
+        mobileWeb && "max-[899px]:fixed max-[899px]:inset-y-0 max-[899px]:left-0 max-[899px]:z-50 max-[899px]:max-w-[calc(100vw-3rem)] max-[899px]:shadow-2xl",
+      )}
       style={{ width }}
     >
       <div ref={projectMenuRef} className="relative shrink-0 border-b border-[var(--ec-border)] p-1.5">
@@ -491,24 +509,28 @@ const SidebarComponent = ({
           <div className="flex h-6 min-w-0 items-center gap-1 px-1">
             <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--ec-faint)]">Project</span>
             <span className="min-w-0 flex-1" />
-            <button
-              type="button"
-              className="flex size-6 shrink-0 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
-              onClick={() => selectProjectFeature(selectedProject.project.id, "overview")}
-              aria-label="Start new agent run"
-              title="New agent run"
-            >
-              <Plus className="size-3.5" />
-            </button>
-            <button
-              type="button"
-              className="flex size-6 shrink-0 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
-              onClick={() => selectProjectFeature(selectedProject.project.id, "settings")}
-              aria-label="Open project settings"
-              title="Project settings"
-            >
-              <Settings className="size-3.5" />
-            </button>
+            {!readOnly ? (
+              <>
+                <button
+                  type="button"
+                  className="flex size-6 shrink-0 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+                  onClick={() => selectProjectFeature(selectedProject.project.id, "overview")}
+                  aria-label="Start new agent run"
+                  title="New agent run"
+                >
+                  <Plus className="size-3.5" />
+                </button>
+                <button
+                  type="button"
+                  className="flex size-6 shrink-0 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+                  onClick={() => selectProjectFeature(selectedProject.project.id, "settings")}
+                  aria-label="Open project settings"
+                  title="Project settings"
+                >
+                  <Settings className="size-3.5" />
+                </button>
+              </>
+            ) : null}
             <button
               type="button"
               className="flex size-6 shrink-0 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
@@ -608,16 +630,19 @@ const SidebarComponent = ({
                           <button
                             key={run.id}
                             type="button"
-                            draggable
+                            draggable={!readOnly}
                             className={cn(
                               "group relative w-full min-w-0 overflow-hidden rounded-md border px-2 py-1.5 text-left transition",
                               highlighted
                                 ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)]"
                                 : "border-transparent bg-[var(--ec-panel)] hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-control)]",
                             )}
-                            onDragStart={(event) => onRunDragStart(event, project.project.id, run.id)}
+                            onDragStart={(event) => {
+                              if (!readOnly) onRunDragStart(event, project.project.id, run.id);
+                            }}
                             onClick={() => onSelectRun(project.project.id, run.id)}
                             onContextMenu={(event) => {
+                              if (readOnly) return;
                               event.preventDefault();
                               setContextMenu({
                                 projectId: project.project.id,
@@ -689,7 +714,7 @@ const SidebarComponent = ({
         </div>
       </div>
 
-      {contextMenu
+      {!readOnly && contextMenu
         ? createPortal(
             <>
               <div
@@ -782,6 +807,7 @@ const SidebarComponent = ({
         aria-orientation="vertical"
       />
     </aside>
+    </>
   );
 };
 

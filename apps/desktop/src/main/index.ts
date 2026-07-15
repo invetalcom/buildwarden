@@ -1,13 +1,22 @@
+import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, ipcMain } from "electron";
 import { getDefaultDatabasePath, BuildWardenDatabase } from "@buildwarden/db";
 import {
+  RemoteAccessServer,
+  RemoteAuthService,
+  RemoteOperationRegistry,
+  validateNoRemoteArgs,
+  type RemoteHostEventSource,
+} from "@buildwarden/remote-server";
+import {
   APP_SETTING_KEYS,
   IPC_CHANNELS,
   isUiTheme,
   parseSupportedIdeKind,
+  parseRemoteAccessEnabledSetting,
   parseUiTheme,
   uiThemeToLegacyDarkMode,
   WINDOWS_TITLEBAR_OVERLAY_BACKGROUND,
@@ -21,9 +30,11 @@ import {
   type ProjectForgePrMonitorConfig,
   type ProjectForgeRequestNotificationPayload,
   type ProviderAccountInput,
+  type RemoteAccessPairingInput,
   type RendererLogPayload,
   type RunChatInput,
   type RunInput,
+  type RunWorkspaceFileInput,
   type UiTheme,
 } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
@@ -293,9 +304,10 @@ const bootstrap = async (): Promise<void> => {
   await db.init();
   const dbReadyAt = Date.now();
 
+  const secretStore = new ElectronSecretStore(join(dataDirPath, secretsFileName));
   const controller = new AppController(
     db,
-    new ElectronSecretStore(join(dataDirPath, secretsFileName)),
+    secretStore,
     logDirPath,
     desktopPlatform,
     hostTerminal,
@@ -343,9 +355,143 @@ const bootstrap = async (): Promise<void> => {
   };
   refreshAppMenu();
 
-  ipcMain.handle(IPC_CHANNELS.getSnapshot, async () => {
+  const remoteOperations = new RemoteOperationRegistry(({ method, requestId, error }) => {
+    logError("Remote operation failed.", { method, requestId, error });
+  }, db);
+  remoteOperations.register("getSnapshot", async () => {
     await startupReconciliation;
     return controller.getSnapshot();
+  }, validateNoRemoteArgs);
+  remoteOperations.register("refreshSnapshot", async () => {
+    await startupReconciliation;
+    return controller.refreshSnapshot();
+  }, validateNoRemoteArgs);
+
+  const validateSingleRemoteStringArg = (args: unknown[]): args is [string] =>
+    args.length === 1 && typeof args[0] === "string";
+  const validateRunWorkspaceFileRemoteArgs = (args: unknown[]): args is [RunWorkspaceFileInput] => {
+    const input = args[0];
+    return args.length === 1 && input != null && typeof input === "object" && !Array.isArray(input) &&
+      typeof (input as Record<string, unknown>).runId === "string" &&
+      typeof (input as Record<string, unknown>).path === "string";
+  };
+  remoteOperations.register("getProjectBranches", (projectId) => controller.getProjectBranches(projectId), validateSingleRemoteStringArg);
+  remoteOperations.register("getProjectCurrentBranch", (projectId) => controller.getProjectCurrentBranch(projectId), validateSingleRemoteStringArg);
+  remoteOperations.register("getRunDetail", (runId) => controller.getRunDetail(runId), validateSingleRemoteStringArg);
+  remoteOperations.register("getRunWorktreeDiff", (runId) => controller.getRunWorktreeDiff(runId), validateSingleRemoteStringArg);
+  remoteOperations.register("getRunWorkspaceFile", (input) => controller.getRunWorkspaceFile(input), validateRunWorkspaceFileRemoteArgs);
+  remoteOperations.register("getProjectLoopUiReviewImage", (reviewId) => controller.getProjectLoopUiReviewImage(reviewId), validateSingleRemoteStringArg);
+  remoteOperations.register("getChatDetail", (chatId) => controller.getChatDetail(chatId), validateSingleRemoteStringArg);
+  remoteOperations.register("listChatsWithSteps", () => controller.listChatsWithSteps(), validateNoRemoteArgs);
+  remoteOperations.register("getBookmarksWithSteps", () => controller.getBookmarksWithSteps(), validateNoRemoteArgs);
+  remoteOperations.register("getChatBookmarksWithSteps", () => controller.getChatBookmarksWithSteps(), validateNoRemoteArgs);
+
+  const remoteEventSource: RemoteHostEventSource = {
+    subscribe(listener) {
+      const disposers = [
+        hostEvents.subscribe("run", (payload) => listener({ event: "run", payload })),
+        hostEvents.subscribe("chat", (payload) => listener({ event: "chat", payload })),
+        hostEvents.subscribe("warning", (payload) => listener({ event: "warning", payload })),
+        hostEvents.subscribe("loop", (payload) => listener({ event: "loop", payload })),
+        hostEvents.subscribe("task", (payload) => listener({ event: "task", payload })),
+      ];
+      return () => disposers.forEach((dispose) => dispose());
+    },
+  };
+
+  const remoteAccessAuthSecretKey = "app:remote-access-auth-key:v1";
+  let remoteAuthService: RemoteAuthService | null = null;
+  let remoteAuthServiceInitialization: Promise<RemoteAuthService> | null = null;
+  const ensureRemoteAuthService = (): Promise<RemoteAuthService> => {
+    if (remoteAuthService) {
+      return Promise.resolve(remoteAuthService);
+    }
+    if (remoteAuthServiceInitialization) {
+      return remoteAuthServiceInitialization;
+    }
+
+    const initialization = (async () => {
+      let encodedKey = await secretStore.readSecret(remoteAccessAuthSecretKey);
+      let credentialKey = encodedKey ? Buffer.from(encodedKey, "base64") : Buffer.alloc(0);
+      if (credentialKey.byteLength < 32) {
+        credentialKey = randomBytes(32);
+        encodedKey = credentialKey.toString("base64");
+        await secretStore.saveSecret(remoteAccessAuthSecretKey, encodedKey);
+      }
+      remoteAuthService = new RemoteAuthService({ store: db, credentialKey });
+      return remoteAuthService;
+    })();
+    remoteAuthServiceInitialization = initialization;
+    void initialization.then(
+      () => {
+        if (remoteAuthServiceInitialization === initialization) remoteAuthServiceInitialization = null;
+      },
+      () => {
+        if (remoteAuthServiceInitialization === initialization) remoteAuthServiceInitialization = null;
+      },
+    );
+    return initialization;
+  };
+
+  let remoteAccessServer: RemoteAccessServer | null = null;
+  let remoteAccessSync = Promise.resolve();
+  const syncRemoteAccessServer = (): Promise<void> => {
+    remoteAccessSync = remoteAccessSync.catch(() => undefined).then(async () => {
+      const enabled = parseRemoteAccessEnabledSetting(db.getSettings()[APP_SETTING_KEYS.remoteAccessEnabled]);
+      if (!enabled) {
+        if (remoteAccessServer?.getInfo()) {
+          try {
+            await remoteAccessServer.stop();
+            remoteAccessServer = null;
+            logInfo("Remote access server stopped.");
+          } catch (error) {
+            logWarn("Remote access server did not stop cleanly; standalone Electron mode remains available.", { error });
+          }
+        }
+        return;
+      }
+      if (remoteAccessServer?.getInfo()) {
+        return;
+      }
+      try {
+        remoteAccessServer = new RemoteAccessServer({
+          appVersion: app.getVersion(),
+          operations: remoteOperations,
+          auth: await ensureRemoteAuthService(),
+          staticRoot: join(app.getAppPath(), "out", "web"),
+          events: remoteEventSource,
+          onServerError: (error) => logError("Remote access server request failed.", { error }),
+        });
+        const info = await remoteAccessServer.start();
+        logInfo("Remote access server started in loopback-only mode.", {
+          baseUrl: info.baseUrl,
+          authentication: "session",
+        });
+      } catch (error) {
+        remoteAccessServer = null;
+        // Remote access is optional; a port conflict must never prevent the desktop app from starting.
+        logWarn("Remote access server could not start; standalone Electron mode remains available.", { error });
+      }
+    });
+    return remoteAccessSync;
+  };
+  await syncRemoteAccessServer();
+
+  ipcMain.handle(IPC_CHANNELS.getSnapshot, () => remoteOperations.invoke("getSnapshot", []));
+  ipcMain.handle(IPC_CHANNELS.createRemoteAccessPairing, async (_, input?: RemoteAccessPairingInput) => {
+    const enabled = parseRemoteAccessEnabledSetting(db.getSettings()[APP_SETTING_KEYS.remoteAccessEnabled]);
+    if (!enabled) {
+      throw new Error("Enable remote access before creating a pairing code.");
+    }
+    await syncRemoteAccessServer();
+    if (!remoteAccessServer?.getInfo()) {
+      throw new Error("Remote access could not be started.");
+    }
+    return (await ensureRemoteAuthService()).createPairingGrant(input);
+  });
+  ipcMain.handle(IPC_CHANNELS.listRemoteAccessSessions, () => db.listRemoteAccessSessions());
+  ipcMain.handle(IPC_CHANNELS.revokeRemoteAccessSession, async (_, sessionId: string) => {
+    (await ensureRemoteAuthService()).revokeSession(sessionId);
   });
   ipcMain.handle(IPC_CHANNELS.getNetworkProxySettings, () => controller.getNetworkProxySettings());
   ipcMain.handle(IPC_CHANNELS.selectProject, (_, projectId: string) => controller.selectProject(projectId));
@@ -371,10 +517,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.deleteProjectBranch, (_, projectId: string, input) => controller.deleteProjectBranch(projectId, input));
   ipcMain.handle(IPC_CHANNELS.pullProjectBranch, (_, projectId: string) => controller.pullProjectBranch(projectId));
   ipcMain.handle(IPC_CHANNELS.pushProjectBranch, (_, projectId: string, input) => controller.pushProjectBranch(projectId, input));
-  ipcMain.handle(IPC_CHANNELS.refreshSnapshot, async () => {
-    await startupReconciliation;
-    return controller.refreshSnapshot();
-  });
+  ipcMain.handle(IPC_CHANNELS.refreshSnapshot, () => remoteOperations.invoke("refreshSnapshot", []));
   ipcMain.handle(IPC_CHANNELS.getAppPaths, () => controller.getAppPaths());
   ipcMain.handle(IPC_CHANNELS.getDetectedCodexInstallation, () => controller.getDetectedCodexInstallation());
   ipcMain.handle(IPC_CHANNELS.getDetectedClaudeInstallation, () => controller.getDetectedClaudeInstallation());
@@ -480,6 +623,9 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.setAppSetting, async (_, key: string, value: string) => {
     await controller.setAppSetting(key, value);
     refreshAppMenu();
+    if (key === APP_SETTING_KEYS.remoteAccessEnabled) {
+      await syncRemoteAccessServer();
+    }
   });
   ipcMain.handle(IPC_CHANNELS.saveNetworkProxySettings, async (_, input: NetworkProxySettingsInput) =>
     controller.saveNetworkProxySettings(input),
@@ -575,6 +721,9 @@ const bootstrap = async (): Promise<void> => {
   registerHostEventIpc(hostEvents, () => mainWindow);
   registerRunTerminalIpc(hostTerminal, desktopPlatform);
   app.on("before-quit", () => {
+    void remoteAccessServer?.stop().catch((error) => {
+      logWarn("Remote access server did not stop cleanly.", { error });
+    });
     hostTerminal.disposeAll();
     for (const state of projectForgeMonitorStates.values()) {
       clearInterval(state.timer);
