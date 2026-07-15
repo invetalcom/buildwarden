@@ -203,6 +203,7 @@ const SidebarComponent = ({
 }: SidebarProps) => {
   const buildwarden = useBuildWardenClient();
   const readOnly = !buildwarden.capabilities.mutations;
+  const mobileWeb = buildwarden.capabilities.platform === "web";
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [projectToolsExpanded, setProjectToolsExpanded] = useState(true);
   const [expandedRecentProjectIds, setExpandedRecentProjectIds] = useState<Record<string, boolean>>({});
@@ -359,7 +360,7 @@ const SidebarComponent = ({
 
   if (collapsed) {
     return (
-      <aside className="flex min-h-0 w-[50px] shrink-0 flex-col border-r border-[var(--ec-border)] bg-[var(--ec-sidebar)] transition-colors duration-150">
+      <aside className="flex min-h-0 w-[46px] shrink-0 flex-col border-r border-[var(--ec-border)] bg-[var(--ec-sidebar)] transition-colors duration-150 sm:w-[50px]">
         <div className="flex h-12 items-center justify-center border-b border-[var(--ec-border)]">
           <button
             className="flex size-8 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
@@ -426,9 +427,21 @@ const SidebarComponent = ({
   }
 
   return (
+    <>
+    {mobileWeb ? (
+      <button
+        type="button"
+        className="fixed inset-0 z-40 hidden bg-black/45 backdrop-blur-[1px] max-[899px]:block"
+        onClick={onToggleCollapsed}
+        aria-label="Close navigation"
+      />
+    ) : null}
     <aside
       ref={sidebarRef}
-      className="relative flex min-h-0 shrink-0 flex-col border-r border-[var(--ec-border)] bg-[var(--ec-sidebar)] text-[var(--ec-text)] transition-colors duration-150"
+      className={cn(
+        "relative flex min-h-0 shrink-0 flex-col border-r border-[var(--ec-border)] bg-[var(--ec-sidebar)] text-[var(--ec-text)] transition-colors duration-150",
+        mobileWeb && "max-[899px]:fixed max-[899px]:inset-y-0 max-[899px]:left-0 max-[899px]:z-50 max-[899px]:max-w-[calc(100vw-3rem)] max-[899px]:shadow-2xl",
+      )}
       style={{ width }}
     >
       <div ref={projectMenuRef} className="relative shrink-0 border-b border-[var(--ec-border)] p-1.5">
@@ -794,6 +807,7 @@ const SidebarComponent = ({
         aria-orientation="vertical"
       />
     </aside>
+    </>
   );
 };
 

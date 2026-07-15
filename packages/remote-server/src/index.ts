@@ -1,40 +1,59 @@
-import { createHmac, randomBytes, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { extname, resolve, sep } from "node:path";
+import type { Duplex } from "node:stream";
+import WebSocket, { WebSocketServer, type RawData } from "ws";
 import {
   DEFAULT_REMOTE_ACCESS_PORT,
   REMOTE_ACCESS_HEALTH_PATH,
+  REMOTE_ACCESS_INFO_PATH,
+  REMOTE_ACCESS_LEGACY_HEALTH_PATH,
   REMOTE_ACCESS_LOOPBACK_HOST,
+  REMOTE_ACCESS_MIN_PROTOCOL_VERSION,
   REMOTE_ACCESS_PAIRING_PATH,
   REMOTE_ACCESS_PROTOCOL_VERSION,
   REMOTE_ACCESS_RPC_PATH,
+  REMOTE_ACCESS_SERVER_CAPABILITIES,
   REMOTE_ACCESS_SESSION_COOKIE,
   REMOTE_ACCESS_SESSION_PATH,
   REMOTE_ACCESS_SCOPES,
+  REMOTE_ACCESS_WEBSOCKET_PATH,
   type RemoteAccessAuditRecord,
   type RemoteAccessHealth,
+  type RemoteAccessInfo,
   type RemoteAccessPairingGrant,
   type RemoteAccessPairingGrantRecord,
   type RemoteAccessPairingInput,
   type RemoteAccessScope,
   type RemoteAccessSession,
   type RemoteAccessSessionRecord,
+  type RemoteAccessServerCapability,
+  type RemoteCommandIdempotencyRecord,
   type RemoteApiMethod,
   type RemoteApiMethodArgs,
   type RemoteApiMethodResult,
   type RemoteRpcErrorCode,
   type RemoteRpcRequest,
   type RemoteRpcResponse,
+  type RemoteStreamEvent,
+  type RemoteStreamEventType,
+  type RemoteWebSocketClientMessage,
+  type RemoteWebSocketServerMessage,
 } from "@buildwarden/shared";
 
 const MAX_REQUEST_BODY_BYTES = 1_048_576;
+const MAX_WEBSOCKET_MESSAGE_BYTES = 65_536;
 const DEFAULT_PAIRING_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const PAIRING_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const PAIRING_RATE_LIMIT_WINDOW_MS = 60_000;
 const PAIRING_RATE_LIMIT_ATTEMPTS = 5;
+const REMOTE_STREAM_EVENTS = ["run", "chat", "warning", "loop", "task"] as const satisfies readonly RemoteStreamEventType[];
+const REMOTE_STREAM_EVENT_SET = new Set<string>(REMOTE_STREAM_EVENTS);
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
 
 const STATIC_CONTENT_TYPES: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
@@ -55,7 +74,21 @@ type RemoteOperationHandler<Method extends RemoteApiMethod> = (
   ...args: RemoteApiMethodArgs<Method>
 ) => Promise<RemoteApiMethodResult<Method>>;
 
+type RemoteOperationArgsValidator<Method extends RemoteApiMethod> = (
+  args: unknown[],
+) => args is RemoteApiMethodArgs<Method>;
+
 type UntypedRemoteOperationHandler = (...args: unknown[]) => Promise<unknown>;
+type UntypedRemoteOperationArgsValidator = (args: unknown[]) => boolean;
+
+interface RegisteredRemoteOperation {
+  handler: UntypedRemoteOperationHandler;
+  validateArgs: UntypedRemoteOperationArgsValidator;
+  requiredScope: RemoteAccessScope;
+  mutating: boolean;
+}
+
+export const validateNoRemoteArgs = (args: unknown[]): args is [] => args.length === 0;
 
 export interface RemoteAuthStore {
   createRemoteAccessPairingGrant(record: RemoteAccessPairingGrantRecord): void;
@@ -176,17 +209,28 @@ export class RemoteAuthService {
     return { session: publicSession(sessionRecord), token };
   }
 
-  authenticate(token: string | null, remoteAddress: string | null): RemoteAccessSession | null {
+  authenticate(
+    token: string | null,
+    remoteAddress: string | null,
+    options: { audit?: boolean; touch?: boolean } = {},
+  ): RemoteAccessSession | null {
     if (!token) {
       return null;
     }
     const session = this.options.store.getRemoteAccessSessionByTokenHash(this.hashCredential("session", token));
     const authenticatedAt = this.now();
     if (!session || session.revokedAt || session.expiresAt <= authenticatedAt.toISOString()) {
+      if (options.audit !== false) {
+        this.audit("session-authentication-failed", "failure", { remoteAddress });
+      }
       return null;
     }
-    this.options.store.touchRemoteAccessSession(session.id, authenticatedAt.toISOString());
-    this.audit("session-authenticated", "success", { sessionId: session.id, remoteAddress });
+    if (options.touch !== false) {
+      this.options.store.touchRemoteAccessSession(session.id, authenticatedAt.toISOString());
+    }
+    if (options.audit !== false) {
+      this.audit("session-authenticated", "success", { sessionId: session.id, remoteAddress });
+    }
     return { ...publicSession(session), lastUsedAt: authenticatedAt.toISOString() };
   }
 
@@ -233,22 +277,51 @@ export interface RemoteOperationErrorContext {
   error: unknown;
 }
 
-interface RegisteredRemoteOperation {
-  handler: UntypedRemoteOperationHandler;
-  requiredScope: RemoteAccessScope;
+export interface RemoteIdempotencyStore {
+  createRemoteCommandIdempotency(record: RemoteCommandIdempotencyRecord): boolean;
+  getRemoteCommandIdempotency(sessionId: string, idempotencyKey: string): RemoteCommandIdempotencyRecord | null;
+  completeRemoteCommandIdempotency(
+    sessionId: string,
+    idempotencyKey: string,
+    responseJson: string,
+    completedAt: string,
+  ): boolean;
 }
+
+const canonicalJson = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
+  }
+  if (isPlainObject(value)) {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+};
+
+const remoteCommandRequestHash = (method: string, args: unknown[]): string =>
+  createHash("sha256").update(canonicalJson({ method, args })).digest("hex");
 
 export class RemoteOperationRegistry {
   private readonly handlers = new Map<RemoteApiMethod, RegisteredRemoteOperation>();
 
-  constructor(private readonly onOperationError?: (context: RemoteOperationErrorContext) => void) {}
+  constructor(
+    private readonly onOperationError?: (context: RemoteOperationErrorContext) => void,
+    private readonly idempotencyStore?: RemoteIdempotencyStore,
+  ) {}
 
   register<Method extends RemoteApiMethod>(
     method: Method,
     handler: RemoteOperationHandler<Method>,
+    validateArgs: RemoteOperationArgsValidator<Method>,
     requiredScope: RemoteAccessScope = "state:read",
+    mutating = false,
   ): void {
-    this.handlers.set(method, { handler: handler as UntypedRemoteOperationHandler, requiredScope });
+    this.handlers.set(method, {
+      handler: handler as unknown as UntypedRemoteOperationHandler,
+      validateArgs: validateArgs as UntypedRemoteOperationArgsValidator,
+      requiredScope,
+      mutating,
+    });
   }
 
   has(method: RemoteApiMethod): boolean {
@@ -263,10 +336,14 @@ export class RemoteOperationRegistry {
     if (!operation) {
       return Promise.reject(new Error(`Remote operation is not registered: ${method}`));
     }
-    return operation.handler(...args) as Promise<RemoteApiMethodResult<Method>>;
+    return operation.handler(...args as unknown[]) as Promise<RemoteApiMethodResult<Method>>;
   }
 
-  async dispatch(payload: unknown, scopes: readonly RemoteAccessScope[]): Promise<RemoteRpcResponse> {
+  async dispatch(
+    payload: unknown,
+    scopes: readonly RemoteAccessScope[] = [],
+    sessionId?: string,
+  ): Promise<RemoteRpcResponse> {
     const parsed = parseRemoteRpcRequest(payload);
     if (!parsed.ok) {
       return errorResponse(parsed.requestId, parsed.code, parsed.message);
@@ -280,10 +357,54 @@ export class RemoteOperationRegistry {
     if (!scopes.includes(operation.requiredScope)) {
       return errorResponse(request.requestId, "forbidden", "The session does not have permission for this operation.");
     }
+    if (!operation.validateArgs(request.args)) {
+      return errorResponse(request.requestId, "invalid-request", "The operation arguments are invalid.");
+    }
 
+    let persistedCommand: { sessionId: string; idempotencyKey: string } | null = null;
+    if (operation.mutating) {
+      if (!request.idempotencyKey || !sessionId || !this.idempotencyStore) {
+        return errorResponse(
+          request.requestId,
+          "idempotency-required",
+          "A persisted idempotency key is required for this command.",
+        );
+      }
+      const requestHash = remoteCommandRequestHash(request.method, request.args);
+      const created = this.idempotencyStore.createRemoteCommandIdempotency({
+        sessionId,
+        idempotencyKey: request.idempotencyKey,
+        method: request.method,
+        requestHash,
+        responseJson: null,
+        createdAt: new Date().toISOString(),
+        completedAt: null,
+      });
+      if (!created) {
+        const existing = this.idempotencyStore.getRemoteCommandIdempotency(sessionId, request.idempotencyKey);
+        if (!existing || existing.method !== request.method || existing.requestHash !== requestHash) {
+          return errorResponse(request.requestId, "idempotency-conflict", "The idempotency key belongs to another command.");
+        }
+        if (!existing.responseJson) {
+          return errorResponse(request.requestId, "command-in-progress", "The command is already in progress.");
+        }
+        try {
+          const replay = JSON.parse(existing.responseJson) as unknown;
+          if (!isRemoteRpcResponse(replay)) {
+            throw new Error("Invalid persisted response.");
+          }
+          return { ...replay, requestId: request.requestId };
+        } catch {
+          return errorResponse(request.requestId, "idempotency-conflict", "The persisted command response is invalid.");
+        }
+      }
+      persistedCommand = { sessionId, idempotencyKey: request.idempotencyKey };
+    }
+
+    let response: RemoteRpcResponse;
     try {
       const result = await operation.handler(...request.args);
-      return {
+      response = {
         protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
         requestId: request.requestId,
         ok: true,
@@ -291,8 +412,17 @@ export class RemoteOperationRegistry {
       };
     } catch (error) {
       this.onOperationError?.({ method: request.method, requestId: request.requestId, error });
-      return errorResponse(request.requestId, "operation-failed", "The operation failed.");
+      response = errorResponse(request.requestId, "operation-failed", "The operation failed.");
     }
+    if (persistedCommand && this.idempotencyStore) {
+      this.idempotencyStore.completeRemoteCommandIdempotency(
+        persistedCommand.sessionId,
+        persistedCommand.idempotencyKey,
+        JSON.stringify(response),
+        new Date().toISOString(),
+      );
+    }
+    return response;
   }
 }
 
@@ -300,35 +430,65 @@ type ParsedRemoteRpcRequest =
   | { ok: true; request: RemoteRpcRequest }
   | { ok: false; requestId: string; code: RemoteRpcErrorCode; message: string };
 
-const errorResponse = (
-  requestId: string,
-  code: RemoteRpcErrorCode,
-  message: string,
-): RemoteRpcResponse => ({
+const errorResponse = (requestId: string, code: RemoteRpcErrorCode, message: string): RemoteRpcResponse => ({
   protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
   requestId,
   ok: false,
   error: { code, message },
 });
 
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const REMOTE_RPC_ERROR_CODES = new Set<RemoteRpcErrorCode>([
+  "invalid-request",
+  "protocol-mismatch",
+  "method-not-found",
+  "forbidden",
+  "idempotency-required",
+  "idempotency-conflict",
+  "command-in-progress",
+  "operation-failed",
+]);
+
+const isRemoteRpcResponse = (value: unknown): value is RemoteRpcResponse => {
+  if (!isPlainObject(value) || value.protocolVersion !== REMOTE_ACCESS_PROTOCOL_VERSION ||
+      typeof value.requestId !== "string" || typeof value.ok !== "boolean") {
+    return false;
+  }
+  if (value.ok) {
+    return "result" in value;
+  }
+  return isPlainObject(value.error) && typeof value.error.code === "string" &&
+    REMOTE_RPC_ERROR_CODES.has(value.error.code as RemoteRpcErrorCode) && typeof value.error.message === "string";
+};
+
+const isRequestId = (value: unknown): value is string =>
+  typeof value === "string" && REQUEST_ID_PATTERN.test(value);
+
 const parseRemoteRpcRequest = (payload: unknown): ParsedRemoteRpcRequest => {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+  if (!isPlainObject(payload)) {
     return { ok: false, requestId: "", code: "invalid-request", message: "Expected a JSON object." };
   }
 
-  const value = payload as Record<string, unknown>;
-  const requestId = typeof value.requestId === "string" ? value.requestId : "";
-  if (!requestId || requestId.length > 128) {
+  const requestId = typeof payload.requestId === "string" ? payload.requestId : "";
+  if (!isRequestId(requestId)) {
     return { ok: false, requestId, code: "invalid-request", message: "A valid requestId is required." };
   }
-  if (value.protocolVersion !== REMOTE_ACCESS_PROTOCOL_VERSION) {
+  if (payload.protocolVersion !== REMOTE_ACCESS_PROTOCOL_VERSION) {
     return { ok: false, requestId, code: "protocol-mismatch", message: "Unsupported protocol version." };
   }
-  if (typeof value.method !== "string" || !value.method) {
-    return { ok: false, requestId, code: "invalid-request", message: "A method is required." };
+  if (typeof payload.method !== "string" || !payload.method || payload.method.length > 128) {
+    return { ok: false, requestId, code: "invalid-request", message: "A valid method is required." };
   }
-  if (!Array.isArray(value.args)) {
+  if (!Array.isArray(payload.args)) {
     return { ok: false, requestId, code: "invalid-request", message: "args must be an array." };
+  }
+  if (
+    payload.idempotencyKey !== undefined &&
+    (typeof payload.idempotencyKey !== "string" || !IDEMPOTENCY_KEY_PATTERN.test(payload.idempotencyKey))
+  ) {
+    return { ok: false, requestId, code: "invalid-request", message: "The idempotencyKey is invalid." };
   }
 
   return {
@@ -336,8 +496,9 @@ const parseRemoteRpcRequest = (payload: unknown): ParsedRemoteRpcRequest => {
     request: {
       protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
       requestId,
-      method: value.method as RemoteApiMethod,
-      args: value.args,
+      method: payload.method as RemoteApiMethod,
+      args: payload.args,
+      ...(typeof payload.idempotencyKey === "string" ? { idempotencyKey: payload.idempotencyKey } : {}),
     },
   };
 };
@@ -350,7 +511,7 @@ const writeJson = (
 ): void => {
   response.writeHead(statusCode, {
     "Cache-Control": "no-store",
-    "Content-Security-Policy": "default-src 'none'",
+    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
     "Content-Type": "application/json; charset=utf-8",
     "X-Content-Type-Options": "nosniff",
     ...extraHeaders,
@@ -446,32 +607,58 @@ const writeStaticResponse = (
   response.end(headOnly ? undefined : body);
 };
 
-const isAllowedLoopbackHostHeader = (hostHeader: string | undefined): boolean => {
+const isAllowedLoopbackHostHeader = (hostHeader: string | undefined, expectedPort: number | undefined): boolean => {
   if (!hostHeader) {
     return false;
   }
   try {
-    const hostname = new URL(`http://${hostHeader}`).hostname.toLowerCase();
-    return hostname === REMOTE_ACCESS_LOOPBACK_HOST || hostname === "localhost" || hostname === "[::1]";
+    const url = new URL(`http://${hostHeader}`);
+    const hostname = url.hostname.toLowerCase();
+    const loopback = hostname === REMOTE_ACCESS_LOOPBACK_HOST || hostname === "localhost" || hostname === "[::1]";
+    return loopback && (expectedPort === undefined || url.port === String(expectedPort));
   } catch {
     return false;
   }
 };
 
+class RequestBodyError extends Error {
+  constructor(
+    message: string,
+    readonly statusCode: 400 | 413,
+  ) {
+    super(message);
+  }
+}
+
 const readJsonBody = async (request: IncomingMessage): Promise<unknown> => {
+  const contentLength = Number(request.headers["content-length"] ?? 0);
+  if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BODY_BYTES) {
+    throw new RequestBodyError("Request body is too large.", 413);
+  }
+
   const chunks: Buffer[] = [];
   let totalBytes = 0;
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
     totalBytes += buffer.length;
     if (totalBytes > MAX_REQUEST_BODY_BYTES) {
-      throw new Error("Request body is too large.");
+      throw new RequestBodyError("Request body is too large.", 413);
     }
     chunks.push(buffer);
   }
-  const raw = Buffer.concat(chunks).toString("utf8");
-  return raw ? JSON.parse(raw) as unknown : null;
+  try {
+    const raw = Buffer.concat(chunks).toString("utf8");
+    return raw ? JSON.parse(raw) as unknown : null;
+  } catch {
+    throw new RequestBodyError("Invalid JSON request body.", 400);
+  }
 };
+
+const firstHeaderValue = (value: string | string[] | undefined): string | undefined =>
+  Array.isArray(value) ? value[0] : value;
+
+const requestedProtocolVersion = (request: IncomingMessage, url: URL): string | undefined =>
+  firstHeaderValue(request.headers["x-buildwarden-protocol-version"]) ?? url.searchParams.get("protocolVersion") ?? undefined;
 
 export interface RemoteAccessServerInfo {
   host: typeof REMOTE_ACCESS_LOOPBACK_HOST;
@@ -480,19 +667,108 @@ export interface RemoteAccessServerInfo {
   startedAt: string;
 }
 
+export interface RemoteHostEventSource {
+  subscribe(listener: (event: RemoteStreamEvent) => void): () => void;
+}
+
 export interface RemoteAccessServerOptions {
   appVersion: string;
   operations: RemoteOperationRegistry;
   auth: RemoteAuthService;
   staticRoot?: string;
+  events?: RemoteHostEventSource;
   port?: number;
+  capabilities?: RemoteAccessServerCapability[];
+  authentication?: RemoteAccessHealth["authentication"];
   onServerError?: (error: unknown) => void;
 }
 
+const isRunEventPayload = (value: unknown): boolean =>
+  isPlainObject(value) &&
+  typeof value.runId === "string" &&
+  typeof value.type === "string" &&
+  typeof value.title === "string" &&
+  typeof value.content === "string" &&
+  typeof value.createdAt === "string" &&
+  (value.metadata === undefined || isPlainObject(value.metadata));
+
+const isRemoteEventPayload = (event: RemoteStreamEventType, payload: unknown): boolean => {
+  if (event === "run") return isRunEventPayload(payload);
+  if (event === "chat") return isRunEventPayload(payload) && isPlainObject(payload) && typeof payload.chatId === "string";
+  if (event === "warning") {
+    return isPlainObject(payload) && typeof payload.title === "string" && typeof payload.message === "string" &&
+      (payload.detail === undefined || typeof payload.detail === "string");
+  }
+  if (event === "loop") {
+    return isPlainObject(payload) && typeof payload.loopId === "string" && typeof payload.projectId === "string";
+  }
+  return isPlainObject(payload) && typeof payload.projectId === "string" && typeof payload.taskId === "string" &&
+    (payload.status === "open" || payload.status === "in_progress" || payload.status === "in_review" || payload.status === "done");
+};
+
+const parseWebSocketClientMessage = (
+  payload: unknown,
+): { ok: true; message: RemoteWebSocketClientMessage } | { ok: false; requestId: string; code: "invalid-message" | "protocol-mismatch"; message: string } => {
+  if (!isPlainObject(payload)) {
+    return { ok: false, requestId: "", code: "invalid-message", message: "Expected a JSON object." };
+  }
+  const requestId = typeof payload.requestId === "string" ? payload.requestId : "";
+  if (!isRequestId(requestId)) {
+    return { ok: false, requestId, code: "invalid-message", message: "A valid requestId is required." };
+  }
+  if (payload.protocolVersion !== REMOTE_ACCESS_PROTOCOL_VERSION) {
+    return { ok: false, requestId, code: "protocol-mismatch", message: "Unsupported protocol version." };
+  }
+  if (payload.type === "ping") {
+    return { ok: true, message: { protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION, type: "ping", requestId } };
+  }
+  if (payload.type !== "subscribe" || !Array.isArray(payload.events)) {
+    return { ok: false, requestId, code: "invalid-message", message: "Expected a subscribe or ping message." };
+  }
+  if (!payload.events.every((event): event is RemoteStreamEventType => typeof event === "string" && REMOTE_STREAM_EVENT_SET.has(event))) {
+    return { ok: false, requestId, code: "invalid-message", message: "One or more event subscriptions are invalid." };
+  }
+  const events = [...new Set(payload.events)];
+  return {
+    ok: true,
+    message: { protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION, type: "subscribe", requestId, events },
+  };
+};
+
+const validateServerMessage = (message: RemoteWebSocketServerMessage): boolean => {
+  if (message.protocolVersion !== REMOTE_ACCESS_PROTOCOL_VERSION) return false;
+  if (message.type === "hello") {
+    return message.info.protocolVersion === REMOTE_ACCESS_PROTOCOL_VERSION && message.info.apiVersion === "v1";
+  }
+  if (message.type === "event") {
+    return Number.isSafeInteger(message.sequence) && message.sequence > 0 && isRemoteEventPayload(message.event, message.payload);
+  }
+  if (!isRequestId(message.requestId)) return false;
+  if (message.type === "subscribed") {
+    return message.events.every((event) => REMOTE_STREAM_EVENT_SET.has(event));
+  }
+  return message.type === "pong" || (message.type === "error" && typeof message.message === "string");
+};
+
+const rejectUpgrade = (socket: Duplex, statusCode: number, statusText: string, message: string): void => {
+  const body = JSON.stringify({ error: message });
+  socket.write([
+    `HTTP/1.1 ${String(statusCode)} ${statusText}`,
+    "Connection: close",
+    "Content-Type: application/json; charset=utf-8",
+    `Content-Length: ${String(Buffer.byteLength(body))}`,
+    "",
+    body,
+  ].join("\r\n"));
+  socket.destroy();
+};
+
 export class RemoteAccessServer {
   private server: Server | null = null;
+  private webSocketServer: WebSocketServer | null = null;
   private info: RemoteAccessServerInfo | null = null;
   private readonly pairingAttempts = new Map<string, number[]>();
+  private sequence = 0;
 
   constructor(private readonly options: RemoteAccessServerOptions) {}
 
@@ -516,7 +792,11 @@ export class RemoteAccessServer {
         }
       });
     });
+    const webSocketServer = new WebSocketServer({ noServer: true, clientTracking: true, maxPayload: MAX_WEBSOCKET_MESSAGE_BYTES });
+    webSocketServer.on("error", (error) => this.options.onServerError?.(error));
+    server.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket, head, webSocketServer, startedAt));
     this.server = server;
+    this.webSocketServer = webSocketServer;
 
     try {
       await new Promise<void>((resolve, reject) => {
@@ -534,6 +814,8 @@ export class RemoteAccessServer {
       });
     } catch (error) {
       this.server = null;
+      this.webSocketServer = null;
+      webSocketServer.close();
       throw error;
     }
 
@@ -549,22 +831,52 @@ export class RemoteAccessServer {
 
   async stop(): Promise<void> {
     const server = this.server;
+    const webSocketServer = this.webSocketServer;
     this.server = null;
+    this.webSocketServer = null;
     this.info = null;
+    if (webSocketServer) {
+      for (const client of webSocketServer.clients) {
+        client.terminate();
+      }
+      await new Promise<void>((resolve) => webSocketServer.close(() => resolve()));
+    }
     if (!server) {
       return;
     }
     await new Promise<void>((resolve, reject) => {
-      server.close((error) => {
-        if (error) reject(error);
-        else resolve();
-      });
+      server.close((error) => error ? reject(error) : resolve());
       server.closeAllConnections();
     });
   }
 
+  private buildInfo(startedAt: string): RemoteAccessInfo {
+    const capabilities = this.options.capabilities ?? [
+      "rpc",
+      ...(this.options.events ? REMOTE_ACCESS_SERVER_CAPABILITIES.filter((capability) => capability !== "rpc") : []),
+    ];
+    return {
+      app: "buildwarden",
+      appVersion: this.options.appVersion,
+      apiVersion: "v1",
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      minProtocolVersion: REMOTE_ACCESS_MIN_PROTOCOL_VERSION,
+      maxProtocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      scope: "loopback",
+      authentication: "session",
+      capabilities: [...new Set(capabilities)],
+      endpoints: {
+        health: REMOTE_ACCESS_HEALTH_PATH,
+        info: REMOTE_ACCESS_INFO_PATH,
+        rpc: REMOTE_ACCESS_RPC_PATH,
+        events: REMOTE_ACCESS_WEBSOCKET_PATH,
+      },
+      startedAt,
+    };
+  }
+
   private async handleRequest(request: IncomingMessage, response: ServerResponse, startedAt: string): Promise<void> {
-    if (!isAllowedLoopbackHostHeader(request.headers.host)) {
+    if (!isAllowedLoopbackHostHeader(request.headers.host, this.info?.port)) {
       writeJson(response, 421, { error: "Loopback host required." });
       return;
     }
@@ -574,14 +886,14 @@ export class RemoteAccessServer {
     }
 
     const url = new URL(request.url ?? "/", "http://localhost");
-    if (request.method === "GET" && url.pathname === REMOTE_ACCESS_HEALTH_PATH) {
+    if (request.method === "GET" && (url.pathname === REMOTE_ACCESS_HEALTH_PATH || url.pathname === REMOTE_ACCESS_LEGACY_HEALTH_PATH)) {
       const health: RemoteAccessHealth = {
         status: "ok",
         app: "buildwarden",
         appVersion: this.options.appVersion,
         protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
         scope: "loopback",
-        authentication: "required",
+        authentication: "session",
         startedAt,
       };
       writeJson(response, 200, health);
@@ -633,8 +945,9 @@ export class RemoteAccessServer {
           { session: authenticated.session },
           { "Set-Cookie": sessionCookie(authenticated.token, authenticated.session.expiresAt, secureCookie) },
         );
-      } catch {
-        writeJson(response, 400, { error: "Invalid JSON request body." });
+      } catch (error) {
+        const statusCode = error instanceof RequestBodyError ? error.statusCode : 400;
+        writeJson(response, statusCode, { error: error instanceof Error ? error.message : "Invalid JSON request body." });
       }
       return;
     }
@@ -656,6 +969,17 @@ export class RemoteAccessServer {
       return;
     }
 
+    if (request.method === "GET" && url.pathname === REMOTE_ACCESS_INFO_PATH) {
+      const info = this.buildInfo(startedAt);
+      const requestedVersion = requestedProtocolVersion(request, url);
+      if (requestedVersion && requestedVersion !== String(REMOTE_ACCESS_PROTOCOL_VERSION)) {
+        writeJson(response, 426, { error: "Unsupported protocol version.", info });
+        return;
+      }
+      writeJson(response, 200, info);
+      return;
+    }
+
     if (request.method === "POST" && url.pathname === REMOTE_ACCESS_RPC_PATH) {
       if (request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
         writeJson(response, 415, { error: "Content-Type must be application/json." });
@@ -663,10 +987,10 @@ export class RemoteAccessServer {
       }
       try {
         const payload = await readJsonBody(request);
-        const result = await this.options.operations.dispatch(payload, session.scopes);
-        writeJson(response, 200, result);
-      } catch {
-        writeJson(response, 400, { error: "Invalid JSON request body." });
+        writeJson(response, 200, await this.options.operations.dispatch(payload, session.scopes, session.id));
+      } catch (error) {
+        const statusCode = error instanceof RequestBodyError ? error.statusCode : 400;
+        writeJson(response, statusCode, { error: error instanceof Error ? error.message : "Invalid JSON request body." });
       }
       return;
     }
@@ -722,6 +1046,155 @@ export class RemoteAccessServer {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  private handleUpgrade(
+    request: IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+    webSocketServer: WebSocketServer,
+    startedAt: string,
+  ): void {
+    const url = new URL(request.url ?? "/", "http://localhost");
+    if (url.pathname !== REMOTE_ACCESS_WEBSOCKET_PATH) {
+      rejectUpgrade(socket, 404, "Not Found", "WebSocket endpoint not found.");
+      return;
+    }
+    if (!isAllowedLoopbackHostHeader(request.headers.host, this.info?.port)) {
+      rejectUpgrade(socket, 421, "Misdirected Request", "Loopback host required.");
+      return;
+    }
+    if (!isAllowedSameOrigin(request.headers.origin, request.headers.host)) {
+      rejectUpgrade(socket, 403, "Forbidden", "Origin is not allowed.");
+      return;
+    }
+    if (requestedProtocolVersion(request, url) !== String(REMOTE_ACCESS_PROTOCOL_VERSION)) {
+      rejectUpgrade(socket, 426, "Upgrade Required", "A supported protocolVersion is required.");
+      return;
+    }
+    const token = getSessionToken(request);
+    const remoteAddress = request.socket.remoteAddress ?? null;
+    const session = this.options.auth.authenticate(token, remoteAddress);
+    if (!session) {
+      rejectUpgrade(socket, 401, "Unauthorized", "Authentication required.");
+      return;
+    }
+    if (!session.scopes.includes("state:read")) {
+      rejectUpgrade(socket, 403, "Forbidden", "The session cannot read event streams.");
+      return;
+    }
+    webSocketServer.handleUpgrade(request, socket, head, (client) => {
+      this.handleWebSocket(client, startedAt, token ?? "", remoteAddress);
+    });
+  }
+
+  private handleWebSocket(socket: WebSocket, startedAt: string, token: string, remoteAddress: string | null): void {
+    const subscriptions = new Set<RemoteStreamEventType>();
+    const eventDispose = this.options.events?.subscribe((event) => {
+      if (!subscriptions.has(event.event)) {
+        return;
+      }
+      const session = this.options.auth.authenticate(token, remoteAddress, { audit: false, touch: false });
+      if (!session?.scopes.includes("state:read")) {
+        socket.close(1008, "Session is no longer authorized");
+        return;
+      }
+      this.sendWebSocketMessage(socket, {
+        protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+        type: "event",
+        sequence: ++this.sequence,
+        event: event.event,
+        payload: event.payload,
+      });
+    });
+    socket.once("close", () => eventDispose?.());
+    socket.on("error", (error) => this.options.onServerError?.(error));
+    socket.on("message", (data, isBinary) =>
+      this.handleWebSocketMessage(socket, subscriptions, data, isBinary, token, remoteAddress));
+    this.sendWebSocketMessage(socket, {
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "hello",
+      info: this.buildInfo(startedAt),
+    });
+  }
+
+  private handleWebSocketMessage(
+    socket: WebSocket,
+    subscriptions: Set<RemoteStreamEventType>,
+    data: RawData,
+    isBinary: boolean,
+    token: string,
+    remoteAddress: string | null,
+  ): void {
+    const session = this.options.auth.authenticate(token, remoteAddress);
+    if (!session?.scopes.includes("state:read")) {
+      socket.close(1008, "Session is no longer authorized");
+      return;
+    }
+    let payload: unknown;
+    try {
+      const buffer = Array.isArray(data)
+        ? Buffer.concat(data)
+        : Buffer.isBuffer(data)
+          ? data
+          : Buffer.from(new Uint8Array(data));
+      if (isBinary || buffer.byteLength > MAX_WEBSOCKET_MESSAGE_BYTES) {
+        throw new Error("Only bounded JSON text messages are accepted.");
+      }
+      payload = JSON.parse(buffer.toString("utf8")) as unknown;
+    } catch (error) {
+      this.sendWebSocketMessage(socket, {
+        protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+        type: "error",
+        requestId: "invalid",
+        code: "invalid-message",
+        message: error instanceof Error ? error.message : "Invalid JSON message.",
+      });
+      return;
+    }
+
+    const parsed = parseWebSocketClientMessage(payload);
+    if (!parsed.ok) {
+      this.sendWebSocketMessage(socket, {
+        protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+        type: "error",
+        requestId: isRequestId(parsed.requestId) ? parsed.requestId : "invalid",
+        code: parsed.code,
+        message: parsed.message,
+      });
+      if (parsed.code === "protocol-mismatch") {
+        socket.close(1002, "Protocol version mismatch");
+      }
+      return;
+    }
+
+    if (parsed.message.type === "ping") {
+      this.sendWebSocketMessage(socket, {
+        protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+        type: "pong",
+        requestId: parsed.message.requestId,
+      });
+      return;
+    }
+
+    subscriptions.clear();
+    parsed.message.events.forEach((event) => subscriptions.add(event));
+    this.sendWebSocketMessage(socket, {
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "subscribed",
+      requestId: parsed.message.requestId,
+      events: [...subscriptions],
+    });
+  }
+
+  private sendWebSocketMessage(socket: WebSocket, message: RemoteWebSocketServerMessage): void {
+    if (!validateServerMessage(message)) {
+      this.options.onServerError?.(new Error("Refused to publish an invalid remote WebSocket message."));
+      return;
+    }
+    if (socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify(message));
     }
   }
 }

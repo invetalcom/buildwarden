@@ -64,7 +64,7 @@ const PairingGate = ({ initialError, onPaired }: { initialError?: string; onPair
   };
 
   return (
-    <main className="remote-pairing-shell theme-dark flex min-h-screen items-center justify-center bg-[var(--ec-bg)] px-4 py-8 text-[var(--ec-text)]">
+    <main className="remote-pairing-shell theme-dark flex min-h-[100svh] items-center justify-center bg-[var(--ec-bg)] px-3 py-6 text-[var(--ec-text)] sm:px-4 sm:py-8">
       <section className="remote-pairing-panel w-full max-w-md overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] shadow-2xl shadow-black/30">
         <div className="border-b border-[var(--ec-border)] px-5 py-4">
           <div className="flex items-center gap-3">
@@ -184,14 +184,14 @@ export const RemoteWebApp = () => {
 
   return (
     <BuildWardenClientProvider client={client}>
-      <div className="remote-app-entry h-screen">
+      <div className="remote-app-entry h-[100svh]">
         <App />
-        <div className="remote-session-chip fixed bottom-3 right-3 z-50 flex items-center gap-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)]/95 px-2.5 py-1.5 text-[10px] shadow-lg backdrop-blur">
+        <div className="remote-session-chip fixed right-2 bottom-2 z-30 flex items-center gap-1.5 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)]/95 px-2 py-1.5 text-[10px] shadow-lg backdrop-blur sm:right-3 sm:bottom-3 sm:gap-2 sm:px-2.5">
           <MonitorDot className="size-3.5 text-[var(--ec-accent)]" />
-          <span className="font-semibold uppercase tracking-[0.16em] text-[var(--ec-muted)]">Read-only remote</span>
+          <span className="hidden font-semibold uppercase tracking-[0.16em] text-[var(--ec-muted)] sm:inline">Read-only remote</span>
           <button type="button" className="ml-1 inline-flex items-center gap-1 text-[var(--ec-faint)] transition hover:text-[var(--ec-text)]" onClick={() => void disconnect()}>
             <LogOut className="size-3" />
-            Disconnect
+            <span className="hidden sm:inline">Disconnect</span>
           </button>
         </div>
       </div>

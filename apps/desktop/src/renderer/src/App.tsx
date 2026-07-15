@@ -3826,7 +3826,7 @@ export const App = () => {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--ec-bg)]">
         <main
           className={cn(
-            "min-h-0 min-w-0 flex-1 p-3",
+            "min-h-0 min-w-0 flex-1 p-2 sm:p-3",
             isAgentRunDetailView || isChatDetailView || isBookmarkDetailView || isProjectWorkspaceView
               ? "flex min-h-0 flex-col overflow-hidden"
               : "overflow-y-auto",

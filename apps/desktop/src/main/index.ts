@@ -2,9 +2,15 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, ipcMain } from "electron";
 import { getDefaultDatabasePath, BuildWardenDatabase } from "@buildwarden/db";
-import { RemoteAccessServer, RemoteAuthService, RemoteOperationRegistry } from "@buildwarden/remote-server";
+import {
+  RemoteAccessServer,
+  RemoteAuthService,
+  RemoteOperationRegistry,
+  validateNoRemoteArgs,
+  type RemoteHostEventSource,
+} from "@buildwarden/remote-server";
 import {
   APP_SETTING_KEYS,
   IPC_CHANNELS,
@@ -15,7 +21,6 @@ import {
   uiThemeToLegacyDarkMode,
   WINDOWS_TITLEBAR_OVERLAY_BACKGROUND,
   WINDOWS_TITLEBAR_OVERLAY_HEIGHT,
-  type AppMenuCommand,
   type AppMenuSection,
   type ChatInput,
   type ListAvailableProviderModelsInput,
@@ -24,44 +29,22 @@ import {
   type ProjectInput,
   type ProjectForgePrMonitorConfig,
   type ProjectForgeRequestNotificationPayload,
-  type ProjectForgeRequestOpenPayload,
   type ProviderAccountInput,
   type RemoteAccessPairingInput,
   type RendererLogPayload,
   type RunChatInput,
-  type RunEvent,
   type RunInput,
+  type RunWorkspaceFileInput,
   type UiTheme,
 } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
 import { getAppLogDirPath, initializeAppLogger, logError, logInfo, logWarn } from "./logger";
 import { ElectronSecretStore } from "./secret-store";
-import { disposeAllRunTerminals, registerRunTerminalIpc } from "./run-terminal-ipc";
-
-const isSafeExternalUrl = (raw: string): boolean => {
-  try {
-    const u = new URL(raw);
-    return u.protocol === "http:" || u.protocol === "https:" || u.protocol === "mailto:";
-  } catch {
-    return false;
-  }
-};
-
-const isAppNavigationUrl = (raw: string): boolean => {
-  try {
-    const u = new URL(raw);
-    if (u.protocol === "file:") {
-      return true;
-    }
-    const dev = process.env.ELECTRON_RENDERER_URL;
-    if (dev) {
-      return u.origin === new URL(dev).origin;
-    }
-    return false;
-  } catch {
-    return false;
-  }
-};
+import { registerRunTerminalIpc } from "./run-terminal-ipc";
+import { ElectronDesktopPlatformServices, isAppNavigationUrl, isSafeExternalUrl } from "./electron-desktop-platform";
+import { HostEventBus } from "./host-events";
+import { registerHostEventIpc } from "./host-events-ipc";
+import { HostTerminalService } from "./host-terminal-service";
 
 const mainDir = dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
@@ -71,59 +54,6 @@ const DEV_DB_FILE_NAME = "buildwarden_dev.sqlite";
 const PROD_SECRETS_FILE_NAME = "secrets.json";
 const DEV_SECRETS_FILE_NAME = "secrets_dev.json";
 let currentUiTheme: UiTheme = "dark";
-
-const showShellApprovalNotification = (event: RunEvent): void => {
-  if (!Notification.isSupported()) {
-    return;
-  }
-
-  const command = event.content.replace(/\s+/g, " ").trim();
-  const body = command.length > 140 ? `${command.slice(0, 137)}...` : command;
-  const notification = new Notification({
-    title: "Shell approval needed",
-    body: body || "An agent run is waiting for a command decision.",
-    silent: false,
-  });
-
-  notification.on("click", () => {
-    if (!mainWindow) {
-      return;
-    }
-    if (mainWindow.isMinimized()) {
-      mainWindow.restore();
-    }
-    mainWindow.show();
-    mainWindow.focus();
-  });
-  notification.show();
-};
-
-const showRunUserInputNotification = (event: RunEvent): void => {
-  if (!Notification.isSupported()) {
-    return;
-  }
-
-  const detail = event.content.replace(/\s+/g, " ").trim();
-  const body = detail.length > 140 ? `${detail.slice(0, 137)}...` : detail;
-  const notification = new Notification({
-    title: "Agent feedback needed",
-    body: body || "An agent run is waiting for your input before it can continue.",
-    silent: false,
-  });
-
-  notification.on("click", () => {
-    focusMainWindow();
-  });
-  notification.show();
-};
-
-const escapeToastXmlText = (value: string): string =>
-  value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
 
 const focusMainWindow = (): void => {
   if (!mainWindow) {
@@ -139,74 +69,18 @@ const focusMainWindow = (): void => {
   mainWindow.focus();
 };
 
-const openProjectForgeRequestFromNotification = (payload: ProjectForgeRequestOpenPayload): void => {
+const hostEvents = new HostEventBus();
+const hostTerminal = new HostTerminalService();
+const desktopPlatform = new ElectronDesktopPlatformServices(() => mainWindow, focusMainWindow);
+
+const publishProjectForgeRequestOpen = (payload: { projectId: string; prUrl: string }): void => {
   focusMainWindow();
-  if (!mainWindow) {
+  const publish = () => hostEvents.publish("forgeRequestOpen", payload);
+  if (mainWindow?.webContents.isLoading()) {
+    mainWindow.webContents.once("did-finish-load", publish);
     return;
   }
-  const send = () => mainWindow?.webContents.send(IPC_CHANNELS.projectForgeRequestOpen, payload);
-  if (mainWindow.webContents.isLoading()) {
-    mainWindow.webContents.once("did-finish-load", send);
-    return;
-  }
-  send();
-};
-
-const showProjectForgeRequestNotification = (input: {
-  projectName: string;
-  repoLabel: string;
-  title: string;
-  author: string | null;
-  providerLabel: "PR" | "MR";
-  payload: ProjectForgeRequestOpenPayload;
-}): void => {
-  if (!Notification.isSupported()) {
-    return;
-  }
-
-  const title = `New ${input.providerLabel}: ${input.projectName}`;
-  const byline = input.author ? ` by ${input.author}` : "";
-  const body = `${input.title}${byline}\n${input.repoLabel}`;
-  let opened = false;
-  const openOnce = () => {
-    if (opened) {
-      return;
-    }
-    opened = true;
-    openProjectForgeRequestFromNotification(input.payload);
-  };
-
-  const notification = new Notification({
-    title,
-    body,
-    silent: false,
-    ...(process.platform === "darwin"
-      ? { actions: [{ type: "button" as const, text: "Open project and PR" }], closeButtonText: "Dismiss" }
-      : {}),
-    ...(process.platform === "win32"
-      ? {
-          toastXml: [
-            "<toast>",
-            "<visual><binding template=\"ToastGeneric\">",
-            `<text>${escapeToastXmlText(title)}</text>`,
-            `<text>${escapeToastXmlText(body)}</text>`,
-            "</binding></visual>",
-            "<actions>",
-            "<action content=\"Open project and PR\" arguments=\"open\" activationType=\"foreground\"/>",
-            "</actions>",
-            "</toast>",
-          ].join(""),
-        }
-      : {}),
-  });
-
-  notification.on("click", openOnce);
-  notification.on("action", openOnce);
-  notification.show();
-};
-
-const showProjectForgeRequestInAppNotification = (payload: ProjectForgeRequestNotificationPayload): void => {
-  mainWindow?.webContents.send(IPC_CHANNELS.projectForgeRequestNotification, payload);
+  publish();
 };
 
 type ProjectForgeMonitorState = {
@@ -236,7 +110,7 @@ const runProjectForgeMonitorCheck = async (
     try {
       const changedTasks = await controller.syncProjectTaskPullRequestStatuses(config.projectId);
       for (const task of changedTasks) {
-        mainWindow?.webContents.send(IPC_CHANNELS.projectTaskChanged, {
+        hostEvents.publish("task", {
           projectId: task.projectId,
           taskId: task.id,
           status: task.status,
@@ -272,14 +146,10 @@ const runProjectForgeMonitorCheck = async (
         author: item.author,
         providerLabel: config.provider === "gitlab" ? "MR" : "PR",
       };
-      showProjectForgeRequestInAppNotification(payload);
-      showProjectForgeRequestNotification({
-        projectName: config.projectName,
-        repoLabel: config.repoLabel,
-        title: item.title,
-        author: item.author,
-        providerLabel: config.provider === "gitlab" ? "MR" : "PR",
+      hostEvents.publish("forgeRequestNotification", payload);
+      desktopPlatform.showProjectForgeRequestNotification({
         payload,
+        onOpen: () => publishProjectForgeRequestOpen(payload),
       });
     }
   } catch (error) {
@@ -380,207 +250,6 @@ const applyWindowTheme = (theme: UiTheme) => {
   }
 };
 
-const sendAppMenuCommand = (command: AppMenuCommand) => {
-  mainWindow?.webContents.send(IPC_CHANNELS.appMenuCommand, command);
-};
-
-type AppMenuDefinition = {
-  id: AppMenuSection;
-  label: string;
-  submenu: MenuItemConstructorOptions[];
-};
-
-const buildAppMenuDefinitions = (
-  controller: AppController,
-  logDirPath: string,
-  theme: UiTheme,
-  applyUiTheme: (next: UiTheme) => void,
-): AppMenuDefinition[] => {
-  return [
-    {
-      id: "file",
-      label: "File",
-      submenu: [
-        {
-          label: "Home",
-          click: () => sendAppMenuCommand("go-home"),
-        },
-        {
-          label: "New Agent Run",
-          accelerator: "CmdOrCtrl+T",
-          click: () => sendAppMenuCommand("new-agent-run"),
-        },
-        {
-          label: "New Chat",
-          accelerator: "CmdOrCtrl+Shift+T",
-          click: () => sendAppMenuCommand("new-chat"),
-        },
-        { type: "separator" },
-        {
-          label: "Settings",
-          accelerator: "CmdOrCtrl+,",
-          click: () => sendAppMenuCommand("open-settings"),
-        },
-        { type: "separator" },
-        process.platform === "darwin"
-          ? ({ role: "close" } as const satisfies MenuItemConstructorOptions)
-          : ({ role: "quit" } as const satisfies MenuItemConstructorOptions),
-      ],
-    },
-    {
-      id: "edit",
-      label: "Edit",
-      submenu: [
-        { role: "undo" },
-        { role: "redo" },
-        { type: "separator" },
-        { role: "cut" },
-        { role: "copy" },
-        { role: "paste" },
-        { role: "selectAll" },
-      ],
-    },
-    {
-      id: "view",
-      label: "View",
-      submenu: [
-        {
-          label: "Dark",
-          type: "radio",
-          checked: theme === "dark",
-          click: () => {
-            applyUiTheme("dark");
-          },
-        },
-        {
-          label: "Light",
-          type: "radio",
-          checked: theme === "light",
-          click: () => {
-            applyUiTheme("light");
-          },
-        },
-        { type: "separator" },
-        {
-          label: "Toggle appearance",
-          accelerator: process.platform === "darwin" ? "Cmd+Shift+L" : "Ctrl+Shift+L",
-          click: () => sendAppMenuCommand("toggle-dark-mode"),
-        },
-        { type: "separator" },
-        { role: "reload" },
-        { role: "forceReload" },
-        { type: "separator" },
-        { role: "resetZoom" },
-        { role: "zoomIn" },
-        { role: "zoomOut" },
-        { type: "separator" },
-        { role: "togglefullscreen" },
-        { role: "toggleDevTools" },
-      ],
-    },
-    {
-      id: "window",
-      label: "Window",
-      submenu: [
-        { role: "minimize" },
-        { role: "zoom" },
-        ...(process.platform === "darwin"
-          ? ([{ type: "separator" }, { role: "front" }] as const satisfies readonly MenuItemConstructorOptions[])
-          : ([{ role: "close" }] as const satisfies readonly MenuItemConstructorOptions[])),
-      ],
-    },
-    {
-      id: "help",
-      label: "Help",
-      submenu: [
-        {
-          label: "Open Log Folder",
-          click: async () => {
-            await controller.openPathInFileManager(logDirPath);
-          },
-        },
-        {
-          label: "Email Support",
-          click: async () => {
-            await shell.openExternal("mailto:ai-support@r-kellner.de");
-          },
-        },
-        { type: "separator" },
-        {
-          label: "About BuildWarden",
-          click: async () => {
-            await dialog.showMessageBox({
-              type: "info",
-              title: "About BuildWarden",
-              message: "BuildWarden",
-              detail: `Version ${app.getVersion()}\nDesktop coding-agent workflows in Electron.`,
-              buttons: ["OK"],
-            });
-          },
-        },
-      ],
-    },
-  ];
-};
-
-const buildAppMenu = (
-  controller: AppController,
-  logDirPath: string,
-  theme: UiTheme,
-  applyUiTheme: (next: UiTheme) => void,
-): Menu => {
-  const template: MenuItemConstructorOptions[] = buildAppMenuDefinitions(controller, logDirPath, theme, applyUiTheme).map(
-    ({ label, submenu }) => ({
-    label,
-    submenu,
-  }),
-  );
-
-  if (process.platform === "darwin") {
-    template.unshift({
-      label: app.name,
-      submenu: [
-        { role: "about" },
-        { type: "separator" },
-        { role: "services" },
-        { type: "separator" },
-        { role: "hide" },
-        { role: "hideOthers" },
-        { role: "unhide" },
-        { type: "separator" },
-        { role: "quit" },
-      ],
-    });
-  }
-
-  return Menu.buildFromTemplate(template);
-};
-
-const popupAppMenuSection = (
-  controller: AppController,
-  logDirPath: string,
-  theme: UiTheme,
-  applyUiTheme: (next: UiTheme) => void,
-  sectionId: AppMenuSection,
-  x: number,
-  y: number,
-) => {
-  if (!mainWindow) {
-    return;
-  }
-
-  const section = buildAppMenuDefinitions(controller, logDirPath, theme, applyUiTheme).find((entry) => entry.id === sectionId);
-  if (!section) {
-    return;
-  }
-
-  Menu.buildFromTemplate(section.submenu).popup({
-    window: mainWindow,
-    x,
-    y,
-  });
-};
-
 /**
  * Last applied theme, cached outside the database so the window can be created
  * with the right chrome immediately at boot, before the database has loaded.
@@ -636,7 +305,14 @@ const bootstrap = async (): Promise<void> => {
   const dbReadyAt = Date.now();
 
   const secretStore = new ElectronSecretStore(join(dataDirPath, secretsFileName));
-  const controller = new AppController(db, secretStore, logDirPath);
+  const controller = new AppController(
+    db,
+    secretStore,
+    logDirPath,
+    desktopPlatform,
+    hostTerminal,
+    hostEvents,
+  );
   const startupReconciliation = controller
     .migrateProjectBaseBranches()
     .then(() => controller.reconcileOrphanedActiveSessions())
@@ -656,40 +332,72 @@ const bootstrap = async (): Promise<void> => {
     await controller.setAppSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next));
     currentUiTheme = parseUiTheme(db.getSettings());
     writeCachedUiTheme(currentUiTheme);
-    Menu.setApplicationMenu(buildAppMenu(controller, logDirPath, currentUiTheme, (t) => void applyUiTheme(t)));
+    desktopPlatform.installApplicationMenu({
+      logDirPath,
+      theme: currentUiTheme,
+      onCommand: (command) => hostEvents.publish("appMenuCommand", command),
+      onThemeChange: (theme) => void applyUiTheme(theme),
+    });
     applyWindowTheme(currentUiTheme);
-    mainWindow?.webContents.send(IPC_CHANNELS.appSettingsChanged);
+    hostEvents.publish("appSettingsChanged", undefined);
   };
 
   const refreshAppMenu = () => {
     currentUiTheme = parseUiTheme(db.getSettings());
     writeCachedUiTheme(currentUiTheme);
-    Menu.setApplicationMenu(buildAppMenu(controller, logDirPath, currentUiTheme, (t) => void applyUiTheme(t)));
+    desktopPlatform.installApplicationMenu({
+      logDirPath,
+      theme: currentUiTheme,
+      onCommand: (command) => hostEvents.publish("appMenuCommand", command),
+      onThemeChange: (theme) => void applyUiTheme(theme),
+    });
     applyWindowTheme(currentUiTheme);
   };
   refreshAppMenu();
 
   const remoteOperations = new RemoteOperationRegistry(({ method, requestId, error }) => {
     logError("Remote operation failed.", { method, requestId, error });
-  });
+  }, db);
   remoteOperations.register("getSnapshot", async () => {
     await startupReconciliation;
     return controller.getSnapshot();
-  });
+  }, validateNoRemoteArgs);
   remoteOperations.register("refreshSnapshot", async () => {
     await startupReconciliation;
     return controller.refreshSnapshot();
-  });
-  remoteOperations.register("getProjectBranches", (projectId) => controller.getProjectBranches(projectId));
-  remoteOperations.register("getProjectCurrentBranch", (projectId) => controller.getProjectCurrentBranch(projectId));
-  remoteOperations.register("getRunDetail", (runId) => controller.getRunDetail(runId));
-  remoteOperations.register("getRunWorktreeDiff", (runId) => controller.getRunWorktreeDiff(runId));
-  remoteOperations.register("getRunWorkspaceFile", (input) => controller.getRunWorkspaceFile(input));
-  remoteOperations.register("getProjectLoopUiReviewImage", (reviewId) => controller.getProjectLoopUiReviewImage(reviewId));
-  remoteOperations.register("getChatDetail", (chatId) => controller.getChatDetail(chatId));
-  remoteOperations.register("listChatsWithSteps", () => controller.listChatsWithSteps());
-  remoteOperations.register("getBookmarksWithSteps", () => controller.getBookmarksWithSteps());
-  remoteOperations.register("getChatBookmarksWithSteps", () => controller.getChatBookmarksWithSteps());
+  }, validateNoRemoteArgs);
+
+  const validateSingleRemoteStringArg = (args: unknown[]): args is [string] =>
+    args.length === 1 && typeof args[0] === "string";
+  const validateRunWorkspaceFileRemoteArgs = (args: unknown[]): args is [RunWorkspaceFileInput] => {
+    const input = args[0];
+    return args.length === 1 && input != null && typeof input === "object" && !Array.isArray(input) &&
+      typeof (input as Record<string, unknown>).runId === "string" &&
+      typeof (input as Record<string, unknown>).path === "string";
+  };
+  remoteOperations.register("getProjectBranches", (projectId) => controller.getProjectBranches(projectId), validateSingleRemoteStringArg);
+  remoteOperations.register("getProjectCurrentBranch", (projectId) => controller.getProjectCurrentBranch(projectId), validateSingleRemoteStringArg);
+  remoteOperations.register("getRunDetail", (runId) => controller.getRunDetail(runId), validateSingleRemoteStringArg);
+  remoteOperations.register("getRunWorktreeDiff", (runId) => controller.getRunWorktreeDiff(runId), validateSingleRemoteStringArg);
+  remoteOperations.register("getRunWorkspaceFile", (input) => controller.getRunWorkspaceFile(input), validateRunWorkspaceFileRemoteArgs);
+  remoteOperations.register("getProjectLoopUiReviewImage", (reviewId) => controller.getProjectLoopUiReviewImage(reviewId), validateSingleRemoteStringArg);
+  remoteOperations.register("getChatDetail", (chatId) => controller.getChatDetail(chatId), validateSingleRemoteStringArg);
+  remoteOperations.register("listChatsWithSteps", () => controller.listChatsWithSteps(), validateNoRemoteArgs);
+  remoteOperations.register("getBookmarksWithSteps", () => controller.getBookmarksWithSteps(), validateNoRemoteArgs);
+  remoteOperations.register("getChatBookmarksWithSteps", () => controller.getChatBookmarksWithSteps(), validateNoRemoteArgs);
+
+  const remoteEventSource: RemoteHostEventSource = {
+    subscribe(listener) {
+      const disposers = [
+        hostEvents.subscribe("run", (payload) => listener({ event: "run", payload })),
+        hostEvents.subscribe("chat", (payload) => listener({ event: "chat", payload })),
+        hostEvents.subscribe("warning", (payload) => listener({ event: "warning", payload })),
+        hostEvents.subscribe("loop", (payload) => listener({ event: "loop", payload })),
+        hostEvents.subscribe("task", (payload) => listener({ event: "task", payload })),
+      ];
+      return () => disposers.forEach((dispose) => dispose());
+    },
+  };
 
   const remoteAccessAuthSecretKey = "app:remote-access-auth-key:v1";
   let remoteAuthService: RemoteAuthService | null = null;
@@ -734,12 +442,13 @@ const bootstrap = async (): Promise<void> => {
           operations: remoteOperations,
           auth: await ensureRemoteAuthService(),
           staticRoot: join(app.getAppPath(), "out", "web"),
+          events: remoteEventSource,
           onServerError: (error) => logError("Remote access server request failed.", { error }),
         });
         const info = await remoteAccessServer.start();
         logInfo("Remote access server started in loopback-only mode.", {
           baseUrl: info.baseUrl,
-          authentication: "required",
+          authentication: "session",
         });
       } catch (error) {
         remoteAccessServer = null;
@@ -924,21 +633,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.cancelRun, (_, runId: string) => controller.cancelRun(runId));
   ipcMain.handle(IPC_CHANNELS.pickProjectDirectory, () => controller.pickProjectDirectory());
   ipcMain.handle(IPC_CHANNELS.openPathInFileManager, (_, path: string) => controller.openPathInFileManager(path));
-  ipcMain.handle(IPC_CHANNELS.openExternalUrl, async (_, url: string) => {
-    if (typeof url !== "string" || !isSafeExternalUrl(url)) {
-      logWarn("Blocked attempt to open unsupported external URL.", { url });
-      return { ok: false, error: "Unsupported or invalid URL." };
-    }
-    try {
-      await shell.openExternal(url);
-      logInfo("Opened external URL.", { url });
-      return { ok: true };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      logError("Failed to open external URL.", { url, error: err });
-      return { ok: false, error: message };
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.openExternalUrl, (_, url: string) => desktopPlatform.openExternalUrl(url));
   ipcMain.handle(IPC_CHANNELS.reportRendererLog, async (_, payload: RendererLogPayload) => {
     const metadata = {
       source: payload.source,
@@ -989,15 +684,26 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.deleteChat, (_, chatId: string) => controller.deleteChat(chatId));
   ipcMain.handle(IPC_CHANNELS.cancelChat, (_, chatId: string) => controller.cancelChat(chatId));
   ipcMain.handle(IPC_CHANNELS.showAppMenu, (_, section: AppMenuSection, x: number, y: number) => {
-    popupAppMenuSection(controller, logDirPath, currentUiTheme, (t) => void applyUiTheme(t), section, x, y);
+    desktopPlatform.popupApplicationMenu(
+      {
+        logDirPath,
+        theme: currentUiTheme,
+        onCommand: (command) => hostEvents.publish("appMenuCommand", command),
+        onThemeChange: (theme) => void applyUiTheme(theme),
+      },
+      section,
+      x,
+      y,
+    );
   });
 
-  registerRunTerminalIpc();
+  registerHostEventIpc(hostEvents, () => mainWindow);
+  registerRunTerminalIpc(hostTerminal, desktopPlatform);
   app.on("before-quit", () => {
     void remoteAccessServer?.stop().catch((error) => {
       logWarn("Remote access server did not stop cleanly.", { error });
     });
-    disposeAllRunTerminals();
+    hostTerminal.disposeAll();
     for (const state of projectForgeMonitorStates.values()) {
       clearInterval(state.timer);
     }
@@ -1009,26 +715,13 @@ const bootstrap = async (): Promise<void> => {
     }
   });
 
-  controller.onRunEvent((event) => {
-    mainWindow?.webContents.send(IPC_CHANNELS.runEvent, event);
+  hostEvents.subscribe("run", (event) => {
     if (event.metadata?.shellApprovalRequest === true) {
-      showShellApprovalNotification(event);
+      desktopPlatform.showShellApprovalNotification(event);
     }
     if (event.metadata?.userInputRequest === true && event.metadata.requestStatus === "opened") {
-      showRunUserInputNotification(event);
+      desktopPlatform.showRunUserInputNotification(event);
     }
-  });
-
-  controller.onChatEvent((event) => {
-    mainWindow?.webContents.send(IPC_CHANNELS.chatEvent, event);
-  });
-
-  controller.onProjectLoopChanged((payload) => {
-    mainWindow?.webContents.send(IPC_CHANNELS.projectLoopChanged, payload);
-  });
-
-  controller.onAppWarning((warning) => {
-    mainWindow?.webContents.send(IPC_CHANNELS.appWarning, warning);
   });
 
   logInfo("Startup timing.", {
@@ -1077,7 +770,7 @@ const createMainWindow = (theme: UiTheme): void => {
     }
     if (isSafeExternalUrl(url)) {
       logInfo("Opening safe external URL from renderer window.", { url });
-      void shell.openExternal(url);
+      void desktopPlatform.openExternalUrl(url);
     } else {
       logWarn("Blocked unsafe renderer window open request.", { url });
     }
@@ -1128,13 +821,7 @@ app.whenReady().then(async () => {
     const message = err instanceof Error ? err.message : String(err);
     const stack = err instanceof Error ? err.stack : undefined;
     logError("Failed to start BuildWarden.", { error: err });
-    await dialog.showMessageBox({
-      type: "error",
-      title: "Startup Error",
-      message: "Failed to start BuildWarden",
-      detail: [message, stack].filter(Boolean).join("\n\n"),
-      noLink: true,
-    });
+    await desktopPlatform.showErrorDialog("Startup Error", "Failed to start BuildWarden", [message, stack].filter(Boolean).join("\n\n"));
     app.quit();
     return;
   }
@@ -1150,13 +837,7 @@ app.whenReady().then(async () => {
 process.on("uncaughtException", (err) => {
   logError("Uncaught exception in main process.", { error: err });
   void app.whenReady().then(async () => {
-    await dialog.showMessageBox({
-      type: "error",
-      title: "Uncaught Exception",
-      message: err.message,
-      detail: err.stack,
-      noLink: true,
-    }).catch(() => {});
+    await desktopPlatform.showErrorDialog("Uncaught Exception", err.message, err.stack).catch(() => {});
     app.quit();
   });
 });
@@ -1165,12 +846,7 @@ process.on("unhandledRejection", (reason) => {
   const message = reason instanceof Error ? reason.message : String(reason);
   logError("Unhandled rejection in main process.", { reason });
   void app.whenReady().then(async () => {
-    await dialog.showMessageBox({
-      type: "error",
-      title: "Unhandled Rejection",
-      message,
-      noLink: true,
-    }).catch(() => {});
+    await desktopPlatform.showErrorDialog("Unhandled Rejection", message).catch(() => {});
     app.quit();
   });
 });

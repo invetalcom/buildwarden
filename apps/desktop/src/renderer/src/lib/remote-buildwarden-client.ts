@@ -3,12 +3,16 @@ import {
   DEFAULT_NETWORK_PROXY_SETTINGS,
   REMOTE_ACCESS_PROTOCOL_VERSION,
   REMOTE_ACCESS_RPC_PATH,
+  REMOTE_ACCESS_WEBSOCKET_PATH,
   type AppSnapshot,
   type DesktopApi,
   type RemoteApiMethod,
   type RemoteApiMethodArgs,
   type RemoteApiMethodResult,
   type RemoteRpcResponse,
+  type RemoteStreamEventPayloadMap,
+  type RemoteStreamEventType,
+  type RemoteWebSocketServerMessage,
 } from "@buildwarden/shared";
 import type { BuildWardenClient, BuildWardenClientCapabilities } from "./buildwarden-client-core";
 
@@ -23,7 +27,7 @@ const WEB_CAPABILITIES: Readonly<BuildWardenClientCapabilities> = Object.freeze(
   embeddedTerminal: false,
   settings: false,
   mutations: false,
-  liveEvents: false,
+  liveEvents: true,
 });
 
 const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
@@ -93,8 +97,53 @@ export class RemoteSessionExpiredError extends Error {
 export interface RemoteBuildWardenClientOptions {
   baseUrl?: string;
   fetch?: typeof globalThis.fetch;
+  webSocketFactory?: (url: string) => WebSocket;
   onSessionExpired?: () => void;
 }
+
+const REMOTE_EVENT_TYPES = new Set<RemoteStreamEventType>(["run", "chat", "warning", "loop", "task"]);
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  value != null && typeof value === "object" && !Array.isArray(value);
+
+const isRemoteEventPayload = (event: RemoteStreamEventType, payload: unknown): boolean => {
+  if (!isObject(payload)) return false;
+  if (event === "run") {
+    return typeof payload.runId === "string" && typeof payload.type === "string" &&
+      typeof payload.title === "string" && typeof payload.content === "string" && typeof payload.createdAt === "string";
+  }
+  if (event === "chat") {
+    return typeof payload.chatId === "string" && typeof payload.runId === "string" &&
+      typeof payload.type === "string" && typeof payload.title === "string" &&
+      typeof payload.content === "string" && typeof payload.createdAt === "string";
+  }
+  if (event === "warning") return typeof payload.title === "string" && typeof payload.message === "string";
+  if (event === "loop") return typeof payload.loopId === "string" && typeof payload.projectId === "string";
+  return typeof payload.projectId === "string" && typeof payload.taskId === "string" &&
+    (payload.status === "open" || payload.status === "in_progress" || payload.status === "in_review" || payload.status === "done");
+};
+
+const parseRemoteServerMessage = (raw: unknown): RemoteWebSocketServerMessage | null => {
+  if (!isObject(raw) || raw.protocolVersion !== REMOTE_ACCESS_PROTOCOL_VERSION || typeof raw.type !== "string") return null;
+  if (raw.type === "event") {
+    if (typeof raw.event !== "string" || !REMOTE_EVENT_TYPES.has(raw.event as RemoteStreamEventType) ||
+      typeof raw.sequence !== "number" || !Number.isSafeInteger(raw.sequence)) return null;
+    const event = raw.event as RemoteStreamEventType;
+    return isRemoteEventPayload(event, raw.payload) ? raw as unknown as RemoteWebSocketServerMessage : null;
+  }
+  if (raw.type === "hello") return isObject(raw.info) ? raw as unknown as RemoteWebSocketServerMessage : null;
+  if (raw.type === "subscribed") {
+    return typeof raw.requestId === "string" && Array.isArray(raw.events) &&
+      raw.events.every((event) => typeof event === "string" && REMOTE_EVENT_TYPES.has(event as RemoteStreamEventType))
+      ? raw as unknown as RemoteWebSocketServerMessage : null;
+  }
+  if (raw.type === "pong") return typeof raw.requestId === "string" ? raw as unknown as RemoteWebSocketServerMessage : null;
+  if (raw.type === "error") {
+    return typeof raw.requestId === "string" && typeof raw.code === "string" && typeof raw.message === "string"
+      ? raw as unknown as RemoteWebSocketServerMessage : null;
+  }
+  return null;
+};
 
 export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOptions = {}): BuildWardenClient => {
   const baseUrl = options.baseUrl?.replace(/\/$/, "") ?? "";
@@ -102,6 +151,89 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
   let selectedProjectId: string | null = null;
   let selectedRunId: string | null = null;
   let localSettings = readLocalSettings();
+  const listeners = new Map<RemoteStreamEventType, Set<(payload: unknown) => void>>();
+  let eventSocket: WebSocket | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let reconnectAttempt = 0;
+
+  const activeEventTypes = (): RemoteStreamEventType[] =>
+    [...listeners.entries()].filter(([, handlers]) => handlers.size > 0).map(([event]) => event);
+
+  const eventSocketUrl = (): string => {
+    const origin = baseUrl || window.location.origin;
+    const url = new URL(REMOTE_ACCESS_WEBSOCKET_PATH, origin);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.searchParams.set("protocolVersion", String(REMOTE_ACCESS_PROTOCOL_VERSION));
+    return url.toString();
+  };
+
+  const sendSubscription = () => {
+    if (eventSocket?.readyState !== 1) return;
+    eventSocket.send(JSON.stringify({
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "subscribe",
+      requestId: crypto.randomUUID(),
+      events: activeEventTypes(),
+    }));
+  };
+
+  const connectEvents = () => {
+    if (eventSocket || activeEventTypes().length === 0) return;
+    const socket = options.webSocketFactory?.(eventSocketUrl()) ?? new WebSocket(eventSocketUrl());
+    eventSocket = socket;
+    socket.addEventListener("open", () => {
+      reconnectAttempt = 0;
+      sendSubscription();
+    });
+    socket.addEventListener("message", (event) => {
+      if (typeof event.data !== "string") return;
+      let decoded: unknown;
+      try {
+        decoded = JSON.parse(event.data) as unknown;
+      } catch {
+        return;
+      }
+      const message = parseRemoteServerMessage(decoded);
+      if (message?.type !== "event") return;
+      listeners.get(message.event)?.forEach((listener) => listener(message.payload));
+    });
+    socket.addEventListener("close", (event) => {
+      if (eventSocket === socket) eventSocket = null;
+      if (event.code === 1008) {
+        options.onSessionExpired?.();
+        return;
+      }
+      if (activeEventTypes().length > 0 && reconnectTimer == null) {
+        const delay = Math.min(10_000, 500 * 2 ** reconnectAttempt++);
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          connectEvents();
+        }, delay);
+      }
+    });
+    socket.addEventListener("error", () => socket.close());
+  };
+
+  const subscribe = <Event extends RemoteStreamEventType>(
+    event: Event,
+    listener: (payload: RemoteStreamEventPayloadMap[Event]) => void,
+  ): (() => void) => {
+    const eventListeners = listeners.get(event) ?? new Set<(payload: unknown) => void>();
+    eventListeners.add(listener as (payload: unknown) => void);
+    listeners.set(event, eventListeners);
+    if (eventSocket?.readyState === 1) sendSubscription();
+    else connectEvents();
+    return () => {
+      eventListeners.delete(listener as (payload: unknown) => void);
+      if (eventSocket?.readyState === 1) sendSubscription();
+      if (activeEventTypes().length === 0) {
+        if (reconnectTimer != null) clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+        eventSocket?.close(1000, "No active subscriptions");
+        eventSocket = null;
+      }
+    };
+  };
 
   const invoke = async <Method extends RemoteApiMethod>(
     method: Method,
@@ -178,6 +310,11 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
       const opened = window.open(url, "_blank", "noopener,noreferrer");
       return opened ? { ok: true } : { ok: false, error: "The browser blocked the new tab." };
     },
+    onRunEvent: (listener) => subscribe("run", listener),
+    onChatEvent: (listener) => subscribe("chat", listener),
+    onAppWarning: (listener) => subscribe("warning", listener),
+    onProjectLoopChanged: (listener) => subscribe("loop", listener),
+    onProjectTaskChanged: (listener) => subscribe("task", listener),
   };
 
   const client = new Proxy(localApi as BuildWardenClient, {
