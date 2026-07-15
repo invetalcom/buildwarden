@@ -1,5 +1,11 @@
-import type { NetworkProxyProtocol } from "@buildwarden/shared";
-import { Globe, Info, Loader2, ShieldCheck } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import type {
+  NetworkProxyProtocol,
+  RemoteAccessPairingGrant,
+  RemoteAccessPairingInput,
+  RemoteAccessSession,
+} from "@buildwarden/shared";
+import { Copy, Globe, Info, KeyRound, Loader2, ShieldCheck, Unplug, Wifi } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
@@ -23,12 +29,176 @@ export type NetworkSettingsTabProps = {
   onDraftChange: (next: NetworkProxyDraft) => void;
   onSave: () => void | Promise<void>;
   onReset: () => void;
+  remoteAccessEnabled: boolean;
+  onRemoteAccessEnabledChange: (enabled: boolean) => Promise<void>;
+  onCreateRemoteAccessPairing: (input?: RemoteAccessPairingInput) => Promise<RemoteAccessPairingGrant>;
+  onListRemoteAccessSessions: () => Promise<RemoteAccessSession[]>;
+  onRevokeRemoteAccessSession: (sessionId: string) => Promise<void>;
 };
 
 const PROXY_PROTOCOL_OPTIONS: Array<{ value: NetworkProxyProtocol; label: string }> = [
   { value: "http", label: "HTTP proxy" },
   { value: "https", label: "HTTPS proxy" },
 ];
+
+const formatTimestamp = (value: string): string => new Date(value).toLocaleString([], {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+
+const RemoteAccessSettings = ({
+  enabled,
+  onEnabledChange,
+  onCreatePairing,
+  onListSessions,
+  onRevokeSession,
+}: {
+  enabled: boolean;
+  onEnabledChange: (enabled: boolean) => Promise<void>;
+  onCreatePairing: (input?: RemoteAccessPairingInput) => Promise<RemoteAccessPairingGrant>;
+  onListSessions: () => Promise<RemoteAccessSession[]>;
+  onRevokeSession: (sessionId: string) => Promise<void>;
+}) => {
+  const [sessions, setSessions] = useState<RemoteAccessSession[]>([]);
+  const [pairing, setPairing] = useState<RemoteAccessPairingGrant | null>(null);
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refreshSessions = useCallback(async () => {
+    setSessions(await onListSessions());
+  }, [onListSessions]);
+
+  useEffect(() => {
+    void refreshSessions().catch((caught) => {
+      setError(caught instanceof Error ? caught.message : "Could not load paired devices.");
+    });
+  }, [refreshSessions]);
+
+  const run = async (action: () => Promise<void>) => {
+    setWorking(true);
+    setError(null);
+    try {
+      await action();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Remote access could not be updated.");
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  return (
+    <Card className="p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="rounded-full border border-zinc-800 bg-zinc-900/70 p-2 text-emerald-300">
+            <Wifi className="h-4 w-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Remote access</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <p className="text-sm font-medium text-zinc-100">Authenticated loopback server</p>
+              <span className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                enabled
+                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                  : "border-zinc-700 bg-zinc-900 text-zinc-400"
+              }`}>
+                {enabled ? "Enabled" : "Off"}
+              </span>
+            </div>
+            <p className="mt-1 max-w-2xl text-sm text-zinc-400">
+              Opt in to a local-only server, then issue single-use pairing codes for revocable read sessions.
+            </p>
+          </div>
+        </div>
+        <label className="flex shrink-0 items-center gap-2 text-sm text-zinc-300">
+          <input
+            className="h-4 w-4 accent-[var(--ec-accent)]"
+            type="checkbox"
+            checked={enabled}
+            disabled={working}
+            onChange={(event) => void run(async () => {
+              await onEnabledChange(event.target.checked);
+              if (!event.target.checked) setPairing(null);
+            })}
+          />
+          Enable
+        </label>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-zinc-800 pt-4">
+        <Button
+          type="button"
+          size="sm"
+          disabled={!enabled || working}
+          onClick={() => void run(async () => {
+            setPairing(await onCreatePairing({ scopes: ["state:read"] }));
+            await refreshSessions();
+          })}
+        >
+          {working ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <KeyRound className="mr-2 h-4 w-4" />}
+          Create pairing code
+        </Button>
+        <span className="text-xs text-zinc-500">Codes expire after five minutes and work once.</span>
+      </div>
+
+      {pairing ? (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2.5">
+          <div>
+            <p className="font-mono text-base font-semibold tracking-wider text-emerald-100">{pairing.code}</p>
+            <p className="mt-0.5 text-[11px] text-emerald-200/70">Expires {formatTimestamp(pairing.expiresAt)}</p>
+          </div>
+          <Button type="button" variant="secondary" size="sm" onClick={() => void navigator.clipboard.writeText(pairing.code)}>
+            <Copy className="mr-2 h-3.5 w-3.5" />
+            Copy
+          </Button>
+        </div>
+      ) : null}
+
+      {error ? <p className="mt-3 text-xs text-red-300">{error}</p> : null}
+
+      <div className="mt-4 border-t border-zinc-800 pt-3">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Paired devices</p>
+          <Button type="button" variant="ghost" size="sm" disabled={working} onClick={() => void run(refreshSessions)}>
+            Refresh
+          </Button>
+        </div>
+        {sessions.length ? (
+          <div className="mt-2 divide-y divide-zinc-800">
+            {sessions.map((session) => {
+              const active = !session.revokedAt && session.expiresAt > new Date().toISOString();
+              return (
+                <div key={session.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm text-zinc-200">{session.label}</p>
+                    <p className="mt-0.5 text-[11px] text-zinc-500">
+                      {active ? `Last used ${formatTimestamp(session.lastUsedAt)}` : session.revokedAt ? "Revoked" : "Expired"}
+                    </p>
+                  </div>
+                  {active ? (
+                    <Button type="button" variant="secondary" size="sm" disabled={working} onClick={() => void run(async () => {
+                      await onRevokeSession(session.id);
+                      await refreshSessions();
+                    })}>
+                      <Unplug className="mr-2 h-3.5 w-3.5" />
+                      Revoke
+                    </Button>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="mt-2 text-xs text-zinc-500">No devices have been paired.</p>
+        )}
+      </div>
+
+      <p className="mt-3 border-l border-amber-500/30 pl-3 text-xs leading-5 text-amber-200/75">
+        This stage is loopback-only. Tailscale/LAN exposure and browser hosting remain disabled until the following milestones.
+      </p>
+    </Card>
+  );
+};
 
 export const NetworkSettingsTab = ({
   draft,
@@ -37,8 +207,21 @@ export const NetworkSettingsTab = ({
   onDraftChange,
   onSave,
   onReset,
+  remoteAccessEnabled,
+  onRemoteAccessEnabledChange,
+  onCreateRemoteAccessPairing,
+  onListRemoteAccessSessions,
+  onRevokeRemoteAccessSession,
 }: NetworkSettingsTabProps) => (
   <div className="grid gap-3">
+    <RemoteAccessSettings
+      enabled={remoteAccessEnabled}
+      onEnabledChange={onRemoteAccessEnabledChange}
+      onCreatePairing={onCreateRemoteAccessPairing}
+      onListSessions={onListRemoteAccessSessions}
+      onRevokeSession={onRevokeRemoteAccessSession}
+    />
+
     <Card className="p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">

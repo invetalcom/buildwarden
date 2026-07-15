@@ -2641,6 +2641,9 @@ export interface RendererLogPayload {
 
 export interface DesktopApi {
   getSnapshot(): Promise<AppSnapshot>;
+  createRemoteAccessPairing(input?: RemoteAccessPairingInput): Promise<RemoteAccessPairingGrant>;
+  listRemoteAccessSessions(): Promise<RemoteAccessSession[]>;
+  revokeRemoteAccessSession(sessionId: string): Promise<void>;
   getNetworkProxySettings(): Promise<NetworkProxySettingsSnapshot>;
   selectProject(projectId: string): Promise<void>;
   reorderProjects(projectIds: string[]): Promise<void>;
@@ -2848,6 +2851,80 @@ export const REMOTE_ACCESS_LOOPBACK_HOST = "127.0.0.1" as const;
 export const DEFAULT_REMOTE_ACCESS_PORT = 47_831;
 export const REMOTE_ACCESS_HEALTH_PATH = "/api/v1/health" as const;
 export const REMOTE_ACCESS_RPC_PATH = "/api/v1/rpc" as const;
+export const REMOTE_ACCESS_PAIRING_PATH = "/api/v1/auth/pair" as const;
+export const REMOTE_ACCESS_SESSION_PATH = "/api/v1/auth/session" as const;
+export const REMOTE_ACCESS_SESSION_COOKIE = "buildwarden_session" as const;
+
+export const REMOTE_ACCESS_SCOPES = [
+  "state:read",
+  "run:operate",
+  "chat:operate",
+  "approval:respond",
+  "git:write",
+  "terminal:operate",
+  "admin",
+] as const;
+
+export type RemoteAccessScope = (typeof REMOTE_ACCESS_SCOPES)[number];
+
+export interface RemoteAccessPairingInput {
+  label?: string;
+  scopes?: RemoteAccessScope[];
+}
+
+export interface RemoteAccessPairingGrant {
+  id: string;
+  code: string;
+  scopes: RemoteAccessScope[];
+  expiresAt: string;
+  createdAt: string;
+}
+
+export interface RemoteAccessPairingGrantRecord extends Omit<RemoteAccessPairingGrant, "code"> {
+  tokenHash: string;
+  usedAt: string | null;
+}
+
+export interface RemoteAccessSession {
+  id: string;
+  label: string;
+  scopes: RemoteAccessScope[];
+  createdAt: string;
+  expiresAt: string;
+  lastUsedAt: string;
+  revokedAt: string | null;
+}
+
+export interface RemoteAccessSessionRecord extends RemoteAccessSession {
+  tokenHash: string;
+}
+
+export type RemoteAccessAuditEvent =
+  | "pairing-created"
+  | "pairing-failed"
+  | "pairing-consumed"
+  | "session-authenticated"
+  | "session-revoked";
+
+export interface RemoteAccessAuditRecord {
+  id: string;
+  event: RemoteAccessAuditEvent;
+  outcome: "success" | "failure";
+  sessionId: string | null;
+  pairingGrantId: string | null;
+  remoteAddress: string | null;
+  details: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface RemoteAccessPairingExchangeRequest {
+  code: string;
+  label?: string;
+}
+
+export interface RemoteAccessPairingExchangeResponse {
+  session: RemoteAccessSession;
+}
 
 type AsyncDesktopApiMethodName = {
   [Method in keyof DesktopApi]-?: DesktopApi[Method] extends (...args: never[]) => Promise<unknown>
@@ -2874,6 +2951,7 @@ export type RemoteRpcErrorCode =
   | "invalid-request"
   | "protocol-mismatch"
   | "method-not-found"
+  | "forbidden"
   | "operation-failed";
 
 export type RemoteRpcResponse =
@@ -2899,7 +2977,7 @@ export interface RemoteAccessHealth {
   appVersion: string;
   protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
   scope: "loopback";
-  authentication: "not-configured";
+  authentication: "required";
   startedAt: string;
 }
 
@@ -2983,6 +3061,9 @@ export const IPC_CHANNELS = {
   pullProjectBranch: "buildwarden:pull-project-branch",
   pushProjectBranch: "buildwarden:push-project-branch",
   getSnapshot: "buildwarden:get-snapshot",
+  createRemoteAccessPairing: "buildwarden:create-remote-access-pairing",
+  listRemoteAccessSessions: "buildwarden:list-remote-access-sessions",
+  revokeRemoteAccessSession: "buildwarden:revoke-remote-access-session",
   getNetworkProxySettings: "buildwarden:get-network-proxy-settings",
   selectProject: "buildwarden:select-project",
   reorderProjects: "buildwarden:reorder-projects",
