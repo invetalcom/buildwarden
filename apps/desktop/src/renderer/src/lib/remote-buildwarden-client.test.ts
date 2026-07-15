@@ -82,6 +82,20 @@ describe("remote BuildWarden client", () => {
     expect(fetcher).toHaveBeenCalledOnce();
   });
 
+  it("omits trailing undefined optional arguments from RPC requests", async () => {
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as { requestId: string };
+      return rpcResponse({ path: null, parentPath: null, entries: [] }, request.requestId);
+    });
+    const client = createRemoteBuildWardenClient({ fetch: fetcher as typeof fetch });
+
+    await expect(client.listHostDirectories(undefined)).resolves.toEqual({ path: null, parentPath: null, entries: [] });
+    expect(JSON.parse(String((fetcher.mock.calls[0]?.[1] as RequestInit | undefined)?.body))).toMatchObject({
+      method: "listHostDirectories",
+      args: [],
+    });
+  });
+
   it("rejects host setting writes when the session lacks settings capability", async () => {
     const fetcher = vi.fn(async () => rpcResponse(undefined));
     const client = createRemoteBuildWardenClient({ fetch: fetcher as typeof fetch });

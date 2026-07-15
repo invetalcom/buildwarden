@@ -401,12 +401,16 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     method: Method,
     args: RemoteApiMethodArgs<Method>,
   ): Promise<RemoteApiMethodResult<Method>> => {
+    const wireArgs: unknown[] = [...args];
+    while (wireArgs.length > 0 && wireArgs[wireArgs.length - 1] === undefined) {
+      wireArgs.pop();
+    }
     const idempotencyKey = REMOTE_MUTATION_METHODS.has(method) ? crypto.randomUUID() : undefined;
     const requestBody = JSON.stringify({
       protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
       requestId: crypto.randomUUID(),
       method,
-      args,
+      args: wireArgs,
       ...(idempotencyKey ? { idempotencyKey } : {}),
     });
     const send = () => fetcher(`${baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
