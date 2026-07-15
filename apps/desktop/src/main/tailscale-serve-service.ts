@@ -234,7 +234,15 @@ export class TailscaleServeService {
       });
     }
     const serveResult = await this.runCommand(located.executable, ["serve", "status", "--json"]);
-    const serveStatus = serveResult.exitCode === 0 ? parseJson<TailscaleServeStatus>(serveResult.stdout) : null;
+    const noConfig = /no serve config/i.test(`${serveResult.stdout} ${serveResult.stderr}`);
+    const serveStatus = serveResult.exitCode === 0 ? parseJson<TailscaleServeStatus>(serveResult.stdout) : noConfig ? {} : null;
+    if (serveStatus == null) {
+      return this.status(desired, "error", cleanMessage(serveResult.stderr || serveResult.stdout) || "Could not inspect Tailscale Serve.", {
+        dnsName: managedHost,
+        endpoint: `https://${managedHost}/`,
+        managed: true,
+      });
+    }
     if (rootProxyForHost(serveStatus, managedHost) !== managedTarget) {
       this.clearOwnership();
       return this.getStatus(null);

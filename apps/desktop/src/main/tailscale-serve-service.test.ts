@@ -138,4 +138,26 @@ describe("TailscaleServeService", () => {
     expect(runner.mock.calls.some(([, args]) => args.at(-1) === "off")).toBe(false);
     expect(runner.mock.calls.some(([, args]) => args.includes("reset"))).toBe(false);
   });
+
+  it.each([
+    { label: "the status command fails", result: { stdout: "", stderr: "daemon unavailable", exitCode: 1 } },
+    { label: "the status output is invalid", result: { stdout: "not json", stderr: "", exitCode: 0 } },
+  ])("preserves ownership when $label", async ({ result }) => {
+    const target = "http://127.0.0.1:47831";
+    const { store, values } = createStore({
+      [APP_SETTING_KEYS.remoteAccessTailscaleManagedHost]: DNS_NAME,
+      [APP_SETTING_KEYS.remoteAccessTailscaleManagedTarget]: target,
+    });
+    const runner = vi.fn<TailscaleCommandRunner>(async (_executable, args) => {
+      if (args[0] === "status") return nodeStatus();
+      return result;
+    });
+    const service = new TailscaleServeService(store, runner, ["tailscale-test"]);
+
+    await expect(service.disable()).resolves.toMatchObject({ state: "error", managed: true });
+
+    expect(runner.mock.calls.some(([, args]) => args.at(-1) === "off")).toBe(false);
+    expect(values.get(APP_SETTING_KEYS.remoteAccessTailscaleManagedHost)).toBe(DNS_NAME);
+    expect(values.get(APP_SETTING_KEYS.remoteAccessTailscaleManagedTarget)).toBe(target);
+  });
 });
