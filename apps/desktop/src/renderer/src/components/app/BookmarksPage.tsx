@@ -39,6 +39,7 @@ export const BookmarksPage = ({
   const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([]);
   const [loading, setLoading] = useState(true);
   const buildwarden = useBuildWardenClient();
+  const readOnly = !buildwarden.capabilities.mutations;
 
   const loadBookmarks = useCallback(async () => {
     if (!buildwarden) return;
@@ -140,7 +141,7 @@ export const BookmarksPage = ({
                     </div>
                     <p className="mt-1 truncate text-sm font-medium text-zinc-200">{bookmark.prompt}</p>
                   </button>
-                  <div className="flex shrink-0 items-center gap-2">
+                  {!readOnly ? <div className="flex shrink-0 items-center gap-2">
                     <Button
                       variant="ghost"
                       size="sm"
@@ -157,7 +158,7 @@ export const BookmarksPage = ({
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
-                  </div>
+                  </div> : null}
                 </div>
               ))}
             </div>

@@ -31,6 +31,7 @@ import { deriveLatestRunPlanProgress } from "../../lib/run-plan-progress";
 import { deriveRunSubagents } from "./run-activity-model";
 import { RunPlanProgressPill } from "./RunPlanProgressPill";
 import { RunTokenBadge } from "./RunTokenBadge";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 
 const RUN_TIMELINE_DENSITY_LABELS: Record<RunTimelineDensity, string> = {
   compact: "Compact",
@@ -229,6 +230,8 @@ export const RunDetailHeader = ({
   onClosePane,
   onFocusSubagent,
 }: RunDetailHeaderProps) => {
+  const buildwarden = useBuildWardenClient();
+  const readOnly = !buildwarden.capabilities.mutations;
   const stackedHeader = splitView && focused;
   const isGitRun = run.workspaceVcs === "git";
   let workspaceLabel = run.branchName;
@@ -238,8 +241,8 @@ export const RunDetailHeader = ({
   const workspaceCopyValue = isGitRun ? run.branchName : run.worktreePath;
   const hasCommit = runDetail?.steps.some((step) => Boolean(safeParseMetadata(step.metadataJson).commitHash)) ?? false;
   const hasOpenChanges = Boolean(runDetail?.diff.trim());
-  const canManageChanges = isGitRun && run.status === "completed" && runDetail?.worktreeUnavailable !== true;
-  const canCommit = run.status === "completed" && hasOpenChanges;
+  const canManageChanges = !readOnly && isGitRun && run.status === "completed" && runDetail?.worktreeUnavailable !== true;
+  const canCommit = !readOnly && run.status === "completed" && hasOpenChanges;
   const canPublish = canManageChanges && !hasOpenChanges && hasCommit;
   const canCreateLocalBranch = canManageChanges && (hasOpenChanges || hasCommit);
   const planProgress = useMemo(
@@ -513,14 +516,14 @@ export const RunDetailHeader = ({
               </AnchorDropdownPortal>
             </div>
           ) : null}
-          {focused && runDetail && runDetail.worktreeUnavailable !== true && configuredIdeKinds.length > 0 ? (
+          {focused && buildwarden.capabilities.ideIntegration && runDetail && runDetail.worktreeUnavailable !== true && configuredIdeKinds.length > 0 ? (
             <OpenInIdeControl
               compact
               configuredIdeKinds={configuredIdeKinds}
               onOpen={(ideKind) => onOpenInIde(runDetail, ideKind)}
             />
           ) : null}
-          {focused && canContinueRun ? (
+          {focused && !readOnly && canContinueRun ? (
             <Button
               type="button"
               variant="secondary"
@@ -539,7 +542,7 @@ export const RunDetailHeader = ({
               <span className="sr-only">Continue as new run</span>
             </Button>
           ) : null}
-          {focused && runDetail && runDetail.worktreeUnavailable !== true ? (
+          {focused && buildwarden.capabilities.fileManager && runDetail && runDetail.worktreeUnavailable !== true ? (
             <Button
               type="button"
               variant="secondary"
@@ -553,7 +556,7 @@ export const RunDetailHeader = ({
               <span className="sr-only">Open in file explorer</span>
             </Button>
           ) : null}
-          {focused ? (
+          {focused && !readOnly ? (
             <Button
               variant="secondary"
               size="sm"

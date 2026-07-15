@@ -2969,6 +2969,16 @@ export interface RemoteAccessPairingExchangeResponse {
 export type RemoteOperationMap = {
   getSnapshot: DesktopApi["getSnapshot"];
   refreshSnapshot: DesktopApi["refreshSnapshot"];
+  getProjectBranches: DesktopApi["getProjectBranches"];
+  getProjectCurrentBranch: DesktopApi["getProjectCurrentBranch"];
+  getRunDetail: DesktopApi["getRunDetail"];
+  getRunWorktreeDiff: DesktopApi["getRunWorktreeDiff"];
+  getRunWorkspaceFile: DesktopApi["getRunWorkspaceFile"];
+  getProjectLoopUiReviewImage: DesktopApi["getProjectLoopUiReviewImage"];
+  getChatDetail: DesktopApi["getChatDetail"];
+  listChatsWithSteps: DesktopApi["listChatsWithSteps"];
+  getBookmarksWithSteps: DesktopApi["getBookmarksWithSteps"];
+  getChatBookmarksWithSteps: DesktopApi["getChatBookmarksWithSteps"];
 };
 
 export type RemoteApiMethod = keyof RemoteOperationMap;

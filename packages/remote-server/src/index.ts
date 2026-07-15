@@ -1,6 +1,8 @@
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
+import { readFile, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { extname, resolve, sep } from "node:path";
 import type { Duplex } from "node:stream";
 import WebSocket, { WebSocketServer, type RawData } from "ws";
 import {
@@ -54,6 +56,21 @@ const REMOTE_STREAM_EVENTS = ["run", "chat", "warning", "loop", "task"] as const
 const REMOTE_STREAM_EVENT_SET = new Set<string>(REMOTE_STREAM_EVENTS);
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
+
+const STATIC_CONTENT_TYPES: Record<string, string> = {
+  ".css": "text/css; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".ico": "image/x-icon",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".webp": "image/webp",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+};
 
 type RemoteOperationHandler<Method extends RemoteApiMethod> = (
   ...args: RemoteApiMethodArgs<Method>
@@ -603,6 +620,37 @@ const sessionCookie = (token: string, expiresAt: string, secure: boolean): strin
 const expiredSessionCookie = (): string =>
   `${REMOTE_ACCESS_SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`;
 
+const writeStaticResponse = (
+  response: ServerResponse,
+  statusCode: number,
+  contentType: string,
+  contentLength: number,
+  body: Buffer | undefined,
+  cacheControl: string,
+): void => {
+  response.writeHead(statusCode, {
+    "Cache-Control": cacheControl,
+    "Content-Security-Policy": [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob:",
+      "font-src 'self' data:",
+      "connect-src 'self'",
+      "object-src 'none'",
+      "frame-ancestors 'none'",
+      "base-uri 'none'",
+      "form-action 'self'",
+    ].join("; "),
+    "Content-Length": String(contentLength),
+    "Content-Type": contentType,
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+  });
+  response.end(body);
+};
+
 const isAllowedLoopbackHostHeader = (hostHeader: string | undefined, expectedPort: number | undefined): boolean => {
   if (!hostHeader) {
     return false;
@@ -671,6 +719,7 @@ export interface RemoteAccessServerOptions {
   appVersion: string;
   operations: RemoteOperationRegistry;
   auth: RemoteAuthService;
+  staticRoot?: string;
   events?: RemoteHostEventSource;
   port?: number;
   capabilities?: RemoteAccessServerCapability[];
@@ -935,6 +984,14 @@ export class RemoteAccessServer {
       return;
     }
 
+    if ((request.method === "GET" || request.method === "HEAD") && !url.pathname.startsWith("/api/")) {
+      if (await this.serveStaticAsset(url.pathname, response, request.method === "HEAD")) {
+        return;
+      }
+      writeJson(response, 404, { error: "Web application asset not found." });
+      return;
+    }
+
     if (request.method === "POST" && url.pathname === REMOTE_ACCESS_PAIRING_PATH) {
       const remoteAddress = request.socket.remoteAddress ?? "unknown";
       if (!this.consumePairingAttempt(remoteAddress)) {
@@ -1043,6 +1100,43 @@ export class RemoteAccessServer {
     recentAttempts.push(now);
     this.pairingAttempts.set(remoteAddress, recentAttempts);
     return true;
+  }
+
+  private async serveStaticAsset(pathname: string, response: ServerResponse, headOnly: boolean): Promise<boolean> {
+    if (!this.options.staticRoot) {
+      return false;
+    }
+    let decodedPath: string;
+    try {
+      decodedPath = decodeURIComponent(pathname);
+    } catch {
+      return false;
+    }
+    const relativePath = decodedPath === "/" ? "index.html" : decodedPath.replace(/^\/+/, "");
+    const root = resolve(this.options.staticRoot);
+    const candidate = resolve(root, relativePath);
+    if (candidate !== root && !candidate.startsWith(`${root}${sep}`)) {
+      return false;
+    }
+    try {
+      const fileStat = await stat(candidate);
+      if (!fileStat.isFile()) {
+        return false;
+      }
+      const body = headOnly ? undefined : await readFile(candidate);
+      const extension = extname(candidate).toLowerCase();
+      writeStaticResponse(
+        response,
+        200,
+        STATIC_CONTENT_TYPES[extension] ?? "application/octet-stream",
+        body?.byteLength ?? fileStat.size,
+        body,
+        relativePath === "index.html" ? "no-store" : "public, max-age=31536000, immutable",
+      );
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private handleUpgrade(

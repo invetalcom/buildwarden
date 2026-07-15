@@ -21,6 +21,7 @@ export interface WelcomeFlowDeps {
   buildwarden: DesktopApi | undefined;
   snapshot: AppSnapshot;
   snapshotLoaded: boolean;
+  disabled?: boolean;
 }
 
 /**
@@ -28,7 +29,7 @@ export interface WelcomeFlowDeps {
  * step is shown, and persisting completed checks so the dialog stays dismissed
  * across restarts once everything is set up.
  */
-export const useWelcomeFlow = ({ buildwarden, snapshot, snapshotLoaded }: WelcomeFlowDeps) => {
+export const useWelcomeFlow = ({ buildwarden, snapshot, snapshotLoaded, disabled = false }: WelcomeFlowDeps) => {
   const [welcomeOpen, setWelcomeOpen] = useState(false);
   const [welcomeFinishedForSession, setWelcomeFinishedForSession] = useState(false);
   const [welcomeStepIndex, setWelcomeStepIndex] = useState(0);
@@ -57,7 +58,7 @@ export const useWelcomeFlow = ({ buildwarden, snapshot, snapshotLoaded }: Welcom
   const welcomeStepKey = welcomeStepKeys[Math.min(welcomeStepIndex, welcomeStepKeys.length - 1)] ?? "intro";
 
   useEffect(() => {
-    if (!buildwarden || !snapshotLoaded) {
+    if (disabled || !buildwarden || !snapshotLoaded) {
       return;
     }
     const serializedCurrent = serializeWelcomeCompletedCheckIdsSetting(welcomeCompletedCheckIds);
@@ -68,16 +69,16 @@ export const useWelcomeFlow = ({ buildwarden, snapshot, snapshotLoaded }: Welcom
     void buildwarden.setAppSetting(APP_SETTING_KEYS.welcomeCompletedCheckIds, serializedNext).catch((caught) => {
       reportRendererError("renderer.welcome.persist-completed-checks", caught);
     });
-  }, [buildwarden, snapshotLoaded, welcomeCompletedCheckIds, welcomeKnownCompletedCheckIds]);
+  }, [buildwarden, disabled, snapshotLoaded, welcomeCompletedCheckIds, welcomeKnownCompletedCheckIds]);
 
   useEffect(() => {
-    if (!snapshotLoaded || welcomeFinishedForSession || welcomeOpen || welcomePendingChecks.length === 0) {
+    if (disabled || !snapshotLoaded || welcomeFinishedForSession || welcomeOpen || welcomePendingChecks.length === 0) {
       return;
     }
     setWelcomeSkippedCheckIds([]);
     setWelcomeStepIndex(0);
     setWelcomeOpen(true);
-  }, [snapshotLoaded, welcomeFinishedForSession, welcomeOpen, welcomePendingChecks.length]);
+  }, [disabled, snapshotLoaded, welcomeFinishedForSession, welcomeOpen, welcomePendingChecks.length]);
 
   useEffect(() => {
     if (welcomeStepIndex < welcomeStepKeys.length) {

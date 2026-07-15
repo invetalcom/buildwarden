@@ -245,6 +245,7 @@ export const RunDetailPage = ({
   onFollowUpRun,
 }: RunDetailPageProps) => {
   const buildwarden = useBuildWardenClient();
+  const readOnly = !buildwarden.capabilities.mutations;
   const [followUpPrompt, setFollowUpPrompt] = useState("");
   const [followUpFiles, setFollowUpFiles] = useState<File[]>([]);
   const [goalDraft, setGoalDraft] = useState(runDetail.run.goalText ?? "");
@@ -856,7 +857,7 @@ export const RunDetailPage = ({
             >
               <GitBranch className="h-3.5 w-3.5" />
             </Button>
-            {restorablePromptStepId ? (
+            {!readOnly && restorablePromptStepId ? (
               <Button
                 type="button"
                 variant="ghost"
@@ -930,10 +931,11 @@ export const RunDetailPage = ({
       showBoundaryControls
       endClassName={cn("shrink-0", showModifiedFilesSummary ? "h-2" : "h-px")}
       showLoading={isRunActive}
+      readOnly={readOnly}
       density={timelineDensity}
       subagentFocus={subagentFocus}
       runDurationLabel={runDurationLabel}
-      restorablePromptStepId={restorablePromptStepId}
+      restorablePromptStepId={readOnly ? null : restorablePromptStepId}
       copiedStepId={copiedStepId}
       expandedReasoningStepIds={expandedReasoningStepIds}
       onCopyStepContent={copyStepContent}
@@ -996,25 +998,25 @@ export const RunDetailPage = ({
             <Copy className="h-3.5 w-3.5 text-zinc-500" aria-hidden />
             Copy text
           </button>
-          <button
+          {!readOnly ? <button
             type="button"
             className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-200 transition hover:bg-zinc-800/80"
             onClick={() => void addRunNote(selectionMenu.text)}
           >
             <StickyNote className="h-3.5 w-3.5 text-cyan-300" aria-hidden />
             Add to notes
-          </button>
-          <button
+          </button> : null}
+          {!readOnly ? <button
             type="button"
             className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-200 transition hover:bg-zinc-800/80"
             onClick={() => void addSelectionToTask(selectionMenu.text)}
           >
             <ListTodo className="h-3.5 w-3.5 text-emerald-300" aria-hidden />
             Add to tasks
-          </button>
+          </button> : null}
         </div>
       ) : null}
-      {recovery ? (
+      {!readOnly && recovery ? (
         <Card
           className={cn(
             "shrink-0 overflow-hidden border p-0",
@@ -1354,7 +1356,7 @@ export const RunDetailPage = ({
                                 {allDiffFilesExpanded ? "Collapse file diffs" : "Expand file diffs"}
                               </p>
                             </button>
-                            <div className="flex items-center gap-1 border-l border-zinc-800/80 px-2">
+                            {!readOnly ? <div className="flex items-center gap-1 border-l border-zinc-800/80 px-2">
                               <ComposerSelect
                                 value={selectedReviewModelId}
                                 onChange={setSelectedReviewModelId}
@@ -1384,7 +1386,7 @@ export const RunDetailPage = ({
                                 {reviewBusy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
                                 {reviewPanel.result ? "Review again" : "Review"}
                               </Button>
-                            </div>
+                            </div> : null}
                           </div>
                         </div>
                         {reviewPanel.busy || reviewPanel.error || reviewPanel.result ? (
@@ -1510,7 +1512,7 @@ export const RunDetailPage = ({
 
       {/* Bottom: shell approval + follow-up composer */}
       <div className="shrink-0 space-y-1 pt-0.5">
-        {pendingShellApproval ? (
+        {!readOnly && pendingShellApproval ? (
           <Card className="border-amber-500/25 bg-[linear-gradient(180deg,rgba(120,53,15,0.12),rgba(9,9,11,0.96))] p-4">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div className="min-w-0 flex-1">
@@ -1609,7 +1611,7 @@ export const RunDetailPage = ({
               ) : (
                 <>
                   <span className="min-w-0 flex-1 truncate text-[var(--ec-text)]">{runDetail.run.goalText}</span>
-                  <Button
+                  {!readOnly ? <Button
                     type="button"
                     variant="ghost"
                     size="sm"
@@ -1623,8 +1625,8 @@ export const RunDetailPage = ({
                     title="Edit run goal"
                   >
                     <Pencil className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
+                  </Button> : null}
+                  {!readOnly ? <Button
                     type="button"
                     variant="ghost"
                     size="sm"
@@ -1635,12 +1637,12 @@ export const RunDetailPage = ({
                     title="Clear run goal"
                   >
                     <X className="h-3.5 w-3.5" />
-                  </Button>
+                  </Button> : null}
                 </>
               )}
             </div>
           ) : null}
-          <RunComposer
+          {!readOnly ? <RunComposer
             commandContext="follow-up"
             projectId={runDetail.run.projectId}
             attachments={
@@ -1685,7 +1687,7 @@ export const RunDetailPage = ({
             onAnthropicEffortChange={setSelectedAnthropicEffort}
             yoloMode={selectedYoloMode}
             onYoloModeChange={setSelectedYoloMode}
-          />
+          /> : null}
         </div>
       </div>
     </div>

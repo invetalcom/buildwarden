@@ -9,6 +9,9 @@ export interface BuildWardenClientCapabilities {
   fileManager: boolean;
   systemTerminal: boolean;
   embeddedTerminal: boolean;
+  settings: boolean;
+  mutations: boolean;
+  liveEvents: boolean;
 }
 
 export interface BuildWardenClient extends DesktopApi {
@@ -24,6 +27,9 @@ const ELECTRON_CAPABILITIES: Readonly<BuildWardenClientCapabilities> = Object.fr
   fileManager: true,
   systemTerminal: true,
   embeddedTerminal: true,
+  settings: true,
+  mutations: true,
+  liveEvents: true,
 });
 
 export const createElectronBuildWardenClient = (api: DesktopApi): BuildWardenClient =>
@@ -34,7 +40,7 @@ export const createElectronBuildWardenClient = (api: DesktopApi): BuildWardenCli
 
 let activeBuildWardenClient: BuildWardenClient | null = null;
 
-export const setActiveBuildWardenClient = (client: BuildWardenClient): void => {
+export const setActiveBuildWardenClient = (client: BuildWardenClient | null): void => {
   activeBuildWardenClient = client;
 };
 

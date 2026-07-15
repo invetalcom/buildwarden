@@ -34,6 +34,7 @@ import {
   type RendererLogPayload,
   type RunChatInput,
   type RunInput,
+  type RunWorkspaceFileInput,
   type UiTheme,
 } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
@@ -366,6 +367,25 @@ const bootstrap = async (): Promise<void> => {
     return controller.refreshSnapshot();
   }, validateNoRemoteArgs);
 
+  const validateSingleRemoteStringArg = (args: unknown[]): args is [string] =>
+    args.length === 1 && typeof args[0] === "string";
+  const validateRunWorkspaceFileRemoteArgs = (args: unknown[]): args is [RunWorkspaceFileInput] => {
+    const input = args[0];
+    return args.length === 1 && input != null && typeof input === "object" && !Array.isArray(input) &&
+      typeof (input as Record<string, unknown>).runId === "string" &&
+      typeof (input as Record<string, unknown>).path === "string";
+  };
+  remoteOperations.register("getProjectBranches", (projectId) => controller.getProjectBranches(projectId), validateSingleRemoteStringArg);
+  remoteOperations.register("getProjectCurrentBranch", (projectId) => controller.getProjectCurrentBranch(projectId), validateSingleRemoteStringArg);
+  remoteOperations.register("getRunDetail", (runId) => controller.getRunDetail(runId), validateSingleRemoteStringArg);
+  remoteOperations.register("getRunWorktreeDiff", (runId) => controller.getRunWorktreeDiff(runId), validateSingleRemoteStringArg);
+  remoteOperations.register("getRunWorkspaceFile", (input) => controller.getRunWorkspaceFile(input), validateRunWorkspaceFileRemoteArgs);
+  remoteOperations.register("getProjectLoopUiReviewImage", (reviewId) => controller.getProjectLoopUiReviewImage(reviewId), validateSingleRemoteStringArg);
+  remoteOperations.register("getChatDetail", (chatId) => controller.getChatDetail(chatId), validateSingleRemoteStringArg);
+  remoteOperations.register("listChatsWithSteps", () => controller.listChatsWithSteps(), validateNoRemoteArgs);
+  remoteOperations.register("getBookmarksWithSteps", () => controller.getBookmarksWithSteps(), validateNoRemoteArgs);
+  remoteOperations.register("getChatBookmarksWithSteps", () => controller.getChatBookmarksWithSteps(), validateNoRemoteArgs);
+
   const remoteEventSource: RemoteHostEventSource = {
     subscribe(listener) {
       const disposers = [
@@ -438,6 +458,7 @@ const bootstrap = async (): Promise<void> => {
           appVersion: app.getVersion(),
           operations: remoteOperations,
           auth: await ensureRemoteAuthService(),
+          staticRoot: join(app.getAppPath(), "out", "web"),
           events: remoteEventSource,
           onServerError: (error) => logError("Remote access server request failed.", { error }),
         });
