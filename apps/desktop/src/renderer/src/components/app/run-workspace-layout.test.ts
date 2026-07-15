@@ -1,12 +1,54 @@
 import { describe, expect, it } from "vitest";
 import { parseRunWorkspaceLayoutsSetting } from "@buildwarden/shared";
-import { DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE, DEFAULT_TILE_LAYOUT, DEFAULT_TILE_ORDER } from "./run-workspace-layout";
+import {
+  DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE,
+  DEFAULT_TILE_LAYOUT,
+  DEFAULT_TILE_ORDER,
+  resolveRunWorkspacePanelVisibility,
+} from "./run-workspace-layout";
 
 describe("run workspace layout defaults", () => {
   it("covers every panel including the run chat", () => {
     expect(DEFAULT_TILE_ORDER).toContain("chat");
     expect(DEFAULT_TILE_LAYOUT.chat).toBeDefined();
     expect(DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.visiblePanels.chat).toBe(false);
+  });
+
+  it("excludes unavailable panels and falls back to activity", () => {
+    expect(resolveRunWorkspacePanelVisibility({
+      activity: false,
+      diff: false,
+      terminal: true,
+      browser: true,
+      notes: true,
+      chat: true,
+    }, {
+      platform: "web",
+      embeddedTerminal: false,
+      chatMutations: false,
+    })).toEqual({
+      activity: true,
+      diff: false,
+      terminal: false,
+      browser: false,
+      notes: false,
+      chat: false,
+    });
+  });
+
+  it("preserves available panel selections without forcing activity", () => {
+    expect(resolveRunWorkspacePanelVisibility({
+      activity: false,
+      diff: true,
+      terminal: false,
+      browser: false,
+      notes: false,
+      chat: false,
+    }, {
+      platform: "web",
+      embeddedTerminal: false,
+      chatMutations: false,
+    }).activity).toBe(false);
   });
 });
 

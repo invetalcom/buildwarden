@@ -109,6 +109,10 @@ import { buildCommandPaletteItems } from "./components/app/command-palette-items
 import { useRunActionDialogs } from "./components/app/use-run-action-dialogs";
 import { useProjectBranches } from "./components/app/use-project-branches";
 import { useRunWorkspaceLayouts } from "./components/app/use-run-workspace-layouts";
+import {
+  isRunWorkspacePanelAvailable,
+  resolveRunWorkspacePanelVisibility,
+} from "./components/app/run-workspace-layout";
 import { useShellApprovalQueue } from "./components/app/use-shell-approval-queue";
 import { useSkillsSettings } from "./components/app/use-skills-settings";
 import { useWelcomeFlow } from "./components/app/use-welcome-flow";
@@ -1131,14 +1135,14 @@ export const App = () => {
     [runDetail?.run, snapshot.projects],
   );
   const runWorktreeUnavailable = runDetail?.worktreeUnavailable === true;
-  const runWorkspacePanelVisibility: Record<RunWorkspacePanelId, boolean> = {
+  const runWorkspacePanelVisibility = resolveRunWorkspacePanelVisibility({
     activity: runWorkspaceShowActivity,
     diff: runWorkspaceShowDiff,
     terminal: runWorkspaceShowTerminal,
     browser: runWorkspaceShowBrowser,
     notes: runWorkspaceShowNotes,
     chat: runWorkspaceShowChat,
-  };
+  }, buildwarden.capabilities);
   const runWorkspacePanelSetters: Record<RunWorkspacePanelId, (visible: boolean) => void> = {
     activity: setRunWorkspaceShowActivity,
     diff: setRunWorkspaceShowDiff,
@@ -1169,8 +1173,9 @@ export const App = () => {
       return;
     }
 
-    const visibleCount = Object.values(layout.visiblePanels).filter(Boolean).length;
-    const currentlyVisible = layout.visiblePanels[panelId];
+    const visiblePanels = resolveRunWorkspacePanelVisibility(layout.visiblePanels, buildwarden.capabilities);
+    const visibleCount = Object.values(visiblePanels).filter(Boolean).length;
+    const currentlyVisible = visiblePanels[panelId];
     if (currentlyVisible && visibleCount === 1) {
       return;
     }
@@ -1195,26 +1200,22 @@ export const App = () => {
     setSelectedRunWorkspacePanelVisibility(panelId, next);
   };
 
-  const runPanelToggleItems = RUN_PANEL_TOGGLE_DEFINITIONS.filter((definition) => {
-    if (definition.key === "terminal") return buildwarden.capabilities.embeddedTerminal;
-    if (definition.key === "notes") return buildwarden.capabilities.platform === "electron";
-    if (definition.key === "chat") return buildwarden.capabilities.chatMutations;
-    if (definition.key === "browser") return buildwarden.capabilities.platform === "electron";
-    return true;
-  }).map((definition): RunPanelToggleItem => {
-    const active = runWorkspacePanelVisibility[definition.key];
-    const cannotHide = active && runWorkspaceVisiblePanelCount === 1;
-    const unavailable = definition.requiresWorktree && runWorktreeUnavailable;
-    return {
-      key: definition.key,
-      label: definition.label,
-      icon: definition.icon,
-      active,
-      disabled: unavailable || cannotHide,
-      subtitle: unavailable ? "Worktree unavailable" : panelVisibilitySubtitle(active, definition.hiddenSubtitle),
-      onClick: () => toggleSelectedRunWorkspacePanel(definition.key),
-    };
-  });
+  const runPanelToggleItems = RUN_PANEL_TOGGLE_DEFINITIONS
+    .filter((definition) => isRunWorkspacePanelAvailable(definition.key, buildwarden.capabilities))
+    .map((definition): RunPanelToggleItem => {
+      const active = runWorkspacePanelVisibility[definition.key];
+      const cannotHide = active && runWorkspaceVisiblePanelCount === 1;
+      const unavailable = definition.requiresWorktree && runWorktreeUnavailable;
+      return {
+        key: definition.key,
+        label: definition.label,
+        icon: definition.icon,
+        active,
+        disabled: unavailable || cannotHide,
+        subtitle: unavailable ? "Worktree unavailable" : panelVisibilitySubtitle(active, definition.hiddenSubtitle),
+        onClick: () => toggleSelectedRunWorkspacePanel(definition.key),
+      };
+    });
 
   const openRunBrowserUrl = (runId: string, url: string) => {
     setRunBrowserSessions((current) => {
@@ -3030,16 +3031,19 @@ export const App = () => {
     const isFocused = selectedRunId === entry.runId && focusedRunPane === entry.paneId;
     const paneDropPreviewActive = runPaneDropPreview === entry.paneId;
     const paneLayout = runWorkspaceLayoutsByRunId[entry.runId] ?? cloneDefaultRunWorkspaceLayoutPreference();
-    const paneVisiblePanels = isFocused
-      ? {
-          activity: runWorkspaceShowActivity,
-          diff: runWorkspaceShowDiff,
-          terminal: runWorkspaceShowTerminal,
-          browser: runWorkspaceShowBrowser,
-          notes: runWorkspaceShowNotes,
-          chat: runWorkspaceShowChat,
-        }
-      : paneLayout.visiblePanels;
+    const paneVisiblePanels = resolveRunWorkspacePanelVisibility(
+      isFocused
+        ? {
+            activity: runWorkspaceShowActivity,
+            diff: runWorkspaceShowDiff,
+            terminal: runWorkspaceShowTerminal,
+            browser: runWorkspaceShowBrowser,
+            notes: runWorkspaceShowNotes,
+            chat: runWorkspaceShowChat,
+          }
+        : paneLayout.visiblePanels,
+      buildwarden.capabilities,
+    );
     const paneSecondaryPosition = isFocused ? runWorkspaceSecondaryPosition : paneLayout.secondaryPanelPosition;
     const paneTokenUsage = paneDetail ? latestRunTokenUsage(paneDetail, runLiveUsageById[paneDetail.run.id]) : null;
 
@@ -3115,10 +3119,10 @@ export const App = () => {
             subagentFocus={subagentFocusRequest?.runId === paneDetail.run.id ? subagentFocusRequest : null}
             showActivity={paneVisiblePanels.activity}
             showDiff={paneVisiblePanels.diff}
-              showTerminal={paneVisiblePanels.terminal && buildwarden.capabilities.embeddedTerminal}
-              showBrowser={paneVisiblePanels.browser && buildwarden.capabilities.platform === "electron"}
-              showNotes={paneVisiblePanels.notes && buildwarden.capabilities.platform === "electron"}
-              showChat={paneVisiblePanels.chat && buildwarden.capabilities.chatMutations}
+            showTerminal={paneVisiblePanels.terminal}
+            showBrowser={paneVisiblePanels.browser}
+            showNotes={paneVisiblePanels.notes}
+            showChat={paneVisiblePanels.chat}
             onTogglePanel={(panelId) => toggleRunWorkspacePanelForRun(paneDetail.run.id, panelId, paneDetail.worktreeUnavailable === true)}
             secondaryPanelPosition={paneSecondaryPosition}
             onSecondaryPanelPositionChange={(position) => {
@@ -3514,12 +3518,12 @@ export const App = () => {
               pendingShellApproval={null}
               timelineDensity={runTimelineDensity}
               subagentFocus={subagentFocusRequest?.runId === detail.run.id ? subagentFocusRequest : null}
-              showActivity={runWorkspaceShowActivity}
-              showDiff={runWorkspaceShowDiff}
-              showTerminal={runWorkspaceShowTerminal && buildwarden.capabilities.embeddedTerminal}
-              showBrowser={runWorkspaceShowBrowser && buildwarden.capabilities.platform === "electron"}
-              showNotes={runWorkspaceShowNotes && buildwarden.capabilities.platform === "electron"}
-              showChat={runWorkspaceShowChat && buildwarden.capabilities.chatMutations}
+              showActivity={runWorkspacePanelVisibility.activity}
+              showDiff={runWorkspacePanelVisibility.diff}
+              showTerminal={runWorkspacePanelVisibility.terminal}
+              showBrowser={runWorkspacePanelVisibility.browser}
+              showNotes={runWorkspacePanelVisibility.notes}
+              showChat={runWorkspacePanelVisibility.chat}
               onTogglePanel={toggleSelectedRunWorkspacePanel}
               secondaryPanelPosition={runWorkspaceSecondaryPosition}
               onSecondaryPanelPositionChange={(position) => {
