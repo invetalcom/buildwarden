@@ -2847,13 +2847,41 @@ export interface RunTerminalExitPayload {
 }
 
 export const REMOTE_ACCESS_PROTOCOL_VERSION = 1 as const;
+export const REMOTE_ACCESS_MIN_PROTOCOL_VERSION = 1 as const;
 export const REMOTE_ACCESS_LOOPBACK_HOST = "127.0.0.1" as const;
 export const DEFAULT_REMOTE_ACCESS_PORT = 47_831;
-export const REMOTE_ACCESS_HEALTH_PATH = "/api/v1/health" as const;
+export const REMOTE_ACCESS_HEALTH_PATH = "/health" as const;
+export const REMOTE_ACCESS_LEGACY_HEALTH_PATH = "/api/v1/health" as const;
+export const REMOTE_ACCESS_INFO_PATH = "/api/v1/info" as const;
 export const REMOTE_ACCESS_RPC_PATH = "/api/v1/rpc" as const;
+export const REMOTE_ACCESS_WEBSOCKET_PATH = "/api/v1/events" as const;
 export const REMOTE_ACCESS_PAIRING_PATH = "/api/v1/auth/pair" as const;
 export const REMOTE_ACCESS_SESSION_PATH = "/api/v1/auth/session" as const;
 export const REMOTE_ACCESS_SESSION_COOKIE = "buildwarden_session" as const;
+
+export const REMOTE_ACCESS_SERVER_CAPABILITIES = [
+  "rpc",
+  "events:run",
+  "events:chat",
+  "events:warning",
+  "events:loop",
+  "events:task",
+] as const;
+
+export type RemoteAccessServerCapability = (typeof REMOTE_ACCESS_SERVER_CAPABILITIES)[number];
+export type RemoteStreamEventType = "run" | "chat" | "warning" | "loop" | "task";
+
+export interface RemoteStreamEventPayloadMap {
+  run: RunEvent;
+  chat: RunEvent & { chatId: string };
+  warning: AppWarning;
+  loop: ProjectLoopChangedPayload;
+  task: ProjectTaskChangedPayload;
+}
+
+export type RemoteStreamEvent = {
+  [Event in RemoteStreamEventType]: { event: Event; payload: RemoteStreamEventPayloadMap[Event] };
+}[RemoteStreamEventType];
 
 export const REMOTE_ACCESS_SCOPES = [
   "state:read",
@@ -2899,11 +2927,22 @@ export interface RemoteAccessSessionRecord extends RemoteAccessSession {
   tokenHash: string;
 }
 
+export interface RemoteCommandIdempotencyRecord {
+  sessionId: string;
+  idempotencyKey: string;
+  method: string;
+  requestHash: string;
+  responseJson: string | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
 export type RemoteAccessAuditEvent =
   | "pairing-created"
   | "pairing-failed"
   | "pairing-consumed"
   | "session-authenticated"
+  | "session-authentication-failed"
   | "session-revoked";
 
 export interface RemoteAccessAuditRecord {
@@ -2945,6 +2984,7 @@ export interface RemoteRpcRequest {
   requestId: string;
   method: RemoteApiMethod;
   args: unknown[];
+  idempotencyKey?: string;
 }
 
 export type RemoteRpcErrorCode =
@@ -2952,6 +2992,9 @@ export type RemoteRpcErrorCode =
   | "protocol-mismatch"
   | "method-not-found"
   | "forbidden"
+  | "idempotency-required"
+  | "idempotency-conflict"
+  | "command-in-progress"
   | "operation-failed";
 
 export type RemoteRpcResponse =
@@ -2977,9 +3020,73 @@ export interface RemoteAccessHealth {
   appVersion: string;
   protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
   scope: "loopback";
-  authentication: "required";
+  authentication: "not-configured" | "session";
   startedAt: string;
 }
+
+export interface RemoteAccessInfo {
+  app: "buildwarden";
+  appVersion: string;
+  apiVersion: "v1";
+  protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+  minProtocolVersion: typeof REMOTE_ACCESS_MIN_PROTOCOL_VERSION;
+  maxProtocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+  scope: "loopback";
+  authentication: RemoteAccessHealth["authentication"];
+  capabilities: RemoteAccessServerCapability[];
+  endpoints: {
+    health: typeof REMOTE_ACCESS_HEALTH_PATH;
+    info: typeof REMOTE_ACCESS_INFO_PATH;
+    rpc: typeof REMOTE_ACCESS_RPC_PATH;
+    events: typeof REMOTE_ACCESS_WEBSOCKET_PATH;
+  };
+  startedAt: string;
+}
+
+export type RemoteWebSocketClientMessage =
+  | {
+      protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+      type: "subscribe";
+      requestId: string;
+      events: RemoteStreamEventType[];
+    }
+  | {
+      protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+      type: "ping";
+      requestId: string;
+    };
+
+export type RemoteWebSocketServerMessage =
+  | {
+      protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+      type: "hello";
+      info: RemoteAccessInfo;
+    }
+  | {
+      protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+      type: "subscribed";
+      requestId: string;
+      events: RemoteStreamEventType[];
+    }
+  | {
+      protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+      type: "event";
+      sequence: number;
+      event: RemoteStreamEventType;
+      payload: RemoteStreamEventPayloadMap[RemoteStreamEventType];
+    }
+  | {
+      protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+      type: "pong";
+      requestId: string;
+    }
+  | {
+      protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+      type: "error";
+      requestId: string;
+      code: "invalid-message" | "protocol-mismatch";
+      message: string;
+    };
 
 export const IPC_CHANNELS = {
   activateRun: "buildwarden:activate-run",

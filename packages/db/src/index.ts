@@ -51,6 +51,7 @@ import type {
   RemoteAccessScope,
   RemoteAccessSession,
   RemoteAccessSessionRecord,
+  RemoteCommandIdempotencyRecord,
   RunDetail,
   RunListVisibility,
   RunInput,
@@ -2754,6 +2755,56 @@ export class BuildWardenDatabase {
     return changed;
   }
 
+  createRemoteCommandIdempotency(record: RemoteCommandIdempotencyRecord): boolean {
+    this.run(
+      `insert or ignore into remote_command_idempotency (
+         session_id, idempotency_key, method, request_hash, response_json, created_at, completed_at
+       ) values (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        record.sessionId,
+        record.idempotencyKey,
+        record.method,
+        record.requestHash,
+        record.responseJson,
+        record.createdAt,
+        record.completedAt,
+      ],
+    );
+    const created = (this.first<{ count: number }>("select changes() as count")?.count ?? 0) > 0;
+    if (created) {
+      this.persist();
+    }
+    return created;
+  }
+
+  getRemoteCommandIdempotency(sessionId: string, idempotencyKey: string): RemoteCommandIdempotencyRecord | null {
+    return this.first<RemoteCommandIdempotencyRecord>(
+      `select session_id as sessionId, idempotency_key as idempotencyKey, method, request_hash as requestHash,
+              response_json as responseJson, created_at as createdAt, completed_at as completedAt
+       from remote_command_idempotency where session_id = ? and idempotency_key = ?`,
+      [sessionId, idempotencyKey],
+    ) ?? null;
+  }
+
+  completeRemoteCommandIdempotency(
+    sessionId: string,
+    idempotencyKey: string,
+    responseJson: string,
+    completedAt: string,
+  ): boolean {
+    this.run(
+      `update remote_command_idempotency
+       set response_json = ?, completed_at = ?
+       where session_id = ? and idempotency_key = ? and response_json is null`,
+      [responseJson, completedAt, sessionId, idempotencyKey],
+    );
+    const completed = (this.first<{ count: number }>("select changes() as count")?.count ?? 0) > 0;
+    if (completed) {
+      this.persist();
+    }
+    return completed;
+  }
+
   addRemoteAccessAuditRecord(record: RemoteAccessAuditRecord): void {
     this.run(
       `insert into remote_security_audit (
@@ -3289,10 +3340,22 @@ export class BuildWardenDatabase {
         created_at text not null
       );
 
+      create table if not exists remote_command_idempotency (
+        session_id text not null,
+        idempotency_key text not null,
+        method text not null,
+        request_hash text not null,
+        response_json text,
+        created_at text not null,
+        completed_at text,
+        primary key (session_id, idempotency_key)
+      );
+
       create index if not exists idx_remote_pairing_grants_expiry on remote_pairing_grants(expires_at);
       create index if not exists idx_remote_access_sessions_token on remote_access_sessions(token_hash);
       create index if not exists idx_remote_access_sessions_created on remote_access_sessions(created_at desc);
       create index if not exists idx_remote_security_audit_created on remote_security_audit(created_at desc);
+      create index if not exists idx_remote_command_idempotency_created on remote_command_idempotency(created_at desc);
     `);
 
   }

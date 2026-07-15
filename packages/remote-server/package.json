@@ -10,6 +10,10 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@buildwarden/shared": "workspace:*"
+    "@buildwarden/shared": "workspace:*",
+    "ws": "^8.21.1"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
   }
 }
