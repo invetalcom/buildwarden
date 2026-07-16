@@ -420,6 +420,12 @@ describe("remote BuildWarden client", () => {
       input: { type: "wheel", x: 20, y: 30, deltaX: 0, deltaY: 120 },
     });
     await client.ensureRunBrowser({ runId: "run-1", initialUrl: "about:blank", viewport: { width: 800, height: 600 } });
+    const additionalUnsubscribes = Array.from({ length: 7 }, (_, index) =>
+      client.onRunBrowserEvent(vi.fn(), [`run-${String(index + 2)}`]));
+    expect(() => client.onRunBrowserEvent(vi.fn(), ["run-9"]))
+      .toThrow("at most eight runs");
+    expect(JSON.parse(sent.at(-1) ?? "{}").browserRunIds).toHaveLength(8);
+    additionalUnsubscribes.forEach((dispose) => dispose());
     unsubscribe();
 
     const readOnlyFetch = vi.fn(async () => rpcResponse(snapshot)) as typeof fetch;

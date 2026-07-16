@@ -341,7 +341,7 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
   const activeEventTypes = (): RemoteStreamEventType[] =>
     [...listeners.entries()].filter(([, handlers]) => handlers.size > 0).map(([event]) => event);
 
-  const activeBrowserRunIds = (): string[] => [...new Set([...browserListenerRunIds.values()].flatMap((runIds) => [...runIds]))].slice(0, 8);
+  const activeBrowserRunIds = (): string[] => [...new Set([...browserListenerRunIds.values()].flatMap((runIds) => [...runIds]))];
 
   const eventSocketUrl = (): string => {
     const origin = baseUrl || window.location.origin;
@@ -423,15 +423,27 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     listener: (payload: RemoteStreamEventPayloadMap[Event]) => void,
     runIds?: readonly string[],
   ): (() => void) => {
+    const untypedListener = listener as (payload: unknown) => void;
+    if (event === "browser") {
+      const requestedRunIds = new Set(runIds ?? []);
+      const uniqueRunIds = new Set<string>();
+      for (const [registeredListener, registeredRunIds] of browserListenerRunIds) {
+        if (registeredListener !== untypedListener) registeredRunIds.forEach((runId) => uniqueRunIds.add(runId));
+      }
+      requestedRunIds.forEach((runId) => uniqueRunIds.add(runId));
+      if (uniqueRunIds.size > 8) {
+        throw new Error("Remote browser events can subscribe to at most eight runs at once.");
+      }
+    }
     const eventListeners = listeners.get(event) ?? new Set<(payload: unknown) => void>();
-    eventListeners.add(listener as (payload: unknown) => void);
+    eventListeners.add(untypedListener);
     listeners.set(event, eventListeners);
-    if (event === "browser") browserListenerRunIds.set(listener as (payload: unknown) => void, new Set(runIds ?? []));
+    if (event === "browser") browserListenerRunIds.set(untypedListener, new Set(runIds ?? []));
     if (eventSocket?.readyState === 1) sendSubscription();
     else connectEvents();
     return () => {
-      eventListeners.delete(listener as (payload: unknown) => void);
-      browserListenerRunIds.delete(listener as (payload: unknown) => void);
+      eventListeners.delete(untypedListener);
+      browserListenerRunIds.delete(untypedListener);
       if (eventSocket?.readyState === 1) sendSubscription();
       if (activeEventTypes().length === 0) {
         if (reconnectTimer != null) clearTimeout(reconnectTimer);
