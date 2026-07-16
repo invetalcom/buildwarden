@@ -5,8 +5,6 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
-import { dialog, shell } from "electron";
-import { killRunTerminalForRunId } from "./run-terminal-ipc";
 import {
   buildDependencyGraphSnapshotForProjectGraph,
   listDependencySourceFilesForProjectGraph,
@@ -170,10 +168,14 @@ import {
   type RunUserInputQuestion,
   type ShellApprovalDecision,
   type ShellApprovalRespondOptions,
+  type SecretStore,
   type SupportedIdeKind,
   type WorktreeStatus,
 } from "@buildwarden/shared";
 import { logError, logInfo, logWarn } from "./logger";
+import type { AppControllerDesktopServices } from "./desktop-platform-services";
+import { HostEventBus } from "./host-events";
+import type { HostTerminal } from "./host-terminal-service";
 import { buildIntegratedSkillContext } from "./integrated-skill-context";
 import {
   buildRunChatContext,
@@ -181,7 +183,6 @@ import {
   buildRunChatUpdateTurnPrompt,
   providerReplaysChatHistory,
 } from "./run-chat-context";
-import { ElectronSecretStore } from "./secret-store";
 
 const MAX_DIFF_CHARS_FOR_COMMIT_SUGGEST = 100_000;
 const MAX_DIFF_CHARS_FOR_REVIEW = 140_000;
@@ -465,22 +466,6 @@ const describeInterruptedRecoveryDetail = (hasCheckpoint: boolean, providerSessi
     return "BuildWarden saved the provider session cursor and can continue from the current workspace state.";
   }
   return "No checkpoint or provider session cursor was saved before the application closed.";
-};
-
-const ideExecutableDialogFilters = (platform: NodeJS.Platform): { name: string; extensions: string[] }[] => {
-  if (platform === "win32") {
-    return [
-      { name: "Executable", extensions: ["exe", "bat", "cmd"] },
-      { name: "All files", extensions: ["*"] },
-    ];
-  }
-  if (platform === "darwin") {
-    return [
-      { name: "Application", extensions: ["app"] },
-      { name: "All files", extensions: ["*"] },
-    ];
-  }
-  return [{ name: "All files", extensions: ["*"] }];
 };
 
 const SHELL_APPROVAL_DECISION_MESSAGES: Record<string, { title: string; content: string }> = {
@@ -786,6 +771,11 @@ export class AppController
   implements
     Omit<
       DesktopApi,
+      | "getRemoteAccessStatus"
+      | "listHostDirectories"
+      | "createRemoteAccessPairing"
+      | "listRemoteAccessSessions"
+      | "revokeRemoteAccessSession"
       | "onRunEvent"
       | "runTerminalStart"
       | "runTerminalWrite"
@@ -814,24 +804,22 @@ export class AppController
   private readonly runWorkers = new Map<string, ActiveWorker>();
   private readonly runShellApprovalStepIds = new Map<string, string>();
   private readonly runUserInputStepIds = new Map<string, string>();
-  private readonly runListeners = new Set<(event: RunEvent) => void>();
-  private readonly appWarningListeners = new Set<(warning: AppWarning) => void>();
   private readonly chatWorkers = new Map<string, ActiveWorker>();
   /** In-flight run-chat creations by run id; serializes concurrent first sends for the same run. */
   private readonly runChatCreations = new Map<string, Promise<ChatRecord>>();
   /** Serializes Git branch mutations per project while allowing different projects to proceed independently. */
   private readonly projectBranchMutations = new Map<string, Promise<unknown>>();
   private readonly cancelledProjectLabThreadIds = new Set<string>();
-  private readonly loopChangedListeners = new Set<(payload: ProjectLoopChangedPayload) => void>();
   private loopRunnerInstance: ProjectLoopRunner | null = null;
   private readonly composerCommandCache = new Map<string, { expiresAt: number; commands: ComposerCommandDescriptor[] }>();
   private readonly composerCommandInflight = new Map<string, Promise<ComposerCommandDescriptor[]>>();
-  private chatListeners: ((event: RunEvent & { chatId: string }) => void)[] = [];
-
   constructor(
     private readonly db: BuildWardenDatabase,
-    private readonly secrets: ElectronSecretStore,
+    private readonly secrets: SecretStore,
     private readonly logDirPath: string,
+    private readonly desktop: AppControllerDesktopServices,
+    private readonly terminal: Pick<HostTerminal, "killForRunId">,
+    private readonly events: HostEventBus,
   ) {}
 
   private logControllerError(message: string, error: unknown, metadata?: Record<string, unknown>) {
@@ -876,7 +864,9 @@ export class AppController
     if (!run.projectTaskId) {
       return null;
     }
-    return this.db.markProjectTaskInReview(run.projectTaskId, pullRequestUrl);
+    const task = this.db.markProjectTaskInReview(run.projectTaskId, pullRequestUrl);
+    this.events.publish("task", { projectId: task.projectId, taskId: task.id, status: task.status });
+    return task;
   }
 
   private getRunWorkspaceLabel(run: RunRecord): string {
@@ -1923,10 +1913,7 @@ export class AppController
   }
 
   onChatEvent(listener: (event: RunEvent & { chatId: string }) => void): () => void {
-    this.chatListeners.push(listener);
-    return () => {
-      this.chatListeners = this.chatListeners.filter((l) => l !== listener);
-    };
+    return this.events.subscribe("chat", listener);
   }
 
   async getSnapshot(): Promise<AppSnapshot> {
@@ -3121,7 +3108,9 @@ export class AppController
       throw new Error("Enter a task prompt.");
     }
     this.db.getProject(projectId);
-    return this.db.createProjectTask(projectId, { title, prompt });
+    const task = this.db.createProjectTask(projectId, { title, prompt });
+    this.events.publish("task", { projectId: task.projectId, taskId: task.id, status: task.status });
+    return task;
   }
 
   async updateProjectTask(taskId: string, input: UpdateProjectTaskInput): Promise<ProjectTaskRecord> {
@@ -3138,7 +3127,9 @@ export class AppController
     if (!(status === "open" || status === "in_progress" || status === "in_review" || status === "done")) {
       throw new Error(`Unsupported project task status: ${String(status)}`);
     }
-    return this.db.updateProjectTask(taskId, { title, prompt, status });
+    const task = this.db.updateProjectTask(taskId, { title, prompt, status });
+    this.events.publish("task", { projectId: task.projectId, taskId: task.id, status: task.status });
+    return task;
   }
 
   async syncProjectTaskPullRequestStatuses(projectId: string): Promise<ProjectTaskRecord[]> {
@@ -3155,7 +3146,9 @@ export class AppController
       try {
         const details = await provider.getRequestDetails({ prUrl: task.pullRequestUrl! });
         if (details.request.state === "merged") {
-          changed.push(this.db.updateProjectTask(task.id, { status: "done" }));
+          const updated = this.db.updateProjectTask(task.id, { status: "done" });
+          this.events.publish("task", { projectId: updated.projectId, taskId: updated.id, status: updated.status });
+          changed.push(updated);
         }
       } catch (error) {
         logWarn("Failed to reconcile a project task with its linked PR/MR.", {
@@ -3170,7 +3163,9 @@ export class AppController
   }
 
   async deleteProjectTask(taskId: string): Promise<void> {
+    const existing = this.db.getProjectTask(taskId);
     this.db.deleteProjectTask(taskId);
+    this.events.publish("task", { projectId: existing.projectId, taskId: existing.id, status: existing.status });
   }
 
   async runProjectLab(input: RunProjectLabInput): Promise<ProjectLabThreadRecord[]> {
@@ -3295,7 +3290,7 @@ export class AppController
     if (thread.implementationRunId) {
       const run = this.db.getRun(thread.implementationRunId);
       const project = this.db.getProject(run.projectId);
-      killRunTerminalForRunId(run.id);
+      this.terminal.killForRunId(run.id);
       this.clearRunCheckpoint(run.id);
       this.clearRunPromptRestorePoint(run.id);
       this.db.deleteProviderSessionRuntime(run.id, "run");
@@ -3346,11 +3341,7 @@ export class AppController
           return this.askModelForText(cwd, context, input);
         },
         createForgeProvider: (projectId) => this.createProjectPrReviewProvider(projectId),
-        emitLoopChanged: (payload) => {
-          for (const listener of this.loopChangedListeners) {
-            listener(payload);
-          }
-        },
+        emitLoopChanged: (payload) => this.events.publish("loop", payload),
         logError: (message, error, metadata) => this.logControllerError(message, error, metadata),
         logWarn: (message, metadata) => this.logControllerWarn(message, metadata),
       });
@@ -3359,8 +3350,7 @@ export class AppController
   }
 
   onProjectLoopChanged(listener: (payload: ProjectLoopChangedPayload) => void): () => void {
-    this.loopChangedListeners.add(listener);
-    return () => this.loopChangedListeners.delete(listener);
+    return this.events.subscribe("loop", listener);
   }
 
   /** Re-enters all active loops after an app restart (call after {@link reconcileOrphanedActiveSessions}). */
@@ -4873,7 +4863,10 @@ export class AppController
       await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedSourceBranch);
     }
 
-    await shell.openExternal(url);
+    const openResult = await this.desktop.openExternalUrl(url);
+    if (!openResult.ok) {
+      throw new Error(openResult.error ?? "Could not open the pull request URL.");
+    }
 
     return url;
   }
@@ -5123,7 +5116,7 @@ export class AppController
 
     const runs = this.db.listRunsForProject(projectId);
     for (const run of runs) {
-      killRunTerminalForRunId(run.id);
+      this.terminal.killForRunId(run.id);
       this.clearRunCheckpoint(run.id);
       this.clearRunPromptRestorePoint(run.id);
       this.db.deleteProviderSessionRuntime(run.id, "run");
@@ -5302,7 +5295,7 @@ export class AppController
     const run = this.db.getRun(runId);
     const project = this.db.getProject(run.projectId);
 
-    killRunTerminalForRunId(runId);
+    this.terminal.killForRunId(runId);
     this.clearRunCheckpoint(runId);
     this.clearRunPromptRestorePoint(runId);
     this.db.deleteProviderSessionRuntime(runId, "run");
@@ -5323,40 +5316,11 @@ export class AppController
   }
 
   async pickProjectDirectory(): Promise<string | null> {
-    const result = await dialog.showOpenDialog({
-      title: "Choose a project folder",
-      properties: ["openDirectory"],
-    });
-
-    return result.canceled ? null : result.filePaths[0] ?? null;
+    return this.desktop.pickProjectDirectory();
   }
 
   async openPathInFileManager(dirPath: string): Promise<OpenPathInFileManagerResult> {
-    const trimmed = dirPath?.trim() ?? "";
-    if (!trimmed) {
-      this.logControllerWarn("Rejected empty file-manager open request.");
-      return { ok: false, error: "Path is empty." };
-    }
-    try {
-      if (!existsSync(trimmed)) {
-        this.logControllerWarn("Rejected file-manager open request because path does not exist.", { dirPath: trimmed });
-        return { ok: false, error: "Path does not exist." };
-      }
-      if (!statSync(trimmed).isDirectory()) {
-        this.logControllerWarn("Rejected file-manager open request because path is not a directory.", { dirPath: trimmed });
-        return { ok: false, error: "Path is not a directory." };
-      }
-    } catch (e) {
-      this.logControllerError("Failed to inspect path before opening file manager.", e, { dirPath: trimmed });
-      return { ok: false, error: e instanceof Error ? e.message : "Could not read path." };
-    }
-    const errMsg = await shell.openPath(trimmed);
-    if (errMsg) {
-      this.logControllerWarn("shell.openPath returned an error.", { dirPath: trimmed, error: errMsg });
-      return { ok: false, error: errMsg };
-    }
-    logInfo("Opened path in file manager.", { dirPath: trimmed });
-    return { ok: true };
+    return this.desktop.openPathInFileManager(dirPath);
   }
 
   async resumeRunFromCheckpoint(runId: string): Promise<void> {
@@ -5656,16 +5620,7 @@ export class AppController
   }
 
   async pickIdeExecutable(): Promise<string | null> {
-    const filters =
-      ideExecutableDialogFilters(process.platform);
-
-    const result = await dialog.showOpenDialog({
-      title: "Select IDE executable",
-      properties: ["openFile", "dontAddToRecent"],
-      filters,
-    });
-
-    return result.canceled ? null : (result.filePaths[0] ?? null);
+    return this.desktop.pickIdeExecutable();
   }
 
   async openRunWorktreeInIde(runId: string, ideKind: SupportedIdeKind): Promise<void> {
@@ -5698,39 +5653,7 @@ export class AppController
       throw new Error(`${IDE_KIND_LABELS[ideKind]} is not configured. Add its path in Settings > User Settings.`);
     }
 
-    await this.launchIdeWithFolder(exe, trimmedPath);
-  }
-
-  private launchIdeWithFolder(exePath: string, folderPath: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      if (process.platform === "darwin" && exePath.endsWith(".app")) {
-        const child = spawn("/usr/bin/open", ["-a", exePath, folderPath], {
-          detached: true,
-          stdio: "ignore",
-        });
-        child.on("error", (err) => {
-          reject(err);
-        });
-        child.unref();
-        resolve();
-        return;
-      }
-
-      const child = spawn(exePath, [folderPath], {
-        detached: true,
-        stdio: "ignore",
-        windowsHide: true,
-      });
-      child.on("error", (err) => {
-        reject(
-          new Error(
-            `Could not start the IDE executable. Check the path in Settings (${err instanceof Error ? err.message : String(err)}).`,
-          ),
-        );
-      });
-      child.unref();
-      resolve();
-    });
+    await this.desktop.launchIdeWithFolder(exe, trimmedPath);
   }
 
   async respondToShellApproval(
@@ -5851,13 +5774,11 @@ export class AppController
   }
 
   onRunEvent(listener: (event: RunEvent) => void): () => void {
-    this.runListeners.add(listener);
-    return () => this.runListeners.delete(listener);
+    return this.events.subscribe("run", listener);
   }
 
   onAppWarning(listener: (warning: AppWarning) => void): () => void {
-    this.appWarningListeners.add(listener);
-    return () => this.appWarningListeners.delete(listener);
+    return this.events.subscribe("warning", listener);
   }
 
   private startWorker(
@@ -6701,15 +6622,11 @@ export class AppController
   }
 
   private emitEvent(event: RunEvent): void {
-    for (const listener of this.runListeners) {
-      listener(event);
-    }
+    this.events.publish("run", event);
   }
 
   private emitChatEvent(chatId: string, event: RunEvent): void {
-    for (const listener of this.chatListeners) {
-      listener({ ...event, chatId });
-    }
+    this.events.publish("chat", { ...event, chatId });
   }
 
   private upsertProviderSessionRuntime(
@@ -7090,8 +7007,6 @@ export class AppController
   }
 
   private emitAppWarning(warning: AppWarning): void {
-    for (const listener of this.appWarningListeners) {
-      listener(warning);
-    }
+    this.events.publish("warning", warning);
   }
 }

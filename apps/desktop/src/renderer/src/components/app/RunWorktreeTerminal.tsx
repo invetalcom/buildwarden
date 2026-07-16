@@ -4,6 +4,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { cn } from "../../lib/cn";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
 import { runWorktreeTerminalSessionId } from "./run-worktree-terminal-session";
 
@@ -26,6 +27,7 @@ const TerminalSurface = ({ disabled, error, cwd, containerRef, className }: Pick
   error: string | null;
   containerRef: RefObject<HTMLDivElement | null>;
 }) => {
+  const buildwarden = useBuildWardenClient();
   if (disabled) {
     return (
       <div className={cn("rounded-lg border border-zinc-800 bg-zinc-950/50 p-4 text-sm text-zinc-500", className)}>
@@ -39,7 +41,7 @@ const TerminalSurface = ({ disabled, error, cwd, containerRef, className }: Pick
       {error && (
         <div className="flex flex-col gap-2 border-b border-rose-500/20 bg-rose-500/5 px-3 py-2">
           <p className="text-xs text-rose-200">{error}</p>
-          <Button type="button" variant="secondary" size="sm" className="self-start" onClick={() => void window.buildwarden.openSystemTerminalAtPath(cwd)}>
+          <Button type="button" variant="secondary" size="sm" className="self-start" onClick={() => void buildwarden.openSystemTerminalAtPath(cwd)}>
             Open system terminal here
           </Button>
         </div>
@@ -81,6 +83,7 @@ export const RunWorktreeTerminal = ({
   onOpenUrlInApp,
   className,
 }: Props) => {
+  const buildwarden = useBuildWardenClient();
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -122,7 +125,7 @@ export const RunWorktreeTerminal = ({
         onOpenUrlInApp(uri);
         return;
       }
-      void window.buildwarden.openExternalUrl(uri);
+      void buildwarden.openExternalUrl(uri);
     });
     term.loadAddon(webLinks);
     term.open(el);
@@ -135,17 +138,17 @@ export const RunWorktreeTerminal = ({
       if (!ptyStarted) {
         return;
       }
-      void window.buildwarden.runTerminalWrite({ sessionId, data });
+      void buildwarden.runTerminalWrite({ sessionId, data });
     });
 
-    const unsubData = window.buildwarden.onRunTerminalData((payload) => {
+    const unsubData = buildwarden.onRunTerminalData((payload) => {
       if (payload.sessionId !== sessionId) {
         return;
       }
       term.write(payload.data);
     });
 
-    const unsubExit = window.buildwarden.onRunTerminalExit((payload) => {
+    const unsubExit = buildwarden.onRunTerminalExit((payload) => {
       if (payload.sessionId !== sessionId) {
         return;
       }
@@ -163,7 +166,7 @@ export const RunWorktreeTerminal = ({
       const cols = Math.max(MIN_COLS, dims?.cols ?? 80);
       const rows = Math.max(MIN_ROWS, dims?.rows ?? 24);
       if (ptyStarted) {
-        void window.buildwarden.runTerminalResize({ sessionId, cols, rows });
+        void buildwarden.runTerminalResize({ sessionId, cols, rows });
       }
     };
 
@@ -179,7 +182,7 @@ export const RunWorktreeTerminal = ({
 
       startPromise = (async () => {
         pushSize();
-        const result = await window.buildwarden.runTerminalStart({ sessionId, cwd });
+        const result = await buildwarden.runTerminalStart({ sessionId, cwd });
         if (cancelled) {
           return;
         }
@@ -233,7 +236,7 @@ export const RunWorktreeTerminal = ({
       termRef.current = null;
       fitRef.current = null;
     };
-  }, [runId, cwd, disabled, openLinksInApp, onOpenUrlInApp, sessionId]);
+  }, [buildwarden, runId, cwd, disabled, openLinksInApp, onOpenUrlInApp, sessionId]);
 
   /** After the panel becomes visible again, refit + focus (layout swaps break xterm). */
   useEffect(() => {
@@ -253,7 +256,7 @@ export const RunWorktreeTerminal = ({
         const dims = fit.proposeDimensions();
         const cols = Math.max(MIN_COLS, dims?.cols ?? 80);
         const rows = Math.max(MIN_ROWS, dims?.rows ?? 24);
-        void window.buildwarden.runTerminalResize({ sessionId: sid, cols, rows });
+        void buildwarden.runTerminalResize({ sessionId: sid, cols, rows });
         term.focus();
       } catch {
         /* ignore */
@@ -270,7 +273,7 @@ export const RunWorktreeTerminal = ({
       cancelAnimationFrame(t0);
       window.clearTimeout(t1);
     };
-  }, [uiActive, disabled, runId]);
+  }, [buildwarden, uiActive, disabled, runId]);
 
   return <TerminalSurface disabled={disabled} error={error} cwd={cwd} containerRef={containerRef} className={className} />;
 };

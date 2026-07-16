@@ -12,6 +12,7 @@ import {
   CardTitle,
 } from "../ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 
 interface LandingPageProps {
   snapshot: AppSnapshot;
@@ -72,6 +73,8 @@ const buildTodayActivity = (runs: Array<{ createdAt: string; status: string; inp
 };
 
 export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRun, onOpenChats, onOpenSettings }: LandingPageProps) => {
+  const buildwarden = useBuildWardenClient();
+  const readOnly = !buildwarden.capabilities.mutations;
   const allRuns = useMemo(
     () =>
       snapshot.projects.flatMap((entry) =>
@@ -173,10 +176,12 @@ export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRu
                 <Bot data-icon="inline-start" />
                 Open chat
               </Button>
-              <Button variant="secondary" className="justify-center" onClick={onOpenSettings}>
-                <Settings2 data-icon="inline-start" />
-                Settings
-              </Button>
+              {!readOnly ? (
+                <Button variant="secondary" className="justify-center" onClick={onOpenSettings}>
+                  <Settings2 data-icon="inline-start" />
+                  Settings
+                </Button>
+              ) : null}
             </div>
           </CardContent>
         </Card>
@@ -227,7 +232,7 @@ export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRu
                 <EmptyHeader>
                   <FolderGit2 className="size-8 text-[var(--ec-muted)]" />
                   <EmptyTitle>No repositories yet</EmptyTitle>
-                  <EmptyDescription>Add your first project in Settings to start tracking work here.</EmptyDescription>
+                  <EmptyDescription>{readOnly ? "No projects are configured on the BuildWarden host." : "Add your first project in Settings to start tracking work here."}</EmptyDescription>
                 </EmptyHeader>
               </Empty>
             )}
@@ -272,7 +277,7 @@ export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRu
                 <EmptyHeader>
                   <PlayCircle className="size-8 text-[var(--ec-muted)]" />
                   <EmptyTitle>No runs yet</EmptyTitle>
-                  <EmptyDescription>Start one from a project page to populate activity here.</EmptyDescription>
+                  <EmptyDescription>{readOnly ? "No runs are available on the BuildWarden host." : "Start one from a project page to populate activity here."}</EmptyDescription>
                 </EmptyHeader>
               </Empty>
             )}

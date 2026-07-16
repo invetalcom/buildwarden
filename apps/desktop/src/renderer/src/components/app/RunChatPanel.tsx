@@ -14,6 +14,7 @@ import { buildVisibleConversationHistory } from "../../lib/context-window-estima
 import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
 import { ChatTranscript } from "./ChatTranscript";
 import { RunComposer } from "./RunComposer";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 
 const safeParseMetadata = (value: string) => {
   try {
@@ -56,7 +57,7 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const chatIdRef = useRef<string | null>(null);
 
-  const buildwarden = window.buildwarden;
+  const buildwarden = useBuildWardenClient();
 
   chatIdRef.current = detail?.chat.id ?? null;
 

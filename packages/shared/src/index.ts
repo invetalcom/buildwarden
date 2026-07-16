@@ -1357,6 +1357,22 @@ export interface ProjectInput {
   repoPath: string;
 }
 
+export interface HostDirectoryBrowseInput {
+  /** Absolute host path. Omit to list filesystem roots. */
+  path?: string;
+}
+
+export interface HostDirectoryEntry {
+  name: string;
+  path: string;
+}
+
+export interface HostDirectoryListing {
+  path: string | null;
+  parentPath: string | null;
+  entries: HostDirectoryEntry[];
+}
+
 export interface ProjectFolderGitStatus {
   path: string;
   exists: boolean;
@@ -2641,6 +2657,11 @@ export interface RendererLogPayload {
 
 export interface DesktopApi {
   getSnapshot(): Promise<AppSnapshot>;
+  getRemoteAccessStatus(): Promise<RemoteAccessStatus>;
+  listHostDirectories(input?: HostDirectoryBrowseInput): Promise<HostDirectoryListing>;
+  createRemoteAccessPairing(input?: RemoteAccessPairingInput): Promise<RemoteAccessPairingGrant>;
+  listRemoteAccessSessions(): Promise<RemoteAccessSession[]>;
+  revokeRemoteAccessSession(sessionId: string): Promise<void>;
   getNetworkProxySettings(): Promise<NetworkProxySettingsSnapshot>;
   selectProject(projectId: string): Promise<void>;
   reorderProjects(projectIds: string[]): Promise<void>;
@@ -2843,6 +2864,377 @@ export interface RunTerminalExitPayload {
   exitCode: number;
 }
 
+export const REMOTE_ACCESS_PROTOCOL_VERSION = 1 as const;
+export const REMOTE_ACCESS_MIN_PROTOCOL_VERSION = 1 as const;
+export const REMOTE_ACCESS_LOOPBACK_HOST = "127.0.0.1" as const;
+export const DEFAULT_REMOTE_ACCESS_PORT = 47_831;
+export const REMOTE_ACCESS_HEALTH_PATH = "/health" as const;
+export const REMOTE_ACCESS_LEGACY_HEALTH_PATH = "/api/v1/health" as const;
+export const REMOTE_ACCESS_INFO_PATH = "/api/v1/info" as const;
+export const REMOTE_ACCESS_RPC_PATH = "/api/v1/rpc" as const;
+export const REMOTE_ACCESS_WEBSOCKET_PATH = "/api/v1/events" as const;
+export const REMOTE_ACCESS_PAIRING_PATH = "/api/v1/auth/pair" as const;
+export const REMOTE_ACCESS_SESSION_PATH = "/api/v1/auth/session" as const;
+export const REMOTE_ACCESS_SESSION_COOKIE = "buildwarden_session" as const;
+
+export const REMOTE_ACCESS_SERVER_CAPABILITIES = [
+  "rpc",
+  "events:run",
+  "events:chat",
+  "events:warning",
+  "events:loop",
+  "events:task",
+  "events:terminal",
+] as const;
+
+export type RemoteAccessServerCapability = (typeof REMOTE_ACCESS_SERVER_CAPABILITIES)[number];
+export type RemoteStreamEventType = "run" | "chat" | "warning" | "loop" | "task" | "terminal-data" | "terminal-exit";
+
+export interface RemoteStreamEventPayloadMap {
+  run: RunEvent;
+  chat: RunEvent & { chatId: string };
+  warning: AppWarning;
+  loop: ProjectLoopChangedPayload;
+  task: ProjectTaskChangedPayload;
+  "terminal-data": RunTerminalDataPayload;
+  "terminal-exit": RunTerminalExitPayload;
+}
+
+export type RemoteStreamEvent = {
+  [Event in RemoteStreamEventType]: { event: Event; payload: RemoteStreamEventPayloadMap[Event] };
+}[RemoteStreamEventType];
+
+export const REMOTE_ACCESS_SCOPES = [
+  "state:read",
+  "run:operate",
+  "chat:operate",
+  "approval:respond",
+  "git:write",
+  "terminal:operate",
+  "admin",
+] as const;
+
+export type RemoteAccessScope = (typeof REMOTE_ACCESS_SCOPES)[number];
+
+export interface RemoteAccessPairingInput {
+  label?: string;
+  scopes?: RemoteAccessScope[];
+}
+
+export interface RemoteAccessPairingGrant {
+  id: string;
+  code: string;
+  scopes: RemoteAccessScope[];
+  expiresAt: string;
+  createdAt: string;
+  /** Browser URL with the one-time code in the fragment so proxies and request logs never receive it. */
+  pairingUrl?: string;
+}
+
+export type TailscaleServeState =
+  | "not-installed"
+  | "not-running"
+  | "available"
+  | "managed"
+  | "conflict"
+  | "error";
+
+export interface RemoteAccessStatus {
+  enabled: boolean;
+  loopbackUrl: string | null;
+  tailscale: {
+    desired: boolean;
+    state: TailscaleServeState;
+    cliPath: string | null;
+    backendState: string | null;
+    dnsName: string | null;
+    endpoint: string | null;
+    managed: boolean;
+    verified: boolean;
+    message: string;
+    enableCommand: string | null;
+  };
+}
+
+export interface RemoteAccessPairingGrantRecord extends Omit<RemoteAccessPairingGrant, "code" | "pairingUrl"> {
+  tokenHash: string;
+  usedAt: string | null;
+}
+
+export interface RemoteAccessSession {
+  id: string;
+  label: string;
+  scopes: RemoteAccessScope[];
+  createdAt: string;
+  expiresAt: string;
+  lastUsedAt: string;
+  revokedAt: string | null;
+}
+
+export interface RemoteAccessSessionRecord extends RemoteAccessSession {
+  tokenHash: string;
+}
+
+export interface RemoteCommandIdempotencyRecord {
+  sessionId: string;
+  idempotencyKey: string;
+  method: string;
+  requestHash: string;
+  responseJson: string | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export type RemoteAccessAuditEvent =
+  | "pairing-created"
+  | "pairing-failed"
+  | "pairing-consumed"
+  | "session-authenticated"
+  | "session-authentication-failed"
+  | "session-revoked";
+
+export interface RemoteAccessAuditRecord {
+  id: string;
+  event: RemoteAccessAuditEvent;
+  outcome: "success" | "failure";
+  sessionId: string | null;
+  pairingGrantId: string | null;
+  remoteAddress: string | null;
+  details: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface RemoteAccessPairingExchangeRequest {
+  code: string;
+  label?: string;
+}
+
+export interface RemoteAccessPairingExchangeResponse {
+  session: RemoteAccessSession;
+}
+
+/** Explicit transport contract. Desktop methods are not remotely callable unless listed here. */
+export type RemoteOperationMap = {
+  getSnapshot: DesktopApi["getSnapshot"];
+  refreshSnapshot: DesktopApi["refreshSnapshot"];
+  getNetworkProxySettings: DesktopApi["getNetworkProxySettings"];
+  getProjectBranches: DesktopApi["getProjectBranches"];
+  getProjectCurrentBranch: DesktopApi["getProjectCurrentBranch"];
+  checkProjectFolderGitStatus: DesktopApi["checkProjectFolderGitStatus"];
+  getRunDetail: DesktopApi["getRunDetail"];
+  getRunWorktreeDiff: DesktopApi["getRunWorktreeDiff"];
+  getRunWorkspaceFile: DesktopApi["getRunWorkspaceFile"];
+  getProjectLoopUiReviewImage: DesktopApi["getProjectLoopUiReviewImage"];
+  getProjectLoopDetail: DesktopApi["getProjectLoopDetail"];
+  getProjectLoopAvailability: DesktopApi["getProjectLoopAvailability"];
+  getChatDetail: DesktopApi["getChatDetail"];
+  listChatsWithSteps: DesktopApi["listChatsWithSteps"];
+  getBookmarksWithSteps: DesktopApi["getBookmarksWithSteps"];
+  getChatBookmarksWithSteps: DesktopApi["getChatBookmarksWithSteps"];
+  getRunPublishOptions: DesktopApi["getRunPublishOptions"];
+  getProjectBranchOverview: DesktopApi["getProjectBranchOverview"];
+  getProjectForgeAuthStatus: DesktopApi["getProjectForgeAuthStatus"];
+  getProjectForgePrMonitorSettings: DesktopApi["getProjectForgePrMonitorSettings"];
+  listProjectForgeRequests: DesktopApi["listProjectForgeRequests"];
+  getProjectForgeRequestDetails: DesktopApi["getProjectForgeRequestDetails"];
+  fetchProjectPrMrDiff: DesktopApi["fetchProjectPrMrDiff"];
+  checkProjectGitConversion: DesktopApi["checkProjectGitConversion"];
+  getProjectBranchDeleteImpact: DesktopApi["getProjectBranchDeleteImpact"];
+  listHostDirectories: DesktopApi["listHostDirectories"];
+  listAvailableProviderModels: DesktopApi["listAvailableProviderModels"];
+  getAppPaths: DesktopApi["getAppPaths"];
+  getDetectedCodexInstallation: DesktopApi["getDetectedCodexInstallation"];
+  getDetectedClaudeInstallation: DesktopApi["getDetectedClaudeInstallation"];
+  getDetectedCursorInstallation: DesktopApi["getDetectedCursorInstallation"];
+  listIntegratedSkills: DesktopApi["listIntegratedSkills"];
+  getIntegratedSkillContent: DesktopApi["getIntegratedSkillContent"];
+  createRun: DesktopApi["createRun"];
+  continueRun: DesktopApi["continueRun"];
+  followUpRun: DesktopApi["followUpRun"];
+  cancelRun: DesktopApi["cancelRun"];
+  cancelRunShell: DesktopApi["cancelRunShell"];
+  resumeRunFromCheckpoint: DesktopApi["resumeRunFromCheckpoint"];
+  recoverInterruptedRun: DesktopApi["recoverInterruptedRun"];
+  undoRunToLastPrompt: DesktopApi["undoRunToLastPrompt"];
+  deleteRun: DesktopApi["deleteRun"];
+  setRunListVisibility: DesktopApi["setRunListVisibility"];
+  addBookmark: DesktopApi["addBookmark"];
+  removeBookmark: DesktopApi["removeBookmark"];
+  removeBookmarkById: DesktopApi["removeBookmarkById"];
+  respondToShellApproval: DesktopApi["respondToShellApproval"];
+  respondToRunUserInput: DesktopApi["respondToRunUserInput"];
+  createChat: DesktopApi["createChat"];
+  followUpChat: DesktopApi["followUpChat"];
+  cancelChat: DesktopApi["cancelChat"];
+  deleteChat: DesktopApi["deleteChat"];
+  addChatBookmark: DesktopApi["addChatBookmark"];
+  removeChatBookmark: DesktopApi["removeChatBookmark"];
+  removeChatBookmarkById: DesktopApi["removeChatBookmarkById"];
+  createProjectTask: DesktopApi["createProjectTask"];
+  updateProjectTask: DesktopApi["updateProjectTask"];
+  deleteProjectTask: DesktopApi["deleteProjectTask"];
+  generateProjectTaskRunPrompt: DesktopApi["generateProjectTaskRunPrompt"];
+  generateProjectInsight: DesktopApi["generateProjectInsight"];
+  runProjectLab: DesktopApi["runProjectLab"];
+  deleteProjectLabThread: DesktopApi["deleteProjectLabThread"];
+  createProjectLoop: DesktopApi["createProjectLoop"];
+  cancelProjectLoop: DesktopApi["cancelProjectLoop"];
+  resumeProjectLoop: DesktopApi["resumeProjectLoop"];
+  deleteProjectLoop: DesktopApi["deleteProjectLoop"];
+  respondToProjectLoopUiReview: DesktopApi["respondToProjectLoopUiReview"];
+  analyzeProjectPrMrDiff: DesktopApi["analyzeProjectPrMrDiff"];
+  postProjectPrMrReview: DesktopApi["postProjectPrMrReview"];
+  submitProjectPrMrComments: DesktopApi["submitProjectPrMrComments"];
+  replyProjectPrMrReviewThread: DesktopApi["replyProjectPrMrReviewThread"];
+  resolveProjectPrMrReviewThread: DesktopApi["resolveProjectPrMrReviewThread"];
+  commitRun: DesktopApi["commitRun"];
+  createRunLocalBranch: DesktopApi["createRunLocalBranch"];
+  publishRunBranch: DesktopApi["publishRunBranch"];
+  createRunPullRequest: DesktopApi["createRunPullRequest"];
+  checkoutProjectBranch: DesktopApi["checkoutProjectBranch"];
+  fetchProjectBranches: DesktopApi["fetchProjectBranches"];
+  createProjectBranch: DesktopApi["createProjectBranch"];
+  renameProjectBranch: DesktopApi["renameProjectBranch"];
+  deleteProjectBranch: DesktopApi["deleteProjectBranch"];
+  pullProjectBranch: DesktopApi["pullProjectBranch"];
+  pushProjectBranch: DesktopApi["pushProjectBranch"];
+  convertProjectToGit: DesktopApi["convertProjectToGit"];
+  updateProjectBaseBranch: DesktopApi["updateProjectBaseBranch"];
+  addProject: DesktopApi["addProject"];
+  reorderProjects: DesktopApi["reorderProjects"];
+  addProviderAccount: DesktopApi["addProviderAccount"];
+  addModel: DesktopApi["addModel"];
+  deleteProject: DesktopApi["deleteProject"];
+  deleteProviderAccount: DesktopApi["deleteProviderAccount"];
+  deleteModel: DesktopApi["deleteModel"];
+  setAppSetting: DesktopApi["setAppSetting"];
+  saveNetworkProxySettings: DesktopApi["saveNetworkProxySettings"];
+  saveProjectForgeAuthToken: DesktopApi["saveProjectForgeAuthToken"];
+  deleteProjectForgeAuthToken: DesktopApi["deleteProjectForgeAuthToken"];
+  saveProjectForgePrMonitorSettings: DesktopApi["saveProjectForgePrMonitorSettings"];
+  runTerminalStart: DesktopApi["runTerminalStart"];
+  runTerminalWrite: DesktopApi["runTerminalWrite"];
+  runTerminalResize: DesktopApi["runTerminalResize"];
+  runTerminalKill: DesktopApi["runTerminalKill"];
+};
+
+export type RemoteApiMethod = keyof RemoteOperationMap;
+
+export type RemoteApiMethodArgs<Method extends RemoteApiMethod> =
+  RemoteOperationMap[Method] extends (...args: infer Args) => Promise<unknown> ? Args : never;
+
+export type RemoteApiMethodResult<Method extends RemoteApiMethod> =
+  RemoteOperationMap[Method] extends (...args: never[]) => Promise<infer Result> ? Result : never;
+
+export interface RemoteRpcRequest {
+  protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+  requestId: string;
+  method: RemoteApiMethod;
+  args: unknown[];
+  idempotencyKey?: string;
+}
+
+export type RemoteRpcErrorCode =
+  | "invalid-request"
+  | "protocol-mismatch"
+  | "method-not-found"
+  | "forbidden"
+  | "idempotency-required"
+  | "idempotency-conflict"
+  | "command-in-progress"
+  | "operation-failed";
+
+export type RemoteRpcResponse =
+  | {
+      protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+      requestId: string;
+      ok: true;
+      result: unknown;
+    }
+  | {
+      protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+      requestId: string;
+      ok: false;
+      error: {
+        code: RemoteRpcErrorCode;
+        message: string;
+      };
+    };
+
+export interface RemoteAccessHealth {
+  status: "ok";
+  app: "buildwarden";
+  appVersion: string;
+  protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+  scope: "loopback";
+  authentication: "not-configured" | "session";
+  startedAt: string;
+}
+
+export interface RemoteAccessInfo {
+  app: "buildwarden";
+  appVersion: string;
+  apiVersion: "v1";
+  protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+  minProtocolVersion: typeof REMOTE_ACCESS_MIN_PROTOCOL_VERSION;
+  maxProtocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+  scope: "loopback";
+  authentication: RemoteAccessHealth["authentication"];
+  capabilities: RemoteAccessServerCapability[];
+  endpoints: {
+    health: typeof REMOTE_ACCESS_HEALTH_PATH;
+    info: typeof REMOTE_ACCESS_INFO_PATH;
+    rpc: typeof REMOTE_ACCESS_RPC_PATH;
+    events: typeof REMOTE_ACCESS_WEBSOCKET_PATH;
+  };
+  startedAt: string;
+}
+
+export type RemoteWebSocketClientMessage =
+  | {
+      protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+      type: "subscribe";
+      requestId: string;
+      events: RemoteStreamEventType[];
+    }
+  | {
+      protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+      type: "ping";
+      requestId: string;
+    };
+
+export type RemoteWebSocketServerMessage =
+  | {
+      protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+      type: "hello";
+      info: RemoteAccessInfo;
+    }
+  | {
+      protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+      type: "subscribed";
+      requestId: string;
+      events: RemoteStreamEventType[];
+    }
+  | {
+      protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+      type: "event";
+      sequence: number;
+      event: RemoteStreamEventType;
+      payload: RemoteStreamEventPayloadMap[RemoteStreamEventType];
+    }
+  | {
+      protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+      type: "pong";
+      requestId: string;
+    }
+  | {
+      protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+      type: "error";
+      requestId: string;
+      code: "invalid-message" | "protocol-mismatch" | "forbidden";
+      message: string;
+    };
+
 export const IPC_CHANNELS = {
   activateRun: "buildwarden:activate-run",
   addModel: "buildwarden:add-model",
@@ -2923,6 +3315,11 @@ export const IPC_CHANNELS = {
   pullProjectBranch: "buildwarden:pull-project-branch",
   pushProjectBranch: "buildwarden:push-project-branch",
   getSnapshot: "buildwarden:get-snapshot",
+  getRemoteAccessStatus: "buildwarden:get-remote-access-status",
+  listHostDirectories: "buildwarden:list-host-directories",
+  createRemoteAccessPairing: "buildwarden:create-remote-access-pairing",
+  listRemoteAccessSessions: "buildwarden:list-remote-access-sessions",
+  revokeRemoteAccessSession: "buildwarden:revoke-remote-access-session",
   getNetworkProxySettings: "buildwarden:get-network-proxy-settings",
   selectProject: "buildwarden:select-project",
   reorderProjects: "buildwarden:reorder-projects",
@@ -3026,9 +3423,23 @@ export const APP_SETTING_KEYS = {
   projectForgePrMonitorSettings: "projectForgePrMonitorSettings",
   /** JSON object with app-wide outbound proxy host/port/user settings (password stored in secure storage). */
   networkProxyConfig: "networkProxyConfig",
+  /** Optional remote-access host. Absent or any value other than `"true"` keeps it disabled. */
+  remoteAccessEnabled: "remoteAccess.enabled",
+  /** User opt-in for a BuildWarden-owned Tailscale Serve root handler. */
+  remoteAccessTailscaleEnabled: "remoteAccess.tailscaleEnabled",
+  /** Internal ownership marker; only exact matching handlers are removed. */
+  remoteAccessTailscaleManagedHost: "remoteAccess.tailscaleManagedHost",
+  /** Internal ownership marker for the loopback proxy target. */
+  remoteAccessTailscaleManagedTarget: "remoteAccess.tailscaleManagedTarget",
   /** JSON string array of welcome/onboarding check ids that have been satisfied at least once. */
   welcomeCompletedCheckIds: "welcomeCompletedCheckIds",
 } as const;
+
+export const DEFAULT_REMOTE_ACCESS_ENABLED = false;
+
+/** Remote access is opt-in: legacy databases and malformed values always remain disabled. */
+export const parseRemoteAccessEnabledSetting = (raw: string | undefined | null): boolean =>
+  raw === "true";
 
 export const DEFAULT_RECENT_RUN_DAYS = 2;
 export const MIN_RECENT_RUN_DAYS = 1;

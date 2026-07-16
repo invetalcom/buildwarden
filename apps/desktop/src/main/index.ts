@@ -1,18 +1,27 @@
+import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, ipcMain } from "electron";
 import { getDefaultDatabasePath, BuildWardenDatabase } from "@buildwarden/db";
+import {
+  RemoteAccessServer,
+  RemoteAuthService,
+  RemoteOperationRegistry,
+  defineRemoteArgsValidator,
+  validateNoRemoteArgs,
+  type RemoteHostEventSource,
+} from "@buildwarden/remote-server";
 import {
   APP_SETTING_KEYS,
   IPC_CHANNELS,
   isUiTheme,
   parseSupportedIdeKind,
+  parseRemoteAccessEnabledSetting,
   parseUiTheme,
   uiThemeToLegacyDarkMode,
   WINDOWS_TITLEBAR_OVERLAY_BACKGROUND,
   WINDOWS_TITLEBAR_OVERLAY_HEIGHT,
-  type AppMenuCommand,
   type AppMenuSection,
   type ChatInput,
   type ListAvailableProviderModelsInput,
@@ -21,43 +30,24 @@ import {
   type ProjectInput,
   type ProjectForgePrMonitorConfig,
   type ProjectForgeRequestNotificationPayload,
-  type ProjectForgeRequestOpenPayload,
   type ProviderAccountInput,
+  type RemoteAccessPairingInput,
   type RendererLogPayload,
   type RunChatInput,
-  type RunEvent,
   type RunInput,
+  type RunWorkspaceFileInput,
   type UiTheme,
 } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
 import { getAppLogDirPath, initializeAppLogger, logError, logInfo, logWarn } from "./logger";
 import { ElectronSecretStore } from "./secret-store";
-import { disposeAllRunTerminals, registerRunTerminalIpc } from "./run-terminal-ipc";
-
-const isSafeExternalUrl = (raw: string): boolean => {
-  try {
-    const u = new URL(raw);
-    return u.protocol === "http:" || u.protocol === "https:" || u.protocol === "mailto:";
-  } catch {
-    return false;
-  }
-};
-
-const isAppNavigationUrl = (raw: string): boolean => {
-  try {
-    const u = new URL(raw);
-    if (u.protocol === "file:") {
-      return true;
-    }
-    const dev = process.env.ELECTRON_RENDERER_URL;
-    if (dev) {
-      return u.origin === new URL(dev).origin;
-    }
-    return false;
-  } catch {
-    return false;
-  }
-};
+import { registerRunTerminalIpc } from "./run-terminal-ipc";
+import { ElectronDesktopPlatformServices, isAppNavigationUrl, isSafeExternalUrl } from "./electron-desktop-platform";
+import { HostEventBus } from "./host-events";
+import { registerHostEventIpc } from "./host-events-ipc";
+import { HostTerminalService } from "./host-terminal-service";
+import { TailscaleServeService } from "./tailscale-serve-service";
+import { HostDirectoryService } from "./host-directory-service";
 
 const mainDir = dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
@@ -67,59 +57,6 @@ const DEV_DB_FILE_NAME = "buildwarden_dev.sqlite";
 const PROD_SECRETS_FILE_NAME = "secrets.json";
 const DEV_SECRETS_FILE_NAME = "secrets_dev.json";
 let currentUiTheme: UiTheme = "dark";
-
-const showShellApprovalNotification = (event: RunEvent): void => {
-  if (!Notification.isSupported()) {
-    return;
-  }
-
-  const command = event.content.replace(/\s+/g, " ").trim();
-  const body = command.length > 140 ? `${command.slice(0, 137)}...` : command;
-  const notification = new Notification({
-    title: "Shell approval needed",
-    body: body || "An agent run is waiting for a command decision.",
-    silent: false,
-  });
-
-  notification.on("click", () => {
-    if (!mainWindow) {
-      return;
-    }
-    if (mainWindow.isMinimized()) {
-      mainWindow.restore();
-    }
-    mainWindow.show();
-    mainWindow.focus();
-  });
-  notification.show();
-};
-
-const showRunUserInputNotification = (event: RunEvent): void => {
-  if (!Notification.isSupported()) {
-    return;
-  }
-
-  const detail = event.content.replace(/\s+/g, " ").trim();
-  const body = detail.length > 140 ? `${detail.slice(0, 137)}...` : detail;
-  const notification = new Notification({
-    title: "Agent feedback needed",
-    body: body || "An agent run is waiting for your input before it can continue.",
-    silent: false,
-  });
-
-  notification.on("click", () => {
-    focusMainWindow();
-  });
-  notification.show();
-};
-
-const escapeToastXmlText = (value: string): string =>
-  value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
 
 const focusMainWindow = (): void => {
   if (!mainWindow) {
@@ -135,74 +72,18 @@ const focusMainWindow = (): void => {
   mainWindow.focus();
 };
 
-const openProjectForgeRequestFromNotification = (payload: ProjectForgeRequestOpenPayload): void => {
+const hostEvents = new HostEventBus();
+const hostTerminal = new HostTerminalService();
+const desktopPlatform = new ElectronDesktopPlatformServices(() => mainWindow, focusMainWindow);
+
+const publishProjectForgeRequestOpen = (payload: { projectId: string; prUrl: string }): void => {
   focusMainWindow();
-  if (!mainWindow) {
+  const publish = () => hostEvents.publish("forgeRequestOpen", payload);
+  if (mainWindow?.webContents.isLoading()) {
+    mainWindow.webContents.once("did-finish-load", publish);
     return;
   }
-  const send = () => mainWindow?.webContents.send(IPC_CHANNELS.projectForgeRequestOpen, payload);
-  if (mainWindow.webContents.isLoading()) {
-    mainWindow.webContents.once("did-finish-load", send);
-    return;
-  }
-  send();
-};
-
-const showProjectForgeRequestNotification = (input: {
-  projectName: string;
-  repoLabel: string;
-  title: string;
-  author: string | null;
-  providerLabel: "PR" | "MR";
-  payload: ProjectForgeRequestOpenPayload;
-}): void => {
-  if (!Notification.isSupported()) {
-    return;
-  }
-
-  const title = `New ${input.providerLabel}: ${input.projectName}`;
-  const byline = input.author ? ` by ${input.author}` : "";
-  const body = `${input.title}${byline}\n${input.repoLabel}`;
-  let opened = false;
-  const openOnce = () => {
-    if (opened) {
-      return;
-    }
-    opened = true;
-    openProjectForgeRequestFromNotification(input.payload);
-  };
-
-  const notification = new Notification({
-    title,
-    body,
-    silent: false,
-    ...(process.platform === "darwin"
-      ? { actions: [{ type: "button" as const, text: "Open project and PR" }], closeButtonText: "Dismiss" }
-      : {}),
-    ...(process.platform === "win32"
-      ? {
-          toastXml: [
-            "<toast>",
-            "<visual><binding template=\"ToastGeneric\">",
-            `<text>${escapeToastXmlText(title)}</text>`,
-            `<text>${escapeToastXmlText(body)}</text>`,
-            "</binding></visual>",
-            "<actions>",
-            "<action content=\"Open project and PR\" arguments=\"open\" activationType=\"foreground\"/>",
-            "</actions>",
-            "</toast>",
-          ].join(""),
-        }
-      : {}),
-  });
-
-  notification.on("click", openOnce);
-  notification.on("action", openOnce);
-  notification.show();
-};
-
-const showProjectForgeRequestInAppNotification = (payload: ProjectForgeRequestNotificationPayload): void => {
-  mainWindow?.webContents.send(IPC_CHANNELS.projectForgeRequestNotification, payload);
+  publish();
 };
 
 type ProjectForgeMonitorState = {
@@ -232,7 +113,7 @@ const runProjectForgeMonitorCheck = async (
     try {
       const changedTasks = await controller.syncProjectTaskPullRequestStatuses(config.projectId);
       for (const task of changedTasks) {
-        mainWindow?.webContents.send(IPC_CHANNELS.projectTaskChanged, {
+        hostEvents.publish("task", {
           projectId: task.projectId,
           taskId: task.id,
           status: task.status,
@@ -268,14 +149,10 @@ const runProjectForgeMonitorCheck = async (
         author: item.author,
         providerLabel: config.provider === "gitlab" ? "MR" : "PR",
       };
-      showProjectForgeRequestInAppNotification(payload);
-      showProjectForgeRequestNotification({
-        projectName: config.projectName,
-        repoLabel: config.repoLabel,
-        title: item.title,
-        author: item.author,
-        providerLabel: config.provider === "gitlab" ? "MR" : "PR",
+      hostEvents.publish("forgeRequestNotification", payload);
+      desktopPlatform.showProjectForgeRequestNotification({
         payload,
+        onOpen: () => publishProjectForgeRequestOpen(payload),
       });
     }
   } catch (error) {
@@ -376,207 +253,6 @@ const applyWindowTheme = (theme: UiTheme) => {
   }
 };
 
-const sendAppMenuCommand = (command: AppMenuCommand) => {
-  mainWindow?.webContents.send(IPC_CHANNELS.appMenuCommand, command);
-};
-
-type AppMenuDefinition = {
-  id: AppMenuSection;
-  label: string;
-  submenu: MenuItemConstructorOptions[];
-};
-
-const buildAppMenuDefinitions = (
-  controller: AppController,
-  logDirPath: string,
-  theme: UiTheme,
-  applyUiTheme: (next: UiTheme) => void,
-): AppMenuDefinition[] => {
-  return [
-    {
-      id: "file",
-      label: "File",
-      submenu: [
-        {
-          label: "Home",
-          click: () => sendAppMenuCommand("go-home"),
-        },
-        {
-          label: "New Agent Run",
-          accelerator: "CmdOrCtrl+T",
-          click: () => sendAppMenuCommand("new-agent-run"),
-        },
-        {
-          label: "New Chat",
-          accelerator: "CmdOrCtrl+Shift+T",
-          click: () => sendAppMenuCommand("new-chat"),
-        },
-        { type: "separator" },
-        {
-          label: "Settings",
-          accelerator: "CmdOrCtrl+,",
-          click: () => sendAppMenuCommand("open-settings"),
-        },
-        { type: "separator" },
-        process.platform === "darwin"
-          ? ({ role: "close" } as const satisfies MenuItemConstructorOptions)
-          : ({ role: "quit" } as const satisfies MenuItemConstructorOptions),
-      ],
-    },
-    {
-      id: "edit",
-      label: "Edit",
-      submenu: [
-        { role: "undo" },
-        { role: "redo" },
-        { type: "separator" },
-        { role: "cut" },
-        { role: "copy" },
-        { role: "paste" },
-        { role: "selectAll" },
-      ],
-    },
-    {
-      id: "view",
-      label: "View",
-      submenu: [
-        {
-          label: "Dark",
-          type: "radio",
-          checked: theme === "dark",
-          click: () => {
-            applyUiTheme("dark");
-          },
-        },
-        {
-          label: "Light",
-          type: "radio",
-          checked: theme === "light",
-          click: () => {
-            applyUiTheme("light");
-          },
-        },
-        { type: "separator" },
-        {
-          label: "Toggle appearance",
-          accelerator: process.platform === "darwin" ? "Cmd+Shift+L" : "Ctrl+Shift+L",
-          click: () => sendAppMenuCommand("toggle-dark-mode"),
-        },
-        { type: "separator" },
-        { role: "reload" },
-        { role: "forceReload" },
-        { type: "separator" },
-        { role: "resetZoom" },
-        { role: "zoomIn" },
-        { role: "zoomOut" },
-        { type: "separator" },
-        { role: "togglefullscreen" },
-        { role: "toggleDevTools" },
-      ],
-    },
-    {
-      id: "window",
-      label: "Window",
-      submenu: [
-        { role: "minimize" },
-        { role: "zoom" },
-        ...(process.platform === "darwin"
-          ? ([{ type: "separator" }, { role: "front" }] as const satisfies readonly MenuItemConstructorOptions[])
-          : ([{ role: "close" }] as const satisfies readonly MenuItemConstructorOptions[])),
-      ],
-    },
-    {
-      id: "help",
-      label: "Help",
-      submenu: [
-        {
-          label: "Open Log Folder",
-          click: async () => {
-            await controller.openPathInFileManager(logDirPath);
-          },
-        },
-        {
-          label: "Email Support",
-          click: async () => {
-            await shell.openExternal("mailto:ai-support@r-kellner.de");
-          },
-        },
-        { type: "separator" },
-        {
-          label: "About BuildWarden",
-          click: async () => {
-            await dialog.showMessageBox({
-              type: "info",
-              title: "About BuildWarden",
-              message: "BuildWarden",
-              detail: `Version ${app.getVersion()}\nDesktop coding-agent workflows in Electron.`,
-              buttons: ["OK"],
-            });
-          },
-        },
-      ],
-    },
-  ];
-};
-
-const buildAppMenu = (
-  controller: AppController,
-  logDirPath: string,
-  theme: UiTheme,
-  applyUiTheme: (next: UiTheme) => void,
-): Menu => {
-  const template: MenuItemConstructorOptions[] = buildAppMenuDefinitions(controller, logDirPath, theme, applyUiTheme).map(
-    ({ label, submenu }) => ({
-    label,
-    submenu,
-  }),
-  );
-
-  if (process.platform === "darwin") {
-    template.unshift({
-      label: app.name,
-      submenu: [
-        { role: "about" },
-        { type: "separator" },
-        { role: "services" },
-        { type: "separator" },
-        { role: "hide" },
-        { role: "hideOthers" },
-        { role: "unhide" },
-        { type: "separator" },
-        { role: "quit" },
-      ],
-    });
-  }
-
-  return Menu.buildFromTemplate(template);
-};
-
-const popupAppMenuSection = (
-  controller: AppController,
-  logDirPath: string,
-  theme: UiTheme,
-  applyUiTheme: (next: UiTheme) => void,
-  sectionId: AppMenuSection,
-  x: number,
-  y: number,
-) => {
-  if (!mainWindow) {
-    return;
-  }
-
-  const section = buildAppMenuDefinitions(controller, logDirPath, theme, applyUiTheme).find((entry) => entry.id === sectionId);
-  if (!section) {
-    return;
-  }
-
-  Menu.buildFromTemplate(section.submenu).popup({
-    window: mainWindow,
-    x,
-    y,
-  });
-};
-
 /**
  * Last applied theme, cached outside the database so the window can be created
  * with the right chrome immediately at boot, before the database has loaded.
@@ -631,11 +307,16 @@ const bootstrap = async (): Promise<void> => {
   await db.init();
   const dbReadyAt = Date.now();
 
+  const secretStore = new ElectronSecretStore(join(dataDirPath, secretsFileName));
   const controller = new AppController(
     db,
-    new ElectronSecretStore(join(dataDirPath, secretsFileName)),
+    secretStore,
     logDirPath,
+    desktopPlatform,
+    hostTerminal,
+    hostEvents,
   );
+  const hostDirectory = new HostDirectoryService();
   const startupReconciliation = controller
     .migrateProjectBaseBranches()
     .then(() => controller.reconcileOrphanedActiveSessions())
@@ -655,22 +336,646 @@ const bootstrap = async (): Promise<void> => {
     await controller.setAppSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next));
     currentUiTheme = parseUiTheme(db.getSettings());
     writeCachedUiTheme(currentUiTheme);
-    Menu.setApplicationMenu(buildAppMenu(controller, logDirPath, currentUiTheme, (t) => void applyUiTheme(t)));
+    desktopPlatform.installApplicationMenu({
+      logDirPath,
+      theme: currentUiTheme,
+      onCommand: (command) => hostEvents.publish("appMenuCommand", command),
+      onThemeChange: (theme) => void applyUiTheme(theme),
+    });
     applyWindowTheme(currentUiTheme);
-    mainWindow?.webContents.send(IPC_CHANNELS.appSettingsChanged);
+    hostEvents.publish("appSettingsChanged", undefined);
   };
 
   const refreshAppMenu = () => {
     currentUiTheme = parseUiTheme(db.getSettings());
     writeCachedUiTheme(currentUiTheme);
-    Menu.setApplicationMenu(buildAppMenu(controller, logDirPath, currentUiTheme, (t) => void applyUiTheme(t)));
+    desktopPlatform.installApplicationMenu({
+      logDirPath,
+      theme: currentUiTheme,
+      onCommand: (command) => hostEvents.publish("appMenuCommand", command),
+      onThemeChange: (theme) => void applyUiTheme(theme),
+    });
     applyWindowTheme(currentUiTheme);
   };
   refreshAppMenu();
 
-  ipcMain.handle(IPC_CHANNELS.getSnapshot, async () => {
+  const remoteOperations = new RemoteOperationRegistry(({ method, requestId, error }) => {
+    logError("Remote operation failed.", { method, requestId, error });
+  }, db);
+  remoteOperations.register("getSnapshot", async () => {
     await startupReconciliation;
     return controller.getSnapshot();
+  }, validateNoRemoteArgs);
+  remoteOperations.register("refreshSnapshot", async () => {
+    await startupReconciliation;
+    return controller.refreshSnapshot();
+  }, validateNoRemoteArgs);
+
+  const validateSingleRemoteStringArg = (args: unknown[]): args is [string] =>
+    args.length === 1 && typeof args[0] === "string";
+  const validateRunWorkspaceFileRemoteArgs = (args: unknown[]): args is [RunWorkspaceFileInput] => {
+    const input = args[0];
+    return args.length === 1 && input != null && typeof input === "object" && !Array.isArray(input) &&
+      typeof (input as Record<string, unknown>).runId === "string" &&
+      typeof (input as Record<string, unknown>).path === "string";
+  };
+  const validateRemoteStringArray = (value: unknown): value is string[] =>
+    Array.isArray(value) && value.every((item) => typeof item === "string");
+  remoteOperations.register("getProjectBranches", (projectId) => controller.getProjectBranches(projectId), validateSingleRemoteStringArg);
+  remoteOperations.register("getProjectCurrentBranch", (projectId) => controller.getProjectCurrentBranch(projectId), validateSingleRemoteStringArg);
+  remoteOperations.register("getRunDetail", (runId) => controller.getRunDetail(runId), validateSingleRemoteStringArg);
+  remoteOperations.register("getRunWorktreeDiff", (runId) => controller.getRunWorktreeDiff(runId), validateSingleRemoteStringArg);
+  remoteOperations.register("getRunWorkspaceFile", (input) => controller.getRunWorkspaceFile(input), validateRunWorkspaceFileRemoteArgs);
+  remoteOperations.register("getProjectLoopUiReviewImage", (reviewId) => controller.getProjectLoopUiReviewImage(reviewId), validateSingleRemoteStringArg);
+  remoteOperations.register("getChatDetail", (chatId) => controller.getChatDetail(chatId), validateSingleRemoteStringArg);
+  remoteOperations.register("listChatsWithSteps", () => controller.listChatsWithSteps(), validateNoRemoteArgs);
+  remoteOperations.register("getBookmarksWithSteps", () => controller.getBookmarksWithSteps(), validateNoRemoteArgs);
+  remoteOperations.register("getChatBookmarksWithSteps", () => controller.getChatBookmarksWithSteps(), validateNoRemoteArgs);
+
+  const isRemoteRecord = (value: unknown): value is Record<string, unknown> =>
+    value != null && typeof value === "object" && !Array.isArray(value);
+  const hasRemoteStringFields = (value: unknown, fields: string[]): boolean =>
+    isRemoteRecord(value) && fields.every((field) => typeof value[field] === "string");
+  const optionalRemoteRecord = (value: unknown): boolean => value === undefined || isRemoteRecord(value);
+  const validateTwoRemoteStrings = defineRemoteArgsValidator<"commitRun">(
+    (args) => args.length === 2 && args.every((value) => typeof value === "string"),
+  );
+  const validateRunInput = defineRemoteArgsValidator<"createRun">(
+    (args) => args.length === 1 && hasRemoteStringFields(
+      args[0],
+      ["projectId", "providerAccountId", "modelId", "harnessType", "mode", "workspaceType", "prompt"],
+    ),
+  );
+  const validateContinueRunInput = defineRemoteArgsValidator<"continueRun">(
+    (args) => args.length === 1 && hasRemoteStringFields(
+      args[0],
+      ["sourceRunId", "providerAccountId", "modelId", "harnessType", "mode", "prompt"],
+    ),
+  );
+  const validateFollowUpRun = defineRemoteArgsValidator<"followUpRun">(
+    (args) => (args.length === 2 || args.length === 3) && typeof args[0] === "string" &&
+      typeof args[1] === "string" && optionalRemoteRecord(args[2]),
+  );
+  const validateFollowUpChat = defineRemoteArgsValidator<"followUpChat">(
+    (args) => (args.length === 2 || args.length === 3) && typeof args[0] === "string" &&
+      typeof args[1] === "string" && optionalRemoteRecord(args[2]),
+  );
+  const validateShellApproval = defineRemoteArgsValidator<"respondToShellApproval">((args) => {
+    // Persistent allowlist changes remain a trusted desktop-only operation.
+    const decisions = new Set(["allow-once", "allow-for-run", "deny"]);
+    return (args.length === 3 || args.length === 4) && typeof args[0] === "string" &&
+      typeof args[1] === "string" && typeof args[2] === "string" && decisions.has(args[2]) && optionalRemoteRecord(args[3]);
+  });
+  const validateUserInput = defineRemoteArgsValidator<"respondToRunUserInput">((args) =>
+    args.length === 3 && typeof args[0] === "string" && typeof args[1] === "string" && isRemoteRecord(args[2]) &&
+    Object.values(args[2]).every((answer) => typeof answer === "string" ||
+      (Array.isArray(answer) && answer.every((item) => typeof item === "string"))));
+  const validateChatInput = defineRemoteArgsValidator<"createChat">(
+    (args) => args.length === 1 && hasRemoteStringFields(args[0], ["providerAccountId", "modelId", "prompt"]),
+  );
+  const validateOptionalSecondString = defineRemoteArgsValidator<"publishRunBranch">(
+    (args) => (args.length === 1 || args.length === 2) && typeof args[0] === "string" &&
+      (args[1] === undefined || typeof args[1] === "string"),
+  );
+  const validatePullRequest = defineRemoteArgsValidator<"createRunPullRequest">(
+    (args) => args.length >= 3 && args.length <= 5 && args.slice(0, 3).every((value) => typeof value === "string") &&
+      args.slice(3).every((value) => value === undefined || typeof value === "string"),
+  );
+  const validateProjectInput = defineRemoteArgsValidator<"addProject">(
+    (args) => args.length === 1 && hasRemoteStringFields(args[0], ["repoPath"]) &&
+      (!isRemoteRecord(args[0]) || args[0].name === undefined || typeof args[0].name === "string"),
+  );
+  const validateHostDirectoryInput = defineRemoteArgsValidator<"listHostDirectories">(
+    (args) => args.length === 0 || (args.length === 1 && (args[0] === undefined ||
+      (isRemoteRecord(args[0]) && (args[0].path === undefined || typeof args[0].path === "string")))),
+  );
+  const validateProjectAndBranchInput = <Method extends
+    "createProjectBranch" | "renameProjectBranch" | "deleteProjectBranch" | "pushProjectBranch" | "getProjectBranchDeleteImpact">(
+    fields: string[],
+  ) => defineRemoteArgsValidator<Method>(
+    (args) => args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], fields),
+  );
+  const validateTerminalStart = defineRemoteArgsValidator<"runTerminalStart">(
+    (args) => args.length === 1 && hasRemoteStringFields(args[0], ["sessionId", "cwd"]),
+  );
+  const validateTerminalWrite = defineRemoteArgsValidator<"runTerminalWrite">(
+    (args) => args.length === 1 && hasRemoteStringFields(args[0], ["sessionId", "data"]) &&
+      isRemoteRecord(args[0]) && String(args[0].data).length <= 65_536,
+  );
+  const validateTerminalResize = defineRemoteArgsValidator<"runTerminalResize">(
+    (args) => args.length === 1 && isRemoteRecord(args[0]) && typeof args[0].sessionId === "string" &&
+      Number.isInteger(args[0].cols) && Number.isInteger(args[0].rows) && Number(args[0].cols) >= 10 &&
+      Number(args[0].cols) <= 500 && Number(args[0].rows) >= 2 && Number(args[0].rows) <= 300,
+  );
+  const validateProjectTaskCreate = defineRemoteArgsValidator<"createProjectTask">(
+    (args) => args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["title", "prompt"]),
+  );
+  const validateProjectTaskUpdate = defineRemoteArgsValidator<"updateProjectTask">((args) => {
+    if (args.length !== 2 || typeof args[0] !== "string" || !isRemoteRecord(args[1])) return false;
+    const input = args[1];
+    const statuses = new Set(["open", "in_progress", "in_review", "done"]);
+    return (input.title === undefined || typeof input.title === "string") &&
+      (input.prompt === undefined || typeof input.prompt === "string") &&
+      (input.status === undefined || (typeof input.status === "string" && statuses.has(input.status)));
+  });
+  const validateProjectTaskPrompt = defineRemoteArgsValidator<"generateProjectTaskRunPrompt">(
+    (args) => args.length === 1 && hasRemoteStringFields(args[0], ["projectId", "title", "notes", "modelId"]),
+  );
+  const validateProjectInsight = defineRemoteArgsValidator<"generateProjectInsight">((args) => {
+    if (args.length !== 1 || !hasRemoteStringFields(args[0], ["projectId", "kind"])) return false;
+    const input = args[0] as Record<string, unknown>;
+    const kinds = new Set([
+      "architecture-graph", "dependency-gravity", "repo-historian", "codebase-mood", "curiosity-mode", "narrative-branching",
+    ]);
+    return kinds.has(String(input.kind)) && (input.modelId === undefined || typeof input.modelId === "string");
+  });
+  const validateProjectLabRun = defineRemoteArgsValidator<"runProjectLab">((args) => {
+    if (args.length !== 1 || !hasRemoteStringFields(args[0], ["projectId"])) return false;
+    const input = args[0] as Record<string, unknown>;
+    return (input.mode === undefined || ["new-feature", "bugfix", "refactoring", "rfc-only"].includes(String(input.mode))) &&
+      (input.origin === undefined || ["manual", "idle", "task"].includes(String(input.origin))) &&
+      ["baseBranch", "topic", "implementationModelId", "reviewModelId"].every((field) =>
+        input[field] === undefined || input[field] === null || typeof input[field] === "string");
+  });
+  const validateProjectLoopCreate = defineRemoteArgsValidator<"createProjectLoop">((args) => {
+    if (args.length !== 1 || !hasRemoteStringFields(
+      args[0], ["projectId", "name", "prompt", "runnerModelId", "mergePolicy", "uiChangePolicy"],
+    )) return false;
+    const input = args[0] as Record<string, unknown>;
+    return ["auto-merge", "wait-for-approval"].includes(String(input.mergePolicy)) &&
+      ["auto", "manual-approval", "ai-review"].includes(String(input.uiChangePolicy)) &&
+      (input.prReviewPolicy === undefined || ["none", "ai-review"].includes(String(input.prReviewPolicy))) &&
+      ["reviewModelId", "uiReviewInstructions", "baseBranch"].every((field) =>
+        input[field] === undefined || input[field] === null || typeof input[field] === "string");
+  });
+  const validateLoopUiReview = defineRemoteArgsValidator<"respondToProjectLoopUiReview">((args) =>
+    args.length === 2 && typeof args[0] === "string" && isRemoteRecord(args[1]) &&
+    (args[1].decision === "approve" || args[1].decision === "request-changes") &&
+    (args[1].feedback === undefined || typeof args[1].feedback === "string"));
+  const validateForgeRequestDetails = defineRemoteArgsValidator<"getProjectForgeRequestDetails">(
+    (args) => args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["prUrl"]),
+  );
+  const validateFetchForgeDiff = defineRemoteArgsValidator<"fetchProjectPrMrDiff">((args) => {
+    if (args.length !== 2 || typeof args[0] !== "string" || !hasRemoteStringFields(args[1], ["prUrl"]) ||
+      !isRemoteRecord(args[1])) return false;
+    const input = args[1];
+    return ["baseBranch", "commitSha"].every((field) => input[field] === undefined || typeof input[field] === "string");
+  });
+  const validateAnalyzeForgeDiff = defineRemoteArgsValidator<"analyzeProjectPrMrDiff">((args) =>
+    args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["prUrl", "diff"]) &&
+    isRemoteRecord(args[1]) && (args[1].modelId === undefined || typeof args[1].modelId === "string"));
+  const validateListForgeRequests = defineRemoteArgsValidator<"listProjectForgeRequests">(
+    (args) => (args.length === 1 || args.length === 2) && typeof args[0] === "string" &&
+      (args[1] === undefined || (isRemoteRecord(args[1]) &&
+        (args[1].state === undefined || ["open", "closed", "merged", "all"].includes(String(args[1].state))))),
+  );
+  const validatePostForgeReview = defineRemoteArgsValidator<"postProjectPrMrReview">((args) =>
+    args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["prUrl", "body", "event"]) &&
+    isRemoteRecord(args[1]) && (args[1].event === "comment" || args[1].event === "approve"));
+  const validateSubmitForgeComments = defineRemoteArgsValidator<"submitProjectPrMrComments">((args) => {
+    if (args.length !== 2 || typeof args[0] !== "string" || !hasRemoteStringFields(args[1], ["prUrl"]) ||
+      !isRemoteRecord(args[1]) || !Array.isArray(args[1].comments)) return false;
+    const input = args[1];
+    const comments = input.comments;
+    const validLineNumber = (value: unknown) => value === null || Number.isInteger(value);
+    return (input.body === undefined || typeof input.body === "string") &&
+      (input.mode === undefined || input.mode === "review" || input.mode === "single") &&
+      Array.isArray(comments) && comments.length <= 500 && comments.every((comment: unknown) =>
+        hasRemoteStringFields(comment, ["oldPath", "newPath", "side", "changeType", "body"]) && isRemoteRecord(comment) &&
+        (comment.side === "old" || comment.side === "new") &&
+        ["insert", "delete", "normal"].includes(String(comment.changeType)) &&
+        validLineNumber(comment.oldLineNumber) && validLineNumber(comment.newLineNumber));
+  });
+  const validateResolveForgeThread = defineRemoteArgsValidator<"resolveProjectPrMrReviewThread">((args) =>
+    args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["prUrl", "threadId"]) &&
+    isRemoteRecord(args[1]) && typeof args[1].resolved === "boolean");
+  const validateReplyForgeThread = defineRemoteArgsValidator<"replyProjectPrMrReviewThread">((args) =>
+    args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["prUrl", "threadId", "body"]) &&
+    isRemoteRecord(args[1]) && (args[1].replyToCommentId === undefined || args[1].replyToCommentId === null ||
+      typeof args[1].replyToCommentId === "string"));
+  const validateStringArrayArg = defineRemoteArgsValidator<"reorderProjects">(
+    (args) => args.length === 1 && validateRemoteStringArray(args[0]),
+  );
+  const validateProviderAccount = defineRemoteArgsValidator<"addProviderAccount">(
+    (args) => args.length === 1 && hasRemoteStringFields(args[0], ["providerType", "label", "apiKey"]) &&
+      isRemoteRecord(args[0]) && ["ai-sdk", "azure-legacy", "codex-cli", "claude-code", "cursor-agent"].includes(String(args[0].providerType)) &&
+      (args[0].apiBaseUrl === undefined || args[0].apiBaseUrl === null || typeof args[0].apiBaseUrl === "string") &&
+      (args[0].config === undefined || isRemoteRecord(args[0].config)),
+  );
+  const validateModel = defineRemoteArgsValidator<"addModel">(
+    (args) => args.length === 1 && hasRemoteStringFields(args[0], ["providerAccountId", "modelId", "displayName"]) &&
+      isRemoteRecord(args[0]) &&
+      (args[0].baseUrlOverride === undefined || args[0].baseUrlOverride === null || typeof args[0].baseUrlOverride === "string") &&
+      (args[0].config === undefined || isRemoteRecord(args[0].config)) &&
+      (args[0].capabilities === undefined || isRemoteRecord(args[0].capabilities)) &&
+      (args[0].enabled === undefined || typeof args[0].enabled === "boolean"),
+  );
+  const validateAvailableProviderModels = defineRemoteArgsValidator<"listAvailableProviderModels">(
+    (args) => args.length === 1 && hasRemoteStringFields(args[0], ["providerAccountId"]),
+  );
+  const remoteAppSettingKeys = new Set<string>(Object.values(APP_SETTING_KEYS).filter((key) =>
+    key !== APP_SETTING_KEYS.remoteAccessEnabled && key !== APP_SETTING_KEYS.remoteAccessTailscaleEnabled));
+  const validateAppSetting = defineRemoteArgsValidator<"setAppSetting">(
+    (args) => args.length === 2 && typeof args[0] === "string" && remoteAppSettingKeys.has(args[0]) &&
+      typeof args[1] === "string" && args[1].length <= 1_000_000,
+  );
+  const validateNetworkProxySettings = defineRemoteArgsValidator<"saveNetworkProxySettings">((args) => {
+    if (args.length !== 1 || !isRemoteRecord(args[0])) return false;
+    const input = args[0];
+    return typeof input.enabled === "boolean" && (input.protocol === "http" || input.protocol === "https") &&
+      ["host", "port", "username"].every((field) => typeof input[field] === "string") &&
+      (input.password === undefined || typeof input.password === "string") &&
+      (input.clearSavedPassword === undefined || typeof input.clearSavedPassword === "boolean");
+  });
+  const validateForgeMonitorSettings = defineRemoteArgsValidator<"saveProjectForgePrMonitorSettings">((args) =>
+    args.length === 2 && typeof args[0] === "string" && isRemoteRecord(args[1]) &&
+    Number.isFinite(args[1].intervalMinutes) && Number(args[1].intervalMinutes) >= 0);
+
+  remoteOperations.register("getRunPublishOptions", (runId) => controller.getRunPublishOptions(runId), validateSingleRemoteStringArg);
+  remoteOperations.register("getProjectBranchOverview", (projectId) => controller.getProjectBranchOverview(projectId), validateSingleRemoteStringArg);
+  remoteOperations.register("getProjectForgeAuthStatus", (projectId) => controller.getProjectForgeAuthStatus(projectId), validateSingleRemoteStringArg);
+  remoteOperations.register("getNetworkProxySettings", () => controller.getNetworkProxySettings(), validateNoRemoteArgs, "admin");
+  remoteOperations.register("checkProjectFolderGitStatus", (repoPath) => controller.checkProjectFolderGitStatus(repoPath), validateSingleRemoteStringArg, "admin");
+  remoteOperations.register("getProjectLoopDetail", (loopId) => controller.getProjectLoopDetail(loopId), validateSingleRemoteStringArg, "admin");
+  remoteOperations.register("getProjectLoopAvailability", (projectId) => controller.getProjectLoopAvailability(projectId), validateSingleRemoteStringArg, "admin");
+  remoteOperations.register("getProjectForgePrMonitorSettings", (projectId) => controller.getProjectForgePrMonitorSettings(projectId), validateSingleRemoteStringArg, "admin");
+  remoteOperations.register("listProjectForgeRequests", (projectId, input) => controller.listProjectForgeRequests(projectId, input), validateListForgeRequests, "git:write");
+  remoteOperations.register(
+    "getProjectForgeRequestDetails",
+    (projectId, input) => controller.getProjectForgeRequestDetails(projectId, input),
+    validateForgeRequestDetails,
+    "git:write",
+  );
+  remoteOperations.register(
+    "fetchProjectPrMrDiff",
+    (projectId, input) => controller.fetchProjectPrMrDiff(projectId, input),
+    validateFetchForgeDiff,
+    "git:write",
+    true,
+  );
+  remoteOperations.register("listAvailableProviderModels", (input) => controller.listAvailableProviderModels(input), validateAvailableProviderModels, "admin");
+  remoteOperations.register("getAppPaths", () => controller.getAppPaths(), validateNoRemoteArgs, "admin");
+  remoteOperations.register("getDetectedCodexInstallation", () => controller.getDetectedCodexInstallation(), validateNoRemoteArgs, "admin");
+  remoteOperations.register("getDetectedClaudeInstallation", () => controller.getDetectedClaudeInstallation(), validateNoRemoteArgs, "admin");
+  remoteOperations.register("getDetectedCursorInstallation", () => controller.getDetectedCursorInstallation(), validateNoRemoteArgs, "admin");
+  remoteOperations.register("listIntegratedSkills", () => controller.listIntegratedSkills(), validateNoRemoteArgs, "admin");
+  remoteOperations.register("getIntegratedSkillContent", (skillId) => controller.getIntegratedSkillContent(skillId), validateSingleRemoteStringArg, "admin");
+  remoteOperations.register("checkProjectGitConversion", (projectId) => controller.checkProjectGitConversion(projectId), validateSingleRemoteStringArg);
+  remoteOperations.register(
+    "getProjectBranchDeleteImpact",
+    (projectId, input) => controller.getProjectBranchDeleteImpact(projectId, input),
+    validateProjectAndBranchInput<"getProjectBranchDeleteImpact">(["branchName"]),
+  );
+  remoteOperations.register("listHostDirectories", (input) => hostDirectory.list(input), validateHostDirectoryInput, "admin");
+
+  remoteOperations.register("createRun", (input) => controller.createRun(input), validateRunInput, "run:operate", true);
+  remoteOperations.register("continueRun", (input) => controller.continueRun(input), validateContinueRunInput, "run:operate", true);
+  remoteOperations.register("followUpRun", (runId, prompt, options) => controller.followUpRun(runId, prompt, options), validateFollowUpRun, "run:operate", true);
+  remoteOperations.register("cancelRun", (runId) => controller.cancelRun(runId), validateSingleRemoteStringArg, "run:operate", true);
+  remoteOperations.register("cancelRunShell", (runId, toolCallId) => controller.cancelRunShell(runId, toolCallId), validateTwoRemoteStrings, "run:operate", true);
+  remoteOperations.register("resumeRunFromCheckpoint", (runId) => controller.resumeRunFromCheckpoint(runId), validateSingleRemoteStringArg, "run:operate", true);
+  remoteOperations.register("recoverInterruptedRun", (runId) => controller.recoverInterruptedRun(runId), validateSingleRemoteStringArg, "run:operate", true);
+  remoteOperations.register("undoRunToLastPrompt", (runId) => controller.undoRunToLastPrompt(runId), validateSingleRemoteStringArg, "run:operate", true);
+  remoteOperations.register("deleteRun", (runId) => controller.deleteRun(runId), validateSingleRemoteStringArg, "run:operate", true);
+  remoteOperations.register(
+    "setRunListVisibility",
+    (runId, visibility) => controller.setRunListVisibility(runId, visibility),
+    defineRemoteArgsValidator<"setRunListVisibility">((args) =>
+      args.length === 2 && typeof args[0] === "string" && (args[1] === "default" || args[1] === "for-later")),
+    "run:operate",
+    true,
+  );
+  for (const method of ["addBookmark", "removeBookmark", "removeBookmarkById"] as const) {
+    remoteOperations.register(method, (id) => controller[method](id), validateSingleRemoteStringArg, "run:operate", true);
+  }
+  remoteOperations.register(
+    "respondToShellApproval",
+    (runId, requestId, decision, options) => controller.respondToShellApproval(runId, requestId, decision, options),
+    validateShellApproval,
+    "approval:respond",
+    true,
+  );
+  remoteOperations.register(
+    "respondToRunUserInput",
+    (runId, requestId, answers) => controller.respondToRunUserInput(runId, requestId, answers),
+    validateUserInput,
+    "approval:respond",
+    true,
+  );
+  remoteOperations.register("createChat", (input) => controller.createChat(input), validateChatInput, "chat:operate", true);
+  remoteOperations.register("followUpChat", (chatId, prompt, options) => controller.followUpChat(chatId, prompt, options), validateFollowUpChat, "chat:operate", true);
+  remoteOperations.register("cancelChat", (chatId) => controller.cancelChat(chatId), validateSingleRemoteStringArg, "chat:operate", true);
+  remoteOperations.register("deleteChat", (chatId) => controller.deleteChat(chatId), validateSingleRemoteStringArg, "chat:operate", true);
+  for (const method of ["addChatBookmark", "removeChatBookmark", "removeChatBookmarkById"] as const) {
+    remoteOperations.register(method, (id) => controller[method](id), validateSingleRemoteStringArg, "chat:operate", true);
+  }
+
+  remoteOperations.register("createProjectTask", (projectId, input) => controller.createProjectTask(projectId, input), validateProjectTaskCreate, "admin", true);
+  remoteOperations.register("updateProjectTask", (taskId, input) => controller.updateProjectTask(taskId, input), validateProjectTaskUpdate, "admin", true);
+  remoteOperations.register("deleteProjectTask", (taskId) => controller.deleteProjectTask(taskId), validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register("generateProjectTaskRunPrompt", (input) => controller.generateProjectTaskRunPrompt(input), validateProjectTaskPrompt, "admin", true);
+  remoteOperations.register("generateProjectInsight", (input) => controller.generateProjectInsight(input), validateProjectInsight, "admin", true);
+  remoteOperations.register("runProjectLab", (input) => controller.runProjectLab(input), validateProjectLabRun, "admin", true);
+  remoteOperations.register("deleteProjectLabThread", (threadId) => controller.deleteProjectLabThread(threadId), validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register("createProjectLoop", (input) => controller.createProjectLoop(input), validateProjectLoopCreate, "admin", true);
+  remoteOperations.register("cancelProjectLoop", (loopId) => controller.cancelProjectLoop(loopId), validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register("resumeProjectLoop", (loopId) => controller.resumeProjectLoop(loopId), validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register("deleteProjectLoop", (loopId) => controller.deleteProjectLoop(loopId), validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register(
+    "respondToProjectLoopUiReview",
+    (reviewId, input) => controller.respondToProjectLoopUiReview(reviewId, input),
+    validateLoopUiReview,
+    "admin",
+    true,
+  );
+  remoteOperations.register(
+    "analyzeProjectPrMrDiff",
+    (projectId, input) => controller.analyzeProjectPrMrDiff(projectId, input),
+    validateAnalyzeForgeDiff,
+    "git:write",
+    true,
+  );
+  remoteOperations.register(
+    "postProjectPrMrReview",
+    (projectId, input) => controller.postProjectPrMrReview(projectId, input),
+    validatePostForgeReview,
+    "git:write",
+    true,
+  );
+  remoteOperations.register(
+    "submitProjectPrMrComments",
+    (projectId, input) => controller.submitProjectPrMrComments(projectId, input),
+    validateSubmitForgeComments,
+    "git:write",
+    true,
+  );
+  remoteOperations.register(
+    "replyProjectPrMrReviewThread",
+    (projectId, input) => controller.replyProjectPrMrReviewThread(projectId, input),
+    validateReplyForgeThread,
+    "git:write",
+    true,
+  );
+  remoteOperations.register(
+    "resolveProjectPrMrReviewThread",
+    (projectId, input) => controller.resolveProjectPrMrReviewThread(projectId, input),
+    validateResolveForgeThread,
+    "git:write",
+    true,
+  );
+
+  remoteOperations.register("commitRun", (runId, message) => controller.commitRun(runId, message), validateTwoRemoteStrings, "git:write", true);
+  remoteOperations.register("createRunLocalBranch", (runId, branchName) => controller.createRunLocalBranch(runId, branchName), validateTwoRemoteStrings, "git:write", true);
+  remoteOperations.register("publishRunBranch", (runId, branchName) => controller.publishRunBranch(runId, branchName), validateOptionalSecondString, "git:write", true);
+  remoteOperations.register(
+    "createRunPullRequest",
+    (runId, targetBranch, title, sourceBranchName, description) =>
+      controller.createRunPullRequest(runId, targetBranch, title, sourceBranchName, description),
+    validatePullRequest,
+    "git:write",
+    true,
+  );
+  remoteOperations.register("checkoutProjectBranch", (projectId, branchName) => controller.checkoutProjectBranch(projectId, branchName), validateTwoRemoteStrings, "git:write", true);
+  remoteOperations.register("fetchProjectBranches", (projectId) => controller.fetchProjectBranches(projectId), validateSingleRemoteStringArg, "git:write", true);
+  remoteOperations.register(
+    "createProjectBranch",
+    (projectId, input) => controller.createProjectBranch(projectId, input),
+    validateProjectAndBranchInput<"createProjectBranch">(["branchName", "startPoint"]),
+    "git:write",
+    true,
+  );
+  remoteOperations.register(
+    "renameProjectBranch",
+    (projectId, input) => controller.renameProjectBranch(projectId, input),
+    validateProjectAndBranchInput<"renameProjectBranch">(["oldName", "newName"]),
+    "git:write",
+    true,
+  );
+  remoteOperations.register(
+    "deleteProjectBranch",
+    (projectId, input) => controller.deleteProjectBranch(projectId, input),
+    validateProjectAndBranchInput<"deleteProjectBranch">(["branchName"]),
+    "git:write",
+    true,
+  );
+  remoteOperations.register("pullProjectBranch", (projectId) => controller.pullProjectBranch(projectId), validateSingleRemoteStringArg, "git:write", true);
+  remoteOperations.register(
+    "pushProjectBranch",
+    (projectId, input) => controller.pushProjectBranch(projectId, input),
+    validateProjectAndBranchInput<"pushProjectBranch">(["branchName"]),
+    "git:write",
+    true,
+  );
+  remoteOperations.register("convertProjectToGit", (projectId) => controller.convertProjectToGit(projectId), validateSingleRemoteStringArg, "git:write", true);
+  remoteOperations.register(
+    "updateProjectBaseBranch",
+    (projectId, branchName) => controller.updateProjectBaseBranch(projectId, branchName),
+    validateTwoRemoteStrings,
+    "git:write",
+    true,
+  );
+  remoteOperations.register("addProject", (input) => controller.addProject(input), validateProjectInput, "admin", true);
+  remoteOperations.register("reorderProjects", (projectIds) => controller.reorderProjects(projectIds), validateStringArrayArg, "admin", true);
+  remoteOperations.register("addProviderAccount", (input) => controller.addProviderAccount(input), validateProviderAccount, "admin", true);
+  remoteOperations.register("addModel", (input) => controller.addModel(input), validateModel, "admin", true);
+  remoteOperations.register("deleteProject", async (projectId) => {
+    await controller.deleteProject(projectId);
+    await refreshProjectForgePrMonitors(controller);
+  }, validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register("deleteProviderAccount", (providerAccountId) => controller.deleteProviderAccount(providerAccountId), validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register("deleteModel", (modelId) => controller.deleteModel(modelId), validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register("setAppSetting", async (key, value) => {
+    await controller.setAppSetting(key, value);
+    refreshAppMenu();
+  }, validateAppSetting, "admin", true);
+  remoteOperations.register("saveNetworkProxySettings", (input) => controller.saveNetworkProxySettings(input), validateNetworkProxySettings, "admin", true);
+  remoteOperations.register("saveProjectForgeAuthToken", async (projectId, token) => {
+    const result = await controller.saveProjectForgeAuthToken(projectId, token);
+    await refreshProjectForgePrMonitors(controller);
+    return result;
+  }, validateTwoRemoteStrings, "admin", true);
+  remoteOperations.register("deleteProjectForgeAuthToken", async (projectId) => {
+    const result = await controller.deleteProjectForgeAuthToken(projectId);
+    await refreshProjectForgePrMonitors(controller);
+    return result;
+  }, validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register("saveProjectForgePrMonitorSettings", async (projectId, input) => {
+    const result = await controller.saveProjectForgePrMonitorSettings(projectId, input);
+    await refreshProjectForgePrMonitors(controller);
+    return result;
+  }, validateForgeMonitorSettings, "admin", true);
+
+  remoteOperations.register("runTerminalStart", async (input) => {
+    const prefix = "buildwarden-run-terminal:";
+    const runId = input.sessionId.startsWith(prefix) ? input.sessionId.slice(prefix.length) : "";
+    if (!runId) return { ok: false, error: "Invalid remote terminal session." };
+    const detail = await controller.getRunDetail(runId);
+    return hostTerminal.start({ ...input, cwd: detail.workspacePath ?? "" });
+  }, validateTerminalStart, "terminal:operate", true);
+  remoteOperations.register("runTerminalWrite", async (input) => hostTerminal.write(input), validateTerminalWrite, "terminal:operate", true);
+  remoteOperations.register("runTerminalResize", async (input) => hostTerminal.resize(input), validateTerminalResize, "terminal:operate", true);
+  remoteOperations.register("runTerminalKill", async (sessionId) => hostTerminal.kill(sessionId), validateSingleRemoteStringArg, "terminal:operate", true);
+
+  const remoteEventSource: RemoteHostEventSource = {
+    subscribe(listener) {
+      const disposers = [
+        hostEvents.subscribe("run", (payload) => listener({ event: "run", payload })),
+        hostEvents.subscribe("chat", (payload) => listener({ event: "chat", payload })),
+        hostEvents.subscribe("warning", (payload) => listener({ event: "warning", payload })),
+        hostEvents.subscribe("loop", (payload) => listener({ event: "loop", payload })),
+        hostEvents.subscribe("task", (payload) => listener({ event: "task", payload })),
+        hostTerminal.onData((payload) => listener({ event: "terminal-data", payload })),
+        hostTerminal.onExit((payload) => listener({ event: "terminal-exit", payload })),
+      ];
+      return () => disposers.forEach((dispose) => dispose());
+    },
+  };
+
+  const remoteAccessAuthSecretKey = "app:remote-access-auth-key:v1";
+  const tailscaleServe = new TailscaleServeService({
+    read: (key) => db.getSettings()[key],
+    write: (key, value) => db.setSetting(key, value),
+  });
+  let remoteAuthService: RemoteAuthService | null = null;
+  let remoteAuthServiceInitialization: Promise<RemoteAuthService> | null = null;
+  const ensureRemoteAuthService = (): Promise<RemoteAuthService> => {
+    if (remoteAuthService) {
+      return Promise.resolve(remoteAuthService);
+    }
+    if (remoteAuthServiceInitialization) {
+      return remoteAuthServiceInitialization;
+    }
+
+    const initialization = (async () => {
+      let encodedKey = await secretStore.readSecret(remoteAccessAuthSecretKey);
+      let credentialKey = encodedKey ? Buffer.from(encodedKey, "base64") : Buffer.alloc(0);
+      if (credentialKey.byteLength < 32) {
+        credentialKey = randomBytes(32);
+        encodedKey = credentialKey.toString("base64");
+        await secretStore.saveSecret(remoteAccessAuthSecretKey, encodedKey);
+      }
+      remoteAuthService = new RemoteAuthService({ store: db, credentialKey });
+      return remoteAuthService;
+    })();
+    remoteAuthServiceInitialization = initialization;
+    void initialization.then(
+      () => {
+        if (remoteAuthServiceInitialization === initialization) remoteAuthServiceInitialization = null;
+      },
+      () => {
+        if (remoteAuthServiceInitialization === initialization) remoteAuthServiceInitialization = null;
+      },
+    );
+    return initialization;
+  };
+
+  let remoteAccessServer: RemoteAccessServer | null = null;
+  let remoteAccessSync = Promise.resolve();
+  const syncRemoteAccessServer = (): Promise<void> => {
+    remoteAccessSync = remoteAccessSync.catch(() => undefined).then(async () => {
+      const enabled = parseRemoteAccessEnabledSetting(db.getSettings()[APP_SETTING_KEYS.remoteAccessEnabled]);
+      if (!enabled) {
+        const tailscaleStatus = await tailscaleServe.disable();
+        if (tailscaleStatus.state === "error") {
+          const loopbackServerBound = Boolean(remoteAccessServer?.getInfo());
+          logWarn(loopbackServerBound
+            ? "BuildWarden could not remove its Tailscale Serve exposure; the authenticated loopback server will remain bound to protect its port."
+            : "BuildWarden could not remove its Tailscale Serve exposure; ownership was retained so cleanup can be retried.", {
+            message: tailscaleStatus.message,
+          });
+          return;
+        }
+        if (remoteAccessServer?.getInfo()) {
+          try {
+            await remoteAccessServer.stop();
+            remoteAccessServer = null;
+            logInfo("Remote access server stopped.");
+          } catch (error) {
+            logWarn("Remote access server did not stop cleanly; standalone Electron mode remains available.", { error });
+          }
+        }
+        return;
+      }
+      if (!remoteAccessServer?.getInfo()) {
+        try {
+          remoteAccessServer = new RemoteAccessServer({
+            appVersion: app.getVersion(),
+            operations: remoteOperations,
+            auth: await ensureRemoteAuthService(),
+            staticRoot: join(app.getAppPath(), "out", "web"),
+            events: remoteEventSource,
+            trustedProxyHosts: () => {
+              const host = tailscaleServe.getManagedHost();
+              return host ? [host] : [];
+            },
+            onServerError: (error) => logError("Remote access server request failed.", { error }),
+          });
+          const info = await remoteAccessServer.start();
+          logInfo("Remote access server started in loopback-only mode.", {
+            baseUrl: info.baseUrl,
+            authentication: "session",
+          });
+        } catch (error) {
+          const tailscaleStatus = await tailscaleServe.disable();
+          if (tailscaleStatus.state === "error") {
+            logWarn("Remote access server startup failed and its previous Tailscale Serve exposure could not be removed.", {
+              message: tailscaleStatus.message,
+            });
+          }
+          remoteAccessServer = null;
+          // Remote access is optional; a port conflict must never prevent the desktop app from starting.
+          logWarn("Remote access server could not start; standalone Electron mode remains available.", { error });
+        }
+      }
+      const serverInfo = remoteAccessServer?.getInfo();
+      if (!serverInfo) return;
+      const tailscaleDesired = db.getSettings()[APP_SETTING_KEYS.remoteAccessTailscaleEnabled] === "true";
+      const tailscaleStatus = tailscaleDesired
+        ? await tailscaleServe.enable(serverInfo.port)
+        : await tailscaleServe.disable();
+      if (tailscaleStatus.state === "managed") {
+        logInfo("BuildWarden Tailscale Serve exposure verified.", { endpoint: tailscaleStatus.endpoint });
+      } else if (tailscaleDesired && tailscaleStatus.state !== "available") {
+        logWarn("BuildWarden Tailscale Serve exposure is unavailable.", {
+          state: tailscaleStatus.state,
+          message: tailscaleStatus.message,
+        });
+      }
+    });
+    return remoteAccessSync;
+  };
+  await syncRemoteAccessServer();
+
+  ipcMain.handle(IPC_CHANNELS.getSnapshot, () => remoteOperations.invoke("getSnapshot", []));
+  ipcMain.handle(IPC_CHANNELS.getRemoteAccessStatus, async () => {
+    const info = remoteAccessServer?.getInfo() ?? null;
+    return {
+      enabled: parseRemoteAccessEnabledSetting(db.getSettings()[APP_SETTING_KEYS.remoteAccessEnabled]),
+      loopbackUrl: info?.baseUrl ?? null,
+      tailscale: await tailscaleServe.getStatus(info?.port ?? null),
+    };
+  });
+  ipcMain.handle(IPC_CHANNELS.listHostDirectories, (_, input) => hostDirectory.list(input));
+  ipcMain.handle(IPC_CHANNELS.createRemoteAccessPairing, async (_, input?: RemoteAccessPairingInput) => {
+    const enabled = parseRemoteAccessEnabledSetting(db.getSettings()[APP_SETTING_KEYS.remoteAccessEnabled]);
+    if (!enabled) {
+      throw new Error("Enable remote access before creating a pairing code.");
+    }
+    await syncRemoteAccessServer();
+    if (!remoteAccessServer?.getInfo()) {
+      throw new Error("Remote access could not be started.");
+    }
+    const grant = (await ensureRemoteAuthService()).createPairingGrant(input);
+    const info = remoteAccessServer.getInfo();
+    const tailscaleStatus = await tailscaleServe.getStatus(info?.port ?? null);
+    const endpoint = tailscaleStatus.verified ? tailscaleStatus.endpoint : info?.baseUrl;
+    return endpoint
+      ? { ...grant, pairingUrl: `${endpoint.replace(/\/$/, "")}/#pair=${encodeURIComponent(grant.code)}` }
+      : grant;
+  });
+  ipcMain.handle(IPC_CHANNELS.listRemoteAccessSessions, () => db.listRemoteAccessSessions());
+  ipcMain.handle(IPC_CHANNELS.revokeRemoteAccessSession, async (_, sessionId: string) => {
+    (await ensureRemoteAuthService()).revokeSession(sessionId);
   });
   ipcMain.handle(IPC_CHANNELS.getNetworkProxySettings, () => controller.getNetworkProxySettings());
   ipcMain.handle(IPC_CHANNELS.selectProject, (_, projectId: string) => controller.selectProject(projectId));
@@ -696,10 +1001,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.deleteProjectBranch, (_, projectId: string, input) => controller.deleteProjectBranch(projectId, input));
   ipcMain.handle(IPC_CHANNELS.pullProjectBranch, (_, projectId: string) => controller.pullProjectBranch(projectId));
   ipcMain.handle(IPC_CHANNELS.pushProjectBranch, (_, projectId: string, input) => controller.pushProjectBranch(projectId, input));
-  ipcMain.handle(IPC_CHANNELS.refreshSnapshot, async () => {
-    await startupReconciliation;
-    return controller.refreshSnapshot();
-  });
+  ipcMain.handle(IPC_CHANNELS.refreshSnapshot, () => remoteOperations.invoke("refreshSnapshot", []));
   ipcMain.handle(IPC_CHANNELS.getAppPaths, () => controller.getAppPaths());
   ipcMain.handle(IPC_CHANNELS.getDetectedCodexInstallation, () => controller.getDetectedCodexInstallation());
   ipcMain.handle(IPC_CHANNELS.getDetectedClaudeInstallation, () => controller.getDetectedClaudeInstallation());
@@ -805,6 +1107,9 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.setAppSetting, async (_, key: string, value: string) => {
     await controller.setAppSetting(key, value);
     refreshAppMenu();
+    if (key === APP_SETTING_KEYS.remoteAccessEnabled || key === APP_SETTING_KEYS.remoteAccessTailscaleEnabled) {
+      await syncRemoteAccessServer();
+    }
   });
   ipcMain.handle(IPC_CHANNELS.saveNetworkProxySettings, async (_, input: NetworkProxySettingsInput) =>
     controller.saveNetworkProxySettings(input),
@@ -833,21 +1138,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.cancelRun, (_, runId: string) => controller.cancelRun(runId));
   ipcMain.handle(IPC_CHANNELS.pickProjectDirectory, () => controller.pickProjectDirectory());
   ipcMain.handle(IPC_CHANNELS.openPathInFileManager, (_, path: string) => controller.openPathInFileManager(path));
-  ipcMain.handle(IPC_CHANNELS.openExternalUrl, async (_, url: string) => {
-    if (typeof url !== "string" || !isSafeExternalUrl(url)) {
-      logWarn("Blocked attempt to open unsupported external URL.", { url });
-      return { ok: false, error: "Unsupported or invalid URL." };
-    }
-    try {
-      await shell.openExternal(url);
-      logInfo("Opened external URL.", { url });
-      return { ok: true };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      logError("Failed to open external URL.", { url, error: err });
-      return { ok: false, error: message };
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.openExternalUrl, (_, url: string) => desktopPlatform.openExternalUrl(url));
   ipcMain.handle(IPC_CHANNELS.reportRendererLog, async (_, payload: RendererLogPayload) => {
     const metadata = {
       source: payload.source,
@@ -898,12 +1189,26 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.deleteChat, (_, chatId: string) => controller.deleteChat(chatId));
   ipcMain.handle(IPC_CHANNELS.cancelChat, (_, chatId: string) => controller.cancelChat(chatId));
   ipcMain.handle(IPC_CHANNELS.showAppMenu, (_, section: AppMenuSection, x: number, y: number) => {
-    popupAppMenuSection(controller, logDirPath, currentUiTheme, (t) => void applyUiTheme(t), section, x, y);
+    desktopPlatform.popupApplicationMenu(
+      {
+        logDirPath,
+        theme: currentUiTheme,
+        onCommand: (command) => hostEvents.publish("appMenuCommand", command),
+        onThemeChange: (theme) => void applyUiTheme(theme),
+      },
+      section,
+      x,
+      y,
+    );
   });
 
-  registerRunTerminalIpc();
+  registerHostEventIpc(hostEvents, () => mainWindow);
+  registerRunTerminalIpc(hostTerminal, desktopPlatform);
   app.on("before-quit", () => {
-    disposeAllRunTerminals();
+    void remoteAccessServer?.stop().catch((error) => {
+      logWarn("Remote access server did not stop cleanly.", { error });
+    });
+    hostTerminal.disposeAll();
     for (const state of projectForgeMonitorStates.values()) {
       clearInterval(state.timer);
     }
@@ -915,26 +1220,13 @@ const bootstrap = async (): Promise<void> => {
     }
   });
 
-  controller.onRunEvent((event) => {
-    mainWindow?.webContents.send(IPC_CHANNELS.runEvent, event);
+  hostEvents.subscribe("run", (event) => {
     if (event.metadata?.shellApprovalRequest === true) {
-      showShellApprovalNotification(event);
+      desktopPlatform.showShellApprovalNotification(event);
     }
     if (event.metadata?.userInputRequest === true && event.metadata.requestStatus === "opened") {
-      showRunUserInputNotification(event);
+      desktopPlatform.showRunUserInputNotification(event);
     }
-  });
-
-  controller.onChatEvent((event) => {
-    mainWindow?.webContents.send(IPC_CHANNELS.chatEvent, event);
-  });
-
-  controller.onProjectLoopChanged((payload) => {
-    mainWindow?.webContents.send(IPC_CHANNELS.projectLoopChanged, payload);
-  });
-
-  controller.onAppWarning((warning) => {
-    mainWindow?.webContents.send(IPC_CHANNELS.appWarning, warning);
   });
 
   logInfo("Startup timing.", {
@@ -983,7 +1275,7 @@ const createMainWindow = (theme: UiTheme): void => {
     }
     if (isSafeExternalUrl(url)) {
       logInfo("Opening safe external URL from renderer window.", { url });
-      void shell.openExternal(url);
+      void desktopPlatform.openExternalUrl(url);
     } else {
       logWarn("Blocked unsafe renderer window open request.", { url });
     }
@@ -1034,13 +1326,7 @@ app.whenReady().then(async () => {
     const message = err instanceof Error ? err.message : String(err);
     const stack = err instanceof Error ? err.stack : undefined;
     logError("Failed to start BuildWarden.", { error: err });
-    await dialog.showMessageBox({
-      type: "error",
-      title: "Startup Error",
-      message: "Failed to start BuildWarden",
-      detail: [message, stack].filter(Boolean).join("\n\n"),
-      noLink: true,
-    });
+    await desktopPlatform.showErrorDialog("Startup Error", "Failed to start BuildWarden", [message, stack].filter(Boolean).join("\n\n"));
     app.quit();
     return;
   }
@@ -1056,13 +1342,7 @@ app.whenReady().then(async () => {
 process.on("uncaughtException", (err) => {
   logError("Uncaught exception in main process.", { error: err });
   void app.whenReady().then(async () => {
-    await dialog.showMessageBox({
-      type: "error",
-      title: "Uncaught Exception",
-      message: err.message,
-      detail: err.stack,
-      noLink: true,
-    }).catch(() => {});
+    await desktopPlatform.showErrorDialog("Uncaught Exception", err.message, err.stack).catch(() => {});
     app.quit();
   });
 });
@@ -1071,12 +1351,7 @@ process.on("unhandledRejection", (reason) => {
   const message = reason instanceof Error ? reason.message : String(reason);
   logError("Unhandled rejection in main process.", { reason });
   void app.whenReady().then(async () => {
-    await dialog.showMessageBox({
-      type: "error",
-      title: "Unhandled Rejection",
-      message,
-      noLink: true,
-    }).catch(() => {});
+    await desktopPlatform.showErrorDialog("Unhandled Rejection", message).catch(() => {});
     app.quit();
   });
 });

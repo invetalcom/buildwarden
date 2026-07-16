@@ -1,4 +1,4 @@
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderWithBuildWardenClient as renderToStaticMarkup } from "../../lib/buildwarden-client-test-utils";
 import { describe, expect, it, vi } from "vitest";
 import type { BookmarkRecord, BookmarkStepRecord, ChatBookmarkRecord } from "@buildwarden/shared";
 import { BookmarkDetailPage } from "./BookmarkDetailPage";

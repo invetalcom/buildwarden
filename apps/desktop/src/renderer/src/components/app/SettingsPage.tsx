@@ -6,6 +6,9 @@ import type {
   NetworkProxySettingsInput,
   NetworkProxySettingsSnapshot,
   ProviderType,
+  RemoteAccessPairingGrant,
+  RemoteAccessPairingInput,
+  RemoteAccessSession,
   SupportedIdeKind,
   UiTheme,
   UnifiedProviderFamily,
@@ -34,6 +37,7 @@ import { GitWorkspaceSettingsTab } from "./settings-git-workspace-tab";
 import { NetworkSettingsTab, type NetworkProxyDraft } from "./settings-network-tab";
 import { SkillsSettingsTab } from "./settings-skills-tab";
 import { UserSettingsTab } from "./settings-user-tab";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 
 type SettingsTab = "provider-models" | "git-workspace" | "skills" | "network" | "user";
 
@@ -74,6 +78,7 @@ interface SettingsPageProps {
   appLogDirPath: string;
   appLogDirectorySize: AppLogDirectorySizeInfo;
   networkProxySettings: NetworkProxySettingsSnapshot;
+  remoteAccessEnabled: boolean;
   providerAccounts: AppSnapshot["providerAccounts"];
   models: AppSnapshot["models"];
   availableModelsByProviderId: Record<string, AvailableProviderModelsState>;
@@ -121,6 +126,10 @@ interface SettingsPageProps {
   onOpenAppLogDirectory: () => void | Promise<void>;
   onResetDatabase: () => void | Promise<void>;
   onSaveNetworkProxySettings: (input: NetworkProxySettingsInput) => Promise<NetworkProxySettingsSnapshot>;
+  onRemoteAccessEnabledChange: (enabled: boolean) => Promise<void>;
+  onCreateRemoteAccessPairing: (input?: RemoteAccessPairingInput) => Promise<RemoteAccessPairingGrant>;
+  onListRemoteAccessSessions: () => Promise<RemoteAccessSession[]>;
+  onRevokeRemoteAccessSession: (sessionId: string) => Promise<void>;
   idePathsSettingValue: string;
   onSaveIdePaths: (serialized: string) => void | Promise<void>;
   onPickIdeExecutable: () => Promise<string | null>;
@@ -177,6 +186,7 @@ export const SettingsPage = ({
   appLogDirPath,
   appLogDirectorySize,
   networkProxySettings,
+  remoteAccessEnabled,
   providerAccounts,
   models,
   availableModelsByProviderId,
@@ -224,6 +234,10 @@ export const SettingsPage = ({
   onOpenAppLogDirectory,
   onResetDatabase,
   onSaveNetworkProxySettings,
+  onRemoteAccessEnabledChange,
+  onCreateRemoteAccessPairing,
+  onListRemoteAccessSessions,
+  onRevokeRemoteAccessSession,
   idePathsSettingValue,
   onSaveIdePaths,
   onPickIdeExecutable,
@@ -231,6 +245,8 @@ export const SettingsPage = ({
   globallyDisabledIntegratedSkillIds,
   onGloballyDisabledIntegratedSkillIdsChange,
 }: SettingsPageProps) => {
+  const buildwarden = useBuildWardenClient();
+  const nativeActions = buildwarden.capabilities.platform === "electron";
   const [activeTab, setActiveTab] = useState<SettingsTab>("user");
   const [openAiPresetUserChoseCustom, setOpenAiPresetUserChoseCustom] = useState(false);
   const [userShellPatternsDraft, setUserShellPatternsDraft] = useState(() => userShellLinesFromSavedText(shellAllowlistExtraText));
@@ -513,6 +529,7 @@ export const SettingsPage = ({
             }
           }}
           onResetShellAllowlistDraft={() => setUserShellPatternsDraft([...savedUserShellLines])}
+          canBrowseHostPaths={buildwarden.capabilities.directoryPicker}
         />
       ) : null}
 
@@ -545,6 +562,7 @@ export const SettingsPage = ({
           }}
           onResetIdeDraft={() => setIdeDraft(parseIdePathConfig(idePathsSettingValue))}
           onPickIdeExecutable={browseIdeExecutable}
+          nativeActions={nativeActions}
         />
       ) : null}
 
@@ -590,6 +608,12 @@ export const SettingsPage = ({
               clearSavedPassword: false,
             })
           }
+          remoteAccessEnabled={remoteAccessEnabled}
+          onRemoteAccessEnabledChange={onRemoteAccessEnabledChange}
+          onCreateRemoteAccessPairing={onCreateRemoteAccessPairing}
+          onListRemoteAccessSessions={onListRemoteAccessSessions}
+          onRevokeRemoteAccessSession={onRevokeRemoteAccessSession}
+          showRemoteAccess={nativeActions}
         />
       ) : null}
 

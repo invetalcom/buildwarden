@@ -167,12 +167,14 @@ const EditorPathCard = ({
   saving,
   onValueChange,
   onPickExecutable,
+  canBrowseHostPaths,
 }: {
   kind: SupportedIdeKind;
   value: string;
   saving: boolean;
   onValueChange: (value: string) => void;
   onPickExecutable: () => void | Promise<void>;
+  canBrowseHostPaths: boolean;
 }) => {
   const configured = value.trim().length > 0;
 
@@ -205,9 +207,9 @@ const EditorPathCard = ({
         placeholder={idePathPlaceholder(kind)}
         spellCheck={false}
       />
-      <Button type="button" variant="secondary" size="sm" className="mt-2 h-8 w-full" disabled={saving} onClick={() => void onPickExecutable()}>
+      {canBrowseHostPaths ? <Button type="button" variant="secondary" size="sm" className="mt-2 h-8 w-full" disabled={saving} onClick={() => void onPickExecutable()}>
         Browse...
-      </Button>
+      </Button> : null}
     </div>
   );
 };
@@ -233,6 +235,7 @@ export type UserSettingsTabProps = {
   onSaveIdePaths: () => void | Promise<void>;
   onResetIdeDraft: () => void;
   onPickIdeExecutable: (kind: SupportedIdeKind) => void | Promise<void>;
+  nativeActions: boolean;
 };
 
 export const UserSettingsTab = ({
@@ -256,6 +259,7 @@ export const UserSettingsTab = ({
   onSaveIdePaths,
   onResetIdeDraft,
   onPickIdeExecutable,
+  nativeActions,
 }: UserSettingsTabProps) => (
   <div className="space-y-5">
     <SettingsSection title="Appearance">
@@ -300,7 +304,7 @@ export const UserSettingsTab = ({
       </SettingsRow>
     </SettingsSection>
 
-    <SettingsSection title="External editors">
+    {nativeActions ? <SettingsSection title="External editors">
       <SettingsRow
         title="IDE executable paths"
         description={
@@ -333,6 +337,7 @@ export const UserSettingsTab = ({
                     onIdeDraftChange(next);
                   }}
                   onPickExecutable={() => onPickIdeExecutable(kind)}
+                  canBrowseHostPaths={nativeActions}
                 />
               );
             })}
@@ -354,7 +359,7 @@ export const UserSettingsTab = ({
           </div>
         </div>
       </SettingsRow>
-    </SettingsSection>
+    </SettingsSection> : null}
 
     <SettingsSection title="Keyboard shortcuts">
       <SettingsRow
@@ -401,7 +406,7 @@ export const UserSettingsTab = ({
                   <span className="mt-1 block text-xs text-[var(--ec-muted)]">Log folder unavailable</span>
                 )}
               </div>
-              <Button
+              {nativeActions ? <Button
                 type="button"
                 variant="secondary"
                 size="sm"
@@ -410,14 +415,14 @@ export const UserSettingsTab = ({
                 onClick={() => void onOpenAppLogDirectory()}
               >
                 Open log folder
-              </Button>
+              </Button> : null}
             </div>
           </div>
         </div>
       </SettingsRow>
     </SettingsSection>
 
-    <SettingsSection title="Data">
+    {nativeActions ? <SettingsSection title="Data">
       <SettingsRow
         title="Clear database"
         description="Permanently delete all projects, runs, bookmarks, providers, models, and settings. The app will restart with a fresh database. This cannot be undone."
@@ -440,6 +445,6 @@ export const UserSettingsTab = ({
           </Button>
         </div>
       </SettingsRow>
-    </SettingsSection>
+    </SettingsSection> : null}
   </div>
 );

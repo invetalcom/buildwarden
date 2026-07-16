@@ -32,6 +32,15 @@ beforeEach(() => {
 });
 
 describe("preload DesktopApi bridge", () => {
+  it("keeps the standalone bootstrap on the Electron IPC transport", async () => {
+    const api = electronMocks.exposedApi!;
+
+    await api.getSnapshot();
+
+    expect(electronMocks.invoke).toHaveBeenCalledOnce();
+    expect(electronMocks.invoke).toHaveBeenCalledWith(IPC_CHANNELS.getSnapshot);
+  });
+
   it("exposes every API operation and wires it to Electron IPC", async () => {
     const api = electronMocks.exposedApi;
     expect(api).not.toBeNull();

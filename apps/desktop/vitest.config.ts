@@ -15,6 +15,7 @@ export default defineConfig({
       "@buildwarden/provider-claude-code": packageSource("provider-claude-code"),
       "@buildwarden/provider-codex-cli": packageSource("provider-codex-cli"),
       "@buildwarden/provider-cursor-agent": packageSource("provider-cursor-agent"),
+      "@buildwarden/remote-server": packageSource("remote-server"),
       "@buildwarden/shared/integrated-skills-catalog": packageSource("shared", "integrated-skills-catalog.ts"),
       "@buildwarden/shared": packageSource("shared"),
     },

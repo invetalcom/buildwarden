@@ -2,6 +2,7 @@ import { appendChatAttachmentFiles, type ChatAttachmentPayload, type ProjectKind
 import { Archive, Clock3, FolderOpen, Play, PlayCircle, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { parseSearchTerms, runMatchesSearch } from "../../lib/run-search";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -74,25 +75,28 @@ const formatRunMeta = (run: { branchName: string; workspaceType: RunWorkspaceTyp
   return `${workspaceLabel} - ${new Date(run.createdAt).toLocaleString()}`;
 };
 
-const EmptyRunList = ({ hasRunSearch, hasRuns }: Readonly<{ hasRunSearch: boolean; hasRuns: boolean }>) => (
+const EmptyRunList = ({ hasRunSearch, hasRuns, readOnly }: Readonly<{ hasRunSearch: boolean; hasRuns: boolean; readOnly: boolean }>) => (
   <Empty>
     <EmptyHeader>
       {hasRunSearch && hasRuns ? <Search className="size-10 text-[var(--ec-muted)]" /> : <PlayCircle className="size-10 text-[var(--ec-muted)]" />}
       <EmptyTitle>{hasRunSearch && hasRuns ? "No matching runs" : "No visible runs yet"}</EmptyTitle>
       <EmptyDescription>
-        {hasRunSearch && hasRuns ? "Search checks only user prompts, follow-ups, run goals, and submitted answers." : "Start one above or move a run back from For later."}
+        {hasRunSearch && hasRuns
+          ? "Search checks only user prompts, follow-ups, run goals, and submitted answers."
+          : readOnly ? "No runs are available on the BuildWarden host." : "Start one above or move a run back from For later."}
       </EmptyDescription>
     </EmptyHeader>
   </Empty>
 );
 
-const RunHistory = ({ runs, visibleRuns, searchQuery, onSearchChange, onSelectRun, onSetRunForLater }: {
+const RunHistory = ({ runs, visibleRuns, searchQuery, onSearchChange, onSelectRun, onSetRunForLater, readOnly }: {
   runs: ProjectOverviewTabProps["runs"];
   visibleRuns: ProjectOverviewTabProps["runs"];
   searchQuery: string;
   onSearchChange: (value: string) => void;
   onSelectRun: ProjectOverviewTabProps["onSelectRun"];
   onSetRunForLater: ProjectOverviewTabProps["onSetRunForLater"];
+  readOnly: boolean;
 }) => {
   const hasRunSearch = searchQuery.trim().length > 0;
   return (
@@ -116,7 +120,7 @@ const RunHistory = ({ runs, visibleRuns, searchQuery, onSearchChange, onSelectRu
         </div>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-b-lg p-0">
-        {visibleRuns.length === 0 ? <EmptyRunList hasRunSearch={hasRunSearch} hasRuns={runs.length > 0} /> : (
+        {visibleRuns.length === 0 ? <EmptyRunList hasRunSearch={hasRunSearch} hasRuns={runs.length > 0} readOnly={readOnly} /> : (
           <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto">
             {visibleRuns.map((run) => (
               <div key={run.id} className="flex items-center gap-3 border-t border-[var(--ec-border)] px-4 py-3 transition hover:bg-[var(--ec-hover)]">
@@ -127,7 +131,7 @@ const RunHistory = ({ runs, visibleRuns, searchQuery, onSearchChange, onSelectRu
                 <div className="flex shrink-0 items-center gap-2">
                   <Badge dot tone={run.status}>{run.status}</Badge>
                   <span className="font-mono text-xs text-[var(--ec-muted)]">{(run.inputTokens + run.outputTokens).toLocaleString()}</span>
-                  <Button type="button" size="icon" variant="ghost" title="Move to For later" onClick={() => void onSetRunForLater(run.id)}><Archive className="size-3.5" /></Button>
+                  {!readOnly ? <Button type="button" size="icon" variant="ghost" title="Move to For later" onClick={() => void onSetRunForLater(run.id)}><Archive className="size-3.5" /></Button> : null}
                 </div>
               </div>
             ))}
@@ -173,6 +177,8 @@ export const ProjectOverviewTab = ({
   onAnthropicEffortChange,
   onYoloModeChange,
 }: ProjectOverviewTabProps) => {
+  const buildwarden = useBuildWardenClient();
+  const readOnly = !buildwarden.capabilities.runMutations;
   const [runAttachmentFiles, setRunAttachmentFiles] = useState<File[]>([]);
   const [runSearchQuery, setRunSearchQuery] = useState("");
   const runSearchTerms = useMemo(() => parseSearchTerms(runSearchQuery), [runSearchQuery]);
@@ -186,7 +192,7 @@ export const ProjectOverviewTab = ({
   const canUseMultiModel = runWorkspaceType === "worktree" || runWorkspaceType === "copy";
 
   const openProjectInFileManager = async () => {
-    const result = await window.buildwarden.openPathInFileManager(repoPath);
+    const result = await buildwarden.openPathInFileManager(repoPath);
     if (!result.ok && result.error) {
       window.alert(`Could not open folder: ${result.error}`);
     }
@@ -194,7 +200,7 @@ export const ProjectOverviewTab = ({
 
   const openProjectInIde = async (ideKind: SupportedIdeKind) => {
     try {
-      await window.buildwarden.openFolderInIde(repoPath, ideKind);
+      await buildwarden.openFolderInIde(repoPath, ideKind);
     } catch (e) {
       window.alert(e instanceof Error ? e.message : "Could not open the project in the IDE.");
     }
@@ -225,19 +231,21 @@ export const ProjectOverviewTab = ({
               </div>
               <CardAction>
                 <div className="flex items-center gap-2">
-                  <OpenInIdeControl compact configuredIdeKinds={configuredIdeKinds} onOpen={(ideKind) => void openProjectInIde(ideKind)} />
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    className="h-8 shrink-0 border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-2 text-xs text-[var(--ec-accent)] hover:bg-[var(--ec-hover)]"
-                    title="Open project folder in file explorer"
-                    aria-label="Open project folder in file explorer"
-                    onClick={() => void openProjectInFileManager()}
-                  >
-                    <FolderOpen className="h-4 w-4 shrink-0" />
-                    <span className="sr-only">Open in file explorer</span>
-                  </Button>
+                  {buildwarden.capabilities.ideIntegration ? <OpenInIdeControl compact configuredIdeKinds={configuredIdeKinds} onOpen={(ideKind) => void openProjectInIde(ideKind)} /> : null}
+                  {buildwarden.capabilities.fileManager ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="h-8 shrink-0 border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-2 text-xs text-[var(--ec-accent)] hover:bg-[var(--ec-hover)]"
+                      title="Open project folder in file explorer"
+                      aria-label="Open project folder in file explorer"
+                      onClick={() => void openProjectInFileManager()}
+                    >
+                      <FolderOpen className="h-4 w-4 shrink-0" />
+                      <span className="sr-only">Open in file explorer</span>
+                    </Button>
+                  ) : null}
                   <Badge dot tone={projectRunStats.active > 0 ? "running" : "neutral"}>
                     {projectRunStats.active > 0 ? `${projectRunStats.active} active` : "idle"}
                   </Badge>
@@ -245,7 +253,7 @@ export const ProjectOverviewTab = ({
               </CardAction>
             </div>
           </CardHeader>
-          <CardContent className="px-3 pb-3">
+          {!readOnly ? <CardContent className="px-3 pb-3">
             <RunComposer
               projectId={projectId}
               attachments={<ChatAttachmentPicker variant="footer" files={runAttachmentFiles} onChange={setRunAttachmentFiles} disabled={busy} />}
@@ -301,11 +309,11 @@ export const ProjectOverviewTab = ({
               yoloMode={yoloMode}
               onYoloModeChange={onYoloModeChange}
             />
-          </CardContent>
+          </CardContent> : null}
         </Card>
       </section>
 
-      <RunHistory runs={runs} visibleRuns={visibleRuns} searchQuery={runSearchQuery} onSearchChange={setRunSearchQuery} onSelectRun={onSelectRun} onSetRunForLater={onSetRunForLater} />
+      <RunHistory runs={runs} visibleRuns={visibleRuns} searchQuery={runSearchQuery} onSearchChange={setRunSearchQuery} onSelectRun={onSelectRun} onSetRunForLater={onSetRunForLater} readOnly={readOnly} />
     </div>
   );
 };

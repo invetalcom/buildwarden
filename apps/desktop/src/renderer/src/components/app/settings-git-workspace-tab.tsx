@@ -43,6 +43,7 @@ export type GitWorkspaceSettingsTabProps = {
   onUserShellPatternsDraftChange: (next: string[]) => void;
   onShellAllowlistExtraSave: () => void | Promise<void>;
   onResetShellAllowlistDraft: () => void;
+  canBrowseHostPaths: boolean;
 };
 
 export type ProjectSetupFieldsProps = {
@@ -54,6 +55,7 @@ export type ProjectSetupFieldsProps = {
   onSubmitProject: () => void;
   onProjectNameChange: (value: string) => void;
   onProjectPathChange: (value: string) => void;
+  canBrowseHostPaths?: boolean;
 };
 
 type SettingsSectionProps = {
@@ -100,6 +102,7 @@ export const ProjectSetupFields = ({
   onSubmitProject,
   onProjectNameChange,
   onProjectPathChange,
+  canBrowseHostPaths = true,
 }: ProjectSetupFieldsProps) => (
   <div className="space-y-2">
     <div className="flex min-w-0 flex-wrap gap-2 sm:flex-nowrap">
@@ -109,9 +112,9 @@ export const ProjectSetupFields = ({
         value={projectPath}
         onChange={(event) => onProjectPathChange(event.target.value)}
       />
-      <Button type="button" variant="secondary" className="shrink-0" onClick={onChooseDirectory}>
+      {canBrowseHostPaths ? <Button type="button" variant="secondary" className="shrink-0" onClick={onChooseDirectory}>
         Browse
-      </Button>
+      </Button> : null}
       <Button type="button" className="shrink-0" onClick={onSubmitProject} disabled={busy || !projectPath}>
         Add project
       </Button>
@@ -163,13 +166,14 @@ export const GitWorkspaceSettingsTab = ({
   onUserShellPatternsDraftChange,
   onShellAllowlistExtraSave,
   onResetShellAllowlistDraft,
+  canBrowseHostPaths,
 }: GitWorkspaceSettingsTabProps) => {
   const normalizedWorktreeRootDraft = worktreeRootDraft.trim();
 
   return (
     <div className="space-y-5">
       <SettingsSection title="Projects">
-        <SettingsRow
+        {canBrowseHostPaths ? <SettingsRow
           title="Add project folder"
           description="Register a local folder. Git repositories enable branches, worktrees, commits, and PR/MR review; plain folders can still run agents."
           align="start"
@@ -184,9 +188,10 @@ export const GitWorkspaceSettingsTab = ({
               onSubmitProject={onSubmitProject}
               onProjectNameChange={onProjectNameChange}
               onProjectPathChange={onProjectPathChange}
+              canBrowseHostPaths={canBrowseHostPaths}
             />
           </div>
-        </SettingsRow>
+        </SettingsRow> : null}
         <SettingsRow title="Existing projects" description="Remove projects from BuildWarden without deleting the original folder." align="start">
           <div className={`${rowControlClass} app-scrollbar max-h-72 overflow-auto rounded-md border border-[var(--ec-border)]`}>
             {projects.length > 0 ? (
@@ -268,7 +273,7 @@ export const GitWorkspaceSettingsTab = ({
         </SettingsRow>
       </SettingsSection>
 
-      <SettingsSection title="Managed workspaces">
+      {canBrowseHostPaths ? <SettingsSection title="Managed workspaces">
         <SettingsRow
           title="Custom workspace folder"
           description="Optional absolute directory for new Git worktrees and folder copies. Leave it blank to keep the default sibling-folder behavior."
@@ -283,9 +288,9 @@ export const GitWorkspaceSettingsTab = ({
                 placeholder="Default: parent/.buildwarden-worktrees/<project-name>"
                 spellCheck={false}
               />
-              <Button type="button" variant="secondary" className="shrink-0" onClick={() => void onBrowseWorktreeRootDirectory()}>
+              {canBrowseHostPaths ? <Button type="button" variant="secondary" className="shrink-0" onClick={() => void onBrowseWorktreeRootDirectory()}>
                 Browse
-              </Button>
+              </Button> : null}
             </div>
             <div className="flex flex-wrap items-center justify-start gap-2 md:justify-end">
               <Button type="button" size="sm" disabled={!worktreeRootDirty || worktreeRootSaving} onClick={() => void onSaveWorktreeRootOverride()}>
@@ -323,7 +328,7 @@ export const GitWorkspaceSettingsTab = ({
             </div>
           </div>
         </SettingsRow>
-      </SettingsSection>
+      </SettingsSection> : null}
 
       <SettingsSection title="Shell commands">
         <SettingsRow

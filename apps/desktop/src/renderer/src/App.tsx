@@ -9,6 +9,7 @@ import {
   DEFAULT_ADD_MODEL_DRAFT,
   DEFAULT_SHELL_ALLOWLIST_PATTERN_SOURCES,
   parseRecentRunDaysSetting,
+  parseRemoteAccessEnabledSetting,
   parseRunTimelineDensitySetting,
   parseUiTheme,
   SUPPORTED_IDE_KINDS,
@@ -108,6 +109,10 @@ import { buildCommandPaletteItems } from "./components/app/command-palette-items
 import { useRunActionDialogs } from "./components/app/use-run-action-dialogs";
 import { useProjectBranches } from "./components/app/use-project-branches";
 import { useRunWorkspaceLayouts } from "./components/app/use-run-workspace-layouts";
+import {
+  isRunWorkspacePanelAvailable,
+  resolveRunWorkspacePanelVisibility,
+} from "./components/app/run-workspace-layout";
 import { useShellApprovalQueue } from "./components/app/use-shell-approval-queue";
 import { useSkillsSettings } from "./components/app/use-skills-settings";
 import { useWelcomeFlow } from "./components/app/use-welcome-flow";
@@ -132,6 +137,7 @@ import { useProjectRunDefaults } from "./lib/use-project-run-defaults";
 import { useRendererErrorReporting } from "./lib/use-renderer-error-reporting";
 import { useStableCallback } from "./lib/use-stable-callback";
 import { reportRendererError, reportRendererLog } from "./lib/report-renderer-error";
+import { useBuildWardenClient } from "./lib/buildwarden-client";
 
 const isLocalProviderType = (type: ProviderType): boolean =>
   type === "codex-cli" || type === "claude-code" || type === "cursor-agent";
@@ -169,9 +175,12 @@ const addProjectForgeRequestToast = (
 ): ProjectForgeRequestToast[] => [toast, ...current.filter((existing) => existing.id !== toast.id)].slice(0, 4);
 
 export const App = () => {
-  const buildwarden = window.buildwarden;
+  const buildwarden = useBuildWardenClient();
+  const readOnly = !buildwarden.capabilities.mutations;
   useRendererErrorReporting();
-  const showCustomWindowsTitleBar = typeof navigator !== "undefined" && navigator.userAgent.includes("Windows");
+  const showCustomWindowsTitleBar = buildwarden.capabilities.nativeTitleBar
+    && typeof navigator !== "undefined"
+    && navigator.userAgent.includes("Windows");
   const [snapshot, setSnapshot] = useState<AppSnapshot>(EMPTY_SNAPSHOT);
   const [snapshotLoaded, setSnapshotLoaded] = useState(false);
   const [runDetail, setRunDetail] = useState<RunDetail | null>(null);
@@ -253,7 +262,9 @@ export const App = () => {
     requestId: number;
   } | null>(null);
   const [settingsPreviousPage, setSettingsPreviousPage] = useState<SettingsPreviousPageState | null>(null);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => buildwarden.capabilities.platform === "web" && window.innerWidth < 900,
+  );
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [landingPageJoke] = useState(() => pickRandomLandingJoke());
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
@@ -289,7 +300,7 @@ export const App = () => {
     handleWelcomeBack,
     handleWelcomeSkipCheck,
     handleWelcomeFinish,
-  } = useWelcomeFlow({ buildwarden, snapshot, snapshotLoaded });
+  } = useWelcomeFlow({ buildwarden, snapshot, snapshotLoaded, disabled: !buildwarden.capabilities.settings });
   const shouldCheckProjectFolderGitStatus = settingsOpen || (welcomeOpen && welcomeStepKey === "project");
   const selectedProviderAccount = snapshot.providerAccounts.find((provider) => provider.id === selectedProviderId) ?? null;
   const openAiPresetsGroupedForSelectedProvider = useMemo(() => {
@@ -838,6 +849,19 @@ export const App = () => {
   ]);
 
   useEffect(() => {
+    if (buildwarden.capabilities.liveEvents) return;
+    const refreshRemoteView = () => {
+      void loadSnapshot();
+      const activeRunId = selectedRunIdRef.current;
+      if (typeof activeRunId === "string") {
+        void refreshOpenRunDetailForEvent(activeRunId);
+      }
+    };
+    const intervalId = window.setInterval(refreshRemoteView, 3000);
+    return () => window.clearInterval(intervalId);
+  }, [buildwarden.capabilities.liveEvents, loadSnapshot, refreshOpenRunDetailForEvent]);
+
+  useEffect(() => {
     if (!settingsOpen) {
       return;
     }
@@ -1111,14 +1135,14 @@ export const App = () => {
     [runDetail?.run, snapshot.projects],
   );
   const runWorktreeUnavailable = runDetail?.worktreeUnavailable === true;
-  const runWorkspacePanelVisibility: Record<RunWorkspacePanelId, boolean> = {
+  const runWorkspacePanelVisibility = resolveRunWorkspacePanelVisibility({
     activity: runWorkspaceShowActivity,
     diff: runWorkspaceShowDiff,
     terminal: runWorkspaceShowTerminal,
     browser: runWorkspaceShowBrowser,
     notes: runWorkspaceShowNotes,
     chat: runWorkspaceShowChat,
-  };
+  }, buildwarden.capabilities);
   const runWorkspacePanelSetters: Record<RunWorkspacePanelId, (visible: boolean) => void> = {
     activity: setRunWorkspaceShowActivity,
     diff: setRunWorkspaceShowDiff,
@@ -1149,8 +1173,9 @@ export const App = () => {
       return;
     }
 
-    const visibleCount = Object.values(layout.visiblePanels).filter(Boolean).length;
-    const currentlyVisible = layout.visiblePanels[panelId];
+    const visiblePanels = resolveRunWorkspacePanelVisibility(layout.visiblePanels, buildwarden.capabilities);
+    const visibleCount = Object.values(visiblePanels).filter(Boolean).length;
+    const currentlyVisible = visiblePanels[panelId];
     if (currentlyVisible && visibleCount === 1) {
       return;
     }
@@ -1175,20 +1200,22 @@ export const App = () => {
     setSelectedRunWorkspacePanelVisibility(panelId, next);
   };
 
-  const runPanelToggleItems = RUN_PANEL_TOGGLE_DEFINITIONS.map((definition): RunPanelToggleItem => {
-    const active = runWorkspacePanelVisibility[definition.key];
-    const cannotHide = active && runWorkspaceVisiblePanelCount === 1;
-    const unavailable = definition.requiresWorktree && runWorktreeUnavailable;
-    return {
-      key: definition.key,
-      label: definition.label,
-      icon: definition.icon,
-      active,
-      disabled: unavailable || cannotHide,
-      subtitle: unavailable ? "Worktree unavailable" : panelVisibilitySubtitle(active, definition.hiddenSubtitle),
-      onClick: () => toggleSelectedRunWorkspacePanel(definition.key),
-    };
-  });
+  const runPanelToggleItems = RUN_PANEL_TOGGLE_DEFINITIONS
+    .filter((definition) => isRunWorkspacePanelAvailable(definition.key, buildwarden.capabilities))
+    .map((definition): RunPanelToggleItem => {
+      const active = runWorkspacePanelVisibility[definition.key];
+      const cannotHide = active && runWorkspaceVisiblePanelCount === 1;
+      const unavailable = definition.requiresWorktree && runWorktreeUnavailable;
+      return {
+        key: definition.key,
+        label: definition.label,
+        icon: definition.icon,
+        active,
+        disabled: unavailable || cannotHide,
+        subtitle: unavailable ? "Worktree unavailable" : panelVisibilitySubtitle(active, definition.hiddenSubtitle),
+        onClick: () => toggleSelectedRunWorkspacePanel(definition.key),
+      };
+    });
 
   const openRunBrowserUrl = (runId: string, url: string) => {
     setRunBrowserSessions((current) => {
@@ -1332,7 +1359,7 @@ export const App = () => {
   }, []);
 
   useEffect(() => {
-    if (!buildwarden || !selectedProject || selectedProject.project.kind !== "folder") {
+    if (!buildwarden || !buildwarden.capabilities.gitMutations || !selectedProject || selectedProject.project.kind !== "folder") {
       return;
     }
     let cancelled = false;
@@ -2181,6 +2208,7 @@ export const App = () => {
   }, [clearRunSelectionState, leaveSelectedRun]);
 
   const openSettingsPage = useCallback(() => {
+    if (!buildwarden.capabilities.settings) return;
     setSettingsPreviousPage({
       landingSelected,
       allRunsSelected,
@@ -2207,6 +2235,7 @@ export const App = () => {
     setChatDetail(null);
     clearRunSelectionState(null);
   }, [
+    buildwarden.capabilities.settings,
     allRunsSelected,
     bookmarksSelected,
     chatDetail,
@@ -2642,6 +2671,11 @@ export const App = () => {
         onSelectRun: handleRunSelect,
         onSelectChat: handleChatSelect,
         onToggleTheme: toggleUiTheme,
+      }).filter((item) => {
+        if (!readOnly) return true;
+        if (item.id === "workspace-settings" || item.id === "workspace-new-run") return false;
+        if (item.section !== "Project") return true;
+        return snapshot.projects.some((entry) => item.id === `project-${entry.project.id}`);
       }),
     [
       handleAllRunsSelect,
@@ -2656,6 +2690,7 @@ export const App = () => {
       runProjectId,
       selectedProject?.project.id,
       snapshot,
+      readOnly,
       toggleUiTheme,
     ],
   );
@@ -2996,16 +3031,19 @@ export const App = () => {
     const isFocused = selectedRunId === entry.runId && focusedRunPane === entry.paneId;
     const paneDropPreviewActive = runPaneDropPreview === entry.paneId;
     const paneLayout = runWorkspaceLayoutsByRunId[entry.runId] ?? cloneDefaultRunWorkspaceLayoutPreference();
-    const paneVisiblePanels = isFocused
-      ? {
-          activity: runWorkspaceShowActivity,
-          diff: runWorkspaceShowDiff,
-          terminal: runWorkspaceShowTerminal,
-          browser: runWorkspaceShowBrowser,
-          notes: runWorkspaceShowNotes,
-          chat: runWorkspaceShowChat,
-        }
-      : paneLayout.visiblePanels;
+    const paneVisiblePanels = resolveRunWorkspacePanelVisibility(
+      isFocused
+        ? {
+            activity: runWorkspaceShowActivity,
+            diff: runWorkspaceShowDiff,
+            terminal: runWorkspaceShowTerminal,
+            browser: runWorkspaceShowBrowser,
+            notes: runWorkspaceShowNotes,
+            chat: runWorkspaceShowChat,
+          }
+        : paneLayout.visiblePanels,
+      buildwarden.capabilities,
+    );
     const paneSecondaryPosition = isFocused ? runWorkspaceSecondaryPosition : paneLayout.secondaryPanelPosition;
     const paneTokenUsage = paneDetail ? latestRunTokenUsage(paneDetail, runLiveUsageById[paneDetail.run.id]) : null;
 
@@ -3223,6 +3261,7 @@ export const App = () => {
               appLogDirPath={appLogDirPath}
               appLogDirectorySize={appLogDirectorySize}
               networkProxySettings={networkProxySettings}
+              remoteAccessEnabled={parseRemoteAccessEnabledSetting(snapshot.settings[APP_SETTING_KEYS.remoteAccessEnabled])}
               providerAccounts={snapshot.providerAccounts}
               models={snapshot.models}
               availableModelsByProviderId={availableModelsByProviderId}
@@ -3304,6 +3343,31 @@ export const App = () => {
                 setNetworkProxySettings(saved);
                 await loadSnapshot();
                 return saved;
+              }}
+              onRemoteAccessEnabledChange={async (enabled) => {
+                if (!buildwarden) {
+                  throw new Error("The Electron desktop bridge is unavailable.");
+                }
+                await buildwarden.setAppSetting(APP_SETTING_KEYS.remoteAccessEnabled, String(enabled));
+                await loadSnapshot();
+              }}
+              onCreateRemoteAccessPairing={(input) => {
+                if (!buildwarden) {
+                  throw new Error("The Electron desktop bridge is unavailable.");
+                }
+                return buildwarden.createRemoteAccessPairing(input);
+              }}
+              onListRemoteAccessSessions={() => {
+                if (!buildwarden) {
+                  throw new Error("The Electron desktop bridge is unavailable.");
+                }
+                return buildwarden.listRemoteAccessSessions();
+              }}
+              onRevokeRemoteAccessSession={async (sessionId) => {
+                if (!buildwarden) {
+                  throw new Error("The Electron desktop bridge is unavailable.");
+                }
+                await buildwarden.revokeRemoteAccessSession(sessionId);
               }}
               onOpenAppLogDirectory={() =>
                 void handleAction(async () => {
@@ -3454,12 +3518,12 @@ export const App = () => {
               pendingShellApproval={null}
               timelineDensity={runTimelineDensity}
               subagentFocus={subagentFocusRequest?.runId === detail.run.id ? subagentFocusRequest : null}
-              showActivity={runWorkspaceShowActivity}
-              showDiff={runWorkspaceShowDiff}
-              showTerminal={runWorkspaceShowTerminal}
-              showBrowser={runWorkspaceShowBrowser}
-              showNotes={runWorkspaceShowNotes}
-              showChat={runWorkspaceShowChat}
+              showActivity={runWorkspacePanelVisibility.activity}
+              showDiff={runWorkspacePanelVisibility.diff}
+              showTerminal={runWorkspacePanelVisibility.terminal}
+              showBrowser={runWorkspacePanelVisibility.browser}
+              showNotes={runWorkspacePanelVisibility.notes}
+              showChat={runWorkspacePanelVisibility.chat}
               onTogglePanel={toggleSelectedRunWorkspacePanel}
               secondaryPanelPosition={runWorkspaceSecondaryPosition}
               onSecondaryPanelPositionChange={(position) => {
@@ -3686,8 +3750,8 @@ export const App = () => {
             return renderWorkspaceView(
                 <Card className="p-8 text-center">
                   <p className="text-lg font-medium">No project selected</p>
-                  <p className="mt-2 text-sm text-zinc-500">Open Settings to add your first project, provider, and model.</p>
-                  <Button
+                  <p className="mt-2 text-sm text-zinc-500">{readOnly ? "No projects are configured on the BuildWarden host." : "Open Settings to add your first project, provider, and model."}</p>
+                  {!readOnly ? <Button
                     className="mt-4"
                     variant="secondary"
                     onClick={() => {
@@ -3696,7 +3760,7 @@ export const App = () => {
                     }}
                   >
                     Open settings
-                  </Button>
+                  </Button> : null}
                 </Card>,
             );
   };
@@ -3767,7 +3831,7 @@ export const App = () => {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--ec-bg)]">
         <main
           className={cn(
-            "min-h-0 min-w-0 flex-1 p-3",
+            "min-h-0 min-w-0 flex-1 p-2 sm:p-3",
             isAgentRunDetailView || isChatDetailView || isBookmarkDetailView || isProjectWorkspaceView
               ? "flex min-h-0 flex-col overflow-hidden"
               : "overflow-y-auto",

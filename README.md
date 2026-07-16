@@ -1,6 +1,6 @@
 # BuildWarden
 
-BuildWarden is yet another GUI for coding agents. In comparison to most others, it also focuses on project management, not just agent runs. Also separated are standalone chats without any linked repository. BuildWarden keeps projects, runs, chats, worktrees, branches, review activity, provider configuration, and local app state coordinated through a typed Electron main/preload/renderer boundary.
+BuildWarden is yet another GUI for coding agents. In comparison to most others, it also focuses on project management, not just agent runs. Also separated are standalone chats without any linked repository. BuildWarden keeps projects, runs, chats, worktrees, branches, review activity, provider configuration, and local app state coordinated through a typed client boundary for both Electron IPC and optional browser RPC access.
 
 ## What It Does
 
@@ -17,18 +17,88 @@ BuildWarden is yet another GUI for coding agents. In comparison to most others, 
 - Configure integrated skills globally and per project.
 - Store provider keys, PR/MR tokens, and proxy passwords through Electron secure storage.
 - Support shell approvals, user-input requests, shell allowlists, per-run token accounting, and optional provider request/response logging.
+- Optionally use the same BuildWarden UI from a browser through an authenticated, self-hosted remote-access endpoint.
+
+## Remote Access
+
+Remote Access is optional and disabled by default. When enabled, the BuildWarden desktop app starts an embedded server on `http://127.0.0.1:47831`. The server hosts the browser build of the same React application used by Electron and exposes typed JSON RPC plus WebSocket event streams to that application.
+
+The server deliberately listens only on loopback. It cannot be reached directly through the host's LAN address, such as `http://192.168.x.x:47831`. To connect from another computer, tablet, or phone, use the optional Tailscale Serve integration. BuildWarden remains the host and sole owner of its database, Git operations, workers, and terminals; no data is moved to a central BuildWarden service.
+
+### Requirements
+
+Install Tailscale using its [platform installation guide](https://tailscale.com/docs/install). Tailscale Serve requires HTTPS certificates to be enabled for the tailnet and remains subject to the tailnet's access-control policy; see the [Tailscale Serve documentation](https://tailscale.com/docs/features/tailscale-serve).
+
+BuildWarden looks for `tailscale` on `PATH` and in the standard Windows, macOS, and Linux installation locations. A custom executable can be supplied through `TAILSCALE_CLI_PATH` before starting BuildWarden.
+
+### Set Up Remote Access
+
+1. Start the BuildWarden desktop app on the computer that owns the projects and runs the agents.
+2. Open **Settings → Network → Remote access** and enable **Remote Access**.
+3. For a browser on the same computer, open the displayed loopback URL, normally `http://127.0.0.1:47831`.
+4. For another tailnet device, enable **Expose to tailnet**. BuildWarden verifies Tailscale, creates a background HTTPS Serve proxy to its loopback server, and displays the MagicDNS URL, normally `https://<device>.<tailnet>.ts.net/`.
+5. Choose whether the new session should be read-only or whether **Allow runs, chats, approvals, Git, projects, and terminal** should grant control scopes.
+6. Select **Create pairing code**, then open the pairing link, scan its QR code, or enter the code in the browser.
+
+Pairing codes expire after five minutes and can be used only once. A successful pairing creates a revocable device session that is valid for up to 90 days. The browser keeps the session token in an `HttpOnly`, `SameSite=Strict` cookie, not in `localStorage`; the cookie is marked `Secure` when the connection uses Tailscale HTTPS. Use **Disconnect** in the browser to revoke its current session, or revoke any paired device from the desktop settings.
+
+The desktop app must be running for the website, RPC operations, and live events to work. Tailscale's background Serve configuration can survive restarts, but it only proxies to BuildWarden while BuildWarden's embedded loopback server is running. Disabling Remote Access stops the server and removes only the exact Tailscale Serve root handler that BuildWarden created; unrelated Serve configuration is left unchanged.
+
+If automatic Tailscale setup is unavailable, the settings page shows the exact command for the current port. The default equivalent is:
+
+```bash
+tailscale serve --bg --yes --https=443 --set-path=/ http://127.0.0.1:47831
+```
+
+BuildWarden refuses to replace an existing root HTTPS handler and reports the conflict instead. Useful diagnostics are `tailscale status` and `tailscale serve status`.
 
 ## Architecture
 
+BuildWarden has one authoritative host and two client transports. The Electron renderer uses the preload IPC bridge, while the browser uses authenticated HTTP RPC and WebSocket streams. Both clients render the same React components through the `BuildWardenClient` interface and capability flags.
+
+```mermaid
+flowchart LR
+    subgraph Clients
+        Electron["Electron React UI"]
+        Browser["Browser React UI"]
+    end
+
+    Electron --> ElectronClient["ElectronBuildWardenClient"]
+    ElectronClient --> Preload["Preload bridge / IPC"]
+
+    Browser --> RemoteClient["RemoteBuildWardenClient"]
+
+    subgraph Host["BuildWarden desktop host — one process"]
+        Server["Embedded remote server"]
+        Main["Electron main process"]
+        Services["Controller, Git, workers, terminal and platform services"]
+        DB["sql.js database"]
+        Secrets["Electron secure storage"]
+        Server --> Services
+        Main --> Services
+        Services --> DB
+        Services --> Secrets
+    end
+
+    RemoteClient -->|"JSON RPC"| Server
+    Server -->|"WebSocket events"| RemoteClient
+    Tailscale["Optional Tailscale Serve HTTPS proxy"] --> Server
+    Preload --> Main
+```
+
+
 - `apps/desktop`
-  - Electron main process, IPC handlers, app controller, run/chat orchestration, workers, terminal IPC, notifications, and secret-store integration.
-  - Preload bridge exposed as `window.buildwarden`; renderer code should use this bridge for privileged operations.
-  - React renderer for landing, sidebar, project, run, chat, bookmark, settings, branch, PR/MR review, Project Lab, and insight views.
+  - Electron main process: authoritative app controller, IPC handlers, remote-server lifecycle, run/chat orchestration, workers, host terminal service, Tailscale Serve integration, notifications, and secret-store integration.
+  - Preload: safe desktop bridge exposed as `window.buildwarden` and wrapped by `ElectronBuildWardenClient`.
+  - Shared React renderer: landing, sidebar, project, run, chat, bookmark, settings, branch, PR/MR review, Project Lab, insight, and remote-pairing views.
+  - Web entry and Vite build: packages the shared renderer for delivery by the embedded server and supplies `RemoteBuildWardenClient` as its transport adapter.
+- `packages/remote-server`
+  - Loopback-only HTTP server, static web application hosting, protocol/version negotiation, scoped RPC dispatch, one-time pairing and session authentication, request validation, idempotency enforcement, and authenticated WebSocket event streaming.
 - `packages/shared`
-  - Shared types, DTOs, IPC contract shapes, provider metadata, settings keys, run/chat/event contracts, project insight types, and integrated skill metadata.
+  - Shared types, DTOs, IPC and remote RPC contract shapes, protocol constants, provider metadata, settings keys, run/chat/event contracts, project insight types, and integrated skill metadata.
 - `packages/db`
   - Local persisted state using `sql.js`.
-  - Projects, provider accounts, models, runs, run steps, run notes, worktrees, bookmarks, chats, chat steps, chat bookmarks, project tasks, project insights, Project Lab threads/events, provider session runtime, settings, snapshots, and checkpoint metadata.
+  - Projects, provider accounts, models, runs, run steps, run notes, worktrees, bookmarks, chats, chat steps, chat bookmarks, project tasks, project insights, Project Lab threads/events, provider session runtime, settings, snapshots, checkpoint metadata, remote pairing grants, device sessions, idempotency records, and security audits.
 - `packages/git-service`
   - Repository validation, worktree lifecycle, branch management, diff computation, GitHub/GitLab remote parsing, PR/MR diff fetching, branch publishing, and pull/merge request creation helpers.
 - `packages/agent-runtime`
@@ -85,6 +155,13 @@ pnpm install
 pnpm dev
 ```
 
+The packaged build always includes the browser application. When testing Remote Access with the development app, build the static web assets before starting Electron and rebuild them after renderer changes:
+
+```bash
+pnpm --filter @buildwarden/desktop build:web
+pnpm dev
+```
+
 Useful validation commands:
 
 ```bash
@@ -114,7 +191,7 @@ pnpm build:all
 - `electron-builder` is configured with `npmRebuild: false`; native module setup should be handled during dependency installation, not during packaging.
 - `pnpm lint` runs the desktop ESLint task and the desktop Vitest suite through the root script.
 - Some run/chat state survives app restarts through DB rows, checkpoints, and provider session runtime records.
-- Renderer code must go through `window.buildwarden`; privileged filesystem, Git, shell, and secret-store logic belongs in the Electron main process.
+- Shared renderer components use `BuildWardenClient`; its Electron adapter wraps `window.buildwarden`, while its browser adapter uses authenticated RPC. Privileged filesystem, Git, shell, and secret-store logic remains in the Electron main process.
 
 ## Contributing
 

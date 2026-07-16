@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import {
   appendChatAttachmentFiles,
   parseRunWorkspaceFileReference,
@@ -243,6 +244,8 @@ export const RunDetailPage = ({
   onCreateProjectTask,
   onFollowUpRun,
 }: RunDetailPageProps) => {
+  const buildwarden = useBuildWardenClient();
+  const readOnly = !buildwarden.capabilities.runMutations;
   const [followUpPrompt, setFollowUpPrompt] = useState("");
   const [followUpFiles, setFollowUpFiles] = useState<File[]>([]);
   const [goalDraft, setGoalDraft] = useState(runDetail.run.goalText ?? "");
@@ -340,7 +343,7 @@ export const RunDetailPage = ({
       error: null,
     }));
     try {
-      const result = await window.buildwarden.analyzeRunDiff(runDetail.run.id, {
+      const result = await buildwarden.analyzeRunDiff(runDetail.run.id, {
         modelId: selectedReviewModelId,
       });
       setReviewPanel({
@@ -610,7 +613,7 @@ export const RunDetailPage = ({
         return;
       }
       try {
-        const note = await window.buildwarden.addRunNote(runDetail.run.id, { content: trimmed });
+        const note = await buildwarden.addRunNote(runDetail.run.id, { content: trimmed });
         setRunNotes((current) => [note, ...current.filter((entry) => entry.id !== note.id)]);
         setNoteDraft("");
         setSelectionMenu(null);
@@ -622,7 +625,7 @@ export const RunDetailPage = ({
         window.alert(error instanceof Error ? error.message : "Could not add the note.");
       }
     },
-    [onTogglePanel, runDetail.run.id, showNotes],
+    [buildwarden, onTogglePanel, runDetail.run.id, showNotes],
   );
 
   const addSelectionToTask = useCallback(
@@ -644,7 +647,7 @@ export const RunDetailPage = ({
   const updateRunNoteStatus = async (note: RunNoteRecord, status: RunNoteStatus) => {
     setNoteBusyId(note.id);
     try {
-      const updated = await window.buildwarden.updateRunNote(note.id, { status });
+      const updated = await buildwarden.updateRunNote(note.id, { status });
       setRunNotes((current) => current.map((entry) => (entry.id === updated.id ? updated : entry)));
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "Could not update the note.");
@@ -674,7 +677,7 @@ export const RunDetailPage = ({
     }
     setNoteBusyId(note.id);
     try {
-      const updated = await window.buildwarden.updateRunNote(note.id, { content: trimmed });
+      const updated = await buildwarden.updateRunNote(note.id, { content: trimmed });
       setRunNotes((current) => current.map((entry) => (entry.id === updated.id ? updated : entry)));
       cancelEditingRunNote();
     } catch (error) {
@@ -687,7 +690,7 @@ export const RunDetailPage = ({
   const deleteRunNote = async (noteId: string) => {
     setNoteBusyId(noteId);
     try {
-      await window.buildwarden.deleteRunNote(noteId);
+      await buildwarden.deleteRunNote(noteId);
       setRunNotes((current) => current.filter((entry) => entry.id !== noteId));
       if (editingNoteId === noteId) {
         cancelEditingRunNote();
@@ -854,7 +857,7 @@ export const RunDetailPage = ({
             >
               <GitBranch className="h-3.5 w-3.5" />
             </Button>
-            {restorablePromptStepId ? (
+            {!readOnly && restorablePromptStepId ? (
               <Button
                 type="button"
                 variant="ghost"
@@ -928,10 +931,11 @@ export const RunDetailPage = ({
       showBoundaryControls
       endClassName={cn("shrink-0", showModifiedFilesSummary ? "h-2" : "h-px")}
       showLoading={isRunActive}
+      readOnly={readOnly}
       density={timelineDensity}
       subagentFocus={subagentFocus}
       runDurationLabel={runDurationLabel}
-      restorablePromptStepId={restorablePromptStepId}
+      restorablePromptStepId={readOnly ? null : restorablePromptStepId}
       copiedStepId={copiedStepId}
       expandedReasoningStepIds={expandedReasoningStepIds}
       onCopyStepContent={copyStepContent}
@@ -940,7 +944,7 @@ export const RunDetailPage = ({
       onPreparePlanContinuation={preparePlanContinuation}
       onSubmitPlanFeedback={submitPlanFeedback}
       onSubmitUserInputAnswers={(_, requestId: string, answers: RunUserInputAnswers) =>
-        window.buildwarden.respondToRunUserInput(runDetail.run.id, requestId, answers)
+        buildwarden.respondToRunUserInput(runDetail.run.id, requestId, answers)
       }
       onOpenWorkspaceFile={openRunFileReference}
       onToggleReasoningStep={(stepId) =>
@@ -994,25 +998,25 @@ export const RunDetailPage = ({
             <Copy className="h-3.5 w-3.5 text-zinc-500" aria-hidden />
             Copy text
           </button>
-          <button
+          {buildwarden.capabilities.platform === "electron" ? <button
             type="button"
             className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-200 transition hover:bg-zinc-800/80"
             onClick={() => void addRunNote(selectionMenu.text)}
           >
             <StickyNote className="h-3.5 w-3.5 text-cyan-300" aria-hidden />
             Add to notes
-          </button>
-          <button
+          </button> : null}
+          {buildwarden.capabilities.platform === "electron" ? <button
             type="button"
             className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-200 transition hover:bg-zinc-800/80"
             onClick={() => void addSelectionToTask(selectionMenu.text)}
           >
             <ListTodo className="h-3.5 w-3.5 text-emerald-300" aria-hidden />
             Add to tasks
-          </button>
+          </button> : null}
         </div>
       ) : null}
-      {recovery ? (
+      {!readOnly && recovery ? (
         <Card
           className={cn(
             "shrink-0 overflow-hidden border p-0",
@@ -1352,7 +1356,7 @@ export const RunDetailPage = ({
                                 {allDiffFilesExpanded ? "Collapse file diffs" : "Expand file diffs"}
                               </p>
                             </button>
-                            <div className="flex items-center gap-1 border-l border-zinc-800/80 px-2">
+                            {buildwarden.capabilities.platform === "electron" ? <div className="flex items-center gap-1 border-l border-zinc-800/80 px-2">
                               <ComposerSelect
                                 value={selectedReviewModelId}
                                 onChange={setSelectedReviewModelId}
@@ -1382,7 +1386,7 @@ export const RunDetailPage = ({
                                 {reviewBusy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
                                 {reviewPanel.result ? "Review again" : "Review"}
                               </Button>
-                            </div>
+                            </div> : null}
                           </div>
                         </div>
                         {reviewPanel.busy || reviewPanel.error || reviewPanel.result ? (
@@ -1443,7 +1447,7 @@ export const RunDetailPage = ({
                         className="h-8 w-8 shrink-0 p-0 text-zinc-400 hover:text-zinc-100"
                         title="Open external"
                         aria-label="Open external"
-                        onClick={() => void window.buildwarden.openSystemTerminalAtPath(workspacePath)}
+                        onClick={() => void buildwarden.openSystemTerminalAtPath(workspacePath)}
                       >
                         <ExternalLink className="h-3.5 w-3.5" />
                       </Button>
@@ -1508,7 +1512,7 @@ export const RunDetailPage = ({
 
       {/* Bottom: shell approval + follow-up composer */}
       <div className="shrink-0 space-y-1 pt-0.5">
-        {pendingShellApproval ? (
+        {!readOnly && pendingShellApproval ? (
           <Card className="border-amber-500/25 bg-[linear-gradient(180deg,rgba(120,53,15,0.12),rgba(9,9,11,0.96))] p-4">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div className="min-w-0 flex-1">
@@ -1607,7 +1611,7 @@ export const RunDetailPage = ({
               ) : (
                 <>
                   <span className="min-w-0 flex-1 truncate text-[var(--ec-text)]">{runDetail.run.goalText}</span>
-                  <Button
+                  {!readOnly ? <Button
                     type="button"
                     variant="ghost"
                     size="sm"
@@ -1621,8 +1625,8 @@ export const RunDetailPage = ({
                     title="Edit run goal"
                   >
                     <Pencil className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
+                  </Button> : null}
+                  {!readOnly ? <Button
                     type="button"
                     variant="ghost"
                     size="sm"
@@ -1633,12 +1637,12 @@ export const RunDetailPage = ({
                     title="Clear run goal"
                   >
                     <X className="h-3.5 w-3.5" />
-                  </Button>
+                  </Button> : null}
                 </>
               )}
             </div>
           ) : null}
-          <RunComposer
+          {!readOnly ? <RunComposer
             commandContext="follow-up"
             projectId={runDetail.run.projectId}
             attachments={
@@ -1683,7 +1687,7 @@ export const RunDetailPage = ({
             onAnthropicEffortChange={setSelectedAnthropicEffort}
             yoloMode={selectedYoloMode}
             onYoloModeChange={setSelectedYoloMode}
-          />
+          /> : null}
         </div>
       </div>
     </div>

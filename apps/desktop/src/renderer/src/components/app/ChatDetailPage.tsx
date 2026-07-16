@@ -15,6 +15,7 @@ import { ScrollBoundaryControls } from "./ScrollBoundaryControls";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 
 const safeParseMetadata = (value: string) => {
   try {
@@ -60,11 +61,12 @@ interface ChatDetailPageProps {
 
 const ChatDetailHeader = ({
   chat,
+  canManageBookmarks,
   isBookmarked,
   onBack,
   onAddBookmark,
   onRemoveBookmark,
-}: Pick<ChatDetailPageProps, "isBookmarked" | "onBack" | "onAddBookmark" | "onRemoveBookmark"> & { chat: ChatDetail["chat"] }) => (
+}: Pick<ChatDetailPageProps, "isBookmarked" | "onBack" | "onAddBookmark" | "onRemoveBookmark"> & { chat: ChatDetail["chat"]; canManageBookmarks: boolean }) => (
   <Card className="app-surface-chat-hero overflow-hidden border px-4 py-3">
     <div className="flex min-w-0 items-center gap-3">
       <button type="button" className="shrink-0 text-[11px] uppercase tracking-[0.28em] text-cyan-400 transition hover:text-cyan-300" onClick={onBack}>
@@ -72,7 +74,7 @@ const ChatDetailHeader = ({
       </button>
       <Badge dot tone={chat.status} className="shrink-0">{chat.status}</Badge>
       <span className="truncate text-xs text-zinc-500">{new Date(chat.updatedAt).toLocaleString()}</span>
-      <Button
+      {canManageBookmarks ? <Button
         variant="ghost"
         size="sm"
         className="ml-auto h-8 w-8 shrink-0 p-0 text-zinc-400 hover:text-cyan-300"
@@ -81,7 +83,7 @@ const ChatDetailHeader = ({
         aria-label={isBookmarked ? "Remove from bookmarks" : "Add to bookmarks"}
       >
         {isBookmarked ? <BookmarkCheck className="h-3.5 w-3.5 fill-current" /> : <Bookmark className="h-3.5 w-3.5" />}
-      </Button>
+      </Button> : null}
     </div>
   </Card>
 );
@@ -108,7 +110,8 @@ export const ChatDetailPage = ({
   const activityContainerRef = useRef<HTMLDivElement>(null);
   const activityEndRef = useRef<HTMLDivElement>(null);
 
-  const buildwarden = window.buildwarden;
+  const buildwarden = useBuildWardenClient();
+  const readOnly = !buildwarden.capabilities.chatMutations;
 
   const isChatActive = ["queued", "preparing", "running"].includes(chat.status);
 
@@ -232,6 +235,7 @@ export const ChatDetailPage = ({
     <div className="flex min-h-0 flex-1 flex-col gap-4">
       <ChatDetailHeader
         chat={chat}
+        canManageBookmarks={buildwarden.capabilities.chatMutations}
         isBookmarked={isBookmarked}
         onBack={onBack}
         onAddBookmark={onAddBookmark}
@@ -249,7 +253,7 @@ export const ChatDetailPage = ({
         />
         <ScrollBoundaryControls key={chat.id} scrollElementRef={activityContainerRef} />
       </div>
-      <RunComposer
+      {!readOnly ? <RunComposer
         variant="chat"
         attachments={
           <ChatAttachmentPicker
@@ -288,7 +292,7 @@ export const ChatDetailPage = ({
         onReasoningEffortChange={setSelectedReasoningEffort}
         onAnthropicEffortChange={setSelectedAnthropicEffort}
         dense
-      />
+      /> : null}
     </div>
   );
 };

@@ -1,5 +1,5 @@
-import { createRef } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import { createRef, type ComponentProps } from "react";
+import { renderWithBuildWardenClient as renderToStaticMarkup } from "../../lib/buildwarden-client-test-utils";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import {
   getModelPresetsByGroupForProvider,
@@ -18,11 +18,13 @@ import { BookmarksPage } from "./BookmarksPage";
 import { ChatPage } from "./ChatPage";
 import { ContextWindowBadge } from "./ContextWindowBadge";
 import { ProjectForLaterTab } from "./ProjectForLaterTab";
+import { ProjectGraphsTab } from "./ProjectGraphsTab";
 import { ProjectOverviewTab } from "./ProjectOverviewTab";
 import { ProjectTasksTab } from "./ProjectTasksTab";
 import { ProjectBranchesPage } from "./ProjectBranchesPage";
 import { ProjectLabTab } from "./ProjectLabTab";
 import { ProjectPrMrTab } from "./ProjectPrMrTab";
+import { ProjectSettingsPage } from "./ProjectSettingsPage";
 import { ProviderModelPanelButtons, ProviderModelsOverview } from "./provider-models-overview";
 import { RunEmbeddedBrowser } from "./RunEmbeddedBrowser";
 import { RunComposer } from "./RunComposer";
@@ -30,6 +32,7 @@ import { RunDetailHeader } from "./RunDetailHeader";
 import { RunPlanProgressPill } from "./RunPlanProgressPill";
 import { RunPlanSteps } from "./RunPlanSteps";
 import { RunTokenBadge } from "./RunTokenBadge";
+import { Sidebar } from "./Sidebar";
 import { ProviderModelsSettingsTab, type ProviderModelsSettingsTabProps } from "./settings-provider-models-tab";
 
 beforeAll(() => {
@@ -68,6 +71,50 @@ const modelRecord = (account = providerAccount()): ModelRecord => ({
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
 });
+
+const remoteRunCapabilities = {
+  platform: "web" as const,
+  nativeTitleBar: false,
+  nativeAppMenu: false,
+  directoryPicker: false,
+  ideIntegration: false,
+  fileManager: false,
+  systemTerminal: false,
+  embeddedTerminal: false,
+  settings: false,
+  mutations: true,
+  runMutations: true,
+  chatMutations: false,
+  bookmarkMutations: false,
+  runListVisibilityMutations: false,
+  taskMutations: false,
+  insightMutations: false,
+  projectLabMutations: false,
+  projectLoopMutations: false,
+  prReview: false,
+  projectSettingsMutations: false,
+  approvalResponses: false,
+  gitMutations: true,
+  projectCreation: false,
+  hostDirectoryBrowser: false,
+  liveEvents: true,
+};
+
+const remoteControlCapabilities = {
+  ...remoteRunCapabilities,
+  settings: true,
+  chatMutations: true,
+  bookmarkMutations: true,
+  runListVisibilityMutations: true,
+  taskMutations: true,
+  insightMutations: true,
+  projectLabMutations: true,
+  projectLoopMutations: true,
+  prReview: true,
+  projectSettingsMutations: true,
+  projectCreation: true,
+  hostDirectoryBrowser: true,
+};
 
 const runRecord = (overrides: Partial<RunRecord> = {}): RunRecord => ({
   id: "run-1",
@@ -234,15 +281,21 @@ describe("renderer component states", () => {
   });
 
   it("renders folder and git runs saved for later", () => {
-    const markup = renderToStaticMarkup(
+    const component = (
       <ProjectForLaterTab
         runs={[runRecord(), runRecord({ id: "run-2", workspaceVcs: "folder", workspaceType: "copy" })]}
         onSelectRun={vi.fn()}
         onRestoreRunFromForLater={vi.fn()}
-      />,
+      />
     );
+    const markup = renderToStaticMarkup(component);
     expect(markup).toContain("feat/coverage");
     expect(markup).toContain("Folder copy");
+    expect(markup).toContain("Reactivate");
+
+    const remoteMarkup = renderToStaticMarkup(component, {} as DesktopApi, remoteRunCapabilities);
+    expect(remoteMarkup).toContain("Improve renderer coverage");
+    expect(remoteMarkup).not.toContain("Reactivate");
   });
 
   it("renders project overview and task states", () => {
@@ -308,6 +361,28 @@ describe("renderer component states", () => {
     expect(taskMarkup).toContain("In Progress");
     expect(taskMarkup).toContain("In Review");
     expect(taskMarkup).toContain("Done");
+
+    const remoteTaskMarkup = renderToStaticMarkup(
+      <ProjectTasksTab
+        projectId="project-1"
+        tasks={[{ id: "task-1", projectId: "project-1", title: "Raise quality", prompt: "Add tests", status: "open", runId: null, pullRequestUrl: null, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" }]}
+        modelOptions={modelOptions}
+        defaultTaskModelId="model-1"
+        busy={false}
+        onCreateTask={vi.fn()}
+        onUpdateTask={vi.fn()}
+        onDeleteTask={vi.fn()}
+        onStartTask={vi.fn()}
+      />,
+      {} as DesktopApi,
+      remoteRunCapabilities,
+    );
+    expect(remoteTaskMarkup).toContain("Raise quality");
+    expect(remoteTaskMarkup).toContain("Start run");
+    expect(remoteTaskMarkup).toContain("View task");
+    expect(remoteTaskMarkup).not.toContain("Add task");
+    expect(remoteTaskMarkup).not.toContain("Edit task");
+    expect(remoteTaskMarkup).not.toContain("Delete task");
   });
 
   it("renders loading chat and bookmark pages", () => {
@@ -572,5 +647,178 @@ describe("renderer component states", () => {
     );
     expect(markup).toContain("Project Lab");
     expect(markup).toContain("Extract renderer workflow");
+
+    const remoteLabMarkup = renderToStaticMarkup(
+      <ProjectLabTab
+        project={projectSnapshot}
+        modelOptions={[{ id: "model-1", label: "GPT-5", modelId: "gpt-5", providerType: "ai-sdk", providerFamily: "openai" }]}
+        settings={{ enabled: true, maxThreadsPerDay: 3, maxConcurrentThreads: 1, implementationModelId: "model-1", reviewModelId: "model-1" }}
+        busy={false}
+        branchOptions={["main"]}
+        selectedBaseBranch="main"
+        onBaseBranchChange={vi.fn()}
+        onSettingsChange={vi.fn()}
+        onRunProjectLab={vi.fn()}
+        onDeleteThread={vi.fn()}
+        onOpenImplementationRun={vi.fn()}
+      />,
+      {} as DesktopApi,
+      remoteRunCapabilities,
+    );
+    expect(remoteLabMarkup).toContain("Extract renderer workflow");
+    expect(remoteLabMarkup).toContain("Open implementation run");
+    expect(remoteLabMarkup).not.toContain("Start Project Lab");
+    expect(remoteLabMarkup).not.toContain("Delete");
+
+    const remoteGraphsMarkup = renderToStaticMarkup(
+      <ProjectGraphsTab project={projectSnapshot} onGenerateInsight={vi.fn()} />,
+      {} as DesktopApi,
+      remoteRunCapabilities,
+    );
+    expect(remoteGraphsMarkup).toContain("Architecture graph");
+    expect(remoteGraphsMarkup).toContain("No saved architecture graph is available on the host.");
+    expect(remoteGraphsMarkup).not.toContain("Refresh");
+
+    const projectSettingsProps = {
+      project: projectSnapshot,
+      modelOptions: [{ id: "model-1", label: "GPT-5", modelId: "gpt-5", providerType: "ai-sdk", providerFamily: "openai" }],
+      availableBranches: ["main", "feat/remote"],
+      currentProjectBranch: "main",
+      runMode: "code",
+      runWorkspaceType: "worktree",
+      runModelId: "model-1",
+      runWorktreeModelIds: ["model-1"],
+      projectRunStats: { total: 1, active: 0, completed: 1, failed: 0, cancelled: 0, inputTokens: 1200, outputTokens: 300, totalTokens: 1500 },
+      reasoningEffort: "high",
+      anthropicEffort: "medium",
+      yoloMode: false,
+      busy: false,
+      availableIntegratedSkills: [],
+      activeIntegratedSkillIds: [],
+      onRunModeChange: vi.fn(),
+      onRunWorkspaceTypeChange: vi.fn(),
+      onProjectBaseBranchChange: vi.fn(),
+      onRunModelChange: vi.fn(),
+      onRunWorktreeModelIdsChange: vi.fn(),
+      onReasoningEffortChange: vi.fn(),
+      onAnthropicEffortChange: vi.fn(),
+      onYoloModeChange: vi.fn(),
+      onActiveIntegratedSkillIdsChange: vi.fn(),
+      onDeleteProject: vi.fn(),
+    } satisfies ComponentProps<typeof ProjectSettingsPage>;
+    const remoteSettingsMarkup = renderToStaticMarkup(
+      <ProjectSettingsPage {...projectSettingsProps} />,
+      {} as DesktopApi,
+      remoteRunCapabilities,
+    );
+    expect(remoteSettingsMarkup).toContain("limited remote settings");
+    expect(remoteSettingsMarkup).toContain("Base branch");
+    expect(remoteSettingsMarkup).not.toContain("Project defaults");
+    expect(remoteSettingsMarkup).not.toContain("Model set");
+    expect(remoteSettingsMarkup).not.toContain("Git hosting");
+    expect(remoteSettingsMarkup).not.toContain("Project skills");
+    expect(remoteSettingsMarkup).not.toContain("Delete project");
+
+    const remoteFolderSettingsMarkup = renderToStaticMarkup(
+      <ProjectSettingsPage
+        {...projectSettingsProps}
+        project={{
+          ...projectSnapshot,
+          project: { ...projectSnapshot.project, kind: "folder" },
+        }}
+        runWorkspaceType="copy"
+      />,
+      {} as DesktopApi,
+      remoteRunCapabilities,
+    );
+    expect(remoteFolderSettingsMarkup).toContain("limited remote settings");
+    expect(remoteFolderSettingsMarkup).not.toContain("Repository");
+
+    const remoteSidebarMarkup = renderToStaticMarkup(
+      <Sidebar
+        projects={[projectSnapshot]}
+        landingSelected={false}
+        allRunsSelected={false}
+        bookmarksSelected={false}
+        chatsSelected={false}
+        settingsSelected={false}
+        selectedProjectId="project-1"
+        currentProjectBranch="main"
+        currentProjectBranchStatus="attached"
+        projectView="overview"
+        highlightedRunId={null}
+        collapsed={false}
+        width={312}
+        recentRunDays={2}
+        bookmarksCount={0}
+        chatsCount={0}
+        bookmarkedRunIds={new Set()}
+        onSelectLanding={vi.fn()}
+        onSelectAllRuns={vi.fn()}
+        onSelectBookmarks={vi.fn()}
+        onSelectChats={vi.fn()}
+        onSelectProject={vi.fn()}
+        onSelectProjectFeature={vi.fn()}
+        onSelectRun={vi.fn()}
+        onRunDragStart={vi.fn()}
+        onReorderProjects={vi.fn()}
+        onAddRunToBookmarks={vi.fn()}
+        onRemoveRunFromBookmarks={vi.fn()}
+        onContinueRun={vi.fn()}
+        onDeleteRun={vi.fn()}
+        onSetRunForLater={vi.fn()}
+        pendingDeleteRunIds={{}}
+        onOpenSettings={vi.fn()}
+        onWidthCommit={vi.fn()}
+        onToggleCollapsed={vi.fn()}
+        loopEnabledProjectIds={new Set()}
+      />,
+      {} as DesktopApi,
+      remoteRunCapabilities,
+    );
+    expect(remoteSidebarMarkup).toContain("Start new agent run");
+    expect(remoteSidebarMarkup).toContain("Project settings (limited remote access)");
+    expect(remoteSidebarMarkup).toContain("Graphs");
+    expect(remoteSidebarMarkup).toContain("AI Insights");
+    expect(remoteSidebarMarkup).toContain("Task Board");
+    expect(remoteSidebarMarkup).toContain("Project Lab");
+    expect(remoteSidebarMarkup).toContain("For Later");
+    expect(remoteSidebarMarkup).not.toContain("PR Review");
+    expect(remoteSidebarMarkup).not.toContain("Loops");
+
+    const controlLabMarkup = renderToStaticMarkup(
+      <ProjectLabTab
+        project={projectSnapshot}
+        modelOptions={[{ id: "model-1", label: "GPT-5", modelId: "gpt-5", providerType: "ai-sdk", providerFamily: "openai" }]}
+        settings={{ enabled: true, maxThreadsPerDay: 3, maxConcurrentThreads: 1, implementationModelId: "model-1", reviewModelId: "model-1" }}
+        busy={false}
+        branchOptions={["main"]}
+        selectedBaseBranch="main"
+        onBaseBranchChange={vi.fn()}
+        onSettingsChange={vi.fn()}
+        onRunProjectLab={vi.fn()}
+        onDeleteThread={vi.fn()}
+        onOpenImplementationRun={vi.fn()}
+      />,
+      {} as DesktopApi,
+      remoteControlCapabilities,
+    );
+    expect(controlLabMarkup).toContain("Start Project Lab");
+
+    const controlGraphsMarkup = renderToStaticMarkup(
+      <ProjectGraphsTab project={projectSnapshot} onGenerateInsight={vi.fn()} />,
+      {} as DesktopApi,
+      remoteControlCapabilities,
+    );
+    expect(controlGraphsMarkup).toContain("Refresh");
+
+    const controlSettingsMarkup = renderToStaticMarkup(
+      <ProjectSettingsPage {...projectSettingsProps} />,
+      {} as DesktopApi,
+      remoteControlCapabilities,
+    );
+    expect(controlSettingsMarkup).toContain("Project defaults");
+    expect(controlSettingsMarkup).toContain("Git hosting");
+    expect(controlSettingsMarkup).toContain("Delete project");
   });
 });

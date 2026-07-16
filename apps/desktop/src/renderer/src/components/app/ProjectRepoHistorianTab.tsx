@@ -1,6 +1,7 @@
 import type { ProjectInsightKind, ProjectSnapshot, ProviderType, UnifiedProviderFamily } from "@buildwarden/shared";
 import { Clock3, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Select } from "../ui/select";
@@ -19,6 +20,7 @@ interface ProjectRepoHistorianTabProps {
 }
 
 export const ProjectRepoHistorianTab = ({ project, modelOptions, defaultModelId, onGenerateInsight }: ProjectRepoHistorianTabProps) => {
+  const canGenerateInsights = useBuildWardenClient().capabilities.insightMutations;
   const firstModelId = modelOptions[0]?.id ?? "";
   const [modelId, setModelId] = useState(defaultModelId || firstModelId);
   const [busy, setBusy] = useState(false);
@@ -50,7 +52,7 @@ export const ProjectRepoHistorianTab = ({ project, modelOptions, defaultModelId,
             <p className="text-xs text-zinc-500">{record?.summary ?? "Use recent history and structural signals to explain how the repo got here."}</p>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        {canGenerateInsights ? <div className="flex flex-wrap items-center gap-2">
           <Select
             value={modelId}
             onValueChange={setModelId}
@@ -61,7 +63,7 @@ export const ProjectRepoHistorianTab = ({ project, modelOptions, defaultModelId,
           <Button type="button" size="sm" variant="secondary" onClick={() => void handleRefresh()} disabled={busy}>
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Refresh"}
           </Button>
-        </div>
+        </div> : null}
       </div>
       <p className="mb-3 text-xs text-zinc-500">Updated {formatGeneratedAt(record?.generatedAt)}</p>
 
@@ -96,7 +98,7 @@ export const ProjectRepoHistorianTab = ({ project, modelOptions, defaultModelId,
         </div>
       ) : (
         <div className="rounded-xl border border-dashed border-zinc-800/80 bg-zinc-950/40 px-4 py-10 text-center text-sm text-zinc-500">
-          Generate the repo historian to summarize architectural turning points and recurring change themes.
+          {canGenerateInsights ? "Generate the repo historian to summarize architectural turning points and recurring change themes." : "No saved repository history report is available on the host."}
         </div>
       )}
     </Card>

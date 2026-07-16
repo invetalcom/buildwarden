@@ -5,6 +5,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 
 export type BookmarkItem = BookmarkRecord | ChatBookmarkRecord;
 
@@ -37,7 +38,7 @@ export const BookmarksPage = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const buildwarden = window.buildwarden;
+  const buildwarden = useBuildWardenClient();
 
   const loadBookmarks = useCallback(async () => {
     if (!buildwarden) return;
@@ -139,7 +140,7 @@ export const BookmarksPage = ({
                     </div>
                     <p className="mt-1 truncate text-sm font-medium text-zinc-200">{bookmark.prompt}</p>
                   </button>
-                  <div className="flex shrink-0 items-center gap-2">
+                  {(isChatBookmark(bookmark) ? buildwarden.capabilities.chatMutations : buildwarden.capabilities.runMutations) ? <div className="flex shrink-0 items-center gap-2">
                     <Button
                       variant="ghost"
                       size="sm"
@@ -156,7 +157,7 @@ export const BookmarksPage = ({
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
-                  </div>
+                  </div> : null}
                 </div>
               ))}
             </div>

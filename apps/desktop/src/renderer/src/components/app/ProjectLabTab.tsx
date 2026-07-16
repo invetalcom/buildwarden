@@ -2,6 +2,7 @@ import type { ProjectLabEventRecord, ProjectLabMode, ProjectLabSettings, Project
 import { Bot, ChevronDown, ChevronRight, ExternalLink, FileText, Loader2, Rocket, ShieldCheck, Sparkles, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
@@ -115,9 +116,10 @@ const implementationWorkspaceLabel = (run: ProjectSnapshot["labThreads"][number]
   return run.workspaceType === "copy" ? "Folder copy" : "Project folder";
 };
 
-const ProjectLabRunCard = ({ detail, expanded, onToggle, onDelete, onOpenImplementationRun }: {
+const ProjectLabRunCard = ({ detail, expanded, canDelete, onToggle, onDelete, onOpenImplementationRun }: {
   detail: ProjectSnapshot["labThreads"][number];
   expanded: boolean;
+  canDelete: boolean;
   onToggle: () => void;
   onDelete: () => void;
   onOpenImplementationRun: ProjectLabTabProps["onOpenImplementationRun"];
@@ -151,7 +153,7 @@ const ProjectLabRunCard = ({ detail, expanded, onToggle, onDelete, onOpenImpleme
               <ExternalLink className="h-3.5 w-3.5" />
             </Button>
           )}
-          <Button type="button" size="sm" variant="ghost" className="text-zinc-500 hover:text-rose-200" onClick={(event) => { event.stopPropagation(); onDelete(); }}><Trash2 className="mr-2 h-3.5 w-3.5" />Delete</Button>
+          {canDelete ? <Button type="button" size="sm" variant="ghost" className="text-zinc-500 hover:text-rose-200" onClick={(event) => { event.stopPropagation(); onDelete(); }}><Trash2 className="mr-2 h-3.5 w-3.5" />Delete</Button> : null}
         </div>
       </div>
       {expanded && (
@@ -201,6 +203,7 @@ export const ProjectLabTab = ({
   onDeleteThread,
   onOpenImplementationRun,
 }: ProjectLabTabProps) => {
+  const canManageLab = useBuildWardenClient().capabilities.projectLabMutations;
   const [selectedMode, setSelectedMode] = useState<ProjectLabMode>("new-feature");
   const [expandedThreadIds, setExpandedThreadIds] = useState<Record<string, boolean>>({});
   const isFolderProject = project.project.kind === "folder";
@@ -222,7 +225,7 @@ export const ProjectLabTab = ({
 
   return (
     <div className="space-y-4 pb-2">
-      <Card className="overflow-hidden p-0">
+      {canManageLab ? <Card className="overflow-hidden p-0">
         <div className="border-b border-zinc-800/80 px-4 py-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-3">
@@ -352,7 +355,7 @@ export const ProjectLabTab = ({
             </div>
           </div>
         </div>
-      </Card>
+      </Card> : null}
 
       <Card className="p-4">
         <div className="flex items-center gap-2">
@@ -366,13 +369,14 @@ export const ProjectLabTab = ({
         <div className="mt-4 space-y-3">
           {sortedThreads.length === 0 ? (
             <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 px-4 py-10 text-center text-sm text-zinc-500">
-              No Project Lab runs yet. Enable the lab, choose implementation and review models, then start one.
+              {canManageLab ? "No Project Lab runs yet. Enable the lab, choose implementation and review models, then start one." : "No Project Lab runs are available on the host."}
             </div>
           ) : sortedThreads.map((detail) => (
             <ProjectLabRunCard
               key={detail.thread.id}
               detail={detail}
               expanded={expandedThreadIds[detail.thread.id] ?? false}
+              canDelete={canManageLab}
               onToggle={() => setExpandedThreadIds((current) => ({ ...current, [detail.thread.id]: !(current[detail.thread.id] ?? false) }))}
               onDelete={() => void onDeleteThread(detail.thread.id)}
               onOpenImplementationRun={onOpenImplementationRun}

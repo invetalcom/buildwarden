@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Check, Loader2, MessageSquareText, Send } from "lucide-react";
 import type { RunUserInputAnswers, RunUserInputQuestion } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { AgentPanel } from "./agent-worklog";
@@ -106,6 +107,7 @@ export function RunUserInputRequestCard({
   disabled?: boolean;
   onSubmitAnswers?: (answers: RunUserInputAnswers) => Promise<void> | void;
 }>) {
+  const buildwarden = useBuildWardenClient();
   const [drafts, setDrafts] = useState<DraftAnswers>(() => buildInitialDrafts(questions, answers));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -156,7 +158,7 @@ export function RunUserInputRequestCard({
       if (onSubmitAnswers) {
         await onSubmitAnswers(nextAnswers);
       } else {
-        await window.buildwarden.respondToRunUserInput(runId, requestId, nextAnswers);
+        await buildwarden.respondToRunUserInput(runId, requestId, nextAnswers);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not submit this answer.");
