@@ -1,0 +1,35 @@
+{
+  "name": "@buildwarden/web",
+  "version": "0.5.5",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build --mode hosted",
+    "build:embedded": "vite build --mode embedded",
+    "dev": "vite --mode hosted",
+    "lint": "eslint src vite.config.ts --ext .ts,.tsx",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@buildwarden/renderer": "workspace:*",
+    "@buildwarden/shared": "workspace:*",
+    "lucide-react": "^0.511.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@tailwindcss/vite": "^4.3.2",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^5.2.0",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.5.3",
+    "typescript": "^5.8.2",
+    "vite": "^7.3.6",
+    "typescript-eslint": "^8.62.1",
+    "vitest": "^4.1.9"
+  }
+}

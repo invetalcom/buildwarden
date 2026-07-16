@@ -41,7 +41,9 @@
       "@buildwarden/provider-openai-compatible": ["packages/provider-openai-compatible/src/index.ts"],
       "@buildwarden/provider-openai-compatible/*": ["packages/provider-openai-compatible/src/*"],
       "@buildwarden/remote-server": ["packages/remote-server/src/index.ts"],
-      "@buildwarden/remote-server/*": ["packages/remote-server/src/*"]
+      "@buildwarden/remote-server/*": ["packages/remote-server/src/*"],
+      "@buildwarden/renderer": ["packages/renderer/src/index.ts"],
+      "@buildwarden/renderer/*": ["packages/renderer/src/*"]
     }
   }
 }

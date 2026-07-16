@@ -99,6 +99,7 @@ export default defineConfig({
     resolve: {
       alias: {
         "@": resolve(__dirname, "src/renderer/src"),
+        "@buildwarden/renderer": resolve(__dirname, "../../packages/renderer/src"),
         "@buildwarden/shared": resolve(__dirname, "../../packages/shared/src"),
       },
     },

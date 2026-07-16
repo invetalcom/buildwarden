@@ -333,7 +333,12 @@ describe("remote operation registry", () => {
 });
 
 describe("remote access authentication", () => {
-  const startServer = async (staticRoot?: string, trustedProxyHosts?: () => readonly string[]) => {
+  const startServer = async (
+    staticRoot?: string,
+    trustedProxyHosts?: () => readonly string[],
+    trustedWebOrigins?: () => readonly string[],
+    webSocketAuthenticationTimeoutMs?: number,
+  ) => {
     const db = await createDatabase();
     const auth = new RemoteAuthService({ store: db, credentialKey: new Uint8Array(32).fill(7) });
     const operations = new RemoteOperationRegistry();
@@ -355,6 +360,8 @@ describe("remote access authentication", () => {
       port: 0,
       staticRoot,
       trustedProxyHosts,
+      trustedWebOrigins,
+      webSocketAuthenticationTimeoutMs,
     });
     startedServers.push(server);
     return {
@@ -430,6 +437,97 @@ describe("remote access authentication", () => {
     });
     expect(rpcResponse.status).toBe(200);
     await expect(rpcResponse.json()).resolves.toMatchObject({ ok: true, requestId: "snapshot", result: emptySnapshot });
+  });
+
+  it("issues origin-bound bearer sessions with exact CORS, private-network preflight, and WebSocket authentication", async () => {
+    const hostedOrigin = "https://buildwarden.example.com";
+    const otherTrustedOrigin = "https://preview.example.com";
+    const { auth, info } = await startServer(undefined, undefined, () => [hostedOrigin, otherTrustedOrigin]);
+    const grant = auth.createPairingGrant({ clientOrigin: hostedOrigin, scopes: ["state:read"] });
+
+    const wrongOrigin = await fetch(`${info.baseUrl}${REMOTE_ACCESS_PAIRING_PATH}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: otherTrustedOrigin },
+      body: JSON.stringify({ code: grant.code, label: "Wrong hosted origin" }),
+    });
+    expect(wrongOrigin.status).toBe(401);
+
+    const preflight = await fetch(`${info.baseUrl}${REMOTE_ACCESS_PAIRING_PATH}`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: hostedOrigin,
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type",
+        "Access-Control-Request-Private-Network": "true",
+      },
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-origin")).toBe(hostedOrigin);
+    expect(preflight.headers.get("access-control-allow-private-network")).toBe("true");
+    expect(preflight.headers.get("access-control-allow-credentials")).toBeNull();
+
+    const paired = await fetch(`${info.baseUrl}${REMOTE_ACCESS_PAIRING_PATH}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: hostedOrigin,
+        "Access-Control-Request-Private-Network": "true",
+      },
+      body: JSON.stringify({ code: grant.code, label: "Hosted browser" }),
+    });
+    expect(paired.status).toBe(201);
+    expect(paired.headers.get("set-cookie")).toBeNull();
+    expect(paired.headers.get("access-control-allow-origin")).toBe(hostedOrigin);
+    expect(paired.headers.get("access-control-allow-private-network")).toBeNull();
+    const pairedPayload = await paired.json() as { token?: string; session: { clientOrigin: string | null } };
+    expect(pairedPayload.token).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(pairedPayload.session.clientOrigin).toBe(hostedOrigin);
+
+    const mismatchedSession = await fetch(`${info.baseUrl}${REMOTE_ACCESS_SESSION_PATH}`, {
+      headers: { Authorization: `Bearer ${pairedPayload.token ?? ""}`, Origin: otherTrustedOrigin },
+    });
+    expect(mismatchedSession.status).toBe(401);
+
+    const session = await fetch(`${info.baseUrl}${REMOTE_ACCESS_SESSION_PATH}`, {
+      headers: { Authorization: `Bearer ${pairedPayload.token ?? ""}`, Origin: hostedOrigin },
+    });
+    expect(session.status).toBe(200);
+
+    const socket = new WebSocket(
+      `${info.baseUrl.replace("http://", "ws://")}${REMOTE_ACCESS_WEBSOCKET_PATH}?protocolVersion=${String(REMOTE_ACCESS_PROTOCOL_VERSION)}`,
+      { headers: { Origin: hostedOrigin } },
+    );
+    const messages: Array<Record<string, unknown>> = [];
+    socket.on("message", (data) => messages.push(JSON.parse(String(data)) as Record<string, unknown>));
+    await new Promise<void>((resolve, reject) => {
+      socket.once("open", resolve);
+      socket.once("error", reject);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(messages).toEqual([]);
+
+    socket.send(JSON.stringify({
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "authenticate",
+      requestId: "hosted-auth",
+      token: pairedPayload.token,
+    }));
+    await vi.waitFor(() => expect(messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "authenticated", requestId: "hosted-auth" }),
+      expect.objectContaining({ type: "hello" }),
+    ])));
+    socket.close();
+  });
+
+  it("closes a hosted WebSocket that does not authenticate in time", async () => {
+    const hostedOrigin = "https://buildwarden.example.com";
+    const { info } = await startServer(undefined, undefined, () => [hostedOrigin], 20);
+    const socket = new WebSocket(
+      `${info.baseUrl.replace("http://", "ws://")}${REMOTE_ACCESS_WEBSOCKET_PATH}?protocolVersion=${String(REMOTE_ACCESS_PROTOCOL_VERSION)}`,
+      { headers: { Origin: hostedOrigin } },
+    );
+    const closed = new Promise<number>((resolve) => socket.once("close", (code) => resolve(code)));
+    await expect(closed).resolves.toBe(1008);
   });
 
   it("serves the shared web client without exposing authenticated APIs", async () => {

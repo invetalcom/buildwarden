@@ -6,7 +6,15 @@
       "project": ["scripts/*.mjs"]
     },
     "apps/desktop": {
-      "entry": ["src/**/*.test.ts", "src/renderer/web/main.tsx"],
+      "entry": ["src/**/*.test.ts", "src/renderer/src/main.tsx"],
+      "project": ["src/**/*.ts", "src/**/*.tsx"]
+    },
+    "apps/web": {
+      "entry": ["src/main.tsx", "src/**/*.test.ts"],
+      "project": ["src/**/*.ts", "src/**/*.tsx"]
+    },
+    "packages/renderer": {
+      "entry": ["src/index.ts", "src/**/*.test.ts", "src/**/*.test.tsx"],
       "project": ["src/**/*.ts", "src/**/*.tsx"]
     },
     "packages/*": {

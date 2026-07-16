@@ -192,6 +192,61 @@ describe("remote BuildWarden client", () => {
     ]);
   });
 
+  it("uses an origin-bound bearer for hosted HTTP and authenticates WebSockets before subscribing", async () => {
+    type SocketListener = (event: { data?: string; code?: number }) => void;
+    const handlers = new Map<string, SocketListener[]>();
+    const sent: string[] = [];
+    const socket = {
+      readyState: 0,
+      addEventListener: (type: string, listener: SocketListener) => {
+        handlers.set(type, [...(handlers.get(type) ?? []), listener]);
+      },
+      send: (message: string) => sent.push(message),
+      close: vi.fn(),
+    };
+    const emit = (type: string, event: { data?: string; code?: number } = {}) =>
+      handlers.get(type)?.forEach((handler) => handler(event));
+    const fetcher = vi.fn(async () => rpcResponse(snapshot));
+    const client = createRemoteBuildWardenClient({
+      baseUrl: "https://host.tailnet.ts.net",
+      sessionToken: "hosted-session-token",
+      fetch: fetcher as typeof fetch,
+      webSocketFactory: (url) => {
+        expect(url).toBe(`wss://host.tailnet.ts.net/api/v1/events?protocolVersion=${String(REMOTE_ACCESS_PROTOCOL_VERSION)}`);
+        return socket as unknown as WebSocket;
+      },
+    });
+
+    await client.getSnapshot();
+    expect(fetcher).toHaveBeenCalledWith("https://host.tailnet.ts.net/api/v1/rpc", expect.objectContaining({
+      credentials: "omit",
+      headers: expect.objectContaining({ Authorization: "Bearer hosted-session-token" }),
+    }));
+
+    const unsubscribe = client.onRunEvent(vi.fn());
+    socket.readyState = 1;
+    emit("open");
+    expect(JSON.parse(sent[0] ?? "{}")).toMatchObject({ type: "authenticate", token: "hosted-session-token" });
+    expect(sent).toHaveLength(1);
+    emit("message", { data: JSON.stringify({
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "authenticated",
+      requestId: "request-id",
+      session: {
+        id: "session-1",
+        label: "Hosted browser",
+        scopes: ["state:read"],
+        createdAt: "2026-07-16T00:00:00.000Z",
+        expiresAt: "2026-10-14T00:00:00.000Z",
+        lastUsedAt: "2026-07-16T00:00:00.000Z",
+        revokedAt: null,
+        clientOrigin: "https://buildwarden.example.com",
+      },
+    }) });
+    expect(JSON.parse(sent[1] ?? "{}")).toMatchObject({ type: "subscribe", events: ["run"] });
+    unsubscribe();
+  });
+
   it("publishes validated live events from the authenticated WebSocket", () => {
     type SocketListener = (event: { data?: string; code?: number }) => void;
     const handlers = new Map<string, SocketListener[]>();

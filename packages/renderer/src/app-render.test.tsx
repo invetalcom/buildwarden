@@ -29,7 +29,7 @@ afterAll(() => {
 
 describe("App initial render", () => {
   it("renders the landing shell before the preload snapshot arrives", () => {
-    const client = createElectronBuildWardenClient(window.buildwarden);
+    const client = createElectronBuildWardenClient((window as unknown as { buildwarden: DesktopApi }).buildwarden);
     const markup = renderToStaticMarkup(
       <BuildWardenClientProvider client={client}>
         <App />

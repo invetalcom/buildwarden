@@ -10,7 +10,7 @@ module.exports = {
     {
       name: "renderer-does-not-import-privileged-processes",
       severity: "error",
-      from: { path: "^apps/desktop/src/renderer" },
+      from: { path: "^(apps/(desktop/src/renderer|web)|packages/renderer)" },
       to: { path: "^apps/desktop/src/(main|preload)" },
     },
     {
