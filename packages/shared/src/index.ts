@@ -2180,11 +2180,23 @@ export interface WorktreeInfo {
   isLocked: boolean;
 }
 
+export interface BrowserElementAttachmentSource {
+  kind: "browser-element";
+  /** Groups the Markdown context and JPEG screenshot into one logical attachment. */
+  groupId: string;
+  captureId: string;
+  role: "context" | "screenshot";
+  /** Sanitized page URL. Sensitive query parameters are removed by the browser host. */
+  url: string;
+  selector: string;
+}
+
 /** Serializable file chunk for chat IPC (raw base64, no data: prefix). */
 export interface ChatAttachmentPayload {
   fileName: string;
   mimeType: string;
   dataBase64: string;
+  source?: BrowserElementAttachmentSource;
 }
 
 /** Persisted on chat/run steps so reopened sessions can still render attached or generated files/images. */
@@ -2237,6 +2249,12 @@ export function validateChatAttachmentPayloads(attachments: ChatAttachmentPayloa
   }
   let total = 0;
   for (const a of attachments) {
+    if (!a.fileName.trim() || !a.mimeType.trim()) {
+      throw new Error("Attachments require a file name and MIME type.");
+    }
+    if (a.source && !isBrowserElementAttachmentSource(a.source)) {
+      throw new Error(`"${a.fileName}" has invalid browser element metadata.`);
+    }
     const n = estimateBase64ByteLength(a.dataBase64);
     if (n > CHAT_ATTACHMENT_LIMITS.maxBytesPerFile) {
       throw new Error(
@@ -2250,6 +2268,19 @@ export function validateChatAttachmentPayloads(attachments: ChatAttachmentPayloa
       `Attachments exceed the total size limit (${String(CHAT_ATTACHMENT_LIMITS.maxTotalBytes / (1024 * 1024))} MB).`,
     );
   }
+}
+
+export function isBrowserElementAttachmentSource(value: unknown): value is BrowserElementAttachmentSource {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const source = value as Record<string, unknown>;
+  return source.kind === "browser-element" &&
+    typeof source.groupId === "string" && source.groupId.trim().length > 0 && source.groupId.length <= 128 &&
+    typeof source.captureId === "string" && source.captureId.trim().length > 0 && source.captureId.length <= 128 &&
+    (source.role === "context" || source.role === "screenshot") &&
+    typeof source.url === "string" && source.url.length <= 4_096 &&
+    typeof source.selector === "string" && source.selector.trim().length > 0 && source.selector.length <= 8_192;
 }
 
 export function extractAttachmentNamesFromMetadata(metadata: Record<string, unknown>): string[] {
@@ -2279,6 +2310,7 @@ export function extractAttachmentPayloadsFromMetadata(metadata: Record<string, u
     const fileName = typeof attachment.fileName === "string" ? attachment.fileName.trim() : "";
     const mimeType = typeof attachment.mimeType === "string" ? attachment.mimeType.trim() : "";
     const dataBase64 = typeof attachment.dataBase64 === "string" ? attachment.dataBase64.trim() : "";
+    const source = isBrowserElementAttachmentSource(attachment.source) ? attachment.source : undefined;
 
     if (!fileName || !dataBase64) {
       return [];
@@ -2289,6 +2321,7 @@ export function extractAttachmentPayloadsFromMetadata(metadata: Record<string, u
         fileName,
         mimeType: mimeType || "application/octet-stream",
         dataBase64,
+        ...(source ? { source } : {}),
       } satisfies ChatAttachmentPayload,
     ];
   });
@@ -2654,6 +2687,153 @@ export interface RendererLogPayload {
   stack?: string;
   metadata?: Record<string, unknown>;
 }
+
+export interface RunBrowserViewport {
+  width: number;
+  height: number;
+  deviceScaleFactor?: number;
+}
+
+export interface RunBrowserBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface EnsureRunBrowserInput {
+  runId: string;
+  initialUrl?: string;
+  viewport: RunBrowserViewport;
+}
+
+export interface NavigateRunBrowserInput {
+  runId: string;
+  url: string;
+}
+
+export type RunBrowserAction = "back" | "forward" | "reload" | "stop" | "start-inspect" | "cancel-inspect";
+
+export interface RunBrowserActionInput {
+  runId: string;
+  action: RunBrowserAction;
+}
+
+export interface SetRunBrowserViewportInput {
+  runId: string;
+  viewport: RunBrowserViewport;
+}
+
+export interface SetRunBrowserDesktopSurfaceInput {
+  runId: string;
+  bounds: RunBrowserBounds;
+  visible: boolean;
+}
+
+export interface GetRunBrowserElementCaptureInput {
+  runId: string;
+  captureId: string;
+}
+
+export interface RunBrowserState {
+  runId: string;
+  currentUrl: string;
+  title: string;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  inspecting: boolean;
+  viewport: RunBrowserViewport;
+}
+
+export interface RunBrowserLocatorSegment {
+  kind: "frame" | "shadow" | "element";
+  selector: string;
+  frameUrl?: string;
+}
+
+export interface RunBrowserElementLocator {
+  selector: string;
+  segments: RunBrowserLocatorSegment[];
+  fallback?: string;
+}
+
+export interface RunBrowserFrameworkHint {
+  framework: "angular" | "wordpress";
+  name?: string;
+  details?: string[];
+}
+
+export interface RunBrowserElementSummary {
+  tagName: string;
+  accessibleName: string;
+  selector: string;
+  url: string;
+}
+
+export interface RunBrowserElementCapture {
+  id: string;
+  runId: string;
+  capturedAt: string;
+  url: string;
+  pageTitle: string;
+  locator: RunBrowserElementLocator;
+  tagName: string;
+  accessibleRole: string;
+  accessibleName: string;
+  visibleText: string;
+  sanitizedHtml: string;
+  attributes: Record<string, string>;
+  computedStyles: Record<string, string>;
+  ancestry: string[];
+  frameworkHints: RunBrowserFrameworkHint[];
+  bounds: RunBrowserBounds;
+  contextAttachment: ChatAttachmentPayload;
+  screenshotAttachment: ChatAttachmentPayload;
+}
+
+export interface RunBrowserFrame {
+  runId: string;
+  sequence: number;
+  width: number;
+  height: number;
+  mimeType: "image/jpeg";
+  dataBase64: string;
+}
+
+export type RunBrowserEvent =
+  | { type: "state"; runId: string; state: RunBrowserState }
+  | { type: "selection-ready"; runId: string; captureId: string; summary: RunBrowserElementSummary }
+  | { type: "frame"; runId: string; frame: RunBrowserFrame }
+  | { type: "error"; runId: string; message: string; recoverable: boolean };
+
+export type RunBrowserInput =
+  | {
+      type: "mouse";
+      eventType: "mouseMoved" | "mousePressed" | "mouseReleased";
+      x: number;
+      y: number;
+      button?: "none" | "left" | "middle" | "right";
+      clickCount?: number;
+      modifiers?: number;
+    }
+  | {
+      type: "wheel";
+      x: number;
+      y: number;
+      deltaX: number;
+      deltaY: number;
+      modifiers?: number;
+    }
+  | {
+      type: "key";
+      eventType: "keyDown" | "keyUp" | "rawKeyDown";
+      key: string;
+      code?: string;
+      text?: string;
+      modifiers?: number;
+    }
+  | { type: "text"; text: string };
 
 export interface DesktopApi {
   getSnapshot(): Promise<AppSnapshot>;
