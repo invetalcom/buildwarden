@@ -24,6 +24,7 @@ import {
   type RemoteAccessPairingInput,
   type RemoteApiMethod,
   type RemoteStreamEvent,
+  type RunBrowserInput,
 } from "@buildwarden/shared";
 import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
@@ -769,8 +770,16 @@ describe("remote access authentication", () => {
   });
 
   it("filters browser events by run and validates scoped browser input", async () => {
-    const onBrowserInput = vi.fn(async () => {
-      throw new Error("private input payload");
+    let releaseFirstInput!: () => void;
+    const firstInput = new Promise<void>((resolve) => {
+      releaseFirstInput = resolve;
+    });
+    const dispatchOrder: string[] = [];
+    const onBrowserInput = vi.fn(async (_runId: string, input: RunBrowserInput) => {
+      if (input.type !== "mouse") return;
+      dispatchOrder.push(input.eventType);
+      if (input.eventType === "mousePressed") await firstInput;
+      if (input.eventType === "mouseReleased") throw new Error("private input payload");
     });
     const onBrowserSubscriptionChange = vi.fn();
     const onServerError = vi.fn();
@@ -861,6 +870,13 @@ describe("remote access authentication", () => {
       runId: "run-1",
       input: { type: "mouse", eventType: "mousePressed", x: 12, y: 34, button: "left", clickCount: 1 },
     }));
+    socket.send(JSON.stringify({
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "browser-input",
+      requestId: "queued-browser-input",
+      runId: "run-1",
+      input: { type: "mouse", eventType: "mouseMoved", x: 13, y: 35 },
+    }));
     await vi.waitFor(() => expect(onBrowserInput).toHaveBeenCalledWith("run-1", {
       type: "mouse",
       eventType: "mousePressed",
@@ -868,6 +884,18 @@ describe("remote access authentication", () => {
       y: 34,
       button: "left",
       clickCount: 1,
+    }));
+    expect(onBrowserInput).toHaveBeenCalledOnce();
+    releaseFirstInput();
+    await vi.waitFor(() => expect(onBrowserInput).toHaveBeenCalledTimes(2));
+    expect(dispatchOrder).toEqual(["mousePressed", "mouseMoved"]);
+
+    socket.send(JSON.stringify({
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "browser-input",
+      requestId: "failed-browser-input",
+      runId: "run-1",
+      input: { type: "mouse", eventType: "mouseReleased", x: 13, y: 35, button: "left" },
     }));
     await vi.waitFor(() => expect(onServerError).toHaveBeenCalledOnce());
     expect(String(onServerError.mock.calls[0]?.[0])).toBe("Error: Browser input dispatch failed.");

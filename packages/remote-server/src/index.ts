@@ -1382,7 +1382,7 @@ export class RemoteAccessServer {
     remoteAddress: string | null,
     clientOrigin: string | null,
   ): void {
-    const connection = { token };
+    const connection = { token, browserInputQueue: Promise.resolve() };
     const subscriptions = new Set<RemoteStreamEventType>();
     const browserRunIds = new Set<string>();
     const eventDispose = this.options.events?.subscribe((event) => {
@@ -1436,7 +1436,29 @@ export class RemoteAccessServer {
         });
         return;
       }
-      this.handleWebSocketMessage(socket, subscriptions, browserRunIds, data, isBinary, connection.token, remoteAddress, clientOrigin);
+      this.handleWebSocketMessage(
+        socket,
+        subscriptions,
+        browserRunIds,
+        (runId, input) => {
+          const handler = this.options.onBrowserInput;
+          if (!handler) return;
+          connection.browserInputQueue = connection.browserInputQueue.then(async () => {
+            try {
+              await handler(runId, input);
+            } catch {
+              // CDP errors may echo input parameters. Never pass browser input
+              // details into the host's general-purpose request logger.
+              this.options.onServerError?.(new Error("Browser input dispatch failed."));
+            }
+          });
+        },
+        data,
+        isBinary,
+        connection.token,
+        remoteAddress,
+        clientOrigin,
+      );
     });
     if (connection.token) {
       this.sendWebSocketMessage(socket, {
@@ -1516,6 +1538,7 @@ export class RemoteAccessServer {
     socket: WebSocket,
     subscriptions: Set<RemoteStreamEventType>,
     browserRunIds: Set<string>,
+    enqueueBrowserInput: (runId: string, input: RunBrowserInput) => void,
     data: RawData,
     isBinary: boolean,
     token: string,
@@ -1595,12 +1618,7 @@ export class RemoteAccessServer {
         });
         return;
       }
-      void this.options.onBrowserInput(parsed.message.runId, parsed.message.input).catch((error) => {
-        void error;
-        // CDP errors may echo input parameters. Never pass browser input details
-        // into the host's general-purpose request logger.
-        this.options.onServerError?.(new Error("Browser input dispatch failed."));
-      });
+      enqueueBrowserInput(parsed.message.runId, parsed.message.input);
       return;
     }
 
