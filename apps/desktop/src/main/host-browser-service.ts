@@ -229,23 +229,30 @@ export class HostBrowserService {
 
   setDesktopSurface(input: SetRunBrowserDesktopSurfaceInput): void {
     const session = this.requireSession(input.runId);
-    session.desktopVisible = input.visible;
     if (input.visible) {
-      const mainWindow = this.options.getMainWindow();
-      if (!mainWindow || mainWindow.isDestroyed()) {
-        throw new Error("The BuildWarden window is unavailable.");
+      session.desktopVisible = false;
+      try {
+        const mainWindow = this.options.getMainWindow();
+        if (!mainWindow || mainWindow.isDestroyed()) {
+          throw new Error("The BuildWarden window is unavailable.");
+        }
+        this.moveToParent(session, "main", mainWindow);
+        session.view.setBounds({
+          x: Math.max(0, Math.round(input.bounds.x)),
+          y: Math.max(0, Math.round(input.bounds.y)),
+          width: Math.max(1, Math.round(input.bounds.width)),
+          height: Math.max(1, Math.round(input.bounds.height)),
+        });
+        session.view.setVisible(true);
+      } catch (error) {
+        if (session.remoteSubscribers === 0) this.scheduleIdleDisposal(session);
+        throw error;
       }
-      this.moveToParent(session, "main", mainWindow);
-      session.view.setBounds({
-        x: Math.max(0, Math.round(input.bounds.x)),
-        y: Math.max(0, Math.round(input.bounds.y)),
-        width: Math.max(1, Math.round(input.bounds.width)),
-        height: Math.max(1, Math.round(input.bounds.height)),
-      });
-      session.view.setVisible(true);
+      session.desktopVisible = true;
       this.cancelIdleDisposal(session);
       return;
     }
+    session.desktopVisible = false;
     session.view.setVisible(false);
     this.attachToCompositor(session);
     if (session.remoteSubscribers === 0) this.scheduleIdleDisposal(session);

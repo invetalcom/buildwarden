@@ -239,6 +239,28 @@ describe("HostBrowserService", () => {
     await expect(service.navigate({ runId: "run-a", url: "https://example.com" })).rejects.toThrow(/not open/);
   });
 
+  it("keeps a failed desktop attachment hidden and eligible for idle disposal", async () => {
+    const compositor = createWindow();
+    const { view, webContents } = createView();
+    const service = new HostBrowserService({
+      getMainWindow: () => null,
+      resolveRunProjectId: async () => "project-a",
+      idleTimeoutMs: 1_000,
+      createView: () => view,
+      createCompositor: () => compositor as unknown as BaseWindow,
+    });
+    await service.ensure({ runId: "run-a", viewport: { width: 640, height: 480 } });
+
+    expect(() => service.setDesktopSurface({
+      runId: "run-a",
+      bounds: { x: 0, y: 0, width: 640, height: 480 },
+      visible: true,
+    })).toThrow(/window is unavailable/);
+
+    vi.advanceTimersByTime(1_000);
+    expect(webContents.close).toHaveBeenCalledOnce();
+  });
+
   it("drops stale inspector state and reloads after the target renderer exits", async () => {
     const compositor = createWindow();
     const { view, webContents } = createView();
