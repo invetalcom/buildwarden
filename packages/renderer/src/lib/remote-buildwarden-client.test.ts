@@ -419,10 +419,12 @@ describe("remote BuildWarden client", () => {
       runId: "run-1",
       input: { type: "wheel", x: 20, y: 30, deltaX: 0, deltaY: 120 },
     });
+    await client.ensureRunBrowser({ runId: "run-1", initialUrl: "about:blank", viewport: { width: 800, height: 600 } });
     unsubscribe();
 
+    const readOnlyFetch = vi.fn(async () => rpcResponse(snapshot)) as typeof fetch;
     const readOnlyClient = createRemoteBuildWardenClient({
-      fetch: vi.fn(async () => rpcResponse(snapshot)) as typeof fetch,
+      fetch: readOnlyFetch,
       scopes: ["state:read"],
     });
     expect(readOnlyClient.capabilities.browserControl).toBe(false);
@@ -430,5 +432,11 @@ describe("remote BuildWarden client", () => {
       runId: "run-1",
       input: { type: "text", text: "blocked" },
     })).rejects.toThrow("Re-pair the device");
+    await expect(readOnlyClient.ensureRunBrowser({
+      runId: "run-1",
+      initialUrl: "about:blank",
+      viewport: { width: 800, height: 600 },
+    })).rejects.toThrow("Re-pair the device");
+    expect(readOnlyFetch).not.toHaveBeenCalled();
   });
 });

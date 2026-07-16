@@ -90,6 +90,9 @@ const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
   "getDetectedCursorInstallation",
   "listIntegratedSkills",
   "getIntegratedSkillContent",
+]);
+
+const REMOTE_BROWSER_METHODS = new Set<RemoteApiMethod>([
   "ensureRunBrowser",
   "navigateRunBrowser",
   "runBrowserAction",
@@ -579,6 +582,14 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
       if (existing !== undefined) return existing;
       if (typeof property !== "string") return undefined;
       if (property.startsWith("on")) return () => () => {};
+      if (REMOTE_BROWSER_METHODS.has(property as RemoteApiMethod)) {
+        if (!capabilities.browserControl) {
+          return async () => {
+            throw new Error(`"${property}" requires browser control. Re-pair the device.`);
+          };
+        }
+        return (...args: unknown[]) => invoke(property as RemoteApiMethod, args as never);
+      }
       if (REMOTE_READ_METHODS.has(property as RemoteApiMethod)) {
         return (...args: unknown[]) => invoke(property as RemoteApiMethod, args as never);
       }
