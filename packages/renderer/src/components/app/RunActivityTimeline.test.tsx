@@ -128,6 +128,52 @@ describe("run activity timeline shaping", () => {
     expect(items.map((item) => item.kind)).toEqual(["entry", "plan-decision", "loading", "end"]);
   });
 
+  it("keeps virtual row keys stable while live activity groups grow", () => {
+    const renderItems = (steps: RunActivityStep[]) =>
+      buildTimelineRenderItems({
+        entries: buildActivityEntries(steps, { runActive: true }),
+        density: "comfortable",
+        canShowPlanDecision: false,
+        latestPlanDecisionText: null,
+        showLoading: true,
+      });
+
+    const activityUpdates = [
+      {
+        before: [step("answer-1", "output", {}, "First answer")],
+        after: [step("answer-1", "output", {}, "First answer"), step("answer-2", "output", {}, "Second answer")],
+      },
+      {
+        before: [step("call-1", "tool-call", { callId: "1", toolName: "read_file", path: "a.ts" })],
+        after: [
+          step("call-1", "tool-call", { callId: "1", toolName: "read_file", path: "a.ts" }),
+          step("result-1", "tool-result", { callId: "1", toolName: "read_file", path: "a.ts" }),
+          step("call-2", "tool-call", { callId: "2", toolName: "read_file", path: "b.ts" }),
+        ],
+      },
+      {
+        before: [step("diff-1", "diff-updated", { toolName: "write_file", path: "a.ts" })],
+        after: [
+          step("diff-1", "diff-updated", { toolName: "write_file", path: "a.ts" }),
+          step("diff-2", "diff-updated", { toolName: "write_file", path: "b.ts" }),
+        ],
+      },
+      {
+        before: [step("answer-1", "output", {}, "First answer")],
+        after: [step("answer-1", "output", {}, "First answer"), step("error-1", "error", {}, "Something failed")],
+      },
+    ];
+
+    for (const update of activityUpdates) {
+      const before = renderItems(update.before);
+      const after = renderItems(update.after);
+
+      expect(after[0]?.key).toBe(before[0]?.key);
+      expect(after.find((item) => item.kind === "loading")?.key).toBe(before.find((item) => item.kind === "loading")?.key);
+      expect(after.at(-1)?.key).toBe(before.at(-1)?.key);
+    }
+  });
+
   it("omits tool rows from compact timeline items", () => {
     const entries = buildActivityEntries([
       step("call-1", "tool-call", { callId: "1", toolName: "run_shell", command: "pnpm test" }),

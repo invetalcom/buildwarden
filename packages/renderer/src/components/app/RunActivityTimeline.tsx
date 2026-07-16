@@ -143,7 +143,6 @@ const ActivityEntryView = ({ entry, context }: Readonly<{ entry: ActivityEntry; 
 
     return (
       <AgentLogRow
-        key={`${entry.items[0]?.step.id ?? "diff-batch"}-${entry.items.length}`}
         tone="diff"
         label={`Diffs (${entry.items.length})`}
         time={rowTime(latestTimestamp ? new Date(latestTimestamp).toLocaleTimeString() : null)}
@@ -163,7 +162,6 @@ const ActivityEntryView = ({ entry, context }: Readonly<{ entry: ActivityEntry; 
 
     return (
       <AgentLogRow
-        key={`${entry.items[0]?.callStep?.id ?? entry.items[0]?.resultStep?.id ?? "tool-batch"}-${entry.items.length}`}
         tone="tools"
         label={`Tools (${entry.items.length})`}
         time={rowTime(latestTimestamp ? new Date(latestTimestamp).toLocaleTimeString() : null)}
