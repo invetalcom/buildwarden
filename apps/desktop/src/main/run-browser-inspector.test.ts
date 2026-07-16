@@ -153,6 +153,17 @@ describe("RunBrowserInspector", () => {
     now.mockRestore();
   });
 
+  it("omits the optional CDP session argument for selections in the root target", async () => {
+    const { cdp, inspector, onError, onSelection } = createInspector();
+    await inspector.start();
+    cdp.emit("message", {}, "Overlay.inspectNodeRequested", { backendNodeId: 42 }, "");
+
+    await vi.waitFor(() => expect(onSelection).toHaveBeenCalledOnce());
+    expect(onError).not.toHaveBeenCalled();
+    const rootResolveCall = cdp.sendCommand.mock.calls.find(([method]) => method === "DOM.resolveNode");
+    expect(rootResolveCall).toHaveLength(2);
+  });
+
   it("reports debugger detach", async () => {
     const { cdp, inspector, onError } = createInspector();
     await inspector.start();

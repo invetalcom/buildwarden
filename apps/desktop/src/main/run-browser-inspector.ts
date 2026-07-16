@@ -578,6 +578,8 @@ export class RunBrowserInspector {
   }
 
   private command(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<unknown> {
-    return this.options.webContents.debugger.sendCommand(method, params, sessionId);
+    return sessionId
+      ? this.options.webContents.debugger.sendCommand(method, params, sessionId)
+      : this.options.webContents.debugger.sendCommand(method, params);
   }
 }
