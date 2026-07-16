@@ -846,6 +846,14 @@ export class AppController
     logWarn(message, metadata);
   }
 
+  private notifyRunDeleted(runId: string): void {
+    try {
+      this.lifecycle.onRunDeleted?.(runId);
+    } catch (error) {
+      this.logControllerWarn("A run-deletion lifecycle callback failed.", { runId, error });
+    }
+  }
+
   private getFolderSnapshotRoot(): string {
     return getFolderSnapshotRoot(this.db.getFilePath());
   }
@@ -3309,7 +3317,7 @@ export class AppController
       this.db.deleteProviderSessionRuntime(run.id, "run");
       await this.deleteRunResources(project.repoPath, run, "run");
       this.db.deleteRun(run.id);
-      this.lifecycle.onRunDeleted?.(run.id);
+      this.notifyRunDeleted(run.id);
     }
     this.db.deleteProjectLabThread(threadId);
   }
@@ -5140,7 +5148,7 @@ export class AppController
     await this.secrets.deleteSecret(projectForgeTokenSecretKey(projectId));
     this.setProjectForgePrMonitorInterval(projectId, 0);
     this.db.deleteProject(projectId);
-    runs.forEach((run) => this.lifecycle.onRunDeleted?.(run.id));
+    runs.forEach((run) => this.notifyRunDeleted(run.id));
 
     const remainingProjects = this.db.listProjects();
     if (remainingProjects.length > 0) {
@@ -5326,7 +5334,7 @@ export class AppController
     }
     await this.deleteRunResources(project.repoPath, run, "run");
     this.db.deleteRun(runId);
-    this.lifecycle.onRunDeleted?.(runId);
+    this.notifyRunDeleted(runId);
     this.db.deleteSetting(SELECTED_RUN_KEY);
     this.db.setSetting(SELECTED_PROJECT_KEY, project.id);
   }
