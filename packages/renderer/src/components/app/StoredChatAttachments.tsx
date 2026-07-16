@@ -13,9 +13,11 @@ import {
   FileSpreadsheet,
   FileText,
   FileVideo,
+  MousePointer2,
   Presentation,
 } from "lucide-react";
 import {
+  groupStoredAttachments,
   getStoredAttachmentDownloadMimeType,
   getStoredAttachmentRenderMode,
   getStoredAttachmentTextPreview,
@@ -207,6 +209,60 @@ const ImageAttachmentCard = ({
   </div>
 );
 
+const BrowserElementAttachmentCard = ({
+  compact,
+  contextAttachment,
+  screenshotAttachment,
+  onOpen,
+}: {
+  compact: boolean;
+  contextAttachment?: ChatAttachmentPayload;
+  screenshotAttachment?: ChatAttachmentPayload;
+  onOpen: () => void;
+}) => {
+  const source = contextAttachment?.source ?? screenshotAttachment?.source;
+  const selector = source?.kind === "browser-element" ? source.selector : "Selected browser element";
+
+  return (
+    <div className={`overflow-hidden rounded-lg border border-blue-400/25 bg-zinc-950/60 shadow-sm ${compact ? "w-44" : "w-52"}`}>
+      {screenshotAttachment ? (
+        <button type="button" className="block w-full bg-black/40" title="Open browser element screenshot" onClick={onOpen}>
+          <img
+            src={toDataUrl(screenshotAttachment)}
+            alt="Selected browser element"
+            className={`${compact ? "h-24" : "h-28"} w-full object-cover`}
+          />
+        </button>
+      ) : (
+        <div className={`${compact ? "h-24" : "h-28"} flex items-center justify-center bg-blue-500/10 text-blue-200`}>
+          <MousePointer2 className="h-8 w-8" aria-hidden />
+        </div>
+      )}
+      <div className="border-t border-zinc-700/45 px-2 py-1.5">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="shrink-0 rounded border border-blue-400/25 bg-blue-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-none text-blue-100">
+            Element
+          </span>
+          <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-zinc-300" title={selector}>{selector}</span>
+        </div>
+        <div className="mt-1 flex items-center gap-1 text-[10px] text-zinc-500">
+          {contextAttachment ? (
+            <a href={toDataUrl(contextAttachment)} download={contextAttachment.fileName} className="hover:text-zinc-200">
+              Context
+            </a>
+          ) : null}
+          {contextAttachment && screenshotAttachment ? <span aria-hidden>·</span> : null}
+          {screenshotAttachment ? (
+            <a href={toDataUrl(screenshotAttachment)} download={screenshotAttachment.fileName} className="hover:text-zinc-200">
+              Screenshot
+            </a>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const PdfAttachmentCard = ({
   attachment,
   compact,
@@ -303,6 +359,7 @@ export const StoredChatAttachments = ({
 
   const usedNames = new Set(attachments.map((attachment) => attachment.fileName));
   const namesOnly = fallbackNames.filter((name) => !usedNames.has(name));
+  const displayItems = groupStoredAttachments(attachments);
   const expandedImageUrl = expandedImage ? toDataUrl(expandedImage) : "";
   const expandedPdfUrl = expandedPdf ? toDataUrl(expandedPdf) : "";
 
@@ -310,7 +367,19 @@ export const StoredChatAttachments = ({
     <>
       <div className={compact ? "mt-1.5 space-y-2" : "mt-2 space-y-2"}>
         <div className="flex flex-wrap gap-2">
-          {attachments.map((attachment, index) => {
+          {displayItems.map((item, index) => {
+            if (item.kind === "browser-element") {
+              return (
+                <BrowserElementAttachmentCard
+                  key={`browser-element-${item.groupId}`}
+                  compact={compact}
+                  contextAttachment={item.contextAttachment}
+                  screenshotAttachment={item.screenshotAttachment}
+                  onOpen={() => item.screenshotAttachment && setExpandedImage(item.screenshotAttachment)}
+                />
+              );
+            }
+            const { attachment } = item;
             const renderMode = getStoredAttachmentRenderMode(attachment);
             const textPreview = renderMode === "text" ? getStoredAttachmentTextPreview(attachment) : null;
             const key = `${attachment.fileName}-${String(index)}`;

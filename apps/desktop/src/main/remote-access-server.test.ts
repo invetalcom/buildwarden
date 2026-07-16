@@ -344,7 +344,7 @@ describe("remote access authentication", () => {
     trustedProxyHosts?: () => readonly string[],
     trustedWebOrigins?: () => readonly string[],
     webSocketAuthenticationTimeoutMs?: number,
-    browserOptions: Pick<RemoteAccessServerOptions, "onBrowserInput" | "onBrowserSubscriptionChange"> = {},
+    browserOptions: Pick<RemoteAccessServerOptions, "onBrowserInput" | "onBrowserSubscriptionChange" | "onServerError"> = {},
   ) => {
     const db = await createDatabase();
     const auth = new RemoteAuthService({ store: db, credentialKey: new Uint8Array(32).fill(7) });
@@ -769,14 +769,17 @@ describe("remote access authentication", () => {
   });
 
   it("filters browser events by run and validates scoped browser input", async () => {
-    const onBrowserInput = vi.fn(async () => undefined);
+    const onBrowserInput = vi.fn(async () => {
+      throw new Error("private input payload");
+    });
     const onBrowserSubscriptionChange = vi.fn();
+    const onServerError = vi.fn();
     const { auth, info, publishEvent } = await startServer(
       undefined,
       undefined,
       undefined,
       undefined,
-      { onBrowserInput, onBrowserSubscriptionChange },
+      { onBrowserInput, onBrowserSubscriptionChange, onServerError },
     );
     const { cookie } = await pair(info.baseUrl, auth, { scopes: ["state:read", "browser:operate"] });
     const socket = new WebSocket(
@@ -866,6 +869,8 @@ describe("remote access authentication", () => {
       button: "left",
       clickCount: 1,
     }));
+    await vi.waitFor(() => expect(onServerError).toHaveBeenCalledOnce());
+    expect(String(onServerError.mock.calls[0]?.[0])).toBe("Error: Browser input dispatch failed.");
 
     const invalidInput = nextMessage();
     socket.send(JSON.stringify({

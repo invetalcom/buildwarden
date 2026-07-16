@@ -160,4 +160,18 @@ describe("RunBrowserInspector", () => {
     expect(onError).toHaveBeenCalledWith(expect.stringContaining("target closed"), true);
     inspector.dispose();
   });
+
+  it("invalidates captures and inspection state when the main document is replaced", async () => {
+    const { cdp, inspector, onInspectingChange, onSelection } = createInspector();
+    await inspector.start();
+    cdp.emit("message", {}, "Overlay.inspectNodeRequested", { backendNodeId: 42 });
+    await vi.waitFor(() => expect(onSelection).toHaveBeenCalledOnce());
+    const captureId = onSelection.mock.calls[0]?.[0] as string;
+    expect(inspector.getCapture(captureId)).not.toBeNull();
+
+    inspector.handleNavigationReplacement();
+
+    expect(inspector.getCapture(captureId)).toBeNull();
+    expect(onInspectingChange).toHaveBeenLastCalledWith(false);
+  });
 });

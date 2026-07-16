@@ -54,6 +54,7 @@ import { HostBrowserService } from "./host-browser-service";
 
 const mainDir = dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
+let activeHostBrowser: HostBrowserService | null = null;
 const USE_CUSTOM_WINDOWS_TITLEBAR = process.platform === "win32";
 const PROD_DB_FILE_NAME = "buildwarden.sqlite";
 const DEV_DB_FILE_NAME = "buildwarden_dev.sqlite";
@@ -311,6 +312,16 @@ const bootstrap = async (): Promise<void> => {
   const dbReadyAt = Date.now();
 
   const secretStore = new ElectronSecretStore(join(dataDirPath, secretsFileName));
+  const hostDirectory = new HostDirectoryService();
+  const controllerRef: { current: AppController | null } = { current: null };
+  const hostBrowser = new HostBrowserService({
+    getMainWindow: () => mainWindow,
+    resolveRunProjectId: async (runId) => {
+      if (!controllerRef.current) throw new Error("The application controller is still starting.");
+      return (await controllerRef.current.getRunDetail(runId)).run.projectId;
+    },
+  });
+  activeHostBrowser = hostBrowser;
   const controller = new AppController(
     db,
     secretStore,
@@ -318,23 +329,14 @@ const bootstrap = async (): Promise<void> => {
     desktopPlatform,
     hostTerminal,
     hostEvents,
+    { onRunDeleted: (runId) => hostBrowser.disposeRun(runId) },
   );
-  const hostDirectory = new HostDirectoryService();
-  const hostBrowser = new HostBrowserService({
-    getMainWindow: () => mainWindow,
-    resolveRunProjectId: async (runId) => (await controller.getRunDetail(runId)).run.projectId,
-  });
+  controllerRef.current = controller;
   hostBrowser.onEvent((event) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(IPC_CHANNELS.runBrowserEvent, event);
     }
   });
-  mainWindow?.on("focus", () => hostBrowser.setDesktopWindowVisible(true));
-  mainWindow?.on("show", () => hostBrowser.setDesktopWindowVisible(true));
-  mainWindow?.on("restore", () => hostBrowser.setDesktopWindowVisible(true));
-  mainWindow?.on("blur", () => hostBrowser.setDesktopWindowVisible(false));
-  mainWindow?.on("hide", () => hostBrowser.setDesktopWindowVisible(false));
-  mainWindow?.on("minimize", () => hostBrowser.setDesktopWindowVisible(false));
   const startupReconciliation = controller
     .migrateProjectBaseBranches()
     .then(() => controller.reconcileOrphanedActiveSessions())
@@ -378,6 +380,18 @@ const bootstrap = async (): Promise<void> => {
   refreshAppMenu();
 
   const remoteOperations = new RemoteOperationRegistry(({ method, requestId, error }) => {
+    if ([
+      "ensureRunBrowser",
+      "navigateRunBrowser",
+      "runBrowserAction",
+      "setRunBrowserViewport",
+      "getRunBrowserElementCapture",
+    ].includes(method)) {
+      // Navigation errors can include sensitive target URLs. Browser artifacts
+      // and input are deliberately excluded from persistent logs.
+      logError("Remote browser operation failed.", { method, requestId });
+      return;
+    }
     logError("Remote operation failed.", { method, requestId, error });
   }, db);
   remoteOperations.register("getSnapshot", async () => {
@@ -1297,6 +1311,7 @@ const bootstrap = async (): Promise<void> => {
     });
     hostTerminal.disposeAll();
     hostBrowser.disposeAll();
+    activeHostBrowser = null;
     for (const state of projectForgeMonitorStates.values()) {
       clearInterval(state.timer);
     }
@@ -1349,8 +1364,15 @@ const createMainWindow = (theme: UiTheme): void => {
 
   mainWindow.on("closed", () => {
     logInfo("Main window closed.");
+    activeHostBrowser?.detachDesktopSurfaces();
     mainWindow = null;
   });
+  mainWindow.on("focus", () => activeHostBrowser?.setDesktopWindowVisible(true));
+  mainWindow.on("show", () => activeHostBrowser?.setDesktopWindowVisible(true));
+  mainWindow.on("restore", () => activeHostBrowser?.setDesktopWindowVisible(true));
+  mainWindow.on("blur", () => activeHostBrowser?.setDesktopWindowVisible(false));
+  mainWindow.on("hide", () => activeHostBrowser?.setDesktopWindowVisible(false));
+  mainWindow.on("minimize", () => activeHostBrowser?.setDesktopWindowVisible(false));
 
   if (USE_CUSTOM_WINDOWS_TITLEBAR) {
     mainWindow.setMenuBarVisibility(false);
@@ -1371,6 +1393,7 @@ const createMainWindow = (theme: UiTheme): void => {
   });
 
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    activeHostBrowser?.detachDesktopSurfaces();
     logError("Renderer process exited unexpectedly.", {
       reason: details.reason,
       exitCode: details.exitCode,

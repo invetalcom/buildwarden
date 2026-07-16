@@ -236,6 +236,16 @@ export class HostBrowserService {
     }
   }
 
+  detachDesktopSurfaces(): void {
+    for (const session of this.sessions.values()) {
+      if (!session.desktopVisible && session.parent !== "main") continue;
+      session.desktopVisible = false;
+      session.view.setVisible(false);
+      this.attachToCompositor(session);
+      if (session.remoteSubscribers === 0) this.scheduleIdleDisposal(session);
+    }
+  }
+
   onEvent(listener: (event: RunBrowserEvent) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -266,6 +276,7 @@ export class HostBrowserService {
   }
 
   disposeRun(runId: string): void {
+    this.pendingRemoteSubscribers.delete(runId);
     const session = this.sessions.get(runId);
     if (session) this.disposeSession(session);
   }
@@ -306,6 +317,9 @@ export class HostBrowserService {
     };
     contents.on("will-navigate", blockUnsafeNavigation);
     contents.on("will-redirect", blockUnsafeNavigation);
+    contents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+      if (isMainFrame && !isInPlace) session.inspector?.handleNavigationReplacement();
+    });
     contents.on("did-start-loading", () => this.emitState(session));
     contents.on("did-stop-loading", () => this.emitState(session));
     contents.on("did-navigate", () => this.emitState(session));
@@ -318,12 +332,22 @@ export class HostBrowserService {
       this.emitState(session);
     });
     contents.on("render-process-gone", (_event, details) => {
+      session.inspector?.dispose();
+      session.inspector = null;
+      session.inspecting = false;
+      this.stopRemoteFrames(session);
       this.emit({
         type: "error",
         runId: session.runId,
         message: `The browser renderer exited (${details.reason}).`,
-        recoverable: false,
+        recoverable: true,
       });
+      try {
+        contents.reload();
+        this.requestRemoteFrame(session, true);
+      } catch {
+        this.disposeSession(session);
+      }
     });
   }
 
@@ -517,8 +541,10 @@ export class HostBrowserService {
         this.compositor.contentView.removeChildView(session.view);
       }
       if (!session.view.webContents.isDestroyed()) session.view.webContents.close();
-    } catch (error) {
-      logWarn("Failed to dispose a run browser session cleanly.", { runId: session.runId, error });
+    } catch {
+      // Browser errors can contain the current target URL. Keep host-browser logs
+      // limited to opaque BuildWarden identifiers.
+      logWarn("Failed to dispose a run browser session cleanly.", { runId: session.runId });
     }
     this.sessions.delete(session.runId);
   }
