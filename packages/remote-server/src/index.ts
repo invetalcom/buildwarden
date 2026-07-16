@@ -52,6 +52,7 @@ const DEFAULT_REMOTE_RECORD_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 const PAIRING_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const PAIRING_RATE_LIMIT_WINDOW_MS = 60_000;
 const PAIRING_RATE_LIMIT_ATTEMPTS = 5;
+const DEFAULT_WEBSOCKET_AUTHENTICATION_TIMEOUT_MS = 5_000;
 const REMOTE_STREAM_EVENTS = [
   "run",
   "chat",
@@ -107,7 +108,11 @@ export const validateNoRemoteArgs = (args: unknown[]): args is [] => args.length
 
 export interface RemoteAuthStore {
   createRemoteAccessPairingGrant(record: RemoteAccessPairingGrantRecord): void;
-  consumeRemoteAccessPairingGrant(tokenHash: string, consumedAt: string): RemoteAccessPairingGrantRecord | null;
+  consumeRemoteAccessPairingGrant(
+    tokenHash: string,
+    consumedAt: string,
+    clientOrigin: string | null,
+  ): RemoteAccessPairingGrantRecord | null;
   createRemoteAccessSession(record: RemoteAccessSessionRecord): void;
   getRemoteAccessSessionByTokenHash(tokenHash: string): RemoteAccessSessionRecord | null;
   listRemoteAccessSessions(): RemoteAccessSession[];
@@ -190,6 +195,7 @@ export class RemoteAuthService {
       code,
       scopes: sanitizeScopes(input.scopes),
       createdAt: createdAt.toISOString(),
+      clientOrigin: input.clientOrigin ?? null,
       expiresAt: new Date(createdAt.getTime() + this.pairingTtlMs).toISOString(),
     };
     this.options.store.createRemoteAccessPairingGrant({
@@ -199,12 +205,18 @@ export class RemoteAuthService {
       createdAt: grant.createdAt,
       tokenHash: this.hashCredential("pairing", normalizePairingCode(code)),
       usedAt: null,
+      clientOrigin: grant.clientOrigin ?? null,
     });
     this.audit("pairing-created", "success", { pairingGrantId: grant.id, details: { scopes: grant.scopes } });
     return grant;
   }
 
-  exchangePairingCode(code: string, label: string | undefined, remoteAddress: string | null): RemoteAccessAuthenticatedSession | null {
+  exchangePairingCode(
+    code: string,
+    label: string | undefined,
+    remoteAddress: string | null,
+    clientOrigin: string | null = null,
+  ): RemoteAccessAuthenticatedSession | null {
     const normalizedCode = normalizePairingCode(code);
     const consumedAt = this.now();
     this.maybePrune(consumedAt);
@@ -212,6 +224,7 @@ export class RemoteAuthService {
       ? this.options.store.consumeRemoteAccessPairingGrant(
           this.hashCredential("pairing", normalizedCode),
           consumedAt.toISOString(),
+          clientOrigin,
         )
       : null;
     if (!grant) {
@@ -229,6 +242,7 @@ export class RemoteAuthService {
       expiresAt: new Date(consumedAt.getTime() + this.sessionTtlMs).toISOString(),
       lastUsedAt: consumedAt.toISOString(),
       revokedAt: null,
+      clientOrigin: grant.clientOrigin ?? null,
     };
     this.options.store.createRemoteAccessSession(sessionRecord);
     this.audit("pairing-consumed", "success", {
@@ -242,7 +256,7 @@ export class RemoteAuthService {
   authenticate(
     token: string | null,
     remoteAddress: string | null,
-    options: { audit?: boolean; touch?: boolean } = {},
+    options: { audit?: boolean; touch?: boolean; clientOrigin?: string | null } = {},
   ): RemoteAccessSession | null {
     if (!token) {
       return null;
@@ -250,7 +264,8 @@ export class RemoteAuthService {
     const session = this.options.store.getRemoteAccessSessionByTokenHash(this.hashCredential("session", token));
     const authenticatedAt = this.now();
     this.maybePrune(authenticatedAt);
-    if (!session || session.revokedAt || session.expiresAt <= authenticatedAt.toISOString()) {
+    if (!session || session.revokedAt || session.expiresAt <= authenticatedAt.toISOString() ||
+        (options.clientOrigin !== undefined && session.clientOrigin !== options.clientOrigin)) {
       if (options.audit !== false) {
         this.audit("session-authentication-failed", "failure", { remoteAddress });
       }
@@ -576,20 +591,55 @@ const writeJson = (
   response.end(JSON.stringify(body));
 };
 
-const isAllowedSameOrigin = (originHeader: string | undefined, hostHeader: string | undefined): boolean => {
-  if (!originHeader) {
-    return true;
-  }
-  if (!hostHeader) {
-    return false;
-  }
+const normalizedRequestOrigin = (originHeader: string | undefined): string | null => {
+  if (!originHeader) return null;
   try {
     const origin = new URL(originHeader);
-    return (origin.protocol === "http:" || origin.protocol === "https:") && origin.host.toLowerCase() === hostHeader.toLowerCase();
+    return origin.protocol === "http:" || origin.protocol === "https:" ? origin.origin : null;
   } catch {
-    return false;
+    return null;
   }
 };
+
+type AllowedRequestOrigin = { clientOrigin: string | null; corsOrigin: string | null };
+
+const resolveAllowedRequestOrigin = (
+  originHeader: string | undefined,
+  hostHeader: string | undefined,
+  trustedWebOrigins: readonly string[],
+): AllowedRequestOrigin | null => {
+  if (!originHeader) return { clientOrigin: null, corsOrigin: null };
+  if (!hostHeader) return null;
+  const origin = normalizedRequestOrigin(originHeader);
+  if (!origin) return null;
+  const parsedOrigin = new URL(origin);
+  if (parsedOrigin.host.toLowerCase() === hostHeader.toLowerCase()) {
+    return { clientOrigin: null, corsOrigin: null };
+  }
+  const trusted = trustedWebOrigins.some((candidate) => candidate === origin);
+  return trusted ? { clientOrigin: origin, corsOrigin: origin } : null;
+};
+
+const applyCorsHeaders = (response: ServerResponse, origin: string, request: IncomingMessage): void => {
+  response.setHeader("Access-Control-Allow-Origin", origin);
+  response.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+  response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-BuildWarden-Protocol-Version");
+  response.setHeader("Access-Control-Max-Age", "600");
+  response.setHeader("Vary", "Origin, Access-Control-Request-Private-Network");
+  if (request.method === "OPTIONS" &&
+      firstHeaderValue(request.headers["access-control-request-private-network"]) === "true") {
+    response.setHeader("Access-Control-Allow-Private-Network", "true");
+  }
+};
+
+const CORS_API_PATHS = new Set<string>([
+  REMOTE_ACCESS_HEALTH_PATH,
+  REMOTE_ACCESS_LEGACY_HEALTH_PATH,
+  REMOTE_ACCESS_INFO_PATH,
+  REMOTE_ACCESS_PAIRING_PATH,
+  REMOTE_ACCESS_SESSION_PATH,
+  REMOTE_ACCESS_RPC_PATH,
+]);
 
 const getCookie = (request: IncomingMessage, name: string): string | null => {
   const cookieHeader = request.headers.cookie;
@@ -745,6 +795,9 @@ export interface RemoteAccessServerOptions {
   authentication?: RemoteAccessHealth["authentication"];
   /** Exact MagicDNS hosts whose HTTPS traffic is forwarded by a verified loopback-only proxy. */
   trustedProxyHosts?: () => readonly string[];
+  /** Exact hosted HTTPS origins allowed to call the API through that proxy. */
+  trustedWebOrigins?: () => readonly string[];
+  webSocketAuthenticationTimeoutMs?: number;
   onServerError?: (error: unknown) => void;
 }
 
@@ -790,6 +843,15 @@ const parseWebSocketClientMessage = (
   if (payload.protocolVersion !== REMOTE_ACCESS_PROTOCOL_VERSION) {
     return { ok: false, requestId, code: "protocol-mismatch", message: "Unsupported protocol version." };
   }
+  if (payload.type === "authenticate") {
+    if (typeof payload.token !== "string" || payload.token.length < 16 || payload.token.length > 512) {
+      return { ok: false, requestId, code: "invalid-message", message: "A valid session token is required." };
+    }
+    return {
+      ok: true,
+      message: { protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION, type: "authenticate", requestId, token: payload.token },
+    };
+  }
   if (payload.type === "ping") {
     return { ok: true, message: { protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION, type: "ping", requestId } };
   }
@@ -813,6 +875,10 @@ const validateServerMessage = (message: RemoteWebSocketServerMessage): boolean =
   }
   if (message.type === "event") {
     return Number.isSafeInteger(message.sequence) && message.sequence > 0 && isRemoteEventPayload(message.event, message.payload);
+  }
+  if (message.type === "authenticated") {
+    return isRequestId(message.requestId) && typeof message.session.id === "string" &&
+      Array.isArray(message.session.scopes) && typeof message.session.expiresAt === "string";
   }
   if (!isRequestId(message.requestId)) return false;
   if (message.type === "subscribed") {
@@ -991,12 +1057,44 @@ export class RemoteAccessServer {
       writeJson(response, 421, { error: "Loopback host required." });
       return;
     }
-    if (!isAllowedSameOrigin(request.headers.origin, request.headers.host)) {
+    const requestOrigin = resolveAllowedRequestOrigin(
+      request.headers.origin,
+      request.headers.host,
+      this.options.trustedWebOrigins?.() ?? [],
+    );
+    if (!requestOrigin) {
       writeJson(response, 403, { error: "Origin is not allowed." });
       return;
     }
 
     const url = new URL(request.url ?? "/", "http://localhost");
+    if (requestOrigin.corsOrigin) {
+      applyCorsHeaders(response, requestOrigin.corsOrigin, request);
+    }
+    if (request.method === "OPTIONS") {
+      if (!requestOrigin.corsOrigin || !CORS_API_PATHS.has(url.pathname)) {
+        writeJson(response, 404, { error: "Not found." });
+        return;
+      }
+      const requestedMethod = firstHeaderValue(request.headers["access-control-request-method"])?.toUpperCase();
+      const requestedHeaders = (firstHeaderValue(request.headers["access-control-request-headers"]) ?? "")
+        .split(",")
+        .map((header) => header.trim().toLowerCase())
+        .filter(Boolean);
+      const allowedHeaders = new Set(["authorization", "content-type", "x-buildwarden-protocol-version"]);
+      if (!requestedMethod || !["GET", "POST", "DELETE"].includes(requestedMethod) ||
+          requestedHeaders.some((header) => !allowedHeaders.has(header))) {
+        writeJson(response, 403, { error: "CORS preflight is not allowed." });
+        return;
+      }
+      response.writeHead(204, {
+        "Cache-Control": "no-store",
+        "Content-Length": "0",
+        "X-Content-Type-Options": "nosniff",
+      });
+      response.end();
+      return;
+    }
     if (request.method === "GET" && (url.pathname === REMOTE_ACCESS_HEALTH_PATH || url.pathname === REMOTE_ACCESS_LEGACY_HEALTH_PATH)) {
       const health: RemoteAccessHealth = {
         status: "ok",
@@ -1044,18 +1142,23 @@ export class RemoteAccessServer {
           input.code,
           typeof input.label === "string" ? input.label : undefined,
           request.socket.remoteAddress ?? null,
+          requestOrigin.clientOrigin,
         );
         if (!authenticated) {
           writeJson(response, 401, { error: "Pairing code is invalid or expired." });
           return;
         }
-        const secureCookie = request.headers.origin?.startsWith("https://") ?? false;
-        writeJson(
-          response,
-          201,
-          { session: authenticated.session },
-          { "Set-Cookie": sessionCookie(authenticated.token, authenticated.session.expiresAt, secureCookie) },
-        );
+        if (requestOrigin.clientOrigin) {
+          writeJson(response, 201, { session: authenticated.session, token: authenticated.token });
+        } else {
+          const secureCookie = request.headers.origin?.startsWith("https://") ?? false;
+          writeJson(
+            response,
+            201,
+            { session: authenticated.session },
+            { "Set-Cookie": sessionCookie(authenticated.token, authenticated.session.expiresAt, secureCookie) },
+          );
+        }
       } catch (error) {
         if (error instanceof RequestBodyError) {
           writeJson(response, error.statusCode, { error: error.message });
@@ -1066,7 +1169,9 @@ export class RemoteAccessServer {
       return;
     }
 
-    const session = this.options.auth.authenticate(getSessionToken(request), request.socket.remoteAddress ?? null);
+    const session = this.options.auth.authenticate(getSessionToken(request), request.socket.remoteAddress ?? null, {
+      clientOrigin: requestOrigin.clientOrigin,
+    });
     if (!session) {
       writeJson(response, 401, { error: "Authentication required." });
       return;
@@ -1079,7 +1184,7 @@ export class RemoteAccessServer {
 
     if (request.method === "DELETE" && url.pathname === REMOTE_ACCESS_SESSION_PATH) {
       this.options.auth.revokeSession(session.id, request.socket.remoteAddress ?? null);
-      writeJson(response, 200, { ok: true }, { "Set-Cookie": expiredSessionCookie() });
+      writeJson(response, 200, { ok: true }, requestOrigin.clientOrigin ? {} : { "Set-Cookie": expiredSessionCookie() });
       return;
     }
 
@@ -1182,7 +1287,12 @@ export class RemoteAccessServer {
       rejectUpgrade(socket, 421, "Misdirected Request", "Loopback host required.");
       return;
     }
-    if (!isAllowedSameOrigin(request.headers.origin, request.headers.host)) {
+    const requestOrigin = resolveAllowedRequestOrigin(
+      request.headers.origin,
+      request.headers.host,
+      this.options.trustedWebOrigins?.() ?? [],
+    );
+    if (!requestOrigin) {
       rejectUpgrade(socket, 403, "Forbidden", "Origin is not allowed.");
       return;
     }
@@ -1190,29 +1300,42 @@ export class RemoteAccessServer {
       rejectUpgrade(socket, 426, "Upgrade Required", "A supported protocolVersion is required.");
       return;
     }
-    const token = getSessionToken(request);
+    const token = requestOrigin.clientOrigin ? null : getSessionToken(request);
     const remoteAddress = request.socket.remoteAddress ?? null;
-    const session = this.options.auth.authenticate(token, remoteAddress);
-    if (!session) {
-      rejectUpgrade(socket, 401, "Unauthorized", "Authentication required.");
-      return;
-    }
-    if (!session.scopes.includes("state:read")) {
-      rejectUpgrade(socket, 403, "Forbidden", "The session cannot read event streams.");
-      return;
+    if (!requestOrigin.clientOrigin) {
+      const session = this.options.auth.authenticate(token, remoteAddress, { clientOrigin: null });
+      if (!session) {
+        rejectUpgrade(socket, 401, "Unauthorized", "Authentication required.");
+        return;
+      }
+      if (!session.scopes.includes("state:read")) {
+        rejectUpgrade(socket, 403, "Forbidden", "The session cannot read event streams.");
+        return;
+      }
     }
     webSocketServer.handleUpgrade(request, socket, head, (client) => {
-      this.handleWebSocket(client, startedAt, token ?? "", remoteAddress);
+      this.handleWebSocket(client, startedAt, token, remoteAddress, requestOrigin.clientOrigin);
     });
   }
 
-  private handleWebSocket(socket: WebSocket, startedAt: string, token: string, remoteAddress: string | null): void {
+  private handleWebSocket(
+    socket: WebSocket,
+    startedAt: string,
+    token: string | null,
+    remoteAddress: string | null,
+    clientOrigin: string | null,
+  ): void {
+    const connection = { token };
     const subscriptions = new Set<RemoteStreamEventType>();
     const eventDispose = this.options.events?.subscribe((event) => {
-      if (!subscriptions.has(event.event)) {
+      if (!connection.token || !subscriptions.has(event.event)) {
         return;
       }
-      const session = this.options.auth.authenticate(token, remoteAddress, { audit: false, touch: false });
+      const session = this.options.auth.authenticate(connection.token, remoteAddress, {
+        audit: false,
+        touch: false,
+        clientOrigin,
+      });
       const terminalEvent = event.event === "terminal-data" || event.event === "terminal-exit";
       if (!session?.scopes.includes("state:read") || (terminalEvent && !session.scopes.includes("terminal:operate"))) {
         socket.close(1008, "Session is no longer authorized");
@@ -1226,31 +1349,87 @@ export class RemoteAccessServer {
         payload: event.payload,
       });
     });
-    socket.once("close", () => eventDispose?.());
-    socket.on("error", (error) => this.options.onServerError?.(error));
-    socket.on("message", (data, isBinary) =>
-      this.handleWebSocketMessage(socket, subscriptions, data, isBinary, token, remoteAddress));
-    this.sendWebSocketMessage(socket, {
-      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
-      type: "hello",
-      info: this.buildInfo(startedAt),
+    const authenticationTimer = connection.token ? null : setTimeout(() => {
+      socket.close(1008, "Authentication timeout");
+    }, this.options.webSocketAuthenticationTimeoutMs ?? DEFAULT_WEBSOCKET_AUTHENTICATION_TIMEOUT_MS);
+    socket.once("close", () => {
+      if (authenticationTimer) clearTimeout(authenticationTimer);
+      eventDispose?.();
     });
+    socket.on("error", (error) => this.options.onServerError?.(error));
+    socket.on("message", (data, isBinary) => {
+      if (!connection.token) {
+        this.handleWebSocketAuthentication(socket, data, isBinary, connection, remoteAddress, clientOrigin, () => {
+          if (authenticationTimer) clearTimeout(authenticationTimer);
+          this.sendWebSocketMessage(socket, {
+            protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+            type: "hello",
+            info: this.buildInfo(startedAt),
+          });
+        });
+        return;
+      }
+      this.handleWebSocketMessage(socket, subscriptions, data, isBinary, connection.token, remoteAddress, clientOrigin);
+    });
+    if (connection.token) {
+      this.sendWebSocketMessage(socket, {
+        protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+        type: "hello",
+        info: this.buildInfo(startedAt),
+      });
+    }
   }
 
-  private handleWebSocketMessage(
+  private handleWebSocketAuthentication(
     socket: WebSocket,
-    subscriptions: Set<RemoteStreamEventType>,
     data: RawData,
     isBinary: boolean,
-    token: string,
+    connection: { token: string | null },
     remoteAddress: string | null,
+    clientOrigin: string | null,
+    onAuthenticated: () => void,
   ): void {
-    const session = this.options.auth.authenticate(token, remoteAddress);
-    if (!session?.scopes.includes("state:read")) {
-      socket.close(1008, "Session is no longer authorized");
+    const payload = this.decodeWebSocketPayload(data, isBinary);
+    if (!payload.ok) {
+      this.sendWebSocketMessage(socket, {
+        protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+        type: "error",
+        requestId: "invalid",
+        code: "invalid-message",
+        message: payload.message,
+      });
       return;
     }
-    let payload: unknown;
+    const parsed = parseWebSocketClientMessage(payload.value);
+    if (!parsed.ok || parsed.message.type !== "authenticate") {
+      this.sendWebSocketMessage(socket, {
+        protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+        type: "error",
+        requestId: parsed.ok ? parsed.message.requestId : isRequestId(parsed.requestId) ? parsed.requestId : "invalid",
+        code: parsed.ok ? "authentication-required" : parsed.code,
+        message: parsed.ok ? "Authenticate before using the event stream." : parsed.message,
+      });
+      return;
+    }
+    const session = this.options.auth.authenticate(parsed.message.token, remoteAddress, { clientOrigin });
+    if (!session?.scopes.includes("state:read")) {
+      socket.close(1008, "Session is not authorized");
+      return;
+    }
+    connection.token = parsed.message.token;
+    this.sendWebSocketMessage(socket, {
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "authenticated",
+      requestId: parsed.message.requestId,
+      session,
+    });
+    onAuthenticated();
+  }
+
+  private decodeWebSocketPayload(
+    data: RawData,
+    isBinary: boolean,
+  ): { ok: true; value: unknown } | { ok: false; message: string } {
     try {
       const buffer = Array.isArray(data)
         ? Buffer.concat(data)
@@ -1260,19 +1439,39 @@ export class RemoteAccessServer {
       if (isBinary || buffer.byteLength > MAX_WEBSOCKET_MESSAGE_BYTES) {
         throw new Error("Only bounded JSON text messages are accepted.");
       }
-      payload = JSON.parse(buffer.toString("utf8")) as unknown;
+      return { ok: true, value: JSON.parse(buffer.toString("utf8")) as unknown };
     } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : "Invalid JSON message." };
+    }
+  }
+
+  private handleWebSocketMessage(
+    socket: WebSocket,
+    subscriptions: Set<RemoteStreamEventType>,
+    data: RawData,
+    isBinary: boolean,
+    token: string,
+    remoteAddress: string | null,
+    clientOrigin: string | null,
+  ): void {
+    const session = this.options.auth.authenticate(token, remoteAddress, { clientOrigin });
+    if (!session?.scopes.includes("state:read")) {
+      socket.close(1008, "Session is no longer authorized");
+      return;
+    }
+    const payload = this.decodeWebSocketPayload(data, isBinary);
+    if (!payload.ok) {
       this.sendWebSocketMessage(socket, {
         protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
         type: "error",
         requestId: "invalid",
         code: "invalid-message",
-        message: error instanceof Error ? error.message : "Invalid JSON message.",
+        message: payload.message,
       });
       return;
     }
 
-    const parsed = parseWebSocketClientMessage(payload);
+    const parsed = parseWebSocketClientMessage(payload.value);
     if (!parsed.ok) {
       this.sendWebSocketMessage(socket, {
         protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
@@ -1284,6 +1483,17 @@ export class RemoteAccessServer {
       if (parsed.code === "protocol-mismatch") {
         socket.close(1002, "Protocol version mismatch");
       }
+      return;
+    }
+
+    if (parsed.message.type === "authenticate") {
+      this.sendWebSocketMessage(socket, {
+        protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+        type: "error",
+        requestId: parsed.message.requestId,
+        code: "invalid-message",
+        message: "The event stream is already authenticated.",
+      });
       return;
     }
 

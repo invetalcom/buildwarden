@@ -18,6 +18,8 @@ import {
   isUiTheme,
   parseSupportedIdeKind,
   parseRemoteAccessEnabledSetting,
+  parseRemoteAccessWebOriginsSetting,
+  normalizeRemoteAccessWebOrigin,
   parseUiTheme,
   uiThemeToLegacyDarkMode,
   WINDOWS_TITLEBAR_OVERLAY_BACKGROUND,
@@ -574,7 +576,9 @@ const bootstrap = async (): Promise<void> => {
     (args) => args.length === 1 && hasRemoteStringFields(args[0], ["providerAccountId"]),
   );
   const remoteAppSettingKeys = new Set<string>(Object.values(APP_SETTING_KEYS).filter((key) =>
-    key !== APP_SETTING_KEYS.remoteAccessEnabled && key !== APP_SETTING_KEYS.remoteAccessTailscaleEnabled));
+    key !== APP_SETTING_KEYS.remoteAccessEnabled &&
+    key !== APP_SETTING_KEYS.remoteAccessTailscaleEnabled &&
+    key !== APP_SETTING_KEYS.remoteAccessWebOrigins));
   const validateAppSetting = defineRemoteArgsValidator<"setAppSetting">(
     (args) => args.length === 2 && typeof args[0] === "string" && remoteAppSettingKeys.has(args[0]) &&
       typeof args[1] === "string" && args[1].length <= 1_000_000,
@@ -908,6 +912,8 @@ const bootstrap = async (): Promise<void> => {
               const host = tailscaleServe.getManagedHost();
               return host ? [host] : [];
             },
+            trustedWebOrigins: () =>
+              parseRemoteAccessWebOriginsSetting(db.getSettings()[APP_SETTING_KEYS.remoteAccessWebOrigins]),
             onServerError: (error) => logError("Remote access server request failed.", { error }),
           });
           const info = await remoteAccessServer.start();
@@ -965,9 +971,39 @@ const bootstrap = async (): Promise<void> => {
     if (!remoteAccessServer?.getInfo()) {
       throw new Error("Remote access could not be started.");
     }
-    const grant = (await ensureRemoteAuthService()).createPairingGrant(input);
     const info = remoteAccessServer.getInfo();
     const tailscaleStatus = await tailscaleServe.getStatus(info?.port ?? null);
+    const requestedClientOrigin = input?.clientOrigin == null
+      ? null
+      : normalizeRemoteAccessWebOrigin(input.clientOrigin);
+    if (input?.clientOrigin != null && !requestedClientOrigin) {
+      throw new Error("The hosted website origin is invalid.");
+    }
+    if (requestedClientOrigin) {
+      const trustedOrigins = parseRemoteAccessWebOriginsSetting(
+        db.getSettings()[APP_SETTING_KEYS.remoteAccessWebOrigins],
+      );
+      if (!trustedOrigins.includes(requestedClientOrigin)) {
+        throw new Error("Add this exact hosted website origin before creating a pairing code.");
+      }
+      if (!tailscaleStatus.verified || !tailscaleStatus.endpoint) {
+        throw new Error("A verified Tailscale HTTPS endpoint is required for hosted website pairing.");
+      }
+    }
+    const grant = (await ensureRemoteAuthService()).createPairingGrant({
+      ...input,
+      clientOrigin: requestedClientOrigin ?? undefined,
+    });
+    if (requestedClientOrigin && tailscaleStatus.endpoint) {
+      const fragment = new URLSearchParams({
+        host: tailscaleStatus.endpoint.replace(/\/$/, ""),
+        pair: grant.code,
+      });
+      return {
+        ...grant,
+        pairingUrl: `${requestedClientOrigin}/#${fragment.toString()}`,
+      };
+    }
     const endpoint = tailscaleStatus.verified ? tailscaleStatus.endpoint : info?.baseUrl;
     return endpoint
       ? { ...grant, pairingUrl: `${endpoint.replace(/\/$/, "")}/#pair=${encodeURIComponent(grant.code)}` }

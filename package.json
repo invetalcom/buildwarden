@@ -6,7 +6,7 @@
   "description": "Desktop GUI for coding agents",
   "scripts": {
     "analyze": "pnpm analyze:eslint && pnpm analyze:deps && pnpm analyze:duplicates && pnpm analyze:unused",
-    "analyze:deps": "dependency-cruiser --config .dependency-cruiser.cjs apps/desktop/src packages --output-type err",
+    "analyze:deps": "dependency-cruiser --config .dependency-cruiser.cjs apps/desktop/src apps/web/src packages --output-type err",
     "analyze:duplicates": "jscpd --config .jscpd.json apps packages",
     "analyze:eslint": "node scripts/analyze-eslint.mjs",
     "analyze:unused": "knip --config knip.json",
@@ -20,12 +20,12 @@
     "build:mac": "pnpm --filter @buildwarden/desktop build:mac",
     "build:all": "pnpm --filter @buildwarden/desktop build:all",
     "dev": "pnpm --filter @buildwarden/desktop dev",
-    "lint": "pnpm --filter @buildwarden/desktop lint && pnpm --filter @buildwarden/desktop test",
+    "lint": "pnpm --filter @buildwarden/desktop lint && pnpm --filter @buildwarden/renderer lint && pnpm --filter @buildwarden/web lint",
     "release:prepare": "node scripts/prepare-release.mjs",
     "release:prepare:usage": "node scripts/prepare-release.mjs --help",
-    "test": "pnpm --filter @buildwarden/desktop test",
+    "test": "pnpm --filter @buildwarden/desktop test && pnpm --filter @buildwarden/renderer test && pnpm --filter @buildwarden/web test",
     "test:coverage": "pnpm --filter @buildwarden/desktop test:coverage",
-    "typecheck": "pnpm --filter @buildwarden/desktop typecheck"
+    "typecheck": "pnpm --filter @buildwarden/desktop typecheck && pnpm --filter @buildwarden/renderer typecheck && pnpm --filter @buildwarden/web typecheck"
   },
   "devDependencies": {
     "dependency-cruiser": "17.3.10",

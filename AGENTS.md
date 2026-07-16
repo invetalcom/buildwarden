@@ -21,7 +21,9 @@ This repository is an Electron desktop app for coding-agent workflows. Optimize 
 - `apps/desktop`
   - `src/main`: Electron main process, app controller, IPC handlers, workers, secrets, terminal IPC, run/chat orchestration
   - `src/preload`: safe renderer bridge exposed on `window.buildwarden`
-  - `src/renderer/src`: React UI for landing, sidebar, project, run, chat, bookmark, and settings flows
+  - `src/renderer/src`: thin Electron entry for the shared renderer
+- `apps/web`: hosted/embedded browser entry, connection persistence, Vite and Vercel configuration
+- `packages/renderer`: shared React UI, styles, assets, client adapters, and renderer tests
 - `packages/shared`: shared types, DTOs, provider metadata, IPC contract shapes, settings keys, run/chat types
 - `packages/db`: persisted app state, snapshots, bookmarks, chats, settings, run history, checkpoint persistence
 - `packages/git-service`: Git repo validation, worktree lifecycle, branch/worktree helpers

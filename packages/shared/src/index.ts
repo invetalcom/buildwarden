@@ -2919,6 +2919,8 @@ export type RemoteAccessScope = (typeof REMOTE_ACCESS_SCOPES)[number];
 export interface RemoteAccessPairingInput {
   label?: string;
   scopes?: RemoteAccessScope[];
+  /** Exact hosted web origin this one-time grant and its resulting session are bound to. */
+  clientOrigin?: string;
 }
 
 export interface RemoteAccessPairingGrant {
@@ -2927,6 +2929,7 @@ export interface RemoteAccessPairingGrant {
   scopes: RemoteAccessScope[];
   expiresAt: string;
   createdAt: string;
+  clientOrigin?: string | null;
   /** Browser URL with the one-time code in the fragment so proxies and request logs never receive it. */
   pairingUrl?: string;
 }
@@ -2969,6 +2972,8 @@ export interface RemoteAccessSession {
   expiresAt: string;
   lastUsedAt: string;
   revokedAt: string | null;
+  /** Null for the host-served same-origin cookie flow. */
+  clientOrigin: string | null;
 }
 
 export interface RemoteAccessSessionRecord extends RemoteAccessSession {
@@ -3011,6 +3016,8 @@ export interface RemoteAccessPairingExchangeRequest {
 
 export interface RemoteAccessPairingExchangeResponse {
   session: RemoteAccessSession;
+  /** Returned only for an origin-bound hosted client. Same-origin clients receive an HttpOnly cookie. */
+  token?: string;
 }
 
 /** Explicit transport contract. Desktop methods are not remotely callable unless listed here. */
@@ -3193,6 +3200,12 @@ export interface RemoteAccessInfo {
 export type RemoteWebSocketClientMessage =
   | {
       protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+      type: "authenticate";
+      requestId: string;
+      token: string;
+    }
+  | {
+      protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
       type: "subscribe";
       requestId: string;
       events: RemoteStreamEventType[];
@@ -3204,6 +3217,12 @@ export type RemoteWebSocketClientMessage =
     };
 
 export type RemoteWebSocketServerMessage =
+  | {
+      protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+      type: "authenticated";
+      requestId: string;
+      session: RemoteAccessSession;
+    }
   | {
       protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
       type: "hello";
@@ -3231,7 +3250,7 @@ export type RemoteWebSocketServerMessage =
       protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
       type: "error";
       requestId: string;
-      code: "invalid-message" | "protocol-mismatch" | "forbidden";
+      code: "invalid-message" | "protocol-mismatch" | "forbidden" | "authentication-required";
       message: string;
     };
 
@@ -3427,6 +3446,8 @@ export const APP_SETTING_KEYS = {
   remoteAccessEnabled: "remoteAccess.enabled",
   /** User opt-in for a BuildWarden-owned Tailscale Serve root handler. */
   remoteAccessTailscaleEnabled: "remoteAccess.tailscaleEnabled",
+  /** JSON array of exact hosted HTTPS origins allowed to connect to the loopback host through Tailscale. */
+  remoteAccessWebOrigins: "remoteAccess.webOrigins",
   /** Internal ownership marker; only exact matching handlers are removed. */
   remoteAccessTailscaleManagedHost: "remoteAccess.tailscaleManagedHost",
   /** Internal ownership marker for the loopback proxy target. */
@@ -3440,6 +3461,41 @@ export const DEFAULT_REMOTE_ACCESS_ENABLED = false;
 /** Remote access is opt-in: legacy databases and malformed values always remain disabled. */
 export const parseRemoteAccessEnabledSetting = (raw: string | undefined | null): boolean =>
   raw === "true";
+
+export const normalizeRemoteAccessWebOrigin = (raw: string): string | null => {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.includes("*")) return null;
+  try {
+    const url = new URL(trimmed);
+    const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) return null;
+    if (url.username || url.password || url.search || url.hash || (url.pathname && url.pathname !== "/")) return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+};
+
+export const parseRemoteAccessWebOriginsSetting = (raw: string | undefined | null): string[] => {
+  if (!raw?.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return Array.from(new Set(parsed.flatMap((value) => {
+      if (typeof value !== "string") return [];
+      const origin = normalizeRemoteAccessWebOrigin(value);
+      return origin ? [origin] : [];
+    })));
+  } catch {
+    return [];
+  }
+};
+
+export const serializeRemoteAccessWebOriginsSetting = (origins: Iterable<string>): string =>
+  JSON.stringify(Array.from(new Set(Array.from(origins).flatMap((value) => {
+    const origin = normalizeRemoteAccessWebOrigin(value);
+    return origin ? [origin] : [];
+  }))));
 
 export const DEFAULT_RECENT_RUN_DAYS = 2;
 export const MIN_RECENT_RUN_DAYS = 1;

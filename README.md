@@ -25,6 +25,8 @@ Remote Access is optional and disabled by default. When enabled, the BuildWarden
 
 The server deliberately listens only on loopback. It cannot be reached directly through the host's LAN address, such as `http://192.168.x.x:47831`. To connect from another computer, tablet, or phone, use the optional Tailscale Serve integration. BuildWarden remains the host and sole owner of its database, Git operations, workers, and terminals; no data is moved to a central BuildWarden service.
 
+BuildWarden also provides a static client in `apps/web` for deployment at one stable Vercel or other static-hosting URL. That deployment contains no backend or relay: the browser still connects directly to the user's desktop through Tailscale. The existing host-served URL continues to work independently.
+
 ### Requirements
 
 Install Tailscale using its [platform installation guide](https://tailscale.com/docs/install). Tailscale Serve requires HTTPS certificates to be enabled for the tailnet and remains subject to the tailnet's access-control policy; see the [Tailscale Serve documentation](https://tailscale.com/docs/features/tailscale-serve).
@@ -39,6 +41,8 @@ BuildWarden looks for `tailscale` on `PATH` and in the standard Windows, macOS, 
 4. For another tailnet device, enable **Expose to tailnet**. BuildWarden verifies Tailscale, creates a background HTTPS Serve proxy to its loopback server, and displays the MagicDNS URL, normally `https://<device>.<tailnet>.ts.net/`.
 5. Choose whether the new session should be read-only or whether **Allow runs, chats, approvals, Git, projects, and terminal** should grant control scopes.
 6. Select **Create pairing code**, then open the pairing link, scan its QR code, or enter the code in the browser.
+
+For a separately hosted website, deploy `apps/web` as described in its README, add its exact HTTPS origin under **Hosted website origins**, choose **Hosted website** when creating the code, and scan the resulting QR link. Hosted sessions use an origin-bound bearer stored in IndexedDB; host-served sessions continue to use the HttpOnly cookie described below.
 
 Pairing codes expire after five minutes and can be used only once. A successful pairing creates a revocable device session that is valid for up to 90 days. The browser keeps the session token in an `HttpOnly`, `SameSite=Strict` cookie, not in `localStorage`; the cookie is marked `Secure` when the connection uses Tailscale HTTPS. Use **Disconnect** in the browser to revoke its current session, or revoke any paired device from the desktop settings.
 
@@ -60,13 +64,15 @@ BuildWarden has one authoritative host and two client transports. The Electron r
 flowchart LR
     subgraph Clients
         Electron["Electron React UI"]
-        Browser["Browser React UI"]
+        Browser["Host-served browser UI"]
+        Hosted["Static hosted browser UI"]
     end
 
     Electron --> ElectronClient["ElectronBuildWardenClient"]
     ElectronClient --> Preload["Preload bridge / IPC"]
 
     Browser --> RemoteClient["RemoteBuildWardenClient"]
+    Hosted --> RemoteClient
 
     subgraph Host["BuildWarden desktop host — one process"]
         Server["Embedded remote server"]
@@ -90,8 +96,12 @@ flowchart LR
 - `apps/desktop`
   - Electron main process: authoritative app controller, IPC handlers, remote-server lifecycle, run/chat orchestration, workers, host terminal service, Tailscale Serve integration, notifications, and secret-store integration.
   - Preload: safe desktop bridge exposed as `window.buildwarden` and wrapped by `ElectronBuildWardenClient`.
-  - Shared React renderer: landing, sidebar, project, run, chat, bookmark, settings, branch, PR/MR review, Project Lab, insight, and remote-pairing views.
-  - Web entry and Vite build: packages the shared renderer for delivery by the embedded server and supplies `RemoteBuildWardenClient` as its transport adapter.
+  - Thin Electron renderer entry that supplies `ElectronBuildWardenClient` to the shared UI.
+- `apps/web`
+  - Hosted and embedded browser entries, pairing/session lifecycle, IndexedDB connection persistence, Vite build, and self-contained Vercel configuration.
+  - Produces both the static Vercel site and `apps/desktop/out/web` used by the embedded server.
+- `packages/renderer`
+  - Shared React application, components, styles, assets, capability-aware UI, and Electron/remote client adapters consumed by both app entries.
 - `packages/remote-server`
   - Loopback-only HTTP server, static web application hosting, protocol/version negotiation, scoped RPC dispatch, one-time pairing and session authentication, request validation, idempotency enforcement, and authenticated WebSocket event streaming.
 - `packages/shared`
@@ -158,7 +168,7 @@ pnpm dev
 The packaged build always includes the browser application. When testing Remote Access with the development app, build the static web assets before starting Electron and rebuild them after renderer changes:
 
 ```bash
-pnpm --filter @buildwarden/desktop build:web
+pnpm --filter @buildwarden/web build:embedded
 pnpm dev
 ```
 

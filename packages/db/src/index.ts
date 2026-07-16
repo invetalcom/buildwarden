@@ -2644,14 +2644,18 @@ export class BuildWardenDatabase {
 
   createRemoteAccessPairingGrant(record: RemoteAccessPairingGrantRecord): void {
     this.run(
-      `insert into remote_pairing_grants (id, token_hash, scopes_json, expires_at, used_at, created_at)
-       values (?, ?, ?, ?, ?, ?)`,
-      [record.id, record.tokenHash, JSON.stringify(record.scopes), record.expiresAt, record.usedAt, record.createdAt],
+      `insert into remote_pairing_grants (id, token_hash, scopes_json, expires_at, used_at, created_at, client_origin)
+       values (?, ?, ?, ?, ?, ?, ?)`,
+      [record.id, record.tokenHash, JSON.stringify(record.scopes), record.expiresAt, record.usedAt, record.createdAt, record.clientOrigin ?? null],
     );
     this.persist();
   }
 
-  consumeRemoteAccessPairingGrant(tokenHash: string, consumedAt: string): RemoteAccessPairingGrantRecord | null {
+  consumeRemoteAccessPairingGrant(
+    tokenHash: string,
+    consumedAt: string,
+    clientOrigin: string | null,
+  ): RemoteAccessPairingGrantRecord | null {
     const row = this.first<{
       id: string;
       tokenHash: string;
@@ -2659,12 +2663,13 @@ export class BuildWardenDatabase {
       expiresAt: string;
       usedAt: string | null;
       createdAt: string;
+      clientOrigin: string | null;
     }>(
       `select id, token_hash as tokenHash, scopes_json as scopesJson, expires_at as expiresAt,
-              used_at as usedAt, created_at as createdAt
+              used_at as usedAt, created_at as createdAt, client_origin as clientOrigin
        from remote_pairing_grants
-       where token_hash = ? and used_at is null and expires_at > ?`,
-      [tokenHash, consumedAt],
+       where token_hash = ? and used_at is null and expires_at > ? and client_origin is ?`,
+      [tokenHash, consumedAt, clientOrigin],
     );
     if (!row) {
       return null;
@@ -2678,14 +2683,15 @@ export class BuildWardenDatabase {
       expiresAt: row.expiresAt,
       usedAt: consumedAt,
       createdAt: row.createdAt,
+      clientOrigin: row.clientOrigin,
     };
   }
 
   createRemoteAccessSession(record: RemoteAccessSessionRecord): void {
     this.run(
       `insert into remote_access_sessions (
-         id, token_hash, label, scopes_json, created_at, expires_at, last_used_at, revoked_at
-       ) values (?, ?, ?, ?, ?, ?, ?, ?)`,
+         id, token_hash, label, scopes_json, created_at, expires_at, last_used_at, revoked_at, client_origin
+       ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         record.id,
         record.tokenHash,
@@ -2695,6 +2701,7 @@ export class BuildWardenDatabase {
         record.expiresAt,
         record.lastUsedAt,
         record.revokedAt,
+        record.clientOrigin,
       ],
     );
     this.persist();
@@ -2710,9 +2717,10 @@ export class BuildWardenDatabase {
       expiresAt: string;
       lastUsedAt: string;
       revokedAt: string | null;
+      clientOrigin: string | null;
     }>(
       `select id, token_hash as tokenHash, label, scopes_json as scopesJson, created_at as createdAt,
-              expires_at as expiresAt, last_used_at as lastUsedAt, revoked_at as revokedAt
+              expires_at as expiresAt, last_used_at as lastUsedAt, revoked_at as revokedAt, client_origin as clientOrigin
        from remote_access_sessions where token_hash = ?`,
       [tokenHash],
     );
@@ -2732,9 +2740,10 @@ export class BuildWardenDatabase {
       expiresAt: string;
       lastUsedAt: string;
       revokedAt: string | null;
+      clientOrigin: string | null;
     }>(
       `select id, label, scopes_json as scopesJson, created_at as createdAt, expires_at as expiresAt,
-              last_used_at as lastUsedAt, revoked_at as revokedAt
+              last_used_at as lastUsedAt, revoked_at as revokedAt, client_origin as clientOrigin
        from remote_access_sessions order by created_at desc`,
     ).map(({ scopesJson, ...row }) => ({ ...row, scopes: this.parseRemoteAccessScopes(scopesJson) }));
   }
@@ -3344,7 +3353,8 @@ export class BuildWardenDatabase {
         scopes_json text not null,
         expires_at text not null,
         used_at text,
-        created_at text not null
+        created_at text not null,
+        client_origin text
       );
 
       create table if not exists remote_access_sessions (
@@ -3355,7 +3365,8 @@ export class BuildWardenDatabase {
         created_at text not null,
         expires_at text not null,
         last_used_at text not null,
-        revoked_at text
+        revoked_at text,
+        client_origin text
       );
 
       create table if not exists remote_security_audit (
@@ -3399,6 +3410,8 @@ export class BuildWardenDatabase {
     this.ensureColumn("project_tasks", "status", "text not null default 'open'");
     this.ensureColumn("project_tasks", "run_id", "text");
     this.ensureColumn("project_tasks", "pull_request_url", "text");
+    this.ensureColumn("remote_pairing_grants", "client_origin", "text");
+    this.ensureColumn("remote_access_sessions", "client_origin", "text");
   }
 
   private ensureColumn(tableName: string, columnName: string, definition: string): void {

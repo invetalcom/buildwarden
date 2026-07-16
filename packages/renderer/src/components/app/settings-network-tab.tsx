@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   APP_SETTING_KEYS,
+  normalizeRemoteAccessWebOrigin,
+  parseRemoteAccessWebOriginsSetting,
+  serializeRemoteAccessWebOriginsSetting,
   type NetworkProxyProtocol,
   type RemoteAccessStatus,
   type RemoteAccessPairingGrant,
@@ -14,6 +17,7 @@ import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
 import { Select } from "../ui/select";
+import { Textarea } from "../ui/textarea";
 
 export type NetworkProxyDraft = {
   enabled: boolean;
@@ -69,6 +73,10 @@ const RemoteAccessSettings = ({
   const [pairingQrCode, setPairingQrCode] = useState<string | null>(null);
   const [remoteStatus, setRemoteStatus] = useState<RemoteAccessStatus | null>(null);
   const [allowRemoteControl, setAllowRemoteControl] = useState(false);
+  const [pairingTarget, setPairingTarget] = useState<"host" | "hosted">("host");
+  const [webOrigins, setWebOrigins] = useState<string[]>([]);
+  const [webOriginsDraft, setWebOriginsDraft] = useState("");
+  const [selectedWebOrigin, setSelectedWebOrigin] = useState("");
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const buildwarden = useBuildWardenClient();
@@ -82,10 +90,19 @@ const RemoteAccessSettings = ({
   }, [buildwarden]);
 
   useEffect(() => {
-    void Promise.all([refreshSessions(), refreshRemoteStatus()]).catch((caught) => {
+    void Promise.all([
+      refreshSessions(),
+      refreshRemoteStatus(),
+      buildwarden.getSnapshot().then((snapshot) => {
+        const origins = parseRemoteAccessWebOriginsSetting(snapshot.settings[APP_SETTING_KEYS.remoteAccessWebOrigins]);
+        setWebOrigins(origins);
+        setWebOriginsDraft(origins.join("\n"));
+        setSelectedWebOrigin((current) => origins.includes(current) ? current : origins[0] ?? "");
+      }),
+    ]).catch((caught) => {
       setError(caught instanceof Error ? caught.message : "Could not load paired devices.");
     });
-  }, [refreshRemoteStatus, refreshSessions]);
+  }, [buildwarden, refreshRemoteStatus, refreshSessions]);
 
   useEffect(() => {
     let disposed = false;
@@ -216,15 +233,65 @@ const RemoteAccessSettings = ({
         ) : null}
       </div>
 
+      <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-950/45 p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium text-zinc-200">Hosted website origins</p>
+            <p className="mt-1 text-xs leading-5 text-zinc-400">
+              Add exact HTTPS origins that may connect directly to this host, one per line. Wildcards and URL paths are rejected.
+            </p>
+          </div>
+          <Button type="button" variant="secondary" size="sm" disabled={working} onClick={() => void run(async () => {
+            const entered = webOriginsDraft.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+            const invalid = entered.find((value) => !normalizeRemoteAccessWebOrigin(value));
+            if (invalid) throw new Error(`Invalid hosted website origin: ${invalid}`);
+            const serialized = serializeRemoteAccessWebOriginsSetting(entered);
+            const origins = parseRemoteAccessWebOriginsSetting(serialized);
+            await buildwarden.setAppSetting(APP_SETTING_KEYS.remoteAccessWebOrigins, serialized);
+            setWebOrigins(origins);
+            setWebOriginsDraft(origins.join("\n"));
+            setSelectedWebOrigin((current) => origins.includes(current) ? current : origins[0] ?? "");
+            setPairing(null);
+          })}>
+            Save origins
+          </Button>
+        </div>
+        <Textarea
+          className="mt-3 min-h-20 font-mono text-xs"
+          value={webOriginsDraft}
+          onChange={(event) => setWebOriginsDraft(event.target.value)}
+          placeholder="https://buildwarden.example.com"
+          spellCheck={false}
+        />
+      </div>
+
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-zinc-800 pt-4">
+        <div className="flex items-center rounded-md border border-zinc-800 bg-zinc-950/50 p-0.5 text-xs">
+          <button type="button" className={`rounded px-2 py-1 ${pairingTarget === "host" ? "bg-zinc-800 text-zinc-100" : "text-zinc-500"}`} onClick={() => setPairingTarget("host")}>Host-served</button>
+          <button type="button" className={`rounded px-2 py-1 ${pairingTarget === "hosted" ? "bg-zinc-800 text-zinc-100" : "text-zinc-500"}`} onClick={() => setPairingTarget("hosted")}>Hosted website</button>
+        </div>
+        {pairingTarget === "hosted" ? (
+          <Select
+            className="min-w-64"
+            triggerClassName="h-8 text-xs"
+            value={selectedWebOrigin}
+            options={webOrigins.map((origin) => ({ value: origin, label: origin }))}
+            onValueChange={setSelectedWebOrigin}
+            placeholder="Configure an origin first"
+            ariaLabel="Hosted website origin"
+          />
+        ) : null}
         <Button
           type="button"
           size="sm"
-          disabled={!enabled || working}
+          disabled={!enabled || working || (pairingTarget === "hosted" && !selectedWebOrigin)}
           onClick={() => void run(async () => {
-            setPairing(await onCreatePairing({ scopes: allowRemoteControl
-              ? ["state:read", "run:operate", "chat:operate", "approval:respond", "git:write", "terminal:operate", "admin"]
-              : ["state:read"] }));
+            setPairing(await onCreatePairing({
+              scopes: allowRemoteControl
+                ? ["state:read", "run:operate", "chat:operate", "approval:respond", "git:write", "terminal:operate", "admin"]
+                : ["state:read"],
+              ...(pairingTarget === "hosted" ? { clientOrigin: selectedWebOrigin } : {}),
+            }));
             await refreshSessions();
             await refreshRemoteStatus();
           })}

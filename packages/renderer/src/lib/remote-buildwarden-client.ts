@@ -245,6 +245,8 @@ export class RemoteSessionExpiredError extends Error {
 
 export interface RemoteBuildWardenClientOptions {
   baseUrl?: string;
+  /** Origin-bound bearer used by the standalone hosted client. Omit for same-origin cookie sessions. */
+  sessionToken?: string;
   fetch?: typeof globalThis.fetch;
   webSocketFactory?: (url: string) => WebSocket;
   scopes?: readonly RemoteAccessScope[];
@@ -292,6 +294,10 @@ const parseRemoteServerMessage = (raw: unknown): RemoteWebSocketServerMessage | 
     return isRemoteEventPayload(event, raw.payload) ? raw as unknown as RemoteWebSocketServerMessage : null;
   }
   if (raw.type === "hello") return isObject(raw.info) ? raw as unknown as RemoteWebSocketServerMessage : null;
+  if (raw.type === "authenticated") {
+    return typeof raw.requestId === "string" && isObject(raw.session)
+      ? raw as unknown as RemoteWebSocketServerMessage : null;
+  }
   if (raw.type === "subscribed") {
     return typeof raw.requestId === "string" && Array.isArray(raw.events) &&
       raw.events.every((event) => typeof event === "string" && REMOTE_EVENT_TYPES.has(event as RemoteStreamEventType))
@@ -345,7 +351,16 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     eventSocket = socket;
     socket.addEventListener("open", () => {
       reconnectAttempt = 0;
-      sendSubscription();
+      if (options.sessionToken) {
+        socket.send(JSON.stringify({
+          protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+          type: "authenticate",
+          requestId: crypto.randomUUID(),
+          token: options.sessionToken,
+        }));
+      } else {
+        sendSubscription();
+      }
     });
     socket.addEventListener("message", (event) => {
       if (typeof event.data !== "string") return;
@@ -356,6 +371,10 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
         return;
       }
       const message = parseRemoteServerMessage(decoded);
+      if (message?.type === "authenticated") {
+        sendSubscription();
+        return;
+      }
       if (message?.type !== "event") return;
       listeners.get(message.event)?.forEach((listener) => listener(message.payload));
     });
@@ -415,8 +434,11 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     });
     const send = () => fetcher(`${baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
       method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
+      credentials: options.sessionToken ? "omit" : "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.sessionToken ? { Authorization: `Bearer ${options.sessionToken}` } : {}),
+      },
       body: requestBody,
     });
     let response: Response;
