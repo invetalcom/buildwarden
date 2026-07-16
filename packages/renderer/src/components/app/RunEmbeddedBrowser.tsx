@@ -52,6 +52,8 @@ export const RunEmbeddedBrowser = ({
   const remoteInputFrameRef = useRef(0);
   const pendingPointerRef = useRef<RunBrowserInput | null>(null);
   const pendingWheelRef = useRef<{ x: number; y: number; deltaX: number; deltaY: number; modifiers: number } | null>(null);
+  const pressedPointerButtonRef = useRef<"left" | "middle" | "right" | null>(null);
+  const lastRemotePointRef = useRef<{ x: number; y: number } | null>(null);
   const sessionRef = useRef(session);
   const addressFocusedRef = useRef(false);
   const onSessionChangeRef = useRef(onSessionChange);
@@ -105,6 +107,8 @@ export const RunEmbeddedBrowser = ({
     setDraftUrl(nextSession.draftUrl || nextSession.currentUrl || DEFAULT_BROWSER_URL);
     lastRequestedUrlRef.current = "";
     remoteFrameRef.current = null;
+    pressedPointerButtonRef.current = null;
+    lastRemotePointRef.current = null;
     setRemoteFrameReady(false);
     setReady(false);
     setError(null);
@@ -269,6 +273,19 @@ export const RunEmbeddedBrowser = ({
     void buildwarden.sendRunBrowserInput({ runId, input }).catch(() => undefined);
   };
 
+  const releaseRemotePointer = (clientX: number, clientY: number, clickCount: number, modifiers: number) => {
+    const button = pressedPointerButtonRef.current;
+    if (!button) return;
+    const point = remoteCoordinates(clientX, clientY) ?? lastRemotePointRef.current;
+    pressedPointerButtonRef.current = null;
+    const pendingPointer = pendingPointerRef.current;
+    pendingPointerRef.current = null;
+    if (pendingPointer) sendRemoteInput(pendingPointer);
+    if (point) {
+      sendRemoteInput({ type: "mouse", eventType: "mouseReleased", ...point, button, clickCount, modifiers });
+    }
+  };
+
   const flushRemoteInput = () => {
     remoteInputFrameRef.current = 0;
     const pointer = pendingPointerRef.current;
@@ -359,19 +376,22 @@ export const RunEmbeddedBrowser = ({
                 event.currentTarget.setPointerCapture(event.pointerId);
                 remoteTextInputRef.current?.focus();
                 const button = event.button === 2 ? "right" : event.button === 1 ? "middle" : "left";
+                pressedPointerButtonRef.current = button;
+                lastRemotePointRef.current = point;
                 sendRemoteInput({ type: "mouse", eventType: "mousePressed", ...point, button, clickCount: event.detail || 1, modifiers: modifiersFor(event) });
               }}
               onPointerMove={(event) => {
                 const point = remoteCoordinates(event.clientX, event.clientY);
                 if (!point) return;
+                lastRemotePointRef.current = point;
                 pendingPointerRef.current = { type: "mouse", eventType: "mouseMoved", ...point, button: "none", modifiers: modifiersFor(event) };
                 scheduleRemoteInput();
               }}
               onPointerUp={(event) => {
-                const point = remoteCoordinates(event.clientX, event.clientY);
-                if (!point) return;
-                const button = event.button === 2 ? "right" : event.button === 1 ? "middle" : "left";
-                sendRemoteInput({ type: "mouse", eventType: "mouseReleased", ...point, button, clickCount: event.detail || 1, modifiers: modifiersFor(event) });
+                releaseRemotePointer(event.clientX, event.clientY, event.detail || 1, modifiersFor(event));
+              }}
+              onPointerCancel={(event) => {
+                releaseRemotePointer(event.clientX, event.clientY, event.detail || 1, modifiersFor(event));
               }}
               onWheel={(event) => {
                 event.preventDefault();
