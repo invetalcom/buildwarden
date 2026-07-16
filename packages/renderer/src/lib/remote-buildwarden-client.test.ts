@@ -334,4 +334,101 @@ describe("remote BuildWarden client", () => {
     expect(onTerminalData).toHaveBeenCalledOnce();
     unsubscribe();
   });
+
+  it("subscribes to bounded browser runs and sends browser input only for scoped sessions", async () => {
+    type SocketListener = (event: { data?: string; code?: number }) => void;
+    const handlers = new Map<string, SocketListener[]>();
+    const sent: string[] = [];
+    const socket = {
+      readyState: 0,
+      addEventListener: (type: string, listener: SocketListener) => {
+        handlers.set(type, [...(handlers.get(type) ?? []), listener]);
+      },
+      send: (message: string) => sent.push(message),
+      close: vi.fn(),
+    };
+    const emit = (type: string, event: { data?: string; code?: number } = {}) =>
+      handlers.get(type)?.forEach((handler) => handler(event));
+    const client = createRemoteBuildWardenClient({
+      fetch: vi.fn(async () => rpcResponse(snapshot)) as typeof fetch,
+      scopes: ["state:read", "browser:operate"],
+      webSocketFactory: () => socket as unknown as WebSocket,
+    });
+    const onBrowserEvent = vi.fn();
+    const unsubscribe = client.onRunBrowserEvent(onBrowserEvent, ["run-1"]);
+
+    expect(client.capabilities.browserControl).toBe(true);
+    expect(client.capabilities.mutations).toBe(true);
+    socket.readyState = 1;
+    emit("open");
+    expect(JSON.parse(sent[0] ?? "{}")).toMatchObject({
+      type: "subscribe",
+      events: ["browser"],
+      browserRunIds: ["run-1"],
+    });
+
+    emit("message", { data: JSON.stringify({
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "event",
+      sequence: 1,
+      event: "browser",
+      payload: {
+        type: "state",
+        runId: "run-2",
+        state: {
+          runId: "run-2",
+          currentUrl: "https://example.com/ignored",
+          title: "Ignored",
+          loading: false,
+          canGoBack: false,
+          canGoForward: false,
+          inspecting: false,
+          viewport: { width: 800, height: 600, deviceScaleFactor: 1 },
+        },
+      },
+    }) });
+    emit("message", { data: JSON.stringify({
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "event",
+      sequence: 2,
+      event: "browser",
+      payload: {
+        type: "state",
+        runId: "run-1",
+        state: {
+          runId: "run-1",
+          currentUrl: "https://example.com/selected",
+          title: "Selected",
+          loading: false,
+          canGoBack: false,
+          canGoForward: false,
+          inspecting: false,
+          viewport: { width: 800, height: 600, deviceScaleFactor: 1 },
+        },
+      },
+    }) });
+    expect(onBrowserEvent).toHaveBeenCalledOnce();
+    expect(onBrowserEvent).toHaveBeenCalledWith(expect.objectContaining({ runId: "run-1" }));
+
+    await client.sendRunBrowserInput({
+      runId: "run-1",
+      input: { type: "wheel", x: 20, y: 30, deltaX: 0, deltaY: 120 },
+    });
+    expect(JSON.parse(sent.at(-1) ?? "{}")).toMatchObject({
+      type: "browser-input",
+      runId: "run-1",
+      input: { type: "wheel", x: 20, y: 30, deltaX: 0, deltaY: 120 },
+    });
+    unsubscribe();
+
+    const readOnlyClient = createRemoteBuildWardenClient({
+      fetch: vi.fn(async () => rpcResponse(snapshot)) as typeof fetch,
+      scopes: ["state:read"],
+    });
+    expect(readOnlyClient.capabilities.browserControl).toBe(false);
+    await expect(readOnlyClient.sendRunBrowserInput({
+      runId: "run-1",
+      input: { type: "text", text: "blocked" },
+    })).rejects.toThrow("Re-pair the device");
+  });
 });

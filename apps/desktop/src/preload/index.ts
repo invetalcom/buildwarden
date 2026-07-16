@@ -187,6 +187,7 @@ const api: DesktopApi = {
   setRunBrowserViewport: (input) => invoke(IPC_CHANNELS.setRunBrowserViewport, input),
   setRunBrowserDesktopSurface: (input) => invoke(IPC_CHANNELS.setRunBrowserDesktopSurface, input),
   getRunBrowserElementCapture: (input) => invoke(IPC_CHANNELS.getRunBrowserElementCapture, input),
+  sendRunBrowserInput: (input) => invoke(IPC_CHANNELS.sendRunBrowserInput, input),
   onRunBrowserEvent: (listener: (event: RunBrowserEvent) => void) => {
     const wrapped = (_event: Electron.IpcRendererEvent, payload: RunBrowserEvent) => listener(payload);
     ipcRenderer.on(IPC_CHANNELS.runBrowserEvent, wrapped);

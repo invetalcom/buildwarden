@@ -288,7 +288,7 @@ const RemoteAccessSettings = ({
           onClick={() => void run(async () => {
             setPairing(await onCreatePairing({
               scopes: allowRemoteControl
-                ? ["state:read", "run:operate", "chat:operate", "approval:respond", "git:write", "terminal:operate", "admin"]
+                ? ["state:read", "run:operate", "chat:operate", "approval:respond", "git:write", "terminal:operate", "browser:operate", "admin"]
                 : ["state:read"],
               ...(pairingTarget === "hosted" ? { clientOrigin: selectedWebOrigin } : {}),
             }));
@@ -307,10 +307,13 @@ const RemoteAccessSettings = ({
             disabled={!enabled || working}
             onChange={(event) => setAllowRemoteControl(event.target.checked)}
           />
-          Allow runs, chats, approvals, Git, projects, and terminal
+          Allow runs, chats, approvals, Git, projects, terminal, and browser
         </label>
         <span className="text-xs text-zinc-500">Codes expire after five minutes and work once.</span>
       </div>
+      <p className="mt-2 text-[11px] text-amber-300/80">
+        Existing paired sessions do not gain browser control automatically. Revoke and re-pair a device to enable it.
+      </p>
 
       {pairing ? (
         <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2.5">

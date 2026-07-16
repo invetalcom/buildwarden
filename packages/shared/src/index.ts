@@ -2833,7 +2833,13 @@ export type RunBrowserInput =
       text?: string;
       modifiers?: number;
     }
-  | { type: "text"; text: string };
+  | { type: "text"; text: string }
+  | { type: "paste"; text: string };
+
+export interface RunBrowserInputEnvelope {
+  runId: string;
+  input: RunBrowserInput;
+}
 
 export interface DesktopApi {
   getSnapshot(): Promise<AppSnapshot>;
@@ -2975,7 +2981,8 @@ export interface DesktopApi {
   /** Electron-only: positions and occludes the native browser surface. */
   setRunBrowserDesktopSurface(input: SetRunBrowserDesktopSurfaceInput): Promise<void>;
   getRunBrowserElementCapture(input: GetRunBrowserElementCaptureInput): Promise<RunBrowserElementCapture>;
-  onRunBrowserEvent(listener: (event: RunBrowserEvent) => void): () => void;
+  sendRunBrowserInput(input: RunBrowserInputEnvelope): Promise<void>;
+  onRunBrowserEvent(listener: (event: RunBrowserEvent) => void, runIds?: readonly string[]): () => void;
   onRunEvent(listener: (event: RunEvent) => void): () => void;
   addBookmark(runId: string): Promise<void>;
   removeBookmark(runId: string): Promise<void>;
@@ -3073,10 +3080,11 @@ export const REMOTE_ACCESS_SERVER_CAPABILITIES = [
   "events:loop",
   "events:task",
   "events:terminal",
+  "events:browser",
 ] as const;
 
 export type RemoteAccessServerCapability = (typeof REMOTE_ACCESS_SERVER_CAPABILITIES)[number];
-export type RemoteStreamEventType = "run" | "chat" | "warning" | "loop" | "task" | "terminal-data" | "terminal-exit";
+export type RemoteStreamEventType = "run" | "chat" | "warning" | "loop" | "task" | "terminal-data" | "terminal-exit" | "browser";
 
 export interface RemoteStreamEventPayloadMap {
   run: RunEvent;
@@ -3086,6 +3094,7 @@ export interface RemoteStreamEventPayloadMap {
   task: ProjectTaskChangedPayload;
   "terminal-data": RunTerminalDataPayload;
   "terminal-exit": RunTerminalExitPayload;
+  browser: RunBrowserEvent;
 }
 
 export type RemoteStreamEvent = {
@@ -3099,6 +3108,7 @@ export const REMOTE_ACCESS_SCOPES = [
   "approval:respond",
   "git:write",
   "terminal:operate",
+  "browser:operate",
   "admin",
 ] as const;
 
@@ -3311,6 +3321,11 @@ export type RemoteOperationMap = {
   runTerminalWrite: DesktopApi["runTerminalWrite"];
   runTerminalResize: DesktopApi["runTerminalResize"];
   runTerminalKill: DesktopApi["runTerminalKill"];
+  ensureRunBrowser: DesktopApi["ensureRunBrowser"];
+  navigateRunBrowser: DesktopApi["navigateRunBrowser"];
+  runBrowserAction: DesktopApi["runBrowserAction"];
+  setRunBrowserViewport: DesktopApi["setRunBrowserViewport"];
+  getRunBrowserElementCapture: DesktopApi["getRunBrowserElementCapture"];
 };
 
 export type RemoteApiMethod = keyof RemoteOperationMap;
@@ -3397,6 +3412,15 @@ export type RemoteWebSocketClientMessage =
       type: "subscribe";
       requestId: string;
       events: RemoteStreamEventType[];
+      /** Required and bounded when subscribing to browser events. */
+      browserRunIds?: string[];
+    }
+  | {
+      protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
+      type: "browser-input";
+      requestId: string;
+      runId: string;
+      input: RunBrowserInput;
     }
   | {
       protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
@@ -3421,6 +3445,7 @@ export type RemoteWebSocketServerMessage =
       type: "subscribed";
       requestId: string;
       events: RemoteStreamEventType[];
+      browserRunIds?: string[];
     }
   | {
       protocolVersion: typeof REMOTE_ACCESS_PROTOCOL_VERSION;
@@ -3549,6 +3574,7 @@ export const IPC_CHANNELS = {
   setRunBrowserViewport: "buildwarden:set-run-browser-viewport",
   setRunBrowserDesktopSurface: "buildwarden:set-run-browser-desktop-surface",
   getRunBrowserElementCapture: "buildwarden:get-run-browser-element-capture",
+  sendRunBrowserInput: "buildwarden:send-run-browser-input",
   runBrowserEvent: "buildwarden:run-browser-event",
   releaseRun: "buildwarden:release-run",
   respondToShellApproval: "buildwarden:respond-to-shell-approval",

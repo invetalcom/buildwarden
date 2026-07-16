@@ -9,6 +9,7 @@ export interface BuildWardenClientCapabilities {
   fileManager: boolean;
   systemTerminal: boolean;
   embeddedTerminal: boolean;
+  browserControl: boolean;
   settings: boolean;
   mutations: boolean;
   runMutations: boolean;
@@ -41,6 +42,7 @@ const ELECTRON_CAPABILITIES: Readonly<BuildWardenClientCapabilities> = Object.fr
   fileManager: true,
   systemTerminal: true,
   embeddedTerminal: true,
+  browserControl: true,
   settings: true,
   mutations: true,
   runMutations: true,

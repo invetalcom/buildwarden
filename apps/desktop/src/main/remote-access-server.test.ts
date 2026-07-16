@@ -9,6 +9,7 @@ import {
   RemoteAuthService,
   RemoteOperationRegistry,
   validateNoRemoteArgs,
+  type RemoteAccessServerOptions,
   type RemoteHostEventSource,
 } from "@buildwarden/remote-server";
 import {
@@ -180,6 +181,11 @@ describe("remote operation registry", () => {
       | "runTerminalWrite"
       | "runTerminalResize"
       | "runTerminalKill"
+      | "ensureRunBrowser"
+      | "navigateRunBrowser"
+      | "runBrowserAction"
+      | "setRunBrowserViewport"
+      | "getRunBrowserElementCapture"
     >();
   });
 
@@ -338,6 +344,7 @@ describe("remote access authentication", () => {
     trustedProxyHosts?: () => readonly string[],
     trustedWebOrigins?: () => readonly string[],
     webSocketAuthenticationTimeoutMs?: number,
+    browserOptions: Pick<RemoteAccessServerOptions, "onBrowserInput" | "onBrowserSubscriptionChange"> = {},
   ) => {
     const db = await createDatabase();
     const auth = new RemoteAuthService({ store: db, credentialKey: new Uint8Array(32).fill(7) });
@@ -362,6 +369,7 @@ describe("remote access authentication", () => {
       trustedProxyHosts,
       trustedWebOrigins,
       webSocketAuthenticationTimeoutMs,
+      ...browserOptions,
     });
     startedServers.push(server);
     return {
@@ -603,7 +611,16 @@ describe("remote access authentication", () => {
       protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
       minProtocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
       maxProtocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
-      capabilities: ["rpc", "events:run", "events:chat", "events:warning", "events:loop", "events:task", "events:terminal"],
+      capabilities: [
+        "rpc",
+        "events:run",
+        "events:chat",
+        "events:warning",
+        "events:loop",
+        "events:task",
+        "events:terminal",
+        "events:browser",
+      ],
       endpoints: { health: REMOTE_ACCESS_HEALTH_PATH, info: REMOTE_ACCESS_INFO_PATH, events: REMOTE_ACCESS_WEBSOCKET_PATH },
     });
 
@@ -748,6 +765,153 @@ describe("remote access authentication", () => {
       requestId: "terminal-without-scope",
       code: "forbidden",
     });
+    socket.close();
+  });
+
+  it("filters browser events by run and validates scoped browser input", async () => {
+    const onBrowserInput = vi.fn(async () => undefined);
+    const onBrowserSubscriptionChange = vi.fn();
+    const { auth, info, publishEvent } = await startServer(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { onBrowserInput, onBrowserSubscriptionChange },
+    );
+    const { cookie } = await pair(info.baseUrl, auth, { scopes: ["state:read", "browser:operate"] });
+    const socket = new WebSocket(
+      `${info.baseUrl.replace("http://", "ws://")}${REMOTE_ACCESS_WEBSOCKET_PATH}?protocolVersion=${String(REMOTE_ACCESS_PROTOCOL_VERSION)}`,
+      { headers: { Cookie: cookie } },
+    );
+    const nextMessage = () => new Promise<Record<string, unknown>>((resolve, reject) => {
+      socket.addEventListener("message", (event) => resolve(JSON.parse(String(event.data)) as Record<string, unknown>), { once: true });
+      socket.addEventListener("error", () => reject(new Error("WebSocket connection failed.")), { once: true });
+    });
+    const hello = nextMessage();
+    await new Promise<void>((resolve, reject) => {
+      socket.addEventListener("open", () => resolve(), { once: true });
+      socket.addEventListener("error", () => reject(new Error("WebSocket connection failed.")), { once: true });
+    });
+    await expect(hello).resolves.toMatchObject({ type: "hello" });
+
+    const subscribed = nextMessage();
+    socket.send(JSON.stringify({
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "subscribe",
+      requestId: "browser-subscribe",
+      events: ["browser"],
+      browserRunIds: ["run-1"],
+    }));
+    await expect(subscribed).resolves.toMatchObject({
+      type: "subscribed",
+      requestId: "browser-subscribe",
+      events: ["browser"],
+      browserRunIds: ["run-1"],
+    });
+    expect(onBrowserSubscriptionChange).toHaveBeenCalledWith([], ["run-1"]);
+
+    const runOneEvent = nextMessage();
+    publishEvent({
+      event: "browser",
+      payload: {
+        type: "state",
+        runId: "run-2",
+        state: {
+          runId: "run-2",
+          currentUrl: "https://example.com/ignored",
+          title: "Ignored",
+          loading: false,
+          canGoBack: false,
+          canGoForward: false,
+          inspecting: false,
+          viewport: { width: 800, height: 600, deviceScaleFactor: 1 },
+        },
+      },
+    });
+    publishEvent({
+      event: "browser",
+      payload: {
+        type: "state",
+        runId: "run-1",
+        state: {
+          runId: "run-1",
+          currentUrl: "https://example.com/selected",
+          title: "Selected",
+          loading: false,
+          canGoBack: false,
+          canGoForward: false,
+          inspecting: false,
+          viewport: { width: 800, height: 600, deviceScaleFactor: 1 },
+        },
+      },
+    });
+    await expect(runOneEvent).resolves.toMatchObject({
+      type: "event",
+      event: "browser",
+      payload: { type: "state", runId: "run-1" },
+    });
+
+    socket.send(JSON.stringify({
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "browser-input",
+      requestId: "valid-browser-input",
+      runId: "run-1",
+      input: { type: "mouse", eventType: "mousePressed", x: 12, y: 34, button: "left", clickCount: 1 },
+    }));
+    await vi.waitFor(() => expect(onBrowserInput).toHaveBeenCalledWith("run-1", {
+      type: "mouse",
+      eventType: "mousePressed",
+      x: 12,
+      y: 34,
+      button: "left",
+      clickCount: 1,
+    }));
+
+    const invalidInput = nextMessage();
+    socket.send(JSON.stringify({
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "browser-input",
+      requestId: "invalid-browser-input",
+      runId: "run-1",
+      input: { type: "mouse", eventType: "mouseMoved", x: null, y: 0 },
+    }));
+    await expect(invalidInput).resolves.toMatchObject({
+      type: "error",
+      requestId: "invalid-browser-input",
+      code: "invalid-message",
+    });
+
+    socket.close();
+    await vi.waitFor(() => expect(onBrowserSubscriptionChange).toHaveBeenLastCalledWith(["run-1"], []));
+  });
+
+  it("does not grant browser streaming to an existing session without the browser scope", async () => {
+    const { auth, info } = await startServer();
+    const { cookie } = await pair(info.baseUrl, auth, { scopes: ["state:read"] });
+    const socket = new WebSocket(
+      `${info.baseUrl.replace("http://", "ws://")}${REMOTE_ACCESS_WEBSOCKET_PATH}?protocolVersion=${String(REMOTE_ACCESS_PROTOCOL_VERSION)}`,
+      { headers: { Cookie: cookie } },
+    );
+    const messages: Record<string, unknown>[] = [];
+    socket.addEventListener("message", (event) => messages.push(JSON.parse(String(event.data)) as Record<string, unknown>));
+    await new Promise<void>((resolve, reject) => {
+      socket.addEventListener("open", () => resolve(), { once: true });
+      socket.addEventListener("error", () => reject(new Error("WebSocket connection failed.")), { once: true });
+    });
+    await vi.waitFor(() => expect(messages).toContainEqual(expect.objectContaining({ type: "hello" })));
+
+    socket.send(JSON.stringify({
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "subscribe",
+      requestId: "browser-without-scope",
+      events: ["browser"],
+      browserRunIds: ["run-1"],
+    }));
+    await vi.waitFor(() => expect(messages).toContainEqual(expect.objectContaining({
+      type: "error",
+      requestId: "browser-without-scope",
+      code: "forbidden",
+    })));
     socket.close();
   });
 

@@ -783,6 +783,7 @@ export class AppController
       | "setRunBrowserViewport"
       | "setRunBrowserDesktopSurface"
       | "getRunBrowserElementCapture"
+      | "sendRunBrowserInput"
       | "onRunBrowserEvent"
       | "runTerminalStart"
       | "runTerminalWrite"
