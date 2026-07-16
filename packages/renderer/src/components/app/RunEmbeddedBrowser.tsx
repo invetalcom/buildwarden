@@ -159,7 +159,7 @@ export const RunEmbeddedBrowser = ({
 
   useEffect(() => {
     const requestedUrl = session.currentUrl;
-    if (!desktopSurface || !ready || !requestedUrl || requestedUrl === browserState.currentUrl || requestedUrl === lastRequestedUrlRef.current) {
+    if (!ready || !requestedUrl || requestedUrl === browserState.currentUrl || requestedUrl === lastRequestedUrlRef.current) {
       return;
     }
     lastRequestedUrlRef.current = requestedUrl;
@@ -167,7 +167,7 @@ export const RunEmbeddedBrowser = ({
     void buildwarden.navigateRunBrowser({ runId, url: requestedUrl }).catch((navigationError: unknown) => {
       setError(navigationError instanceof Error ? navigationError.message : "Could not open that URL.");
     });
-  }, [browserState.currentUrl, buildwarden, desktopSurface, ready, runId, session.currentUrl]);
+  }, [browserState.currentUrl, buildwarden, ready, runId, session.currentUrl]);
 
   useEffect(() => {
     if (!desktopSurface) return;
