@@ -9,6 +9,18 @@ vi.mock("electron", () => ({
 
 import { HostBrowserService, normalizeRunBrowserUrl, runBrowserPartitionForProject } from "./host-browser-service";
 
+class FakeNativeImage {
+  constructor(
+    private readonly bytes: Buffer,
+    private readonly width: number,
+    private readonly height: number,
+  ) {}
+
+  getSize = () => ({ width: this.width, height: this.height });
+  resize = ({ width, height }: { width: number; height: number }) => new FakeNativeImage(this.bytes, width, height);
+  toJPEG = () => this.bytes;
+}
+
 class FakeWebContents extends EventEmitter {
   currentUrl = "about:blank";
   title = "";
@@ -45,6 +57,7 @@ class FakeWebContents extends EventEmitter {
   isDestroyed = () => this.closed;
   reload = vi.fn();
   stop = vi.fn();
+  capturePage = vi.fn(async () => new FakeNativeImage(Buffer.from("unchanged-frame"), 2_000, 1_000));
   close = vi.fn(() => {
     this.closed = true;
   });
@@ -174,5 +187,48 @@ describe("HostBrowserService", () => {
     vi.advanceTimersByTime(1_000);
     expect(webContents.close).toHaveBeenCalledOnce();
     await expect(service.navigate({ runId: "run-a", url: "https://example.com" })).rejects.toThrow(/not open/);
+  });
+
+  it("streams bounded frames only while a remote run subscriber exists and skips unchanged images", async () => {
+    const compositor = createWindow();
+    const { view, webContents } = createView();
+    const frames: Array<{
+      runId: string;
+      width: number;
+      height: number;
+      sequence: number;
+      mimeType: "image/jpeg";
+      dataBase64: string;
+    }> = [];
+    const service = new HostBrowserService({
+      getMainWindow: () => null,
+      resolveRunProjectId: async () => "project-a",
+      createView: () => view,
+      createCompositor: () => compositor as unknown as BaseWindow,
+    });
+    service.onEvent((event) => {
+      if (event.type === "frame") frames.push(event.frame);
+    });
+
+    service.setRemoteSubscriptions([], ["run-a"]);
+    await service.ensure({ runId: "run-a", viewport: { width: 2_000, height: 1_000 } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(webContents.capturePage).toHaveBeenCalledOnce();
+    expect(frames).toEqual([{
+      runId: "run-a",
+      width: 1_280,
+      height: 640,
+      sequence: 1,
+      mimeType: "image/jpeg",
+      dataBase64: Buffer.from("unchanged-frame").toString("base64"),
+    }]);
+
+    await vi.advanceTimersByTimeAsync(125);
+    expect(webContents.capturePage).toHaveBeenCalledTimes(2);
+    expect(frames).toHaveLength(1);
+
+    service.setRemoteSubscriptions(["run-a"], []);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(webContents.capturePage).toHaveBeenCalledTimes(2);
   });
 });

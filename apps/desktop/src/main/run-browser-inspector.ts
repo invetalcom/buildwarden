@@ -9,6 +9,7 @@ import type {
   RunBrowserElementSummary,
   RunBrowserFrameworkHint,
   RunBrowserLocatorSegment,
+  RunBrowserInput,
 } from "@buildwarden/shared";
 
 const INSPECTOR_PROTOCOL_VERSION = "1.3";
@@ -289,6 +290,43 @@ export class RunBrowserInspector {
       this.inspecting = false;
       this.options.onInspectingChange(false);
     }
+  }
+
+  async dispatchInput(input: RunBrowserInput): Promise<void> {
+    await this.ensureAttached();
+    if (input.type === "mouse") {
+      await this.command("Input.dispatchMouseEvent", {
+        type: input.eventType,
+        x: input.x,
+        y: input.y,
+        button: input.button ?? "none",
+        clickCount: input.clickCount ?? 0,
+        modifiers: input.modifiers ?? 0,
+      });
+      return;
+    }
+    if (input.type === "wheel") {
+      await this.command("Input.dispatchMouseEvent", {
+        type: "mouseWheel",
+        x: input.x,
+        y: input.y,
+        deltaX: input.deltaX,
+        deltaY: input.deltaY,
+        modifiers: input.modifiers ?? 0,
+      });
+      return;
+    }
+    if (input.type === "key") {
+      await this.command("Input.dispatchKeyEvent", {
+        type: input.eventType,
+        key: input.key,
+        code: input.code ?? "",
+        text: input.text ?? "",
+        modifiers: input.modifiers ?? 0,
+      });
+      return;
+    }
+    await this.command("Input.insertText", { text: input.text });
   }
 
   getCapture(captureId: string): RunBrowserElementCapture | null {

@@ -476,6 +476,26 @@ const bootstrap = async (): Promise<void> => {
   const validateTerminalStart = defineRemoteArgsValidator<"runTerminalStart">(
     (args) => args.length === 1 && hasRemoteStringFields(args[0], ["sessionId", "cwd"]),
   );
+  const validateRunBrowserEnsure = defineRemoteArgsValidator<"ensureRunBrowser">((args) => {
+    if (args.length !== 1 || !isRemoteRecord(args[0]) || typeof args[0].runId !== "string" || !isRemoteRecord(args[0].viewport)) return false;
+    const viewport = args[0].viewport;
+    return typeof viewport.width === "number" && Number.isFinite(viewport.width) && viewport.width >= 1 && viewport.width <= 4_096 &&
+      typeof viewport.height === "number" && Number.isFinite(viewport.height) && viewport.height >= 1 && viewport.height <= 4_096 &&
+      (args[0].initialUrl === undefined || typeof args[0].initialUrl === "string");
+  });
+  const validateRunBrowserNavigate = defineRemoteArgsValidator<"navigateRunBrowser">((args) =>
+    args.length === 1 && hasRemoteStringFields(args[0], ["runId", "url"]));
+  const validateRunBrowserAction = defineRemoteArgsValidator<"runBrowserAction">((args) =>
+    args.length === 1 && isRemoteRecord(args[0]) && typeof args[0].runId === "string" &&
+    ["back", "forward", "reload", "stop", "start-inspect", "cancel-inspect"].includes(String(args[0].action)));
+  const validateRunBrowserViewport = defineRemoteArgsValidator<"setRunBrowserViewport">((args) => {
+    if (args.length !== 1 || !isRemoteRecord(args[0]) || typeof args[0].runId !== "string" || !isRemoteRecord(args[0].viewport)) return false;
+    const viewport = args[0].viewport;
+    return typeof viewport.width === "number" && Number.isFinite(viewport.width) && viewport.width >= 1 && viewport.width <= 4_096 &&
+      typeof viewport.height === "number" && Number.isFinite(viewport.height) && viewport.height >= 1 && viewport.height <= 4_096;
+  });
+  const validateRunBrowserCapture = defineRemoteArgsValidator<"getRunBrowserElementCapture">((args) =>
+    args.length === 1 && hasRemoteStringFields(args[0], ["runId", "captureId"]));
   const validateTerminalWrite = defineRemoteArgsValidator<"runTerminalWrite">(
     (args) => args.length === 1 && hasRemoteStringFields(args[0], ["sessionId", "data"]) &&
       isRemoteRecord(args[0]) && String(args[0].data).length <= 65_536,
@@ -835,6 +855,11 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("runTerminalWrite", async (input) => hostTerminal.write(input), validateTerminalWrite, "terminal:operate", true);
   remoteOperations.register("runTerminalResize", async (input) => hostTerminal.resize(input), validateTerminalResize, "terminal:operate", true);
   remoteOperations.register("runTerminalKill", async (sessionId) => hostTerminal.kill(sessionId), validateSingleRemoteStringArg, "terminal:operate", true);
+  remoteOperations.register("ensureRunBrowser", (input) => hostBrowser.ensure(input), validateRunBrowserEnsure, "browser:operate");
+  remoteOperations.register("navigateRunBrowser", (input) => hostBrowser.navigate(input), validateRunBrowserNavigate, "browser:operate");
+  remoteOperations.register("runBrowserAction", (input) => hostBrowser.action(input), validateRunBrowserAction, "browser:operate");
+  remoteOperations.register("setRunBrowserViewport", async (input) => hostBrowser.setViewport(input), validateRunBrowserViewport, "browser:operate");
+  remoteOperations.register("getRunBrowserElementCapture", async (input) => hostBrowser.getElementCapture(input), validateRunBrowserCapture, "browser:operate");
 
   const remoteEventSource: RemoteHostEventSource = {
     subscribe(listener) {
@@ -846,6 +871,7 @@ const bootstrap = async (): Promise<void> => {
         hostEvents.subscribe("task", (payload) => listener({ event: "task", payload })),
         hostTerminal.onData((payload) => listener({ event: "terminal-data", payload })),
         hostTerminal.onExit((payload) => listener({ event: "terminal-exit", payload })),
+        hostBrowser.onEvent((payload) => listener({ event: "browser", payload })),
       ];
       return () => disposers.forEach((dispose) => dispose());
     },
@@ -924,6 +950,8 @@ const bootstrap = async (): Promise<void> => {
             auth: await ensureRemoteAuthService(),
             staticRoot: join(app.getAppPath(), "out", "web"),
             events: remoteEventSource,
+            onBrowserInput: (runId, input) => hostBrowser.sendInput({ runId, input }),
+            onBrowserSubscriptionChange: (previousRunIds, nextRunIds) => hostBrowser.setRemoteSubscriptions(previousRunIds, nextRunIds),
             trustedProxyHosts: () => {
               const host = tailscaleServe.getManagedHost();
               return host ? [host] : [];
@@ -1197,6 +1225,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.setRunBrowserViewport, (_, input) => hostBrowser.setViewport(input));
   ipcMain.handle(IPC_CHANNELS.setRunBrowserDesktopSurface, (_, input) => hostBrowser.setDesktopSurface(input));
   ipcMain.handle(IPC_CHANNELS.getRunBrowserElementCapture, (_, input) => hostBrowser.getElementCapture(input));
+  ipcMain.handle(IPC_CHANNELS.sendRunBrowserInput, (_, input) => hostBrowser.sendInput(input));
   ipcMain.handle(IPC_CHANNELS.reportRendererLog, async (_, payload: RendererLogPayload) => {
     const metadata = {
       source: payload.source,

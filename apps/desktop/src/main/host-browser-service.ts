@@ -6,6 +6,7 @@ import type {
   RunBrowserActionInput,
   RunBrowserEvent,
   RunBrowserElementCapture,
+  RunBrowserInputEnvelope,
   RunBrowserState,
   RunBrowserViewport,
   SetRunBrowserDesktopSurfaceInput,
@@ -32,6 +33,13 @@ type HostBrowserSession = {
   parent: SessionParent;
   idleTimer: ReturnType<typeof setTimeout> | null;
   inspector: RunBrowserInspector | null;
+  remoteSubscribers: number;
+  frameTimer: ReturnType<typeof setTimeout> | null;
+  frameCaptureInFlight: boolean;
+  frameCapturePending: boolean;
+  lastFrameHash: string;
+  lastFrameAt: number;
+  frameSequence: number;
 };
 
 export interface HostBrowserServiceOptions {
@@ -89,6 +97,7 @@ const viewportBounds = (viewport: RunBrowserViewport): Rectangle => ({
 
 export class HostBrowserService {
   private readonly sessions = new Map<string, HostBrowserSession>();
+  private readonly pendingRemoteSubscribers = new Map<string, number>();
   private readonly listeners = new Set<(event: RunBrowserEvent) => void>();
   private compositor: BaseWindow | null = null;
 
@@ -125,12 +134,20 @@ export class HostBrowserService {
         parent: null,
         idleTimer: null,
         inspector: null,
+        remoteSubscribers: this.pendingRemoteSubscribers.get(runId) ?? 0,
+        frameTimer: null,
+        frameCaptureInFlight: false,
+        frameCapturePending: false,
+        lastFrameHash: "",
+        lastFrameAt: 0,
+        frameSequence: 0,
       };
       this.sessions.set(runId, session);
       this.configureSession(session);
       this.attachToCompositor(session);
       const initialUrl = normalizeRunBrowserUrl(input.initialUrl ?? DEFAULT_BROWSER_URL);
       await view.webContents.loadURL(initialUrl);
+      if (session.remoteSubscribers > 0) this.requestRemoteFrame(session, true);
     } else {
       session.viewport = viewport;
       if (!session.desktopVisible) {
@@ -139,7 +156,7 @@ export class HostBrowserService {
     }
     this.cancelIdleDisposal(session);
     this.emitState(session);
-    if (!session.desktopVisible) {
+    if (!session.desktopVisible && session.remoteSubscribers === 0) {
       this.scheduleIdleDisposal(session);
     }
     return this.stateFor(session);
@@ -149,6 +166,7 @@ export class HostBrowserService {
     const session = this.requireSession(input.runId);
     this.cancelIdleDisposal(session);
     await session.view.webContents.loadURL(normalizeRunBrowserUrl(input.url));
+    this.requestRemoteFrame(session, true);
   }
 
   async action(input: RunBrowserActionInput): Promise<void> {
@@ -175,6 +193,7 @@ export class HostBrowserService {
         break;
     }
     this.emitState(session);
+    this.requestRemoteFrame(session, true);
   }
 
   setViewport(input: SetRunBrowserViewportInput): void {
@@ -184,6 +203,7 @@ export class HostBrowserService {
       session.view.setBounds(viewportBounds(session.viewport));
     }
     this.emitState(session);
+    this.requestRemoteFrame(session, true);
   }
 
   setDesktopSurface(input: SetRunBrowserDesktopSurfaceInput): void {
@@ -207,7 +227,7 @@ export class HostBrowserService {
     }
     session.view.setVisible(false);
     this.attachToCompositor(session);
-    this.scheduleIdleDisposal(session);
+    if (session.remoteSubscribers === 0) this.scheduleIdleDisposal(session);
   }
 
   setDesktopWindowVisible(visible: boolean): void {
@@ -228,6 +248,23 @@ export class HostBrowserService {
     return capture;
   }
 
+  async sendInput(envelope: RunBrowserInputEnvelope): Promise<void> {
+    const session = this.requireSession(envelope.runId);
+    await this.ensureInspector(session).dispatchInput(envelope.input);
+    this.requestRemoteFrame(session, true);
+  }
+
+  setRemoteSubscriptions(previousRunIds: readonly string[], nextRunIds: readonly string[]): void {
+    const previous = new Set(previousRunIds);
+    const next = new Set(nextRunIds);
+    for (const runId of previous) {
+      if (!next.has(runId)) this.updateRemoteSubscriber(runId, -1);
+    }
+    for (const runId of next) {
+      if (!previous.has(runId)) this.updateRemoteSubscriber(runId, 1);
+    }
+  }
+
   disposeRun(runId: string): void {
     const session = this.sessions.get(runId);
     if (session) this.disposeSession(session);
@@ -242,6 +279,7 @@ export class HostBrowserService {
     }
     this.compositor = null;
     this.listeners.clear();
+    this.pendingRemoteSubscribers.clear();
   }
 
   private configureSession(session: HostBrowserSession): void {
@@ -313,6 +351,7 @@ export class HostBrowserService {
 
   private emitState(session: HostBrowserSession): void {
     this.emit({ type: "state", runId: session.runId, state: this.stateFor(session) });
+    this.requestRemoteFrame(session, true);
   }
 
   private emitError(runId: string, message: string): void {
@@ -340,6 +379,83 @@ export class HostBrowserService {
       },
     });
     return session.inspector;
+  }
+
+  private updateRemoteSubscriber(runId: string, delta: number): void {
+    const nextCount = Math.max(0, (this.pendingRemoteSubscribers.get(runId) ?? 0) + delta);
+    if (nextCount > 0) this.pendingRemoteSubscribers.set(runId, nextCount);
+    else this.pendingRemoteSubscribers.delete(runId);
+    const session = this.sessions.get(runId);
+    if (!session) return;
+    session.remoteSubscribers = nextCount;
+    if (nextCount > 0) {
+      this.cancelIdleDisposal(session);
+      this.requestRemoteFrame(session, true);
+    } else {
+      this.stopRemoteFrames(session);
+      if (!session.desktopVisible) this.scheduleIdleDisposal(session);
+    }
+  }
+
+  private requestRemoteFrame(session: HostBrowserSession, immediate = false): void {
+    if (session.remoteSubscribers <= 0 || session.view.webContents.isDestroyed()) return;
+    if (session.frameCaptureInFlight) {
+      session.frameCapturePending ||= immediate;
+      return;
+    }
+    if (session.frameTimer) clearTimeout(session.frameTimer);
+    const elapsed = Date.now() - session.lastFrameAt;
+    const delay = Math.max(0, 125 - elapsed);
+    session.frameTimer = setTimeout(() => {
+      session.frameTimer = null;
+      void this.captureRemoteFrame(session);
+    }, delay);
+  }
+
+  private async captureRemoteFrame(session: HostBrowserSession): Promise<void> {
+    if (session.remoteSubscribers <= 0 || session.frameCaptureInFlight) return;
+    session.frameCaptureInFlight = true;
+    session.frameCapturePending = false;
+    try {
+      const source = await session.view.webContents.capturePage();
+      session.lastFrameAt = Date.now();
+      const size = source.getSize();
+      if (size.width < 1 || size.height < 1) return;
+      const scale = Math.min(1, 1_280 / size.width, 800 / size.height);
+      const image = scale < 1
+        ? source.resize({ width: Math.max(1, Math.round(size.width * scale)), height: Math.max(1, Math.round(size.height * scale)), quality: "good" })
+        : source;
+      const jpeg = image.toJPEG(65);
+      const hash = createHash("sha256").update(jpeg).digest("hex");
+      if (hash !== session.lastFrameHash) {
+        session.lastFrameHash = hash;
+        const outputSize = image.getSize();
+        this.emit({
+          type: "frame",
+          runId: session.runId,
+          frame: {
+            runId: session.runId,
+            sequence: ++session.frameSequence,
+            width: outputSize.width,
+            height: outputSize.height,
+            mimeType: "image/jpeg",
+            dataBase64: jpeg.toString("base64"),
+          },
+        });
+      }
+    } catch (error) {
+      this.emitError(session.runId, error instanceof Error ? error.message : "Could not capture a remote browser frame.");
+    } finally {
+      session.frameCaptureInFlight = false;
+      if (session.remoteSubscribers > 0) this.requestRemoteFrame(session, session.frameCapturePending);
+    }
+  }
+
+  private stopRemoteFrames(session: HostBrowserSession): void {
+    if (session.frameTimer) clearTimeout(session.frameTimer);
+    session.frameTimer = null;
+    session.frameCapturePending = false;
+    session.lastFrameHash = "";
   }
 
   private ensureCompositor(): BaseWindow {
@@ -384,12 +500,13 @@ export class HostBrowserService {
   private scheduleIdleDisposal(session: HostBrowserSession): void {
     this.cancelIdleDisposal(session);
     session.idleTimer = setTimeout(() => {
-      if (!session.desktopVisible) this.disposeSession(session);
+      if (!session.desktopVisible && session.remoteSubscribers === 0) this.disposeSession(session);
     }, this.options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS);
   }
 
   private disposeSession(session: HostBrowserSession): void {
     this.cancelIdleDisposal(session);
+    this.stopRemoteFrames(session);
     session.inspector?.dispose();
     session.inspector = null;
     try {
