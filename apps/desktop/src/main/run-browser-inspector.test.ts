@@ -128,7 +128,7 @@ describe("RunBrowserInspector", () => {
     await inspector.start();
     cdp.emit("message", {}, "Target.attachedToTarget", {
       sessionId: "child-1",
-      targetInfo: { url: "https://frame.example/account?auth=private" },
+      targetInfo: { type: "iframe", url: "https://frame.example/account?auth=private" },
     });
     await vi.waitFor(() => expect(cdp.commands.some(({ method, sessionId }) => method === "Overlay.enable" && sessionId === "child-1")).toBe(true));
     cdp.emit("message", {}, "Overlay.inspectNodeRequested", { backendNodeId: 42 }, "child-1");
@@ -151,6 +151,25 @@ describe("RunBrowserInspector", () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(currentTime + 120_001);
     expect(inspector.getCapture(captureId)).toBeNull();
     now.mockRestore();
+  });
+
+  it("ignores worker targets and recursively auto-attaches iframe targets", async () => {
+    const { cdp, inspector } = createInspector();
+    await inspector.start();
+
+    cdp.emit("message", {}, "Target.attachedToTarget", {
+      sessionId: "worker-1",
+      targetInfo: { type: "worker", url: "https://example.com/worker.js" },
+    });
+    await Promise.resolve();
+    expect(cdp.commands.some(({ sessionId }) => sessionId === "worker-1")).toBe(false);
+
+    cdp.emit("message", {}, "Target.attachedToTarget", {
+      sessionId: "child-1",
+      targetInfo: { type: "iframe", url: "https://frame.example" },
+    });
+    await vi.waitFor(() => expect(cdp.commands.some(({ method, sessionId }) =>
+      method === "Target.setAutoAttach" && sessionId === "child-1")).toBe(true));
   });
 
   it("omits the optional CDP session argument for selections in the root target", async () => {

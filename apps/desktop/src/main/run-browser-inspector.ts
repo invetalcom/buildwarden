@@ -400,11 +400,14 @@ export class RunBrowserInspector {
     if (method === "Target.attachedToTarget") {
       const childSessionId = typeof params.sessionId === "string" ? params.sessionId : "";
       const targetInfo = params.targetInfo && typeof params.targetInfo === "object" ? params.targetInfo as Record<string, unknown> : {};
-      if (childSessionId) {
+      if (childSessionId && targetInfo.type === "iframe") {
         this.targetUrls.set(childSessionId, typeof targetInfo.url === "string" ? targetInfo.url : "");
-        void this.enableDomains(childSessionId).then(() => this.inspecting ? this.setInspectModeForSession("searchForNode", childSessionId) : undefined).catch((error) => {
-          this.options.onError(error instanceof Error ? error.message : "Could not inspect a child frame.", true);
-        });
+        void this.enableDomains(childSessionId)
+          .then(() => this.setAutoAttach(childSessionId))
+          .then(() => this.inspecting ? this.setInspectModeForSession("searchForNode", childSessionId) : undefined)
+          .catch((error) => {
+            this.options.onError(error instanceof Error ? error.message : "Could not inspect a child frame.", true);
+          });
       }
       return;
     }
@@ -432,11 +435,15 @@ export class RunBrowserInspector {
     }
     this.attached = true;
     await this.enableDomains();
-    await this.command("Target.setAutoAttach", {
+    await this.setAutoAttach();
+  }
+
+  private setAutoAttach(sessionId?: string): Promise<unknown> {
+    return this.command("Target.setAutoAttach", {
       autoAttach: true,
       waitForDebuggerOnStart: false,
       flatten: true,
-    });
+    }, sessionId);
   }
 
   private async enableDomains(sessionId?: string): Promise<void> {
