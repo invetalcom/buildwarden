@@ -50,6 +50,7 @@ import { registerHostEventIpc } from "./host-events-ipc";
 import { HostTerminalService } from "./host-terminal-service";
 import { TailscaleServeService } from "./tailscale-serve-service";
 import { HostDirectoryService } from "./host-directory-service";
+import { HostBrowserService } from "./host-browser-service";
 
 const mainDir = dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
@@ -319,6 +320,15 @@ const bootstrap = async (): Promise<void> => {
     hostEvents,
   );
   const hostDirectory = new HostDirectoryService();
+  const hostBrowser = new HostBrowserService({
+    getMainWindow: () => mainWindow,
+    resolveRunProjectId: async (runId) => (await controller.getRunDetail(runId)).run.projectId,
+  });
+  hostBrowser.onEvent((event) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC_CHANNELS.runBrowserEvent, event);
+    }
+  });
   const startupReconciliation = controller
     .migrateProjectBaseBranches()
     .then(() => controller.reconcileOrphanedActiveSessions())
@@ -1175,6 +1185,11 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.pickProjectDirectory, () => controller.pickProjectDirectory());
   ipcMain.handle(IPC_CHANNELS.openPathInFileManager, (_, path: string) => controller.openPathInFileManager(path));
   ipcMain.handle(IPC_CHANNELS.openExternalUrl, (_, url: string) => desktopPlatform.openExternalUrl(url));
+  ipcMain.handle(IPC_CHANNELS.ensureRunBrowser, (_, input) => hostBrowser.ensure(input));
+  ipcMain.handle(IPC_CHANNELS.navigateRunBrowser, (_, input) => hostBrowser.navigate(input));
+  ipcMain.handle(IPC_CHANNELS.runBrowserAction, (_, input) => hostBrowser.action(input));
+  ipcMain.handle(IPC_CHANNELS.setRunBrowserViewport, (_, input) => hostBrowser.setViewport(input));
+  ipcMain.handle(IPC_CHANNELS.setRunBrowserDesktopSurface, (_, input) => hostBrowser.setDesktopSurface(input));
   ipcMain.handle(IPC_CHANNELS.reportRendererLog, async (_, payload: RendererLogPayload) => {
     const metadata = {
       source: payload.source,
@@ -1245,6 +1260,7 @@ const bootstrap = async (): Promise<void> => {
       logWarn("Remote access server did not stop cleanly.", { error });
     });
     hostTerminal.disposeAll();
+    hostBrowser.disposeAll();
     for (const state of projectForgeMonitorStates.values()) {
       clearInterval(state.timer);
     }
