@@ -2,10 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import {
   appendChatAttachmentFiles,
+  CHAT_ATTACHMENT_LIMITS,
   parseRunWorkspaceFileReference,
+  validateChatAttachmentPayloads,
   type ChatAttachmentPayload,
   type KeyboardShortcutId,
   type RunDetail,
+  type RunBrowserElementCapture,
   type RunNoteRecord,
   type RunNoteStatus,
   type RunRecord,
@@ -29,6 +32,7 @@ import {
   Maximize2,
   MessageSquareText,
   MessagesSquare,
+  MousePointer2,
   Minimize2,
   PanelBottom,
   PanelRight,
@@ -59,6 +63,11 @@ import {
 } from "./git-diff-preview";
 import { summarizeDiffStats } from "./git-diff-utils";
 import { cn } from "../../lib/cn";
+import {
+  browserElementPayloadsForProvider,
+  browserElementReservedFileSlots,
+  validateBrowserElementCaptureAddition,
+} from "../../lib/browser-element-attachments";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -248,6 +257,7 @@ export const RunDetailPage = ({
   const readOnly = !buildwarden.capabilities.runMutations;
   const [followUpPrompt, setFollowUpPrompt] = useState("");
   const [followUpFiles, setFollowUpFiles] = useState<File[]>([]);
+  const [browserElementCaptures, setBrowserElementCaptures] = useState<RunBrowserElementCapture[]>([]);
   const [goalDraft, setGoalDraft] = useState(runDetail.run.goalText ?? "");
   const [goalEditing, setGoalEditing] = useState(false);
   const [goalSaving, setGoalSaving] = useState(false);
@@ -389,6 +399,7 @@ export const RunDetailPage = ({
   useEffect(() => {
     setRunTerminalPinned(false);
     setFilePanelTarget(null);
+    setBrowserElementCaptures([]);
   }, [runDetail.run.id]);
 
   useEffect(() => {
@@ -524,12 +535,16 @@ export const RunDetailPage = ({
 
   const handleFollowUpSubmit = async () => {
     const trimmed = followUpPrompt.trim();
-    if ((!trimmed && followUpFiles.length === 0) || busy || isRunActive) {
+    if ((!trimmed && followUpFiles.length === 0 && browserElementCaptures.length === 0) || busy || isRunActive) {
       return;
     }
     let attachments: ChatAttachmentPayload[] | undefined;
     try {
-      attachments = followUpFiles.length > 0 ? await readFilesAsChatPayloads(followUpFiles) : undefined;
+      const fileAttachments = followUpFiles.length > 0 ? await readFilesAsChatPayloads(followUpFiles) : [];
+      const selectedProvider = modelOptions.find((option) => option.id === selectedModelId)?.providerType;
+      const browserAttachments = browserElementPayloadsForProvider(browserElementCaptures, selectedProvider);
+      attachments = [...fileAttachments, ...browserAttachments];
+      validateChatAttachmentPayloads(attachments);
     } catch (e) {
       window.alert(e instanceof Error ? e.message : "Could not read attachments.");
       return;
@@ -545,6 +560,7 @@ export const RunDetailPage = ({
       });
       setFollowUpPrompt("");
       setFollowUpFiles([]);
+      setBrowserElementCaptures([]);
     } catch {
       /* App surfaces errors */
     }
@@ -1471,8 +1487,21 @@ export const RunDetailPage = ({
               {showBrowser && activeSecondaryTab === "browser" ? (
                 <RunEmbeddedBrowser
                   className="h-full min-h-0"
+                  runId={runDetail.run.id}
+                  uiActive={showBrowser && activeSecondaryTab === "browser"}
                   session={browserSession}
                   onSessionChange={onBrowserSessionChange}
+                  onElementSelected={(capture) => {
+                    setBrowserElementCaptures((current) => {
+                      if (current.some((item) => item.id === capture.id)) return current;
+                      const captureError = validateBrowserElementCaptureAddition(followUpFiles, current, capture);
+                      if (captureError) {
+                        window.alert(captureError);
+                        return current;
+                      }
+                      return [...current, capture];
+                    });
+                  }}
                 />
               ) : null}
 
@@ -1646,12 +1675,36 @@ export const RunDetailPage = ({
             commandContext="follow-up"
             projectId={runDetail.run.projectId}
             attachments={
-              <ChatAttachmentPicker
-                variant="footer"
-                files={followUpFiles}
-                onChange={setFollowUpFiles}
-                disabled={busy || isRunActive}
-              />
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                <ChatAttachmentPicker
+                  variant="footer"
+                  files={followUpFiles}
+                  onChange={setFollowUpFiles}
+                  disabled={busy || isRunActive}
+                  reservedFileSlots={browserElementReservedFileSlots(browserElementCaptures)}
+                />
+                {browserElementCaptures.map((capture) => (
+                  <div
+                    key={capture.id}
+                    className="flex max-w-[min(100%,18rem)] items-center gap-1 rounded-md border border-sky-500/30 bg-sky-500/10 py-0.5 pl-2 pr-1 text-[11px] text-sky-100"
+                    title={`${capture.locator.selector}\n${capture.url}`}
+                  >
+                    <MousePointer2 className="h-3.5 w-3.5 shrink-0 text-sky-300" />
+                    <span className="truncate">
+                      {capture.accessibleName || capture.tagName} <span className="text-sky-300/70">&lt;{capture.tagName}&gt;</span>
+                    </span>
+                    <button
+                      type="button"
+                      className="shrink-0 rounded p-0.5 text-sky-300/70 hover:bg-sky-400/10 hover:text-sky-100"
+                      aria-label={`Remove browser element ${capture.accessibleName || capture.tagName}`}
+                      disabled={busy || isRunActive}
+                      onClick={() => setBrowserElementCaptures((current) => current.filter((item) => item.id !== capture.id))}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
             }
             prompt={followUpPrompt}
             onPromptChange={setFollowUpPrompt}
@@ -1672,10 +1725,14 @@ export const RunDetailPage = ({
             sticky={false}
             dense
             submitShortcut={keyboardShortcuts.submitComposer}
-            onAddAttachmentFiles={(incoming) => setFollowUpFiles((prev) => appendChatAttachmentFiles(prev, incoming))}
+            onAddAttachmentFiles={(incoming) => setFollowUpFiles((prev) =>
+              appendChatAttachmentFiles(prev, incoming).slice(
+                0,
+                Math.max(0, CHAT_ATTACHMENT_LIMITS.maxFileCount - browserElementReservedFileSlots(browserElementCaptures)),
+              ))}
             placeholder="Follow up on this run… (optional if you attach files)"
             submitDisabled={
-              busy || isRunActive || !selectedModelId || (!followUpPrompt.trim() && followUpFiles.length === 0)
+              busy || isRunActive || !selectedModelId || (!followUpPrompt.trim() && followUpFiles.length === 0 && browserElementCaptures.length === 0)
             }
             onCancel={() => onCancelRun(runDetail.run)}
             onSubmit={() => void handleFollowUpSubmit()}

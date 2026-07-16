@@ -210,6 +210,12 @@ export class HostBrowserService {
     this.scheduleIdleDisposal(session);
   }
 
+  setDesktopWindowVisible(visible: boolean): void {
+    for (const session of this.sessions.values()) {
+      if (session.parent === "main" && session.desktopVisible) session.view.setVisible(visible);
+    }
+  }
+
   onEvent(listener: (event: RunBrowserEvent) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

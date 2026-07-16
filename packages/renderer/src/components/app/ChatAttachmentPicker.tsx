@@ -9,16 +9,19 @@ interface ChatAttachmentPickerProps {
   disabled?: boolean;
   /** Single row beside Send; limits shown on attach button tooltip only. */
   variant?: "default" | "footer";
+  /** Physical file slots reserved by logical attachments such as browser elements. */
+  reservedFileSlots?: number;
 }
 
-export const ChatAttachmentPicker = ({ files, onChange, disabled, variant = "default" }: ChatAttachmentPickerProps) => {
+export const ChatAttachmentPicker = ({ files, onChange, disabled, variant = "default", reservedFileSlots = 0 }: ChatAttachmentPickerProps) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const inputId = useId();
   const acceptedFileTypes = "image/*,application/pdf,text/*,application/json,.md,.txt,.pdf,.json";
 
   const addFromList = (list: FileList | null) => {
     if (!list?.length) return;
-    onChange(appendChatAttachmentFiles(files, Array.from(list)));
+    const available = Math.max(0, CHAT_ATTACHMENT_LIMITS.maxFileCount - reservedFileSlots);
+    onChange(appendChatAttachmentFiles(files, Array.from(list)).slice(0, available));
     if (inputRef.current) {
       inputRef.current.value = "";
     }
@@ -73,7 +76,7 @@ export const ChatAttachmentPicker = ({ files, onChange, disabled, variant = "def
             variant="ghost"
             size="sm"
             className="h-8 w-8 shrink-0 rounded-full p-0 text-[var(--ec-muted)] hover:text-[var(--ec-text)]"
-            disabled={disabled || files.length >= CHAT_ATTACHMENT_LIMITS.maxFileCount}
+            disabled={disabled || files.length + reservedFileSlots >= CHAT_ATTACHMENT_LIMITS.maxFileCount}
             onClick={() => inputRef.current?.click()}
             title={limitsTitle}
             aria-label="Attach files"
@@ -91,7 +94,7 @@ export const ChatAttachmentPicker = ({ files, onChange, disabled, variant = "def
               variant="ghost"
               size="sm"
               className="h-7 gap-1 px-1.5 text-[var(--ec-muted)] hover:text-[var(--ec-accent)]"
-              disabled={disabled || files.length >= CHAT_ATTACHMENT_LIMITS.maxFileCount}
+              disabled={disabled || files.length + reservedFileSlots >= CHAT_ATTACHMENT_LIMITS.maxFileCount}
               onClick={() => inputRef.current?.click()}
               title="Attach files"
             >

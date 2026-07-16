@@ -410,6 +410,7 @@ describe("renderer component states", () => {
   it("renders browser navigation state", () => {
     const markup = renderToStaticMarkup(
       <RunEmbeddedBrowser
+        runId="run-1"
         session={{
           draftUrl: "localhost:5173",
           currentUrl: "https://example.test/",
@@ -422,6 +423,7 @@ describe("renderer component states", () => {
     );
     expect(markup).toContain("Browser");
     expect(markup).toContain("Open in external browser");
+    expect(markup).not.toContain("<iframe");
   });
 
   it("renders run and chat composer configurations", () => {
