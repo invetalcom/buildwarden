@@ -2968,6 +2968,13 @@ export interface DesktopApi {
   openRunWorktreeInIde(runId: string, ideKind: SupportedIdeKind): Promise<void>;
   /** Open an arbitrary folder (e.g. a project's repo path) in the given IDE (must be configured under {@link APP_SETTING_KEYS.idePaths}). */
   openFolderInIde(folderPath: string, ideKind: SupportedIdeKind): Promise<void>;
+  ensureRunBrowser(input: EnsureRunBrowserInput): Promise<RunBrowserState>;
+  navigateRunBrowser(input: NavigateRunBrowserInput): Promise<void>;
+  runBrowserAction(input: RunBrowserActionInput): Promise<void>;
+  setRunBrowserViewport(input: SetRunBrowserViewportInput): Promise<void>;
+  /** Electron-only: positions and occludes the native browser surface. */
+  setRunBrowserDesktopSurface(input: SetRunBrowserDesktopSurfaceInput): Promise<void>;
+  onRunBrowserEvent(listener: (event: RunBrowserEvent) => void): () => void;
   onRunEvent(listener: (event: RunEvent) => void): () => void;
   addBookmark(runId: string): Promise<void>;
   removeBookmark(runId: string): Promise<void>;
@@ -3535,6 +3542,12 @@ export const IPC_CHANNELS = {
   pickIdeExecutable: "buildwarden:pick-ide-executable",
   openRunWorktreeInIde: "buildwarden:open-run-worktree-in-ide",
   openFolderInIde: "buildwarden:open-folder-in-ide",
+  ensureRunBrowser: "buildwarden:ensure-run-browser",
+  navigateRunBrowser: "buildwarden:navigate-run-browser",
+  runBrowserAction: "buildwarden:run-browser-action",
+  setRunBrowserViewport: "buildwarden:set-run-browser-viewport",
+  setRunBrowserDesktopSurface: "buildwarden:set-run-browser-desktop-surface",
+  runBrowserEvent: "buildwarden:run-browser-event",
   releaseRun: "buildwarden:release-run",
   respondToShellApproval: "buildwarden:respond-to-shell-approval",
   respondToRunUserInput: "buildwarden:respond-to-run-user-input",

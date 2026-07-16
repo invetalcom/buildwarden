@@ -20,6 +20,7 @@ import {
   type ProjectTaskChangedPayload,
   type ProviderAccountInput,
   type RunChatInput,
+  type RunBrowserEvent,
   type RunEvent,
   type RunFollowUpOptions,
   type RunInput,
@@ -180,6 +181,16 @@ const api: DesktopApi = {
     invoke(IPC_CHANNELS.openRunWorktreeInIde, runId, ideKind),
   openFolderInIde: (folderPath: string, ideKind: SupportedIdeKind) =>
     invoke(IPC_CHANNELS.openFolderInIde, folderPath, ideKind),
+  ensureRunBrowser: (input) => invoke(IPC_CHANNELS.ensureRunBrowser, input),
+  navigateRunBrowser: (input) => invoke(IPC_CHANNELS.navigateRunBrowser, input),
+  runBrowserAction: (input) => invoke(IPC_CHANNELS.runBrowserAction, input),
+  setRunBrowserViewport: (input) => invoke(IPC_CHANNELS.setRunBrowserViewport, input),
+  setRunBrowserDesktopSurface: (input) => invoke(IPC_CHANNELS.setRunBrowserDesktopSurface, input),
+  onRunBrowserEvent: (listener: (event: RunBrowserEvent) => void) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, payload: RunBrowserEvent) => listener(payload);
+    ipcRenderer.on(IPC_CHANNELS.runBrowserEvent, wrapped);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.runBrowserEvent, wrapped);
+  },
   addBookmark: (runId: string) => invoke(IPC_CHANNELS.addBookmark, runId),
   removeBookmark: (runId: string) => invoke(IPC_CHANNELS.removeBookmark, runId),
   removeBookmarkById: (bookmarkId: string) => invoke(IPC_CHANNELS.removeBookmarkById, bookmarkId),
