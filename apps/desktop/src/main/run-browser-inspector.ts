@@ -118,17 +118,40 @@ const PAGE_COLLECTOR_SOURCE = String.raw`function (finderSource) {
   } catch {
     // Cross-origin frame targets are prefixed by the host from CDP target data.
   }
-  const inputType = this instanceof HTMLInputElement ? this.type.toLowerCase() : "";
-  const sanitizeElement = (element, forceRedactValue) => {
+  const controlIsSensitive = (element) => {
+    if (!(element instanceof HTMLInputElement) && !(element instanceof HTMLTextAreaElement)) return false;
+    const type = element instanceof HTMLInputElement ? element.type.toLowerCase() : "";
+    if (["password", "hidden"].includes(type)) return true;
+    const semanticValues = [
+      type,
+      element.getAttribute("name"),
+      element.getAttribute("id"),
+      element.getAttribute("autocomplete"),
+      element.getAttribute("placeholder"),
+      element.getAttribute("aria-label"),
+    ];
+    for (const label of element.labels || []) semanticValues.push(label.textContent);
+    const labelledBy = element.getAttribute("aria-labelledby");
+    if (labelledBy) {
+      for (const id of labelledBy.split(/\s+/)) semanticValues.push(element.ownerDocument.getElementById(id)?.textContent);
+    }
+    return semanticValues.some((value) => sensitive.test(String(value || "")));
+  };
+  const selectedControlIsSensitive = controlIsSensitive(this);
+  const sanitizeElement = (element) => {
+    const sensitiveControl = controlIsSensitive(element);
     for (const attribute of [...element.attributes]) {
       const name = attribute.name;
       if (/^on/i.test(name)) {
         element.removeAttribute(name);
-      } else if (sensitive.test(name) || (forceRedactValue && name.toLowerCase() === "value")) {
+      } else if (sensitive.test(name) || (sensitiveControl && name.toLowerCase() === "value")) {
         element.setAttribute(name, "[REDACTED]");
       } else if (/^(?:href|src|action|formaction)$/i.test(name)) {
         element.setAttribute(name, safeUrl(attribute.value));
       }
+    }
+    if (sensitiveControl && element instanceof HTMLTextAreaElement) {
+      element.textContent = "[REDACTED]";
     }
   };
   const clone = this.cloneNode(true);
@@ -138,13 +161,12 @@ const PAGE_COLLECTOR_SOURCE = String.raw`function (finderSource) {
       element.remove();
       continue;
     }
-    const hiddenValue = element instanceof HTMLInputElement && ["password", "hidden"].includes(element.type.toLowerCase());
-    sanitizeElement(element, hiddenValue);
+    sanitizeElement(element);
   }
   const attributes = {};
   for (const attribute of [...this.attributes].slice(0, 100)) {
     const name = attribute.name;
-    const redactValue = sensitive.test(name) || (["password", "hidden"].includes(inputType) && name.toLowerCase() === "value");
+    const redactValue = sensitive.test(name) || (selectedControlIsSensitive && name.toLowerCase() === "value");
     attributes[name] = redactValue ? "[REDACTED]" : /^(?:href|src|action|formaction)$/i.test(name) ? safeUrl(attribute.value) : attribute.value.slice(0, 1024);
   }
   const style = getComputedStyle(this);
@@ -177,7 +199,9 @@ const PAGE_COLLECTOR_SOURCE = String.raw`function (finderSource) {
     locatorSegments,
     fallback: structural(this, this.getRootNode()),
     tagName: this.tagName.toLowerCase(),
-    visibleText: String(this.innerText || this.textContent || "").replace(/\s+/g, " ").trim().slice(0, 4000),
+    visibleText: selectedControlIsSensitive
+      ? "[REDACTED]"
+      : String(this.innerText || this.textContent || "").replace(/\s+/g, " ").trim().slice(0, 4000),
     sanitizedHtml: String(clone.outerHTML || "").slice(0, 12000),
     attributes,
     computedStyles,
