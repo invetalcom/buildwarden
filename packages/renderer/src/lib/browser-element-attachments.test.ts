@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { describe, expect, it } from "vitest";
-import type { RunBrowserElementCapture } from "@buildwarden/shared";
+import type { ProviderType, RunBrowserElementCapture } from "@buildwarden/shared";
 import {
   browserElementPayloadsForProvider,
   browserElementReservedFileSlots,
@@ -31,8 +31,14 @@ const capture = (id: string): RunBrowserElementCapture => ({
   ancestry: ["body"],
   frameworkHints: [],
   bounds: { x: 10, y: 20, width: 80, height: 32 },
-  contextAttachment: payload(`browser-element-${id}.md`, "text/markdown", "context"),
-  screenshotAttachment: payload(`browser-element-${id}.jpg`, "image/jpeg", "jpeg"),
+  contextAttachment: {
+    ...payload(`browser-element-${id}.md`, "text/markdown", "context"),
+    source: { kind: "browser-element", groupId: id, captureId: id, role: "context", url: "https://example.com/", selector: "button.save" },
+  },
+  screenshotAttachment: {
+    ...payload(`browser-element-${id}.jpg`, "image/jpeg", "jpeg"),
+    source: { kind: "browser-element", groupId: id, captureId: id, role: "screenshot", url: "https://example.com/", selector: "button.save" },
+  },
 });
 
 describe("browser element composer attachments", () => {
@@ -46,12 +52,21 @@ describe("browser element composer attachments", () => {
     )).toMatch(/two attachment slots/);
   });
 
-  it("always sends Markdown and only sends JPEG to image-capable provider transports", () => {
+  it.each([
+    "ai-sdk",
+    "azure-legacy",
+    "codex-cli",
+    "cursor-agent",
+  ] satisfies ProviderType[])("sends Markdown and JPEG to the vision-capable %s provider", (providerType) => {
     const selected = [capture("one")];
-    expect(browserElementPayloadsForProvider(selected, "codex-cli").map(({ mimeType }) => mimeType)).toEqual([
-      "text/markdown",
-      "image/jpeg",
+    expect(browserElementPayloadsForProvider(selected, providerType).map(({ mimeType, source }) => [mimeType, source?.role])).toEqual([
+      ["text/markdown", "context"],
+      ["image/jpeg", "screenshot"],
     ]);
+  });
+
+  it("sends Markdown without JPEG to the text-only Claude Code transport", () => {
+    const selected = [capture("one")];
     expect(browserElementPayloadsForProvider(selected, "claude-code").map(({ mimeType }) => mimeType)).toEqual([
       "text/markdown",
     ]);

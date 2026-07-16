@@ -271,6 +271,7 @@ export class RunBrowserInspector {
   private attached = false;
   private inspecting = false;
   private captureInFlight = false;
+  private documentGeneration = 0;
 
   constructor(private readonly options: RunBrowserInspectorOptions) {
     options.webContents.debugger.on("message", this.handleDebuggerMessage);
@@ -334,7 +335,18 @@ export class RunBrowserInspector {
     return this.captures.get(captureId)?.capture ?? null;
   }
 
+  handleNavigationReplacement(): void {
+    this.documentGeneration += 1;
+    this.captures.clear();
+    this.targetUrls.clear();
+    if (this.inspecting) {
+      this.inspecting = false;
+      this.options.onInspectingChange(false);
+    }
+  }
+
   dispose(): void {
+    this.documentGeneration += 1;
     this.captures.clear();
     this.targetUrls.clear();
     this.options.webContents.debugger.removeListener("message", this.handleDebuggerMessage);
@@ -378,6 +390,8 @@ export class RunBrowserInspector {
 
   private readonly handleDebuggerDetach = (_event: Electron.Event, reason: string): void => {
     this.attached = false;
+    this.documentGeneration += 1;
+    this.captures.clear();
     this.targetUrls.clear();
     if (this.inspecting) {
       this.inspecting = false;
@@ -434,6 +448,7 @@ export class RunBrowserInspector {
   private async captureSelection(backendNodeId: number, sessionId?: string): Promise<void> {
     if (this.captureInFlight) return;
     this.captureInFlight = true;
+    const documentGeneration = this.documentGeneration;
     try {
       await this.cancel();
       const resolved = await this.command("DOM.resolveNode", { backendNodeId }, sessionId) as CdpValueResult<never>;
@@ -497,6 +512,7 @@ export class RunBrowserInspector {
           source: { ...source, role: "screenshot" },
         },
       };
+      if (documentGeneration !== this.documentGeneration) return;
       this.storeCapture(capture);
       this.options.onSelection(id, {
         tagName: capture.tagName,
@@ -505,7 +521,9 @@ export class RunBrowserInspector {
         url,
       });
     } catch (error) {
-      this.options.onError(error instanceof Error ? error.message : "Could not capture the selected browser element.", true);
+      if (documentGeneration === this.documentGeneration) {
+        this.options.onError(error instanceof Error ? error.message : "Could not capture the selected browser element.", true);
+      }
     } finally {
       this.captureInFlight = false;
     }

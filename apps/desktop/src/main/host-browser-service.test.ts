@@ -147,6 +147,10 @@ describe("HostBrowserService", () => {
     expect(view.setVisible).toHaveBeenLastCalledWith(false);
     service.setDesktopWindowVisible(true);
     expect(view.setVisible).toHaveBeenLastCalledWith(true);
+    service.detachDesktopSurfaces();
+    expect(main.contentView.removeChildView).toHaveBeenCalledWith(view);
+    expect(compositor.contentView.addChildView).toHaveBeenLastCalledWith(view);
+    expect(view.setVisible).toHaveBeenLastCalledWith(false);
   });
 
   it("routes safe popups into the session and blocks unsafe navigation", async () => {
@@ -185,6 +189,45 @@ describe("HostBrowserService", () => {
     await service.ensure({ runId: "run-a", viewport: { width: 640, height: 480 } });
 
     vi.advanceTimersByTime(1_000);
+    expect(webContents.close).toHaveBeenCalledOnce();
+    await expect(service.navigate({ runId: "run-a", url: "https://example.com" })).rejects.toThrow(/not open/);
+  });
+
+  it("drops stale inspector state and reloads after the target renderer exits", async () => {
+    const compositor = createWindow();
+    const { view, webContents } = createView();
+    const errors: Array<{ message: string; recoverable: boolean }> = [];
+    const service = new HostBrowserService({
+      getMainWindow: () => null,
+      resolveRunProjectId: async () => "project-a",
+      createView: () => view,
+      createCompositor: () => compositor as unknown as BaseWindow,
+    });
+    service.onEvent((event) => {
+      if (event.type === "error") errors.push(event);
+    });
+    await service.ensure({ runId: "run-a", viewport: { width: 640, height: 480 } });
+
+    webContents.emit("render-process-gone", {}, { reason: "crashed" });
+
+    expect(webContents.reload).toHaveBeenCalledOnce();
+    expect(errors).toContainEqual(expect.objectContaining({ message: expect.stringContaining("crashed"), recoverable: true }));
+  });
+
+  it("clears pending remote ownership when a run is deleted", async () => {
+    const compositor = createWindow();
+    const { view, webContents } = createView();
+    const service = new HostBrowserService({
+      getMainWindow: () => null,
+      resolveRunProjectId: async () => "project-a",
+      createView: () => view,
+      createCompositor: () => compositor as unknown as BaseWindow,
+    });
+    service.setRemoteSubscriptions([], ["run-a"]);
+    await service.ensure({ runId: "run-a", viewport: { width: 640, height: 480 } });
+
+    service.disposeRun("run-a");
+
     expect(webContents.close).toHaveBeenCalledOnce();
     await expect(service.navigate({ runId: "run-a", url: "https://example.com" })).rejects.toThrow(/not open/);
   });

@@ -16,6 +16,36 @@ export type StoredAttachmentKind =
 
 export type StoredAttachmentRenderMode = "icon" | "image" | "pdf" | "text";
 
+export type StoredAttachmentDisplayItem =
+  | { kind: "attachment"; attachment: ChatAttachmentPayload }
+  | {
+      kind: "browser-element";
+      groupId: string;
+      contextAttachment?: ChatAttachmentPayload;
+      screenshotAttachment?: ChatAttachmentPayload;
+    };
+
+export const groupStoredAttachments = (attachments: readonly ChatAttachmentPayload[]): StoredAttachmentDisplayItem[] => {
+  const items: StoredAttachmentDisplayItem[] = [];
+  const browserGroups = new Map<string, Extract<StoredAttachmentDisplayItem, { kind: "browser-element" }>>();
+  for (const attachment of attachments) {
+    const source = attachment.source;
+    if (source?.kind !== "browser-element") {
+      items.push({ kind: "attachment", attachment });
+      continue;
+    }
+    let group = browserGroups.get(source.groupId);
+    if (!group) {
+      group = { kind: "browser-element", groupId: source.groupId };
+      browserGroups.set(source.groupId, group);
+      items.push(group);
+    }
+    if (source.role === "context") group.contextAttachment ??= attachment;
+    else group.screenshotAttachment ??= attachment;
+  }
+  return items;
+};
+
 const IMAGE_EXTENSIONS = new Set([
   "apng",
   "avif",

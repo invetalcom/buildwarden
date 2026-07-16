@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ChatAttachmentPayload } from "@buildwarden/shared";
 import {
+  groupStoredAttachments,
   getStoredAttachmentDownloadMimeType,
   getStoredAttachmentRenderMode,
   type StoredAttachmentRenderMode,
@@ -48,5 +49,23 @@ describe("stored chat attachment preview decisions", () => {
     expect(getStoredAttachmentDownloadMimeType(attachment("report.xlsx"))).toBe(
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     );
+  });
+
+  it("groups persisted browser context and screenshot payloads into one logical item", () => {
+    const source = {
+      kind: "browser-element" as const,
+      groupId: "capture-1",
+      captureId: "capture-1",
+      url: "https://example.com/",
+      selector: "button.save",
+    };
+    const context = { ...attachment("browser-element-capture-1.md", "text/markdown"), source: { ...source, role: "context" as const } };
+    const screenshot = { ...attachment("browser-element-capture-1.jpg", "image/jpeg"), source: { ...source, role: "screenshot" as const } };
+    const ordinary = attachment("notes.txt");
+
+    expect(groupStoredAttachments([context, screenshot, ordinary])).toEqual([
+      { kind: "browser-element", groupId: "capture-1", contextAttachment: context, screenshotAttachment: screenshot },
+      { kind: "attachment", attachment: ordinary },
+    ]);
   });
 });

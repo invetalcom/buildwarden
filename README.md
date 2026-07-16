@@ -39,7 +39,7 @@ BuildWarden looks for `tailscale` on `PATH` and in the standard Windows, macOS, 
 2. Open **Settings → Network → Remote access** and enable **Remote Access**.
 3. For a browser on the same computer, open the displayed loopback URL, normally `http://127.0.0.1:47831`.
 4. For another tailnet device, enable **Expose to tailnet**. BuildWarden verifies Tailscale, creates a background HTTPS Serve proxy to its loopback server, and displays the MagicDNS URL, normally `https://<device>.<tailnet>.ts.net/`.
-5. Choose whether the new session should be read-only or whether **Allow runs, chats, approvals, Git, projects, and terminal** should grant control scopes.
+5. Choose whether the new session should be read-only or whether **Allow runs, chats, approvals, Git, projects, terminal, and browser** should grant control scopes.
 6. Select **Create pairing code**, then open the pairing link, scan its QR code, or enter the code in the browser.
 
 For the hosted website, open [https://buildwarden-app.vercel.app](https://buildwarden-app.vercel.app/), add the exact origin `https://buildwarden-app.vercel.app` under **Hosted website origins**, choose **Hosted website** when creating the code, and scan the resulting QR link. To deploy another instance, build `apps/web` as described in its README and configure that deployment's exact HTTPS origin instead. Hosted sessions use an origin-bound bearer stored in IndexedDB; host-served sessions continue to use the HttpOnly cookie described below.
@@ -55,6 +55,16 @@ tailscale serve --bg --yes --https=443 --set-path=/ http://127.0.0.1:47831
 ```
 
 BuildWarden refuses to replace an existing root HTTPS handler and reports the conflict instead. Useful diagnostics are `tailscale status` and `tailscale serve status`.
+
+## Run Browser And Element Attachments
+
+The run browser is hosted by Electron through a sandboxed `WebContentsView`, not an iframe. It can therefore open ordinary HTTP and HTTPS sites—including Angular applications, WordPress sites, localhost development servers, and pages that reject iframe embedding. Each project uses a separate persistent Chromium partition, so cookies and web storage survive browser-session cleanup while remaining isolated from other BuildWarden projects.
+
+Use the pointer control in the browser toolbar to inspect an element. BuildWarden uses its private Electron debugger connection and CDP DOM, CSS, accessibility, overlay, and page domains; it does not expose a remote-debugging port. A selection produces one logical attachment containing sanitized Markdown context and a highlighted JPEG. Sensitive URL parameters and element attributes matching token, secret, auth, key, session, or password are redacted, and password/hidden-input values are never captured. Vision-capable providers receive both files; the Claude Code CLI receives the Markdown context only.
+
+Remote clients never load the target website. The desktop host sends a bounded JPEG stream and accepts validated mouse, wheel, keyboard, text, and paste input over the authenticated event connection. Browser access requires the `browser:operate` pairing scope; existing paired sessions do not gain it automatically and must be revoked and paired again. Frames are sent only while subscribed, at no more than 8 FPS, JPEG quality 65, and 1280×800.
+
+Version-one boundaries are browser-internal and extension URLs, DRM-protected frames, hardware-permission workflows, remote file upload/drag-and-drop, and exact source-file recovery. Angular component names and WordPress block/template hints are best-effort metadata because production sites usually do not expose an exact source path.
 
 ## Architecture
 

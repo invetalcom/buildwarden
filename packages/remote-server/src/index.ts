@@ -1596,7 +1596,10 @@ export class RemoteAccessServer {
         return;
       }
       void this.options.onBrowserInput(parsed.message.runId, parsed.message.input).catch((error) => {
-        this.options.onServerError?.(error);
+        void error;
+        // CDP errors may echo input parameters. Never pass browser input details
+        // into the host's general-purpose request logger.
+        this.options.onServerError?.(new Error("Browser input dispatch failed."));
       });
       return;
     }
