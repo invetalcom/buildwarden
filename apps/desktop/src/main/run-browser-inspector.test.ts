@@ -51,7 +51,7 @@ class FakeDebugger extends EventEmitter {
     this.commands.push({ method, params, sessionId });
     switch (method) {
       case "DOM.resolveNode":
-        return { result: { objectId: "node-1" } };
+        return { object: { objectId: "node-1" } };
       case "Runtime.callFunctionOn":
         return { result: { value: PAGE_DATA } };
       case "Accessibility.getPartialAXTree":
