@@ -1190,6 +1190,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.runBrowserAction, (_, input) => hostBrowser.action(input));
   ipcMain.handle(IPC_CHANNELS.setRunBrowserViewport, (_, input) => hostBrowser.setViewport(input));
   ipcMain.handle(IPC_CHANNELS.setRunBrowserDesktopSurface, (_, input) => hostBrowser.setDesktopSurface(input));
+  ipcMain.handle(IPC_CHANNELS.getRunBrowserElementCapture, (_, input) => hostBrowser.getElementCapture(input));
   ipcMain.handle(IPC_CHANNELS.reportRendererLog, async (_, payload: RendererLogPayload) => {
     const metadata = {
       source: payload.source,

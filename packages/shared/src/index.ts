@@ -2974,6 +2974,7 @@ export interface DesktopApi {
   setRunBrowserViewport(input: SetRunBrowserViewportInput): Promise<void>;
   /** Electron-only: positions and occludes the native browser surface. */
   setRunBrowserDesktopSurface(input: SetRunBrowserDesktopSurfaceInput): Promise<void>;
+  getRunBrowserElementCapture(input: GetRunBrowserElementCaptureInput): Promise<RunBrowserElementCapture>;
   onRunBrowserEvent(listener: (event: RunBrowserEvent) => void): () => void;
   onRunEvent(listener: (event: RunEvent) => void): () => void;
   addBookmark(runId: string): Promise<void>;
@@ -3547,6 +3548,7 @@ export const IPC_CHANNELS = {
   runBrowserAction: "buildwarden:run-browser-action",
   setRunBrowserViewport: "buildwarden:set-run-browser-viewport",
   setRunBrowserDesktopSurface: "buildwarden:set-run-browser-desktop-surface",
+  getRunBrowserElementCapture: "buildwarden:get-run-browser-element-capture",
   runBrowserEvent: "buildwarden:run-browser-event",
   releaseRun: "buildwarden:release-run",
   respondToShellApproval: "buildwarden:respond-to-shell-approval",

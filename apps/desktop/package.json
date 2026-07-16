@@ -40,6 +40,7 @@
     "@buildwarden/remote-server": "workspace:*",
     "@buildwarden/renderer": "workspace:*",
     "@buildwarden/shared": "workspace:*",
+    "@medv/finder": "4.0.2",
     "@tailwindcss/vite": "^4.3.2",
     "diff": "^8.0.3",
     "gpt-tokenizer": "^3.4.0",
