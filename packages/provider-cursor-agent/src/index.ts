@@ -1255,6 +1255,7 @@ class CursorAcpRuntime {
   private readonly toolStates = new Map<string, CursorToolState>();
   private readonly subagents = new Map<string, RunSubagentInfo>();
   private assistantText = "";
+  private isPromptActive = false;
   private usage: RunTokenUsage = { inputTokens: 0, outputTokens: 0 };
 
   constructor(private readonly options: CursorRuntimeOptions) {
@@ -1349,16 +1350,23 @@ class CursorAcpRuntime {
   }> {
     const session = this.requireSession();
     const modeApplied = await this.applyMode();
-    const result = await this.connection.request("session/prompt", {
-      sessionId: session.sessionId,
-      prompt: buildPromptParts(prompt, this.options.attachments, modeApplied ? undefined : modeFallbackInstruction(this.options.mode)),
-    }, 0);
-    this.mergeUsage(normalizeCursorTokenUsage(result));
-    return {
-      summary: this.assistantText.trim(),
-      usage: this.usage,
-      result,
-    };
+    this.assistantText = "";
+    this.toolStates.clear();
+    this.isPromptActive = true;
+    try {
+      const result = await this.connection.request("session/prompt", {
+        sessionId: session.sessionId,
+        prompt: buildPromptParts(prompt, this.options.attachments, modeApplied ? undefined : modeFallbackInstruction(this.options.mode)),
+      }, 0);
+      this.mergeUsage(normalizeCursorTokenUsage(result));
+      return {
+        summary: this.assistantText.trim(),
+        usage: this.usage,
+        result,
+      };
+    } finally {
+      this.isPromptActive = false;
+    }
   }
 
   async cancel(): Promise<void> {
@@ -1531,6 +1539,11 @@ class CursorAcpRuntime {
   }
 
   private handleSessionUpdate(params: unknown): void {
+    // session/load replays the saved transcript as ordinary session/update
+    // notifications. Only updates produced by the active prompt are new run output.
+    if (!this.isPromptActive) {
+      return;
+    }
     this.mergeUsage(normalizeCursorTokenUsage(params));
 
     const text = textFromSessionUpdate(params);

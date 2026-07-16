@@ -1,9 +1,10 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  CursorAgentHarnessAdapter,
   CursorAgentProviderAdapter,
   assertCursorAgentAvailable,
   cursorSubagentStatusFromToolStatus,
@@ -160,6 +161,97 @@ describe("CursorAgentProviderAdapter", () => {
       });
     } finally {
       rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not emit transcript replay notifications when resuming a session", async () => {
+    const fakeAgentDir = mkdtempSync(join(tmpdir(), "buildwarden-fake-cursor-agent-"));
+    const serverPath = join(fakeAgentDir, "fake-agent.cjs");
+    const commandPath = join(fakeAgentDir, process.platform === "win32" ? "fake-agent.cmd" : "fake-agent");
+    writeFileSync(
+      serverPath,
+      [
+        'const { createInterface } = require("node:readline");',
+        'const lines = createInterface({ input: process.stdin });',
+        'const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");',
+        'const update = (sessionUpdate, details) => send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "existing-session", update: { sessionUpdate, ...details } } });',
+        'lines.on("line", (line) => {',
+        '  const message = JSON.parse(line);',
+        '  const respond = (result) => send({ jsonrpc: "2.0", id: message.id, result });',
+        '  if (message.method === "initialize") return respond({ protocolVersion: 1, agentCapabilities: { loadSession: true } });',
+        '  if (message.method === "authenticate") return respond({});',
+        '  if (message.method === "session/load") {',
+        '    update("agent_message_chunk", { content: { type: "text", text: "Previous answer" } });',
+        '    update("tool_call", { toolCallId: "replay-tool", title: "Old tool", status: "pending" });',
+        '    update("tool_call_update", { toolCallId: "replay-tool", title: "Old tool", status: "completed" });',
+        '    return respond({ sessionId: "existing-session", configOptions: [] });',
+        '  }',
+        '  if (message.method === "session/set_config_option") return respond({});',
+        '  if (message.method === "session/prompt") {',
+        '    update("agent_message_chunk", { content: { type: "text", text: "Fresh" } });',
+        '    update("agent_message_chunk", { content: { type: "text", text: " response" } });',
+        '    respond({ stopReason: "end_turn" });',
+        '    return setImmediate(() => process.exit(0));',
+        '  }',
+        '  return respond({});',
+        '});',
+      ].join("\n"),
+      "utf8",
+    );
+    if (process.platform === "win32") {
+      writeFileSync(commandPath, `@echo off\r\n"${process.execPath}" "${serverPath}" %*\r\n`, "utf8");
+    } else {
+      writeFileSync(commandPath, `#!/bin/sh\nexec "${process.execPath}" "${serverPath}" "$@"\n`, "utf8");
+      chmodSync(commandPath, 0o755);
+    }
+
+    try {
+      const adapter = new CursorAgentHarnessAdapter();
+      const chunks: Array<{ type: string; value: string }> = [];
+      const result = await adapter.run(
+        {
+          runId: "run-follow-up",
+          worktreePath: tmpdir(),
+          mode: "code",
+          prompt: "Follow up",
+          providerType: "cursor-agent",
+          modelId: "composer-2.5",
+          apiKey: "",
+          config: { cursorBinaryPath: commandPath },
+          providerSessionRuntime: {
+            ownerId: "run-follow-up",
+            ownerKind: "run",
+            providerType: "cursor-agent",
+            harnessType: "cursor-acp",
+            status: "ready",
+            cwd: tmpdir(),
+            modelId: "composer-2.5",
+            runtimeMode: "code",
+            resumeCursor: { schemaVersion: 1, sessionId: "existing-session" },
+            runtimePayload: { sessionId: "existing-session" },
+            lastSeenAt: "2026-07-16T00:00:00.000Z",
+            createdAt: "2026-07-16T00:00:00.000Z",
+            updatedAt: "2026-07-16T00:00:00.000Z",
+          },
+        },
+        {
+          tools: [],
+          executeTool: async () => {
+            throw new Error("No BuildWarden tools are expected.");
+          },
+        },
+        (chunk) => chunks.push({ type: chunk.type, value: chunk.value }),
+        new AbortController().signal,
+      );
+
+      expect(result.summary).toBe("Fresh response");
+      expect(chunks.filter((chunk) => chunk.type === "message").map((chunk) => chunk.value)).toEqual([
+        "Fresh",
+        "Fresh response",
+      ]);
+      expect(chunks.some((chunk) => chunk.value.includes("Previous answer") || chunk.value.includes("Old tool"))).toBe(false);
+    } finally {
+      rmSync(fakeAgentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
   });
 
