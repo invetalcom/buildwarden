@@ -598,6 +598,7 @@ export const RunDetailPage = ({
     setSelectedMode("code");
     setFollowUpPrompt(`Implement this plan:\n\n${plan.trim()}`);
     setFollowUpFiles([]);
+    setBrowserElementCaptures([]);
   };
 
   const submitPlanFeedback = async (feedback: string) => {
