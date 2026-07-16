@@ -20,6 +20,7 @@ const MAX_SCREENSHOT_HEIGHT = 1_200;
 const SENSITIVE_NAME = /token|secret|auth|key|session|password/i;
 
 type CdpValueResult<T> = { result?: { value?: T; objectId?: string } };
+type CdpResolveNodeResult = { object?: { objectId?: string } };
 type CdpAxValue = { value?: string };
 type CdpAxNode = { role?: CdpAxValue; name?: CdpAxValue };
 
@@ -451,8 +452,8 @@ export class RunBrowserInspector {
     const documentGeneration = this.documentGeneration;
     try {
       await this.cancel();
-      const resolved = await this.command("DOM.resolveNode", { backendNodeId }, sessionId) as CdpValueResult<never>;
-      const objectId = resolved.result?.objectId;
+      const resolved = await this.command("DOM.resolveNode", { backendNodeId }, sessionId) as CdpResolveNodeResult;
+      const objectId = resolved.object?.objectId;
       if (!objectId) throw new Error("The selected browser element is no longer available.");
       const collected = await this.command("Runtime.callFunctionOn", {
         objectId,
@@ -578,6 +579,8 @@ export class RunBrowserInspector {
   }
 
   private command(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<unknown> {
-    return this.options.webContents.debugger.sendCommand(method, params, sessionId);
+    return sessionId
+      ? this.options.webContents.debugger.sendCommand(method, params, sessionId)
+      : this.options.webContents.debugger.sendCommand(method, params);
   }
 }

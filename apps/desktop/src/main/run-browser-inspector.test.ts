@@ -51,7 +51,7 @@ class FakeDebugger extends EventEmitter {
     this.commands.push({ method, params, sessionId });
     switch (method) {
       case "DOM.resolveNode":
-        return { result: { objectId: "node-1" } };
+        return { object: { objectId: "node-1" } };
       case "Runtime.callFunctionOn":
         return { result: { value: PAGE_DATA } };
       case "Accessibility.getPartialAXTree":
@@ -151,6 +151,17 @@ describe("RunBrowserInspector", () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(currentTime + 120_001);
     expect(inspector.getCapture(captureId)).toBeNull();
     now.mockRestore();
+  });
+
+  it("omits the optional CDP session argument for selections in the root target", async () => {
+    const { cdp, inspector, onError, onSelection } = createInspector();
+    await inspector.start();
+    cdp.emit("message", {}, "Overlay.inspectNodeRequested", { backendNodeId: 42 }, "");
+
+    await vi.waitFor(() => expect(onSelection).toHaveBeenCalledOnce());
+    expect(onError).not.toHaveBeenCalled();
+    const rootResolveCall = cdp.sendCommand.mock.calls.find(([method]) => method === "DOM.resolveNode");
+    expect(rootResolveCall).toHaveLength(2);
   });
 
   it("reports debugger detach", async () => {
