@@ -40,6 +40,30 @@ describe("run browser shared contracts", () => {
     }])).toThrow("invalid browser element metadata");
   });
 
+  it("rejects inconsistent browser element attachment groups", () => {
+    const context: ChatAttachmentPayload = {
+      fileName: "browser-element-capture-1.md",
+      mimeType: "text/markdown",
+      dataBase64: "YQ==",
+      source,
+    };
+    const screenshot: ChatAttachmentPayload = {
+      fileName: "browser-element-capture-1.jpg",
+      mimeType: "image/jpeg",
+      dataBase64: "YQ==",
+      source: { ...source, role: "screenshot" },
+    };
+
+    expect(() => validateChatAttachmentPayloads([context, screenshot])).not.toThrow();
+    expect(() => validateChatAttachmentPayloads([context, { ...context }])).toThrow("duplicate context");
+    expect(() => validateChatAttachmentPayloads([
+      context,
+      { ...screenshot, source: { ...screenshot.source!, selector: "button.cancel" } },
+    ])).toThrow("does not match");
+    expect(() => validateChatAttachmentPayloads([{ ...context, mimeType: "image/jpeg" }])).toThrow("does not match its MIME type");
+    expect(() => validateChatAttachmentPayloads([screenshot])).toThrow("missing its Markdown context");
+  });
+
   it("defines transport-neutral browser state events", () => {
     const event: RunBrowserEvent = {
       type: "state",

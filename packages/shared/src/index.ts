@@ -2248,12 +2248,42 @@ export function validateChatAttachmentPayloads(attachments: ChatAttachmentPayloa
     throw new Error(`At most ${String(CHAT_ATTACHMENT_LIMITS.maxFileCount)} files can be attached per message.`);
   }
   let total = 0;
+  const browserGroups = new Map<string, {
+    captureId: string;
+    url: string;
+    selector: string;
+    roles: Set<BrowserElementAttachmentSource["role"]>;
+  }>();
   for (const a of attachments) {
     if (!a.fileName.trim() || !a.mimeType.trim()) {
       throw new Error("Attachments require a file name and MIME type.");
     }
     if (a.source && !isBrowserElementAttachmentSource(a.source)) {
       throw new Error(`"${a.fileName}" has invalid browser element metadata.`);
+    }
+    if (a.source) {
+      const mimeType = a.mimeType.toLowerCase().split(";", 1)[0]?.trim();
+      const expectedMimeType = a.source.role === "context" ? "text/markdown" : "image/jpeg";
+      if (mimeType !== expectedMimeType) {
+        throw new Error(`"${a.fileName}" has a browser element role that does not match its MIME type.`);
+      }
+      const group = browserGroups.get(a.source.groupId);
+      if (!group) {
+        browserGroups.set(a.source.groupId, {
+          captureId: a.source.captureId,
+          url: a.source.url,
+          selector: a.source.selector,
+          roles: new Set([a.source.role]),
+        });
+      } else {
+        if (group.captureId !== a.source.captureId || group.url !== a.source.url || group.selector !== a.source.selector) {
+          throw new Error(`"${a.fileName}" does not match the other attachment in its browser element group.`);
+        }
+        if (group.roles.has(a.source.role)) {
+          throw new Error(`Browser element group "${a.source.groupId}" contains a duplicate ${a.source.role} attachment.`);
+        }
+        group.roles.add(a.source.role);
+      }
     }
     const n = estimateBase64ByteLength(a.dataBase64);
     if (n > CHAT_ATTACHMENT_LIMITS.maxBytesPerFile) {
@@ -2267,6 +2297,11 @@ export function validateChatAttachmentPayloads(attachments: ChatAttachmentPayloa
     throw new Error(
       `Attachments exceed the total size limit (${String(CHAT_ATTACHMENT_LIMITS.maxTotalBytes / (1024 * 1024))} MB).`,
     );
+  }
+  for (const [groupId, group] of browserGroups) {
+    if (!group.roles.has("context")) {
+      throw new Error(`Browser element group "${groupId}" is missing its Markdown context attachment.`);
+    }
   }
 }
 
