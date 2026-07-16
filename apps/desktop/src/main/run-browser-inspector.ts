@@ -40,6 +40,7 @@ type PageElementData = {
 };
 
 type CachedCapture = { capture: RunBrowserElementCapture; expiresAt: number };
+type AttachedFrameTarget = { frameId: string; url: string; parentSessionId?: string };
 
 export interface RunBrowserInspectorOptions {
   runId: string;
@@ -292,7 +293,7 @@ const valueFromAx = (value: CdpAxValue | undefined): string => typeof value?.val
 
 export class RunBrowserInspector {
   private readonly captures = new Map<string, CachedCapture>();
-  private readonly targetUrls = new Map<string, string>();
+  private readonly frameTargets = new Map<string, AttachedFrameTarget>();
   private attached = false;
   private inspecting = false;
   private captureInFlight = false;
@@ -363,7 +364,7 @@ export class RunBrowserInspector {
   handleNavigationReplacement(): void {
     this.documentGeneration += 1;
     this.captures.clear();
-    this.targetUrls.clear();
+    this.frameTargets.clear();
     if (this.inspecting) {
       this.inspecting = false;
       this.options.onInspectingChange(false);
@@ -373,7 +374,7 @@ export class RunBrowserInspector {
   dispose(): void {
     this.documentGeneration += 1;
     this.captures.clear();
-    this.targetUrls.clear();
+    this.frameTargets.clear();
     this.options.webContents.debugger.removeListener("message", this.handleDebuggerMessage);
     this.options.webContents.debugger.removeListener("detach", this.handleDebuggerDetach);
     if (this.attached && this.options.webContents.debugger.isAttached()) {
@@ -401,7 +402,11 @@ export class RunBrowserInspector {
       const childSessionId = typeof params.sessionId === "string" ? params.sessionId : "";
       const targetInfo = params.targetInfo && typeof params.targetInfo === "object" ? params.targetInfo as Record<string, unknown> : {};
       if (childSessionId && targetInfo.type === "iframe") {
-        this.targetUrls.set(childSessionId, typeof targetInfo.url === "string" ? targetInfo.url : "");
+        this.frameTargets.set(childSessionId, {
+          frameId: typeof targetInfo.targetId === "string" ? targetInfo.targetId : "",
+          url: typeof targetInfo.url === "string" ? targetInfo.url : "",
+          ...(sessionId ? { parentSessionId: sessionId } : {}),
+        });
         void this.enableDomains(childSessionId)
           .then(() => this.setAutoAttach(childSessionId))
           .then(() => this.inspecting ? this.setInspectModeForSession("searchForNode", childSessionId) : undefined)
@@ -412,7 +417,7 @@ export class RunBrowserInspector {
       return;
     }
     if (method === "Target.detachedFromTarget" && typeof params.sessionId === "string") {
-      this.targetUrls.delete(params.sessionId);
+      this.frameTargets.delete(params.sessionId);
     }
   };
 
@@ -420,7 +425,7 @@ export class RunBrowserInspector {
     this.attached = false;
     this.documentGeneration += 1;
     this.captures.clear();
-    this.targetUrls.clear();
+    this.frameTargets.clear();
     if (this.inspecting) {
       this.inspecting = false;
       this.options.onInspectingChange(false);
@@ -453,7 +458,7 @@ export class RunBrowserInspector {
   }
 
   private async setInspectMode(mode: "searchForNode" | "none", ignoreErrors = false): Promise<void> {
-    const sessions = [undefined, ...this.targetUrls.keys()];
+    const sessions = [undefined, ...this.frameTargets.keys()];
     await Promise.all(sessions.map(async (sessionId) => {
       try {
         await this.setInspectModeForSession(mode, sessionId);
@@ -483,24 +488,10 @@ export class RunBrowserInspector {
     const documentGeneration = this.documentGeneration;
     try {
       await this.cancel();
-      const resolved = await this.command("DOM.resolveNode", { backendNodeId }, sessionId) as CdpResolveNodeResult;
-      const objectId = resolved.object?.objectId;
-      if (!objectId) throw new Error("The selected browser element is no longer available.");
-      const collected = await this.command("Runtime.callFunctionOn", {
-        objectId,
-        functionDeclaration: PAGE_COLLECTOR_SOURCE,
-        arguments: [{ value: getFinderSource() }],
-        returnByValue: true,
-        awaitPromise: true,
-        userGesture: false,
-      }, sessionId) as CdpValueResult<PageElementData>;
-      const pageData = collected.result?.value;
-      if (!pageData) throw new Error("Could not collect context for the selected browser element.");
+      const pageData = await this.collectPageData(backendNodeId, sessionId);
       const segments = [...pageData.locatorSegments];
-      const targetUrl = sessionId ? this.targetUrls.get(sessionId) : undefined;
-      if (targetUrl && !segments.some((segment) => segment.kind === "frame")) {
-        const sanitizedTargetUrl = sanitizeRunBrowserUrl(targetUrl);
-        segments.unshift({ kind: "frame", selector: `iframe[src=${JSON.stringify(sanitizedTargetUrl)}]`, frameUrl: sanitizedTargetUrl });
+      if (sessionId && !segments.some((segment) => segment.kind === "frame")) {
+        segments.unshift(...await this.resolveOwnerFrameSegments(sessionId));
       }
       const selector = selectorFromSegments(segments) || pageData.fallback;
       const locator: RunBrowserElementLocator = { selector, segments, fallback: pageData.fallback };
@@ -559,6 +550,49 @@ export class RunBrowserInspector {
     } finally {
       this.captureInFlight = false;
     }
+  }
+
+  private async collectPageData(backendNodeId: number, sessionId?: string): Promise<PageElementData> {
+    const resolved = await this.command("DOM.resolveNode", { backendNodeId }, sessionId) as CdpResolveNodeResult;
+    const objectId = resolved.object?.objectId;
+    if (!objectId) throw new Error("The selected browser element is no longer available.");
+    const collected = await this.command("Runtime.callFunctionOn", {
+      objectId,
+      functionDeclaration: PAGE_COLLECTOR_SOURCE,
+      arguments: [{ value: getFinderSource() }],
+      returnByValue: true,
+      awaitPromise: true,
+      userGesture: false,
+    }, sessionId) as CdpValueResult<PageElementData>;
+    const pageData = collected.result?.value;
+    if (!pageData) throw new Error("Could not collect context for the selected browser element.");
+    return pageData;
+  }
+
+  private async resolveOwnerFrameSegments(sessionId: string): Promise<RunBrowserLocatorSegment[]> {
+    const segments: RunBrowserLocatorSegment[] = [];
+    let currentSessionId: string | undefined = sessionId;
+    while (currentSessionId) {
+      const frame = this.frameTargets.get(currentSessionId);
+      if (!frame?.frameId) break;
+      try {
+        const owner = await this.command("DOM.getFrameOwner", { frameId: frame.frameId }, frame.parentSessionId) as {
+          backendNodeId?: number;
+        };
+        if (typeof owner.backendNodeId !== "number") break;
+        const ownerData = await this.collectPageData(owner.backendNodeId, frame.parentSessionId);
+        const ownerSegments = ownerData.locatorSegments.length > 0
+          ? ownerData.locatorSegments.map((segment, index) => index === ownerData.locatorSegments.length - 1
+            ? { kind: "frame" as const, selector: segment.selector, frameUrl: sanitizeRunBrowserUrl(frame.url) }
+            : segment)
+          : [{ kind: "frame" as const, selector: ownerData.fallback, frameUrl: sanitizeRunBrowserUrl(frame.url) }];
+        segments.unshift(...ownerSegments);
+        currentSessionId = frame.parentSessionId;
+      } catch {
+        break;
+      }
+    }
+    return segments;
   }
 
   private async captureHighlightedScreenshot(backendNodeId: number, sessionId?: string): Promise<string> {

@@ -52,6 +52,8 @@ class FakeDebugger extends EventEmitter {
     switch (method) {
       case "DOM.resolveNode":
         return { object: { objectId: "node-1" } };
+      case "DOM.getFrameOwner":
+        return { backendNodeId: 7 };
       case "Runtime.callFunctionOn":
         return { result: { value: PAGE_DATA } };
       case "Accessibility.getPartialAXTree":
@@ -128,7 +130,7 @@ describe("RunBrowserInspector", () => {
     await inspector.start();
     cdp.emit("message", {}, "Target.attachedToTarget", {
       sessionId: "child-1",
-      targetInfo: { type: "iframe", url: "https://frame.example/account?auth=private" },
+      targetInfo: { type: "iframe", targetId: "frame-1", url: "https://frame.example/account?auth=private" },
     });
     await vi.waitFor(() => expect(cdp.commands.some(({ method, sessionId }) => method === "Overlay.enable" && sessionId === "child-1")).toBe(true));
     cdp.emit("message", {}, "Overlay.inspectNodeRequested", { backendNodeId: 42 }, "child-1");
@@ -138,7 +140,14 @@ describe("RunBrowserInspector", () => {
     const captureId = onSelection.mock.calls[0]?.[0] as string;
     const capture = inspector.getCapture(captureId);
     expect(capture?.accessibleRole).toBe("button");
-    expect(capture?.locator.segments[0]).toMatchObject({ kind: "frame" });
+    const ownerFrame = capture?.locator.segments.find((segment) => segment.kind === "frame");
+    expect(ownerFrame).toBeDefined();
+    expect(ownerFrame?.selector).not.toContain("frame.example");
+    expect(cdp.commands).toContainEqual(expect.objectContaining({
+      method: "DOM.getFrameOwner",
+      params: { frameId: "frame-1" },
+      sessionId: undefined,
+    }));
     expect(capture?.url).not.toContain("private");
     expect(capture?.contextAttachment.source).toMatchObject({ groupId: captureId, role: "context" });
     expect(capture?.screenshotAttachment.source).toMatchObject({ groupId: captureId, role: "screenshot" });
@@ -166,7 +175,7 @@ describe("RunBrowserInspector", () => {
 
     cdp.emit("message", {}, "Target.attachedToTarget", {
       sessionId: "child-1",
-      targetInfo: { type: "iframe", url: "https://frame.example" },
+      targetInfo: { type: "iframe", targetId: "frame-1", url: "https://frame.example" },
     });
     await vi.waitFor(() => expect(cdp.commands.some(({ method, sessionId }) =>
       method === "Target.setAutoAttach" && sessionId === "child-1")).toBe(true));
