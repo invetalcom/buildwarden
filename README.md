@@ -1,6 +1,6 @@
 # BuildWarden
 
-BuildWarden is yet another GUI for coding agents. In comparison to most others, it also focuses on project management, not just agent runs. Also separated are standalone chats without any linked repository. BuildWarden keeps projects, runs, chats, worktrees, branches, review activity, provider configuration, and local app state coordinated through a typed client boundary for both Electron IPC and optional browser RPC access.
+BuildWarden is yet another GUI for coding agents—but with a refreshing design and a stronger focus on project management, not just agent runs. It keeps your projects, chats, branches, worktrees, reviews, and agent sessions organized in one place, while supporting both repository-based workflows and standalone AI chats. It offers all the common features, including support for multiple providers and models, parallel agent runs, and Git workflows. In addition, it includes unique capabilities such as AI Insights, repository and code graphs, and a Project Lab for autonomous tasks, fixes, and loops, providing an end-to-end workflow.
 
 ## What It Does
 
