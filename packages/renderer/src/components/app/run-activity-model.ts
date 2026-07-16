@@ -146,15 +146,18 @@ const getActivityEntryKey = (entry: ActivityEntry, index: number) => {
   if (entry.kind === "tool-batch") {
     const first = entry.items[0];
     const id = first?.callStep?.id ?? first?.resultStep?.id ?? `tool-batch-${index}`;
-    return `${id}-tools-${entry.items.length}`;
+    return `${id}-tools`;
   }
   if (entry.kind === "diff-batch") {
     const firstId = entry.items[0]?.step.id ?? `diff-batch-${index}`;
-    return `${firstId}-diffs-${entry.items.length}`;
+    return `${firstId}-diffs`;
   }
   if (entry.kind === "single-group") {
     const first = entry.items[0]?.step.id ?? `single-group-${index}`;
-    return `${first}-${entry.groupKey}-${entry.items.length}`;
+    // A single row becomes a group when the next compatible live step arrives.
+    // Keep the first step's key so the virtualizer updates its measurement
+    // instead of replacing the row and discarding its cached position.
+    return first;
   }
   if (entry.kind === "tool") {
     return entry.callStep?.id ?? entry.resultStep?.id ?? `tool-${index}`;
@@ -189,7 +192,7 @@ export const buildTimelineRenderItems = ({
   if (canShowPlanDecision && latestPlanDecisionText) {
     items.push({
       kind: "plan-decision",
-      key: `plan-decision-${density}-${items.length}`,
+      key: `plan-decision-${density}`,
       planText: latestPlanDecisionText,
     });
   }
@@ -197,7 +200,7 @@ export const buildTimelineRenderItems = ({
   if (showLoading) {
     items.push({
       kind: "loading",
-      key: `loading-${density}-${items.length}`,
+      key: `loading-${density}`,
     });
   }
 

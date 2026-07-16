@@ -143,7 +143,6 @@ const ActivityEntryView = ({ entry, context }: Readonly<{ entry: ActivityEntry; 
 
     return (
       <AgentLogRow
-        key={`${entry.items[0]?.step.id ?? "diff-batch"}-${entry.items.length}`}
         tone="diff"
         label={`Diffs (${entry.items.length})`}
         time={rowTime(latestTimestamp ? new Date(latestTimestamp).toLocaleTimeString() : null)}
@@ -163,7 +162,6 @@ const ActivityEntryView = ({ entry, context }: Readonly<{ entry: ActivityEntry; 
 
     return (
       <AgentLogRow
-        key={`${entry.items[0]?.callStep?.id ?? entry.items[0]?.resultStep?.id ?? "tool-batch"}-${entry.items.length}`}
         tone="tools"
         label={`Tools (${entry.items.length})`}
         time={rowTime(latestTimestamp ? new Date(latestTimestamp).toLocaleTimeString() : null)}
@@ -303,7 +301,10 @@ const rowVirtualizer = useVirtualizer({
   estimateSize: (index) => estimateTimelineItemSize(timelineItems[index], density, activeReasoningStepIds),
   getItemKey: (index) => timelineItems[index]?.key ?? index,
   useAnimationFrameWithResizeObserver: true,
-  initialOffset: virtualized ? () => (initialScrollPosition === "start" ? 0 : Number.MAX_SAFE_INTEGER) : undefined,
+  // Use a real initial offset. A maximum-number "scroll to end" sentinel can
+  // remain cached when a new run is shorter than its viewport because writing
+  // scrollTop = 0 is a DOM no-op and emits no correcting scroll event.
+  initialOffset: virtualized ? 0 : undefined,
   anchorTo: "end",
   scrollEndThreshold: 140,
   overscan: 4,
@@ -400,11 +401,10 @@ useLayoutEffect(() => {
   const scrollToInitialPosition = () =>
     initialScrollPosition === "start" ? scrollTimelineToStart("auto") : scrollTimelineToEnd();
 
-  if (scrollToInitialPosition()) {
-    initiallyScrolledRunIdRef.current = runId;
-    return;
-  }
-
+  scrollToInitialPosition();
+  // Repeat after the virtualizer has observed the committed viewport and the
+  // estimated spacer has received its actual dimensions. The immediate call
+  // prevents a visible jump in the common case; this frame handles first mount.
   const frame = window.requestAnimationFrame(() => {
     if (scrollToInitialPosition()) {
       initiallyScrolledRunIdRef.current = runId;
