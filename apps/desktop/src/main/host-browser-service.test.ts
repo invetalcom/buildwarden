@@ -130,6 +130,10 @@ describe("HostBrowserService", () => {
     expect(main.contentView.addChildView).toHaveBeenCalledWith(view);
     expect(view.setBounds).toHaveBeenLastCalledWith({ x: 12, y: 21, width: 500, height: 301 });
     expect(view.setVisible).toHaveBeenLastCalledWith(true);
+    service.setDesktopWindowVisible(false);
+    expect(view.setVisible).toHaveBeenLastCalledWith(false);
+    service.setDesktopWindowVisible(true);
+    expect(view.setVisible).toHaveBeenLastCalledWith(true);
   });
 
   it("routes safe popups into the session and blocks unsafe navigation", async () => {

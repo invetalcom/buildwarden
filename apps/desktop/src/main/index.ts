@@ -329,6 +329,12 @@ const bootstrap = async (): Promise<void> => {
       mainWindow.webContents.send(IPC_CHANNELS.runBrowserEvent, event);
     }
   });
+  mainWindow?.on("focus", () => hostBrowser.setDesktopWindowVisible(true));
+  mainWindow?.on("show", () => hostBrowser.setDesktopWindowVisible(true));
+  mainWindow?.on("restore", () => hostBrowser.setDesktopWindowVisible(true));
+  mainWindow?.on("blur", () => hostBrowser.setDesktopWindowVisible(false));
+  mainWindow?.on("hide", () => hostBrowser.setDesktopWindowVisible(false));
+  mainWindow?.on("minimize", () => hostBrowser.setDesktopWindowVisible(false));
   const startupReconciliation = controller
     .migrateProjectBaseBranches()
     .then(() => controller.reconcileOrphanedActiveSessions())
