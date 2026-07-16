@@ -25,7 +25,7 @@ Remote Access is optional and disabled by default. When enabled, the BuildWarden
 
 The server deliberately listens only on loopback. It cannot be reached directly through the host's LAN address, such as `http://192.168.x.x:47831`. To connect from another computer, tablet, or phone, use the optional Tailscale Serve integration. BuildWarden remains the host and sole owner of its database, Git operations, workers, and terminals; no data is moved to a central BuildWarden service.
 
-BuildWarden also provides a static client in `apps/web` for deployment at one stable Vercel or other static-hosting URL. That deployment contains no backend or relay: the browser still connects directly to the user's desktop through Tailscale. The existing host-served URL continues to work independently.
+BuildWarden also provides a static client in `apps/web` for deployment at one stable Vercel or other static-hosting URL. The production client is available at [https://buildwarden-app.vercel.app](https://buildwarden-app.vercel.app/), but using it is optional: users can host the static build on any web server and domain they choose. A self-hosted deployment must use HTTPS, serve the SPA fallback, and be added as an exact origin under **Hosted website origins** in BuildWarden. These deployments contain no backend or relay: the browser still connects directly to the user's desktop through Tailscale. The existing host-served URL continues to work independently.
 
 ### Requirements
 
@@ -42,9 +42,9 @@ BuildWarden looks for `tailscale` on `PATH` and in the standard Windows, macOS, 
 5. Choose whether the new session should be read-only or whether **Allow runs, chats, approvals, Git, projects, and terminal** should grant control scopes.
 6. Select **Create pairing code**, then open the pairing link, scan its QR code, or enter the code in the browser.
 
-For a separately hosted website, deploy `apps/web` as described in its README, add its exact HTTPS origin under **Hosted website origins**, choose **Hosted website** when creating the code, and scan the resulting QR link. Hosted sessions use an origin-bound bearer stored in IndexedDB; host-served sessions continue to use the HttpOnly cookie described below.
+For the hosted website, open [https://buildwarden-app.vercel.app](https://buildwarden-app.vercel.app/), add the exact origin `https://buildwarden-app.vercel.app` under **Hosted website origins**, choose **Hosted website** when creating the code, and scan the resulting QR link. To deploy another instance, build `apps/web` as described in its README and configure that deployment's exact HTTPS origin instead. Hosted sessions use an origin-bound bearer stored in IndexedDB; host-served sessions continue to use the HttpOnly cookie described below.
 
-Pairing codes expire after five minutes and can be used only once. A successful pairing creates a revocable device session that is valid for up to 90 days. The browser keeps the session token in an `HttpOnly`, `SameSite=Strict` cookie, not in `localStorage`; the cookie is marked `Secure` when the connection uses Tailscale HTTPS. Use **Disconnect** in the browser to revoke its current session, or revoke any paired device from the desktop settings.
+Pairing codes expire after five minutes and can be used only once. A successful pairing creates a revocable device session that is valid for up to 90 days. The host-served browser keeps its session token in an `HttpOnly`, `SameSite=Strict` cookie, not in `localStorage`; the cookie is marked `Secure` when the connection uses Tailscale HTTPS. The separately hosted client stores its origin-bound bearer in IndexedDB. Use **Disconnect** in the browser to revoke its current session, or revoke any paired device from the desktop settings.
 
 The desktop app must be running for the website, RPC operations, and live events to work. Tailscale's background Serve configuration can survive restarts, but it only proxies to BuildWarden while BuildWarden's embedded loopback server is running. Disabling Remote Access stops the server and removes only the exact Tailscale Serve root handler that BuildWarden created; unrelated Serve configuration is left unchanged.
 

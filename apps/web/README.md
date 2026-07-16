@@ -7,6 +7,8 @@ This package builds the same BuildWarden React application for two browser deplo
 
 The hosted deployment has no API routes, functions, database, analytics, or relay. After pairing, the browser connects directly to the running BuildWarden desktop through its Tailscale Serve HTTPS and WebSocket endpoint. Vercel serves only static HTML, CSS, and JavaScript.
 
+The production deployment is available at [https://buildwarden-app.vercel.app](https://buildwarden-app.vercel.app/), but it is optional. You can host the contents of `dist` on any static web server and use any domain you control. The server must provide HTTPS and route unknown application paths to `index.html`; add that deployment's exact origin under **Hosted website origins** in BuildWarden before pairing it.
+
 ## Deploy to Vercel
 
 1. Import the BuildWarden repository as a Vercel project.
@@ -23,7 +25,7 @@ Vercel follows the explicit pnpm workspace dependencies, so changes to this pack
 1. Install and sign in to Tailscale on the desktop host and the viewing phone/computer.
 2. In the BuildWarden desktop app, open **Settings → Network → Remote access**.
 3. Enable **Remote Access** and **Expose to tailnet**. Wait for a verified `https://<device>.<tailnet>.ts.net` endpoint.
-4. Add the deployed site's exact origin, for example `https://buildwarden.example.com`, under **Hosted website origins** and save it.
+4. Add the deployed site's exact origin—`https://buildwarden-app.vercel.app` for the production deployment—under **Hosted website origins** and save it.
 5. Choose **Hosted website**, select that origin, choose the desired scopes, and create a pairing code.
 6. Scan the QR code or open the generated link on the tailnet device. The host and pairing code are carried in the URL fragment, which is removed before any network request and is not sent to Vercel.
 
