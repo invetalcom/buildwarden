@@ -767,6 +767,10 @@ const parseProjectOrderSetting = (raw: string | undefined): string[] => {
   }
 };
 
+type AppControllerLifecycle = {
+  onRunDeleted?: (runId: string) => void;
+};
+
 export class AppController
   implements
     Omit<
@@ -777,6 +781,14 @@ export class AppController
       | "listRemoteAccessSessions"
       | "revokeRemoteAccessSession"
       | "onRunEvent"
+      | "ensureRunBrowser"
+      | "navigateRunBrowser"
+      | "runBrowserAction"
+      | "setRunBrowserViewport"
+      | "setRunBrowserDesktopSurface"
+      | "getRunBrowserElementCapture"
+      | "sendRunBrowserInput"
+      | "onRunBrowserEvent"
       | "runTerminalStart"
       | "runTerminalWrite"
       | "runTerminalResize"
@@ -820,6 +832,7 @@ export class AppController
     private readonly desktop: AppControllerDesktopServices,
     private readonly terminal: Pick<HostTerminal, "killForRunId">,
     private readonly events: HostEventBus,
+    private readonly lifecycle: AppControllerLifecycle = {},
   ) {}
 
   private logControllerError(message: string, error: unknown, metadata?: Record<string, unknown>) {
@@ -831,6 +844,14 @@ export class AppController
 
   private logControllerWarn(message: string, metadata?: Record<string, unknown>) {
     logWarn(message, metadata);
+  }
+
+  private notifyRunDeleted(runId: string): void {
+    try {
+      this.lifecycle.onRunDeleted?.(runId);
+    } catch (error) {
+      this.logControllerWarn("A run-deletion lifecycle callback failed.", { runId, error });
+    }
   }
 
   private getFolderSnapshotRoot(): string {
@@ -3296,6 +3317,7 @@ export class AppController
       this.db.deleteProviderSessionRuntime(run.id, "run");
       await this.deleteRunResources(project.repoPath, run, "run");
       this.db.deleteRun(run.id);
+      this.notifyRunDeleted(run.id);
     }
     this.db.deleteProjectLabThread(threadId);
   }
@@ -5126,6 +5148,7 @@ export class AppController
     await this.secrets.deleteSecret(projectForgeTokenSecretKey(projectId));
     this.setProjectForgePrMonitorInterval(projectId, 0);
     this.db.deleteProject(projectId);
+    runs.forEach((run) => this.notifyRunDeleted(run.id));
 
     const remainingProjects = this.db.listProjects();
     if (remainingProjects.length > 0) {
@@ -5311,6 +5334,7 @@ export class AppController
     }
     await this.deleteRunResources(project.repoPath, run, "run");
     this.db.deleteRun(runId);
+    this.notifyRunDeleted(runId);
     this.db.deleteSetting(SELECTED_RUN_KEY);
     this.db.setSetting(SELECTED_PROJECT_KEY, project.id);
   }

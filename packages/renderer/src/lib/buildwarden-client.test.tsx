@@ -29,6 +29,7 @@ describe("BuildWarden client boundary", () => {
       fileManager: true,
       systemTerminal: true,
       embeddedTerminal: true,
+      browserControl: true,
       settings: true,
       mutations: true,
       runMutations: true,

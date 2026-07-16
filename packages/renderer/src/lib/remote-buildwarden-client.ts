@@ -26,6 +26,7 @@ const webCapabilities = (scopes: readonly RemoteAccessScope[]): Readonly<BuildWa
   const projectCreation = has("admin");
   const adminMutations = has("admin");
   const terminalOperations = has("terminal:operate");
+  const browserOperations = has("browser:operate");
   return Object.freeze({
     platform: "web" as const,
     nativeTitleBar: false,
@@ -35,8 +36,9 @@ const webCapabilities = (scopes: readonly RemoteAccessScope[]): Readonly<BuildWa
     fileManager: false,
     systemTerminal: false,
     embeddedTerminal: terminalOperations,
+    browserControl: browserOperations,
     settings: adminMutations,
-    mutations: runMutations || chatMutations || approvalResponses || gitMutations || projectCreation || terminalOperations,
+    mutations: runMutations || chatMutations || approvalResponses || gitMutations || projectCreation || terminalOperations || browserOperations,
     runMutations,
     chatMutations,
     bookmarkMutations: runMutations || chatMutations,
@@ -88,6 +90,14 @@ const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
   "getDetectedCursorInstallation",
   "listIntegratedSkills",
   "getIntegratedSkillContent",
+]);
+
+const REMOTE_BROWSER_METHODS = new Set<RemoteApiMethod>([
+  "ensureRunBrowser",
+  "navigateRunBrowser",
+  "runBrowserAction",
+  "setRunBrowserViewport",
+  "getRunBrowserElementCapture",
 ]);
 
 const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
@@ -261,6 +271,7 @@ const REMOTE_EVENT_TYPES = new Set<RemoteStreamEventType>([
   "task",
   "terminal-data",
   "terminal-exit",
+  "browser",
 ]);
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -281,6 +292,8 @@ const isRemoteEventPayload = (event: RemoteStreamEventType, payload: unknown): b
   if (event === "loop") return typeof payload.loopId === "string" && typeof payload.projectId === "string";
   if (event === "terminal-data") return typeof payload.sessionId === "string" && typeof payload.data === "string";
   if (event === "terminal-exit") return typeof payload.sessionId === "string" && Number.isInteger(payload.exitCode);
+  if (event === "browser") return typeof payload.runId === "string" &&
+    (payload.type === "state" || payload.type === "selection-ready" || payload.type === "frame" || payload.type === "error");
   return typeof payload.projectId === "string" && typeof payload.taskId === "string" &&
     (payload.status === "open" || payload.status === "in_progress" || payload.status === "in_review" || payload.status === "done");
 };
@@ -320,12 +333,15 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
   const scopes = options.scopes ?? ["state:read"];
   const capabilities = webCapabilities(scopes);
   const listeners = new Map<RemoteStreamEventType, Set<(payload: unknown) => void>>();
+  const browserListenerRunIds = new Map<(payload: unknown) => void, Set<string>>();
   let eventSocket: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempt = 0;
 
   const activeEventTypes = (): RemoteStreamEventType[] =>
     [...listeners.entries()].filter(([, handlers]) => handlers.size > 0).map(([event]) => event);
+
+  const activeBrowserRunIds = (): string[] => [...new Set([...browserListenerRunIds.values()].flatMap((runIds) => [...runIds]))];
 
   const eventSocketUrl = (): string => {
     const origin = baseUrl || window.location.origin;
@@ -342,6 +358,7 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
       type: "subscribe",
       requestId: crypto.randomUUID(),
       events: activeEventTypes(),
+      ...(activeEventTypes().includes("browser") ? { browserRunIds: activeBrowserRunIds() } : {}),
     }));
   };
 
@@ -376,7 +393,13 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
         return;
       }
       if (message?.type !== "event") return;
-      listeners.get(message.event)?.forEach((listener) => listener(message.payload));
+      listeners.get(message.event)?.forEach((listener) => {
+        if (message.event === "browser") {
+          const payload = message.payload as RemoteStreamEventPayloadMap["browser"];
+          if (!browserListenerRunIds.get(listener)?.has(payload.runId)) return;
+        }
+        listener(message.payload);
+      });
     });
     socket.addEventListener("close", (event) => {
       if (eventSocket === socket) eventSocket = null;
@@ -398,14 +421,29 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
   const subscribe = <Event extends RemoteStreamEventType>(
     event: Event,
     listener: (payload: RemoteStreamEventPayloadMap[Event]) => void,
+    runIds?: readonly string[],
   ): (() => void) => {
+    const untypedListener = listener as (payload: unknown) => void;
+    if (event === "browser") {
+      const requestedRunIds = new Set(runIds ?? []);
+      const uniqueRunIds = new Set<string>();
+      for (const [registeredListener, registeredRunIds] of browserListenerRunIds) {
+        if (registeredListener !== untypedListener) registeredRunIds.forEach((runId) => uniqueRunIds.add(runId));
+      }
+      requestedRunIds.forEach((runId) => uniqueRunIds.add(runId));
+      if (uniqueRunIds.size > 8) {
+        throw new Error("Remote browser events can subscribe to at most eight runs at once.");
+      }
+    }
     const eventListeners = listeners.get(event) ?? new Set<(payload: unknown) => void>();
-    eventListeners.add(listener as (payload: unknown) => void);
+    eventListeners.add(untypedListener);
     listeners.set(event, eventListeners);
+    if (event === "browser") browserListenerRunIds.set(untypedListener, new Set(runIds ?? []));
     if (eventSocket?.readyState === 1) sendSubscription();
     else connectEvents();
     return () => {
-      eventListeners.delete(listener as (payload: unknown) => void);
+      eventListeners.delete(untypedListener);
+      browserListenerRunIds.delete(untypedListener);
       if (eventSocket?.readyState === 1) sendSubscription();
       if (activeEventTypes().length === 0) {
         if (reconnectTimer != null) clearTimeout(reconnectTimer);
@@ -536,6 +574,18 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     onProjectTaskChanged: (listener) => subscribe("task", listener),
     onRunTerminalData: (listener) => subscribe("terminal-data", listener),
     onRunTerminalExit: (listener) => subscribe("terminal-exit", listener),
+    onRunBrowserEvent: (listener, runIds) => subscribe("browser", listener, runIds),
+    sendRunBrowserInput: async ({ runId, input }) => {
+      if (!capabilities.browserControl) throw new Error("Browser control is not available for this remote session. Re-pair the device.");
+      if (eventSocket?.readyState !== 1) throw new Error("The remote browser event connection is not ready.");
+      eventSocket.send(JSON.stringify({
+        protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+        type: "browser-input",
+        requestId: crypto.randomUUID(),
+        runId,
+        input,
+      }));
+    },
   };
 
   const client = new Proxy(localApi as BuildWardenClient, {
@@ -544,6 +594,14 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
       if (existing !== undefined) return existing;
       if (typeof property !== "string") return undefined;
       if (property.startsWith("on")) return () => () => {};
+      if (REMOTE_BROWSER_METHODS.has(property as RemoteApiMethod)) {
+        if (!capabilities.browserControl) {
+          return async () => {
+            throw new Error(`"${property}" requires browser control. Re-pair the device.`);
+          };
+        }
+        return (...args: unknown[]) => invoke(property as RemoteApiMethod, args as never);
+      }
       if (REMOTE_READ_METHODS.has(property as RemoteApiMethod)) {
         return (...args: unknown[]) => invoke(property as RemoteApiMethod, args as never);
       }

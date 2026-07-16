@@ -41,6 +41,7 @@ import {
   type RemoteStreamEventType,
   type RemoteWebSocketClientMessage,
   type RemoteWebSocketServerMessage,
+  type RunBrowserInput,
 } from "@buildwarden/shared";
 
 const MAX_REQUEST_BODY_BYTES = 1_048_576;
@@ -61,10 +62,13 @@ const REMOTE_STREAM_EVENTS = [
   "task",
   "terminal-data",
   "terminal-exit",
+  "browser",
 ] as const satisfies readonly RemoteStreamEventType[];
 const REMOTE_STREAM_EVENT_SET = new Set<string>(REMOTE_STREAM_EVENTS);
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
+const MAX_BROWSER_RUN_FILTERS = 8;
+const MAX_WEBSOCKET_BACKPRESSURE_BYTES = 1_048_576;
 
 const STATIC_CONTENT_TYPES: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
@@ -799,6 +803,8 @@ export interface RemoteAccessServerOptions {
   trustedWebOrigins?: () => readonly string[];
   webSocketAuthenticationTimeoutMs?: number;
   onServerError?: (error: unknown) => void;
+  onBrowserInput?: (runId: string, input: RunBrowserInput) => Promise<void>;
+  onBrowserSubscriptionChange?: (previousRunIds: readonly string[], nextRunIds: readonly string[]) => void;
 }
 
 const isRunEventPayload = (value: unknown): boolean =>
@@ -826,8 +832,41 @@ const isRemoteEventPayload = (event: RemoteStreamEventType, payload: unknown): b
   if (event === "terminal-exit") {
     return isPlainObject(payload) && typeof payload.sessionId === "string" && Number.isInteger(payload.exitCode);
   }
+  if (event === "browser") {
+    return isPlainObject(payload) && typeof payload.runId === "string" &&
+      (payload.type === "state" || payload.type === "selection-ready" || payload.type === "frame" || payload.type === "error");
+  }
   return isPlainObject(payload) && typeof payload.projectId === "string" && typeof payload.taskId === "string" &&
     (payload.status === "open" || payload.status === "in_progress" || payload.status === "in_review" || payload.status === "done");
+};
+
+const isOptionalBoundedNumber = (value: unknown, minimum: number, maximum: number): boolean =>
+  value === undefined || (typeof value === "number" && Number.isFinite(value) && value >= minimum && value <= maximum);
+const isBoundedNumber = (value: unknown, minimum: number, maximum: number): boolean =>
+  typeof value === "number" && Number.isFinite(value) && value >= minimum && value <= maximum;
+
+const isRunBrowserInput = (value: unknown): value is RunBrowserInput => {
+  if (!isPlainObject(value) || typeof value.type !== "string") return false;
+  if (value.type === "mouse") {
+    return ["mouseMoved", "mousePressed", "mouseReleased"].includes(String(value.eventType)) &&
+      isBoundedNumber(value.x, 0, 4_096) && isBoundedNumber(value.y, 0, 4_096) &&
+      [undefined, "none", "left", "middle", "right"].includes(value.button as string | undefined) &&
+      isOptionalBoundedNumber(value.clickCount, 0, 3) && isOptionalBoundedNumber(value.modifiers, 0, 255);
+  }
+  if (value.type === "wheel") {
+    return isBoundedNumber(value.x, 0, 4_096) && isBoundedNumber(value.y, 0, 4_096) &&
+      typeof value.deltaX === "number" && Number.isFinite(value.deltaX) && Math.abs(value.deltaX) <= 10_000 &&
+      typeof value.deltaY === "number" && Number.isFinite(value.deltaY) && Math.abs(value.deltaY) <= 10_000 &&
+      isOptionalBoundedNumber(value.modifiers, 0, 255);
+  }
+  if (value.type === "key") {
+    return ["keyDown", "keyUp", "rawKeyDown"].includes(String(value.eventType)) &&
+      typeof value.key === "string" && value.key.length <= 128 &&
+      (value.code === undefined || (typeof value.code === "string" && value.code.length <= 128)) &&
+      (value.text === undefined || (typeof value.text === "string" && value.text.length <= 8_192)) &&
+      isOptionalBoundedNumber(value.modifiers, 0, 255);
+  }
+  return (value.type === "text" || value.type === "paste") && typeof value.text === "string" && value.text.length <= 8_192;
 };
 
 const parseWebSocketClientMessage = (
@@ -855,6 +894,15 @@ const parseWebSocketClientMessage = (
   if (payload.type === "ping") {
     return { ok: true, message: { protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION, type: "ping", requestId } };
   }
+  if (payload.type === "browser-input") {
+    if (typeof payload.runId !== "string" || payload.runId.length < 1 || payload.runId.length > 128 || !isRunBrowserInput(payload.input)) {
+      return { ok: false, requestId, code: "invalid-message", message: "Invalid browser input." };
+    }
+    return {
+      ok: true,
+      message: { protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION, type: "browser-input", requestId, runId: payload.runId, input: payload.input },
+    };
+  }
   if (payload.type !== "subscribe" || !Array.isArray(payload.events)) {
     return { ok: false, requestId, code: "invalid-message", message: "Expected a subscribe or ping message." };
   }
@@ -862,9 +910,17 @@ const parseWebSocketClientMessage = (
     return { ok: false, requestId, code: "invalid-message", message: "One or more event subscriptions are invalid." };
   }
   const events = [...new Set(payload.events)];
+  if (payload.browserRunIds !== undefined && (!Array.isArray(payload.browserRunIds) ||
+    !payload.browserRunIds.every((runId) => typeof runId === "string" && runId.length > 0 && runId.length <= 128))) {
+    return { ok: false, requestId, code: "invalid-message", message: "Invalid browser run filters." };
+  }
+  const browserRunIds = Array.isArray(payload.browserRunIds) ? [...new Set(payload.browserRunIds as string[])] : [];
+  if (events.includes("browser") && (browserRunIds.length < 1 || browserRunIds.length > MAX_BROWSER_RUN_FILTERS)) {
+    return { ok: false, requestId, code: "invalid-message", message: "Browser subscriptions require one to eight run filters." };
+  }
   return {
     ok: true,
-    message: { protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION, type: "subscribe", requestId, events },
+    message: { protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION, type: "subscribe", requestId, events, ...(browserRunIds.length ? { browserRunIds } : {}) },
   };
 };
 
@@ -882,7 +938,8 @@ const validateServerMessage = (message: RemoteWebSocketServerMessage): boolean =
   }
   if (!isRequestId(message.requestId)) return false;
   if (message.type === "subscribed") {
-    return message.events.every((event) => REMOTE_STREAM_EVENT_SET.has(event));
+    return message.events.every((event) => REMOTE_STREAM_EVENT_SET.has(event)) &&
+      (message.browserRunIds === undefined || (message.browserRunIds.length <= MAX_BROWSER_RUN_FILTERS && message.browserRunIds.every((runId) => typeof runId === "string")));
   }
   return message.type === "pong" || (message.type === "error" && typeof message.message === "string");
 };
@@ -1325,11 +1382,17 @@ export class RemoteAccessServer {
     remoteAddress: string | null,
     clientOrigin: string | null,
   ): void {
-    const connection = { token };
+    const connection = { token, browserInputQueue: Promise.resolve() };
     const subscriptions = new Set<RemoteStreamEventType>();
+    const browserRunIds = new Set<string>();
     const eventDispose = this.options.events?.subscribe((event) => {
       if (!connection.token || !subscriptions.has(event.event)) {
         return;
+      }
+      if (event.event === "browser") {
+        const browserEvent = event.payload;
+        if (!browserRunIds.has(browserEvent.runId)) return;
+        if (browserEvent.type === "frame" && socket.bufferedAmount > MAX_WEBSOCKET_BACKPRESSURE_BYTES) return;
       }
       const session = this.options.auth.authenticate(connection.token, remoteAddress, {
         audit: false,
@@ -1337,7 +1400,10 @@ export class RemoteAccessServer {
         clientOrigin,
       });
       const terminalEvent = event.event === "terminal-data" || event.event === "terminal-exit";
-      if (!session?.scopes.includes("state:read") || (terminalEvent && !session.scopes.includes("terminal:operate"))) {
+      const browserEvent = event.event === "browser";
+      if (!session?.scopes.includes("state:read") ||
+        (terminalEvent && !session.scopes.includes("terminal:operate")) ||
+        (browserEvent && !session.scopes.includes("browser:operate"))) {
         socket.close(1008, "Session is no longer authorized");
         return;
       }
@@ -1355,6 +1421,7 @@ export class RemoteAccessServer {
     socket.once("close", () => {
       if (authenticationTimer) clearTimeout(authenticationTimer);
       eventDispose?.();
+      this.options.onBrowserSubscriptionChange?.([...browserRunIds], []);
     });
     socket.on("error", (error) => this.options.onServerError?.(error));
     socket.on("message", (data, isBinary) => {
@@ -1369,7 +1436,29 @@ export class RemoteAccessServer {
         });
         return;
       }
-      this.handleWebSocketMessage(socket, subscriptions, data, isBinary, connection.token, remoteAddress, clientOrigin);
+      this.handleWebSocketMessage(
+        socket,
+        subscriptions,
+        browserRunIds,
+        (runId, input) => {
+          const handler = this.options.onBrowserInput;
+          if (!handler) return;
+          connection.browserInputQueue = connection.browserInputQueue.then(async () => {
+            try {
+              await handler(runId, input);
+            } catch {
+              // CDP errors may echo input parameters. Never pass browser input
+              // details into the host's general-purpose request logger.
+              this.options.onServerError?.(new Error("Browser input dispatch failed."));
+            }
+          });
+        },
+        data,
+        isBinary,
+        connection.token,
+        remoteAddress,
+        clientOrigin,
+      );
     });
     if (connection.token) {
       this.sendWebSocketMessage(socket, {
@@ -1448,6 +1537,8 @@ export class RemoteAccessServer {
   private handleWebSocketMessage(
     socket: WebSocket,
     subscriptions: Set<RemoteStreamEventType>,
+    browserRunIds: Set<string>,
+    enqueueBrowserInput: (runId: string, input: RunBrowserInput) => void,
     data: RawData,
     isBinary: boolean,
     token: string,
@@ -1506,6 +1597,31 @@ export class RemoteAccessServer {
       return;
     }
 
+    if (parsed.message.type === "browser-input") {
+      if (!session.scopes.includes("browser:operate") || !this.options.onBrowserInput) {
+        this.sendWebSocketMessage(socket, {
+          protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+          type: "error",
+          requestId: parsed.message.requestId,
+          code: "forbidden",
+          message: "The session cannot control the run browser.",
+        });
+        return;
+      }
+      if (!browserRunIds.has(parsed.message.runId)) {
+        this.sendWebSocketMessage(socket, {
+          protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+          type: "error",
+          requestId: parsed.message.requestId,
+          code: "forbidden",
+          message: "Subscribe to this run before sending browser input.",
+        });
+        return;
+      }
+      enqueueBrowserInput(parsed.message.runId, parsed.message.input);
+      return;
+    }
+
     if (parsed.message.events.some((event) =>
       (event === "terminal-data" || event === "terminal-exit") && !session.scopes.includes("terminal:operate"))) {
       this.sendWebSocketMessage(socket, {
@@ -1517,7 +1633,21 @@ export class RemoteAccessServer {
       });
       return;
     }
+    if (parsed.message.events.includes("browser") && !session.scopes.includes("browser:operate")) {
+      this.sendWebSocketMessage(socket, {
+        protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+        type: "error",
+        requestId: parsed.message.requestId,
+        code: "forbidden",
+        message: "The session cannot subscribe to browser events.",
+      });
+      return;
+    }
 
+    const nextBrowserRunIds = parsed.message.events.includes("browser") ? parsed.message.browserRunIds ?? [] : [];
+    this.options.onBrowserSubscriptionChange?.([...browserRunIds], nextBrowserRunIds);
+    browserRunIds.clear();
+    nextBrowserRunIds.forEach((runId) => browserRunIds.add(runId));
     subscriptions.clear();
     parsed.message.events.forEach((event) => subscriptions.add(event));
     this.sendWebSocketMessage(socket, {
@@ -1525,6 +1655,7 @@ export class RemoteAccessServer {
       type: "subscribed",
       requestId: parsed.message.requestId,
       events: [...subscriptions],
+      ...(browserRunIds.size ? { browserRunIds: [...browserRunIds] } : {}),
     });
   }
 

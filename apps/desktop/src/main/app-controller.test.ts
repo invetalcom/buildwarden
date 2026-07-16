@@ -101,14 +101,16 @@ const createHarness = (overrides: DbOverrides = {}) => {
   } satisfies AppControllerDesktopServices;
   const terminal = { killForRunId: vi.fn() };
   const events = new HostEventBus();
+  const lifecycle = { onRunDeleted: vi.fn() };
   const logDir = mkdtempSync(join(tmpdir(), "buildwarden-controller-"));
   return {
-    controller: new AppController(db, secrets, logDir, desktop, terminal, events),
+    controller: new AppController(db, secrets, logDir, desktop, terminal, events, lifecycle),
     db,
     secrets,
     desktop,
     terminal,
     events,
+    lifecycle,
     settings,
     calls,
     logDir,
@@ -142,6 +144,56 @@ const createMutableProjectHarness = () => {
 };
 
 describe("AppController settings and lightweight workflows", () => {
+  it("notifies host services after a run is deleted", async () => {
+    const run = {
+      id: "run-1",
+      projectId: project.id,
+      workspaceType: "local",
+      workspaceVcs: "git",
+      worktreePath: project.repoPath,
+      branchName: "main",
+    } as RunRecord;
+    const deleteRun = vi.fn();
+    const harness = createHarness({
+      getRun: vi.fn(() => run),
+      getChatsForRun: vi.fn(() => []),
+      deleteProviderSessionRuntime: vi.fn(),
+      deleteRun,
+    });
+    tempDirs.push(harness.logDir);
+
+    await harness.controller.deleteRun(run.id);
+
+    expect(deleteRun).toHaveBeenCalledWith(run.id);
+    expect(harness.lifecycle.onRunDeleted).toHaveBeenCalledWith(run.id);
+  });
+
+  it("continues post-delete cleanup when a run lifecycle callback throws", async () => {
+    const run = {
+      id: "run-1",
+      projectId: project.id,
+      workspaceType: "local",
+      workspaceVcs: "git",
+      worktreePath: project.repoPath,
+      branchName: "main",
+    } as RunRecord;
+    const harness = createHarness({
+      getRun: vi.fn(() => run),
+      getChatsForRun: vi.fn(() => []),
+      deleteProviderSessionRuntime: vi.fn(),
+      deleteRun: vi.fn(),
+    });
+    tempDirs.push(harness.logDir);
+    harness.lifecycle.onRunDeleted.mockImplementation(() => {
+      throw new Error("cleanup failed");
+    });
+
+    await expect(harness.controller.deleteRun(run.id)).resolves.toBeUndefined();
+
+    expect(harness.calls.deleteSetting).toHaveBeenCalledWith("selectedRunId");
+    expect(harness.calls.setSetting).toHaveBeenCalledWith("selectedProjectId", project.id);
+  });
+
   it("migrates the former run base into the single project base branch", async () => {
     const harness = createHarness();
     tempDirs.push(harness.logDir);

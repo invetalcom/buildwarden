@@ -50,9 +50,11 @@ import { registerHostEventIpc } from "./host-events-ipc";
 import { HostTerminalService } from "./host-terminal-service";
 import { TailscaleServeService } from "./tailscale-serve-service";
 import { HostDirectoryService } from "./host-directory-service";
+import { HostBrowserService } from "./host-browser-service";
 
 const mainDir = dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
+let activeHostBrowser: HostBrowserService | null = null;
 const USE_CUSTOM_WINDOWS_TITLEBAR = process.platform === "win32";
 const PROD_DB_FILE_NAME = "buildwarden.sqlite";
 const DEV_DB_FILE_NAME = "buildwarden_dev.sqlite";
@@ -310,6 +312,16 @@ const bootstrap = async (): Promise<void> => {
   const dbReadyAt = Date.now();
 
   const secretStore = new ElectronSecretStore(join(dataDirPath, secretsFileName));
+  const hostDirectory = new HostDirectoryService();
+  const controllerRef: { current: AppController | null } = { current: null };
+  const hostBrowser = new HostBrowserService({
+    getMainWindow: () => mainWindow,
+    resolveRunProjectId: async (runId) => {
+      if (!controllerRef.current) throw new Error("The application controller is still starting.");
+      return (await controllerRef.current.getRunDetail(runId)).run.projectId;
+    },
+  });
+  activeHostBrowser = hostBrowser;
   const controller = new AppController(
     db,
     secretStore,
@@ -317,8 +329,14 @@ const bootstrap = async (): Promise<void> => {
     desktopPlatform,
     hostTerminal,
     hostEvents,
+    { onRunDeleted: (runId) => hostBrowser.disposeRun(runId) },
   );
-  const hostDirectory = new HostDirectoryService();
+  controllerRef.current = controller;
+  hostBrowser.onEvent((event) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC_CHANNELS.runBrowserEvent, event);
+    }
+  });
   const startupReconciliation = controller
     .migrateProjectBaseBranches()
     .then(() => controller.reconcileOrphanedActiveSessions())
@@ -362,6 +380,18 @@ const bootstrap = async (): Promise<void> => {
   refreshAppMenu();
 
   const remoteOperations = new RemoteOperationRegistry(({ method, requestId, error }) => {
+    if ([
+      "ensureRunBrowser",
+      "navigateRunBrowser",
+      "runBrowserAction",
+      "setRunBrowserViewport",
+      "getRunBrowserElementCapture",
+    ].includes(method)) {
+      // Navigation errors can include sensitive target URLs. Browser artifacts
+      // and input are deliberately excluded from persistent logs.
+      logError("Remote browser operation failed.", { method, requestId });
+      return;
+    }
     logError("Remote operation failed.", { method, requestId, error });
   }, db);
   remoteOperations.register("getSnapshot", async () => {
@@ -460,6 +490,26 @@ const bootstrap = async (): Promise<void> => {
   const validateTerminalStart = defineRemoteArgsValidator<"runTerminalStart">(
     (args) => args.length === 1 && hasRemoteStringFields(args[0], ["sessionId", "cwd"]),
   );
+  const validateRunBrowserEnsure = defineRemoteArgsValidator<"ensureRunBrowser">((args) => {
+    if (args.length !== 1 || !isRemoteRecord(args[0]) || typeof args[0].runId !== "string" || !isRemoteRecord(args[0].viewport)) return false;
+    const viewport = args[0].viewport;
+    return typeof viewport.width === "number" && Number.isFinite(viewport.width) && viewport.width >= 1 && viewport.width <= 4_096 &&
+      typeof viewport.height === "number" && Number.isFinite(viewport.height) && viewport.height >= 1 && viewport.height <= 4_096 &&
+      (args[0].initialUrl === undefined || typeof args[0].initialUrl === "string");
+  });
+  const validateRunBrowserNavigate = defineRemoteArgsValidator<"navigateRunBrowser">((args) =>
+    args.length === 1 && hasRemoteStringFields(args[0], ["runId", "url"]));
+  const validateRunBrowserAction = defineRemoteArgsValidator<"runBrowserAction">((args) =>
+    args.length === 1 && isRemoteRecord(args[0]) && typeof args[0].runId === "string" &&
+    ["back", "forward", "reload", "stop", "start-inspect", "cancel-inspect"].includes(String(args[0].action)));
+  const validateRunBrowserViewport = defineRemoteArgsValidator<"setRunBrowserViewport">((args) => {
+    if (args.length !== 1 || !isRemoteRecord(args[0]) || typeof args[0].runId !== "string" || !isRemoteRecord(args[0].viewport)) return false;
+    const viewport = args[0].viewport;
+    return typeof viewport.width === "number" && Number.isFinite(viewport.width) && viewport.width >= 1 && viewport.width <= 4_096 &&
+      typeof viewport.height === "number" && Number.isFinite(viewport.height) && viewport.height >= 1 && viewport.height <= 4_096;
+  });
+  const validateRunBrowserCapture = defineRemoteArgsValidator<"getRunBrowserElementCapture">((args) =>
+    args.length === 1 && hasRemoteStringFields(args[0], ["runId", "captureId"]));
   const validateTerminalWrite = defineRemoteArgsValidator<"runTerminalWrite">(
     (args) => args.length === 1 && hasRemoteStringFields(args[0], ["sessionId", "data"]) &&
       isRemoteRecord(args[0]) && String(args[0].data).length <= 65_536,
@@ -819,6 +869,11 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("runTerminalWrite", async (input) => hostTerminal.write(input), validateTerminalWrite, "terminal:operate", true);
   remoteOperations.register("runTerminalResize", async (input) => hostTerminal.resize(input), validateTerminalResize, "terminal:operate", true);
   remoteOperations.register("runTerminalKill", async (sessionId) => hostTerminal.kill(sessionId), validateSingleRemoteStringArg, "terminal:operate", true);
+  remoteOperations.register("ensureRunBrowser", (input) => hostBrowser.ensure(input), validateRunBrowserEnsure, "browser:operate");
+  remoteOperations.register("navigateRunBrowser", (input) => hostBrowser.navigate(input), validateRunBrowserNavigate, "browser:operate");
+  remoteOperations.register("runBrowserAction", (input) => hostBrowser.action(input), validateRunBrowserAction, "browser:operate");
+  remoteOperations.register("setRunBrowserViewport", async (input) => hostBrowser.setViewport(input), validateRunBrowserViewport, "browser:operate");
+  remoteOperations.register("getRunBrowserElementCapture", async (input) => hostBrowser.getElementCapture(input), validateRunBrowserCapture, "browser:operate");
 
   const remoteEventSource: RemoteHostEventSource = {
     subscribe(listener) {
@@ -830,6 +885,7 @@ const bootstrap = async (): Promise<void> => {
         hostEvents.subscribe("task", (payload) => listener({ event: "task", payload })),
         hostTerminal.onData((payload) => listener({ event: "terminal-data", payload })),
         hostTerminal.onExit((payload) => listener({ event: "terminal-exit", payload })),
+        hostBrowser.onEvent((payload) => listener({ event: "browser", payload })),
       ];
       return () => disposers.forEach((dispose) => dispose());
     },
@@ -908,6 +964,8 @@ const bootstrap = async (): Promise<void> => {
             auth: await ensureRemoteAuthService(),
             staticRoot: join(app.getAppPath(), "out", "web"),
             events: remoteEventSource,
+            onBrowserInput: (runId, input) => hostBrowser.sendInput({ runId, input }),
+            onBrowserSubscriptionChange: (previousRunIds, nextRunIds) => hostBrowser.setRemoteSubscriptions(previousRunIds, nextRunIds),
             trustedProxyHosts: () => {
               const host = tailscaleServe.getManagedHost();
               return host ? [host] : [];
@@ -1175,6 +1233,13 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.pickProjectDirectory, () => controller.pickProjectDirectory());
   ipcMain.handle(IPC_CHANNELS.openPathInFileManager, (_, path: string) => controller.openPathInFileManager(path));
   ipcMain.handle(IPC_CHANNELS.openExternalUrl, (_, url: string) => desktopPlatform.openExternalUrl(url));
+  ipcMain.handle(IPC_CHANNELS.ensureRunBrowser, (_, input) => hostBrowser.ensure(input));
+  ipcMain.handle(IPC_CHANNELS.navigateRunBrowser, (_, input) => hostBrowser.navigate(input));
+  ipcMain.handle(IPC_CHANNELS.runBrowserAction, (_, input) => hostBrowser.action(input));
+  ipcMain.handle(IPC_CHANNELS.setRunBrowserViewport, (_, input) => hostBrowser.setViewport(input));
+  ipcMain.handle(IPC_CHANNELS.setRunBrowserDesktopSurface, (_, input) => hostBrowser.setDesktopSurface(input));
+  ipcMain.handle(IPC_CHANNELS.getRunBrowserElementCapture, (_, input) => hostBrowser.getElementCapture(input));
+  ipcMain.handle(IPC_CHANNELS.sendRunBrowserInput, (_, input) => hostBrowser.sendInput(input));
   ipcMain.handle(IPC_CHANNELS.reportRendererLog, async (_, payload: RendererLogPayload) => {
     const metadata = {
       source: payload.source,
@@ -1245,6 +1310,8 @@ const bootstrap = async (): Promise<void> => {
       logWarn("Remote access server did not stop cleanly.", { error });
     });
     hostTerminal.disposeAll();
+    hostBrowser.disposeAll();
+    activeHostBrowser = null;
     for (const state of projectForgeMonitorStates.values()) {
       clearInterval(state.timer);
     }
@@ -1297,8 +1364,15 @@ const createMainWindow = (theme: UiTheme): void => {
 
   mainWindow.on("closed", () => {
     logInfo("Main window closed.");
+    activeHostBrowser?.detachDesktopSurfaces();
     mainWindow = null;
   });
+  mainWindow.on("focus", () => activeHostBrowser?.setDesktopWindowVisible(true));
+  mainWindow.on("show", () => activeHostBrowser?.setDesktopWindowVisible(true));
+  mainWindow.on("restore", () => activeHostBrowser?.setDesktopWindowVisible(true));
+  mainWindow.on("blur", () => activeHostBrowser?.setDesktopWindowVisible(false));
+  mainWindow.on("hide", () => activeHostBrowser?.setDesktopWindowVisible(false));
+  mainWindow.on("minimize", () => activeHostBrowser?.setDesktopWindowVisible(false));
 
   if (USE_CUSTOM_WINDOWS_TITLEBAR) {
     mainWindow.setMenuBarVisibility(false);
@@ -1319,6 +1393,7 @@ const createMainWindow = (theme: UiTheme): void => {
   });
 
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    activeHostBrowser?.detachDesktopSurfaces();
     logError("Renderer process exited unexpectedly.", {
       reason: details.reason,
       exitCode: details.exitCode,
