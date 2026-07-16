@@ -782,6 +782,7 @@ export class AppController
       | "runBrowserAction"
       | "setRunBrowserViewport"
       | "setRunBrowserDesktopSurface"
+      | "getRunBrowserElementCapture"
       | "onRunBrowserEvent"
       | "runTerminalStart"
       | "runTerminalWrite"

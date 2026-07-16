@@ -5,12 +5,15 @@ import type {
   NavigateRunBrowserInput,
   RunBrowserActionInput,
   RunBrowserEvent,
+  RunBrowserElementCapture,
   RunBrowserState,
   RunBrowserViewport,
   SetRunBrowserDesktopSurfaceInput,
   SetRunBrowserViewportInput,
+  GetRunBrowserElementCaptureInput,
 } from "@buildwarden/shared";
 import { logWarn } from "./logger";
+import { RunBrowserInspector } from "./run-browser-inspector";
 
 const DEFAULT_BROWSER_URL = "about:blank";
 const DEFAULT_IDLE_TIMEOUT_MS = 30_000;
@@ -28,6 +31,7 @@ type HostBrowserSession = {
   desktopVisible: boolean;
   parent: SessionParent;
   idleTimer: ReturnType<typeof setTimeout> | null;
+  inspector: RunBrowserInspector | null;
 };
 
 export interface HostBrowserServiceOptions {
@@ -120,6 +124,7 @@ export class HostBrowserService {
         desktopVisible: false,
         parent: null,
         idleTimer: null,
+        inspector: null,
       };
       this.sessions.set(runId, session);
       this.configureSession(session);
@@ -146,7 +151,7 @@ export class HostBrowserService {
     await session.view.webContents.loadURL(normalizeRunBrowserUrl(input.url));
   }
 
-  action(input: RunBrowserActionInput): void {
+  async action(input: RunBrowserActionInput): Promise<void> {
     const session = this.requireSession(input.runId);
     const history = session.view.webContents.navigationHistory;
     switch (input.action) {
@@ -163,8 +168,11 @@ export class HostBrowserService {
         session.view.webContents.stop();
         break;
       case "start-inspect":
+        await this.ensureInspector(session).start();
+        break;
       case "cancel-inspect":
-        throw new Error("Browser element inspection is not available yet.");
+        await session.inspector?.cancel();
+        break;
     }
     this.emitState(session);
   }
@@ -205,6 +213,13 @@ export class HostBrowserService {
   onEvent(listener: (event: RunBrowserEvent) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  getElementCapture(input: GetRunBrowserElementCaptureInput): RunBrowserElementCapture {
+    const session = this.requireSession(input.runId);
+    const capture = session.inspector?.getCapture(input.captureId) ?? null;
+    if (!capture) throw new Error("The browser element capture expired. Select the element again.");
+    return capture;
   }
 
   disposeRun(runId: string): void {
@@ -302,6 +317,25 @@ export class HostBrowserService {
     for (const listener of this.listeners) listener(event);
   }
 
+  private ensureInspector(session: HostBrowserSession): RunBrowserInspector {
+    if (session.inspector) return session.inspector;
+    session.inspector = new RunBrowserInspector({
+      runId: session.runId,
+      webContents: session.view.webContents,
+      onInspectingChange: (inspecting) => {
+        session.inspecting = inspecting;
+        this.emitState(session);
+      },
+      onSelection: (captureId, summary) => {
+        this.emit({ type: "selection-ready", runId: session.runId, captureId, summary });
+      },
+      onError: (message, recoverable) => {
+        this.emit({ type: "error", runId: session.runId, message, recoverable });
+      },
+    });
+    return session.inspector;
+  }
+
   private ensureCompositor(): BaseWindow {
     if (this.compositor && !this.compositor.isDestroyed()) {
       return this.compositor;
@@ -350,6 +384,8 @@ export class HostBrowserService {
 
   private disposeSession(session: HostBrowserSession): void {
     this.cancelIdleDisposal(session);
+    session.inspector?.dispose();
+    session.inspector = null;
     try {
       if (session.parent === "main") {
         const mainWindow = this.options.getMainWindow();
