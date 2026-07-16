@@ -153,6 +153,52 @@ describe("HostBrowserService", () => {
     expect(view.setVisible).toHaveBeenLastCalledWith(false);
   });
 
+  it("shares one session creation across concurrent ensure calls", async () => {
+    const compositor = createWindow();
+    const { view } = createView();
+    const resolveRunProjectId = vi.fn(async () => "project-a");
+    const createViewForSession = vi.fn(() => view);
+    const service = new HostBrowserService({
+      getMainWindow: () => null,
+      resolveRunProjectId,
+      createView: createViewForSession,
+      createCompositor: () => compositor as unknown as BaseWindow,
+    });
+
+    await Promise.all([
+      service.ensure({ runId: "run-a", initialUrl: "https://example.com", viewport: { width: 640, height: 480 } }),
+      service.ensure({ runId: "run-a", initialUrl: "https://example.com", viewport: { width: 800, height: 600 } }),
+    ]);
+
+    expect(resolveRunProjectId).toHaveBeenCalledOnce();
+    expect(createViewForSession).toHaveBeenCalledOnce();
+    expect(compositor.contentView.addChildView).toHaveBeenCalledOnce();
+  });
+
+  it("disposes a failed session creation and allows a retry", async () => {
+    const compositor = createWindow();
+    const failed = createView();
+    const retry = createView();
+    failed.webContents.loadURL.mockRejectedValueOnce(new Error("load failed"));
+    const createViewForSession = vi.fn()
+      .mockReturnValueOnce(failed.view)
+      .mockReturnValueOnce(retry.view);
+    const service = new HostBrowserService({
+      getMainWindow: () => null,
+      resolveRunProjectId: async () => "project-a",
+      createView: createViewForSession,
+      createCompositor: () => compositor as unknown as BaseWindow,
+    });
+
+    await expect(service.ensure({ runId: "run-a", initialUrl: "https://example.com", viewport: { width: 640, height: 480 } }))
+      .rejects.toThrow("load failed");
+    expect(failed.webContents.close).toHaveBeenCalledOnce();
+
+    await expect(service.ensure({ runId: "run-a", initialUrl: "https://example.com", viewport: { width: 640, height: 480 } }))
+      .resolves.toEqual(expect.objectContaining({ runId: "run-a" }));
+    expect(createViewForSession).toHaveBeenCalledTimes(2);
+  });
+
   it("routes safe popups into the session and blocks unsafe navigation", async () => {
     const compositor = createWindow();
     const { view, webContents } = createView();

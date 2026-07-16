@@ -97,6 +97,7 @@ const viewportBounds = (viewport: RunBrowserViewport): Rectangle => ({
 
 export class HostBrowserService {
   private readonly sessions = new Map<string, HostBrowserSession>();
+  private readonly sessionCreations = new Map<string, Promise<HostBrowserSession>>();
   private readonly pendingRemoteSubscribers = new Map<string, number>();
   private readonly listeners = new Set<(event: RunBrowserEvent) => void>();
   private compositor: BaseWindow | null = null;
@@ -109,50 +110,25 @@ export class HostBrowserService {
       throw new Error("A run id is required.");
     }
     const viewport = normalizeViewport(input.viewport);
+    const initialUrl = normalizeRunBrowserUrl(input.initialUrl ?? DEFAULT_BROWSER_URL);
     let session = this.sessions.get(runId);
     if (!session) {
-      const projectId = await this.options.resolveRunProjectId(runId);
-      const partition = runBrowserPartitionForProject(projectId);
-      const view = this.options.createView?.(partition) ?? new WebContentsView({
-        webPreferences: {
-          partition,
-          contextIsolation: true,
-          nodeIntegration: false,
-          sandbox: true,
-          webSecurity: true,
-          allowRunningInsecureContent: false,
-          devTools: false,
-        },
-      });
-      session = {
-        runId,
-        projectId,
-        view,
-        viewport,
-        inspecting: false,
-        desktopVisible: false,
-        parent: null,
-        idleTimer: null,
-        inspector: null,
-        remoteSubscribers: this.pendingRemoteSubscribers.get(runId) ?? 0,
-        frameTimer: null,
-        frameCaptureInFlight: false,
-        frameCapturePending: false,
-        lastFrameHash: "",
-        lastFrameAt: 0,
-        frameSequence: 0,
-      };
-      this.sessions.set(runId, session);
-      this.configureSession(session);
-      this.attachToCompositor(session);
-      const initialUrl = normalizeRunBrowserUrl(input.initialUrl ?? DEFAULT_BROWSER_URL);
-      await view.webContents.loadURL(initialUrl);
-      if (session.remoteSubscribers > 0) this.requestRemoteFrame(session, true);
-    } else {
-      session.viewport = viewport;
-      if (!session.desktopVisible) {
-        session.view.setBounds(viewportBounds(viewport));
+      let creation = this.sessionCreations.get(runId);
+      if (!creation) {
+        creation = this.createSession(runId, viewport, initialUrl);
+        this.sessionCreations.set(runId, creation);
       }
+      try {
+        session = await creation;
+      } finally {
+        if (this.sessionCreations.get(runId) === creation) {
+          this.sessionCreations.delete(runId);
+        }
+      }
+    }
+    session.viewport = viewport;
+    if (!session.desktopVisible) {
+      session.view.setBounds(viewportBounds(viewport));
     }
     this.cancelIdleDisposal(session);
     this.emitState(session);
@@ -160,6 +136,51 @@ export class HostBrowserService {
       this.scheduleIdleDisposal(session);
     }
     return this.stateFor(session);
+  }
+
+  private async createSession(runId: string, viewport: RunBrowserViewport, initialUrl: string): Promise<HostBrowserSession> {
+    const projectId = await this.options.resolveRunProjectId(runId);
+    const partition = runBrowserPartitionForProject(projectId);
+    const view = this.options.createView?.(partition) ?? new WebContentsView({
+      webPreferences: {
+        partition,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        webSecurity: true,
+        allowRunningInsecureContent: false,
+        devTools: false,
+      },
+    });
+    const session: HostBrowserSession = {
+      runId,
+      projectId,
+      view,
+      viewport,
+      inspecting: false,
+      desktopVisible: false,
+      parent: null,
+      idleTimer: null,
+      inspector: null,
+      remoteSubscribers: this.pendingRemoteSubscribers.get(runId) ?? 0,
+      frameTimer: null,
+      frameCaptureInFlight: false,
+      frameCapturePending: false,
+      lastFrameHash: "",
+      lastFrameAt: 0,
+      frameSequence: 0,
+    };
+    this.sessions.set(runId, session);
+    try {
+      this.configureSession(session);
+      this.attachToCompositor(session);
+      await view.webContents.loadURL(initialUrl);
+      if (session.remoteSubscribers > 0) this.requestRemoteFrame(session, true);
+      return session;
+    } catch (error) {
+      this.disposeSession(session);
+      throw error;
+    }
   }
 
   async navigate(input: NavigateRunBrowserInput): Promise<void> {
@@ -546,6 +567,8 @@ export class HostBrowserService {
       // limited to opaque BuildWarden identifiers.
       logWarn("Failed to dispose a run browser session cleanly.", { runId: session.runId });
     }
-    this.sessions.delete(session.runId);
+    if (this.sessions.get(session.runId) === session) {
+      this.sessions.delete(session.runId);
+    }
   }
 }
