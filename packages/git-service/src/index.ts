@@ -92,8 +92,8 @@ export const readTrackedProjectFiles = async (repoPath: string): Promise<string[
   const output = await runGitRaw(simpleGit(repoPath), ["ls-files", "-z"]);
   return output
     .split("\0")
-    .map((filePath) => filePath.replace(/\\/g, "/").trim())
-    .filter(Boolean);
+    .filter((filePath) => filePath.length > 0)
+    .map((filePath) => filePath.replace(/\\/g, "/"));
 };
 
 export interface GitProjectReleaseStat {

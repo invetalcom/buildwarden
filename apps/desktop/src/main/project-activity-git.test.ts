@@ -23,6 +23,16 @@ afterEach(async () => {
 });
 
 describe("project activity Git collection", () => {
+  it("preserves meaningful whitespace in tracked file paths", async () => {
+    const { repoPath, git } = await createRepository();
+    const fileName = " leading-space.ts";
+    await writeFile(join(repoPath, fileName), "export const spaced = true;\n", "utf8");
+    await git.add(fileName);
+    await git.commit("Add a path with leading whitespace");
+
+    await expect(readTrackedProjectFiles(repoPath)).resolves.toEqual([fileName]);
+  });
+
   it("collects file status, tracked files, and per-tag release ranges", async () => {
     const { repoPath, git } = await createRepository();
     await writeFile(join(repoPath, "app.ts"), "export const value = 1;\n", "utf8");
