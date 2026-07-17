@@ -2,6 +2,7 @@ import type { ProjectActivityInsightData, ProjectInsightKind, ProjectSnapshot } 
 import { Activity, CalendarDays, GitCommitHorizontal, Loader2, RefreshCw, UsersRound } from "lucide-react";
 import { useState } from "react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { reportRendererError } from "../../lib/report-renderer-error";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import {
@@ -146,14 +147,19 @@ const RecentHistory = ({ activity }: { activity: ProjectActivityInsightData }) =
 export const ProjectActivityTab = ({ project, onGenerateInsight }: ProjectActivityTabProps) => {
   const canGenerateInsights = useBuildWardenClient().capabilities.insightMutations;
   const [busy, setBusy] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [scopeActive, setScopeActive] = useState(false);
   const record = getProjectInsight(project, "activity");
   const activity = parseProjectInsightData<ProjectActivityInsightData>(record);
 
   const handleRefresh = async () => {
     setBusy(true);
+    setRefreshError(null);
     try {
       await onGenerateInsight("activity");
+    } catch (error) {
+      reportRendererError("renderer.project-activity.refresh", error, { projectId: project.project.id });
+      setRefreshError(error instanceof Error ? error.message : "Could not refresh Activity history.");
     } finally {
       setBusy(false);
     }
@@ -180,6 +186,11 @@ export const ProjectActivityTab = ({ project, onGenerateInsight }: ProjectActivi
           </Button>
         ) : null}
       </header>
+      {refreshError ? (
+        <div role="alert" className="mt-3 rounded-md border border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] px-3 py-2 text-xs text-[var(--ec-danger)]">
+          Could not refresh Activity: {refreshError}
+        </div>
+      ) : null}
       {activity && activity.summaryStats.totalCommits > 0 ? (
         <>
           <ProjectActivityExplorer projectId={project.project.id} activity={activity} onScopeActiveChange={setScopeActive} />
