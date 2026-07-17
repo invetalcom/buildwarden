@@ -1098,6 +1098,7 @@ export interface ProjectLoopChangedPayload {
 export type ProjectInsightKind =
   | "architecture-graph"
   | "dependency-gravity"
+  | "activity"
   | "repo-historian"
   | "codebase-mood"
   | "curiosity-mode"
@@ -1156,6 +1157,68 @@ export interface DependencyGravityInsightData {
     totalEdges: number;
     averageInbound: number;
   };
+}
+
+export interface ProjectActivityInsightData {
+  summaryStats: {
+    totalCommits: number;
+    contributorCount: number;
+    linesAdded: number;
+    linesDeleted: number;
+    filesChanged: number;
+    activeDays: number;
+    activeWeeks: number;
+    averageCommitsPerWeek: number;
+    mergeCommits: number;
+    busFactor50: number;
+    firstCommitAt: string | null;
+    latestCommitAt: string | null;
+    longestDailyStreak: number;
+  };
+  contributors: Array<{
+    name: string;
+    email: string;
+    commits: number;
+    commitShare: number;
+    linesAdded: number;
+    linesDeleted: number;
+    linesChanged: number;
+    filesChanged: number;
+    activeDays: number;
+    firstCommitAt: string;
+    latestCommitAt: string;
+  }>;
+  weekdays: Array<{
+    weekday: number;
+    label: string;
+    commits: number;
+    commitShare: number;
+  }>;
+  modules: Array<{
+    path: string;
+    commits: number;
+    commitShare: number;
+    fileTouches: number;
+    uniqueFiles: number;
+    linesAdded: number;
+    linesDeleted: number;
+    linesChanged: number;
+    contributorCount: number;
+  }>;
+  monthlyActivity: Array<{
+    month: string;
+    commits: number;
+    linesChanged: number;
+    contributorCount: number;
+  }>;
+  recentCommits: Array<{
+    sha: string;
+    title: string;
+    author: string;
+    date: string;
+    filesChanged: number;
+    linesChanged: number;
+  }>;
 }
 
 export interface InsightToneSection {
@@ -1221,6 +1284,7 @@ export interface NarrativeBranchingInsightData {
 export type ProjectInsightData =
   | ArchitectureGraphInsightData
   | DependencyGravityInsightData
+  | ProjectActivityInsightData
   | RepoHistorianInsightData
   | CodebaseMoodInsightData
   | CuriosityModeInsightData

@@ -1,13 +1,14 @@
 import type { ProjectInsightKind, ProjectSnapshot, ProviderType, UnifiedProviderFamily } from "@buildwarden/shared";
-import { Bot, Clock3, GitBranch, Sparkles } from "lucide-react";
+import { Activity, Bot, Clock3, GitBranch, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { cn } from "../../lib/cn";
+import { ProjectActivityTab } from "./ProjectActivityTab";
 import { ProjectCodebaseMoodTab } from "./ProjectCodebaseMoodTab";
 import { ProjectCuriosityModeTab } from "./ProjectCuriosityModeTab";
 import { ProjectNarrativeBranchingTab } from "./ProjectNarrativeBranchingTab";
 import { ProjectRepoHistorianTab } from "./ProjectRepoHistorianTab";
 
-type AiInsightsHistorySubpage = "codebase-mood" | "curiosity-mode" | "repo-historian" | "narrative-branching";
+type AiInsightsHistorySubpage = "activity" | "codebase-mood" | "curiosity-mode" | "repo-historian" | "narrative-branching";
 
 interface ProjectAiInsightsHistoryPageProps {
   project: ProjectSnapshot;
@@ -18,6 +19,7 @@ interface ProjectAiInsightsHistoryPageProps {
 }
 
 const subpages: Array<{ id: AiInsightsHistorySubpage; label: string; icon: typeof Sparkles }> = [
+  { id: "activity", label: "Activity", icon: Activity },
   { id: "codebase-mood", label: "Codebase mood", icon: Bot },
   { id: "curiosity-mode", label: "Curiosity mode", icon: Sparkles },
   { id: "repo-historian", label: "Repo historian", icon: Clock3 },
@@ -31,7 +33,7 @@ export const ProjectAiInsightsHistoryPage = ({
   onGenerateInsight,
   onSelectRun,
 }: ProjectAiInsightsHistoryPageProps) => {
-  const [activeSubpage, setActiveSubpage] = useState<AiInsightsHistorySubpage>("codebase-mood");
+  const [activeSubpage, setActiveSubpage] = useState<AiInsightsHistorySubpage>("activity");
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
@@ -60,6 +62,10 @@ export const ProjectAiInsightsHistoryPage = ({
       </div>
 
       <div className="min-h-0 flex-1">
+        {activeSubpage === "activity" ? (
+          <ProjectActivityTab project={project} onGenerateInsight={onGenerateInsight} />
+        ) : null}
+
         {activeSubpage === "codebase-mood" ? (
           <ProjectCodebaseMoodTab
             project={project}

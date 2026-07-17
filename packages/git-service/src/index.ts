@@ -74,6 +74,18 @@ export const readRecentCommitLog = async (repoPath: string, limit: number): Prom
   ]);
 };
 
+export const readProjectActivityLog = async (repoPath: string): Promise<string> =>
+  runGitRaw(simpleGit(repoPath), [
+    "log",
+    "--all",
+    "--date-order",
+    "--date=iso-strict",
+    "--pretty=format:__BW_ACTIVITY_COMMIT__%H%x09%aN%x09%aE%x09%aI%x09%P%x09%s",
+    "--numstat",
+    "--no-renames",
+    "--use-mailmap",
+  ]);
+
 const ensureGitLongPathSupport = async (git: SimpleGit): Promise<void> => {
   if (process.platform !== "win32") {
     return;

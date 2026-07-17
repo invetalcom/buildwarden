@@ -20,9 +20,10 @@ import { getHarnessTypeForProvider } from "./harness-adapters";
 import { createProjectPrReviewProvider } from "./pr-review/pr-review-provider-factory";
 import { resolveProjectPrReviewRemoteContext } from "./pr-review/pr-review-remote-context";
 import type { ProjectPrReviewProvider, ProjectPrReviewRemoteContext } from "./pr-review/pr-review-types";
+import { buildProjectActivityInsight, parseProjectActivityLog } from "./project-activity";
 import { ProjectLoopRunner } from "./loop/loop-runner";
 import { BuildWardenDatabase } from "@buildwarden/db";
-import { computePrMrDiffViaFetch, GitService, readRecentCommitLog } from "@buildwarden/git-service";
+import { computePrMrDiffViaFetch, GitService, readProjectActivityLog, readRecentCommitLog } from "@buildwarden/git-service";
 import { AiSdkProviderAdapter, generateAskTextResultWithAiSdk, suggestCommitMessageWithAiSdk } from "@buildwarden/provider-ai-sdk";
 import {
   ClaudeCodeProviderAdapter,
@@ -112,6 +113,7 @@ import {
   type GenerateProjectInsightInput,
   type ArchitectureGraphInsightData,
   type DependencyGravityInsightData,
+  type ProjectActivityInsightData,
   type NarrativeBranchingInsightData,
   type ProjectInsightNode,
   type ProjectInsightEdge,
@@ -3562,6 +3564,27 @@ export class AppController
           kind,
           title: "Dependency gravity map",
           summary: `Scored ${String(insight.nodes.length)} dependency hotspots from ${String(insight.summaryStats.totalModules)} analyzed modules.`,
+          dataJson: JSON.stringify(insight),
+          modelId: null,
+        });
+      }
+
+      if (kind === "activity") {
+        const activityLog = await readProjectActivityLog(project.repoPath);
+        const commits = parseProjectActivityLog(activityLog);
+        const insight: ProjectActivityInsightData = buildProjectActivityInsight(commits);
+        logInfo("Project activity insight built.", {
+          projectId: project.id,
+          commitCount: insight.summaryStats.totalCommits,
+          contributorCount: insight.summaryStats.contributorCount,
+          moduleCount: insight.modules.length,
+          activityLogLength: activityLog.length,
+        });
+        return this.db.upsertProjectInsight({
+          projectId: project.id,
+          kind,
+          title: "Activity",
+          summary: `Analyzed ${String(insight.summaryStats.totalCommits)} commits by ${String(insight.summaryStats.contributorCount)} contributors across ${String(insight.modules.length)} modules.`,
           dataJson: JSON.stringify(insight),
           modelId: null,
         });

@@ -537,7 +537,7 @@ const bootstrap = async (): Promise<void> => {
     if (args.length !== 1 || !hasRemoteStringFields(args[0], ["projectId", "kind"])) return false;
     const input = args[0] as Record<string, unknown>;
     const kinds = new Set([
-      "architecture-graph", "dependency-gravity", "repo-historian", "codebase-mood", "curiosity-mode", "narrative-branching",
+      "architecture-graph", "dependency-gravity", "activity", "repo-historian", "codebase-mood", "curiosity-mode", "narrative-branching",
     ]);
     return kinds.has(String(input.kind)) && (input.modelId === undefined || typeof input.modelId === "string");
   });
