@@ -299,7 +299,7 @@ export const ProjectActivityExplorer = ({ projectId, activity, onScopeActiveChan
 
   return (
     <section className="mt-4">
-      <div className="sticky top-0 z-10 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-strong)] p-2.5 shadow-[var(--ec-panel-shadow)] backdrop-blur-xl">
+      <div className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-strong)] p-2.5 shadow-[var(--ec-panel-shadow)]">
         <div className="flex items-center gap-2 px-0.5 pb-2">
           <Filter className="size-3.5 text-[var(--ec-accent)]" />
           <p className="text-xs font-medium text-[var(--ec-text)]">Activity scope</p>
