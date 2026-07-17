@@ -1,6 +1,6 @@
 {
   "name": "buildwarden",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "packageManager": "pnpm@10.32.1",
   "description": "Desktop GUI for coding agents",
