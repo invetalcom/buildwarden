@@ -41,6 +41,22 @@ describe("project activity analysis", () => {
     });
   });
 
+  it("preserves trailing whitespace in legacy activity log paths", () => {
+    const legacyLog = [
+      "__BW_ACTIVITY_COMMIT__legacy\tLegacy Author\tlegacy@example.com\t2026-07-17T09:00:00+02:00\t\tAdd spaced path",
+      "1\t0\tlegacy.ts ",
+      " create mode 100644 legacy.ts ",
+    ].join("\n");
+
+    expect(parseProjectActivityLog(legacyLog)[0]?.files).toEqual([{
+      path: "legacy.ts ",
+      linesAdded: 1,
+      linesDeleted: 0,
+      binary: false,
+      changeType: "added",
+    }]);
+  });
+
   it("builds contributor, cadence, module, and repository-level statistics", () => {
     const activity = buildProjectActivityInsight(parseProjectActivityLog(sampleLog), {
       now: new Date("2026-07-20T12:00:00.000Z"),

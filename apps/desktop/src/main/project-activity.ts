@@ -290,7 +290,7 @@ const parseLegacyProjectActivityLog = (output: string): ProjectActivityCommit[] 
       continue;
     }
 
-    const summaryMatch = /^(create|delete) mode \d+ (.+)$/.exec(rawLine.trim());
+    const summaryMatch = /^\s*(create|delete) mode \d+ (.+)$/.exec(rawLine);
     if (!summaryMatch) continue;
     const path = normalizePath(summaryMatch[2] ?? "");
     const file = current.files.find((candidate) => candidate.path === path);
