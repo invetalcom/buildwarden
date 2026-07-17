@@ -323,8 +323,8 @@ export const ProjectActivityExplorer = ({ projectId, activity, onScopeActiveChan
           </div>
         </div>
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[1.25fr_1.25fr_0.8fr_0.75fr_0.8fr]">
-          <Select value={contributorKey} options={contributorOptions} onValueChange={setContributorKey} ariaLabel="Filter by contributor" triggerClassName="h-8 text-xs" maxMenuHeightPx={320} searchable searchPlaceholder="Search contributors…" />
-          <Select value={modulePath} options={moduleOptions} onValueChange={setModulePath} ariaLabel="Filter by module" triggerClassName="h-8 font-mono text-xs" maxMenuHeightPx={320} searchable searchPlaceholder="Search modules…" />
+          <Select value={contributorKey} options={contributorOptions} onValueChange={setContributorKey} ariaLabel="Filter by contributor" triggerClassName="h-8 text-xs" maxMenuHeightPx={320} searchable searchPlaceholder="Search contributors…" searchAriaLabel="Search contributors" />
+          <Select value={modulePath} options={moduleOptions} onValueChange={setModulePath} ariaLabel="Filter by module" triggerClassName="h-8 font-mono text-xs" maxMenuHeightPx={320} searchable searchPlaceholder="Search modules…" searchAriaLabel="Search modules" />
           <Select value={period} options={[
             { value: "all", label: "All time" },
             { value: "30", label: "Last 30 days" },

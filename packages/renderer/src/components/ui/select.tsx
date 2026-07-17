@@ -32,6 +32,7 @@ export type SelectProps = {
   maxMenuHeightPx?: number;
   searchable?: boolean;
   searchPlaceholder?: string;
+  searchAriaLabel?: string;
   align?: AnchorDropdownAlign;
   placement?: AnchorDropdownPlacement;
   onKeyDown?: (event: KeyboardEvent<HTMLButtonElement>) => void;
@@ -53,6 +54,7 @@ export const Select = ({
   maxMenuHeightPx,
   searchable = false,
   searchPlaceholder = "Search options…",
+  searchAriaLabel = "Search options",
   align = "start",
   placement = "auto",
   onKeyDown,
@@ -159,10 +161,13 @@ export const Select = ({
               type="search"
               value={searchQuery}
               placeholder={searchPlaceholder}
+              aria-label={searchAriaLabel}
               className="h-8 w-full rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-2.5 text-xs text-[var(--ec-text)] outline-none placeholder:text-[var(--ec-faint)] focus:border-[var(--ec-accent-ring)]"
               autoFocus
               onChange={(event) => setSearchQuery(event.target.value)}
-              onKeyDown={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                if (event.key !== "Escape") event.stopPropagation();
+              }}
             />
           </div>
         ) : null}
