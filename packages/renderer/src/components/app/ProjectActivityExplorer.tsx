@@ -255,6 +255,7 @@ export const ProjectActivityExplorer = ({ projectId, activity, onScopeActiveChan
     let cancelled = false;
     setLoading(true);
     setErrorMessage(null);
+    setResult(null);
     void client.queryProjectActivity(queryInput)
       .then((nextResult) => {
         if (!cancelled) setResult(nextResult);
