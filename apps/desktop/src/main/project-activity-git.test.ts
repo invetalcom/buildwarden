@@ -40,6 +40,10 @@ describe("project activity Git collection", () => {
     await git.commit("Initial release");
     await git.addTag("v1.0.0");
 
+    await writeFile(join(repoPath, "app.ts"), "export const value = 2;\n", "utf8");
+    await git.add("app.ts");
+    await git.commit("Prepare second release");
+
     await writeFile(join(repoPath, "app.ts"), "export const value = 2;\nexport const next = true;\n", "utf8");
     await writeFile(join(repoPath, "README.md"), "# Activity fixture\n", "utf8");
     await writeFile(join(repoPath, "café.ts"), "export const café = true;\n", "utf8");
@@ -54,14 +58,14 @@ describe("project activity Git collection", () => {
     ]);
     const commits = parseProjectActivityLog(activityLog);
 
-    expect(commits).toHaveLength(2);
+    expect(commits).toHaveLength(3);
     expect(commits.flatMap((commit) => commit.files).filter((file) => file.changeType === "added").map((file) => file.path)).toEqual(
       expect.arrayContaining(["app.ts", "README.md", "café.ts"]),
     );
     expect(trackedFiles.sort()).toEqual(["README.md", "app.ts", "café.ts"]);
     expect(releaseHistory.totalReleases).toBe(2);
     expect(releaseHistory.releases.map((release) => release.name)).toEqual(["v1.0.0", "v1.1.0"]);
-    expect(releaseHistory.releases[1]).toMatchObject({ commitsSincePrevious: 1, filesChanged: 3 });
+    expect(releaseHistory.releases[1]).toMatchObject({ commitsSincePrevious: 2, filesChanged: 3 });
     expect(releaseHistory.releases[1]?.linesChanged).toBeGreaterThan(0);
   });
 });

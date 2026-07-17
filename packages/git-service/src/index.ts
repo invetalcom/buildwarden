@@ -128,7 +128,7 @@ const parseProjectTags = (output: string): GitProjectTag[] =>
 const parseReleaseRangeStats = (output: string): Pick<GitProjectReleaseStat, "commitsSincePrevious" | "linesChanged" | "filesChanged"> => {
   let commitsSincePrevious = 0;
   let linesChanged = 0;
-  let filesChanged = 0;
+  const changedFiles = new Set<string>();
   for (const line of output.split(/\r?\n/)) {
     if (line.startsWith("__BW_RELEASE_COMMIT__")) {
       commitsSincePrevious += 1;
@@ -136,10 +136,10 @@ const parseReleaseRangeStats = (output: string): Pick<GitProjectReleaseStat, "co
     }
     const [added = "", deleted = "", ...pathParts] = line.split("\t");
     if (!pathParts.length || (!/^\d+$/.test(added) && added !== "-") || (!/^\d+$/.test(deleted) && deleted !== "-")) continue;
-    filesChanged += 1;
+    changedFiles.add(pathParts.join("\t"));
     linesChanged += (added === "-" ? 0 : Number.parseInt(added, 10)) + (deleted === "-" ? 0 : Number.parseInt(deleted, 10));
   }
-  return { commitsSincePrevious, linesChanged, filesChanged };
+  return { commitsSincePrevious, linesChanged, filesChanged: changedFiles.size };
 };
 
 export const readProjectReleaseHistory = async (repoPath: string, limit = 12): Promise<GitProjectReleaseHistory> => {
