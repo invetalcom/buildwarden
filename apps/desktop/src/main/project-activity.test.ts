@@ -184,7 +184,11 @@ describe("project activity analysis", () => {
   });
 
   it("sweeps scoped commits across release boundaries in chronological order", () => {
-    const result = queryProjectActivity(parseProjectActivityLog(sampleLog), {
+    const commits = parseProjectActivityLog(sampleLog).map((commit) => commit.sha === "c3" ? {
+      ...commit,
+      files: commit.files.map((file) => file.path === "README.md" ? { ...file, path: "packages/renderer/src/chart.tsx" } : file),
+    } : commit);
+    const result = queryProjectActivity(commits, {
       projectId: "project-1",
       dateFrom: "2026-07-16",
       dateTo: "2026-07-17",
@@ -204,7 +208,7 @@ describe("project activity analysis", () => {
       daysSincePrevious: null,
       commitsSincePrevious: 2,
       linesChanged: 23,
-      filesChanged: 4,
+      filesChanged: 3,
     }]);
   });
 });

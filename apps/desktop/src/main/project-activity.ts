@@ -1014,7 +1014,7 @@ const scopeQueryReleases = (
     const releaseTimestamp = timestampFromIso(release.date);
     let commitsSincePrevious = 0;
     let linesChanged = 0;
-    let filesChanged = 0;
+    const changedFiles = new Set<string>();
     while (commitIndex < sortedCommits.length) {
       const commit = sortedCommits[commitIndex]!;
       const timestamp = timestampFromIso(commit.date);
@@ -1023,12 +1023,12 @@ const scopeQueryReleases = (
       if (timestamp <= previousTimestamp) continue;
       commitsSincePrevious += 1;
       linesChanged += commitLinesChanged(commit);
-      filesChanged += commit.files.length;
+      for (const file of commit.files) changedFiles.add(normalizePath(file.path));
     }
 
     const releaseDateKey = dateKeyFromIso(release.date);
     if ((!input.dateFrom || releaseDateKey >= input.dateFrom) && (!input.dateTo || releaseDateKey <= input.dateTo)) {
-      scopedReleases.push({ name: release.name, date: release.date, commitsSincePrevious, linesChanged, filesChanged });
+      scopedReleases.push({ name: release.name, date: release.date, commitsSincePrevious, linesChanged, filesChanged: changedFiles.size });
     }
     previousTimestamp = releaseTimestamp;
   }
