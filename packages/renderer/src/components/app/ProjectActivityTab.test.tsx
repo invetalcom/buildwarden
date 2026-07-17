@@ -206,6 +206,7 @@ describe("ProjectActivityTab", () => {
     expect(markup).toContain("Code growth");
     expect(markup).toContain("Change hotspots");
     expect(markup).toContain("Ownership risk");
+    expect(markup).not.toContain(">silo</span>");
     expect(markup).toContain("Commit size");
     expect(markup).toContain("File age");
     expect(markup).toContain("Release cadence");

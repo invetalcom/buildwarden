@@ -192,12 +192,9 @@ const OwnershipPanel = ({ activity }: { activity: ProjectActivityInsightData }) 
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <p className="truncate font-mono text-xs text-[var(--ec-text)]" title={module.path}>{module.path}</p>
-                {module.risk !== "shared" ? (
-                  <span className={cn(
-                    "rounded-sm px-1 py-0.5 text-[9px] uppercase",
-                    module.risk === "silo" ? "bg-[var(--ec-danger-soft)] text-[var(--ec-danger)]" : "bg-[var(--ec-warning-soft)] text-[var(--ec-warning)]",
-                  )}>
-                    {module.risk}
+                {module.risk === "concentrated" ? (
+                  <span className="rounded-sm bg-[var(--ec-warning-soft)] px-1 py-0.5 text-[9px] uppercase text-[var(--ec-warning)]">
+                    concentrated
                   </span>
                 ) : null}
               </div>
