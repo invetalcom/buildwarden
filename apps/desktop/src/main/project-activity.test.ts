@@ -182,4 +182,29 @@ describe("project activity analysis", () => {
     expect(exactThursday.activity.momentum).toHaveLength(1);
     expect(exactThursday.activity.momentum?.[0]).toMatchObject({ days: 1, current: { commits: 1 } });
   });
+
+  it("sweeps scoped commits across release boundaries in chronological order", () => {
+    const result = queryProjectActivity(parseProjectActivityLog(sampleLog), {
+      projectId: "project-1",
+      dateFrom: "2026-07-16",
+      dateTo: "2026-07-17",
+      groupBy: "day",
+    }, {
+      now: new Date("2026-07-20T12:00:00.000Z"),
+      totalReleaseCount: 2,
+      releases: [
+        { name: "v1.1.0", date: "2026-07-17T12:00:00.000Z", commitsSincePrevious: 2, linesChanged: 23, filesChanged: 4 },
+        { name: "v1.0.0", date: "2026-07-15T12:00:00.000Z", commitsSincePrevious: 1, linesChanged: 28, filesChanged: 2 },
+      ],
+    });
+
+    expect(result.activity.releaseCadence?.releases).toEqual([{
+      name: "v1.1.0",
+      date: "2026-07-17T12:00:00.000Z",
+      daysSincePrevious: null,
+      commitsSincePrevious: 2,
+      linesChanged: 23,
+      filesChanged: 4,
+    }]);
+  });
 });

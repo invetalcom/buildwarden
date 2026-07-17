@@ -947,25 +947,35 @@ const scopeQueryReleases = (
   filteredCommits: ProjectActivityCommit[],
   input: ProjectActivityQueryInput,
 ): ProjectActivityReleaseInput[] => {
-  const sorted = [...releases].sort((left, right) => timestampFromIso(left.date) - timestampFromIso(right.date));
-  return sorted.flatMap((release, index) => {
-    const releaseDateKey = dateKeyFromIso(release.date);
-    if (input.dateFrom && releaseDateKey < input.dateFrom) return [];
-    if (input.dateTo && releaseDateKey > input.dateTo) return [];
-    const previousTimestamp = index > 0 ? timestampFromIso(sorted[index - 1]?.date ?? "") : Number.NEGATIVE_INFINITY;
+  const sortedReleases = [...releases].sort((left, right) => timestampFromIso(left.date) - timestampFromIso(right.date));
+  const sortedCommits = [...filteredCommits].sort((left, right) => timestampFromIso(left.date) - timestampFromIso(right.date));
+  const scopedReleases: ProjectActivityReleaseInput[] = [];
+  let commitIndex = 0;
+  let previousTimestamp = Number.NEGATIVE_INFINITY;
+
+  for (const release of sortedReleases) {
     const releaseTimestamp = timestampFromIso(release.date);
-    const releaseCommits = filteredCommits.filter((commit) => {
+    let commitsSincePrevious = 0;
+    let linesChanged = 0;
+    let filesChanged = 0;
+    while (commitIndex < sortedCommits.length) {
+      const commit = sortedCommits[commitIndex]!;
       const timestamp = timestampFromIso(commit.date);
-      return timestamp > previousTimestamp && timestamp <= releaseTimestamp;
-    });
-    return [{
-      name: release.name,
-      date: release.date,
-      commitsSincePrevious: releaseCommits.length,
-      linesChanged: releaseCommits.reduce((sum, commit) => sum + commitLinesChanged(commit), 0),
-      filesChanged: releaseCommits.reduce((sum, commit) => sum + commit.files.length, 0),
-    }];
-  });
+      if (timestamp > releaseTimestamp) break;
+      commitIndex += 1;
+      if (timestamp <= previousTimestamp) continue;
+      commitsSincePrevious += 1;
+      linesChanged += commitLinesChanged(commit);
+      filesChanged += commit.files.length;
+    }
+
+    const releaseDateKey = dateKeyFromIso(release.date);
+    if ((!input.dateFrom || releaseDateKey >= input.dateFrom) && (!input.dateTo || releaseDateKey <= input.dateTo)) {
+      scopedReleases.push({ name: release.name, date: release.date, commitsSincePrevious, linesChanged, filesChanged });
+    }
+    previousTimestamp = releaseTimestamp;
+  }
+  return scopedReleases;
 };
 
 const commitsForSelectedFiles = (
