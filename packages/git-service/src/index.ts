@@ -80,11 +80,12 @@ export const readProjectActivityLog = async (repoPath: string): Promise<string> 
     "--all",
     "--date-order",
     "--date=iso-strict",
-    "--pretty=format:__BW_ACTIVITY_COMMIT__%H%x09%aN%x09%aE%x09%aI%x09%P%x09%s",
+    "--pretty=format:%x00__BW_ACTIVITY_COMMIT__%H%x09%aN%x09%aE%x09%aI%x09%P%x09%s%x00",
+    "--raw",
     "--numstat",
-    "--summary",
     "--no-renames",
     "--use-mailmap",
+    "-z",
   ]);
 
 export const readTrackedProjectFiles = async (repoPath: string): Promise<string[]> => {

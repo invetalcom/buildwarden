@@ -98,7 +98,7 @@ const parseLineCount = (value: string): number => {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 };
 
-const normalizePath = (value: string): string => value.replace(/\\/g, "/").replace(/^\.\//, "").trim();
+const normalizePath = (value: string): string => value.replace(/\\/g, "/").replace(/^\.\//, "");
 
 const dateKeyFromIso = (value: string): string => (/^\d{4}-\d{2}-\d{2}/.exec(value)?.[0] ?? "");
 
@@ -201,23 +201,77 @@ const createFile = (file: ProjectActivityCommitFile, commit: ProjectActivityComm
   lastChangeType: file.changeType,
 });
 
-export const parseProjectActivityLog = (output: string): ProjectActivityCommit[] => {
+const parseActivityCommitHeader = (record: string): ProjectActivityCommit | null => {
+  if (!record.startsWith(ACTIVITY_COMMIT_PREFIX)) return null;
+  const [prefixedSha = "", author = "", email = "", date = "", parents = "", ...titleParts] = record.split("\t");
+  return {
+    sha: prefixedSha.slice(ACTIVITY_COMMIT_PREFIX.length),
+    author: author.trim(),
+    email: email.trim(),
+    date: date.trim(),
+    parentCount: parents.trim() ? parents.trim().split(/\s+/).length : 0,
+    title: titleParts.join("\t").trim(),
+    files: [],
+  };
+};
+
+const parseNullDelimitedProjectActivityLog = (output: string): ProjectActivityCommit[] => {
+  const commits: ProjectActivityCommit[] = [];
+  let current: ProjectActivityCommit | null = null;
+  let pendingChangeType: ProjectActivityCommitFile["changeType"] | null = null;
+  const changeTypesByPath = new Map<string, ProjectActivityCommitFile["changeType"]>();
+
+  for (const rawRecord of output.split("\0")) {
+    if (pendingChangeType) {
+      changeTypesByPath.set(normalizePath(rawRecord), pendingChangeType);
+      pendingChangeType = null;
+      continue;
+    }
+
+    const record = rawRecord.replace(/^\r?\n+/, "");
+    const nextCommit = parseActivityCommitHeader(record);
+    if (nextCommit) {
+      if (current) commits.push(current);
+      current = nextCommit;
+      changeTypesByPath.clear();
+      continue;
+    }
+
+    if (!current) continue;
+    const rawStatus = /^:\d{6} \d{6} [0-9a-f]+ [0-9a-f]+ ([A-Z])(?:\d+)?$/.exec(record)?.[1];
+    if (rawStatus) {
+      pendingChangeType = rawStatus === "A" ? "added" : rawStatus === "D" ? "deleted" : "modified";
+      continue;
+    }
+
+    const numstat = /^(\d+|-)\t(\d+|-)\t([\s\S]+)$/.exec(record);
+    if (!numstat) continue;
+    const addedRaw = numstat[1] ?? "";
+    const deletedRaw = numstat[2] ?? "";
+    const path = normalizePath(numstat[3] ?? "");
+    if (!path) continue;
+    current.files.push({
+      path,
+      linesAdded: parseLineCount(addedRaw),
+      linesDeleted: parseLineCount(deletedRaw),
+      binary: addedRaw === "-" || deletedRaw === "-",
+      changeType: changeTypesByPath.get(path) ?? "modified",
+    });
+  }
+
+  if (current) commits.push(current);
+  return commits;
+};
+
+const parseLegacyProjectActivityLog = (output: string): ProjectActivityCommit[] => {
   const commits: ProjectActivityCommit[] = [];
   let current: ProjectActivityCommit | null = null;
 
   for (const rawLine of output.split(/\r?\n/)) {
-    if (rawLine.startsWith(ACTIVITY_COMMIT_PREFIX)) {
+    const nextCommit = parseActivityCommitHeader(rawLine);
+    if (nextCommit) {
       if (current) commits.push(current);
-      const [prefixedSha = "", author = "", email = "", date = "", parents = "", ...titleParts] = rawLine.split("\t");
-      current = {
-        sha: prefixedSha.slice(ACTIVITY_COMMIT_PREFIX.length),
-        author: author.trim(),
-        email: email.trim(),
-        date: date.trim(),
-        parentCount: parents.trim() ? parents.trim().split(/\s+/).length : 0,
-        title: titleParts.join("\t").trim(),
-        files: [],
-      };
+      current = nextCommit;
       continue;
     }
 
@@ -246,6 +300,9 @@ export const parseProjectActivityLog = (output: string): ProjectActivityCommit[]
   if (current) commits.push(current);
   return commits;
 };
+
+export const parseProjectActivityLog = (output: string): ProjectActivityCommit[] =>
+  output.includes("\0") ? parseNullDelimitedProjectActivityLog(output) : parseLegacyProjectActivityLog(output);
 
 const contributorKeyForCommit = (commit: ProjectActivityCommit): string =>
   commit.email.trim().toLowerCase() || commit.author.trim().toLowerCase() || "unknown-author";
