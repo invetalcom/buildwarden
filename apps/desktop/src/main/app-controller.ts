@@ -841,7 +841,12 @@ export class AppController
   private loopRunnerInstance: ProjectLoopRunner | null = null;
   private readonly composerCommandCache = new Map<string, { expiresAt: number; commands: ComposerCommandDescriptor[] }>();
   private readonly composerCommandInflight = new Map<string, Promise<ComposerCommandDescriptor[]>>();
-  private readonly projectActivityCommitCache = new Map<string, { expiresAt: number; commits: ProjectActivityCommit[] }>();
+  private readonly projectActivityCache = new Map<string, {
+    expiresAt: number;
+    commits: ProjectActivityCommit[];
+    currentFiles: string[];
+    releaseHistory: Awaited<ReturnType<typeof readProjectReleaseHistory>>;
+  }>();
   constructor(
     private readonly db: BuildWardenDatabase,
     private readonly secrets: SecretStore,
@@ -3535,15 +3540,24 @@ export class AppController
       throw new Error("Invalid Activity weekday filter.");
     }
 
-    const cached = this.projectActivityCommitCache.get(project.repoPath);
-    let commits: ProjectActivityCommit[];
+    const cached = this.projectActivityCache.get(project.repoPath);
+    let activityData: Omit<NonNullable<typeof cached>, "expiresAt">;
     if (cached && cached.expiresAt > Date.now()) {
-      commits = cached.commits;
+      activityData = cached;
     } else {
-      commits = parseProjectActivityLog(await readProjectActivityLog(project.repoPath));
-      this.projectActivityCommitCache.set(project.repoPath, { expiresAt: Date.now() + 60_000, commits });
+      const [activityLog, currentFiles, releaseHistory] = await Promise.all([
+        readProjectActivityLog(project.repoPath),
+        readTrackedProjectFiles(project.repoPath),
+        readProjectReleaseHistory(project.repoPath),
+      ]);
+      activityData = { commits: parseProjectActivityLog(activityLog), currentFiles, releaseHistory };
+      this.projectActivityCache.set(project.repoPath, { expiresAt: Date.now() + 60_000, ...activityData });
     }
-    return queryProjectActivityCommits(commits, input);
+    return queryProjectActivityCommits(activityData.commits, input, {
+      currentFiles: activityData.currentFiles,
+      releases: activityData.releaseHistory.releases,
+      totalReleaseCount: activityData.releaseHistory.totalReleases,
+    });
   }
 
   async generateProjectInsight(input: GenerateProjectInsightInput): Promise<ProjectInsightRecord> {
@@ -3622,7 +3636,12 @@ export class AppController
           readProjectReleaseHistory(project.repoPath),
         ]);
         const commits = parseProjectActivityLog(activityLog);
-        this.projectActivityCommitCache.set(project.repoPath, { expiresAt: Date.now() + 60_000, commits });
+        this.projectActivityCache.set(project.repoPath, {
+          expiresAt: Date.now() + 60_000,
+          commits,
+          currentFiles: trackedFiles,
+          releaseHistory,
+        });
         const insight: ProjectActivityInsightData = buildProjectActivityInsight(commits, {
           currentFiles: trackedFiles,
           releases: releaseHistory.releases,

@@ -10,6 +10,11 @@ import { cn } from "../../lib/cn";
 import { reportRendererError } from "../../lib/report-renderer-error";
 import { Button } from "../ui/button";
 import { Select } from "../ui/select";
+import {
+  ProjectActivityMomentumGrowth,
+  ProjectActivityRepositoryHealth,
+  ProjectActivityRiskSections,
+} from "./ProjectActivityAdvancedSections";
 
 interface ProjectActivityExplorerProps {
   projectId: string;
@@ -201,10 +206,13 @@ export const ProjectActivityQueryResults = ({
     </div>
 
     {scopeActive && result.summary.commits > 0 ? (
-      <>
+      <div className="space-y-10">
         <ScopedRankings result={result} onContributor={onContributor} onModule={onModule} />
+        <ProjectActivityMomentumGrowth activity={result.activity} />
+        <ProjectActivityRiskSections activity={result.activity} />
+        <ProjectActivityRepositoryHealth activity={result.activity} />
         <ScopedCommits result={result} />
-      </>
+      </div>
     ) : null}
     {scopeActive && result.summary.commits === 0 ? (
       <div className="rounded-md border border-dashed border-[var(--ec-border)] bg-[var(--ec-panel-soft)] py-10 text-center text-xs text-[var(--ec-muted)]">
@@ -299,14 +307,21 @@ export const ProjectActivityExplorer = ({ projectId, activity, onScopeActiveChan
 
   return (
     <section className="mt-4">
-      <div className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-strong)] p-2.5 shadow-[var(--ec-panel-shadow)]">
-        <div className="flex items-center gap-2 px-0.5 pb-2">
+      <div className="border-b border-[var(--ec-border)] pb-4">
+        <div className="mb-2.5 flex items-center gap-2 px-0.5">
           <Filter className="size-3.5 text-[var(--ec-accent)]" />
-          <p className="text-xs font-medium text-[var(--ec-text)]">Activity scope</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--ec-text)]">Filter</p>
           <p className="text-[10px] text-[var(--ec-faint)]">Combine filters, then group the matching commits.</p>
-          {loading ? <Loader2 className="ml-auto size-3.5 animate-spin text-[var(--ec-faint)]" /> : null}
+          <div className="ml-auto flex items-center gap-1.5">
+            {loading ? <Loader2 className="size-3.5 animate-spin text-[var(--ec-faint)]" /> : null}
+            {scopeActive ? (
+              <Button type="button" variant="ghost" size="xs" className="h-7 px-2 text-[10px]" onClick={resetFilters} title="Clear filters">
+                <RotateCcw className="size-3" /> Clear
+              </Button>
+            ) : null}
+          </div>
         </div>
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[1.2fr_1.2fr_0.8fr_0.75fr_0.8fr_auto]">
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[1.25fr_1.25fr_0.8fr_0.75fr_0.8fr]">
           <Select value={contributorKey} options={contributorOptions} onValueChange={setContributorKey} ariaLabel="Filter by contributor" triggerClassName="h-8 text-xs" maxMenuHeightPx={320} searchable searchPlaceholder="Search contributors…" />
           <Select value={modulePath} options={moduleOptions} onValueChange={setModulePath} ariaLabel="Filter by module" triggerClassName="h-8 font-mono text-xs" maxMenuHeightPx={320} searchable searchPlaceholder="Search modules…" />
           <Select value={period} options={[
@@ -326,10 +341,7 @@ export const ProjectActivityExplorer = ({ projectId, activity, onScopeActiveChan
             { value: "month", label: "Group: month" },
             { value: "contributor", label: "Group: contributor" },
             { value: "module", label: "Group: module" },
-          ]} onValueChange={(value) => setGroupBy(value as ProjectActivityQueryInput["groupBy"])} ariaLabel="Group activity" triggerClassName="h-8 text-xs" />
-          <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs" onClick={resetFilters} disabled={!scopeActive} title="Clear filters">
-            <RotateCcw className="size-3.5" /> Clear
-          </Button>
+          ]} onValueChange={(value) => setGroupBy(value as ProjectActivityQueryInput["groupBy"])} ariaLabel="Group activity" className="sm:col-span-2 xl:col-span-1" triggerClassName="h-8 text-xs" />
         </div>
 
         {period === "custom" ? (

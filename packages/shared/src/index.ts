@@ -1258,7 +1258,7 @@ export interface ProjectActivityInsightData {
     risk: "silo" | "concentrated" | "shared";
   }>;
   momentum?: Array<{
-    days: 30 | 90;
+    days: number;
     current: ProjectActivityPeriodStats;
     previous: ProjectActivityPeriodStats;
     changePercent: {
@@ -1380,6 +1380,7 @@ export interface ProjectActivityQueryResult {
     label: string;
     commits: number;
   }>;
+  activity: ProjectActivityInsightData;
   commits: ProjectActivityCommitSummary[];
   commitResultLimit: number;
 }

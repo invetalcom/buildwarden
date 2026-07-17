@@ -2,7 +2,6 @@ import type { ProjectActivityInsightData, ProjectInsightKind, ProjectSnapshot } 
 import { Activity, CalendarDays, GitCommitHorizontal, Loader2, RefreshCw, UsersRound } from "lucide-react";
 import { useState } from "react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
-import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import {
@@ -27,11 +26,6 @@ const formatCompactNumber = (value: number): string => compactNumberFormatter.fo
 const formatShortDate = (value: string | null | undefined): string => {
   if (!value) return "—";
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(new Date(value));
-};
-
-const formatMonth = (value: string): string => {
-  const date = new Date(`${value}-01T12:00:00.000Z`);
-  return new Intl.DateTimeFormat(undefined, { month: "short" }).format(date);
 };
 
 const initialsForName = (name: string): string =>
@@ -129,79 +123,6 @@ const ContributorTable = ({ activity }: { activity: ProjectActivityInsightData }
   );
 };
 
-const CommitRhythm = ({ activity }: { activity: ProjectActivityInsightData }) => {
-  const maxWeekdayCommits = Math.max(1, ...activity.weekdays.map((weekday) => weekday.commits));
-  const recentMonths = activity.monthlyActivity.slice(-12);
-  const maxMonthCommits = Math.max(1, ...recentMonths.map((month) => month.commits));
-  const busiestWeekday = [...activity.weekdays].sort((left, right) => right.commits - left.commits)[0];
-
-  return (
-    <section className="min-w-0">
-      <SectionHeading title="Commit rhythm" detail={busiestWeekday ? `${busiestWeekday.label} is busiest` : "No activity"} />
-      <div className="rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 pb-3 pt-3.5">
-        <div className="flex h-28 items-end justify-between gap-2" aria-label="Commits by weekday">
-          {activity.weekdays.map((weekday) => (
-            <div key={weekday.weekday} className="group flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1.5">
-              <span className="text-[10px] font-medium tabular-nums text-[var(--ec-muted)] opacity-0 transition-opacity group-hover:opacity-100">
-                {weekday.commits}
-              </span>
-              <div className="flex h-20 w-full items-end justify-center">
-                <div
-                  className={cn(
-                    "w-full max-w-7 rounded-sm bg-[var(--ec-accent-soft)] transition-[height,background-color] duration-300 group-hover:bg-[var(--ec-accent)]",
-                    weekday.commits === maxWeekdayCommits && weekday.commits > 0 && "bg-[var(--ec-accent)]",
-                  )}
-                  style={{ height: weekday.commits ? `${Math.max(6, (weekday.commits / maxWeekdayCommits) * 100)}%` : "2px" }}
-                  title={`${weekday.label}: ${formatNumber(weekday.commits)} commits (${weekday.commitShare}%)`}
-                />
-              </div>
-              <span className="text-[10px] text-[var(--ec-faint)]">{weekday.label}</span>
-            </div>
-          ))}
-        </div>
-        <div className="mt-4 border-t border-[var(--ec-border)] pt-3">
-          <div className="mb-2 flex items-baseline justify-between">
-            <p className="text-[10px] font-medium uppercase tracking-[0.1em] text-[var(--ec-faint)]">Last 12 active months</p>
-            <p className="text-[10px] text-[var(--ec-faint)]">commits</p>
-          </div>
-          <div className="flex h-14 items-end gap-1" aria-label="Recent monthly commits">
-            {recentMonths.map((month, index) => (
-              <div key={month.month} className="group flex h-full min-w-0 flex-1 items-end" title={`${month.month}: ${formatNumber(month.commits)} commits`}>
-                <div
-                  className="relative w-full rounded-[2px] bg-[var(--ec-accent-soft)] transition-colors group-hover:bg-[var(--ec-accent)]"
-                  style={{ height: `${Math.max(7, (month.commits / maxMonthCommits) * 100)}%` }}
-                >
-                  {(index === 0 || index === recentMonths.length - 1) ? (
-                    <span className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-[9px] text-[var(--ec-faint)]">{formatMonth(month.month)}</span>
-                  ) : null}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-        <div className="flex items-baseline justify-between gap-2 border-b border-[var(--ec-border)] pb-2">
-          <dt className="text-[var(--ec-muted)]">Weekly pace</dt>
-          <dd className="font-medium tabular-nums text-[var(--ec-text)]">{activity.summaryStats.averageCommitsPerWeek}</dd>
-        </div>
-        <div className="flex items-baseline justify-between gap-2 border-b border-[var(--ec-border)] pb-2">
-          <dt className="text-[var(--ec-muted)]">Longest streak</dt>
-          <dd className="font-medium tabular-nums text-[var(--ec-text)]">{activity.summaryStats.longestDailyStreak}d</dd>
-        </div>
-        <div className="flex items-baseline justify-between gap-2">
-          <dt className="text-[var(--ec-muted)]">Merge commits</dt>
-          <dd className="font-medium tabular-nums text-[var(--ec-text)]">{formatNumber(activity.summaryStats.mergeCommits)}</dd>
-        </div>
-        <div className="flex items-baseline justify-between gap-2">
-          <dt className="text-[var(--ec-muted)]">50% bus factor</dt>
-          <dd className="font-medium tabular-nums text-[var(--ec-text)]">{activity.summaryStats.busFactor50}</dd>
-        </div>
-      </dl>
-    </section>
-  );
-};
-
 const RecentHistory = ({ activity }: { activity: ProjectActivityInsightData }) => (
   <section className="min-w-0">
     <SectionHeading title="Recent history" detail="Latest reachable commits" />
@@ -269,10 +190,7 @@ export const ProjectActivityTab = ({ project, onGenerateInsight }: ProjectActivi
             </div>
           ) : null}
 
-          <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(18rem,1fr)]">
-            <ContributorTable activity={activity} />
-            <CommitRhythm activity={activity} />
-          </div>
+          <ContributorTable activity={activity} />
 
           <ProjectActivityMomentumGrowth activity={activity} />
 

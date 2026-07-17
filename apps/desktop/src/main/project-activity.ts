@@ -905,11 +905,116 @@ const buildQuerySummary = (commits: ProjectActivityCommit[]): ProjectActivityQue
   };
 };
 
+const activityQueryNow = (input: ProjectActivityQueryInput, fallback: Date): Date =>
+  input.dateTo ? new Date(`${input.dateTo}T23:59:59.999Z`) : fallback;
+
+const withoutQueryDateRange = (input: ProjectActivityQueryInput): ProjectActivityQueryInput => {
+  const next = { ...input };
+  delete next.dateFrom;
+  delete next.dateTo;
+  return next;
+};
+
+const buildQueryMomentum = (
+  commits: ProjectActivityCommit[],
+  input: ProjectActivityQueryInput,
+  now: Date,
+): NonNullable<ProjectActivityInsightData["momentum"]> => {
+  const contextualCommits = filterProjectActivityCommits(commits, withoutQueryDateRange(input));
+  if (!input.dateFrom) return buildMomentum(contextualCommits, now);
+
+  const start = Date.parse(`${input.dateFrom}T00:00:00.000Z`);
+  const endDateKey = input.dateTo ?? dateKeyFromIso(now.toISOString());
+  const parsedEnd = Date.parse(`${addDaysToDateKey(endDateKey, 1)}T00:00:00.000Z`);
+  const end = Math.max(start + DAY_MS, parsedEnd);
+  const days = Math.max(1, Math.round((end - start) / DAY_MS));
+  const current = periodStats(contextualCommits, start, end);
+  const previous = periodStats(contextualCommits, start - (days * DAY_MS), start);
+  return [{
+    days,
+    current,
+    previous,
+    changePercent: {
+      commits: changePercent(current.commits, previous.commits),
+      contributors: changePercent(current.contributors, previous.contributors),
+      linesChanged: changePercent(current.linesChanged, previous.linesChanged),
+    },
+  }];
+};
+
+const scopeQueryReleases = (
+  releases: ProjectActivityReleaseInput[],
+  filteredCommits: ProjectActivityCommit[],
+  input: ProjectActivityQueryInput,
+): ProjectActivityReleaseInput[] => {
+  const sorted = [...releases].sort((left, right) => timestampFromIso(left.date) - timestampFromIso(right.date));
+  return sorted.flatMap((release, index) => {
+    const releaseDateKey = dateKeyFromIso(release.date);
+    if (input.dateFrom && releaseDateKey < input.dateFrom) return [];
+    if (input.dateTo && releaseDateKey > input.dateTo) return [];
+    const previousTimestamp = index > 0 ? timestampFromIso(sorted[index - 1]?.date ?? "") : Number.NEGATIVE_INFINITY;
+    const releaseTimestamp = timestampFromIso(release.date);
+    const releaseCommits = filteredCommits.filter((commit) => {
+      const timestamp = timestampFromIso(commit.date);
+      return timestamp > previousTimestamp && timestamp <= releaseTimestamp;
+    });
+    return [{
+      name: release.name,
+      date: release.date,
+      commitsSincePrevious: releaseCommits.length,
+      linesChanged: releaseCommits.reduce((sum, commit) => sum + commitLinesChanged(commit), 0),
+      filesChanged: releaseCommits.reduce((sum, commit) => sum + commit.files.length, 0),
+    }];
+  });
+};
+
+const commitsForSelectedFiles = (
+  commits: ProjectActivityCommit[],
+  selectedCommits: ProjectActivityCommit[],
+): ProjectActivityCommit[] => {
+  const selectedPaths = new Set(selectedCommits.flatMap((commit) => commit.files.map((file) => normalizePath(file.path))));
+  return commits.flatMap((commit) => {
+    const files = commit.files.filter((file) => selectedPaths.has(normalizePath(file.path)));
+    return files.length > 0 ? [{ ...commit, files }] : [];
+  });
+};
+
+const commitsForScopedOwnership = (
+  commits: ProjectActivityCommit[],
+  selectedCommits: ProjectActivityCommit[],
+  input: ProjectActivityQueryInput,
+): ProjectActivityCommit[] => {
+  const selectedModules = new Set(selectedCommits.flatMap((commit) => commit.files.map((file) => modulePathForFile(file.path))));
+  const ownershipInput = { ...input };
+  delete ownershipInput.contributorKey;
+  return filterProjectActivityCommits(commits, ownershipInput).flatMap((commit) => {
+    const files = commit.files.filter((file) => selectedModules.has(modulePathForFile(file.path)));
+    return files.length > 0 ? [{ ...commit, files }] : [];
+  });
+};
+
 export const queryProjectActivity = (
   commits: ProjectActivityCommit[],
   input: ProjectActivityQueryInput,
+  options: BuildProjectActivityInsightOptions = {},
 ): ProjectActivityQueryResult => {
   const filteredCommits = filterProjectActivityCommits(commits, input);
+  const now = activityQueryNow(input, options.now ?? new Date());
+  const scopedReleases = scopeQueryReleases(options.releases ?? [], filteredCommits, input);
+  const activity = buildProjectActivityInsight(filteredCommits, {
+    now,
+    currentFiles: options.currentFiles,
+    releases: scopedReleases,
+    totalReleaseCount: input.dateFrom || input.dateTo
+      ? scopedReleases.length
+      : options.totalReleaseCount ?? scopedReleases.length,
+  });
+  activity.momentum = buildQueryMomentum(commits, input, now);
+  activity.fileAge = buildProjectActivityInsight(commitsForSelectedFiles(commits, filteredCommits), {
+    now,
+    currentFiles: options.currentFiles,
+  }).fileAge;
+  activity.moduleOwnership = buildProjectActivityInsight(commitsForScopedOwnership(commits, filteredCommits, input), { now }).moduleOwnership;
   const weekdayCounts = Array.from({ length: 7 }, () => 0);
   for (const commit of filteredCommits) {
     const weekday = weekdayFromDateKey(dateKeyFromIso(commit.date));
@@ -933,6 +1038,7 @@ export const queryProjectActivity = (
       label: WEEKDAY_LABELS[weekday] ?? "",
       commits: weekdayCounts[weekday] ?? 0,
     })),
+    activity,
     commits: [...filteredCommits]
       .sort((left, right) => timestampFromIso(right.date) - timestampFromIso(left.date))
       .slice(0, 100)

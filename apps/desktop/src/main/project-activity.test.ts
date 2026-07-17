@@ -153,6 +153,13 @@ describe("project activity analysis", () => {
       linesChanged: 15,
       drilldown: { modulePath: "apps/desktop" },
     });
+    expect(aliceByModule.activity.codeGrowth).toEqual({ netLines: 27, filesCreated: 3, filesDeleted: 0 });
+    expect(aliceByModule.activity.commitSize).toMatchObject({ medianLinesChanged: 20.5, megaCommitCount: 0 });
+    expect(aliceByModule.activity.moduleOwnership?.find((module) => module.path === "packages/renderer")).toMatchObject({
+      contributorCount: 2,
+      ownershipShare: 50,
+      risk: "shared",
+    });
 
     const rendererByContributor = queryProjectActivity(commits, {
       projectId: "project-1",
@@ -172,5 +179,7 @@ describe("project activity analysis", () => {
     expect(exactThursday.summary.commits).toBe(1);
     expect(exactThursday.commits[0]?.sha).toBe("c2");
     expect(exactThursday.groups[0]?.drilldown).toEqual({ dateFrom: "2026-07-16", dateTo: "2026-07-16" });
+    expect(exactThursday.activity.momentum).toHaveLength(1);
+    expect(exactThursday.activity.momentum?.[0]).toMatchObject({ days: 1, current: { commits: 1 } });
   });
 });

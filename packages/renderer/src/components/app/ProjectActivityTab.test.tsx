@@ -185,6 +185,7 @@ const queryResult: ProjectActivityQueryResult = {
     { weekday: 5, label: "Fri", commits: 3 }, { weekday: 6, label: "Sat", commits: 0 },
     { weekday: 0, label: "Sun", commits: 0 },
   ],
+  activity,
   commits: [{ sha: "abcdef123", title: "Scoped commit", author: "Alice Example", date: "2026-02-12T10:00:00.000Z", filesChanged: 3, linesChanged: 120 }],
   commitResultLimit: 100,
 };
@@ -196,11 +197,11 @@ describe("ProjectActivityTab", () => {
     );
 
     expect(markup).toContain("Top contributors");
-    expect(markup).toContain("Activity scope");
+    expect(markup).toContain(">Filter</p>");
     expect(markup).toContain("All contributors");
     expect(markup).toContain("Group: month");
     expect(markup).toContain("Alice Example");
-    expect(markup).toContain("Commit rhythm");
+    expect(markup).not.toContain("Commit rhythm");
     expect(markup).toContain("Momentum");
     expect(markup).toContain("Code growth");
     expect(markup).toContain("Change hotspots");
@@ -213,9 +214,8 @@ describe("ProjectActivityTab", () => {
     expect(markup).toContain('aria-label="Refresh Activity"');
     expect(markup).not.toContain(">Activity</h3>");
     expect(markup).not.toContain("All reachable refs");
-    expect(markup.indexOf(">Commits</p>")).toBeLessThan(markup.indexOf("Activity scope"));
+    expect(markup.indexOf(">Commits</p>")).toBeLessThan(markup.indexOf(">Filter</p>"));
     expect(markup.indexOf("Top contributors")).toBeLessThan(markup.indexOf("Momentum"));
-    expect(markup.indexOf("Commit rhythm")).toBeLessThan(markup.indexOf("Code growth"));
   });
 
   it("renders scoped metrics, grouped drill-downs, rankings, and commits", () => {
@@ -234,6 +234,9 @@ describe("ProjectActivityTab", () => {
     expect(markup).toContain("Grouped by contributor");
     expect(markup).toContain("Contributors in scope");
     expect(markup).toContain("Modules in scope");
+    expect(markup).toContain("Momentum");
+    expect(markup).toContain("Change hotspots");
+    expect(markup).toContain("Commit size");
     expect(markup).toContain("Commits in scope");
     expect(markup).toContain("Scoped commit");
   });
