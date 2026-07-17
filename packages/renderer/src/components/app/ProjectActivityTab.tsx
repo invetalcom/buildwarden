@@ -10,7 +10,8 @@ import {
   ProjectActivityRepositoryHealth,
   ProjectActivityRiskSections,
 } from "./ProjectActivityAdvancedSections";
-import { formatGeneratedAt, getProjectInsight, parseProjectInsightData } from "./project-insight-utils";
+import { ProjectActivityExplorer } from "./ProjectActivityExplorer";
+import { getProjectInsight, parseProjectInsightData } from "./project-insight-utils";
 
 interface ProjectActivityTabProps {
   project: ProjectSnapshot;
@@ -46,6 +47,16 @@ const Metric = ({ label, value, detail }: { label: string; value: string; detail
     <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--ec-faint)]">{label}</p>
     <p className="mt-0.5 truncate text-lg font-semibold tabular-nums text-[var(--ec-text)]">{value}</p>
     <p className="truncate text-[11px] text-[var(--ec-muted)]">{detail}</p>
+  </div>
+);
+
+const ActivitySummaryMetrics = ({ activity }: { activity: ProjectActivityInsightData }) => (
+  <div className="grid min-w-0 flex-1 grid-cols-2 divide-x divide-y divide-[var(--ec-border)] border-y border-[var(--ec-border)] sm:grid-cols-3 sm:divide-y-0 xl:grid-cols-5">
+    <Metric label="Commits" value={formatNumber(activity.summaryStats.totalCommits)} detail={`${formatNumber(activity.summaryStats.activeDays)} active days`} />
+    <Metric label="Contributors" value={formatNumber(activity.summaryStats.contributorCount)} detail={`${activity.summaryStats.busFactor50} make half the commits`} />
+    <Metric label="Lines changed" value={formatCompactNumber(activity.summaryStats.linesAdded + activity.summaryStats.linesDeleted)} detail={`+${formatCompactNumber(activity.summaryStats.linesAdded)} / −${formatCompactNumber(activity.summaryStats.linesDeleted)}`} />
+    <Metric label="File touches" value={formatCompactNumber(activity.summaryStats.filesChanged)} detail={`${formatNumber(activity.modules.length)} modules`} />
+    <Metric label="History" value={formatShortDate(activity.summaryStats.firstCommitAt)} detail={`through ${formatShortDate(activity.summaryStats.latestCommitAt)}`} />
   </div>
 );
 
@@ -214,6 +225,7 @@ const RecentHistory = ({ activity }: { activity: ProjectActivityInsightData }) =
 export const ProjectActivityTab = ({ project, onGenerateInsight }: ProjectActivityTabProps) => {
   const canGenerateInsights = useBuildWardenClient().capabilities.insightMutations;
   const [busy, setBusy] = useState(false);
+  const [scopeActive, setScopeActive] = useState(false);
   const record = getProjectInsight(project, "activity");
   const activity = parseProjectInsightData<ProjectActivityInsightData>(record);
 
@@ -228,57 +240,49 @@ export const ProjectActivityTab = ({ project, onGenerateInsight }: ProjectActivi
 
   return (
     <Card className="h-full min-h-0 overflow-y-auto p-4">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-2.5">
-          <Activity className="mt-0.5 size-4 shrink-0 text-[var(--ec-accent)]" />
-          <div className="min-w-0">
-            <h3 className="text-sm font-medium text-[var(--ec-text)]">Activity</h3>
-            <p className="text-xs text-[var(--ec-muted)]">
-              {record?.summary ?? "Contributor, cadence, and code-churn patterns across the repository's full reachable history."}
-            </p>
-          </div>
-        </div>
+      <header className="flex items-center gap-3">
+        {activity && activity.summaryStats.totalCommits > 0 && !scopeActive
+          ? <ActivitySummaryMetrics activity={activity} />
+          : <div className="min-w-0 flex-1" />}
         {canGenerateInsights ? (
-          <Button type="button" size="sm" variant="secondary" onClick={() => void handleRefresh()} disabled={busy}>
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="shrink-0 text-[var(--ec-accent)] hover:bg-[var(--ec-accent-soft)] hover:text-[var(--ec-accent-strong)]"
+            onClick={() => void handleRefresh()}
+            disabled={busy}
+            aria-label={busy ? "Refreshing Activity" : activity ? "Refresh Activity" : "Analyze Activity history"}
+            title={busy ? "Refreshing Activity…" : activity ? "Refresh Activity" : "Analyze Activity history"}
+          >
             {busy ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-            {busy ? "Analyzing…" : activity ? "Refresh" : "Analyze history"}
           </Button>
         ) : null}
       </header>
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-[var(--ec-faint)]">
-        <span>Updated {formatGeneratedAt(record?.generatedAt)}</span>
-        {activity ? <span>All reachable refs · mailmap-aware authors</span> : null}
-      </div>
-
       {activity && activity.summaryStats.totalCommits > 0 ? (
-        <div className="mt-4 space-y-6">
-          <div className="grid grid-cols-2 divide-x divide-y divide-[var(--ec-border)] border-y border-[var(--ec-border)] sm:grid-cols-3 sm:divide-y-0 xl:grid-cols-5">
-            <Metric label="Commits" value={formatNumber(activity.summaryStats.totalCommits)} detail={`${formatNumber(activity.summaryStats.activeDays)} active days`} />
-            <Metric label="Contributors" value={formatNumber(activity.summaryStats.contributorCount)} detail={`${activity.summaryStats.busFactor50} make half the commits`} />
-            <Metric label="Lines changed" value={formatCompactNumber(activity.summaryStats.linesAdded + activity.summaryStats.linesDeleted)} detail={`+${formatCompactNumber(activity.summaryStats.linesAdded)} / −${formatCompactNumber(activity.summaryStats.linesDeleted)}`} />
-            <Metric label="File touches" value={formatCompactNumber(activity.summaryStats.filesChanged)} detail={`${formatNumber(activity.modules.length)} modules`} />
-            <Metric label="History" value={formatShortDate(activity.summaryStats.firstCommitAt)} detail={`through ${formatShortDate(activity.summaryStats.latestCommitAt)}`} />
-          </div>
-
+        <>
+          <ProjectActivityExplorer projectId={project.project.id} activity={activity} onScopeActiveChange={setScopeActive} />
+          {!scopeActive ? <div className="mt-10 space-y-10">
           {!activity.hotspots ? (
             <div className="rounded-md border border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-3 py-2 text-xs text-[var(--ec-muted)]">
               Refresh this saved report to calculate hotspots, ownership risk, momentum, file age, and release cadence.
             </div>
           ) : null}
 
-          <ProjectActivityMomentumGrowth activity={activity} />
-
-          <ProjectActivityRiskSections activity={activity} />
-
           <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(18rem,1fr)]">
             <ContributorTable activity={activity} />
             <CommitRhythm activity={activity} />
           </div>
 
+          <ProjectActivityMomentumGrowth activity={activity} />
+
+          <ProjectActivityRiskSections activity={activity} />
+
           <ProjectActivityRepositoryHealth activity={activity} />
 
           <RecentHistory activity={activity} />
-        </div>
+          </div> : null}
+        </>
       ) : (
         <div className="mt-4 flex min-h-52 flex-col items-center justify-center rounded-lg border border-dashed border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-5 text-center">
           {project.project.kind === "git" ? <UsersRound className="size-6 text-[var(--ec-faint)]" /> : <CalendarDays className="size-6 text-[var(--ec-faint)]" />}

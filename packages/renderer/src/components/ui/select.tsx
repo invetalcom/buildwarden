@@ -30,6 +30,8 @@ export type SelectProps = {
   menuClassName?: string;
   optionClassName?: string;
   maxMenuHeightPx?: number;
+  searchable?: boolean;
+  searchPlaceholder?: string;
   align?: AnchorDropdownAlign;
   placement?: AnchorDropdownPlacement;
   onKeyDown?: (event: KeyboardEvent<HTMLButtonElement>) => void;
@@ -49,6 +51,8 @@ export const Select = ({
   menuClassName,
   optionClassName,
   maxMenuHeightPx,
+  searchable = false,
+  searchPlaceholder = "Search options…",
   align = "start",
   placement = "auto",
   onKeyDown,
@@ -56,12 +60,17 @@ export const Select = ({
   const generatedId = useId();
   const listboxId = `${id ?? generatedId}-listbox`;
   const [open, setOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [menuWidth, setMenuWidth] = useState(192);
   const anchorRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const selected = options.find((option) => option.value === value);
   const selectedLabel = selected?.label ?? placeholder;
   const isDisabled = disabled || options.length === 0;
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const visibleOptions = searchable && normalizedSearchQuery
+    ? options.filter((option) => `${option.label} ${option.description ?? ""}`.toLowerCase().includes(normalizedSearchQuery))
+    : options;
 
   const openMenu = () => {
     if (isDisabled) {
@@ -69,6 +78,7 @@ export const Select = ({
     }
     const width = anchorRef.current?.getBoundingClientRect().width ?? 192;
     setMenuWidth(Math.max(192, width));
+    setSearchQuery("");
     setOpen(true);
   };
 
@@ -143,11 +153,24 @@ export const Select = ({
           menuClassName,
         )}
       >
+        {searchable ? (
+          <div className="border-b border-[var(--ec-border)] p-1.5">
+            <input
+              type="search"
+              value={searchQuery}
+              placeholder={searchPlaceholder}
+              className="h-8 w-full rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-2.5 text-xs text-[var(--ec-text)] outline-none placeholder:text-[var(--ec-faint)] focus:border-[var(--ec-accent-ring)]"
+              autoFocus
+              onChange={(event) => setSearchQuery(event.target.value)}
+              onKeyDown={(event) => event.stopPropagation()}
+            />
+          </div>
+        ) : null}
         <div id={listboxId} role="listbox" className="app-scrollbar app-dropdown-scrollbar overflow-y-auto p-1" style={{ maxHeight: "inherit" }}>
-          {options.length === 0 ? (
-            <div className="px-3 py-2 text-sm text-[var(--ec-muted)]">{emptyMessage}</div>
+          {visibleOptions.length === 0 ? (
+            <div className="px-3 py-2 text-sm text-[var(--ec-muted)]">{normalizedSearchQuery ? "No matching options" : emptyMessage}</div>
           ) : (
-            options.map((option) => {
+            visibleOptions.map((option) => {
               const optionSelected = option.value === value;
               return (
                 <button

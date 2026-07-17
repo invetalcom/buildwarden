@@ -1318,6 +1318,72 @@ export interface ProjectActivityInsightData {
   };
 }
 
+export type ProjectActivityGroupBy = "day" | "week" | "month" | "contributor" | "module";
+
+export interface ProjectActivityQueryInput {
+  projectId: string;
+  contributorKey?: string;
+  modulePath?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  weekday?: number;
+  groupBy: ProjectActivityGroupBy;
+}
+
+export interface ProjectActivityQueryResult {
+  appliedFilters: Omit<ProjectActivityQueryInput, "projectId" | "groupBy">;
+  groupBy: ProjectActivityGroupBy;
+  summary: {
+    commits: number;
+    contributors: number;
+    linesAdded: number;
+    linesDeleted: number;
+    linesChanged: number;
+    netLines: number;
+    filesChanged: number;
+    filesCreated: number;
+    filesDeleted: number;
+    activeDays: number;
+    medianCommitSize: number;
+    megaCommits: number;
+    firstCommitAt: string | null;
+    latestCommitAt: string | null;
+  };
+  groups: Array<{
+    key: string;
+    label: string;
+    commits: number;
+    contributors: number;
+    linesChanged: number;
+    filesChanged: number;
+    drilldown: Partial<Pick<ProjectActivityQueryInput, "contributorKey" | "modulePath" | "dateFrom" | "dateTo">>;
+  }>;
+  totalGroups: number;
+  groupResultLimit: number;
+  contributors: Array<{
+    key: string;
+    name: string;
+    email: string;
+    commits: number;
+    linesChanged: number;
+    filesChanged: number;
+  }>;
+  modules: Array<{
+    path: string;
+    commits: number;
+    contributors: number;
+    linesChanged: number;
+    filesChanged: number;
+  }>;
+  weekdays: Array<{
+    weekday: number;
+    label: string;
+    commits: number;
+  }>;
+  commits: ProjectActivityCommitSummary[];
+  commitResultLimit: number;
+}
+
 export interface InsightToneSection {
   label: string;
   score: number;
@@ -3086,6 +3152,7 @@ export interface DesktopApi {
   onProjectLoopChanged(listener: (payload: ProjectLoopChangedPayload) => void): () => void;
   generateProjectTaskRunPrompt(input: { projectId: string; title: string; notes: string; modelId: string }): Promise<string>;
   generateProjectInsight(input: GenerateProjectInsightInput): Promise<ProjectInsightRecord>;
+  queryProjectActivity(input: ProjectActivityQueryInput): Promise<ProjectActivityQueryResult>;
   createRun(input: RunInput): Promise<RunRecord>;
   continueRun(input: ContinueRunInput): Promise<RunRecord>;
   createRunPullRequest(runId: string, targetBranch: string, title: string, sourceBranchName?: string, description?: string): Promise<string>;
@@ -3421,6 +3488,7 @@ export type RemoteOperationMap = {
   getNetworkProxySettings: DesktopApi["getNetworkProxySettings"];
   getProjectBranches: DesktopApi["getProjectBranches"];
   getProjectCurrentBranch: DesktopApi["getProjectCurrentBranch"];
+  queryProjectActivity: DesktopApi["queryProjectActivity"];
   checkProjectFolderGitStatus: DesktopApi["checkProjectFolderGitStatus"];
   getRunDetail: DesktopApi["getRunDetail"];
   getRunWorktreeDiff: DesktopApi["getRunWorktreeDiff"];
@@ -3684,6 +3752,7 @@ export const IPC_CHANNELS = {
   projectLoopChanged: "buildwarden:project-loop-changed",
   generateProjectTaskRunPrompt: "buildwarden:generate-project-task-run-prompt",
   generateProjectInsight: "buildwarden:generate-project-insight",
+  queryProjectActivity: "buildwarden:query-project-activity",
   addProject: "buildwarden:add-project",
   addProviderAccount: "buildwarden:add-provider-account",
   listComposerCommands: "buildwarden:list-composer-commands",

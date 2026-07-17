@@ -1,4 +1,10 @@
-import type { ProjectActivityInsightData, ProjectActivityPeriodStats } from "@buildwarden/shared";
+import type {
+  ProjectActivityGroupBy,
+  ProjectActivityInsightData,
+  ProjectActivityPeriodStats,
+  ProjectActivityQueryInput,
+  ProjectActivityQueryResult,
+} from "@buildwarden/shared";
 
 export interface ProjectActivityCommitFile {
   path: string;
@@ -698,5 +704,239 @@ export const buildProjectActivityInsight = (
     },
     fileAge: buildFileAge(files, modules, options.currentFiles, now),
     releaseCadence: buildReleaseCadence(options.releases ?? [], options.totalReleaseCount ?? options.releases?.length ?? 0),
+  };
+};
+
+type ProjectActivityQueryGroupAccumulator = {
+  key: string;
+  label: string;
+  commitShas: Set<string>;
+  contributors: Set<string>;
+  linesChanged: number;
+  filesChanged: number;
+  drilldown: ProjectActivityQueryResult["groups"][number]["drilldown"];
+};
+
+const addDaysToDateKey = (dateKey: string, days: number): string => {
+  const date = new Date(`${dateKey}T12:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+};
+
+const monthEndDateKey = (monthKey: string): string => {
+  const [year = 0, month = 0] = monthKey.split("-").map((value) => Number.parseInt(value, 10));
+  return new Date(Date.UTC(year, month, 0, 12)).toISOString().slice(0, 10);
+};
+
+const filterProjectActivityCommits = (
+  commits: ProjectActivityCommit[],
+  input: ProjectActivityQueryInput,
+): ProjectActivityCommit[] => {
+  const contributorKey = input.contributorKey?.trim().toLowerCase();
+  const modulePath = input.modulePath?.trim();
+  return commits.flatMap((commit) => {
+    const dateKey = dateKeyFromIso(commit.date);
+    if (contributorKey && contributorKeyForCommit(commit) !== contributorKey) return [];
+    if (input.dateFrom && dateKey < input.dateFrom) return [];
+    if (input.dateTo && dateKey > input.dateTo) return [];
+    if (input.weekday !== undefined && weekdayFromDateKey(dateKey) !== input.weekday) return [];
+    const files = modulePath ? commit.files.filter((file) => modulePathForFile(file.path) === modulePath) : commit.files;
+    if (modulePath && files.length === 0) return [];
+    return [{ ...commit, files }];
+  });
+};
+
+const groupDateDrilldown = (groupBy: ProjectActivityGroupBy, key: string): ProjectActivityQueryResult["groups"][number]["drilldown"] => {
+  if (groupBy === "day") return { dateFrom: key, dateTo: key };
+  if (groupBy === "week") return { dateFrom: key, dateTo: addDaysToDateKey(key, 6) };
+  if (groupBy === "month") return { dateFrom: `${key}-01`, dateTo: monthEndDateKey(key) };
+  return {};
+};
+
+const groupKeyForCommit = (commit: ProjectActivityCommit, groupBy: Exclude<ProjectActivityGroupBy, "module">): { key: string; label: string } => {
+  if (groupBy === "contributor") {
+    return { key: contributorKeyForCommit(commit), label: commit.author || commit.email || "Unknown author" };
+  }
+  const dateKey = dateKeyFromIso(commit.date);
+  if (groupBy === "day") return { key: dateKey, label: dateKey };
+  if (groupBy === "week") {
+    const key = weekKeyFromDateKey(dateKey);
+    return { key, label: `Week of ${key}` };
+  }
+  const key = monthKeyFromIso(commit.date);
+  return { key, label: key };
+};
+
+const addQueryGroup = (
+  groups: Map<string, ProjectActivityQueryGroupAccumulator>,
+  input: ProjectActivityQueryInput,
+  commit: ProjectActivityCommit,
+  key: string,
+  label: string,
+  files: ProjectActivityCommitFile[],
+): void => {
+  const existing = groups.get(key) ?? {
+    key,
+    label,
+    commitShas: new Set<string>(),
+    contributors: new Set<string>(),
+    linesChanged: 0,
+    filesChanged: 0,
+    drilldown: input.groupBy === "contributor"
+      ? { contributorKey: key }
+      : input.groupBy === "module"
+        ? { modulePath: key }
+        : groupDateDrilldown(input.groupBy, key),
+  };
+  existing.commitShas.add(commit.sha);
+  existing.contributors.add(contributorKeyForCommit(commit));
+  existing.linesChanged += files.reduce((sum, file) => sum + file.linesAdded + file.linesDeleted, 0);
+  existing.filesChanged += files.length;
+  groups.set(key, existing);
+};
+
+const buildQueryGroups = (
+  commits: ProjectActivityCommit[],
+  input: ProjectActivityQueryInput,
+): Pick<ProjectActivityQueryResult, "groups" | "totalGroups" | "groupResultLimit"> => {
+  const groups = new Map<string, ProjectActivityQueryGroupAccumulator>();
+  for (const commit of commits) {
+    if (input.groupBy === "module") {
+      const filesByModule = new Map<string, ProjectActivityCommitFile[]>();
+      for (const file of commit.files) {
+        const modulePath = modulePathForFile(file.path);
+        filesByModule.set(modulePath, [...(filesByModule.get(modulePath) ?? []), file]);
+      }
+      for (const [modulePath, files] of filesByModule) addQueryGroup(groups, input, commit, modulePath, modulePath, files);
+      continue;
+    }
+    const { key, label } = groupKeyForCommit(commit, input.groupBy);
+    if (key) addQueryGroup(groups, input, commit, key, label, commit.files);
+  }
+  const chronological = input.groupBy === "day" || input.groupBy === "week" || input.groupBy === "month";
+  const allGroups = [...groups.values()]
+    .map((group) => ({
+      key: group.key,
+      label: group.label,
+      commits: group.commitShas.size,
+      contributors: group.contributors.size,
+      linesChanged: group.linesChanged,
+      filesChanged: group.filesChanged,
+      drilldown: group.drilldown,
+    }))
+    .sort((left, right) => chronological
+      ? left.key.localeCompare(right.key)
+      : right.commits - left.commits || right.linesChanged - left.linesChanged);
+  const groupResultLimit = 500;
+  return {
+    groups: chronological ? allGroups.slice(-groupResultLimit) : allGroups.slice(0, groupResultLimit),
+    totalGroups: allGroups.length,
+    groupResultLimit,
+  };
+};
+
+const buildQueryContributors = (commits: ProjectActivityCommit[]): ProjectActivityQueryResult["contributors"] => {
+  const contributors = new Map<string, ProjectActivityQueryResult["contributors"][number]>();
+  for (const commit of commits) {
+    const key = contributorKeyForCommit(commit);
+    const existing = contributors.get(key) ?? {
+      key,
+      name: commit.author || commit.email || "Unknown author",
+      email: commit.email,
+      commits: 0,
+      linesChanged: 0,
+      filesChanged: 0,
+    };
+    existing.commits += 1;
+    existing.linesChanged += commitLinesChanged(commit);
+    existing.filesChanged += commit.files.length;
+    contributors.set(key, existing);
+  }
+  return [...contributors.values()]
+    .sort((left, right) => right.commits - left.commits || right.linesChanged - left.linesChanged)
+    .slice(0, 100);
+};
+
+const buildQueryModules = (commits: ProjectActivityCommit[]): ProjectActivityQueryResult["modules"] => {
+  const modules = new Map<string, { path: string; commitShas: Set<string>; contributorKeys: Set<string>; linesChanged: number; filesChanged: number }>();
+  for (const commit of commits) {
+    for (const file of commit.files) {
+      const path = modulePathForFile(file.path);
+      const existing = modules.get(path) ?? { path, commitShas: new Set<string>(), contributorKeys: new Set<string>(), linesChanged: 0, filesChanged: 0 };
+      existing.commitShas.add(commit.sha);
+      existing.contributorKeys.add(contributorKeyForCommit(commit));
+      existing.linesChanged += file.linesAdded + file.linesDeleted;
+      existing.filesChanged += 1;
+      modules.set(path, existing);
+    }
+  }
+  return [...modules.values()]
+    .map((module) => ({
+      path: module.path,
+      commits: module.commitShas.size,
+      contributors: module.contributorKeys.size,
+      linesChanged: module.linesChanged,
+      filesChanged: module.filesChanged,
+    }))
+    .sort((left, right) => right.commits - left.commits || right.linesChanged - left.linesChanged)
+    .slice(0, 100);
+};
+
+const buildQuerySummary = (commits: ProjectActivityCommit[]): ProjectActivityQueryResult["summary"] => {
+  const linesAdded = commits.reduce((sum, commit) => sum + commit.files.reduce((fileSum, file) => fileSum + file.linesAdded, 0), 0);
+  const linesDeleted = commits.reduce((sum, commit) => sum + commit.files.reduce((fileSum, file) => fileSum + file.linesDeleted, 0), 0);
+  const dates = commits.map((commit) => commit.date).filter(Boolean).sort((left, right) => timestampFromIso(left) - timestampFromIso(right));
+  const sizes = commits.map(commitLinesChanged);
+  return {
+    commits: commits.length,
+    contributors: new Set(commits.map(contributorKeyForCommit)).size,
+    linesAdded,
+    linesDeleted,
+    linesChanged: linesAdded + linesDeleted,
+    netLines: linesAdded - linesDeleted,
+    filesChanged: commits.reduce((sum, commit) => sum + commit.files.length, 0),
+    filesCreated: commits.reduce((sum, commit) => sum + commit.files.filter((file) => file.changeType === "added").length, 0),
+    filesDeleted: commits.reduce((sum, commit) => sum + commit.files.filter((file) => file.changeType === "deleted").length, 0),
+    activeDays: new Set(commits.map((commit) => dateKeyFromIso(commit.date)).filter(Boolean)).size,
+    medianCommitSize: median(sizes),
+    megaCommits: sizes.filter((size) => size >= MEGA_COMMIT_THRESHOLD).length,
+    firstCommitAt: dates[0] ?? null,
+    latestCommitAt: dates.at(-1) ?? null,
+  };
+};
+
+export const queryProjectActivity = (
+  commits: ProjectActivityCommit[],
+  input: ProjectActivityQueryInput,
+): ProjectActivityQueryResult => {
+  const filteredCommits = filterProjectActivityCommits(commits, input);
+  const weekdayCounts = Array.from({ length: 7 }, () => 0);
+  for (const commit of filteredCommits) {
+    const weekday = weekdayFromDateKey(dateKeyFromIso(commit.date));
+    if (weekday >= 0) weekdayCounts[weekday] = (weekdayCounts[weekday] ?? 0) + 1;
+  }
+  return {
+    appliedFilters: {
+      ...(input.contributorKey ? { contributorKey: input.contributorKey } : {}),
+      ...(input.modulePath ? { modulePath: input.modulePath } : {}),
+      ...(input.dateFrom ? { dateFrom: input.dateFrom } : {}),
+      ...(input.dateTo ? { dateTo: input.dateTo } : {}),
+      ...(input.weekday !== undefined ? { weekday: input.weekday } : {}),
+    },
+    groupBy: input.groupBy,
+    summary: buildQuerySummary(filteredCommits),
+    ...buildQueryGroups(filteredCommits, input),
+    contributors: buildQueryContributors(filteredCommits),
+    modules: buildQueryModules(filteredCommits),
+    weekdays: [1, 2, 3, 4, 5, 6, 0].map((weekday) => ({
+      weekday,
+      label: WEEKDAY_LABELS[weekday] ?? "",
+      commits: weekdayCounts[weekday] ?? 0,
+    })),
+    commits: [...filteredCommits]
+      .sort((left, right) => timestampFromIso(right.date) - timestampFromIso(left.date))
+      .slice(0, 100)
+      .map(commitSummary),
+    commitResultLimit: 100,
   };
 };

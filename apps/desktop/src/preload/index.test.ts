@@ -75,5 +75,9 @@ describe("preload DesktopApi bridge", () => {
 
     await api.setAppSetting("theme", "dark");
     expect(electronMocks.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.setAppSetting, "theme", "dark");
+
+    const activityQuery = { projectId: "project-1", groupBy: "module" as const };
+    await api.queryProjectActivity(activityQuery);
+    expect(electronMocks.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.queryProjectActivity, activityQuery);
   });
 });

@@ -1,7 +1,8 @@
-import type { ProjectActivityInsightData, ProjectSnapshot } from "@buildwarden/shared";
+import type { ProjectActivityInsightData, ProjectActivityQueryResult, ProjectSnapshot } from "@buildwarden/shared";
 import { renderWithBuildWardenClient } from "../../lib/buildwarden-client-test-utils";
 import { describe, expect, it, vi } from "vitest";
 import { ProjectActivityTab } from "./ProjectActivityTab";
+import { ProjectActivityQueryResults } from "./ProjectActivityExplorer";
 
 const activity: ProjectActivityInsightData = {
   summaryStats: {
@@ -154,6 +155,40 @@ const project = {
   labThreads: [],
 } as unknown as ProjectSnapshot;
 
+const queryResult: ProjectActivityQueryResult = {
+  appliedFilters: { modulePath: "packages/renderer" },
+  groupBy: "contributor",
+  summary: {
+    commits: 12,
+    contributors: 2,
+    linesAdded: 400,
+    linesDeleted: 100,
+    linesChanged: 500,
+    netLines: 300,
+    filesChanged: 30,
+    filesCreated: 4,
+    filesDeleted: 1,
+    activeDays: 8,
+    medianCommitSize: 32,
+    megaCommits: 1,
+    firstCommitAt: "2026-01-01T10:00:00.000Z",
+    latestCommitAt: "2026-02-12T10:00:00.000Z",
+  },
+  groups: [{ key: "alice@example.com", label: "Alice Example", commits: 8, contributors: 1, linesChanged: 340, filesChanged: 20, drilldown: { contributorKey: "alice@example.com" } }],
+  totalGroups: 1,
+  groupResultLimit: 500,
+  contributors: [{ key: "alice@example.com", name: "Alice Example", email: "alice@example.com", commits: 8, linesChanged: 340, filesChanged: 20 }],
+  modules: [{ path: "packages/renderer", commits: 12, contributors: 2, linesChanged: 500, filesChanged: 30 }],
+  weekdays: [
+    { weekday: 1, label: "Mon", commits: 2 }, { weekday: 2, label: "Tue", commits: 2 },
+    { weekday: 3, label: "Wed", commits: 3 }, { weekday: 4, label: "Thu", commits: 2 },
+    { weekday: 5, label: "Fri", commits: 3 }, { weekday: 6, label: "Sat", commits: 0 },
+    { weekday: 0, label: "Sun", commits: 0 },
+  ],
+  commits: [{ sha: "abcdef123", title: "Scoped commit", author: "Alice Example", date: "2026-02-12T10:00:00.000Z", filesChanged: 3, linesChanged: 120 }],
+  commitResultLimit: 100,
+};
+
 describe("ProjectActivityTab", () => {
   it("renders activity, risk, growth, ownership, file-age, and release sections", () => {
     const markup = renderWithBuildWardenClient(
@@ -161,6 +196,9 @@ describe("ProjectActivityTab", () => {
     );
 
     expect(markup).toContain("Top contributors");
+    expect(markup).toContain("Activity scope");
+    expect(markup).toContain("All contributors");
+    expect(markup).toContain("Group: month");
     expect(markup).toContain("Alice Example");
     expect(markup).toContain("Commit rhythm");
     expect(markup).toContain("Momentum");
@@ -172,7 +210,32 @@ describe("ProjectActivityTab", () => {
     expect(markup).toContain("Release cadence");
     expect(markup).toContain("packages/renderer");
     expect(markup).toContain("Add activity insights");
-    expect(markup).toContain("Refresh");
+    expect(markup).toContain('aria-label="Refresh Activity"');
+    expect(markup).not.toContain(">Activity</h3>");
+    expect(markup).not.toContain("All reachable refs");
+    expect(markup.indexOf(">Commits</p>")).toBeLessThan(markup.indexOf("Activity scope"));
+    expect(markup.indexOf("Top contributors")).toBeLessThan(markup.indexOf("Momentum"));
+    expect(markup.indexOf("Commit rhythm")).toBeLessThan(markup.indexOf("Code growth"));
+  });
+
+  it("renders scoped metrics, grouped drill-downs, rankings, and commits", () => {
+    const markup = renderWithBuildWardenClient(
+      <ProjectActivityQueryResults
+        result={queryResult}
+        scopeActive
+        onDrilldown={vi.fn()}
+        onWeekday={vi.fn()}
+        onContributor={vi.fn()}
+        onModule={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain("Breakdown");
+    expect(markup).toContain("Grouped by contributor");
+    expect(markup).toContain("Contributors in scope");
+    expect(markup).toContain("Modules in scope");
+    expect(markup).toContain("Commits in scope");
+    expect(markup).toContain("Scoped commit");
   });
 
   it("prompts users to refresh a legacy saved Activity report", () => {

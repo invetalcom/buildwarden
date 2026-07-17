@@ -20,7 +20,12 @@ import { getHarnessTypeForProvider } from "./harness-adapters";
 import { createProjectPrReviewProvider } from "./pr-review/pr-review-provider-factory";
 import { resolveProjectPrReviewRemoteContext } from "./pr-review/pr-review-remote-context";
 import type { ProjectPrReviewProvider, ProjectPrReviewRemoteContext } from "./pr-review/pr-review-types";
-import { buildProjectActivityInsight, parseProjectActivityLog } from "./project-activity";
+import {
+  buildProjectActivityInsight,
+  parseProjectActivityLog,
+  queryProjectActivity as queryProjectActivityCommits,
+  type ProjectActivityCommit,
+} from "./project-activity";
 import { ProjectLoopRunner } from "./loop/loop-runner";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import {
@@ -121,6 +126,8 @@ import {
   type ArchitectureGraphInsightData,
   type DependencyGravityInsightData,
   type ProjectActivityInsightData,
+  type ProjectActivityQueryInput,
+  type ProjectActivityQueryResult,
   type NarrativeBranchingInsightData,
   type ProjectInsightNode,
   type ProjectInsightEdge,
@@ -834,6 +841,7 @@ export class AppController
   private loopRunnerInstance: ProjectLoopRunner | null = null;
   private readonly composerCommandCache = new Map<string, { expiresAt: number; commands: ComposerCommandDescriptor[] }>();
   private readonly composerCommandInflight = new Map<string, Promise<ComposerCommandDescriptor[]>>();
+  private readonly projectActivityCommitCache = new Map<string, { expiresAt: number; commits: ProjectActivityCommit[] }>();
   constructor(
     private readonly db: BuildWardenDatabase,
     private readonly secrets: SecretStore,
@@ -3507,6 +3515,37 @@ export class AppController
     }
   }
 
+  async queryProjectActivity(input: ProjectActivityQueryInput): Promise<ProjectActivityQueryResult> {
+    const project = this.db.getProject(input.projectId);
+    const groupByValues = new Set(["day", "week", "month", "contributor", "module"]);
+    if (!groupByValues.has(input.groupBy)) throw new Error("Unsupported Activity grouping.");
+    if (input.contributorKey !== undefined && (typeof input.contributorKey !== "string" || input.contributorKey.length > 320)) {
+      throw new Error("Invalid Activity contributor filter.");
+    }
+    if (input.modulePath !== undefined && (typeof input.modulePath !== "string" || input.modulePath.length > 1_024)) {
+      throw new Error("Invalid Activity module filter.");
+    }
+    for (const date of [input.dateFrom, input.dateTo]) {
+      if (date !== undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(`${date}T12:00:00.000Z`)))) {
+        throw new Error("Invalid Activity date filter.");
+      }
+    }
+    if (input.dateFrom && input.dateTo && input.dateFrom > input.dateTo) throw new Error("Activity start date must not be after the end date.");
+    if (input.weekday !== undefined && (!Number.isInteger(input.weekday) || input.weekday < 0 || input.weekday > 6)) {
+      throw new Error("Invalid Activity weekday filter.");
+    }
+
+    const cached = this.projectActivityCommitCache.get(project.repoPath);
+    let commits: ProjectActivityCommit[];
+    if (cached && cached.expiresAt > Date.now()) {
+      commits = cached.commits;
+    } else {
+      commits = parseProjectActivityLog(await readProjectActivityLog(project.repoPath));
+      this.projectActivityCommitCache.set(project.repoPath, { expiresAt: Date.now() + 60_000, commits });
+    }
+    return queryProjectActivityCommits(commits, input);
+  }
+
   async generateProjectInsight(input: GenerateProjectInsightInput): Promise<ProjectInsightRecord> {
     const project = this.db.getProject(input.projectId);
     const kind = input.kind;
@@ -3583,6 +3622,7 @@ export class AppController
           readProjectReleaseHistory(project.repoPath),
         ]);
         const commits = parseProjectActivityLog(activityLog);
+        this.projectActivityCommitCache.set(project.repoPath, { expiresAt: Date.now() + 60_000, commits });
         const insight: ProjectActivityInsightData = buildProjectActivityInsight(commits, {
           currentFiles: trackedFiles,
           releases: releaseHistory.releases,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildProjectActivityInsight, parseProjectActivityLog } from "./project-activity";
+import { buildProjectActivityInsight, parseProjectActivityLog, queryProjectActivity } from "./project-activity";
 
 const sampleLog = [
   "__BW_ACTIVITY_COMMIT__c3\tAlice Example\talice@example.com\t2026-07-17T09:00:00+02:00\tc2 p2\tShip activity insights",
@@ -138,5 +138,39 @@ describe("project activity analysis", () => {
     expect(activity.contributors).toEqual([]);
     expect(activity.weekdays).toHaveLength(7);
     expect(activity.modules).toEqual([]);
+  });
+
+  it("filters by contributor, module, exact date, and weekday before grouping", () => {
+    const commits = parseProjectActivityLog(sampleLog);
+    const aliceByModule = queryProjectActivity(commits, {
+      projectId: "project-1",
+      contributorKey: "alice@example.com",
+      groupBy: "module",
+    });
+    expect(aliceByModule.summary).toMatchObject({ commits: 2, contributors: 1, linesChanged: 41, filesChanged: 4 });
+    expect(aliceByModule.groups.find((group) => group.key === "apps/desktop")).toMatchObject({
+      commits: 2,
+      linesChanged: 15,
+      drilldown: { modulePath: "apps/desktop" },
+    });
+
+    const rendererByContributor = queryProjectActivity(commits, {
+      projectId: "project-1",
+      modulePath: "packages/renderer",
+      groupBy: "contributor",
+    });
+    expect(rendererByContributor.summary).toMatchObject({ commits: 2, contributors: 2, linesChanged: 35, filesChanged: 3 });
+    expect(rendererByContributor.groups.map((group) => group.key)).toEqual(["alice@example.com", "bob@example.com"]);
+
+    const exactThursday = queryProjectActivity(commits, {
+      projectId: "project-1",
+      dateFrom: "2026-07-16",
+      dateTo: "2026-07-16",
+      weekday: 4,
+      groupBy: "day",
+    });
+    expect(exactThursday.summary.commits).toBe(1);
+    expect(exactThursday.commits[0]?.sha).toBe("c2");
+    expect(exactThursday.groups[0]?.drilldown).toEqual({ dateFrom: "2026-07-16", dateTo: "2026-07-16" });
   });
 });
