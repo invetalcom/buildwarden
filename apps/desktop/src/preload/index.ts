@@ -85,6 +85,7 @@ const api: DesktopApi = {
   },
   generateProjectTaskRunPrompt: (input) => invoke(IPC_CHANNELS.generateProjectTaskRunPrompt, input),
   generateProjectInsight: (input) => invoke(IPC_CHANNELS.generateProjectInsight, input),
+  queryProjectActivity: (input) => invoke(IPC_CHANNELS.queryProjectActivity, input),
   addProject: (input: ProjectInput) => invoke(IPC_CHANNELS.addProject, input),
   addProviderAccount: (input: ProviderAccountInput) => invoke(IPC_CHANNELS.addProviderAccount, input),
   listComposerCommands: (input) => invoke(IPC_CHANNELS.listComposerCommands, input),

@@ -63,6 +63,7 @@ const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
   "getNetworkProxySettings",
   "getProjectBranches",
   "getProjectCurrentBranch",
+  "queryProjectActivity",
   "checkProjectFolderGitStatus",
   "getRunDetail",
   "getRunWorktreeDiff",

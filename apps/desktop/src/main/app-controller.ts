@@ -20,9 +20,22 @@ import { getHarnessTypeForProvider } from "./harness-adapters";
 import { createProjectPrReviewProvider } from "./pr-review/pr-review-provider-factory";
 import { resolveProjectPrReviewRemoteContext } from "./pr-review/pr-review-remote-context";
 import type { ProjectPrReviewProvider, ProjectPrReviewRemoteContext } from "./pr-review/pr-review-types";
+import {
+  buildProjectActivityInsight,
+  parseProjectActivityLog,
+  queryProjectActivity as queryProjectActivityCommits,
+  type ProjectActivityCommit,
+} from "./project-activity";
 import { ProjectLoopRunner } from "./loop/loop-runner";
 import { BuildWardenDatabase } from "@buildwarden/db";
-import { computePrMrDiffViaFetch, GitService, readRecentCommitLog } from "@buildwarden/git-service";
+import {
+  computePrMrDiffViaFetch,
+  GitService,
+  readProjectActivityLog,
+  readProjectReleaseHistory,
+  readRecentCommitLog,
+  readTrackedProjectFiles,
+} from "@buildwarden/git-service";
 import { AiSdkProviderAdapter, generateAskTextResultWithAiSdk, suggestCommitMessageWithAiSdk } from "@buildwarden/provider-ai-sdk";
 import {
   ClaudeCodeProviderAdapter,
@@ -112,6 +125,9 @@ import {
   type GenerateProjectInsightInput,
   type ArchitectureGraphInsightData,
   type DependencyGravityInsightData,
+  type ProjectActivityInsightData,
+  type ProjectActivityQueryInput,
+  type ProjectActivityQueryResult,
   type NarrativeBranchingInsightData,
   type ProjectInsightNode,
   type ProjectInsightEdge,
@@ -825,6 +841,12 @@ export class AppController
   private loopRunnerInstance: ProjectLoopRunner | null = null;
   private readonly composerCommandCache = new Map<string, { expiresAt: number; commands: ComposerCommandDescriptor[] }>();
   private readonly composerCommandInflight = new Map<string, Promise<ComposerCommandDescriptor[]>>();
+  private readonly projectActivityCache = new Map<string, {
+    expiresAt: number;
+    commits: ProjectActivityCommit[];
+    currentFiles: string[];
+    releaseHistory: Awaited<ReturnType<typeof readProjectReleaseHistory>>;
+  }>();
   constructor(
     private readonly db: BuildWardenDatabase,
     private readonly secrets: SecretStore,
@@ -3498,6 +3520,46 @@ export class AppController
     }
   }
 
+  async queryProjectActivity(input: ProjectActivityQueryInput): Promise<ProjectActivityQueryResult> {
+    const project = this.db.getProject(input.projectId);
+    const groupByValues = new Set(["day", "week", "month", "contributor", "module"]);
+    if (!groupByValues.has(input.groupBy)) throw new Error("Unsupported Activity grouping.");
+    if (input.contributorKey !== undefined && (typeof input.contributorKey !== "string" || input.contributorKey.length > 320)) {
+      throw new Error("Invalid Activity contributor filter.");
+    }
+    if (input.modulePath !== undefined && (typeof input.modulePath !== "string" || input.modulePath.length > 1_024)) {
+      throw new Error("Invalid Activity module filter.");
+    }
+    for (const date of [input.dateFrom, input.dateTo]) {
+      if (date !== undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(`${date}T12:00:00.000Z`)))) {
+        throw new Error("Invalid Activity date filter.");
+      }
+    }
+    if (input.dateFrom && input.dateTo && input.dateFrom > input.dateTo) throw new Error("Activity start date must not be after the end date.");
+    if (input.weekday !== undefined && (!Number.isInteger(input.weekday) || input.weekday < 0 || input.weekday > 6)) {
+      throw new Error("Invalid Activity weekday filter.");
+    }
+
+    const cached = this.projectActivityCache.get(project.repoPath);
+    let activityData: Omit<NonNullable<typeof cached>, "expiresAt">;
+    if (cached && cached.expiresAt > Date.now()) {
+      activityData = cached;
+    } else {
+      const [activityLog, currentFiles, releaseHistory] = await Promise.all([
+        readProjectActivityLog(project.repoPath),
+        readTrackedProjectFiles(project.repoPath),
+        readProjectReleaseHistory(project.repoPath),
+      ]);
+      activityData = { commits: parseProjectActivityLog(activityLog), currentFiles, releaseHistory };
+      this.projectActivityCache.set(project.repoPath, { expiresAt: Date.now() + 60_000, ...activityData });
+    }
+    return queryProjectActivityCommits(activityData.commits, input, {
+      currentFiles: activityData.currentFiles,
+      releases: activityData.releaseHistory.releases,
+      totalReleaseCount: activityData.releaseHistory.totalReleases,
+    });
+  }
+
   async generateProjectInsight(input: GenerateProjectInsightInput): Promise<ProjectInsightRecord> {
     const project = this.db.getProject(input.projectId);
     const kind = input.kind;
@@ -3562,6 +3624,43 @@ export class AppController
           kind,
           title: "Dependency gravity map",
           summary: `Scored ${String(insight.nodes.length)} dependency hotspots from ${String(insight.summaryStats.totalModules)} analyzed modules.`,
+          dataJson: JSON.stringify(insight),
+          modelId: null,
+        });
+      }
+
+      if (kind === "activity") {
+        const [activityLog, trackedFiles, releaseHistory] = await Promise.all([
+          readProjectActivityLog(project.repoPath),
+          readTrackedProjectFiles(project.repoPath),
+          readProjectReleaseHistory(project.repoPath),
+        ]);
+        const commits = parseProjectActivityLog(activityLog);
+        this.projectActivityCache.set(project.repoPath, {
+          expiresAt: Date.now() + 60_000,
+          commits,
+          currentFiles: trackedFiles,
+          releaseHistory,
+        });
+        const insight: ProjectActivityInsightData = buildProjectActivityInsight(commits, {
+          currentFiles: trackedFiles,
+          releases: releaseHistory.releases,
+          totalReleaseCount: releaseHistory.totalReleases,
+        });
+        logInfo("Project activity insight built.", {
+          projectId: project.id,
+          commitCount: insight.summaryStats.totalCommits,
+          contributorCount: insight.summaryStats.contributorCount,
+          moduleCount: insight.modules.length,
+          trackedFileCount: trackedFiles.length,
+          releaseCount: releaseHistory.totalReleases,
+          activityLogLength: activityLog.length,
+        });
+        return this.db.upsertProjectInsight({
+          projectId: project.id,
+          kind,
+          title: "Activity",
+          summary: `Analyzed ${String(insight.summaryStats.totalCommits)} commits by ${String(insight.summaryStats.contributorCount)} contributors across ${String(insight.modules.length)} modules.`,
           dataJson: JSON.stringify(insight),
           modelId: null,
         });

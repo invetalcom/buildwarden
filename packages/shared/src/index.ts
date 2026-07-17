@@ -1098,6 +1098,7 @@ export interface ProjectLoopChangedPayload {
 export type ProjectInsightKind =
   | "architecture-graph"
   | "dependency-gravity"
+  | "activity"
   | "repo-historian"
   | "codebase-mood"
   | "curiosity-mode"
@@ -1156,6 +1157,232 @@ export interface DependencyGravityInsightData {
     totalEdges: number;
     averageInbound: number;
   };
+}
+
+export interface ProjectActivityCommitSummary {
+  sha: string;
+  title: string;
+  author: string;
+  date: string;
+  filesChanged: number;
+  linesChanged: number;
+}
+
+export interface ProjectActivityHotspot {
+  path: string;
+  score: number;
+  commits: number;
+  linesChanged: number;
+  lastChangedAt: string;
+  contributorCount: number;
+}
+
+export interface ProjectActivityPeriodStats {
+  commits: number;
+  contributors: number;
+  linesChanged: number;
+}
+
+export interface ProjectActivityInsightData {
+  summaryStats: {
+    totalCommits: number;
+    contributorCount: number;
+    linesAdded: number;
+    linesDeleted: number;
+    filesChanged: number;
+    activeDays: number;
+    activeWeeks: number;
+    averageCommitsPerWeek: number;
+    mergeCommits: number;
+    busFactor50: number;
+    firstCommitAt: string | null;
+    latestCommitAt: string | null;
+    longestDailyStreak: number;
+  };
+  contributors: Array<{
+    name: string;
+    email: string;
+    commits: number;
+    commitShare: number;
+    linesAdded: number;
+    linesDeleted: number;
+    linesChanged: number;
+    filesChanged: number;
+    activeDays: number;
+    firstCommitAt: string;
+    latestCommitAt: string;
+  }>;
+  weekdays: Array<{
+    weekday: number;
+    label: string;
+    commits: number;
+    commitShare: number;
+  }>;
+  modules: Array<{
+    path: string;
+    commits: number;
+    commitShare: number;
+    fileTouches: number;
+    uniqueFiles: number;
+    linesAdded: number;
+    linesDeleted: number;
+    linesChanged: number;
+    contributorCount: number;
+  }>;
+  monthlyActivity: Array<{
+    month: string;
+    commits: number;
+    linesChanged: number;
+    contributorCount: number;
+    linesAdded?: number;
+    linesDeleted?: number;
+    netLines?: number;
+    cumulativeNetLines?: number;
+    filesCreated?: number;
+    filesDeleted?: number;
+  }>;
+  recentCommits: ProjectActivityCommitSummary[];
+  hotspots?: {
+    formula: string;
+    files: ProjectActivityHotspot[];
+    modules: ProjectActivityHotspot[];
+  };
+  moduleOwnership?: Array<{
+    path: string;
+    primaryOwnerName: string;
+    primaryOwnerEmail: string;
+    ownershipShare: number;
+    busFactor50: number;
+    contributorCount: number;
+    commits: number;
+    risk: "silo" | "concentrated" | "shared";
+  }>;
+  momentum?: Array<{
+    days: number;
+    current: ProjectActivityPeriodStats;
+    previous: ProjectActivityPeriodStats;
+    changePercent: {
+      commits: number | null;
+      contributors: number | null;
+      linesChanged: number | null;
+    };
+  }>;
+  commitSize?: {
+    medianLinesChanged: number;
+    p90LinesChanged: number;
+    megaCommitThreshold: number;
+    megaCommitCount: number;
+    megaCommitShare: number;
+    largestCommits: ProjectActivityCommitSummary[];
+  };
+  codeGrowth?: {
+    netLines: number;
+    filesCreated: number;
+    filesDeleted: number;
+  };
+  fileAge?: {
+    trackedFileCount: number;
+    medianAgeDays: number;
+    medianDaysSinceChange: number;
+    staleThresholdDays: number;
+    oldestUntouchedFiles: Array<{
+      path: string;
+      firstSeenAt: string;
+      lastChangedAt: string;
+      ageDays: number;
+      daysSinceChange: number;
+    }>;
+    staleModules: Array<{
+      path: string;
+      lastChangedAt: string;
+      daysSinceChange: number;
+      trackedFiles: number;
+      commits: number;
+    }>;
+  };
+  releaseCadence?: {
+    totalReleases: number;
+    averageDaysBetweenReleases: number;
+    medianDaysBetweenReleases: number;
+    averageCommitsPerRelease: number;
+    latestReleaseAt: string | null;
+    sizeTrend: "growing" | "shrinking" | "stable" | "insufficient-data";
+    releases: Array<{
+      name: string;
+      date: string;
+      daysSincePrevious: number | null;
+      commitsSincePrevious: number;
+      linesChanged: number | null;
+      filesChanged: number | null;
+    }>;
+  };
+}
+
+export type ProjectActivityGroupBy = "day" | "week" | "month" | "contributor" | "module";
+
+export interface ProjectActivityQueryInput {
+  projectId: string;
+  contributorKey?: string;
+  modulePath?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  weekday?: number;
+  groupBy: ProjectActivityGroupBy;
+}
+
+export interface ProjectActivityQueryResult {
+  appliedFilters: Omit<ProjectActivityQueryInput, "projectId" | "groupBy">;
+  groupBy: ProjectActivityGroupBy;
+  summary: {
+    commits: number;
+    contributors: number;
+    linesAdded: number;
+    linesDeleted: number;
+    linesChanged: number;
+    netLines: number;
+    filesChanged: number;
+    filesCreated: number;
+    filesDeleted: number;
+    activeDays: number;
+    medianCommitSize: number;
+    megaCommits: number;
+    firstCommitAt: string | null;
+    latestCommitAt: string | null;
+  };
+  groups: Array<{
+    key: string;
+    label: string;
+    commits: number;
+    contributors: number;
+    linesChanged: number;
+    filesChanged: number;
+    drilldown: Partial<Pick<ProjectActivityQueryInput, "contributorKey" | "modulePath" | "dateFrom" | "dateTo">>;
+  }>;
+  totalGroups: number;
+  groupResultLimit: number;
+  contributors: Array<{
+    key: string;
+    name: string;
+    email: string;
+    commits: number;
+    linesChanged: number;
+    filesChanged: number;
+  }>;
+  modules: Array<{
+    path: string;
+    commits: number;
+    contributors: number;
+    linesChanged: number;
+    filesChanged: number;
+  }>;
+  weekdays: Array<{
+    weekday: number;
+    label: string;
+    commits: number;
+  }>;
+  activity: ProjectActivityInsightData;
+  commits: ProjectActivityCommitSummary[];
+  commitResultLimit: number;
 }
 
 export interface InsightToneSection {
@@ -1221,6 +1448,7 @@ export interface NarrativeBranchingInsightData {
 export type ProjectInsightData =
   | ArchitectureGraphInsightData
   | DependencyGravityInsightData
+  | ProjectActivityInsightData
   | RepoHistorianInsightData
   | CodebaseMoodInsightData
   | CuriosityModeInsightData
@@ -2925,6 +3153,7 @@ export interface DesktopApi {
   onProjectLoopChanged(listener: (payload: ProjectLoopChangedPayload) => void): () => void;
   generateProjectTaskRunPrompt(input: { projectId: string; title: string; notes: string; modelId: string }): Promise<string>;
   generateProjectInsight(input: GenerateProjectInsightInput): Promise<ProjectInsightRecord>;
+  queryProjectActivity(input: ProjectActivityQueryInput): Promise<ProjectActivityQueryResult>;
   createRun(input: RunInput): Promise<RunRecord>;
   continueRun(input: ContinueRunInput): Promise<RunRecord>;
   createRunPullRequest(runId: string, targetBranch: string, title: string, sourceBranchName?: string, description?: string): Promise<string>;
@@ -3260,6 +3489,7 @@ export type RemoteOperationMap = {
   getNetworkProxySettings: DesktopApi["getNetworkProxySettings"];
   getProjectBranches: DesktopApi["getProjectBranches"];
   getProjectCurrentBranch: DesktopApi["getProjectCurrentBranch"];
+  queryProjectActivity: DesktopApi["queryProjectActivity"];
   checkProjectFolderGitStatus: DesktopApi["checkProjectFolderGitStatus"];
   getRunDetail: DesktopApi["getRunDetail"];
   getRunWorktreeDiff: DesktopApi["getRunWorktreeDiff"];
@@ -3523,6 +3753,7 @@ export const IPC_CHANNELS = {
   projectLoopChanged: "buildwarden:project-loop-changed",
   generateProjectTaskRunPrompt: "buildwarden:generate-project-task-run-prompt",
   generateProjectInsight: "buildwarden:generate-project-insight",
+  queryProjectActivity: "buildwarden:query-project-activity",
   addProject: "buildwarden:add-project",
   addProviderAccount: "buildwarden:add-provider-account",
   listComposerCommands: "buildwarden:list-composer-commands",

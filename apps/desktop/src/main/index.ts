@@ -30,6 +30,7 @@ import {
   type ModelInput,
   type NetworkProxySettingsInput,
   type ProjectInput,
+  type ProjectActivityQueryInput,
   type ProjectForgePrMonitorConfig,
   type ProjectForgeRequestNotificationPayload,
   type ProviderAccountInput,
@@ -537,9 +538,17 @@ const bootstrap = async (): Promise<void> => {
     if (args.length !== 1 || !hasRemoteStringFields(args[0], ["projectId", "kind"])) return false;
     const input = args[0] as Record<string, unknown>;
     const kinds = new Set([
-      "architecture-graph", "dependency-gravity", "repo-historian", "codebase-mood", "curiosity-mode", "narrative-branching",
+      "architecture-graph", "dependency-gravity", "activity", "repo-historian", "codebase-mood", "curiosity-mode", "narrative-branching",
     ]);
     return kinds.has(String(input.kind)) && (input.modelId === undefined || typeof input.modelId === "string");
+  });
+  const validateProjectActivityQuery = defineRemoteArgsValidator<"queryProjectActivity">((args) => {
+    if (args.length !== 1 || !isRemoteRecord(args[0])) return false;
+    const input = args[0];
+    const groupByValues = new Set(["day", "week", "month", "contributor", "module"]);
+    return typeof input.projectId === "string" && typeof input.groupBy === "string" && groupByValues.has(input.groupBy) &&
+      ["contributorKey", "modulePath", "dateFrom", "dateTo"].every((field) => input[field] === undefined || typeof input[field] === "string") &&
+      (input.weekday === undefined || (Number.isInteger(input.weekday) && Number(input.weekday) >= 0 && Number(input.weekday) <= 6));
   });
   const validateProjectLabRun = defineRemoteArgsValidator<"runProjectLab">((args) => {
     if (args.length !== 1 || !hasRemoteStringFields(args[0], ["projectId"])) return false;
@@ -729,6 +738,7 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("deleteProjectTask", (taskId) => controller.deleteProjectTask(taskId), validateSingleRemoteStringArg, "admin", true);
   remoteOperations.register("generateProjectTaskRunPrompt", (input) => controller.generateProjectTaskRunPrompt(input), validateProjectTaskPrompt, "admin", true);
   remoteOperations.register("generateProjectInsight", (input) => controller.generateProjectInsight(input), validateProjectInsight, "admin", true);
+  remoteOperations.register("queryProjectActivity", (input) => controller.queryProjectActivity(input), validateProjectActivityQuery);
   remoteOperations.register("runProjectLab", (input) => controller.runProjectLab(input), validateProjectLabRun, "admin", true);
   remoteOperations.register("deleteProjectLabThread", (threadId) => controller.deleteProjectLabThread(threadId), validateSingleRemoteStringArg, "admin", true);
   remoteOperations.register("createProjectLoop", (input) => controller.createProjectLoop(input), validateProjectLoopCreate, "admin", true);
@@ -1173,6 +1183,7 @@ const bootstrap = async (): Promise<void> => {
   );
   ipcMain.handle(IPC_CHANNELS.generateProjectTaskRunPrompt, (_, input) => controller.generateProjectTaskRunPrompt(input));
   ipcMain.handle(IPC_CHANNELS.generateProjectInsight, (_, input) => controller.generateProjectInsight(input));
+  ipcMain.handle(IPC_CHANNELS.queryProjectActivity, (_, input: ProjectActivityQueryInput) => controller.queryProjectActivity(input));
   ipcMain.handle(IPC_CHANNELS.createRun, (_, input: RunInput) => controller.createRun(input));
   ipcMain.handle(IPC_CHANNELS.continueRun, (_, input) => controller.continueRun(input));
   ipcMain.handle(

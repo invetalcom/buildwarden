@@ -74,6 +74,108 @@ export const readRecentCommitLog = async (repoPath: string, limit: number): Prom
   ]);
 };
 
+export const readProjectActivityLog = async (repoPath: string): Promise<string> =>
+  runGitRaw(simpleGit(repoPath), [
+    "log",
+    "--all",
+    "--date-order",
+    "--date=iso-strict",
+    "--pretty=format:%x00__BW_ACTIVITY_COMMIT__%H%x09%aN%x09%aE%x09%aI%x09%P%x09%s%x00",
+    "--raw",
+    "--numstat",
+    "--no-renames",
+    "--use-mailmap",
+    "-z",
+  ]);
+
+export const readTrackedProjectFiles = async (repoPath: string): Promise<string[]> => {
+  const output = await runGitRaw(simpleGit(repoPath), ["ls-files", "-z"]);
+  return output
+    .split("\0")
+    .filter((filePath) => filePath.length > 0)
+    .map((filePath) => filePath.replace(/\\/g, "/"));
+};
+
+export interface GitProjectReleaseStat {
+  name: string;
+  date: string;
+  commitsSincePrevious: number;
+  linesChanged: number;
+  filesChanged: number;
+}
+
+export interface GitProjectReleaseHistory {
+  totalReleases: number;
+  releases: GitProjectReleaseStat[];
+}
+
+type GitProjectTag = {
+  ref: string;
+  name: string;
+  date: string;
+};
+
+const parseProjectTags = (output: string): GitProjectTag[] =>
+  output
+    .split(/\r?\n/)
+    .map((line) => {
+      const [ref = "", name = "", date = ""] = line.split("\t");
+      return { ref: ref.trim(), name: name.trim(), date: date.trim() };
+    })
+    .filter((tag) => tag.ref.startsWith("refs/tags/") && Boolean(tag.name) && Number.isFinite(Date.parse(tag.date)))
+    .sort((left, right) => Date.parse(left.date) - Date.parse(right.date));
+
+const parseReleaseRangeStats = (output: string): Pick<GitProjectReleaseStat, "commitsSincePrevious" | "linesChanged" | "filesChanged"> => {
+  let commitsSincePrevious = 0;
+  let linesChanged = 0;
+  const changedFiles = new Set<string>();
+  for (const line of output.split(/\r?\n/)) {
+    if (line.startsWith("__BW_RELEASE_COMMIT__")) {
+      commitsSincePrevious += 1;
+      continue;
+    }
+    const [added = "", deleted = "", ...pathParts] = line.split("\t");
+    if (!pathParts.length || (!/^\d+$/.test(added) && added !== "-") || (!/^\d+$/.test(deleted) && deleted !== "-")) continue;
+    changedFiles.add(pathParts.join("\t"));
+    linesChanged += (added === "-" ? 0 : Number.parseInt(added, 10)) + (deleted === "-" ? 0 : Number.parseInt(deleted, 10));
+  }
+  return { commitsSincePrevious, linesChanged, filesChanged: changedFiles.size };
+};
+
+export const readProjectReleaseHistory = async (repoPath: string, limit = 12): Promise<GitProjectReleaseHistory> => {
+  const git = simpleGit(repoPath);
+  const tagOutput = await runGitRaw(git, [
+    "for-each-ref",
+    "--sort=creatordate",
+    "--format=%(refname)%09%(refname:short)%09%(creatordate:iso-strict)",
+    "refs/tags",
+  ]);
+  const tags = parseProjectTags(tagOutput);
+  const normalizedLimit = Math.max(1, Math.min(24, Math.floor(limit)));
+  const startIndex = Math.max(0, tags.length - normalizedLimit);
+  const releases: GitProjectReleaseStat[] = [];
+
+  for (let index = startIndex; index < tags.length; index += 1) {
+    const tag = tags[index]!;
+    const previousTag = index > 0 ? tags[index - 1] : null;
+    const range = previousTag ? `${previousTag.ref}..${tag.ref}` : tag.ref;
+    try {
+      const rangeOutput = await runGitRaw(git, [
+        "log",
+        "--pretty=format:__BW_RELEASE_COMMIT__",
+        "--numstat",
+        "--no-renames",
+        range,
+      ]);
+      releases.push({ name: tag.name, date: tag.date, ...parseReleaseRangeStats(rangeOutput) });
+    } catch {
+      // Tags can legally point to blobs or trees; keep the rest of the release history usable.
+    }
+  }
+
+  return { totalReleases: tags.length, releases };
+};
+
 const ensureGitLongPathSupport = async (git: SimpleGit): Promise<void> => {
   if (process.platform !== "win32") {
     return;

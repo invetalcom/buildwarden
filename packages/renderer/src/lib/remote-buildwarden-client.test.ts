@@ -67,6 +67,21 @@ describe("remote BuildWarden client", () => {
     }));
   });
 
+  it("allows read-only remote sessions to query filtered project activity", async () => {
+    const queryResult = { summary: { commits: 0 }, groups: [], contributors: [], modules: [], weekdays: [], commits: [] };
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as { requestId: string };
+      return rpcResponse(queryResult, request.requestId);
+    });
+    const client = createRemoteBuildWardenClient({ fetch: fetcher as typeof fetch });
+
+    await expect(client.queryProjectActivity({ projectId: "project-1", groupBy: "month" })).resolves.toMatchObject({ summary: { commits: 0 } });
+    expect(JSON.parse(String((fetcher.mock.calls[0]?.[1] as RequestInit | undefined)?.body))).toMatchObject({
+      method: "queryProjectActivity",
+      args: [{ projectId: "project-1", groupBy: "month" }],
+    });
+  });
+
   it("keeps navigation and UI preferences local without mutating the host", async () => {
     const fetcher = vi.fn(async () => rpcResponse(snapshot));
     const client = createRemoteBuildWardenClient({ fetch: fetcher as typeof fetch });

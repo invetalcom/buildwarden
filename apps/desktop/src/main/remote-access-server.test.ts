@@ -86,6 +86,7 @@ describe("remote operation registry", () => {
       | "getNetworkProxySettings"
       | "getProjectBranches"
       | "getProjectCurrentBranch"
+      | "queryProjectActivity"
       | "checkProjectFolderGitStatus"
       | "getRunDetail"
       | "getRunWorktreeDiff"
