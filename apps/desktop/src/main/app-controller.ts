@@ -23,7 +23,14 @@ import type { ProjectPrReviewProvider, ProjectPrReviewRemoteContext } from "./pr
 import { buildProjectActivityInsight, parseProjectActivityLog } from "./project-activity";
 import { ProjectLoopRunner } from "./loop/loop-runner";
 import { BuildWardenDatabase } from "@buildwarden/db";
-import { computePrMrDiffViaFetch, GitService, readProjectActivityLog, readRecentCommitLog } from "@buildwarden/git-service";
+import {
+  computePrMrDiffViaFetch,
+  GitService,
+  readProjectActivityLog,
+  readProjectReleaseHistory,
+  readRecentCommitLog,
+  readTrackedProjectFiles,
+} from "@buildwarden/git-service";
 import { AiSdkProviderAdapter, generateAskTextResultWithAiSdk, suggestCommitMessageWithAiSdk } from "@buildwarden/provider-ai-sdk";
 import {
   ClaudeCodeProviderAdapter,
@@ -3570,14 +3577,24 @@ export class AppController
       }
 
       if (kind === "activity") {
-        const activityLog = await readProjectActivityLog(project.repoPath);
+        const [activityLog, trackedFiles, releaseHistory] = await Promise.all([
+          readProjectActivityLog(project.repoPath),
+          readTrackedProjectFiles(project.repoPath),
+          readProjectReleaseHistory(project.repoPath),
+        ]);
         const commits = parseProjectActivityLog(activityLog);
-        const insight: ProjectActivityInsightData = buildProjectActivityInsight(commits);
+        const insight: ProjectActivityInsightData = buildProjectActivityInsight(commits, {
+          currentFiles: trackedFiles,
+          releases: releaseHistory.releases,
+          totalReleaseCount: releaseHistory.totalReleases,
+        });
         logInfo("Project activity insight built.", {
           projectId: project.id,
           commitCount: insight.summaryStats.totalCommits,
           contributorCount: insight.summaryStats.contributorCount,
           moduleCount: insight.modules.length,
+          trackedFileCount: trackedFiles.length,
+          releaseCount: releaseHistory.totalReleases,
           activityLogLength: activityLog.length,
         });
         return this.db.upsertProjectInsight({

@@ -1159,6 +1159,30 @@ export interface DependencyGravityInsightData {
   };
 }
 
+export interface ProjectActivityCommitSummary {
+  sha: string;
+  title: string;
+  author: string;
+  date: string;
+  filesChanged: number;
+  linesChanged: number;
+}
+
+export interface ProjectActivityHotspot {
+  path: string;
+  score: number;
+  commits: number;
+  linesChanged: number;
+  lastChangedAt: string;
+  contributorCount: number;
+}
+
+export interface ProjectActivityPeriodStats {
+  commits: number;
+  contributors: number;
+  linesChanged: number;
+}
+
 export interface ProjectActivityInsightData {
   summaryStats: {
     totalCommits: number;
@@ -1210,15 +1234,88 @@ export interface ProjectActivityInsightData {
     commits: number;
     linesChanged: number;
     contributorCount: number;
+    linesAdded?: number;
+    linesDeleted?: number;
+    netLines?: number;
+    cumulativeNetLines?: number;
+    filesCreated?: number;
+    filesDeleted?: number;
   }>;
-  recentCommits: Array<{
-    sha: string;
-    title: string;
-    author: string;
-    date: string;
-    filesChanged: number;
-    linesChanged: number;
+  recentCommits: ProjectActivityCommitSummary[];
+  hotspots?: {
+    formula: string;
+    files: ProjectActivityHotspot[];
+    modules: ProjectActivityHotspot[];
+  };
+  moduleOwnership?: Array<{
+    path: string;
+    primaryOwnerName: string;
+    primaryOwnerEmail: string;
+    ownershipShare: number;
+    busFactor50: number;
+    contributorCount: number;
+    commits: number;
+    risk: "silo" | "concentrated" | "shared";
   }>;
+  momentum?: Array<{
+    days: 30 | 90;
+    current: ProjectActivityPeriodStats;
+    previous: ProjectActivityPeriodStats;
+    changePercent: {
+      commits: number | null;
+      contributors: number | null;
+      linesChanged: number | null;
+    };
+  }>;
+  commitSize?: {
+    medianLinesChanged: number;
+    p90LinesChanged: number;
+    megaCommitThreshold: number;
+    megaCommitCount: number;
+    megaCommitShare: number;
+    largestCommits: ProjectActivityCommitSummary[];
+  };
+  codeGrowth?: {
+    netLines: number;
+    filesCreated: number;
+    filesDeleted: number;
+  };
+  fileAge?: {
+    trackedFileCount: number;
+    medianAgeDays: number;
+    medianDaysSinceChange: number;
+    staleThresholdDays: number;
+    oldestUntouchedFiles: Array<{
+      path: string;
+      firstSeenAt: string;
+      lastChangedAt: string;
+      ageDays: number;
+      daysSinceChange: number;
+    }>;
+    staleModules: Array<{
+      path: string;
+      lastChangedAt: string;
+      daysSinceChange: number;
+      trackedFiles: number;
+      commits: number;
+    }>;
+  };
+  releaseCadence?: {
+    totalReleases: number;
+    averageDaysBetweenReleases: number;
+    medianDaysBetweenReleases: number;
+    averageCommitsPerRelease: number;
+    latestReleaseAt: string | null;
+    sizeTrend: "growing" | "shrinking" | "stable" | "insufficient-data";
+    releases: Array<{
+      name: string;
+      date: string;
+      daysSincePrevious: number | null;
+      commitsSincePrevious: number;
+      linesChanged: number | null;
+      filesChanged: number | null;
+    }>;
+  };
 }
 
 export interface InsightToneSection {

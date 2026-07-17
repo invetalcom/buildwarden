@@ -5,6 +5,11 @@ import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
+import {
+  ProjectActivityMomentumGrowth,
+  ProjectActivityRepositoryHealth,
+  ProjectActivityRiskSections,
+} from "./ProjectActivityAdvancedSections";
 import { formatGeneratedAt, getProjectInsight, parseProjectInsightData } from "./project-insight-utils";
 
 interface ProjectActivityTabProps {
@@ -186,37 +191,6 @@ const CommitRhythm = ({ activity }: { activity: ProjectActivityInsightData }) =>
   );
 };
 
-const ModuleHotspots = ({ activity }: { activity: ProjectActivityInsightData }) => {
-  const maxCommits = activity.modules[0]?.commits ?? 1;
-  return (
-    <section className="min-w-0">
-      <SectionHeading title="Most changed modules" detail="Commit reach and line churn" />
-      <div className="divide-y divide-[var(--ec-border)] border-y border-[var(--ec-border)]">
-        {activity.modules.slice(0, 10).map((module, index) => (
-          <div key={module.path} className="group grid grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-2 py-2.5 transition-colors hover:bg-[var(--ec-hover)]">
-            <span className="text-center text-[10px] tabular-nums text-[var(--ec-faint)]">{index + 1}</span>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <p className="truncate font-mono text-xs text-[var(--ec-text)]" title={module.path}>{module.path}</p>
-                <span className="shrink-0 text-[10px] text-[var(--ec-faint)]">{module.commitShare}%</span>
-              </div>
-              <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-[var(--ec-muted-soft)]">
-                <div className="h-full rounded-full bg-[var(--ec-accent)]" style={{ width: `${Math.max(2, (module.commits / maxCommits) * 100)}%` }} />
-              </div>
-            </div>
-            <div className="min-w-28 text-right">
-              <p className="text-xs font-medium tabular-nums text-[var(--ec-text)]">{formatNumber(module.commits)} commits</p>
-              <p className="text-[10px] tabular-nums text-[var(--ec-faint)]">
-                {formatCompactNumber(module.linesChanged)} lines · {formatNumber(module.uniqueFiles)} files
-              </p>
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-};
-
 const RecentHistory = ({ activity }: { activity: ProjectActivityInsightData }) => (
   <section className="min-w-0">
     <SectionHeading title="Recent history" detail="Latest reachable commits" />
@@ -286,15 +260,24 @@ export const ProjectActivityTab = ({ project, onGenerateInsight }: ProjectActivi
             <Metric label="History" value={formatShortDate(activity.summaryStats.firstCommitAt)} detail={`through ${formatShortDate(activity.summaryStats.latestCommitAt)}`} />
           </div>
 
+          {!activity.hotspots ? (
+            <div className="rounded-md border border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-3 py-2 text-xs text-[var(--ec-muted)]">
+              Refresh this saved report to calculate hotspots, ownership risk, momentum, file age, and release cadence.
+            </div>
+          ) : null}
+
+          <ProjectActivityMomentumGrowth activity={activity} />
+
+          <ProjectActivityRiskSections activity={activity} />
+
           <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(18rem,1fr)]">
             <ContributorTable activity={activity} />
             <CommitRhythm activity={activity} />
           </div>
 
-          <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(20rem,0.85fr)]">
-            <ModuleHotspots activity={activity} />
-            <RecentHistory activity={activity} />
-          </div>
+          <ProjectActivityRepositoryHealth activity={activity} />
+
+          <RecentHistory activity={activity} />
         </div>
       ) : (
         <div className="mt-4 flex min-h-52 flex-col items-center justify-center rounded-lg border border-dashed border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-5 text-center">

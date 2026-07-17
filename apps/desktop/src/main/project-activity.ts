@@ -1,10 +1,11 @@
-import type { ProjectActivityInsightData } from "@buildwarden/shared";
+import type { ProjectActivityInsightData, ProjectActivityPeriodStats } from "@buildwarden/shared";
 
 export interface ProjectActivityCommitFile {
   path: string;
   linesAdded: number;
   linesDeleted: number;
   binary: boolean;
+  changeType: "added" | "deleted" | "modified";
 }
 
 export interface ProjectActivityCommit {
@@ -15,6 +16,21 @@ export interface ProjectActivityCommit {
   parentCount: number;
   title: string;
   files: ProjectActivityCommitFile[];
+}
+
+export interface ProjectActivityReleaseInput {
+  name: string;
+  date: string;
+  commitsSincePrevious: number;
+  linesChanged: number;
+  filesChanged: number;
+}
+
+export interface BuildProjectActivityInsightOptions {
+  now?: Date;
+  currentFiles?: string[];
+  releases?: ProjectActivityReleaseInput[];
+  totalReleaseCount?: number;
 }
 
 type ContributorAccumulator = {
@@ -37,18 +53,38 @@ type ModuleAccumulator = {
   linesAdded: number;
   linesDeleted: number;
   contributors: Set<string>;
+  contributorCommits: Map<string, number>;
+  lastChangedAt: string;
 };
 
 type MonthlyAccumulator = {
   month: string;
   commits: number;
   linesChanged: number;
+  linesAdded: number;
+  linesDeleted: number;
+  filesCreated: number;
+  filesDeleted: number;
   contributors: Set<string>;
+};
+
+type FileAccumulator = {
+  path: string;
+  commits: number;
+  linesChanged: number;
+  contributors: Set<string>;
+  firstSeenAt: string;
+  lastChangedAt: string;
+  lastChangeType: ProjectActivityCommitFile["changeType"];
 };
 
 const ACTIVITY_COMMIT_PREFIX = "__BW_ACTIVITY_COMMIT__";
 const MODULE_CONTAINER_NAMES = new Set(["apps", "crates", "libs", "modules", "packages", "plugins", "services"]);
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+const DAY_MS = 24 * 60 * 60 * 1_000;
+const HOTSPOT_RECENCY_HALF_LIFE_DAYS = 180;
+const MEGA_COMMIT_THRESHOLD = 500;
+const STALE_FILE_THRESHOLD_DAYS = 365;
 
 const parseLineCount = (value: string): number => {
   if (value === "-") return 0;
@@ -107,7 +143,7 @@ const longestDailyStreak = (dateKeys: Set<string>): number => {
   let current = 0;
   let previous = Number.NaN;
   for (const day of days) {
-    current = day - previous === 24 * 60 * 60 * 1_000 ? current + 1 : 1;
+    current = day - previous === DAY_MS ? current + 1 : 1;
     longest = Math.max(longest, current);
     previous = day;
   }
@@ -134,13 +170,29 @@ const createModule = (path: string): ModuleAccumulator => ({
   linesAdded: 0,
   linesDeleted: 0,
   contributors: new Set<string>(),
+  contributorCommits: new Map<string, number>(),
+  lastChangedAt: "",
 });
 
 const createMonth = (month: string): MonthlyAccumulator => ({
   month,
   commits: 0,
   linesChanged: 0,
+  linesAdded: 0,
+  linesDeleted: 0,
+  filesCreated: 0,
+  filesDeleted: 0,
   contributors: new Set<string>(),
+});
+
+const createFile = (file: ProjectActivityCommitFile, commit: ProjectActivityCommit): FileAccumulator => ({
+  path: file.path,
+  commits: 0,
+  linesChanged: 0,
+  contributors: new Set<string>(),
+  firstSeenAt: commit.date,
+  lastChangedAt: commit.date,
+  lastChangeType: file.changeType,
 });
 
 export const parseProjectActivityLog = (output: string): ProjectActivityCommit[] => {
@@ -163,16 +215,26 @@ export const parseProjectActivityLog = (output: string): ProjectActivityCommit[]
       continue;
     }
 
-    if (!current || !rawLine.includes("\t")) continue;
-    const [addedRaw = "", deletedRaw = "", ...pathParts] = rawLine.split("\t");
-    const path = normalizePath(pathParts.join("\t"));
-    if (!path || (!/^\d+$/.test(addedRaw) && addedRaw !== "-") || (!/^\d+$/.test(deletedRaw) && deletedRaw !== "-")) continue;
-    current.files.push({
-      path,
-      linesAdded: parseLineCount(addedRaw),
-      linesDeleted: parseLineCount(deletedRaw),
-      binary: addedRaw === "-" || deletedRaw === "-",
-    });
+    if (!current) continue;
+    if (rawLine.includes("\t")) {
+      const [addedRaw = "", deletedRaw = "", ...pathParts] = rawLine.split("\t");
+      const path = normalizePath(pathParts.join("\t"));
+      if (!path || (!/^\d+$/.test(addedRaw) && addedRaw !== "-") || (!/^\d+$/.test(deletedRaw) && deletedRaw !== "-")) continue;
+      current.files.push({
+        path,
+        linesAdded: parseLineCount(addedRaw),
+        linesDeleted: parseLineCount(deletedRaw),
+        binary: addedRaw === "-" || deletedRaw === "-",
+        changeType: "modified",
+      });
+      continue;
+    }
+
+    const summaryMatch = /^(create|delete) mode \d+ (.+)$/.exec(rawLine.trim());
+    if (!summaryMatch) continue;
+    const path = normalizePath(summaryMatch[2] ?? "");
+    const file = current.files.find((candidate) => candidate.path === path);
+    if (file) file.changeType = summaryMatch[1] === "create" ? "added" : "deleted";
   }
 
   if (current) commits.push(current);
@@ -215,7 +277,31 @@ const updateModules = (
     modules.set(modulePath, module);
     changedModules.add(modulePath);
   }
-  for (const modulePath of changedModules) modules.get(modulePath)!.commits += 1;
+  for (const modulePath of changedModules) {
+    const module = modules.get(modulePath)!;
+    module.commits += 1;
+    module.contributorCommits.set(contributorKey, (module.contributorCommits.get(contributorKey) ?? 0) + 1);
+    if (!module.lastChangedAt || timestampFromIso(commit.date) > timestampFromIso(module.lastChangedAt)) module.lastChangedAt = commit.date;
+  }
+};
+
+const updateFiles = (
+  files: Map<string, FileAccumulator>,
+  commit: ProjectActivityCommit,
+  contributorKey: string,
+): void => {
+  for (const changedFile of commit.files) {
+    const file = files.get(changedFile.path) ?? createFile(changedFile, commit);
+    file.commits += 1;
+    file.linesChanged += changedFile.linesAdded + changedFile.linesDeleted;
+    file.contributors.add(contributorKey);
+    if (timestampFromIso(commit.date) < timestampFromIso(file.firstSeenAt)) file.firstSeenAt = commit.date;
+    if (timestampFromIso(commit.date) >= timestampFromIso(file.lastChangedAt)) {
+      file.lastChangedAt = commit.date;
+      file.lastChangeType = changedFile.changeType;
+    }
+    files.set(changedFile.path, file);
+  }
 };
 
 const busFactorForHalfOfCommits = (commitCounts: number[], totalCommits: number): number => {
@@ -229,9 +315,242 @@ const busFactorForHalfOfCommits = (commitCounts: number[], totalCommits: number)
   return commitCounts.length;
 };
 
-export const buildProjectActivityInsight = (commits: ProjectActivityCommit[]): ProjectActivityInsightData => {
+const median = (values: number[]): number => {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? roundOne(((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2)
+    : (sorted[middle] ?? 0);
+};
+
+const percentile = (values: number[], value: number): number => {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * value) - 1))] ?? 0;
+};
+
+const average = (values: number[]): number => values.length ? roundOne(values.reduce((sum, value) => sum + value, 0) / values.length) : 0;
+
+const daysBetween = (earlier: string, later: Date): number => {
+  const timestamp = timestampFromIso(earlier);
+  return timestamp ? Math.max(0, Math.floor((later.getTime() - timestamp) / DAY_MS)) : 0;
+};
+
+const commitLinesChanged = (commit: ProjectActivityCommit): number =>
+  commit.files.reduce((sum, file) => sum + file.linesAdded + file.linesDeleted, 0);
+
+const commitSummary = (commit: ProjectActivityCommit) => ({
+  sha: commit.sha,
+  title: commit.title,
+  author: commit.author || commit.email || "Unknown author",
+  date: commit.date,
+  filesChanged: commit.files.length,
+  linesChanged: commitLinesChanged(commit),
+});
+
+type HotspotSource = {
+  path: string;
+  commits: number;
+  linesChanged: number;
+  lastChangedAt: string;
+  contributorCount: number;
+};
+
+const scoreHotspots = (sources: HotspotSource[], now: Date): NonNullable<ProjectActivityInsightData["hotspots"]>["files"] => {
+  const maxCommits = Math.max(1, ...sources.map((source) => source.commits));
+  const maxChurn = Math.max(1, ...sources.map((source) => source.linesChanged));
+  return sources
+    .map((source) => {
+      const frequencyWeight = source.commits / maxCommits;
+      const churnWeight = Math.log1p(Math.max(1, source.linesChanged)) / Math.log1p(maxChurn);
+      const ageDays = daysBetween(source.lastChangedAt, now);
+      const recencyWeight = 0.2 + (0.8 * Math.exp(-ageDays / HOTSPOT_RECENCY_HALF_LIFE_DAYS));
+      return { ...source, score: roundOne(100 * frequencyWeight * churnWeight * recencyWeight) };
+    })
+    .sort((left, right) => right.score - left.score || right.commits - left.commits);
+};
+
+const buildHotspots = (
+  files: Map<string, FileAccumulator>,
+  modules: Map<string, ModuleAccumulator>,
+  now: Date,
+): NonNullable<ProjectActivityInsightData["hotspots"]> => ({
+  formula: "Normalized commit frequency × logarithmic line churn × 180-day recency weight",
+  files: scoreHotspots([...files.values()].map((file) => ({
+    path: file.path,
+    commits: file.commits,
+    linesChanged: file.linesChanged,
+    lastChangedAt: file.lastChangedAt,
+    contributorCount: file.contributors.size,
+  })), now).slice(0, 20),
+  modules: scoreHotspots([...modules.values()].map((module) => ({
+    path: module.path,
+    commits: module.commits,
+    linesChanged: module.linesAdded + module.linesDeleted,
+    lastChangedAt: module.lastChangedAt,
+    contributorCount: module.contributors.size,
+  })), now).slice(0, 20),
+});
+
+const buildModuleOwnership = (
+  modules: Map<string, ModuleAccumulator>,
+  contributors: Map<string, ContributorAccumulator>,
+): NonNullable<ProjectActivityInsightData["moduleOwnership"]> =>
+  [...modules.values()]
+    .map((module) => {
+      const rankedOwners = [...module.contributorCommits.entries()].sort((left, right) => right[1] - left[1]);
+      const [primaryOwnerKey = "", primaryOwnerCommits = 0] = rankedOwners[0] ?? [];
+      const owner = contributors.get(primaryOwnerKey);
+      const ownershipShare = module.commits ? roundOne((primaryOwnerCommits / module.commits) * 100) : 0;
+      return {
+        path: module.path,
+        primaryOwnerName: owner?.name ?? primaryOwnerKey ?? "Unknown author",
+        primaryOwnerEmail: owner?.email ?? "",
+        ownershipShare,
+        busFactor50: busFactorForHalfOfCommits(rankedOwners.map(([, commits]) => commits), module.commits),
+        contributorCount: module.contributors.size,
+        commits: module.commits,
+        risk: ownershipShare >= 80 ? "silo" as const : ownershipShare >= 65 ? "concentrated" as const : "shared" as const,
+      };
+    })
+    .sort((left, right) => right.ownershipShare - left.ownershipShare || right.commits - left.commits);
+
+const periodStats = (commits: ProjectActivityCommit[], start: number, end: number): ProjectActivityPeriodStats => {
+  const selected = commits.filter((commit) => {
+    const timestamp = timestampFromIso(commit.date);
+    return timestamp >= start && timestamp < end;
+  });
+  return {
+    commits: selected.length,
+    contributors: new Set(selected.map(contributorKeyForCommit)).size,
+    linesChanged: selected.reduce((sum, commit) => sum + commitLinesChanged(commit), 0),
+  };
+};
+
+const changePercent = (current: number, previous: number): number | null => {
+  if (previous === 0) return current === 0 ? 0 : null;
+  return roundOne(((current - previous) / previous) * 100);
+};
+
+const buildMomentum = (commits: ProjectActivityCommit[], now: Date): NonNullable<ProjectActivityInsightData["momentum"]> =>
+  ([30, 90] as const).map((days) => {
+    const current = periodStats(commits, now.getTime() - (days * DAY_MS), now.getTime() + 1);
+    const previous = periodStats(commits, now.getTime() - (days * 2 * DAY_MS), now.getTime() - (days * DAY_MS));
+    return {
+      days,
+      current,
+      previous,
+      changePercent: {
+        commits: changePercent(current.commits, previous.commits),
+        contributors: changePercent(current.contributors, previous.contributors),
+        linesChanged: changePercent(current.linesChanged, previous.linesChanged),
+      },
+    };
+  });
+
+const buildCommitSize = (commits: ProjectActivityCommit[]): NonNullable<ProjectActivityInsightData["commitSize"]> => {
+  const sizes = commits.map(commitLinesChanged);
+  const megaCommits = sizes.filter((size) => size >= MEGA_COMMIT_THRESHOLD).length;
+  return {
+    medianLinesChanged: median(sizes),
+    p90LinesChanged: percentile(sizes, 0.9),
+    megaCommitThreshold: MEGA_COMMIT_THRESHOLD,
+    megaCommitCount: megaCommits,
+    megaCommitShare: commits.length ? roundOne((megaCommits / commits.length) * 100) : 0,
+    largestCommits: [...commits]
+      .sort((left, right) => commitLinesChanged(right) - commitLinesChanged(left))
+      .slice(0, 5)
+      .map(commitSummary),
+  };
+};
+
+const resolveCurrentFilePaths = (files: Map<string, FileAccumulator>, currentFiles: string[] | undefined): string[] => {
+  if (currentFiles) return currentFiles.map(normalizePath).filter((path) => files.has(path));
+  return [...files.values()].filter((file) => file.lastChangeType !== "deleted").map((file) => file.path);
+};
+
+const buildFileAge = (
+  files: Map<string, FileAccumulator>,
+  modules: Map<string, ModuleAccumulator>,
+  currentFiles: string[] | undefined,
+  now: Date,
+): NonNullable<ProjectActivityInsightData["fileAge"]> => {
+  const currentPaths = resolveCurrentFilePaths(files, currentFiles);
+  const currentStats = currentPaths.map((path) => files.get(path)!).filter(Boolean);
+  const fileRows = currentStats.map((file) => ({
+    path: file.path,
+    firstSeenAt: file.firstSeenAt,
+    lastChangedAt: file.lastChangedAt,
+    ageDays: daysBetween(file.firstSeenAt, now),
+    daysSinceChange: daysBetween(file.lastChangedAt, now),
+  }));
+  const trackedFilesByModule = new Map<string, number>();
+  for (const path of currentPaths) {
+    const modulePath = modulePathForFile(path);
+    trackedFilesByModule.set(modulePath, (trackedFilesByModule.get(modulePath) ?? 0) + 1);
+  }
+  return {
+    trackedFileCount: currentStats.length,
+    medianAgeDays: median(fileRows.map((file) => file.ageDays)),
+    medianDaysSinceChange: median(fileRows.map((file) => file.daysSinceChange)),
+    staleThresholdDays: STALE_FILE_THRESHOLD_DAYS,
+    oldestUntouchedFiles: [...fileRows].sort((left, right) => right.daysSinceChange - left.daysSinceChange).slice(0, 10),
+    staleModules: [...trackedFilesByModule.entries()]
+      .map(([path, trackedFiles]) => {
+        const module = modules.get(path);
+        return {
+          path,
+          lastChangedAt: module?.lastChangedAt ?? "",
+          daysSinceChange: module?.lastChangedAt ? daysBetween(module.lastChangedAt, now) : 0,
+          trackedFiles,
+          commits: module?.commits ?? 0,
+        };
+      })
+      .filter((module) => module.daysSinceChange >= STALE_FILE_THRESHOLD_DAYS)
+      .sort((left, right) => right.daysSinceChange - left.daysSinceChange),
+  };
+};
+
+const releaseSizeTrend = (releases: ProjectActivityReleaseInput[]): NonNullable<ProjectActivityInsightData["releaseCadence"]>["sizeTrend"] => {
+  if (releases.length < 4) return "insufficient-data";
+  const recent = releases.slice(-3).map((release) => release.linesChanged);
+  const previous = releases.slice(-6, -3).map((release) => release.linesChanged);
+  if (previous.length === 0) return "insufficient-data";
+  const previousAverage = average(previous);
+  if (previousAverage === 0) return average(recent) > 0 ? "growing" : "stable";
+  const change = ((average(recent) - previousAverage) / previousAverage) * 100;
+  return change > 15 ? "growing" : change < -15 ? "shrinking" : "stable";
+};
+
+const buildReleaseCadence = (
+  releases: ProjectActivityReleaseInput[],
+  totalReleaseCount: number,
+): NonNullable<ProjectActivityInsightData["releaseCadence"]> => {
+  const sorted = [...releases].sort((left, right) => timestampFromIso(left.date) - timestampFromIso(right.date));
+  const intervals = sorted.slice(1).map((release, index) => roundOne((timestampFromIso(release.date) - timestampFromIso(sorted[index]?.date ?? "")) / DAY_MS));
+  return {
+    totalReleases: totalReleaseCount,
+    averageDaysBetweenReleases: average(intervals),
+    medianDaysBetweenReleases: median(intervals),
+    averageCommitsPerRelease: average(sorted.map((release) => release.commitsSincePrevious)),
+    latestReleaseAt: sorted.at(-1)?.date ?? null,
+    sizeTrend: releaseSizeTrend(sorted),
+    releases: sorted.map((release, index) => ({
+      ...release,
+      daysSincePrevious: index === 0 ? null : roundOne((timestampFromIso(release.date) - timestampFromIso(sorted[index - 1]?.date ?? "")) / DAY_MS),
+    })),
+  };
+};
+
+export const buildProjectActivityInsight = (
+  commits: ProjectActivityCommit[],
+  options: BuildProjectActivityInsightOptions = {},
+): ProjectActivityInsightData => {
+  const now = options.now ?? new Date();
   const contributors = new Map<string, ContributorAccumulator>();
   const modules = new Map<string, ModuleAccumulator>();
+  const files = new Map<string, FileAccumulator>();
   const months = new Map<string, MonthlyAccumulator>();
   const weekdayCounts = Array.from({ length: 7 }, () => 0);
   const activeDates = new Set<string>();
@@ -239,6 +558,8 @@ export const buildProjectActivityInsight = (commits: ProjectActivityCommit[]): P
   let linesAdded = 0;
   let linesDeleted = 0;
   let filesChanged = 0;
+  let filesCreated = 0;
+  let filesDeleted = 0;
   let mergeCommits = 0;
   let firstCommitAt = "";
   let latestCommitAt = "";
@@ -251,10 +572,13 @@ export const buildProjectActivityInsight = (commits: ProjectActivityCommit[]): P
     updateContributor(contributor, commit, commitLinesAdded, commitLinesDeleted);
     contributors.set(contributorKey, contributor);
     updateModules(modules, commit, contributorKey);
+    updateFiles(files, commit, contributorKey);
 
     linesAdded += commitLinesAdded;
     linesDeleted += commitLinesDeleted;
     filesChanged += commit.files.length;
+    filesCreated += commit.files.filter((file) => file.changeType === "added").length;
+    filesDeleted += commit.files.filter((file) => file.changeType === "deleted").length;
     if (commit.parentCount > 1) mergeCommits += 1;
 
     const dateKey = dateKeyFromIso(commit.date);
@@ -269,6 +593,10 @@ export const buildProjectActivityInsight = (commits: ProjectActivityCommit[]): P
       const month = months.get(monthKey) ?? createMonth(monthKey);
       month.commits += 1;
       month.linesChanged += commitLinesAdded + commitLinesDeleted;
+      month.linesAdded += commitLinesAdded;
+      month.linesDeleted += commitLinesDeleted;
+      month.filesCreated += commit.files.filter((file) => file.changeType === "added").length;
+      month.filesDeleted += commit.files.filter((file) => file.changeType === "deleted").length;
       month.contributors.add(contributorKey);
       months.set(monthKey, month);
     }
@@ -297,6 +625,38 @@ export const buildProjectActivityInsight = (commits: ProjectActivityCommit[]): P
   const firstDate = dateKeyFromIso(firstCommitAt);
   const latestDate = dateKeyFromIso(latestCommitAt);
   const calendarWeeks = inclusiveWeekCount(firstDate, latestDate);
+  const moduleRows = [...modules.values()]
+    .sort((left, right) => right.commits - left.commits || (right.linesAdded + right.linesDeleted) - (left.linesAdded + left.linesDeleted))
+    .map((module) => ({
+      path: module.path,
+      commits: module.commits,
+      commitShare: totalCommits ? roundOne((module.commits / totalCommits) * 100) : 0,
+      fileTouches: module.fileTouches,
+      uniqueFiles: module.files.size,
+      linesAdded: module.linesAdded,
+      linesDeleted: module.linesDeleted,
+      linesChanged: module.linesAdded + module.linesDeleted,
+      contributorCount: module.contributors.size,
+    }));
+  let cumulativeNetLines = 0;
+  const monthlyRows = [...months.values()]
+    .sort((left, right) => left.month.localeCompare(right.month))
+    .map((month) => {
+      const netLines = month.linesAdded - month.linesDeleted;
+      cumulativeNetLines += netLines;
+      return {
+        month: month.month,
+        commits: month.commits,
+        linesChanged: month.linesChanged,
+        contributorCount: month.contributors.size,
+        linesAdded: month.linesAdded,
+        linesDeleted: month.linesDeleted,
+        netLines,
+        cumulativeNetLines,
+        filesCreated: month.filesCreated,
+        filesDeleted: month.filesDeleted,
+      };
+    });
 
   return {
     summaryStats: {
@@ -321,38 +681,22 @@ export const buildProjectActivityInsight = (commits: ProjectActivityCommit[]): P
       commits: weekdayCounts[weekday] ?? 0,
       commitShare: totalCommits ? roundOne(((weekdayCounts[weekday] ?? 0) / totalCommits) * 100) : 0,
     })),
-    modules: [...modules.values()]
-      .sort((left, right) => right.commits - left.commits || (right.linesAdded + right.linesDeleted) - (left.linesAdded + left.linesDeleted))
-      .map((module) => ({
-        path: module.path,
-        commits: module.commits,
-        commitShare: totalCommits ? roundOne((module.commits / totalCommits) * 100) : 0,
-        fileTouches: module.fileTouches,
-        uniqueFiles: module.files.size,
-        linesAdded: module.linesAdded,
-        linesDeleted: module.linesDeleted,
-        linesChanged: module.linesAdded + module.linesDeleted,
-        contributorCount: module.contributors.size,
-      })),
-    monthlyActivity: [...months.values()]
-      .sort((left, right) => left.month.localeCompare(right.month))
-      .map((month) => ({
-        month: month.month,
-        commits: month.commits,
-        linesChanged: month.linesChanged,
-        contributorCount: month.contributors.size,
-      })),
+    modules: moduleRows,
+    monthlyActivity: monthlyRows,
     recentCommits: [...commits]
       .sort((left, right) => timestampFromIso(right.date) - timestampFromIso(left.date))
       .slice(0, 12)
-      .map((commit) => ({
-        sha: commit.sha,
-        title: commit.title,
-        author: commit.author || commit.email || "Unknown author",
-        date: commit.date,
-        filesChanged: commit.files.length,
-        linesChanged: commit.files.reduce((sum, file) => sum + file.linesAdded + file.linesDeleted, 0),
-      })),
+      .map(commitSummary),
+    hotspots: buildHotspots(files, modules, now),
+    moduleOwnership: buildModuleOwnership(modules, contributors),
+    momentum: buildMomentum(commits, now),
+    commitSize: buildCommitSize(commits),
+    codeGrowth: {
+      netLines: linesAdded - linesDeleted,
+      filesCreated,
+      filesDeleted,
+    },
+    fileAge: buildFileAge(files, modules, options.currentFiles, now),
+    releaseCadence: buildReleaseCadence(options.releases ?? [], options.totalReleaseCount ?? options.releases?.length ?? 0),
   };
 };
-

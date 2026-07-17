@@ -53,8 +53,8 @@ const activity: ProjectActivityInsightData = {
     contributorCount: 3,
   }],
   monthlyActivity: [
-    { month: "2026-01", commits: 22, linesChanged: 700, contributorCount: 2 },
-    { month: "2026-02", commits: 20, linesChanged: 900, contributorCount: 3 },
+    { month: "2026-01", commits: 22, linesChanged: 700, contributorCount: 2, netLines: 420 },
+    { month: "2026-02", commits: 20, linesChanged: 900, contributorCount: 3, netLines: 380 },
   ],
   recentCommits: [{
     sha: "abcdef123456",
@@ -64,6 +64,61 @@ const activity: ProjectActivityInsightData = {
     filesChanged: 4,
     linesChanged: 180,
   }],
+  hotspots: {
+    formula: "Normalized frequency × churn × recency",
+    files: [{ path: "packages/renderer/src/App.tsx", score: 92, commits: 18, linesChanged: 840, lastChangedAt: "2026-02-12T10:00:00.000Z", contributorCount: 3 }],
+    modules: [{ path: "packages/renderer", score: 100, commits: 30, linesChanged: 1_200, lastChangedAt: "2026-02-12T10:00:00.000Z", contributorCount: 3 }],
+  },
+  moduleOwnership: [{
+    path: "packages/renderer",
+    primaryOwnerName: "Alice Example",
+    primaryOwnerEmail: "alice@example.com",
+    ownershipShare: 82,
+    busFactor50: 1,
+    contributorCount: 3,
+    commits: 30,
+    risk: "silo",
+  }],
+  momentum: [{
+    days: 30,
+    current: { commits: 20, contributors: 3, linesChanged: 900 },
+    previous: { commits: 12, contributors: 2, linesChanged: 500 },
+    changePercent: { commits: 66.7, contributors: 50, linesChanged: 80 },
+  }, {
+    days: 90,
+    current: { commits: 42, contributors: 3, linesChanged: 1_600 },
+    previous: { commits: 0, contributors: 0, linesChanged: 0 },
+    changePercent: { commits: null, contributors: null, linesChanged: null },
+  }],
+  commitSize: {
+    medianLinesChanged: 28,
+    p90LinesChanged: 240,
+    megaCommitThreshold: 500,
+    megaCommitCount: 2,
+    megaCommitShare: 4.8,
+    largestCommits: [{ sha: "large123456", title: "Large renderer migration", author: "Alice Example", date: "2026-02-01T10:00:00.000Z", filesChanged: 20, linesChanged: 980 }],
+  },
+  codeGrowth: { netLines: 800, filesCreated: 22, filesDeleted: 5 },
+  fileAge: {
+    trackedFileCount: 120,
+    medianAgeDays: 180,
+    medianDaysSinceChange: 24,
+    staleThresholdDays: 365,
+    oldestUntouchedFiles: [{ path: "packages/legacy/index.ts", firstSeenAt: "2020-01-01T00:00:00.000Z", lastChangedAt: "2022-01-01T00:00:00.000Z", ageDays: 2_200, daysSinceChange: 1_500 }],
+    staleModules: [{ path: "packages/legacy", lastChangedAt: "2022-01-01T00:00:00.000Z", daysSinceChange: 1_500, trackedFiles: 8, commits: 12 }],
+  },
+  releaseCadence: {
+    totalReleases: 2,
+    averageDaysBetweenReleases: 28,
+    medianDaysBetweenReleases: 28,
+    averageCommitsPerRelease: 21,
+    latestReleaseAt: "2026-02-10T00:00:00.000Z",
+    sizeTrend: "growing",
+    releases: [
+      { name: "v1.0.0", date: "2026-01-10T00:00:00.000Z", daysSincePrevious: null, commitsSincePrevious: 22, linesChanged: 700, filesChanged: 40 },
+      { name: "v1.1.0", date: "2026-02-10T00:00:00.000Z", daysSincePrevious: 31, commitsSincePrevious: 20, linesChanged: 900, filesChanged: 56 },
+    ],
+  },
 };
 
 const project = {
@@ -100,7 +155,7 @@ const project = {
 } as unknown as ProjectSnapshot;
 
 describe("ProjectActivityTab", () => {
-  it("renders contributor, rhythm, module, and recent history sections", () => {
+  it("renders activity, risk, growth, ownership, file-age, and release sections", () => {
     const markup = renderWithBuildWardenClient(
       <ProjectActivityTab project={project} onGenerateInsight={vi.fn()} />,
     );
@@ -108,10 +163,29 @@ describe("ProjectActivityTab", () => {
     expect(markup).toContain("Top contributors");
     expect(markup).toContain("Alice Example");
     expect(markup).toContain("Commit rhythm");
-    expect(markup).toContain("Most changed modules");
+    expect(markup).toContain("Momentum");
+    expect(markup).toContain("Code growth");
+    expect(markup).toContain("Change hotspots");
+    expect(markup).toContain("Ownership risk");
+    expect(markup).toContain("Commit size");
+    expect(markup).toContain("File age");
+    expect(markup).toContain("Release cadence");
     expect(markup).toContain("packages/renderer");
     expect(markup).toContain("Add activity insights");
     expect(markup).toContain("Refresh");
+  });
+
+  it("prompts users to refresh a legacy saved Activity report", () => {
+    const legacyActivity = { ...activity, hotspots: undefined };
+    const legacyProject = {
+      ...project,
+      insights: [{ ...project.insights[0]!, dataJson: JSON.stringify(legacyActivity) }],
+    } as unknown as ProjectSnapshot;
+    const markup = renderWithBuildWardenClient(
+      <ProjectActivityTab project={legacyProject} onGenerateInsight={vi.fn()} />,
+    );
+
+    expect(markup).toContain("Refresh this saved report");
   });
 
   it("shows a repository-specific empty state", () => {
@@ -123,4 +197,3 @@ describe("ProjectActivityTab", () => {
     expect(markup).toContain("Analyze history");
   });
 });
-
