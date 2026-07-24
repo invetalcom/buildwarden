@@ -350,6 +350,8 @@ describe("renderer component states", () => {
     );
     expect(overviewMarkup).toContain("BuildWarden");
     expect(overviewMarkup).toContain("Improve renderer coverage");
+    expect(overviewMarkup).toContain("Orchestration");
+    expect(overviewMarkup).not.toContain("Allow delegation");
 
     const taskMarkup = renderToStaticMarkup(
       <ProjectTasksTab

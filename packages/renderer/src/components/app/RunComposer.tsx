@@ -933,8 +933,8 @@ export const RunComposer = ({
                   aria-pressed={delegationEnabled}
                   title={
                     delegationAvailable
-                      ? "Allow this run to coordinate durable, isolated child runs across the configured agent team."
-                      : "Configure at least one valid Agent Team role in Settings before enabling delegation."
+                      ? "Allow this run to coordinate durable, isolated child runs across the configured orchestration team."
+                      : "Configure at least one valid role in Settings > Orchestration before enabling orchestration."
                   }
                   disabled={busy || !delegationAvailable}
                   onClick={() => onDelegationEnabledChange(!delegationEnabled)}
@@ -947,7 +947,7 @@ export const RunComposer = ({
                   ].join(" ")}
                 >
                   <UsersRound className="h-3.5 w-3.5" />
-                  Allow delegation
+                  Orchestration
                 </button>
               ) : null}
             </div>

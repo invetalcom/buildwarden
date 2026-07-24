@@ -299,9 +299,7 @@ export const App = () => {
   const delegationAvailable = orchestrationTeam.roles.length > 0;
 
   useEffect(() => {
-    if (!delegationAvailable) {
-      setRunDelegationEnabled(false);
-    }
+    setRunDelegationEnabled(delegationAvailable);
   }, [delegationAvailable]);
   const {
     welcomeOpen,
