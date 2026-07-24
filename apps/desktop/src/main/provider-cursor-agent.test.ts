@@ -7,10 +7,14 @@ import type { HarnessToolContext } from "@buildwarden/shared";
 import {
   CursorAgentHarnessAdapter,
   CursorAgentProviderAdapter,
+  CursorMcpToolNameMatcher,
   assertCursorAgentAvailable,
+  buildCursorToolChunkForState,
   cursorSubagentStatusFromToolStatus,
   isCursorSubagentToolState,
+  mergeCursorPermissionToolState,
   readCursorTaskRequestInfo,
+  readCursorToolName,
   buildCursorPlanProgressChunk,
   createCursorDevLogger,
   deriveCursorMaxTokensFromConfigOptions,
@@ -117,6 +121,65 @@ describe("CursorAgentProviderAdapter", () => {
     } else {
       expect(shim).toEqual({ command: "agent", args: ["acp"] });
     }
+  });
+
+  it("recovers MCP tool names from Cursor permission titles", () => {
+    const permissionParams = {
+      toolCall: {
+        toolCallId: "tool-1",
+        title: "buildwarden-orchestration-buildwarden_tasks_delegate: buildwarden_tasks_delegate",
+        kind: "other",
+        status: "pending",
+      },
+    };
+
+    expect(readCursorToolName({}, "MCP: tool")).toBeUndefined();
+    expect(readCursorToolName({ _toolName: "task" }, "MCP: tool")).toBe("task");
+    expect(readCursorToolName({}, permissionParams.toolCall.title)).toBe("buildwarden_tasks_delegate");
+    expect(mergeCursorPermissionToolState({
+      id: "tool-1",
+      kind: "other",
+      title: "MCP: tool",
+      status: "pending",
+    }, permissionParams)).toMatchObject({
+      id: "tool-1",
+      title: permissionParams.toolCall.title,
+      toolName: "buildwarden_tasks_delegate",
+    });
+  });
+
+  it("does not persist Cursor's generic MCP placeholder as a tool name", () => {
+    const genericChunk = buildCursorToolChunkForState({
+      id: "tool-1",
+      kind: "other",
+      title: "MCP: tool",
+      status: "pending",
+    });
+    const namedChunk = buildCursorToolChunkForState({
+      id: "tool-1",
+      kind: "other",
+      title: "buildwarden-orchestration-buildwarden_tasks_delegate: buildwarden_tasks_delegate",
+      toolName: "buildwarden_tasks_delegate",
+      status: "completed",
+    });
+
+    expect(genericChunk.metadata).not.toHaveProperty("toolName");
+    expect(namedChunk.metadata).toMatchObject({ toolName: "buildwarden_tasks_delegate" });
+    expect(namedChunk.title).toContain("buildwarden_tasks_delegate");
+  });
+
+  it("correlates anonymous Cursor MCP calls with bridge tool names in either arrival order", () => {
+    const cursorFirst = new CursorMcpToolNameMatcher();
+    expect(cursorFirst.registerCursorTool("cursor-1")).toBeUndefined();
+    expect(cursorFirst.registerToolName("buildwarden_orchestration_get")).toEqual({
+      toolId: "cursor-1",
+      toolName: "buildwarden_orchestration_get",
+    });
+
+    const bridgeFirst = new CursorMcpToolNameMatcher();
+    expect(bridgeFirst.registerToolName("buildwarden_tasks_delegate")).toBeNull();
+    expect(bridgeFirst.registerCursorTool("cursor-2")).toBe("buildwarden_tasks_delegate");
+    expect(bridgeFirst.registerCursorTool("cursor-2")).toBeUndefined();
   });
 
   it("terminates the complete Cursor process tree on Windows", () => {
@@ -659,7 +722,8 @@ describe("Cursor private per-turn orchestration MCP", () => {
       ],
       executeTool,
     };
-    const transport = await startCursorOrchestrationMcp(toolContext);
+    const onToolCall = vi.fn();
+    const transport = await startCursorOrchestrationMcp(toolContext, onToolCall);
     expect(transport).not.toBeNull();
     const config = transport!.config as {
       url: string;
@@ -691,6 +755,7 @@ describe("Cursor private per-turn orchestration MCP", () => {
     }).then((response) => response.json()) as { result: { content: Array<{ text: string }>; isError: boolean } };
     expect(called.result).toEqual({ content: [{ type: "text", text: "[]" }], isError: false });
     expect(executeTool).toHaveBeenCalledOnce();
+    expect(onToolCall).toHaveBeenCalledWith("buildwarden_tasks_list");
     await transport!.close();
     await expect(fetch(config.url, {
       method: "POST",

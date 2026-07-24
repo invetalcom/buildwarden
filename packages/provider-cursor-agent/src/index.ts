@@ -75,7 +75,7 @@ type CursorAcpConfigOption = {
   options?: unknown;
 };
 
-type CursorToolState = {
+export type CursorToolState = {
   id: string;
   kind?: string;
   title?: string;
@@ -116,6 +116,44 @@ type CursorRuntimeOptions = {
   mcpServers?: Array<Record<string, unknown>>;
 };
 
+export class CursorMcpToolNameMatcher {
+  private readonly pendingCursorToolIds: string[] = [];
+  private readonly pendingCursorToolIdSet = new Set<string>();
+  private readonly pendingToolNames: string[] = [];
+  private readonly matchedCursorToolIds = new Set<string>();
+
+  registerCursorTool(toolId: string): string | undefined {
+    if (this.matchedCursorToolIds.has(toolId) || this.pendingCursorToolIdSet.has(toolId)) {
+      return undefined;
+    }
+    const pendingToolName = this.pendingToolNames.shift();
+    if (pendingToolName) {
+      this.matchedCursorToolIds.add(toolId);
+      return pendingToolName;
+    }
+    this.pendingCursorToolIds.push(toolId);
+    this.pendingCursorToolIdSet.add(toolId);
+    return undefined;
+  }
+
+  registerToolName(toolName: string): { toolId: string; toolName: string } | null {
+    const toolId = this.pendingCursorToolIds.shift();
+    if (!toolId) {
+      this.pendingToolNames.push(toolName);
+      return null;
+    }
+    this.pendingCursorToolIdSet.delete(toolId);
+    this.matchedCursorToolIds.add(toolId);
+    return { toolId, toolName };
+  }
+
+  discardCursorTool(toolId: string): void {
+    if (!this.pendingCursorToolIdSet.delete(toolId)) return;
+    const index = this.pendingCursorToolIds.indexOf(toolId);
+    if (index >= 0) this.pendingCursorToolIds.splice(index, 1);
+  }
+}
+
 const readHttpJsonBody = async (request: IncomingMessage): Promise<unknown> => {
   const chunks: Buffer[] = [];
   let total = 0;
@@ -140,6 +178,7 @@ const writeMcpJson = (response: ServerResponse, status: number, value?: unknown)
 
 export const startCursorOrchestrationMcp = async (
   toolContext: HarnessToolContext,
+  onToolCall?: (toolName: string) => void,
 ): Promise<{ config: Record<string, unknown>; close: () => Promise<void> } | null> => {
   const tools = toolContext.tools.filter((tool) => tool.name.startsWith("buildwarden_"));
   if (tools.length === 0) return null;
@@ -207,6 +246,7 @@ export const startCursorOrchestrationMcp = async (
           });
           return;
         }
+        onToolCall?.(definition.name);
         const result = await toolContext.executeTool({
           id: randomUUID(),
           name: definition.name,
@@ -862,6 +902,15 @@ const extractCommandFromRawInput = (rawInput: unknown, title: string | undefined
   return match?.[1]?.trim();
 };
 
+export const readCursorToolName = (rawInput: unknown, title: string | undefined): string | undefined => {
+  const inputToolName = isRecord(rawInput) ? asString(rawInput._toolName)?.trim() : undefined;
+  if (inputToolName && normalizeToken(inputToolName) !== "tool") {
+    return inputToolName;
+  }
+  const titleToolName = title?.match(/:\s*([A-Za-z][A-Za-z0-9_.-]*)\s*$/)?.[1]?.trim();
+  return titleToolName && normalizeToken(titleToolName) !== "tool" ? titleToolName : undefined;
+};
+
 const textContentFromToolContent = (content: unknown): string | undefined => {
   const entries = asArray(content) ?? [];
   const chunks: string[] = [];
@@ -895,7 +944,7 @@ const parseCursorToolState = (params: unknown): CursorToolState | null => {
   const status = normalizeCursorToolStatus(update.status) ?? (updateKind === "tool_call" ? "pending" : undefined);
   const command = extractCommandFromRawInput(update.rawInput, title);
   const detail = command ?? textContentFromToolContent(update.content) ?? title;
-  const toolName = isRecord(update.rawInput) ? asString(update.rawInput._toolName)?.trim() : undefined;
+  const toolName = readCursorToolName(update.rawInput, title);
   const rawOutput = isRecord(update.rawOutput) ? update.rawOutput : undefined;
   return {
     id,
@@ -921,6 +970,11 @@ const mergeCursorToolState = (left: CursorToolState | undefined, right: CursorTo
   rawOutput: right.rawOutput ?? left?.rawOutput,
   raw: right.raw ?? left?.raw,
 });
+
+const isGenericCursorMcpToolState = (tool: CursorToolState): boolean =>
+  !tool.toolName &&
+  normalizeToken(tool.kind) === "other" &&
+  /^mcp:\s*tool$/i.test(tool.title ?? "");
 
 // Subagents surface over Cursor ACP as a "task" tool call
 // (`rawInput._toolName === "task"`, title "Task: ..."). The richer metadata
@@ -983,13 +1037,17 @@ export const readCursorTaskRequestInfo = (params: unknown): CursorTaskRequestInf
   };
 };
 
-const cursorToolChunkForState = (tool: CursorToolState): HarnessRunChunk => {
-  const toolName = normalizeCursorToolName(tool.kind);
-  const title = tool.title ?? (toolName === "run_shell" ? "Shell command" : "Cursor tool");
+export const buildCursorToolChunkForState = (tool: CursorToolState): HarnessRunChunk => {
+  const kindToolName = normalizeCursorToolName(tool.kind);
+  const toolName = tool.toolName ?? (kindToolName !== "tool" ? kindToolName : undefined);
+  const genericTitle = !tool.title || /^mcp:\s*tool$/i.test(tool.title);
+  const title = genericTitle
+    ? toolName ?? (kindToolName === "run_shell" ? "Shell command" : "Cursor tool")
+    : tool.title!;
   const value = tool.command ?? tool.detail ?? title;
   const metadata = {
     provider: PROVIDER,
-    toolName,
+    ...(toolName ? { toolName } : {}),
     callId: tool.id,
     cursorToolKind: tool.kind,
     command: tool.command,
@@ -1316,6 +1374,14 @@ const getPermissionTool = (params: unknown): CursorToolState | null => {
   });
 };
 
+export const mergeCursorPermissionToolState = (
+  existing: CursorToolState | undefined,
+  params: unknown,
+): CursorToolState | null => {
+  const permissionTool = getPermissionTool(params);
+  return permissionTool ? mergeCursorToolState(existing, permissionTool) : null;
+};
+
 type ParsedCursorQuestion = {
   question: RunUserInputQuestion;
   answersByLabel: Record<string, string>;
@@ -1424,6 +1490,7 @@ class CursorAcpRuntime {
   private readonly connection: CursorAcpJsonRpcConnection;
   private session: CursorAcpStartedSession | null = null;
   private readonly toolStates = new Map<string, CursorToolState>();
+  private readonly mcpToolNameMatcher = new CursorMcpToolNameMatcher();
   private readonly subagents = new Map<string, RunSubagentInfo>();
   private assistantText = "";
   private isPromptActive = false;
@@ -1436,6 +1503,21 @@ class CursorAcpRuntime {
     ]);
     this.connection = new CursorAcpJsonRpcConnection(launch, options.cwd, options.devLogger);
     this.registerHandlers();
+  }
+
+  recordMcpToolCallName(toolName: string): void {
+    const match = this.mcpToolNameMatcher.registerToolName(toolName);
+    if (!match) return;
+    const previous = this.toolStates.get(match.toolId);
+    if (!previous || previous.toolName === match.toolName) return;
+    const namedTool = {
+      ...previous,
+      title: match.toolName,
+      detail: match.toolName,
+      toolName: match.toolName,
+    };
+    this.toolStates.set(match.toolId, namedTool);
+    this.options.onChunk?.(this.withUsage(buildCursorToolChunkForState(namedTool)));
   }
 
   async start(timeoutMs = MODEL_DISCOVERY_TIMEOUT_MS): Promise<CursorAcpStartedSession> {
@@ -1752,13 +1834,32 @@ class CursorAcpRuntime {
 
     const tool = parseCursorToolState(params);
     if (tool) {
-      const merged = mergeCursorToolState(this.toolStates.get(tool.id), tool);
+      const previous = this.toolStates.get(tool.id);
+      let merged = mergeCursorToolState(previous, tool);
+      if (isGenericCursorMcpToolState(merged)) {
+        const matchedToolName = this.mcpToolNameMatcher.registerCursorTool(merged.id);
+        if (matchedToolName) {
+          merged = {
+            ...merged,
+            title: matchedToolName,
+            detail: matchedToolName,
+            toolName: matchedToolName,
+          };
+        }
+      }
       this.toolStates.set(tool.id, merged);
+      if (isGenericCursorMcpToolState(merged)) {
+        if (merged.status === "completed" || merged.status === "failed") {
+          this.mcpToolNameMatcher.discardCursorTool(merged.id);
+        } else {
+          return;
+        }
+      }
       if (isCursorSubagentToolState(merged)) {
         this.emitSubagentUpdateFromToolState(merged);
         return;
       }
-      this.options.onChunk?.(this.withUsage(cursorToolChunkForState(merged)));
+      this.options.onChunk?.(this.withUsage(buildCursorToolChunkForState(merged)));
     }
   }
 
@@ -1813,7 +1914,21 @@ class CursorAcpRuntime {
     const allowOnce = selectAllowOnceOption(params) ?? "allow-once";
     const allowAlways = selectAllowAlwaysOption(params) ?? "allow-always";
     const reject = selectRejectOption(params) ?? "reject-once";
-    const tool = getPermissionTool(params);
+    const permissionTool = getPermissionTool(params);
+    const previousTool = permissionTool ? this.toolStates.get(permissionTool.id) : undefined;
+    const tool = mergeCursorPermissionToolState(previousTool, params);
+    if (tool) {
+      if (tool.toolName?.startsWith("buildwarden_")) {
+        this.mcpToolNameMatcher.registerCursorTool(tool.id);
+      }
+      this.toolStates.set(tool.id, tool);
+      if (previousTool && !isCursorSubagentToolState(tool)) {
+        this.options.onChunk?.(this.withUsage(buildCursorToolChunkForState({
+          ...tool,
+          status: "inProgress",
+        })));
+      }
+    }
     const kind = normalizeToken(tool?.kind);
 
     if (this.options.yoloMode) {
@@ -2168,8 +2283,16 @@ export class CursorAgentHarnessAdapter implements HarnessAdapter {
       status?: "starting" | "running" | "ready" | "stopped" | "error";
     };
   }> {
-    const orchestrationMcp = await startCursorOrchestrationMcp(toolContext);
-    const runtime = cursorRuntimeFromRunInput(
+    let runtime: CursorAcpRuntime | undefined;
+    const pendingMcpToolNames: string[] = [];
+    const orchestrationMcp = await startCursorOrchestrationMcp(toolContext, (toolName) => {
+      if (runtime) {
+        runtime.recordMcpToolCallName(toolName);
+      } else {
+        pendingMcpToolNames.push(toolName);
+      }
+    });
+    runtime = cursorRuntimeFromRunInput(
       input,
       onChunk,
       signal,
@@ -2177,6 +2300,9 @@ export class CursorAgentHarnessAdapter implements HarnessAdapter {
       this.requestUserInput,
       orchestrationMcp ? [orchestrationMcp.config] : undefined,
     );
+    for (const toolName of pendingMcpToolNames) {
+      runtime.recordMcpToolCallName(toolName);
+    }
     try {
       const started = await runtime.start();
       const providerSessionRuntime = runtime.providerSessionRuntime;
