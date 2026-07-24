@@ -154,6 +154,89 @@ const createMutableProjectHarness = () => {
 };
 
 describe("AppController settings and lightweight workflows", () => {
+  it("cancels the durable orchestration when its coordinator run is cancelled", async () => {
+    let orchestration: OrchestrationRecord = {
+      id: "orchestration-1",
+      projectId: project.id,
+      coordinatorRunId: "coordinator-1",
+      status: "active",
+      teamSnapshot: {
+        version: 1,
+        maxConcurrentTasks: 3,
+        maxTasksPerOrchestration: 12,
+        models: [],
+        roles: [],
+      },
+      wakeMode: "all-terminal",
+      wakeTaskIds: ["orchestration-task-1"],
+      lastEventSequence: 1,
+      lastDeliveredSequence: 0,
+      errorMessage: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:01:00.000Z",
+      finishedAt: null,
+    };
+    let orchestrationTask: OrchestrationTaskRecord = {
+      id: "orchestration-task-1",
+      orchestrationId: orchestration.id,
+      waveId: "wave-1",
+      clientTaskId: "client-task-1",
+      title: "Inspect the workspace",
+      prompt: "Inspect the workspace.",
+      roleId: "researcher",
+      modelId: model.id,
+      intent: "inspect",
+      status: "running",
+      childRunId: "child-1",
+      retryOfTaskId: null,
+      summary: null,
+      errorMessage: null,
+      attentionReason: null,
+      adoptionStatus: "none",
+      inputTokens: 0,
+      outputTokens: 0,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:01:00.000Z",
+      startedAt: "2026-01-01T00:00:10.000Z",
+      finishedAt: null,
+    };
+    const updateOrchestration = vi.fn((_id: string, input: Partial<OrchestrationRecord>) => {
+      orchestration = { ...orchestration, ...input };
+      return orchestration;
+    });
+    const updateOrchestrationTask = vi.fn((_id: string, input: Partial<OrchestrationTaskRecord>) => {
+      orchestrationTask = { ...orchestrationTask, ...input };
+      return orchestrationTask;
+    });
+    const flushDurable = vi.fn(async () => undefined);
+    const harness = createHarness({
+      getOrchestrationByCoordinatorRunId: vi.fn((runId: string) =>
+        runId === orchestration.coordinatorRunId ? orchestration : null),
+      getOrchestration: vi.fn(() => orchestration),
+      getOrchestrationTask: vi.fn(() => orchestrationTask),
+      listOrchestrationTasks: vi.fn(() => [orchestrationTask]),
+      updateOrchestration,
+      updateOrchestrationTask,
+      appendOrchestrationEvent: vi.fn(),
+      flushDurable,
+    });
+    tempDirs.push(harness.logDir);
+
+    await harness.controller.cancelRun(orchestration.coordinatorRunId);
+
+    expect(updateOrchestration).toHaveBeenCalledWith(orchestration.id, expect.objectContaining({
+      status: "cancelled",
+      finishedAt: expect.any(String),
+    }));
+    expect(updateOrchestrationTask).toHaveBeenCalledWith(orchestrationTask.id, expect.objectContaining({
+      status: "cancelled",
+      finishedAt: expect.any(String),
+    }));
+    expect(flushDurable).toHaveBeenCalled();
+    expect(orchestration.status).toBe("cancelled");
+    expect(orchestrationTask.status).toBe("cancelled");
+  });
+
   it("automatically completes an orchestration after its delivered terminal wave is summarized", async () => {
     const orchestration = {
       id: "orchestration-1",

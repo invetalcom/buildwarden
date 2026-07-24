@@ -238,6 +238,12 @@ const ORCHESTRATION_TERMINAL_TASK_STATUSES = new Set<OrchestrationTaskStatus>([
   "interrupted",
   "blocked",
 ]);
+const ORCHESTRATION_CANCELLABLE_STATUSES = new Set([
+  "active",
+  "waiting",
+  "paused",
+  "attention",
+]);
 const stableJsonValue = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(stableJsonValue);
   if (value && typeof value === "object") {
@@ -5469,6 +5475,16 @@ export class AppController
   }
 
   async cancelRun(runId: string): Promise<void> {
+    const orchestration = this.db.getOrchestrationByCoordinatorRunId(runId);
+    if (orchestration && ORCHESTRATION_CANCELLABLE_STATUSES.has(orchestration.status)) {
+      await this.cancelOrchestration(runId);
+      return;
+    }
+
+    await this.cancelRunWorker(runId);
+  }
+
+  private async cancelRunWorker(runId: string): Promise<void> {
     const active = this.runWorkers.get(runId);
 
     if (!active) {
@@ -6335,13 +6351,14 @@ export class AppController
           .filter((task) => !ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status))
           .map((task) => task.id),
       );
-      if (this.runWorkers.has(coordinatorRunId)) await this.cancelRun(coordinatorRunId);
+      if (this.runWorkers.has(coordinatorRunId)) await this.cancelRunWorker(coordinatorRunId);
       this.db.appendOrchestrationEvent({
         orchestrationId: orchestration.id,
         type: "cancelled",
         title: "Orchestration cancelled",
         content: "All pending and running tasks were cancelled.",
       });
+      await this.db.flushDurable();
       this.emitOrchestrationChanged(orchestration.id);
     });
   }
