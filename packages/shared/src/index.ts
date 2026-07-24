@@ -1834,7 +1834,7 @@ export const DEFAULT_ORCHESTRATION_TEAM_SETTINGS: OrchestrationTeamSettings = {
   roles: [],
 };
 
-const DEFAULT_ORCHESTRATION_ROLE_TEMPLATES = [
+export const ORCHESTRATION_ROLE_PRESETS = [
   {
     id: "researcher",
     name: "Researcher",
@@ -1853,19 +1853,22 @@ const DEFAULT_ORCHESTRATION_ROLE_TEMPLATES = [
     description: "Independently reviews proposed changes for correctness, regressions, and missing tests.",
     maxConcurrent: 1,
   },
-] satisfies Array<Pick<OrchestrationRoleProfile, "id" | "name" | "description" | "maxConcurrent">>;
+] as const satisfies ReadonlyArray<Pick<OrchestrationRoleProfile, "id" | "name" | "description" | "maxConcurrent">>;
 
-export const createDefaultOrchestrationRoles = (
+export const createOrchestrationRoleFromPreset = (
+  presetId: string,
   modelIds: readonly string[],
-): OrchestrationRoleProfile[] => {
+): OrchestrationRoleProfile | null => {
+  const preset = ORCHESTRATION_ROLE_PRESETS.find((candidate) => candidate.id === presetId);
+  if (!preset) return null;
   const eligibleModelIds = Array.from(new Set(modelIds.map((modelId) => modelId.trim()).filter(Boolean)));
   const preferredModelId = eligibleModelIds[0];
-  if (!preferredModelId) return [];
-  return DEFAULT_ORCHESTRATION_ROLE_TEMPLATES.map((template) => ({
-    ...template,
+  if (!preferredModelId) return null;
+  return {
+    ...preset,
     eligibleModelIds: [...eligibleModelIds],
     preferredModelId,
-  }));
+  };
 };
 
 const orchestrationInteger = (value: unknown, fallback: number, min: number, max: number): number => {

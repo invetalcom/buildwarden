@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import { createOrchestrationRoleFromPreset, ORCHESTRATION_ROLE_PRESETS } from "@buildwarden/shared";
 import { OrchestrationSettingsTab } from "./settings-orchestration-tab";
 
 describe("OrchestrationSettingsTab", () => {
@@ -41,7 +42,7 @@ describe("OrchestrationSettingsTab", () => {
     );
 
     expect(markup).not.toContain("<select");
-    expect(markup.match(/role="combobox"/g)).toHaveLength(4);
+    expect(markup.match(/role="combobox"/g)).toHaveLength(2);
     expect(markup).toContain('role="switch"');
     expect(markup).toContain("Parallel tasks");
     expect(markup).toContain("Default effort");
@@ -50,8 +51,23 @@ describe("OrchestrationSettingsTab", () => {
     expect(markup).toContain("Extra tasks");
     expect(markup).toContain("Lifetime task limit");
     expect(markup).toContain("not a target");
-    expect(markup).toContain("Researcher");
-    expect(markup).toContain("Implementer");
-    expect(markup).toContain("Reviewer");
+    expect(markup).toContain("Add predefined");
+    expect(markup).toContain("Add custom role");
+    expect(markup).toContain("Add a predefined role or create a custom role.");
+    expect(markup).toContain("How role selection works");
+    expect(markup).toContain("The preferred model is used unless");
+    expect(markup).toContain("waits in the queue");
+    expect(markup).not.toContain('value="Researcher"');
+
+    expect(ORCHESTRATION_ROLE_PRESETS.map((preset) => preset.name)).toEqual([
+      "Researcher",
+      "Implementer",
+      "Reviewer",
+    ]);
+    expect(createOrchestrationRoleFromPreset("reviewer", ["model-1"])).toMatchObject({
+      id: "reviewer",
+      preferredModelId: "model-1",
+      eligibleModelIds: ["model-1"],
+    });
   });
 });

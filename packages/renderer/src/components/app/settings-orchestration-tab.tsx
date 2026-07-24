@@ -1,5 +1,6 @@
 import {
-  createDefaultOrchestrationRoles,
+  createOrchestrationRoleFromPreset,
+  ORCHESTRATION_ROLE_PRESETS,
   parseOrchestrationTeamSettings,
   type AppSnapshot,
   type OrchestrationRoleProfile,
@@ -43,14 +44,7 @@ const newRole = (preferredModelId: string): OrchestrationRoleProfile => ({
   maxConcurrent: 1,
 });
 
-const seedDefaultRoles = (settings: OrchestrationTeamSettings): OrchestrationTeamSettings => {
-  if (settings.roles.length > 0) return settings;
-  const modelIds = settings.models.filter((model) => model.enabled).map((model) => model.modelId);
-  const roles = createDefaultOrchestrationRoles(modelIds);
-  return roles.length > 0 ? { ...settings, roles } : settings;
-};
-
-const LimitHelp = ({
+const SettingsHelp = ({
   label,
   title,
   align,
@@ -75,7 +69,7 @@ const LimitHelp = ({
       <span
         id={tooltipId}
         role="tooltip"
-        className={`glass-popover invisible absolute top-[calc(100%+0.5rem)] z-[100] w-72 p-3 text-left normal-case opacity-0 transition duration-150 group-hover/help:visible group-hover/help:opacity-100 group-focus-within/help:visible group-focus-within/help:opacity-100 ${
+        className={`glass-popover invisible absolute top-[calc(100%+0.5rem)] z-[100] w-80 max-w-[calc(100vw-2rem)] p-3 text-left normal-case opacity-0 transition duration-150 group-hover/help:visible group-hover/help:opacity-100 group-focus-within/help:visible group-focus-within/help:opacity-100 ${
           align === "left" ? "left-0" : "right-0"
         }`}
       >
@@ -95,9 +89,7 @@ export const OrchestrationSettingsTab = ({
   canEdit,
   onSave,
 }: OrchestrationSettingsTabProps) => {
-  const [draft, setDraft] = useState<OrchestrationTeamSettings>(() => (
-    seedDefaultRoles(parseOrchestrationTeamSettings(serializedValue))
-  ));
+  const [draft, setDraft] = useState<OrchestrationTeamSettings>(() => parseOrchestrationTeamSettings(serializedValue));
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const enabledModels = useMemo(() => models.filter((model) => model.enabled !== 0), [models]);
@@ -111,7 +103,7 @@ export const OrchestrationSettingsTab = ({
   );
 
   useEffect(() => {
-    setDraft(seedDefaultRoles(parseOrchestrationTeamSettings(serializedValue)));
+    setDraft(parseOrchestrationTeamSettings(serializedValue));
   }, [serializedValue]);
 
   const setModelEnabled = (modelId: string, enabled: boolean) => {
@@ -131,13 +123,7 @@ export const OrchestrationSettingsTab = ({
               preferredModelId: role.preferredModelId === modelId ? (eligibleModelIds[0] ?? "") : role.preferredModelId,
             };
           });
-      return {
-        ...current,
-        models: modelsNext,
-        roles: enabled && roles.length === 0
-          ? createDefaultOrchestrationRoles(modelsNext.filter((model) => model.enabled).map((model) => model.modelId))
-          : roles,
-      };
+      return { ...current, models: modelsNext, roles };
     });
   };
 
@@ -163,6 +149,12 @@ export const OrchestrationSettingsTab = ({
   const validRoleCount = draft.roles.filter(
     (role) => role.name.trim() && role.preferredModelId && role.eligibleModelIds.includes(role.preferredModelId),
   ).length;
+  const predefinedRoleOptions = ORCHESTRATION_ROLE_PRESETS.map((preset) => ({
+    value: preset.id,
+    label: preset.name,
+    description: preset.description,
+    disabled: draft.roles.some((role) => role.id === preset.id),
+  }));
 
   const save = async () => {
     setSaving(true);
@@ -195,7 +187,7 @@ export const OrchestrationSettingsTab = ({
               <div className="w-32 space-y-1">
                 <span className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-[var(--ec-faint)]">
                   <span>Parallel tasks</span>
-                  <LimitHelp
+                  <SettingsHelp
                     label="About maximum concurrent tasks"
                     title="Maximum concurrent tasks"
                     align="left"
@@ -203,7 +195,7 @@ export const OrchestrationSettingsTab = ({
                     The most durable child tasks BuildWarden may run at once across active orchestrations. Extra tasks
                     wait in the queue. Role and model capacity can lower the actual concurrency; provider-native
                     subagents are not counted.
-                  </LimitHelp>
+                  </SettingsHelp>
                 </span>
                 <Input
                   type="number"
@@ -225,7 +217,7 @@ export const OrchestrationSettingsTab = ({
               <div className="w-32 space-y-1">
                 <span className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-[var(--ec-faint)]">
                   <span>Tasks per run</span>
-                  <LimitHelp
+                  <SettingsHelp
                     label="About maximum tasks per orchestration"
                     title="Lifetime task limit"
                     align="right"
@@ -233,7 +225,7 @@ export const OrchestrationSettingsTab = ({
                     The most durable tasks one orchestration may create over its lifetime—not a target. Completed,
                     failed, cancelled, and retry replacement tasks all count. Further delegation is rejected after
                     this limit is reached.
-                  </LimitHelp>
+                  </SettingsHelp>
                 </span>
                 <Input
                   type="number"
@@ -256,7 +248,7 @@ export const OrchestrationSettingsTab = ({
                 type="button"
                 size="sm"
                 className="h-8 gap-1.5"
-                disabled={!canEdit || saving || validRoleCount === 0}
+                disabled={!canEdit || saving}
                 onClick={() => void save()}
               >
                 <Save className="size-3.5" />
@@ -361,31 +353,66 @@ export const OrchestrationSettingsTab = ({
       <Card className="overflow-hidden">
         <CardHeader className="flex-row items-start justify-between gap-3 p-4">
           <div className="min-w-0">
-            <CardTitle className="text-base">Roles</CardTitle>
+            <CardTitle className="flex items-center gap-1.5 text-base">
+              <span>Roles</span>
+              <SettingsHelp
+                label="About orchestration roles"
+                title="How role selection works"
+                align="left"
+              >
+                Roles are routing profiles used when the coordinator delegates a durable task. It chooses a role from
+                the task purpose and the role name and description—for example research, implementation, or review.
+                The preferred model is used unless the coordinator explicitly requests another eligible model. Role
+                and model capacity then determine whether the task starts immediately or waits in the queue.
+              </SettingsHelp>
+            </CardTitle>
             <CardDescription>Every role needs an eligible preferred model before delegation can be enabled.</CardDescription>
           </div>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            className="h-8 shrink-0 gap-1.5"
-            disabled={!canEdit || selectedModelIds.size === 0}
-            onClick={() => {
-              setSaved(false);
-              setDraft((current) => ({
-                ...current,
-                roles: [...current.roles, newRole([...selectedModelIds][0] ?? "")],
-              }));
-            }}
-          >
-            <Plus className="size-3.5" />
-            Add role
-          </Button>
+          <div className="flex shrink-0 items-center gap-2">
+            <Select
+              value=""
+              placeholder="Add predefined"
+              ariaLabel="Add a predefined orchestration role"
+              className="w-40"
+              triggerClassName="h-8 rounded-md px-2.5 text-xs"
+              menuClassName="w-80"
+              maxMenuHeightPx={280}
+              disabled={!canEdit || selectedModelIds.size === 0}
+              options={predefinedRoleOptions}
+              onValueChange={(presetId) => {
+                const role = createOrchestrationRoleFromPreset(presetId, [...selectedModelIds]);
+                if (!role) return;
+                setSaved(false);
+                setDraft((current) => current.roles.some((entry) => entry.id === role.id)
+                  ? current
+                  : { ...current, roles: [...current.roles, role] });
+              }}
+            />
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="h-8 shrink-0 gap-1.5"
+              disabled={!canEdit || selectedModelIds.size === 0}
+              onClick={() => {
+                setSaved(false);
+                setDraft((current) => ({
+                  ...current,
+                  roles: [...current.roles, newRole([...selectedModelIds][0] ?? "")],
+                }));
+              }}
+            >
+              <Plus className="size-3.5" />
+              Add custom role
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="border-t border-[var(--ec-border)] p-0">
           {draft.roles.length === 0 ? (
             <div className="px-4 py-6 text-center text-sm text-[var(--ec-muted)]">
-              Enable at least one model, then add a role.
+              {selectedModelIds.size === 0
+                ? "Enable at least one model, then add a role."
+                : "Add a predefined role or create a custom role."}
             </div>
           ) : draft.roles.map((role) => (
             <section key={role.id} className="border-b border-[var(--ec-border)] p-3 last:border-b-0">
@@ -517,7 +544,7 @@ export const OrchestrationSettingsTab = ({
             </p>
           ) : validRoleCount === 0 ? (
             <p className="border-t border-[var(--ec-border)] px-4 py-2 text-[11px] text-[var(--ec-danger)]">
-              Add a valid role before saving or enabling delegation.
+              Add a valid role before enabling delegation.
             </p>
           ) : null}
         </CardContent>
