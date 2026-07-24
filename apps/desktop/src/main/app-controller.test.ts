@@ -85,6 +85,8 @@ const createHarness = (overrides: DbOverrides = {}) => {
     updateRunNote: vi.fn((_noteId: string, input: object) => ({ id: "note-1", runId: "run-1", content: "note", status: "open", ...input })),
     deleteRunNote: vi.fn(),
     updateRunListVisibility: vi.fn((_runId: string, visibility: string) => ({ id: "run-1", listVisibility: visibility } as RunRecord)),
+    getOrchestrationTaskByChildRunId: vi.fn(() => null),
+    getOrchestrationByCoordinatorRunId: vi.fn(() => null),
   };
   const db = { ...defaults, ...overrides } as unknown as BuildWardenDatabase;
   const secrets = {

@@ -18,7 +18,7 @@ import {
   type UnifiedProviderFamily,
   type ProviderType,
 } from "@buildwarden/shared";
-import { ArrowUp, Bot, BrainCircuit, Check, ChevronDown, GitBranch, ShieldOff, SlidersHorizontal, WandSparkles } from "lucide-react";
+import { ArrowUp, Bot, BrainCircuit, Check, ChevronDown, GitBranch, ShieldOff, SlidersHorizontal, UsersRound, WandSparkles } from "lucide-react";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { ContextWindowBadge } from "./ContextWindowBadge";
@@ -531,6 +531,9 @@ interface RunComposerProps {
   onAnthropicEffortChange?: (value: string) => void;
   yoloMode?: boolean;
   onYoloModeChange?: (value: boolean) => void;
+  delegationEnabled?: boolean;
+  delegationAvailable?: boolean;
+  onDelegationEnabledChange?: (value: boolean) => void;
 }
 
 export const RunComposer = ({
@@ -581,6 +584,9 @@ export const RunComposer = ({
   onAnthropicEffortChange,
   yoloMode = false,
   onYoloModeChange,
+  delegationEnabled = false,
+  delegationAvailable = false,
+  onDelegationEnabledChange,
 }: RunComposerProps) => {
   const buildwarden = useBuildWardenClient();
   const isChat = variant === "chat";
@@ -919,6 +925,29 @@ export const RunComposer = ({
                 >
                   <ShieldOff className={["h-3.5 w-3.5", yoloMode ? "text-[var(--ec-danger)]" : "text-[var(--ec-muted)]"].join(" ")} />
                   Full access
+                </button>
+              ) : null}
+              {!isChat && onDelegationEnabledChange ? (
+                <button
+                  type="button"
+                  aria-pressed={delegationEnabled}
+                  title={
+                    delegationAvailable
+                      ? "Allow this run to coordinate durable, isolated child runs across the configured agent team."
+                      : "Configure at least one valid Agent Team role in Settings before enabling delegation."
+                  }
+                  disabled={busy || !delegationAvailable}
+                  onClick={() => onDelegationEnabledChange(!delegationEnabled)}
+                  className={[
+                    "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-[13px] font-medium transition",
+                    delegationEnabled
+                      ? "bg-[var(--ec-accent-soft)] text-[var(--ec-accent)] ring-1 ring-inset ring-[var(--ec-accent-ring)]"
+                      : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
+                    busy || !delegationAvailable ? "cursor-not-allowed opacity-50" : "",
+                  ].join(" ")}
+                >
+                  <UsersRound className="h-3.5 w-3.5" />
+                  Allow delegation
                 </button>
               ) : null}
             </div>

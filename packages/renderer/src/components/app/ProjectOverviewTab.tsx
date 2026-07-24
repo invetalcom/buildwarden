@@ -55,6 +55,8 @@ interface ProjectOverviewTabProps {
   reasoningEffort: string;
   anthropicEffort: string;
   yoloMode: boolean;
+  delegationEnabled: boolean;
+  delegationAvailable: boolean;
   onSubmitRun: (payload: { attachments?: ChatAttachmentPayload[] }) => void | Promise<void>;
   onSetRunForLater: (runId: string) => void | Promise<void>;
   onSelectRun: (runId: string) => void;
@@ -67,6 +69,7 @@ interface ProjectOverviewTabProps {
   onReasoningEffortChange: (value: string) => void;
   onAnthropicEffortChange: (value: string) => void;
   onYoloModeChange: (value: boolean) => void;
+  onDelegationEnabledChange: (value: boolean) => void;
 }
 
 const formatRunMeta = (run: { branchName: string; workspaceType: RunWorkspaceType; workspaceVcs: RunWorkspaceVcs; createdAt: string }) => {
@@ -164,6 +167,8 @@ export const ProjectOverviewTab = ({
   reasoningEffort,
   anthropicEffort,
   yoloMode,
+  delegationEnabled,
+  delegationAvailable,
   onSubmitRun,
   onSetRunForLater,
   onSelectRun,
@@ -176,6 +181,7 @@ export const ProjectOverviewTab = ({
   onReasoningEffortChange,
   onAnthropicEffortChange,
   onYoloModeChange,
+  onDelegationEnabledChange,
 }: ProjectOverviewTabProps) => {
   const buildwarden = useBuildWardenClient();
   const readOnly = !buildwarden.capabilities.runMutations;
@@ -308,6 +314,9 @@ export const ProjectOverviewTab = ({
               onAnthropicEffortChange={onAnthropicEffortChange}
               yoloMode={yoloMode}
               onYoloModeChange={onYoloModeChange}
+              delegationEnabled={delegationEnabled}
+              delegationAvailable={delegationAvailable}
+              onDelegationEnabledChange={onDelegationEnabledChange}
             />
           </CardContent> : null}
         </Card>

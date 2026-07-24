@@ -26,6 +26,10 @@ export interface BuildWardenClientCapabilities {
   gitMutations: boolean;
   projectCreation: boolean;
   hostDirectoryBrowser: boolean;
+  orchestrationRead: boolean;
+  orchestrationOperate: boolean;
+  orchestrationAdoption: boolean;
+  orchestrationSettings: boolean;
   liveEvents: boolean;
 }
 
@@ -59,6 +63,10 @@ const ELECTRON_CAPABILITIES: Readonly<BuildWardenClientCapabilities> = Object.fr
   gitMutations: true,
   projectCreation: true,
   hostDirectoryBrowser: false,
+  orchestrationRead: true,
+  orchestrationOperate: true,
+  orchestrationAdoption: true,
+  orchestrationSettings: true,
   liveEvents: true,
 });
 

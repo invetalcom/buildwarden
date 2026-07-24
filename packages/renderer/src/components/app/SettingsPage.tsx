@@ -22,7 +22,7 @@ import {
   serializeIdePathConfig,
   type KeyboardShortcutId,
 } from "@buildwarden/shared";
-import { ArrowLeft, Cpu, Database, FolderGit2, Globe, Settings2 } from "lucide-react";
+import { ArrowLeft, Cpu, Database, FolderGit2, Globe, Settings2, UsersRound } from "lucide-react";
 import { APP_VERSION, APP_VERSION_DATE } from "../../lib/app-build-meta";
 import {
   emptyModelPresetsByGroup,
@@ -38,8 +38,9 @@ import { NetworkSettingsTab, type NetworkProxyDraft } from "./settings-network-t
 import { SkillsSettingsTab } from "./settings-skills-tab";
 import { UserSettingsTab } from "./settings-user-tab";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { OrchestrationSettingsTab } from "./settings-orchestration-tab";
 
-type SettingsTab = "provider-models" | "git-workspace" | "skills" | "network" | "user";
+type SettingsTab = "provider-models" | "orchestration" | "git-workspace" | "skills" | "network" | "user";
 
 interface SettingsPageProps {
   busy: boolean;
@@ -81,6 +82,7 @@ interface SettingsPageProps {
   remoteAccessEnabled: boolean;
   providerAccounts: AppSnapshot["providerAccounts"];
   models: AppSnapshot["models"];
+  orchestrationTeamSetting: string;
   availableModelsByProviderId: Record<string, AvailableProviderModelsState>;
   onBack: () => void;
   onChooseDirectory: () => void;
@@ -136,10 +138,12 @@ interface SettingsPageProps {
   integratedSkills: IntegratedSkillMetadata[];
   globallyDisabledIntegratedSkillIds: string[];
   onGloballyDisabledIntegratedSkillIdsChange: (skillIds: string[]) => void | Promise<void>;
+  onSaveOrchestrationTeam: (serialized: string) => void | Promise<void>;
 }
 
 const TAB_CONFIG: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }> = [
   { id: "provider-models", label: "Provider & Models", icon: <Cpu className="h-4 w-4" /> },
+  { id: "orchestration", label: "Agent Team", icon: <UsersRound className="h-4 w-4" /> },
   { id: "git-workspace", label: "Projects & Workspace", icon: <FolderGit2 className="h-4 w-4" /> },
   { id: "skills", label: "Skills", icon: <Database className="h-4 w-4" /> },
   { id: "network", label: "Network", icon: <Globe className="h-4 w-4" /> },
@@ -189,6 +193,7 @@ export const SettingsPage = ({
   remoteAccessEnabled,
   providerAccounts,
   models,
+  orchestrationTeamSetting,
   availableModelsByProviderId,
   onBack,
   onChooseDirectory,
@@ -244,6 +249,7 @@ export const SettingsPage = ({
   integratedSkills,
   globallyDisabledIntegratedSkillIds,
   onGloballyDisabledIntegratedSkillIdsChange,
+  onSaveOrchestrationTeam,
 }: SettingsPageProps) => {
   const buildwarden = useBuildWardenClient();
   const nativeActions = buildwarden.capabilities.platform === "electron";
@@ -474,6 +480,16 @@ export const SettingsPage = ({
           onModelDisplayNameChange={onModelDisplayNameChange}
           onModelBaseUrlChange={onModelBaseUrlChange}
           onSetOpenAiPresetUserChoseCustom={setOpenAiPresetUserChoseCustom}
+        />
+      ) : null}
+
+      {activeTab === "orchestration" ? (
+        <OrchestrationSettingsTab
+          models={models}
+          providerAccounts={providerAccounts}
+          serializedValue={orchestrationTeamSetting}
+          canEdit={buildwarden.capabilities.orchestrationSettings}
+          onSave={onSaveOrchestrationTeam}
         />
       ) : null}
 

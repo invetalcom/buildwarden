@@ -1,5 +1,5 @@
 import type { AppSnapshot, RunRecord } from "@buildwarden/shared";
-import { Clock3, FolderGit2, PlayCircle, Search, X } from "lucide-react";
+import { Clock3, FolderGit2, PlayCircle, Search, UsersRound, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { parseSearchTerms, runMatchesSearch } from "../../lib/run-search";
 import { Badge } from "../ui/badge";
@@ -109,18 +109,20 @@ const AllRunsContent = ({
 
 export const AllRunsPage = ({ projects, onSelectRun }: AllRunsPageProps) => {
   const [searchQuery, setSearchQuery] = useState("");
+  const [view, setView] = useState<"runs" | "orchestrated">("runs");
   const rows = useMemo(
     () =>
       projects
         .flatMap((entry) => {
           const runsById = new Map<string, RunRecord>();
-          for (const run of [...entry.runs, ...entry.forLaterRuns]) {
+          const sourceRuns = view === "orchestrated" ? entry.orchestratedRuns : [...entry.runs, ...entry.forLaterRuns];
+          for (const run of sourceRuns) {
             runsById.set(run.id, run);
           }
           return [...runsById.values()].map((run) => ({ project: entry.project, run }));
         })
         .sort((a, b) => new Date(b.run.updatedAt).getTime() - new Date(a.run.updatedAt).getTime()),
-    [projects],
+    [projects, view],
   );
 
   const activeCount = rows.filter(({ run }) => ["queued", "preparing", "running"].includes(run.status)).length;
@@ -140,6 +142,14 @@ export const AllRunsPage = ({ projects, onSelectRun }: AllRunsPageProps) => {
             </CardDescription>
           </div>
           <div className="flex min-w-0 flex-1 flex-wrap items-end justify-end gap-2">
+            <div className="flex h-8 items-center rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-0.5">
+              <button type="button" className={`h-7 rounded px-2.5 text-xs ${view === "runs" ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)]"}`} onClick={() => setView("runs")}>
+                Runs
+              </button>
+              <button type="button" className={`flex h-7 items-center gap-1.5 rounded px-2.5 text-xs ${view === "orchestrated" ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)]"}`} onClick={() => setView("orchestrated")}>
+                <UsersRound className="size-3" /> Orchestrated
+              </button>
+            </div>
             <label className="min-w-[16rem] max-w-md flex-1 space-y-1">
               <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--ec-faint)]">Search user input</span>
               <span className="relative block">

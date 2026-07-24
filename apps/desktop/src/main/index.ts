@@ -341,6 +341,7 @@ const bootstrap = async (): Promise<void> => {
   const startupReconciliation = controller
     .migrateProjectBaseBranches()
     .then(() => controller.reconcileOrphanedActiveSessions())
+    .then(() => controller.reconcileOrchestrationsAfterRestart())
     .then(() => {
       // Loops persist their full progress; re-enter their state machines only after the
       // interrupted-run reconciliation marked orphaned sessions terminal. Resuming on a
@@ -417,6 +418,26 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("getProjectBranches", (projectId) => controller.getProjectBranches(projectId), validateSingleRemoteStringArg);
   remoteOperations.register("getProjectCurrentBranch", (projectId) => controller.getProjectCurrentBranch(projectId), validateSingleRemoteStringArg);
   remoteOperations.register("getRunDetail", (runId) => controller.getRunDetail(runId), validateSingleRemoteStringArg);
+  remoteOperations.register(
+    "getOrchestrationDetail",
+    (coordinatorRunId) => controller.getOrchestrationDetail(coordinatorRunId),
+    validateSingleRemoteStringArg,
+  );
+  remoteOperations.register(
+    "getOrchestrationTaskDetail",
+    (taskId) => controller.getOrchestrationTaskDetail(taskId),
+    validateSingleRemoteStringArg,
+  );
+  remoteOperations.register(
+    "getOrchestrationAdoptionPreview",
+    (taskId) => controller.getOrchestrationAdoptionPreview(taskId),
+    validateSingleRemoteStringArg,
+  );
+  remoteOperations.register(
+    "getRunDeletionImpact",
+    (runId) => controller.getRunDeletionImpact(runId),
+    validateSingleRemoteStringArg,
+  );
   remoteOperations.register("getRunWorktreeDiff", (runId) => controller.getRunWorktreeDiff(runId), validateSingleRemoteStringArg);
   remoteOperations.register("getRunWorkspaceFile", (input) => controller.getRunWorkspaceFile(input), validateRunWorkspaceFileRemoteArgs);
   remoteOperations.register("getProjectLoopUiReviewImage", (reviewId) => controller.getProjectLoopUiReviewImage(reviewId), validateSingleRemoteStringArg);
@@ -653,6 +674,11 @@ const bootstrap = async (): Promise<void> => {
   const validateForgeMonitorSettings = defineRemoteArgsValidator<"saveProjectForgePrMonitorSettings">((args) =>
     args.length === 2 && typeof args[0] === "string" && isRemoteRecord(args[1]) &&
     Number.isFinite(args[1].intervalMinutes) && Number(args[1].intervalMinutes) >= 0);
+  const validateOrchestrationTaskMessage = defineRemoteArgsValidator<"sendOrchestrationTaskMessage">((args) =>
+    args.length === 1 && hasRemoteStringFields(args[0], ["taskId", "content"]));
+  const validateOrchestrationAdoption = defineRemoteArgsValidator<"decideOrchestrationAdoption">((args) =>
+    args.length === 1 && hasRemoteStringFields(args[0], ["taskId", "decision"]) &&
+    isRemoteRecord(args[0]) && ["approve", "reject", "undo"].includes(String(args[0].decision)));
 
   remoteOperations.register("getRunPublishOptions", (runId) => controller.getRunPublishOptions(runId), validateSingleRemoteStringArg);
   remoteOperations.register("getProjectBranchOverview", (projectId) => controller.getProjectBranchOverview(projectId), validateSingleRemoteStringArg);
@@ -700,6 +726,62 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("recoverInterruptedRun", (runId) => controller.recoverInterruptedRun(runId), validateSingleRemoteStringArg, "run:operate", true);
   remoteOperations.register("undoRunToLastPrompt", (runId) => controller.undoRunToLastPrompt(runId), validateSingleRemoteStringArg, "run:operate", true);
   remoteOperations.register("deleteRun", (runId) => controller.deleteRun(runId), validateSingleRemoteStringArg, "run:operate", true);
+  remoteOperations.register(
+    "pauseOrchestration",
+    (coordinatorRunId) => controller.pauseOrchestration(coordinatorRunId),
+    validateSingleRemoteStringArg,
+    "run:operate",
+    true,
+  );
+  remoteOperations.register(
+    "resumeOrchestration",
+    (coordinatorRunId) => controller.resumeOrchestration(coordinatorRunId),
+    validateSingleRemoteStringArg,
+    "run:operate",
+    true,
+  );
+  remoteOperations.register(
+    "cancelOrchestration",
+    (coordinatorRunId) => controller.cancelOrchestration(coordinatorRunId),
+    validateSingleRemoteStringArg,
+    "run:operate",
+    true,
+  );
+  remoteOperations.register(
+    "finishOrchestration",
+    (coordinatorRunId) => controller.finishOrchestration(coordinatorRunId),
+    validateSingleRemoteStringArg,
+    "run:operate",
+    true,
+  );
+  remoteOperations.register(
+    "sendOrchestrationTaskMessage",
+    (input) => controller.sendOrchestrationTaskMessage(input),
+    validateOrchestrationTaskMessage,
+    "run:operate",
+    true,
+  );
+  remoteOperations.register(
+    "retryOrchestrationTask",
+    (taskId) => controller.retryOrchestrationTask(taskId),
+    validateSingleRemoteStringArg,
+    "run:operate",
+    true,
+  );
+  remoteOperations.register(
+    "decideOrchestrationAdoption",
+    (input) => controller.decideOrchestrationAdoption(input),
+    validateOrchestrationAdoption,
+    ["run:operate", "git:write"],
+    true,
+  );
+  remoteOperations.register(
+    "refreshOrchestrationTeam",
+    (coordinatorRunId) => controller.refreshOrchestrationTeam(coordinatorRunId),
+    validateSingleRemoteStringArg,
+    ["run:operate", "admin"],
+    true,
+  );
   remoteOperations.register(
     "setRunListVisibility",
     (runId, visibility) => controller.setRunListVisibility(runId, visibility),
@@ -893,6 +975,7 @@ const bootstrap = async (): Promise<void> => {
         hostEvents.subscribe("warning", (payload) => listener({ event: "warning", payload })),
         hostEvents.subscribe("loop", (payload) => listener({ event: "loop", payload })),
         hostEvents.subscribe("task", (payload) => listener({ event: "task", payload })),
+        hostEvents.subscribe("orchestration", (payload) => listener({ event: "orchestration", payload })),
         hostTerminal.onData((payload) => listener({ event: "terminal-data", payload })),
         hostTerminal.onExit((payload) => listener({ event: "terminal-exit", payload })),
         hostBrowser.onEvent((payload) => listener({ event: "browser", payload })),
@@ -1229,6 +1312,29 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.deleteRun, (_, runId: string) => controller.deleteRun(runId));
   ipcMain.handle(IPC_CHANNELS.deleteModel, (_, modelId: string) => controller.deleteModel(modelId));
   ipcMain.handle(IPC_CHANNELS.getRunDetail, (_, runId: string) => controller.getRunDetail(runId));
+  ipcMain.handle(IPC_CHANNELS.getOrchestrationDetail, (_, coordinatorRunId: string) =>
+    controller.getOrchestrationDetail(coordinatorRunId));
+  ipcMain.handle(IPC_CHANNELS.getOrchestrationTaskDetail, (_, taskId: string) =>
+    controller.getOrchestrationTaskDetail(taskId));
+  ipcMain.handle(IPC_CHANNELS.getOrchestrationAdoptionPreview, (_, taskId: string) =>
+    controller.getOrchestrationAdoptionPreview(taskId));
+  ipcMain.handle(IPC_CHANNELS.getRunDeletionImpact, (_, runId: string) => controller.getRunDeletionImpact(runId));
+  ipcMain.handle(IPC_CHANNELS.pauseOrchestration, (_, coordinatorRunId: string) =>
+    controller.pauseOrchestration(coordinatorRunId));
+  ipcMain.handle(IPC_CHANNELS.resumeOrchestration, (_, coordinatorRunId: string) =>
+    controller.resumeOrchestration(coordinatorRunId));
+  ipcMain.handle(IPC_CHANNELS.cancelOrchestration, (_, coordinatorRunId: string) =>
+    controller.cancelOrchestration(coordinatorRunId));
+  ipcMain.handle(IPC_CHANNELS.finishOrchestration, (_, coordinatorRunId: string) =>
+    controller.finishOrchestration(coordinatorRunId));
+  ipcMain.handle(IPC_CHANNELS.sendOrchestrationTaskMessage, (_, input) =>
+    controller.sendOrchestrationTaskMessage(input));
+  ipcMain.handle(IPC_CHANNELS.retryOrchestrationTask, (_, taskId: string) =>
+    controller.retryOrchestrationTask(taskId));
+  ipcMain.handle(IPC_CHANNELS.decideOrchestrationAdoption, (_, input) =>
+    controller.decideOrchestrationAdoption(input));
+  ipcMain.handle(IPC_CHANNELS.refreshOrchestrationTeam, (_, coordinatorRunId: string) =>
+    controller.refreshOrchestrationTeam(coordinatorRunId));
   ipcMain.handle(IPC_CHANNELS.addRunNote, (_, runId: string, input) => controller.addRunNote(runId, input));
   ipcMain.handle(IPC_CHANNELS.updateRunNote, (_, noteId: string, input) => controller.updateRunNote(noteId, input));
   ipcMain.handle(IPC_CHANNELS.deleteRunNote, (_, noteId: string) => controller.deleteRunNote(noteId));

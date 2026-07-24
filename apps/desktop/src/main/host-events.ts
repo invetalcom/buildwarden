@@ -1,6 +1,7 @@
 import type {
   AppMenuCommand,
   AppWarning,
+  OrchestrationChangedPayload,
   ProjectForgeRequestNotificationPayload,
   ProjectForgeRequestOpenPayload,
   ProjectLoopChangedPayload,
@@ -14,6 +15,7 @@ export interface HostEventMap {
   warning: AppWarning;
   loop: ProjectLoopChangedPayload;
   task: ProjectTaskChangedPayload;
+  orchestration: OrchestrationChangedPayload;
   forgeRequestOpen: ProjectForgeRequestOpenPayload;
   forgeRequestNotification: ProjectForgeRequestNotificationPayload;
   appMenuCommand: AppMenuCommand;

@@ -18,6 +18,15 @@ import type {
   ChatSummary,
   ModelInput,
   ModelRecord,
+  OrchestrationDetail,
+  OrchestrationEventRecord,
+  OrchestrationRecord,
+  OrchestrationStatus,
+  OrchestrationTaskMessageRecord,
+  OrchestrationTaskRecord,
+  OrchestrationTaskStatus,
+  OrchestrationTeamSettings,
+  OrchestrationWaveRecord,
   ProjectInput,
   ProjectInsightKind,
   ProjectInsightRecord,
@@ -162,6 +171,30 @@ export class BuildWardenDatabase {
     this.db = null;
   }
 
+  transaction<T>(operation: () => T): T {
+    this.exec("begin immediate");
+    try {
+      const result = operation();
+      this.exec("commit");
+      this.persist();
+      return result;
+    } catch (error) {
+      try {
+        this.exec("rollback");
+      } catch {
+        // Preserve the original failure.
+      }
+      throw error;
+    }
+  }
+
+  async flushDurable(): Promise<void> {
+    this.persist();
+    while (this.persistInFlightPromise) {
+      await this.persistInFlightPromise;
+    }
+  }
+
   /**
    * Synchronous best-effort write for process shutdown, where async work can
    * no longer be awaited. Clears any pending debounced write first.
@@ -199,13 +232,22 @@ export class BuildWardenDatabase {
     const projects = this.listProjects().map((project) => {
       const allRuns = this.listRunsForProject(project.id);
       const visibleRuns = allRuns.filter((run) => run.kind === "standard");
+      const orchestratedRuns = allRuns.filter((run) => run.kind === "orchestration-task");
       const runs = visibleRuns.filter((run) => run.listVisibility !== "for-later");
       const forLaterRuns = visibleRuns.filter((run) => run.listVisibility === "for-later");
+      const activeCoordinatorIds = new Set(
+        this.listOrchestrationsWithStatuses(["active", "waiting", "paused", "attention"])
+          .filter((orchestration) => orchestration.projectId === project.id)
+          .map((orchestration) => orchestration.coordinatorRunId),
+      );
       return {
         project,
         runs,
         forLaterRuns,
-        activeRuns: runs.filter((run) => ["queued", "preparing", "running"].includes(run.status)),
+        orchestratedRuns,
+        activeRuns: runs.filter((run) =>
+          ["queued", "preparing", "running"].includes(run.status) || activeCoordinatorIds.has(run.id),
+        ),
         recentRuns: runs.slice(0, 12),
         tasks: this.listProjectTasks(project.id),
         insights: this.listProjectInsights(project.id),
@@ -1849,8 +1891,8 @@ export class BuildWardenDatabase {
       insert into runs (
         id, project_id, provider_account_id, model_id, harness_type, run_mode, workspace_type, prompt, status,
         workspace_vcs, goal_text, branch_name, worktree_path, summary, error_message, last_provider_response_id, input_tokens, output_tokens, list_visibility, run_kind, lab_thread_id,
-        parent_run_id, root_run_id, lineage_title, project_task_id, created_at, updated_at, started_at, finished_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        parent_run_id, root_run_id, lineage_title, project_task_id, delegation_enabled, created_at, updated_at, started_at, finished_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         id,
@@ -1878,6 +1920,7 @@ export class BuildWardenDatabase {
         input.rootRunId ?? null,
         input.lineageTitle ?? null,
         input.projectTaskId ?? null,
+        Number(input.delegationEnabled === true),
         createdAt,
         createdAt,
         null,
@@ -1976,6 +2019,7 @@ export class BuildWardenDatabase {
         root_run_id as rootRunId,
         lineage_title as lineageTitle,
         project_task_id as projectTaskId,
+        delegation_enabled as delegationEnabled,
         created_at as createdAt,
         updated_at as updatedAt,
         started_at as startedAt,
@@ -2129,6 +2173,7 @@ export class BuildWardenDatabase {
         root_run_id as rootRunId,
         lineage_title as lineageTitle,
         project_task_id as projectTaskId,
+        delegation_enabled as delegationEnabled,
         created_at as createdAt,
         updated_at as updatedAt,
         started_at as startedAt,
@@ -2179,6 +2224,7 @@ export class BuildWardenDatabase {
             root_run_id as rootRunId,
             lineage_title as lineageTitle,
             project_task_id as projectTaskId,
+            delegation_enabled as delegationEnabled,
             created_at as createdAt,
             updated_at as updatedAt,
             started_at as startedAt,
@@ -2228,6 +2274,7 @@ export class BuildWardenDatabase {
         root_run_id as rootRunId,
         lineage_title as lineageTitle,
         project_task_id as projectTaskId,
+        delegation_enabled as delegationEnabled,
         created_at as createdAt,
         updated_at as updatedAt,
         started_at as startedAt,
@@ -2348,6 +2395,7 @@ export class BuildWardenDatabase {
       modelId?: string;
       mode?: RunRecord["mode"];
       goalText?: string | null;
+      delegationEnabled?: boolean;
     },
   ): RunRecord {
     const existing = this.getRun(runId);
@@ -2356,7 +2404,7 @@ export class BuildWardenDatabase {
     this.run(
       `
       update runs
-      set provider_account_id = ?, model_id = ?, run_mode = ?, goal_text = ?, updated_at = ?
+      set provider_account_id = ?, model_id = ?, run_mode = ?, goal_text = ?, delegation_enabled = ?, updated_at = ?
       where id = ?
       `,
       [
@@ -2364,6 +2412,7 @@ export class BuildWardenDatabase {
         fields.modelId ?? existing.modelId,
         fields.mode ?? existing.mode,
         fields.goalText !== undefined ? fields.goalText : existing.goalText,
+        fields.delegationEnabled === undefined ? Number(existing.delegationEnabled) : Number(fields.delegationEnabled),
         timestamp,
         runId,
       ],
@@ -2980,12 +3029,646 @@ export class BuildWardenDatabase {
     this.persist();
   }
 
+  createOrchestration(input: {
+    projectId: string;
+    coordinatorRunId: string;
+    teamSnapshot: OrchestrationTeamSettings;
+  }): OrchestrationRecord {
+    const existing = this.getOrchestrationByCoordinatorRunId(input.coordinatorRunId);
+    if (existing) return existing;
+    const id = createId();
+    const timestamp = nowIso();
+    this.run(
+      `insert into orchestrations (
+        id, project_id, coordinator_run_id, status, team_snapshot_json, wake_mode, wake_task_ids_json,
+        last_event_sequence, last_delivered_sequence, error_message, created_at, updated_at, finished_at
+      ) values (?, ?, ?, 'active', ?, null, '[]', 0, 0, null, ?, ?, null)`,
+      [id, input.projectId, input.coordinatorRunId, JSON.stringify(input.teamSnapshot), timestamp, timestamp],
+    );
+    this.persist();
+    return this.getOrchestration(id);
+  }
+
+  getOrchestration(id: string): OrchestrationRecord {
+    const row = this.first<{
+      id: string;
+      projectId: string;
+      coordinatorRunId: string;
+      status: OrchestrationStatus;
+      teamSnapshotJson: string;
+      wakeMode: OrchestrationRecord["wakeMode"];
+      wakeTaskIdsJson: string;
+      lastEventSequence: number;
+      lastDeliveredSequence: number;
+      errorMessage: string | null;
+      createdAt: string;
+      updatedAt: string;
+      finishedAt: string | null;
+    }>(
+      `select id, project_id as projectId, coordinator_run_id as coordinatorRunId, status,
+        team_snapshot_json as teamSnapshotJson, wake_mode as wakeMode, wake_task_ids_json as wakeTaskIdsJson,
+        last_event_sequence as lastEventSequence, last_delivered_sequence as lastDeliveredSequence,
+        error_message as errorMessage, created_at as createdAt, updated_at as updatedAt, finished_at as finishedAt
+       from orchestrations where id = ?`,
+      [id],
+    );
+    if (!row) throw new Error(`Orchestration not found: ${id}`);
+    let teamSnapshot: OrchestrationTeamSettings;
+    let wakeTaskIds: string[];
+    try {
+      teamSnapshot = JSON.parse(row.teamSnapshotJson) as OrchestrationTeamSettings;
+    } catch {
+      throw new Error(`Orchestration team snapshot is invalid: ${id}`);
+    }
+    try {
+      const parsed = JSON.parse(row.wakeTaskIdsJson) as unknown;
+      wakeTaskIds = Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : [];
+    } catch {
+      wakeTaskIds = [];
+    }
+    return { ...row, teamSnapshot, wakeTaskIds };
+  }
+
+  getOrchestrationByCoordinatorRunId(coordinatorRunId: string): OrchestrationRecord | null {
+    const row = this.first<{ id: string }>("select id from orchestrations where coordinator_run_id = ?", [coordinatorRunId]);
+    return row ? this.getOrchestration(row.id) : null;
+  }
+
+  listOrchestrationsWithStatuses(statuses: OrchestrationStatus[]): OrchestrationRecord[] {
+    if (statuses.length === 0) return [];
+    const placeholders = statuses.map(() => "?").join(", ");
+    return this.all<{ id: string }>(
+      `select id from orchestrations where status in (${placeholders}) order by created_at asc`,
+      statuses,
+    ).map((row) => this.getOrchestration(row.id));
+  }
+
+  updateOrchestration(
+    id: string,
+    fields: Partial<Pick<
+      OrchestrationRecord,
+      "status" | "teamSnapshot" | "wakeMode" | "wakeTaskIds" | "lastDeliveredSequence" | "errorMessage" | "finishedAt"
+    >>,
+  ): OrchestrationRecord {
+    const existing = this.getOrchestration(id);
+    const timestamp = nowIso();
+    this.run(
+      `update orchestrations set status = ?, team_snapshot_json = ?, wake_mode = ?, wake_task_ids_json = ?,
+       last_delivered_sequence = ?, error_message = ?, updated_at = ?, finished_at = ? where id = ?`,
+      [
+        fields.status ?? existing.status,
+        JSON.stringify(fields.teamSnapshot ?? existing.teamSnapshot),
+        fields.wakeMode !== undefined ? fields.wakeMode : existing.wakeMode,
+        JSON.stringify(fields.wakeTaskIds ?? existing.wakeTaskIds),
+        fields.lastDeliveredSequence ?? existing.lastDeliveredSequence,
+        fields.errorMessage !== undefined ? fields.errorMessage : existing.errorMessage,
+        timestamp,
+        fields.finishedAt !== undefined ? fields.finishedAt : existing.finishedAt,
+        id,
+      ],
+    );
+    this.persist();
+    return this.getOrchestration(id);
+  }
+
+  createOrchestrationWave(orchestrationId: string, baselinePath?: string | null): OrchestrationWaveRecord {
+    const row = this.first<{ nextIndex: number }>(
+      "select coalesce(max(wave_index), -1) + 1 as nextIndex from orchestration_waves where orchestration_id = ?",
+      [orchestrationId],
+    );
+    const id = createId();
+    const timestamp = nowIso();
+    this.run(
+      `insert into orchestration_waves (
+        id, orchestration_id, wave_index, baseline_path, baseline_state, created_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?)`,
+      [id, orchestrationId, Number(row?.nextIndex ?? 0), baselinePath ?? null, baselinePath ? "ready" : "capturing", timestamp, timestamp],
+    );
+    this.persist();
+    return this.getOrchestrationWave(id);
+  }
+
+  getOrchestrationWave(id: string): OrchestrationWaveRecord {
+    const wave = this.first<OrchestrationWaveRecord>(
+      `select id, orchestration_id as orchestrationId, wave_index as waveIndex, baseline_path as baselinePath,
+       baseline_state as baselineState, created_at as createdAt, updated_at as updatedAt
+       from orchestration_waves where id = ?`,
+      [id],
+    );
+    if (!wave) throw new Error(`Orchestration wave not found: ${id}`);
+    return wave;
+  }
+
+  updateOrchestrationWave(
+    id: string,
+    fields: Partial<Pick<OrchestrationWaveRecord, "baselinePath" | "baselineState">>,
+  ): OrchestrationWaveRecord {
+    const existing = this.getOrchestrationWave(id);
+    this.run(
+      "update orchestration_waves set baseline_path = ?, baseline_state = ?, updated_at = ? where id = ?",
+      [
+        fields.baselinePath !== undefined ? fields.baselinePath : existing.baselinePath,
+        fields.baselineState ?? existing.baselineState,
+        nowIso(),
+        id,
+      ],
+    );
+    this.persist();
+    return this.getOrchestrationWave(id);
+  }
+
+  listOrchestrationWaves(orchestrationId: string): OrchestrationWaveRecord[] {
+    return this.all<OrchestrationWaveRecord>(
+      `select id, orchestration_id as orchestrationId, wave_index as waveIndex, baseline_path as baselinePath,
+       baseline_state as baselineState, created_at as createdAt, updated_at as updatedAt
+       from orchestration_waves where orchestration_id = ? order by wave_index asc`,
+      [orchestrationId],
+    );
+  }
+
+  createOrchestrationTask(input: {
+    orchestrationId: string;
+    waveId: string;
+    clientTaskId: string;
+    title: string;
+    prompt: string;
+    roleId: string;
+    modelId: string;
+    intent: OrchestrationTaskRecord["intent"];
+    childRunId?: string | null;
+    retryOfTaskId?: string | null;
+  }): OrchestrationTaskRecord {
+    const id = createId();
+    const timestamp = nowIso();
+    this.run(
+      `insert into orchestration_tasks (
+        id, orchestration_id, wave_id, client_task_id, title, prompt, role_id, model_id, intent, status,
+        child_run_id, retry_of_task_id, summary, error_message, attention_reason, adoption_status,
+        input_tokens, output_tokens, created_at, updated_at, started_at, finished_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, null, null, null, 'none', 0, 0, ?, ?, null, null)`,
+      [
+        id,
+        input.orchestrationId,
+        input.waveId,
+        input.clientTaskId,
+        input.title,
+        input.prompt,
+        input.roleId,
+        input.modelId,
+        input.intent,
+        input.childRunId ?? null,
+        input.retryOfTaskId ?? null,
+        timestamp,
+        timestamp,
+      ],
+    );
+    this.persist();
+    return this.getOrchestrationTask(id);
+  }
+
+  getOrchestrationTask(id: string): OrchestrationTaskRecord {
+    const task = this.first<OrchestrationTaskRecord>(
+      `select id, orchestration_id as orchestrationId, wave_id as waveId, client_task_id as clientTaskId,
+       title, prompt, role_id as roleId, model_id as modelId, intent, status, child_run_id as childRunId,
+       retry_of_task_id as retryOfTaskId, summary, error_message as errorMessage,
+       attention_reason as attentionReason, adoption_status as adoptionStatus,
+       input_tokens as inputTokens, output_tokens as outputTokens,
+       created_at as createdAt, updated_at as updatedAt, started_at as startedAt, finished_at as finishedAt
+       from orchestration_tasks where id = ?`,
+      [id],
+    );
+    if (!task) throw new Error(`Orchestration task not found: ${id}`);
+    return task;
+  }
+
+  getOrchestrationTaskByChildRunId(runId: string): OrchestrationTaskRecord | null {
+    const row = this.first<{ id: string }>("select id from orchestration_tasks where child_run_id = ?", [runId]);
+    return row ? this.getOrchestrationTask(row.id) : null;
+  }
+
+  getOrchestrationTaskByClientTaskId(orchestrationId: string, clientTaskId: string): OrchestrationTaskRecord | null {
+    const row = this.first<{ id: string }>(
+      "select id from orchestration_tasks where orchestration_id = ? and client_task_id = ?",
+      [orchestrationId, clientTaskId],
+    );
+    return row ? this.getOrchestrationTask(row.id) : null;
+  }
+
+  listOrchestrationTasks(orchestrationId: string): OrchestrationTaskRecord[] {
+    return this.all<{ id: string }>(
+      "select id from orchestration_tasks where orchestration_id = ? order by created_at asc",
+      [orchestrationId],
+    ).map((row) => this.getOrchestrationTask(row.id));
+  }
+
+  updateOrchestrationTask(
+    id: string,
+    fields: Partial<Pick<
+      OrchestrationTaskRecord,
+      | "status"
+      | "childRunId"
+      | "summary"
+      | "errorMessage"
+      | "attentionReason"
+      | "adoptionStatus"
+      | "inputTokens"
+      | "outputTokens"
+      | "startedAt"
+      | "finishedAt"
+    >>,
+  ): OrchestrationTaskRecord {
+    const existing = this.getOrchestrationTask(id);
+    this.run(
+      `update orchestration_tasks set status = ?, child_run_id = ?, summary = ?, error_message = ?,
+       attention_reason = ?, adoption_status = ?, input_tokens = ?, output_tokens = ?, updated_at = ?,
+       started_at = ?, finished_at = ? where id = ?`,
+      [
+        fields.status ?? existing.status,
+        fields.childRunId !== undefined ? fields.childRunId : existing.childRunId,
+        fields.summary !== undefined ? fields.summary : existing.summary,
+        fields.errorMessage !== undefined ? fields.errorMessage : existing.errorMessage,
+        fields.attentionReason !== undefined ? fields.attentionReason : existing.attentionReason,
+        fields.adoptionStatus ?? existing.adoptionStatus,
+        fields.inputTokens ?? existing.inputTokens,
+        fields.outputTokens ?? existing.outputTokens,
+        nowIso(),
+        fields.startedAt !== undefined ? fields.startedAt : existing.startedAt,
+        fields.finishedAt !== undefined ? fields.finishedAt : existing.finishedAt,
+        id,
+      ],
+    );
+    this.persist();
+    return this.getOrchestrationTask(id);
+  }
+
+  appendOrchestrationEvent(input: {
+    orchestrationId: string;
+    taskId?: string | null;
+    type: string;
+    title: string;
+    content: string;
+    metadata?: Record<string, unknown>;
+  }): OrchestrationEventRecord {
+    const orchestration = this.getOrchestration(input.orchestrationId);
+    const sequence = orchestration.lastEventSequence + 1;
+    const id = createId();
+    const createdAt = nowIso();
+    this.transaction(() => {
+      this.run(
+        `insert into orchestration_events (
+          id, orchestration_id, task_id, sequence, type, title, content, metadata_json, created_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          input.orchestrationId,
+          input.taskId ?? null,
+          sequence,
+          input.type,
+          input.title,
+          input.content,
+          JSON.stringify(input.metadata ?? {}),
+          createdAt,
+        ],
+      );
+      this.run(
+        "update orchestrations set last_event_sequence = ?, updated_at = ? where id = ?",
+        [sequence, createdAt, input.orchestrationId],
+      );
+    });
+    return {
+      id,
+      orchestrationId: input.orchestrationId,
+      taskId: input.taskId ?? null,
+      sequence,
+      type: input.type,
+      title: input.title,
+      content: input.content,
+      metadata: input.metadata ?? {},
+      createdAt,
+    };
+  }
+
+  listOrchestrationEvents(orchestrationId: string): OrchestrationEventRecord[] {
+    return this.all<{
+      id: string;
+      orchestrationId: string;
+      taskId: string | null;
+      sequence: number;
+      type: string;
+      title: string;
+      content: string;
+      metadataJson: string;
+      createdAt: string;
+    }>(
+      `select id, orchestration_id as orchestrationId, task_id as taskId, sequence, type, title, content,
+       metadata_json as metadataJson, created_at as createdAt
+       from orchestration_events where orchestration_id = ? order by sequence asc`,
+      [orchestrationId],
+    ).map((row) => ({
+      ...row,
+      metadata: this.parseJsonObject(row.metadataJson) ?? {},
+    }));
+  }
+
+  createOrchestrationTaskMessage(input: {
+    orchestrationId: string;
+    taskId: string;
+    source: OrchestrationTaskMessageRecord["source"];
+    content: string;
+  }): OrchestrationTaskMessageRecord {
+    const id = createId();
+    const createdAt = nowIso();
+    this.run(
+      `insert into orchestration_task_messages (
+        id, orchestration_id, task_id, source, content, status, created_at, delivered_at
+      ) values (?, ?, ?, ?, ?, 'queued', ?, null)`,
+      [id, input.orchestrationId, input.taskId, input.source, input.content, createdAt],
+    );
+    this.persist();
+    return {
+      id,
+      orchestrationId: input.orchestrationId,
+      taskId: input.taskId,
+      source: input.source,
+      content: input.content,
+      status: "queued",
+      createdAt,
+      deliveredAt: null,
+    };
+  }
+
+  listOrchestrationTaskMessages(orchestrationId: string): OrchestrationTaskMessageRecord[] {
+    return this.all<OrchestrationTaskMessageRecord>(
+      `select id, orchestration_id as orchestrationId, task_id as taskId, source, content, status,
+       created_at as createdAt, delivered_at as deliveredAt
+       from orchestration_task_messages where orchestration_id = ? order by created_at asc`,
+      [orchestrationId],
+    );
+  }
+
+  updateOrchestrationTaskMessage(
+    id: string,
+    status: OrchestrationTaskMessageRecord["status"],
+  ): void {
+    this.run(
+      "update orchestration_task_messages set status = ?, delivered_at = ? where id = ?",
+      [status, status === "delivered" ? nowIso() : null, id],
+    );
+    this.persist();
+  }
+
+  getOrchestrationAdoption(taskId: string): {
+    id: string;
+    orchestrationId: string;
+    taskId: string;
+    status: string;
+    manifest: Record<string, unknown>;
+    backupPath: string | null;
+    errorMessage: string | null;
+    createdAt: string;
+    updatedAt: string;
+  } | null {
+    const row = this.first<{
+      id: string;
+      orchestrationId: string;
+      taskId: string;
+      status: string;
+      manifestJson: string;
+      backupPath: string | null;
+      errorMessage: string | null;
+      createdAt: string;
+      updatedAt: string;
+    }>(
+      `select id, orchestration_id as orchestrationId, task_id as taskId, status,
+       manifest_json as manifestJson, backup_path as backupPath, error_message as errorMessage,
+       created_at as createdAt, updated_at as updatedAt
+       from orchestration_adoptions where task_id = ? order by created_at desc limit 1`,
+      [taskId],
+    );
+    return row ? { ...row, manifest: this.parseJsonObject(row.manifestJson) ?? {} } : null;
+  }
+
+  upsertOrchestrationAdoption(input: {
+    orchestrationId: string;
+    taskId: string;
+    status: string;
+    manifest?: Record<string, unknown>;
+    backupPath?: string | null;
+    errorMessage?: string | null;
+  }): void {
+    const existing = this.getOrchestrationAdoption(input.taskId);
+    const timestamp = nowIso();
+    if (existing) {
+      this.run(
+        `update orchestration_adoptions set status = ?, manifest_json = ?, backup_path = ?,
+         error_message = ?, updated_at = ? where id = ?`,
+        [
+          input.status,
+          JSON.stringify(input.manifest ?? existing.manifest),
+          input.backupPath !== undefined ? input.backupPath : existing.backupPath,
+          input.errorMessage !== undefined ? input.errorMessage : existing.errorMessage,
+          timestamp,
+          existing.id,
+        ],
+      );
+    } else {
+      this.run(
+        `insert into orchestration_adoptions (
+          id, orchestration_id, task_id, status, manifest_json, backup_path, error_message, created_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          createId(),
+          input.orchestrationId,
+          input.taskId,
+          input.status,
+          JSON.stringify(input.manifest ?? {}),
+          input.backupPath ?? null,
+          input.errorMessage ?? null,
+          timestamp,
+          timestamp,
+        ],
+      );
+    }
+    this.persist();
+  }
+
+  getOrchestrationDetailByCoordinatorRunId(coordinatorRunId: string): OrchestrationDetail | null {
+    const orchestration = this.getOrchestrationByCoordinatorRunId(coordinatorRunId);
+    if (!orchestration) return null;
+    const tasks = this.listOrchestrationTasks(orchestration.id);
+    const activeStatuses = new Set<OrchestrationTaskStatus>(["provisioning", "queued", "running", "waiting-input"]);
+    return {
+      orchestration,
+      waves: this.listOrchestrationWaves(orchestration.id),
+      tasks,
+      events: this.listOrchestrationEvents(orchestration.id),
+      messages: this.listOrchestrationTaskMessages(orchestration.id),
+      activeTaskCount: tasks.filter((task) => activeStatuses.has(task.status)).length,
+      queuedTaskCount: tasks.filter((task) => task.status === "pending" || task.status === "queued").length,
+      attentionTaskCount: tasks.filter((task) =>
+        task.status === "waiting-input" || task.status === "interrupted" || task.status === "blocked").length,
+      totalInputTokens: tasks.reduce((sum, task) => sum + task.inputTokens, 0),
+      totalOutputTokens: tasks.reduce((sum, task) => sum + task.outputTokens, 0),
+    };
+  }
+
+  getOrchestrationOperation(orchestrationId: string, requestId: string): {
+    id: string;
+    toolName: string;
+    requestHash: string;
+    status: string;
+    responseJson: string | null;
+    errorMessage: string | null;
+  } | null {
+    return this.first(
+      `select id, tool_name as toolName, request_hash as requestHash, status, response_json as responseJson,
+       error_message as errorMessage from orchestration_operations where orchestration_id = ? and request_id = ?`,
+      [orchestrationId, requestId],
+    );
+  }
+
+  createOrchestrationOperation(input: {
+    orchestrationId: string;
+    requestId: string;
+    toolName: string;
+    requestHash: string;
+  }): void {
+    const timestamp = nowIso();
+    this.run(
+      `insert into orchestration_operations (
+        id, orchestration_id, request_id, tool_name, request_hash, status, response_json, error_message, created_at, updated_at
+      ) values (?, ?, ?, ?, ?, 'running', null, null, ?, ?)`,
+      [createId(), input.orchestrationId, input.requestId, input.toolName, input.requestHash, timestamp, timestamp],
+    );
+    this.persist();
+  }
+
+  completeOrchestrationOperation(
+    orchestrationId: string,
+    requestId: string,
+    status: "completed" | "failed",
+    response: unknown,
+    errorMessage?: string | null,
+  ): void {
+    this.run(
+      `update orchestration_operations set status = ?, response_json = ?, error_message = ?, updated_at = ?
+       where orchestration_id = ? and request_id = ?`,
+      [status, JSON.stringify(response ?? null), errorMessage ?? null, nowIso(), orchestrationId, requestId],
+    );
+    this.persist();
+  }
+
+  createOrchestrationCleanupJob(input: {
+    coordinatorRunId: string;
+    orchestrationId?: string | null;
+    manifest: Record<string, unknown>;
+  }): string {
+    const existing = this.first<{ id: string }>(
+      "select id from orchestration_cleanup_jobs where coordinator_run_id = ? and status != 'completed'",
+      [input.coordinatorRunId],
+    );
+    if (existing) return existing.id;
+    const id = createId();
+    const timestamp = nowIso();
+    this.run(
+      `insert into orchestration_cleanup_jobs (
+        id, coordinator_run_id, orchestration_id, manifest_json, status, error_message, created_at, updated_at
+      ) values (?, ?, ?, ?, 'pending', null, ?, ?)`,
+      [id, input.coordinatorRunId, input.orchestrationId ?? null, JSON.stringify(input.manifest), timestamp, timestamp],
+    );
+    this.persist();
+    return id;
+  }
+
+  listPendingOrchestrationCleanupJobs(): Array<{
+    id: string;
+    coordinatorRunId: string;
+    orchestrationId: string | null;
+    manifest: Record<string, unknown>;
+    status: string;
+    errorMessage: string | null;
+  }> {
+    return this.all<{
+      id: string;
+      coordinatorRunId: string;
+      orchestrationId: string | null;
+      manifestJson: string;
+      status: string;
+      errorMessage: string | null;
+    }>(
+      "select id, coordinator_run_id as coordinatorRunId, orchestration_id as orchestrationId, manifest_json as manifestJson, status, error_message as errorMessage from orchestration_cleanup_jobs where status != 'completed'",
+    ).map((row) => ({ ...row, manifest: this.parseJsonObject(row.manifestJson) ?? {} }));
+  }
+
+  updateOrchestrationCleanupJob(id: string, status: string, errorMessage?: string | null): void {
+    this.run(
+      "update orchestration_cleanup_jobs set status = ?, error_message = ?, updated_at = ? where id = ?",
+      [status, errorMessage ?? null, nowIso(), id],
+    );
+    this.persist();
+  }
+
+  completeOrchestrationCleanupJob(id: string): void {
+    this.run("delete from orchestration_cleanup_jobs where id = ?", [id]);
+    this.persist();
+  }
+
+  deleteOrchestrationData(orchestrationId: string): void {
+    this.transaction(() => {
+      this.run("delete from orchestration_adoptions where orchestration_id = ?", [orchestrationId]);
+      this.run("delete from orchestration_operations where orchestration_id = ?", [orchestrationId]);
+      this.run("delete from orchestration_task_messages where orchestration_id = ?", [orchestrationId]);
+      this.run("delete from orchestration_events where orchestration_id = ?", [orchestrationId]);
+      this.run("delete from orchestration_tasks where orchestration_id = ?", [orchestrationId]);
+      this.run("delete from orchestration_waves where orchestration_id = ?", [orchestrationId]);
+      this.run("delete from orchestrations where id = ?", [orchestrationId]);
+    });
+  }
+
+  deleteBookmarksForRunIds(runIds: string[]): void {
+    for (const batch of chunkValues([...new Set(runIds)])) {
+      if (batch.length === 0) continue;
+      const placeholders = batch.map(() => "?").join(", ");
+      this.run(
+        `delete from bookmark_steps where bookmark_id in (
+          select id from bookmarks where original_run_id in (${placeholders})
+        )`,
+        batch,
+      );
+      this.run(`delete from bookmarks where original_run_id in (${placeholders})`, batch);
+    }
+    this.persist();
+  }
+
+  deleteChatBookmarksForRunIds(runIds: string[]): void {
+    for (const batch of chunkValues([...new Set(runIds)])) {
+      if (batch.length === 0) continue;
+      const placeholders = batch.map(() => "?").join(", ");
+      this.run(
+        `delete from chat_bookmark_steps where chat_bookmark_id in (
+          select id from chat_bookmarks where original_chat_id in (
+            select id from chats where run_id in (${placeholders})
+          )
+        )`,
+        batch,
+      );
+      this.run(
+        `delete from chat_bookmarks where original_chat_id in (
+          select id from chats where run_id in (${placeholders})
+        )`,
+        batch,
+      );
+    }
+    this.persist();
+  }
+
   getRunDetail(runId: string, diff: string): RunDetail {
     return {
       run: this.getRun(runId),
       steps: this.getRunSteps(runId),
       notes: this.listRunNotes(runId),
       diff,
+      orchestration: this.getOrchestrationDetailByCoordinatorRunId(runId),
     };
   }
 
@@ -3055,6 +3738,7 @@ export class BuildWardenDatabase {
         root_run_id text,
         lineage_title text,
         project_task_id text,
+        delegation_enabled integer not null default 0,
         created_at text not null,
         updated_at text not null,
         started_at text,
@@ -3396,6 +4080,128 @@ export class BuildWardenDatabase {
       create index if not exists idx_remote_access_sessions_created on remote_access_sessions(created_at desc);
       create index if not exists idx_remote_security_audit_created on remote_security_audit(created_at desc);
       create index if not exists idx_remote_command_idempotency_created on remote_command_idempotency(created_at desc);
+
+      create table if not exists orchestrations (
+        id text primary key,
+        project_id text not null,
+        coordinator_run_id text not null unique,
+        status text not null,
+        team_snapshot_json text not null,
+        wake_mode text,
+        wake_task_ids_json text not null default '[]',
+        last_event_sequence integer not null default 0,
+        last_delivered_sequence integer not null default 0,
+        error_message text,
+        created_at text not null,
+        updated_at text not null,
+        finished_at text
+      );
+
+      create table if not exists orchestration_waves (
+        id text primary key,
+        orchestration_id text not null,
+        wave_index integer not null,
+        baseline_path text,
+        baseline_state text not null default 'capturing',
+        created_at text not null,
+        updated_at text not null
+      );
+
+      create table if not exists orchestration_tasks (
+        id text primary key,
+        orchestration_id text not null,
+        wave_id text not null,
+        client_task_id text not null,
+        title text not null,
+        prompt text not null,
+        role_id text not null,
+        model_id text not null,
+        intent text not null,
+        status text not null,
+        child_run_id text unique,
+        retry_of_task_id text,
+        summary text,
+        error_message text,
+        attention_reason text,
+        adoption_status text not null default 'none',
+        input_tokens integer not null default 0,
+        output_tokens integer not null default 0,
+        created_at text not null,
+        updated_at text not null,
+        started_at text,
+        finished_at text,
+        unique(orchestration_id, client_task_id)
+      );
+
+      create table if not exists orchestration_events (
+        id text primary key,
+        orchestration_id text not null,
+        task_id text,
+        sequence integer not null,
+        type text not null,
+        title text not null,
+        content text not null,
+        metadata_json text not null default '{}',
+        created_at text not null,
+        unique(orchestration_id, sequence)
+      );
+
+      create table if not exists orchestration_task_messages (
+        id text primary key,
+        orchestration_id text not null,
+        task_id text not null,
+        source text not null,
+        content text not null,
+        status text not null default 'queued',
+        created_at text not null,
+        delivered_at text
+      );
+
+      create table if not exists orchestration_operations (
+        id text primary key,
+        orchestration_id text not null,
+        request_id text not null,
+        tool_name text not null,
+        request_hash text not null,
+        status text not null,
+        response_json text,
+        error_message text,
+        created_at text not null,
+        updated_at text not null,
+        unique(orchestration_id, request_id)
+      );
+
+      create table if not exists orchestration_cleanup_jobs (
+        id text primary key,
+        coordinator_run_id text not null,
+        orchestration_id text,
+        manifest_json text not null,
+        status text not null,
+        error_message text,
+        created_at text not null,
+        updated_at text not null
+      );
+
+      create table if not exists orchestration_adoptions (
+        id text primary key,
+        orchestration_id text not null,
+        task_id text not null,
+        status text not null,
+        manifest_json text not null default '{}',
+        backup_path text,
+        error_message text,
+        created_at text not null,
+        updated_at text not null
+      );
+
+      create index if not exists idx_orchestrations_project on orchestrations(project_id, updated_at desc);
+      create index if not exists idx_orchestrations_status on orchestrations(status);
+      create unique index if not exists idx_orchestration_waves_number on orchestration_waves(orchestration_id, wave_index);
+      create index if not exists idx_orchestration_tasks_status on orchestration_tasks(orchestration_id, status);
+      create index if not exists idx_orchestration_tasks_child_run on orchestration_tasks(child_run_id);
+      create index if not exists idx_orchestration_events_sequence on orchestration_events(orchestration_id, sequence);
+      create index if not exists idx_orchestration_messages_status on orchestration_task_messages(task_id, status);
+      create index if not exists idx_orchestration_cleanup_status on orchestration_cleanup_jobs(status, updated_at);
     `);
 
   }
@@ -3407,6 +4213,7 @@ export class BuildWardenDatabase {
     this.ensureColumn("project_loop_iterations", "ai_review_posted", "integer not null default 0");
     this.ensureColumn("chats", "run_id", "text");
     this.ensureColumn("runs", "project_task_id", "text");
+    this.ensureColumn("runs", "delegation_enabled", "integer not null default 0");
     this.ensureColumn("project_tasks", "status", "text not null default 'open'");
     this.ensureColumn("project_tasks", "run_id", "text");
     this.ensureColumn("project_tasks", "pull_request_url", "text");

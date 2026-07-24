@@ -97,6 +97,10 @@ const remoteRunCapabilities = {
   gitMutations: true,
   projectCreation: false,
   hostDirectoryBrowser: false,
+  orchestrationRead: true,
+  orchestrationOperate: true,
+  orchestrationAdoption: true,
+  orchestrationSettings: false,
   liveEvents: true,
 };
 
@@ -141,6 +145,7 @@ const runRecord = (overrides: Partial<RunRecord> = {}): RunRecord => ({
   parentRunId: null,
   rootRunId: null,
   projectTaskId: null,
+  delegationEnabled: false,
   lineageTitle: null,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:05:00.000Z",
@@ -230,6 +235,7 @@ describe("renderer component states", () => {
       },
       runs: [run],
       forLaterRuns: [],
+      orchestratedRuns: [],
       activeRuns: [],
       recentRuns: [run],
       tasks: [],
@@ -325,6 +331,8 @@ describe("renderer component states", () => {
         reasoningEffort="high"
         anthropicEffort="medium"
         yoloMode={false}
+        delegationEnabled={false}
+        delegationAvailable={true}
         onSubmitRun={vi.fn()}
         onSetRunForLater={vi.fn()}
         onSelectRun={vi.fn()}
@@ -337,6 +345,7 @@ describe("renderer component states", () => {
         onReasoningEffortChange={vi.fn()}
         onAnthropicEffortChange={vi.fn()}
         onYoloModeChange={vi.fn()}
+        onDelegationEnabledChange={vi.fn()}
       />,
     );
     expect(overviewMarkup).toContain("BuildWarden");

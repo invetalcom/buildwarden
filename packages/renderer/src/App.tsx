@@ -14,6 +14,7 @@ import {
   parseUiTheme,
   SUPPORTED_IDE_KINDS,
   parseIdePathConfig,
+  parseOrchestrationTeamSettings,
   parseShellAllowlistExtraSetting,
   type AppMenuSection,
   type AppSnapshot,
@@ -31,6 +32,7 @@ import {
   type ProjectInsightKind,
   type ProviderType,
   type RunDetail,
+  type RunDeletionImpact,
   type RunMode,
   type RunRecord,
   type RunTokenUsage,
@@ -232,6 +234,7 @@ export const App = () => {
   const [runReasoningEffort, setRunReasoningEffort] = useState("medium");
   const [runAnthropicEffort, setRunAnthropicEffort] = useState("medium");
   const [runYoloMode, setRunYoloMode] = useState(false);
+  const [runDelegationEnabled, setRunDelegationEnabled] = useState(false);
   const [chatReasoningEffort, setChatReasoningEffort] = useState("medium");
   const [chatAnthropicEffort, setChatAnthropicEffort] = useState("medium");
   const [selectedRunId, setSelectedRunId] = useState<string | null | undefined>(undefined);
@@ -287,6 +290,17 @@ export const App = () => {
   const projectFolderGitWarning = computeProjectFolderGitWarning(projectFolderGitStatus);
   const preferredRunModelId = snapshot.settings[APP_SETTING_KEYS.lastUsedRunModelId] ?? "";
   const persistedSidebarWidthSetting = snapshot.settings[APP_SETTING_KEYS.sidebarWidth];
+  const orchestrationTeam = useMemo(
+    () => parseOrchestrationTeamSettings(snapshot.settings[APP_SETTING_KEYS.orchestrationTeam]),
+    [snapshot.settings],
+  );
+  const delegationAvailable = orchestrationTeam.roles.length > 0;
+
+  useEffect(() => {
+    if (!delegationAvailable) {
+      setRunDelegationEnabled(false);
+    }
+  }, [delegationAvailable]);
   const {
     welcomeOpen,
     welcomeStepIndex,
@@ -827,11 +841,29 @@ export const App = () => {
     const unsubscribeLoopChanged = buildwarden.onProjectLoopChanged(() => {
       scheduleSnapshotRefresh();
     });
+    const unsubscribeOrchestrationChanged = buildwarden.onOrchestrationChanged((payload) => {
+      scheduleSnapshotRefresh();
+      void refreshRunDetailForActiveRunEvent(payload.coordinatorRunId, { immediate: true });
+      if (payload.deletedRunIds?.length) {
+        const deletedIds = new Set(payload.deletedRunIds);
+        setRunDetailsById((current) => Object.fromEntries(
+          Object.entries(current).filter(([runId]) => !deletedIds.has(runId)),
+        ));
+        setOpenRunPanes((current) => Object.fromEntries(
+          Object.entries(current).filter(([, runId]) => !deletedIds.has(runId)),
+        ) as OpenRunPanes);
+        if (typeof selectedRunIdRef.current === "string" && deletedIds.has(selectedRunIdRef.current)) {
+          setSelectedRunId(null);
+          setRunDetail(null);
+        }
+      }
+    });
 
     return () => {
       unsubscribe();
       unsubscribeWarning();
       unsubscribeLoopChanged();
+      unsubscribeOrchestrationChanged();
     };
   }, [
     buildwarden,
@@ -956,7 +988,6 @@ export const App = () => {
     submitCheckoutDetachedProjectBranch,
   } = useProjectBranches({ buildwarden, selectedProject, setError });
   const {
-    removeRunWorkspaceLayout,
     removeRunWorkspaceLayoutsForRuns,
     runWorkspaceLayoutsByRunId,
     selectedRunWorkspaceLayout,
@@ -1680,6 +1711,7 @@ export const App = () => {
       projectTaskId,
       ...reasoningInput,
       yoloMode: runYoloMode,
+      delegationEnabled: runDelegationEnabled,
     });
     return run.id;
   };
@@ -2829,12 +2861,33 @@ export const App = () => {
       return;
     }
 
+    let deletionImpact: RunDeletionImpact;
+    try {
+      deletionImpact = await buildwarden.getRunDeletionImpact(run.id);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not inspect the run deletion impact.");
+      return;
+    }
+    const isCascade = deletionImpact.orchestrationId != null;
+    const impactSummary = isCascade
+      ? [
+          `This permanently deletes the coordinator and ${Math.max(0, deletionImpact.runIds.length - 1)} child run(s).`,
+          `${deletionImpact.runningRunIds.length} process(es) will be cancelled.`,
+          `${deletionImpact.ownedDirectories.length} owned workspace(s), ${deletionImpact.branches.length} branch(es), and ${deletionImpact.artifactPaths.length} orchestration artifact path(s) will be removed.`,
+          deletionImpact.lockedOrMissingPaths.length
+            ? `${deletionImpact.lockedOrMissingPaths.length} path(s) are currently unavailable and may require a cleanup retry.`
+            : "Every owned path and database row must be verified removed before deletion succeeds.",
+          run.workspaceType === "local"
+            ? "The original repository and previously adopted project changes are never deleted."
+            : "",
+          "Child cleanup is mandatory and cannot be deselected.",
+        ].filter(Boolean).join("\n\n")
+      : run.workspaceType === "local"
+        ? "Delete this local run and remove its logs, diff history, and persisted run data? Repository files will not be deleted."
+        : "Delete this run, its worktree, logs, diff history, and persisted run data?";
     const confirmed = await requestConfirmation({
-      title: "Delete run",
-      message:
-        run.workspaceType === "local"
-          ? "Delete this local run and remove its logs, diff history, and persisted run data? Repository files will not be deleted."
-          : "Delete this run, its worktree, logs, diff history, and persisted run data?",
+      title: isCascade ? "Delete orchestration and all children" : "Delete run",
+      message: impactSummary,
       confirmLabel: "Delete run",
       confirmVariant: "danger",
     });
@@ -2847,44 +2900,43 @@ export const App = () => {
     const wasViewingThisRun = selectedRunId === runId;
     const paneId = paneForOpenRunId(openRunPanesRef.current, runId);
 
-    if (paneId) {
-      const nextPanes: OpenRunPanes = { ...openRunPanesRef.current };
-      delete nextPanes[paneId];
-      const remainingRunId = firstOpenRunId(nextPanes);
-      const remainingPaneId = remainingRunId ? paneForOpenRunId(nextPanes, remainingRunId) ?? "left" : "left";
-      setOpenRunPanes(nextPanes);
-      setRunDetailsById((current) => {
-        const next = { ...current };
-        delete next[runId];
-        return next;
-      });
-      if (wasViewingThisRun && remainingRunId) {
-        void setFocusedRunSelection(remainingPaneId, remainingRunId).catch((caught) => {
-          setError(caught instanceof Error ? caught.message : "Unexpected error");
-        });
-      } else if (wasViewingThisRun) {
-        clearRunSelectionState(null);
-      }
-    } else if (wasViewingThisRun) {
-      clearRunSelectionState(null);
-    }
-
     setPendingDeleteRunIds((current) => ({ ...current, [runId]: true }));
 
     void (async () => {
       try {
         await buildwarden.deleteRun(runId);
+        if (paneId) {
+          const nextPanes: OpenRunPanes = { ...openRunPanesRef.current };
+          delete nextPanes[paneId];
+          const remainingRunId = firstOpenRunId(nextPanes);
+          const remainingPaneId = remainingRunId ? paneForOpenRunId(nextPanes, remainingRunId) ?? "left" : "left";
+          setOpenRunPanes(nextPanes);
+          setRunDetailsById((current) => {
+            const next = { ...current };
+            for (const deletedRunId of deletionImpact.runIds) {
+              delete next[deletedRunId];
+            }
+            return next;
+          });
+          if (wasViewingThisRun && remainingRunId) {
+            await setFocusedRunSelection(remainingPaneId, remainingRunId);
+          } else if (wasViewingThisRun) {
+            clearRunSelectionState(null);
+          }
+        } else if (wasViewingThisRun) {
+          clearRunSelectionState(null);
+        }
         setRunBrowserSessions((current) => {
           const next = { ...current };
-          delete next[runId];
+          for (const deletedRunId of deletionImpact.runIds) delete next[deletedRunId];
           return next;
         });
         setRunTerminalOpenLinksInApp((current) => {
           const next = { ...current };
-          delete next[runId];
+          for (const deletedRunId of deletionImpact.runIds) delete next[deletedRunId];
           return next;
         });
-        removeRunWorkspaceLayout(runId);
+        removeRunWorkspaceLayoutsForRuns(deletionImpact.runIds);
         await loadSnapshot();
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : "Could not delete run.");
@@ -2902,7 +2954,7 @@ export const App = () => {
     clearRunSelectionState,
     loadSnapshot,
     pendingDeleteRunIds,
-    removeRunWorkspaceLayout,
+    removeRunWorkspaceLayoutsForRuns,
     requestConfirmation,
     selectedRunId,
     setFocusedRunSelection,
@@ -3169,6 +3221,11 @@ export const App = () => {
             onUndoRunToLastPrompt={(run) => void undoRunToLastPrompt(run)}
             onRecoverInterruptedRun={(run) => void recoverInterruptedRun(run)}
             onCreateProjectTask={(projectId, input) => createProjectTask(projectId, input)}
+            onOpenChildRun={(childRunId) => void handleRunSelect(paneDetail.run.projectId, childRunId)}
+            onReviewChildRun={(childRunId) => {
+              setRunWorkspaceShowDiff(true);
+              void handleRunSelect(paneDetail.run.projectId, childRunId);
+            }}
             onFollowUpRun={(run, prompt, options) => followUpRun(run, prompt, options)}
           />
         ) : (
@@ -3264,6 +3321,7 @@ export const App = () => {
               remoteAccessEnabled={parseRemoteAccessEnabledSetting(snapshot.settings[APP_SETTING_KEYS.remoteAccessEnabled])}
               providerAccounts={snapshot.providerAccounts}
               models={snapshot.models}
+              orchestrationTeamSetting={snapshot.settings[APP_SETTING_KEYS.orchestrationTeam] ?? ""}
               availableModelsByProviderId={availableModelsByProviderId}
               onBack={handleSettingsBack}
               onChooseDirectory={() => void chooseDirectory()}
@@ -3394,6 +3452,15 @@ export const App = () => {
               integratedSkills={integratedSkillsCatalog}
               globallyDisabledIntegratedSkillIds={globallyDisabledIntegratedSkillIds}
               onGloballyDisabledIntegratedSkillIdsChange={(skillIds) => void updateGloballyDisabledIntegratedSkills(skillIds)}
+              onSaveOrchestrationTeam={(serialized) =>
+                void handleAction(async () => {
+                  if (!buildwarden) {
+                    throw new Error("The BuildWarden bridge is unavailable.");
+                  }
+                  await buildwarden.setAppSetting(APP_SETTING_KEYS.orchestrationTeam, serialized);
+                  await loadSnapshot();
+                })
+              }
             />
   );
 
@@ -3575,6 +3642,11 @@ export const App = () => {
               onUndoRunToLastPrompt={(run) => void undoRunToLastPrompt(run)}
               onRecoverInterruptedRun={(run) => void recoverInterruptedRun(run)}
               onCreateProjectTask={(projectId, input) => createProjectTask(projectId, input)}
+              onOpenChildRun={(childRunId) => void handleRunSelect(detail.run.projectId, childRunId)}
+              onReviewChildRun={(childRunId) => {
+                setRunWorkspaceShowDiff(true);
+                void handleRunSelect(detail.run.projectId, childRunId);
+              }}
               onFollowUpRun={(run, prompt, options) => followUpRun(run, prompt, options)}
             />
   );
@@ -3607,9 +3679,12 @@ export const App = () => {
               reasoningEffort={runReasoningEffort}
               anthropicEffort={runAnthropicEffort}
               yoloMode={runYoloMode}
+              delegationEnabled={runDelegationEnabled}
+              delegationAvailable={delegationAvailable}
               onReasoningEffortChange={changeRunReasoningEffort}
               onAnthropicEffortChange={changeRunAnthropicEffort}
               onYoloModeChange={changeRunYoloMode}
+              onDelegationEnabledChange={setRunDelegationEnabled}
               onSelectRun={(runId) => void handleRunSelect(project.project.id, runId)}
               onRunPromptChange={setRunPrompt}
               onRunModeChange={changeRunMode}

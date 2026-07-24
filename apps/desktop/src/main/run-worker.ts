@@ -2,7 +2,11 @@ import { parentPort, workerData } from "node:worker_threads";
 import { randomUUID } from "node:crypto";
 import {
   type HarnessRunChunk,
+  type HarnessToolContext,
+  type OrchestrationToolName,
   type RunExecutionRequest,
+  type RunToolCall,
+  type RunToolResult,
   type RunToolName,
   type RunUserInputAnswers,
   type RunUserInputRequest,
@@ -13,6 +17,7 @@ import { createHarnessAdapter } from "./harness-adapters";
 import { buildInitialRepoContext } from "./initial-repo-context";
 import { logError, logInfo } from "./logger";
 import { createRunToolContext } from "./run-tools";
+import { isOrchestrationToolName } from "./orchestration-tools";
 
 interface WorkerInput {
   request: RunExecutionRequest;
@@ -30,6 +35,10 @@ const pendingShellApprovals = new Map<string, (decision: ShellApprovalDecision) 
 const pendingUserInputs = new Map<string, { resolve: (answers: RunUserInputAnswers) => void; reject: (error: Error) => void }>();
 const approvedShellCommands = new Set<string>();
 const activeShellCommands = new Map<string, { cancel: (reason?: unknown) => void }>();
+const pendingHostTools = new Map<string, {
+  resolve: (result: RunToolResult) => void;
+  reject: (error: Error) => void;
+}>();
 
 port.on(
   "message",
@@ -38,7 +47,8 @@ port.on(
       | { type: "cancel" }
       | { type: "cancel-shell"; callId: string }
       | { type: "shell-approval-response"; requestId: string; decision: ShellApprovalDecision }
-      | { type: "user-input-response"; requestId: string; answers: RunUserInputAnswers },
+      | { type: "user-input-response"; requestId: string; answers: RunUserInputAnswers }
+      | { type: "host-tool-response"; callId: string; result?: RunToolResult; error?: string },
   ) => {
     if (message.type === "cancel") {
       for (const activeShell of activeShellCommands.values()) {
@@ -54,6 +64,10 @@ port.on(
         pending.reject(new Error("Run cancelled."));
       }
       pendingUserInputs.clear();
+      for (const pending of pendingHostTools.values()) {
+        pending.reject(new Error("Run cancelled."));
+      }
+      pendingHostTools.clear();
       return;
     }
 
@@ -75,6 +89,18 @@ port.on(
       if (pending) {
         pendingUserInputs.delete(message.requestId);
         pending.resolve(message.answers);
+      }
+      return;
+    }
+
+    if (message.type === "host-tool-response") {
+      const pending = pendingHostTools.get(message.callId);
+      if (!pending) return;
+      pendingHostTools.delete(message.callId);
+      if (message.result) {
+        pending.resolve(message.result);
+      } else {
+        pending.reject(new Error(message.error || "The BuildWarden host tool failed."));
       }
     }
   },
@@ -139,7 +165,7 @@ const run = async () => {
       request.providerType === "azure-legacy"
         ? ["read_file", "write_file", "edit_file", "delete_file", "list_files", "search_repo", "run_shell"]
         : undefined;
-    const toolContext = createRunToolContext(
+    const runToolContext = createRunToolContext(
       request.worktreePath,
       request.mode,
       requestShellApproval,
@@ -171,6 +197,25 @@ const run = async () => {
       azureLegacyToolOverride,
       { yoloMode: request.yoloMode === true },
     );
+    const orchestrationTools = request.orchestrationTools ?? [];
+    const orchestrationToolNames = new Set(orchestrationTools.map((tool) => tool.name));
+    const toolContext: HarnessToolContext = {
+      tools: [...runToolContext.tools, ...orchestrationTools],
+      executeTool: async (call: RunToolCall): Promise<RunToolResult> => {
+        if (!isOrchestrationToolName(call.name) || !orchestrationToolNames.has(call.name)) {
+          return runToolContext.executeTool(call);
+        }
+        port.postMessage({
+          type: "host-tool-request",
+          callId: call.id,
+          toolName: call.name satisfies OrchestrationToolName,
+          arguments: call.arguments,
+        });
+        return new Promise<RunToolResult>((resolve, reject) => {
+          pendingHostTools.set(call.id, { resolve, reject });
+        });
+      },
+    };
     const result = await harness.run(
       {
         ...request,

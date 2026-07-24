@@ -5,6 +5,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   query,
+  createSdkMcpServer,
+  tool,
   type CanUseTool,
   type ModelInfo,
   type Options as ClaudeAgentOptions,
@@ -13,6 +15,7 @@ import {
   type SDKUserMessage,
   type SlashCommand,
 } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
 import type {
   ChatAttachmentPayload,
   HarnessAdapter,
@@ -102,7 +105,74 @@ type ClaudeTurnExecutionOptions = {
   signal: AbortSignal;
   requestShellApproval?: (command: string) => Promise<ShellApprovalDecision>;
   requestUserInput?: (request: RunUserInputRequest) => Promise<RunUserInputAnswers>;
+  toolContext?: HarnessToolContext;
   onChunk?: (chunk: HarnessRunChunk) => void;
+};
+
+const jsonSchemaToZod = (schema: unknown): z.ZodType => {
+  if (!isRecord(schema)) return z.unknown();
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+    const values = schema.enum.filter((value): value is string => typeof value === "string");
+    if (values.length === schema.enum.length && values.length > 0) {
+      return z.enum(values as [string, ...string[]]);
+    }
+  }
+  switch (schema.type) {
+    case "string":
+      return z.string();
+    case "number":
+      return z.number();
+    case "integer":
+      return z.number().int();
+    case "boolean":
+      return z.boolean();
+    case "array":
+      return z.array(jsonSchemaToZod(schema.items));
+    case "object": {
+      const properties = isRecord(schema.properties) ? schema.properties : {};
+      const required = new Set(Array.isArray(schema.required) ? schema.required.filter((value): value is string => typeof value === "string") : []);
+      return z.object(Object.fromEntries(
+        Object.entries(properties).map(([name, value]) => {
+          const field = jsonSchemaToZod(value);
+          return [name, required.has(name) ? field : field.optional()];
+        }),
+      ));
+    }
+    default:
+      return z.unknown();
+  }
+};
+
+const jsonSchemaToZodShape = (schema: Record<string, unknown>): Record<string, z.ZodType> => {
+  const objectSchema = jsonSchemaToZod(schema);
+  return objectSchema instanceof z.ZodObject ? objectSchema.shape : {};
+};
+
+export const buildClaudeOrchestrationMcpServer = (toolContext: HarnessToolContext) => {
+  const orchestrationTools = toolContext.tools.filter((definition) => definition.name.startsWith("buildwarden_"));
+  if (orchestrationTools.length === 0) return null;
+  return createSdkMcpServer({
+    name: "buildwarden",
+    version: "1.0.0",
+    alwaysLoad: true,
+    tools: orchestrationTools.map((definition) => tool(
+      definition.name,
+      definition.description,
+      jsonSchemaToZodShape(definition.inputSchema),
+      async (args) => {
+        const result = await toolContext.executeTool({
+          id: crypto.randomUUID(),
+          name: definition.name,
+          arguments: args as Record<string, unknown>,
+        });
+        return {
+          content: [{ type: "text" as const, text: result.content }],
+          isError: !result.ok,
+        };
+      },
+      { alwaysLoad: true },
+    )),
+  });
 };
 
 type ClaudeTurnExecutionResult = {
@@ -1672,6 +1742,12 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
     env: buildClaudeProcessEnv(options.networkProxy),
     ...launchArgsToSdkOptions(launchArgs),
   };
+  const orchestrationMcpServer = options.toolContext
+    ? buildClaudeOrchestrationMcpServer(options.toolContext)
+    : null;
+  if (orchestrationMcpServer) {
+    sdkOptions.mcpServers = { buildwarden: orchestrationMcpServer };
+  }
   const claudeQuery = query({
     prompt: buildPrompt(options),
     options: sdkOptions,
@@ -1810,7 +1886,7 @@ export class ClaudeCodeHarnessAdapter implements HarnessAdapter {
 
   async run(
     input: RunExecutionRequest,
-    _toolContext: HarnessToolContext,
+    toolContext: HarnessToolContext,
     onChunk: (chunk: HarnessRunChunk) => void,
     signal: AbortSignal,
   ): ReturnType<HarnessAdapter["run"]> {
@@ -1831,6 +1907,7 @@ export class ClaudeCodeHarnessAdapter implements HarnessAdapter {
       signal,
       requestShellApproval: input.yoloMode === true ? undefined : this.requestShellApproval,
       requestUserInput: this.requestUserInput,
+      toolContext,
       onChunk,
     });
     return {

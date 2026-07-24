@@ -46,6 +46,10 @@ describe("BuildWarden client boundary", () => {
       gitMutations: true,
       projectCreation: true,
       hostDirectoryBrowser: false,
+      orchestrationRead: true,
+      orchestrationOperate: true,
+      orchestrationAdoption: true,
+      orchestrationSettings: true,
       liveEvents: true,
     };
     expect(client.capabilities).toEqual(expectedCapabilities);

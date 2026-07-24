@@ -3,7 +3,9 @@ import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import {
   buildRunSubagentChunk,
   formatRunPlanProgressContent,
@@ -111,6 +113,148 @@ type CursorRuntimeOptions = {
   onUsage?: (usage: RunTokenUsage) => void;
   onAssistantText?: (text: string) => void;
   signal: AbortSignal;
+  mcpServers?: Array<Record<string, unknown>>;
+};
+
+const readHttpJsonBody = async (request: IncomingMessage): Promise<unknown> => {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of request) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += bytes.byteLength;
+    if (total > 1_048_576) throw new Error("MCP request body is too large.");
+    chunks.push(bytes);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+};
+
+const writeMcpJson = (response: ServerResponse, status: number, value?: unknown): void => {
+  if (value === undefined) {
+    response.writeHead(status);
+    response.end();
+    return;
+  }
+  response.writeHead(status, { "Content-Type": "application/json" });
+  response.end(JSON.stringify(value));
+};
+
+export const startCursorOrchestrationMcp = async (
+  toolContext: HarnessToolContext,
+): Promise<{ config: Record<string, unknown>; close: () => Promise<void> } | null> => {
+  const tools = toolContext.tools.filter((tool) => tool.name.startsWith("buildwarden_"));
+  if (tools.length === 0) return null;
+  const bearerToken = randomBytes(32).toString("base64url");
+  const server = createServer((request, response) => {
+    void (async () => {
+      if (request.url !== "/mcp" || request.method !== "POST") {
+        writeMcpJson(response, 404, { error: "Not found" });
+        return;
+      }
+      if (request.headers.authorization !== `Bearer ${bearerToken}`) {
+        writeMcpJson(response, 401, { error: "Unauthorized" });
+        return;
+      }
+      const payload = await readHttpJsonBody(request);
+      if (!isRecord(payload) || (typeof payload.id !== "string" && typeof payload.id !== "number" && payload.id !== undefined)) {
+        writeMcpJson(response, 400, { error: "Invalid JSON-RPC request" });
+        return;
+      }
+      const id = payload.id;
+      const method = asString(payload.method);
+      const params = isRecord(payload.params) ? payload.params : {};
+      if (id === undefined) {
+        writeMcpJson(response, 202);
+        return;
+      }
+      if (method === "initialize") {
+        writeMcpJson(response, 200, {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            protocolVersion: asString(params.protocolVersion) ?? "2025-06-18",
+            capabilities: { tools: {} },
+            serverInfo: { name: "buildwarden-orchestration", version: "1.0.0" },
+          },
+        });
+        return;
+      }
+      if (method === "ping") {
+        writeMcpJson(response, 200, { jsonrpc: "2.0", id, result: {} });
+        return;
+      }
+      if (method === "tools/list") {
+        writeMcpJson(response, 200, {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            tools: tools.map((tool) => ({
+              name: tool.name,
+              description: tool.description,
+              inputSchema: tool.inputSchema,
+            })),
+          },
+        });
+        return;
+      }
+      if (method === "tools/call") {
+        const name = asString(params.name);
+        const definition = tools.find((tool) => tool.name === name);
+        if (!definition || !name) {
+          writeMcpJson(response, 200, {
+            jsonrpc: "2.0",
+            id,
+            result: { content: [{ type: "text", text: `Unknown BuildWarden tool: ${name ?? "(missing)"}` }], isError: true },
+          });
+          return;
+        }
+        const result = await toolContext.executeTool({
+          id: randomUUID(),
+          name: definition.name,
+          arguments: isRecord(params.arguments) ? params.arguments : {},
+        });
+        writeMcpJson(response, 200, {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            content: [{ type: "text", text: result.content }],
+            isError: !result.ok,
+          },
+        });
+        return;
+      }
+      writeMcpJson(response, 200, {
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32601, message: `Unsupported MCP method: ${method ?? "(missing)"}` },
+      });
+    })().catch((error) => {
+      writeMcpJson(response, 500, {
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32603, message: error instanceof Error ? error.message : String(error) },
+      });
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  const address = server.address() as AddressInfo;
+  return {
+    config: {
+      type: "http",
+      name: "buildwarden-orchestration",
+      url: `http://127.0.0.1:${String(address.port)}/mcp`,
+      headers: [{ name: "Authorization", value: `Bearer ${bearerToken}` }],
+    },
+    close: () => new Promise<void>((resolveClose, rejectClose) => {
+      server.close((error) => error ? rejectClose(error) : resolveClose());
+      server.closeAllConnections?.();
+    }),
+  };
 };
 
 type CursorDevLogger = {
@@ -1275,7 +1419,7 @@ class CursorAcpRuntime {
     };
     this.options.signal.addEventListener("abort", abort, { once: true });
 
-    await this.connection.request("initialize", {
+    const initialization = await this.connection.request("initialize", {
       protocolVersion: 1,
       clientCapabilities: {
         fs: {
@@ -1292,6 +1436,15 @@ class CursorAcpRuntime {
         version: "0.5.2",
       },
     }, timeoutMs);
+    if (this.options.mcpServers?.length) {
+      const capabilities = isRecord(isRecord(initialization) ? initialization.agentCapabilities : undefined)
+        ? (initialization as Record<string, unknown>).agentCapabilities as Record<string, unknown>
+        : {};
+      const mcpCapabilities = isRecord(capabilities.mcpCapabilities) ? capabilities.mcpCapabilities : {};
+      if (mcpCapabilities.http !== true) {
+        throw new Error("This Cursor Agent ACP version does not advertise HTTP MCP support.");
+      }
+    }
     await this.connection.request("authenticate", { methodId: "cursor_login" }, timeoutMs);
 
     let setup: unknown;
@@ -1301,7 +1454,7 @@ class CursorAcpRuntime {
         setup = await this.connection.request("session/load", {
           sessionId: this.options.resumeSessionId,
           cwd: this.options.cwd,
-          mcpServers: [],
+          mcpServers: this.options.mcpServers ?? [],
         }, timeoutMs);
         loadedExistingSession = true;
       } catch {
@@ -1311,7 +1464,7 @@ class CursorAcpRuntime {
     if (!setup) {
       setup = await this.connection.request("session/new", {
         cwd: this.options.cwd,
-        mcpServers: [],
+        mcpServers: this.options.mcpServers ?? [],
       }, timeoutMs);
     }
     const sessionId = loadedExistingSession ? this.options.resumeSessionId : extractSessionId(setup);
@@ -1934,6 +2087,7 @@ const cursorRuntimeFromRunInput = (
   signal: AbortSignal,
   requestShellApproval?: (command: string) => Promise<ShellApprovalDecision>,
   requestUserInput?: (request: RunUserInputRequest) => Promise<RunUserInputAnswers>,
+  mcpServers?: Array<Record<string, unknown>>,
 ): CursorAcpRuntime => {
   const devLogger = createCursorDevLogger({
     logDirPath: input.devLogging?.logDirPath,
@@ -1957,6 +2111,7 @@ const cursorRuntimeFromRunInput = (
     requestUserInput,
     onChunk,
     signal,
+    mcpServers,
   });
 };
 
@@ -1970,7 +2125,7 @@ export class CursorAgentHarnessAdapter implements HarnessAdapter {
 
   async run(
     input: RunExecutionRequest,
-    _toolContext: HarnessToolContext,
+    toolContext: HarnessToolContext,
     onChunk: (chunk: HarnessRunChunk) => void,
     signal: AbortSignal,
   ): Promise<{
@@ -1986,7 +2141,15 @@ export class CursorAgentHarnessAdapter implements HarnessAdapter {
       status?: "starting" | "running" | "ready" | "stopped" | "error";
     };
   }> {
-    const runtime = cursorRuntimeFromRunInput(input, onChunk, signal, this.requestShellApproval, this.requestUserInput);
+    const orchestrationMcp = await startCursorOrchestrationMcp(toolContext);
+    const runtime = cursorRuntimeFromRunInput(
+      input,
+      onChunk,
+      signal,
+      this.requestShellApproval,
+      this.requestUserInput,
+      orchestrationMcp ? [orchestrationMcp.config] : undefined,
+    );
     try {
       const started = await runtime.start();
       const providerSessionRuntime = runtime.providerSessionRuntime;
@@ -2014,6 +2177,7 @@ export class CursorAgentHarnessAdapter implements HarnessAdapter {
       };
     } finally {
       runtime.close();
+      await orchestrationMcp?.close().catch(() => undefined);
     }
   }
 }

@@ -55,9 +55,12 @@ interface ProjectPageProps {
   reasoningEffort: string;
   anthropicEffort: string;
   yoloMode: boolean;
+  delegationEnabled: boolean;
+  delegationAvailable: boolean;
   onReasoningEffortChange: (value: string) => void;
   onAnthropicEffortChange: (value: string) => void;
   onYoloModeChange: (value: boolean) => void;
+  onDelegationEnabledChange: (value: boolean) => void;
   onSelectRun: (runId: string) => void;
   onRunPromptChange: (value: string) => void;
   onRunModeChange: (value: RunMode) => void;
@@ -139,9 +142,12 @@ export const ProjectPage = ({
   reasoningEffort,
   anthropicEffort,
   yoloMode,
+  delegationEnabled,
+  delegationAvailable,
   onReasoningEffortChange,
   onAnthropicEffortChange,
   onYoloModeChange,
+  onDelegationEnabledChange,
   onSelectRun,
   onRunPromptChange,
   onRunModeChange,
@@ -198,6 +204,8 @@ export const ProjectPage = ({
           reasoningEffort={reasoningEffort}
           anthropicEffort={anthropicEffort}
           yoloMode={yoloMode}
+          delegationEnabled={delegationEnabled}
+          delegationAvailable={delegationAvailable}
           onSubmitRun={onSubmitRun}
           onSetRunForLater={onSetRunForLater}
           onSelectRun={onSelectRun}
@@ -210,6 +218,7 @@ export const ProjectPage = ({
           onReasoningEffortChange={onReasoningEffortChange}
           onAnthropicEffortChange={onAnthropicEffortChange}
           onYoloModeChange={onYoloModeChange}
+          onDelegationEnabledChange={onDelegationEnabledChange}
         />
       ) : null}
 

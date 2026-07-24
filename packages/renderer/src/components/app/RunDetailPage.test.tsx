@@ -1,8 +1,9 @@
 import { renderWithBuildWardenClient as renderToStaticMarkup } from "../../lib/buildwarden-client-test-utils";
-import type { KeyboardShortcutId, RunDetail, RunRecord, RunWorkspacePanelId } from "@buildwarden/shared";
+import type { KeyboardShortcutId, OrchestrationDetail, RunDetail, RunRecord, RunWorkspacePanelId } from "@buildwarden/shared";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { RunDetailPage, type RunDetailPageProps } from "./RunDetailPage";
 import { RunNotesPanel } from "./RunNoteCard";
+import { OrchestrationAgentsPanel } from "./OrchestrationAgentsPanel";
 
 beforeAll(() => {
   Object.defineProperty(globalThis, "window", {
@@ -41,6 +42,7 @@ const run = (overrides: Partial<RunRecord> = {}): RunRecord => ({
   rootRunId: null,
   lineageTitle: null,
   projectTaskId: null,
+  delegationEnabled: false,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:05:00.000Z",
   startedAt: "2026-01-01T00:00:10.000Z",
@@ -93,10 +95,93 @@ const baseProps = (runDetail: RunDetail): RunDetailPageProps => ({
   onUndoRunToLastPrompt: vi.fn(),
   onRecoverInterruptedRun: vi.fn(),
   onCreateProjectTask: vi.fn(),
+  onOpenChildRun: vi.fn(),
+  onReviewChildRun: vi.fn(),
   onFollowUpRun: vi.fn(async () => undefined),
 });
 
 describe("RunDetailPage workflows", () => {
+  it("renders durable task status, role/model, usage, result, and scoped actions in the shared Agents panel", () => {
+    const orchestration: OrchestrationDetail = {
+      orchestration: {
+        id: "orchestration-1",
+        projectId: "project-1",
+        coordinatorRunId: "run-1",
+        status: "waiting",
+        teamSnapshot: {
+          version: 1,
+          maxConcurrentTasks: 3,
+          maxTasksPerOrchestration: 12,
+          models: [{ modelId: "model-1", enabled: true, maxConcurrent: 2 }],
+          roles: [{
+            id: "implementer",
+            name: "Implementer",
+            description: "Implements isolated changes.",
+            eligibleModelIds: ["model-1"],
+            preferredModelId: "model-1",
+            maxConcurrent: 2,
+          }],
+        },
+        wakeMode: "all-terminal",
+        wakeTaskIds: ["task-1"],
+        lastEventSequence: 1,
+        lastDeliveredSequence: 0,
+        errorMessage: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:01:00.000Z",
+        finishedAt: null,
+      },
+      waves: [],
+      tasks: [{
+        id: "task-1",
+        orchestrationId: "orchestration-1",
+        waveId: "wave-1",
+        clientTaskId: "client-1",
+        title: "Implement durable scheduler",
+        prompt: "Implement scheduling.",
+        roleId: "implementer",
+        modelId: "model-1",
+        intent: "implement",
+        status: "completed",
+        childRunId: "child-1",
+        retryOfTaskId: null,
+        summary: "Scheduler implemented and tested.",
+        errorMessage: null,
+        attentionReason: null,
+        adoptionStatus: "proposed",
+        inputTokens: 1200,
+        outputTokens: 400,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:01:00.000Z",
+        startedAt: "2026-01-01T00:00:10.000Z",
+        finishedAt: "2026-01-01T00:01:00.000Z",
+      }],
+      events: [],
+      messages: [],
+      activeTaskCount: 0,
+      queuedTaskCount: 0,
+      attentionTaskCount: 0,
+      totalInputTokens: 1200,
+      totalOutputTokens: 400,
+    };
+    const markup = renderToStaticMarkup(
+      <OrchestrationAgentsPanel
+        coordinatorRunId="run-1"
+        initialDetail={orchestration}
+        modelLabels={new Map([["model-1", "Claude Sonnet"]])}
+        onOpenChildRun={vi.fn()}
+        onReviewChildRun={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain("Implement durable scheduler");
+    expect(markup).toContain("Claude Sonnet");
+    expect(markup).toContain("1,600 tokens");
+    expect(markup).toContain("Scheduler implemented and tested.");
+    expect(markup).toContain("Open full run");
+    expect(markup).toContain("Adoption preview");
+  });
+
   it("renders open, closed, and editing run-note workflows", () => {
     const openNote = detail().notes[0]!;
     const closedNote = { ...openNote, id: "note-2", status: "closed" as const, closedAt: "2026-01-01T00:03:00.000Z" };

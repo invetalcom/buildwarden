@@ -1,8 +1,8 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { describe, expect, it } from "vitest";
-import { mergeRunSubagentInfo, type HarnessRunChunk } from "@buildwarden/shared";
+import { describe, expect, it, vi } from "vitest";
+import { mergeRunSubagentInfo, type HarnessRunChunk, type HarnessToolContext } from "@buildwarden/shared";
 import {
   buildCodexPlanProgressChunk,
   CodexAppServerSession,
@@ -248,6 +248,68 @@ describe("Codex CLI subagents", () => {
       status: "completed",
       summary: "2. Count was non-recursive.",
     });
+  });
+});
+
+describe("Codex app-server dynamic BuildWarden tools", () => {
+  it("executes item/tool/call requests through the in-app host context and returns the app-server response shape", async () => {
+    const stdout = new PassThrough();
+    const stdin = new PassThrough();
+    const responses: string[] = [];
+    stdin.on("data", (chunk) => responses.push(String(chunk)));
+    const child = Object.assign(new EventEmitter(), {
+      stdout,
+      stderr: new PassThrough(),
+      stdin,
+      killed: true,
+      kill: () => true,
+    }) as unknown as ChildProcessWithoutNullStreams;
+    const executeTool = vi.fn(async () => ({
+      toolCallId: "call-1",
+      name: "buildwarden_tasks_list" as const,
+      ok: true,
+      content: JSON.stringify([{ id: "task-1", status: "running" }]),
+    }));
+    const toolContext: HarnessToolContext = {
+      tools: [{
+        name: "buildwarden_tasks_list",
+        description: "List durable tasks.",
+        inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      }],
+      executeTool,
+    };
+    const chunks: HarnessRunChunk[] = [];
+    new CodexAppServerSession(
+      child,
+      "parent-thread",
+      "C:\\repo",
+      undefined,
+      undefined,
+      (chunk) => chunks.push(chunk),
+      toolContext,
+    );
+
+    stdout.write(`${JSON.stringify({
+      id: 17,
+      method: "item/tool/call",
+      params: {
+        threadId: "parent-thread",
+        turnId: "turn-1",
+        callId: "call-1",
+        tool: "buildwarden_tasks_list",
+        arguments: {},
+      },
+    })}\n`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(executeTool).toHaveBeenCalledWith({
+      id: "call-1",
+      name: "buildwarden_tasks_list",
+      arguments: {},
+    });
+    expect(responses.join("")).toContain('"success":true');
+    expect(responses.join("")).toContain('"type":"inputText"');
+    expect(chunks.map((chunk) => chunk.type)).toEqual(expect.arrayContaining(["tool-call", "tool-result"]));
   });
 });
 

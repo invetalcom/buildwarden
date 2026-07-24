@@ -2,7 +2,8 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { spawnSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { HarnessToolContext } from "@buildwarden/shared";
 import {
   CursorAgentHarnessAdapter,
   CursorAgentProviderAdapter,
@@ -23,6 +24,7 @@ import {
   resolveCursorAcpBaseModelId,
   resolveCursorAcpConfigUpdates,
   resolveCursorAgentProcessLaunch,
+  startCursorOrchestrationMcp,
 } from "@buildwarden/provider-cursor-agent";
 
 describe("CursorAgentProviderAdapter", () => {
@@ -612,5 +614,69 @@ describe("Cursor Agent subagents", () => {
       subagentType: { generalPurpose: {} },
     });
     expect(keyed.agentName).toBe("generalPurpose");
+  });
+});
+
+describe("Cursor private per-turn orchestration MCP", () => {
+  it("binds to loopback, requires the bearer token, exposes only BuildWarden tools, and closes cleanly", async () => {
+    const executeTool = vi.fn(async () => ({
+      toolCallId: "call-1",
+      name: "buildwarden_tasks_list" as const,
+      ok: true,
+      content: "[]",
+    }));
+    const toolContext: HarnessToolContext = {
+      tools: [
+        {
+          name: "buildwarden_tasks_list",
+          description: "List durable tasks.",
+          inputSchema: { type: "object", properties: {}, additionalProperties: false },
+        },
+        {
+          name: "read_file",
+          description: "Must remain private to the normal run harness.",
+          inputSchema: { type: "object", properties: {}, additionalProperties: false },
+        },
+      ],
+      executeTool,
+    };
+    const transport = await startCursorOrchestrationMcp(toolContext);
+    expect(transport).not.toBeNull();
+    const config = transport!.config as {
+      url: string;
+      headers: Array<{ name: string; value: string }>;
+    };
+    expect(config.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
+    await expect(fetch(config.url, {
+      method: "POST",
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    }).then((response) => response.status)).resolves.toBe(401);
+
+    const headers = Object.fromEntries(config.headers.map((header) => [header.name, header.value]));
+    const listed = await fetch(config.url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+    }).then((response) => response.json()) as { result: { tools: Array<{ name: string }> } };
+    expect(listed.result.tools.map((tool) => tool.name)).toEqual(["buildwarden_tasks_list"]);
+
+    const called = await fetch(config.url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "buildwarden_tasks_list", arguments: {} },
+      }),
+    }).then((response) => response.json()) as { result: { content: Array<{ text: string }>; isError: boolean } };
+    expect(called.result).toEqual({ content: [{ type: "text", text: "[]" }], isError: false });
+    expect(executeTool).toHaveBeenCalledOnce();
+    await transport!.close();
+    await expect(fetch(config.url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ jsonrpc: "2.0", id: 4, method: "ping", params: {} }),
+    })).rejects.toThrow();
   });
 });
