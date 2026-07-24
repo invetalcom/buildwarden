@@ -176,11 +176,18 @@ describe("durable orchestration database", () => {
     });
     db.createOrchestrationTaskMessage({ orchestrationId: orchestration.id, taskId: task.id, source: "coordinator", content: "Continue." });
     db.appendOrchestrationEvent({ orchestrationId: orchestration.id, taskId: task.id, type: "queued", title: "Queued", content: "" });
+    db.updateRunStatus(coordinator.id, "completed");
+    db.updateOrchestration(orchestration.id, { status: "waiting", wakeMode: "all-terminal", wakeTaskIds: [task.id] });
 
     const projectSnapshot = db.getSnapshot().projects[0]!;
     expect(projectSnapshot.runs.map((run) => run.id)).toContain(coordinator.id);
     expect(projectSnapshot.runs.map((run) => run.id)).not.toContain(child.id);
     expect(projectSnapshot.orchestratedRuns.map((run) => run.id)).toEqual([child.id]);
+    expect(projectSnapshot.runs.find((run) => run.id === coordinator.id)).toMatchObject({
+      status: "completed",
+      orchestrationStatus: "waiting",
+    });
+    expect(projectSnapshot.activeRuns.map((run) => run.id)).toContain(coordinator.id);
 
     db.deleteOrchestrationData(orchestration.id);
     expect(db.getOrchestrationDetailByCoordinatorRunId(coordinator.id)).toBeNull();

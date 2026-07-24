@@ -800,6 +800,8 @@ export interface RunRecord {
   listVisibility: RunListVisibility;
   /** Derived at read time from unresolved user-input request steps; not stored in the runs table. */
   pendingUserInputRequest?: boolean | number;
+  /** Derived for snapshots from the coordinator's durable orchestration; not stored in the runs table. */
+  orchestrationStatus?: OrchestrationStatus | null;
   kind: RunKind;
   labThreadId: string | null;
   parentRunId: string | null;

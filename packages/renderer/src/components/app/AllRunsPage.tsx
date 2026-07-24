@@ -7,6 +7,11 @@ import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Input } from "../ui/input";
+import {
+  isRunDisplayStatusActive,
+  resolveRunDisplayStatus,
+  runDisplayStatusTone,
+} from "./run-display-status";
 
 interface AllRunsPageProps {
   projects: AppSnapshot["projects"];
@@ -78,31 +83,34 @@ const AllRunsContent = ({
 
   return (
     <div className="divide-y divide-[var(--ec-border)]">
-      {rows.map(({ project, run }) => (
-        <button
-          key={run.id}
-          type="button"
-          className="flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left transition hover:bg-[var(--ec-hover)]"
-          onClick={() => onSelectRun(project.id, run.id)}
-        >
-          <span className="size-2 shrink-0 rounded-full bg-[var(--ec-accent)]" aria-hidden />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-[var(--ec-text)]">{run.prompt}</p>
-            <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--ec-muted)]">
-              <span className="inline-flex min-w-0 items-center gap-1">
-                <FolderGit2 className="size-3 shrink-0" />
-                <span className="truncate">{project.name}</span>
-              </span>
-              <span className="inline-flex items-center gap-1 font-mono">
-                <Clock3 className="size-3" />
-                {formatRelativeTime(run.finishedAt ?? run.updatedAt)} - {formatRunDuration(run)}
-              </span>
-              <span className="truncate font-mono">{formatRunWorkspaceLabel(run)}</span>
+      {rows.map(({ project, run }) => {
+        const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
+        return (
+          <button
+            key={run.id}
+            type="button"
+            className="flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left transition hover:bg-[var(--ec-hover)]"
+            onClick={() => onSelectRun(project.id, run.id)}
+          >
+            <span className="size-2 shrink-0 rounded-full bg-[var(--ec-accent)]" aria-hidden />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold text-[var(--ec-text)]">{run.prompt}</p>
+              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--ec-muted)]">
+                <span className="inline-flex min-w-0 items-center gap-1">
+                  <FolderGit2 className="size-3 shrink-0" />
+                  <span className="truncate">{project.name}</span>
+                </span>
+                <span className="inline-flex items-center gap-1 font-mono">
+                  <Clock3 className="size-3" />
+                  {formatRelativeTime(run.finishedAt ?? run.updatedAt)} - {formatRunDuration(run)}
+                </span>
+                <span className="truncate font-mono">{formatRunWorkspaceLabel(run)}</span>
+              </div>
             </div>
-          </div>
-          <Badge dot tone={run.status}>{run.status}</Badge>
-        </button>
-      ))}
+            <Badge dot tone={runDisplayStatusTone(displayStatus)}>{displayStatus}</Badge>
+          </button>
+        );
+      })}
     </div>
   );
 };
@@ -125,7 +133,8 @@ export const AllRunsPage = ({ projects, onSelectRun }: AllRunsPageProps) => {
     [projects, view],
   );
 
-  const activeCount = rows.filter(({ run }) => ["queued", "preparing", "running"].includes(run.status)).length;
+  const activeCount = rows.filter(({ run }) =>
+    isRunDisplayStatusActive(resolveRunDisplayStatus(run.status, run.orchestrationStatus))).length;
   const searchTerms = useMemo(() => parseSearchTerms(searchQuery), [searchQuery]);
   const visibleRows = useMemo(() => rows.filter(({ run }) => runMatchesSearch(run, searchTerms)), [rows, searchTerms]);
   const hasSearch = searchTerms.length > 0;

@@ -509,6 +509,44 @@ describe("renderer component states", () => {
     expect(markup).toContain("Changes");
   });
 
+  it("shows the orchestration status while the coordinator provider turn is idle", () => {
+    const run = runRecord({ orchestrationStatus: "waiting" });
+    const runDetail: RunDetail = { run, steps: [], notes: [], diff: "" };
+    const markup = renderToStaticMarkup(
+      <RunDetailHeader
+        run={run}
+        runDetail={runDetail}
+        tokenUsage={null}
+        busy={false}
+        pendingDelete={false}
+        configuredIdeKinds={[]}
+        canContinueRun
+        runTimelineDensity="comfortable"
+        onRunTimelineDensityChange={vi.fn()}
+        runDensityMenuOpen={false}
+        setRunDensityMenuOpen={vi.fn()}
+        runDensityMenuAnchorRef={createRef<HTMLDivElement>()}
+        runPanelToggleItems={[]}
+        runWorkspaceVisiblePanelCount={0}
+        runPanelsMenuOpen={false}
+        setRunPanelsMenuOpen={vi.fn()}
+        runPanelsMenuAnchorRef={createRef<HTMLDivElement>()}
+        publishMenuOpen={false}
+        setPublishMenuOpen={vi.fn()}
+        publishMenuAnchorRef={createRef<HTMLDivElement>()}
+        onCommitRun={vi.fn()}
+        onOpenPublishDialog={vi.fn()}
+        onOpenBranchPublishDialog={vi.fn()}
+        onOpenInIde={vi.fn()}
+        onOpenFileManager={vi.fn()}
+        onOpenContinueRunDialog={vi.fn()}
+        onDeleteRun={vi.fn()}
+      />,
+    );
+    expect(markup).toContain(">waiting<");
+    expect(markup).toContain("waiting for orchestrated tasks");
+  });
+
   it("renders provider registries and navigation states", () => {
     const account = providerAccount();
     const model = modelRecord(account);

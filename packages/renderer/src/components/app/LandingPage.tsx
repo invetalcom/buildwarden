@@ -13,6 +13,11 @@ import {
 } from "../ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import {
+  isRunDisplayStatusActive,
+  resolveRunDisplayStatus,
+  runDisplayStatusTone,
+} from "./run-display-status";
 
 interface LandingPageProps {
   snapshot: AppSnapshot;
@@ -61,13 +66,15 @@ const LandingMetrics = ({ metrics }: { metrics: LandingMetric[] }) => (
   </div>
 );
 
-const buildTodayActivity = (runs: Array<{ createdAt: string; status: string; inputTokens: number; outputTokens: number }>) => {
+const buildTodayActivity = (runs: AppSnapshot["projects"][number]["runs"]) => {
   const today = new Date().toDateString();
   const todaysRuns = runs.filter((run) => new Date(run.createdAt).toDateString() === today);
   return {
     runsStarted: todaysRuns.length,
-    completedRuns: todaysRuns.filter((run) => run.status === "completed").length,
-    activeRuns: todaysRuns.filter((run) => ["queued", "preparing", "running"].includes(run.status)).length,
+    completedRuns: todaysRuns.filter((run) =>
+      resolveRunDisplayStatus(run.status, run.orchestrationStatus) === "completed").length,
+    activeRuns: todaysRuns.filter((run) =>
+      isRunDisplayStatusActive(resolveRunDisplayStatus(run.status, run.orchestrationStatus))).length,
     tokensUsed: todaysRuns.reduce((sum, run) => sum + run.inputTokens + run.outputTokens, 0),
   };
 };
@@ -94,8 +101,10 @@ export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRu
     return {
       projects: snapshot.projects.length,
       runs: allRuns.length,
-      activeRuns: allRuns.filter((run) => ["queued", "preparing", "running"].includes(run.status)).length,
-      completedRuns: allRuns.filter((run) => run.status === "completed").length,
+      activeRuns: allRuns.filter((run) =>
+        isRunDisplayStatusActive(resolveRunDisplayStatus(run.status, run.orchestrationStatus))).length,
+      completedRuns: allRuns.filter((run) =>
+        resolveRunDisplayStatus(run.status, run.orchestrationStatus) === "completed").length,
       providerAccounts: snapshot.providerAccounts.length,
       models: snapshot.models.length,
       inputTokens,
@@ -252,25 +261,28 @@ export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRu
           <CardContent>
             {recentRuns.length > 0 ? (
               <div className="overflow-hidden rounded-md border border-[var(--ec-border)]">
-                {recentRuns.map((run) => (
-                  <button
-                    key={run.id}
-                    type="button"
-                    className="flex w-full items-center justify-between gap-3 border-b border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-4 py-3 text-left transition last:border-b-0 hover:bg-[var(--ec-hover)]"
-                    onClick={() => onSelectRun(run.projectId, run.id)}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold text-[var(--ec-text)]">{run.prompt}</p>
-                      <p className="mt-1 truncate font-mono text-xs text-[var(--ec-muted)]">
-                        {run.projectName} - {formatRunDate(run.createdAt)}
-                      </p>
-                    </div>
-                    <div className="shrink-0 text-right">
-                      <Badge dot tone={run.status}>{run.status}</Badge>
-                      <p className="mt-1 font-mono text-xs text-[var(--ec-muted)]">{formatTokens(run.inputTokens + run.outputTokens)} tokens</p>
-                    </div>
-                  </button>
-                ))}
+                {recentRuns.map((run) => {
+                  const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
+                  return (
+                    <button
+                      key={run.id}
+                      type="button"
+                      className="flex w-full items-center justify-between gap-3 border-b border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-4 py-3 text-left transition last:border-b-0 hover:bg-[var(--ec-hover)]"
+                      onClick={() => onSelectRun(run.projectId, run.id)}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-[var(--ec-text)]">{run.prompt}</p>
+                        <p className="mt-1 truncate font-mono text-xs text-[var(--ec-muted)]">
+                          {run.projectName} - {formatRunDate(run.createdAt)}
+                        </p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <Badge dot tone={runDisplayStatusTone(displayStatus)}>{displayStatus}</Badge>
+                        <p className="mt-1 font-mono text-xs text-[var(--ec-muted)]">{formatTokens(run.inputTokens + run.outputTokens)} tokens</p>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             ) : (
               <Empty>

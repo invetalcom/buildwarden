@@ -229,16 +229,33 @@ export class BuildWardenDatabase {
     selectedRunId: string | null = null,
     selectedChatId: string | null = null,
   ): AppSnapshot {
+    const orchestrationStatusByCoordinatorRunId = new Map(
+      this.listOrchestrationsWithStatuses([
+        "active",
+        "waiting",
+        "paused",
+        "attention",
+        "deleting",
+        "deletion-failed",
+        "completed",
+        "cancelled",
+        "failed",
+      ]).map((orchestration) => [orchestration.coordinatorRunId, orchestration.status] as const),
+    );
+    const activeOrchestrationStatuses = new Set<OrchestrationStatus>(["active", "waiting", "paused", "attention"]);
     const projects = this.listProjects().map((project) => {
-      const allRuns = this.listRunsForProject(project.id);
+      const allRuns = this.listRunsForProject(project.id).map((run) => {
+        const orchestrationStatus = orchestrationStatusByCoordinatorRunId.get(run.id);
+        return orchestrationStatus ? { ...run, orchestrationStatus } : run;
+      });
       const visibleRuns = allRuns.filter((run) => run.kind === "standard");
       const orchestratedRuns = allRuns.filter((run) => run.kind === "orchestration-task");
       const runs = visibleRuns.filter((run) => run.listVisibility !== "for-later");
       const forLaterRuns = visibleRuns.filter((run) => run.listVisibility === "for-later");
       const activeCoordinatorIds = new Set(
-        this.listOrchestrationsWithStatuses(["active", "waiting", "paused", "attention"])
-          .filter((orchestration) => orchestration.projectId === project.id)
-          .map((orchestration) => orchestration.coordinatorRunId),
+        runs
+          .filter((run) => run.orchestrationStatus && activeOrchestrationStatuses.has(run.orchestrationStatus))
+          .map((run) => run.id),
       );
       return {
         project,
