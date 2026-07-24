@@ -3,6 +3,7 @@ import { createHash, randomInt } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, statSync, type Dirent } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import {
@@ -244,6 +245,8 @@ const ORCHESTRATION_CANCELLABLE_STATUSES = new Set([
   "paused",
   "attention",
 ]);
+const TRANSIENT_WORKTREE_CLEANUP_ERROR = /\b(?:EBUSY|EPERM|ENOTEMPTY)\b/i;
+const WORKTREE_CLEANUP_RETRY_DELAYS_MS = [100, 250, 500, 1_000] as const;
 const stableJsonValue = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(stableJsonValue);
   if (value && typeof value === "object") {
@@ -8705,6 +8708,22 @@ export class AppController
       });
   }
 
+  private async removeRunWorktreeForDeletion(repoPath: string, run: RunRecord): Promise<void> {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await this.gitService.removeWorktree(repoPath, run.worktreePath, run.branchName);
+        return;
+      } catch (error) {
+        const retryDelay = WORKTREE_CLEANUP_RETRY_DELAYS_MS[attempt];
+        const message = error instanceof Error ? error.message : String(error);
+        if (retryDelay === undefined || !TRANSIENT_WORKTREE_CLEANUP_ERROR.test(message)) {
+          throw error;
+        }
+        await delay(retryDelay);
+      }
+    }
+  }
+
   private async promoteRunBranchToProjectCheckout(
     run: RunRecord,
     repoPath: string,
@@ -8759,7 +8778,7 @@ export class AppController
 
     if (run.workspaceType === "worktree") {
       try {
-        await this.gitService.removeWorktree(repoPath, run.worktreePath, run.branchName);
+        await this.removeRunWorktreeForDeletion(repoPath, run);
       } catch (error) {
         const [worktreeRegistered, gitMetadataPresent, branchPresent] = await Promise.all([
           this.gitService.isWorktreeRegistered(repoPath, run.worktreePath).catch(() => true),

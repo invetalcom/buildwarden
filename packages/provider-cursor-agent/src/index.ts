@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -351,6 +351,33 @@ export const resolveCursorAgentProcessLaunch = (binaryPath: string, args: string
   }
 
   return { command: binaryPath, args };
+};
+
+type CursorKillableProcess = Pick<ChildProcessWithoutNullStreams, "pid" | "kill">;
+type CursorWindowsProcessTreeKiller = (pid: number) => boolean;
+
+const killCursorWindowsProcessTree: CursorWindowsProcessTreeKiller = (pid) => {
+  const result = spawnSync(
+    "C:\\Windows\\System32\\taskkill.exe",
+    ["/pid", String(pid), "/T", "/F"],
+    { stdio: "ignore", windowsHide: true },
+  );
+  return !result.error && result.status === 0;
+};
+
+export const terminateCursorProcessTree = (
+  child: CursorKillableProcess,
+  platform: NodeJS.Platform = process.platform,
+  killWindowsTree: CursorWindowsProcessTreeKiller = killCursorWindowsProcessTree,
+): void => {
+  if (platform === "win32" && child.pid !== undefined) {
+    try {
+      if (killWindowsTree(child.pid)) return;
+    } catch {
+      // Fall back to the ordinary child-process termination path.
+    }
+  }
+  child.kill();
 };
 
 const readConfigString = (
@@ -1084,7 +1111,7 @@ class CursorAcpJsonRpcConnection {
     }
     this.pending.clear();
     if (child && !child.killed) {
-      child.kill();
+      terminateCursorProcessTree(child);
     }
   }
 

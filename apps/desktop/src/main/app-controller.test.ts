@@ -237,6 +237,32 @@ describe("AppController settings and lightweight workflows", () => {
     expect(orchestrationTask.status).toBe("cancelled");
   });
 
+  it("retries transient Windows worktree locks during run deletion", async () => {
+    const run = {
+      id: "run-1",
+      projectId: project.id,
+      workspaceType: "worktree",
+      workspaceVcs: "git",
+      worktreePath: "C:\\managed\\run-1",
+      branchName: "buildwarden-run-1",
+    } as RunRecord;
+    const removeWorktree = vi.fn()
+      .mockRejectedValueOnce(new Error("filesystem removal failed: EBUSY: resource busy or locked"))
+      .mockResolvedValueOnce(undefined);
+    const harness = createHarness();
+    tempDirs.push(harness.logDir);
+    const controller = harness.controller as unknown as {
+      gitService: { removeWorktree: typeof removeWorktree };
+      deleteRunResources: (repoPath: string, run: RunRecord, context: "run" | "project") => Promise<void>;
+    };
+    controller.gitService.removeWorktree = removeWorktree;
+
+    await controller.deleteRunResources(project.repoPath, run, "run");
+
+    expect(removeWorktree).toHaveBeenCalledTimes(2);
+    expect(removeWorktree).toHaveBeenLastCalledWith(project.repoPath, run.worktreePath, run.branchName);
+  });
+
   it("automatically completes an orchestration after its delivered terminal wave is summarized", async () => {
     const orchestration = {
       id: "orchestration-1",

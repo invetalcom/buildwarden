@@ -25,6 +25,7 @@ import {
   resolveCursorAcpConfigUpdates,
   resolveCursorAgentProcessLaunch,
   startCursorOrchestrationMcp,
+  terminateCursorProcessTree,
 } from "@buildwarden/provider-cursor-agent";
 
 describe("CursorAgentProviderAdapter", () => {
@@ -116,6 +117,24 @@ describe("CursorAgentProviderAdapter", () => {
     } else {
       expect(shim).toEqual({ command: "agent", args: ["acp"] });
     }
+  });
+
+  it("terminates the complete Cursor process tree on Windows", () => {
+    const kill = vi.fn(() => true);
+    const killWindowsTree = vi.fn(() => true);
+
+    terminateCursorProcessTree({ pid: 1234, kill }, "win32", killWindowsTree);
+
+    expect(killWindowsTree).toHaveBeenCalledWith(1234);
+    expect(kill).not.toHaveBeenCalled();
+  });
+
+  it("falls back to ordinary Cursor process termination when tree cleanup fails", () => {
+    const kill = vi.fn(() => true);
+
+    terminateCursorProcessTree({ pid: 1234, kill }, "win32", () => false);
+
+    expect(kill).toHaveBeenCalledOnce();
   });
 
   it("launches a full Windows command-shim path without quoting it as a literal command", () => {
@@ -679,4 +698,5 @@ describe("Cursor private per-turn orchestration MCP", () => {
       body: JSON.stringify({ jsonrpc: "2.0", id: 4, method: "ping", params: {} }),
     })).rejects.toThrow();
   });
+
 });
