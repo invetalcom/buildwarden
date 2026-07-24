@@ -4618,7 +4618,7 @@ export const WINDOWS_TITLEBAR_OVERLAY_BACKGROUND: Record<UiTheme, string> = {
   light: "#e7eef6",
 };
 
-export type RunWorkspacePanelId = "activity" | "diff" | "terminal" | "browser" | "notes" | "chat";
+export type RunWorkspacePanelId = "activity" | "agents" | "diff" | "terminal" | "browser" | "notes" | "chat";
 
 export interface RunWorkspaceTileSize {
   colSpan: number;
@@ -4635,13 +4635,14 @@ export interface RunWorkspaceLayoutPreference {
 
 export type RunWorkspaceLayoutPreferencesByRunId = Record<string, RunWorkspaceLayoutPreference>;
 
-const RUN_WORKSPACE_PANEL_IDS: readonly RunWorkspacePanelId[] = ["activity", "diff", "terminal", "browser", "notes", "chat"];
+const RUN_WORKSPACE_PANEL_IDS: readonly RunWorkspacePanelId[] = ["activity", "agents", "diff", "terminal", "browser", "notes", "chat"];
 
 const RUN_WORKSPACE_PANEL_DEFAULTS: Record<
   RunWorkspacePanelId,
   { visible: boolean; size: RunWorkspaceTileSize }
 > = {
   activity: { visible: true, size: { colSpan: 7, rowSpan: 4 } },
+  agents: { visible: false, size: { colSpan: 5, rowSpan: 4 } },
   diff: { visible: false, size: { colSpan: 5, rowSpan: 4 } },
   terminal: { visible: false, size: { colSpan: 5, rowSpan: 3 } },
   browser: { visible: false, size: { colSpan: 7, rowSpan: 3 } },

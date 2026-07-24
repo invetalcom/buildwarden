@@ -3,7 +3,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BuildWardenDatabase } from "@buildwarden/db";
 import { APP_SETTING_KEYS } from "@buildwarden/shared";
-import type { ModelRecord, ProjectRecord, ProjectTaskRecord, ProviderAccountRecord, RunRecord } from "@buildwarden/shared";
+import type {
+  ModelRecord,
+  OrchestrationRecord,
+  OrchestrationTaskRecord,
+  ProjectRecord,
+  ProjectTaskRecord,
+  ProviderAccountRecord,
+  RunRecord,
+} from "@buildwarden/shared";
 import type { SecretStore } from "@buildwarden/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GitService } from "@buildwarden/git-service";
@@ -146,6 +154,78 @@ const createMutableProjectHarness = () => {
 };
 
 describe("AppController settings and lightweight workflows", () => {
+  it("automatically completes an orchestration after its delivered terminal wave is summarized", async () => {
+    const orchestration = {
+      id: "orchestration-1",
+      projectId: project.id,
+      coordinatorRunId: "coordinator-1",
+      status: "active",
+      teamSnapshot: {
+        version: 1,
+        maxConcurrentTasks: 3,
+        maxTasksPerOrchestration: 12,
+        models: [],
+        roles: [],
+      },
+      wakeMode: null,
+      wakeTaskIds: [],
+      lastEventSequence: 4,
+      lastDeliveredSequence: 4,
+      errorMessage: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:01:00.000Z",
+      finishedAt: null,
+    } satisfies OrchestrationRecord;
+    const completedTask = {
+      id: "orchestration-task-1",
+      orchestrationId: orchestration.id,
+      waveId: "wave-1",
+      clientTaskId: "client-task-1",
+      title: "Inspect the workspace",
+      prompt: "Inspect the workspace.",
+      roleId: "researcher",
+      modelId: model.id,
+      intent: "inspect",
+      status: "completed",
+      childRunId: "child-1",
+      retryOfTaskId: null,
+      summary: "Inspection complete.",
+      errorMessage: null,
+      attentionReason: null,
+      adoptionStatus: "none",
+      inputTokens: 100,
+      outputTokens: 20,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:01:00.000Z",
+      startedAt: "2026-01-01T00:00:10.000Z",
+      finishedAt: "2026-01-01T00:01:00.000Z",
+    } satisfies OrchestrationTaskRecord;
+    const updateOrchestration = vi.fn();
+    const appendOrchestrationEvent = vi.fn();
+    const harness = createHarness({
+      getOrchestrationByCoordinatorRunId: vi.fn(() => orchestration),
+      getOrchestration: vi.fn(() => orchestration),
+      listOrchestrationTasks: vi.fn(() => [completedTask]),
+      updateOrchestration,
+      appendOrchestrationEvent,
+    });
+    tempDirs.push(harness.logDir);
+
+    await (harness.controller as unknown as {
+      handleOrchestrationCoordinatorTurnTerminal: (runId: string) => Promise<void>;
+    }).handleOrchestrationCoordinatorTurnTerminal(orchestration.coordinatorRunId);
+
+    expect(updateOrchestration).toHaveBeenCalledWith(orchestration.id, expect.objectContaining({
+      status: "completed",
+      wakeMode: null,
+      wakeTaskIds: [],
+    }));
+    expect(appendOrchestrationEvent).toHaveBeenCalledWith(expect.objectContaining({
+      orchestrationId: orchestration.id,
+      type: "completed",
+    }));
+  });
+
   it("notifies host services after a run is deleted", async () => {
     const run = {
       id: "run-1",

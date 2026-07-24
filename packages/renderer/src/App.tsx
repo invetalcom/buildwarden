@@ -53,6 +53,7 @@ import {
   MessagesSquare,
   SquareTerminal,
   StickyNote,
+  UsersRound,
 } from "lucide-react";
 const AllRunsPage = lazy(() => import("./components/app/AllRunsPage").then((m) => ({ default: m.AllRunsPage })));
 const BookmarkDetailPage = lazy(() => import("./components/app/BookmarkDetailPage").then((m) => ({ default: m.BookmarkDetailPage })));
@@ -164,6 +165,7 @@ interface RunPanelToggleDefinition {
 
 const RUN_PANEL_TOGGLE_DEFINITIONS: readonly RunPanelToggleDefinition[] = [
   { key: "activity", label: "Activity Log", icon: MessageSquareText, hiddenSubtitle: "Show agent activity", requiresWorktree: false },
+  { key: "agents", label: "Agents", icon: UsersRound, hiddenSubtitle: "Show orchestrated tasks", requiresWorktree: false },
   { key: "diff", label: "Diff View", icon: GitBranch, hiddenSubtitle: "Show changes", requiresWorktree: true },
   { key: "terminal", label: "Terminal", icon: SquareTerminal, hiddenSubtitle: "Show terminal", requiresWorktree: true },
   { key: "browser", label: "Browser", icon: Globe, hiddenSubtitle: "Show in-app browser", requiresWorktree: false },
@@ -993,6 +995,7 @@ export const App = () => {
     selectedRunWorkspaceLayout,
     runWorkspaceSecondaryPosition,
     runWorkspaceShowActivity,
+    runWorkspaceShowAgents,
     runWorkspaceShowBrowser,
     runWorkspaceShowChat,
     runWorkspaceShowDiff,
@@ -1000,6 +1003,7 @@ export const App = () => {
     runWorkspaceShowTerminal,
     setRunWorkspaceSecondaryPosition,
     setRunWorkspaceShowActivity,
+    setRunWorkspaceShowAgents,
     setRunWorkspaceShowBrowser,
     setRunWorkspaceShowChat,
     setRunWorkspaceShowDiff,
@@ -1166,8 +1170,14 @@ export const App = () => {
     [runDetail?.run, snapshot.projects],
   );
   const runWorktreeUnavailable = runDetail?.worktreeUnavailable === true;
+  const selectedRunHasOrchestrationSurface = Boolean(
+    runDetail?.run &&
+    runDetail.run.kind !== "orchestration-task" &&
+    (runDetail.run.delegationEnabled || runDetail.orchestration),
+  );
   const runWorkspacePanelVisibility = resolveRunWorkspacePanelVisibility({
     activity: runWorkspaceShowActivity,
+    agents: runWorkspaceShowAgents && selectedRunHasOrchestrationSurface,
     diff: runWorkspaceShowDiff,
     terminal: runWorkspaceShowTerminal,
     browser: runWorkspaceShowBrowser,
@@ -1176,6 +1186,7 @@ export const App = () => {
   }, buildwarden.capabilities);
   const runWorkspacePanelSetters: Record<RunWorkspacePanelId, (visible: boolean) => void> = {
     activity: setRunWorkspaceShowActivity,
+    agents: setRunWorkspaceShowAgents,
     diff: setRunWorkspaceShowDiff,
     terminal: setRunWorkspaceShowTerminal,
     browser: setRunWorkspaceShowBrowser,
@@ -1198,13 +1209,21 @@ export const App = () => {
     }));
   };
 
-  const toggleRunWorkspacePanelForRun = (runId: string, panelId: RunWorkspacePanelId, worktreeUnavailableForRun = false) => {
+  const toggleRunWorkspacePanelForRun = (
+    runId: string,
+    panelId: RunWorkspacePanelId,
+    worktreeUnavailableForRun = false,
+    agentsAvailableForRun = false,
+  ) => {
     const layout = runWorkspaceLayoutsByRunId[runId] ?? cloneDefaultRunWorkspaceLayoutPreference();
     if (worktreeUnavailableForRun && (panelId === "diff" || panelId === "terminal")) {
       return;
     }
 
-    const visiblePanels = resolveRunWorkspacePanelVisibility(layout.visiblePanels, buildwarden.capabilities);
+    const visiblePanels = resolveRunWorkspacePanelVisibility({
+      ...layout.visiblePanels,
+      agents: layout.visiblePanels.agents && agentsAvailableForRun,
+    }, buildwarden.capabilities);
     const visibleCount = Object.values(visiblePanels).filter(Boolean).length;
     const currentlyVisible = visiblePanels[panelId];
     if (currentlyVisible && visibleCount === 1) {
@@ -1232,6 +1251,7 @@ export const App = () => {
   };
 
   const runPanelToggleItems = RUN_PANEL_TOGGLE_DEFINITIONS
+    .filter((definition) => definition.key !== "agents" || selectedRunHasOrchestrationSurface)
     .filter((definition) => isRunWorkspacePanelAvailable(definition.key, buildwarden.capabilities))
     .map((definition): RunPanelToggleItem => {
       const active = runWorkspacePanelVisibility[definition.key];
@@ -3083,10 +3103,16 @@ export const App = () => {
     const isFocused = selectedRunId === entry.runId && focusedRunPane === entry.paneId;
     const paneDropPreviewActive = runPaneDropPreview === entry.paneId;
     const paneLayout = runWorkspaceLayoutsByRunId[entry.runId] ?? cloneDefaultRunWorkspaceLayoutPreference();
-    const paneVisiblePanels = resolveRunWorkspacePanelVisibility(
+    const paneHasOrchestrationSurface = Boolean(
+      paneRun &&
+      paneRun.kind !== "orchestration-task" &&
+      (paneRun.delegationEnabled || paneDetail?.orchestration),
+    );
+    const resolvedPaneVisiblePanels = resolveRunWorkspacePanelVisibility(
       isFocused
         ? {
             activity: runWorkspaceShowActivity,
+            agents: runWorkspaceShowAgents,
             diff: runWorkspaceShowDiff,
             terminal: runWorkspaceShowTerminal,
             browser: runWorkspaceShowBrowser,
@@ -3096,6 +3122,10 @@ export const App = () => {
         : paneLayout.visiblePanels,
       buildwarden.capabilities,
     );
+    const paneVisiblePanels = {
+      ...resolvedPaneVisiblePanels,
+      agents: resolvedPaneVisiblePanels.agents && paneHasOrchestrationSurface,
+    };
     const paneSecondaryPosition = isFocused ? runWorkspaceSecondaryPosition : paneLayout.secondaryPanelPosition;
     const paneTokenUsage = paneDetail ? latestRunTokenUsage(paneDetail, runLiveUsageById[paneDetail.run.id]) : null;
 
@@ -3170,12 +3200,18 @@ export const App = () => {
             timelineDensity={runTimelineDensity}
             subagentFocus={subagentFocusRequest?.runId === paneDetail.run.id ? subagentFocusRequest : null}
             showActivity={paneVisiblePanels.activity}
+            showAgents={paneVisiblePanels.agents}
             showDiff={paneVisiblePanels.diff}
             showTerminal={paneVisiblePanels.terminal}
             showBrowser={paneVisiblePanels.browser}
             showNotes={paneVisiblePanels.notes}
             showChat={paneVisiblePanels.chat}
-            onTogglePanel={(panelId) => toggleRunWorkspacePanelForRun(paneDetail.run.id, panelId, paneDetail.worktreeUnavailable === true)}
+            onTogglePanel={(panelId) => toggleRunWorkspacePanelForRun(
+              paneDetail.run.id,
+              panelId,
+              paneDetail.worktreeUnavailable === true,
+              paneHasOrchestrationSurface,
+            )}
             secondaryPanelPosition={paneSecondaryPosition}
             onSecondaryPanelPositionChange={(position) => {
               if (isFocused) {
@@ -3586,6 +3622,7 @@ export const App = () => {
               timelineDensity={runTimelineDensity}
               subagentFocus={subagentFocusRequest?.runId === detail.run.id ? subagentFocusRequest : null}
               showActivity={runWorkspacePanelVisibility.activity}
+              showAgents={runWorkspacePanelVisibility.agents}
               showDiff={runWorkspacePanelVisibility.diff}
               showTerminal={runWorkspacePanelVisibility.terminal}
               showBrowser={runWorkspacePanelVisibility.browser}

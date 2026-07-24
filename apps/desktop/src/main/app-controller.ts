@@ -5991,6 +5991,18 @@ export class AppController
     if (!orchestration || ["completed", "cancelled", "deleting", "deletion-failed"].includes(orchestration.status)) return;
     const tasks = this.db.listOrchestrationTasks(orchestration.id);
     if (tasks.length === 0) return;
+    const allTasksTerminal = tasks.every((task) => ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status));
+    const adoptionApplying = tasks.some((task) => task.adoptionStatus === "applying");
+    if (
+      orchestration.status === "active" &&
+      !orchestration.wakeMode &&
+      orchestration.lastDeliveredSequence > 0 &&
+      allTasksTerminal &&
+      !adoptionApplying
+    ) {
+      await this.finishOrchestration(coordinatorRunId);
+      return;
+    }
     if (!orchestration.wakeMode && orchestration.status === "active") {
       const latestWave = this.db.listOrchestrationWaves(orchestration.id).at(-1);
       const waveTaskIds = latestWave ? tasks.filter((task) => task.waveId === latestWave.id).map((task) => task.id) : [];
@@ -6044,7 +6056,7 @@ export class AppController
     });
     return [
       "BuildWarden durable orchestration resumed you because the persisted wake condition was met.",
-      "Review these compact results, inspect individual tasks with buildwarden_tasks_read when needed, and decide the next wave or finish.",
+      "Review these compact results and inspect individual tasks with buildwarden_tasks_read when needed. Delegate another wave if useful; otherwise provide the final summary. BuildWarden completes the orchestration automatically when this turn ends without new work.",
       "",
       ...lines,
       "",

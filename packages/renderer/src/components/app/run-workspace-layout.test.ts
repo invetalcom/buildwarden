@@ -5,10 +5,14 @@ import {
   DEFAULT_TILE_LAYOUT,
   DEFAULT_TILE_ORDER,
   resolveRunWorkspacePanelVisibility,
+  shouldAutoOpenAgentsPanel,
 } from "./run-workspace-layout";
 
 describe("run workspace layout defaults", () => {
-  it("covers every panel including the run chat", () => {
+  it("covers every panel including agents and the run chat", () => {
+    expect(DEFAULT_TILE_ORDER).toContain("agents");
+    expect(DEFAULT_TILE_LAYOUT.agents).toBeDefined();
+    expect(DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.visiblePanels.agents).toBe(false);
     expect(DEFAULT_TILE_ORDER).toContain("chat");
     expect(DEFAULT_TILE_LAYOUT.chat).toBeDefined();
     expect(DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.visiblePanels.chat).toBe(false);
@@ -17,6 +21,7 @@ describe("run workspace layout defaults", () => {
   it("excludes unavailable panels and falls back to activity", () => {
     expect(resolveRunWorkspacePanelVisibility({
       activity: false,
+      agents: false,
       diff: false,
       terminal: true,
       browser: true,
@@ -28,6 +33,7 @@ describe("run workspace layout defaults", () => {
       chatMutations: false,
     })).toEqual({
       activity: true,
+      agents: false,
       diff: false,
       terminal: false,
       browser: false,
@@ -39,6 +45,7 @@ describe("run workspace layout defaults", () => {
   it("preserves available panel selections without forcing activity", () => {
     expect(resolveRunWorkspacePanelVisibility({
       activity: false,
+      agents: false,
       diff: true,
       terminal: false,
       browser: false,
@@ -49,6 +56,30 @@ describe("run workspace layout defaults", () => {
       embeddedTerminal: false,
       chatMutations: false,
     }).activity).toBe(false);
+  });
+
+  it("opens Agents only when the first durable task appears in the same run", () => {
+    const empty = { runId: "run-1", taskCount: 0 };
+    expect(shouldAutoOpenAgentsPanel(empty, {
+      runId: "run-1",
+      taskCount: 1,
+      visible: false,
+    })).toBe(true);
+    expect(shouldAutoOpenAgentsPanel({ runId: "run-1", taskCount: 1 }, {
+      runId: "run-1",
+      taskCount: 2,
+      visible: false,
+    })).toBe(false);
+    expect(shouldAutoOpenAgentsPanel(empty, {
+      runId: "run-2",
+      taskCount: 1,
+      visible: false,
+    })).toBe(false);
+    expect(shouldAutoOpenAgentsPanel(empty, {
+      runId: "run-1",
+      taskCount: 1,
+      visible: true,
+    })).toBe(false);
   });
 });
 
@@ -74,8 +105,11 @@ describe("parseRunWorkspaceLayoutsSetting back-compat", () => {
     const layout = parsed["run-1"];
     expect(layout).toBeDefined();
     expect(layout!.visiblePanels.diff).toBe(true);
+    expect(layout!.visiblePanels.agents).toBe(false);
     expect(layout!.visiblePanels.chat).toBe(false);
+    expect(layout!.tileOrder).toContain("agents");
     expect(layout!.tileOrder).toContain("chat");
+    expect(layout!.tileLayout.agents).toEqual({ colSpan: 5, rowSpan: 4 });
     expect(layout!.tileLayout.chat).toEqual({ colSpan: 5, rowSpan: 3 });
   });
 });

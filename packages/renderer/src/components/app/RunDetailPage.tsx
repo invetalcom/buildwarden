@@ -73,6 +73,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { OrchestrationAgentsPanel } from "./OrchestrationAgentsPanel";
+import { shouldAutoOpenAgentsPanel } from "./run-workspace-layout";
 
 type ReviewPanelState = DiffReviewPanelState;
 
@@ -180,8 +181,9 @@ export interface RunDetailPageProps {
   timelineDensity: RunTimelineDensity;
   /** Request to scroll to and expand a subagent card in the activity timeline. */
   subagentFocus?: { subagentId: string; nonce: number } | null;
-  /** Activity / diff / terminal / browser panel visibility. */
+  /** Workspace panel visibility. */
   showActivity: boolean;
+  showAgents: boolean;
   showDiff: boolean;
   showTerminal: boolean;
   showBrowser: boolean;
@@ -235,6 +237,7 @@ export const RunDetailPage = ({
   timelineDensity,
   subagentFocus = null,
   showActivity,
+  showAgents,
   showDiff,
   showTerminal,
   showBrowser,
@@ -285,7 +288,12 @@ export const RunDetailPage = ({
   const [selectionMenu, setSelectionMenu] = useState<{ x: number; y: number; text: string } | null>(null);
   const hasOrchestrationSurface = runDetail.run.kind !== "orchestration-task" &&
     (Boolean(runDetail.run.delegationEnabled) || Boolean(runDetail.orchestration));
-  const [agentsPanelVisible, setAgentsPanelVisible] = useState(hasOrchestrationSurface);
+  const agentsPanelVisible = showAgents && hasOrchestrationSurface;
+  const orchestrationTaskCount = runDetail.orchestration?.tasks.length ?? 0;
+  const previousOrchestrationTasksRef = useRef({
+    runId: runDetail.run.id,
+    taskCount: orchestrationTaskCount,
+  });
 
   // Split-pane state
   const [splitPct, setSplitPct] = useState(() => {
@@ -421,8 +429,20 @@ export const RunDetailPage = ({
   }, [runDetail.run.id, runDetail.notes]);
 
   useEffect(() => {
-    setAgentsPanelVisible(hasOrchestrationSurface);
-  }, [hasOrchestrationSurface, runDetail.run.id]);
+    const current = {
+      runId: runDetail.run.id,
+      taskCount: orchestrationTaskCount,
+      visible: agentsPanelVisible,
+    };
+    const shouldOpen = shouldAutoOpenAgentsPanel(previousOrchestrationTasksRef.current, current);
+    previousOrchestrationTasksRef.current = {
+      runId: current.runId,
+      taskCount: current.taskCount,
+    };
+    if (shouldOpen) {
+      onTogglePanel("agents");
+    }
+  }, [agentsPanelVisible, onTogglePanel, orchestrationTaskCount, runDetail.run.id]);
 
   useEffect(() => {
     if (showTerminal) {
@@ -543,7 +563,7 @@ export const RunDetailPage = ({
         return;
       }
       if (panelId === "agents") {
-        setAgentsPanelVisible(false);
+        onTogglePanel("agents");
         return;
       }
       onTogglePanel(panelId);
@@ -1297,7 +1317,7 @@ export const RunDetailPage = ({
                                   return;
                                 }
                                 if (panel.id === "agents") {
-                                  setAgentsPanelVisible(true);
+                                  onTogglePanel("agents");
                                   setActiveSecondaryTab("agents");
                                   setAddPanelOpen(false);
                                   return;

@@ -63,7 +63,7 @@ const detail = (overrides: Partial<RunDetail> = {}): RunDetail => ({
   ...overrides,
 });
 
-const panels: RunWorkspacePanelId[] = ["activity", "diff", "terminal", "browser", "notes", "chat"];
+const panels: RunWorkspacePanelId[] = ["activity", "agents", "diff", "terminal", "browser", "notes", "chat"];
 const baseProps = (runDetail: RunDetail): RunDetailPageProps => ({
   runDetail,
   busy: false,
@@ -72,6 +72,7 @@ const baseProps = (runDetail: RunDetail): RunDetailPageProps => ({
   pendingShellApproval: null,
   timelineDensity: "comfortable",
   showActivity: true,
+  showAgents: false,
   showDiff: false,
   showTerminal: false,
   showBrowser: false,
@@ -180,6 +181,7 @@ describe("RunDetailPage workflows", () => {
     expect(markup).toContain("Scheduler implemented and tested.");
     expect(markup).toContain("Open full run");
     expect(markup).toContain("Adoption preview");
+    expect(markup).not.toContain("Finish orchestration");
   });
 
   it("renders open, closed, and editing run-note workflows", () => {

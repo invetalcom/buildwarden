@@ -404,11 +404,6 @@ export const OrchestrationAgentsPanel = ({
                 </div>
               </section>
 
-              {detail.tasks.every((task) => TERMINAL_TASK_STATUSES.has(task.status)) ? (
-                <Button type="button" size="sm" className="h-8 gap-1.5 text-xs" disabled={!canOperate || busyAction != null} onClick={() => void runAction("finish", () => buildwarden.finishOrchestration(coordinatorRunId))}>
-                  <CheckCircle2 className="size-3.5" /> Finish orchestration
-                </Button>
-              ) : null}
             </div>
           ) : (
             <div className="grid h-full place-items-center px-6 text-center text-sm text-[var(--ec-muted)]">
