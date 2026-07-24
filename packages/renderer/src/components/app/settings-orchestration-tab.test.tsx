@@ -45,6 +45,8 @@ describe("OrchestrationSettingsTab", () => {
     expect(markup.match(/role="combobox"/g)).toHaveLength(2);
     expect(markup).toContain('role="switch"');
     expect(markup).toContain("Parallel tasks");
+    expect(markup).toContain("Durable orchestration");
+    expect(markup).not.toContain("Durable agent team");
     expect(markup).toContain("Default effort");
     expect(markup).toContain("1 active");
     expect(markup).toContain("Maximum concurrent tasks");

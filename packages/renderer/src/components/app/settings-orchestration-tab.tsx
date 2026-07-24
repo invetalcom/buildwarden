@@ -177,7 +177,7 @@ export const OrchestrationSettingsTab = ({
             <div className="min-w-0 flex-1 self-center">
               <CardTitle className="flex items-center gap-2 text-base">
                 <UsersRound className="size-4 text-[var(--ec-accent)]" />
-                Durable agent team
+                Durable orchestration
               </CardTitle>
               <CardDescription className="mt-1 max-w-2xl">
                 Choose the models and reusable roles available to delegation-enabled coordinator runs.
