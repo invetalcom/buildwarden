@@ -2573,6 +2573,17 @@ export const App = () => {
     });
   }, [buildwarden, leaveSelectedRun, loadRunDetail, loadSnapshot, selectedRunId]);
 
+  const reviewChildRun = useCallback((projectId: string, childRunId: string) => {
+    updateRunWorkspaceLayout(childRunId, (current) => ({
+      ...current,
+      visiblePanels: {
+        ...current.visiblePanels,
+        diff: true,
+      },
+    }));
+    void handleRunSelect(projectId, childRunId);
+  }, [handleRunSelect, updateRunWorkspaceLayout]);
+
   const openRunInSplitPane = useCallback(
     async (projectId: string, runId: string, targetPaneId?: RunPaneId) => {
       if (!selectedRunIdRef.current) {
@@ -3252,10 +3263,7 @@ export const App = () => {
             onRecoverInterruptedRun={(run) => void recoverInterruptedRun(run)}
             onCreateProjectTask={(projectId, input) => createProjectTask(projectId, input)}
             onOpenChildRun={(childRunId) => void handleRunSelect(paneDetail.run.projectId, childRunId)}
-            onReviewChildRun={(childRunId) => {
-              setRunWorkspaceShowDiff(true);
-              void handleRunSelect(paneDetail.run.projectId, childRunId);
-            }}
+            onReviewChildRun={(childRunId) => reviewChildRun(paneDetail.run.projectId, childRunId)}
             onFollowUpRun={(run, prompt, options) => followUpRun(run, prompt, options)}
           />
         ) : (
@@ -3674,10 +3682,7 @@ export const App = () => {
               onRecoverInterruptedRun={(run) => void recoverInterruptedRun(run)}
               onCreateProjectTask={(projectId, input) => createProjectTask(projectId, input)}
               onOpenChildRun={(childRunId) => void handleRunSelect(detail.run.projectId, childRunId)}
-              onReviewChildRun={(childRunId) => {
-                setRunWorkspaceShowDiff(true);
-                void handleRunSelect(detail.run.projectId, childRunId);
-              }}
+              onReviewChildRun={(childRunId) => reviewChildRun(detail.run.projectId, childRunId)}
               onFollowUpRun={(run, prompt, options) => followUpRun(run, prompt, options)}
             />
   );
