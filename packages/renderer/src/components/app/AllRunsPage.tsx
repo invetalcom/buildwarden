@@ -10,6 +10,7 @@ import { Input } from "../ui/input";
 import {
   isRunDisplayStatusActive,
   resolveRunDisplayStatus,
+  RUN_DISPLAY_STATUS_LABELS,
   runDisplayStatusTone,
 } from "./run-display-status";
 
@@ -107,7 +108,7 @@ const AllRunsContent = ({
                 <span className="truncate font-mono">{formatRunWorkspaceLabel(run)}</span>
               </div>
             </div>
-            <Badge dot tone={runDisplayStatusTone(displayStatus)}>{displayStatus}</Badge>
+            <Badge dot tone={runDisplayStatusTone(displayStatus)}>{RUN_DISPLAY_STATUS_LABELS[displayStatus]}</Badge>
           </button>
         );
       })}
