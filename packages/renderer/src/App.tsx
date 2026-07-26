@@ -2906,7 +2906,7 @@ export const App = () => {
     const confirmed = await requestConfirmation({
       title: isCascade ? "Delete orchestration and all children" : "Delete run",
       message: impactSummary,
-      confirmLabel: "Delete run",
+      confirmLabel: isCascade ? "Delete orchestration" : "Delete run",
       confirmVariant: "danger",
     });
 
