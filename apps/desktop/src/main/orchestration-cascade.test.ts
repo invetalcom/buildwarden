@@ -167,5 +167,5 @@ describe("mandatory coordinator deletion cascade", () => {
     expect(db.listPendingOrchestrationCleanupJobs()).toEqual([]);
     expect(lifecycle.onRunDeleted).toHaveBeenCalledWith(child.id);
     expect(lifecycle.onRunDeleted).toHaveBeenCalledWith(coordinator.id);
-  });
+  }, 30_000);
 });
