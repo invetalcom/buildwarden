@@ -88,6 +88,7 @@ import {
   parseKeyboardShortcuts,
   parseRunDragPayload,
   readRunTokenUsage,
+  removeRunIdsFromOpenPanes,
   resolveProviderComposerPrompt,
   runIdIsOpenInPanes,
   snapshotContainsRunId,
@@ -2915,33 +2916,28 @@ export const App = () => {
     }
 
     const runId = run.id;
-    const wasViewingThisRun = selectedRunId === runId;
-    const paneId = paneForOpenRunId(openRunPanesRef.current, runId);
+    const deletedRunIds = new Set(deletionImpact.runIds);
+    const wasViewingDeletedRun = typeof selectedRunId === "string" && deletedRunIds.has(selectedRunId);
 
     setPendingDeleteRunIds((current) => ({ ...current, [runId]: true }));
 
     void (async () => {
       try {
         await buildwarden.deleteRun(runId);
-        if (paneId) {
-          const nextPanes: OpenRunPanes = { ...openRunPanesRef.current };
-          delete nextPanes[paneId];
-          const remainingRunId = firstOpenRunId(nextPanes);
-          const remainingPaneId = remainingRunId ? paneForOpenRunId(nextPanes, remainingRunId) ?? "left" : "left";
-          setOpenRunPanes(nextPanes);
-          setRunDetailsById((current) => {
-            const next = { ...current };
-            for (const deletedRunId of deletionImpact.runIds) {
-              delete next[deletedRunId];
-            }
-            return next;
-          });
-          if (wasViewingThisRun && remainingRunId) {
-            await setFocusedRunSelection(remainingPaneId, remainingRunId);
-          } else if (wasViewingThisRun) {
-            clearRunSelectionState(null);
+        const nextPanes = removeRunIdsFromOpenPanes(openRunPanesRef.current, deletedRunIds);
+        const remainingRunId = firstOpenRunId(nextPanes);
+        const remainingPaneId = remainingRunId ? paneForOpenRunId(nextPanes, remainingRunId) ?? "left" : "left";
+        setOpenRunPanes(nextPanes);
+        setRunDetailsById((current) => {
+          const next = { ...current };
+          for (const deletedRunId of deletedRunIds) {
+            delete next[deletedRunId];
           }
-        } else if (wasViewingThisRun) {
+          return next;
+        });
+        if (wasViewingDeletedRun && remainingRunId) {
+          await setFocusedRunSelection(remainingPaneId, remainingRunId);
+        } else if (wasViewingDeletedRun) {
           clearRunSelectionState(null);
         }
         setRunBrowserSessions((current) => {

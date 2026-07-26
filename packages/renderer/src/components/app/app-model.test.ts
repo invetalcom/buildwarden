@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderType, UnifiedProviderFamily } from "@buildwarden/shared";
-import { buildRunReasoningInput, harnessTypeForProvider } from "./app-model";
+import { buildRunReasoningInput, harnessTypeForProvider, removeRunIdsFromOpenPanes } from "./app-model";
 
 describe("harnessTypeForProvider", () => {
   const cases: Array<[ProviderType, string]> = [
@@ -49,5 +49,18 @@ describe("buildRunReasoningInput", () => {
     expect(buildRunReasoningInput("azure-legacy", null, "high", "high")).toEqual({});
     expect(buildRunReasoningInput("ai-sdk", "google" as UnifiedProviderFamily, "high", "high")).toEqual({});
     expect(buildRunReasoningInput("ai-sdk", "xai" as UnifiedProviderFamily, "high", "high")).toEqual({});
+  });
+});
+
+describe("removeRunIdsFromOpenPanes", () => {
+  it("removes coordinator and child panes from a cascade while preserving unrelated runs", () => {
+    expect(removeRunIdsFromOpenPanes(
+      { left: "coordinator-1", right: "child-1" },
+      new Set(["coordinator-1", "child-1"]),
+    )).toEqual({});
+    expect(removeRunIdsFromOpenPanes(
+      { left: "child-1", right: "run-2" },
+      new Set(["coordinator-1", "child-1"]),
+    )).toEqual({ right: "run-2" });
   });
 });
