@@ -152,10 +152,10 @@ export const AllRunsPage = ({ projects, onSelectRun }: AllRunsPageProps) => {
           </div>
           <div className="flex min-w-0 flex-1 flex-wrap items-end justify-end gap-2">
             <div className="flex h-8 items-center rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-0.5">
-              <button type="button" className={`h-7 rounded px-2.5 text-xs ${view === "runs" ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)]"}`} onClick={() => setView("runs")}>
+              <button type="button" aria-pressed={view === "runs"} className={`h-7 rounded px-2.5 text-xs ${view === "runs" ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)]"}`} onClick={() => setView("runs")}>
                 Runs
               </button>
-              <button type="button" className={`flex h-7 items-center gap-1.5 rounded px-2.5 text-xs ${view === "orchestrated" ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)]"}`} onClick={() => setView("orchestrated")}>
+              <button type="button" aria-pressed={view === "orchestrated"} className={`flex h-7 items-center gap-1.5 rounded px-2.5 text-xs ${view === "orchestrated" ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)]"}`} onClick={() => setView("orchestrated")}>
                 <UsersRound className="size-3" /> Orchestrated
               </button>
             </div>

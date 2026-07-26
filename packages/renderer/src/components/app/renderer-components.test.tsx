@@ -246,6 +246,8 @@ describe("renderer component states", () => {
     const markup = renderToStaticMarkup(<AllRunsPage projects={[projectEntry]} onSelectRun={vi.fn()} />);
     expect(markup).toContain("Improve renderer coverage");
     expect(markup).toContain("feat/coverage");
+    expect(markup).toContain('aria-pressed="true"');
+    expect(markup).toContain('aria-pressed="false"');
   });
 
   it("renders plan, token, and context summaries", () => {
