@@ -74,6 +74,8 @@ import type {
   WorktreeRecord,
 } from "@buildwarden/shared";
 
+const ORCHESTRATION_DETAIL_HISTORY_LIMIT = 200;
+
 const require = createRequire(import.meta.url);
 
 const DEFAULT_DB_NAME = "buildwarden.sqlite";
@@ -3365,7 +3367,8 @@ export class BuildWardenDatabase {
     };
   }
 
-  listOrchestrationEvents(orchestrationId: string): OrchestrationEventRecord[] {
+  listOrchestrationEvents(orchestrationId: string, limit?: number): OrchestrationEventRecord[] {
+    const boundedLimit = Number.isInteger(limit) && Number(limit) > 0 ? Number(limit) : null;
     return this.all<{
       id: string;
       orchestrationId: string;
@@ -3377,10 +3380,17 @@ export class BuildWardenDatabase {
       metadataJson: string;
       createdAt: string;
     }>(
-      `select id, orchestration_id as orchestrationId, task_id as taskId, sequence, type, title, content,
-       metadata_json as metadataJson, created_at as createdAt
-       from orchestration_events where orchestration_id = ? order by sequence asc`,
-      [orchestrationId],
+      boundedLimit
+        ? `select id, orchestrationId, taskId, sequence, type, title, content, metadataJson, createdAt
+           from (
+             select id, orchestration_id as orchestrationId, task_id as taskId, sequence, type, title, content,
+              metadata_json as metadataJson, created_at as createdAt
+             from orchestration_events where orchestration_id = ? order by sequence desc limit ?
+           ) order by sequence asc`
+        : `select id, orchestration_id as orchestrationId, task_id as taskId, sequence, type, title, content,
+           metadata_json as metadataJson, created_at as createdAt
+           from orchestration_events where orchestration_id = ? order by sequence asc`,
+      boundedLimit ? [orchestrationId, boundedLimit] : [orchestrationId],
     ).map((row) => ({
       ...row,
       metadata: this.parseJsonObject(row.metadataJson) ?? {},
@@ -3414,12 +3424,20 @@ export class BuildWardenDatabase {
     };
   }
 
-  listOrchestrationTaskMessages(orchestrationId: string): OrchestrationTaskMessageRecord[] {
+  listOrchestrationTaskMessages(orchestrationId: string, limit?: number): OrchestrationTaskMessageRecord[] {
+    const boundedLimit = Number.isInteger(limit) && Number(limit) > 0 ? Number(limit) : null;
     return this.all<OrchestrationTaskMessageRecord>(
-      `select id, orchestration_id as orchestrationId, task_id as taskId, source, content, status,
-       created_at as createdAt, delivered_at as deliveredAt
-       from orchestration_task_messages where orchestration_id = ? order by created_at asc`,
-      [orchestrationId],
+      boundedLimit
+        ? `select id, orchestrationId, taskId, source, content, status, createdAt, deliveredAt
+           from (
+             select rowid as insertionOrder, id, orchestration_id as orchestrationId, task_id as taskId,
+              source, content, status, created_at as createdAt, delivered_at as deliveredAt
+             from orchestration_task_messages where orchestration_id = ? order by rowid desc limit ?
+           ) order by insertionOrder asc`
+        : `select id, orchestration_id as orchestrationId, task_id as taskId, source, content, status,
+           created_at as createdAt, delivered_at as deliveredAt
+           from orchestration_task_messages where orchestration_id = ? order by created_at asc, rowid asc`,
+      boundedLimit ? [orchestrationId, boundedLimit] : [orchestrationId],
     );
   }
 
@@ -3518,8 +3536,8 @@ export class BuildWardenDatabase {
       orchestration,
       waves: this.listOrchestrationWaves(orchestration.id),
       tasks,
-      events: this.listOrchestrationEvents(orchestration.id),
-      messages: this.listOrchestrationTaskMessages(orchestration.id),
+      events: this.listOrchestrationEvents(orchestration.id, ORCHESTRATION_DETAIL_HISTORY_LIMIT),
+      messages: this.listOrchestrationTaskMessages(orchestration.id, ORCHESTRATION_DETAIL_HISTORY_LIMIT),
       activeTaskCount: tasks.filter((task) => activeStatuses.has(task.status)).length,
       queuedTaskCount: tasks.filter((task) => task.status === "pending" || task.status === "queued").length,
       attentionTaskCount: tasks.filter((task) =>

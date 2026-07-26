@@ -253,4 +253,49 @@ describe("durable orchestration database", () => {
       responseJson: JSON.stringify({ waiting: true }),
     });
   });
+
+  it("bounds orchestration detail history to the latest records in chronological order", async () => {
+    const db = await makeDb();
+    const { coordinator, project, model, team } = await makeFixture(db);
+    const orchestration = db.createOrchestration({
+      projectId: project.id,
+      coordinatorRunId: coordinator.id,
+      teamSnapshot: team,
+    });
+    const wave = db.createOrchestrationWave(orchestration.id);
+    const task = db.createOrchestrationTask({
+      orchestrationId: orchestration.id,
+      waveId: wave.id,
+      clientTaskId: "history-task",
+      title: "History task",
+      prompt: "Generate history.",
+      roleId: "implementer",
+      modelId: model.id,
+      intent: "inspect",
+    });
+    for (let index = 0; index < 205; index += 1) {
+      db.appendOrchestrationEvent({
+        orchestrationId: orchestration.id,
+        taskId: task.id,
+        type: "history",
+        title: `Event ${index}`,
+        content: "",
+      });
+      db.createOrchestrationTaskMessage({
+        orchestrationId: orchestration.id,
+        taskId: task.id,
+        source: "coordinator",
+        content: `Message ${index}`,
+      });
+    }
+
+    const detail = db.getOrchestrationDetailByCoordinatorRunId(coordinator.id);
+
+    expect(detail?.events).toHaveLength(200);
+    expect(detail?.events[0]?.sequence).toBe(6);
+    expect(detail?.events.at(-1)?.sequence).toBe(205);
+    expect(detail?.messages).toHaveLength(200);
+    expect(detail?.messages[0]?.content).toBe("Message 5");
+    expect(detail?.messages.at(-1)?.content).toBe("Message 204");
+  });
 });
