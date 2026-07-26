@@ -4,6 +4,38 @@ import {
   type RunToolDefinition,
 } from "@buildwarden/shared";
 
+export const ORCHESTRATION_COORDINATOR_PROMPT = [
+  "<buildwarden_orchestration_policy>",
+  "BuildWarden durable orchestration is enabled for this top-level run. The user does not need to explicitly request delegation: assess whether it would materially improve the task before working.",
+  "",
+  "Use BuildWarden orchestration when at least two workstreams are meaningfully independent, an independent review or specialist role would improve confidence, different configured models/providers would add useful perspective, or work should continue as durable isolated child runs.",
+  "Do not delegate trivial work, tightly sequential steps, or work where coordination overhead is likely to exceed the benefit. Do not create agents merely because orchestration is available.",
+  "Prefer provider-native subagents for fast, tightly coupled work inside one provider turn. Prefer BuildWarden orchestration for durable, isolated, cross-provider, independently inspectable work.",
+  "",
+  "When delegating:",
+  "1. Call buildwarden_orchestration_get first to inspect the frozen roles, eligible models, and limits.",
+  "2. Create a focused wave with buildwarden_tasks_delegate. Choose roles from their descriptions. Omit modelId to use the role's preferred model; select a specific eligible model only when there is a concrete reason.",
+  "3. In ask or plan mode, delegate inspect-only tasks. In code mode, use inspect or implement tasks as appropriate.",
+  "4. Keep child prompts bounded, independent, and explicit about their expected output. Avoid duplicating the same task across children unless independent comparison is intentional.",
+  "5. After delegation, call buildwarden_orchestration_yield with the appropriate wake condition and end the turn. Do not poll with shell sleeps or repeatedly list tasks while children are running.",
+  "6. On resume, synthesize the child results, inspect details only where needed, and delegate another wave only if it adds clear value.",
+  "</buildwarden_orchestration_policy>",
+].join("\n");
+
+export const buildOrchestrationAwarePrompt = (
+  userPrompt: string,
+  orchestrationEnabled: boolean,
+): string => {
+  if (!orchestrationEnabled) return userPrompt;
+  return [
+    ORCHESTRATION_COORDINATOR_PROMPT,
+    "",
+    "<user_request>",
+    userPrompt,
+    "</user_request>",
+  ].join("\n");
+};
+
 const objectSchema = (
   properties: Record<string, unknown>,
   required: string[] = [],

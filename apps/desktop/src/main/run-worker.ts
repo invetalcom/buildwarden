@@ -17,7 +17,7 @@ import { createHarnessAdapter } from "./harness-adapters";
 import { buildInitialRepoContext } from "./initial-repo-context";
 import { logError, logInfo } from "./logger";
 import { createRunToolContext } from "./run-tools";
-import { isOrchestrationToolName } from "./orchestration-tools";
+import { buildOrchestrationAwarePrompt, isOrchestrationToolName } from "./orchestration-tools";
 
 interface WorkerInput {
   request: RunExecutionRequest;
@@ -219,6 +219,7 @@ const run = async () => {
     const result = await harness.run(
       {
         ...request,
+        prompt: buildOrchestrationAwarePrompt(request.prompt, orchestrationTools.length > 0),
         repoContext: request.repoContext ?? [
           request.skillContext?.trim(),
           await buildInitialRepoContext(request.worktreePath, {
