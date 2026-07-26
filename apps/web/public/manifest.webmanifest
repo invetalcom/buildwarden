@@ -1,0 +1,19 @@
+{
+  "name": "BuildWarden Remote",
+  "short_name": "BuildWarden",
+  "description": "Monitor and drive BuildWarden agent runs from your phone.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0b0d10",
+  "theme_color": "#0b0d10",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

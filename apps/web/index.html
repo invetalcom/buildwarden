@@ -2,9 +2,35 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      viewport-fit=cover exposes env(safe-area-inset-*) so the mobile app bar / tab bar can clear
+      notches and home indicators. interactive-widget=resizes-content makes the on-screen keyboard
+      shrink the layout viewport, which keeps the sticky composer visible without JS.
+    -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
     <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b0d10" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#eef4fa" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <title>BuildWarden Remote</title>
+    <style>
+      /* Painted before either shell's stylesheet loads, so the lazy chunk never flashes white. */
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: #0b0d10;
+        color: #f2f5f7;
+      }
+      .boot-splash {
+        height: 100%;
+      }
+    </style>
   </head>
   <body data-platform="web">
     <div id="root"></div>

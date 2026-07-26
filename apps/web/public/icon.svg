@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="BuildWarden">
+  <!-- Full-bleed background keeps the icon safe under maskable cropping; the glyph stays inside
+       the central 80% safe zone. -->
+  <rect width="512" height="512" fill="#0b0d10" />
+  <g transform="translate(256 256)">
+    <path
+      d="M0 -132 L104 -92 V6 C104 72 60 116 0 138 C-60 116 -104 72 -104 6 V-92 Z"
+      fill="none"
+      stroke="#6ab2ff"
+      stroke-width="22"
+      stroke-linejoin="round"
+    />
+    <path d="M-42 2 L-10 36 L46 -34" fill="none" stroke="#6ab2ff" stroke-width="22" stroke-linecap="round" stroke-linejoin="round" />
+  </g>
+</svg>

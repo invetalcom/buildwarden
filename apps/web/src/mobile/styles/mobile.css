@@ -1,0 +1,142 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+/* Only the mobile UI is scanned: no desktop renderer classes end up in this bundle. */
+@source "../**/*.{ts,tsx}";
+
+@theme {
+  --radius-xs: 0.45rem;
+  --radius-sm: 0.6rem;
+  --radius-md: 0.85rem;
+  --radius-lg: 1.1rem;
+  --radius-xl: 1.4rem;
+  --radius-2xl: 1.75rem;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-size: 15px;
+  color: var(--ec-text);
+  background: var(--m-backdrop);
+  /* Phones must not rubber-band the whole document behind a fixed app shell. */
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The shell owns scrolling; the document never does. */
+.m-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--ec-bg);
+  color: var(--ec-text);
+}
+
+.m-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.m-scroll-x {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.m-scroll-x::-webkit-scrollbar {
+  display: none;
+}
+
+/* Thin scrollbars where a scrollbar is actually useful (diff bodies, terminals). */
+.m-scroll::-webkit-scrollbar,
+.m-scroll-thin::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.m-scroll::-webkit-scrollbar-thumb,
+.m-scroll-thin::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--app-scrollbar-thumb-start);
+}
+
+.m-safe-top {
+  padding-top: var(--m-safe-top);
+}
+
+.m-safe-bottom {
+  padding-bottom: var(--m-safe-bottom);
+}
+
+/* Every interactive row clears the 44px touch-target floor. */
+.m-tap {
+  min-height: var(--m-tap);
+}
+
+.m-sheet-enter {
+  animation: m-sheet-in 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.m-scrim-enter {
+  animation: m-fade-in 160ms ease-out both;
+}
+
+.m-drawer-enter {
+  animation: m-drawer-in 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.m-screen-enter {
+  animation: m-fade-in 140ms ease-out both;
+}
+
+@keyframes m-sheet-in {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+@keyframes m-drawer-in {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes m-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .m-sheet-enter,
+  .m-scrim-enter,
+  .m-drawer-enter,
+  .m-screen-enter {
+    animation: none;
+  }
+}
+
+/* Long branch names, paths and prompts must wrap rather than widen the viewport. */
+.m-wrap-anywhere {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.m-mono {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* iOS zooms the page when a focused input renders below 16px. */
+input,
+textarea,
+select {
+  font-size: max(16px, 1em);
+}
