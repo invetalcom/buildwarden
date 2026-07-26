@@ -284,6 +284,33 @@ export const App = () => {
   const confirmDialogResolverRef = useRef<((value: boolean) => void) | null>(null);
   const [runBrowserSessions, setRunBrowserSessions] = useState<Record<string, RunBrowserSessionState>>({});
   const [runTerminalOpenLinksInApp, setRunTerminalOpenLinksInApp] = useState<Record<string, boolean>>({});
+  const {
+    removeRunWorkspaceLayoutsForRuns,
+    runWorkspaceLayoutsByRunId,
+    selectedRunWorkspaceLayout,
+    runWorkspaceSecondaryPosition,
+    runWorkspaceShowActivity,
+    runWorkspaceShowAgents,
+    runWorkspaceShowBrowser,
+    runWorkspaceShowChat,
+    runWorkspaceShowDiff,
+    runWorkspaceShowNotes,
+    runWorkspaceShowTerminal,
+    setRunWorkspaceSecondaryPosition,
+    setRunWorkspaceShowActivity,
+    setRunWorkspaceShowAgents,
+    setRunWorkspaceShowBrowser,
+    setRunWorkspaceShowChat,
+    setRunWorkspaceShowDiff,
+    setRunWorkspaceShowNotes,
+    setRunWorkspaceShowTerminal,
+    updateRunWorkspaceLayout,
+  } = useRunWorkspaceLayouts({
+    buildwarden,
+    selectedRunId,
+    settings: snapshot.settings,
+    setError,
+  });
   const [appLogDirPath, setAppLogDirPath] = useState("");
   const [appLogDirectorySize, setAppLogDirectorySize] = useState(EMPTY_APP_LOG_DIRECTORY_SIZE);
   const [networkProxySettings, setNetworkProxySettings] = useState<NetworkProxySettingsSnapshot>({
@@ -759,6 +786,34 @@ export const App = () => {
     visibleStartedAtById: visibleShellApprovalStartedAtById,
   } = useShellApprovalQueue({ buildwarden, loadRunDetailForRun, loadSnapshot, selectedRunId, setError });
 
+  const purgeDeletedRunState = useCallback((runIds: readonly string[]) => {
+    if (runIds.length === 0) return;
+    const deletedIds = new Set(runIds);
+    const omitDeleted = <T,>(current: Record<string, T>): Record<string, T> =>
+      Object.fromEntries(Object.entries(current).filter(([runId]) => !deletedIds.has(runId)));
+
+    for (const runId of deletedIds) {
+      clearDiffRefreshTimer(runId);
+      const refreshTimer = runDetailRefreshTimersRef.current[runId];
+      if (refreshTimer !== undefined) {
+        window.clearTimeout(refreshTimer);
+        delete runDetailRefreshTimersRef.current[runId];
+      }
+      removeShellApprovalsByRunId(runId);
+    }
+    setRunDetailsById(omitDeleted);
+    setRunLiveUsageById(omitDeleted);
+    setRunBrowserSessions(omitDeleted);
+    setRunTerminalOpenLinksInApp(omitDeleted);
+    setOpenRunPanes((current) => removeRunIdsFromOpenPanes(current, deletedIds));
+    removeRunWorkspaceLayoutsForRuns(runIds.slice());
+    if (typeof selectedRunIdRef.current === "string" && deletedIds.has(selectedRunIdRef.current)) {
+      selectedRunIdRef.current = null;
+      setSelectedRunId(null);
+      setRunDetail(null);
+    }
+  }, [clearDiffRefreshTimer, removeRunWorkspaceLayoutsForRuns, removeShellApprovalsByRunId]);
+
   useEffect(
     () => () => {
       for (const timer of Object.values(runDetailRefreshTimersRef.current)) {
@@ -844,19 +899,10 @@ export const App = () => {
     });
     const unsubscribeOrchestrationChanged = buildwarden.onOrchestrationChanged((payload) => {
       scheduleSnapshotRefresh();
-      void refreshRunDetailForActiveRunEvent(payload.coordinatorRunId, { immediate: true });
       if (payload.deletedRunIds?.length) {
-        const deletedIds = new Set(payload.deletedRunIds);
-        setRunDetailsById((current) => Object.fromEntries(
-          Object.entries(current).filter(([runId]) => !deletedIds.has(runId)),
-        ));
-        setOpenRunPanes((current) => Object.fromEntries(
-          Object.entries(current).filter(([, runId]) => !deletedIds.has(runId)),
-        ) as OpenRunPanes);
-        if (typeof selectedRunIdRef.current === "string" && deletedIds.has(selectedRunIdRef.current)) {
-          setSelectedRunId(null);
-          setRunDetail(null);
-        }
+        purgeDeletedRunState(payload.deletedRunIds);
+      } else {
+        void refreshRunDetailForActiveRunEvent(payload.coordinatorRunId, { immediate: true });
       }
     });
 
@@ -878,6 +924,7 @@ export const App = () => {
     refreshRunDetailForActiveRunEvent,
     removeShellApprovalByRequestId,
     removeShellApprovalsByRunId,
+    purgeDeletedRunState,
     scheduleSnapshotRefresh,
   ]);
 
@@ -988,34 +1035,6 @@ export const App = () => {
     setRunBaseBranch,
     submitCheckoutDetachedProjectBranch,
   } = useProjectBranches({ buildwarden, selectedProject, setError });
-  const {
-    removeRunWorkspaceLayoutsForRuns,
-    runWorkspaceLayoutsByRunId,
-    selectedRunWorkspaceLayout,
-    runWorkspaceSecondaryPosition,
-    runWorkspaceShowActivity,
-    runWorkspaceShowAgents,
-    runWorkspaceShowBrowser,
-    runWorkspaceShowChat,
-    runWorkspaceShowDiff,
-    runWorkspaceShowNotes,
-    runWorkspaceShowTerminal,
-    setRunWorkspaceSecondaryPosition,
-    setRunWorkspaceShowActivity,
-    setRunWorkspaceShowAgents,
-    setRunWorkspaceShowBrowser,
-    setRunWorkspaceShowChat,
-    setRunWorkspaceShowDiff,
-    setRunWorkspaceShowNotes,
-    setRunWorkspaceShowTerminal,
-    updateRunWorkspaceLayout,
-  } = useRunWorkspaceLayouts({
-    buildwarden,
-    selectedRunId,
-    settings: snapshot.settings,
-    setError,
-  });
-
   const {
     changeRunMode,
     changeRunWorkspaceType,
@@ -2938,30 +2957,12 @@ export const App = () => {
         const nextPanes = removeRunIdsFromOpenPanes(openRunPanesRef.current, deletedRunIds);
         const remainingRunId = firstOpenRunId(nextPanes);
         const remainingPaneId = remainingRunId ? paneForOpenRunId(nextPanes, remainingRunId) ?? "left" : "left";
-        setOpenRunPanes(nextPanes);
-        setRunDetailsById((current) => {
-          const next = { ...current };
-          for (const deletedRunId of deletedRunIds) {
-            delete next[deletedRunId];
-          }
-          return next;
-        });
+        purgeDeletedRunState(deletionImpact.runIds);
         if (wasViewingDeletedRun && remainingRunId) {
           await setFocusedRunSelection(remainingPaneId, remainingRunId);
         } else if (wasViewingDeletedRun) {
-          clearRunSelectionState(null);
+          setFocusedRunPane("left");
         }
-        setRunBrowserSessions((current) => {
-          const next = { ...current };
-          for (const deletedRunId of deletionImpact.runIds) delete next[deletedRunId];
-          return next;
-        });
-        setRunTerminalOpenLinksInApp((current) => {
-          const next = { ...current };
-          for (const deletedRunId of deletionImpact.runIds) delete next[deletedRunId];
-          return next;
-        });
-        removeRunWorkspaceLayoutsForRuns(deletionImpact.runIds);
         await loadSnapshot();
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : "Could not delete run.");
@@ -2976,10 +2977,9 @@ export const App = () => {
     })();
   }, [
     buildwarden,
-    clearRunSelectionState,
     loadSnapshot,
     pendingDeleteRunIds,
-    removeRunWorkspaceLayoutsForRuns,
+    purgeDeletedRunState,
     requestConfirmation,
     selectedRunId,
     setFocusedRunSelection,
