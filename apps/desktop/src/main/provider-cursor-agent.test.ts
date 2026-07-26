@@ -233,16 +233,33 @@ describe("CursorAgentProviderAdapter", () => {
       });
 
       expect(logger.enabled).toBe(true);
-      logger.log("cursor.rpc.outbound", { method: "initialize", params: { protocolVersion: 1 } });
+      logger.log("cursor.rpc.outbound", {
+        method: "session/new",
+        params: {
+          protocolVersion: 1,
+          mcpServers: [{
+            headers: [{ name: "Authorization", value: "Bearer private-loopback-token" }],
+          }],
+          apiKey: "private-provider-key",
+        },
+      });
 
       const line = readFileSync(join(logDir, "run-run-1-cursor-agent-composer-2.5.jsonl"), "utf8").trim();
       expect(JSON.parse(line)).toMatchObject({
         event: "cursor.rpc.outbound",
         data: {
-          method: "initialize",
-          params: { protocolVersion: 1 },
+          method: "session/new",
+          params: {
+            protocolVersion: 1,
+            mcpServers: [{
+              headers: [{ name: "Authorization", value: "[REDACTED]" }],
+            }],
+            apiKey: "[REDACTED]",
+          },
         },
       });
+      expect(line).not.toContain("private-loopback-token");
+      expect(line).not.toContain("private-provider-key");
     } finally {
       rmSync(logDir, { recursive: true, force: true });
     }

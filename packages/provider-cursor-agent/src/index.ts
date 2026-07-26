@@ -317,10 +317,33 @@ const asFiniteNumber = (value: unknown): number | undefined => {
   return Number.isFinite(number) && number >= 0 ? number : undefined;
 };
 
+const REDACTED_LOG_VALUE = "[REDACTED]";
+const isSensitiveLogKey = (key: string): boolean =>
+  /^(?:authorization|proxy-authorization|api[-_]?key|access[-_]?token|refresh[-_]?token|bearer[-_]?token|password|secret)$/i
+    .test(key);
+
+const redactSensitiveLogValues = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map(redactSensitiveLogValues);
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
+  const sensitiveNamedValue = typeof value.name === "string" && isSensitiveLogKey(value.name);
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [
+      key,
+      isSensitiveLogKey(key) || (key === "value" && sensitiveNamedValue)
+        ? REDACTED_LOG_VALUE
+        : redactSensitiveLogValues(entry),
+    ]),
+  );
+};
+
 const sanitizeMetadataValue = (value: unknown): unknown => {
   if (value === undefined) return undefined;
   try {
-    return JSON.parse(JSON.stringify(value)) as unknown;
+    return redactSensitiveLogValues(JSON.parse(JSON.stringify(value)) as unknown);
   } catch {
     return String(value);
   }
