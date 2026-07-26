@@ -504,6 +504,7 @@ export const OrchestrationSettingsTab = ({
               <Input
                 className="mt-2 h-8 text-xs"
                 value={role.description}
+                aria-label={`Description for ${role.name || "role"}`}
                 disabled={!canEdit}
                 placeholder="What should coordinators use this role for?"
                 onChange={(event) => updateRole(role.id, (current) => ({
