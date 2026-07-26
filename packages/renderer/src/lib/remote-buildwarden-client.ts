@@ -221,6 +221,9 @@ const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAccessSco
   ["refreshOrchestrationTeam", ["run:operate", "admin"]],
 ]);
 
+export const listRemoteMutationMethodsMissingScopePolicy = (): RemoteApiMethod[] =>
+  [...REMOTE_MUTATION_METHODS].filter((method) => !REMOTE_MUTATION_SCOPES.has(method));
+
 const REMOTE_LOCAL_SETTING_KEYS = new Set<string>([
   APP_SETTING_KEYS.darkMode,
   APP_SETTING_KEYS.uiTheme,
@@ -635,7 +638,12 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
       }
       if (REMOTE_MUTATION_METHODS.has(property as RemoteApiMethod)) {
         const requiredScopes = REMOTE_MUTATION_SCOPES.get(property as RemoteApiMethod);
-        const missingScopes = requiredScopes?.filter((scope) => !scopes.includes(scope)) ?? [];
+        if (!requiredScopes) {
+          return async () => {
+            throw new Error(`"${property}" is disabled because its remote authorization policy is not configured.`);
+          };
+        }
+        const missingScopes = requiredScopes.filter((scope) => !scopes.includes(scope));
         if (missingScopes.length > 0) {
           return async () => {
             const reason = capabilities.mutations ? "this remote session" : "the read-only remote client";
