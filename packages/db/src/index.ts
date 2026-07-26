@@ -75,6 +75,23 @@ import type {
 } from "@buildwarden/shared";
 
 const ORCHESTRATION_DETAIL_HISTORY_LIMIT = 200;
+const ORCHESTRATION_SELECT = `select id, project_id as projectId, coordinator_run_id as coordinatorRunId, status,
+  team_snapshot_json as teamSnapshotJson, wake_mode as wakeMode, wake_task_ids_json as wakeTaskIdsJson,
+  last_event_sequence as lastEventSequence, last_delivered_sequence as lastDeliveredSequence,
+  error_message as errorMessage, created_at as createdAt, updated_at as updatedAt, finished_at as finishedAt
+  from orchestrations`;
+const ORCHESTRATION_TASK_SELECT = `select id, orchestration_id as orchestrationId, wave_id as waveId,
+  client_task_id as clientTaskId, title, prompt, role_id as roleId, model_id as modelId, intent, status,
+  child_run_id as childRunId, retry_of_task_id as retryOfTaskId, summary, error_message as errorMessage,
+  attention_reason as attentionReason, adoption_status as adoptionStatus,
+  input_tokens as inputTokens, output_tokens as outputTokens,
+  created_at as createdAt, updated_at as updatedAt, started_at as startedAt, finished_at as finishedAt
+  from orchestration_tasks`;
+
+type StoredOrchestrationRecord = Omit<OrchestrationRecord, "teamSnapshot" | "wakeTaskIds"> & {
+  teamSnapshotJson: string;
+  wakeTaskIdsJson: string;
+};
 
 const require = createRequire(import.meta.url);
 
@@ -3069,35 +3086,18 @@ export class BuildWardenDatabase {
   }
 
   getOrchestration(id: string): OrchestrationRecord {
-    const row = this.first<{
-      id: string;
-      projectId: string;
-      coordinatorRunId: string;
-      status: OrchestrationStatus;
-      teamSnapshotJson: string;
-      wakeMode: OrchestrationRecord["wakeMode"];
-      wakeTaskIdsJson: string;
-      lastEventSequence: number;
-      lastDeliveredSequence: number;
-      errorMessage: string | null;
-      createdAt: string;
-      updatedAt: string;
-      finishedAt: string | null;
-    }>(
-      `select id, project_id as projectId, coordinator_run_id as coordinatorRunId, status,
-        team_snapshot_json as teamSnapshotJson, wake_mode as wakeMode, wake_task_ids_json as wakeTaskIdsJson,
-        last_event_sequence as lastEventSequence, last_delivered_sequence as lastDeliveredSequence,
-        error_message as errorMessage, created_at as createdAt, updated_at as updatedAt, finished_at as finishedAt
-       from orchestrations where id = ?`,
-      [id],
-    );
+    const row = this.first<StoredOrchestrationRecord>(`${ORCHESTRATION_SELECT} where id = ?`, [id]);
     if (!row) throw new Error(`Orchestration not found: ${id}`);
+    return this.deserializeOrchestration(row);
+  }
+
+  private deserializeOrchestration(row: StoredOrchestrationRecord): OrchestrationRecord {
     let teamSnapshot: OrchestrationTeamSettings;
     let wakeTaskIds: string[];
     try {
       teamSnapshot = JSON.parse(row.teamSnapshotJson) as OrchestrationTeamSettings;
     } catch {
-      throw new Error(`Orchestration team snapshot is invalid: ${id}`);
+      throw new Error(`Orchestration team snapshot is invalid: ${row.id}`);
     }
     try {
       const parsed = JSON.parse(row.wakeTaskIdsJson) as unknown;
@@ -3105,21 +3105,38 @@ export class BuildWardenDatabase {
     } catch {
       wakeTaskIds = [];
     }
-    return { ...row, teamSnapshot, wakeTaskIds };
+    return {
+      id: row.id,
+      projectId: row.projectId,
+      coordinatorRunId: row.coordinatorRunId,
+      status: row.status,
+      teamSnapshot,
+      wakeMode: row.wakeMode,
+      wakeTaskIds,
+      lastEventSequence: row.lastEventSequence,
+      lastDeliveredSequence: row.lastDeliveredSequence,
+      errorMessage: row.errorMessage,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      finishedAt: row.finishedAt,
+    };
   }
 
   getOrchestrationByCoordinatorRunId(coordinatorRunId: string): OrchestrationRecord | null {
-    const row = this.first<{ id: string }>("select id from orchestrations where coordinator_run_id = ?", [coordinatorRunId]);
-    return row ? this.getOrchestration(row.id) : null;
+    const row = this.first<StoredOrchestrationRecord>(
+      `${ORCHESTRATION_SELECT} where coordinator_run_id = ?`,
+      [coordinatorRunId],
+    );
+    return row ? this.deserializeOrchestration(row) : null;
   }
 
   listOrchestrationsWithStatuses(statuses: OrchestrationStatus[]): OrchestrationRecord[] {
     if (statuses.length === 0) return [];
     const placeholders = statuses.map(() => "?").join(", ");
-    return this.all<{ id: string }>(
-      `select id from orchestrations where status in (${placeholders}) order by created_at asc`,
+    return this.all<StoredOrchestrationRecord>(
+      `${ORCHESTRATION_SELECT} where status in (${placeholders}) order by created_at asc`,
       statuses,
-    ).map((row) => this.getOrchestration(row.id));
+    ).map((row) => this.deserializeOrchestration(row));
   }
 
   updateOrchestration(
@@ -3247,13 +3264,7 @@ export class BuildWardenDatabase {
 
   getOrchestrationTask(id: string): OrchestrationTaskRecord {
     const task = this.first<OrchestrationTaskRecord>(
-      `select id, orchestration_id as orchestrationId, wave_id as waveId, client_task_id as clientTaskId,
-       title, prompt, role_id as roleId, model_id as modelId, intent, status, child_run_id as childRunId,
-       retry_of_task_id as retryOfTaskId, summary, error_message as errorMessage,
-       attention_reason as attentionReason, adoption_status as adoptionStatus,
-       input_tokens as inputTokens, output_tokens as outputTokens,
-       created_at as createdAt, updated_at as updatedAt, started_at as startedAt, finished_at as finishedAt
-       from orchestration_tasks where id = ?`,
+      `${ORCHESTRATION_TASK_SELECT} where id = ?`,
       [id],
     );
     if (!task) throw new Error(`Orchestration task not found: ${id}`);
@@ -3261,23 +3272,24 @@ export class BuildWardenDatabase {
   }
 
   getOrchestrationTaskByChildRunId(runId: string): OrchestrationTaskRecord | null {
-    const row = this.first<{ id: string }>("select id from orchestration_tasks where child_run_id = ?", [runId]);
-    return row ? this.getOrchestrationTask(row.id) : null;
+    return this.first<OrchestrationTaskRecord>(
+      `${ORCHESTRATION_TASK_SELECT} where child_run_id = ?`,
+      [runId],
+    );
   }
 
   getOrchestrationTaskByClientTaskId(orchestrationId: string, clientTaskId: string): OrchestrationTaskRecord | null {
-    const row = this.first<{ id: string }>(
-      "select id from orchestration_tasks where orchestration_id = ? and client_task_id = ?",
+    return this.first<OrchestrationTaskRecord>(
+      `${ORCHESTRATION_TASK_SELECT} where orchestration_id = ? and client_task_id = ?`,
       [orchestrationId, clientTaskId],
     );
-    return row ? this.getOrchestrationTask(row.id) : null;
   }
 
   listOrchestrationTasks(orchestrationId: string): OrchestrationTaskRecord[] {
-    return this.all<{ id: string }>(
-      "select id from orchestration_tasks where orchestration_id = ? order by created_at asc",
+    return this.all<OrchestrationTaskRecord>(
+      `${ORCHESTRATION_TASK_SELECT} where orchestration_id = ? order by created_at asc`,
       [orchestrationId],
-    ).map((row) => this.getOrchestrationTask(row.id));
+    );
   }
 
   updateOrchestrationTask(
