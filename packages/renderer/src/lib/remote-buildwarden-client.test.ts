@@ -163,6 +163,20 @@ describe("remote BuildWarden client", () => {
       .rejects.toThrow("not available for this remote session");
   });
 
+  it("requires both run operation and admin scopes to refresh orchestration settings", () => {
+    const adminOnly = createRemoteBuildWardenClient({
+      fetch: vi.fn(async () => rpcResponse(snapshot)) as typeof fetch,
+      scopes: ["state:read", "admin"],
+    });
+    const runAdmin = createRemoteBuildWardenClient({
+      fetch: vi.fn(async () => rpcResponse(snapshot)) as typeof fetch,
+      scopes: ["state:read", "run:operate", "admin"],
+    });
+
+    expect(adminOnly.capabilities.orchestrationSettings).toBe(false);
+    expect(runAdmin.capabilities.orchestrationSettings).toBe(true);
+  });
+
   it("enables scoped project workflows and host settings for control sessions", async () => {
     const hostSnapshot = {
       ...snapshot,

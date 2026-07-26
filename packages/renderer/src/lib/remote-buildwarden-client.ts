@@ -56,7 +56,7 @@ const webCapabilities = (scopes: readonly RemoteAccessScope[]): Readonly<BuildWa
     orchestrationRead: has("state:read"),
     orchestrationOperate: runMutations,
     orchestrationAdoption: runMutations && gitMutations,
-    orchestrationSettings: adminMutations,
+    orchestrationSettings: runMutations && adminMutations,
     liveEvents: true,
   });
 };
