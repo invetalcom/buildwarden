@@ -6465,80 +6465,94 @@ export class AppController
   }
 
   async decideOrchestrationAdoption(input: OrchestrationAdoptionDecisionInput): Promise<void> {
-    const task = this.db.getOrchestrationTask(input.taskId);
-    const orchestration = this.db.getOrchestration(task.orchestrationId);
-    const coordinator = this.db.getRun(orchestration.coordinatorRunId);
-    const wave = this.db.getOrchestrationWave(task.waveId);
-    const adoption = this.db.getOrchestrationAdoption(task.id);
-    if (input.decision === "reject") {
-      this.db.updateOrchestrationTask(task.id, { adoptionStatus: "rejected" });
-      this.db.upsertOrchestrationAdoption({ orchestrationId: orchestration.id, taskId: task.id, status: "rejected" });
-    } else if (input.decision === "undo") {
-      if (!adoption?.backupPath || task.adoptionStatus !== "adopted") throw new Error("No adopted change is available to undo.");
-      await undoOrchestrationDelta({ backupPath: adoption.backupPath, targetPath: coordinator.worktreePath });
-      this.db.updateOrchestrationTask(task.id, { adoptionStatus: "undone" });
-      this.db.upsertOrchestrationAdoption({ orchestrationId: orchestration.id, taskId: task.id, status: "undone" });
-    } else {
-      if (!task.childRunId || !wave.baselinePath || task.status !== "completed" || task.intent !== "implement") {
-        throw new Error("Only completed implementation tasks with a valid baseline can be adopted.");
+    const source = this.db.getOrchestrationTask(input.taskId);
+    await this.withOrchestrationMutation(source.orchestrationId, async () => {
+      const task = this.db.getOrchestrationTask(input.taskId);
+      if (task.orchestrationId !== source.orchestrationId) {
+        throw new Error("The task no longer belongs to the expected orchestration.");
       }
-      const preview = await this.getOrchestrationAdoptionPreview(task.id);
-      if (preview.conflicts.length || preview.unsupportedPaths.length) {
-        this.db.updateOrchestrationTask(task.id, { adoptionStatus: "conflict" });
+      const orchestration = this.db.getOrchestration(task.orchestrationId);
+      const coordinator = this.db.getRun(orchestration.coordinatorRunId);
+      const wave = this.db.getOrchestrationWave(task.waveId);
+      const adoption = this.db.getOrchestrationAdoption(task.id);
+      if (input.decision === "reject") {
+        if (task.adoptionStatus === "rejected") return;
+        if (task.adoptionStatus === "applying" || task.adoptionStatus === "adopted") {
+          throw new Error(`Changes cannot be rejected while adoption is ${task.adoptionStatus}.`);
+        }
+        this.db.updateOrchestrationTask(task.id, { adoptionStatus: "rejected" });
+        this.db.upsertOrchestrationAdoption({ orchestrationId: orchestration.id, taskId: task.id, status: "rejected" });
+      } else if (input.decision === "undo") {
+        if (!adoption?.backupPath || task.adoptionStatus !== "adopted") throw new Error("No adopted change is available to undo.");
+        await undoOrchestrationDelta({ backupPath: adoption.backupPath, targetPath: coordinator.worktreePath });
+        this.db.updateOrchestrationTask(task.id, { adoptionStatus: "undone" });
+        this.db.upsertOrchestrationAdoption({ orchestrationId: orchestration.id, taskId: task.id, status: "undone" });
+      } else {
+        if (task.adoptionStatus === "applying" || task.adoptionStatus === "adopted") {
+          throw new Error(`Changes cannot be adopted while adoption is ${task.adoptionStatus}.`);
+        }
+        if (!task.childRunId || !wave.baselinePath || task.status !== "completed" || task.intent !== "implement") {
+          throw new Error("Only completed implementation tasks with a valid baseline can be adopted.");
+        }
+        const preview = await this.getOrchestrationAdoptionPreview(task.id);
+        if (preview.conflicts.length || preview.unsupportedPaths.length) {
+          this.db.updateOrchestrationTask(task.id, { adoptionStatus: "conflict" });
+          this.db.upsertOrchestrationAdoption({
+            orchestrationId: orchestration.id,
+            taskId: task.id,
+            status: "conflict",
+            manifest: { conflicts: preview.conflicts, unsupportedPaths: preview.unsupportedPaths },
+          });
+          throw new Error(`Adoption is blocked: ${[...preview.conflicts, ...preview.unsupportedPaths].join(", ")}`);
+        }
+        const child = this.db.getRun(task.childRunId);
+        const backupPath = join(this.getOrchestrationArtifactRoot(), orchestration.id, "adoptions", task.id, "backup");
+        this.db.updateOrchestrationTask(task.id, { adoptionStatus: "applying" });
         this.db.upsertOrchestrationAdoption({
           orchestrationId: orchestration.id,
           taskId: task.id,
-          status: "conflict",
-          manifest: { conflicts: preview.conflicts, unsupportedPaths: preview.unsupportedPaths },
+          status: "applying",
+          backupPath,
+          manifest: { changedFiles: preview.changedFiles },
         });
-        throw new Error(`Adoption is blocked: ${[...preview.conflicts, ...preview.unsupportedPaths].join(", ")}`);
+        await this.db.flushDurable();
+        try {
+          await applyOrchestrationDelta({
+            baselinePath: wave.baselinePath,
+            childPath: child.worktreePath,
+            targetPath: coordinator.worktreePath,
+            backupPath,
+          });
+          this.db.updateOrchestrationTask(task.id, { adoptionStatus: "adopted" });
+          this.db.upsertOrchestrationAdoption({
+            orchestrationId: orchestration.id,
+            taskId: task.id,
+            status: "adopted",
+            backupPath,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.db.updateOrchestrationTask(task.id, { adoptionStatus: "conflict" });
+          this.db.upsertOrchestrationAdoption({
+            orchestrationId: orchestration.id,
+            taskId: task.id,
+            status: "conflict",
+            backupPath,
+            errorMessage: message,
+          });
+          throw error;
+        }
       }
-      const child = this.db.getRun(task.childRunId);
-      const backupPath = join(this.getOrchestrationArtifactRoot(), orchestration.id, "adoptions", task.id, "backup");
-      this.db.updateOrchestrationTask(task.id, { adoptionStatus: "applying" });
-      this.db.upsertOrchestrationAdoption({
+      this.db.appendOrchestrationEvent({
         orchestrationId: orchestration.id,
         taskId: task.id,
-        status: "applying",
-        backupPath,
-        manifest: { changedFiles: preview.changedFiles },
+        type: `adoption-${input.decision}`,
+        title: `Adoption ${input.decision}`,
+        content: `Task "${task.title}" adoption decision: ${input.decision}.`,
       });
       await this.db.flushDurable();
-      try {
-        await applyOrchestrationDelta({
-          baselinePath: wave.baselinePath,
-          childPath: child.worktreePath,
-          targetPath: coordinator.worktreePath,
-          backupPath,
-        });
-        this.db.updateOrchestrationTask(task.id, { adoptionStatus: "adopted" });
-        this.db.upsertOrchestrationAdoption({
-          orchestrationId: orchestration.id,
-          taskId: task.id,
-          status: "adopted",
-          backupPath,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.db.updateOrchestrationTask(task.id, { adoptionStatus: "conflict" });
-        this.db.upsertOrchestrationAdoption({
-          orchestrationId: orchestration.id,
-          taskId: task.id,
-          status: "conflict",
-          backupPath,
-          errorMessage: message,
-        });
-        throw error;
-      }
-    }
-    this.db.appendOrchestrationEvent({
-      orchestrationId: orchestration.id,
-      taskId: task.id,
-      type: `adoption-${input.decision}`,
-      title: `Adoption ${input.decision}`,
-      content: `Task "${task.title}" adoption decision: ${input.decision}.`,
+      this.emitOrchestrationChanged(orchestration.id, task.id);
     });
-    this.emitOrchestrationChanged(orchestration.id, task.id);
   }
 
   async refreshOrchestrationTeam(coordinatorRunId: string): Promise<void> {

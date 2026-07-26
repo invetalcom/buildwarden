@@ -275,6 +275,53 @@ describe("AppController settings and lightweight workflows", () => {
     expect(createOrchestrationTask).not.toHaveBeenCalled();
   });
 
+  it("serializes adoption decisions and re-reads task state inside the lock", async () => {
+    const orchestration = {
+      id: "orchestration-1",
+      coordinatorRunId: "coordinator-1",
+    } as OrchestrationRecord;
+    let adoptionTask = {
+      id: "orchestration-task-1",
+      orchestrationId: orchestration.id,
+      waveId: "wave-1",
+      title: "Implementation",
+      adoptionStatus: "proposed",
+    } as OrchestrationTaskRecord;
+    const firstFlush = deferred<void>();
+    const updateOrchestrationTask = vi.fn((_taskId: string, input: Partial<OrchestrationTaskRecord>) => {
+      adoptionTask = { ...adoptionTask, ...input };
+      return adoptionTask;
+    });
+    const flushDurable = vi.fn()
+      .mockImplementationOnce(() => firstFlush.promise)
+      .mockResolvedValue(undefined);
+    const appendOrchestrationEvent = vi.fn();
+    const harness = createHarness({
+      getOrchestrationTask: vi.fn(() => adoptionTask),
+      getOrchestration: vi.fn(() => orchestration),
+      getRun: vi.fn(() => ({ id: orchestration.coordinatorRunId, worktreePath: project.repoPath } as RunRecord)),
+      getOrchestrationWave: vi.fn(() => ({ id: adoptionTask.waveId })),
+      getOrchestrationAdoption: vi.fn(() => null),
+      updateOrchestrationTask,
+      upsertOrchestrationAdoption: vi.fn(),
+      appendOrchestrationEvent,
+      flushDurable,
+    });
+    tempDirs.push(harness.logDir);
+
+    const first = harness.controller.decideOrchestrationAdoption({ taskId: adoptionTask.id, decision: "reject" });
+    const second = harness.controller.decideOrchestrationAdoption({ taskId: adoptionTask.id, decision: "reject" });
+    await vi.waitFor(() => expect(flushDurable).toHaveBeenCalledTimes(1));
+    expect(updateOrchestrationTask).toHaveBeenCalledTimes(1);
+
+    firstFlush.resolve();
+    await Promise.all([first, second]);
+
+    expect(adoptionTask.adoptionStatus).toBe("rejected");
+    expect(updateOrchestrationTask).toHaveBeenCalledTimes(1);
+    expect(appendOrchestrationEvent).toHaveBeenCalledTimes(1);
+  });
+
   it("retries transient Windows worktree locks during run deletion", async () => {
     const run = {
       id: "run-1",
