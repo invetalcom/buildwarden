@@ -6435,6 +6435,9 @@ export class AppController
       throw new Error("Only a terminal task can be retried.");
     }
     const orchestration = this.db.getOrchestration(source.orchestrationId);
+    if (!ORCHESTRATION_CANCELLABLE_STATUSES.has(orchestration.status)) {
+      throw new Error(`Tasks cannot be retried while the orchestration is ${orchestration.status}.`);
+    }
     const tasks = this.db.listOrchestrationTasks(orchestration.id);
     if (tasks.length >= orchestration.teamSnapshot.maxTasksPerOrchestration) {
       throw new Error("The orchestration task cap has been reached.");

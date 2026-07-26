@@ -251,6 +251,30 @@ describe("AppController settings and lightweight workflows", () => {
     expect(orchestrationTask.status).toBe("cancelled");
   });
 
+  it("does not create retries after an orchestration is terminal", async () => {
+    const orchestration = {
+      id: "orchestration-1",
+      status: "completed",
+      teamSnapshot: { maxTasksPerOrchestration: 12 },
+    } as OrchestrationRecord;
+    const completedTask = {
+      id: "orchestration-task-1",
+      orchestrationId: orchestration.id,
+      status: "completed",
+    } as OrchestrationTaskRecord;
+    const createOrchestrationTask = vi.fn();
+    const harness = createHarness({
+      getOrchestrationTask: vi.fn(() => completedTask),
+      getOrchestration: vi.fn(() => orchestration),
+      createOrchestrationTask,
+    });
+    tempDirs.push(harness.logDir);
+
+    await expect(harness.controller.retryOrchestrationTask(completedTask.id))
+      .rejects.toThrow("Tasks cannot be retried while the orchestration is completed.");
+    expect(createOrchestrationTask).not.toHaveBeenCalled();
+  });
+
   it("retries transient Windows worktree locks during run deletion", async () => {
     const run = {
       id: "run-1",
