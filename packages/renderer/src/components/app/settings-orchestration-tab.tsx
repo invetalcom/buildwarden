@@ -92,6 +92,7 @@ export const OrchestrationSettingsTab = ({
   const [draft, setDraft] = useState<OrchestrationTeamSettings>(() => parseOrchestrationTeamSettings(serializedValue));
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const enabledModels = useMemo(() => models.filter((model) => model.enabled !== 0), [models]);
   const providerLabels = useMemo(
     () => new Map(providerAccounts.map((provider) => [provider.id, provider.label])),
@@ -104,6 +105,7 @@ export const OrchestrationSettingsTab = ({
 
   useEffect(() => {
     setDraft(parseOrchestrationTeamSettings(serializedValue));
+    setSaveError(null);
   }, [serializedValue]);
 
   const setModelEnabled = (modelId: string, enabled: boolean) => {
@@ -159,11 +161,14 @@ export const OrchestrationSettingsTab = ({
   const save = async () => {
     setSaving(true);
     setSaved(false);
+    setSaveError(null);
     try {
       const normalized = parseOrchestrationTeamSettings(JSON.stringify(draft));
       await onSave(JSON.stringify(normalized));
       setDraft(normalized);
       setSaved(true);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Could not save orchestration settings.");
     } finally {
       setSaving(false);
     }
@@ -256,6 +261,11 @@ export const OrchestrationSettingsTab = ({
               </Button>
             </div>
           </div>
+          {saveError ? (
+            <p role="alert" className="mt-2 text-right text-[11px] text-[var(--ec-danger)]">
+              {saveError}
+            </p>
+          ) : null}
         </CardContent>
       </Card>
 
