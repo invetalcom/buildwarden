@@ -21,7 +21,7 @@ import {
   UsersRound,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -36,6 +36,7 @@ interface OrchestrationAgentsPanelProps {
 }
 
 const TERMINAL_TASK_STATUSES = new Set(["completed", "failed", "cancelled", "blocked"]);
+const LIVE_REFRESH_DELAY_MS = 250;
 const formatCount = new Intl.NumberFormat("en-US");
 
 const taskTone = (status: OrchestrationTaskRecord["status"]): "queued" | "preparing" | "running" | "completed" | "failed" | "cancelled" => {
@@ -101,10 +102,21 @@ export const OrchestrationAgentsPanel = ({
   const [message, setMessage] = useState("");
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const coordinatorRunIdRef = useRef(coordinatorRunId);
+  const reloadGenerationRef = useRef(0);
+  coordinatorRunIdRef.current = coordinatorRunId;
 
   const reload = useCallback(async () => {
     if (!buildwarden.capabilities.orchestrationRead) return;
+    const requestedCoordinatorRunId = coordinatorRunId;
+    const generation = ++reloadGenerationRef.current;
     const next = await buildwarden.getOrchestrationDetail(coordinatorRunId);
+    if (
+      coordinatorRunIdRef.current !== requestedCoordinatorRunId ||
+      reloadGenerationRef.current !== generation
+    ) {
+      return;
+    }
     setDetail(next);
     setSelectedTaskId((current) => current && next?.tasks.some((task) => task.id === current)
       ? current
@@ -112,6 +124,7 @@ export const OrchestrationAgentsPanel = ({
   }, [buildwarden, coordinatorRunId]);
 
   useEffect(() => {
+    reloadGenerationRef.current += 1;
     setDetail(initialDetail);
     setSelectedTaskId(initialDetail?.tasks[0]?.id ?? null);
     setPreview(null);
@@ -121,31 +134,100 @@ export const OrchestrationAgentsPanel = ({
     }
   }, [coordinatorRunId, initialDetail, reload]);
 
-  useEffect(
-    () => buildwarden.onOrchestrationChanged((payload) => {
+  useEffect(() => {
+    let disposed = false;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    let refreshInFlight = false;
+    let trailingRefresh = false;
+    const scheduleRefresh = () => {
+      if (disposed || refreshTimer) return;
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        if (refreshInFlight) {
+          trailingRefresh = true;
+          return;
+        }
+        refreshInFlight = true;
+        void reload()
+          .catch(() => undefined)
+          .finally(() => {
+            refreshInFlight = false;
+            if (trailingRefresh && !disposed) {
+              trailingRefresh = false;
+              scheduleRefresh();
+            }
+          });
+      }, LIVE_REFRESH_DELAY_MS);
+    };
+    const unsubscribe = buildwarden.onOrchestrationChanged((payload) => {
       if (payload.coordinatorRunId !== coordinatorRunId) return;
-      void reload().catch(() => undefined);
-    }),
-    [buildwarden, coordinatorRunId, reload],
-  );
+      if (refreshInFlight) {
+        trailingRefresh = true;
+      } else {
+        scheduleRefresh();
+      }
+    });
+    return () => {
+      disposed = true;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      unsubscribe();
+    };
+  }, [buildwarden, coordinatorRunId, reload]);
 
   const selectedTask = detail?.tasks.find((task) => task.id === selectedTaskId) ?? null;
+  const selectedChildRunId = selectedTask?.childRunId ?? null;
 
   useEffect(() => {
     setPreview(null);
     setSelectedRunDetail(null);
-    if (!selectedTask?.childRunId) return;
-    void buildwarden.getRunDetail(selectedTask.childRunId)
-      .then(setSelectedRunDetail)
-      .catch(() => setSelectedRunDetail(null));
-  }, [buildwarden, selectedTask?.childRunId]);
+    if (!selectedChildRunId) return;
 
-  useEffect(() => buildwarden.onRunEvent((event) => {
-    if (!selectedTask?.childRunId || event.runId !== selectedTask.childRunId) return;
-    void buildwarden.getRunDetail(selectedTask.childRunId)
-      .then(setSelectedRunDetail)
-      .catch(() => undefined);
-  }), [buildwarden, selectedTask?.childRunId]);
+    let disposed = false;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    let refreshInFlight = false;
+    let trailingRefresh = false;
+    const loadChildDetail = async (clearOnError: boolean) => {
+      if (refreshInFlight) {
+        trailingRefresh = true;
+        return;
+      }
+      refreshInFlight = true;
+      try {
+        const next = await buildwarden.getRunDetail(selectedChildRunId);
+        if (!disposed) setSelectedRunDetail(next);
+      } catch {
+        if (!disposed && clearOnError) setSelectedRunDetail(null);
+      } finally {
+        refreshInFlight = false;
+        if (trailingRefresh && !disposed) {
+          trailingRefresh = false;
+          scheduleRefresh();
+        }
+      }
+    };
+    const scheduleRefresh = () => {
+      if (disposed || refreshTimer) return;
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        void loadChildDetail(false);
+      }, LIVE_REFRESH_DELAY_MS);
+    };
+
+    void loadChildDetail(true);
+    const unsubscribe = buildwarden.onRunEvent((event) => {
+      if (event.runId !== selectedChildRunId) return;
+      if (refreshInFlight) {
+        trailingRefresh = true;
+      } else {
+        scheduleRefresh();
+      }
+    });
+    return () => {
+      disposed = true;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      unsubscribe();
+    };
+  }, [buildwarden, selectedChildRunId]);
 
   const runAction = async (name: string, action: () => Promise<unknown>) => {
     setBusyAction(name);
