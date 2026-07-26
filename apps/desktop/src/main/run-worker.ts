@@ -16,6 +16,7 @@ import {
 import { createHarnessAdapter } from "./harness-adapters";
 import { buildInitialRepoContext } from "./initial-repo-context";
 import { logError, logInfo } from "./logger";
+import { PendingHostToolRequests } from "./pending-host-tool-requests";
 import { createRunToolContext } from "./run-tools";
 import { buildOrchestrationAwarePrompt, isOrchestrationToolName } from "./orchestration-tools";
 
@@ -35,10 +36,7 @@ const pendingShellApprovals = new Map<string, (decision: ShellApprovalDecision) 
 const pendingUserInputs = new Map<string, { resolve: (answers: RunUserInputAnswers) => void; reject: (error: Error) => void }>();
 const approvedShellCommands = new Set<string>();
 const activeShellCommands = new Map<string, { cancel: (reason?: unknown) => void }>();
-const pendingHostTools = new Map<string, {
-  resolve: (result: RunToolResult) => void;
-  reject: (error: Error) => void;
-}>();
+const pendingHostTools = new PendingHostToolRequests<RunToolResult>();
 
 port.on(
   "message",
@@ -64,10 +62,7 @@ port.on(
         pending.reject(new Error("Run cancelled."));
       }
       pendingUserInputs.clear();
-      for (const pending of pendingHostTools.values()) {
-        pending.reject(new Error("Run cancelled."));
-      }
-      pendingHostTools.clear();
+      pendingHostTools.rejectAll(new Error("Run cancelled."));
       return;
     }
 
@@ -94,13 +89,10 @@ port.on(
     }
 
     if (message.type === "host-tool-response") {
-      const pending = pendingHostTools.get(message.callId);
-      if (!pending) return;
-      pendingHostTools.delete(message.callId);
       if (message.result) {
-        pending.resolve(message.result);
+        pendingHostTools.resolve(message.callId, message.result);
       } else {
-        pending.reject(new Error(message.error || "The BuildWarden host tool failed."));
+        pendingHostTools.reject(message.callId, new Error(message.error || "The BuildWarden host tool failed."));
       }
     }
   },
@@ -205,15 +197,14 @@ const run = async () => {
         if (!isOrchestrationToolName(call.name) || !orchestrationToolNames.has(call.name)) {
           return runToolContext.executeTool(call);
         }
+        const response = pendingHostTools.create(call.id);
         port.postMessage({
           type: "host-tool-request",
           callId: call.id,
           toolName: call.name satisfies OrchestrationToolName,
           arguments: call.arguments,
         });
-        return new Promise<RunToolResult>((resolve, reject) => {
-          pendingHostTools.set(call.id, { resolve, reject });
-        });
+        return response;
       },
     };
     const result = await harness.run(
