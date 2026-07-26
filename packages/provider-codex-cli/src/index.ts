@@ -1354,7 +1354,7 @@ export class CodexAppServerSession {
       const argumentsRecord = asRecord(params?.arguments) ?? {};
       const definition = this.toolContext?.tools.find((tool) => tool.name === toolName);
       if (!definition || !this.toolContext || !toolName) {
-        this.writeMessage({
+        this.writeServerResponse({
           id: request.id,
           result: {
             success: false,
@@ -1380,7 +1380,7 @@ export class CodexAppServerSession {
           value: result.content,
           metadata: { toolName, callId, ok: result.ok, provider: "codex-cli" },
         });
-        this.writeMessage({
+        this.writeServerResponse({
           id: request.id,
           result: {
             success: result.ok,
@@ -1389,7 +1389,7 @@ export class CodexAppServerSession {
         });
       }).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
-        this.writeMessage({
+        this.writeServerResponse({
           id: request.id,
           result: {
             success: false,
@@ -1408,14 +1408,14 @@ export class CodexAppServerSession {
         "Command";
       void (async () => {
         const decision = this.requestShellApproval ? await this.requestShellApproval(command) : "allow-once";
-        this.writeMessage({
+        this.writeServerResponse({
           id: request.id,
           result: {
             decision: decision === "deny" ? "deny" : "accept",
           },
         });
       })().catch((error) => {
-        this.writeMessage({
+        this.writeServerResponse({
           id: request.id,
           error: {
             code: -32000,
@@ -1427,7 +1427,7 @@ export class CodexAppServerSession {
     }
 
     if (request.method === "item/fileRead/requestApproval" || request.method === "item/fileChange/requestApproval") {
-      this.writeMessage({
+      this.writeServerResponse({
         id: request.id,
         result: {
           decision: "accept",
@@ -1467,14 +1467,14 @@ export class CodexAppServerSession {
           if (!answers) {
             throw new Error("No answers were returned for Codex user input.");
           }
-          this.writeMessage({
+          this.writeServerResponse({
             id: request.id,
             result: {
               answers: toCodexUserInputAnswers(answers),
             },
           });
         })().catch((error) => {
-          this.writeMessage({
+          this.writeServerResponse({
             id: request.id,
             error: {
               code: -32000,
@@ -1498,7 +1498,7 @@ export class CodexAppServerSession {
           rawRequestParams: params ?? {},
         },
       });
-      this.writeMessage({
+      this.writeServerResponse({
         id: request.id,
         error: {
           code: -32601,
@@ -1508,13 +1508,26 @@ export class CodexAppServerSession {
       return;
     }
 
-    this.writeMessage({
+    this.writeServerResponse({
       id: request.id,
       error: {
         code: -32601,
         message: `Unsupported request: ${request.method}`,
       },
     });
+  }
+
+  private writeServerResponse(message: unknown): void {
+    if (this.stopped || !this.child.stdin.writable) {
+      return;
+    }
+    try {
+      this.writeMessage(message);
+    } catch (error) {
+      this.devLogger?.log("codex.rpc.response.write-failed", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   // Emits a chunk, stamping it with the owning subagent id when the current

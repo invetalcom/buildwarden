@@ -311,6 +311,62 @@ describe("Codex app-server dynamic BuildWarden tools", () => {
     expect(responses.join("")).toContain('"type":"inputText"');
     expect(chunks.map((chunk) => chunk.type)).toEqual(expect.arrayContaining(["tool-call", "tool-result"]));
   });
+
+  it("drops a late host-tool response after the app-server session stops", async () => {
+    const stdout = new PassThrough();
+    const stdin = new PassThrough();
+    const responses: string[] = [];
+    stdin.on("data", (chunk) => responses.push(String(chunk)));
+    const child = Object.assign(new EventEmitter(), {
+      stdout,
+      stderr: new PassThrough(),
+      stdin,
+      killed: true,
+      kill: () => true,
+    }) as unknown as ChildProcessWithoutNullStreams;
+    let resolveTool!: (value: Awaited<ReturnType<HarnessToolContext["executeTool"]>>) => void;
+    const executeTool = vi.fn(() => new Promise<Awaited<ReturnType<HarnessToolContext["executeTool"]>>>((resolve) => {
+      resolveTool = resolve;
+    }));
+    const session = new CodexAppServerSession(
+      child,
+      "parent-thread",
+      "C:\\repo",
+      undefined,
+      undefined,
+      vi.fn(),
+      {
+        tools: [{
+          name: "buildwarden_tasks_list",
+          description: "List durable tasks.",
+          inputSchema: { type: "object", properties: {}, additionalProperties: false },
+        }],
+        executeTool,
+      },
+    );
+
+    stdout.write(`${JSON.stringify({
+      id: 18,
+      method: "item/tool/call",
+      params: {
+        callId: "call-late",
+        tool: "buildwarden_tasks_list",
+        arguments: {},
+      },
+    })}\n`);
+    await vi.waitFor(() => expect(executeTool).toHaveBeenCalledOnce());
+    session.stop();
+    stdin.destroy();
+    resolveTool({
+      toolCallId: "call-late",
+      name: "buildwarden_tasks_list",
+      ok: true,
+      content: "[]",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(responses).toEqual([]);
+  });
 });
 
 describe("Codex agent nickname extraction", () => {
