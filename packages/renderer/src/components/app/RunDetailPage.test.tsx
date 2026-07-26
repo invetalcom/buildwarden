@@ -101,7 +101,7 @@ const baseProps = (runDetail: RunDetail): RunDetailPageProps => ({
   onFollowUpRun: vi.fn(async () => undefined),
 });
 
-describe("RunDetailPage workflows", () => {
+describe("OrchestrationAgentsPanel", () => {
   it("renders durable task status, role/model, usage, result, and scoped actions in the shared Agents panel", () => {
     const orchestration: OrchestrationDetail = {
       orchestration: {
@@ -183,7 +183,9 @@ describe("RunDetailPage workflows", () => {
     expect(markup).toContain("Adoption preview");
     expect(markup).not.toContain("Finish orchestration");
   });
+});
 
+describe("RunDetailPage workflows", () => {
   it("renders open, closed, and editing run-note workflows", () => {
     const openNote = detail().notes[0]!;
     const closedNote = { ...openNote, id: "note-2", status: "closed" as const, closedAt: "2026-01-01T00:03:00.000Z" };
