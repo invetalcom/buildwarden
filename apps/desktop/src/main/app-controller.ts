@@ -260,6 +260,24 @@ const stableJsonValue = (value: unknown): unknown => {
 };
 const orchestrationRequestHash = (value: unknown): string =>
   createHash("sha256").update(JSON.stringify(stableJsonValue(value))).digest("hex");
+export const latestUserTurnUsedFullAccess = (
+  steps: ReadonlyArray<{ metadataJson: string }>,
+): boolean => {
+  for (const step of [...steps].reverse()) {
+    try {
+      const metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
+      if (
+        metadata.source === "user" &&
+        (metadata.commandType === "initial" || metadata.commandType === "follow-up")
+      ) {
+        return metadata.yoloMode === true;
+      }
+    } catch {
+      // Ignore malformed historical metadata and keep looking for the latest user turn.
+    }
+  }
+  return false;
+};
 const normalizeAssistantOutputText = (value: string) => value.replace(/\s+/g, " ").trim();
 const normalizeRunGoalText = (value: string | null | undefined): string | null => {
   if (typeof value !== "string") {
@@ -5747,14 +5765,7 @@ export class AppController
       task.prompt,
     ].filter(Boolean).join("\n");
     const coordinatorSteps = this.db.getRunSteps(coordinator.id);
-    const inheritedFullAccess = task.intent === "implement" && [...coordinatorSteps].reverse().some((step) => {
-      try {
-        const metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
-        return metadata.yoloMode === true;
-      } catch {
-        return false;
-      }
-    });
+    const inheritedFullAccess = task.intent === "implement" && latestUserTurnUsedFullAccess(coordinatorSteps);
     const worker = this.startWorker(
       child,
       provider,
@@ -6782,14 +6793,7 @@ export class AppController
         coordinator.errorMessage === SESSION_INTERRUPTED_MESSAGE
       ) {
         const steps = this.db.getRunSteps(coordinator.id);
-        const elevated = [...steps].reverse().some((step) => {
-          try {
-            const metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
-            return metadata.source === "user" && metadata.yoloMode === true;
-          } catch {
-            return false;
-          }
-        });
+        const elevated = latestUserTurnUsedFullAccess(steps);
         const awaitingApproval = steps.some((step) => {
           try {
             const metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
@@ -6867,14 +6871,7 @@ export class AppController
           const provider = this.db.getProviderAccount(model.providerAccountId);
           const steps = this.db.getRunSteps(child.id);
           const coordinatorSteps = this.db.getRunSteps(orchestration.coordinatorRunId);
-          const elevated = [...coordinatorSteps].reverse().some((step) => {
-            try {
-              const metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
-              return metadata.source === "user" && metadata.yoloMode === true;
-            } catch {
-              return false;
-            }
-          });
+          const elevated = latestUserTurnUsedFullAccess(coordinatorSteps);
           const awaitingApproval = steps.some((step) => {
             try {
               const metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;

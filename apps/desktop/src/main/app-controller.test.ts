@@ -15,7 +15,7 @@ import type {
 import type { SecretStore } from "@buildwarden/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GitService } from "@buildwarden/git-service";
-import { AppController } from "./app-controller";
+import { AppController, latestUserTurnUsedFullAccess } from "./app-controller";
 import type { AppControllerDesktopServices } from "./desktop-platform-services";
 import { HostEventBus } from "./host-events";
 
@@ -154,6 +154,20 @@ const createMutableProjectHarness = () => {
 };
 
 describe("AppController settings and lightweight workflows", () => {
+  it("inherits full access only from the latest coordinator user turn", () => {
+    expect(latestUserTurnUsedFullAccess([
+      { metadataJson: JSON.stringify({ source: "user", commandType: "initial", yoloMode: true }) },
+      { metadataJson: "{malformed" },
+      { metadataJson: JSON.stringify({ source: "user", commandType: "goal" }) },
+      { metadataJson: JSON.stringify({ source: "user", commandType: "follow-up", yoloMode: false }) },
+    ])).toBe(false);
+
+    expect(latestUserTurnUsedFullAccess([
+      { metadataJson: JSON.stringify({ source: "user", commandType: "initial", yoloMode: false }) },
+      { metadataJson: JSON.stringify({ source: "user", commandType: "follow-up", yoloMode: true }) },
+    ])).toBe(true);
+  });
+
   it("cancels the durable orchestration when its coordinator run is cancelled", async () => {
     let orchestration: OrchestrationRecord = {
       id: "orchestration-1",
