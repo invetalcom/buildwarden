@@ -562,10 +562,6 @@ export const RunDetailPage = ({
         closeFilePanel();
         return;
       }
-      if (panelId === "agents") {
-        onTogglePanel("agents");
-        return;
-      }
       onTogglePanel(panelId);
     },
     [closeFilePanel, onTogglePanel],
@@ -1314,12 +1310,6 @@ export const RunDetailPage = ({
                               className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-zinc-300 transition hover:bg-zinc-800/80"
                               onClick={() => {
                                 if (panel.id === "file") {
-                                  return;
-                                }
-                                if (panel.id === "agents") {
-                                  onTogglePanel("agents");
-                                  setActiveSecondaryTab("agents");
-                                  setAddPanelOpen(false);
                                   return;
                                 }
                                 onTogglePanel(panel.id);
