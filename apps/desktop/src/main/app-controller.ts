@@ -6757,6 +6757,13 @@ export class AppController
 
   /** Reconciles durable orchestration work after ordinary run/chat orphan recovery on startup. */
   async reconcileOrchestrationsAfterRestart(): Promise<void> {
+    // No orchestration mutation can still be executing after the host process
+    // restarts. Remove orphaned operation leases so their stable request IDs can
+    // be retried while the domain-specific recovery below reconciles persisted
+    // task, workspace, adoption, and deletion intent.
+    this.db.deleteRunningOrchestrationOperations();
+    await this.db.flushDurable();
+
     for (const job of this.db.listPendingOrchestrationCleanupJobs()) {
       try {
         let coordinator: RunRecord | null = null;

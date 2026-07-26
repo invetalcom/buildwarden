@@ -3575,6 +3575,11 @@ export class BuildWardenDatabase {
     this.persist();
   }
 
+  deleteRunningOrchestrationOperations(): void {
+    this.run("delete from orchestration_operations where status = 'running'");
+    this.persist();
+  }
+
   createOrchestrationCleanupJob(input: {
     coordinatorRunId: string;
     orchestrationId?: string | null;

@@ -216,4 +216,41 @@ describe("durable orchestration database", () => {
     db.completeOrchestrationCleanupJob(jobId);
     expect(db.listPendingOrchestrationCleanupJobs()).toEqual([]);
   });
+
+  it("clears only orphaned running idempotency operations for startup recovery", async () => {
+    const db = await makeDb();
+    const { coordinator, project, team } = await makeFixture(db);
+    const orchestration = db.createOrchestration({
+      projectId: project.id,
+      coordinatorRunId: coordinator.id,
+      teamSnapshot: team,
+    });
+    db.createOrchestrationOperation({
+      orchestrationId: orchestration.id,
+      requestId: "running-request",
+      toolName: "buildwarden_tasks_delegate",
+      requestHash: "running-hash",
+    });
+    db.createOrchestrationOperation({
+      orchestrationId: orchestration.id,
+      requestId: "completed-request",
+      toolName: "buildwarden_orchestration_yield",
+      requestHash: "completed-hash",
+    });
+    db.completeOrchestrationOperation(
+      orchestration.id,
+      "completed-request",
+      "completed",
+      { waiting: true },
+    );
+
+    db.deleteRunningOrchestrationOperations();
+    await db.flushDurable();
+
+    expect(db.getOrchestrationOperation(orchestration.id, "running-request")).toBeNull();
+    expect(db.getOrchestrationOperation(orchestration.id, "completed-request")).toMatchObject({
+      status: "completed",
+      responseJson: JSON.stringify({ waiting: true }),
+    });
+  });
 });
