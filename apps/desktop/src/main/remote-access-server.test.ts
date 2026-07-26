@@ -89,6 +89,10 @@ describe("remote operation registry", () => {
       | "queryProjectActivity"
       | "checkProjectFolderGitStatus"
       | "getRunDetail"
+      | "getOrchestrationDetail"
+      | "getOrchestrationTaskDetail"
+      | "getOrchestrationAdoptionPreview"
+      | "getRunDeletionImpact"
       | "getRunWorktreeDiff"
       | "getRunWorkspaceFile"
       | "getProjectLoopUiReviewImage"
@@ -124,6 +128,14 @@ describe("remote operation registry", () => {
       | "recoverInterruptedRun"
       | "undoRunToLastPrompt"
       | "deleteRun"
+      | "pauseOrchestration"
+      | "resumeOrchestration"
+      | "cancelOrchestration"
+      | "finishOrchestration"
+      | "sendOrchestrationTaskMessage"
+      | "retryOrchestrationTask"
+      | "decideOrchestrationAdoption"
+      | "refreshOrchestrationTeam"
       | "setRunListVisibility"
       | "addBookmark"
       | "removeBookmark"
@@ -247,6 +259,46 @@ describe("remote operation registry", () => {
     expect(failed).toMatchObject({ ok: false, error: { code: "operation-failed", message: "The operation failed." } });
     expect(JSON.stringify(failed)).not.toContain("sensitive internal detail");
     expect(onOperationError).toHaveBeenCalledOnce();
+  });
+
+  it("requires every composite scope for adoption and active-team refresh mutations", async () => {
+    const db = await createDatabase();
+    const registry = new RemoteOperationRegistry(undefined, db);
+    const adoption = vi.fn(async () => undefined);
+    const refreshTeam = vi.fn(async () => undefined);
+    const validateAdoption = (args: unknown[]): args is [{ taskId: string; decision: "approve" | "reject" | "undo" }] =>
+      args.length === 1 && typeof args[0] === "object" && args[0] != null;
+    const validateCoordinator = (args: unknown[]): args is [string] =>
+      args.length === 1 && typeof args[0] === "string";
+    registry.register("decideOrchestrationAdoption", adoption, validateAdoption, ["run:operate", "git:write"], true);
+    registry.register("refreshOrchestrationTeam", refreshTeam, validateCoordinator, ["run:operate", "admin"], true);
+
+    const adoptionRequest = {
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      requestId: "adopt-1",
+      idempotencyKey: "adoption-command-1",
+      method: "decideOrchestrationAdoption" as const,
+      args: [{ taskId: "task-1", decision: "approve" as const }],
+    };
+    await expect(registry.dispatch(adoptionRequest, ["run:operate"], "session-1"))
+      .resolves.toMatchObject({ ok: false, error: { code: "forbidden" } });
+    await expect(registry.dispatch({ ...adoptionRequest, requestId: "adopt-2" }, ["run:operate", "git:write"], "session-1"))
+      .resolves.toMatchObject({ ok: true });
+
+    const refreshRequest = {
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      requestId: "refresh-team-1",
+      idempotencyKey: "refresh-team-command-1",
+      method: "refreshOrchestrationTeam" as const,
+      args: ["run-1"],
+    };
+    await expect(registry.dispatch(refreshRequest, ["run:operate"], "session-1"))
+      .resolves.toMatchObject({ ok: false, error: { code: "forbidden" } });
+    await expect(registry.dispatch({ ...refreshRequest, requestId: "refresh-team-2" }, ["run:operate", "admin"], "session-1"))
+      .resolves.toMatchObject({ ok: true });
+
+    expect(adoption).toHaveBeenCalledOnce();
+    expect(refreshTeam).toHaveBeenCalledOnce();
   });
 
   it("persists mutation idempotency and replays a completed command only for the same payload", async () => {

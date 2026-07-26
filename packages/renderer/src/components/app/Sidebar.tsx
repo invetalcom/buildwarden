@@ -29,6 +29,11 @@ import type { ProjectPageTab } from "./project-page-tabs";
 import { projectSidebarContext } from "./sidebar-project-context";
 import { recentRunOrderTimestamp } from "./sidebar-run-ordering";
 import { clampSidebarWidth } from "./sidebar-width";
+import {
+  resolveRunDisplayStatus,
+  RUN_DISPLAY_STATUS_LABELS,
+  type RunDisplayStatus,
+} from "./run-display-status";
 import type { CurrentProjectBranchStatus } from "./use-project-branches";
 import { Separator } from "../ui/separator";
 import { cn } from "../../lib/cn";
@@ -146,29 +151,22 @@ const formatRunDuration = (run: SidebarRun) => {
 
 const formatRecentRunWindowLabel = (days: number) => `${days} ${days === 1 ? "day" : "days"}`;
 
-const runDotClassName = (status: SidebarRun["status"]) => {
+const runDotClassName = (status: RunDisplayStatus) => {
   if (status === "completed") return "bg-[var(--ec-success)]";
-  if (status === "failed") return "bg-[var(--ec-danger)]";
+  if (status === "failed" || status === "attention" || status === "deletion-failed") return "bg-[var(--ec-danger)]";
   if (status === "cancelled") return "bg-[var(--ec-faint)]";
-  if (status === "preparing") return "bg-[var(--ec-info)]";
+  if (status === "preparing" || status === "deleting") return "bg-[var(--ec-info)]";
   if (status === "running") return "bg-[var(--ec-accent)] shadow-[0_0_0_3px_var(--ec-accent-soft)]";
   return "bg-[var(--ec-warning)]";
 };
 
-const RUN_STATUS_LABELS: Record<SidebarRun["status"], string> = {
-  queued: "Queued",
-  preparing: "Preparing",
-  running: "Running",
-  completed: "Done",
-  failed: "Failed",
-  cancelled: "Cancelled",
-};
-
-const runStatusPillClassName = (status: SidebarRun["status"]) => {
+const runStatusPillClassName = (status: RunDisplayStatus) => {
   if (status === "completed") return "border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] text-[var(--ec-success)]";
-  if (status === "failed") return "border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] text-[var(--ec-danger)]";
+  if (status === "failed" || status === "attention" || status === "deletion-failed") {
+    return "border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] text-[var(--ec-danger)]";
+  }
   if (status === "cancelled") return "border-[var(--ec-border)] bg-[var(--ec-muted-soft)] text-[var(--ec-muted)]";
-  if (status === "preparing") return "border-[var(--ec-info-ring)] bg-[var(--ec-info-soft)] text-[var(--ec-info)]";
+  if (status === "preparing" || status === "deleting") return "border-[var(--ec-info-ring)] bg-[var(--ec-info-soft)] text-[var(--ec-info)]";
   if (status === "running") return "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]";
   return "border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] text-[var(--ec-warning)]";
 };
@@ -643,6 +641,7 @@ const SidebarComponent = ({
                       {runs.map((run) => {
                         const highlighted = highlightedRunId === run.id;
                         const waitingForInput = run.pendingUserInputRequest === true || run.pendingUserInputRequest === 1;
+                        const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
                         return (
                           <button
                             key={run.id}
@@ -670,7 +669,7 @@ const SidebarComponent = ({
                               });
                             }}
                           >
-                            <span className={cn("absolute bottom-2 left-0 top-2 w-0.5 rounded-r-full", runDotClassName(run.status))} />
+                            <span className={cn("absolute bottom-2 left-0 top-2 w-0.5 rounded-r-full", runDotClassName(displayStatus))} />
                             <span className="flex min-w-0 items-start justify-between gap-2 pl-1">
                               <span className="min-w-0 flex-1 truncate text-[12px] font-semibold leading-4 text-[var(--ec-text)]">{run.prompt}</span>
                               <span className="flex shrink-0 items-center gap-1">
@@ -679,8 +678,11 @@ const SidebarComponent = ({
                                     <CircleAlert className="size-3.5 text-amber-300" />
                                   </span>
                                 ) : null}
-                                <span className={cn("rounded-full border px-1.5 py-0.5 text-[9px] font-semibold leading-none", runStatusPillClassName(run.status))}>
-                                  {RUN_STATUS_LABELS[run.status]}
+                                <span
+                                  className={cn("rounded-full border px-1.5 py-0.5 text-[9px] font-semibold leading-none", runStatusPillClassName(displayStatus))}
+                                  title={displayStatus === "waiting" ? "Coordinator turn completed; waiting for orchestrated tasks." : undefined}
+                                >
+                                  {RUN_DISPLAY_STATUS_LABELS[displayStatus]}
                                 </span>
                               </span>
                             </span>

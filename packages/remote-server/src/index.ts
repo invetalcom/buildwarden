@@ -60,6 +60,7 @@ const REMOTE_STREAM_EVENTS = [
   "warning",
   "loop",
   "task",
+  "orchestration",
   "terminal-data",
   "terminal-exit",
   "browser",
@@ -104,7 +105,7 @@ type UntypedRemoteOperationArgsValidator = (args: unknown[]) => boolean;
 interface RegisteredRemoteOperation {
   handler: UntypedRemoteOperationHandler;
   validateArgs: UntypedRemoteOperationArgsValidator;
-  requiredScope: RemoteAccessScope;
+  requiredScopes: readonly RemoteAccessScope[];
   mutating: boolean;
 }
 
@@ -380,13 +381,13 @@ export class RemoteOperationRegistry {
     method: Method,
     handler: RemoteOperationHandler<Method>,
     validateArgs: RemoteOperationArgsValidator<Method>,
-    requiredScope: RemoteAccessScope = "state:read",
+    requiredScope: RemoteAccessScope | readonly RemoteAccessScope[] = "state:read",
     mutating = false,
   ): void {
     this.handlers.set(method, {
       handler: handler as unknown as UntypedRemoteOperationHandler,
       validateArgs: validateArgs as UntypedRemoteOperationArgsValidator,
-      requiredScope,
+      requiredScopes: Array.isArray(requiredScope) ? requiredScope : [requiredScope],
       mutating,
     });
   }
@@ -421,8 +422,13 @@ export class RemoteOperationRegistry {
     if (!operation) {
       return errorResponse(request.requestId, "method-not-found", "The requested operation is not available.");
     }
-    if (!scopes.includes(operation.requiredScope)) {
-      return errorResponse(request.requestId, "forbidden", "The session does not have permission for this operation.");
+    const missingScopes = operation.requiredScopes.filter((scope) => !scopes.includes(scope));
+    if (missingScopes.length > 0) {
+      return errorResponse(
+        request.requestId,
+        "forbidden",
+        `The session is missing required scope${missingScopes.length === 1 ? "" : "s"}: ${missingScopes.join(", ")}.`,
+      );
     }
     if (!operation.validateArgs(request.args)) {
       return errorResponse(request.requestId, "invalid-request", "The operation arguments are invalid.");

@@ -44,6 +44,7 @@ import {
   StickyNote,
   Target,
   Terminal,
+  UsersRound,
   X,
 } from "lucide-react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
@@ -71,6 +72,8 @@ import {
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
+import { OrchestrationAgentsPanel } from "./OrchestrationAgentsPanel";
+import { shouldAutoOpenAgentsPanel } from "./run-workspace-layout";
 
 type ReviewPanelState = DiffReviewPanelState;
 
@@ -79,7 +82,7 @@ type TilePanelId = RunWorkspacePanelId;
 // Kept for interface compatibility with the shared type.
 type TileLayoutState = Record<TilePanelId, RunWorkspaceTileSize>;
 
-type SecondaryPanelId = "diff" | "terminal" | "browser" | "notes" | "chat" | "file";
+type SecondaryPanelId = "agents" | "diff" | "terminal" | "browser" | "notes" | "chat" | "file";
 type SecondaryPanelPosition = "right" | "bottom";
 
 const pickVisibleSecondaryTab = (
@@ -87,7 +90,7 @@ const pickVisibleSecondaryTab = (
   visibility: Record<SecondaryPanelId, boolean>,
 ): SecondaryPanelId | null => {
   if (previous && visibility[previous]) return previous;
-  const order: SecondaryPanelId[] = ["file", "diff", "terminal", "browser", "notes", "chat"];
+  const order: SecondaryPanelId[] = ["file", "agents", "diff", "terminal", "browser", "notes", "chat"];
   return order.find((tab) => visibility[tab]) ?? null;
 };
 
@@ -178,8 +181,9 @@ export interface RunDetailPageProps {
   timelineDensity: RunTimelineDensity;
   /** Request to scroll to and expand a subagent card in the activity timeline. */
   subagentFocus?: { subagentId: string; nonce: number } | null;
-  /** Activity / diff / terminal / browser panel visibility. */
+  /** Workspace panel visibility. */
   showActivity: boolean;
+  showAgents: boolean;
   showDiff: boolean;
   showTerminal: boolean;
   showBrowser: boolean;
@@ -206,6 +210,8 @@ export interface RunDetailPageProps {
   onUndoRunToLastPrompt: (run: RunRecord) => void;
   onRecoverInterruptedRun: (run: RunRecord) => void;
   onCreateProjectTask: (projectId: string, input: { title: string; prompt: string }) => void | Promise<void>;
+  onOpenChildRun: (runId: string) => void;
+  onReviewChildRun: (runId: string) => void;
   onFollowUpRun: (
     run: RunRecord,
     prompt: string,
@@ -231,6 +237,7 @@ export const RunDetailPage = ({
   timelineDensity,
   subagentFocus = null,
   showActivity,
+  showAgents,
   showDiff,
   showTerminal,
   showBrowser,
@@ -251,6 +258,8 @@ export const RunDetailPage = ({
   onUndoRunToLastPrompt,
   onRecoverInterruptedRun,
   onCreateProjectTask,
+  onOpenChildRun,
+  onReviewChildRun,
   onFollowUpRun,
 }: RunDetailPageProps) => {
   const buildwarden = useBuildWardenClient();
@@ -277,6 +286,14 @@ export const RunDetailPage = ({
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [noteEditDraft, setNoteEditDraft] = useState("");
   const [selectionMenu, setSelectionMenu] = useState<{ x: number; y: number; text: string } | null>(null);
+  const hasOrchestrationSurface = runDetail.run.kind !== "orchestration-task" &&
+    (Boolean(runDetail.run.delegationEnabled) || Boolean(runDetail.orchestration));
+  const agentsPanelVisible = showAgents && hasOrchestrationSurface;
+  const orchestrationTaskCount = runDetail.orchestration?.tasks.length ?? 0;
+  const previousOrchestrationTasksRef = useRef({
+    runId: runDetail.run.id,
+    taskCount: orchestrationTaskCount,
+  });
 
   // Split-pane state
   const [splitPct, setSplitPct] = useState(() => {
@@ -412,6 +429,22 @@ export const RunDetailPage = ({
   }, [runDetail.run.id, runDetail.notes]);
 
   useEffect(() => {
+    const current = {
+      runId: runDetail.run.id,
+      taskCount: orchestrationTaskCount,
+      visible: agentsPanelVisible,
+    };
+    const shouldOpen = shouldAutoOpenAgentsPanel(previousOrchestrationTasksRef.current, current);
+    previousOrchestrationTasksRef.current = {
+      runId: current.runId,
+      taskCount: current.taskCount,
+    };
+    if (shouldOpen) {
+      onTogglePanel("agents");
+    }
+  }, [agentsPanelVisible, onTogglePanel, orchestrationTaskCount, runDetail.run.id]);
+
+  useEffect(() => {
     if (showTerminal) {
       setRunTerminalPinned(true);
     }
@@ -442,6 +475,7 @@ export const RunDetailPage = ({
   // Keep the active secondary tab in sync with panel visibility changes
   useEffect(() => {
     setActiveSecondaryTab((previous) => pickVisibleSecondaryTab(previous, {
+      agents: agentsPanelVisible,
       file: Boolean(filePanelTarget),
       diff: showDiff,
       terminal: showTerminal,
@@ -449,7 +483,7 @@ export const RunDetailPage = ({
       notes: showNotes,
       chat: showChat,
     }));
-  }, [filePanelTarget, showDiff, showTerminal, showBrowser, showNotes, showChat]);
+  }, [agentsPanelVisible, filePanelTarget, showDiff, showTerminal, showBrowser, showNotes, showChat]);
 
   // Split-pane resize (works for both right and bottom positions)
   useEffect(() => {
@@ -506,10 +540,10 @@ export const RunDetailPage = ({
   const closeFilePanel = useCallback(() => {
     setFilePanelTarget(null);
     setActiveSecondaryTab((current) => (current === "file" ? null : current));
-    if (!showActivity && !showDiff && !showTerminal && !showBrowser && !showNotes && !showChat) {
+    if (!showActivity && !agentsPanelVisible && !showDiff && !showTerminal && !showBrowser && !showNotes && !showChat) {
       onTogglePanel("activity");
     }
-  }, [onTogglePanel, showActivity, showBrowser, showChat, showDiff, showNotes, showTerminal]);
+  }, [agentsPanelVisible, onTogglePanel, showActivity, showBrowser, showChat, showDiff, showNotes, showTerminal]);
 
   const openRunFileReference = useCallback((value: string | RunWorkspaceFileReference): boolean => {
     const reference = typeof value === "string" ? parseRunWorkspaceFileReference(value) : value;
@@ -769,9 +803,10 @@ export const RunDetailPage = ({
 
   // Derived visibility
   const hasFilePanel = Boolean(filePanelTarget);
-  const hasSecondaryPanels = showDiff || showTerminal || showBrowser || showNotes || showChat || hasFilePanel;
-  const visiblePanelCount = [showActivity, showDiff, showTerminal, showBrowser, showNotes, showChat, hasFilePanel].filter(Boolean).length;
+  const hasSecondaryPanels = agentsPanelVisible || showDiff || showTerminal || showBrowser || showNotes || showChat || hasFilePanel;
+  const visiblePanelCount = [showActivity, agentsPanelVisible, showDiff, showTerminal, showBrowser, showNotes, showChat, hasFilePanel].filter(Boolean).length;
 
+  const canHideAgents = agentsPanelVisible && visiblePanelCount > 1;
   const canHideDiff = showDiff && visiblePanelCount > 1 && !worktreeUnavailable;
   const canHideTerminal = showTerminal && visiblePanelCount > 1 && !worktreeUnavailable;
   const canHideBrowser = showBrowser && visiblePanelCount > 1;
@@ -779,6 +814,14 @@ export const RunDetailPage = ({
   const canHideChat = showChat && visiblePanelCount > 1;
 
   const secondaryPanelDefs = [
+    {
+      id: "agents" as const,
+      label: "Agents",
+      Icon: UsersRound,
+      enabled: agentsPanelVisible,
+      canToggle: hasOrchestrationSurface,
+      canHide: canHideAgents,
+    },
     {
       id: "diff" as const,
       label: "Git Diff",
@@ -1327,6 +1370,17 @@ export const RunDetailPage = ({
                   target={filePanelTarget}
                   diffText={runDetail.diff}
                   diffPending={diffPending}
+                />
+              ) : null}
+
+              {/* Durable cross-provider agents panel */}
+              {agentsPanelVisible && activeSecondaryTab === "agents" ? (
+                <OrchestrationAgentsPanel
+                  coordinatorRunId={runDetail.run.id}
+                  initialDetail={runDetail.orchestration}
+                  modelLabels={new Map(modelOptions.map((option) => [option.id, option.label]))}
+                  onOpenChildRun={onOpenChildRun}
+                  onReviewChildRun={onReviewChildRun}
                 />
               ) : null}
 

@@ -14,6 +14,7 @@ import {
   parseUiTheme,
   SUPPORTED_IDE_KINDS,
   parseIdePathConfig,
+  parseOrchestrationTeamSettings,
   parseShellAllowlistExtraSetting,
   type AppMenuSection,
   type AppSnapshot,
@@ -31,6 +32,7 @@ import {
   type ProjectInsightKind,
   type ProviderType,
   type RunDetail,
+  type RunDeletionImpact,
   type RunMode,
   type RunRecord,
   type RunTokenUsage,
@@ -51,6 +53,7 @@ import {
   MessagesSquare,
   SquareTerminal,
   StickyNote,
+  UsersRound,
 } from "lucide-react";
 const AllRunsPage = lazy(() => import("./components/app/AllRunsPage").then((m) => ({ default: m.AllRunsPage })));
 const BookmarkDetailPage = lazy(() => import("./components/app/BookmarkDetailPage").then((m) => ({ default: m.BookmarkDetailPage })));
@@ -85,6 +88,7 @@ import {
   parseKeyboardShortcuts,
   parseRunDragPayload,
   readRunTokenUsage,
+  removeRunIdsFromOpenPanes,
   resolveProviderComposerPrompt,
   runIdIsOpenInPanes,
   snapshotContainsRunId,
@@ -162,6 +166,7 @@ interface RunPanelToggleDefinition {
 
 const RUN_PANEL_TOGGLE_DEFINITIONS: readonly RunPanelToggleDefinition[] = [
   { key: "activity", label: "Activity Log", icon: MessageSquareText, hiddenSubtitle: "Show agent activity", requiresWorktree: false },
+  { key: "agents", label: "Agents", icon: UsersRound, hiddenSubtitle: "Show orchestrated tasks", requiresWorktree: false },
   { key: "diff", label: "Diff View", icon: GitBranch, hiddenSubtitle: "Show changes", requiresWorktree: true },
   { key: "terminal", label: "Terminal", icon: SquareTerminal, hiddenSubtitle: "Show terminal", requiresWorktree: true },
   { key: "browser", label: "Browser", icon: Globe, hiddenSubtitle: "Show in-app browser", requiresWorktree: false },
@@ -232,6 +237,7 @@ export const App = () => {
   const [runReasoningEffort, setRunReasoningEffort] = useState("medium");
   const [runAnthropicEffort, setRunAnthropicEffort] = useState("medium");
   const [runYoloMode, setRunYoloMode] = useState(false);
+  const [runDelegationEnabled, setRunDelegationEnabled] = useState(false);
   const [chatReasoningEffort, setChatReasoningEffort] = useState("medium");
   const [chatAnthropicEffort, setChatAnthropicEffort] = useState("medium");
   const [selectedRunId, setSelectedRunId] = useState<string | null | undefined>(undefined);
@@ -278,6 +284,33 @@ export const App = () => {
   const confirmDialogResolverRef = useRef<((value: boolean) => void) | null>(null);
   const [runBrowserSessions, setRunBrowserSessions] = useState<Record<string, RunBrowserSessionState>>({});
   const [runTerminalOpenLinksInApp, setRunTerminalOpenLinksInApp] = useState<Record<string, boolean>>({});
+  const {
+    removeRunWorkspaceLayoutsForRuns,
+    runWorkspaceLayoutsByRunId,
+    selectedRunWorkspaceLayout,
+    runWorkspaceSecondaryPosition,
+    runWorkspaceShowActivity,
+    runWorkspaceShowAgents,
+    runWorkspaceShowBrowser,
+    runWorkspaceShowChat,
+    runWorkspaceShowDiff,
+    runWorkspaceShowNotes,
+    runWorkspaceShowTerminal,
+    setRunWorkspaceSecondaryPosition,
+    setRunWorkspaceShowActivity,
+    setRunWorkspaceShowAgents,
+    setRunWorkspaceShowBrowser,
+    setRunWorkspaceShowChat,
+    setRunWorkspaceShowDiff,
+    setRunWorkspaceShowNotes,
+    setRunWorkspaceShowTerminal,
+    updateRunWorkspaceLayout,
+  } = useRunWorkspaceLayouts({
+    buildwarden,
+    selectedRunId,
+    settings: snapshot.settings,
+    setError,
+  });
   const [appLogDirPath, setAppLogDirPath] = useState("");
   const [appLogDirectorySize, setAppLogDirectorySize] = useState(EMPTY_APP_LOG_DIRECTORY_SIZE);
   const [networkProxySettings, setNetworkProxySettings] = useState<NetworkProxySettingsSnapshot>({
@@ -287,6 +320,15 @@ export const App = () => {
   const projectFolderGitWarning = computeProjectFolderGitWarning(projectFolderGitStatus);
   const preferredRunModelId = snapshot.settings[APP_SETTING_KEYS.lastUsedRunModelId] ?? "";
   const persistedSidebarWidthSetting = snapshot.settings[APP_SETTING_KEYS.sidebarWidth];
+  const orchestrationTeam = useMemo(
+    () => parseOrchestrationTeamSettings(snapshot.settings[APP_SETTING_KEYS.orchestrationTeam]),
+    [snapshot.settings],
+  );
+  const delegationAvailable = orchestrationTeam.roles.length > 0;
+
+  useEffect(() => {
+    setRunDelegationEnabled(delegationAvailable);
+  }, [delegationAvailable]);
   const {
     welcomeOpen,
     welcomeStepIndex,
@@ -744,6 +786,34 @@ export const App = () => {
     visibleStartedAtById: visibleShellApprovalStartedAtById,
   } = useShellApprovalQueue({ buildwarden, loadRunDetailForRun, loadSnapshot, selectedRunId, setError });
 
+  const purgeDeletedRunState = useCallback((runIds: readonly string[]) => {
+    if (runIds.length === 0) return;
+    const deletedIds = new Set(runIds);
+    const omitDeleted = <T,>(current: Record<string, T>): Record<string, T> =>
+      Object.fromEntries(Object.entries(current).filter(([runId]) => !deletedIds.has(runId)));
+
+    for (const runId of deletedIds) {
+      clearDiffRefreshTimer(runId);
+      const refreshTimer = runDetailRefreshTimersRef.current[runId];
+      if (refreshTimer !== undefined) {
+        window.clearTimeout(refreshTimer);
+        delete runDetailRefreshTimersRef.current[runId];
+      }
+      removeShellApprovalsByRunId(runId);
+    }
+    setRunDetailsById(omitDeleted);
+    setRunLiveUsageById(omitDeleted);
+    setRunBrowserSessions(omitDeleted);
+    setRunTerminalOpenLinksInApp(omitDeleted);
+    setOpenRunPanes((current) => removeRunIdsFromOpenPanes(current, deletedIds));
+    removeRunWorkspaceLayoutsForRuns(runIds.slice());
+    if (typeof selectedRunIdRef.current === "string" && deletedIds.has(selectedRunIdRef.current)) {
+      selectedRunIdRef.current = null;
+      setSelectedRunId(null);
+      setRunDetail(null);
+    }
+  }, [clearDiffRefreshTimer, removeRunWorkspaceLayoutsForRuns, removeShellApprovalsByRunId]);
+
   useEffect(
     () => () => {
       for (const timer of Object.values(runDetailRefreshTimersRef.current)) {
@@ -827,11 +897,20 @@ export const App = () => {
     const unsubscribeLoopChanged = buildwarden.onProjectLoopChanged(() => {
       scheduleSnapshotRefresh();
     });
+    const unsubscribeOrchestrationChanged = buildwarden.onOrchestrationChanged((payload) => {
+      scheduleSnapshotRefresh();
+      if (payload.deletedRunIds?.length) {
+        purgeDeletedRunState(payload.deletedRunIds);
+      } else {
+        void refreshRunDetailForActiveRunEvent(payload.coordinatorRunId, { immediate: true });
+      }
+    });
 
     return () => {
       unsubscribe();
       unsubscribeWarning();
       unsubscribeLoopChanged();
+      unsubscribeOrchestrationChanged();
     };
   }, [
     buildwarden,
@@ -845,6 +924,7 @@ export const App = () => {
     refreshRunDetailForActiveRunEvent,
     removeShellApprovalByRequestId,
     removeShellApprovalsByRunId,
+    purgeDeletedRunState,
     scheduleSnapshotRefresh,
   ]);
 
@@ -955,33 +1035,6 @@ export const App = () => {
     setRunBaseBranch,
     submitCheckoutDetachedProjectBranch,
   } = useProjectBranches({ buildwarden, selectedProject, setError });
-  const {
-    removeRunWorkspaceLayout,
-    removeRunWorkspaceLayoutsForRuns,
-    runWorkspaceLayoutsByRunId,
-    selectedRunWorkspaceLayout,
-    runWorkspaceSecondaryPosition,
-    runWorkspaceShowActivity,
-    runWorkspaceShowBrowser,
-    runWorkspaceShowChat,
-    runWorkspaceShowDiff,
-    runWorkspaceShowNotes,
-    runWorkspaceShowTerminal,
-    setRunWorkspaceSecondaryPosition,
-    setRunWorkspaceShowActivity,
-    setRunWorkspaceShowBrowser,
-    setRunWorkspaceShowChat,
-    setRunWorkspaceShowDiff,
-    setRunWorkspaceShowNotes,
-    setRunWorkspaceShowTerminal,
-    updateRunWorkspaceLayout,
-  } = useRunWorkspaceLayouts({
-    buildwarden,
-    selectedRunId,
-    settings: snapshot.settings,
-    setError,
-  });
-
   const {
     changeRunMode,
     changeRunWorkspaceType,
@@ -1135,8 +1188,14 @@ export const App = () => {
     [runDetail?.run, snapshot.projects],
   );
   const runWorktreeUnavailable = runDetail?.worktreeUnavailable === true;
+  const selectedRunHasOrchestrationSurface = Boolean(
+    runDetail?.run &&
+    runDetail.run.kind !== "orchestration-task" &&
+    (runDetail.run.delegationEnabled || runDetail.orchestration),
+  );
   const runWorkspacePanelVisibility = resolveRunWorkspacePanelVisibility({
     activity: runWorkspaceShowActivity,
+    agents: runWorkspaceShowAgents && selectedRunHasOrchestrationSurface,
     diff: runWorkspaceShowDiff,
     terminal: runWorkspaceShowTerminal,
     browser: runWorkspaceShowBrowser,
@@ -1145,6 +1204,7 @@ export const App = () => {
   }, buildwarden.capabilities);
   const runWorkspacePanelSetters: Record<RunWorkspacePanelId, (visible: boolean) => void> = {
     activity: setRunWorkspaceShowActivity,
+    agents: setRunWorkspaceShowAgents,
     diff: setRunWorkspaceShowDiff,
     terminal: setRunWorkspaceShowTerminal,
     browser: setRunWorkspaceShowBrowser,
@@ -1167,13 +1227,21 @@ export const App = () => {
     }));
   };
 
-  const toggleRunWorkspacePanelForRun = (runId: string, panelId: RunWorkspacePanelId, worktreeUnavailableForRun = false) => {
+  const toggleRunWorkspacePanelForRun = (
+    runId: string,
+    panelId: RunWorkspacePanelId,
+    worktreeUnavailableForRun = false,
+    agentsAvailableForRun = false,
+  ) => {
     const layout = runWorkspaceLayoutsByRunId[runId] ?? cloneDefaultRunWorkspaceLayoutPreference();
     if (worktreeUnavailableForRun && (panelId === "diff" || panelId === "terminal")) {
       return;
     }
 
-    const visiblePanels = resolveRunWorkspacePanelVisibility(layout.visiblePanels, buildwarden.capabilities);
+    const visiblePanels = resolveRunWorkspacePanelVisibility({
+      ...layout.visiblePanels,
+      agents: layout.visiblePanels.agents && agentsAvailableForRun,
+    }, buildwarden.capabilities);
     const visibleCount = Object.values(visiblePanels).filter(Boolean).length;
     const currentlyVisible = visiblePanels[panelId];
     if (currentlyVisible && visibleCount === 1) {
@@ -1201,6 +1269,7 @@ export const App = () => {
   };
 
   const runPanelToggleItems = RUN_PANEL_TOGGLE_DEFINITIONS
+    .filter((definition) => definition.key !== "agents" || selectedRunHasOrchestrationSurface)
     .filter((definition) => isRunWorkspacePanelAvailable(definition.key, buildwarden.capabilities))
     .map((definition): RunPanelToggleItem => {
       const active = runWorkspacePanelVisibility[definition.key];
@@ -1680,6 +1749,7 @@ export const App = () => {
       projectTaskId,
       ...reasoningInput,
       yoloMode: runYoloMode,
+      delegationEnabled: runDelegationEnabled,
     });
     return run.id;
   };
@@ -2522,6 +2592,17 @@ export const App = () => {
     });
   }, [buildwarden, leaveSelectedRun, loadRunDetail, loadSnapshot, selectedRunId]);
 
+  const reviewChildRun = useCallback((projectId: string, childRunId: string) => {
+    updateRunWorkspaceLayout(childRunId, (current) => ({
+      ...current,
+      visiblePanels: {
+        ...current.visiblePanels,
+        diff: true,
+      },
+    }));
+    void handleRunSelect(projectId, childRunId);
+  }, [handleRunSelect, updateRunWorkspaceLayout]);
+
   const openRunInSplitPane = useCallback(
     async (projectId: string, runId: string, targetPaneId?: RunPaneId) => {
       if (!selectedRunIdRef.current) {
@@ -2829,13 +2910,34 @@ export const App = () => {
       return;
     }
 
+    let deletionImpact: RunDeletionImpact;
+    try {
+      deletionImpact = await buildwarden.getRunDeletionImpact(run.id);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not inspect the run deletion impact.");
+      return;
+    }
+    const isCascade = deletionImpact.orchestrationId != null;
+    const impactSummary = isCascade
+      ? [
+          `This permanently deletes the coordinator and ${Math.max(0, deletionImpact.runIds.length - 1)} child run(s).`,
+          `${deletionImpact.runningRunIds.length} process(es) will be cancelled.`,
+          `${deletionImpact.ownedDirectories.length} owned workspace(s), ${deletionImpact.branches.length} branch(es), and ${deletionImpact.artifactPaths.length} orchestration artifact path(s) will be removed.`,
+          deletionImpact.lockedOrMissingPaths.length
+            ? `${deletionImpact.lockedOrMissingPaths.length} path(s) are currently unavailable and may require a cleanup retry.`
+            : "Every owned path and database row must be verified removed before deletion succeeds.",
+          run.workspaceType === "local"
+            ? "The original repository and previously adopted project changes are never deleted."
+            : "",
+          "Child cleanup is mandatory and cannot be deselected.",
+        ].filter(Boolean).join("\n\n")
+      : run.workspaceType === "local"
+        ? "Delete this local run and remove its logs, diff history, and persisted run data? Repository files will not be deleted."
+        : "Delete this run, its worktree, logs, diff history, and persisted run data?";
     const confirmed = await requestConfirmation({
-      title: "Delete run",
-      message:
-        run.workspaceType === "local"
-          ? "Delete this local run and remove its logs, diff history, and persisted run data? Repository files will not be deleted."
-          : "Delete this run, its worktree, logs, diff history, and persisted run data?",
-      confirmLabel: "Delete run",
+      title: isCascade ? "Delete orchestration and all children" : "Delete run",
+      message: impactSummary,
+      confirmLabel: isCascade ? "Delete orchestration" : "Delete run",
       confirmVariant: "danger",
     });
 
@@ -2844,47 +2946,23 @@ export const App = () => {
     }
 
     const runId = run.id;
-    const wasViewingThisRun = selectedRunId === runId;
-    const paneId = paneForOpenRunId(openRunPanesRef.current, runId);
-
-    if (paneId) {
-      const nextPanes: OpenRunPanes = { ...openRunPanesRef.current };
-      delete nextPanes[paneId];
-      const remainingRunId = firstOpenRunId(nextPanes);
-      const remainingPaneId = remainingRunId ? paneForOpenRunId(nextPanes, remainingRunId) ?? "left" : "left";
-      setOpenRunPanes(nextPanes);
-      setRunDetailsById((current) => {
-        const next = { ...current };
-        delete next[runId];
-        return next;
-      });
-      if (wasViewingThisRun && remainingRunId) {
-        void setFocusedRunSelection(remainingPaneId, remainingRunId).catch((caught) => {
-          setError(caught instanceof Error ? caught.message : "Unexpected error");
-        });
-      } else if (wasViewingThisRun) {
-        clearRunSelectionState(null);
-      }
-    } else if (wasViewingThisRun) {
-      clearRunSelectionState(null);
-    }
+    const deletedRunIds = new Set(deletionImpact.runIds);
+    const wasViewingDeletedRun = typeof selectedRunId === "string" && deletedRunIds.has(selectedRunId);
 
     setPendingDeleteRunIds((current) => ({ ...current, [runId]: true }));
 
     void (async () => {
       try {
         await buildwarden.deleteRun(runId);
-        setRunBrowserSessions((current) => {
-          const next = { ...current };
-          delete next[runId];
-          return next;
-        });
-        setRunTerminalOpenLinksInApp((current) => {
-          const next = { ...current };
-          delete next[runId];
-          return next;
-        });
-        removeRunWorkspaceLayout(runId);
+        const nextPanes = removeRunIdsFromOpenPanes(openRunPanesRef.current, deletedRunIds);
+        const remainingRunId = firstOpenRunId(nextPanes);
+        const remainingPaneId = remainingRunId ? paneForOpenRunId(nextPanes, remainingRunId) ?? "left" : "left";
+        purgeDeletedRunState(deletionImpact.runIds);
+        if (wasViewingDeletedRun && remainingRunId) {
+          await setFocusedRunSelection(remainingPaneId, remainingRunId);
+        } else if (wasViewingDeletedRun) {
+          setFocusedRunPane("left");
+        }
         await loadSnapshot();
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : "Could not delete run.");
@@ -2899,10 +2977,9 @@ export const App = () => {
     })();
   }, [
     buildwarden,
-    clearRunSelectionState,
     loadSnapshot,
     pendingDeleteRunIds,
-    removeRunWorkspaceLayout,
+    purgeDeletedRunState,
     requestConfirmation,
     selectedRunId,
     setFocusedRunSelection,
@@ -3031,10 +3108,16 @@ export const App = () => {
     const isFocused = selectedRunId === entry.runId && focusedRunPane === entry.paneId;
     const paneDropPreviewActive = runPaneDropPreview === entry.paneId;
     const paneLayout = runWorkspaceLayoutsByRunId[entry.runId] ?? cloneDefaultRunWorkspaceLayoutPreference();
-    const paneVisiblePanels = resolveRunWorkspacePanelVisibility(
+    const paneHasOrchestrationSurface = Boolean(
+      paneRun &&
+      paneRun.kind !== "orchestration-task" &&
+      (paneRun.delegationEnabled || paneDetail?.orchestration),
+    );
+    const resolvedPaneVisiblePanels = resolveRunWorkspacePanelVisibility(
       isFocused
         ? {
             activity: runWorkspaceShowActivity,
+            agents: runWorkspaceShowAgents,
             diff: runWorkspaceShowDiff,
             terminal: runWorkspaceShowTerminal,
             browser: runWorkspaceShowBrowser,
@@ -3044,6 +3127,10 @@ export const App = () => {
         : paneLayout.visiblePanels,
       buildwarden.capabilities,
     );
+    const paneVisiblePanels = {
+      ...resolvedPaneVisiblePanels,
+      agents: resolvedPaneVisiblePanels.agents && paneHasOrchestrationSurface,
+    };
     const paneSecondaryPosition = isFocused ? runWorkspaceSecondaryPosition : paneLayout.secondaryPanelPosition;
     const paneTokenUsage = paneDetail ? latestRunTokenUsage(paneDetail, runLiveUsageById[paneDetail.run.id]) : null;
 
@@ -3118,12 +3205,18 @@ export const App = () => {
             timelineDensity={runTimelineDensity}
             subagentFocus={subagentFocusRequest?.runId === paneDetail.run.id ? subagentFocusRequest : null}
             showActivity={paneVisiblePanels.activity}
+            showAgents={paneVisiblePanels.agents}
             showDiff={paneVisiblePanels.diff}
             showTerminal={paneVisiblePanels.terminal}
             showBrowser={paneVisiblePanels.browser}
             showNotes={paneVisiblePanels.notes}
             showChat={paneVisiblePanels.chat}
-            onTogglePanel={(panelId) => toggleRunWorkspacePanelForRun(paneDetail.run.id, panelId, paneDetail.worktreeUnavailable === true)}
+            onTogglePanel={(panelId) => toggleRunWorkspacePanelForRun(
+              paneDetail.run.id,
+              panelId,
+              paneDetail.worktreeUnavailable === true,
+              paneHasOrchestrationSurface,
+            )}
             secondaryPanelPosition={paneSecondaryPosition}
             onSecondaryPanelPositionChange={(position) => {
               if (isFocused) {
@@ -3169,6 +3262,8 @@ export const App = () => {
             onUndoRunToLastPrompt={(run) => void undoRunToLastPrompt(run)}
             onRecoverInterruptedRun={(run) => void recoverInterruptedRun(run)}
             onCreateProjectTask={(projectId, input) => createProjectTask(projectId, input)}
+            onOpenChildRun={(childRunId) => void handleRunSelect(paneDetail.run.projectId, childRunId)}
+            onReviewChildRun={(childRunId) => reviewChildRun(paneDetail.run.projectId, childRunId)}
             onFollowUpRun={(run, prompt, options) => followUpRun(run, prompt, options)}
           />
         ) : (
@@ -3264,6 +3359,7 @@ export const App = () => {
               remoteAccessEnabled={parseRemoteAccessEnabledSetting(snapshot.settings[APP_SETTING_KEYS.remoteAccessEnabled])}
               providerAccounts={snapshot.providerAccounts}
               models={snapshot.models}
+              orchestrationTeamSetting={snapshot.settings[APP_SETTING_KEYS.orchestrationTeam] ?? ""}
               availableModelsByProviderId={availableModelsByProviderId}
               onBack={handleSettingsBack}
               onChooseDirectory={() => void chooseDirectory()}
@@ -3394,6 +3490,15 @@ export const App = () => {
               integratedSkills={integratedSkillsCatalog}
               globallyDisabledIntegratedSkillIds={globallyDisabledIntegratedSkillIds}
               onGloballyDisabledIntegratedSkillIdsChange={(skillIds) => void updateGloballyDisabledIntegratedSkills(skillIds)}
+              onSaveOrchestrationTeam={(serialized) =>
+                void handleAction(async () => {
+                  if (!buildwarden) {
+                    throw new Error("The BuildWarden bridge is unavailable.");
+                  }
+                  await buildwarden.setAppSetting(APP_SETTING_KEYS.orchestrationTeam, serialized);
+                  await loadSnapshot();
+                })
+              }
             />
   );
 
@@ -3519,6 +3624,7 @@ export const App = () => {
               timelineDensity={runTimelineDensity}
               subagentFocus={subagentFocusRequest?.runId === detail.run.id ? subagentFocusRequest : null}
               showActivity={runWorkspacePanelVisibility.activity}
+              showAgents={runWorkspacePanelVisibility.agents}
               showDiff={runWorkspacePanelVisibility.diff}
               showTerminal={runWorkspacePanelVisibility.terminal}
               showBrowser={runWorkspacePanelVisibility.browser}
@@ -3575,6 +3681,8 @@ export const App = () => {
               onUndoRunToLastPrompt={(run) => void undoRunToLastPrompt(run)}
               onRecoverInterruptedRun={(run) => void recoverInterruptedRun(run)}
               onCreateProjectTask={(projectId, input) => createProjectTask(projectId, input)}
+              onOpenChildRun={(childRunId) => void handleRunSelect(detail.run.projectId, childRunId)}
+              onReviewChildRun={(childRunId) => reviewChildRun(detail.run.projectId, childRunId)}
               onFollowUpRun={(run, prompt, options) => followUpRun(run, prompt, options)}
             />
   );
@@ -3607,9 +3715,12 @@ export const App = () => {
               reasoningEffort={runReasoningEffort}
               anthropicEffort={runAnthropicEffort}
               yoloMode={runYoloMode}
+              delegationEnabled={runDelegationEnabled}
+              delegationAvailable={delegationAvailable}
               onReasoningEffortChange={changeRunReasoningEffort}
               onAnthropicEffortChange={changeRunAnthropicEffort}
               onYoloModeChange={changeRunYoloMode}
+              onDelegationEnabledChange={setRunDelegationEnabled}
               onSelectRun={(runId) => void handleRunSelect(project.project.id, runId)}
               onRunPromptChange={setRunPrompt}
               onRunModeChange={changeRunMode}

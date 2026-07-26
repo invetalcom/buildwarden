@@ -1,6 +1,10 @@
 import { APP_SETTING_KEYS, REMOTE_ACCESS_PROTOCOL_VERSION, type AppSnapshot, type RemoteRpcResponse } from "@buildwarden/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createRemoteBuildWardenClient, RemoteSessionExpiredError } from "./remote-buildwarden-client";
+import {
+  createRemoteBuildWardenClient,
+  listRemoteMutationMethodsMissingScopePolicy,
+  RemoteSessionExpiredError,
+} from "./remote-buildwarden-client";
 
 const snapshot = {
   projects: [],
@@ -40,6 +44,10 @@ describe("remote BuildWarden client", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("defines an authorization policy for every allowlisted remote mutation", () => {
+    expect(listRemoteMutationMethodsMissingScopePolicy()).toEqual([]);
   });
 
   it("dispatches allowlisted reads through the versioned RPC envelope", async () => {
@@ -161,6 +169,20 @@ describe("remote BuildWarden client", () => {
     });
     await expect(client.createChat({ prompt: "no", modelId: "model", providerAccountId: "provider" }))
       .rejects.toThrow("not available for this remote session");
+  });
+
+  it("requires both run operation and admin scopes to refresh orchestration settings", () => {
+    const adminOnly = createRemoteBuildWardenClient({
+      fetch: vi.fn(async () => rpcResponse(snapshot)) as typeof fetch,
+      scopes: ["state:read", "admin"],
+    });
+    const runAdmin = createRemoteBuildWardenClient({
+      fetch: vi.fn(async () => rpcResponse(snapshot)) as typeof fetch,
+      scopes: ["state:read", "run:operate", "admin"],
+    });
+
+    expect(adminOnly.capabilities.orchestrationSettings).toBe(false);
+    expect(runAdmin.capabilities.orchestrationSettings).toBe(true);
   });
 
   it("enables scoped project workflows and host settings for control sessions", async () => {

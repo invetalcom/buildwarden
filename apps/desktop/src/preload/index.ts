@@ -11,6 +11,7 @@ import {
   type ListAvailableProviderModelsInput,
   type ModelInput,
   type NetworkProxySettingsInput,
+  type OrchestrationChangedPayload,
   type ProjectForgePrMonitorSettingsInput,
   type ProjectForgeRequestNotificationPayload,
   type ProjectForgeRequestOpenPayload,
@@ -148,6 +149,34 @@ const api: DesktopApi = {
   deleteRun: (runId: string) => invoke(IPC_CHANNELS.deleteRun, runId),
   deleteModel: (modelId: string) => invoke(IPC_CHANNELS.deleteModel, modelId),
   getRunDetail: (runId: string) => invoke(IPC_CHANNELS.getRunDetail, runId),
+  getOrchestrationDetail: (coordinatorRunId: string) =>
+    invoke(IPC_CHANNELS.getOrchestrationDetail, coordinatorRunId),
+  getOrchestrationTaskDetail: (taskId: string) =>
+    invoke(IPC_CHANNELS.getOrchestrationTaskDetail, taskId),
+  getOrchestrationAdoptionPreview: (taskId: string) =>
+    invoke(IPC_CHANNELS.getOrchestrationAdoptionPreview, taskId),
+  getRunDeletionImpact: (runId: string) => invoke(IPC_CHANNELS.getRunDeletionImpact, runId),
+  pauseOrchestration: (coordinatorRunId: string) =>
+    invoke(IPC_CHANNELS.pauseOrchestration, coordinatorRunId),
+  resumeOrchestration: (coordinatorRunId: string) =>
+    invoke(IPC_CHANNELS.resumeOrchestration, coordinatorRunId),
+  cancelOrchestration: (coordinatorRunId: string) =>
+    invoke(IPC_CHANNELS.cancelOrchestration, coordinatorRunId),
+  finishOrchestration: (coordinatorRunId: string) =>
+    invoke(IPC_CHANNELS.finishOrchestration, coordinatorRunId),
+  sendOrchestrationTaskMessage: (input) =>
+    invoke(IPC_CHANNELS.sendOrchestrationTaskMessage, input),
+  retryOrchestrationTask: (taskId: string) =>
+    invoke(IPC_CHANNELS.retryOrchestrationTask, taskId),
+  decideOrchestrationAdoption: (input) =>
+    invoke(IPC_CHANNELS.decideOrchestrationAdoption, input),
+  refreshOrchestrationTeam: (coordinatorRunId: string) =>
+    invoke(IPC_CHANNELS.refreshOrchestrationTeam, coordinatorRunId),
+  onOrchestrationChanged: (listener: (payload: OrchestrationChangedPayload) => void) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, payload: OrchestrationChangedPayload) => listener(payload);
+    ipcRenderer.on(IPC_CHANNELS.orchestrationChanged, wrapped);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.orchestrationChanged, wrapped);
+  },
   addRunNote: (runId: string, input) => invoke(IPC_CHANNELS.addRunNote, runId, input),
   updateRunNote: (noteId: string, input) => invoke(IPC_CHANNELS.updateRunNote, noteId, input),
   deleteRunNote: (noteId: string) => invoke(IPC_CHANNELS.deleteRunNote, noteId),

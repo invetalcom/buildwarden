@@ -3,11 +3,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BuildWardenDatabase } from "@buildwarden/db";
 import { APP_SETTING_KEYS } from "@buildwarden/shared";
-import type { ModelRecord, ProjectRecord, ProjectTaskRecord, ProviderAccountRecord, RunRecord } from "@buildwarden/shared";
+import type {
+  ModelRecord,
+  OrchestrationRecord,
+  OrchestrationTaskRecord,
+  ProjectRecord,
+  ProjectTaskRecord,
+  ProviderAccountRecord,
+  RunRecord,
+} from "@buildwarden/shared";
 import type { SecretStore } from "@buildwarden/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GitService } from "@buildwarden/git-service";
-import { AppController } from "./app-controller";
+import { AppController, latestUserTurnUsedFullAccess } from "./app-controller";
 import type { AppControllerDesktopServices } from "./desktop-platform-services";
 import { HostEventBus } from "./host-events";
 
@@ -85,6 +93,8 @@ const createHarness = (overrides: DbOverrides = {}) => {
     updateRunNote: vi.fn((_noteId: string, input: object) => ({ id: "note-1", runId: "run-1", content: "note", status: "open", ...input })),
     deleteRunNote: vi.fn(),
     updateRunListVisibility: vi.fn((_runId: string, visibility: string) => ({ id: "run-1", listVisibility: visibility } as RunRecord)),
+    getOrchestrationTaskByChildRunId: vi.fn(() => null),
+    getOrchestrationByCoordinatorRunId: vi.fn(() => null),
   };
   const db = { ...defaults, ...overrides } as unknown as BuildWardenDatabase;
   const secrets = {
@@ -144,6 +154,272 @@ const createMutableProjectHarness = () => {
 };
 
 describe("AppController settings and lightweight workflows", () => {
+  it("inherits full access only from the latest coordinator user turn", () => {
+    expect(latestUserTurnUsedFullAccess([
+      { metadataJson: JSON.stringify({ source: "user", commandType: "initial", yoloMode: true }) },
+      { metadataJson: "{malformed" },
+      { metadataJson: JSON.stringify({ source: "user", commandType: "goal" }) },
+      { metadataJson: JSON.stringify({ source: "user", commandType: "follow-up", yoloMode: false }) },
+    ])).toBe(false);
+
+    expect(latestUserTurnUsedFullAccess([
+      { metadataJson: JSON.stringify({ source: "user", commandType: "initial", yoloMode: false }) },
+      { metadataJson: JSON.stringify({ source: "user", commandType: "follow-up", yoloMode: true }) },
+    ])).toBe(true);
+  });
+
+  it("cancels the durable orchestration when its coordinator run is cancelled", async () => {
+    let orchestration: OrchestrationRecord = {
+      id: "orchestration-1",
+      projectId: project.id,
+      coordinatorRunId: "coordinator-1",
+      status: "active",
+      teamSnapshot: {
+        version: 1,
+        maxConcurrentTasks: 3,
+        maxTasksPerOrchestration: 12,
+        models: [],
+        roles: [],
+      },
+      wakeMode: "all-terminal",
+      wakeTaskIds: ["orchestration-task-1"],
+      lastEventSequence: 1,
+      lastDeliveredSequence: 0,
+      errorMessage: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:01:00.000Z",
+      finishedAt: null,
+    };
+    let orchestrationTask: OrchestrationTaskRecord = {
+      id: "orchestration-task-1",
+      orchestrationId: orchestration.id,
+      waveId: "wave-1",
+      clientTaskId: "client-task-1",
+      title: "Inspect the workspace",
+      prompt: "Inspect the workspace.",
+      roleId: "researcher",
+      modelId: model.id,
+      intent: "inspect",
+      status: "running",
+      childRunId: "child-1",
+      retryOfTaskId: null,
+      summary: null,
+      errorMessage: null,
+      attentionReason: null,
+      adoptionStatus: "none",
+      inputTokens: 0,
+      outputTokens: 0,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:01:00.000Z",
+      startedAt: "2026-01-01T00:00:10.000Z",
+      finishedAt: null,
+    };
+    const updateOrchestration = vi.fn((_id: string, input: Partial<OrchestrationRecord>) => {
+      orchestration = { ...orchestration, ...input };
+      return orchestration;
+    });
+    const updateOrchestrationTask = vi.fn((_id: string, input: Partial<OrchestrationTaskRecord>) => {
+      orchestrationTask = { ...orchestrationTask, ...input };
+      return orchestrationTask;
+    });
+    const flushDurable = vi.fn(async () => undefined);
+    const harness = createHarness({
+      getOrchestrationByCoordinatorRunId: vi.fn((runId: string) =>
+        runId === orchestration.coordinatorRunId ? orchestration : null),
+      getOrchestration: vi.fn(() => orchestration),
+      getOrchestrationTask: vi.fn(() => orchestrationTask),
+      listOrchestrationTasks: vi.fn(() => [orchestrationTask]),
+      updateOrchestration,
+      updateOrchestrationTask,
+      appendOrchestrationEvent: vi.fn(),
+      flushDurable,
+    });
+    tempDirs.push(harness.logDir);
+
+    await harness.controller.cancelRun(orchestration.coordinatorRunId);
+
+    expect(updateOrchestration).toHaveBeenCalledWith(orchestration.id, expect.objectContaining({
+      status: "cancelled",
+      finishedAt: expect.any(String),
+    }));
+    expect(updateOrchestrationTask).toHaveBeenCalledWith(orchestrationTask.id, expect.objectContaining({
+      status: "cancelled",
+      finishedAt: expect.any(String),
+    }));
+    expect(flushDurable).toHaveBeenCalled();
+    expect(orchestration.status).toBe("cancelled");
+    expect(orchestrationTask.status).toBe("cancelled");
+  });
+
+  it("does not create retries after an orchestration is terminal", async () => {
+    const orchestration = {
+      id: "orchestration-1",
+      status: "completed",
+      teamSnapshot: { maxTasksPerOrchestration: 12 },
+    } as OrchestrationRecord;
+    const completedTask = {
+      id: "orchestration-task-1",
+      orchestrationId: orchestration.id,
+      status: "completed",
+    } as OrchestrationTaskRecord;
+    const createOrchestrationTask = vi.fn();
+    const harness = createHarness({
+      getOrchestrationTask: vi.fn(() => completedTask),
+      getOrchestration: vi.fn(() => orchestration),
+      createOrchestrationTask,
+    });
+    tempDirs.push(harness.logDir);
+
+    await expect(harness.controller.retryOrchestrationTask(completedTask.id))
+      .rejects.toThrow("Tasks cannot be retried while the orchestration is completed.");
+    expect(createOrchestrationTask).not.toHaveBeenCalled();
+  });
+
+  it("serializes adoption decisions and re-reads task state inside the lock", async () => {
+    const orchestration = {
+      id: "orchestration-1",
+      coordinatorRunId: "coordinator-1",
+    } as OrchestrationRecord;
+    let adoptionTask = {
+      id: "orchestration-task-1",
+      orchestrationId: orchestration.id,
+      waveId: "wave-1",
+      title: "Implementation",
+      adoptionStatus: "proposed",
+    } as OrchestrationTaskRecord;
+    const firstFlush = deferred<void>();
+    const updateOrchestrationTask = vi.fn((_taskId: string, input: Partial<OrchestrationTaskRecord>) => {
+      adoptionTask = { ...adoptionTask, ...input };
+      return adoptionTask;
+    });
+    const flushDurable = vi.fn()
+      .mockImplementationOnce(() => firstFlush.promise)
+      .mockResolvedValue(undefined);
+    const appendOrchestrationEvent = vi.fn();
+    const harness = createHarness({
+      getOrchestrationTask: vi.fn(() => adoptionTask),
+      getOrchestration: vi.fn(() => orchestration),
+      getRun: vi.fn(() => ({ id: orchestration.coordinatorRunId, worktreePath: project.repoPath } as RunRecord)),
+      getOrchestrationWave: vi.fn(() => ({ id: adoptionTask.waveId })),
+      getOrchestrationAdoption: vi.fn(() => null),
+      updateOrchestrationTask,
+      upsertOrchestrationAdoption: vi.fn(),
+      appendOrchestrationEvent,
+      flushDurable,
+    });
+    tempDirs.push(harness.logDir);
+
+    const first = harness.controller.decideOrchestrationAdoption({ taskId: adoptionTask.id, decision: "reject" });
+    const second = harness.controller.decideOrchestrationAdoption({ taskId: adoptionTask.id, decision: "reject" });
+    await vi.waitFor(() => expect(flushDurable).toHaveBeenCalledTimes(1));
+    expect(updateOrchestrationTask).toHaveBeenCalledTimes(1);
+
+    firstFlush.resolve();
+    await Promise.all([first, second]);
+
+    expect(adoptionTask.adoptionStatus).toBe("rejected");
+    expect(updateOrchestrationTask).toHaveBeenCalledTimes(1);
+    expect(appendOrchestrationEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries transient Windows worktree locks during run deletion", async () => {
+    const run = {
+      id: "run-1",
+      projectId: project.id,
+      workspaceType: "worktree",
+      workspaceVcs: "git",
+      worktreePath: "C:\\managed\\run-1",
+      branchName: "buildwarden-run-1",
+    } as RunRecord;
+    const removeWorktree = vi.fn()
+      .mockRejectedValueOnce(new Error("filesystem removal failed: EBUSY: resource busy or locked"))
+      .mockResolvedValueOnce(undefined);
+    const harness = createHarness();
+    tempDirs.push(harness.logDir);
+    const controller = harness.controller as unknown as {
+      gitService: { removeWorktree: typeof removeWorktree };
+      deleteRunResources: (repoPath: string, run: RunRecord, context: "run" | "project") => Promise<void>;
+    };
+    controller.gitService.removeWorktree = removeWorktree;
+
+    await controller.deleteRunResources(project.repoPath, run, "run");
+
+    expect(removeWorktree).toHaveBeenCalledTimes(2);
+    expect(removeWorktree).toHaveBeenLastCalledWith(project.repoPath, run.worktreePath, run.branchName);
+  });
+
+  it("automatically completes an orchestration after its delivered terminal wave is summarized", async () => {
+    const orchestration = {
+      id: "orchestration-1",
+      projectId: project.id,
+      coordinatorRunId: "coordinator-1",
+      status: "active",
+      teamSnapshot: {
+        version: 1,
+        maxConcurrentTasks: 3,
+        maxTasksPerOrchestration: 12,
+        models: [],
+        roles: [],
+      },
+      wakeMode: null,
+      wakeTaskIds: [],
+      lastEventSequence: 4,
+      lastDeliveredSequence: 4,
+      errorMessage: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:01:00.000Z",
+      finishedAt: null,
+    } satisfies OrchestrationRecord;
+    const completedTask = {
+      id: "orchestration-task-1",
+      orchestrationId: orchestration.id,
+      waveId: "wave-1",
+      clientTaskId: "client-task-1",
+      title: "Inspect the workspace",
+      prompt: "Inspect the workspace.",
+      roleId: "researcher",
+      modelId: model.id,
+      intent: "inspect",
+      status: "completed",
+      childRunId: "child-1",
+      retryOfTaskId: null,
+      summary: "Inspection complete.",
+      errorMessage: null,
+      attentionReason: null,
+      adoptionStatus: "none",
+      inputTokens: 100,
+      outputTokens: 20,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:01:00.000Z",
+      startedAt: "2026-01-01T00:00:10.000Z",
+      finishedAt: "2026-01-01T00:01:00.000Z",
+    } satisfies OrchestrationTaskRecord;
+    const updateOrchestration = vi.fn();
+    const appendOrchestrationEvent = vi.fn();
+    const harness = createHarness({
+      getOrchestrationByCoordinatorRunId: vi.fn(() => orchestration),
+      getOrchestration: vi.fn(() => orchestration),
+      listOrchestrationTasks: vi.fn(() => [completedTask]),
+      updateOrchestration,
+      appendOrchestrationEvent,
+    });
+    tempDirs.push(harness.logDir);
+
+    await (harness.controller as unknown as {
+      handleOrchestrationCoordinatorTurnTerminal: (runId: string) => Promise<void>;
+    }).handleOrchestrationCoordinatorTurnTerminal(orchestration.coordinatorRunId);
+
+    expect(updateOrchestration).toHaveBeenCalledWith(orchestration.id, expect.objectContaining({
+      status: "completed",
+      wakeMode: null,
+      wakeTaskIds: [],
+    }));
+    expect(appendOrchestrationEvent).toHaveBeenCalledWith(expect.objectContaining({
+      orchestrationId: orchestration.id,
+      type: "completed",
+    }));
+  });
+
   it("notifies host services after a run is deleted", async () => {
     const run = {
       id: "run-1",

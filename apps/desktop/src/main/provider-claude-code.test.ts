@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { HarnessToolContext } from "@buildwarden/shared";
 import {
   buildClaudeCodeArgs,
   buildClaudeCanUseTool,
+  buildClaudeOrchestrationMcpServer,
   ClaudeCodeProviderAdapter,
   ClaudeSubagentTracker,
   getClaudeCodeAvailableModelsForVersion,
@@ -751,6 +753,40 @@ describe("ClaudeCodeProviderAdapter", () => {
     expect(afterFinal.usage.inputTokens).toBe(530_000);
     expect(afterFinal.usage.outputTokens).toBe(5_000);
     expect(afterFinal.usage.totalProcessedTokens).toBe(535_000);
+  });
+});
+
+describe("Claude in-process orchestration MCP", () => {
+  it("creates a live SDK MCP server only when BuildWarden host tools are present", () => {
+    const executeTool = vi.fn();
+    const withoutOrchestration: HarnessToolContext = {
+      tools: [{
+        name: "read_file",
+        description: "Read a file.",
+        inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      }],
+      executeTool,
+    };
+    expect(buildClaudeOrchestrationMcpServer(withoutOrchestration)).toBeNull();
+
+    const withOrchestration: HarnessToolContext = {
+      tools: [{
+        name: "buildwarden_tasks_delegate",
+        description: "Delegate durable tasks.",
+        inputSchema: {
+          type: "object",
+          properties: { requestId: { type: "string" }, tasks: { type: "array", items: { type: "object" } } },
+          required: ["requestId", "tasks"],
+          additionalProperties: false,
+        },
+      }],
+      executeTool,
+    };
+    expect(buildClaudeOrchestrationMcpServer(withOrchestration)).toMatchObject({
+      type: "sdk",
+      name: "buildwarden",
+      instance: expect.any(Object),
+    });
   });
 });
 

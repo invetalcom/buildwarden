@@ -2,7 +2,11 @@ import { parentPort, workerData } from "node:worker_threads";
 import { randomUUID } from "node:crypto";
 import {
   type HarnessRunChunk,
+  type HarnessToolContext,
+  type OrchestrationToolName,
   type RunExecutionRequest,
+  type RunToolCall,
+  type RunToolResult,
   type RunToolName,
   type RunUserInputAnswers,
   type RunUserInputRequest,
@@ -12,7 +16,9 @@ import {
 import { createHarnessAdapter } from "./harness-adapters";
 import { buildInitialRepoContext } from "./initial-repo-context";
 import { logError, logInfo } from "./logger";
+import { PendingHostToolRequests } from "./pending-host-tool-requests";
 import { createRunToolContext } from "./run-tools";
+import { buildOrchestrationAwarePrompt, isOrchestrationToolName } from "./orchestration-tools";
 
 interface WorkerInput {
   request: RunExecutionRequest;
@@ -30,6 +36,7 @@ const pendingShellApprovals = new Map<string, (decision: ShellApprovalDecision) 
 const pendingUserInputs = new Map<string, { resolve: (answers: RunUserInputAnswers) => void; reject: (error: Error) => void }>();
 const approvedShellCommands = new Set<string>();
 const activeShellCommands = new Map<string, { cancel: (reason?: unknown) => void }>();
+const pendingHostTools = new PendingHostToolRequests<RunToolResult>();
 
 port.on(
   "message",
@@ -38,7 +45,8 @@ port.on(
       | { type: "cancel" }
       | { type: "cancel-shell"; callId: string }
       | { type: "shell-approval-response"; requestId: string; decision: ShellApprovalDecision }
-      | { type: "user-input-response"; requestId: string; answers: RunUserInputAnswers },
+      | { type: "user-input-response"; requestId: string; answers: RunUserInputAnswers }
+      | { type: "host-tool-response"; callId: string; result?: RunToolResult; error?: string },
   ) => {
     if (message.type === "cancel") {
       for (const activeShell of activeShellCommands.values()) {
@@ -54,6 +62,7 @@ port.on(
         pending.reject(new Error("Run cancelled."));
       }
       pendingUserInputs.clear();
+      pendingHostTools.rejectAll(new Error("Run cancelled."));
       return;
     }
 
@@ -75,6 +84,15 @@ port.on(
       if (pending) {
         pendingUserInputs.delete(message.requestId);
         pending.resolve(message.answers);
+      }
+      return;
+    }
+
+    if (message.type === "host-tool-response") {
+      if (message.result) {
+        pendingHostTools.resolve(message.callId, message.result);
+      } else {
+        pendingHostTools.reject(message.callId, new Error(message.error || "The BuildWarden host tool failed."));
       }
     }
   },
@@ -139,7 +157,7 @@ const run = async () => {
       request.providerType === "azure-legacy"
         ? ["read_file", "write_file", "edit_file", "delete_file", "list_files", "search_repo", "run_shell"]
         : undefined;
-    const toolContext = createRunToolContext(
+    const runToolContext = createRunToolContext(
       request.worktreePath,
       request.mode,
       requestShellApproval,
@@ -171,9 +189,28 @@ const run = async () => {
       azureLegacyToolOverride,
       { yoloMode: request.yoloMode === true },
     );
+    const orchestrationTools = request.orchestrationTools ?? [];
+    const orchestrationToolNames = new Set(orchestrationTools.map((tool) => tool.name));
+    const toolContext: HarnessToolContext = {
+      tools: [...runToolContext.tools, ...orchestrationTools],
+      executeTool: async (call: RunToolCall): Promise<RunToolResult> => {
+        if (!isOrchestrationToolName(call.name) || !orchestrationToolNames.has(call.name)) {
+          return runToolContext.executeTool(call);
+        }
+        const response = pendingHostTools.create(call.id);
+        port.postMessage({
+          type: "host-tool-request",
+          callId: call.id,
+          toolName: call.name satisfies OrchestrationToolName,
+          arguments: call.arguments,
+        });
+        return response;
+      },
+    };
     const result = await harness.run(
       {
         ...request,
+        prompt: buildOrchestrationAwarePrompt(request.prompt, orchestrationTools.length > 0),
         repoContext: request.repoContext ?? [
           request.skillContext?.trim(),
           await buildInitialRepoContext(request.worktreePath, {

@@ -14,6 +14,7 @@ import type {
   ProviderAvailableModel,
   ProviderAvailableModelsContext,
   RunExecutionRequest,
+  RunToolCall,
   RunUserInputAnswers,
   RunUserInputQuestion,
   RunUserInputRequest,
@@ -110,6 +111,7 @@ type TurnExecutionOptions = {
   signal: AbortSignal;
   requestShellApproval?: (command: string) => Promise<ShellApprovalDecision>;
   requestUserInput?: (request: RunUserInputRequest) => Promise<RunUserInputAnswers>;
+  toolContext?: HarnessToolContext;
   onChunk?: (chunk: HarnessRunChunk) => void;
   devLogging?: {
     logDirPath: string;
@@ -1077,6 +1079,7 @@ export class CodexAppServerSession {
     private readonly requestShellApproval: ((command: string) => Promise<ShellApprovalDecision>) | undefined,
     private readonly requestUserInput: ((request: RunUserInputRequest) => Promise<RunUserInputAnswers>) | undefined,
     private readonly onChunk: ((chunk: HarnessRunChunk) => void) | undefined,
+    private readonly toolContext?: HarnessToolContext,
     private readonly devLogger?: { log: (event: string, data: unknown) => void },
   ) {
     this.output = readline.createInterface({ input: child.stdout });
@@ -1173,6 +1176,12 @@ export class CodexAppServerSession {
       approvalPolicy: yoloMode ? CODEX_YOLO_APPROVAL_POLICY : CODEX_APPROVAL_POLICY,
       sandbox: yoloMode ? CODEX_YOLO_SANDBOX_MODE : CODEX_SANDBOX_MODE,
       experimentalRawEvents: false,
+      dynamicTools: this.toolContext?.tools.map((tool) => ({
+        type: "function",
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+      })) ?? [],
     });
     const threadId = this.readThreadId(started);
     if (!threadId) {
@@ -1338,6 +1347,58 @@ export class CodexAppServerSession {
 
   private handleServerRequest(request: JsonRpcRequest): void {
     this.devLogger?.log("codex.rpc.request", request);
+    if (request.method === "item/tool/call") {
+      const params = asRecord(request.params);
+      const toolName = asString(params?.tool);
+      const callId = asString(params?.callId) ?? String(request.id);
+      const argumentsRecord = asRecord(params?.arguments) ?? {};
+      const definition = this.toolContext?.tools.find((tool) => tool.name === toolName);
+      if (!definition || !this.toolContext || !toolName) {
+        this.writeServerResponse({
+          id: request.id,
+          result: {
+            success: false,
+            contentItems: [{ type: "inputText", text: `Unknown BuildWarden tool: ${toolName ?? "(missing)"}` }],
+          },
+        });
+        return;
+      }
+      this.onChunk?.({
+        type: "tool-call",
+        title: `Tool call: ${toolName}`,
+        value: JSON.stringify(argumentsRecord),
+        metadata: { toolName, callId, provider: "codex-cli" },
+      });
+      void this.toolContext.executeTool({
+        id: callId,
+        name: toolName,
+        arguments: argumentsRecord,
+      } as RunToolCall).then((result) => {
+        this.onChunk?.({
+          type: "tool-result",
+          title: `Tool result: ${toolName}`,
+          value: result.content,
+          metadata: { toolName, callId, ok: result.ok, provider: "codex-cli" },
+        });
+        this.writeServerResponse({
+          id: request.id,
+          result: {
+            success: result.ok,
+            contentItems: [{ type: "inputText", text: result.content }],
+          },
+        });
+      }).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.writeServerResponse({
+          id: request.id,
+          result: {
+            success: false,
+            contentItems: [{ type: "inputText", text: message }],
+          },
+        });
+      });
+      return;
+    }
     if (request.method === "item/commandExecution/requestApproval") {
       const params = asRecord(request.params);
       const command =
@@ -1347,14 +1408,14 @@ export class CodexAppServerSession {
         "Command";
       void (async () => {
         const decision = this.requestShellApproval ? await this.requestShellApproval(command) : "allow-once";
-        this.writeMessage({
+        this.writeServerResponse({
           id: request.id,
           result: {
             decision: decision === "deny" ? "deny" : "accept",
           },
         });
       })().catch((error) => {
-        this.writeMessage({
+        this.writeServerResponse({
           id: request.id,
           error: {
             code: -32000,
@@ -1366,7 +1427,7 @@ export class CodexAppServerSession {
     }
 
     if (request.method === "item/fileRead/requestApproval" || request.method === "item/fileChange/requestApproval") {
-      this.writeMessage({
+      this.writeServerResponse({
         id: request.id,
         result: {
           decision: "accept",
@@ -1406,14 +1467,14 @@ export class CodexAppServerSession {
           if (!answers) {
             throw new Error("No answers were returned for Codex user input.");
           }
-          this.writeMessage({
+          this.writeServerResponse({
             id: request.id,
             result: {
               answers: toCodexUserInputAnswers(answers),
             },
           });
         })().catch((error) => {
-          this.writeMessage({
+          this.writeServerResponse({
             id: request.id,
             error: {
               code: -32000,
@@ -1437,7 +1498,7 @@ export class CodexAppServerSession {
           rawRequestParams: params ?? {},
         },
       });
-      this.writeMessage({
+      this.writeServerResponse({
         id: request.id,
         error: {
           code: -32601,
@@ -1447,13 +1508,26 @@ export class CodexAppServerSession {
       return;
     }
 
-    this.writeMessage({
+    this.writeServerResponse({
       id: request.id,
       error: {
         code: -32601,
         message: `Unsupported request: ${request.method}`,
       },
     });
+  }
+
+  private writeServerResponse(message: unknown): void {
+    if (this.stopped || !this.child.stdin.writable) {
+      return;
+    }
+    try {
+      this.writeMessage(message);
+    } catch (error) {
+      this.devLogger?.log("codex.rpc.response.write-failed", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   // Emits a chunk, stamping it with the owning subagent id when the current
@@ -2079,6 +2153,7 @@ async function executeCodexTurn(options: TurnExecutionOptions): Promise<TurnExec
     options.requestShellApproval,
     options.requestUserInput,
     options.onChunk,
+    options.toolContext,
     devLogger.enabled ? devLogger : undefined,
   );
   try {
@@ -2100,6 +2175,7 @@ async function executeCodexTurn(options: TurnExecutionOptions): Promise<TurnExec
             runtimePayload: {
               previousResponseId: threadId,
               sessionType: options.isChat ? "chat" : "run",
+              orchestrationTools: Boolean(options.toolContext?.tools.length),
             },
           },
         },
@@ -2173,16 +2249,23 @@ export class CodexCliHarnessAdapter implements HarnessAdapter {
 
   async run(
     input: RunExecutionRequest,
-    _toolContext: HarnessToolContext,
+    toolContext: HarnessToolContext,
     onChunk: (chunk: HarnessRunChunk) => void,
     signal: AbortSignal,
   ): ReturnType<HarnessAdapter["run"]> {
+    const orchestrationToolsEnabled = toolContext.tools.some((tool) => tool.name.startsWith("buildwarden_"));
+    const priorRuntimeHadOrchestrationTools =
+      input.providerSessionRuntime?.runtimePayload?.orchestrationTools === true;
+    const priorThreadId = readProviderSessionCursorId(input.providerSessionRuntime) ?? input.previousResponseId;
     const result = await executeCodexTurn({
       runId: input.runId,
       cwd: input.worktreePath,
       prompt: input.prompt,
       modelId: input.modelId,
-      previousThreadId: readProviderSessionCursorId(input.providerSessionRuntime) ?? input.previousResponseId,
+      // Dynamic tools are declared at thread/start and persist with that
+      // thread. If delegation was enabled on a legacy thread, begin a fresh
+      // tool-capable thread rather than silently resuming without the tools.
+      previousThreadId: orchestrationToolsEnabled && !priorRuntimeHadOrchestrationTools ? null : priorThreadId,
       repoContext: input.repoContext,
       inputMode: input.mode,
       isChat: input.isChat,
@@ -2196,6 +2279,10 @@ export class CodexCliHarnessAdapter implements HarnessAdapter {
       signal,
       requestShellApproval: input.yoloMode === true ? undefined : this.requestShellApproval,
       requestUserInput: this.requestUserInput,
+      toolContext: {
+        tools: toolContext.tools.filter((tool) => tool.name.startsWith("buildwarden_")),
+        executeTool: toolContext.executeTool,
+      },
       onChunk,
     });
     return {
@@ -2213,6 +2300,7 @@ export class CodexCliHarnessAdapter implements HarnessAdapter {
         runtimePayload: {
           previousResponseId: result.threadId,
           sessionType: input.isChat ? "chat" : "run",
+          orchestrationTools: orchestrationToolsEnabled,
         },
       },
     };

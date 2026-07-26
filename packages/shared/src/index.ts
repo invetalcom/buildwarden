@@ -26,7 +26,7 @@ export type ProjectKind = "git" | "folder";
 export type RunWorkspaceType = "worktree" | "local" | "copy";
 export type RunWorkspaceVcs = "git" | "folder";
 export type RunListVisibility = "default" | "for-later";
-export type RunKind = "standard" | "lab-implementation" | "loop-iteration";
+export type RunKind = "standard" | "lab-implementation" | "loop-iteration" | "orchestration-task";
 
 export type ComposerCommandContext = "run" | "follow-up" | "chat";
 export type ComposerCommandEffect = "set-run-mode" | "set-goal" | "native-prompt";
@@ -267,6 +267,21 @@ export type RunEventType =
   | "plan";
 
 export type RunToolName = "read_file" | "write_file" | "edit_file" | "delete_file" | "list_files" | "search_repo" | "run_shell";
+
+export const ORCHESTRATION_TOOL_NAMES = [
+  "buildwarden_orchestration_get",
+  "buildwarden_tasks_delegate",
+  "buildwarden_tasks_list",
+  "buildwarden_tasks_read",
+  "buildwarden_tasks_send_message",
+  "buildwarden_tasks_cancel",
+  "buildwarden_orchestration_yield",
+  "buildwarden_adoption_propose",
+  "buildwarden_orchestration_finish",
+] as const;
+
+export type OrchestrationToolName = (typeof ORCHESTRATION_TOOL_NAMES)[number];
+export type HarnessToolName = RunToolName | OrchestrationToolName;
 
 const TEXT_LIKE_FILE_EXTENSIONS = new Set([
   "c",
@@ -785,6 +800,8 @@ export interface RunRecord {
   listVisibility: RunListVisibility;
   /** Derived at read time from unresolved user-input request steps; not stored in the runs table. */
   pendingUserInputRequest?: boolean | number;
+  /** Derived for snapshots from the coordinator's durable orchestration; not stored in the runs table. */
+  orchestrationStatus?: OrchestrationStatus | null;
   kind: RunKind;
   labThreadId: string | null;
   parentRunId: string | null;
@@ -792,6 +809,8 @@ export interface RunRecord {
   lineageTitle: string | null;
   /** Project-board task that launched this run, when applicable. */
   projectTaskId: string | null;
+  /** Allows the top-level run to create durable cross-provider child runs. */
+  delegationEnabled: boolean | number;
   createdAt: string;
   updatedAt: string;
   startedAt: string | null;
@@ -1626,6 +1645,7 @@ export interface RunInput {
   kind?: RunKind;
   labThreadId?: string | null;
   projectTaskId?: string | null;
+  delegationEnabled?: boolean;
 }
 
 export interface ContinueRunInput {
@@ -1640,6 +1660,7 @@ export interface ContinueRunInput {
   includeWorkspaceChanges?: boolean;
   reasoningEffort?: string;
   anthropicEffort?: string;
+  delegationEnabled?: boolean;
 }
 
 export interface RunFollowUpOptions {
@@ -1650,6 +1671,7 @@ export interface RunFollowUpOptions {
   attachments?: ChatAttachmentPayload[];
   reasoningEffort?: string;
   anthropicEffort?: string;
+  delegationEnabled?: boolean;
 }
 
 export type ShellApprovalDecision = "allow-once" | "allow-for-run" | "allow-always" | "deny";
@@ -1697,6 +1719,8 @@ export interface ProjectSnapshot {
   project: ProjectRecord;
   runs: RunRecord[];
   forLaterRuns: RunRecord[];
+  /** Durable child runs, hidden from normal project history and surfaced through the Orchestrated filter. */
+  orchestratedRuns: RunRecord[];
   activeRuns: RunRecord[];
   recentRuns: RunRecord[];
   tasks: ProjectTaskRecord[];
@@ -1740,6 +1764,304 @@ export interface RunDetail {
     createdAt: string;
     commandType: "initial" | "follow-up";
   } | null;
+  orchestration?: OrchestrationDetail | null;
+}
+
+export type OrchestrationStatus =
+  | "active"
+  | "waiting"
+  | "paused"
+  | "attention"
+  | "deleting"
+  | "deletion-failed"
+  | "completed"
+  | "cancelled"
+  | "failed";
+
+export type OrchestrationTaskStatus =
+  | "pending"
+  | "provisioning"
+  | "queued"
+  | "running"
+  | "waiting-input"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted"
+  | "blocked";
+
+export type OrchestrationTaskIntent = "inspect" | "implement";
+export type OrchestrationWakeMode = "all-terminal" | "any-terminal" | "attention";
+export type OrchestrationAdoptionStatus =
+  | "none"
+  | "proposed"
+  | "approved"
+  | "applying"
+  | "adopted"
+  | "rejected"
+  | "conflict"
+  | "failed"
+  | "undone";
+
+export interface OrchestrationModelProfile {
+  modelId: string;
+  enabled: boolean;
+  defaultEffort?: string;
+  maxConcurrent: number;
+}
+
+export interface OrchestrationRoleProfile {
+  id: string;
+  name: string;
+  description: string;
+  eligibleModelIds: string[];
+  preferredModelId: string;
+  effortOverride?: string;
+  maxConcurrent: number;
+}
+
+export interface OrchestrationTeamSettings {
+  version: 1;
+  maxConcurrentTasks: number;
+  maxTasksPerOrchestration: number;
+  models: OrchestrationModelProfile[];
+  roles: OrchestrationRoleProfile[];
+}
+
+export const DEFAULT_ORCHESTRATION_TEAM_SETTINGS: OrchestrationTeamSettings = {
+  version: 1,
+  maxConcurrentTasks: 3,
+  maxTasksPerOrchestration: 12,
+  models: [],
+  roles: [],
+};
+
+export const ORCHESTRATION_ROLE_PRESETS = [
+  {
+    id: "researcher",
+    name: "Researcher",
+    description: "Inspects the codebase, gathers evidence, and identifies constraints before changes are made.",
+    maxConcurrent: 2,
+  },
+  {
+    id: "implementer",
+    name: "Implementer",
+    description: "Implements a focused, isolated part of the coordinator task.",
+    maxConcurrent: 2,
+  },
+  {
+    id: "reviewer",
+    name: "Reviewer",
+    description: "Independently reviews proposed changes for correctness, regressions, and missing tests.",
+    maxConcurrent: 1,
+  },
+] as const satisfies ReadonlyArray<Pick<OrchestrationRoleProfile, "id" | "name" | "description" | "maxConcurrent">>;
+
+export const createOrchestrationRoleFromPreset = (
+  presetId: string,
+  modelIds: readonly string[],
+): OrchestrationRoleProfile | null => {
+  const preset = ORCHESTRATION_ROLE_PRESETS.find((candidate) => candidate.id === presetId);
+  if (!preset) return null;
+  const eligibleModelIds = Array.from(new Set(modelIds.map((modelId) => modelId.trim()).filter(Boolean)));
+  const preferredModelId = eligibleModelIds[0];
+  if (!preferredModelId) return null;
+  return {
+    ...preset,
+    eligibleModelIds: [...eligibleModelIds],
+    preferredModelId,
+  };
+};
+
+const orchestrationInteger = (value: unknown, fallback: number, min: number, max: number): number => {
+  const number = Number(value);
+  return Number.isInteger(number) ? Math.max(min, Math.min(max, number)) : fallback;
+};
+
+export const parseOrchestrationTeamSettings = (
+  raw: string | undefined | null,
+): OrchestrationTeamSettings => {
+  if (!raw?.trim()) return { ...DEFAULT_ORCHESTRATION_TEAM_SETTINGS, models: [], roles: [] };
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const rawModels = Array.isArray(parsed.models) ? parsed.models : [];
+    const models = rawModels.flatMap((entry): OrchestrationModelProfile[] => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+      const record = entry as Record<string, unknown>;
+      if (typeof record.modelId !== "string" || !record.modelId.trim()) return [];
+      return [{
+        modelId: record.modelId.trim(),
+        enabled: record.enabled !== false,
+        ...(typeof record.defaultEffort === "string" && record.defaultEffort.trim()
+          ? { defaultEffort: record.defaultEffort.trim() }
+          : {}),
+        maxConcurrent: orchestrationInteger(record.maxConcurrent, 1, 1, 8),
+      }];
+    });
+    const modelIds = new Set(models.filter((model) => model.enabled).map((model) => model.modelId));
+    const rawRoles = Array.isArray(parsed.roles) ? parsed.roles : [];
+    const roles = rawRoles.flatMap((entry): OrchestrationRoleProfile[] => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+      const record = entry as Record<string, unknown>;
+      if (typeof record.id !== "string" || !record.id.trim() ||
+          typeof record.name !== "string" || !record.name.trim()) return [];
+      const eligibleModelIds = Array.isArray(record.eligibleModelIds)
+        ? Array.from(new Set(record.eligibleModelIds.filter(
+            (value): value is string => typeof value === "string" && modelIds.has(value),
+          )))
+        : [];
+      const preferredModelId = typeof record.preferredModelId === "string" ? record.preferredModelId : "";
+      if (eligibleModelIds.length === 0 || !eligibleModelIds.includes(preferredModelId)) return [];
+      return [{
+        id: record.id.trim(),
+        name: record.name.trim().slice(0, 80),
+        description: typeof record.description === "string" ? record.description.trim().slice(0, 500) : "",
+        eligibleModelIds,
+        preferredModelId,
+        ...(typeof record.effortOverride === "string" && record.effortOverride.trim()
+          ? { effortOverride: record.effortOverride.trim() }
+          : {}),
+        maxConcurrent: orchestrationInteger(record.maxConcurrent, 1, 1, 8),
+      }];
+    });
+    return {
+      version: 1,
+      maxConcurrentTasks: orchestrationInteger(parsed.maxConcurrentTasks, 3, 1, 8),
+      maxTasksPerOrchestration: orchestrationInteger(parsed.maxTasksPerOrchestration, 12, 1, 64),
+      models,
+      roles,
+    };
+  } catch {
+    return { ...DEFAULT_ORCHESTRATION_TEAM_SETTINGS, models: [], roles: [] };
+  }
+};
+
+export interface OrchestrationRecord {
+  id: string;
+  projectId: string;
+  coordinatorRunId: string;
+  status: OrchestrationStatus;
+  teamSnapshot: OrchestrationTeamSettings;
+  wakeMode: OrchestrationWakeMode | null;
+  wakeTaskIds: string[];
+  lastEventSequence: number;
+  lastDeliveredSequence: number;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+}
+
+export interface OrchestrationWaveRecord {
+  id: string;
+  orchestrationId: string;
+  waveIndex: number;
+  baselinePath: string | null;
+  baselineState: "capturing" | "ready" | "failed";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrchestrationTaskRecord {
+  id: string;
+  orchestrationId: string;
+  waveId: string;
+  clientTaskId: string;
+  title: string;
+  prompt: string;
+  roleId: string;
+  modelId: string;
+  intent: OrchestrationTaskIntent;
+  status: OrchestrationTaskStatus;
+  childRunId: string | null;
+  retryOfTaskId: string | null;
+  summary: string | null;
+  errorMessage: string | null;
+  attentionReason: string | null;
+  adoptionStatus: OrchestrationAdoptionStatus;
+  inputTokens: number;
+  outputTokens: number;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface OrchestrationEventRecord {
+  id: string;
+  orchestrationId: string;
+  taskId: string | null;
+  sequence: number;
+  type: string;
+  title: string;
+  content: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface OrchestrationTaskMessageRecord {
+  id: string;
+  orchestrationId: string;
+  taskId: string;
+  source: "coordinator" | "user";
+  content: string;
+  status: "queued" | "delivered" | "failed";
+  createdAt: string;
+  deliveredAt: string | null;
+}
+
+export interface OrchestrationAdoptionPreview {
+  taskId: string;
+  status: OrchestrationAdoptionStatus;
+  diff: string;
+  changedFiles: string[];
+  conflicts: string[];
+  unsupportedPaths: string[];
+}
+
+export interface OrchestrationDetail {
+  orchestration: OrchestrationRecord;
+  waves: OrchestrationWaveRecord[];
+  tasks: OrchestrationTaskRecord[];
+  events: OrchestrationEventRecord[];
+  messages: OrchestrationTaskMessageRecord[];
+  activeTaskCount: number;
+  queuedTaskCount: number;
+  attentionTaskCount: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+}
+
+export interface OrchestrationChangedPayload {
+  projectId: string;
+  coordinatorRunId: string;
+  orchestrationId: string;
+  taskId?: string | null;
+  status: OrchestrationStatus;
+  sequence: number;
+  deletedRunIds?: string[];
+}
+
+export interface OrchestrationTaskMessageInput {
+  taskId: string;
+  content: string;
+}
+
+export interface OrchestrationAdoptionDecisionInput {
+  taskId: string;
+  decision: "approve" | "reject" | "undo";
+}
+
+export interface RunDeletionImpact {
+  runId: string;
+  coordinatorRunId: string;
+  orchestrationId: string | null;
+  runIds: string[];
+  runningRunIds: string[];
+  ownedDirectories: string[];
+  branches: string[];
+  artifactPaths: string[];
+  lockedOrMissingPaths: string[];
 }
 
 /** Result of computing the worktree patch for a run (potentially slow; use after `getRunDetail`). */
@@ -2707,6 +3029,8 @@ export interface RunExecutionRequest {
   };
   /** Optional outbound proxy for provider network calls. Localhost requests must bypass it. */
   networkProxy?: NetworkProxyRuntimeConfig;
+  /** Main-process orchestration tools advertised to this coordinator turn. */
+  orchestrationTools?: RunToolDefinition[];
 }
 
 export interface ChatRecord {
@@ -2839,20 +3163,20 @@ export interface HarnessRunChunk {
 }
 
 export interface RunToolDefinition {
-  name: RunToolName;
+  name: HarnessToolName;
   description: string;
   inputSchema: Record<string, unknown>;
 }
 
 export interface RunToolCall {
   id: string;
-  name: RunToolName;
+  name: HarnessToolName;
   arguments: Record<string, unknown>;
 }
 
 export interface RunToolResult {
   toolCallId: string;
-  name: RunToolName;
+  name: HarnessToolName;
   ok: boolean;
   content: string;
   metadata?: Record<string, unknown>;
@@ -3156,6 +3480,19 @@ export interface DesktopApi {
   queryProjectActivity(input: ProjectActivityQueryInput): Promise<ProjectActivityQueryResult>;
   createRun(input: RunInput): Promise<RunRecord>;
   continueRun(input: ContinueRunInput): Promise<RunRecord>;
+  getOrchestrationDetail(coordinatorRunId: string): Promise<OrchestrationDetail | null>;
+  getOrchestrationTaskDetail(taskId: string): Promise<OrchestrationTaskRecord>;
+  getOrchestrationAdoptionPreview(taskId: string): Promise<OrchestrationAdoptionPreview>;
+  getRunDeletionImpact(runId: string): Promise<RunDeletionImpact>;
+  pauseOrchestration(coordinatorRunId: string): Promise<void>;
+  resumeOrchestration(coordinatorRunId: string): Promise<void>;
+  cancelOrchestration(coordinatorRunId: string): Promise<void>;
+  finishOrchestration(coordinatorRunId: string): Promise<void>;
+  sendOrchestrationTaskMessage(input: OrchestrationTaskMessageInput): Promise<void>;
+  retryOrchestrationTask(taskId: string): Promise<OrchestrationTaskRecord>;
+  decideOrchestrationAdoption(input: OrchestrationAdoptionDecisionInput): Promise<void>;
+  refreshOrchestrationTeam(coordinatorRunId: string): Promise<void>;
+  onOrchestrationChanged(listener: (payload: OrchestrationChangedPayload) => void): () => void;
   createRunPullRequest(runId: string, targetBranch: string, title: string, sourceBranchName?: string, description?: string): Promise<string>;
   suggestRunPullRequestDescription(runId: string, targetBranch: string, title: string): Promise<string>;
   createRunLocalBranch(runId: string, branchName: string): Promise<string>;
@@ -3348,7 +3685,16 @@ export const REMOTE_ACCESS_SERVER_CAPABILITIES = [
 ] as const;
 
 export type RemoteAccessServerCapability = (typeof REMOTE_ACCESS_SERVER_CAPABILITIES)[number];
-export type RemoteStreamEventType = "run" | "chat" | "warning" | "loop" | "task" | "terminal-data" | "terminal-exit" | "browser";
+export type RemoteStreamEventType =
+  | "run"
+  | "chat"
+  | "warning"
+  | "loop"
+  | "task"
+  | "orchestration"
+  | "terminal-data"
+  | "terminal-exit"
+  | "browser";
 
 export interface RemoteStreamEventPayloadMap {
   run: RunEvent;
@@ -3356,6 +3702,7 @@ export interface RemoteStreamEventPayloadMap {
   warning: AppWarning;
   loop: ProjectLoopChangedPayload;
   task: ProjectTaskChangedPayload;
+  orchestration: OrchestrationChangedPayload;
   "terminal-data": RunTerminalDataPayload;
   "terminal-exit": RunTerminalExitPayload;
   browser: RunBrowserEvent;
@@ -3494,6 +3841,10 @@ export type RemoteOperationMap = {
   getRunDetail: DesktopApi["getRunDetail"];
   getRunWorktreeDiff: DesktopApi["getRunWorktreeDiff"];
   getRunWorkspaceFile: DesktopApi["getRunWorkspaceFile"];
+  getOrchestrationDetail: DesktopApi["getOrchestrationDetail"];
+  getOrchestrationTaskDetail: DesktopApi["getOrchestrationTaskDetail"];
+  getOrchestrationAdoptionPreview: DesktopApi["getOrchestrationAdoptionPreview"];
+  getRunDeletionImpact: DesktopApi["getRunDeletionImpact"];
   getProjectLoopUiReviewImage: DesktopApi["getProjectLoopUiReviewImage"];
   getProjectLoopDetail: DesktopApi["getProjectLoopDetail"];
   getProjectLoopAvailability: DesktopApi["getProjectLoopAvailability"];
@@ -3527,6 +3878,14 @@ export type RemoteOperationMap = {
   recoverInterruptedRun: DesktopApi["recoverInterruptedRun"];
   undoRunToLastPrompt: DesktopApi["undoRunToLastPrompt"];
   deleteRun: DesktopApi["deleteRun"];
+  pauseOrchestration: DesktopApi["pauseOrchestration"];
+  resumeOrchestration: DesktopApi["resumeOrchestration"];
+  cancelOrchestration: DesktopApi["cancelOrchestration"];
+  finishOrchestration: DesktopApi["finishOrchestration"];
+  sendOrchestrationTaskMessage: DesktopApi["sendOrchestrationTaskMessage"];
+  retryOrchestrationTask: DesktopApi["retryOrchestrationTask"];
+  decideOrchestrationAdoption: DesktopApi["decideOrchestrationAdoption"];
+  refreshOrchestrationTeam: DesktopApi["refreshOrchestrationTeam"];
   setRunListVisibility: DesktopApi["setRunListVisibility"];
   addBookmark: DesktopApi["addBookmark"];
   removeBookmark: DesktopApi["removeBookmark"];
@@ -3780,6 +4139,19 @@ export const IPC_CHANNELS = {
   createRunLocalBranch: "buildwarden:create-run-local-branch",
   createRun: "buildwarden:create-run",
   continueRun: "buildwarden:continue-run",
+  getOrchestrationDetail: "buildwarden:get-orchestration-detail",
+  getOrchestrationTaskDetail: "buildwarden:get-orchestration-task-detail",
+  getOrchestrationAdoptionPreview: "buildwarden:get-orchestration-adoption-preview",
+  getRunDeletionImpact: "buildwarden:get-run-deletion-impact",
+  pauseOrchestration: "buildwarden:pause-orchestration",
+  resumeOrchestration: "buildwarden:resume-orchestration",
+  cancelOrchestration: "buildwarden:cancel-orchestration",
+  finishOrchestration: "buildwarden:finish-orchestration",
+  sendOrchestrationTaskMessage: "buildwarden:send-orchestration-task-message",
+  retryOrchestrationTask: "buildwarden:retry-orchestration-task",
+  decideOrchestrationAdoption: "buildwarden:decide-orchestration-adoption",
+  refreshOrchestrationTeam: "buildwarden:refresh-orchestration-team",
+  orchestrationChanged: "buildwarden:orchestration-changed",
   publishRunBranch: "buildwarden:publish-run-branch",
   followUpRun: "buildwarden:follow-up-run",
   deleteProject: "buildwarden:delete-project",
@@ -3927,6 +4299,8 @@ export const APP_SETTING_KEYS = {
   projectBaseBranchMigrationVersion: "projectBaseBranchMigrationVersion",
   /** JSON object keyed by project id with PR/MR background polling intervals. */
   projectForgePrMonitorSettings: "projectForgePrMonitorSettings",
+  /** JSON encoded {@link OrchestrationTeamSettings}. */
+  orchestrationTeam: "orchestrationTeam",
   /** JSON object with app-wide outbound proxy host/port/user settings (password stored in secure storage). */
   networkProxyConfig: "networkProxyConfig",
   /** Optional remote-access host. Absent or any value other than `"true"` keeps it disabled. */
@@ -4246,7 +4620,7 @@ export const WINDOWS_TITLEBAR_OVERLAY_BACKGROUND: Record<UiTheme, string> = {
   light: "#e7eef6",
 };
 
-export type RunWorkspacePanelId = "activity" | "diff" | "terminal" | "browser" | "notes" | "chat";
+export type RunWorkspacePanelId = "activity" | "agents" | "diff" | "terminal" | "browser" | "notes" | "chat";
 
 export interface RunWorkspaceTileSize {
   colSpan: number;
@@ -4263,13 +4637,14 @@ export interface RunWorkspaceLayoutPreference {
 
 export type RunWorkspaceLayoutPreferencesByRunId = Record<string, RunWorkspaceLayoutPreference>;
 
-const RUN_WORKSPACE_PANEL_IDS: readonly RunWorkspacePanelId[] = ["activity", "diff", "terminal", "browser", "notes", "chat"];
+const RUN_WORKSPACE_PANEL_IDS: readonly RunWorkspacePanelId[] = ["activity", "agents", "diff", "terminal", "browser", "notes", "chat"];
 
 const RUN_WORKSPACE_PANEL_DEFAULTS: Record<
   RunWorkspacePanelId,
   { visible: boolean; size: RunWorkspaceTileSize }
 > = {
   activity: { visible: true, size: { colSpan: 7, rowSpan: 4 } },
+  agents: { visible: false, size: { colSpan: 5, rowSpan: 4 } },
   diff: { visible: false, size: { colSpan: 5, rowSpan: 4 } },
   terminal: { visible: false, size: { colSpan: 5, rowSpan: 3 } },
   browser: { visible: false, size: { colSpan: 7, rowSpan: 3 } },

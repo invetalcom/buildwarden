@@ -1,5 +1,5 @@
 import type { AppSnapshot, RunRecord } from "@buildwarden/shared";
-import { Clock3, FolderGit2, PlayCircle, Search, X } from "lucide-react";
+import { Clock3, FolderGit2, PlayCircle, Search, UsersRound, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { parseSearchTerms, runMatchesSearch } from "../../lib/run-search";
 import { Badge } from "../ui/badge";
@@ -7,6 +7,12 @@ import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Input } from "../ui/input";
+import {
+  isRunDisplayStatusActive,
+  resolveRunDisplayStatus,
+  RUN_DISPLAY_STATUS_LABELS,
+  runDisplayStatusTone,
+} from "./run-display-status";
 
 interface AllRunsPageProps {
   projects: AppSnapshot["projects"];
@@ -78,52 +84,58 @@ const AllRunsContent = ({
 
   return (
     <div className="divide-y divide-[var(--ec-border)]">
-      {rows.map(({ project, run }) => (
-        <button
-          key={run.id}
-          type="button"
-          className="flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left transition hover:bg-[var(--ec-hover)]"
-          onClick={() => onSelectRun(project.id, run.id)}
-        >
-          <span className="size-2 shrink-0 rounded-full bg-[var(--ec-accent)]" aria-hidden />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-[var(--ec-text)]">{run.prompt}</p>
-            <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--ec-muted)]">
-              <span className="inline-flex min-w-0 items-center gap-1">
-                <FolderGit2 className="size-3 shrink-0" />
-                <span className="truncate">{project.name}</span>
-              </span>
-              <span className="inline-flex items-center gap-1 font-mono">
-                <Clock3 className="size-3" />
-                {formatRelativeTime(run.finishedAt ?? run.updatedAt)} - {formatRunDuration(run)}
-              </span>
-              <span className="truncate font-mono">{formatRunWorkspaceLabel(run)}</span>
+      {rows.map(({ project, run }) => {
+        const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
+        return (
+          <button
+            key={run.id}
+            type="button"
+            className="flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left transition hover:bg-[var(--ec-hover)]"
+            onClick={() => onSelectRun(project.id, run.id)}
+          >
+            <span className="size-2 shrink-0 rounded-full bg-[var(--ec-accent)]" aria-hidden />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold text-[var(--ec-text)]">{run.prompt}</p>
+              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--ec-muted)]">
+                <span className="inline-flex min-w-0 items-center gap-1">
+                  <FolderGit2 className="size-3 shrink-0" />
+                  <span className="truncate">{project.name}</span>
+                </span>
+                <span className="inline-flex items-center gap-1 font-mono">
+                  <Clock3 className="size-3" />
+                  {formatRelativeTime(run.finishedAt ?? run.updatedAt)} - {formatRunDuration(run)}
+                </span>
+                <span className="truncate font-mono">{formatRunWorkspaceLabel(run)}</span>
+              </div>
             </div>
-          </div>
-          <Badge dot tone={run.status}>{run.status}</Badge>
-        </button>
-      ))}
+            <Badge dot tone={runDisplayStatusTone(displayStatus)}>{RUN_DISPLAY_STATUS_LABELS[displayStatus]}</Badge>
+          </button>
+        );
+      })}
     </div>
   );
 };
 
 export const AllRunsPage = ({ projects, onSelectRun }: AllRunsPageProps) => {
   const [searchQuery, setSearchQuery] = useState("");
+  const [view, setView] = useState<"runs" | "orchestrated">("runs");
   const rows = useMemo(
     () =>
       projects
         .flatMap((entry) => {
           const runsById = new Map<string, RunRecord>();
-          for (const run of [...entry.runs, ...entry.forLaterRuns]) {
+          const sourceRuns = view === "orchestrated" ? entry.orchestratedRuns : [...entry.runs, ...entry.forLaterRuns];
+          for (const run of sourceRuns) {
             runsById.set(run.id, run);
           }
           return [...runsById.values()].map((run) => ({ project: entry.project, run }));
         })
         .sort((a, b) => new Date(b.run.updatedAt).getTime() - new Date(a.run.updatedAt).getTime()),
-    [projects],
+    [projects, view],
   );
 
-  const activeCount = rows.filter(({ run }) => ["queued", "preparing", "running"].includes(run.status)).length;
+  const activeCount = rows.filter(({ run }) =>
+    isRunDisplayStatusActive(resolveRunDisplayStatus(run.status, run.orchestrationStatus))).length;
   const searchTerms = useMemo(() => parseSearchTerms(searchQuery), [searchQuery]);
   const visibleRows = useMemo(() => rows.filter(({ run }) => runMatchesSearch(run, searchTerms)), [rows, searchTerms]);
   const hasSearch = searchTerms.length > 0;
@@ -140,6 +152,14 @@ export const AllRunsPage = ({ projects, onSelectRun }: AllRunsPageProps) => {
             </CardDescription>
           </div>
           <div className="flex min-w-0 flex-1 flex-wrap items-end justify-end gap-2">
+            <div className="flex h-8 items-center rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-0.5">
+              <button type="button" aria-pressed={view === "runs"} className={`h-7 rounded px-2.5 text-xs ${view === "runs" ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)]"}`} onClick={() => setView("runs")}>
+                Runs
+              </button>
+              <button type="button" aria-pressed={view === "orchestrated"} className={`flex h-7 items-center gap-1.5 rounded px-2.5 text-xs ${view === "orchestrated" ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)]"}`} onClick={() => setView("orchestrated")}>
+                <UsersRound className="size-3" /> Orchestrated
+              </button>
+            </div>
             <label className="min-w-[16rem] max-w-md flex-1 space-y-1">
               <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--ec-faint)]">Search user input</span>
               <span className="relative block">

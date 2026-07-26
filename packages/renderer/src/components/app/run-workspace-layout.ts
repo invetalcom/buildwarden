@@ -10,10 +10,11 @@ export interface RunWorkspacePanelCapabilities {
   platform: "electron" | "web";
 }
 
-export const DEFAULT_TILE_ORDER: TilePanelId[] = ["activity", "diff", "terminal", "browser", "notes", "chat"];
+export const DEFAULT_TILE_ORDER: TilePanelId[] = ["activity", "agents", "diff", "terminal", "browser", "notes", "chat"];
 
 export const DEFAULT_TILE_LAYOUT: TileLayoutState = {
   activity: { colSpan: 7, rowSpan: 4 },
+  agents: { colSpan: 5, rowSpan: 4 },
   diff: { colSpan: 5, rowSpan: 4 },
   terminal: { colSpan: 5, rowSpan: 3 },
   browser: { colSpan: 7, rowSpan: 3 },
@@ -24,6 +25,7 @@ export const DEFAULT_TILE_LAYOUT: TileLayoutState = {
 export const DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE: RunWorkspaceLayoutPreference = {
   visiblePanels: {
     activity: true,
+    agents: false,
     diff: false,
     terminal: false,
     browser: false,
@@ -56,3 +58,12 @@ export const resolveRunWorkspacePanelVisibility = (
   if (!Object.values(resolved).some(Boolean)) resolved.activity = true;
   return resolved;
 };
+
+export const shouldAutoOpenAgentsPanel = (
+  previous: { runId: string; taskCount: number },
+  current: { runId: string; taskCount: number; visible: boolean },
+): boolean =>
+  previous.runId === current.runId &&
+  previous.taskCount === 0 &&
+  current.taskCount > 0 &&
+  !current.visible;

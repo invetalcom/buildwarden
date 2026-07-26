@@ -2,14 +2,19 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { spawnSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { HarnessToolContext } from "@buildwarden/shared";
 import {
   CursorAgentHarnessAdapter,
   CursorAgentProviderAdapter,
+  CursorMcpToolNameMatcher,
   assertCursorAgentAvailable,
+  buildCursorToolChunkForState,
   cursorSubagentStatusFromToolStatus,
   isCursorSubagentToolState,
+  mergeCursorPermissionToolState,
   readCursorTaskRequestInfo,
+  readCursorToolName,
   buildCursorPlanProgressChunk,
   createCursorDevLogger,
   deriveCursorMaxTokensFromConfigOptions,
@@ -23,6 +28,8 @@ import {
   resolveCursorAcpBaseModelId,
   resolveCursorAcpConfigUpdates,
   resolveCursorAgentProcessLaunch,
+  startCursorOrchestrationMcp,
+  terminateCursorProcessTree,
 } from "@buildwarden/provider-cursor-agent";
 
 describe("CursorAgentProviderAdapter", () => {
@@ -116,6 +123,83 @@ describe("CursorAgentProviderAdapter", () => {
     }
   });
 
+  it("recovers MCP tool names from Cursor permission titles", () => {
+    const permissionParams = {
+      toolCall: {
+        toolCallId: "tool-1",
+        title: "buildwarden-orchestration-buildwarden_tasks_delegate: buildwarden_tasks_delegate",
+        kind: "other",
+        status: "pending",
+      },
+    };
+
+    expect(readCursorToolName({}, "MCP: tool")).toBeUndefined();
+    expect(readCursorToolName({ _toolName: "task" }, "MCP: tool")).toBe("task");
+    expect(readCursorToolName({}, permissionParams.toolCall.title)).toBe("buildwarden_tasks_delegate");
+    expect(mergeCursorPermissionToolState({
+      id: "tool-1",
+      kind: "other",
+      title: "MCP: tool",
+      status: "pending",
+    }, permissionParams)).toMatchObject({
+      id: "tool-1",
+      title: permissionParams.toolCall.title,
+      toolName: "buildwarden_tasks_delegate",
+    });
+  });
+
+  it("does not persist Cursor's generic MCP placeholder as a tool name", () => {
+    const genericChunk = buildCursorToolChunkForState({
+      id: "tool-1",
+      kind: "other",
+      title: "MCP: tool",
+      status: "pending",
+    });
+    const namedChunk = buildCursorToolChunkForState({
+      id: "tool-1",
+      kind: "other",
+      title: "buildwarden-orchestration-buildwarden_tasks_delegate: buildwarden_tasks_delegate",
+      toolName: "buildwarden_tasks_delegate",
+      status: "completed",
+    });
+
+    expect(genericChunk.metadata).not.toHaveProperty("toolName");
+    expect(namedChunk.metadata).toMatchObject({ toolName: "buildwarden_tasks_delegate" });
+    expect(namedChunk.title).toContain("buildwarden_tasks_delegate");
+  });
+
+  it("correlates anonymous Cursor MCP calls with bridge tool names in either arrival order", () => {
+    const cursorFirst = new CursorMcpToolNameMatcher();
+    expect(cursorFirst.registerCursorTool("cursor-1")).toBeUndefined();
+    expect(cursorFirst.registerToolName("buildwarden_orchestration_get")).toEqual({
+      toolId: "cursor-1",
+      toolName: "buildwarden_orchestration_get",
+    });
+
+    const bridgeFirst = new CursorMcpToolNameMatcher();
+    expect(bridgeFirst.registerToolName("buildwarden_tasks_delegate")).toBeNull();
+    expect(bridgeFirst.registerCursorTool("cursor-2")).toBe("buildwarden_tasks_delegate");
+    expect(bridgeFirst.registerCursorTool("cursor-2")).toBeUndefined();
+  });
+
+  it("terminates the complete Cursor process tree on Windows", () => {
+    const kill = vi.fn(() => true);
+    const killWindowsTree = vi.fn(() => true);
+
+    terminateCursorProcessTree({ pid: 1234, kill }, "win32", killWindowsTree);
+
+    expect(killWindowsTree).toHaveBeenCalledWith(1234);
+    expect(kill).not.toHaveBeenCalled();
+  });
+
+  it("falls back to ordinary Cursor process termination when tree cleanup fails", () => {
+    const kill = vi.fn(() => true);
+
+    terminateCursorProcessTree({ pid: 1234, kill }, "win32", () => false);
+
+    expect(kill).toHaveBeenCalledOnce();
+  });
+
   it("launches a full Windows command-shim path without quoting it as a literal command", () => {
     if (process.platform !== "win32" || !process.env.LOCALAPPDATA) {
       return;
@@ -149,16 +233,33 @@ describe("CursorAgentProviderAdapter", () => {
       });
 
       expect(logger.enabled).toBe(true);
-      logger.log("cursor.rpc.outbound", { method: "initialize", params: { protocolVersion: 1 } });
+      logger.log("cursor.rpc.outbound", {
+        method: "session/new",
+        params: {
+          protocolVersion: 1,
+          mcpServers: [{
+            headers: [{ name: "Authorization", value: "Bearer private-loopback-token" }],
+          }],
+          apiKey: "private-provider-key",
+        },
+      });
 
       const line = readFileSync(join(logDir, "run-run-1-cursor-agent-composer-2.5.jsonl"), "utf8").trim();
       expect(JSON.parse(line)).toMatchObject({
         event: "cursor.rpc.outbound",
         data: {
-          method: "initialize",
-          params: { protocolVersion: 1 },
+          method: "session/new",
+          params: {
+            protocolVersion: 1,
+            mcpServers: [{
+              headers: [{ name: "Authorization", value: "[REDACTED]" }],
+            }],
+            apiKey: "[REDACTED]",
+          },
         },
       });
+      expect(line).not.toContain("private-loopback-token");
+      expect(line).not.toContain("private-provider-key");
     } finally {
       rmSync(logDir, { recursive: true, force: true });
     }
@@ -613,4 +714,71 @@ describe("Cursor Agent subagents", () => {
     });
     expect(keyed.agentName).toBe("generalPurpose");
   });
+});
+
+describe("Cursor private per-turn orchestration MCP", () => {
+  it("binds to loopback, requires the bearer token, exposes only BuildWarden tools, and closes cleanly", async () => {
+    const executeTool = vi.fn(async () => ({
+      toolCallId: "call-1",
+      name: "buildwarden_tasks_list" as const,
+      ok: true,
+      content: "[]",
+    }));
+    const toolContext: HarnessToolContext = {
+      tools: [
+        {
+          name: "buildwarden_tasks_list",
+          description: "List durable tasks.",
+          inputSchema: { type: "object", properties: {}, additionalProperties: false },
+        },
+        {
+          name: "read_file",
+          description: "Must remain private to the normal run harness.",
+          inputSchema: { type: "object", properties: {}, additionalProperties: false },
+        },
+      ],
+      executeTool,
+    };
+    const onToolCall = vi.fn();
+    const transport = await startCursorOrchestrationMcp(toolContext, onToolCall);
+    expect(transport).not.toBeNull();
+    const config = transport!.config as {
+      url: string;
+      headers: Array<{ name: string; value: string }>;
+    };
+    expect(config.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
+    await expect(fetch(config.url, {
+      method: "POST",
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    }).then((response) => response.status)).resolves.toBe(401);
+
+    const headers = Object.fromEntries(config.headers.map((header) => [header.name, header.value]));
+    const listed = await fetch(config.url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+    }).then((response) => response.json()) as { result: { tools: Array<{ name: string }> } };
+    expect(listed.result.tools.map((tool) => tool.name)).toEqual(["buildwarden_tasks_list"]);
+
+    const called = await fetch(config.url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "buildwarden_tasks_list", arguments: {} },
+      }),
+    }).then((response) => response.json()) as { result: { content: Array<{ text: string }>; isError: boolean } };
+    expect(called.result).toEqual({ content: [{ type: "text", text: "[]" }], isError: false });
+    expect(executeTool).toHaveBeenCalledOnce();
+    expect(onToolCall).toHaveBeenCalledWith("buildwarden_tasks_list");
+    await transport!.close();
+    await expect(fetch(config.url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ jsonrpc: "2.0", id: 4, method: "ping", params: {} }),
+    })).rejects.toThrow();
+  });
+
 });

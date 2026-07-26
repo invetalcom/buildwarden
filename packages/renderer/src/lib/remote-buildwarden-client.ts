@@ -53,6 +53,10 @@ const webCapabilities = (scopes: readonly RemoteAccessScope[]): Readonly<BuildWa
     gitMutations,
     projectCreation,
     hostDirectoryBrowser: projectCreation,
+    orchestrationRead: has("state:read"),
+    orchestrationOperate: runMutations,
+    orchestrationAdoption: runMutations && gitMutations,
+    orchestrationSettings: runMutations && adminMutations,
     liveEvents: true,
   });
 };
@@ -66,6 +70,10 @@ const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
   "queryProjectActivity",
   "checkProjectFolderGitStatus",
   "getRunDetail",
+  "getOrchestrationDetail",
+  "getOrchestrationTaskDetail",
+  "getOrchestrationAdoptionPreview",
+  "getRunDeletionImpact",
   "getRunWorktreeDiff",
   "getRunWorkspaceFile",
   "getProjectLoopUiReviewImage",
@@ -113,6 +121,14 @@ const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
   "recoverInterruptedRun",
   "undoRunToLastPrompt",
   "deleteRun",
+  "pauseOrchestration",
+  "resumeOrchestration",
+  "cancelOrchestration",
+  "finishOrchestration",
+  "sendOrchestrationTaskMessage",
+  "retryOrchestrationTask",
+  "decideOrchestrationAdoption",
+  "refreshOrchestrationTeam",
   "setRunListVisibility",
   "addBookmark",
   "removeBookmark",
@@ -173,33 +189,40 @@ const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
   "runTerminalKill",
 ]);
 
-const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, RemoteAccessScope>([
+const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAccessScope[]>([
   ...[
     "createRun", "continueRun", "followUpRun", "cancelRunShell", "cancelRun", "resumeRunFromCheckpoint",
     "recoverInterruptedRun", "undoRunToLastPrompt", "deleteRun", "setRunListVisibility", "addBookmark", "removeBookmark",
     "removeBookmarkById",
-  ].map((method) => [method as RemoteApiMethod, "run:operate" as const] as const),
+    "pauseOrchestration", "resumeOrchestration", "cancelOrchestration", "finishOrchestration",
+    "sendOrchestrationTaskMessage", "retryOrchestrationTask",
+  ].map((method) => [method as RemoteApiMethod, ["run:operate"] as const] as const),
   ...["respondToShellApproval", "respondToRunUserInput"]
-    .map((method) => [method as RemoteApiMethod, "approval:respond" as const] as const),
+    .map((method) => [method as RemoteApiMethod, ["approval:respond"] as const] as const),
   ...["createChat", "followUpChat", "cancelChat", "deleteChat", "addChatBookmark", "removeChatBookmark", "removeChatBookmarkById"]
-    .map((method) => [method as RemoteApiMethod, "chat:operate" as const] as const),
+    .map((method) => [method as RemoteApiMethod, ["chat:operate"] as const] as const),
   ...[
     "commitRun", "createRunLocalBranch", "publishRunBranch", "createRunPullRequest", "checkoutProjectBranch",
     "fetchProjectBranches", "createProjectBranch", "renameProjectBranch", "deleteProjectBranch", "pullProjectBranch",
     "pushProjectBranch", "convertProjectToGit", "updateProjectBaseBranch",
     "analyzeProjectPrMrDiff", "postProjectPrMrReview", "submitProjectPrMrComments", "replyProjectPrMrReviewThread",
     "resolveProjectPrMrReviewThread", "fetchProjectPrMrDiff",
-  ].map((method) => [method as RemoteApiMethod, "git:write" as const] as const),
+  ].map((method) => [method as RemoteApiMethod, ["git:write"] as const] as const),
   ...[
     "addProject", "reorderProjects", "addProviderAccount", "addModel", "deleteProject", "deleteProviderAccount", "deleteModel",
     "setAppSetting", "saveNetworkProxySettings", "saveProjectForgeAuthToken", "deleteProjectForgeAuthToken",
     "saveProjectForgePrMonitorSettings", "createProjectTask", "updateProjectTask", "deleteProjectTask",
     "generateProjectTaskRunPrompt", "generateProjectInsight", "runProjectLab", "deleteProjectLabThread", "createProjectLoop",
     "cancelProjectLoop", "resumeProjectLoop", "deleteProjectLoop", "respondToProjectLoopUiReview",
-  ].map((method) => [method as RemoteApiMethod, "admin" as const] as const),
+  ].map((method) => [method as RemoteApiMethod, ["admin"] as const] as const),
   ...["runTerminalStart", "runTerminalWrite", "runTerminalResize", "runTerminalKill"]
-    .map((method) => [method as RemoteApiMethod, "terminal:operate" as const] as const),
+    .map((method) => [method as RemoteApiMethod, ["terminal:operate"] as const] as const),
+  ["decideOrchestrationAdoption", ["run:operate", "git:write"]],
+  ["refreshOrchestrationTeam", ["run:operate", "admin"]],
 ]);
+
+export const listRemoteMutationMethodsMissingScopePolicy = (): RemoteApiMethod[] =>
+  [...REMOTE_MUTATION_METHODS].filter((method) => !REMOTE_MUTATION_SCOPES.has(method));
 
 const REMOTE_LOCAL_SETTING_KEYS = new Set<string>([
   APP_SETTING_KEYS.darkMode,
@@ -270,6 +293,7 @@ const REMOTE_EVENT_TYPES = new Set<RemoteStreamEventType>([
   "warning",
   "loop",
   "task",
+  "orchestration",
   "terminal-data",
   "terminal-exit",
   "browser",
@@ -295,6 +319,11 @@ const isRemoteEventPayload = (event: RemoteStreamEventType, payload: unknown): b
   if (event === "terminal-exit") return typeof payload.sessionId === "string" && Number.isInteger(payload.exitCode);
   if (event === "browser") return typeof payload.runId === "string" &&
     (payload.type === "state" || payload.type === "selection-ready" || payload.type === "frame" || payload.type === "error");
+  if (event === "orchestration") {
+    return typeof payload.projectId === "string" && typeof payload.coordinatorRunId === "string" &&
+      typeof payload.orchestrationId === "string" && typeof payload.status === "string" &&
+      typeof payload.sequence === "number";
+  }
   return typeof payload.projectId === "string" && typeof payload.taskId === "string" &&
     (payload.status === "open" || payload.status === "in_progress" || payload.status === "in_review" || payload.status === "done");
 };
@@ -573,6 +602,7 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     onAppWarning: (listener) => subscribe("warning", listener),
     onProjectLoopChanged: (listener) => subscribe("loop", listener),
     onProjectTaskChanged: (listener) => subscribe("task", listener),
+    onOrchestrationChanged: (listener) => subscribe("orchestration", listener),
     onRunTerminalData: (listener) => subscribe("terminal-data", listener),
     onRunTerminalExit: (listener) => subscribe("terminal-exit", listener),
     onRunBrowserEvent: (listener, runIds) => subscribe("browser", listener, runIds),
@@ -607,11 +637,17 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
         return (...args: unknown[]) => invoke(property as RemoteApiMethod, args as never);
       }
       if (REMOTE_MUTATION_METHODS.has(property as RemoteApiMethod)) {
-        const requiredScope = REMOTE_MUTATION_SCOPES.get(property as RemoteApiMethod);
-        if (requiredScope && !scopes.includes(requiredScope)) {
+        const requiredScopes = REMOTE_MUTATION_SCOPES.get(property as RemoteApiMethod);
+        if (!requiredScopes) {
+          return async () => {
+            throw new Error(`"${property}" is disabled because its remote authorization policy is not configured.`);
+          };
+        }
+        const missingScopes = requiredScopes.filter((scope) => !scopes.includes(scope));
+        if (missingScopes.length > 0) {
           return async () => {
             const reason = capabilities.mutations ? "this remote session" : "the read-only remote client";
-            throw new Error(`"${property}" is not available for ${reason}.`);
+            throw new Error(`"${property}" is not available for ${reason}; missing ${missingScopes.join(", ")}.`);
           };
         }
         return (...args: unknown[]) => invoke(property as RemoteApiMethod, args as never);

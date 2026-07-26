@@ -1,4 +1,4 @@
-import { appendChatAttachmentFiles, type ChatAttachmentPayload, type ProjectKind, type ProviderType, type RunMode, type RunWorkspaceType, type RunWorkspaceVcs, type SupportedIdeKind, type UnifiedProviderFamily } from "@buildwarden/shared";
+import { appendChatAttachmentFiles, type ChatAttachmentPayload, type OrchestrationStatus, type ProjectKind, type ProviderType, type RunMode, type RunWorkspaceType, type RunWorkspaceVcs, type SupportedIdeKind, type UnifiedProviderFamily } from "@buildwarden/shared";
 import { Archive, Clock3, FolderOpen, Play, PlayCircle, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
@@ -20,6 +20,7 @@ import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
 import { OpenInIdeControl } from "./open-in-ide-control";
 import type { ProjectRunStats } from "./ProjectStatisticsCard";
 import { RunComposer } from "./RunComposer";
+import { resolveRunDisplayStatus, runDisplayStatusTone } from "./run-display-status";
 
 interface ProjectOverviewTabProps {
   projectId: string;
@@ -36,6 +37,7 @@ interface ProjectOverviewTabProps {
     workspaceVcs: RunWorkspaceVcs;
     createdAt: string;
     status: "queued" | "preparing" | "running" | "completed" | "failed" | "cancelled";
+    orchestrationStatus?: OrchestrationStatus | null;
     inputTokens: number;
     outputTokens: number;
   }>;
@@ -55,6 +57,8 @@ interface ProjectOverviewTabProps {
   reasoningEffort: string;
   anthropicEffort: string;
   yoloMode: boolean;
+  delegationEnabled: boolean;
+  delegationAvailable: boolean;
   onSubmitRun: (payload: { attachments?: ChatAttachmentPayload[] }) => void | Promise<void>;
   onSetRunForLater: (runId: string) => void | Promise<void>;
   onSelectRun: (runId: string) => void;
@@ -67,6 +71,7 @@ interface ProjectOverviewTabProps {
   onReasoningEffortChange: (value: string) => void;
   onAnthropicEffortChange: (value: string) => void;
   onYoloModeChange: (value: boolean) => void;
+  onDelegationEnabledChange: (value: boolean) => void;
 }
 
 const formatRunMeta = (run: { branchName: string; workspaceType: RunWorkspaceType; workspaceVcs: RunWorkspaceVcs; createdAt: string }) => {
@@ -122,19 +127,22 @@ const RunHistory = ({ runs, visibleRuns, searchQuery, onSearchChange, onSelectRu
       <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-b-lg p-0">
         {visibleRuns.length === 0 ? <EmptyRunList hasRunSearch={hasRunSearch} hasRuns={runs.length > 0} readOnly={readOnly} /> : (
           <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto">
-            {visibleRuns.map((run) => (
-              <div key={run.id} className="flex items-center gap-3 border-t border-[var(--ec-border)] px-4 py-3 transition hover:bg-[var(--ec-hover)]">
-                <button className="min-w-0 flex-1 text-left" onClick={() => onSelectRun(run.id)} type="button">
-                  <p className="truncate text-sm font-semibold text-[var(--ec-text)]">{run.prompt}</p>
-                  <p className="mt-0.5 truncate font-mono text-xs text-[var(--ec-muted)]">{formatRunMeta(run)}</p>
-                </button>
-                <div className="flex shrink-0 items-center gap-2">
-                  <Badge dot tone={run.status}>{run.status}</Badge>
-                  <span className="font-mono text-xs text-[var(--ec-muted)]">{(run.inputTokens + run.outputTokens).toLocaleString()}</span>
-                  {!readOnly ? <Button type="button" size="icon" variant="ghost" title="Move to For later" onClick={() => void onSetRunForLater(run.id)}><Archive className="size-3.5" /></Button> : null}
+            {visibleRuns.map((run) => {
+              const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
+              return (
+                <div key={run.id} className="flex items-center gap-3 border-t border-[var(--ec-border)] px-4 py-3 transition hover:bg-[var(--ec-hover)]">
+                  <button className="min-w-0 flex-1 text-left" onClick={() => onSelectRun(run.id)} type="button">
+                    <p className="truncate text-sm font-semibold text-[var(--ec-text)]">{run.prompt}</p>
+                    <p className="mt-0.5 truncate font-mono text-xs text-[var(--ec-muted)]">{formatRunMeta(run)}</p>
+                  </button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Badge dot tone={runDisplayStatusTone(displayStatus)}>{displayStatus}</Badge>
+                    <span className="font-mono text-xs text-[var(--ec-muted)]">{(run.inputTokens + run.outputTokens).toLocaleString()}</span>
+                    {!readOnly ? <Button type="button" size="icon" variant="ghost" title="Move to For later" onClick={() => void onSetRunForLater(run.id)}><Archive className="size-3.5" /></Button> : null}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </CardContent>
@@ -164,6 +172,8 @@ export const ProjectOverviewTab = ({
   reasoningEffort,
   anthropicEffort,
   yoloMode,
+  delegationEnabled,
+  delegationAvailable,
   onSubmitRun,
   onSetRunForLater,
   onSelectRun,
@@ -176,6 +186,7 @@ export const ProjectOverviewTab = ({
   onReasoningEffortChange,
   onAnthropicEffortChange,
   onYoloModeChange,
+  onDelegationEnabledChange,
 }: ProjectOverviewTabProps) => {
   const buildwarden = useBuildWardenClient();
   const readOnly = !buildwarden.capabilities.runMutations;
@@ -308,6 +319,9 @@ export const ProjectOverviewTab = ({
               onAnthropicEffortChange={onAnthropicEffortChange}
               yoloMode={yoloMode}
               onYoloModeChange={onYoloModeChange}
+              delegationEnabled={delegationEnabled}
+              delegationAvailable={delegationAvailable}
+              onDelegationEnabledChange={onDelegationEnabledChange}
             />
           </CardContent> : null}
         </Card>

@@ -97,6 +97,10 @@ const remoteRunCapabilities = {
   gitMutations: true,
   projectCreation: false,
   hostDirectoryBrowser: false,
+  orchestrationRead: true,
+  orchestrationOperate: true,
+  orchestrationAdoption: true,
+  orchestrationSettings: false,
   liveEvents: true,
 };
 
@@ -141,6 +145,7 @@ const runRecord = (overrides: Partial<RunRecord> = {}): RunRecord => ({
   parentRunId: null,
   rootRunId: null,
   projectTaskId: null,
+  delegationEnabled: false,
   lineageTitle: null,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:05:00.000Z",
@@ -230,6 +235,7 @@ describe("renderer component states", () => {
       },
       runs: [run],
       forLaterRuns: [],
+      orchestratedRuns: [],
       activeRuns: [],
       recentRuns: [run],
       tasks: [],
@@ -240,6 +246,9 @@ describe("renderer component states", () => {
     const markup = renderToStaticMarkup(<AllRunsPage projects={[projectEntry]} onSelectRun={vi.fn()} />);
     expect(markup).toContain("Improve renderer coverage");
     expect(markup).toContain("feat/coverage");
+    expect(markup).toContain(">Done</span>");
+    expect(markup).toContain('aria-pressed="true"');
+    expect(markup).toContain('aria-pressed="false"');
   });
 
   it("renders plan, token, and context summaries", () => {
@@ -325,6 +334,8 @@ describe("renderer component states", () => {
         reasoningEffort="high"
         anthropicEffort="medium"
         yoloMode={false}
+        delegationEnabled={false}
+        delegationAvailable={true}
         onSubmitRun={vi.fn()}
         onSetRunForLater={vi.fn()}
         onSelectRun={vi.fn()}
@@ -337,10 +348,13 @@ describe("renderer component states", () => {
         onReasoningEffortChange={vi.fn()}
         onAnthropicEffortChange={vi.fn()}
         onYoloModeChange={vi.fn()}
+        onDelegationEnabledChange={vi.fn()}
       />,
     );
     expect(overviewMarkup).toContain("BuildWarden");
     expect(overviewMarkup).toContain("Improve renderer coverage");
+    expect(overviewMarkup).toContain("Orchestration");
+    expect(overviewMarkup).not.toContain("Allow delegation");
 
     const taskMarkup = renderToStaticMarkup(
       <ProjectTasksTab
@@ -498,6 +512,44 @@ describe("renderer component states", () => {
     );
     expect(markup).toContain("feat/coverage");
     expect(markup).toContain("Changes");
+  });
+
+  it("shows the orchestration status while the coordinator provider turn is idle", () => {
+    const run = runRecord({ orchestrationStatus: "waiting" });
+    const runDetail: RunDetail = { run, steps: [], notes: [], diff: "" };
+    const markup = renderToStaticMarkup(
+      <RunDetailHeader
+        run={run}
+        runDetail={runDetail}
+        tokenUsage={null}
+        busy={false}
+        pendingDelete={false}
+        configuredIdeKinds={[]}
+        canContinueRun
+        runTimelineDensity="comfortable"
+        onRunTimelineDensityChange={vi.fn()}
+        runDensityMenuOpen={false}
+        setRunDensityMenuOpen={vi.fn()}
+        runDensityMenuAnchorRef={createRef<HTMLDivElement>()}
+        runPanelToggleItems={[]}
+        runWorkspaceVisiblePanelCount={0}
+        runPanelsMenuOpen={false}
+        setRunPanelsMenuOpen={vi.fn()}
+        runPanelsMenuAnchorRef={createRef<HTMLDivElement>()}
+        publishMenuOpen={false}
+        setPublishMenuOpen={vi.fn()}
+        publishMenuAnchorRef={createRef<HTMLDivElement>()}
+        onCommitRun={vi.fn()}
+        onOpenPublishDialog={vi.fn()}
+        onOpenBranchPublishDialog={vi.fn()}
+        onOpenInIde={vi.fn()}
+        onOpenFileManager={vi.fn()}
+        onOpenContinueRunDialog={vi.fn()}
+        onDeleteRun={vi.fn()}
+      />,
+    );
+    expect(markup).toContain(">waiting<");
+    expect(markup).toContain("waiting for orchestrated tasks");
   });
 
   it("renders provider registries and navigation states", () => {

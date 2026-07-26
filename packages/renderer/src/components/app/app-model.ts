@@ -267,6 +267,13 @@ export const paneForOpenRunId = (panes: OpenRunPanes, runId: string): RunPaneId 
 
 export const firstOpenRunId = (panes: OpenRunPanes): string | null => getOpenRunPaneEntries(panes)[0]?.runId ?? null;
 
+export const removeRunIdsFromOpenPanes = (
+  panes: OpenRunPanes,
+  runIds: ReadonlySet<string>,
+): OpenRunPanes => Object.fromEntries(
+  Object.entries(panes).filter(([, runId]) => !runIds.has(runId)),
+) as OpenRunPanes;
+
 export const parseRunDragPayload = (event: ReactDragEvent<HTMLElement>): RunDragPayload | null => {
   const raw = event.dataTransfer.getData(RUN_DRAG_MIME_TYPE) || event.dataTransfer.getData("text/plain");
   if (!raw) {
@@ -294,6 +301,7 @@ export const cloneDefaultRunWorkspaceLayoutPreference = (): RunWorkspaceLayoutPr
   tileOrder: [...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileOrder],
   tileLayout: {
     activity: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.activity },
+    agents: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.agents },
     diff: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.diff },
     terminal: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.terminal },
     browser: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.browser },
