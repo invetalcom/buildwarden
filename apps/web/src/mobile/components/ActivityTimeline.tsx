@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { RunDetail } from "@buildwarden/shared";
+import type { RunDetail, RunStepRecord } from "@buildwarden/shared";
 import {
   buildActivityEntries,
   describeActivityDetail,
@@ -18,6 +18,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { relativeTime } from "../lib/format";
+import { dedupeFinalSummarySteps, summaryDuplicatesTranscript } from "../lib/run-activity-dedupe";
 import { RichText } from "./RichText";
 import { Badge } from "./primitives";
 
@@ -36,8 +37,8 @@ import { Badge } from "./primitives";
 
 const PAGE_SIZE = 60;
 
-const stepsForModel = (detail: RunDetail): RunActivityStep[] =>
-  detail.steps.map((step) => ({
+const stepsForModel = (steps: readonly RunStepRecord[]): RunActivityStep[] =>
+  steps.map((step) => ({
     id: step.id,
     eventType: step.eventType,
     title: step.title,
@@ -223,10 +224,17 @@ export const ActivityTimeline = ({ detail }: { detail: RunDetail }) => {
   const stickToBottom = useRef(true);
   const runActive = ["queued", "preparing", "running"].includes(detail.run.status);
 
+  const steps = useMemo(() => dedupeFinalSummarySteps(detail.steps), [detail.steps]);
+
   const entries = useMemo(
-    () => buildActivityEntries(stepsForModel(detail), { runActive }),
-    [detail, runActive],
+    () => buildActivityEntries(stepsForModel(steps), { runActive }),
+    [steps, runActive],
   );
+
+  // The stored summary is normally the same text the transcript already ends with; only surface it
+  // when the run actually says something the timeline does not.
+  const summary = detail.run.summary?.trim() ?? "";
+  const showSummary = Boolean(summary) && !summaryDuplicatesTranscript(summary, steps);
 
   const visible = entries.slice(Math.max(0, entries.length - limit));
   const hidden = entries.length - visible.length;
@@ -267,10 +275,10 @@ export const ActivityTimeline = ({ detail }: { detail: RunDetail }) => {
       {visible.map((entry, index) => (
         <EntryView key={`${index}-${entry.kind}`} entry={entry} />
       ))}
-      {detail.run.summary ? (
+      {showSummary ? (
         <div className="mx-3 mt-2 rounded-lg border border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] px-3 py-2">
           <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--ec-success)]">Summary</p>
-          <RichText className="mt-1">{detail.run.summary}</RichText>
+          <RichText className="mt-1">{summary}</RichText>
         </div>
       ) : null}
       {detail.run.errorMessage ? (
