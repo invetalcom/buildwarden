@@ -29,7 +29,16 @@ export const PROJECT_TABS = [
 ] as const;
 export type ProjectTab = (typeof PROJECT_TABS)[number];
 
-export const SETTINGS_SECTIONS = ["appearance", "models", "workspace", "session", "about"] as const;
+export const SETTINGS_SECTIONS = [
+  "appearance",
+  "models",
+  "workspace",
+  "skills",
+  "orchestration",
+  "network",
+  "session",
+  "about",
+] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 export type MobileRoute =

@@ -41,7 +41,8 @@ export const Button = ({
     className={cn(
       "inline-flex items-center justify-center gap-2 rounded-md font-medium transition select-none",
       "disabled:opacity-45",
-      size === "md" ? "min-h-11 px-4 text-sm" : "min-h-9 px-3 text-xs",
+      // "sm" is compact in text and padding, never in height: every button stays a 44px target.
+      size === "md" ? "min-h-11 px-4 text-sm" : "min-h-11 px-3 text-xs",
       block && "w-full",
       BUTTON_TONES[tone],
       className,

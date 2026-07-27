@@ -9,6 +9,7 @@ import type { ProjectTab } from "../nav/mobile-router";
 import { AppBar } from "../components/AppBar";
 import { RunListRow } from "../components/RunListRow";
 import { Badge, Button, CenteredSpinner, EmptyState, InlineError, ListRow, SectionLabel, SegmentedTabs, type SegmentOption } from "../components/primitives";
+import { ProjectSettingsPanel } from "./project/ProjectSettingsPanel";
 
 const TASK_TONES = { open: "neutral", in_progress: "accent", in_review: "warning", done: "success" } as const;
 
@@ -117,6 +118,7 @@ export const ProjectScreen = ({ projectId, tab }: { projectId: string; tab: Proj
     ];
     if (project?.project.kind === "git") base.push({ value: "branches", label: "Branches" });
     base.push({ value: "for-later", label: "For later", ...(forLater.length ? { badge: forLater.length } : {}) });
+    base.push({ value: "settings", label: "Settings" });
     return base;
   }, [forLater.length, project?.project.kind, project?.tasks.length, runs.length]);
 
@@ -202,6 +204,8 @@ export const ProjectScreen = ({ projectId, tab }: { projectId: string; tab: Proj
 
       {activeTab === "branches" ? <BranchesTab projectId={projectId} /> : null}
 
+      {activeTab === "settings" ? <ProjectSettingsPanel project={project} /> : null}
+
       {activeTab === "for-later" ? (
         <div className="m-scroll m-screen-enter flex-1">
           {forLater.length === 0 ? (
@@ -213,7 +217,8 @@ export const ProjectScreen = ({ projectId, tab }: { projectId: string; tab: Proj
         </div>
       ) : null}
 
-      {client.capabilities.runMutations ? (
+      {/* The settings tab is a form; a floating action button would sit on top of its controls. */}
+      {client.capabilities.runMutations && activeTab !== "settings" ? (
         <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center">
           <Button
             className="pointer-events-auto h-12 rounded-full px-5 shadow-[var(--ec-action-shadow)]"
