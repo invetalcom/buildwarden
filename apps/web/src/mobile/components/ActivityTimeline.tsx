@@ -18,7 +18,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { relativeTime } from "../lib/format";
-import { dedupeFinalSummarySteps, summaryDuplicatesTranscript } from "../lib/run-activity-dedupe";
+import { dedupeFinalSummarySteps, finalAssistantStep, summaryDuplicatesTranscript } from "../lib/run-activity-dedupe";
 import { RichText } from "./RichText";
 import { Badge } from "./primitives";
 
@@ -64,7 +64,13 @@ const Collapsible = ({ summary, children, defaultOpen = false }: { summary: Reac
   );
 };
 
-const SingleRow = ({ entry }: { entry: Extract<SingleActivityEntry, { kind: "single" }> }) => {
+const SingleRow = ({
+  entry,
+  isFinalResponse = false,
+}: {
+  entry: Extract<SingleActivityEntry, { kind: "single" }>;
+  isFinalResponse?: boolean;
+}) => {
   const { step, metadata } = entry;
   const isUser = metadata.source === "user";
   const isError = step.eventType === "error";
@@ -110,6 +116,17 @@ const SingleRow = ({ entry }: { entry: Extract<SingleActivityEntry, { kind: "sin
         <Collapsible summary={<span className="text-[11px] font-medium uppercase tracking-[0.1em] text-[var(--ec-faint)]">Reasoning</span>}>
           <RichText className="text-[var(--ec-muted)]">{step.content}</RichText>
         </Collapsible>
+      </div>
+    );
+  }
+
+  // A finished run's answer is what a phone user scrolls to the bottom for; lift it out of the
+  // stream of ordinary output rows instead of repeating it in a second card.
+  if (isFinalResponse) {
+    return (
+      <div className="mx-3 my-2 rounded-lg border border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] px-3 py-2.5">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--ec-success)]">Final response</p>
+        <RichText className="mt-1">{step.content}</RichText>
       </div>
     );
   }
@@ -162,17 +179,17 @@ const ToolRow = ({ entry }: { entry: Extract<SingleActivityEntry, { kind: "tool"
   );
 };
 
-const EntryView = ({ entry }: { entry: ActivityEntry }) => {
+const EntryView = ({ entry, finalResponseStepId }: { entry: ActivityEntry; finalResponseStepId: string | null }) => {
   switch (entry.kind) {
     case "single":
-      return <SingleRow entry={entry} />;
+      return <SingleRow entry={entry} isFinalResponse={entry.step.id === finalResponseStepId} />;
     case "tool":
       return <ToolRow entry={entry} />;
     case "single-group":
       return (
         <div className="flex flex-col">
           {entry.items.map((item) => (
-            <SingleRow key={item.step.id} entry={item} />
+            <SingleRow key={item.step.id} entry={item} isFinalResponse={item.step.id === finalResponseStepId} />
           ))}
         </div>
       );
@@ -209,7 +226,7 @@ const EntryView = ({ entry }: { entry: ActivityEntry }) => {
           >
             <div className="flex flex-col border-l border-[var(--ec-border)] pl-1">
               {entry.entries.map((nested, index) => (
-                <EntryView key={index} entry={nested} />
+                <EntryView key={index} entry={nested} finalResponseStepId={finalResponseStepId} />
               ))}
             </div>
           </Collapsible>
@@ -229,6 +246,13 @@ export const ActivityTimeline = ({ detail }: { detail: RunDetail }) => {
   const entries = useMemo(
     () => buildActivityEntries(stepsForModel(steps), { runActive }),
     [steps, runActive],
+  );
+
+  // Only a finished run has a final answer; highlighting the newest message mid-run would make it
+  // flip in and out of the callout as the agent keeps talking.
+  const finalResponseStepId = useMemo(
+    () => (runActive ? null : finalAssistantStep(steps)?.id ?? null),
+    [runActive, steps],
   );
 
   // The stored summary is normally the same text the transcript already ends with; only surface it
@@ -273,11 +297,13 @@ export const ActivityTimeline = ({ detail }: { detail: RunDetail }) => {
         </button>
       ) : null}
       {visible.map((entry, index) => (
-        <EntryView key={`${index}-${entry.kind}`} entry={entry} />
+        <EntryView key={`${index}-${entry.kind}`} entry={entry} finalResponseStepId={finalResponseStepId} />
       ))}
+      {/* Neutral, not green: the green callout means "the agent's final answer", and this card only
+          appears in the rare case where the stored summary says something different. */}
       {showSummary ? (
-        <div className="mx-3 mt-2 rounded-lg border border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] px-3 py-2">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--ec-success)]">Summary</p>
+        <div className="mx-3 mt-2 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-2">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--ec-faint)]">Run summary</p>
           <RichText className="mt-1">{summary}</RichText>
         </div>
       ) : null}

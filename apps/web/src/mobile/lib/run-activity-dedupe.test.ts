@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { RunStepRecord } from "@buildwarden/shared";
 import {
   dedupeFinalSummarySteps,
+  finalAssistantStep,
   latestAssistantOutputText,
   summaryDuplicatesTranscript,
 } from "./run-activity-dedupe";
@@ -74,6 +75,28 @@ describe("dedupeFinalSummarySteps", () => {
   it("survives malformed metadata", () => {
     const broken: RunStepRecord = { ...step("a", "output", FINAL), metadataJson: "{not json" };
     expect(dedupeFinalSummarySteps([broken]).map((entry) => entry.id)).toEqual(["a"]);
+  });
+});
+
+describe("finalAssistantStep", () => {
+  it("picks the last assistant message, skipping reasoning, status and tool steps", () => {
+    const steps = [
+      step("a", "output", "first"),
+      step("b", "output", "second"),
+      step("r", "output", "thinking", { assistantKind: "reasoning" }, "Reasoning"),
+      step("t", "tool-result", "shell output", { toolName: "run_shell" }, "run_shell"),
+      step("s", "status", "", {}, "Run completed"),
+    ];
+    expect(finalAssistantStep(steps)?.id).toBe("b");
+  });
+
+  it("skips empty assistant messages so the callout never lands on a blank step", () => {
+    const steps = [step("a", "output", "real answer"), step("b", "output", "   ")];
+    expect(finalAssistantStep(steps)?.id).toBe("a");
+  });
+
+  it("returns null when the run produced no assistant output", () => {
+    expect(finalAssistantStep([step("s", "status", "", {}, "Run completed")])).toBeNull();
   });
 });
 

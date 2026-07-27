@@ -54,16 +54,20 @@ export const dedupeFinalSummarySteps = (steps: readonly RunStepRecord[]): RunSte
   return deduped;
 };
 
-/** Normalised text of the last assistant message, ignoring reasoning steps. */
-export const latestAssistantOutputText = (steps: readonly RunStepRecord[]): string => {
+/** The last assistant message, ignoring reasoning steps — a finished run's actual answer. */
+export const finalAssistantStep = (steps: readonly RunStepRecord[]): RunStepRecord | null => {
   for (let index = steps.length - 1; index >= 0; index -= 1) {
     const step = steps[index];
-    if (isAssistantOutput(step, parseMetadata(step.metadataJson))) {
-      return normalizeAssistantOutputText(step.content);
+    if (isAssistantOutput(step, parseMetadata(step.metadataJson)) && step.content.trim()) {
+      return step;
     }
   }
-  return "";
+  return null;
 };
+
+/** Normalised text of the last assistant message, ignoring reasoning steps. */
+export const latestAssistantOutputText = (steps: readonly RunStepRecord[]): string =>
+  normalizeAssistantOutputText(finalAssistantStep(steps)?.content ?? "");
 
 /**
  * True when `run.summary` only repeats what the transcript already ends with — the usual case,
