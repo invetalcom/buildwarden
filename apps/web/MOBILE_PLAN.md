@@ -420,8 +420,12 @@ covers the mobile client unchanged. Adding the manifest needs `manifest-src 'sel
   xterm / CodeMirror / mermaid out of the mobile initial chunk.
 - Both `--mode hosted` (Vercel) and `--mode embedded` (`apps/desktop/out/web`) get the mobile shell
   for free, so a phone on the tailnet hitting the desktop host directly gets it too.
-- `apps/web/package.json` needs no new runtime deps beyond `@tanstack/react-virtual` (list
-  virtualisation) — everything else is already there via `@buildwarden/renderer`.
+- `apps/web/package.json` gains the markdown pipeline (`react-markdown`, `remark-gfm`,
+  `rehype-raw`, `rehype-sanitize`) so agent output renders as Markdown rather than raw text.
+  All four are already in the lockfile via `@buildwarden/renderer`, so no new package enters the
+  repo. Sanitisation is duplicated in `mobile/lib/markdown-sanitize.ts` rather than imported,
+  because the desktop schema lives inside a component file that must not be modified;
+  `markdown-sanitize.test.ts` fails the build if the two allow-lists diverge.
 
 ---
 
@@ -472,6 +476,10 @@ workspace (581 tests), and both `pnpm --filter @buildwarden/web build` and `buil
 - **Router** — hash-backed stack with hardware-back support, 20 unit tests.
 - **Data layer** — `use-snapshot` (with `visibilitychange`/`online` re-fetch and the polling
   fallback), `use-run-detail` (deferred diff), `use-chat-detail`, `use-approval-queue`, `use-action`.
+- **Markdown** — run activity and chat transcripts render through `react-markdown` + GFM +
+  sanitised raw HTML, matching the desktop pipeline. Mobile-specific: code blocks and tables scroll
+  inside their own boxes so the page never scrolls sideways, and workspace-relative file references
+  render as text rather than links that a browser cannot follow.
 - **Screens** — Home, Runs, Run detail (Activity / Diff / Files / Agents / Notes / Chat), Chats,
   Chat detail, Projects, Project (Overview / Runs / Tasks / Branches / For later), Bookmarks,
   Search, Settings (5 sub-pages), New run, Pairing.

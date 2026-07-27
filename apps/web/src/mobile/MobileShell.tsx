@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { parseUiTheme } from "@buildwarden/shared";
 import type { BuildWardenClient } from "@buildwarden/renderer";
 import { FolderGit2, Plus, Settings } from "lucide-react";
@@ -10,19 +10,25 @@ import { useMobileRouter } from "./nav/mobile-router";
 import { ApprovalSheet } from "./components/ApprovalSheet";
 import { Drawer } from "./components/Drawer";
 import { TabBar } from "./components/TabBar";
-import { Badge, ListRow, SectionLabel } from "./components/primitives";
+import { Badge, CenteredSpinner, ListRow, SectionLabel } from "./components/primitives";
 import { BookmarksScreen } from "./screens/BookmarksScreen";
-import { ChatDetailScreen } from "./screens/ChatDetailScreen";
 import { ChatsScreen } from "./screens/ChatsScreen";
 import { HomeScreen } from "./screens/HomeScreen";
 import { MoreScreen } from "./screens/MoreScreen";
 import { NewRunScreen } from "./screens/NewRunScreen";
 import { ProjectScreen } from "./screens/ProjectScreen";
 import { ProjectsScreen } from "./screens/ProjectsScreen";
-import { RunDetailScreen } from "./screens/RunDetailScreen";
 import { RunsScreen } from "./screens/RunsScreen";
 import { SearchScreen } from "./screens/SearchScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
+
+/**
+ * The two transcript screens are the only ones that render Markdown or parse diffs, which together
+ * are heavier than the whole rest of the mobile UI. Loading them on demand keeps the list screens
+ * — the first thing a phone paints — small.
+ */
+const RunDetailScreen = lazy(() => import("./screens/RunDetailScreen").then((m) => ({ default: m.RunDetailScreen })));
+const ChatDetailScreen = lazy(() => import("./screens/ChatDetailScreen").then((m) => ({ default: m.ChatDetailScreen })));
 
 const ProjectDrawerContent = ({ onClose }: { onClose: () => void }) => {
   const { snapshot, activeProjectId, selectProject, router, client } = useMobileApp();
@@ -160,7 +166,9 @@ export const MobileShell = ({
     <MobileAppProvider value={value}>
       <div className="m-shell">
         <div className="relative flex min-h-0 flex-1 flex-col">
-          <CurrentScreen />
+          <Suspense fallback={<CenteredSpinner />}>
+            <CurrentScreen />
+          </Suspense>
         </div>
         <TabBar
           active={router.activeTab}

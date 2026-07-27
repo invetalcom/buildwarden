@@ -1,29 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitDiffByFile, splitFencedBlocks } from "./text-blocks";
-
-describe("splitFencedBlocks", () => {
-  it("separates prose from fenced code and keeps the language", () => {
-    expect(splitFencedBlocks("Before\n```ts\nconst a = 1;\n```\nAfter")).toEqual([
-      { kind: "text", content: "Before\n" },
-      { kind: "code", language: "ts", content: "const a = 1;\n" },
-      { kind: "text", content: "\nAfter" },
-    ]);
-  });
-
-  it("handles a fence with no language", () => {
-    expect(splitFencedBlocks("```\nplain\n```")).toEqual([{ kind: "code", language: "", content: "plain\n" }]);
-  });
-
-  it("leaves an unterminated fence as prose rather than swallowing the rest", () => {
-    expect(splitFencedBlocks("text ```ts\nnever closed")).toEqual([
-      { kind: "text", content: "text ```ts\nnever closed" },
-    ]);
-  });
-
-  it("drops blank segments", () => {
-    expect(splitFencedBlocks("   ")).toEqual([]);
-  });
-});
+import { splitDiffByFile } from "./text-blocks";
 
 describe("splitDiffByFile", () => {
   const diff = [
