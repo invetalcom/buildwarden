@@ -3,6 +3,7 @@ import type { RunDetail, RunStepRecord } from "@buildwarden/shared";
 import {
   buildActivityEntries,
   describeActivityDetail,
+  describeToolTarget,
   type ActivityEntry,
   type RunActivityStep,
   type SingleActivityEntry,
@@ -148,7 +149,7 @@ const ToolRow = ({ entry }: { entry: Extract<SingleActivityEntry, { kind: "tool"
   const call = entry.callMetadata ?? {};
   const result = entry.resultMetadata ?? {};
   const toolName = (call.toolName ?? result.toolName ?? entry.callStep?.title ?? "tool") as string;
-  const target = describeActivityDetail(call) ?? describeActivityDetail(result) ?? "";
+  const target = describeToolTarget(call, result) ?? "";
   const failed = result.ok === false || entry.resultStep?.eventType === "error";
   const pending = !entry.resultStep;
   const output = entry.resultStep?.content ?? "";

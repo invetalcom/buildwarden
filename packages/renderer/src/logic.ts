@@ -34,6 +34,7 @@ export {
   buildTimelineRenderItems,
   deriveRunSubagents,
   describeActivityDetail,
+  describeToolTarget,
   getLatestPlanDecisionText,
   isRunCompletionStatus,
   readUserInputAnswers,

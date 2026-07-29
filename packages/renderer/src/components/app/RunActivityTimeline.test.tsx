@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { renderWithBuildWardenClient as renderToStaticMarkup } from "../../lib/buildwarden-client-test-utils";
 import { RunActivityTimeline } from "./RunActivityTimeline";
-import { buildActivityEntries, buildTimelineRenderItems, deriveRunSubagents, type RunActivityStep } from "./run-activity-model";
+import {
+  buildActivityEntries,
+  buildTimelineRenderItems,
+  deriveRunSubagents,
+  describeToolTarget,
+  type RunActivityStep,
+} from "./run-activity-model";
 import { isOpenableToolPath } from "./run-activity-tool-model";
 
 const step = (
@@ -325,5 +331,36 @@ describe("run activity timeline subagent cancellation", () => {
     });
     const stoppedEntries = buildActivityEntries([completedStep], { runActive: false });
     expect(stoppedEntries[0]?.kind === "subagent" ? stoppedEntries[0].info.status : null).toBe("completed");
+  });
+});
+
+describe("tool target resolution", () => {
+  it("reads an ai-sdk path out of the call arguments while the tool is still running", () => {
+    // ai-sdk only carries the raw arguments on the call and lifts `path` onto the result, so a
+    // pending row has nothing but `arguments` to describe what the tool is touching.
+    expect(describeToolTarget({ toolName: "read_file", arguments: { path: "src/app.css" } }, undefined)).toBe(
+      "src/app.css",
+    );
+    expect(describeToolTarget({ toolName: "edit_file", arguments: { file_path: "src/app.ts" } }, undefined)).toBe(
+      "src/app.ts",
+    );
+  });
+
+  it("falls back to the tool result when the call carries no arguments", () => {
+    expect(describeToolTarget({ toolName: "write_file" }, { toolName: "write_file", path: "src/app.html" })).toBe(
+      "src/app.html",
+    );
+  });
+
+  it("keeps using codex-style call metadata", () => {
+    expect(describeToolTarget({ toolName: "run_shell", command: "npm run build" }, undefined)).toBe("npm run build");
+    expect(describeToolTarget({ toolName: "write_file", path: "src/app.ts" }, { toolName: "write_file" })).toBe(
+      "src/app.ts",
+    );
+  });
+
+  it("never falls back to the tool name, which the row already labels", () => {
+    expect(describeToolTarget({ toolName: "read_file" }, { toolName: "read_file", ok: true })).toBeNull();
+    expect(describeToolTarget({ toolName: "read_file", arguments: { path: "  " } }, undefined)).toBeNull();
   });
 });

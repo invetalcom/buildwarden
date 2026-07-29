@@ -226,6 +226,41 @@ export const describeActivityDetail = (metadata: Record<string, unknown> | undef
   return (metadata?.path ?? metadata?.command ?? metadata?.query ?? metadata?.toolName) as string | null;
 };
 
+const nonEmptyString = (...candidates: unknown[]): string | null => {
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate;
+    }
+  }
+  return null;
+};
+
+/**
+ * What a tool row acted on (a file path, a shell command, a search query) — never the tool name,
+ * which callers already render as the row label.
+ *
+ * Providers disagree about where that value lives: codex-cli puts `path`/`command` on the tool-call
+ * metadata, while ai-sdk only carries the raw `arguments` there and lifts `path` onto the tool
+ * result. Reading both sides (and the call arguments, which exist as soon as the call starts) keeps
+ * the target visible while the tool is still running, whichever provider produced the run.
+ */
+export const describeToolTarget = (
+  callMetadata: Record<string, unknown> | undefined,
+  resultMetadata: Record<string, unknown> | undefined,
+): string | null => {
+  const fromMetadata = (metadata: Record<string, unknown> | undefined): string | null => {
+    if (!metadata) return null;
+    const direct = nonEmptyString(metadata.path, metadata.command, metadata.query);
+    if (direct) return direct;
+    const args = metadata.arguments;
+    if (!args || typeof args !== "object" || Array.isArray(args)) return null;
+    const record = args as Record<string, unknown>;
+    return nonEmptyString(record.path, record.file_path, record.command, record.query);
+  };
+
+  return fromMetadata(callMetadata) ?? fromMetadata(resultMetadata);
+};
+
 const normalizeShellCommandForActivity = (value: unknown) =>
   typeof value === "string" ? value.replace(/\s+/g, " ").trim() : null;
 
