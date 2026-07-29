@@ -160,7 +160,6 @@ export interface ListRowProps {
   trailing?: ReactNode;
   /** Renders a chevron and makes the whole row tappable. */
   onClick?: () => void;
-  onLongPress?: () => void;
   className?: string;
   danger?: boolean;
 }
