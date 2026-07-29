@@ -157,6 +157,8 @@ export const useMobileRouter = (): MobileRouter => {
   const [stack, setStack] = useState<MobileRoute[]>(readInitialStack);
   /** Guards the hash-sync effect while a popstate is being applied, so back does not re-push. */
   const applyingHistory = useRef(false);
+  /** Set by {@link replace} so the next hash sync swaps the current entry instead of adding one. */
+  const pendingReplace = useRef(false);
 
   const route = stack[stack.length - 1] ?? HOME_ROUTE;
 
@@ -181,12 +183,19 @@ export const useMobileRouter = (): MobileRouter => {
 
   useEffect(() => {
     const target = `#${serializeRoute(route)}`;
+    // Consumed even when the sync is skipped below, so a replace never leaks into a later push.
+    const replacing = pendingReplace.current;
+    pendingReplace.current = false;
     if (applyingHistory.current) {
       applyingHistory.current = false;
       return;
     }
     if (window.location.hash !== target) {
-      window.history.pushState(null, "", target);
+      if (replacing) {
+        window.history.replaceState(null, "", target);
+      } else {
+        window.history.pushState(null, "", target);
+      }
     }
   }, [route]);
 
@@ -195,12 +204,17 @@ export const useMobileRouter = (): MobileRouter => {
   }, []);
 
   const replace = useCallback((next: MobileRoute) => {
+    pendingReplace.current = true;
     setStack((current) => [...current.slice(0, -1), next]);
   }, []);
 
+  // Go through the browser rather than popping the stack directly: popping locally would make the
+  // sync effect push the previous route as a *new* entry, so the hardware back button would then
+  // return to the screen the user just left. onPopState applies the real navigation to the stack.
+  // A deeper stack always implies a matching pushState in this document, so this stays in-app.
   const back = useCallback(() => {
-    setStack((current) => (current.length > 1 ? current.slice(0, -1) : current));
-  }, []);
+    if (stack.length > 1) window.history.back();
+  }, [stack.length]);
 
   const selectTab = useCallback((tab: MobileTab) => {
     setStack((current) => applyTabSwitch(current, tab));
