@@ -16,7 +16,13 @@ export const RunNotesPanel = ({ detail, onChanged }: { detail: RunDetail; onChan
 
   const add = async () => {
     if (!draft.trim()) return;
-    await action.run(() => client.addRunNote(detail.run.id, { content: draft.trim() }), "Could not save the note.");
+    const note = await action.run(
+      () => client.addRunNote(detail.run.id, { content: draft.trim() }),
+      "Could not save the note.",
+    );
+    // The host returns the stored note; undefined means it never landed, and clearing the composer
+    // then would throw away text the user cannot get back.
+    if (!note) return;
     setDraft("");
     setComposing(false);
     await onChanged();
