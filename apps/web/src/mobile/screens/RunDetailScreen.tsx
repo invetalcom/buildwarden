@@ -17,7 +17,7 @@ import { useMobileApp } from "../data/mobile-app-context";
 import { useAction } from "../data/use-action";
 import { useRunDetail } from "../data/use-run-detail";
 import { modelLabel } from "../data/selectors";
-import { compactNumber, runTitle } from "../lib/format";
+import { compactNumber, errorMessage, runTitle } from "../lib/format";
 import type { RunSegment } from "../nav/mobile-router";
 import { ActivityTimeline } from "../components/ActivityTimeline";
 import { AppBar } from "../components/AppBar";
@@ -43,6 +43,7 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
   const [confirm, setConfirm] = useState<PendingConfirm>(null);
   const [gitSheet, setGitSheet] = useState<"commit" | "branch" | "pr" | null>(null);
   const [runChat, setRunChat] = useState<ChatDetail | null>(null);
+  const [chatError, setChatError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const detail = store.detail;
@@ -80,9 +81,14 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
   useEffect(() => {
     if (activeSegment !== "chat") return;
     let cancelled = false;
-    void client.getRunChat(runId).then((next) => {
-      if (!cancelled) setRunChat(next);
-    });
+    void client
+      .getRunChat(runId)
+      .then((next) => {
+        if (!cancelled) setRunChat(next);
+      })
+      .catch((caught: unknown) => {
+        if (!cancelled) setChatError(errorMessage(caught, "Could not load the run chat."));
+      });
     return () => {
       cancelled = true;
     };
@@ -101,12 +107,14 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
   const sendRunChat = async (prompt: string) => {
     const model = detail?.run.modelId;
     if (!model) return;
-    if (runChat) {
-      await action.run(() => client.followUpChat(runChat.chat.id, prompt), "The message did not send.");
-    } else {
-      await action.run(() => client.createRunChat(runId, { modelId: model, prompt }), "Could not start the run chat.");
-    }
-    setRunChat(await client.getRunChat(runId));
+    const sent = runChat
+      ? await action.ok(() => client.followUpChat(runChat.chat.id, prompt), "The message did not send.")
+      : await action.ok(() => client.createRunChat(runId, { modelId: model, prompt }), "Could not start the run chat.");
+    if (!sent) return;
+    // Reloading the transcript is a read, but it runs from a send handler: without this it would
+    // reject out of the handler as an unhandled rejection instead of reaching the user.
+    const next = await action.run(() => client.getRunChat(runId), "Could not reload the run chat.");
+    if (next !== undefined) setRunChat(next);
   };
 
   if (store.loading && !detail) {
@@ -195,6 +203,7 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
 
       {activeSegment === "chat" ? (
         <div className="m-scroll flex-1 py-2">
+          {chatError ? <InlineError message={chatError} /> : null}
           {runChat ? (
             runChat.steps.map((step) => (
               <div key={step.id} className="px-4 py-1.5">

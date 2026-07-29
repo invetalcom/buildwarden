@@ -3,6 +3,7 @@ import type { RunPublishOptions } from "@buildwarden/shared";
 import { Sparkles } from "lucide-react";
 import { useMobileApp } from "../../data/mobile-app-context";
 import { useAction } from "../../data/use-action";
+import { errorMessage } from "../../lib/format";
 import { Sheet } from "../../components/Sheet";
 import { Button, CenteredSpinner, InlineError, Input, Textarea } from "../../components/primitives";
 
@@ -124,20 +125,31 @@ export const PullRequestSheet = ({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
 
+  const [optionsError, setOptionsError] = useState<string | null>(null);
+  const [reloadNonce, setReloadNonce] = useState(0);
+
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    void client.getRunPublishOptions(runId).then((next) => {
-      if (cancelled) return;
-      setOptions(next);
-      setTarget(next.defaultTargetBranch);
-      setTitle(next.suggestedTitle);
-      setDescription(next.defaultDescription);
-    });
+    setOptionsError(null);
+    void client
+      .getRunPublishOptions(runId)
+      .then((next) => {
+        if (cancelled) return;
+        setOptions(next);
+        setTarget(next.defaultTargetBranch);
+        setTitle(next.suggestedTitle);
+        setDescription(next.defaultDescription);
+      })
+      // Without this the sheet sits on "Loading branches" forever after a dropped connection, and
+      // the rejection escapes as an unhandled one.
+      .catch((caught: unknown) => {
+        if (!cancelled) setOptionsError(errorMessage(caught, "Could not load the branches for this run."));
+      });
     return () => {
       cancelled = true;
     };
-  }, [client, open, runId]);
+  }, [client, open, reloadNonce, runId]);
 
   const generate = async () => {
     const suggestion = await action.run(
@@ -170,7 +182,9 @@ export const PullRequestSheet = ({
         </Button>
       }
     >
-      {!options ? (
+      {optionsError && !options ? (
+        <InlineError message={optionsError} onRetry={() => setReloadNonce((current) => current + 1)} />
+      ) : !options ? (
         <CenteredSpinner label="Loading branches" />
       ) : (
         <div className="flex flex-col gap-3 px-4 py-3">
