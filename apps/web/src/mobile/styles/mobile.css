@@ -100,6 +100,27 @@ body {
   animation: m-fade-in 140ms ease-out both;
 }
 
+/* Shimmering rail above "Agent is working…", mirroring the desktop timeline's loading row. */
+.m-shimmer {
+  height: 2px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--ec-accent) 45%, transparent),
+    color-mix(in srgb, var(--ec-accent) 85%, transparent),
+    color-mix(in srgb, var(--ec-accent) 45%, transparent),
+    transparent
+  );
+  background-size: 200% 100%;
+  animation: m-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes m-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
 @keyframes m-sheet-in {
   from { transform: translateY(100%); }
   to { transform: translateY(0); }
@@ -119,7 +140,8 @@ body {
   .m-sheet-enter,
   .m-scrim-enter,
   .m-drawer-enter,
-  .m-screen-enter {
+  .m-screen-enter,
+  .m-shimmer {
     animation: none;
   }
 }

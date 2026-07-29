@@ -15,6 +15,7 @@ import {
   ChevronRight,
   FileDiff,
   Info,
+  Loader2,
   Terminal,
   Wrench,
 } from "lucide-react";
@@ -187,6 +188,21 @@ const ToolRow = ({ entry }: { entry: Extract<SingleActivityEntry, { kind: "tool"
   );
 };
 
+/**
+ * Desktop shows this for the whole time a run is active (`showLoading={isRunActive}`), always as the
+ * last row, and suppresses the empty state while it is up. Same rules here: an active run with no
+ * steps yet reads as working rather than empty, and a run that stops loses the row immediately.
+ */
+const WorkingRow = () => (
+  <div className="mx-3 my-2 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-2.5">
+    <div className="m-shimmer mb-2" />
+    <div className="flex items-center gap-2 text-[11px] text-[var(--ec-faint)]">
+      <Loader2 className="size-3.5 shrink-0 animate-spin text-[var(--ec-accent)]" aria-hidden />
+      <span className="animate-pulse">Agent is working...</span>
+    </div>
+  </div>
+);
+
 const EntryView = ({ entry, finalResponseStepId }: { entry: ActivityEntry; finalResponseStepId: string | null }) => {
   switch (entry.kind) {
     case "single":
@@ -275,20 +291,24 @@ export const ActivityTimeline = ({ detail }: { detail: RunDetail }) => {
     setLimit(PAGE_SIZE);
   }, [detail.run.id]);
 
+  // runActive is a dependency because the working row appearing or disappearing changes the height
+  // of the timeline without changing the entry count.
   useEffect(() => {
     if (!stickToBottom.current) return;
     bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [entries.length]);
+  }, [entries.length, runActive]);
 
   const onScroll = (event: React.UIEvent<HTMLDivElement>) => {
     const element = event.currentTarget;
     stickToBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 120;
   };
 
-  if (entries.length === 0) {
+  // An active run is never "empty": it gets the working row below, exactly as the desktop timeline
+  // suppresses its empty message whenever the loading row is up.
+  if (entries.length === 0 && !runActive) {
     return (
       <div className="flex flex-1 items-center justify-center px-8 py-12 text-center text-xs text-[var(--ec-muted)]">
-        {runActive ? "Waiting for the first step…" : "This run produced no activity."}
+        This run produced no activity.
       </div>
     );
   }
@@ -323,6 +343,7 @@ export const ActivityTimeline = ({ detail }: { detail: RunDetail }) => {
           </p>
         </div>
       ) : null}
+      {runActive ? <WorkingRow /> : null}
       <div ref={bottomRef} className="h-2" />
     </div>
   );
