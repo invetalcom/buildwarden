@@ -19,8 +19,11 @@ const UNAVAILABLE_MESSAGES: Record<string, string> = {
 /**
  * Read-only workspace file viewer. The host exposes single-file reads rather than a tree, so the
  * changed-file list from the diff acts as the index, with a path field for anything else.
+ *
+ * The diff itself is requested by `RunDetailScreen` when the files segment becomes active; this
+ * panel only consumes it.
  */
-export const RunFilesPanel = ({ runId, diff, onRequestDiff }: { runId: string; diff: string; onRequestDiff: () => void }) => {
+export const RunFilesPanel = ({ runId, diff }: { runId: string; diff: string }) => {
   const { client } = useMobileApp();
   const [path, setPath] = useState("");
   const [draft, setDraft] = useState("");
@@ -29,10 +32,6 @@ export const RunFilesPanel = ({ runId, diff, onRequestDiff }: { runId: string; d
   const [error, setError] = useState<string | null>(null);
 
   const files = useMemo(() => summarizeDiffStats(diff).files, [diff]);
-
-  useEffect(() => {
-    onRequestDiff();
-  }, [onRequestDiff]);
 
   useEffect(() => {
     if (!path) {

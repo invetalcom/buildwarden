@@ -186,7 +186,7 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
       ) : null}
 
       {activeSegment === "files" ? (
-        <RunFilesPanel runId={runId} diff={store.diff} onRequestDiff={() => void store.loadDiff()} />
+        <RunFilesPanel runId={runId} diff={store.diff} />
       ) : null}
 
       {activeSegment === "agents" ? <RunAgentsPanel coordinatorRunId={runId} /> : null}
