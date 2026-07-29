@@ -15,9 +15,11 @@ export const HomeScreen = () => {
   const { attention, active, recent } = useMemo(() => {
     const all = flattenRuns(snapshot.projects).filter((item) => item.run.listVisibility !== "for-later");
     return {
-      attention: all.filter((item) => needsAttention(item.run)),
-      active: all.filter((item) => isActiveRun(item.run) && !needsAttention(item.run)),
-      recent: all.filter((item) => !isActiveRun(item.run)).slice(0, MAX_PER_SECTION),
+      // The three sections are mutually exclusive: a finished run can still need attention (a
+      // pending input request, an orchestration flag), and it belongs under "Needs you" only.
+      attention: all.filter((item) => needsAttention(item.run)).slice(0, MAX_PER_SECTION),
+      active: all.filter((item) => isActiveRun(item.run) && !needsAttention(item.run)).slice(0, MAX_PER_SECTION),
+      recent: all.filter((item) => !isActiveRun(item.run) && !needsAttention(item.run)).slice(0, MAX_PER_SECTION),
     };
   }, [snapshot.projects]);
 
