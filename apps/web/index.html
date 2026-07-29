@@ -27,6 +27,15 @@
         background: #0b0d10;
         color: #f2f5f7;
       }
+      /* The shells theme from the host's stored setting, which is not known this early; match the
+         theme-color metas above so a light-mode phone does not flash dark first. */
+      @media (prefers-color-scheme: light) {
+        html,
+        body {
+          background: #eef4fa;
+          color: #15222e;
+        }
+      }
       .boot-splash {
         height: 100%;
       }
