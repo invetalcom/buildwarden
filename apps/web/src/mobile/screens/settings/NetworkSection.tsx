@@ -60,10 +60,12 @@ export const NetworkSection = () => {
         }),
       "The host rejected the proxy settings.",
     );
+    // The "Clearing…" label is a pending state, not a success one: leaving it set after a rejected
+    // save would strand the button on it with nothing in flight.
+    if (options.clear) setClearPassword(false);
     if (saved) {
       setSnapshot(saved);
       setPassword("");
-      setClearPassword(false);
     }
   };
 
