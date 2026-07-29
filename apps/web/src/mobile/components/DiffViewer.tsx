@@ -14,6 +14,7 @@ import { EmptyState, ListRow } from "./primitives";
  */
 
 const MAX_RENDERED_LINES = 1200;
+const INLINE_DIFF_LINES = 200;
 
 const lineTone = (line: string): string => {
   if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff --git") || line.startsWith("index ")) {
@@ -25,20 +26,23 @@ const lineTone = (line: string): string => {
   return "text-[var(--ec-muted)]";
 };
 
+const DiffLines = ({ lines }: { lines: string[] }) => (
+  <div className="m-scroll-x m-mono min-w-full text-[11.5px] leading-[1.55]">
+    {lines.map((line, index) => (
+      <div key={index} className={cn("whitespace-pre px-3", lineTone(line))}>
+        {line || " "}
+      </div>
+    ))}
+  </div>
+);
+
 const FileDiffBody = ({ diff }: { diff: string }) => {
   const lines = useMemo(() => diff.split("\n"), [diff]);
   const [limit, setLimit] = useState(MAX_RENDERED_LINES);
-  const visible = lines.slice(0, limit);
 
   return (
     <div className="m-scroll flex-1">
-      <div className="m-scroll-x m-mono min-w-full text-[11.5px] leading-[1.55]">
-        {visible.map((line, index) => (
-          <div key={index} className={cn("whitespace-pre px-3", lineTone(line))}>
-            {line || " "}
-          </div>
-        ))}
-      </div>
+      <DiffLines lines={lines.slice(0, limit)} />
       {lines.length > limit ? (
         <button
           type="button"
@@ -46,6 +50,33 @@ const FileDiffBody = ({ diff }: { diff: string }) => {
           className="m-tap m-4 rounded-md border border-[var(--ec-border)] px-4 text-xs font-medium text-[var(--ec-muted)]"
         >
           Show {Math.min(lines.length - limit, MAX_RENDERED_LINES)} more lines
+        </button>
+      ) : null}
+    </div>
+  );
+};
+
+/**
+ * A single file's diff inline in the run timeline (a `write_file` tool row), rather than as a
+ * full-screen tab. Same colouring as the Diff tab, but boxed and height-capped: one large edit
+ * must not push the rest of the run out of reach of a thumb.
+ */
+export const InlineDiff = ({ diff }: { diff: string }) => {
+  const lines = useMemo(() => diff.split("\n"), [diff]);
+  const [limit, setLimit] = useState(INLINE_DIFF_LINES);
+
+  return (
+    <div className="overflow-hidden rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)]">
+      <div className="m-scroll-thin max-h-72 overflow-auto py-1">
+        <DiffLines lines={lines.slice(0, limit)} />
+      </div>
+      {lines.length > limit ? (
+        <button
+          type="button"
+          onClick={() => setLimit((current) => current + INLINE_DIFF_LINES)}
+          className="m-tap w-full border-t border-[var(--ec-border)] py-1.5 text-[11px] font-medium text-[var(--ec-muted)]"
+        >
+          Show {Math.min(lines.length - limit, INLINE_DIFF_LINES)} more lines
         </button>
       ) : null}
     </div>

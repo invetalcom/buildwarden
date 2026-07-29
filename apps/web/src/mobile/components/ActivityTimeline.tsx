@@ -20,7 +20,9 @@ import {
 } from "lucide-react";
 import { relativeTime } from "../lib/format";
 import { dedupeFinalSummarySteps, finalAssistantStep, summaryDuplicatesTranscript } from "../lib/run-activity-dedupe";
+import { toolWriteFileDiff } from "../lib/tool-write-file-diff";
 import { RichText } from "./RichText";
+import { InlineDiff } from "./DiffViewer";
 import { Badge } from "./primitives";
 
 /**
@@ -154,6 +156,9 @@ const ToolRow = ({ entry }: { entry: Extract<SingleActivityEntry, { kind: "tool"
   const pending = !entry.resultStep;
   const output = entry.resultStep?.content ?? "";
   const isShell = toolName === "run_shell";
+  // A write_file row's content is only "Wrote N characters to …", which the row header already
+  // says. When the tool recorded a diff, show that instead — it is the reason to open the row.
+  const diff = failed ? null : toolWriteFileDiff(result, call);
 
   return (
     <div className="px-4 py-0.5">
@@ -168,7 +173,9 @@ const ToolRow = ({ entry }: { entry: Extract<SingleActivityEntry, { kind: "tool"
           </span>
         }
       >
-        {output ? (
+        {diff ? (
+          <InlineDiff diff={diff} />
+        ) : output ? (
           <pre className="m-scroll-thin m-mono max-h-64 overflow-auto rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-2.5 py-2 text-[11.5px] leading-5">
             {output.length > 8000 ? `${output.slice(0, 8000)}\n…truncated` : output}
           </pre>
