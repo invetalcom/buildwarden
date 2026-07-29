@@ -117,15 +117,19 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
   // Re-apply the project's defaults when the project selector changes, but only once per project,
   // so a choice the user has already made here is not overwritten by a snapshot refresh. This is
   // what `useProjectRunDefaults` does on the desktop.
-  const hydratedProjectIdRef = useRef(selectedProjectId);
+  //
+  // Seeded with null rather than the initial project: a projectId from the route arrives before the
+  // first snapshot, so its stored defaults are not readable yet and hydration still has to happen
+  // once the settings land.
+  const hydratedProjectIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!selectedProjectId || hydratedProjectIdRef.current === selectedProjectId) return;
+    if (!selectedProjectId || !snapshotStore.loaded || hydratedProjectIdRef.current === selectedProjectId) return;
     hydratedProjectIdRef.current = selectedProjectId;
     setMode(defaults.mode);
     setWorkspaceType(defaults.workspaceType);
     setYoloMode(defaults.yoloMode);
     setModelId(defaults.modelId);
-  }, [defaults, selectedProjectId]);
+  }, [defaults, selectedProjectId, snapshotStore.loaded]);
 
   // Models arrive with the first snapshot, which can land after this screen mounts.
   useEffect(() => {
