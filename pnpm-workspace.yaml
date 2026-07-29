@@ -1,6 +1,15 @@
 packages:
   - "apps/*"
   - "packages/*"
+auditConfig:
+  ignoreGhsas:
+    # GHSA-mh99-v99m-4gvg (brace-expansion OOM) declares its affected range as "<=5.0.7",
+    # which semver-matches the 1.x/2.x lines even though the fix was backported to
+    # brace-expansion 1.1.17 and 2.1.3 (both ship the EXPANSION_MAX_LENGTH bound). Those are
+    # the versions we resolve, pulled in by minimatch inside electron-builder's pinned
+    # @electron/asar and @electron/universal — build-time only, never shipped to users.
+    # Drop this entry once the advisory range is corrected or electron-builder unpins them.
+    - GHSA-mh99-v99m-4gvg
 allowBuilds:
   '@swc/core': true
   electron: true
