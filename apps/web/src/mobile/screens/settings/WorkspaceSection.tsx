@@ -153,7 +153,8 @@ export const WorkspaceSection = () => {
         onConfirm={() => {
           const target = pendingDelete;
           if (!target) return;
-          void action.run(() => client.deleteProject(target.id), "Could not delete the project.").then(async () => {
+          void action.ok(() => client.deleteProject(target.id), "Could not delete the project.").then(async (deleted) => {
+            if (!deleted) return;
             setPendingDelete(null);
             await snapshotStore.refresh();
           });

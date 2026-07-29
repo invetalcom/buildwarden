@@ -36,7 +36,7 @@ export const ProvidersSection = () => {
     const run = pendingDelete.kind === "model"
       ? () => client.deleteModel(pendingDelete.id)
       : () => client.deleteProviderAccount(pendingDelete.id);
-    await action.run(run, `Could not delete ${pendingDelete.label}.`);
+    if (!(await action.ok(run, `Could not delete ${pendingDelete.label}.`))) return;
     setPendingDelete(null);
     await snapshotStore.refresh();
   };

@@ -274,9 +274,9 @@ export const ProjectSettingsPanel = ({ project }: { project: ProjectSnapshot }) 
         busy={action.busy}
         onClose={() => setConfirmDelete(false)}
         onConfirm={() => {
-          void action.run(() => client.deleteProject(projectId), "Could not delete the project.").then(async (result) => {
+          void action.ok(() => client.deleteProject(projectId), "Could not delete the project.").then(async (deleted) => {
+            if (!deleted) return;
             setConfirmDelete(false);
-            if (result === undefined) return;
             await snapshotStore.refresh();
             router.selectTab("more");
           });

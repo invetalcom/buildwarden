@@ -313,10 +313,10 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
         onClose={() => setConfirm(null)}
         onConfirm={() => {
           void action
-            .run(() => client.deleteRun(runId), "Could not delete the run.")
-            .then(async (result) => {
+            .ok(() => client.deleteRun(runId), "Could not delete the run.")
+            .then(async (deleted) => {
+              if (!deleted) return;
               setConfirm(null);
-              if (result === undefined) return;
               await snapshotStore.refresh();
               router.back();
             });

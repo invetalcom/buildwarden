@@ -152,7 +152,9 @@ export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
         busy={action.busy}
         onClose={() => setConfirmDelete(false)}
         onConfirm={() => {
-          void action.run(() => client.deleteChat(chatId), "Could not delete the chat.").then(async () => {
+          void action.ok(() => client.deleteChat(chatId), "Could not delete the chat.").then(async (deleted) => {
+            // Stay in the sheet on failure: leaving would hide both the error and the chat it names.
+            if (!deleted) return;
             setConfirmDelete(false);
             await snapshotStore.refresh();
             router.back();

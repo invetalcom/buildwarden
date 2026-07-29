@@ -7,6 +7,13 @@ export interface ActionRunner {
   clearError: () => void;
   /** Runs a mutation, surfacing failures as a message instead of an unhandled rejection. */
   run: <Result>(action: () => Promise<Result>, fallbackMessage?: string) => Promise<Result | undefined>;
+  /**
+   * Like {@link run}, but reports whether the call completed.
+   *
+   * Most host mutations return `Promise<void>`, so `run`'s `undefined` cannot tell success from
+   * failure; anything that navigates away or dismisses a confirmation has to ask this instead.
+   */
+  ok: (action: () => Promise<unknown>, fallbackMessage?: string) => Promise<boolean>;
 }
 
 /**
@@ -33,5 +40,16 @@ export const useAction = (): ActionRunner => {
     }
   }, []);
 
-  return { busy, error, clearError: () => setError(null), run };
+  const ok = useCallback(
+    async (action: () => Promise<unknown>, fallbackMessage?: string) => {
+      const completed = await run(async () => {
+        await action();
+        return true as const;
+      }, fallbackMessage);
+      return completed === true;
+    },
+    [run],
+  );
+
+  return { busy, error, clearError: () => setError(null), run, ok };
 };
