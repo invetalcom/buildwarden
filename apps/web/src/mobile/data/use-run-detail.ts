@@ -34,8 +34,14 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
   const [diffUnavailable, setDiffUnavailable] = useState(false);
   const diffRequested = useRef(false);
   const timerRef = useRef<number | null>(null);
+  // Both fetches are keyed by a runId that changes under them as the user navigates. On a phone
+  // link the previous run's response can easily land after the new one's, so every write is gated
+  // on still being the newest request.
+  const loadRequestRef = useRef(0);
+  const diffRequestRef = useRef(0);
 
   const load = useCallback(async (silent: boolean) => {
+    const requestId = ++loadRequestRef.current;
     if (!runId) {
       setDetail(null);
       setLoading(false);
@@ -44,12 +50,14 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
     if (!silent) setLoading(true);
     try {
       const next = await client.getRunDetail(runId);
+      if (loadRequestRef.current !== requestId) return;
       setDetail(next);
       setError(null);
     } catch (caught) {
+      if (loadRequestRef.current !== requestId) return;
       setError(errorMessage(caught, "Could not load this run."));
     } finally {
-      setLoading(false);
+      if (loadRequestRef.current === requestId) setLoading(false);
     }
   }, [client, runId]);
 
@@ -65,17 +73,20 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
 
   const loadDiff = useCallback(async () => {
     if (!runId) return;
+    const requestId = ++diffRequestRef.current;
     diffRequested.current = true;
     setDiffLoading(true);
     setDiffError(null);
     try {
       const result: RunWorktreeDiffResult = await client.getRunWorktreeDiff(runId);
+      if (diffRequestRef.current !== requestId) return;
       setDiff(result.diff ?? "");
       setDiffUnavailable(result.worktreeUnavailable === true);
     } catch (caught) {
+      if (diffRequestRef.current !== requestId) return;
       setDiffError(errorMessage(caught, "Could not load the diff."));
     } finally {
-      setDiffLoading(false);
+      if (diffRequestRef.current === requestId) setDiffLoading(false);
     }
   }, [client, runId]);
 

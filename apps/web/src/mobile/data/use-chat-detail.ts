@@ -17,8 +17,12 @@ export const useChatDetail = (client: BuildWardenClient, chatId: string | null):
   const [loading, setLoading] = useState(Boolean(chatId));
   const [error, setError] = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
+  // The chatId changes under an in-flight fetch as the user navigates; only the newest request may
+  // write state, or a slow response for the previous chat overwrites this one.
+  const requestRef = useRef(0);
 
   const load = useCallback(async (silent: boolean) => {
+    const requestId = ++requestRef.current;
     if (!chatId) {
       setDetail(null);
       setLoading(false);
@@ -26,12 +30,15 @@ export const useChatDetail = (client: BuildWardenClient, chatId: string | null):
     }
     if (!silent) setLoading(true);
     try {
-      setDetail(await client.getChatDetail(chatId));
+      const next = await client.getChatDetail(chatId);
+      if (requestRef.current !== requestId) return;
+      setDetail(next);
       setError(null);
     } catch (caught) {
+      if (requestRef.current !== requestId) return;
       setError(errorMessage(caught, "Could not load this chat."));
     } finally {
-      setLoading(false);
+      if (requestRef.current === requestId) setLoading(false);
     }
   }, [client, chatId]);
 
