@@ -140,3 +140,19 @@ describe("selectShell", () => {
     expect(replaceState).not.toHaveBeenCalled();
   });
 });
+
+describe("blocked storage", () => {
+  it("still resolves a shell when reading localStorage throws", () => {
+    // Browsers that block site data throw SecurityError from the property getter itself.
+    const win = {
+      get localStorage(): never {
+        throw new DOMException("Access is denied for this document.", "SecurityError");
+      },
+      location: { search: "?ui=mobile", pathname: "/", hash: "" },
+      history: { replaceState: () => undefined },
+      innerWidth: 1440,
+    } as unknown as ShellWindowLike;
+
+    expect(selectShell(win)).toBe("mobile");
+  });
+});

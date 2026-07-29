@@ -115,9 +115,22 @@ const stripShellOverrideFromUrl = (win: ShellWindowLike): void => {
   win.history?.replaceState(null, "", `${win.location.pathname}${query ? `?${query}` : ""}${win.location.hash}`);
 };
 
+/**
+ * Reading the `localStorage` property itself throws `SecurityError` when the browser blocks site
+ * data (cookies off, opaque origin, some private modes) — before any of the guarded getItem /
+ * setItem calls below can run. Without this the whole app fails to boot for those users.
+ */
+const storageOf = (win: { localStorage?: StorageLike | null }): StorageLike | null => {
+  try {
+    return win.localStorage ?? null;
+  } catch {
+    return null;
+  }
+};
+
 export const selectShell = (win: ShellWindowLike): ShellKind => {
   const override = readShellOverride(win.location.search);
-  const storage = win.localStorage ?? null;
+  const storage = storageOf(win);
   if (override) {
     writeStoredShellPreference(storage, override);
   }
@@ -134,6 +147,6 @@ export const selectShell = (win: ShellWindowLike): ShellKind => {
 
 /** Navigates to the other shell. A reload is intentional: the session survives in IndexedDB. */
 export const switchShell = (win: Window, preference: ShellPreference): void => {
-  writeStoredShellPreference(win.localStorage, preference);
+  writeStoredShellPreference(storageOf(win), preference);
   win.location.reload();
 };
