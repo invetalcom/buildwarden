@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { OrchestrationDetail } from "@buildwarden/shared";
 import { Bot, Pause, Play, RotateCw, Square } from "lucide-react";
 import { useMobileApp } from "../../data/mobile-app-context";
@@ -23,14 +23,21 @@ export const RunAgentsPanel = ({ coordinatorRunId }: { coordinatorRunId: string 
   const [error, setError] = useState<string | null>(null);
   const action = useAction();
 
+  // load() re-runs on every orchestration event, so responses can overlap and arrive out of order.
+  const requestRef = useRef(0);
+
   const load = useCallback(async () => {
+    const requestId = ++requestRef.current;
     try {
-      setDetail(await client.getOrchestrationDetail(coordinatorRunId));
+      const next = await client.getOrchestrationDetail(coordinatorRunId);
+      if (requestRef.current !== requestId) return;
+      setDetail(next);
       setError(null);
     } catch (caught) {
+      if (requestRef.current !== requestId) return;
       setError(errorMessage(caught, "Could not load the agent team."));
     } finally {
-      setLoading(false);
+      if (requestRef.current === requestId) setLoading(false);
     }
   }, [client, coordinatorRunId]);
 
@@ -43,7 +50,9 @@ export const RunAgentsPanel = ({ coordinatorRunId }: { coordinatorRunId: string 
   }, [client, coordinatorRunId, load]);
 
   if (loading) return <CenteredSpinner label="Loading agents" />;
-  if (error) return <InlineError message={error} onRetry={() => void load()} />;
+  // Only replace the view when there is nothing to show: these reloads run off orchestration
+  // events, and a blip on a phone connection must not discard the list being read.
+  if (error && !detail) return <InlineError message={error} onRetry={() => void load()} />;
   if (!detail) {
     return <EmptyState icon={<Bot className="size-7" />} title="No delegated agents" message="This run has not created any child tasks." />;
   }
@@ -53,6 +62,7 @@ export const RunAgentsPanel = ({ coordinatorRunId }: { coordinatorRunId: string 
 
   return (
     <div className="m-scroll flex-1">
+      {error ? <InlineError message={error} onRetry={() => void load()} /> : null}
       {action.error ? <InlineError message={action.error} /> : null}
 
       <div className="flex flex-wrap items-center gap-2 border-b border-[var(--ec-border)] px-4 py-3">
