@@ -37,6 +37,11 @@ import { Badge } from "./primitives";
  * Instead of a virtualiser this renders a trailing window with an explicit "Load earlier" control:
  * cheaper than variable-height virtualisation, and it matches how a phone user reads a run — from
  * the bottom, occasionally scrolling back.
+ *
+ * `run.errorMessage` is deliberately not rendered, matching the desktop: every host path that sets
+ * it also appends the matching error or status step (see `appendRunEvent` calls around
+ * `updateRunStatus` in `apps/desktop/src/main/app-controller.ts`), so a card would only repeat the
+ * failure the transcript already ends with.
  */
 
 const PAGE_SIZE = 60;
@@ -333,14 +338,6 @@ export const ActivityTimeline = ({ detail }: { detail: RunDetail }) => {
         <div className="mx-3 mt-2 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-2">
           <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--ec-faint)]">Run summary</p>
           <RichText className="mt-1">{summary}</RichText>
-        </div>
-      ) : null}
-      {detail.run.errorMessage ? (
-        <div className="mx-3 mt-2 rounded-lg border border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] px-3 py-2">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--ec-danger)]">Failure</p>
-          <p className="m-wrap-anywhere mt-1 whitespace-pre-wrap text-[13px] leading-6 text-[var(--ec-danger)]">
-            {detail.run.errorMessage}
-          </p>
         </div>
       ) : null}
       {runActive ? <WorkingRow /> : null}
