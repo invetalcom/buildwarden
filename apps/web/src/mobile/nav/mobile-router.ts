@@ -163,9 +163,11 @@ export const useMobileRouter = (): MobileRouter => {
   useEffect(() => {
     const onPopState = () => {
       const next = parseRoute(window.location.hash);
+      // An unparseable hash leaves the stack alone, so the sync effect never runs to clear the
+      // guard — set it only once there is a route to apply.
+      if (!next) return;
       applyingHistory.current = true;
       setStack((current) => {
-        if (!next) return current;
         // Back: drop the top entry when the previous one matches the new location.
         if (current.length > 1 && routesEqual(current[current.length - 2], next)) {
           return current.slice(0, -1);
