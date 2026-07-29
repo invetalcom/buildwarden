@@ -41,6 +41,9 @@ export const useAppSettings = (): AppSettingsWriter => {
         return true;
       } catch (caught) {
         setError(errorMessage(caught, "The host did not accept that setting."));
+        // The keys are written one at a time, so a failure part-way through leaves the earlier ones
+        // applied on the host. Refresh anyway, or those controls keep showing their old values.
+        await snapshotStore.refresh().catch(() => undefined);
         return false;
       } finally {
         setSaving(false);
