@@ -8,6 +8,7 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./logic": "./src/logic.ts",
     "./styles.css": "./src/styles.css"
   },
   "scripts": {
