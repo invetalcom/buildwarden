@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
-import { APP_SETTING_KEYS, type RunMode, type RunWorkspaceType } from "@buildwarden/shared";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { APP_SETTING_KEYS, type ProjectKind, type RunMode, type RunWorkspaceType } from "@buildwarden/shared";
 import { buildRunReasoningInput } from "@buildwarden/renderer/logic";
 import { ChevronDown, Sparkles } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
 import { defaultProjectId, defaultRunModel, runModelOptions } from "../data/selectors";
 import { useAction } from "../data/use-action";
+import { resolveNewRunDefaults } from "../lib/new-run-defaults";
 import { AppBar } from "../components/AppBar";
 import { Button, EmptyState, InlineError, Textarea, Toggle } from "../components/primitives";
 import { cn } from "../lib/cn";
@@ -15,11 +16,18 @@ const MODES: { value: RunMode; label: string; hint: string }[] = [
   { value: "ask", label: "Ask", hint: "Answer without editing" },
 ];
 
-const WORKSPACES: { value: RunWorkspaceType; label: string; hint: string }[] = [
-  { value: "worktree", label: "Worktree", hint: "Isolated branch, safest" },
-  { value: "local", label: "Local repo", hint: "Works in your checkout" },
-  { value: "copy", label: "Copy", hint: "Throwaway copy of the repo" },
-];
+// Which of these a project can use depends on its kind, exactly as on the desktop: a folder project
+// has no branches to make a worktree from, and a git project copies via a worktree instead.
+const WORKSPACES: Record<ProjectKind, { value: RunWorkspaceType; label: string; hint: string }[]> = {
+  git: [
+    { value: "worktree", label: "Worktree", hint: "Isolated branch, safest" },
+    { value: "local", label: "Local repo", hint: "Works in your checkout" },
+  ],
+  folder: [
+    { value: "copy", label: "Copy", hint: "Throwaway copy of the folder" },
+    { value: "local", label: "Folder", hint: "Works in place" },
+  ],
+};
 
 const OptionGroup = <Value extends string>({
   label,
@@ -74,20 +82,58 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
 
   const models = useMemo(() => runModelOptions(snapshot), [snapshot]);
   const [selectedProjectId, setSelectedProjectId] = useState(projectId ?? defaultProjectId(snapshot) ?? "");
-  const [modelId, setModelId] = useState(() => defaultRunModel(snapshot)?.modelId ?? "");
+  const project = snapshot.projects.find((entry) => entry.project.id === selectedProjectId) ?? null;
+  const projectKind: ProjectKind = project?.project.kind ?? "git";
+
+  const defaults = useMemo(
+    () =>
+      resolveNewRunDefaults({
+        settings: snapshot.settings,
+        projectId: selectedProjectId,
+        projectKind,
+        modelIds: models.map((option) => option.modelId),
+        fallbackModelId: defaultRunModel(snapshot)?.modelId ?? "",
+      }),
+    [models, projectKind, selectedProjectId, snapshot],
+  );
+
   const [prompt, setPrompt] = useState("");
-  const [mode, setMode] = useState<RunMode>("code");
-  const [workspaceType, setWorkspaceType] = useState<RunWorkspaceType>("worktree");
-  const [yoloMode, setYoloMode] = useState(false);
+  const [modelId, setModelId] = useState(defaults.modelId);
+  const [mode, setMode] = useState<RunMode>(defaults.mode);
+  const [workspaceType, setWorkspaceType] = useState<RunWorkspaceType>(defaults.workspaceType);
+  const [yoloMode, setYoloMode] = useState(defaults.yoloMode);
   const [delegation, setDelegation] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
 
+  // The screen can mount before the first snapshot arrives (a reload straight onto this route), so
+  // there may be no project to read defaults from yet. Adopt the host's project once it shows up;
+  // the hydration effect below then applies that project's defaults.
   useEffect(() => {
-    if (!modelId && models.length > 0) setModelId(models[0].modelId);
-  }, [modelId, models]);
+    if (selectedProjectId) return;
+    const next = defaultProjectId(snapshot);
+    if (next) setSelectedProjectId(next);
+  }, [selectedProjectId, snapshot]);
+
+  // Re-apply the project's defaults when the project selector changes, but only once per project,
+  // so a choice the user has already made here is not overwritten by a snapshot refresh. This is
+  // what `useProjectRunDefaults` does on the desktop.
+  const hydratedProjectIdRef = useRef(selectedProjectId);
+  useEffect(() => {
+    if (!selectedProjectId || hydratedProjectIdRef.current === selectedProjectId) return;
+    hydratedProjectIdRef.current = selectedProjectId;
+    setMode(defaults.mode);
+    setWorkspaceType(defaults.workspaceType);
+    setYoloMode(defaults.yoloMode);
+    setModelId(defaults.modelId);
+  }, [defaults, selectedProjectId]);
+
+  // Models arrive with the first snapshot, which can land after this screen mounts.
+  useEffect(() => {
+    if (!modelId && models.length > 0) setModelId(defaults.modelId || models[0].modelId);
+  }, [defaults.modelId, modelId, models]);
 
   const model = models.find((option) => option.modelId === modelId) ?? null;
-  const project = snapshot.projects.find((entry) => entry.project.id === selectedProjectId) ?? null;
+  const workspaces = WORKSPACES[projectKind];
 
   const start = async () => {
     if (!model || !project || !prompt.trim()) return;
@@ -104,7 +150,7 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
           delegationEnabled: delegation,
           baseBranch: project.project.baseBranch,
           prompt: prompt.trim(),
-          ...buildRunReasoningInput(model.providerType, null, "medium", "medium"),
+          ...buildRunReasoningInput(model.providerType, null, defaults.reasoningEffort, defaults.anthropicEffort),
         }),
       "The run did not start.",
     );
@@ -183,7 +229,7 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
         >
           <span className="flex-1 text-[13px] font-medium">Options</span>
           <span className="text-[11px] text-[var(--ec-muted)]">
-            {MODES.find((entry) => entry.value === mode)?.label} · {WORKSPACES.find((entry) => entry.value === workspaceType)?.label}
+            {MODES.find((entry) => entry.value === mode)?.label} · {workspaces.find((entry) => entry.value === workspaceType)?.label}
           </span>
           <ChevronDown className={cn("size-4 text-[var(--ec-faint)] transition", optionsOpen && "rotate-180")} />
         </button>
@@ -191,7 +237,7 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
         {optionsOpen ? (
           <>
             <OptionGroup label="Mode" options={MODES} value={mode} onChange={setMode} />
-            <OptionGroup label="Workspace" options={WORKSPACES} value={workspaceType} onChange={setWorkspaceType} />
+            <OptionGroup label="Workspace" options={workspaces} value={workspaceType} onChange={setWorkspaceType} />
             <div className="flex flex-col gap-1 px-4 py-2">
               <div className="m-tap flex items-center gap-3">
                 <span className="flex flex-1 flex-col">
