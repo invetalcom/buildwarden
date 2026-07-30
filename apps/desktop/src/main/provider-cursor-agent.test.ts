@@ -294,6 +294,28 @@ describe("CursorAgentProviderAdapter", () => {
     });
   });
 
+  it("preserves ACP arguments when stored Cursor arguments are empty", () => {
+    const state = parseCursorToolState({
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "read-1",
+        title: "Read File",
+        kind: "read",
+        status: "pending",
+        rawInput: { path: "src/app.ts" },
+      },
+    });
+
+    expect(state).not.toBeNull();
+    expect(enrichCursorToolState(state!, {
+      toolName: "Read",
+      arguments: {},
+    }, "C:\\workspace")).toMatchObject({
+      path: "src/app.ts",
+      arguments: { path: "src/app.ts" },
+    });
+  });
+
   it("retries session-store reads that are flushed after the ACP tool result", async () => {
     const stored: CursorStoredToolCall = {
       toolName: "Read",

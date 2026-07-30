@@ -1312,9 +1312,10 @@ export const enrichCursorToolState = (
       ? storedToolName
       : undefined);
   const detail = command ?? path ?? query ?? tool.detail;
+  const storedArguments = compactCursorToolArguments(stored.arguments);
   return {
     ...tool,
-    arguments: compactCursorToolArguments(stored.arguments),
+    ...(Object.keys(storedArguments).length > 0 ? { arguments: storedArguments } : {}),
     ...(command ? { command } : {}),
     ...(path ? { path } : {}),
     ...(query ? { query } : {}),
