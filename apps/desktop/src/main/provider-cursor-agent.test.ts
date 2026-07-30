@@ -273,6 +273,27 @@ describe("CursorAgentProviderAdapter", () => {
     }
   });
 
+  it("continues past unusable Cursor diff entries", () => {
+    const state = parseCursorToolState({
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "edit-1",
+        title: "Edit File",
+        kind: "edit",
+        status: "completed",
+        content: [
+          { type: "diff" },
+          { type: "diff", path: "src/app.ts", oldText: "old", newText: "new" },
+        ],
+      },
+    });
+
+    expect(state).toMatchObject({
+      path: "src/app.ts",
+      diff: "--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1,1 +1,1 @@\n-old\n+new",
+    });
+  });
+
   it("retries session-store reads that are flushed after the ACP tool result", async () => {
     const stored: CursorStoredToolCall = {
       toolName: "Read",

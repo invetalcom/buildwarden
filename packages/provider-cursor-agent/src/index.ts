@@ -1227,7 +1227,7 @@ const diffContentFromToolContent = (
     const oldText = asString(nested.oldText);
     const newText = asString(nested.newText);
     const diff = asString(nested.diff)?.trim();
-    return {
+    const result = {
       ...(path ? { path } : {}),
       ...(diff
         ? { diff }
@@ -1235,6 +1235,9 @@ const diffContentFromToolContent = (
           ? { diff: buildCursorFallbackDiff(path, oldText, newText) }
           : {}),
     };
+    if (result.path || result.diff) {
+      return result;
+    }
   }
   return {};
 };
