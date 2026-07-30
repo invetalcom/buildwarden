@@ -361,6 +361,65 @@ const sanitizeMetadataValue = (value: unknown): unknown => {
   }
 };
 
+type CursorStoredToolCallParts = Partial<CursorStoredToolCall>;
+
+const indexCursorStoredToolCallPayload = (
+  data: unknown,
+  toolCalls: Map<string, CursorStoredToolCallParts>,
+): void => {
+  if (!(data instanceof Uint8Array) && typeof data !== "string") {
+    return;
+  }
+  let payload: unknown;
+  try {
+    payload = JSON.parse(typeof data === "string" ? data : Buffer.from(data).toString("utf8")) as unknown;
+  } catch {
+    return;
+  }
+  if (!isRecord(payload)) {
+    return;
+  }
+  const providerOptions = isRecord(payload.providerOptions) ? payload.providerOptions : undefined;
+  const cursorOptions = isRecord(providerOptions?.cursor) ? providerOptions.cursor : undefined;
+  const richResult = isRecord(cursorOptions?.highLevelToolCallResult)
+    ? cursorOptions.highLevelToolCallResult
+    : undefined;
+
+  for (const entry of asArray(payload.content) ?? []) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+    const toolCallId = asString(entry.toolCallId)?.trim();
+    if (!toolCallId) {
+      continue;
+    }
+    const current = toolCalls.get(toolCallId) ?? {};
+    const hasToolCall =
+      entry.type === "tool-call" &&
+      typeof entry.toolName === "string" &&
+      isRecord(entry.args);
+    if (!hasToolCall && !richResult) {
+      continue;
+    }
+    toolCalls.set(toolCallId, {
+      ...current,
+      ...(hasToolCall ? { toolName: entry.toolName as string, arguments: entry.args as Record<string, unknown> } : {}),
+      ...(richResult ? { richResult } : {}),
+    });
+  }
+};
+
+const completeCursorStoredToolCall = (
+  stored: CursorStoredToolCallParts | undefined,
+): CursorStoredToolCall | null =>
+  typeof stored?.toolName === "string" && isRecord(stored.arguments)
+    ? {
+        toolName: stored.toolName,
+        arguments: stored.arguments,
+        ...(stored.richResult ? { richResult: stored.richResult } : {}),
+      }
+    : null;
+
 const readCursorStoredToolCallFromDatabase = (
   database: DatabaseSync,
   toolCallId: string,
@@ -368,60 +427,13 @@ const readCursorStoredToolCallFromDatabase = (
   // Cursor currently publishes empty rawInput objects over ACP for many built-in tools,
   // while its session store retains the arguments under the same toolCallId.
   const rows = database
-    .prepare("SELECT data FROM blobs WHERE instr(CAST(data AS TEXT), ?) > 0")
+    .prepare("SELECT data FROM blobs WHERE instr(CAST(data AS TEXT), ?) > 0 ORDER BY rowid ASC")
     .all(toolCallId) as Array<{ data?: unknown }>;
-  let toolName: string | undefined;
-  let toolArguments: Record<string, unknown> | undefined;
-  let richResult: Record<string, unknown> | undefined;
-
+  const toolCalls = new Map<string, CursorStoredToolCallParts>();
   for (const row of rows) {
-    if (!(row.data instanceof Uint8Array) && typeof row.data !== "string") {
-      continue;
-    }
-    let payload: unknown;
-    try {
-      payload = JSON.parse(typeof row.data === "string" ? row.data : Buffer.from(row.data).toString("utf8")) as unknown;
-    } catch {
-      continue;
-    }
-    if (!isRecord(payload)) {
-      continue;
-    }
-    const content = asArray(payload.content) ?? [];
-    const hasMatchingContent = content.some((entry) => isRecord(entry) && entry.toolCallId === toolCallId);
-    if (!hasMatchingContent) {
-      continue;
-    }
-    for (const entry of content) {
-      if (!isRecord(entry) || entry.toolCallId !== toolCallId) {
-        continue;
-      }
-      if (
-        entry.type === "tool-call" &&
-        typeof entry.toolName === "string" &&
-        isRecord(entry.args)
-      ) {
-        toolName = entry.toolName;
-        toolArguments = entry.args;
-      }
-    }
-    const providerOptions = isRecord(payload.providerOptions) ? payload.providerOptions : undefined;
-    const cursorOptions = isRecord(providerOptions?.cursor) ? providerOptions.cursor : undefined;
-    const storedRichResult = isRecord(cursorOptions?.highLevelToolCallResult)
-      ? cursorOptions.highLevelToolCallResult
-      : undefined;
-    if (storedRichResult) {
-      richResult = storedRichResult;
-    }
+    indexCursorStoredToolCallPayload(row.data, toolCalls);
   }
-
-  return toolName && toolArguments
-    ? {
-        toolName,
-        arguments: toolArguments,
-        ...(richResult ? { richResult } : {}),
-      }
-    : null;
+  return completeCursorStoredToolCall(toolCalls.get(toolCallId));
 };
 
 const openCursorSessionDatabase = (databasePath: string): DatabaseSync => {
@@ -488,6 +500,8 @@ export const findCursorSessionStorePath = (
 
 class CursorToolStoreReader {
   private database: DatabaseSync | null = null;
+  private lastIndexedRowId = 0;
+  private readonly toolCalls = new Map<string, CursorStoredToolCallParts>();
 
   constructor(private readonly sessionId: string) {}
 
@@ -504,7 +518,17 @@ class CursorToolStoreReader {
         }
         this.database = openCursorSessionDatabase(databasePath);
       }
-      return readCursorStoredToolCallFromDatabase(this.database, toolCallId);
+      const rows = this.database
+        .prepare("SELECT rowid, data FROM blobs WHERE rowid > ? ORDER BY rowid ASC")
+        .all(this.lastIndexedRowId) as Array<{ rowid?: unknown; data?: unknown }>;
+      for (const row of rows) {
+        if (typeof row.rowid !== "number" || !Number.isSafeInteger(row.rowid)) {
+          continue;
+        }
+        this.lastIndexedRowId = Math.max(this.lastIndexedRowId, row.rowid);
+        indexCursorStoredToolCallPayload(row.data, this.toolCalls);
+      }
+      return completeCursorStoredToolCall(this.toolCalls.get(toolCallId));
     } catch {
       this.close();
       return null;
@@ -518,6 +542,8 @@ class CursorToolStoreReader {
       /* The Cursor process may have already removed its temporary session store. */
     }
     this.database = null;
+    this.lastIndexedRowId = 0;
+    this.toolCalls.clear();
   }
 }
 

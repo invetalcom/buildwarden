@@ -216,6 +216,12 @@ describe("CursorAgentProviderAdapter", () => {
         },
       },
     })));
+    insert.run("newer-read", Buffer.from(JSON.stringify({
+      role: "assistant",
+      content: [
+        { type: "tool-call", toolCallId: "read-1", toolName: "Read", args: { path: join(workspacePath, "LATEST.md") } },
+      ],
+    })));
     database.close();
 
     try {
@@ -235,11 +241,11 @@ describe("CursorAgentProviderAdapter", () => {
       const readChunk = buildCursorToolChunkForState(enrichCursorToolState(readState!, storedRead, workspacePath));
       expect(readChunk).toMatchObject({
         type: "tool-call",
-        value: "README.md",
+        value: "LATEST.md",
         metadata: {
           toolName: "read_file",
-          path: "README.md",
-          arguments: { path: readPath },
+          path: "LATEST.md",
+          arguments: { path: join(workspacePath, "LATEST.md") },
         },
       });
 
