@@ -1,11 +1,12 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { createInterface } from "node:readline";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import type { DatabaseSync } from "node:sqlite";
 import {
   buildRunSubagentChunk,
   formatRunPlanProgressContent,
@@ -44,6 +45,7 @@ const CURSOR_MODEL_CONFIG_OPTIONS_KEY = "cursorAcpConfigOptions";
 const CURSOR_MODEL_MAX_TOKENS_KEY = "cursorMaxTokens";
 const ABOUT_TIMEOUT_MS = 8_000;
 const MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
+const CURSOR_TOOL_STORE_RETRY_DELAYS_MS = [25, 75, 200, 500, 1_000] as const;
 
 type JsonRpcId = number | string;
 
@@ -80,11 +82,21 @@ export type CursorToolState = {
   kind?: string;
   title?: string;
   status?: "pending" | "inProgress" | "completed" | "failed";
+  arguments?: Record<string, unknown>;
   command?: string;
+  path?: string;
+  query?: string;
+  diff?: string;
   detail?: string;
   toolName?: string;
   rawOutput?: Record<string, unknown>;
   raw?: unknown;
+};
+
+export type CursorStoredToolCall = {
+  toolName: string;
+  arguments: Record<string, unknown>;
+  richResult?: Record<string, unknown>;
 };
 
 type CursorAcpStartedSession = {
@@ -348,6 +360,166 @@ const sanitizeMetadataValue = (value: unknown): unknown => {
     return String(value);
   }
 };
+
+const readCursorStoredToolCallFromDatabase = (
+  database: DatabaseSync,
+  toolCallId: string,
+): CursorStoredToolCall | null => {
+  // Cursor currently publishes empty rawInput objects over ACP for many built-in tools,
+  // while its session store retains the arguments under the same toolCallId.
+  const rows = database
+    .prepare("SELECT data FROM blobs WHERE instr(CAST(data AS TEXT), ?) > 0")
+    .all(toolCallId) as Array<{ data?: unknown }>;
+  let toolName: string | undefined;
+  let toolArguments: Record<string, unknown> | undefined;
+  let richResult: Record<string, unknown> | undefined;
+
+  for (const row of rows) {
+    if (!(row.data instanceof Uint8Array) && typeof row.data !== "string") {
+      continue;
+    }
+    let payload: unknown;
+    try {
+      payload = JSON.parse(typeof row.data === "string" ? row.data : Buffer.from(row.data).toString("utf8")) as unknown;
+    } catch {
+      continue;
+    }
+    if (!isRecord(payload)) {
+      continue;
+    }
+    const content = asArray(payload.content) ?? [];
+    const hasMatchingContent = content.some((entry) => isRecord(entry) && entry.toolCallId === toolCallId);
+    if (!hasMatchingContent) {
+      continue;
+    }
+    for (const entry of content) {
+      if (!isRecord(entry) || entry.toolCallId !== toolCallId) {
+        continue;
+      }
+      if (
+        entry.type === "tool-call" &&
+        typeof entry.toolName === "string" &&
+        isRecord(entry.args)
+      ) {
+        toolName = entry.toolName;
+        toolArguments = entry.args;
+      }
+    }
+    const providerOptions = isRecord(payload.providerOptions) ? payload.providerOptions : undefined;
+    const cursorOptions = isRecord(providerOptions?.cursor) ? providerOptions.cursor : undefined;
+    const storedRichResult = isRecord(cursorOptions?.highLevelToolCallResult)
+      ? cursorOptions.highLevelToolCallResult
+      : undefined;
+    if (storedRichResult) {
+      richResult = storedRichResult;
+    }
+  }
+
+  return toolName && toolArguments
+    ? {
+        toolName,
+        arguments: toolArguments,
+        ...(richResult ? { richResult } : {}),
+      }
+    : null;
+};
+
+const openCursorSessionDatabase = (databasePath: string): DatabaseSync => {
+  const { DatabaseSync: SqliteDatabaseSync } = process.getBuiltinModule("node:sqlite");
+  return new SqliteDatabaseSync(databasePath, { readOnly: true });
+};
+
+export const readCursorStoredToolCall = (
+  databasePath: string,
+  toolCallId: string,
+): CursorStoredToolCall | null => {
+  const database = openCursorSessionDatabase(databasePath);
+  try {
+    return readCursorStoredToolCallFromDatabase(database, toolCallId);
+  } finally {
+    database.close();
+  }
+};
+
+export const readCursorStoredToolCallWithRetry = async (
+  read: () => CursorStoredToolCall | null,
+  retryDelaysMs: readonly number[] = CURSOR_TOOL_STORE_RETRY_DELAYS_MS,
+): Promise<CursorStoredToolCall | null> => {
+  const immediate = read();
+  if (immediate) {
+    return immediate;
+  }
+  for (const delayMs of retryDelaysMs) {
+    await new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, delayMs)));
+    const stored = read();
+    if (stored) {
+      return stored;
+    }
+  }
+  return null;
+};
+
+export const findCursorSessionStorePath = (
+  sessionId: string,
+  cursorDirectory = join(homedir(), ".cursor"),
+): string | null => {
+  if (!/^[A-Za-z0-9_-]+$/.test(sessionId)) {
+    return null;
+  }
+  const currentPath = join(cursorDirectory, "acp-sessions", sessionId, "store.db");
+  if (existsSync(currentPath)) {
+    return currentPath;
+  }
+  const chatsDirectory = join(cursorDirectory, "chats");
+  let hashDirectories: string[];
+  try {
+    hashDirectories = readdirSync(chatsDirectory);
+  } catch {
+    return null;
+  }
+  for (const hash of hashDirectories) {
+    const legacyPath = join(chatsDirectory, hash, sessionId, "store.db");
+    if (existsSync(legacyPath)) {
+      return legacyPath;
+    }
+  }
+  return null;
+};
+
+class CursorToolStoreReader {
+  private database: DatabaseSync | null = null;
+
+  constructor(private readonly sessionId: string) {}
+
+  hasStore(): boolean {
+    return this.database !== null || findCursorSessionStorePath(this.sessionId) !== null;
+  }
+
+  read(toolCallId: string): CursorStoredToolCall | null {
+    try {
+      if (!this.database) {
+        const databasePath = findCursorSessionStorePath(this.sessionId);
+        if (!databasePath) {
+          return null;
+        }
+        this.database = openCursorSessionDatabase(databasePath);
+      }
+      return readCursorStoredToolCallFromDatabase(this.database, toolCallId);
+    } catch {
+      this.close();
+      return null;
+    }
+  }
+
+  close(): void {
+    try {
+      this.database?.close();
+    } catch {
+      /* The Cursor process may have already removed its temporary session store. */
+    }
+    this.database = null;
+  }
+}
 
 const toJsonLine = (event: string, data: unknown) =>
   JSON.stringify({
@@ -886,6 +1058,31 @@ const normalizeCursorToolName = (kind: string | undefined): string => {
   }
 };
 
+const normalizeCursorStoredToolName = (toolName: string): string => {
+  switch (normalizeToken(toolName)) {
+    case "shell":
+    case "execute":
+      return "run_shell";
+    case "read":
+      return "read_file";
+    case "write":
+      return "write_file";
+    case "str-replace":
+    case "edit":
+      return "edit_file";
+    case "delete":
+      return "delete_file";
+    case "glob":
+    case "grep":
+    case "search":
+      return "search_repo";
+    case "task":
+      return "task";
+    default:
+      return toolName;
+  }
+};
+
 const normalizeCursorToolStatus = (value: unknown): CursorToolState["status"] | undefined => {
   const normalized = normalizeToken(asString(value));
   if (normalized === "completed" || normalized === "complete" || normalized === "done" || normalized === "success") return "completed";
@@ -925,6 +1122,58 @@ const extractCommandFromRawInput = (rawInput: unknown, title: string | undefined
   return match?.[1]?.trim();
 };
 
+const readCursorPath = (value: unknown): string | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  return [
+    value.path,
+    value.filePath,
+    value.file_path,
+    value.targetPath,
+    value.target_path,
+  ].find((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0)?.trim();
+};
+
+const readCursorQuery = (value: unknown): string | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  return [
+    value.query,
+    value.pattern,
+    value.glob,
+    value.globPattern,
+    value.glob_pattern,
+  ].find((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0)?.trim();
+};
+
+const compactCursorToolArguments = (value: Record<string, unknown>): Record<string, unknown> =>
+  Object.fromEntries(
+    Object.entries(value).filter(
+      ([key]) => !/^(?:content|contents|fileText|oldText|newText|replacement|replaceWith)$/i.test(key),
+    ),
+  );
+
+const cursorDisplayPath = (cwd: string, value: string | undefined): string | undefined => {
+  if (!value) {
+    return undefined;
+  }
+  if (!isAbsolute(value)) {
+    return value.replaceAll("\\", "/");
+  }
+  const workspaceRelativePath = relative(cwd, value);
+  if (
+    workspaceRelativePath &&
+    workspaceRelativePath !== ".." &&
+    !workspaceRelativePath.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) &&
+    !isAbsolute(workspaceRelativePath)
+  ) {
+    return workspaceRelativePath.replaceAll("\\", "/");
+  }
+  return value;
+};
+
 export const readCursorToolName = (rawInput: unknown, title: string | undefined): string | undefined => {
   const inputToolName = isRecord(rawInput) ? asString(rawInput._toolName)?.trim() : undefined;
   if (inputToolName && normalizeToken(inputToolName) !== "tool") {
@@ -949,7 +1198,48 @@ const textContentFromToolContent = (content: unknown): string | undefined => {
   return chunks.length > 0 ? chunks.join("\n") : undefined;
 };
 
-const parseCursorToolState = (params: unknown): CursorToolState | null => {
+const buildCursorFallbackDiff = (path: string, oldText: string, newText: string): string => {
+  const normalizeLines = (value: string) => value.replaceAll("\r\n", "\n").split("\n");
+  const oldLines = normalizeLines(oldText);
+  const newLines = normalizeLines(newText);
+  const normalizedPath = path.replaceAll("\\", "/");
+  return [
+    `--- a/${normalizedPath}`,
+    `+++ b/${normalizedPath}`,
+    `@@ -1,${String(oldLines.length)} +1,${String(newLines.length)} @@`,
+    ...oldLines.map((line) => `-${line}`),
+    ...newLines.map((line) => `+${line}`),
+  ].join("\n");
+};
+
+const diffContentFromToolContent = (
+  content: unknown,
+): { path?: string; diff?: string } => {
+  for (const entry of asArray(content) ?? []) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+    const nested = isRecord(entry.content) ? entry.content : entry;
+    if (nested.type !== "diff") {
+      continue;
+    }
+    const path = asString(nested.path)?.trim();
+    const oldText = asString(nested.oldText);
+    const newText = asString(nested.newText);
+    const diff = asString(nested.diff)?.trim();
+    return {
+      ...(path ? { path } : {}),
+      ...(diff
+        ? { diff }
+        : path && oldText !== undefined && newText !== undefined
+          ? { diff: buildCursorFallbackDiff(path, oldText, newText) }
+          : {}),
+    };
+  }
+  return {};
+};
+
+export const parseCursorToolState = (params: unknown): CursorToolState | null => {
   if (!isRecord(params)) {
     return null;
   }
@@ -966,7 +1256,10 @@ const parseCursorToolState = (params: unknown): CursorToolState | null => {
   const kind = asString(update.kind)?.trim();
   const status = normalizeCursorToolStatus(update.status) ?? (updateKind === "tool_call" ? "pending" : undefined);
   const command = extractCommandFromRawInput(update.rawInput, title);
-  const detail = command ?? textContentFromToolContent(update.content) ?? title;
+  const path = readCursorPath(update.rawInput);
+  const query = readCursorQuery(update.rawInput);
+  const contentDiff = diffContentFromToolContent(update.content);
+  const detail = command ?? path ?? query ?? contentDiff.path ?? textContentFromToolContent(update.content) ?? title;
   const toolName = readCursorToolName(update.rawInput, title);
   const rawOutput = isRecord(update.rawOutput) ? update.rawOutput : undefined;
   return {
@@ -974,11 +1267,57 @@ const parseCursorToolState = (params: unknown): CursorToolState | null => {
     ...(kind ? { kind } : {}),
     ...(title ? { title } : {}),
     ...(status ? { status } : {}),
+    ...(isRecord(update.rawInput) ? { arguments: compactCursorToolArguments(update.rawInput) } : {}),
     ...(command ? { command } : {}),
+    ...(path ?? contentDiff.path ? { path: path ?? contentDiff.path } : {}),
+    ...(query ? { query } : {}),
+    ...(contentDiff.diff ? { diff: contentDiff.diff } : {}),
     ...(detail ? { detail } : {}),
     ...(toolName ? { toolName } : {}),
     ...(rawOutput ? { rawOutput } : {}),
     raw: sanitizeMetadataValue(params),
+  };
+};
+
+const cursorRichResultSuccess = (richResult: Record<string, unknown> | undefined): Record<string, unknown> | undefined => {
+  const output = isRecord(richResult?.output) ? richResult.output : undefined;
+  return isRecord(output?.success) ? output.success : undefined;
+};
+
+export const enrichCursorToolState = (
+  tool: CursorToolState,
+  stored: CursorStoredToolCall | null,
+  cwd: string,
+): CursorToolState => {
+  if (!stored) {
+    return {
+      ...tool,
+      ...(tool.path ? { path: cursorDisplayPath(cwd, tool.path) } : {}),
+    };
+  }
+  const richSuccess = cursorRichResultSuccess(stored.richResult);
+  const rawPath = readCursorPath(stored.arguments) ?? readCursorPath(richSuccess) ?? tool.path;
+  const path = cursorDisplayPath(cwd, rawPath);
+  const command = extractCommandFromRawInput(stored.arguments, tool.title) ?? tool.command;
+  const query = readCursorQuery(stored.arguments) ?? tool.query;
+  const richDiff = asString(richSuccess?.diffString)?.trim();
+  const kindToolName = normalizeCursorToolName(tool.kind);
+  const storedToolName = normalizeCursorStoredToolName(stored.toolName);
+  const toolName =
+    tool.toolName ??
+    (kindToolName === "tool" && !normalizeToken(storedToolName).startsWith("mcp-")
+      ? storedToolName
+      : undefined);
+  const detail = command ?? path ?? query ?? tool.detail;
+  return {
+    ...tool,
+    arguments: compactCursorToolArguments(stored.arguments),
+    ...(command ? { command } : {}),
+    ...(path ? { path } : {}),
+    ...(query ? { query } : {}),
+    ...(richDiff ? { diff: richDiff } : {}),
+    ...(detail ? { detail } : {}),
+    ...(toolName ? { toolName } : {}),
   };
 };
 
@@ -987,7 +1326,11 @@ const mergeCursorToolState = (left: CursorToolState | undefined, right: CursorTo
   kind: right.kind ?? left?.kind,
   title: right.title ?? left?.title,
   status: right.status ?? left?.status,
+  arguments: right.arguments ?? left?.arguments,
   command: right.command ?? left?.command,
+  path: right.path ?? left?.path,
+  query: right.query ?? left?.query,
+  diff: right.diff ?? left?.diff,
   detail: right.detail ?? left?.detail,
   toolName: right.toolName ?? left?.toolName,
   rawOutput: right.rawOutput ?? left?.rawOutput,
@@ -1067,15 +1410,25 @@ export const buildCursorToolChunkForState = (tool: CursorToolState): HarnessRunC
   const title = genericTitle
     ? toolName ?? (kindToolName === "run_shell" ? "Shell command" : "Cursor tool")
     : tool.title!;
-  const value = tool.command ?? tool.detail ?? title;
+  const value = tool.diff ?? tool.command ?? tool.path ?? tool.query ?? tool.detail ?? title;
   const metadata = {
     provider: PROVIDER,
     ...(toolName ? { toolName } : {}),
     callId: tool.id,
     cursorToolKind: tool.kind,
+    arguments: tool.arguments,
     command: tool.command,
+    path: tool.path,
+    query: tool.query,
+    ...(tool.diff ? { writeFileUnifiedDiff: tool.diff } : {}),
     status: tool.status,
     rawToolCall: tool.raw,
+    ...(tool.status === "completed" || tool.status === "failed"
+      ? {
+          streamId: `cursor-tool-result-${tool.id}`,
+          replace: true,
+        }
+      : {}),
   };
   if (tool.status === "completed" || tool.status === "failed") {
     return {
@@ -1512,11 +1865,16 @@ const buildPromptParts = (
 class CursorAcpRuntime {
   private readonly connection: CursorAcpJsonRpcConnection;
   private session: CursorAcpStartedSession | null = null;
+  private toolStoreReader: CursorToolStoreReader | null = null;
   private readonly toolStates = new Map<string, CursorToolState>();
+  private readonly pendingToolStoreReads = new Map<string, Promise<void>>();
   private readonly mcpToolNameMatcher = new CursorMcpToolNameMatcher();
   private readonly subagents = new Map<string, RunSubagentInfo>();
   private assistantText = "";
+  private assistantSegmentText = "";
+  private assistantStreamIndex = 0;
   private isPromptActive = false;
+  private isClosed = false;
   private usage: RunTokenUsage = { inputTokens: 0, outputTokens: 0 };
 
   constructor(private readonly options: CursorRuntimeOptions) {
@@ -1609,6 +1967,8 @@ class CursorAcpRuntime {
       configOptions,
       modelConfigId: extractModelConfigId(configOptions),
     };
+    this.toolStoreReader?.close();
+    this.toolStoreReader = new CursorToolStoreReader(sessionId);
     await this.applyModelSelection();
     const modeApplied = await this.applyMode();
     if (!modeApplied) {
@@ -1636,6 +1996,8 @@ class CursorAcpRuntime {
     const session = this.requireSession();
     const modeApplied = await this.applyMode();
     this.assistantText = "";
+    this.assistantSegmentText = "";
+    this.assistantStreamIndex = 0;
     this.toolStates.clear();
     this.isPromptActive = true;
     try {
@@ -1643,6 +2005,7 @@ class CursorAcpRuntime {
         sessionId: session.sessionId,
         prompt: buildPromptParts(prompt, this.options.attachments, modeApplied ? undefined : modeFallbackInstruction(this.options.mode)),
       }, 0);
+      await this.waitForPendingToolStoreReads();
       this.mergeUsage(normalizeCursorTokenUsage(result));
       return {
         summary: this.assistantText.trim(),
@@ -1668,6 +2031,9 @@ class CursorAcpRuntime {
   }
 
   close(): void {
+    this.isClosed = true;
+    this.toolStoreReader?.close();
+    this.toolStoreReader = null;
     this.connection.close();
   }
 
@@ -1833,15 +2199,16 @@ class CursorAcpRuntime {
 
     const text = textFromSessionUpdate(params);
     if (text) {
-      this.assistantText += text;
+      this.assistantSegmentText += text;
+      this.assistantText = this.assistantSegmentText;
       this.options.onAssistantText?.(text);
       this.options.onChunk?.({
         type: "message",
         title: "Cursor output",
-        value: this.assistantText,
+        value: this.assistantSegmentText,
         metadata: {
           provider: PROVIDER,
-          streamId: "cursor-assistant",
+          streamId: `cursor-assistant-${String(this.assistantStreamIndex)}`,
           replace: true,
           ...(this.usage.inputTokens > 0 || this.usage.outputTokens > 0 || this.usage.maxTokens ? { usageTotals: this.usage } : {}),
         },
@@ -1855,8 +2222,15 @@ class CursorAcpRuntime {
       return;
     }
 
-    const tool = parseCursorToolState(params);
+    const parsedTool = parseCursorToolState(params);
+    const tool = parsedTool
+      ? enrichCursorToolState(parsedTool, this.toolStoreReader?.read(parsedTool.id) ?? null, this.options.cwd)
+      : null;
     if (tool) {
+      if (this.assistantSegmentText) {
+        this.assistantSegmentText = "";
+        this.assistantStreamIndex += 1;
+      }
       const previous = this.toolStates.get(tool.id);
       let merged = mergeCursorToolState(previous, tool);
       if (isGenericCursorMcpToolState(merged)) {
@@ -1883,6 +2257,85 @@ class CursorAcpRuntime {
         return;
       }
       this.options.onChunk?.(this.withUsage(buildCursorToolChunkForState(merged)));
+      if (this.shouldRetryToolStoreRead(merged)) {
+        this.scheduleToolStoreRead(merged.id);
+      }
+    }
+  }
+
+  private shouldRetryToolStoreRead(tool: CursorToolState): boolean {
+    if (
+      (tool.status !== "completed" && tool.status !== "failed") ||
+      isCursorSubagentToolState(tool) ||
+      isGenericCursorMcpToolState(tool) ||
+      tool.toolName?.startsWith("buildwarden_")
+    ) {
+      return false;
+    }
+    const kind = normalizeToken(tool.kind);
+    if (!["read", "edit", "delete", "move", "search", "execute", "fetch"].includes(kind)) {
+      return false;
+    }
+    return (
+      !tool.path &&
+      !tool.command &&
+      !tool.query &&
+      !tool.diff &&
+      Object.keys(tool.arguments ?? {}).length === 0
+    );
+  }
+
+  private scheduleToolStoreRead(toolId: string): void {
+    if (
+      this.pendingToolStoreReads.has(toolId) ||
+      this.isClosed ||
+      !this.toolStoreReader?.hasStore()
+    ) {
+      return;
+    }
+    const pending = readCursorStoredToolCallWithRetry(() => {
+      if (this.isClosed || this.options.signal.aborted) {
+        return null;
+      }
+      return this.toolStoreReader?.read(toolId) ?? null;
+    })
+      .then((stored) => {
+        if (!stored || this.isClosed || this.options.signal.aborted) {
+          return;
+        }
+        const current = this.toolStates.get(toolId);
+        if (!current || (current.status !== "completed" && current.status !== "failed")) {
+          return;
+        }
+        const enriched = mergeCursorToolState(
+          current,
+          enrichCursorToolState(current, stored, this.options.cwd),
+        );
+        const metadataChanged =
+          enriched.path !== current.path ||
+          enriched.command !== current.command ||
+          enriched.query !== current.query ||
+          enriched.diff !== current.diff ||
+          enriched.toolName !== current.toolName ||
+          JSON.stringify(enriched.arguments ?? {}) !== JSON.stringify(current.arguments ?? {});
+        if (!metadataChanged) {
+          return;
+        }
+        this.toolStates.set(toolId, enriched);
+        this.options.onChunk?.(this.withUsage(buildCursorToolChunkForState(enriched)));
+      })
+      .catch(() => {
+        /* Cursor may remove its session store while a run is shutting down. */
+      })
+      .finally(() => {
+        this.pendingToolStoreReads.delete(toolId);
+      });
+    this.pendingToolStoreReads.set(toolId, pending);
+  }
+
+  private async waitForPendingToolStoreReads(): Promise<void> {
+    while (this.pendingToolStoreReads.size > 0) {
+      await Promise.allSettled([...this.pendingToolStoreReads.values()]);
     }
   }
 
