@@ -249,6 +249,12 @@ describe("renderer component states", () => {
     expect(markup).toContain(">Done</span>");
     expect(markup).toContain('aria-pressed="true"');
     expect(markup).toContain('aria-pressed="false"');
+    // Which agent produced the run, next to the project it ran in.
+    expect(markup).toContain("<title>AI SDK</title>");
+    const claudeMarkup = renderToStaticMarkup(
+      <AllRunsPage projects={[{ ...projectEntry, runs: [runRecord({ harnessType: "claude-code" })] }]} onSelectRun={vi.fn()} />,
+    );
+    expect(claudeMarkup).toContain("<title>Claude Code</title>");
   });
 
   it("renders plan, token, and context summaries", () => {
