@@ -1,7 +1,8 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
 import type { HarnessToolContext } from "@buildwarden/shared";
 import {
@@ -18,18 +19,24 @@ import {
   buildCursorPlanProgressChunk,
   createCursorDevLogger,
   deriveCursorMaxTokensFromConfigOptions,
+  enrichCursorToolState,
   extractCursorTodosAsPlanProgress,
+  findCursorSessionStorePath,
   getCursorAgentBinaryPath,
   getCursorAgentBinaryPathCandidates,
   mapCursorUserInputAnswers,
   normalizeCursorTokenUsage,
+  parseCursorToolState,
   parseCursorAboutOutput,
   parseCursorAvailableModelsResponse,
   resolveCursorAcpBaseModelId,
   resolveCursorAcpConfigUpdates,
   resolveCursorAgentProcessLaunch,
+  readCursorStoredToolCall,
+  readCursorStoredToolCallWithRetry,
   startCursorOrchestrationMcp,
   terminateCursorProcessTree,
+  type CursorStoredToolCall,
 } from "@buildwarden/provider-cursor-agent";
 
 describe("CursorAgentProviderAdapter", () => {
@@ -168,6 +175,185 @@ describe("CursorAgentProviderAdapter", () => {
     expect(namedChunk.title).toContain("buildwarden_tasks_delegate");
   });
 
+  it("recovers Cursor file paths and edit diffs from the session store", () => {
+    const cursorDirectory = mkdtempSync(join(tmpdir(), "buildwarden-cursor-store-"));
+    const sessionId = "session-1";
+    const sessionDirectory = join(cursorDirectory, "acp-sessions", sessionId);
+    const databasePath = join(sessionDirectory, "store.db");
+    const workspacePath = join(cursorDirectory, "workspace");
+    const readPath = join(workspacePath, "README.md");
+    const editPath = join(workspacePath, "src", "app.ts");
+    const editDiff = "--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1 +1 @@\n-old\n+new";
+    mkdirSync(sessionDirectory, { recursive: true });
+    const database = new DatabaseSync(databasePath);
+    database.exec("CREATE TABLE blobs (id TEXT PRIMARY KEY, data BLOB)");
+    const insert = database.prepare("INSERT INTO blobs (id, data) VALUES (?, ?)");
+    insert.run("assistant", Buffer.from(JSON.stringify({
+      role: "assistant",
+      content: [
+        { type: "tool-call", toolCallId: "read-1", toolName: "Read", args: { path: readPath } },
+        {
+          type: "tool-call",
+          toolCallId: "edit-1",
+          toolName: "Write",
+          args: { path: editPath, contents: "new" },
+        },
+      ],
+    })));
+    insert.run("edit-result", Buffer.from(JSON.stringify({
+      role: "tool",
+      content: [{ type: "tool-result", toolCallId: "edit-1", toolName: "Write", result: "updated" }],
+      providerOptions: {
+        cursor: {
+          highLevelToolCallResult: {
+            output: {
+              success: {
+                path: editPath,
+                diffString: editDiff,
+              },
+            },
+          },
+        },
+      },
+    })));
+    insert.run("newer-read", Buffer.from(JSON.stringify({
+      role: "assistant",
+      content: [
+        { type: "tool-call", toolCallId: "read-1", toolName: "Read", args: { path: join(workspacePath, "LATEST.md") } },
+      ],
+    })));
+    database.close();
+
+    try {
+      expect(findCursorSessionStorePath(sessionId, cursorDirectory)).toBe(databasePath);
+      const storedRead = readCursorStoredToolCall(databasePath, "read-1");
+      const readState = parseCursorToolState({
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "read-1",
+          title: "Read File",
+          kind: "read",
+          status: "pending",
+          rawInput: {},
+        },
+      });
+      expect(readState).not.toBeNull();
+      const readChunk = buildCursorToolChunkForState(enrichCursorToolState(readState!, storedRead, workspacePath));
+      expect(readChunk).toMatchObject({
+        type: "tool-call",
+        value: "LATEST.md",
+        metadata: {
+          toolName: "read_file",
+          path: "LATEST.md",
+          arguments: { path: join(workspacePath, "LATEST.md") },
+        },
+      });
+
+      const storedEdit = readCursorStoredToolCall(databasePath, "edit-1");
+      const editState = parseCursorToolState({
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "edit-1",
+          title: "Edit File",
+          kind: "edit",
+          status: "completed",
+          content: [{ type: "diff", path: editPath, oldText: "old", newText: "new" }],
+        },
+      });
+      expect(editState).not.toBeNull();
+      const editChunk = buildCursorToolChunkForState(enrichCursorToolState(editState!, storedEdit, workspacePath));
+      expect(editChunk).toMatchObject({
+        type: "tool-result",
+        value: editDiff,
+        metadata: {
+          toolName: "edit_file",
+          path: "src/app.ts",
+          arguments: { path: editPath },
+          writeFileUnifiedDiff: editDiff,
+          ok: true,
+        },
+      });
+      expect(editChunk.metadata?.arguments).not.toHaveProperty("contents");
+    } finally {
+      rmSync(cursorDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("continues past unusable Cursor diff entries", () => {
+    const state = parseCursorToolState({
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "edit-1",
+        title: "Edit File",
+        kind: "edit",
+        status: "completed",
+        content: [
+          { type: "diff" },
+          { type: "diff", path: "src/app.ts", oldText: "old", newText: "new" },
+        ],
+      },
+    });
+
+    expect(state).toMatchObject({
+      path: "src/app.ts",
+      diff: "--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1,1 +1,1 @@\n-old\n+new",
+    });
+  });
+
+  it("preserves ACP arguments when stored Cursor arguments are empty", () => {
+    const state = parseCursorToolState({
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "read-1",
+        title: "Read File",
+        kind: "read",
+        status: "pending",
+        rawInput: { path: "src/app.ts" },
+      },
+    });
+
+    expect(state).not.toBeNull();
+    expect(enrichCursorToolState(state!, {
+      toolName: "Read",
+      arguments: {},
+    }, "C:\\workspace")).toMatchObject({
+      path: "src/app.ts",
+      arguments: { path: "src/app.ts" },
+    });
+  });
+
+  it("retries session-store reads that are flushed after the ACP tool result", async () => {
+    const stored: CursorStoredToolCall = {
+      toolName: "Read",
+      arguments: { path: "C:\\workspace\\README.md" },
+    };
+    let reads = 0;
+
+    await expect(readCursorStoredToolCallWithRetry(() => {
+      reads += 1;
+      return reads >= 3 ? stored : null;
+    }, [0, 0])).resolves.toEqual(stored);
+    expect(reads).toBe(3);
+  });
+
+  it("makes terminal Cursor tool updates replaceable for late metadata enrichment", () => {
+    const chunk = buildCursorToolChunkForState({
+      id: "read-1",
+      kind: "read",
+      title: "Read File",
+      status: "completed",
+    });
+
+    expect(chunk).toMatchObject({
+      type: "tool-result",
+      metadata: {
+        callId: "read-1",
+        streamId: "cursor-tool-result-read-1",
+        replace: true,
+      },
+    });
+  });
+
   it("correlates anonymous Cursor MCP calls with bridge tool names in either arrival order", () => {
     const cursorFirst = new CursorMcpToolNameMatcher();
     expect(cursorFirst.registerCursorTool("cursor-1")).toBeUndefined();
@@ -291,6 +477,10 @@ describe("CursorAgentProviderAdapter", () => {
         '  if (message.method === "session/prompt") {',
         '    update("agent_message_chunk", { content: { type: "text", text: "Fresh" } });',
         '    update("agent_message_chunk", { content: { type: "text", text: " response" } });',
+        '    update("tool_call", { toolCallId: "fresh-tool", title: "New tool", kind: "search", status: "pending", rawInput: {} });',
+        '    update("tool_call_update", { toolCallId: "fresh-tool", status: "completed" });',
+        '    update("agent_message_chunk", { content: { type: "text", text: "Finished" } });',
+        '    update("agent_message_chunk", { content: { type: "text", text: " cleanly" } });',
         '    respond({ stopReason: "end_turn" });',
         '    return setImmediate(() => process.exit(0));',
         '  }',
@@ -345,10 +535,12 @@ describe("CursorAgentProviderAdapter", () => {
         new AbortController().signal,
       );
 
-      expect(result.summary).toBe("Fresh response");
+      expect(result.summary).toBe("Finished cleanly");
       expect(chunks.filter((chunk) => chunk.type === "message").map((chunk) => chunk.value)).toEqual([
         "Fresh",
         "Fresh response",
+        "Finished",
+        "Finished cleanly",
       ]);
       expect(chunks.some((chunk) => chunk.value.includes("Previous answer") || chunk.value.includes("Old tool"))).toBe(false);
     } finally {

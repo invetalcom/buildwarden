@@ -8552,10 +8552,14 @@ export class AppController
         >,
       );
     }
-    const streamId = payload.chunk.type === "message" && typeof payload.chunk.metadata?.streamId === "string"
+    const replaceableChunk =
+      payload.chunk.type === "message" ||
+      payload.chunk.type === "tool-result" ||
+      payload.chunk.type === "tool-progress";
+    const streamId = replaceableChunk && typeof payload.chunk.metadata?.streamId === "string"
       ? payload.chunk.metadata.streamId
       : null;
-    const shouldReplace = payload.chunk.type === "message" && payload.chunk.metadata?.replace === true && streamId;
+    const shouldReplace = replaceableChunk && payload.chunk.metadata?.replace === true && streamId;
 
     if (shouldReplace) {
       const existingStepId = streamingStepIds.get(streamId);
