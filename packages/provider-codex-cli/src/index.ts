@@ -1688,7 +1688,12 @@ export class CodexAppServerSession {
   private handleTurnCompleted(params: Record<string, unknown> | undefined): void {
     const turn = asRecord(params?.turn);
     const errorMessage = asString(asRecord(turn?.error)?.message);
-    this.usage = normalizeCodexTokenUsage(asRecord(turn?.usage) ?? turn?.usage);
+    // turn/completed carries no usage on current Codex builds; overwriting here would
+    // discard the cached/reasoning breakdown collected from thread/tokenUsage/updated.
+    const turnUsage = asRecord(turn?.usage);
+    if (turnUsage) {
+      this.usage = normalizeCodexTokenUsage(turnUsage);
+    }
     this.emitUsageUpdated();
     const pendingTurn = this.pending.get("__turn_complete__");
     if (!pendingTurn) return;

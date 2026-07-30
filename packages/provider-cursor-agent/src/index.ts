@@ -866,6 +866,7 @@ const addUsage = (left: RunTokenUsage, right: RunTokenUsage): RunTokenUsage => {
   const totalTokens = (left.totalTokens ?? left.inputTokens + left.outputTokens) + (right.totalTokens ?? right.inputTokens + right.outputTokens);
   const reasoningTokens = (left.reasoningTokens ?? 0) + (right.reasoningTokens ?? 0);
   const cachedInputTokens = (left.cachedInputTokens ?? 0) + (right.cachedInputTokens ?? 0);
+  const cacheCreationInputTokens = (left.cacheCreationInputTokens ?? 0) + (right.cacheCreationInputTokens ?? 0);
   const result: RunTokenUsage = {
     ...left,
     inputTokens: left.inputTokens + right.inputTokens,
@@ -874,6 +875,7 @@ const addUsage = (left: RunTokenUsage, right: RunTokenUsage): RunTokenUsage => {
     totalProcessedTokens: totalTokens,
     ...(reasoningTokens > 0 ? { reasoningTokens } : {}),
     ...(cachedInputTokens > 0 ? { cachedInputTokens } : {}),
+    ...(cacheCreationInputTokens > 0 ? { cacheCreationInputTokens } : {}),
     ...(right.usedTokens !== undefined ? { usedTokens: right.usedTokens, lastUsedTokens: right.usedTokens } : {}),
     ...(right.maxTokens !== undefined ? { maxTokens: right.maxTokens } : {}),
     ...(right.lastInputTokens !== undefined ? { lastInputTokens: right.lastInputTokens } : {}),
@@ -891,8 +893,19 @@ const readUsageFromRecord = (record: Record<string, unknown>): RunTokenUsage | n
   const outputTokens = asFiniteNumber(
     record.outputTokens ?? record.output_tokens ?? record.completionTokens ?? record.completion_tokens,
   ) ?? 0;
-  const reasoningTokens = asFiniteNumber(record.reasoningTokens ?? record.reasoning_tokens);
-  const cachedInputTokens = asFiniteNumber(record.cachedInputTokens ?? record.cached_input_tokens);
+  // ACP's stabilized end-turn usage names these thoughtTokens/cachedReadTokens/cachedWriteTokens.
+  const reasoningTokens = asFiniteNumber(
+    record.reasoningTokens ?? record.reasoning_tokens ?? record.thoughtTokens ?? record.thought_tokens,
+  );
+  const cachedInputTokens = asFiniteNumber(
+    record.cachedInputTokens ?? record.cached_input_tokens ?? record.cachedReadTokens ?? record.cached_read_tokens,
+  );
+  const cacheCreationInputTokens = asFiniteNumber(
+    record.cacheCreationInputTokens ??
+      record.cache_creation_input_tokens ??
+      record.cachedWriteTokens ??
+      record.cached_write_tokens,
+  );
   const totalTokens = asFiniteNumber(record.totalTokens ?? record.total_tokens ?? record.tokens);
   const usedTokens = asFiniteNumber(
     record.usedTokens ?? record.used_tokens ?? record.contextUsedTokens ?? record.context_used_tokens ?? record.used,
@@ -906,6 +919,7 @@ const readUsageFromRecord = (record: Record<string, unknown>): RunTokenUsage | n
     outputTokens === 0 &&
     reasoningTokens === undefined &&
     cachedInputTokens === undefined &&
+    cacheCreationInputTokens === undefined &&
     totalTokens === undefined &&
     usedTokens === undefined &&
     maxTokens === undefined
@@ -918,6 +932,7 @@ const readUsageFromRecord = (record: Record<string, unknown>): RunTokenUsage | n
     outputTokens,
     ...(reasoningTokens !== undefined ? { reasoningTokens, lastReasoningTokens: reasoningTokens } : {}),
     ...(cachedInputTokens !== undefined ? { cachedInputTokens, lastCachedInputTokens: cachedInputTokens } : {}),
+    ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
     ...(totalTokens !== undefined ? { totalTokens, totalProcessedTokens: totalTokens } : {}),
     ...(usedTokens !== undefined ? { usedTokens, lastUsedTokens: usedTokens } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),

@@ -808,6 +808,33 @@ describe("CursorAgentProviderAdapter", () => {
     });
   });
 
+  it("normalizes the ACP end-turn usage field names", () => {
+    expect(
+      normalizeCursorTokenUsage({
+        usage: {
+          inputTokens: 1200,
+          outputTokens: 340,
+          thoughtTokens: 90,
+          cachedReadTokens: 800,
+          cachedWriteTokens: 400,
+          totalTokens: 1540,
+        },
+      }),
+    ).toEqual({
+      inputTokens: 1200,
+      outputTokens: 340,
+      reasoningTokens: 90,
+      lastReasoningTokens: 90,
+      cachedInputTokens: 800,
+      lastCachedInputTokens: 800,
+      cacheCreationInputTokens: 400,
+      totalTokens: 1540,
+      totalProcessedTokens: 1540,
+      lastInputTokens: 1200,
+      lastOutputTokens: 340,
+    });
+  });
+
   it("returns null when the payload has no recognizable usage fields", () => {
     expect(normalizeCursorTokenUsage(null)).toBeNull();
     expect(normalizeCursorTokenUsage("not-an-object")).toBeNull();

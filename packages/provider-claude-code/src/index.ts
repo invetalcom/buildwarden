@@ -712,17 +712,28 @@ const readClaudeContextWindow = (value: unknown): number | undefined => {
   if (!isRecord(value)) {
     return undefined;
   }
-  let maxContextWindow: number | undefined;
+  // modelUsage also lists helper models (title generation, summaries) that run on
+  // their own context window. The run's own model does the bulk of the work, so
+  // pick the busiest entry rather than the largest window.
+  let busiest: { tokens: number; contextWindow: number } | undefined;
   for (const entry of Object.values(value)) {
     if (!isRecord(entry)) {
       continue;
     }
     const contextWindow = asOptionalFiniteNumber(entry.contextWindow ?? entry.context_window);
-    if (contextWindow !== undefined && contextWindow > 0) {
-      maxContextWindow = Math.max(maxContextWindow ?? 0, contextWindow);
+    if (contextWindow === undefined || contextWindow <= 0) {
+      continue;
+    }
+    const tokens =
+      asFiniteNumber(entry.inputTokens ?? entry.input_tokens) +
+      asFiniteNumber(entry.cacheReadInputTokens ?? entry.cache_read_input_tokens) +
+      asFiniteNumber(entry.cacheCreationInputTokens ?? entry.cache_creation_input_tokens) +
+      asFiniteNumber(entry.outputTokens ?? entry.output_tokens);
+    if (!busiest || tokens > busiest.tokens) {
+      busiest = { tokens, contextWindow };
     }
   }
-  return maxContextWindow;
+  return busiest?.contextWindow;
 };
 
 const processedTotal = (usage: RunTokenUsage): number =>
@@ -834,6 +845,27 @@ const addClaudeUsageContext = (usage: RunTokenUsage, contextWindow?: number): Ru
   return usage;
 };
 
+// One assistant message is one API call, so its prompt (uncached input + cache
+// reads + cache writes) plus its completion is what currently occupies the
+// context window. Cumulative run totals are a much larger, different number —
+// every turn re-reads the whole cached prompt — so they must not land here.
+const applyClaudeCallContext = (usage: RunTokenUsage, call: RunTokenUsage): RunTokenUsage => {
+  const usedTokens = call.inputTokens + call.outputTokens;
+  if (usedTokens <= 0) {
+    return usage;
+  }
+  const next: RunTokenUsage = {
+    ...usage,
+    usedTokens: usage.maxTokens !== undefined ? Math.min(usedTokens, usage.maxTokens) : usedTokens,
+    lastUsedTokens: usedTokens,
+    lastInputTokens: call.inputTokens,
+    lastOutputTokens: call.outputTokens,
+  };
+  if (call.cachedInputTokens !== undefined) next.lastCachedInputTokens = call.cachedInputTokens;
+  if (call.reasoningTokens !== undefined) next.lastReasoningTokens = call.reasoningTokens;
+  return next;
+};
+
 const readModelUsage = (value: unknown, options: ClaudeUsageReadOptions = {}): RunTokenUsage | null => {
   if (!isRecord(value)) {
     return null;
@@ -876,17 +908,29 @@ type ClaudeUsageUpdate = {
   usageKey?: string;
 };
 
-const mergeClaudeContextSnapshot = (current: RunTokenUsage, update: RunTokenUsage): RunTokenUsage => ({
-  ...current,
-  usedTokens: update.usedTokens,
-  totalProcessedTokens: Math.max(current.totalProcessedTokens ?? processedTotal(current), update.totalProcessedTokens ?? processedTotal(update)),
-  maxTokens: update.maxTokens ?? current.maxTokens,
-  lastUsedTokens: update.lastUsedTokens ?? update.usedTokens ?? current.lastUsedTokens,
-  lastInputTokens: update.lastInputTokens ?? current.lastInputTokens,
-  lastCachedInputTokens: update.lastCachedInputTokens ?? current.lastCachedInputTokens,
-  lastOutputTokens: update.lastOutputTokens ?? current.lastOutputTokens,
-  lastReasoningTokens: update.lastReasoningTokens ?? current.lastReasoningTokens,
-});
+const mergeClaudeContextSnapshot = (current: RunTokenUsage, update: RunTokenUsage): RunTokenUsage => {
+  const totalProcessedTokens = Math.max(
+    current.totalProcessedTokens ?? processedTotal(current),
+    update.totalProcessedTokens ?? processedTotal(update),
+  );
+  // Snapshots come from task_progress/task_notification, whose usage describes the
+  // subagent ({total_tokens, tool_uses, duration_ms}) rather than the parent thread.
+  // Never let it overwrite a real per-call context measurement.
+  if (current.usedTokens !== undefined) {
+    return { ...current, totalProcessedTokens, maxTokens: update.maxTokens ?? current.maxTokens };
+  }
+  return {
+    ...current,
+    usedTokens: update.usedTokens,
+    totalProcessedTokens,
+    maxTokens: update.maxTokens ?? current.maxTokens,
+    lastUsedTokens: update.lastUsedTokens ?? update.usedTokens ?? current.lastUsedTokens,
+    lastInputTokens: update.lastInputTokens ?? current.lastInputTokens,
+    lastCachedInputTokens: update.lastCachedInputTokens ?? current.lastCachedInputTokens,
+    lastOutputTokens: update.lastOutputTokens ?? current.lastOutputTokens,
+    lastReasoningTokens: update.lastReasoningTokens ?? current.lastReasoningTokens,
+  };
+};
 
 const mergeClaudeAbsoluteUsage = (current: RunTokenUsage, update: RunTokenUsage): RunTokenUsage => {
   if (current.usedTokens === undefined && current.lastUsedTokens === undefined) {
@@ -951,11 +995,11 @@ export const mergeClaudeUsageUpdate = (
       if (!delta) {
         return { usage: current, changed: false };
       }
-      return { usage: addUsage(current, delta), changed: true };
+      return { usage: applyClaudeCallContext(addUsage(current, delta), update.usage), changed: true };
     }
   }
 
-  return { usage: addUsage(current, update.usage), changed: true };
+  return { usage: applyClaudeCallContext(addUsage(current, update.usage), update.usage), changed: true };
 };
 
 const stringifyValue = (value: unknown): string => {
