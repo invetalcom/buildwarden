@@ -7,6 +7,7 @@ import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Input } from "../ui/input";
+import { ProviderBrandIcon } from "./provider-brand-icons";
 import {
   isRunDisplayStatusActive,
   resolveRunDisplayStatus,
@@ -100,6 +101,7 @@ const AllRunsContent = ({
                 <span className="inline-flex min-w-0 items-center gap-1">
                   <FolderGit2 className="size-3 shrink-0" />
                   <span className="truncate">{project.name}</span>
+                  <ProviderBrandIcon harnessType={run.harnessType} className="size-3 shrink-0" />
                 </span>
                 <span className="inline-flex items-center gap-1 font-mono">
                   <Clock3 className="size-3" />

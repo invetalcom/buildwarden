@@ -26,6 +26,7 @@ import {
   Trash2,
 } from "lucide-react";
 import type { ProjectPageTab } from "./project-page-tabs";
+import { ProviderBrandIcon } from "./provider-brand-icons";
 import { projectSidebarContext } from "./sidebar-project-context";
 import { recentRunOrderTimestamp } from "./sidebar-run-ordering";
 import { clampSidebarWidth } from "./sidebar-width";
@@ -687,6 +688,8 @@ const SidebarComponent = ({
                               </span>
                             </span>
                             <span className="mt-1 flex min-w-0 items-center gap-1.5 pl-1 font-mono text-[10px] leading-3 text-[var(--ec-muted)]">
+                              {/* size-3 matches the 0.75rem line box of this row, so the mark adds no height. */}
+                              <ProviderBrandIcon harnessType={run.harnessType} className="size-3 shrink-0" />
                               <span className="truncate">{formatRelativeTime(run.finishedAt ?? run.updatedAt)}</span>
                               <span className="size-1 rounded-full bg-[var(--ec-faint)]" />
                               <span className="shrink-0">{formatRunDuration(run)}</span>

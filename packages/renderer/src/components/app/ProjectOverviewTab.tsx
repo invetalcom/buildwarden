@@ -1,4 +1,4 @@
-import { appendChatAttachmentFiles, type ChatAttachmentPayload, type OrchestrationStatus, type ProjectKind, type ProviderType, type RunMode, type RunWorkspaceType, type RunWorkspaceVcs, type SupportedIdeKind, type UnifiedProviderFamily } from "@buildwarden/shared";
+import { appendChatAttachmentFiles, type ChatAttachmentPayload, type HarnessType, type OrchestrationStatus, type ProjectKind, type ProviderType, type RunMode, type RunWorkspaceType, type RunWorkspaceVcs, type SupportedIdeKind, type UnifiedProviderFamily } from "@buildwarden/shared";
 import { Archive, Clock3, FolderOpen, Play, PlayCircle, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
@@ -19,6 +19,7 @@ import { Input } from "../ui/input";
 import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
 import { OpenInIdeControl } from "./open-in-ide-control";
 import type { ProjectRunStats } from "./ProjectStatisticsCard";
+import { ProviderBrandIcon } from "./provider-brand-icons";
 import { RunComposer } from "./RunComposer";
 import { resolveRunDisplayStatus, runDisplayStatusTone } from "./run-display-status";
 
@@ -33,6 +34,7 @@ interface ProjectOverviewTabProps {
     goalText?: string | null;
     userInputSearchText?: string;
     branchName: string;
+    harnessType: HarnessType;
     workspaceType: RunWorkspaceType;
     workspaceVcs: RunWorkspaceVcs;
     createdAt: string;
@@ -131,9 +133,13 @@ const RunHistory = ({ runs, visibleRuns, searchQuery, onSearchChange, onSelectRu
               const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
               return (
                 <div key={run.id} className="flex items-center gap-3 border-t border-[var(--ec-border)] px-4 py-3 transition hover:bg-[var(--ec-hover)]">
-                  <button className="min-w-0 flex-1 text-left" onClick={() => onSelectRun(run.id)} type="button">
-                    <p className="truncate text-sm font-semibold text-[var(--ec-text)]">{run.prompt}</p>
-                    <p className="mt-0.5 truncate font-mono text-xs text-[var(--ec-muted)]">{formatRunMeta(run)}</p>
+                  <button className="flex min-w-0 flex-1 items-center gap-2.5 text-left" onClick={() => onSelectRun(run.id)} type="button">
+                    {/* Sits beside the two-line text block, so the mark never drives the row height. */}
+                    <ProviderBrandIcon harnessType={run.harnessType} className="size-4 shrink-0" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-semibold text-[var(--ec-text)]">{run.prompt}</span>
+                      <span className="mt-0.5 block truncate font-mono text-xs text-[var(--ec-muted)]">{formatRunMeta(run)}</span>
+                    </span>
                   </button>
                   <div className="flex shrink-0 items-center gap-2">
                     <Badge dot tone={runDisplayStatusTone(displayStatus)}>{displayStatus}</Badge>

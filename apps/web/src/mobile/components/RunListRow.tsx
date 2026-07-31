@@ -1,3 +1,4 @@
+import { ProviderBrandIcon } from "@buildwarden/renderer/icons";
 import { GitBranch, MessageCircleQuestion } from "lucide-react";
 import type { RunListItem } from "../data/selectors";
 import { needsAttention } from "../data/selectors";
@@ -31,6 +32,8 @@ export const RunListRow = ({
         </span>
       </div>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        {/* Rides the meta line at the same size as the icons already there, so rows keep their height. */}
+        <ProviderBrandIcon harnessType={run.harnessType} className="size-3.5 shrink-0" />
         <RunStatusPill run={run} />
         {attention ? (
           <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--ec-warning)]">

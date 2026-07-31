@@ -9,6 +9,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./logic": "./src/logic.ts",
+    "./icons": "./src/icons.ts",
     "./styles.css": "./src/styles.css"
   },
   "scripts": {
