@@ -575,6 +575,15 @@ export const normalizeCodexTokenUsage = (value: unknown): RunTokenUsage => {
   };
 };
 
+// normalizeCodexTokenUsage always returns a usage object, so an empty or
+// unrecognized payload is indistinguishable from a genuinely zero one by shape
+// alone. Callers that replace accumulated usage must check for real counts first.
+const hasCodexUsageTokens = (usage: RunTokenUsage): boolean =>
+  usage.inputTokens > 0 ||
+  usage.outputTokens > 0 ||
+  (usage.totalTokens ?? 0) > 0 ||
+  (usage.usedTokens ?? 0) > 0;
+
 export const buildCodexPlanProgressChunk = (params: unknown): HarnessRunChunk | null => {
   const progress = normalizeRunPlanProgressPayload(params, "codex");
   if (!progress) {
@@ -1690,9 +1699,11 @@ export class CodexAppServerSession {
     const errorMessage = asString(asRecord(turn?.error)?.message);
     // turn/completed carries no usage on current Codex builds; overwriting here would
     // discard the cached/reasoning breakdown collected from thread/tokenUsage/updated.
-    const turnUsage = asRecord(turn?.usage);
-    if (turnUsage) {
-      this.usage = normalizeCodexTokenUsage(turnUsage);
+    // An empty or unrecognized usage payload normalizes to zeros, so check the
+    // normalized counts rather than the presence of the field.
+    const turnUsage = normalizeCodexTokenUsage(asRecord(turn?.usage));
+    if (hasCodexUsageTokens(turnUsage)) {
+      this.usage = turnUsage;
     }
     this.emitUsageUpdated();
     const pendingTurn = this.pending.get("__turn_complete__");

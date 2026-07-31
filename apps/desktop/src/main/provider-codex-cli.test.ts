@@ -254,6 +254,34 @@ describe("Codex CLI subagents", () => {
     });
   });
 
+  it("keeps the cached and reasoning breakdown when turn/completed carries an empty usage", async () => {
+    const { chunks, notify } = createSession();
+    await notify("thread/started", { thread: { id: "parent-thread" } });
+    await notify("thread/tokenUsage/updated", {
+      threadId: "parent-thread",
+      turnId: "parent-turn",
+      tokenUsage: {
+        total: { totalTokens: 14_514, inputTokens: 14_494, cachedInputTokens: 5_504, outputTokens: 20, reasoningOutputTokens: 13 },
+        last: { totalTokens: 14_514, inputTokens: 14_494, cachedInputTokens: 5_504, outputTokens: 20, reasoningOutputTokens: 13 },
+        modelContextWindow: 258_400,
+      },
+    });
+    // A present-but-empty usage object normalizes to zeros; it must not count as data.
+    await notify("turn/completed", {
+      threadId: "parent-thread",
+      turn: { id: "parent-turn", status: "completed", usage: {} },
+    });
+
+    expect(chunks.filter((chunk) => chunk.value === "Usage updated.").at(-1)?.metadata?.usageTotals).toMatchObject({
+      inputTokens: 14_494,
+      outputTokens: 20,
+      cachedInputTokens: 5_504,
+      reasoningTokens: 13,
+      usedTokens: 14_514,
+      maxTokens: 258_400,
+    });
+  });
+
   it("captures the child final answer from wait tool-call agent states", async () => {
     const { chunks, notify } = createSession();
     await notify("thread/started", { thread: { id: "parent-thread" } });
