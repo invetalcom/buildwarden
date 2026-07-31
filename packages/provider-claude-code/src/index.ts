@@ -830,10 +830,14 @@ const addUsage = (left: RunTokenUsage, right: RunTokenUsage): RunTokenUsage => {
   return usage;
 };
 
+// Context occupancy can never exceed the window, whichever source measured it.
+const capUsedTokens = (usedTokens: number, maxTokens: number | undefined): number =>
+  maxTokens === undefined ? usedTokens : Math.min(usedTokens, maxTokens);
+
 const addClaudeUsageContext = (usage: RunTokenUsage, contextWindow?: number): RunTokenUsage => {
   const total = processedTotal(usage);
   const maxTokens = typeof contextWindow === "number" && Number.isFinite(contextWindow) && contextWindow > 0 ? contextWindow : undefined;
-  const usedTokens = maxTokens === undefined ? total : Math.min(total, maxTokens);
+  const usedTokens = capUsedTokens(total, maxTokens);
   usage.usedTokens = usedTokens;
   usage.lastUsedTokens = usedTokens;
   usage.totalProcessedTokens = total;
@@ -856,7 +860,7 @@ const applyClaudeCallContext = (usage: RunTokenUsage, call: RunTokenUsage): RunT
   }
   const next: RunTokenUsage = {
     ...usage,
-    usedTokens: usage.maxTokens !== undefined ? Math.min(usedTokens, usage.maxTokens) : usedTokens,
+    usedTokens: capUsedTokens(usedTokens, usage.maxTokens),
     lastUsedTokens: usedTokens,
     lastInputTokens: call.inputTokens,
     lastOutputTokens: call.outputTokens,
