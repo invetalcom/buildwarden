@@ -794,45 +794,48 @@ describe("renderer component states", () => {
     expect(remoteFolderSettingsMarkup).toContain("limited remote settings");
     expect(remoteFolderSettingsMarkup).not.toContain("Repository");
 
+    const sidebarProps = {
+      projects: [projectSnapshot],
+      landingSelected: false,
+      allRunsSelected: false,
+      bookmarksSelected: false,
+      chatsSelected: false,
+      settingsSelected: false,
+      selectedProjectId: "project-1",
+      currentProjectBranch: "main",
+      currentProjectBranchStatus: "attached",
+      projectView: "overview",
+      highlightedRunId: null,
+      collapsed: false,
+      width: 312,
+      recentRunDays: 2,
+      runEntrySize: "medium",
+      groupRunsByProject: true,
+      bookmarksCount: 0,
+      chatsCount: 0,
+      bookmarkedRunIds: new Set<string>(),
+      onSelectLanding: vi.fn(),
+      onSelectAllRuns: vi.fn(),
+      onSelectBookmarks: vi.fn(),
+      onSelectChats: vi.fn(),
+      onSelectProject: vi.fn(),
+      onSelectProjectFeature: vi.fn(),
+      onSelectRun: vi.fn(),
+      onRunDragStart: vi.fn(),
+      onReorderProjects: vi.fn(),
+      onAddRunToBookmarks: vi.fn(),
+      onRemoveRunFromBookmarks: vi.fn(),
+      onContinueRun: vi.fn(),
+      onDeleteRun: vi.fn(),
+      onSetRunForLater: vi.fn(),
+      pendingDeleteRunIds: {},
+      onOpenSettings: vi.fn(),
+      onWidthCommit: vi.fn(),
+      onToggleCollapsed: vi.fn(),
+      loopEnabledProjectIds: new Set<string>(),
+    } satisfies ComponentProps<typeof Sidebar>;
     const remoteSidebarMarkup = renderToStaticMarkup(
-      <Sidebar
-        projects={[projectSnapshot]}
-        landingSelected={false}
-        allRunsSelected={false}
-        bookmarksSelected={false}
-        chatsSelected={false}
-        settingsSelected={false}
-        selectedProjectId="project-1"
-        currentProjectBranch="main"
-        currentProjectBranchStatus="attached"
-        projectView="overview"
-        highlightedRunId={null}
-        collapsed={false}
-        width={312}
-        recentRunDays={2}
-        bookmarksCount={0}
-        chatsCount={0}
-        bookmarkedRunIds={new Set()}
-        onSelectLanding={vi.fn()}
-        onSelectAllRuns={vi.fn()}
-        onSelectBookmarks={vi.fn()}
-        onSelectChats={vi.fn()}
-        onSelectProject={vi.fn()}
-        onSelectProjectFeature={vi.fn()}
-        onSelectRun={vi.fn()}
-        onRunDragStart={vi.fn()}
-        onReorderProjects={vi.fn()}
-        onAddRunToBookmarks={vi.fn()}
-        onRemoveRunFromBookmarks={vi.fn()}
-        onContinueRun={vi.fn()}
-        onDeleteRun={vi.fn()}
-        onSetRunForLater={vi.fn()}
-        pendingDeleteRunIds={{}}
-        onOpenSettings={vi.fn()}
-        onWidthCommit={vi.fn()}
-        onToggleCollapsed={vi.fn()}
-        loopEnabledProjectIds={new Set()}
-      />,
+      <Sidebar {...sidebarProps} />,
       {} as DesktopApi,
       remoteRunCapabilities,
     );
@@ -845,6 +848,16 @@ describe("renderer component states", () => {
     expect(remoteSidebarMarkup).toContain("For Later");
     expect(remoteSidebarMarkup).not.toContain("PR Review");
     expect(remoteSidebarMarkup).not.toContain("Loops");
+
+    const flatSidebarMarkup = renderToStaticMarkup(
+      <Sidebar {...sidebarProps} recentRunDays={10_000} runEntrySize="small" groupRunsByProject={false} />,
+      {} as DesktopApi,
+      remoteRunCapabilities,
+    );
+    expect(flatSidebarMarkup).toContain('data-sidebar-run-entry-size="small"');
+    expect(flatSidebarMarkup).toContain('data-sidebar-run-project="true"');
+    expect(flatSidebarMarkup).toContain("BuildWarden");
+    expect(flatSidebarMarkup).not.toContain("data-sidebar-run-group");
 
     const controlLabMarkup = renderToStaticMarkup(
       <ProjectLabTab

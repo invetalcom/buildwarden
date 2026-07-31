@@ -5,6 +5,7 @@ import {
   SUPPORTED_IDE_KINDS,
   type AppLogDirectorySizeInfo,
   type KeyboardShortcutId,
+  type SidebarRunEntrySize,
   type SupportedIdeKind,
   type UiTheme,
 } from "@buildwarden/shared";
@@ -36,6 +37,12 @@ const SHORTCUT_LABELS: Record<KeyboardShortcutId, string> = {
 const APPEARANCE_OPTIONS: Array<{ value: UiTheme; label: string; hint: string }> = [
   { value: "dark", label: "Dark", hint: "Frosted glass over a deep dark backdrop." },
   { value: "light", label: "Light", hint: "Frosted glass over a bright airy backdrop." },
+];
+
+const SIDEBAR_RUN_ENTRY_SIZE_OPTIONS: Array<{ value: SidebarRunEntrySize; label: string; hint: string }> = [
+  { value: "small", label: "Small", hint: "More runs" },
+  { value: "medium", label: "Medium", hint: "Balanced" },
+  { value: "large", label: "Large", hint: "More space" },
 ];
 
 type SettingsSectionProps = {
@@ -218,6 +225,8 @@ export type UserSettingsTabProps = {
   busy: boolean;
   uiTheme: UiTheme;
   sidebarContrast: boolean;
+  sidebarRunEntrySize: SidebarRunEntrySize;
+  sidebarGroupRunsByProject: boolean;
   enableDevMode: boolean;
   appLogDirPath: string;
   appLogDirectorySize: AppLogDirectorySizeInfo;
@@ -227,6 +236,8 @@ export type UserSettingsTabProps = {
   keyboardShortcuts: Record<KeyboardShortcutId, string>;
   onUiThemeChange: (theme: UiTheme) => void;
   onSidebarContrastChange: (value: boolean) => void;
+  onSidebarRunEntrySizeChange: (value: SidebarRunEntrySize) => void;
+  onSidebarGroupRunsByProjectChange: (value: boolean) => void;
   onEnableDevModeChange: (value: boolean) => void;
   onKeyboardShortcutChange: (id: KeyboardShortcutId, value: string) => void;
   onOpenAppLogDirectory: () => void | Promise<void>;
@@ -242,6 +253,8 @@ export const UserSettingsTab = ({
   busy,
   uiTheme,
   sidebarContrast,
+  sidebarRunEntrySize,
+  sidebarGroupRunsByProject,
   enableDevMode,
   appLogDirPath,
   appLogDirectorySize,
@@ -251,6 +264,8 @@ export const UserSettingsTab = ({
   keyboardShortcuts,
   onUiThemeChange,
   onSidebarContrastChange,
+  onSidebarRunEntrySizeChange,
+  onSidebarGroupRunsByProjectChange,
   onEnableDevModeChange,
   onKeyboardShortcutChange,
   onOpenAppLogDirectory,
@@ -299,6 +314,53 @@ export const UserSettingsTab = ({
             onCheckedChange={onSidebarContrastChange}
             disabled={busy}
             aria-label="Use contrasting sidebar surface"
+          />
+        </div>
+      </SettingsRow>
+      <SettingsRow
+        title="Run entry size"
+        description="Adjust the height of Recent Runs entries to fit more or fewer runs in the sidebar."
+        align="start"
+      >
+        <div className={`${rowControlClass} grid gap-2 sm:grid-cols-3`} role="radiogroup" aria-label="Sidebar run entry size">
+          {SIDEBAR_RUN_ENTRY_SIZE_OPTIONS.map((option) => {
+            const selected = sidebarRunEntrySize === option.value;
+            return (
+              <label
+                key={option.value}
+                className={`cursor-pointer rounded-md border px-3 py-2.5 transition ${
+                  selected
+                    ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] shadow-[var(--ec-action-shadow)]"
+                    : "border-[var(--ec-border)] bg-[var(--ec-panel-soft)] hover:bg-[var(--ec-hover)]"
+                }`}
+              >
+                <input
+                  className="sr-only"
+                  type="radio"
+                  name="buildwarden-sidebar-run-entry-size"
+                  value={option.value}
+                  checked={selected}
+                  disabled={busy}
+                  onChange={() => onSidebarRunEntrySizeChange(option.value)}
+                />
+                <p className="text-sm font-medium text-[var(--ec-text)]">{option.label}</p>
+                <p className="mt-1 text-xs leading-snug text-[var(--ec-muted)]">{option.hint}</p>
+              </label>
+            );
+          })}
+        </div>
+      </SettingsRow>
+      <SettingsRow
+        title="Group runs by project"
+        description="Show collapsible project groups. When off, runs are sorted together and each entry displays its project name."
+      >
+        <div className={`${rowControlClass} flex items-center justify-end gap-3`}>
+          <span className="text-xs font-medium text-[var(--ec-muted)]">{sidebarGroupRunsByProject ? "Grouped" : "Flat list"}</span>
+          <Switch
+            checked={sidebarGroupRunsByProject}
+            onCheckedChange={onSidebarGroupRunsByProjectChange}
+            disabled={busy}
+            aria-label="Group sidebar runs by project"
           />
         </div>
       </SettingsRow>

@@ -11,6 +11,8 @@ import {
   parseRecentRunDaysSetting,
   parseRemoteAccessEnabledSetting,
   parseRunTimelineDensitySetting,
+  parseSidebarGroupRunsByProjectSetting,
+  parseSidebarRunEntrySizeSetting,
   parseUiTheme,
   SUPPORTED_IDE_KINDS,
   parseIdePathConfig,
@@ -37,6 +39,7 @@ import {
   type RunRecord,
   type RunTokenUsage,
   type RunTimelineDensity,
+  type SidebarRunEntrySize,
   type RunWorkspacePanelId,
   type RunWorkspaceType,
   type ShellApprovalDecision,
@@ -1112,6 +1115,8 @@ export const App = () => {
   const recentRunDays = parseRecentRunDaysSetting(snapshot.settings[APP_SETTING_KEYS.recentRunDays]);
   const uiTheme = parseUiTheme(snapshot.settings);
   const sidebarContrast = snapshot.settings[APP_SETTING_KEYS.sidebarContrast] === "true";
+  const sidebarRunEntrySize = parseSidebarRunEntrySizeSetting(snapshot.settings[APP_SETTING_KEYS.sidebarRunEntrySize]);
+  const sidebarGroupRunsByProject = parseSidebarGroupRunsByProjectSetting(snapshot.settings[APP_SETTING_KEYS.sidebarGroupRunsByProject]);
   const runTimelineDensity = parseRunTimelineDensitySetting(snapshot.settings[APP_SETTING_KEYS.runTimelineDensity]);
   const updateRunTimelineDensity = useCallback(
     (density: RunTimelineDensity) => {
@@ -3352,6 +3357,8 @@ export const App = () => {
               recentRunDays={recentRunDays}
               uiTheme={uiTheme}
               sidebarContrast={sidebarContrast}
+              sidebarRunEntrySize={sidebarRunEntrySize}
+              sidebarGroupRunsByProject={sidebarGroupRunsByProject}
               enableDevMode={snapshot.settings[APP_SETTING_KEYS.enableDevMode] === "true"}
               appLogDirPath={appLogDirPath}
               appLogDirectorySize={appLogDirectorySize}
@@ -3393,6 +3400,16 @@ export const App = () => {
                 })
               }
               onSidebarContrastChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.sidebarContrast, value)}
+              onSidebarRunEntrySizeChange={(value: SidebarRunEntrySize) =>
+                void handleAction(async () => {
+                  if (!buildwarden) {
+                    throw new Error("The Electron desktop bridge is unavailable.");
+                  }
+                  await buildwarden.setAppSetting(APP_SETTING_KEYS.sidebarRunEntrySize, value);
+                  await loadSnapshot();
+                })
+              }
+              onSidebarGroupRunsByProjectChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.sidebarGroupRunsByProject, value)}
               worktreeRootOverrideSettingValue={snapshot.settings[APP_SETTING_KEYS.worktreeRootOverride] ?? ""}
               onSaveWorktreeRootOverride={(value) =>
                 void handleAction(async () => {
@@ -3915,6 +3932,8 @@ export const App = () => {
         collapsed={sidebarCollapsed}
         width={sidebarWidth}
         recentRunDays={recentRunDays}
+        runEntrySize={sidebarRunEntrySize}
+        groupRunsByProject={sidebarGroupRunsByProject}
         bookmarksCount={snapshot.bookmarks.length + snapshot.chatBookmarks.length}
         chatsCount={snapshot.chats.length}
         bookmarkedRunIds={sidebarBookmarkedRunIds}

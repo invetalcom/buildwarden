@@ -4266,6 +4266,10 @@ export const APP_SETTING_KEYS = {
   uiTheme: "uiTheme",
   /** `"true"` gives the app sidebar a distinct theme-aware surface color. */
   sidebarContrast: "sidebarContrast",
+  /** `"small"` | `"medium"` | `"large"`. Controls the height of Recent Runs entries in the sidebar. */
+  sidebarRunEntrySize: "sidebarRunEntrySize",
+  /** `"false"` renders Recent Runs as a flat, project-labelled list. Defaults to grouped. */
+  sidebarGroupRunsByProject: "sidebarGroupRunsByProject",
   /** Persisted app sidebar width in CSS pixels. */
   sidebarWidth: "sidebarWidth",
   /** Number of days shown in the sidebar Recent Runs section. */
@@ -4366,6 +4370,8 @@ export type RunTimelineDensity = "compact" | "comfortable" | "detailed";
 
 export const RUN_TIMELINE_DENSITIES = ["compact", "comfortable", "detailed"] as const satisfies readonly RunTimelineDensity[];
 
+export type SidebarRunEntrySize = "small" | "medium" | "large";
+
 export const parseWelcomeCompletedCheckIdsSetting = (raw: string | undefined | null): string[] => {
   if (!raw?.trim()) {
     return [];
@@ -4392,6 +4398,13 @@ export const parseRunTimelineDensitySetting = (raw: string | undefined): RunTime
   const normalized = raw?.trim().toLowerCase();
   return normalized === "compact" || normalized === "detailed" ? normalized : "comfortable";
 };
+
+export const parseSidebarRunEntrySizeSetting = (raw: string | undefined): SidebarRunEntrySize => {
+  const normalized = raw?.trim().toLowerCase();
+  return normalized === "small" || normalized === "large" ? normalized : "medium";
+};
+
+export const parseSidebarGroupRunsByProjectSetting = (raw: string | undefined): boolean => raw?.trim().toLowerCase() !== "false";
 
 export const parseRecentRunDaysSetting = (raw: string | number | undefined | null): number => {
   const parsed = Number(raw);
