@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
-import type { AppSnapshot, RunRecord } from "@buildwarden/shared";
+import type { AppSnapshot, RunRecord, SidebarRunEntrySize } from "@buildwarden/shared";
 import {
   Archive,
   Bookmark,
@@ -66,6 +66,8 @@ interface SidebarProps {
   collapsed: boolean;
   width: number;
   recentRunDays: number;
+  runEntrySize: SidebarRunEntrySize;
+  groupRunsByProject: boolean;
   bookmarksCount: number;
   chatsCount: number;
   bookmarkedRunIds: Set<string>;
@@ -172,6 +174,51 @@ const runStatusPillClassName = (status: RunDisplayStatus) => {
   return "border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] text-[var(--ec-warning)]";
 };
 
+const SIDEBAR_RUN_ENTRY_SIZE_STYLES: Record<
+  SidebarRunEntrySize,
+  {
+    button: string;
+    indicator: string;
+    title: string;
+    meta: string;
+    status: string;
+    alert: string;
+    groupGap: string;
+    rowGap: string;
+  }
+> = {
+  small: {
+    button: "px-2 py-1",
+    indicator: "bottom-1.5 top-1.5",
+    title: "text-[11px] leading-[0.875rem]",
+    meta: "mt-0.5 text-[9px] leading-3",
+    status: "px-1 py-px text-[8px]",
+    alert: "size-3",
+    groupGap: "space-y-1",
+    rowGap: "space-y-px",
+  },
+  medium: {
+    button: "px-2 py-1.5",
+    indicator: "bottom-2 top-2",
+    title: "text-[12px] leading-4",
+    meta: "mt-1 text-[10px] leading-3",
+    status: "px-1.5 py-0.5 text-[9px]",
+    alert: "size-3.5",
+    groupGap: "space-y-1.5",
+    rowGap: "space-y-0.5",
+  },
+  large: {
+    button: "px-2.5 py-2",
+    indicator: "bottom-2.5 top-2.5",
+    title: "text-[13px] leading-[1.125rem]",
+    meta: "mt-1.5 text-[10px] leading-[0.875rem]",
+    status: "px-1.5 py-0.5 text-[9px]",
+    alert: "size-4",
+    groupGap: "space-y-2",
+    rowGap: "space-y-1",
+  },
+};
+
 const SidebarComponent = ({
   projects,
   landingSelected,
@@ -187,6 +234,8 @@ const SidebarComponent = ({
   collapsed,
   width,
   recentRunDays,
+  runEntrySize,
+  groupRunsByProject,
   bookmarksCount,
   chatsCount,
   bookmarkedRunIds,
@@ -261,6 +310,14 @@ const SidebarComponent = ({
       .filter((entry) => entry.runs.length > 0)
       .sort((a, b) => recentRunOrderTimestamp(b.runs[0]!) - recentRunOrderTimestamp(a.runs[0]!));
   }, [projects, recentRunWindowMs]);
+
+  const recentRuns = useMemo(
+    () =>
+      recentRunsByProject
+        .flatMap(({ project, runs }) => runs.map((run) => ({ project, run })))
+        .sort((left, right) => recentRunOrderTimestamp(right.run) - recentRunOrderTimestamp(left.run)),
+    [recentRunsByProject],
+  );
 
   useEffect(() => {
     const firstProjectId = recentRunsByProject[0]?.project.project.id;
@@ -375,6 +432,85 @@ const SidebarComponent = ({
     }
     return projectToolVisible(selectedProject, tool.tab, loopEnabledProjectIds);
   });
+  const runEntryStyles = SIDEBAR_RUN_ENTRY_SIZE_STYLES[runEntrySize];
+  const renderRecentRunEntry = (
+    project: AppSnapshot["projects"][number],
+    run: SidebarRun,
+    showProjectName: boolean,
+  ) => {
+    const highlighted = highlightedRunId === run.id;
+    const waitingForInput = run.pendingUserInputRequest === true || run.pendingUserInputRequest === 1;
+    const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
+    return (
+      <button
+        key={run.id}
+        type="button"
+        draggable
+        data-sidebar-run-entry-size={runEntrySize}
+        className={cn(
+          "group relative w-full min-w-0 overflow-hidden rounded-md border text-left transition",
+          runEntryStyles.button,
+          highlighted
+            ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)]"
+            : showProjectName
+              ? "border-[var(--ec-border)] bg-[var(--ec-panel-soft)] shadow-[var(--ec-panel-shadow)] hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-control)]"
+              : "border-transparent bg-[var(--ec-panel)] hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-control)]",
+        )}
+        onDragStart={(event) => {
+          onRunDragStart(event, project.project.id, run.id);
+        }}
+        onClick={() => onSelectRun(project.project.id, run.id)}
+        onContextMenu={(event) => {
+          if (!canOpenRunContextMenu) return;
+          event.preventDefault();
+          setContextMenu({
+            projectId: project.project.id,
+            runId: run.id,
+            runStatus: run.status,
+            x: event.clientX,
+            y: event.clientY,
+          });
+        }}
+      >
+        <span className={cn("absolute left-0 w-0.5 rounded-r-full", runEntryStyles.indicator, runDotClassName(displayStatus))} />
+        <span className="flex min-w-0 items-start justify-between gap-2 pl-1">
+          <span className={cn("min-w-0 flex-1 truncate font-semibold text-[var(--ec-text)]", runEntryStyles.title)}>{run.prompt}</span>
+          <span className="flex shrink-0 items-center gap-1">
+            {waitingForInput ? (
+              <span title="Waiting for user feedback" aria-label="Waiting for user feedback">
+                <CircleAlert className={cn(runEntryStyles.alert, "text-amber-300")} />
+              </span>
+            ) : null}
+            <span
+              className={cn("rounded-full border font-semibold leading-none", runEntryStyles.status, runStatusPillClassName(displayStatus))}
+              title={displayStatus === "waiting" ? "Coordinator turn completed; waiting for orchestrated tasks." : undefined}
+            >
+              {RUN_DISPLAY_STATUS_LABELS[displayStatus]}
+            </span>
+          </span>
+        </span>
+        <span className={cn("flex min-w-0 items-center gap-1.5 pl-1 font-mono text-[var(--ec-muted)]", runEntryStyles.meta)}>
+          {showProjectName ? (
+            <>
+              <span
+                className="max-w-[45%] truncate font-sans font-medium text-[var(--ec-text)]"
+                data-sidebar-run-project
+                title={project.project.name}
+              >
+                {project.project.name}
+              </span>
+              <span className="size-1 shrink-0 rounded-full bg-[var(--ec-faint)]" />
+            </>
+          ) : null}
+          {/* The provider mark matches the line box, so it adds no row height. */}
+          <ProviderBrandIcon harnessType={run.harnessType} className="size-3 shrink-0" />
+          <span className="truncate">{formatRelativeTime(run.finishedAt ?? run.updatedAt)}</span>
+          <span className="size-1 shrink-0 rounded-full bg-[var(--ec-faint)]" />
+          <span className="shrink-0">{formatRunDuration(run)}</span>
+        </span>
+      </button>
+    );
+  };
 
   if (collapsed) {
     return (
@@ -613,12 +749,16 @@ const SidebarComponent = ({
         </div>
         {recentRunsByProject.length === 0 ? (
           <div className="px-3 py-2 text-xs text-[var(--ec-muted)]">No runs in the last {recentRunWindowLabel}.</div>
-        ) : (
-          <div className="space-y-1.5 px-2">
+        ) : groupRunsByProject ? (
+          <div className={cn("px-2", runEntryStyles.groupGap)}>
             {recentRunsByProject.map(({ project, runs }) => {
               const expanded = expandedRecentProjectIds[project.project.id] ?? false;
               return (
-                <div key={project.project.id} className="overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-0.5 shadow-[var(--ec-panel-shadow)]">
+                <div
+                  key={project.project.id}
+                  data-sidebar-run-group={project.project.id}
+                  className="overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-0.5 shadow-[var(--ec-panel-shadow)]"
+                >
                   <button
                     type="button"
                     className="flex h-7 w-full min-w-0 items-center gap-1.5 rounded-md px-2 text-left text-xs text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
@@ -638,70 +778,17 @@ const SidebarComponent = ({
                     </span>
                   </button>
                   {expanded ? (
-                    <div className="space-y-0.5 px-0.5 pb-0.5">
-                      {runs.map((run) => {
-                        const highlighted = highlightedRunId === run.id;
-                        const waitingForInput = run.pendingUserInputRequest === true || run.pendingUserInputRequest === 1;
-                        const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
-                        return (
-                          <button
-                            key={run.id}
-                            type="button"
-                            draggable
-                            className={cn(
-                              "group relative w-full min-w-0 overflow-hidden rounded-md border px-2 py-1.5 text-left transition",
-                              highlighted
-                                ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)]"
-                                : "border-transparent bg-[var(--ec-panel)] hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-control)]",
-                            )}
-                            onDragStart={(event) => {
-                              onRunDragStart(event, project.project.id, run.id);
-                            }}
-                            onClick={() => onSelectRun(project.project.id, run.id)}
-                            onContextMenu={(event) => {
-                              if (!canOpenRunContextMenu) return;
-                              event.preventDefault();
-                              setContextMenu({
-                                projectId: project.project.id,
-                                runId: run.id,
-                                runStatus: run.status,
-                                x: event.clientX,
-                                y: event.clientY,
-                              });
-                            }}
-                          >
-                            <span className={cn("absolute bottom-2 left-0 top-2 w-0.5 rounded-r-full", runDotClassName(displayStatus))} />
-                            <span className="flex min-w-0 items-start justify-between gap-2 pl-1">
-                              <span className="min-w-0 flex-1 truncate text-[12px] font-semibold leading-4 text-[var(--ec-text)]">{run.prompt}</span>
-                              <span className="flex shrink-0 items-center gap-1">
-                                {waitingForInput ? (
-                                  <span title="Waiting for user feedback" aria-label="Waiting for user feedback">
-                                    <CircleAlert className="size-3.5 text-amber-300" />
-                                  </span>
-                                ) : null}
-                                <span
-                                  className={cn("rounded-full border px-1.5 py-0.5 text-[9px] font-semibold leading-none", runStatusPillClassName(displayStatus))}
-                                  title={displayStatus === "waiting" ? "Coordinator turn completed; waiting for orchestrated tasks." : undefined}
-                                >
-                                  {RUN_DISPLAY_STATUS_LABELS[displayStatus]}
-                                </span>
-                              </span>
-                            </span>
-                            <span className="mt-1 flex min-w-0 items-center gap-1.5 pl-1 font-mono text-[10px] leading-3 text-[var(--ec-muted)]">
-                              {/* size-3 matches the 0.75rem line box of this row, so the mark adds no height. */}
-                              <ProviderBrandIcon harnessType={run.harnessType} className="size-3 shrink-0" />
-                              <span className="truncate">{formatRelativeTime(run.finishedAt ?? run.updatedAt)}</span>
-                              <span className="size-1 rounded-full bg-[var(--ec-faint)]" />
-                              <span className="shrink-0">{formatRunDuration(run)}</span>
-                            </span>
-                          </button>
-                        );
-                      })}
+                    <div className={cn("px-0.5 pb-0.5", runEntryStyles.rowGap)}>
+                      {runs.map((run) => renderRecentRunEntry(project, run, false))}
                     </div>
                   ) : null}
                 </div>
               );
             })}
+          </div>
+        ) : (
+          <div className={cn("px-2", runEntryStyles.rowGap)}>
+            {recentRuns.map(({ project, run }) => renderRecentRunEntry(project, run, true))}
           </div>
         )}
       </div>

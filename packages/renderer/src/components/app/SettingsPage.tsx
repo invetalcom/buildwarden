@@ -9,6 +9,7 @@ import type {
   RemoteAccessPairingGrant,
   RemoteAccessPairingInput,
   RemoteAccessSession,
+  SidebarRunEntrySize,
   SupportedIdeKind,
   UiTheme,
   UnifiedProviderFamily,
@@ -74,6 +75,8 @@ interface SettingsPageProps {
   recentRunDays: number;
   uiTheme: UiTheme;
   sidebarContrast: boolean;
+  sidebarRunEntrySize: SidebarRunEntrySize;
+  sidebarGroupRunsByProject: boolean;
   worktreeRootOverrideSettingValue: string;
   enableDevMode: boolean;
   appLogDirPath: string;
@@ -99,6 +102,8 @@ interface SettingsPageProps {
   onRecentRunDaysChange: (value: number) => void | Promise<void>;
   onUiThemeChange: (theme: UiTheme) => void;
   onSidebarContrastChange: (value: boolean) => void;
+  onSidebarRunEntrySizeChange: (value: SidebarRunEntrySize) => void;
+  onSidebarGroupRunsByProjectChange: (value: boolean) => void;
   onSaveWorktreeRootOverride: (value: string) => void | Promise<void>;
   onEnableDevModeChange: (value: boolean) => void;
   onProjectNameChange: (value: string) => void;
@@ -185,6 +190,8 @@ export const SettingsPage = ({
   recentRunDays,
   uiTheme,
   sidebarContrast,
+  sidebarRunEntrySize,
+  sidebarGroupRunsByProject,
   worktreeRootOverrideSettingValue,
   enableDevMode,
   appLogDirPath,
@@ -210,6 +217,8 @@ export const SettingsPage = ({
   onRecentRunDaysChange,
   onUiThemeChange,
   onSidebarContrastChange,
+  onSidebarRunEntrySizeChange,
+  onSidebarGroupRunsByProjectChange,
   onSaveWorktreeRootOverride,
   onEnableDevModeChange,
   onProjectNameChange,
@@ -554,6 +563,8 @@ export const SettingsPage = ({
           busy={busy}
           uiTheme={uiTheme}
           sidebarContrast={sidebarContrast}
+          sidebarRunEntrySize={sidebarRunEntrySize}
+          sidebarGroupRunsByProject={sidebarGroupRunsByProject}
           enableDevMode={enableDevMode}
           appLogDirPath={appLogDirPath}
           appLogDirectorySize={appLogDirectorySize}
@@ -563,6 +574,8 @@ export const SettingsPage = ({
           keyboardShortcuts={keyboardShortcuts}
           onUiThemeChange={onUiThemeChange}
           onSidebarContrastChange={onSidebarContrastChange}
+          onSidebarRunEntrySizeChange={onSidebarRunEntrySizeChange}
+          onSidebarGroupRunsByProjectChange={onSidebarGroupRunsByProjectChange}
           onEnableDevModeChange={onEnableDevModeChange}
           onKeyboardShortcutChange={onKeyboardShortcutChange}
           onOpenAppLogDirectory={onOpenAppLogDirectory}

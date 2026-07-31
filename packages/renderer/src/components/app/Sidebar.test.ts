@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { ProjectRecord } from "@buildwarden/shared";
+import {
+  parseSidebarGroupRunsByProjectSetting,
+  parseSidebarRunEntrySizeSetting,
+  type ProjectRecord,
+} from "@buildwarden/shared";
 import { projectSidebarContext } from "./sidebar-project-context";
 import { recentRunOrderTimestamp } from "./sidebar-run-ordering";
 
@@ -47,5 +51,19 @@ describe("Sidebar recent run ordering", () => {
     );
 
     expect(sorted[0]).toBe(newerPromptButOlderActivity);
+  });
+});
+
+describe("Sidebar run layout settings", () => {
+  it("defaults to medium entries and grouped projects", () => {
+    expect(parseSidebarRunEntrySizeSetting(undefined)).toBe("medium");
+    expect(parseSidebarRunEntrySizeSetting("unexpected")).toBe("medium");
+    expect(parseSidebarGroupRunsByProjectSetting(undefined)).toBe(true);
+  });
+
+  it("accepts supported sizes and the explicit flat-list setting", () => {
+    expect(parseSidebarRunEntrySizeSetting("small")).toBe("small");
+    expect(parseSidebarRunEntrySizeSetting("large")).toBe("large");
+    expect(parseSidebarGroupRunsByProjectSetting(" FALSE ")).toBe(false);
   });
 });
