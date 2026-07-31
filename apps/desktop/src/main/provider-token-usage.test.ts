@@ -201,6 +201,25 @@ describe("provider token usage normalization", () => {
     });
   });
 
+  it("normalizes the app-server tokenUsage shape Codex emits today", () => {
+    // Verified against codex-cli 0.144.1: camelCase, total/last buckets, no cache-write counter.
+    expect(
+      normalizeCodexTokenUsage({
+        total: { totalTokens: 14_514, inputTokens: 14_494, cachedInputTokens: 5_504, outputTokens: 20, reasoningOutputTokens: 13 },
+        last: { totalTokens: 14_514, inputTokens: 14_494, cachedInputTokens: 5_504, outputTokens: 20, reasoningOutputTokens: 13 },
+        modelContextWindow: 258_400,
+      }),
+    ).toMatchObject({
+      inputTokens: 14_494,
+      outputTokens: 20,
+      cachedInputTokens: 5_504,
+      reasoningTokens: 13,
+      totalProcessedTokens: 14_514,
+      usedTokens: 14_514,
+      maxTokens: 258_400,
+    });
+  });
+
   it("normalizes equivalent provider-native usage payloads to the same processed token usage", () => {
     const { facts, formats } = PROVIDER_USAGE_SCENARIO;
     const expected = expectedComparableUsageFromFacts(facts);

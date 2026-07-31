@@ -635,6 +635,12 @@ describe("ClaudeCodeProviderAdapter", () => {
       cachedInputTokens: 90,
       totalTokens: 104,
       totalProcessedTokens: 104,
+      // Single API call, so its prompt + completion is also the context occupancy.
+      usedTokens: 104,
+      lastUsedTokens: 104,
+      lastInputTokens: 100,
+      lastOutputTokens: 4,
+      lastCachedInputTokens: 90,
     });
   });
 
@@ -679,6 +685,11 @@ describe("ClaudeCodeProviderAdapter", () => {
       cacheCreationInputTokens: 5,
       totalTokens: 114,
       totalProcessedTokens: 114,
+      usedTokens: 114,
+      lastUsedTokens: 114,
+      lastInputTokens: 107,
+      lastOutputTokens: 7,
+      lastCachedInputTokens: 90,
     });
   });
 
@@ -753,6 +764,60 @@ describe("ClaudeCodeProviderAdapter", () => {
     expect(afterFinal.usage.inputTokens).toBe(530_000);
     expect(afterFinal.usage.outputTokens).toBe(5_000);
     expect(afterFinal.usage.totalProcessedTokens).toBe(535_000);
+  });
+
+  it("reports the last API call as context used, not the accumulated run total", () => {
+    // Shapes verified against claude-code stream-json: assistant `usage` is the raw
+    // Anthropic per-call usage, task_progress `usage` is the subagent's cumulative
+    // total, and result `modelUsage` is per-model cumulative plus the context window.
+    const firstCall = parseClaudeCodeStreamEvent({
+      type: "assistant",
+      message: {
+        id: "msg-1",
+        content: [{ type: "text", text: "Working." }],
+        usage: { input_tokens: 3_295, cache_creation_input_tokens: 6_247, cache_read_input_tokens: 22_844, output_tokens: 2 },
+      },
+    });
+    const subagentProgress = parseClaudeCodeStreamEvent({
+      type: "task_progress",
+      task_id: "task-1",
+      usage: { total_tokens: 22_324, tool_uses: 1, duration_ms: 4_333 },
+    });
+    const lastCall = parseClaudeCodeStreamEvent({
+      type: "assistant",
+      message: {
+        id: "msg-2",
+        content: [{ type: "text", text: "Done." }],
+        usage: { input_tokens: 2, cache_creation_input_tokens: 3_469, cache_read_input_tokens: 29_091, output_tokens: 1 },
+      },
+    });
+    const final = parseClaudeCodeStreamEvent({
+      type: "result",
+      result: "done",
+      modelUsage: {
+        "claude-haiku-4-5-20251001": { inputTokens: 533, outputTokens: 14, contextWindow: 200_000 },
+        "claude-sonnet-5": {
+          inputTokens: 3_297,
+          outputTokens: 113,
+          cacheReadInputTokens: 51_935,
+          cacheCreationInputTokens: 9_716,
+          contextWindow: 1_000_000,
+        },
+      },
+    });
+
+    const counted = new Map();
+    let usage = mergeClaudeUsageUpdate({ inputTokens: 0, outputTokens: 0 }, counted, firstCall).usage;
+    usage = mergeClaudeUsageUpdate(usage, counted, subagentProgress).usage;
+    usage = mergeClaudeUsageUpdate(usage, counted, lastCall).usage;
+    usage = mergeClaudeUsageUpdate(usage, counted, final).usage;
+
+    // Context is the final call's prompt + completion, not the 65k the run processed.
+    expect(usage.usedTokens).toBe(32_563);
+    expect(usage.lastInputTokens).toBe(32_562);
+    // The busiest model's window, not the largest one in modelUsage.
+    expect(usage.maxTokens).toBe(1_000_000);
+    expect(usage.totalProcessedTokens).toBe(65_608);
   });
 });
 
