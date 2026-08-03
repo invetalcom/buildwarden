@@ -82,21 +82,16 @@ describe("node:sqlite WAL persistence", () => {
     database.setSetting("streaming", "visible");
 
     const connection = (database as unknown as { database: DatabaseSync }).database;
-    const reader = new DatabaseSync(path, { readOnly: true });
-    try {
-      const journalMode = connection.prepare("pragma journal_mode").get() as { journal_mode: string };
-      const synchronous = connection.prepare("pragma synchronous").get() as { synchronous: number };
-      const busyTimeout = connection.prepare("pragma busy_timeout").get() as { timeout: number };
-      const autoCheckpoint = connection.prepare("pragma wal_autocheckpoint").get() as { wal_autocheckpoint: number };
+    const journalMode = connection.prepare("pragma journal_mode").get() as { journal_mode: string };
+    const synchronous = connection.prepare("pragma synchronous").get() as { synchronous: number };
+    const busyTimeout = connection.prepare("pragma busy_timeout").get() as { timeout: number };
+    const autoCheckpoint = connection.prepare("pragma wal_autocheckpoint").get() as { wal_autocheckpoint: number };
 
-      expect(journalMode.journal_mode).toBe("wal");
-      expect(synchronous.synchronous).toBe(1);
-      expect(busyTimeout.timeout).toBe(5_000);
-      expect(autoCheckpoint.wal_autocheckpoint).toBe(1_000);
-      expect(readSetting(path, "streaming")).toBe("visible");
-    } finally {
-      reader.close();
-    }
+    expect(journalMode.journal_mode).toBe("wal");
+    expect(synchronous.synchronous).toBe(1);
+    expect(busyTimeout.timeout).toBe(5_000);
+    expect(autoCheckpoint.wal_autocheckpoint).toBe(1_000);
+    expect(readSetting(path, "streaming")).toBe("visible");
   });
 
   it("creates a pre-WAL backup only while converting an existing rollback-journal database", async () => {
