@@ -15,7 +15,13 @@ import {
 import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
 import { readRunWorkspaceFileForPreview } from "./run-workspace-file";
 import { normalizeJsonResponse } from "./json-response";
-import { createFolderSnapshot, deleteFolderSnapshot, diffFolderAgainstSnapshot, getFolderSnapshotRoot } from "./folder-diff";
+import {
+  createFolderSnapshot,
+  deleteFolderSnapshot,
+  diffFolderAgainstSnapshot,
+  getFolderSnapshotRoot,
+  summarizeFolderAgainstSnapshot,
+} from "./folder-diff";
 import { createFolderWorkspaceCopy, removeFolderWorkspaceCopy } from "./folder-workspace";
 import { getHarnessTypeForProvider } from "./harness-adapters";
 import { createProjectPrReviewProvider } from "./pr-review/pr-review-provider-factory";
@@ -183,6 +189,7 @@ import {
   type RunEvent,
   type AppWarning,
   type RunWorktreeDiffResult,
+  type RunWorktreeDiffSummaryResult,
   type RunFollowUpOptions,
   type RunInput,
   type RunDeletionImpact,
@@ -5404,7 +5411,9 @@ export class AppController
       ...detail,
       workspacePath,
       branchPromotedToProject,
-      diffPending: true,
+      diffLoaded: false,
+      diffPending: false,
+      diffSummaryPending: true,
       worktreeUnavailable: false,
       latestCheckpoint: checkpoint ? { round: checkpoint.round, memo: checkpoint.memo } : null,
       canResumeFromCheckpoint: Boolean(checkpoint) && !this.runWorkers.has(runId),
@@ -5493,6 +5502,44 @@ export class AppController
       return { diff: "", worktreeUnavailable: true, diffUnavailableReason: "The Git workspace is no longer available." };
     }
     return { diff: outcome.diff, worktreeUnavailable: false };
+  }
+
+  async getRunWorktreeDiffSummary(runId: string): Promise<RunWorktreeDiffSummaryResult> {
+    const run = this.db.getRun(runId);
+    const project = this.db.getProject(run.projectId);
+    const diffPath = this.getEffectiveRunWorkspacePath(run, project);
+    if (!existsSync(diffPath) || !statSync(diffPath).isDirectory()) {
+      return {
+        summary: { files: [], totalFiles: 0, totalAdditions: 0, totalDeletions: 0 },
+        worktreeUnavailable: true,
+        diffUnavailableReason: run.workspaceVcs === "folder"
+          ? "The folder workspace is no longer available."
+          : "The Git workspace is no longer available.",
+      };
+    }
+
+    if (run.workspaceVcs === "folder") {
+      const outcome = await summarizeFolderAgainstSnapshot({
+        runId: run.id,
+        workspacePath: diffPath,
+        snapshotsRoot: this.getFolderSnapshotRoot(),
+      });
+      return {
+        summary: outcome.summary,
+        worktreeUnavailable: outcome.missingSnapshot,
+        diffUnavailableReason: outcome.missingSnapshot ? "No folder baseline snapshot is available for this run." : null,
+      };
+    }
+
+    try {
+      return { summary: await this.gitService.getDiffSummary(diffPath), worktreeUnavailable: false };
+    } catch (error) {
+      return {
+        summary: { files: [], totalFiles: 0, totalAdditions: 0, totalDeletions: 0 },
+        worktreeUnavailable: false,
+        diffUnavailableReason: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   async cancelRun(runId: string): Promise<void> {

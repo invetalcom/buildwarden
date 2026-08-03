@@ -252,6 +252,8 @@ export const App = () => {
   runDetailsByIdRef.current = runDetailsById;
   const diffRefreshTimersRef = useRef<Partial<Record<string, ReturnType<typeof setTimeout>>>>({});
   const runDetailLoadTokenRef = useRef<Record<string, number>>({});
+  const diffLoadPromisesRef = useRef<Partial<Record<string, Promise<void>>>>({});
+  const diffLoadGenerationRef = useRef<Record<string, number>>({});
   const [landingSelected, setLandingSelected] = useState(true);
   const [allRunsSelected, setAllRunsSelected] = useState(false);
   const [bookmarksSelected, setBookmarksSelected] = useState(false);
@@ -668,18 +670,28 @@ export const App = () => {
       if (runDetailLoadTokenRef.current[runId] !== loadToken) {
         return;
       }
-      replaceRunDetailForRun(runId, { ...fast, diffPending: true, diff: "", worktreeUnavailable: false });
-
-      const diffRes = await buildwarden.getRunWorktreeDiff(runId);
-      if (runDetailLoadTokenRef.current[runId] !== loadToken) {
-        return;
-      }
-      mergeRunDetailForRun(runId, (previous) => ({
-        ...previous,
-        diff: diffRes.diff,
-        worktreeUnavailable: diffRes.worktreeUnavailable,
+      replaceRunDetailForRun(runId, {
+        ...fast,
+        diff: "",
+        diffLoaded: false,
         diffPending: false,
-      }));
+        diffSummaryPending: true,
+        worktreeUnavailable: false,
+      });
+
+      try {
+        const summaryResult = await buildwarden.getRunWorktreeDiffSummary(runId);
+        if (runDetailLoadTokenRef.current[runId] !== loadToken) return;
+        mergeRunDetailForRun(runId, (previous) => ({
+          ...previous,
+          diffSummary: summaryResult.summary,
+          diffSummaryPending: false,
+          worktreeUnavailable: summaryResult.worktreeUnavailable,
+        }));
+      } catch {
+        if (runDetailLoadTokenRef.current[runId] !== loadToken) return;
+        mergeRunDetailForRun(runId, (previous) => ({ ...previous, diffSummaryPending: false }));
+      }
     },
     [buildwarden, clearDiffRefreshTimer, mergeRunDetailForRun, replaceRunDetailForRun],
   );
@@ -695,14 +707,20 @@ export const App = () => {
     [loadRunDetailForRun],
   );
 
-  const loadDiffForOpenRun = useCallback(
+  const loadDiffSummaryForOpenRun = useCallback(
     async (eventRunId: string) => {
       const shouldLoadDiff =
         selectedRunIdRef.current === eventRunId || runIdIsOpenInPanes(openRunPanesRef.current, eventRunId);
       if (!buildwarden || !shouldLoadDiff) {
         return;
       }
-      const d = await buildwarden.getRunWorktreeDiff(eventRunId);
+      let result;
+      try {
+        result = await buildwarden.getRunWorktreeDiffSummary(eventRunId);
+      } catch {
+        mergeRunDetailForRun(eventRunId, (previous) => ({ ...previous, diffSummaryPending: false }));
+        return;
+      }
       const stillShouldApply =
         selectedRunIdRef.current === eventRunId || runIdIsOpenInPanes(openRunPanesRef.current, eventRunId);
       if (!stillShouldApply) {
@@ -710,16 +728,51 @@ export const App = () => {
       }
       mergeRunDetailForRun(eventRunId, (prev) => ({
         ...prev,
-        diff: d.diff,
-        worktreeUnavailable: d.worktreeUnavailable,
-        diffPending: false,
+        diffSummary: result.summary,
+        diffSummaryPending: false,
+        worktreeUnavailable: result.worktreeUnavailable,
       }));
     },
     [buildwarden, mergeRunDetailForRun],
   );
 
-  const refreshOpenRunDetailForEvent = useCallback(
+  const loadDiffForOpenRun = useCallback(
     async (eventRunId: string) => {
+      if (!buildwarden) return;
+      const existing = diffLoadPromisesRef.current[eventRunId];
+      if (existing) return existing;
+      const generation = diffLoadGenerationRef.current[eventRunId] ?? 0;
+      mergeRunDetailForRun(eventRunId, (previous) => ({ ...previous, diffPending: true }));
+      const request = buildwarden
+        .getRunWorktreeDiff(eventRunId)
+        .then((result) => {
+          if ((diffLoadGenerationRef.current[eventRunId] ?? 0) !== generation) return;
+          mergeRunDetailForRun(eventRunId, (previous) => ({
+            ...previous,
+            diff: result.diff,
+            diffLoaded: true,
+            diffPending: false,
+            worktreeUnavailable: result.worktreeUnavailable,
+          }));
+        })
+        .catch(() => {
+          if ((diffLoadGenerationRef.current[eventRunId] ?? 0) !== generation) return;
+          mergeRunDetailForRun(eventRunId, (previous) => ({ ...previous, diffLoaded: true, diffPending: false }));
+        })
+        .finally(() => {
+          delete diffLoadPromisesRef.current[eventRunId];
+          if ((diffLoadGenerationRef.current[eventRunId] ?? 0) !== generation) {
+            mergeRunDetailForRun(eventRunId, (previous) => ({ ...previous, diffPending: false }));
+          }
+        });
+      diffLoadPromisesRef.current[eventRunId] = request;
+      return request;
+    },
+    [buildwarden, mergeRunDetailForRun],
+  );
+
+  const refreshOpenRunDetailForEvent = useCallback(
+    async (eventRunId: string, options?: { refreshDiff?: boolean }) => {
       const shouldRefresh =
         selectedRunIdRef.current === eventRunId || runIdIsOpenInPanes(openRunPanesRef.current, eventRunId);
       if (!buildwarden || !shouldRefresh) {
@@ -734,20 +787,28 @@ export const App = () => {
       }
 
       const previous = runDetailsByIdRef.current[eventRunId];
+      if (options?.refreshDiff) {
+        diffLoadGenerationRef.current[eventRunId] = (diffLoadGenerationRef.current[eventRunId] ?? 0) + 1;
+      }
       replaceRunDetailForRun(eventRunId, {
         ...fast,
-        diff: previous?.diff ?? "",
+        diff: options?.refreshDiff ? "" : (previous?.diff ?? ""),
+        diffLoaded: options?.refreshDiff ? false : (previous?.diffLoaded ?? false),
         worktreeUnavailable: previous?.worktreeUnavailable ?? false,
-        diffPending: previous?.diffPending ?? true,
+        diffPending: options?.refreshDiff ? Boolean(diffLoadPromisesRef.current[eventRunId]) : false,
+        diffSummary: options?.refreshDiff ? undefined : previous?.diffSummary,
+        diffSummaryPending: options?.refreshDiff ? true : (previous?.diffSummaryPending ?? false),
       });
 
-      clearDiffRefreshTimer(eventRunId);
-      diffRefreshTimersRef.current[eventRunId] = setTimeout(() => {
-        delete diffRefreshTimersRef.current[eventRunId];
-        void loadDiffForOpenRun(eventRunId);
-      }, 500);
+      if (options?.refreshDiff) {
+        clearDiffRefreshTimer(eventRunId);
+        diffRefreshTimersRef.current[eventRunId] = setTimeout(() => {
+          delete diffRefreshTimersRef.current[eventRunId];
+          void loadDiffSummaryForOpenRun(eventRunId);
+        }, 500);
+      }
     },
-    [buildwarden, clearDiffRefreshTimer, loadDiffForOpenRun, replaceRunDetailForRun],
+    [buildwarden, clearDiffRefreshTimer, loadDiffSummaryForOpenRun, replaceRunDetailForRun],
   );
 
   /**
@@ -756,15 +817,19 @@ export const App = () => {
    * immediately on terminal events so the final state is never delayed.
    */
   const runDetailRefreshTimersRef = useRef<Partial<Record<string, number>>>({});
+  const runDetailDiffRefreshRequestedRef = useRef<Partial<Record<string, boolean>>>({});
   const refreshRunDetailForActiveRunEvent = useCallback(
-    async (eventRunId: string, options?: { immediate?: boolean }) => {
+    async (eventRunId: string, options?: { immediate?: boolean; refreshDiff?: boolean }) => {
+      if (options?.refreshDiff) runDetailDiffRefreshRequestedRef.current[eventRunId] = true;
       if (options?.immediate) {
         const pending = runDetailRefreshTimersRef.current[eventRunId];
         if (pending !== undefined) {
           window.clearTimeout(pending);
           delete runDetailRefreshTimersRef.current[eventRunId];
         }
-        await refreshOpenRunDetailForEvent(eventRunId);
+        const refreshDiff = runDetailDiffRefreshRequestedRef.current[eventRunId] === true;
+        delete runDetailDiffRefreshRequestedRef.current[eventRunId];
+        await refreshOpenRunDetailForEvent(eventRunId, { refreshDiff });
         return;
       }
       if (runDetailRefreshTimersRef.current[eventRunId] !== undefined) {
@@ -772,7 +837,9 @@ export const App = () => {
       }
       runDetailRefreshTimersRef.current[eventRunId] = window.setTimeout(() => {
         delete runDetailRefreshTimersRef.current[eventRunId];
-        void refreshOpenRunDetailForEvent(eventRunId);
+        const refreshDiff = runDetailDiffRefreshRequestedRef.current[eventRunId] === true;
+        delete runDetailDiffRefreshRequestedRef.current[eventRunId];
+        void refreshOpenRunDetailForEvent(eventRunId, { refreshDiff });
       }, 400);
     },
     [refreshOpenRunDetailForEvent],
@@ -890,7 +957,10 @@ export const App = () => {
       scheduleSnapshotRefresh();
       const isTerminalRunEvent =
         event.title === "Run completed" || event.title === "Run failed" || event.title === "Run cancelled";
-      void refreshRunDetailForActiveRunEvent(event.runId, { immediate: isTerminalRunEvent });
+      void refreshRunDetailForActiveRunEvent(event.runId, {
+        immediate: isTerminalRunEvent,
+        refreshDiff: event.type === "diff-updated" || isTerminalRunEvent,
+      });
     });
 
     const unsubscribeWarning = buildwarden.onAppWarning((warning) => {
@@ -3216,6 +3286,7 @@ export const App = () => {
             showBrowser={paneVisiblePanels.browser}
             showNotes={paneVisiblePanels.notes}
             showChat={paneVisiblePanels.chat}
+            onRequestDiff={loadDiffForOpenRun}
             onTogglePanel={(panelId) => toggleRunWorkspacePanelForRun(
               paneDetail.run.id,
               panelId,
@@ -3647,6 +3718,7 @@ export const App = () => {
               showBrowser={runWorkspacePanelVisibility.browser}
               showNotes={runWorkspacePanelVisibility.notes}
               showChat={runWorkspacePanelVisibility.chat}
+              onRequestDiff={loadDiffForOpenRun}
               onTogglePanel={toggleSelectedRunWorkspacePanel}
               secondaryPanelPosition={runWorkspaceSecondaryPosition}
               onSecondaryPanelPositionChange={(position) => {

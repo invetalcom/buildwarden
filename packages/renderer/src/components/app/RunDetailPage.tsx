@@ -14,6 +14,7 @@ import {
   type RunRecord,
   type RunTimelineDensity,
   type RunUserInputAnswers,
+  type RunWorktreeDiffSummary,
   type RunWorkspaceFileReference,
   type RunWorkspacePanelId,
   type RunWorkspaceTileSize,
@@ -189,6 +190,8 @@ export interface RunDetailPageProps {
   showBrowser: boolean;
   showNotes: boolean;
   showChat: boolean;
+  /** Requests the complete unified patch when a visible consumer needs it. */
+  onRequestDiff: (runId: string) => void;
   /** Called when a panel should be toggled on or off from within the layout. */
   onTogglePanel: (panelId: TilePanelId) => void;
   /** Whether the secondary panel column is docked to the right or bottom. */
@@ -243,6 +246,7 @@ export const RunDetailPage = ({
   showBrowser,
   showNotes,
   showChat,
+  onRequestDiff,
   onTogglePanel,
   secondaryPanelPosition,
   onSecondaryPanelPositionChange,
@@ -316,16 +320,19 @@ export const RunDetailPage = ({
   const workspacePath = runDetail.workspacePath ?? runDetail.run.worktreePath;
   const isRunActive = ["queued", "preparing", "running"].includes(runDetail.run.status);
   const worktreeUnavailable = runDetail.worktreeUnavailable === true;
+  const diffLoaded = runDetail.diffLoaded === true;
   const diffPending = runDetail.diffPending === true;
   const orderedSteps = useMemo(() => dedupeFinalSummarySteps(runDetail.steps), [runDetail.steps]);
   const contextHistoryText = useMemo(() => buildVisibleConversationHistory(runDetail.steps), [runDetail.steps]);
   const gitDiffPanelRef = useRef<GitDiffPreviewHandle>(null);
   const [allDiffFilesExpanded, setAllDiffFilesExpanded] = useState(false);
   const [modifiedFilesExpanded, setModifiedFilesExpanded] = useState(false);
-  const diffStats = useMemo(
-    () => (diffPending ? { totalFiles: 0, totalAdditions: 0, totalDeletions: 0, files: [] } : summarizeDiffStats(runDetail.diff)),
-    [diffPending, runDetail.diff],
-  );
+  const diffStats = useMemo<RunWorktreeDiffSummary>(() => {
+    if (runDetail.diffSummary) return runDetail.diffSummary;
+    return diffLoaded
+      ? summarizeDiffStats(runDetail.diff)
+      : { totalFiles: 0, totalAdditions: 0, totalDeletions: 0, files: [] };
+  }, [diffLoaded, runDetail.diff, runDetail.diffSummary]);
   const openNotes = useMemo(() => runNotes.filter((note) => note.status === "open"), [runNotes]);
   const closedNotes = useMemo(() => runNotes.filter((note) => note.status === "closed"), [runNotes]);
   const [selectedReviewModelId, setSelectedReviewModelId] = useState(runDetail.run.modelId);
@@ -873,7 +880,12 @@ export const RunDetailPage = ({
   ] as const;
 
   const isGitDiffPanelVisible = showDiff && activeSecondaryTab === "diff";
-  const showModifiedFilesSummary = !isRunActive && !diffPending && diffStats.totalFiles > 0 && !isGitDiffPanelVisible;
+  useEffect(() => {
+    if (isGitDiffPanelVisible && !diffLoaded && !diffPending) onRequestDiff(runDetail.run.id);
+  }, [diffLoaded, diffPending, isGitDiffPanelVisible, onRequestDiff, runDetail.run.id]);
+
+  const showModifiedFilesSummary =
+    !isRunActive && runDetail.diffSummaryPending !== true && diffStats.totalFiles > 0 && !isGitDiffPanelVisible;
   const fallbackFinishedAt = orderedSteps[orderedSteps.length - 1]?.createdAt ?? runDetail.run.updatedAt;
   const runDurationLabel = formatRunDuration(runDetail.run.startedAt ?? runDetail.run.createdAt, runDetail.run.finishedAt ?? fallbackFinishedAt);
   const modifiedFilesSummary = showModifiedFilesSummary ? (
@@ -945,10 +957,16 @@ export const RunDetailPage = ({
                   >
                     <span className="whitespace-nowrap text-zinc-200">{file.path}</span>
                     <span className="shrink-0 text-[10px] font-medium">
-                      <span className="text-teal-300/90">+{file.additions}</span>
-                      <span className="mx-1 text-zinc-700">/</span>
-                  <span className="text-red-300/85">-{file.deletions}</span>
-                </span>
+                      {file.additions === null || file.deletions === null ? (
+                        <span className="text-zinc-500">binary</span>
+                      ) : (
+                        <>
+                          <span className="text-teal-300/90">+{file.additions}</span>
+                          <span className="mx-1 text-zinc-700">/</span>
+                          <span className="text-red-300/85">-{file.deletions}</span>
+                        </>
+                      )}
+                    </span>
               </button>
             ))}
           </div>
@@ -1370,6 +1388,9 @@ export const RunDetailPage = ({
                   target={filePanelTarget}
                   diffText={runDetail.diff}
                   diffPending={diffPending}
+                  diffLoaded={diffLoaded}
+                  diffSummary={runDetail.diffSummary}
+                  onRequestDiff={onRequestDiff}
                 />
               ) : null}
 
@@ -1388,7 +1409,7 @@ export const RunDetailPage = ({
               {showDiff && activeSecondaryTab === "diff" ? (
                 <div className="flex h-full min-h-0 flex-col overflow-hidden">
                   <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                    {diffPending ? (
+                    {!diffLoaded || diffPending ? (
                       <div
                         className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-4 py-8 text-center text-sm text-zinc-500"
                         role="status"

@@ -10,6 +10,8 @@ import {
   type GitProjectValidation,
   type ProjectGitBranchInfo,
   type ProjectGitBranchOverview,
+  type RunWorktreeDiffFileStat,
+  type RunWorktreeDiffSummary,
   type WorktreeInfo,
 } from "@buildwarden/shared";
 import { parseGitRemoteToWebBase, type ParsedGitRemote } from "./remote-parse.js";
@@ -286,41 +288,116 @@ async function formatGitStatusSummary(worktreePath: string): Promise<string> {
   return lines.join("\n");
 }
 
+const mapWithConcurrency = async <T, R>(items: readonly T[], limit: number, mapper: (item: T) => Promise<R>): Promise<R[]> => {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await mapper(items[index]!);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+};
+
+const parseNumstatValue = (value: string): number | null => (value === "-" ? null : Number.parseInt(value, 10) || 0);
+
+/** Parses `git diff --numstat -z`, including its three-NUL-field rename form. */
+const parseNumstat = (output: string): RunWorktreeDiffFileStat[] => {
+  const parts = output.split("\0");
+  const files: RunWorktreeDiffFileStat[] = [];
+  for (let index = 0; index < parts.length;) {
+    const header = parts[index++] ?? "";
+    if (!header) continue;
+    const fields = header.split("\t");
+    if (fields.length < 3) continue;
+    const additions = parseNumstatValue(fields[0] ?? "0");
+    const deletions = parseNumstatValue(fields[1] ?? "0");
+    if (fields[2] === "") {
+      const previousPath = parts[index++] || null;
+      const path = parts[index++] || previousPath || "";
+      if (path) files.push({ path, previousPath, additions, deletions });
+      continue;
+    }
+    const path = fields.slice(2).join("\t");
+    if (path) files.push({ path, additions, deletions });
+  }
+  return files;
+};
+
+const mergeNumstatFiles = (groups: readonly RunWorktreeDiffFileStat[][]): RunWorktreeDiffSummary => {
+  const byPath = new Map<string, RunWorktreeDiffFileStat>();
+  for (const file of groups.flat()) {
+    const existing = byPath.get(file.path);
+    if (!existing) {
+      byPath.set(file.path, { ...file });
+      continue;
+    }
+    existing.previousPath ??= file.previousPath;
+    existing.additions = existing.additions === null || file.additions === null ? null : existing.additions + file.additions;
+    existing.deletions = existing.deletions === null || file.deletions === null ? null : existing.deletions + file.deletions;
+  }
+  const files = [...byPath.values()].sort((left, right) => left.path.localeCompare(right.path));
+  return {
+    files,
+    totalFiles: files.length,
+    totalAdditions: files.reduce((sum, file) => sum + (file.additions ?? 0), 0),
+    totalDeletions: files.reduce((sum, file) => sum + (file.deletions ?? 0), 0),
+  };
+};
+
+/** Changed-file statistics without constructing a complete unified patch. */
+export async function computeWorktreeDiffSummary(worktreePath: string): Promise<RunWorktreeDiffSummary> {
+  const git = simpleGit({ baseDir: worktreePath, maxConcurrentProcesses: 6 });
+  const [status, unstagedOutput, stagedOutput] = await Promise.all([
+    git.status(),
+    runGitRaw(git, ["diff", "--numstat", "-z", "--find-renames"]),
+    runGitRaw(git, ["diff", "--cached", "--numstat", "-z", "--find-renames"]),
+  ]);
+  const untracked = await mapWithConcurrency(status.not_added, 4, async (filePath) => {
+    try {
+      return parseNumstat(await runGitRaw(git, ["diff", "--no-index", "--numstat", "-z", "--", "/dev/null", filePath]));
+    } catch (error) {
+      return parseNumstat(extractCommandOutput(error));
+    }
+  });
+  return mergeNumstatFiles([parseNumstat(unstagedOutput), parseNumstat(stagedOutput), ...untracked]);
+}
+
 /**
  * Full unified diff text for a worktree (staged + unstaged + untracked).
  * CPU/git-heavy — safe to run in a worker thread; exported for the desktop git-diff worker.
  */
 export async function computeWorktreeDiff(worktreePath: string): Promise<string> {
-  const git = simpleGit(worktreePath);
-  const status = await git.status();
+  const git = simpleGit({ baseDir: worktreePath, maxConcurrentProcesses: 6 });
   const sections: string[] = [];
 
-  const unstaged = (await git.diff()).trim();
+  const [status, unstagedOutput, stagedOutput] = await Promise.all([git.status(), git.diff(), git.diff(["--cached"])]);
+  const unstaged = unstagedOutput.trim();
   if (unstaged) {
     sections.push(unstaged);
   }
 
-  const staged = (await git.diff(["--cached"])).trim();
+  const staged = stagedOutput.trim();
   if (staged) {
     sections.push(staged);
   }
 
-  for (const filePath of status.not_added) {
+  const untrackedSections = await mapWithConcurrency(status.not_added, 4, async (filePath) => {
     try {
       const untrackedPatch = (await git.raw(["diff", "--no-index", "--", "/dev/null", filePath])).trim();
-      if (untrackedPatch) {
-        sections.push(untrackedPatch);
-      }
+      return untrackedPatch || null;
     } catch (error) {
       const output = extractCommandOutput(error);
       if (output.includes("diff --git")) {
-        sections.push(output);
-        continue;
+        return output;
       }
 
-      sections.push(`Unable to render patch for untracked file ${filePath}:\n${output}`);
+      return `Unable to render patch for untracked file ${filePath}:\n${output}`;
     }
-  }
+  });
+  sections.push(...untrackedSections.filter((section): section is string => Boolean(section)));
 
   if (sections.length === 0 && !status.isClean()) {
     sections.push(await formatGitStatusSummary(worktreePath));
@@ -898,6 +975,10 @@ export class GitService {
 
   async getDiff(worktreePath: string): Promise<string> {
     return computeWorktreeDiff(worktreePath);
+  }
+
+  async getDiffSummary(worktreePath: string): Promise<RunWorktreeDiffSummary> {
+    return computeWorktreeDiffSummary(worktreePath);
   }
 
   async getStatusSummary(worktreePath: string): Promise<string> {

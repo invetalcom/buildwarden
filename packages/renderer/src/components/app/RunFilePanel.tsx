@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Copy, FileText, GitBranch, Loader2, RefreshCw } from "lucide-react";
-import type { RunWorkspaceFileReference, RunWorkspaceFileResult } from "@buildwarden/shared";
+import type { RunWorktreeDiffSummary, RunWorkspaceFileReference, RunWorkspaceFileResult } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
 import { CodeMirrorFileViewer } from "./CodeMirrorFileViewer";
 import { GitDiffPreview } from "./git-diff-preview";
-import { summarizeDiffStats } from "./git-diff-utils";
 
 type FilePanelView = "file" | "diff";
 
@@ -165,9 +164,20 @@ export interface RunFilePanelProps {
   target: RunWorkspaceFileReference;
   diffText: string;
   diffPending: boolean;
+  diffLoaded: boolean;
+  diffSummary?: RunWorktreeDiffSummary;
+  onRequestDiff: (runId: string) => void;
 }
 
-export const RunFilePanel = ({ runId, target, diffText, diffPending }: RunFilePanelProps) => {
+export const RunFilePanel = ({
+  runId,
+  target,
+  diffText,
+  diffPending,
+  diffLoaded,
+  diffSummary,
+  onRequestDiff,
+}: RunFilePanelProps) => {
   const buildwarden = useBuildWardenClient();
   const [view, setView] = useState<FilePanelView>("file");
   const [reloadKey, setReloadKey] = useState(0);
@@ -178,12 +188,11 @@ export const RunFilePanel = ({ runId, target, diffText, diffPending }: RunFilePa
   const inputPath = useMemo(() => referenceToInputPath(target), [target]);
   const displayPath = result?.path || target.path;
   const hasFileDiff = useMemo(() => {
-    if (diffPending || !diffText.trim()) {
-      return false;
-    }
-    return summarizeDiffStats(diffText).files.some((file) => filePathMatches(file.path, displayPath));
-  }, [diffPending, diffText, displayPath]);
-  const canShowDiffTab = diffPending || hasFileDiff;
+    return diffSummary?.files.some(
+      (file) => filePathMatches(file.path, displayPath) || Boolean(file.previousPath && filePathMatches(file.previousPath, displayPath)),
+    ) ?? false;
+  }, [diffSummary, displayPath]);
+  const canShowDiffTab = hasFileDiff;
   const message = unavailableMessage(result, loading, error);
 
   useEffect(() => {
@@ -198,6 +207,10 @@ export const RunFilePanel = ({ runId, target, diffText, diffPending }: RunFilePa
       setView("file");
     }
   }, [canShowDiffTab, view]);
+
+  useEffect(() => {
+    if (view === "diff" && !diffLoaded && !diffPending) onRequestDiff(runId);
+  }, [diffLoaded, diffPending, onRequestDiff, runId, view]);
 
   useEffect(() => {
     let cancelled = false;
@@ -300,7 +313,10 @@ export const RunFilePanel = ({ runId, target, diffText, diffPending }: RunFilePa
               "flex items-center gap-1.5 border-b-2 px-2 text-[11px] transition",
               view === "diff" ? "border-cyan-500/70 text-zinc-100" : "border-transparent text-zinc-500 hover:text-zinc-200",
             )}
-            onClick={() => setView("diff")}
+            onClick={() => {
+              setView("diff");
+              if (!diffLoaded && !diffPending) onRequestDiff(runId);
+            }}
           >
             <GitBranch className="h-3.5 w-3.5" aria-hidden />
             Diff
@@ -314,7 +330,7 @@ export const RunFilePanel = ({ runId, target, diffText, diffPending }: RunFilePa
           loading={loading}
           message={message}
           result={result}
-          diffPending={diffPending}
+          diffPending={diffPending || !diffLoaded}
           diffText={diffText}
           displayPath={displayPath}
         />
