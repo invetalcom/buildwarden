@@ -1,5 +1,7 @@
-import { useDeferredValue, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { estimateContextWindow, formatCompactTokens } from "../../lib/context-window-estimate";
+import { requestExactContextWindowTokenCounts } from "../../lib/context-window-tokenizer-client";
+import type { ContextWindowTextTokenCounts } from "../../lib/context-window-estimate";
 
 interface ContextWindowBadgeProps {
   modelIds: string[];
@@ -27,11 +29,29 @@ export const ContextWindowBadge = ({
   isRun = false,
 }: ContextWindowBadgeProps) => {
   const [open, setOpen] = useState(false);
+  const [exactTextTokenCounts, setExactTextTokenCounts] = useState<ContextWindowTextTokenCounts | null>(null);
   const deferredPrompt = useDeferredValue(prompt);
   const deferredHistoryText = useDeferredValue(historyText ?? "");
   const ringSize = 24;
   const radius = 10;
   const circumference = 2 * Math.PI * radius;
+
+  useEffect(() => {
+    let cancelled = false;
+    setExactTextTokenCounts(null);
+    const timer = window.setTimeout(() => {
+      void requestExactContextWindowTokenCounts(deferredPrompt, deferredHistoryText).then((counts) => {
+        if (!cancelled && counts) {
+          setExactTextTokenCounts(counts);
+        }
+      });
+    }, 150);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [deferredHistoryText, deferredPrompt]);
 
   const estimate = useMemo(
     () =>
@@ -41,8 +61,9 @@ export const ContextWindowBadge = ({
         historyText: deferredHistoryText,
         attachmentFiles,
         isRun,
+        textTokenCounts: exactTextTokenCounts,
       }),
-    [attachmentFiles, deferredHistoryText, deferredPrompt, isRun, modelIds],
+    [attachmentFiles, deferredHistoryText, deferredPrompt, exactTextTokenCounts, isRun, modelIds],
   );
 
   if (!estimate) {
