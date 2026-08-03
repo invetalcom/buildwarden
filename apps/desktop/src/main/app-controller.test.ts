@@ -348,6 +348,34 @@ describe("AppController settings and lightweight workflows", () => {
     expect(removeWorktree).toHaveBeenLastCalledWith(project.repoPath, run.worktreePath, run.branchName);
   });
 
+  it("does not expose Git command details when a worktree summary fails", async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "buildwarden-summary-error-"));
+    tempDirs.push(workspacePath);
+    const run = {
+      id: "run-summary-error",
+      projectId: project.id,
+      workspaceType: "local",
+      workspaceVcs: "git",
+      worktreePath: workspacePath,
+      branchName: "main",
+    } as RunRecord;
+    const harness = createHarness({
+      getRun: vi.fn(() => run),
+      getRunSteps: vi.fn(() => []),
+    });
+    tempDirs.push(harness.logDir);
+    const getDiffSummary = vi.fn().mockRejectedValue(new Error(`git failed in ${workspacePath}`));
+    (harness.controller as unknown as { gitService: { getDiffSummary: typeof getDiffSummary } }).gitService.getDiffSummary = getDiffSummary;
+
+    const result = await harness.controller.getRunWorktreeDiffSummary(run.id);
+
+    expect(result).toEqual({
+      summary: { files: [], totalFiles: 0, totalAdditions: 0, totalDeletions: 0 },
+      worktreeUnavailable: true,
+      diffUnavailableReason: "The Git workspace is no longer available.",
+    });
+  });
+
   it("automatically completes an orchestration after its delivered terminal wave is summarized", async () => {
     const orchestration = {
       id: "orchestration-1",

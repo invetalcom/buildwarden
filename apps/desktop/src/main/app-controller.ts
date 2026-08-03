@@ -5534,10 +5534,14 @@ export class AppController
     try {
       return { summary: await this.gitService.getDiffSummary(diffPath), worktreeUnavailable: false };
     } catch (error) {
+      this.logControllerWarn("Could not compute the run worktree diff summary.", {
+        runId: run.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return {
         summary: { files: [], totalFiles: 0, totalAdditions: 0, totalDeletions: 0 },
-        worktreeUnavailable: false,
-        diffUnavailableReason: error instanceof Error ? error.message : String(error),
+        worktreeUnavailable: true,
+        diffUnavailableReason: "The Git workspace is no longer available.",
       };
     }
   }
