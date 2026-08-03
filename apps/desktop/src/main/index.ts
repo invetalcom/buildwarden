@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, ipcMain } from "electron";
 import { getDefaultDatabasePath, BuildWardenDatabase } from "@buildwarden/db";
+import { disposeWorktreeDiffWorker } from "./run-worktree-diff-worker";
 import {
   RemoteAccessServer,
   RemoteAuthService,
@@ -439,6 +440,11 @@ const bootstrap = async (): Promise<void> => {
     validateSingleRemoteStringArg,
   );
   remoteOperations.register("getRunWorktreeDiff", (runId) => controller.getRunWorktreeDiff(runId), validateSingleRemoteStringArg);
+  remoteOperations.register(
+    "getRunWorktreeDiffSummary",
+    (runId) => controller.getRunWorktreeDiffSummary(runId),
+    validateSingleRemoteStringArg,
+  );
   remoteOperations.register("getRunWorkspaceFile", (input) => controller.getRunWorkspaceFile(input), validateRunWorkspaceFileRemoteArgs);
   remoteOperations.register("getProjectLoopUiReviewImage", (reviewId) => controller.getProjectLoopUiReviewImage(reviewId), validateSingleRemoteStringArg);
   remoteOperations.register("getChatDetail", (chatId) => controller.getChatDetail(chatId), validateSingleRemoteStringArg);
@@ -1341,6 +1347,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.setRunListVisibility, (_, runId: string, visibility) => controller.setRunListVisibility(runId, visibility));
   ipcMain.handle(IPC_CHANNELS.getRunWorkspaceFile, (_, input) => controller.getRunWorkspaceFile(input));
   ipcMain.handle(IPC_CHANNELS.getRunWorktreeDiff, (_, runId: string) => controller.getRunWorktreeDiff(runId));
+  ipcMain.handle(IPC_CHANNELS.getRunWorktreeDiffSummary, (_, runId: string) => controller.getRunWorktreeDiffSummary(runId));
   ipcMain.handle(IPC_CHANNELS.resumeRunFromCheckpoint, (_, runId: string) => controller.resumeRunFromCheckpoint(runId));
   ipcMain.handle(IPC_CHANNELS.recoverInterruptedRun, (_, runId: string) => controller.recoverInterruptedRun(runId));
   ipcMain.handle(IPC_CHANNELS.undoRunToLastPrompt, (_, runId: string) => controller.undoRunToLastPrompt(runId));
@@ -1423,6 +1430,7 @@ const bootstrap = async (): Promise<void> => {
   registerHostEventIpc(hostEvents, () => mainWindow);
   registerRunTerminalIpc(hostTerminal, desktopPlatform);
   app.on("before-quit", () => {
+    void disposeWorktreeDiffWorker();
     void remoteAccessServer?.stop().catch((error) => {
       logWarn("Remote access server did not stop cleanly.", { error });
     });

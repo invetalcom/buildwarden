@@ -1740,9 +1740,14 @@ export interface RunDetail {
   branchPromotedToProject?: boolean;
   /** True when the run's worktree no longer exists; diff will be empty and the UI should hide the diff panel. */
   worktreeUnavailable?: boolean;
+  /** True after the complete unified patch has been fetched at least once. */
+  diffLoaded?: boolean;
+  /** Lightweight changed-file statistics, available without loading the complete unified patch. */
+  diffSummary?: RunWorktreeDiffSummary;
+  /** True while lightweight changed-file statistics are loading. */
+  diffSummaryPending?: boolean;
   /**
-   * True while the worktree git diff is still being loaded (see `DesktopApi.getRunWorktreeDiff`).
-   * `getRunDetail` returns immediately with an empty diff and this set to true.
+   * True only while a requested complete patch is actively loading (see `DesktopApi.getRunWorktreeDiff`).
    */
   diffPending?: boolean;
   latestCheckpoint?: {
@@ -2067,6 +2072,28 @@ export interface RunDeletionImpact {
 /** Result of computing the worktree patch for a run (potentially slow; use after `getRunDetail`). */
 export interface RunWorktreeDiffResult {
   diff: string;
+  worktreeUnavailable: boolean;
+  diffUnavailableReason?: string | null;
+}
+
+export interface RunWorktreeDiffFileStat {
+  path: string;
+  previousPath?: string | null;
+  /** Null for binary or otherwise non-text changes. */
+  additions: number | null;
+  /** Null for binary or otherwise non-text changes. */
+  deletions: number | null;
+}
+
+export interface RunWorktreeDiffSummary {
+  files: RunWorktreeDiffFileStat[];
+  totalFiles: number;
+  totalAdditions: number;
+  totalDeletions: number;
+}
+
+export interface RunWorktreeDiffSummaryResult {
+  summary: RunWorktreeDiffSummary;
   worktreeUnavailable: boolean;
   diffUnavailableReason?: string | null;
 }
@@ -3543,6 +3570,8 @@ export interface DesktopApi {
   getRunWorkspaceFile(input: RunWorkspaceFileInput): Promise<RunWorkspaceFileResult>;
   /** Worktree git diff only; can be slow on large repos. Call after {@link getRunDetail} for progressive loading. */
   getRunWorktreeDiff(runId: string): Promise<RunWorktreeDiffResult>;
+  /** Changed-file paths and line counts without constructing or transferring a complete unified patch. */
+  getRunWorktreeDiffSummary(runId: string): Promise<RunWorktreeDiffSummaryResult>;
   resumeRunFromCheckpoint(runId: string): Promise<void>;
   recoverInterruptedRun(runId: string): Promise<void>;
   undoRunToLastPrompt(runId: string): Promise<void>;
@@ -3840,6 +3869,7 @@ export type RemoteOperationMap = {
   checkProjectFolderGitStatus: DesktopApi["checkProjectFolderGitStatus"];
   getRunDetail: DesktopApi["getRunDetail"];
   getRunWorktreeDiff: DesktopApi["getRunWorktreeDiff"];
+  getRunWorktreeDiffSummary: DesktopApi["getRunWorktreeDiffSummary"];
   getRunWorkspaceFile: DesktopApi["getRunWorkspaceFile"];
   getOrchestrationDetail: DesktopApi["getOrchestrationDetail"];
   getOrchestrationTaskDetail: DesktopApi["getOrchestrationTaskDetail"];
@@ -4165,6 +4195,7 @@ export const IPC_CHANNELS = {
   setRunListVisibility: "buildwarden:set-run-list-visibility",
   getRunWorkspaceFile: "buildwarden:get-run-workspace-file",
   getRunWorktreeDiff: "buildwarden:get-run-worktree-diff",
+  getRunWorktreeDiffSummary: "buildwarden:get-run-worktree-diff-summary",
   resumeRunFromCheckpoint: "buildwarden:resume-run-from-checkpoint",
   recoverInterruptedRun: "buildwarden:recover-interrupted-run",
   undoRunToLastPrompt: "buildwarden:undo-run-to-last-prompt",

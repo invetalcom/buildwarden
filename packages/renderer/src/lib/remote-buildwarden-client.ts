@@ -75,6 +75,7 @@ const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
   "getOrchestrationAdoptionPreview",
   "getRunDeletionImpact",
   "getRunWorktreeDiff",
+  "getRunWorktreeDiffSummary",
   "getRunWorkspaceFile",
   "getProjectLoopUiReviewImage",
   "getProjectLoopDetail",

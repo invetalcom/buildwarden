@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash, randomInt } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, statSync, type Dirent } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
@@ -15,7 +15,13 @@ import {
 import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
 import { readRunWorkspaceFileForPreview } from "./run-workspace-file";
 import { normalizeJsonResponse } from "./json-response";
-import { createFolderSnapshot, deleteFolderSnapshot, diffFolderAgainstSnapshot, getFolderSnapshotRoot } from "./folder-diff";
+import {
+  createFolderSnapshot,
+  deleteFolderSnapshot,
+  diffFolderAgainstSnapshot,
+  getFolderSnapshotRoot,
+  summarizeFolderAgainstSnapshot,
+} from "./folder-diff";
 import { createFolderWorkspaceCopy, removeFolderWorkspaceCopy } from "./folder-workspace";
 import { getHarnessTypeForProvider } from "./harness-adapters";
 import { createProjectPrReviewProvider } from "./pr-review/pr-review-provider-factory";
@@ -183,6 +189,8 @@ import {
   type RunEvent,
   type AppWarning,
   type RunWorktreeDiffResult,
+  type RunWorktreeDiffSummary,
+  type RunWorktreeDiffSummaryResult,
   type RunFollowUpOptions,
   type RunInput,
   type RunDeletionImpact,
@@ -921,6 +929,7 @@ export class AppController
   private loopRunnerInstance: ProjectLoopRunner | null = null;
   private readonly composerCommandCache = new Map<string, { expiresAt: number; commands: ComposerCommandDescriptor[] }>();
   private readonly composerCommandInflight = new Map<string, Promise<ComposerCommandDescriptor[]>>();
+  private readonly runWorktreeDiffSummaryInflight = new Map<string, Promise<RunWorktreeDiffSummary>>();
   private readonly projectActivityCache = new Map<string, {
     expiresAt: number;
     commits: ProjectActivityCommit[];
@@ -5404,7 +5413,9 @@ export class AppController
       ...detail,
       workspacePath,
       branchPromotedToProject,
-      diffPending: true,
+      diffLoaded: false,
+      diffPending: false,
+      diffSummaryPending: true,
       worktreeUnavailable: false,
       latestCheckpoint: checkpoint ? { round: checkpoint.round, memo: checkpoint.memo } : null,
       canResumeFromCheckpoint: Boolean(checkpoint) && !this.runWorkers.has(runId),
@@ -5493,6 +5504,58 @@ export class AppController
       return { diff: "", worktreeUnavailable: true, diffUnavailableReason: "The Git workspace is no longer available." };
     }
     return { diff: outcome.diff, worktreeUnavailable: false };
+  }
+
+  async getRunWorktreeDiffSummary(runId: string): Promise<RunWorktreeDiffSummaryResult> {
+    const run = this.db.getRun(runId);
+    const project = this.db.getProject(run.projectId);
+    const diffPath = this.getEffectiveRunWorkspacePath(run, project);
+    if (!existsSync(diffPath) || !statSync(diffPath).isDirectory()) {
+      return {
+        summary: { files: [], totalFiles: 0, totalAdditions: 0, totalDeletions: 0 },
+        worktreeUnavailable: true,
+        diffUnavailableReason: run.workspaceVcs === "folder"
+          ? "The folder workspace is no longer available."
+          : "The Git workspace is no longer available.",
+      };
+    }
+
+    if (run.workspaceVcs === "folder") {
+      const outcome = await summarizeFolderAgainstSnapshot({
+        runId: run.id,
+        workspacePath: diffPath,
+        snapshotsRoot: this.getFolderSnapshotRoot(),
+      });
+      return {
+        summary: outcome.summary,
+        worktreeUnavailable: outcome.missingSnapshot,
+        diffUnavailableReason: outcome.missingSnapshot ? "No folder baseline snapshot is available for this run." : null,
+      };
+    }
+
+    try {
+      const normalizedPath = resolve(diffPath);
+      const existing = this.runWorktreeDiffSummaryInflight.get(normalizedPath);
+      const pending = existing ?? this.gitService.getDiffSummary(normalizedPath);
+      this.runWorktreeDiffSummaryInflight.set(normalizedPath, pending);
+      try {
+        return { summary: await pending, worktreeUnavailable: false };
+      } finally {
+        if (this.runWorktreeDiffSummaryInflight.get(normalizedPath) === pending) {
+          this.runWorktreeDiffSummaryInflight.delete(normalizedPath);
+        }
+      }
+    } catch (error) {
+      this.logControllerWarn("Could not compute the run worktree diff summary.", {
+        runId: run.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return {
+        summary: { files: [], totalFiles: 0, totalAdditions: 0, totalDeletions: 0 },
+        worktreeUnavailable: true,
+        diffUnavailableReason: "The Git workspace is no longer available.",
+      };
+    }
   }
 
   async cancelRun(runId: string): Promise<void> {
