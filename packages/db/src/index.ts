@@ -149,9 +149,9 @@ export class BuildWardenDatabase {
     mkdirSync(dirname(this.filePath), { recursive: true });
     this.db = new DatabaseSync(this.filePath);
     try {
+      this.exec("pragma busy_timeout = 5000");
       this.exec("pragma journal_mode = WAL");
       this.exec("pragma synchronous = NORMAL");
-      this.exec("pragma busy_timeout = 5000");
       this.exec("pragma wal_autocheckpoint = 1000");
 
       this.transaction(() => {
