@@ -13,6 +13,26 @@ type TestDatabase = {
   path: string;
 };
 
+class ResetObservationDatabase extends BuildWardenDatabase {
+  private initialized = false;
+  sidecarsBeforeReinit: { wal: boolean; shm: boolean } | null = null;
+
+  constructor(private readonly observedPath: string) {
+    super(observedPath);
+  }
+
+  override async init(): Promise<void> {
+    if (this.initialized) {
+      this.sidecarsBeforeReinit = {
+        wal: existsSync(`${this.observedPath}-wal`),
+        shm: existsSync(`${this.observedPath}-shm`),
+      };
+    }
+    await super.init();
+    this.initialized = true;
+  }
+}
+
 const openDatabases: TestDatabase[] = [];
 
 const createDatabase = async (): Promise<TestDatabase> => {
@@ -156,7 +176,11 @@ describe("node:sqlite WAL persistence", () => {
   });
 
   it("deletes only the database WAL sidecars during reset", async () => {
-    const { database, path } = await createDatabase();
+    const directory = await mkdtemp(join(tmpdir(), "buildwarden-sqlite-reset-"));
+    const path = join(directory, "state.sqlite");
+    const database = new ResetObservationDatabase(path);
+    openDatabases.push({ database, directory, path });
+    await database.init();
     database.setSetting("before-reset", "present");
     await database.close();
 
@@ -168,6 +192,7 @@ describe("node:sqlite WAL persistence", () => {
     await database.resetAndReinit();
 
     expect(database.getSettings()["before-reset"]).toBeUndefined();
+    expect(database.sidecarsBeforeReinit).toEqual({ wal: false, shm: false });
     expect(existsSync(unrelatedPath)).toBe(true);
   });
 
