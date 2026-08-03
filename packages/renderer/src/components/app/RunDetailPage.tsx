@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import {
   appendChatAttachmentFiles,
@@ -54,9 +54,7 @@ import { ComposerSelect, RunComposer } from "./RunComposer";
 import { RunChatPanel } from "./RunChatPanel";
 import { RunEmbeddedBrowser } from "./RunEmbeddedBrowser";
 import { RunActivityTimeline } from "./RunActivityTimeline";
-import { RunFilePanel } from "./RunFilePanel";
 import { RunNotesPanel } from "./RunNoteCard";
-import { RunWorktreeTerminal } from "./RunWorktreeTerminal";
 import { DiffReviewPanel, type DiffReviewPanelState } from "./diff-review-panel";
 import {
   GitDiffPreview,
@@ -74,6 +72,18 @@ import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { OrchestrationAgentsPanel } from "./OrchestrationAgentsPanel";
 import { shouldAutoOpenAgentsPanel } from "./run-workspace-layout";
+
+const RunFilePanel = lazy(() => import("./RunFilePanel").then((module) => ({ default: module.RunFilePanel })));
+const RunWorktreeTerminal = lazy(() =>
+  import("./RunWorktreeTerminal").then((module) => ({ default: module.RunWorktreeTerminal })),
+);
+
+const LazyPanelFallback = ({ label }: { label: string }) => (
+  <div className="flex h-full min-h-24 items-center justify-center gap-2 text-xs text-zinc-500">
+    <Loader2 className="h-4 w-4 animate-spin text-cyan-400" aria-hidden />
+    {label}
+  </div>
+);
 
 type ReviewPanelState = DiffReviewPanelState;
 
@@ -1365,12 +1375,14 @@ export const RunDetailPage = ({
 
               {/* File panel */}
               {filePanelTarget && activeSecondaryTab === "file" ? (
-                <RunFilePanel
-                  runId={runDetail.run.id}
-                  target={filePanelTarget}
-                  diffText={runDetail.diff}
-                  diffPending={diffPending}
-                />
+                <Suspense fallback={<LazyPanelFallback label="Loading file viewer..." />}>
+                  <RunFilePanel
+                    runId={runDetail.run.id}
+                    target={filePanelTarget}
+                    diffText={runDetail.diff}
+                    diffPending={diffPending}
+                  />
+                </Suspense>
               ) : null}
 
               {/* Durable cross-provider agents panel */}
@@ -1525,6 +1537,7 @@ export const RunDetailPage = ({
                     </div>
                   </div>
                   <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-2">
+                    <Suspense fallback={<LazyPanelFallback label="Loading terminal..." />}>
                       <RunWorktreeTerminal
                         className="min-h-0 flex-1"
                         runId={runDetail.run.id}
@@ -1532,8 +1545,9 @@ export const RunDetailPage = ({
                         disabled={false}
                         uiActive={showTerminal}
                         openLinksInApp={terminalOpenLinksInApp}
-                      onOpenUrlInApp={onOpenBrowserUrl}
-                    />
+                        onOpenUrlInApp={onOpenBrowserUrl}
+                      />
+                    </Suspense>
                   </div>
                 </div>
               ) : null}
@@ -1583,14 +1597,16 @@ export const RunDetailPage = ({
       {/* Keep PTY + xterm mounted after first open; toggling Terminal only hides the panel. */}
       {!worktreeUnavailable && runTerminalPinned && !showTerminal ? (
         <div className="pointer-events-none fixed left-[-12000px] top-0 z-0 h-[420px] w-[896px] opacity-0" aria-hidden>
-          <RunWorktreeTerminal
-            runId={runDetail.run.id}
-            cwd={workspacePath}
-            disabled={false}
-            uiActive={false}
-            openLinksInApp={terminalOpenLinksInApp}
-            onOpenUrlInApp={onOpenBrowserUrl}
-          />
+          <Suspense fallback={null}>
+            <RunWorktreeTerminal
+              runId={runDetail.run.id}
+              cwd={workspacePath}
+              disabled={false}
+              uiActive={false}
+              openLinksInApp={terminalOpenLinksInApp}
+              onOpenUrlInApp={onOpenBrowserUrl}
+            />
+          </Suspense>
         </div>
       ) : null}
 
