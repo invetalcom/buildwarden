@@ -22,10 +22,12 @@ describe("folder diff snapshots", () => {
     const snapshotsRoot = await makeTempDir();
     await mkdir(join(workspacePath, "src"), { recursive: true });
     await writeFile(join(workspacePath, "README.md"), "hello\n", "utf8");
+    await writeFile(join(workspacePath, "binary.bin"), Buffer.from([0, 1, 2]));
     await writeFile(join(workspacePath, "src", "old.ts"), "export const oldValue = 1;\n", "utf8");
 
     await createFolderSnapshot({ runId: "run-1", workspacePath, snapshotsRoot });
     await writeFile(join(workspacePath, "README.md"), "hello\nworld\n", "utf8");
+    await writeFile(join(workspacePath, "binary.bin"), Buffer.from([0, 1, 3]));
     await writeFile(join(workspacePath, "src", "new.ts"), "export const newValue = 2;\n", "utf8");
     await rm(join(workspacePath, "src", "old.ts"));
 
@@ -40,7 +42,12 @@ describe("folder diff snapshots", () => {
 
     const summary = await summarizeFolderAgainstSnapshot({ runId: "run-1", workspacePath, snapshotsRoot });
     expect(summary.missingSnapshot).toBe(false);
-    expect(summary.summary.files.map((file) => file.path)).toEqual(["README.md", "src/new.ts", "src/old.ts"]);
+    expect(summary.summary.files.map((file) => file.path)).toEqual(["binary.bin", "README.md", "src/new.ts", "src/old.ts"]);
+    expect(summary.summary.files.find((file) => file.path === "binary.bin")).toEqual({
+      path: "binary.bin",
+      additions: null,
+      deletions: null,
+    });
     expect(summary.summary.totalAdditions).toBe(2);
     expect(summary.summary.totalDeletions).toBe(1);
   });
