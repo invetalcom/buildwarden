@@ -6,6 +6,7 @@ import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
 import { CodeMirrorFileViewer } from "./CodeMirrorFileViewer";
 import { GitDiffPreview } from "./git-diff-preview";
+import { diffFileMatchesPath, parseGitDiffFiles } from "./git-diff-utils";
 
 type FilePanelView = "file" | "diff";
 
@@ -17,6 +18,16 @@ export const filePathMatches = (left: string, right: string) => {
   const a = normalizeFilePath(left);
   const b = normalizeFilePath(right);
   return a === b || a.endsWith(`/${b}`) || b.endsWith(`/${a}`);
+};
+
+// Exported for focused renderer behavior tests.
+// eslint-disable-next-line react-refresh/only-export-components
+export const loadedDiffHasFile = (diffText: string, targetPath: string): boolean => {
+  try {
+    return parseGitDiffFiles(diffText).some((file) => diffFileMatchesPath(file, targetPath));
+  } catch {
+    return false;
+  }
 };
 
 const formatBytes = (value: number | null) => {
@@ -188,10 +199,13 @@ export const RunFilePanel = ({
   const inputPath = useMemo(() => referenceToInputPath(target), [target]);
   const displayPath = result?.path || target.path;
   const hasFileDiff = useMemo(() => {
-    return diffSummary?.files.some(
-      (file) => filePathMatches(file.path, displayPath) || Boolean(file.previousPath && filePathMatches(file.previousPath, displayPath)),
-    ) ?? false;
-  }, [diffSummary, displayPath]);
+    if (diffSummary) {
+      return diffSummary.files.some(
+        (file) => filePathMatches(file.path, displayPath) || Boolean(file.previousPath && filePathMatches(file.previousPath, displayPath)),
+      );
+    }
+    return diffLoaded && loadedDiffHasFile(diffText, displayPath);
+  }, [diffLoaded, diffSummary, diffText, displayPath]);
   const canShowDiffTab = hasFileDiff;
   const message = unavailableMessage(result, loading, error);
 
