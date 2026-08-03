@@ -1,8 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { createRequire } from "node:module";
-import initSqlJs, { type Database, type QueryExecResult, type SqlJsStatic } from "sql.js";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { REMOTE_ACCESS_SCOPES } from "@buildwarden/shared";
 import type {
   AppSettingRecord,
@@ -93,8 +91,6 @@ type StoredOrchestrationRecord = Omit<OrchestrationRecord, "teamSnapshot" | "wak
   wakeTaskIdsJson: string;
 };
 
-const require = createRequire(import.meta.url);
-
 const DEFAULT_DB_NAME = "buildwarden.sqlite";
 const SQLITE_VARIABLE_BATCH_SIZE = 900;
 
@@ -138,15 +134,7 @@ const applyDerivedRunStep = (
 };
 
 export class BuildWardenDatabase {
-  private sql: SqlJsStatic | null = null;
-  private db: Database | null = null;
-  /** Coalesces disk writes during streaming so the main process can still handle IPC (e.g. switching runs). */
-  private persistFlushTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Monotonic write id; an in-flight async write only renames into place while it is still the newest. */
-  private persistGeneration = 0;
-  private persistInFlightPromise: Promise<void> | null = null;
-  private persistDirty = false;
-  private static readonly PERSIST_DEBOUNCE_MS = 400;
+  private db: DatabaseSync | null = null;
 
   constructor(private readonly filePath: string) {}
 
@@ -155,26 +143,33 @@ export class BuildWardenDatabase {
       return;
     }
 
-    let wasmPath = require.resolve("sql.js/dist/sql-wasm.wasm");
-    // In packaged Electron apps, .wasm files are unpacked to app.asar.unpacked
-    if (!existsSync(wasmPath) && wasmPath.includes(".asar")) {
-      wasmPath = wasmPath.replace(".asar", ".asar.unpacked");
-    }
-    this.sql = await initSqlJs({
-      locateFile: () => wasmPath,
-    });
+    const databaseExisted = existsSync(this.filePath);
+    mkdirSync(dirname(this.filePath), { recursive: true });
+    this.db = new DatabaseSync(this.filePath);
+    try {
+      this.exec("pragma busy_timeout = 5000");
+      const existingJournalMode = this.first<{ journal_mode: string }>("pragma journal_mode")?.journal_mode.toLowerCase();
+      if (databaseExisted && existingJournalMode !== "wal") {
+        this.createPreWalBackup();
+      }
+      this.exec("pragma journal_mode = WAL");
+      this.exec("pragma synchronous = NORMAL");
+      this.exec("pragma wal_autocheckpoint = 1000");
 
-    if (existsSync(this.filePath)) {
-      const bytes = readFileSync(this.filePath);
-      this.db = new this.sql.Database(bytes);
-    } else {
-      mkdirSync(dirname(this.filePath), { recursive: true });
-      this.db = new this.sql.Database();
+      this.transaction(() => {
+        this.createInitialSchema();
+        this.applySchemaMigrations();
+      });
+    } catch (error) {
+      try {
+        this.db.close();
+      } catch {
+        // Preserve the original initialization failure.
+      } finally {
+        this.db = null;
+      }
+      throw error;
     }
-
-    this.createInitialSchema();
-    this.applySchemaMigrations();
-    this.persist();
   }
 
   getFilePath(): string {
@@ -182,12 +177,17 @@ export class BuildWardenDatabase {
   }
 
   async close(): Promise<void> {
-    this.persist();
-    while (this.persistInFlightPromise) {
-      await this.persistInFlightPromise;
+    if (!this.db) return;
+    const database = this.db;
+    try {
+      this.checkpoint("truncate");
+    } finally {
+      try {
+        database.close();
+      } finally {
+        this.db = null;
+      }
     }
-    this.db?.close();
-    this.db = null;
   }
 
   transaction<T>(operation: () => T): T {
@@ -195,7 +195,6 @@ export class BuildWardenDatabase {
     try {
       const result = operation();
       this.exec("commit");
-      this.persist();
       return result;
     } catch (error) {
       try {
@@ -208,37 +207,19 @@ export class BuildWardenDatabase {
   }
 
   async flushDurable(): Promise<void> {
-    this.persist();
-    while (this.persistInFlightPromise) {
-      await this.persistInFlightPromise;
-    }
+    if (this.db) this.checkpoint("full");
   }
 
-  /**
-   * Synchronous best-effort write for process shutdown, where async work can
-   * no longer be awaited. Clears any pending debounced write first.
-   */
+  /** Checkpoints and truncates the WAL synchronously during process shutdown. */
   flushToDiskSync(): void {
-    if (!this.db) {
-      return;
-    }
-    if (this.persistFlushTimer != null) {
-      clearTimeout(this.persistFlushTimer);
-      this.persistFlushTimer = null;
-    }
-    const generation = ++this.persistGeneration;
-    const bytes = this.db.export();
-    const tmpPath = `${this.filePath}.${generation}.tmp`;
-    mkdirSync(dirname(this.filePath), { recursive: true });
-    writeFileSync(tmpPath, Buffer.from(bytes));
-    renameSync(tmpPath, this.filePath);
+    if (this.db) this.checkpoint("truncate");
   }
 
   /** Clears the database file and reinitializes with a fresh schema. Complete reset. */
   async resetAndReinit(): Promise<void> {
     await this.close();
-    if (existsSync(this.filePath)) {
-      unlinkSync(this.filePath);
+    for (const path of [this.filePath, `${this.filePath}-wal`, `${this.filePath}-shm`]) {
+      if (existsSync(path)) unlinkSync(path);
     }
     await this.init();
   }
@@ -368,7 +349,6 @@ export class BuildWardenDatabase {
         [stepId, bookmarkId, step.eventType, step.title, step.content, step.metadataJson, step.createdAt],
       );
     }
-    this.persist();
   }
 
   removeBookmark(runId: string): void {
@@ -381,7 +361,6 @@ export class BuildWardenDatabase {
   removeBookmarkById(bookmarkId: string): void {
     this.run("delete from bookmark_steps where bookmark_id = ?", [bookmarkId]);
     this.run("delete from bookmarks where id = ?", [bookmarkId]);
-    this.persist();
   }
 
   isBookmarked(runId: string): boolean {
@@ -489,7 +468,6 @@ export class BuildWardenDatabase {
         [stepId, bookmarkId, step.eventType, step.title, step.content, step.metadataJson, step.createdAt],
       );
     }
-    this.persist();
   }
 
   removeChatBookmark(chatId: string): void {
@@ -500,7 +478,6 @@ export class BuildWardenDatabase {
   removeChatBookmarkById(bookmarkId: string): void {
     this.run("delete from chat_bookmark_steps where chat_bookmark_id = ?", [bookmarkId]);
     this.run("delete from chat_bookmarks where id = ?", [bookmarkId]);
-    this.persist();
   }
 
   isChatBookmarked(chatId: string): boolean {
@@ -556,7 +533,6 @@ export class BuildWardenDatabase {
       `,
       [id, providerAccountId, modelId, runId ?? null, prompt, createdAt, createdAt],
     );
-    this.persist();
     return this.getChat(id);
   }
 
@@ -570,7 +546,6 @@ export class BuildWardenDatabase {
       `,
       [id, projectId, input.title, input.prompt, createdAt, createdAt],
     );
-    this.persist();
     return this.getProjectTask(id);
   }
 
@@ -598,7 +573,6 @@ export class BuildWardenDatabase {
       `,
       [nextTitle, nextPrompt, nextStatus, updatedAt, taskId],
     );
-    this.persist();
     return this.getProjectTask(taskId);
   }
 
@@ -650,7 +624,6 @@ export class BuildWardenDatabase {
   deleteProjectTask(taskId: string): void {
     this.run("update runs set project_task_id = null where project_task_id = ?", [taskId]);
     this.run("delete from project_tasks where id = ?", [taskId]);
-    this.persist();
   }
 
   linkProjectTaskToRun(taskId: string, runId: string): ProjectTaskRecord {
@@ -663,7 +636,6 @@ export class BuildWardenDatabase {
       "update project_tasks set status = 'in_progress', run_id = ?, pull_request_url = null, updated_at = ? where id = ?",
       [runId, nowIso(), taskId],
     );
-    this.persist();
     return this.getProjectTask(taskId);
   }
 
@@ -678,7 +650,6 @@ export class BuildWardenDatabase {
         [pullRequestUrl, updatedAt, taskId],
       );
     }
-    this.persist();
     return this.getProjectTask(taskId);
   }
 
@@ -744,7 +715,6 @@ export class BuildWardenDatabase {
         `,
         [input.title, input.summary, input.dataJson, input.modelId ?? null, timestamp, timestamp, existing.id],
       );
-      this.persist();
       return this.getProjectInsight(input.projectId, input.kind)!;
     }
 
@@ -756,7 +726,6 @@ export class BuildWardenDatabase {
       `,
       [id, input.projectId, input.kind, input.title, input.summary, input.dataJson, input.modelId ?? null, timestamp, timestamp],
     );
-    this.persist();
     return this.getProjectInsight(input.projectId, input.kind)!;
   }
 
@@ -804,7 +773,6 @@ export class BuildWardenDatabase {
           timestamp,
       ],
     );
-    this.persist();
     return this.getProjectLabThread(id);
   }
 
@@ -910,7 +878,6 @@ export class BuildWardenDatabase {
           threadId,
       ],
     );
-    this.persist();
     return this.getProjectLabThread(threadId);
   }
 
@@ -929,7 +896,6 @@ export class BuildWardenDatabase {
       `,
       [id, input.threadId, input.role, input.label, input.content, createdAt],
     );
-    this.persist();
     return this.getProjectLabEvents(input.threadId).at(-1)!;
   }
 
@@ -1001,7 +967,6 @@ export class BuildWardenDatabase {
   deleteProjectLabThread(threadId: string): void {
     this.run("delete from project_lab_events where thread_id = ?", [threadId]);
     this.run("delete from project_lab_threads where id = ?", [threadId]);
-    this.persist();
   }
 
   private static readonly PROJECT_LOOP_SELECT = `
@@ -1104,7 +1069,6 @@ export class BuildWardenDatabase {
         timestamp,
       ],
     );
-    this.persist();
     return this.getProjectLoop(id);
   }
 
@@ -1162,7 +1126,6 @@ export class BuildWardenDatabase {
         loopId,
       ],
     );
-    this.persist();
     return this.getProjectLoop(loopId);
   }
 
@@ -1195,33 +1158,33 @@ export class BuildWardenDatabase {
         timestamp,
       ],
     );
-    this.persist();
     return this.getProjectLoopIteration(id);
   }
 
   /**
-   * Inserts a whole loop plan and persists it as one disk write, so an app crash
-   * cannot leave a partially persisted (truncated) iteration list behind. Existing
-   * iterations for the loop are replaced, making plan creation idempotent.
+   * Inserts a whole loop plan in one SQLite transaction, so an app crash cannot
+   * leave a partially committed iteration list behind. Existing iterations for
+   * the loop are replaced, making plan creation idempotent.
    */
   replaceProjectLoopIterations(
     loopId: string,
     entries: Array<{ title: string; objective: string; targetBranch?: string | null }>,
   ): ProjectLoopIterationRecord[] {
     const timestamp = nowIso();
-    this.run("delete from project_loop_iterations where loop_id = ?", [loopId]);
-    for (const [index, entry] of entries.entries()) {
-      this.run(
-        `
-        insert into project_loop_iterations (
-          id, loop_id, iteration_index, title, objective, status, run_id, branch_name, pr_url, pr_number,
-          target_branch, error_message, processed_comment_ids_json, created_at, updated_at
-        ) values (?, ?, ?, ?, ?, 'pending', null, null, null, null, ?, null, '[]', ?, ?)
-        `,
-        [createId(), loopId, index, entry.title, entry.objective, entry.targetBranch ?? null, timestamp, timestamp],
-      );
-    }
-    this.persist();
+    this.transaction(() => {
+      this.run("delete from project_loop_iterations where loop_id = ?", [loopId]);
+      for (const [index, entry] of entries.entries()) {
+        this.run(
+          `
+          insert into project_loop_iterations (
+            id, loop_id, iteration_index, title, objective, status, run_id, branch_name, pr_url, pr_number,
+            target_branch, error_message, processed_comment_ids_json, created_at, updated_at
+          ) values (?, ?, ?, ?, ?, 'pending', null, null, null, null, ?, null, '[]', ?, ?)
+          `,
+          [createId(), loopId, index, entry.title, entry.objective, entry.targetBranch ?? null, timestamp, timestamp],
+        );
+      }
+    });
     return this.listProjectLoopIterations(loopId);
   }
 
@@ -1291,7 +1254,6 @@ export class BuildWardenDatabase {
         iterationId,
       ],
     );
-    this.persist();
     return this.getProjectLoopIteration(iterationId);
   }
 
@@ -1311,7 +1273,6 @@ export class BuildWardenDatabase {
       `,
       [id, input.loopId, input.iterationId ?? null, input.role, input.label, input.content, createdAt],
     );
-    this.persist();
     return {
       id,
       loopId: input.loopId,
@@ -1373,7 +1334,6 @@ export class BuildWardenDatabase {
         timestamp,
       ],
     );
-    this.persist();
     return this.getProjectLoopUiReview(id);
   }
 
@@ -1416,7 +1376,6 @@ export class BuildWardenDatabase {
         reviewId,
       ],
     );
-    this.persist();
     return this.getProjectLoopUiReview(reviewId);
   }
 
@@ -1454,7 +1413,6 @@ export class BuildWardenDatabase {
     this.run("delete from project_loop_events where loop_id = ?", [loopId]);
     this.run("delete from project_loop_iterations where loop_id = ?", [loopId]);
     this.run("delete from project_loops where id = ?", [loopId]);
-    this.persist();
   }
 
   getChat(id: string): ChatRecord {
@@ -1548,12 +1506,10 @@ export class BuildWardenDatabase {
     }
     values.push(chatId);
     this.run(`update chats set ${updates.join(", ")} where id = ?`, values);
-    this.persist();
   }
 
   updateChatConfiguration(chatId: string, modelId: string): void {
     this.run("update chats set model_id = ?, updated_at = ? where id = ?", [modelId, nowIso(), chatId]);
-    this.persist();
   }
 
   appendChatEvent(
@@ -1572,7 +1528,6 @@ export class BuildWardenDatabase {
       `,
       [id, chatId, eventType, title, content, metadataJson, nowIso()],
     );
-    this.schedulePersist();
     return { id };
   }
 
@@ -1594,13 +1549,11 @@ export class BuildWardenDatabase {
     if (parts.length === 0) return;
     values.push(stepId);
     this.run(`update chat_steps set ${parts.join(", ")} where id = ?`, values);
-    this.schedulePersist();
   }
 
   deleteChat(chatId: string): void {
     this.run("delete from chat_steps where chat_id = ?", [chatId]);
     this.run("delete from chats where id = ?", [chatId]);
-    this.persist();
   }
 
   addProject(input: ProjectInput & { baseBranch: string; resolvedName: string; kind?: ProjectRecord["kind"] }): ProjectRecord {
@@ -1614,7 +1567,6 @@ export class BuildWardenDatabase {
       `,
       [id, input.resolvedName, input.repoPath, input.baseBranch, kind, 0, 0, createdAt, createdAt, createdAt],
     );
-    this.persist();
     return this.getProject(id);
   }
 
@@ -1671,7 +1623,6 @@ export class BuildWardenDatabase {
       "update projects set last_opened_at = ?, updated_at = ? where id = ?",
       [timestamp, timestamp, projectId],
     );
-    this.persist();
   }
 
   updateProjectKind(projectId: string, kind: ProjectRecord["kind"], baseBranch: string): ProjectRecord {
@@ -1684,7 +1635,6 @@ export class BuildWardenDatabase {
       `,
       [kind, baseBranch, timestamp, projectId],
     );
-    this.persist();
     return this.getProject(projectId);
   }
 
@@ -1698,7 +1648,6 @@ export class BuildWardenDatabase {
       `,
       [baseBranch, timestamp, projectId],
     );
-    this.persist();
     return this.getProject(projectId);
   }
 
@@ -1719,7 +1668,6 @@ export class BuildWardenDatabase {
       `,
       [inputTokensDelta, outputTokensDelta, timestamp, projectId],
     );
-    this.schedulePersist();
     return this.getProject(projectId);
   }
 
@@ -1760,7 +1708,6 @@ export class BuildWardenDatabase {
     this.run("delete from project_tasks where project_id = ?", [projectId]);
     this.run("delete from project_insights where project_id = ?", [projectId]);
     this.run("delete from projects where id = ?", [projectId]);
-    this.persist();
   }
 
   addProviderAccount(input: {
@@ -1779,7 +1726,6 @@ export class BuildWardenDatabase {
       `,
       [id, input.providerType, input.label, input.apiBaseUrl, input.apiKeyRef, input.configJson, createdAt, createdAt],
     );
-    this.persist();
     return this.getProviderAccount(id);
   }
 
@@ -1804,7 +1750,6 @@ export class BuildWardenDatabase {
   deleteProviderAccount(providerAccountId: string): void {
     this.run("delete from models where provider_account_id = ?", [providerAccountId]);
     this.run("delete from provider_accounts where id = ?", [providerAccountId]);
-    this.persist();
   }
 
   getProviderAccount(id: string): ProviderAccountRecord {
@@ -1855,7 +1800,6 @@ export class BuildWardenDatabase {
         createdAt,
       ],
     );
-    this.persist();
     return this.getModel(id);
   }
 
@@ -1881,7 +1825,6 @@ export class BuildWardenDatabase {
 
   deleteModel(modelId: string): void {
     this.run("delete from models where id = ?", [modelId]);
-    this.persist();
   }
 
   getModel(id: string): ModelRecord {
@@ -1963,7 +1906,6 @@ export class BuildWardenDatabase {
         null,
       ],
     );
-    this.persist();
     return this.getRun(id);
   }
 
@@ -2081,7 +2023,6 @@ export class BuildWardenDatabase {
     this.run("delete from chat_steps where chat_id in (select id from chats where run_id = ?)", [runId]);
     this.run("delete from chats where run_id = ?", [runId]);
     this.run("delete from runs where id = ?", [runId]);
-    this.persist();
   }
 
   listRunNotes(runId: string): RunNoteRecord[] {
@@ -2145,7 +2086,6 @@ export class BuildWardenDatabase {
       `,
       [id, runId, trimmed, "open", createdAt, createdAt, null],
     );
-    this.persist();
     return this.getRunNote(id);
   }
 
@@ -2171,13 +2111,11 @@ export class BuildWardenDatabase {
       `,
       [nextContent, nextStatus, updatedAt, closedAt, noteId],
     );
-    this.persist();
     return this.getRunNote(noteId);
   }
 
   deleteRunNote(noteId: string): void {
     this.run("delete from run_notes where id = ?", [noteId]);
-    this.persist();
   }
 
   listRunsForProject(projectId: string): RunRecord[] {
@@ -2415,12 +2353,6 @@ export class BuildWardenDatabase {
         runId,
       ],
     );
-    const terminal = status === "completed" || status === "failed" || status === "cancelled";
-    if (terminal) {
-      this.persist();
-    } else {
-      this.schedulePersist();
-    }
     return this.getRun(runId);
   }
 
@@ -2453,7 +2385,6 @@ export class BuildWardenDatabase {
         runId,
       ],
     );
-    this.persist();
     return this.getRun(runId);
   }
 
@@ -2480,7 +2411,6 @@ export class BuildWardenDatabase {
       `,
       [trimmedBranchName, timestamp, runId],
     );
-    this.persist();
     return this.getRun(runId);
   }
 
@@ -2512,8 +2442,6 @@ export class BuildWardenDatabase {
     } else {
       this.run("delete from worktrees where run_id = ?", [runId]);
     }
-
-    this.persist();
     return this.getRun(runId);
   }
 
@@ -2527,7 +2455,6 @@ export class BuildWardenDatabase {
       `,
       [visibility, timestamp, runId],
     );
-    this.persist();
     return this.getRun(runId);
   }
 
@@ -2541,7 +2468,6 @@ export class BuildWardenDatabase {
       `,
       [id, runId, eventType, title, content, metadataJson, createdAt],
     );
-    this.schedulePersist();
     return {
       id,
       runId,
@@ -2594,7 +2520,6 @@ export class BuildWardenDatabase {
         stepId,
       ],
     );
-    this.schedulePersist();
 
     return this.first<RunStepRecord>(
       `
@@ -2679,8 +2604,6 @@ export class BuildWardenDatabase {
       );
     }
 
-    this.persist();
-
     return this.first<WorktreeRecord>(
       `
       select
@@ -2709,12 +2632,10 @@ export class BuildWardenDatabase {
       `,
       [key, value, timestamp],
     );
-    this.persist();
   }
 
   deleteSetting(key: string): void {
     this.run("delete from app_settings where key = ?", [key]);
-    this.persist();
   }
 
   getSettings(): Record<string, string> {
@@ -2733,7 +2654,6 @@ export class BuildWardenDatabase {
        values (?, ?, ?, ?, ?, ?, ?)`,
       [record.id, record.tokenHash, JSON.stringify(record.scopes), record.expiresAt, record.usedAt, record.createdAt, record.clientOrigin ?? null],
     );
-    this.persist();
   }
 
   consumeRemoteAccessPairingGrant(
@@ -2760,7 +2680,6 @@ export class BuildWardenDatabase {
       return null;
     }
     this.run("update remote_pairing_grants set used_at = ? where id = ? and used_at is null", [consumedAt, row.id]);
-    this.persist();
     return {
       id: row.id,
       tokenHash: row.tokenHash,
@@ -2789,7 +2708,6 @@ export class BuildWardenDatabase {
         record.clientOrigin,
       ],
     );
-    this.persist();
   }
 
   getRemoteAccessSessionByTokenHash(tokenHash: string): RemoteAccessSessionRecord | null {
@@ -2838,7 +2756,6 @@ export class BuildWardenDatabase {
       "update remote_access_sessions set last_used_at = ? where id = ? and revoked_at is null",
       [lastUsedAt, sessionId],
     );
-    this.schedulePersist();
   }
 
   revokeRemoteAccessSession(sessionId: string, revokedAt: string): boolean {
@@ -2847,9 +2764,6 @@ export class BuildWardenDatabase {
       [revokedAt, sessionId],
     );
     const changed = (this.first<{ count: number }>("select changes() as count")?.count ?? 0) > 0;
-    if (changed) {
-      this.persist();
-    }
     return changed;
   }
 
@@ -2869,9 +2783,6 @@ export class BuildWardenDatabase {
       ],
     );
     const created = (this.first<{ count: number }>("select changes() as count")?.count ?? 0) > 0;
-    if (created) {
-      this.persist();
-    }
     return created;
   }
 
@@ -2897,9 +2808,6 @@ export class BuildWardenDatabase {
       [responseJson, completedAt, sessionId, idempotencyKey],
     );
     const completed = (this.first<{ count: number }>("select changes() as count")?.count ?? 0) > 0;
-    if (completed) {
-      this.persist();
-    }
     return completed;
   }
 
@@ -2922,9 +2830,6 @@ export class BuildWardenDatabase {
       [cutoffs.completedCommandBefore],
     );
     removed += this.first<{ count: number }>("select changes() as count")?.count ?? 0;
-    if (removed > 0) {
-      this.schedulePersist();
-    }
     return removed;
   }
 
@@ -2944,7 +2849,6 @@ export class BuildWardenDatabase {
         record.createdAt,
       ],
     );
-    this.schedulePersist();
   }
 
   listRemoteAccessAuditRecords(): RemoteAccessAuditRecord[] {
@@ -3016,7 +2920,6 @@ export class BuildWardenDatabase {
         timestamp,
       ],
     );
-    this.persist();
     return this.getProviderSessionRuntime(input.ownerId, input.ownerKind)!;
   }
 
@@ -3062,7 +2965,6 @@ export class BuildWardenDatabase {
 
   deleteProviderSessionRuntime(ownerId: string, ownerKind: ProviderSessionRuntimeRecord["ownerKind"]): void {
     this.run("delete from provider_session_runtime where owner_id = ? and owner_kind = ?", [ownerId, ownerKind]);
-    this.persist();
   }
 
   createOrchestration(input: {
@@ -3081,7 +2983,6 @@ export class BuildWardenDatabase {
       ) values (?, ?, ?, 'active', ?, null, '[]', 0, 0, null, ?, ?, null)`,
       [id, input.projectId, input.coordinatorRunId, JSON.stringify(input.teamSnapshot), timestamp, timestamp],
     );
-    this.persist();
     return this.getOrchestration(id);
   }
 
@@ -3163,7 +3064,6 @@ export class BuildWardenDatabase {
         id,
       ],
     );
-    this.persist();
     return this.getOrchestration(id);
   }
 
@@ -3180,7 +3080,6 @@ export class BuildWardenDatabase {
       ) values (?, ?, ?, ?, ?, ?, ?)`,
       [id, orchestrationId, Number(row?.nextIndex ?? 0), baselinePath ?? null, baselinePath ? "ready" : "capturing", timestamp, timestamp],
     );
-    this.persist();
     return this.getOrchestrationWave(id);
   }
 
@@ -3209,7 +3108,6 @@ export class BuildWardenDatabase {
         id,
       ],
     );
-    this.persist();
     return this.getOrchestrationWave(id);
   }
 
@@ -3258,7 +3156,6 @@ export class BuildWardenDatabase {
         timestamp,
       ],
     );
-    this.persist();
     return this.getOrchestrationTask(id);
   }
 
@@ -3328,7 +3225,6 @@ export class BuildWardenDatabase {
         id,
       ],
     );
-    this.persist();
     return this.getOrchestrationTask(id);
   }
 
@@ -3423,7 +3319,6 @@ export class BuildWardenDatabase {
       ) values (?, ?, ?, ?, ?, 'queued', ?, null)`,
       [id, input.orchestrationId, input.taskId, input.source, input.content, createdAt],
     );
-    this.persist();
     return {
       id,
       orchestrationId: input.orchestrationId,
@@ -3461,7 +3356,6 @@ export class BuildWardenDatabase {
       "update orchestration_task_messages set status = ?, delivered_at = ? where id = ?",
       [status, status === "delivered" ? nowIso() : null, id],
     );
-    this.persist();
   }
 
   getOrchestrationAdoption(taskId: string): {
@@ -3536,7 +3430,6 @@ export class BuildWardenDatabase {
         ],
       );
     }
-    this.persist();
   }
 
   getOrchestrationDetailByCoordinatorRunId(coordinatorRunId: string): OrchestrationDetail | null {
@@ -3587,7 +3480,6 @@ export class BuildWardenDatabase {
       ) values (?, ?, ?, ?, ?, 'running', null, null, ?, ?)`,
       [createId(), input.orchestrationId, input.requestId, input.toolName, input.requestHash, timestamp, timestamp],
     );
-    this.persist();
   }
 
   completeOrchestrationOperation(
@@ -3602,12 +3494,10 @@ export class BuildWardenDatabase {
        where orchestration_id = ? and request_id = ?`,
       [status, JSON.stringify(response ?? null), errorMessage ?? null, nowIso(), orchestrationId, requestId],
     );
-    this.persist();
   }
 
   deleteRunningOrchestrationOperations(): void {
     this.run("delete from orchestration_operations where status = 'running'");
-    this.persist();
   }
 
   createOrchestrationCleanupJob(input: {
@@ -3628,7 +3518,6 @@ export class BuildWardenDatabase {
       ) values (?, ?, ?, ?, 'pending', null, ?, ?)`,
       [id, input.coordinatorRunId, input.orchestrationId ?? null, JSON.stringify(input.manifest), timestamp, timestamp],
     );
-    this.persist();
     return id;
   }
 
@@ -3657,12 +3546,10 @@ export class BuildWardenDatabase {
       "update orchestration_cleanup_jobs set status = ?, error_message = ?, updated_at = ? where id = ?",
       [status, errorMessage ?? null, nowIso(), id],
     );
-    this.persist();
   }
 
   completeOrchestrationCleanupJob(id: string): void {
     this.run("delete from orchestration_cleanup_jobs where id = ?", [id]);
-    this.persist();
   }
 
   deleteOrchestrationData(orchestrationId: string): void {
@@ -3689,7 +3576,6 @@ export class BuildWardenDatabase {
       );
       this.run(`delete from bookmarks where original_run_id in (${placeholders})`, batch);
     }
-    this.persist();
   }
 
   deleteChatBookmarksForRunIds(runIds: string[]): void {
@@ -3711,7 +3597,6 @@ export class BuildWardenDatabase {
         batch,
       );
     }
-    this.persist();
   }
 
   getRunDetail(runId: string, diff: string): RunDetail {
@@ -4283,15 +4168,7 @@ export class BuildWardenDatabase {
 
   private all<T>(sql: string, params: unknown[] = []): T[] {
     const statement = this.database.prepare(sql);
-    statement.bind(params);
-    const rows: T[] = [];
-
-    while (statement.step()) {
-      rows.push(statement.getAsObject() as T);
-    }
-
-    statement.free();
-    return rows;
+    return statement.all(...(params as SQLInputValue[])) as T[];
   }
 
   private first<T>(sql: string, params: unknown[] = []): T | null {
@@ -4300,12 +4177,11 @@ export class BuildWardenDatabase {
 
   private run(sql: string, params: unknown[] = []): void {
     const statement = this.database.prepare(sql);
-    statement.run(params);
-    statement.free();
+    statement.run(...(params as SQLInputValue[]));
   }
 
-  private exec(sql: string): QueryExecResult[] {
-    return this.database.exec(sql);
+  private exec(sql: string): void {
+    this.database.exec(sql);
   }
 
   private parseJsonObject(value: string | null): Record<string, unknown> | null {
@@ -4332,78 +4208,20 @@ export class BuildWardenDatabase {
     }
   }
 
-  /**
-   * Writes the in-memory DB to disk immediately. Clears any pending debounced write.
-   * Use for app shutdown and terminal run/chat states.
-   */
-  private persist(): void {
-    if (this.persistFlushTimer != null) {
-      clearTimeout(this.persistFlushTimer);
-      this.persistFlushTimer = null;
-    }
-    this.persistToDisk();
+  private createPreWalBackup(): void {
+    const backupPath = `${this.filePath}.pre-wal-backup`;
+    if (existsSync(backupPath)) return;
+    const temporaryPath = `${backupPath}.tmp`;
+    if (existsSync(temporaryPath)) unlinkSync(temporaryPath);
+    copyFileSync(this.filePath, temporaryPath);
+    renameSync(temporaryPath, backupPath);
   }
 
-  /**
-   * Coalesced persist for high-frequency updates (streaming steps, token
-   * counts). Trailing-throttle rather than sliding-debounce: a pending flush is
-   * never postponed, so sustained streaming still hits disk every 400ms.
-   */
-  private schedulePersist(): void {
-    if (!this.db) {
-      return;
-    }
-    if (this.persistFlushTimer != null) {
-      return;
-    }
-    this.persistFlushTimer = setTimeout(() => {
-      this.persistFlushTimer = null;
-      this.persistToDisk();
-    }, BuildWardenDatabase.PERSIST_DEBOUNCE_MS);
+  private checkpoint(mode: "full" | "truncate"): void {
+    this.database.exec(`pragma wal_checkpoint(${mode})`);
   }
 
-  /**
-   * Exports the in-memory database (cheap memcpy) and writes it to disk
-   * asynchronously via temp-file + rename, so the multi-megabyte file write
-   * never blocks the main-process event loop. Writes never overlap; a write
-   * requested while one is in flight runs once the current write finishes.
-   */
-  private persistToDisk(): void {
-    if (!this.db) {
-      return;
-    }
-    if (this.persistInFlightPromise) {
-      this.persistDirty = true;
-      return;
-    }
-
-    const generation = ++this.persistGeneration;
-    const bytes = this.db.export();
-    const tmpPath = `${this.filePath}.${generation}.tmp`;
-    this.persistInFlightPromise = (async () => {
-      try {
-        await mkdir(dirname(this.filePath), { recursive: true });
-        await writeFile(tmpPath, Buffer.from(bytes));
-        if (generation === this.persistGeneration) {
-          await rename(tmpPath, this.filePath);
-        } else {
-          // A newer write (e.g. the synchronous shutdown flush) superseded this one.
-          await rm(tmpPath, { force: true });
-        }
-      } catch (error) {
-        console.error("[buildwarden:db] Failed to persist database to disk.", error);
-        await rm(tmpPath, { force: true }).catch(() => {});
-      } finally {
-        this.persistInFlightPromise = null;
-        if (this.persistDirty) {
-          this.persistDirty = false;
-          this.persistToDisk();
-        }
-      }
-    })();
-  }
-
-  private get database(): Database {
+  private get database(): DatabaseSync {
     if (!this.db) {
       throw new Error("Database has not been initialized");
     }
