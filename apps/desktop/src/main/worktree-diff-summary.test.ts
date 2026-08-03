@@ -14,6 +14,8 @@ const createRepository = async () => {
   await git.init();
   await git.addConfig("user.name", "Diff Tester");
   await git.addConfig("user.email", "diff@example.com");
+  await git.addConfig("commit.gpgsign", "false");
+  await git.addConfig("core.autocrlf", "false");
   await writeFile(join(repoPath, "app.ts"), "export const value = 1;\n", "utf8");
   await writeFile(join(repoPath, "old.ts"), "export const renamed = true;\n", "utf8");
   await git.add(["app.ts", "old.ts"]);
