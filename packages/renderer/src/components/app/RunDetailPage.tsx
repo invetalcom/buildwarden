@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import {
   appendChatAttachmentFiles,
@@ -84,6 +84,32 @@ const LazyPanelFallback = ({ label }: { label: string }) => (
     {label}
   </div>
 );
+
+class LazyPanelErrorBoundary extends Component<{
+  children: ReactNode;
+  fallback?: ReactNode;
+  label: string;
+}, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    if (this.props.fallback !== undefined) return this.props.fallback;
+    return (
+      <div role="alert" className="flex h-full min-h-24 flex-col items-center justify-center gap-2 px-4 text-center text-xs text-zinc-500">
+        <span>The {this.props.label} could not be loaded.</span>
+        <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5" onClick={() => window.location.reload()}>
+          <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+          Reload BuildWarden
+        </Button>
+      </div>
+    );
+  }
+}
 
 type ReviewPanelState = DiffReviewPanelState;
 
@@ -1375,14 +1401,16 @@ export const RunDetailPage = ({
 
               {/* File panel */}
               {filePanelTarget && activeSecondaryTab === "file" ? (
-                <Suspense fallback={<LazyPanelFallback label="Loading file viewer..." />}>
-                  <RunFilePanel
-                    runId={runDetail.run.id}
-                    target={filePanelTarget}
-                    diffText={runDetail.diff}
-                    diffPending={diffPending}
-                  />
-                </Suspense>
+                <LazyPanelErrorBoundary label="file viewer">
+                  <Suspense fallback={<LazyPanelFallback label="Loading file viewer..." />}>
+                    <RunFilePanel
+                      runId={runDetail.run.id}
+                      target={filePanelTarget}
+                      diffText={runDetail.diff}
+                      diffPending={diffPending}
+                    />
+                  </Suspense>
+                </LazyPanelErrorBoundary>
               ) : null}
 
               {/* Durable cross-provider agents panel */}
@@ -1537,17 +1565,19 @@ export const RunDetailPage = ({
                     </div>
                   </div>
                   <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-2">
-                    <Suspense fallback={<LazyPanelFallback label="Loading terminal..." />}>
-                      <RunWorktreeTerminal
-                        className="min-h-0 flex-1"
-                        runId={runDetail.run.id}
-                        cwd={workspacePath}
-                        disabled={false}
-                        uiActive={showTerminal}
-                        openLinksInApp={terminalOpenLinksInApp}
-                        onOpenUrlInApp={onOpenBrowserUrl}
-                      />
-                    </Suspense>
+                    <LazyPanelErrorBoundary label="terminal">
+                      <Suspense fallback={<LazyPanelFallback label="Loading terminal..." />}>
+                        <RunWorktreeTerminal
+                          className="min-h-0 flex-1"
+                          runId={runDetail.run.id}
+                          cwd={workspacePath}
+                          disabled={false}
+                          uiActive={showTerminal}
+                          openLinksInApp={terminalOpenLinksInApp}
+                          onOpenUrlInApp={onOpenBrowserUrl}
+                        />
+                      </Suspense>
+                    </LazyPanelErrorBoundary>
                   </div>
                 </div>
               ) : null}
@@ -1597,16 +1627,18 @@ export const RunDetailPage = ({
       {/* Keep PTY + xterm mounted after first open; toggling Terminal only hides the panel. */}
       {!worktreeUnavailable && runTerminalPinned && !showTerminal ? (
         <div className="pointer-events-none fixed left-[-12000px] top-0 z-0 h-[420px] w-[896px] opacity-0" aria-hidden>
-          <Suspense fallback={null}>
-            <RunWorktreeTerminal
-              runId={runDetail.run.id}
-              cwd={workspacePath}
-              disabled={false}
-              uiActive={false}
-              openLinksInApp={terminalOpenLinksInApp}
-              onOpenUrlInApp={onOpenBrowserUrl}
-            />
-          </Suspense>
+          <LazyPanelErrorBoundary label="terminal" fallback={null}>
+            <Suspense fallback={null}>
+              <RunWorktreeTerminal
+                runId={runDetail.run.id}
+                cwd={workspacePath}
+                disabled={false}
+                uiActive={false}
+                openLinksInApp={terminalOpenLinksInApp}
+                onOpenUrlInApp={onOpenBrowserUrl}
+              />
+            </Suspense>
+          </LazyPanelErrorBoundary>
         </div>
       ) : null}
 
