@@ -81,7 +81,7 @@ describe("node:sqlite WAL persistence", () => {
     const { database, path } = await createDatabase();
     database.setSetting("streaming", "visible");
 
-    const connection = (database as unknown as { database: DatabaseSync }).database;
+    const connection = (database as unknown as { db: DatabaseSync }).db;
     const journalMode = connection.prepare("pragma journal_mode").get() as { journal_mode: string };
     const synchronous = connection.prepare("pragma synchronous").get() as { synchronous: number };
     const busyTimeout = connection.prepare("pragma busy_timeout").get() as { timeout: number };
