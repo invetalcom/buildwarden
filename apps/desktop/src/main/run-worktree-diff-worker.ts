@@ -36,7 +36,9 @@ const getWorker = (): Worker | null => {
       pending.delete(message.requestId);
       request.resolve(message.type === "ok" ? { ok: true, diff: message.diff } : { ok: false, message: message.message });
     });
-    instance.on("error", (error) => resetWorker(error.message));
+    instance.on("error", (error) => {
+      if (worker === instance) resetWorker(error.message);
+    });
     instance.on("exit", (code) => {
       if (worker === instance) resetWorker(code === 0 ? undefined : `Diff worker exited with code ${code}.`);
     });
