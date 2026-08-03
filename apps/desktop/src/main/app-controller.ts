@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash, randomInt } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, statSync, type Dirent } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
@@ -189,6 +189,7 @@ import {
   type RunEvent,
   type AppWarning,
   type RunWorktreeDiffResult,
+  type RunWorktreeDiffSummary,
   type RunWorktreeDiffSummaryResult,
   type RunFollowUpOptions,
   type RunInput,
@@ -928,6 +929,7 @@ export class AppController
   private loopRunnerInstance: ProjectLoopRunner | null = null;
   private readonly composerCommandCache = new Map<string, { expiresAt: number; commands: ComposerCommandDescriptor[] }>();
   private readonly composerCommandInflight = new Map<string, Promise<ComposerCommandDescriptor[]>>();
+  private readonly runWorktreeDiffSummaryInflight = new Map<string, Promise<RunWorktreeDiffSummary>>();
   private readonly projectActivityCache = new Map<string, {
     expiresAt: number;
     commits: ProjectActivityCommit[];
@@ -5532,7 +5534,17 @@ export class AppController
     }
 
     try {
-      return { summary: await this.gitService.getDiffSummary(diffPath), worktreeUnavailable: false };
+      const normalizedPath = resolve(diffPath);
+      const existing = this.runWorktreeDiffSummaryInflight.get(normalizedPath);
+      const pending = existing ?? this.gitService.getDiffSummary(normalizedPath);
+      this.runWorktreeDiffSummaryInflight.set(normalizedPath, pending);
+      try {
+        return { summary: await pending, worktreeUnavailable: false };
+      } finally {
+        if (this.runWorktreeDiffSummaryInflight.get(normalizedPath) === pending) {
+          this.runWorktreeDiffSummaryInflight.delete(normalizedPath);
+        }
+      }
     } catch (error) {
       this.logControllerWarn("Could not compute the run worktree diff summary.", {
         runId: run.id,

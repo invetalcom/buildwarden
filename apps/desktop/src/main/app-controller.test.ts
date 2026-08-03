@@ -376,6 +376,41 @@ describe("AppController settings and lightweight workflows", () => {
     });
   });
 
+  it("coalesces concurrent worktree summaries for the same path", async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "buildwarden-summary-coalesce-"));
+    tempDirs.push(workspacePath);
+    const run = {
+      id: "run-summary-coalesce",
+      projectId: project.id,
+      workspaceType: "local",
+      workspaceVcs: "git",
+      worktreePath: workspacePath,
+      branchName: "main",
+    } as RunRecord;
+    const harness = createHarness({
+      getRun: vi.fn(() => run),
+      getRunSteps: vi.fn(() => []),
+    });
+    tempDirs.push(harness.logDir);
+    const summaryRequest = deferred<Awaited<ReturnType<GitService["getDiffSummary"]>>>();
+    const getDiffSummary = vi.fn(() => summaryRequest.promise);
+    (harness.controller as unknown as { gitService: { getDiffSummary: typeof getDiffSummary } }).gitService.getDiffSummary = getDiffSummary;
+
+    const first = harness.controller.getRunWorktreeDiffSummary(run.id);
+    const second = harness.controller.getRunWorktreeDiffSummary(run.id);
+    expect(getDiffSummary).toHaveBeenCalledTimes(1);
+
+    const summary = { files: [], totalFiles: 0, totalAdditions: 0, totalDeletions: 0 };
+    summaryRequest.resolve(summary);
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { summary, worktreeUnavailable: false },
+      { summary, worktreeUnavailable: false },
+    ]);
+
+    await harness.controller.getRunWorktreeDiffSummary(run.id);
+    expect(getDiffSummary).toHaveBeenCalledTimes(2);
+  });
+
   it("automatically completes an orchestration after its delivered terminal wave is summarized", async () => {
     const orchestration = {
       id: "orchestration-1",
