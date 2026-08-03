@@ -161,8 +161,13 @@ export class BuildWardenDatabase {
         this.applySchemaMigrations();
       });
     } catch (error) {
-      this.db.close();
-      this.db = null;
+      try {
+        this.db.close();
+      } catch {
+        // Preserve the original initialization failure.
+      } finally {
+        this.db = null;
+      }
       throw error;
     }
   }
