@@ -1,23 +1,47 @@
 # BuildWarden
 
-BuildWarden is yet another GUI for coding agents—but with a refreshing design and a stronger focus on project management, not just agent runs. It keeps your projects, chats, branches, worktrees, reviews, and agent sessions organized in one place, while supporting both repository-based workflows and standalone AI chats. It offers all the common features, including support for multiple providers and models, parallel agent runs, and Git workflows. In addition, it includes unique capabilities such as AI Insights, repository and code graphs, and a Project Lab for autonomous tasks, fixes, and loops, providing an end-to-end workflow.
+BuildWarden is yet another GUI for coding agents—but with a refreshing design and unique features. It gives you one place to work with coding agents. Instead of juggling terminal sessions, branches, worktrees, chats, and code reviews, you can keep everything organized by project. Use an agent to work on a Git repository or start a standalone AI chat, follow its progress, review the result, and take the work all the way to a pull or merge request.
+
+Your workspace, your way. BuildWarden offers 2 refreshing themes (one dark and one light one), customizations for the side menu on how your run activity looks like, custom shortcuts, extendable default allowlist for accepted shell commands (in case "full access" is not granted), and plenty more.
+
+It supports multiple AI providers and models, parallel agent runs, and everyday Git workflows. It also includes unique features such as AI Insights, repository and code graphs, and Project Lab — a space for running longer tasks, autonomous fixes & feature discovery, and repeatable autonomous workflows.
+
+## Built For Companies, Too
+
+- **Zero telemetry.** BuildWarden collects nothing. No analytics, no usage tracking, no phone-home. Your code and prompts go to the AI provider you configured and nowhere else — there is no BuildWarden server in the middle, and there is nothing to opt out of.
+- **GitHub and GitLab, both fully supported.** Open pull requests or merge requests, read the diffs, leave and reply to review comments, approve, and resolve threads — all from inside the app. Access tokens are stored per project in the operating system's secure storage.
+- **Bring your own AI.** Use OpenAI, Anthropic, Google, or xAI directly; connect a private Azure deployment; or point BuildWarden at any OpenAI-compatible endpoint, including models your company hosts itself. You can also run everything through a locally installed CLI agent so the model access follows whatever contract you already have.
+- **Nothing leaves your machine unless you send it there.** Projects, run history, and settings stay in a local database on the desktop that owns them. Optional remote access is self-hosted and authenticated, so a phone or laptop connects straight back to your own computer rather than through a hosted service.
 
 ## What It Does
 
-- Add and manage multiple local Git projects.
-- Start agent runs in `code`, `plan`, or `ask` mode against either a dedicated Git worktree or the local repository.
-- Keep one workspace context per run, stream agent activity into the UI, and preserve reviewable diffs.
-- Continue runs, undo a run to the last prompt, resume from saved checkpoints, and recover interrupted provider sessions where supported.
-- Review run changes with activity, diff, terminal, in-app browser, and notes panels.
-- Commit run worktree changes, publish branches, create local branches, and create GitHub pull requests or GitLab merge requests.
-- Run standalone chats with history, follow-ups, file attachments, and generated file attachments from supported providers.
-- Bookmark both runs and chats, and move runs into a project-level "For Later" view.
-- Manage project branches, project task prompts, AI-generated project insights, and Project Lab implementation/RFC threads.
-- Inspect and review GitHub pull requests or GitLab merge requests from a project, including diffs, activity, review comments, replies, approvals, and thread resolution.
-- Configure integrated skills globally and per project.
-- Store provider keys, PR/MR tokens, and proxy passwords through Electron secure storage.
-- Support shell approvals, user-input requests, shell allowlists, per-run token accounting, and optional provider request/response logging.
-- Optionally use the same BuildWarden UI from a browser through an authenticated, self-hosted remote-access endpoint.
+**Projects and runs**
+
+- Add and manage as many local Git projects as you like.
+- Start an agent run in `code`, `plan`, or `ask` mode — either in its own isolated Git worktree or directly in your repository.
+- Watch agent activity stream in live, with each run keeping its own workspace and a reviewable diff.
+- Keep going with follow-ups, undo a run back to the last prompt, jump back to a saved checkpoint, or pick up a provider session that got interrupted.
+- Review what changed through activity, diff, terminal, in-app browser, and notes panels.
+
+**Getting work shipped**
+
+- Commit a run's changes, publish or create branches, and open a GitHub pull request or GitLab merge request.
+- Review PRs and MRs without leaving the app: diffs, activity, review comments, replies, approvals, and thread resolution.
+- Manage project branches and reusable task prompts.
+
+**Chats, insights, and organization**
+
+- Run standalone chats with full history, follow-ups, and file attachments — including files the model generates, where the provider supports it.
+- Bookmark runs and chats, or park a run in the project's "For Later" list.
+- Browse AI-generated project insights and Project Lab implementation/RFC threads.
+- Turn integrated skills on globally or per project.
+
+**Security and access**
+
+- Provider keys, PR/MR tokens, and proxy passwords are held in Electron's secure storage, not in plain config files.
+- Shell commands can require your approval, with allowlists for the ones you trust; agents can also pause and ask you a question mid-run.
+- Per-run token accounting, plus optional request/response logging when you need to debug a provider.
+- Optionally open the same BuildWarden interface in a browser through an authenticated, self-hosted remote-access endpoint.
 
 ## Remote Access
 
