@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import {
   appendChatAttachmentFiles,
@@ -14,6 +14,7 @@ import {
   type RunRecord,
   type RunTimelineDensity,
   type RunUserInputAnswers,
+  type RunWorktreeDiffSummary,
   type RunWorkspaceFileReference,
   type RunWorkspacePanelId,
   type RunWorkspaceTileSize,
@@ -54,9 +55,7 @@ import { ComposerSelect, RunComposer } from "./RunComposer";
 import { RunChatPanel } from "./RunChatPanel";
 import { RunEmbeddedBrowser } from "./RunEmbeddedBrowser";
 import { RunActivityTimeline } from "./RunActivityTimeline";
-import { RunFilePanel } from "./RunFilePanel";
 import { RunNotesPanel } from "./RunNoteCard";
-import { RunWorktreeTerminal } from "./RunWorktreeTerminal";
 import { DiffReviewPanel, type DiffReviewPanelState } from "./diff-review-panel";
 import {
   GitDiffPreview,
@@ -74,6 +73,44 @@ import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { OrchestrationAgentsPanel } from "./OrchestrationAgentsPanel";
 import { shouldAutoOpenAgentsPanel } from "./run-workspace-layout";
+
+const RunFilePanel = lazy(() => import("./RunFilePanel").then((module) => ({ default: module.RunFilePanel })));
+const RunWorktreeTerminal = lazy(() =>
+  import("./RunWorktreeTerminal").then((module) => ({ default: module.RunWorktreeTerminal })),
+);
+
+const LazyPanelFallback = ({ label }: { label: string }) => (
+  <div className="flex h-full min-h-24 items-center justify-center gap-2 text-xs text-zinc-500">
+    <Loader2 className="h-4 w-4 animate-spin text-cyan-400" aria-hidden />
+    {label}
+  </div>
+);
+
+class LazyPanelErrorBoundary extends Component<{
+  children: ReactNode;
+  fallback?: ReactNode;
+  label: string;
+}, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    if (this.props.fallback !== undefined) return this.props.fallback;
+    return (
+      <div role="alert" className="flex h-full min-h-24 flex-col items-center justify-center gap-2 px-4 text-center text-xs text-zinc-500">
+        <span>The {this.props.label} could not be loaded.</span>
+        <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5" onClick={() => window.location.reload()}>
+          <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+          Reload BuildWarden
+        </Button>
+      </div>
+    );
+  }
+}
 
 type ReviewPanelState = DiffReviewPanelState;
 
@@ -189,6 +226,8 @@ export interface RunDetailPageProps {
   showBrowser: boolean;
   showNotes: boolean;
   showChat: boolean;
+  /** Requests the complete unified patch when a visible consumer needs it. */
+  onRequestDiff: (runId: string) => void;
   /** Called when a panel should be toggled on or off from within the layout. */
   onTogglePanel: (panelId: TilePanelId) => void;
   /** Whether the secondary panel column is docked to the right or bottom. */
@@ -243,6 +282,7 @@ export const RunDetailPage = ({
   showBrowser,
   showNotes,
   showChat,
+  onRequestDiff,
   onTogglePanel,
   secondaryPanelPosition,
   onSecondaryPanelPositionChange,
@@ -316,16 +356,19 @@ export const RunDetailPage = ({
   const workspacePath = runDetail.workspacePath ?? runDetail.run.worktreePath;
   const isRunActive = ["queued", "preparing", "running"].includes(runDetail.run.status);
   const worktreeUnavailable = runDetail.worktreeUnavailable === true;
+  const diffLoaded = runDetail.diffLoaded === true;
   const diffPending = runDetail.diffPending === true;
   const orderedSteps = useMemo(() => dedupeFinalSummarySteps(runDetail.steps), [runDetail.steps]);
   const contextHistoryText = useMemo(() => buildVisibleConversationHistory(runDetail.steps), [runDetail.steps]);
   const gitDiffPanelRef = useRef<GitDiffPreviewHandle>(null);
   const [allDiffFilesExpanded, setAllDiffFilesExpanded] = useState(false);
   const [modifiedFilesExpanded, setModifiedFilesExpanded] = useState(false);
-  const diffStats = useMemo(
-    () => (diffPending ? { totalFiles: 0, totalAdditions: 0, totalDeletions: 0, files: [] } : summarizeDiffStats(runDetail.diff)),
-    [diffPending, runDetail.diff],
-  );
+  const diffStats = useMemo<RunWorktreeDiffSummary>(() => {
+    if (runDetail.diffSummary) return runDetail.diffSummary;
+    return diffLoaded
+      ? summarizeDiffStats(runDetail.diff)
+      : { totalFiles: 0, totalAdditions: 0, totalDeletions: 0, files: [] };
+  }, [diffLoaded, runDetail.diff, runDetail.diffSummary]);
   const openNotes = useMemo(() => runNotes.filter((note) => note.status === "open"), [runNotes]);
   const closedNotes = useMemo(() => runNotes.filter((note) => note.status === "closed"), [runNotes]);
   const [selectedReviewModelId, setSelectedReviewModelId] = useState(runDetail.run.modelId);
@@ -873,7 +916,12 @@ export const RunDetailPage = ({
   ] as const;
 
   const isGitDiffPanelVisible = showDiff && activeSecondaryTab === "diff";
-  const showModifiedFilesSummary = !isRunActive && !diffPending && diffStats.totalFiles > 0 && !isGitDiffPanelVisible;
+  useEffect(() => {
+    if (isGitDiffPanelVisible && !diffLoaded && !diffPending) onRequestDiff(runDetail.run.id);
+  }, [diffLoaded, diffPending, isGitDiffPanelVisible, onRequestDiff, runDetail.run.id]);
+
+  const showModifiedFilesSummary =
+    !isRunActive && runDetail.diffSummaryPending !== true && diffStats.totalFiles > 0 && !isGitDiffPanelVisible;
   const fallbackFinishedAt = orderedSteps[orderedSteps.length - 1]?.createdAt ?? runDetail.run.updatedAt;
   const runDurationLabel = formatRunDuration(runDetail.run.startedAt ?? runDetail.run.createdAt, runDetail.run.finishedAt ?? fallbackFinishedAt);
   const modifiedFilesSummary = showModifiedFilesSummary ? (
@@ -945,10 +993,16 @@ export const RunDetailPage = ({
                   >
                     <span className="whitespace-nowrap text-zinc-200">{file.path}</span>
                     <span className="shrink-0 text-[10px] font-medium">
-                      <span className="text-teal-300/90">+{file.additions}</span>
-                      <span className="mx-1 text-zinc-700">/</span>
-                  <span className="text-red-300/85">-{file.deletions}</span>
-                </span>
+                      {file.additions === null || file.deletions === null ? (
+                        <span className="text-zinc-500">binary</span>
+                      ) : (
+                        <>
+                          <span className="text-teal-300/90">+{file.additions}</span>
+                          <span className="mx-1 text-zinc-700">/</span>
+                          <span className="text-red-300/85">-{file.deletions}</span>
+                        </>
+                      )}
+                    </span>
               </button>
             ))}
           </div>
@@ -1365,12 +1419,19 @@ export const RunDetailPage = ({
 
               {/* File panel */}
               {filePanelTarget && activeSecondaryTab === "file" ? (
-                <RunFilePanel
-                  runId={runDetail.run.id}
-                  target={filePanelTarget}
-                  diffText={runDetail.diff}
-                  diffPending={diffPending}
-                />
+                <LazyPanelErrorBoundary label="file viewer">
+                  <Suspense fallback={<LazyPanelFallback label="Loading file viewer..." />}>
+                    <RunFilePanel
+                      runId={runDetail.run.id}
+                      target={filePanelTarget}
+                      diffText={runDetail.diff}
+                      diffPending={diffPending}
+                      diffLoaded={diffLoaded}
+                      diffSummary={runDetail.diffSummary}
+                      onRequestDiff={onRequestDiff}
+                    />
+                  </Suspense>
+                </LazyPanelErrorBoundary>
               ) : null}
 
               {/* Durable cross-provider agents panel */}
@@ -1388,7 +1449,7 @@ export const RunDetailPage = ({
               {showDiff && activeSecondaryTab === "diff" ? (
                 <div className="flex h-full min-h-0 flex-col overflow-hidden">
                   <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                    {diffPending ? (
+                    {!diffLoaded || diffPending ? (
                       <div
                         className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-4 py-8 text-center text-sm text-zinc-500"
                         role="status"
@@ -1525,15 +1586,19 @@ export const RunDetailPage = ({
                     </div>
                   </div>
                   <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-2">
-                      <RunWorktreeTerminal
-                        className="min-h-0 flex-1"
-                        runId={runDetail.run.id}
-                        cwd={workspacePath}
-                        disabled={false}
-                        uiActive={showTerminal}
-                        openLinksInApp={terminalOpenLinksInApp}
-                      onOpenUrlInApp={onOpenBrowserUrl}
-                    />
+                    <LazyPanelErrorBoundary label="terminal">
+                      <Suspense fallback={<LazyPanelFallback label="Loading terminal..." />}>
+                        <RunWorktreeTerminal
+                          className="min-h-0 flex-1"
+                          runId={runDetail.run.id}
+                          cwd={workspacePath}
+                          disabled={false}
+                          uiActive={showTerminal}
+                          openLinksInApp={terminalOpenLinksInApp}
+                          onOpenUrlInApp={onOpenBrowserUrl}
+                        />
+                      </Suspense>
+                    </LazyPanelErrorBoundary>
                   </div>
                 </div>
               ) : null}
@@ -1583,14 +1648,18 @@ export const RunDetailPage = ({
       {/* Keep PTY + xterm mounted after first open; toggling Terminal only hides the panel. */}
       {!worktreeUnavailable && runTerminalPinned && !showTerminal ? (
         <div className="pointer-events-none fixed left-[-12000px] top-0 z-0 h-[420px] w-[896px] opacity-0" aria-hidden>
-          <RunWorktreeTerminal
-            runId={runDetail.run.id}
-            cwd={workspacePath}
-            disabled={false}
-            uiActive={false}
-            openLinksInApp={terminalOpenLinksInApp}
-            onOpenUrlInApp={onOpenBrowserUrl}
-          />
+          <LazyPanelErrorBoundary label="terminal" fallback={null}>
+            <Suspense fallback={null}>
+              <RunWorktreeTerminal
+                runId={runDetail.run.id}
+                cwd={workspacePath}
+                disabled={false}
+                uiActive={false}
+                openLinksInApp={terminalOpenLinksInApp}
+                onOpenUrlInApp={onOpenBrowserUrl}
+              />
+            </Suspense>
+          </LazyPanelErrorBoundary>
         </div>
       ) : null}
 

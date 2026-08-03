@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { createFolderSnapshot, deleteFolderSnapshot, diffFolderAgainstSnapshot } from "./folder-diff";
+import { createFolderSnapshot, deleteFolderSnapshot, diffFolderAgainstSnapshot, summarizeFolderAgainstSnapshot } from "./folder-diff";
 
 const tempDirs: string[] = [];
 
@@ -22,10 +22,12 @@ describe("folder diff snapshots", () => {
     const snapshotsRoot = await makeTempDir();
     await mkdir(join(workspacePath, "src"), { recursive: true });
     await writeFile(join(workspacePath, "README.md"), "hello\n", "utf8");
+    await writeFile(join(workspacePath, "binary.bin"), Buffer.from([0, 1, 2]));
     await writeFile(join(workspacePath, "src", "old.ts"), "export const oldValue = 1;\n", "utf8");
 
     await createFolderSnapshot({ runId: "run-1", workspacePath, snapshotsRoot });
     await writeFile(join(workspacePath, "README.md"), "hello\nworld\n", "utf8");
+    await writeFile(join(workspacePath, "binary.bin"), Buffer.from([0, 1, 3]));
     await writeFile(join(workspacePath, "src", "new.ts"), "export const newValue = 2;\n", "utf8");
     await rm(join(workspacePath, "src", "old.ts"));
 
@@ -37,6 +39,17 @@ describe("folder diff snapshots", () => {
     expect(result.diff).toContain("src/new.ts");
     expect(result.diff).toContain("src/old.ts");
     expect(result.diff).toContain("-export const oldValue = 1;");
+
+    const summary = await summarizeFolderAgainstSnapshot({ runId: "run-1", workspacePath, snapshotsRoot });
+    expect(summary.missingSnapshot).toBe(false);
+    expect(summary.summary.files.map((file) => file.path)).toEqual(["binary.bin", "README.md", "src/new.ts", "src/old.ts"]);
+    expect(summary.summary.files.find((file) => file.path === "binary.bin")).toEqual({
+      path: "binary.bin",
+      additions: null,
+      deletions: null,
+    });
+    expect(summary.summary.totalAdditions).toBe(2);
+    expect(summary.summary.totalDeletions).toBe(1);
   });
 
   it("returns a missing-snapshot result after snapshot cleanup", async () => {
@@ -50,5 +63,10 @@ describe("folder diff snapshots", () => {
     await expect(readFile(join(snapshotsRoot, "run-2", "manifest.json"), "utf8")).rejects.toThrow();
     const result = await diffFolderAgainstSnapshot({ runId: "run-2", workspacePath, snapshotsRoot });
     expect(result).toEqual({ diff: "", missingSnapshot: true });
+    const summary = await summarizeFolderAgainstSnapshot({ runId: "run-2", workspacePath, snapshotsRoot });
+    expect(summary).toEqual({
+      summary: { files: [], totalFiles: 0, totalAdditions: 0, totalDeletions: 0 },
+      missingSnapshot: true,
+    });
   });
 });

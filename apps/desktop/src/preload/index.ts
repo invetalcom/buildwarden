@@ -183,6 +183,7 @@ const api: DesktopApi = {
   setRunListVisibility: (runId: string, visibility) => invoke(IPC_CHANNELS.setRunListVisibility, runId, visibility),
   getRunWorkspaceFile: (input) => invoke(IPC_CHANNELS.getRunWorkspaceFile, input),
   getRunWorktreeDiff: (runId: string) => invoke(IPC_CHANNELS.getRunWorktreeDiff, runId),
+  getRunWorktreeDiffSummary: (runId: string) => invoke(IPC_CHANNELS.getRunWorktreeDiffSummary, runId),
   resumeRunFromCheckpoint: (runId: string) => invoke(IPC_CHANNELS.resumeRunFromCheckpoint, runId),
   recoverInterruptedRun: (runId: string) => invoke(IPC_CHANNELS.recoverInterruptedRun, runId),
   undoRunToLastPrompt: (runId: string) => invoke(IPC_CHANNELS.undoRunToLastPrompt, runId),

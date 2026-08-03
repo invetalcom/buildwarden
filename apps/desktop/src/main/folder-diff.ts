@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { copyFile, lstat, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
-import { createTwoFilesPatch } from "diff";
+import { createTwoFilesPatch, diffLines } from "diff";
+import type { RunWorktreeDiffFileStat, RunWorktreeDiffSummary } from "@buildwarden/shared";
 import { FOLDER_WORKSPACE_IGNORED_NAMES } from "./folder-workspace-constants";
 
 const MAX_TEXT_SNAPSHOT_BYTES = 512 * 1024;
@@ -178,6 +179,77 @@ const diffBaselineEntry = async (entry: SnapshotEntry, current: CurrentFile | un
 const diffCreatedFile = (current: CurrentFile): string => {
   if (current.kind === "text") return makePatch(current.path, "", current.text ?? "");
   return `# Created ${current.kind} file: ${current.path}`;
+};
+
+const summarizeTextChange = (path: string, oldText: string, newText: string): RunWorktreeDiffFileStat => {
+  let additions = 0;
+  let deletions = 0;
+  for (const change of diffLines(oldText, newText)) {
+    if (change.added) additions += change.count ?? 0;
+    if (change.removed) deletions += change.count ?? 0;
+  }
+  return { path, additions, deletions };
+};
+
+export const summarizeFolderAgainstSnapshot = async (input: {
+  runId: string;
+  workspacePath: string;
+  snapshotsRoot: string;
+}): Promise<{ summary: RunWorktreeDiffSummary; missingSnapshot: boolean }> => {
+  const emptySummary: RunWorktreeDiffSummary = { files: [], totalFiles: 0, totalAdditions: 0, totalDeletions: 0 };
+  const manifest = await readManifest(input.snapshotsRoot, input.runId);
+  if (!manifest) {
+    return { summary: emptySummary, missingSnapshot: true };
+  }
+
+  const currentFiles = await scanFiles(resolve(input.workspacePath));
+  const currentByPath = new Map(currentFiles.map((file) => [file.path, file]));
+  const baselineByPath = new Map(manifest.entries.map((entry) => [entry.path, entry]));
+  const files: RunWorktreeDiffFileStat[] = [];
+  const baselinePath = snapshotDir(input.snapshotsRoot, input.runId);
+
+  for (const entry of manifest.entries) {
+    const current = currentByPath.get(entry.path);
+    if (!current) {
+      if (entry.kind === "text" && entry.textSnapshotPath) {
+        files.push(summarizeTextChange(entry.path, await readFile(join(baselinePath, entry.textSnapshotPath), "utf8"), ""));
+      } else {
+        files.push({ path: entry.path, additions: null, deletions: null });
+      }
+      continue;
+    }
+    if (entry.kind === "text" && current.kind === "text" && entry.textSnapshotPath && entry.hash !== current.hash) {
+      files.push(
+        summarizeTextChange(
+          entry.path,
+          await readFile(join(baselinePath, entry.textSnapshotPath), "utf8"),
+          current.text ?? "",
+        ),
+      );
+    } else if (hasNonTextChange(entry, current)) {
+      files.push({ path: entry.path, additions: null, deletions: null });
+    }
+  }
+
+  for (const current of currentFiles) {
+    if (baselineByPath.has(current.path)) continue;
+    files.push(
+      current.kind === "text"
+        ? summarizeTextChange(current.path, "", current.text ?? "")
+        : { path: current.path, additions: null, deletions: null },
+    );
+  }
+
+  files.sort((left, right) => left.path.localeCompare(right.path));
+  return {
+    summary: {
+      files,
+      totalFiles: files.length,
+      totalAdditions: files.reduce((sum, file) => sum + (file.additions ?? 0), 0),
+      totalDeletions: files.reduce((sum, file) => sum + (file.deletions ?? 0), 0),
+    },
+    missingSnapshot: false,
+  };
 };
 
 export const diffFolderAgainstSnapshot = async (input: {

@@ -1,5 +1,4 @@
 import { CHAT_ATTACHMENT_LIMITS, isTextLikeFileName } from "@buildwarden/shared";
-import { countTokens } from "gpt-tokenizer";
 
 const IMAGE_ATTACHMENT_TOKENS = 1_200;
 const PDF_ATTACHMENT_TOKENS = 2_200;
@@ -26,12 +25,18 @@ export interface ContextWindowEstimate {
   remainingPercent: number;
 }
 
+export interface ContextWindowTextTokenCounts {
+  prompt: number;
+  history: number;
+}
+
 interface ContextWindowEstimateInput {
   modelIds: string[];
   prompt: string;
   historyText?: string;
   attachmentFiles?: File[];
   isRun?: boolean;
+  textTokenCounts?: ContextWindowTextTokenCounts | null;
 }
 
 const estimateTextTokens = (text: string): number => {
@@ -39,11 +44,7 @@ const estimateTextTokens = (text: string): number => {
   if (!trimmed) {
     return 0;
   }
-  try {
-    return countTokens(trimmed);
-  } catch {
-    return Math.max(1, Math.ceil(trimmed.length / 4));
-  }
+  return Math.max(1, Math.ceil(trimmed.length / 4));
 };
 
 const isTextLikeAttachment = (file: File): boolean => {
@@ -107,6 +108,7 @@ export const estimateContextWindow = ({
   historyText = "",
   attachmentFiles = [],
   isRun = false,
+  textTokenCounts = null,
 }: ContextWindowEstimateInput): ContextWindowEstimate | null => {
   const maxTokens = getMaxContextTokens(modelIds);
   if (!maxTokens) {
@@ -114,8 +116,8 @@ export const estimateContextWindow = ({
   }
 
   const usedTokens =
-    estimateTextTokens(prompt) +
-    estimateTextTokens(historyText) +
+    (textTokenCounts?.prompt ?? estimateTextTokens(prompt)) +
+    (textTokenCounts?.history ?? estimateTextTokens(historyText)) +
     estimateAttachmentTokens(attachmentFiles) +
     (isRun ? RUN_OVERHEAD_TOKENS : CHAT_OVERHEAD_TOKENS);
 
