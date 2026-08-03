@@ -143,13 +143,15 @@ export class BuildWardenDatabase {
       return;
     }
 
-    if (existsSync(this.filePath)) {
-      this.createPreWalBackup();
-    }
+    const databaseExisted = existsSync(this.filePath);
     mkdirSync(dirname(this.filePath), { recursive: true });
     this.db = new DatabaseSync(this.filePath);
     try {
       this.exec("pragma busy_timeout = 5000");
+      const existingJournalMode = this.first<{ journal_mode: string }>("pragma journal_mode")?.journal_mode.toLowerCase();
+      if (databaseExisted && existingJournalMode !== "wal") {
+        this.createPreWalBackup();
+      }
       this.exec("pragma journal_mode = WAL");
       this.exec("pragma synchronous = NORMAL");
       this.exec("pragma wal_autocheckpoint = 1000");

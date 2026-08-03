@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -79,7 +79,7 @@ describe("node:sqlite WAL persistence", () => {
     }
   });
 
-  it("migrates an existing SQLite file and creates only one pre-WAL backup", async () => {
+  it("creates a pre-WAL backup only while converting an existing rollback-journal database", async () => {
     const directory = await mkdtemp(join(tmpdir(), "buildwarden-sqlite-legacy-"));
     const path = join(directory, "state.sqlite");
     const legacy = new DatabaseSync(path);
@@ -125,6 +125,12 @@ describe("node:sqlite WAL persistence", () => {
     await database.close();
     await database.init();
     expect(readFileSync(backupPath).equals(originalBackup)).toBe(true);
+
+    await database.close();
+    unlinkSync(backupPath);
+    await database.init();
+    expect(existsSync(backupPath)).toBe(false);
+    expect(database.getSettings()["after-migration"]).toBe("new");
   });
 
   it("rolls back failed transactions and checkpoints durable boundaries into the main file", async () => {
