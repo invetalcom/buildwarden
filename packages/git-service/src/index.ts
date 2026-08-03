@@ -301,6 +301,13 @@ const mapWithConcurrency = async <T, R>(items: readonly T[], limit: number, mapp
   return results;
 };
 
+const WORKTREE_DIFF_GIT_TIMEOUT_MS = 60_000;
+const createWorktreeDiffGit = (worktreePath: string): SimpleGit => simpleGit({
+  baseDir: worktreePath,
+  maxConcurrentProcesses: 6,
+  timeout: { block: WORKTREE_DIFF_GIT_TIMEOUT_MS },
+});
+
 const parseNumstatValue = (value: string): number | null => (value === "-" ? null : Number.parseInt(value, 10) || 0);
 
 /** Parses `git diff --numstat -z`, including its three-NUL-field rename form. */
@@ -349,7 +356,7 @@ const mergeNumstatFiles = (groups: readonly RunWorktreeDiffFileStat[][]): RunWor
 
 /** Changed-file statistics without constructing a complete unified patch. */
 export async function computeWorktreeDiffSummary(worktreePath: string): Promise<RunWorktreeDiffSummary> {
-  const git = simpleGit({ baseDir: worktreePath, maxConcurrentProcesses: 6 });
+  const git = createWorktreeDiffGit(worktreePath);
   const [status, unstagedOutput, stagedOutput] = await Promise.all([
     git.status(),
     runGitRaw(git, ["diff", "--numstat", "-z", "--find-renames"]),
@@ -370,7 +377,7 @@ export async function computeWorktreeDiffSummary(worktreePath: string): Promise<
  * CPU/git-heavy — safe to run in a worker thread; exported for the desktop git-diff worker.
  */
 export async function computeWorktreeDiff(worktreePath: string): Promise<string> {
-  const git = simpleGit({ baseDir: worktreePath, maxConcurrentProcesses: 6 });
+  const git = createWorktreeDiffGit(worktreePath);
   const sections: string[] = [];
 
   const [status, unstagedOutput, stagedOutput] = await Promise.all([git.status(), git.diff(), git.diff(["--cached"])]);
