@@ -10,7 +10,7 @@ This repository is an Electron desktop app for coding-agent workflows. Optimize 
 - Electron + Vite
 - React 19 + TypeScript
 - Tailwind CSS v4 renderer UI
-- `sql.js` for local persisted app state
+- Electron's built-in `node:sqlite` for local persisted app state
 - `simple-git` for repository and worktree operations
 - `node-pty` for the embedded run terminal
 - OpenAI-first provider/harness architecture with support for OpenAI-compatible, Codex CLI, Claude Code, and Cursor Agent providers

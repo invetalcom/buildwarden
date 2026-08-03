@@ -10,7 +10,6 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@buildwarden/shared": "workspace:*",
-    "sql.js": "^1.13.0"
+    "@buildwarden/shared": "workspace:*"
   }
 }

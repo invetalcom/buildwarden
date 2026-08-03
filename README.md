@@ -112,7 +112,7 @@ flowchart LR
         Server["Embedded remote server"]
         Main["Electron main process"]
         Services["Controller, Git, workers, terminal and platform services"]
-        DB["sql.js database"]
+        DB["node:sqlite WAL database"]
         Secrets["Electron secure storage"]
         Server --> Services
         Main --> Services
@@ -141,7 +141,7 @@ flowchart LR
 - `packages/shared`
   - Shared types, DTOs, IPC and remote RPC contract shapes, protocol constants, provider metadata, settings keys, run/chat/event contracts, project insight types, and integrated skill metadata.
 - `packages/db`
-  - Local persisted state using `sql.js`.
+  - Local persisted state using Electron's built-in `node:sqlite` with WAL journaling.
   - Projects, provider accounts, models, runs, run steps, run notes, worktrees, bookmarks, chats, chat steps, chat bookmarks, project tasks, project insights, Project Lab threads/events, provider session runtime, settings, snapshots, checkpoint metadata, remote pairing grants, device sessions, idempotency records, and security audits.
 - `packages/git-service`
   - Repository validation, worktree lifecycle, branch management, diff computation, GitHub/GitLab remote parsing, PR/MR diff fetching, branch publishing, and pull/merge request creation helpers.
