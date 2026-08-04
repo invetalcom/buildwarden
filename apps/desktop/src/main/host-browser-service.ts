@@ -207,10 +207,16 @@ export class HostBrowserService {
         session.view.webContents.stop();
         break;
       case "start-inspect":
-        await this.ensureInspector(session).start();
+        await this.ensureInspector(session).start(input.annotationStartNumber);
         break;
       case "cancel-inspect":
         await session.inspector?.cancel();
+        break;
+      case "remove-annotation":
+        if (input.captureId) await session.inspector?.removeAnnotation(input.captureId);
+        break;
+      case "clear-annotations":
+        await session.inspector?.clearAnnotations();
         break;
     }
     this.emitState(session);

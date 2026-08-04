@@ -7,6 +7,7 @@ import {
 import { Bot, BrainCircuit, Check, ChevronDown, Copy, Loader2, MessageSquareText, ShieldCheck } from "lucide-react";
 import { ActivityMarkdownOrGitDiff } from "./activity-message-body";
 import { StoredChatAttachments } from "./StoredChatAttachments";
+import { getStoredAttachmentMessageContent } from "./stored-chat-attachment-utils";
 import type { ChatTranscriptItem } from "./ChatTranscript";
 
 type EntryKind = "user" | "assistant" | "reasoning" | "subagent" | "request" | "plan" | "diff" | "status" | "error" | "note";
@@ -24,18 +25,24 @@ const entryKind = (item: ChatTranscriptItem, metadata: Record<string, unknown>):
   return "note";
 };
 
-const UserEntry = ({ item, metadata, timestamp }: EntryViewProps) => (
-  <section className="chat-turn chat-turn--user">
-    <div className="chat-turn-stack">
-      <div className="chat-bubble chat-bubble--user">
-        <div className="chat-bubble-meta"><span>{metadata.commandType === "follow-up" ? "Follow-up" : "You"}</span><span>{timestamp}</span></div>
-        <StoredChatAttachments attachments={extractAttachmentPayloadsFromMetadata(metadata)} fallbackNames={extractAttachmentNamesFromMetadata(metadata)} />
-        <ActivityMarkdownOrGitDiff content={item.content} className="chat-message-body" />
+const UserEntry = ({ item, metadata, timestamp }: EntryViewProps) => {
+  const attachmentNames = extractAttachmentNamesFromMetadata(metadata);
+  const attachments = extractAttachmentPayloadsFromMetadata(metadata);
+  const messageContent = getStoredAttachmentMessageContent(item.content, attachmentNames);
+
+  return (
+    <section className="chat-turn chat-turn--user">
+      <div className="chat-turn-stack">
+        <div className="chat-bubble chat-bubble--user">
+          <div className="chat-bubble-meta"><span>{metadata.commandType === "follow-up" ? "Follow-up" : "You"}</span><span>{timestamp}</span></div>
+          {messageContent ? <ActivityMarkdownOrGitDiff content={messageContent} className="chat-message-body" /> : null}
+          <StoredChatAttachments attachments={attachments} fallbackNames={attachmentNames} />
+        </div>
       </div>
-    </div>
-    <div className="chat-avatar chat-avatar--user" aria-hidden>You</div>
-  </section>
-);
+      <div className="chat-avatar chat-avatar--user" aria-hidden>You</div>
+    </section>
+  );
+};
 
 const ReasoningEntry = ({ item, timestamp }: EntryViewProps) => (
   <section className="chat-turn chat-turn--assistant chat-turn--reasoning">

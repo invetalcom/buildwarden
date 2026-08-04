@@ -15,6 +15,10 @@ const source: BrowserElementAttachmentSource = {
   role: "context",
   url: "https://example.com/account",
   selector: "main > form:nth-of-type(1)",
+  annotationNumber: 3,
+  comment: "Align this field with the submit action.",
+  tagName: "form",
+  accessibleName: "Account settings",
 };
 
 describe("run browser shared contracts", () => {
@@ -32,6 +36,7 @@ describe("run browser shared contracts", () => {
 
   it("rejects malformed browser attachment metadata", () => {
     expect(isBrowserElementAttachmentSource({ ...source, role: "preview" })).toBe(false);
+    expect(isBrowserElementAttachmentSource({ ...source, annotationNumber: 0 })).toBe(false);
     expect(() => validateChatAttachmentPayloads([{
       fileName: "browser-element.md",
       mimeType: "text/markdown",
@@ -59,6 +64,10 @@ describe("run browser shared contracts", () => {
     expect(() => validateChatAttachmentPayloads([
       context,
       { ...screenshot, source: { ...screenshot.source!, selector: "button.cancel" } },
+    ])).toThrow("does not match");
+    expect(() => validateChatAttachmentPayloads([
+      context,
+      { ...screenshot, source: { ...screenshot.source!, comment: "Different note" } },
     ])).toThrow("does not match");
     expect(() => validateChatAttachmentPayloads([{ ...context, mimeType: "image/jpeg" }])).toThrow("does not match its MIME type");
     expect(() => validateChatAttachmentPayloads([screenshot])).toThrow("missing its Markdown context");

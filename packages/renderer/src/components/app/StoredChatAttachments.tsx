@@ -18,10 +18,12 @@ import {
 } from "lucide-react";
 import {
   groupStoredAttachments,
+  getStoredBrowserElementDisplayInfo,
   getStoredAttachmentDownloadMimeType,
   getStoredAttachmentRenderMode,
   getStoredAttachmentTextPreview,
   inferStoredAttachmentKind,
+  type StoredAttachmentDisplayItem,
   type StoredAttachmentKind,
 } from "./stored-chat-attachment-utils";
 import { ImageLightbox } from "../ui/image-lightbox";
@@ -209,52 +211,76 @@ const ImageAttachmentCard = ({
   </div>
 );
 
-const BrowserElementAttachmentCard = ({
+const BrowserElementAttachmentRow = ({
   compact,
   contextAttachment,
   screenshotAttachment,
+  fallbackNumber,
   onOpen,
 }: {
   compact: boolean;
   contextAttachment?: ChatAttachmentPayload;
   screenshotAttachment?: ChatAttachmentPayload;
+  fallbackNumber: number;
   onOpen: () => void;
 }) => {
-  const source = contextAttachment?.source ?? screenshotAttachment?.source;
-  const selector = source?.kind === "browser-element" ? source.selector : "Selected browser element";
+  const [expanded, setExpanded] = useState(false);
+  const info = getStoredBrowserElementDisplayInfo(contextAttachment, screenshotAttachment, fallbackNumber);
+  const label = info.accessibleName || `<${info.tagName}>`;
+  const noteIsLong = info.comment.length > 180 || info.comment.split("\n").length > 3;
 
   return (
-    <div className={`overflow-hidden rounded-lg border border-blue-400/25 bg-zinc-950/60 shadow-sm ${compact ? "w-44" : "w-52"}`}>
+    <div className="group flex min-w-0 items-start gap-2.5 border-t border-[color:var(--ec-border)] px-2 py-2 first:border-t-0">
       {screenshotAttachment ? (
-        <button type="button" className="block w-full bg-black/40" title="Open browser element screenshot" onClick={onOpen}>
+        <button
+          type="button"
+          className={`relative shrink-0 overflow-hidden rounded-md border border-sky-500/25 bg-black/50 outline-none transition hover:border-sky-400/55 focus-visible:ring-2 focus-visible:ring-sky-400 ${compact ? "h-12 w-20" : "h-14 w-24"}`}
+          title="Open browser element screenshot"
+          onClick={onOpen}
+        >
           <img
             src={toDataUrl(screenshotAttachment)}
-            alt="Selected browser element"
-            className={`${compact ? "h-24" : "h-28"} w-full object-cover`}
+            alt=""
+            className="h-full w-full object-cover transition-transform duration-150 group-hover:scale-[1.02]"
           />
+          <span className="absolute left-1 top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-sky-600 px-1 text-[9px] font-bold leading-none text-white shadow-sm">
+            {info.annotationNumber}
+          </span>
         </button>
       ) : (
-        <div className={`${compact ? "h-24" : "h-28"} flex items-center justify-center bg-blue-500/10 text-blue-200`}>
-          <MousePointer2 className="h-8 w-8" aria-hidden />
+        <div className={`relative flex shrink-0 items-center justify-center rounded-md border border-sky-500/25 bg-sky-500/10 text-sky-500 ${compact ? "h-12 w-20" : "h-14 w-24"}`}>
+          <MousePointer2 className="h-5 w-5" aria-hidden />
+          <span className="absolute left-1 top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-sky-600 px-1 text-[9px] font-bold leading-none text-white">
+            {info.annotationNumber}
+          </span>
         </div>
       )}
-      <div className="border-t border-zinc-700/45 px-2 py-1.5">
+      <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5">
-          <span className="shrink-0 rounded border border-blue-400/25 bg-blue-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-none text-blue-100">
-            Element
-          </span>
-          <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-zinc-300" title={selector}>{selector}</span>
+          <span className="min-w-0 truncate text-[11px] font-semibold text-[color:var(--ec-text)]" title={label}>{label}</span>
+          {info.accessibleName ? <code className="shrink-0 text-[9px] text-[color:var(--ec-muted)]">&lt;{info.tagName}&gt;</code> : null}
         </div>
-        <div className="mt-1 flex items-center gap-1 text-[10px] text-zinc-500">
+        <div className="mt-1 border-l-2 border-sky-500/35 pl-2">
+          <span className="block text-[9px] font-semibold uppercase tracking-wide text-[color:var(--ec-muted)]">Requested change</span>
+          <p className={`mt-0.5 whitespace-pre-wrap break-words text-[11px] leading-4 text-[color:var(--ec-text)] ${!expanded && noteIsLong ? "line-clamp-3" : ""}`}>
+            {info.comment || <span className="italic text-[color:var(--ec-muted)]">No note added</span>}
+          </p>
+          {noteIsLong ? (
+            <button type="button" className="mt-0.5 text-[10px] font-medium text-sky-500 hover:text-sky-400" onClick={() => setExpanded((value) => !value)}>
+              {expanded ? "Show less" : "Show more"}
+            </button>
+          ) : null}
+        </div>
+        <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[9px] text-[color:var(--ec-muted)]">
+          <code className="min-w-0 flex-1 truncate" title={info.selector}>{info.selector}</code>
           {contextAttachment ? (
-            <a href={toDataUrl(contextAttachment)} download={contextAttachment.fileName} className="hover:text-zinc-200">
+            <a href={toDataUrl(contextAttachment)} download={contextAttachment.fileName} className="shrink-0 hover:text-[color:var(--ec-text)]" title="Download DOM context">
               Context
             </a>
           ) : null}
-          {contextAttachment && screenshotAttachment ? <span aria-hidden>·</span> : null}
           {screenshotAttachment ? (
-            <a href={toDataUrl(screenshotAttachment)} download={screenshotAttachment.fileName} className="hover:text-zinc-200">
-              Screenshot
+            <a href={toDataUrl(screenshotAttachment)} download={screenshotAttachment.fileName} className="shrink-0 hover:text-[color:var(--ec-text)]" title="Download screenshot">
+              Image
             </a>
           ) : null}
         </div>
@@ -360,25 +386,38 @@ export const StoredChatAttachments = ({
   const usedNames = new Set(attachments.map((attachment) => attachment.fileName));
   const namesOnly = fallbackNames.filter((name) => !usedNames.has(name));
   const displayItems = groupStoredAttachments(attachments);
+  const browserItems = displayItems.filter(
+    (item): item is Extract<StoredAttachmentDisplayItem, { kind: "browser-element" }> => item.kind === "browser-element",
+  );
+  const fileItems = displayItems.filter(
+    (item): item is Extract<StoredAttachmentDisplayItem, { kind: "attachment" }> => item.kind === "attachment",
+  );
   const expandedImageUrl = expandedImage ? toDataUrl(expandedImage) : "";
   const expandedPdfUrl = expandedPdf ? toDataUrl(expandedPdf) : "";
 
   return (
     <>
       <div className={compact ? "mt-1.5 space-y-2" : "mt-2 space-y-2"}>
-        <div className="flex flex-wrap gap-2">
-          {displayItems.map((item, index) => {
-            if (item.kind === "browser-element") {
-              return (
-                <BrowserElementAttachmentCard
-                  key={`browser-element-${item.groupId}`}
-                  compact={compact}
-                  contextAttachment={item.contextAttachment}
-                  screenshotAttachment={item.screenshotAttachment}
-                  onOpen={() => item.screenshotAttachment && setExpandedImage(item.screenshotAttachment)}
-                />
-              );
-            }
+        {browserItems.length > 0 ? (
+          <section className="overflow-hidden rounded-lg border border-sky-500/25 bg-[color:var(--ec-panel-soft)] shadow-sm">
+            <div className="flex items-center justify-between border-b border-[color:var(--ec-border)] px-2 py-1.5">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-[color:var(--ec-muted)]">Referenced elements</span>
+              <span className="rounded-full bg-sky-500/[0.12] px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-sky-500">{browserItems.length}</span>
+            </div>
+            {browserItems.map((item, index) => (
+              <BrowserElementAttachmentRow
+                key={`browser-element-${item.groupId}`}
+                compact={compact}
+                contextAttachment={item.contextAttachment}
+                screenshotAttachment={item.screenshotAttachment}
+                fallbackNumber={index + 1}
+                onOpen={() => item.screenshotAttachment && setExpandedImage(item.screenshotAttachment)}
+              />
+            ))}
+          </section>
+        ) : null}
+        {fileItems.length > 0 || namesOnly.length > 0 ? <div className="flex flex-wrap gap-2">
+          {fileItems.map((item, index) => {
             const { attachment } = item;
             const renderMode = getStoredAttachmentRenderMode(attachment);
             const textPreview = renderMode === "text" ? getStoredAttachmentTextPreview(attachment) : null;
@@ -415,7 +454,7 @@ export const StoredChatAttachments = ({
           {namesOnly.map((name, index) => (
             <NameOnlyAttachmentCard key={`${name}-${String(index)}`} name={name} compact={compact} />
           ))}
-        </div>
+        </div> : null}
       </div>
 
       {expandedImage ? (

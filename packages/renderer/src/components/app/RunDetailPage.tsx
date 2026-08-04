@@ -33,7 +33,6 @@ import {
   Maximize2,
   MessageSquareText,
   MessagesSquare,
-  MousePointer2,
   Minimize2,
   PanelBottom,
   PanelRight,
@@ -54,6 +53,7 @@ import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
 import { ComposerSelect, RunComposer } from "./RunComposer";
 import { RunChatPanel } from "./RunChatPanel";
 import { RunEmbeddedBrowser } from "./RunEmbeddedBrowser";
+import { BrowserElementAttachmentPreview } from "./BrowserElementAttachmentPreview";
 import { RunActivityTimeline } from "./RunActivityTimeline";
 import { RunNotesPanel } from "./RunNoteCard";
 import { DiffReviewPanel, type DiffReviewPanelState } from "./diff-review-panel";
@@ -307,6 +307,8 @@ export const RunDetailPage = ({
   const [followUpPrompt, setFollowUpPrompt] = useState("");
   const [followUpFiles, setFollowUpFiles] = useState<File[]>([]);
   const [browserElementCaptures, setBrowserElementCaptures] = useState<RunBrowserElementCapture[]>([]);
+  const browserElementCapturesRef = useRef(browserElementCaptures);
+  browserElementCapturesRef.current = browserElementCaptures;
   const [goalDraft, setGoalDraft] = useState(runDetail.run.goalText ?? "");
   const [goalEditing, setGoalEditing] = useState(false);
   const [goalSaving, setGoalSaving] = useState(false);
@@ -610,6 +612,37 @@ export const RunDetailPage = ({
     [closeFilePanel, onTogglePanel],
   );
 
+  const removeBrowserElementCapture = useCallback((captureId: string) => {
+    setBrowserElementCaptures((current) => {
+      const next = current.filter((capture) => capture.id !== captureId);
+      browserElementCapturesRef.current = next;
+      return next;
+    });
+    void buildwarden.runBrowserAction({
+      runId: runDetail.run.id,
+      action: "remove-annotation",
+      captureId,
+    }).catch(() => undefined);
+  }, [buildwarden, runDetail.run.id]);
+
+  const handleBrowserElementSelected = useCallback((capture: RunBrowserElementCapture) => {
+    const current = browserElementCapturesRef.current;
+    if (current.some((item) => item.id === capture.id)) return;
+    const captureError = validateBrowserElementCaptureAddition(followUpFiles, current, capture);
+    if (captureError) {
+      window.alert(captureError);
+      void buildwarden.runBrowserAction({
+        runId: runDetail.run.id,
+        action: "remove-annotation",
+        captureId: capture.id,
+      }).catch(() => undefined);
+      return;
+    }
+    const next = [...current, capture];
+    browserElementCapturesRef.current = next;
+    setBrowserElementCaptures(next);
+  }, [buildwarden, followUpFiles, runDetail.run.id]);
+
   const handleFollowUpSubmit = async () => {
     const trimmed = followUpPrompt.trim();
     if ((!trimmed && followUpFiles.length === 0 && browserElementCaptures.length === 0) || busy || isRunActive) {
@@ -637,7 +670,13 @@ export const RunDetailPage = ({
       });
       setFollowUpPrompt("");
       setFollowUpFiles([]);
+      browserElementCapturesRef.current = [];
       setBrowserElementCaptures([]);
+      if (browserElementCaptures.length > 0) {
+        void buildwarden.runBrowserAction({ runId: runDetail.run.id, action: "clear-annotations" })
+          .then(() => buildwarden.runBrowserAction({ runId: runDetail.run.id, action: "cancel-inspect" }))
+          .catch(() => undefined);
+      }
     } catch {
       /* App surfaces errors */
     }
@@ -1610,18 +1649,9 @@ export const RunDetailPage = ({
                   runId={runDetail.run.id}
                   uiActive={showBrowser && activeSecondaryTab === "browser"}
                   session={browserSession}
+                  nextAnnotationNumber={browserElementCaptures.reduce((maximum, capture) => Math.max(maximum, capture.annotationNumber), 0) + 1}
                   onSessionChange={onBrowserSessionChange}
-                  onElementSelected={(capture) => {
-                    setBrowserElementCaptures((current) => {
-                      if (current.some((item) => item.id === capture.id)) return current;
-                      const captureError = validateBrowserElementCaptureAddition(followUpFiles, current, capture);
-                      if (captureError) {
-                        window.alert(captureError);
-                        return current;
-                      }
-                      return [...current, capture];
-                    });
-                  }}
+                  onElementSelected={handleBrowserElementSelected}
                 />
               ) : null}
 
@@ -1808,25 +1838,12 @@ export const RunDetailPage = ({
                   reservedFileSlots={browserElementReservedFileSlots(browserElementCaptures)}
                 />
                 {browserElementCaptures.map((capture) => (
-                  <div
+                  <BrowserElementAttachmentPreview
                     key={capture.id}
-                    className="flex max-w-[min(100%,18rem)] items-center gap-1 rounded-md border border-sky-500/30 bg-sky-500/10 py-0.5 pl-2 pr-1 text-[11px] text-sky-100"
-                    title={`${capture.locator.selector}\n${capture.url}`}
-                  >
-                    <MousePointer2 className="h-3.5 w-3.5 shrink-0 text-sky-300" />
-                    <span className="truncate">
-                      {capture.accessibleName || capture.tagName} <span className="text-sky-300/70">&lt;{capture.tagName}&gt;</span>
-                    </span>
-                    <button
-                      type="button"
-                      className="shrink-0 rounded p-0.5 text-sky-300/70 hover:bg-sky-400/10 hover:text-sky-100"
-                      aria-label={`Remove browser element ${capture.accessibleName || capture.tagName}`}
-                      disabled={busy || isRunActive}
-                      onClick={() => setBrowserElementCaptures((current) => current.filter((item) => item.id !== capture.id))}
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
+                    capture={capture}
+                    disabled={busy || isRunActive}
+                    onRemove={() => removeBrowserElementCapture(capture.id)}
+                  />
                 ))}
               </div>
             }
