@@ -8,6 +8,8 @@ interface ImageLightboxProps {
   title: string;
   /** File name used for the download link. */
   downloadFileName: string;
+  /** Keeps the portaled viewer inside an owning dialog's focus scope. */
+  focusScopeId?: string;
   onClose: () => void;
 }
 
@@ -16,7 +18,7 @@ interface ImageLightboxProps {
  * the Close button, or Escape. Used for chat image attachments and loop UI
  * review screenshots.
  */
-export const ImageLightbox = ({ imageUrl, title, downloadFileName, onClose }: ImageLightboxProps) => {
+export const ImageLightbox = ({ imageUrl, title, downloadFileName, focusScopeId, onClose }: ImageLightboxProps) => {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -32,6 +34,7 @@ export const ImageLightbox = ({ imageUrl, title, downloadFileName, onClose }: Im
 
   return createPortal(
     <div
+      data-focus-scope-portal-id={focusScopeId}
       className="fixed inset-0 z-[30000] flex items-center justify-center bg-black/80 p-4"
       onClick={onClose}
       role="dialog"
