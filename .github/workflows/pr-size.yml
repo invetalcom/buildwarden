@@ -130,7 +130,7 @@ jobs:
       # This privileged workflow must only inspect git metadata. Do not add
       # dependency installs, builds, tests, package scripts, or cache actions here.
       - name: Checkout base repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
