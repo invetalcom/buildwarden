@@ -343,7 +343,7 @@ export const App = () => {
     welcomeSkippedCheckIds,
     welcomeProviderModelsOpenPanel,
     setWelcomeProviderModelsOpenPanel,
-    handleWelcomeIntroNext,
+    handleWelcomeNext,
     handleWelcomeBack,
     handleWelcomeSkipCheck,
     handleWelcomeFinish,
@@ -4065,7 +4065,7 @@ export const App = () => {
           providerModelsOpenPanel={welcomeProviderModelsOpenPanel}
           onProviderModelsOpenPanelChange={setWelcomeProviderModelsOpenPanel}
           onBack={handleWelcomeBack}
-          onIntroNext={handleWelcomeIntroNext}
+          onNext={handleWelcomeNext}
           onSkipCheck={handleWelcomeSkipCheck}
           onFinish={handleWelcomeFinish}
           providerModelsProps={{

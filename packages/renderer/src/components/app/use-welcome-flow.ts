@@ -52,7 +52,7 @@ export const useWelcomeFlow = ({ buildwarden, snapshot, snapshotLoaded, disabled
     [welcomeKnownCompletedSet],
   );
   const welcomeStepKeys = useMemo<WelcomeStepKey[]>(
-    () => ["intro", ...welcomePendingChecks.map((check) => check.id), "done"],
+    () => ["intro", "about", ...welcomePendingChecks.map((check) => check.id), "done"],
     [welcomePendingChecks],
   );
   const welcomeStepKey = welcomeStepKeys[Math.min(welcomeStepIndex, welcomeStepKeys.length - 1)] ?? "intro";
@@ -97,7 +97,7 @@ export const useWelcomeFlow = ({ buildwarden, snapshot, snapshotLoaded, disabled
     }
   }, [snapshot.models.length, snapshot.providerAccounts.length]);
 
-  const handleWelcomeIntroNext = useStableCallback(() => {
+  const handleWelcomeNext = useStableCallback(() => {
     setWelcomeStepIndex((current) => Math.min(current + 1, welcomeStepKeys.length - 1));
   });
   const handleWelcomeBack = useStableCallback(() => {
@@ -121,7 +121,7 @@ export const useWelcomeFlow = ({ buildwarden, snapshot, snapshotLoaded, disabled
     welcomeSkippedCheckIds,
     welcomeProviderModelsOpenPanel,
     setWelcomeProviderModelsOpenPanel,
-    handleWelcomeIntroNext,
+    handleWelcomeNext,
     handleWelcomeBack,
     handleWelcomeSkipCheck,
     handleWelcomeFinish,

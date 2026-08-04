@@ -1,6 +1,7 @@
-import { useEffect, useRef, type ComponentType, type RefObject } from "react";
+import { useEffect, useRef, useState, type ComponentType, type RefObject } from "react";
 import { Check, Circle, Cpu, FolderOpen, Sparkles } from "lucide-react";
 import { Button } from "../ui/button";
+import { ImageLightbox } from "../ui/image-lightbox";
 import {
   ProviderModelsSettingsTab,
   type ProviderModelsOpenPanel,
@@ -9,8 +10,9 @@ import {
 import { ProjectSetupFields, type ProjectSetupFieldsProps } from "./settings-git-workspace-tab";
 import { WELCOME_CHECK_DEFINITIONS, type WelcomeCheckId } from "./welcome-checks";
 import { cn } from "../../lib/cn";
+import welcomeInformationImage from "../../assets/welcome_information.png";
 
-export type WelcomeStepKey = "intro" | "done" | WelcomeCheckId;
+export type WelcomeStepKey = "intro" | "about" | "done" | WelcomeCheckId;
 
 export type WelcomeDialogProps = {
   stepKey: WelcomeStepKey;
@@ -23,7 +25,7 @@ export type WelcomeDialogProps = {
   projectSetupProps: ProjectSetupFieldsProps;
   onProviderModelsOpenPanelChange: (panel: ProviderModelsOpenPanel) => void;
   onBack: () => void;
-  onIntroNext: () => void;
+  onNext: () => void;
   onSkipCheck: (checkId: WelcomeCheckId) => void;
   onFinish: () => void;
 };
@@ -35,6 +37,7 @@ const checkIconById: Record<WelcomeCheckId, ComponentType<{ className?: string }
 
 const getStepLabel = (step: WelcomeStepKey): string => {
   if (step === "intro") return "Welcome";
+  if (step === "about") return "About";
   if (step === "done") return "Done";
   return WELCOME_CHECK_DEFINITIONS.find((check) => check.id === step)?.navLabel ?? step;
 };
@@ -141,6 +144,12 @@ const buildWelcomeCopy = (stepKey: WelcomeStepKey, completedChecks: Array<{ navL
     introSubtitle = `You already handled ${completedList}. Let's finish ${missingList}.`;
   }
   if (stepKey === "intro") return { introTitle, introDescription, headerTitle: "Welcome to BuildWarden", headerSubtitle: introSubtitle };
+  if (stepKey === "about") return {
+    introTitle,
+    introDescription,
+    headerTitle: "About BuildWarden",
+    headerSubtitle: "A quick map of the workspace and the controls you'll use most.",
+  };
   if (stepKey === "done") return {
     introTitle,
     introDescription,
@@ -153,8 +162,8 @@ const buildWelcomeCopy = (stepKey: WelcomeStepKey, completedChecks: Array<{ navL
   return { introTitle, introDescription, headerTitle: check?.title, headerSubtitle: check?.description };
 };
 
-const WelcomeDialogFooter = ({ stepKey, stepIndex, steps, currentCheck, onBack, onIntroNext, onSkipCheck, onFinish }: Pick<WelcomeDialogProps,
-  "stepKey" | "stepIndex" | "steps" | "onBack" | "onIntroNext" | "onSkipCheck" | "onFinish"
+const WelcomeDialogFooter = ({ stepKey, stepIndex, steps, currentCheck, onBack, onNext, onSkipCheck, onFinish }: Pick<WelcomeDialogProps,
+  "stepKey" | "stepIndex" | "steps" | "onBack" | "onNext" | "onSkipCheck" | "onFinish"
 > & { currentCheck: (typeof WELCOME_CHECK_DEFINITIONS)[number] | null }) => (
   <footer className="flex items-center justify-between gap-3 border-t border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-4 py-3">
     <div className="flex items-center gap-1 md:hidden">
@@ -162,9 +171,10 @@ const WelcomeDialogFooter = ({ stepKey, stepIndex, steps, currentCheck, onBack, 
     </div>
     <div className="ml-auto flex items-center gap-2">
       {stepIndex > 0 && <Button type="button" variant="secondary" onClick={onBack}>Back</Button>}
-      {stepKey === "intro" && <Button type="button" onClick={onIntroNext}>Get started</Button>}
-      {stepKey !== "intro" && currentCheck && <Button type="button" onClick={() => onSkipCheck(currentCheck.id)}>Skip this step</Button>}
-      {stepKey !== "intro" && !currentCheck && <Button type="button" onClick={onFinish}>Finish</Button>}
+      {stepKey === "intro" && <Button type="button" onClick={onNext}>Get started</Button>}
+      {stepKey === "about" && <Button type="button" onClick={onNext}>Continue</Button>}
+      {currentCheck && <Button type="button" onClick={() => onSkipCheck(currentCheck.id)}>Skip this step</Button>}
+      {stepKey === "done" && <Button type="button" onClick={onFinish}>Finish</Button>}
     </div>
   </footer>
 );
@@ -180,19 +190,20 @@ export const WelcomeDialog = ({
   projectSetupProps,
   onProviderModelsOpenPanelChange,
   onBack,
-  onIntroNext,
+  onNext,
   onSkipCheck,
   onFinish,
 }: WelcomeDialogProps) => {
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
+  const [aboutImageOpen, setAboutImageOpen] = useState(false);
   const completedSet = new Set(completedCheckIds);
   const skippedSet = new Set(skippedCheckIds);
   const allChecksComplete = WELCOME_CHECK_DEFINITIONS.every((check) => completedSet.has(check.id));
   const completedChecks = WELCOME_CHECK_DEFINITIONS.filter((check) => completedSet.has(check.id));
   const missingChecks = WELCOME_CHECK_DEFINITIONS.filter((check) => !completedSet.has(check.id));
   const skippedIncompleteChecks = WELCOME_CHECK_DEFINITIONS.filter((check) => skippedSet.has(check.id) && !completedSet.has(check.id));
-  const currentCheck = stepKey !== "intro" && stepKey !== "done"
+  const currentCheck = stepKey !== "intro" && stepKey !== "about" && stepKey !== "done"
     ? WELCOME_CHECK_DEFINITIONS.find((check) => check.id === stepKey) ?? null
     : null;
   const { introTitle, introDescription, headerTitle, headerSubtitle } = buildWelcomeCopy(stepKey, completedChecks, missingChecks, allChecksComplete);
@@ -298,6 +309,24 @@ export const WelcomeDialog = ({
               </div>
             ) : null}
 
+            {stepKey === "about" ? (
+              <figure className="overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)]">
+                <button
+                  type="button"
+                  className="block w-full cursor-zoom-in outline-none transition hover:brightness-110 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-accent)]"
+                  title="Open the BuildWarden workspace overview full size"
+                  aria-label="Open the BuildWarden workspace overview full size"
+                  onClick={() => setAboutImageOpen(true)}
+                >
+                  <img
+                    src={welcomeInformationImage}
+                    alt="Annotated BuildWarden workspace showing project switching, project settings, view and Git controls, history, chats, bookmarks, and global settings."
+                    className="block h-auto w-full object-contain"
+                  />
+                </button>
+              </figure>
+            ) : null}
+
             {stepKey === "provider-models" ? (
               <ProviderModelsSettingsTab
                 {...providerModelsProps}
@@ -345,12 +374,21 @@ export const WelcomeDialog = ({
             steps={steps}
             currentCheck={currentCheck}
             onBack={onBack}
-            onIntroNext={onIntroNext}
+            onNext={onNext}
             onSkipCheck={onSkipCheck}
             onFinish={onFinish}
           />
         </section>
       </div>
+      {aboutImageOpen ? (
+        <ImageLightbox
+          imageUrl={welcomeInformationImage}
+          title="BuildWarden workspace overview"
+          downloadFileName="welcome_information.png"
+          focusScopeId={WELCOME_DIALOG_FOCUS_SCOPE_ID}
+          onClose={() => setAboutImageOpen(false)}
+        />
+      ) : null}
     </div>
   );
 };
