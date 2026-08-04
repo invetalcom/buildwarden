@@ -315,8 +315,11 @@ export const UserSettingsTab = ({
           })}
         </div>
       </SettingsRow>
+    </SettingsSection>
+
+    <SettingsSection title="Sidebar">
       <SettingsRow
-        title="Sidebar run entry size"
+        title="Run entry size"
         description="Adjust the height of Recent Runs entries to fit more or fewer runs in the sidebar."
         align="start"
       >
@@ -349,7 +352,7 @@ export const UserSettingsTab = ({
         </div>
       </SettingsRow>
       <SettingsRow
-        title="Sidebar contrast"
+        title="Contrast"
         description="Give the sidebar its own surface color: slightly brighter and blue-tinted in dark mode, and slightly darker in light mode."
       >
         <div className={`${rowControlClass} flex items-center justify-end gap-3`}>
@@ -363,7 +366,7 @@ export const UserSettingsTab = ({
         </div>
       </SettingsRow>
       <SettingsRow
-        title="Sidebar grouping"
+        title="Grouping"
         description="Show collapsible project groups. When off, runs are sorted together and each entry displays its project name."
       >
         <div className={`${rowControlClass} flex items-center justify-end gap-3`}>
@@ -377,9 +380,8 @@ export const UserSettingsTab = ({
         </div>
       </SettingsRow>
       <SettingsRow
-        title="Sidebar Recent runs window"
+        title="Recent runs window"
         description={`Controls how many days appear in the sidebar Recent Runs group. Default is ${recentRunDaysDefault} days.`}
-        align="start"
       >
         <div className={`${rowControlClass} space-y-2`}>
           <div className="flex flex-wrap items-center justify-start gap-2 md:justify-end">
