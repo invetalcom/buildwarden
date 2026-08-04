@@ -115,9 +115,6 @@ export const ProjectSetupFields = ({
       {canBrowseHostPaths ? <Button type="button" variant="secondary" className="shrink-0" onClick={onChooseDirectory}>
         Browse
       </Button> : null}
-      <Button type="button" className="shrink-0" onClick={onSubmitProject} disabled={busy || !projectPath}>
-        Add project
-      </Button>
     </div>
     <Input placeholder="Display name (optional)" value={projectName} onChange={(event) => onProjectNameChange(event.target.value)} />
     {projectFolderGitWarning ? (
@@ -126,6 +123,11 @@ export const ProjectSetupFields = ({
         <span className="min-w-0">{projectFolderGitWarning}</span>
       </div>
     ) : null}
+    <div className="flex justify-end">
+      <Button type="button" className="shrink-0" onClick={onSubmitProject} disabled={busy || !projectPath}>
+        Add project
+      </Button>
+    </div>
   </div>
 );
 
