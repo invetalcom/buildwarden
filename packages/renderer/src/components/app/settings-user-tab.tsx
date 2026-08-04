@@ -227,6 +227,11 @@ export type UserSettingsTabProps = {
   sidebarContrast: boolean;
   sidebarRunEntrySize: SidebarRunEntrySize;
   sidebarGroupRunsByProject: boolean;
+  recentRunDaysDraft: string;
+  recentRunDaysInvalid: boolean;
+  recentRunDaysMin: number;
+  recentRunDaysMax: number;
+  recentRunDaysDefault: number;
   enableDevMode: boolean;
   appLogDirPath: string;
   appLogDirectorySize: AppLogDirectorySizeInfo;
@@ -238,6 +243,7 @@ export type UserSettingsTabProps = {
   onSidebarContrastChange: (value: boolean) => void;
   onSidebarRunEntrySizeChange: (value: SidebarRunEntrySize) => void;
   onSidebarGroupRunsByProjectChange: (value: boolean) => void;
+  onRecentRunDaysDraftChange: (value: string) => void;
   onEnableDevModeChange: (value: boolean) => void;
   onKeyboardShortcutChange: (id: KeyboardShortcutId, value: string) => void;
   onOpenAppLogDirectory: () => void | Promise<void>;
@@ -255,6 +261,11 @@ export const UserSettingsTab = ({
   sidebarContrast,
   sidebarRunEntrySize,
   sidebarGroupRunsByProject,
+  recentRunDaysDraft,
+  recentRunDaysInvalid,
+  recentRunDaysMin,
+  recentRunDaysMax,
+  recentRunDaysDefault,
   enableDevMode,
   appLogDirPath,
   appLogDirectorySize,
@@ -266,6 +277,7 @@ export const UserSettingsTab = ({
   onSidebarContrastChange,
   onSidebarRunEntrySizeChange,
   onSidebarGroupRunsByProjectChange,
+  onRecentRunDaysDraftChange,
   onEnableDevModeChange,
   onKeyboardShortcutChange,
   onOpenAppLogDirectory,
@@ -304,21 +316,7 @@ export const UserSettingsTab = ({
         </div>
       </SettingsRow>
       <SettingsRow
-        title="Sidebar contrast"
-        description="Give the sidebar its own surface color: slightly brighter and blue-tinted in dark mode, and slightly darker in light mode."
-      >
-        <div className={`${rowControlClass} flex items-center justify-end gap-3`}>
-          <span className="text-xs font-medium text-[var(--ec-muted)]">{sidebarContrast ? "On" : "Off"}</span>
-          <Switch
-            checked={sidebarContrast}
-            onCheckedChange={onSidebarContrastChange}
-            disabled={busy}
-            aria-label="Use contrasting sidebar surface"
-          />
-        </div>
-      </SettingsRow>
-      <SettingsRow
-        title="Run entry size"
+        title="Sidebar run entry size"
         description="Adjust the height of Recent Runs entries to fit more or fewer runs in the sidebar."
         align="start"
       >
@@ -351,7 +349,21 @@ export const UserSettingsTab = ({
         </div>
       </SettingsRow>
       <SettingsRow
-        title="Group runs by project"
+        title="Sidebar contrast"
+        description="Give the sidebar its own surface color: slightly brighter and blue-tinted in dark mode, and slightly darker in light mode."
+      >
+        <div className={`${rowControlClass} flex items-center justify-end gap-3`}>
+          <span className="text-xs font-medium text-[var(--ec-muted)]">{sidebarContrast ? "On" : "Off"}</span>
+          <Switch
+            checked={sidebarContrast}
+            onCheckedChange={onSidebarContrastChange}
+            disabled={busy}
+            aria-label="Use contrasting sidebar surface"
+          />
+        </div>
+      </SettingsRow>
+      <SettingsRow
+        title="Sidebar grouping"
         description="Show collapsible project groups. When off, runs are sorted together and each entry displays its project name."
       >
         <div className={`${rowControlClass} flex items-center justify-end gap-3`}>
@@ -362,6 +374,36 @@ export const UserSettingsTab = ({
             disabled={busy}
             aria-label="Group sidebar runs by project"
           />
+        </div>
+      </SettingsRow>
+      <SettingsRow
+        title="Sidebar Recent runs window"
+        description={`Controls how many days appear in the sidebar Recent Runs group. Default is ${recentRunDaysDefault} days.`}
+        align="start"
+      >
+        <div className={`${rowControlClass} space-y-2`}>
+          <div className="flex flex-wrap items-center justify-start gap-2 md:justify-end">
+            <label className="flex h-9 w-36 items-center overflow-hidden rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)]">
+              <input
+                className="h-full min-w-0 flex-1 bg-transparent px-3 text-sm text-[var(--ec-text)] outline-none"
+                type="number"
+                min={recentRunDaysMin}
+                max={recentRunDaysMax}
+                step={1}
+                value={recentRunDaysDraft}
+                onChange={(event) => onRecentRunDaysDraftChange(event.target.value)}
+                aria-label="Recent runs days"
+              />
+              <span className="inline-flex h-full items-center border-l border-[var(--ec-border)] px-2 text-[11px] text-[var(--ec-muted)]">
+                days
+              </span>
+            </label>
+          </div>
+          {recentRunDaysInvalid ? (
+            <p className="text-xs text-[var(--ec-danger)] md:text-right">
+              Enter a whole number between {recentRunDaysMin} and {recentRunDaysMax}.
+            </p>
+          ) : null}
         </div>
       </SettingsRow>
     </SettingsSection>

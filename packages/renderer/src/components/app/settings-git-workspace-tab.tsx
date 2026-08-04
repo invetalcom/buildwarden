@@ -14,11 +14,6 @@ export type GitWorkspaceSettingsTabProps = {
   projectFolderGitWarning: string | null;
   autoCheckoutRunBranchOnOpen: boolean;
   autoReleaseRunBranchOnLeave: boolean;
-  recentRunDaysDraft: string;
-  recentRunDaysInvalid: boolean;
-  recentRunDaysMin: number;
-  recentRunDaysMax: number;
-  recentRunDaysDefault: number;
   worktreeRootDraft: string;
   worktreeRootOverrideSettingValue: string;
   worktreeRootDirty: boolean;
@@ -33,7 +28,6 @@ export type GitWorkspaceSettingsTabProps = {
   onDeleteProject: (projectId: string) => void;
   onAutoCheckoutRunBranchOnOpenChange: (value: boolean) => void;
   onAutoReleaseRunBranchOnLeaveChange: (value: boolean) => void;
-  onRecentRunDaysDraftChange: (value: string) => void;
   onProjectNameChange: (value: string) => void;
   onProjectPathChange: (value: string) => void;
   onWorktreeRootDraftChange: (value: string) => void;
@@ -139,11 +133,6 @@ export const GitWorkspaceSettingsTab = ({
   projectFolderGitWarning,
   autoCheckoutRunBranchOnOpen,
   autoReleaseRunBranchOnLeave,
-  recentRunDaysDraft,
-  recentRunDaysInvalid,
-  recentRunDaysMin,
-  recentRunDaysMax,
-  recentRunDaysDefault,
   worktreeRootDraft,
   worktreeRootOverrideSettingValue,
   worktreeRootDirty,
@@ -158,7 +147,6 @@ export const GitWorkspaceSettingsTab = ({
   onDeleteProject,
   onAutoCheckoutRunBranchOnOpenChange,
   onAutoReleaseRunBranchOnLeaveChange,
-  onRecentRunDaysDraftChange,
   onProjectNameChange,
   onProjectPathChange,
   onWorktreeRootDraftChange,
@@ -241,36 +229,6 @@ export const GitWorkspaceSettingsTab = ({
               onCheckedChange={onAutoReleaseRunBranchOnLeaveChange}
               aria-label="Auto release idle run branch on leave"
             />
-          </div>
-        </SettingsRow>
-        <SettingsRow
-          title="Recent runs window"
-          description={`Controls how many days appear in the sidebar Recent Runs group. Default is ${recentRunDaysDefault} days.`}
-          align="start"
-        >
-          <div className={`${rowControlClass} space-y-2`}>
-            <div className="flex flex-wrap items-center justify-start gap-2 md:justify-end">
-              <label className="flex h-9 w-36 items-center overflow-hidden rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)]">
-                <input
-                  className="h-full min-w-0 flex-1 bg-transparent px-3 text-sm text-[var(--ec-text)] outline-none"
-                  type="number"
-                  min={recentRunDaysMin}
-                  max={recentRunDaysMax}
-                  step={1}
-                  value={recentRunDaysDraft}
-                  onChange={(event) => onRecentRunDaysDraftChange(event.target.value)}
-                  aria-label="Recent runs days"
-                />
-                <span className="inline-flex h-full items-center border-l border-[var(--ec-border)] px-2 text-[11px] text-[var(--ec-muted)]">
-                  days
-                </span>
-              </label>
-            </div>
-            {recentRunDaysInvalid ? (
-              <p className="text-xs text-[var(--ec-danger)] md:text-right">
-                Enter a whole number between {recentRunDaysMin} and {recentRunDaysMax}.
-              </p>
-            ) : null}
           </div>
         </SettingsRow>
       </SettingsSection>
