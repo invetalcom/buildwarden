@@ -81,6 +81,27 @@ describe("run activity timeline shaping", () => {
     expect(renderToStaticMarkup(<RunActivityTimeline steps={[]} run={{ id: "empty", status: "completed", mode: "code" }} />)).toContain("No activity recorded");
   });
 
+  it("cleans generated attachment text from single prompt entries", () => {
+    const prompt = renderToStaticMarkup(
+      <RunActivityTimeline
+        steps={[step("prompt", "log", { source: "user", attachmentNames: ["spec.md"] }, "Update the form\nAttachments: spec.md")]}
+        run={{ id: "run-prompt", status: "completed", mode: "code" }}
+      />,
+    );
+    const attachmentOnly = renderToStaticMarkup(
+      <RunActivityTimeline
+        steps={[step("prompt", "log", { source: "user", attachmentNames: ["spec.md"] }, "(no text)\nAttachments: spec.md")]}
+        run={{ id: "run-attachment", status: "completed", mode: "code" }}
+      />,
+    );
+
+    expect(prompt).toContain("Update the form");
+    expect(prompt).not.toContain("Attachments:");
+    expect(prompt.indexOf("Update the form")).toBeLessThan(prompt.indexOf("spec.md"));
+    expect(attachmentOnly).not.toContain("(no text)");
+    expect(attachmentOnly).not.toContain("Attachments:");
+  });
+
   it("renders the virtualized timeline shell without crashing", () => {
     const virtualized = renderToStaticMarkup(
       <RunActivityTimeline

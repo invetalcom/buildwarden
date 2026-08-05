@@ -198,6 +198,7 @@ const renderUserActivityEntry = (entry: Extract<ActivityEntry, { kind: "single" 
   const timestamp = new Date(entry.step.createdAt).toLocaleTimeString();
   const att = extractAttachmentNamesFromMetadata(entry.metadata);
   const attachments = extractAttachmentPayloadsFromMetadata(entry.metadata);
+  const promptContent = getStoredAttachmentMessageContent(entry.step.content, att);
   const canUndoPrompt = !readOnly && entry.step.id === restorablePromptStepId && Boolean(onUndoRunToLastPrompt);
   return (
     <AgentLogRow key={entry.step.id} tone="prompt" label="Prompt" time={rowTime(timestamp)}>
@@ -244,8 +245,8 @@ const renderUserActivityEntry = (entry: Extract<ActivityEntry, { kind: "single" 
             <span className="agent-density-meta text-[10px] text-zinc-500">{timestamp}</span>
           </div>
         </div>
+        {promptContent ? <ActivityMarkdownOrGitDiff content={promptContent} compact={compactContent} className="mt-1 text-zinc-200" onOpenWorkspaceFile={onOpenWorkspaceFile} /> : null}
         <StoredChatAttachments attachments={attachments} fallbackNames={att} compact={compactContent} />
-        <ActivityMarkdownOrGitDiff content={entry.step.content} compact={compactContent} className="mt-1 text-zinc-200" onOpenWorkspaceFile={onOpenWorkspaceFile} />
       </div>
     </AgentLogRow>
   );
