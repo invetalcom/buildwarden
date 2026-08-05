@@ -2850,27 +2850,22 @@ export function validateChatAttachmentPayloads(attachments: ChatAttachmentPayloa
       if (mimeType !== expectedMimeType) {
         throw new Error(`"${a.fileName}" has a browser element role that does not match its MIME type.`);
       }
+      const displayMetadata = JSON.stringify([
+        a.source.annotationNumber ?? null,
+        a.source.comment ?? null,
+        a.source.tagName ?? null,
+        a.source.accessibleName ?? null,
+      ]);
       const group = browserGroups.get(a.source.groupId);
       if (!group) {
         browserGroups.set(a.source.groupId, {
           captureId: a.source.captureId,
           url: a.source.url,
           selector: a.source.selector,
-          displayMetadata: JSON.stringify([
-            a.source.annotationNumber ?? null,
-            a.source.comment ?? null,
-            a.source.tagName ?? null,
-            a.source.accessibleName ?? null,
-          ]),
+          displayMetadata,
           roles: new Set([a.source.role]),
         });
       } else {
-        const displayMetadata = JSON.stringify([
-          a.source.annotationNumber ?? null,
-          a.source.comment ?? null,
-          a.source.tagName ?? null,
-          a.source.accessibleName ?? null,
-        ]);
         if (group.captureId !== a.source.captureId || group.url !== a.source.url || group.selector !== a.source.selector || group.displayMetadata !== displayMetadata) {
           throw new Error(`"${a.fileName}" does not match the other attachment in its browser element group.`);
         }
