@@ -7,6 +7,8 @@ import {
   validateChatAttachmentPayloads,
   type ChatAttachmentPayload,
   type KeyboardShortcutId,
+  type ModelExecutionProfile,
+  type ProviderExecutionOptions,
   type RunDetail,
   type RunBrowserElementCapture,
   type RunNoteRecord,
@@ -73,6 +75,7 @@ import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { OrchestrationAgentsPanel } from "./OrchestrationAgentsPanel";
 import { shouldAutoOpenAgentsPanel } from "./run-workspace-layout";
+import { buildRunReasoningInput } from "./app-model";
 
 const RunFilePanel = lazy(() => import("./RunFilePanel").then((module) => ({ default: module.RunFilePanel })));
 const RunWorktreeTerminal = lazy(() =>
@@ -137,6 +140,7 @@ type RunDetailModelOption = {
   modelId: string;
   providerType: import("@buildwarden/shared").ProviderType;
   providerFamily: import("@buildwarden/shared").UnifiedProviderFamily | null;
+  executionProfile?: ModelExecutionProfile;
 };
 
 const safeParseMetadata = (value: string) => {
@@ -191,9 +195,13 @@ const formatRunDuration = (startedAt: string | null, finishedAt: string | null) 
 const getLatestUserCommandOptions = (steps: RunDetail["steps"]) => {
   const latestUserStep = [...steps].reverse().find((step) => safeParseMetadata(step.metadataJson).source === "user");
   const metadata = latestUserStep ? safeParseMetadata(latestUserStep.metadataJson) : {};
+  const executionOptions = metadata.executionOptions && typeof metadata.executionOptions === "object" && !Array.isArray(metadata.executionOptions)
+    ? metadata.executionOptions as ProviderExecutionOptions
+    : undefined;
   return {
-    reasoningEffort: typeof metadata.reasoningEffort === "string" ? metadata.reasoningEffort : "medium",
-    anthropicEffort: typeof metadata.anthropicEffort === "string" ? metadata.anthropicEffort : "medium",
+    reasoningEffort: typeof metadata.reasoningEffort === "string" ? metadata.reasoningEffort : executionOptions?.reasoningEffort ?? "auto",
+    anthropicEffort: typeof metadata.anthropicEffort === "string" ? metadata.anthropicEffort : executionOptions?.anthropicEffort ?? "auto",
+    executionMode: executionOptions?.serviceTier ?? executionOptions?.speed ?? executionOptions?.contextMode ?? executionOptions?.workflowMode ?? "auto",
     yoloMode: metadata.yoloMode === true,
   };
 };
@@ -260,6 +268,7 @@ export interface RunDetailPageProps {
       attachments?: ChatAttachmentPayload[];
       reasoningEffort?: string;
       anthropicEffort?: string;
+      executionOptions?: ProviderExecutionOptions;
       yoloMode?: boolean;
       goalText?: string | null;
     },
@@ -312,8 +321,9 @@ export const RunDetailPage = ({
   const [goalSaving, setGoalSaving] = useState(false);
   const [selectedMode, setSelectedMode] = useState<RunRecord["mode"]>(runDetail.run.mode);
   const [selectedModelId, setSelectedModelId] = useState(runDetail.run.modelId);
-  const [selectedReasoningEffort, setSelectedReasoningEffort] = useState("medium");
-  const [selectedAnthropicEffort, setSelectedAnthropicEffort] = useState("medium");
+  const [selectedReasoningEffort, setSelectedReasoningEffort] = useState("auto");
+  const [selectedAnthropicEffort, setSelectedAnthropicEffort] = useState("auto");
+  const [selectedExecutionMode, setSelectedExecutionMode] = useState("auto");
   const [selectedYoloMode, setSelectedYoloMode] = useState(false);
   const [expandedReasoningStepIds, setExpandedReasoningStepIds] = useState<Record<string, boolean>>({});
   const [copiedStepId, setCopiedStepId] = useState<string | null>(null);
@@ -444,9 +454,11 @@ export const RunDetailPage = ({
     setSelectedModelId(runDetail.run.modelId);
     setSelectedReasoningEffort(latestUserCommandOptions.reasoningEffort);
     setSelectedAnthropicEffort(latestUserCommandOptions.anthropicEffort);
+    setSelectedExecutionMode(latestUserCommandOptions.executionMode);
     setSelectedYoloMode(latestUserCommandOptions.yoloMode);
   }, [
     latestUserCommandOptions.anthropicEffort,
+    latestUserCommandOptions.executionMode,
     latestUserCommandOptions.reasoningEffort,
     latestUserCommandOptions.yoloMode,
     runDetail.run.id,
@@ -627,12 +639,20 @@ export const RunDetailPage = ({
       return;
     }
     try {
+      const selectedModel = modelOptions.find((option) => option.id === selectedModelId);
+      if (!selectedModel) return;
       await onFollowUpRun(runDetail.run, trimmed, {
         mode: selectedMode,
         modelId: selectedModelId,
         attachments,
-        reasoningEffort: selectedReasoningEffort,
-        anthropicEffort: selectedAnthropicEffort,
+        ...buildRunReasoningInput(
+          selectedModel.providerType,
+          selectedModel.providerFamily,
+          selectedReasoningEffort,
+          selectedAnthropicEffort,
+          selectedModel.executionProfile,
+          selectedExecutionMode,
+        ),
         yoloMode: selectedYoloMode,
       });
       setFollowUpPrompt("");
@@ -653,11 +673,20 @@ export const RunDetailPage = ({
     }
     setGoalSaving(true);
     try {
+      const selectedModel = modelOptions.find((option) => option.id === (selectedModelId || runDetail.run.modelId));
       await onFollowUpRun(runDetail.run, "", {
         mode: selectedMode,
         modelId: selectedModelId || runDetail.run.modelId,
-        reasoningEffort: selectedReasoningEffort,
-        anthropicEffort: selectedAnthropicEffort,
+        ...(selectedModel
+          ? buildRunReasoningInput(
+              selectedModel.providerType,
+              selectedModel.providerFamily,
+              selectedReasoningEffort,
+              selectedAnthropicEffort,
+              selectedModel.executionProfile,
+              selectedExecutionMode,
+            )
+          : {}),
         yoloMode: selectedYoloMode,
         goalText: nextGoal,
       });
@@ -683,11 +712,20 @@ export const RunDetailPage = ({
     if (!trimmed || busy || isRunActive) {
       return;
     }
+    const selectedModel = modelOptions.find((option) => option.id === (selectedModelId || runDetail.run.modelId));
     await onFollowUpRun(runDetail.run, `Please revise the plan with this feedback:\n\n${trimmed}`, {
       mode: "plan",
       modelId: selectedModelId || runDetail.run.modelId,
-      reasoningEffort: selectedReasoningEffort,
-      anthropicEffort: selectedAnthropicEffort,
+      ...(selectedModel
+        ? buildRunReasoningInput(
+            selectedModel.providerType,
+            selectedModel.providerFamily,
+            selectedReasoningEffort,
+            selectedAnthropicEffort,
+            selectedModel.executionProfile,
+            selectedExecutionMode,
+          )
+        : {}),
       yoloMode: selectedYoloMode,
     });
   };
@@ -1842,6 +1880,7 @@ export const RunDetailPage = ({
               contextModelId: option.modelId,
               providerType: option.providerType,
               providerFamily: option.providerFamily,
+              executionProfile: option.executionProfile,
             }))}
             busy={busy}
             isRunActive={isRunActive}
@@ -1866,6 +1905,8 @@ export const RunDetailPage = ({
             anthropicEffort={selectedAnthropicEffort}
             onReasoningEffortChange={setSelectedReasoningEffort}
             onAnthropicEffortChange={setSelectedAnthropicEffort}
+            executionMode={selectedExecutionMode}
+            onExecutionModeChange={setSelectedExecutionMode}
             yoloMode={selectedYoloMode}
             onYoloModeChange={setSelectedYoloMode}
           /> : null}

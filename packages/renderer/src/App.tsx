@@ -32,6 +32,8 @@ import {
   type ProjectSnapshot,
   type ProjectTaskStatus,
   type ProjectInsightKind,
+  type ProviderExecutionOptions,
+  type FollowUpChatOptions,
   type ProviderType,
   type RunDetail,
   type RunDeletionImpact,
@@ -79,6 +81,7 @@ import {
   EMPTY_SNAPSHOT,
   RUN_DRAG_MIME_TYPE,
   RUN_PANE_IDS,
+  buildModelExecutionProfile,
   buildRunReasoningInput,
   cloneDefaultRunWorkspaceLayoutPreference,
   findProjectRun,
@@ -237,12 +240,14 @@ export const App = () => {
   const [runMode, setRunMode] = useState<RunMode>("code");
   const [runWorkspaceType, setRunWorkspaceType] = useState<RunWorkspaceType>("worktree");
   const [runPrompt, setRunPrompt] = useState("");
-  const [runReasoningEffort, setRunReasoningEffort] = useState("medium");
-  const [runAnthropicEffort, setRunAnthropicEffort] = useState("medium");
+  const [runReasoningEffort, setRunReasoningEffort] = useState("auto");
+  const [runAnthropicEffort, setRunAnthropicEffort] = useState("auto");
+  const [runExecutionMode, setRunExecutionMode] = useState("auto");
   const [runYoloMode, setRunYoloMode] = useState(false);
   const [runDelegationEnabled, setRunDelegationEnabled] = useState(false);
-  const [chatReasoningEffort, setChatReasoningEffort] = useState("medium");
-  const [chatAnthropicEffort, setChatAnthropicEffort] = useState("medium");
+  const [chatReasoningEffort, setChatReasoningEffort] = useState("auto");
+  const [chatAnthropicEffort, setChatAnthropicEffort] = useState("auto");
+  const [chatExecutionMode, setChatExecutionMode] = useState("auto");
   const [selectedRunId, setSelectedRunId] = useState<string | null | undefined>(undefined);
   const selectedRunIdRef = useRef<string | null | undefined>(undefined);
   selectedRunIdRef.current = selectedRunId;
@@ -1113,6 +1118,7 @@ export const App = () => {
     changeRunWorkspaceType,
     changeRunReasoningEffort,
     changeRunAnthropicEffort,
+    changeRunExecutionMode,
     changeRunYoloMode,
     changeRunModel,
     changeRunWorktreeModelIds,
@@ -1127,6 +1133,7 @@ export const App = () => {
     setRunWorkspaceType,
     setRunReasoningEffort,
     setRunAnthropicEffort,
+    setRunExecutionMode,
     setRunYoloMode,
     setRunModelId,
     setRunWorktreeModelIds,
@@ -1233,12 +1240,15 @@ export const App = () => {
           const provider = providerAccountById.get(model.providerAccountId) ?? null;
           const providerLabel = provider?.label ?? "Provider";
 
+          const providerType = provider?.providerType ?? "ai-sdk";
+          const providerFamily = providerType === "ai-sdk" ? getAiSdkProviderFamilyFromConfigJson(provider?.configJson ?? "{}") : null;
           return {
             id: model.id,
             label: `${model.displayName} - ${providerLabel}`,
             modelId: model.modelId,
-            providerType: provider?.providerType ?? "ai-sdk",
-            providerFamily: provider?.providerType === "ai-sdk" ? getAiSdkProviderFamilyFromConfigJson(provider.configJson) : null,
+            providerType,
+            providerFamily,
+            executionProfile: buildModelExecutionProfile(providerType, providerFamily, model.modelId, model.configJson),
           };
         }),
     [providerAccountById, snapshot.models],
@@ -1805,6 +1815,8 @@ export const App = () => {
       providerFamilyForModel,
       runReasoningEffort,
       runAnthropicEffort,
+      buildModelExecutionProfile(selectedProvider.providerType, providerFamilyForModel, selectedModel.modelId, selectedModel.configJson),
+      runExecutionMode,
     );
     const commandInput = resolveProviderComposerPrompt(prompt, selectedProvider.providerType, "run");
     if (commandInput.goalText !== undefined && !commandInput.prompt.trim() && !(attachments?.length ?? 0)) {
@@ -2561,6 +2573,7 @@ export const App = () => {
     attachments?: ChatAttachmentPayload[];
     reasoningEffort?: string;
     anthropicEffort?: string;
+    executionOptions?: ProviderExecutionOptions;
   }) => {
     await handleAction(async () => {
       if (!buildwarden) {
@@ -2578,6 +2591,7 @@ export const App = () => {
         attachments: input.attachments,
         reasoningEffort: input.reasoningEffort,
         anthropicEffort: input.anthropicEffort,
+        executionOptions: input.executionOptions,
       });
       await loadSnapshot();
       setChatsSelected(true);
@@ -2600,7 +2614,7 @@ export const App = () => {
   const followUpChat = async (
     chatId: string,
     prompt: string,
-    options?: { modelId?: string; attachments?: ChatAttachmentPayload[]; reasoningEffort?: string; anthropicEffort?: string },
+    options?: FollowUpChatOptions,
   ) => {
     await handleAction(async () => {
       if (!buildwarden) {
@@ -3671,6 +3685,7 @@ export const App = () => {
                   attachments: input.attachments,
                   reasoningEffort: input.reasoningEffort,
                   anthropicEffort: input.anthropicEffort,
+                  executionOptions: input.executionOptions,
                 })
               }
               onCancel={() => void cancelChat(selectedChat.id)}
@@ -3696,6 +3711,8 @@ export const App = () => {
               anthropicEffort={chatAnthropicEffort}
               onReasoningEffortChange={setChatReasoningEffort}
               onAnthropicEffortChange={setChatAnthropicEffort}
+              executionMode={chatExecutionMode}
+              onExecutionModeChange={setChatExecutionMode}
               onDeleteChat={(chatId) => void deleteChat(chatId)}
             />
               );
@@ -3803,11 +3820,13 @@ export const App = () => {
               onRestoreRunFromForLater={(runId) => void restoreRunFromForLater(runId)}
               reasoningEffort={runReasoningEffort}
               anthropicEffort={runAnthropicEffort}
+              executionMode={runExecutionMode}
               yoloMode={runYoloMode}
               delegationEnabled={runDelegationEnabled}
               delegationAvailable={delegationAvailable}
               onReasoningEffortChange={changeRunReasoningEffort}
               onAnthropicEffortChange={changeRunAnthropicEffort}
+              onExecutionModeChange={changeRunExecutionMode}
               onYoloModeChange={changeRunYoloMode}
               onDelegationEnabledChange={setRunDelegationEnabled}
               onSelectRun={(runId) => void handleRunSelect(project.project.id, runId)}

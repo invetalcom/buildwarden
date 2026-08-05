@@ -102,6 +102,9 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
   const [mode, setMode] = useState<RunMode>(defaults.mode);
   const [workspaceType, setWorkspaceType] = useState<RunWorkspaceType>(defaults.workspaceType);
   const [yoloMode, setYoloMode] = useState(defaults.yoloMode);
+  const [reasoningEffort, setReasoningEffort] = useState(defaults.reasoningEffort);
+  const [anthropicEffort, setAnthropicEffort] = useState(defaults.anthropicEffort);
+  const [executionMode, setExecutionMode] = useState(defaults.executionMode);
   const [delegation, setDelegation] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
 
@@ -129,6 +132,9 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
     setWorkspaceType(defaults.workspaceType);
     setYoloMode(defaults.yoloMode);
     setModelId(defaults.modelId);
+    setReasoningEffort(defaults.reasoningEffort);
+    setAnthropicEffort(defaults.anthropicEffort);
+    setExecutionMode(defaults.executionMode);
   }, [defaults, selectedProjectId, snapshotStore.loaded]);
 
   // Models arrive with the first snapshot, which can land after this screen mounts.
@@ -137,6 +143,11 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
   }, [defaults.modelId, modelId, models]);
 
   const model = models.find((option) => option.modelId === modelId) ?? null;
+  const reasoningControl = model?.executionProfile.controls.find((control) => control.id === "reasoningEffort" || control.id === "thinkingLevel");
+  const secondaryControl = model?.executionProfile.controls.find((control) => control.id !== "reasoningEffort" && control.id !== "thinkingLevel");
+  const selectedEffort = model?.providerType === "claude-code" || (model?.providerType === "ai-sdk" && model.providerFamily === "anthropic")
+    ? anthropicEffort
+    : reasoningEffort;
   const workspaces = WORKSPACES[projectKind];
 
   const start = async () => {
@@ -154,7 +165,14 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
           delegationEnabled: delegation,
           baseBranch: project.project.baseBranch,
           prompt: prompt.trim(),
-          ...buildRunReasoningInput(model.providerType, null, defaults.reasoningEffort, defaults.anthropicEffort),
+          ...buildRunReasoningInput(
+            model.providerType,
+            model.providerFamily,
+            reasoningEffort,
+            anthropicEffort,
+            model.executionProfile,
+            executionMode,
+          ),
         }),
       "The run did not start.",
     );
@@ -242,6 +260,36 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
           <>
             <OptionGroup label="Mode" options={MODES} value={mode} onChange={setMode} />
             <OptionGroup label="Workspace" options={workspaces} value={workspaceType} onChange={setWorkspaceType} />
+            {reasoningControl ? (
+              <label className="flex flex-col gap-1.5 px-4 py-2">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">{reasoningControl.label}</span>
+                <select
+                  value={reasoningControl.options.some((option) => option.value === selectedEffort) ? selectedEffort : "auto"}
+                  onChange={(event) => {
+                    if (model?.providerType === "claude-code" || (model?.providerType === "ai-sdk" && model.providerFamily === "anthropic")) {
+                      setAnthropicEffort(event.target.value);
+                    } else {
+                      setReasoningEffort(event.target.value);
+                    }
+                  }}
+                  className="m-tap w-full rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-3 text-[var(--ec-text)]"
+                >
+                  {reasoningControl.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+            ) : null}
+            {secondaryControl && secondaryControl.options.length > 1 ? (
+              <label className="flex flex-col gap-1.5 px-4 py-2">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">{secondaryControl.label}</span>
+                <select
+                  value={secondaryControl.options.some((option) => option.value === executionMode) ? executionMode : "auto"}
+                  onChange={(event) => setExecutionMode(event.target.value)}
+                  className="m-tap w-full rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-3 text-[var(--ec-text)]"
+                >
+                  {secondaryControl.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+            ) : null}
             <div className="flex flex-col gap-1 px-4 py-2">
               <div className="m-tap flex items-center gap-3">
                 <span className="flex flex-1 flex-col">

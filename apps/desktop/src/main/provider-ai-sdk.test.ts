@@ -5,6 +5,7 @@ import { MockLanguageModelV4 } from "../../../../packages/provider-ai-sdk/node_m
 import {
   AiSdkProviderAdapter,
   applyAnthropicCacheBreakpoints,
+  buildAiSdkExecutionProfile,
   buildAiSdkPlanProgressChunk,
   buildAiSdkProviderOptions,
   buildInstructionsForFamily,
@@ -16,6 +17,25 @@ import {
 } from "../../../../packages/provider-ai-sdk/src";
 
 describe("AiSdkProviderAdapter", () => {
+  const controlValues = (family: "openai" | "anthropic" | "google" | "xai" | "openai-compatible", modelId: string, id: string) => {
+    const config = buildAiSdkExecutionProfile(family, modelId) as {
+      buildwardenExecutionProfile: { controls: Array<{ id: string; options: Array<{ value: string }> }> };
+    };
+    return config.buildwardenExecutionProfile.controls.find((control) => control.id === id)?.options.map((option) => option.value) ?? [];
+  };
+
+  it("publishes exact per-model effort and speed profiles", () => {
+    expect(controlValues("openai", "gpt-5.5", "reasoningEffort")).toEqual(["auto", "none", "low", "medium", "high", "xhigh"]);
+    expect(controlValues("openai", "gpt-5.5-pro", "reasoningEffort")).toEqual(["auto", "medium", "high", "xhigh"]);
+    expect(controlValues("openai", "gpt-5.5", "serviceTier")).toEqual(["auto", "default", "flex", "priority"]);
+    expect(controlValues("anthropic", "claude-opus-4-8", "speed")).toEqual(["auto", "standard", "fast"]);
+    expect(controlValues("anthropic", "claude-opus-4-7", "speed")).toEqual([]);
+    expect(controlValues("google", "gemini-3.1-pro-preview", "thinkingLevel")).toEqual(["auto", "low", "medium", "high"]);
+    expect(controlValues("google", "gemini-3.5-flash", "thinkingLevel")).toEqual(["auto", "minimal", "low", "medium", "high"]);
+    expect(controlValues("xai", "grok-4.5", "reasoningEffort")).toEqual(["auto", "low", "medium", "high"]);
+    expect(controlValues("openai-compatible", "custom", "reasoningEffort")).toEqual([]);
+  });
+
   it("rejects missing api keys for direct providers", () => {
     const adapter = new AiSdkProviderAdapter();
 
@@ -56,19 +76,20 @@ describe("AiSdkProviderAdapter", () => {
       source: "curated" as const,
     }));
 
-    await expect(
-      adapter.listAvailableModels({
+    const models = await adapter.listAvailableModels({
         providerAccountId: "provider-1",
         providerType: "ai-sdk",
         config: { providerFamily: "anthropic" },
         apiBaseUrl: null,
-      }),
-    ).resolves.toEqual(expected);
+      });
+    expect(models.map(({ modelId, displayName, source }) => ({ modelId, displayName, source }))).toEqual(expected);
+    expect(models.find((model) => model.modelId === "opus")?.config).toEqual({
+      buildwardenExecutionProfile: { source: "catalog", controls: [] },
+    });
   });
 
   it("normalizes Google models from the AI SDK model catalog", () => {
-    expect(
-      parseAiSdkModelsApiAvailableModels(
+    const models = parseAiSdkModelsApiAvailableModels(
         {
           data: [
             { id: "google/gemini-2.5-flash", name: "Gemini 2.5 Flash", type: "language" },
@@ -80,23 +101,27 @@ describe("AiSdkProviderAdapter", () => {
           ],
         },
         "google",
-      ),
-    ).toEqual([
+      );
+    expect(models.map(({ modelId, displayName, source }) => ({ modelId, displayName, source }))).toEqual([
       { modelId: "gemini-2.5-flash", displayName: "Gemini 2.5 Flash", source: "provider" },
       { modelId: "gemini-3-pro-preview", displayName: "Gemini 3 Pro Preview", source: "provider" },
       { modelId: "gemini-3.1-flash-lite", displayName: "Gemini 3.1 Flash Lite", source: "provider" },
     ]);
+    expect(models.find((model) => model.modelId === "gemini-3-pro-preview")?.config).toMatchObject({
+      buildwardenExecutionProfile: { controls: expect.arrayContaining([expect.objectContaining({ id: "thinkingLevel" })]) },
+    });
   });
 
   it("supports models response shape from the AI SDK catalog", () => {
-    expect(
-      parseAiSdkModelsApiAvailableModels(
+    const models = parseAiSdkModelsApiAvailableModels(
         {
           models: [{ id: "google/gemini-3-flash", displayName: "Gemini 3 Flash", modelType: "language" }],
         },
         "google",
-      ),
-    ).toEqual([{ modelId: "gemini-3-flash", displayName: "Gemini 3 Flash", source: "provider" }]);
+      );
+    expect(models.map(({ modelId, displayName, source }) => ({ modelId, displayName, source }))).toEqual([
+      { modelId: "gemini-3-flash", displayName: "Gemini 3 Flash", source: "provider" },
+    ]);
   });
 
   it("does not surface catalog models for non-Google AI SDK families", () => {
@@ -420,5 +445,33 @@ describe("buildAiSdkProviderOptions prompt cache key", () => {
 
   it("still returns undefined when nothing is configured", () => {
     expect(buildAiSdkProviderOptions("openai", "gpt-4o", undefined, undefined)).toBeUndefined();
+  });
+
+  it("maps service and reasoning controls to each AI SDK provider namespace", () => {
+    expect(buildAiSdkProviderOptions("openai", "gpt-5.6", {
+      reasoningEffort: "max",
+      serviceTier: "priority",
+    }, undefined)).toEqual({
+      openai: { reasoningEffort: "max", reasoningSummary: "auto", serviceTier: "priority" },
+    });
+    expect(buildAiSdkProviderOptions("anthropic", "claude-opus-4-8", {
+      anthropicEffort: "xhigh",
+      speed: "fast",
+    }, undefined)).toEqual({ anthropic: { effort: "xhigh", speed: "fast" } });
+    expect(buildAiSdkProviderOptions("google", "gemini-3-pro", {
+      thinkingLevel: "high",
+      serviceTier: "flex",
+    }, undefined)).toEqual({ google: { thinkingConfig: { thinkingLevel: "high" }, serviceTier: "flex" } });
+    expect(buildAiSdkProviderOptions("xai", "grok-4.3", { reasoningEffort: "medium" }, undefined)).toEqual({
+      xai: { reasoningEffort: "medium" },
+    });
+    expect(buildAiSdkProviderOptions("openai-compatible", "custom", { reasoningEffort: "high" }, undefined)).toEqual({
+      buildwardenCompatible: { reasoningEffort: "high" },
+    });
+  });
+
+  it("treats auto as provider default and omits the override", () => {
+    expect(buildAiSdkProviderOptions("openai", "gpt-5.6", { reasoningEffort: "auto", serviceTier: "auto" }, undefined)).toBeUndefined();
+    expect(buildAiSdkProviderOptions("anthropic", "claude-opus-4-8", { anthropicEffort: "auto", speed: "auto" }, undefined)).toBeUndefined();
   });
 });

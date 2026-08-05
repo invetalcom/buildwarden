@@ -13,6 +13,7 @@ import {
   getModelPresetsForProvider,
   isTerminalRunSubagentStatus,
   mergeRunSubagentInfo,
+  MODEL_CONFIG_EXECUTION_PROFILE_KEY,
   normalizeRunPlanProgressPayload,
   normalizeRunPlanStepStatus,
   PROVIDER_CONFIG_CURSOR_API_ENDPOINT_KEY,
@@ -26,6 +27,7 @@ import {
   type ProviderAdapter,
   type ProviderAvailableModel,
   type ProviderAvailableModelsContext,
+  type ProviderExecutionOptions,
   type ProviderAccountInput,
   type RunExecutionRequest,
   type RunMode,
@@ -115,9 +117,7 @@ type CursorRuntimeOptions = {
   mode: RunMode;
   yoloMode?: boolean;
   modelConfig?: Record<string, unknown>;
-  providerOptions?: {
-    reasoningEffort?: string;
-  };
+  providerOptions?: ProviderExecutionOptions;
   attachments?: ChatAttachmentPayload[];
   requestShellApproval?: (command: string) => Promise<ShellApprovalDecision>;
   requestUserInput?: (request: RunUserInputRequest) => Promise<RunUserInputAnswers>;
@@ -747,13 +747,20 @@ const isModelConfigOption = (option: CursorAcpConfigOption): boolean => {
 const isReasoningConfigOption = (option: CursorAcpConfigOption): boolean => {
   const id = normalizeToken(configOptionId(option));
   const name = normalizeToken(configOptionName(option));
-  return id.includes("reasoning") || id.includes("effort") || name.includes("reasoning") || name.includes("effort");
+  const category = normalizeToken(asString(option.category));
+  return category === "thought-level" || id.includes("reasoning") || id.includes("effort") || name.includes("reasoning") || name.includes("effort");
 };
 
 const isContextConfigOption = (option: CursorAcpConfigOption): boolean => {
   const id = normalizeToken(configOptionId(option));
   const name = normalizeToken(configOptionName(option));
   return id.includes("context") || name.includes("context");
+};
+
+const isSpeedConfigOption = (option: CursorAcpConfigOption): boolean => {
+  const id = normalizeToken(configOptionId(option));
+  const name = normalizeToken(configOptionName(option));
+  return id.includes("speed") || id.includes("fast") || name.includes("speed") || name.includes("fast");
 };
 
 const isModeConfigOption = (option: CursorAcpConfigOption): boolean => normalizeToken(configOptionId(option)) === "mode";
@@ -804,9 +811,30 @@ const buildCursorModelConfig = (
     return undefined;
   }
   const maxTokens = deriveCursorMaxTokensFromConfigOptions(configOptions);
+  const executionControls = configOptions.flatMap((entry) => {
+    const id = isReasoningConfigOption(entry)
+      ? "reasoningEffort"
+      : isContextConfigOption(entry)
+        ? "contextMode"
+        : isSpeedConfigOption(entry)
+          ? "speed"
+          : null;
+    if (!id || entry.type !== "select") return [];
+    const options = flattenSelectOptions(entry).map((candidate) => ({ value: candidate.value, label: candidate.name }));
+    if (options.length === 0) return [];
+    return [{
+      id,
+      label: id === "reasoningEffort" ? "Effort" : id === "contextMode" ? "Context" : "Speed",
+      defaultValue: "auto",
+      options: [{ value: "auto", label: "Provider default" }, ...options],
+    }];
+  });
   return {
     [CURSOR_MODEL_CONFIG_OPTIONS_KEY]: configOptions,
     ...(maxTokens ? { [CURSOR_MODEL_MAX_TOKENS_KEY]: maxTokens } : {}),
+    ...(executionControls.length > 0
+      ? { [MODEL_CONFIG_EXECUTION_PROFILE_KEY]: { source: "provider", controls: executionControls } }
+      : {}),
   };
 };
 
@@ -843,23 +871,40 @@ const normalizeReasoningEffort = (value: string | undefined): string | undefined
 
 export const resolveCursorAcpConfigUpdates = (
   configOptions: readonly CursorAcpConfigOption[] | undefined,
-  providerOptions: { reasoningEffort?: string } | undefined,
+  providerOptions: ProviderExecutionOptions | undefined,
 ): Array<{ configId: string; value: string | boolean }> => {
-  const reasoning = normalizeReasoningEffort(providerOptions?.reasoningEffort);
-  if (!reasoning) {
-    return [];
-  }
-  const reasoningOption = findConfigOption(configOptions, isReasoningConfigOption);
-  const configId = reasoningOption ? configOptionId(reasoningOption) : "";
-  if (!configId) {
-    return [];
-  }
-  const selected = flattenSelectOptions(reasoningOption).find((option) => {
-    const normalizedValue = normalizeReasoningEffort(option.value);
-    const normalizedName = normalizeReasoningEffort(option.name);
-    return normalizedValue === reasoning || normalizedName === reasoning;
+  const requested = [
+    {
+      label: "reasoning effort",
+      value: providerOptions?.reasoningEffort,
+      matcher: isReasoningConfigOption,
+      normalize: normalizeReasoningEffort,
+    },
+    {
+      label: "context mode",
+      value: providerOptions?.contextMode,
+      matcher: isContextConfigOption,
+      normalize: (value: string | undefined) => normalizeToken(value) || undefined,
+    },
+    {
+      label: "speed",
+      value: providerOptions?.speed,
+      matcher: isSpeedConfigOption,
+      normalize: (value: string | undefined) => normalizeToken(value) || undefined,
+    },
+  ];
+  return requested.flatMap((request) => {
+    const normalized = request.normalize(request.value);
+    if (!normalized || normalized === "auto") return [];
+    const configOption = findConfigOption(configOptions, request.matcher);
+    const configId = configOption ? configOptionId(configOption) : "";
+    if (!configId) throw new Error(`Cursor Agent does not advertise a ${request.label} control for this model.`);
+    const selected = flattenSelectOptions(configOption).find((candidate) =>
+      request.normalize(candidate.value) === normalized || request.normalize(candidate.name) === normalized,
+    );
+    if (!selected) throw new Error(`Cursor Agent does not support ${request.label} '${request.value ?? ""}' for this model.`);
+    return [{ configId, value: selected.value }];
   });
-  return selected ? [{ configId, value: selected.value }] : [];
 };
 
 const addUsage = (left: RunTokenUsage, right: RunTokenUsage): RunTokenUsage => {
@@ -2200,7 +2245,7 @@ class CursorAcpRuntime {
         configId: update.configId,
         ...(typeof update.value === "boolean" ? { type: "boolean" } : {}),
         value: update.value,
-      }).catch(() => undefined);
+      });
     }
 
     const maxTokens =
@@ -2862,9 +2907,7 @@ type GenerateAskTextWithCursorAgentInput = {
   modelId: string;
   config?: Record<string, unknown>;
   modelConfig?: Record<string, unknown>;
-  providerOptions?: {
-    reasoningEffort?: string;
-  };
+  providerOptions?: ProviderExecutionOptions;
   signal?: AbortSignal;
   devLogging?: {
     logDirPath: string;
@@ -2918,9 +2961,7 @@ export async function suggestCommitMessageWithCursorAgent(input: {
   modelId: string;
   config?: Record<string, unknown>;
   modelConfig?: Record<string, unknown>;
-  providerOptions?: {
-    reasoningEffort?: string;
-  };
+  providerOptions?: ProviderExecutionOptions;
   signal?: AbortSignal;
 }): Promise<string> {
   return generateAskTextWithCursorAgent({

@@ -10,6 +10,7 @@
 
 export {
   EMPTY_SNAPSHOT,
+  buildModelExecutionProfile,
   buildRunReasoningInput,
   findProjectRun,
   harnessTypeForProvider,
@@ -19,6 +20,7 @@ export {
   readRunTokenUsage,
   resolveProviderComposerPrompt,
   snapshotContainsRunId,
+  type RunReasoningInput,
 } from "./components/app/app-model";
 
 export {

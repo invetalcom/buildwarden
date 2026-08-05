@@ -22,6 +22,7 @@ import type {
   ProviderAdapter,
   ProviderAvailableModel,
   ProviderAvailableModelsContext,
+  ProviderExecutionOptions,
   RunExecutionRequest,
   RunTokenUsage,
   UnifiedProviderFamily,
@@ -30,12 +31,14 @@ import {
   AI_SDK_RECOMMENDED_MODEL_IDS,
   CHAT_ATTACHMENT_LIMITS,
   MODEL_CONFIG_ANTHROPIC_EFFORT_KEY,
+  MODEL_CONFIG_EXECUTION_PROFILE_KEY,
   MODEL_CONFIG_OPENAI_REASONING_EFFORT_KEY,
   PROVIDER_CONFIG_AI_SDK_PROVIDER_FAMILY_KEY,
   PROVIDER_CONFIG_DEFAULT_HEADERS_KEY,
   buildNetworkProxyUrl,
   estimateBase64ByteLength,
   formatRunPlanProgressContent,
+  getKnownModelExecutionProfile,
   getModelPresetsForProvider,
   isTextLikeFileName,
   normalizeRunPlanProgressPayload,
@@ -441,6 +444,13 @@ const getProviderFamily = (config: Record<string, unknown> | undefined): Unified
 
 const AI_SDK_MODELS_API_URL = "https://ai-gateway.vercel.sh/v1/models";
 
+export const buildAiSdkExecutionProfile = (family: UnifiedProviderFamily, modelId: string): Record<string, unknown> => ({
+  [MODEL_CONFIG_EXECUTION_PROFILE_KEY]: {
+    ...getKnownModelExecutionProfile("ai-sdk", family, modelId),
+    source: "catalog",
+  },
+});
+
 type ModelsApiFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
 const aiSdkModelsApiItems = (value: unknown): unknown[] => {
@@ -494,6 +504,7 @@ export const parseAiSdkModelsApiAvailableModels = (
         modelId,
         displayName: asTrimmedString(item.name) ?? asTrimmedString(item.displayName) ?? modelId,
         source: "provider" as const,
+        config: buildAiSdkExecutionProfile(family, modelId),
       },
     ];
   });
@@ -531,6 +542,7 @@ export const listAvailableModelsWithAiSdk = async (
     modelId: preset.modelId,
     displayName: preset.displayName,
     source: "curated" as const,
+    config: buildAiSdkExecutionProfile(family, preset.modelId),
   }));
 };
 
@@ -551,18 +563,19 @@ const supportsOpenAiReasoningSummary = (modelId: string): boolean => {
 
 const buildOpenAiProviderOptions = (
   modelId: string,
-  requestProviderOptions: { reasoningEffort?: string } | undefined,
+  requestProviderOptions: ProviderExecutionOptions | undefined,
   modelConfig: Record<string, unknown> | undefined,
   promptCacheKey?: string,
 ): Record<string, unknown> | undefined => {
   let reasoningEffort = typeof modelConfig?.[MODEL_CONFIG_OPENAI_REASONING_EFFORT_KEY] === "string"
     ? String(modelConfig[MODEL_CONFIG_OPENAI_REASONING_EFFORT_KEY]).trim()
     : "";
-  if (typeof requestProviderOptions?.reasoningEffort === "string" && requestProviderOptions.reasoningEffort.trim()) {
-    reasoningEffort = requestProviderOptions.reasoningEffort.trim();
+  if (typeof requestProviderOptions?.reasoningEffort === "string") {
+    reasoningEffort = requestProviderOptions.reasoningEffort.trim() === "auto" ? "" : requestProviderOptions.reasoningEffort.trim();
   }
-  const reasoningSummary = supportsOpenAiReasoningSummary(modelId);
-  if (!reasoningEffort && !reasoningSummary && !promptCacheKey) {
+  const serviceTier = requestProviderOptions?.serviceTier?.trim();
+  const reasoningSummary = Boolean(reasoningEffort) && supportsOpenAiReasoningSummary(modelId);
+  if (!reasoningEffort && !reasoningSummary && !promptCacheKey && (!serviceTier || serviceTier === "auto")) {
     return undefined;
   }
   return {
@@ -570,27 +583,31 @@ const buildOpenAiProviderOptions = (
       ...(reasoningEffort ? { reasoningEffort } : {}),
       ...(reasoningSummary ? { reasoningSummary: "auto" } : {}),
       ...(promptCacheKey ? { promptCacheKey } : {}),
+      ...(serviceTier && serviceTier !== "auto" ? { serviceTier } : {}),
     },
   };
 };
 
 const buildAnthropicProviderOptions = (
-  requestProviderOptions: { anthropicEffort?: string } | undefined,
+  requestProviderOptions: ProviderExecutionOptions | undefined,
   modelConfig: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined => {
   let effort = typeof modelConfig?.[MODEL_CONFIG_ANTHROPIC_EFFORT_KEY] === "string"
     ? String(modelConfig[MODEL_CONFIG_ANTHROPIC_EFFORT_KEY]).trim()
     : "";
-  if (typeof requestProviderOptions?.anthropicEffort === "string" && requestProviderOptions.anthropicEffort.trim()) {
-    effort = requestProviderOptions.anthropicEffort.trim();
+  if (typeof requestProviderOptions?.anthropicEffort === "string") {
+    effort = requestProviderOptions.anthropicEffort.trim() === "auto" ? "" : requestProviderOptions.anthropicEffort.trim();
   }
-  return effort ? { anthropic: { effort } } : undefined;
+  const speed = requestProviderOptions?.speed?.trim();
+  return effort || (speed && speed !== "auto")
+    ? { anthropic: { ...(effort ? { effort } : {}), ...(speed && speed !== "auto" ? { speed } : {}) } }
+    : undefined;
 };
 
 export const buildAiSdkProviderOptions = (
   family: UnifiedProviderFamily,
   modelId: string,
-  requestProviderOptions: { reasoningEffort?: string; anthropicEffort?: string } | undefined,
+  requestProviderOptions: ProviderExecutionOptions | undefined,
   modelConfig: Record<string, unknown> | undefined,
   promptCacheKey?: string,
 ): Record<string, unknown> | undefined => {
@@ -604,6 +621,33 @@ export const buildAiSdkProviderOptions = (
 
   if (family === "anthropic") {
     return buildAnthropicProviderOptions(requestProviderOptions, modelConfig);
+  }
+
+  if (family === "google") {
+    const thinkingLevel = requestProviderOptions?.thinkingLevel?.trim();
+    const serviceTier = requestProviderOptions?.serviceTier?.trim();
+    const thinkingBudget = requestProviderOptions?.thinkingBudget;
+    const thinkingConfig = {
+      ...(thinkingLevel && thinkingLevel !== "auto" ? { thinkingLevel } : {}),
+      ...(typeof thinkingBudget === "number" ? { thinkingBudget } : {}),
+    };
+    const google = {
+      ...(Object.keys(thinkingConfig).length > 0 ? { thinkingConfig } : {}),
+      ...(serviceTier && serviceTier !== "auto" ? { serviceTier } : {}),
+    };
+    return Object.keys(google).length > 0 ? { google } : undefined;
+  }
+
+  if (family === "xai") {
+    const reasoningEffort = requestProviderOptions?.reasoningEffort?.trim();
+    return reasoningEffort && reasoningEffort !== "auto" ? { xai: { reasoningEffort } } : undefined;
+  }
+
+  if (family === "openai-compatible") {
+    const reasoningEffort = requestProviderOptions?.reasoningEffort?.trim();
+    return reasoningEffort && reasoningEffort !== "auto"
+      ? { buildwardenCompatible: { reasoningEffort } }
+      : undefined;
   }
 
   return undefined;
@@ -1102,10 +1146,7 @@ type GenerateAskTextWithAiSdkInput = {
   config?: Record<string, unknown>;
   modelConfig?: Record<string, unknown>;
   networkProxy?: NetworkProxyRuntimeConfig;
-  providerOptions?: {
-    reasoningEffort?: string;
-    anthropicEffort?: string;
-  };
+  providerOptions?: ProviderExecutionOptions;
   systemPrompt: string;
   prompt: string;
   signal?: AbortSignal;
@@ -1170,10 +1211,7 @@ export const suggestCommitMessageWithAiSdk = async (input: {
   config?: Record<string, unknown>;
   modelConfig?: Record<string, unknown>;
   networkProxy?: NetworkProxyRuntimeConfig;
-  providerOptions?: {
-    reasoningEffort?: string;
-    anthropicEffort?: string;
-  };
+  providerOptions?: ProviderExecutionOptions;
   prompt: string;
   signal?: AbortSignal;
 }): Promise<string> =>

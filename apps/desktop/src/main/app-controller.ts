@@ -109,6 +109,7 @@ import {
   type DeleteProjectBranchInput,
   type DesktopApi,
   type FetchProjectPrMrDiffInput,
+  type FollowUpChatOptions,
   type GetProjectForgeRequestDetailsInput,
   type ListProjectForgeRequestsInput,
   type ListAvailableProviderModelsInput,
@@ -177,6 +178,7 @@ import {
   type ProviderAdapter,
   type ProviderAvailableModel,
   type ProviderAccountRecord,
+  type ProviderExecutionOptions,
   type ProviderSessionRuntimeInput,
   type PushProjectBranchInput,
   type RendererLogPayload,
@@ -675,6 +677,32 @@ const providerAllowsMissingApiKey = (provider: ProviderAccountRecord): boolean =
   provider.providerType === "claude-code" ||
   provider.providerType === "cursor-agent" ||
   (provider.providerType === "ai-sdk" && getAiSdkProviderFamilyFromConfig(provider.configJson) === "openai-compatible");
+
+type ExecutionOptionsInput = {
+  reasoningEffort?: string;
+  anthropicEffort?: string;
+  executionOptions?: ProviderExecutionOptions;
+};
+
+const resolveProviderExecutionOptions = (
+  provider: ProviderAccountRecord,
+  input: ExecutionOptionsInput | undefined,
+): ProviderExecutionOptions | undefined => {
+  // Azure Legacy is intentionally frozen on its established request contract.
+  if (provider.providerType === "azure-legacy" || !input) return undefined;
+  const resolved: ProviderExecutionOptions = {
+    ...(input.reasoningEffort !== undefined ? { reasoningEffort: input.reasoningEffort } : {}),
+    ...(input.anthropicEffort !== undefined ? { anthropicEffort: input.anthropicEffort } : {}),
+    ...(input.executionOptions ?? {}),
+  };
+  return Object.keys(resolved).length > 0 ? resolved : undefined;
+};
+
+const assertModelBelongsToProvider = (model: ModelRecord, provider: ProviderAccountRecord): void => {
+  if (model.providerAccountId !== provider.id) {
+    throw new Error("The selected model does not belong to the selected provider account.");
+  }
+};
 
 const providerSupportsInterruptedRunRecovery = (providerType: ProviderAccountRecord["providerType"]): boolean =>
   providerType === "codex-cli" || providerType === "claude-code" || providerType === "cursor-agent";
@@ -1710,6 +1738,8 @@ export class AppController
   async createChat(input: ChatInput): Promise<ChatRecord> {
     const provider = this.db.getProviderAccount(input.providerAccountId);
     const model = this.db.getModel(input.modelId);
+    assertModelBelongsToProvider(model, provider);
+    const executionOptions = resolveProviderExecutionOptions(provider, input);
     const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
 
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
@@ -1742,6 +1772,7 @@ export class AppController
       modelId: chat.modelId,
       reasoningEffort: input.reasoningEffort,
       anthropicEffort: input.anthropicEffort,
+      executionOptions,
       ...this.buildStoredAttachmentMetadata(input.attachments),
     });
     this.db.updateChatStatus(chat.id, "preparing", { startedAt: new Date().toISOString() });
@@ -1753,10 +1784,16 @@ export class AppController
       createdAt: new Date().toISOString(),
     });
 
-    const worker = this.startChatWorker(chat, provider, model, apiKey ?? "", await this.resolveNetworkProxyRuntimeConfig(), userText, input.attachments, {
-      reasoningEffort: input.reasoningEffort,
-      anthropicEffort: input.anthropicEffort,
-    });
+    const worker = this.startChatWorker(
+      chat,
+      provider,
+      model,
+      apiKey ?? "",
+      await this.resolveNetworkProxyRuntimeConfig(),
+      userText,
+      input.attachments,
+      executionOptions,
+    );
     this.chatWorkers.set(chat.id, { worker, cancelled: false });
 
     return this.db.getChat(chat.id);
@@ -1847,6 +1884,7 @@ export class AppController
         attachments: input.attachments,
         reasoningEffort: input.reasoningEffort,
         anthropicEffort: input.anthropicEffort,
+        executionOptions: input.executionOptions,
       });
     }
 
@@ -1863,6 +1901,7 @@ export class AppController
     this.db.getRun(runId); // validate the run exists before creating the chat
     const model = this.db.getModel(input.modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
+    const executionOptions = resolveProviderExecutionOptions(provider, input);
     const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
 
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
@@ -1903,6 +1942,7 @@ export class AppController
       modelId: chat.modelId,
       reasoningEffort: input.reasoningEffort,
       anthropicEffort: input.anthropicEffort,
+      executionOptions,
       ...this.buildStoredAttachmentMetadata(input.attachments),
     });
     this.db.updateChatStatus(chat.id, "preparing", { startedAt: new Date().toISOString() });
@@ -1921,10 +1961,16 @@ export class AppController
       ? userText
       : buildRunChatFirstTurnPrompt(contextBlock, userText);
 
-    const worker = this.startChatWorker(chat, provider, model, apiKey ?? "", await this.resolveNetworkProxyRuntimeConfig(), firstTurnPrompt, input.attachments, {
-      reasoningEffort: input.reasoningEffort,
-      anthropicEffort: input.anthropicEffort,
-    });
+    const worker = this.startChatWorker(
+      chat,
+      provider,
+      model,
+      apiKey ?? "",
+      await this.resolveNetworkProxyRuntimeConfig(),
+      firstTurnPrompt,
+      input.attachments,
+      executionOptions,
+    );
     this.chatWorkers.set(chat.id, { worker, cancelled: false });
 
     return this.db.getChat(chat.id);
@@ -1933,11 +1979,12 @@ export class AppController
   async followUpChat(
     chatId: string,
     prompt: string,
-    options?: { modelId?: string; attachments?: ChatAttachmentPayload[]; reasoningEffort?: string; anthropicEffort?: string },
+    options?: FollowUpChatOptions,
   ): Promise<ChatRecord> {
     let chat = this.db.getChat(chatId);
     const model = this.db.getModel(options?.modelId ?? chat.modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
+    const executionOptions = resolveProviderExecutionOptions(provider, options) ?? this.getLatestChatExecutionOptions(chatId, provider);
     const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
 
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
@@ -1986,14 +2033,21 @@ export class AppController
       modelId: model.id,
       reasoningEffort: options?.reasoningEffort,
       anthropicEffort: options?.anthropicEffort,
+      executionOptions,
       ...this.buildStoredAttachmentMetadata(options?.attachments),
     });
     this.db.updateChatStatus(chat.id, "preparing", { startedAt: new Date().toISOString() });
 
-    const worker = this.startChatWorker(chat, provider, model, apiKey ?? "", await this.resolveNetworkProxyRuntimeConfig(), workerPrompt, options?.attachments, {
-      reasoningEffort: options?.reasoningEffort,
-      anthropicEffort: options?.anthropicEffort,
-    });
+    const worker = this.startChatWorker(
+      chat,
+      provider,
+      model,
+      apiKey ?? "",
+      await this.resolveNetworkProxyRuntimeConfig(),
+      workerPrompt,
+      options?.attachments,
+      executionOptions,
+    );
     this.chatWorkers.set(chat.id, { worker, cancelled: false });
 
     return this.db.getChat(chat.id);
@@ -2561,6 +2615,8 @@ export class AppController
     }
     const provider = this.db.getProviderAccount(input.providerAccountId);
     const model = this.db.getModel(input.modelId);
+    assertModelBelongsToProvider(model, provider);
+    const executionOptions = resolveProviderExecutionOptions(provider, input);
     const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
 
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
@@ -2666,6 +2722,7 @@ export class AppController
       yoloMode: input.yoloMode === true,
       reasoningEffort: input.reasoningEffort,
       anthropicEffort: input.anthropicEffort,
+      executionOptions,
       ...this.buildStoredAttachmentMetadata(initialAttachments),
     });
     if (run.goalText) {
@@ -2698,10 +2755,7 @@ export class AppController
         promptOverride: initialPromptForHarness || undefined,
         attachments: initialAttachments,
         skillContext: this.buildIntegratedSkillContext(project.id),
-        providerOptions: {
-          reasoningEffort: input.reasoningEffort,
-          anthropicEffort: input.anthropicEffort,
-        },
+        providerOptions: executionOptions,
         yoloMode: input.yoloMode === true,
       },
     );
@@ -2722,6 +2776,8 @@ export class AppController
     const project = this.db.getProject(sourceRun.projectId);
     const provider = this.db.getProviderAccount(input.providerAccountId);
     const model = this.db.getModel(input.modelId);
+    assertModelBelongsToProvider(model, provider);
+    const executionOptions = resolveProviderExecutionOptions(provider, input);
     const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
 
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
@@ -2789,6 +2845,7 @@ export class AppController
       yoloMode: input.yoloMode === true,
       reasoningEffort: input.reasoningEffort,
       anthropicEffort: input.anthropicEffort,
+      executionOptions,
       continuedFromRunId: sourceRun.id,
       continuedFromBranch: sourceRun.branchName,
       includeWorkspaceChanges: input.includeWorkspaceChanges !== false,
@@ -2827,10 +2884,7 @@ export class AppController
       {
         promptOverride: promptForHarness,
         skillContext: this.buildIntegratedSkillContext(project.id),
-        providerOptions: {
-          reasoningEffort: input.reasoningEffort,
-          anthropicEffort: input.anthropicEffort,
-        },
+        providerOptions: executionOptions,
         yoloMode: input.yoloMode === true,
       },
     );
@@ -2937,6 +2991,7 @@ export class AppController
     const project = this.db.getProject(run.projectId);
     const model = this.db.getModel(options?.modelId ?? run.modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
+    const executionOptions = resolveProviderExecutionOptions(provider, options) ?? this.getLatestRunExecutionOptions(runId, provider);
 
     if (this.runWorkers.has(runId)) {
       throw new Error("This run is already active. Wait for it to finish before sending a follow-up.");
@@ -3000,6 +3055,7 @@ export class AppController
       yoloMode: options?.yoloMode === true,
       reasoningEffort: options?.reasoningEffort,
       anthropicEffort: options?.anthropicEffort,
+      executionOptions,
       ...extraLogMetadata,
       ...this.buildStoredAttachmentMetadata(options?.attachments),
     });
@@ -3017,10 +3073,7 @@ export class AppController
         promptOverride: followUpPromptForHarness,
         attachments: options?.attachments,
         skillContext: this.buildIntegratedSkillContext(project.id),
-        providerOptions: {
-          reasoningEffort: options?.reasoningEffort,
-          anthropicEffort: options?.anthropicEffort,
-        },
+        providerOptions: executionOptions,
         yoloMode: options?.yoloMode === true,
       },
     );
@@ -5838,7 +5891,7 @@ export class AppController
       {
         promptOverride: buildPromptWithRunGoal(prompt, coordinator.goalText),
         skillContext: this.buildIntegratedSkillContext(project.id),
-        providerOptions: { reasoningEffort: effort, anthropicEffort: effort },
+        providerOptions: resolveProviderExecutionOptions(provider, { reasoningEffort: effort, anthropicEffort: effort }),
         yoloMode: inheritedFullAccess,
       },
     );
@@ -7112,7 +7165,7 @@ export class AppController
       {
         promptOverride: buildPromptWithRunGoal(prompt, coordinator.goalText),
         skillContext: this.buildIntegratedSkillContext(child.projectId),
-        providerOptions: { reasoningEffort: effort, anthropicEffort: effort },
+        providerOptions: resolveProviderExecutionOptions(provider, { reasoningEffort: effort, anthropicEffort: effort }),
         yoloMode: false,
       },
     );
@@ -7176,6 +7229,7 @@ export class AppController
     const worker = this.startWorker(run, provider, model, apiKey ?? "", await this.resolveNetworkProxyRuntimeConfig(), {
       promptOverride: this.buildInterruptedRunRecoveryPrompt(run),
       skillContext: this.buildIntegratedSkillContext(run.projectId),
+      providerOptions: this.getLatestRunExecutionOptions(run.id, provider),
     });
     this.runWorkers.set(run.id, { worker, cancelled: false });
   }
@@ -7619,7 +7673,7 @@ export class AppController
       promptOverride?: string;
       attachments?: ChatAttachmentPayload[];
       skillContext?: string;
-      providerOptions?: { reasoningEffort?: string; anthropicEffort?: string };
+      providerOptions?: ProviderExecutionOptions;
       yoloMode?: boolean;
     },
   ): Worker {
@@ -8487,9 +8541,52 @@ export class AppController
 
     const worker = this.startWorker(run, provider, model, apiKey ?? "", await this.resolveNetworkProxyRuntimeConfig(), {
       skillContext: this.buildIntegratedSkillContext(run.projectId),
+      providerOptions: this.getLatestRunExecutionOptions(run.id, provider),
     });
     this.runWorkers.set(run.id, { worker, cancelled: false });
     return true;
+  }
+
+  private getLatestRunExecutionOptions(runId: string, provider: ProviderAccountRecord): ProviderExecutionOptions | undefined {
+    for (const step of [...this.db.getRunSteps(runId)].reverse()) {
+      try {
+        const metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
+        if (metadata.source !== "user") continue;
+        const stored = metadata.executionOptions;
+        const executionOptions = stored && typeof stored === "object" && !Array.isArray(stored)
+          ? (stored as ProviderExecutionOptions)
+          : undefined;
+        return resolveProviderExecutionOptions(provider, {
+          ...(typeof metadata.reasoningEffort === "string" ? { reasoningEffort: metadata.reasoningEffort } : {}),
+          ...(typeof metadata.anthropicEffort === "string" ? { anthropicEffort: metadata.anthropicEffort } : {}),
+          ...(executionOptions ? { executionOptions } : {}),
+        });
+      } catch {
+        // Skip malformed historical metadata and keep looking for the last user turn.
+      }
+    }
+    return undefined;
+  }
+
+  private getLatestChatExecutionOptions(chatId: string, provider: ProviderAccountRecord): ProviderExecutionOptions | undefined {
+    for (const step of [...this.db.getChatSteps(chatId)].reverse()) {
+      try {
+        const metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
+        if (metadata.source !== "user") continue;
+        const stored = metadata.executionOptions;
+        const executionOptions = stored && typeof stored === "object" && !Array.isArray(stored)
+          ? (stored as ProviderExecutionOptions)
+          : undefined;
+        return resolveProviderExecutionOptions(provider, {
+          ...(typeof metadata.reasoningEffort === "string" ? { reasoningEffort: metadata.reasoningEffort } : {}),
+          ...(typeof metadata.anthropicEffort === "string" ? { anthropicEffort: metadata.anthropicEffort } : {}),
+          ...(executionOptions ? { executionOptions } : {}),
+        });
+      } catch {
+        // Skip malformed historical metadata and keep looking for the last user turn.
+      }
+    }
+    return undefined;
   }
 
   private buildInterruptedRunRecoveryPrompt(run: RunRecord): string {
@@ -8657,7 +8754,7 @@ export class AppController
     networkProxy: NetworkProxyRuntimeConfig | undefined,
     promptOverride?: string,
     attachments?: ChatAttachmentPayload[],
-    providerOptions?: { reasoningEffort?: string; anthropicEffort?: string },
+    providerOptions?: ProviderExecutionOptions,
   ): Worker {
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "chat-worker.js");
     const streamingStepIds = new Map<string, string>();

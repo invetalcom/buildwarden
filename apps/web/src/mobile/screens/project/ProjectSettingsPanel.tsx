@@ -47,8 +47,9 @@ const FOLDER_WORKSPACES: ReadonlyArray<{ value: RunWorkspaceType; label: string 
   { value: "local", label: "Local — work in place" },
 ];
 
-const EFFORTS = ["low", "medium", "high", "xhigh"] as const;
+const EFFORTS = ["auto", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "ultracode"] as const;
 const effortOptions = EFFORTS.map((value) => ({ value, label: value }));
+const executionModeOptions = ["auto", "standard", "fast", "flex", "priority"].map((value) => ({ value, label: value }));
 
 export const ProjectSettingsPanel = ({ project }: { project: ProjectSnapshot }) => {
   const { client, snapshot, snapshotStore, router } = useMobileApp();
@@ -197,6 +198,14 @@ export const ProjectSettingsPanel = ({ project }: { project: ProjectSnapshot }) 
           options={effortOptions}
           disabled={disabled}
           onChange={(anthropicEffort) => saveDefaults({ anthropicEffort })}
+        />
+        <SelectRow
+          title="Speed / service"
+          description="Applied only when the selected model advertises the option."
+          value={defaults.executionMode}
+          options={executionModeOptions}
+          disabled={disabled}
+          onChange={(executionMode) => saveDefaults({ executionMode })}
         />
         <ToggleRow
           title="Full access"

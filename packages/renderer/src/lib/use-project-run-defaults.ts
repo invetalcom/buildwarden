@@ -24,6 +24,7 @@ interface UseProjectRunDefaultsInput {
   setRunWorkspaceType: (value: RunWorkspaceType) => void;
   setRunReasoningEffort: (value: string) => void;
   setRunAnthropicEffort: (value: string) => void;
+  setRunExecutionMode: (value: string) => void;
   setRunYoloMode: (value: boolean) => void;
   setRunModelId: (value: string) => void;
   setRunWorktreeModelIds: (value: string[]) => void;
@@ -50,6 +51,7 @@ export const useProjectRunDefaults = ({
   setRunWorkspaceType,
   setRunReasoningEffort,
   setRunAnthropicEffort,
+  setRunExecutionMode,
   setRunYoloMode,
   setRunModelId,
   setRunWorktreeModelIds,
@@ -98,6 +100,7 @@ export const useProjectRunDefaults = ({
     setRunWorkspaceType(defaults.workspaceType);
     setRunReasoningEffort(defaults.reasoningEffort);
     setRunAnthropicEffort(defaults.anthropicEffort);
+    setRunExecutionMode(defaults.executionMode);
     setRunYoloMode(defaults.yoloMode);
     // Always reset model selections so a project without stored defaults does not inherit the
     // previous project's models. Without a stored value, fall back to the last used model like
@@ -124,6 +127,7 @@ export const useProjectRunDefaults = ({
     projectRunDefaultsByProjectId,
     selectedProjectId,
     setRunAnthropicEffort,
+    setRunExecutionMode,
     setRunMode,
     setRunModelId,
     setRunReasoningEffort,
@@ -165,6 +169,14 @@ export const useProjectRunDefaults = ({
     [persistProjectRunDefaults, setRunAnthropicEffort],
   );
 
+  const changeRunExecutionMode = useCallback(
+    (value: string) => {
+      setRunExecutionMode(value);
+      persistProjectRunDefaults({ executionMode: value });
+    },
+    [persistProjectRunDefaults, setRunExecutionMode],
+  );
+
   const changeRunYoloMode = useCallback(
     (value: boolean) => {
       setRunYoloMode(value);
@@ -194,6 +206,7 @@ export const useProjectRunDefaults = ({
     changeRunWorkspaceType,
     changeRunReasoningEffort,
     changeRunAnthropicEffort,
+    changeRunExecutionMode,
     changeRunYoloMode,
     changeRunModel,
     changeRunWorktreeModelIds,

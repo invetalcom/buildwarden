@@ -28,6 +28,7 @@ import { ProjectSettingsPage } from "./ProjectSettingsPage";
 import { ProviderModelPanelButtons, ProviderModelsOverview } from "./provider-models-overview";
 import { RunEmbeddedBrowser } from "./RunEmbeddedBrowser";
 import { RunComposer } from "./RunComposer";
+import { intersectModelExecutionControls } from "./model-execution-controls";
 import { RunDetailHeader } from "./RunDetailHeader";
 import { RunPlanProgressPill } from "./RunPlanProgressPill";
 import { RunPlanSteps } from "./RunPlanSteps";
@@ -480,6 +481,32 @@ describe("renderer component states", () => {
     expect(runMarkup).toContain("Full access");
     const chatMarkup = renderToStaticMarkup(<RunComposer {...commonProps} variant="chat" submitLabel="Send chat" />);
     expect(chatMarkup).toContain("Send chat");
+  });
+
+  it("intersects effort choices across every selected model", () => {
+    const common = intersectModelExecutionControls([
+      {
+        id: "reasoningEffort",
+        label: "Effort",
+        options: [
+          { value: "auto", label: "Provider default" },
+          { value: "low", label: "Low" },
+          { value: "high", label: "High" },
+          { value: "xhigh", label: "Extra high" },
+        ],
+      },
+      {
+        id: "reasoningEffort",
+        label: "Effort",
+        options: [
+          { value: "auto", label: "Provider default" },
+          { value: "medium", label: "Medium" },
+          { value: "high", label: "High" },
+        ],
+      },
+    ]);
+    expect(common?.options.map((option) => option.value)).toEqual(["auto", "high"]);
+    expect(intersectModelExecutionControls([])).toBeUndefined();
   });
 
   it("renders completed run header controls", () => {

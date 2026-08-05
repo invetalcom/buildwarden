@@ -25,6 +25,7 @@ export interface NewRunDefaults {
   modelId: string;
   reasoningEffort: string;
   anthropicEffort: string;
+  executionMode: string;
   yoloMode: boolean;
 }
 
@@ -56,6 +57,7 @@ export const resolveNewRunDefaults = ({
     modelId: stored.modelId && modelIds.includes(stored.modelId) ? stored.modelId : fallbackModelId,
     reasoningEffort: stored.reasoningEffort,
     anthropicEffort: stored.anthropicEffort,
+    executionMode: stored.executionMode,
     yoloMode: stored.yoloMode,
   };
 };

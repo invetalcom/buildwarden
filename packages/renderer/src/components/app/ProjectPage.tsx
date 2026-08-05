@@ -4,6 +4,7 @@ import type {
   ProjectLabMode,
   ProjectLabSettings,
   ProjectLoopAvailability,
+  ModelExecutionProfile,
   ProjectSnapshot,
   ProjectTaskStatus,
   ProviderType,
@@ -31,7 +32,7 @@ const ProjectGraphsTab = lazy(() => import("./ProjectGraphsTab").then((module) =
 interface ProjectPageProps {
   project: ProjectSnapshot;
   activeTab: ProjectPageTab;
-  modelOptions: Array<{ id: string; label: string; modelId: string; providerType: ProviderType; providerFamily: UnifiedProviderFamily | null }>;
+  modelOptions: Array<{ id: string; label: string; modelId: string; providerType: ProviderType; providerFamily: UnifiedProviderFamily | null; executionProfile?: ModelExecutionProfile }>;
   configuredIdeKinds: SupportedIdeKind[];
   availableBranches: string[];
   currentProjectBranch: string;
@@ -54,11 +55,13 @@ interface ProjectPageProps {
   onRestoreRunFromForLater: (runId: string) => void | Promise<void>;
   reasoningEffort: string;
   anthropicEffort: string;
+  executionMode: string;
   yoloMode: boolean;
   delegationEnabled: boolean;
   delegationAvailable: boolean;
   onReasoningEffortChange: (value: string) => void;
   onAnthropicEffortChange: (value: string) => void;
+  onExecutionModeChange: (value: string) => void;
   onYoloModeChange: (value: boolean) => void;
   onDelegationEnabledChange: (value: boolean) => void;
   onSelectRun: (runId: string) => void;
@@ -141,11 +144,13 @@ export const ProjectPage = ({
   onRestoreRunFromForLater,
   reasoningEffort,
   anthropicEffort,
+  executionMode,
   yoloMode,
   delegationEnabled,
   delegationAvailable,
   onReasoningEffortChange,
   onAnthropicEffortChange,
+  onExecutionModeChange,
   onYoloModeChange,
   onDelegationEnabledChange,
   onSelectRun,
@@ -203,6 +208,7 @@ export const ProjectPage = ({
           busy={busy}
           reasoningEffort={reasoningEffort}
           anthropicEffort={anthropicEffort}
+          executionMode={executionMode}
           yoloMode={yoloMode}
           delegationEnabled={delegationEnabled}
           delegationAvailable={delegationAvailable}
@@ -217,6 +223,7 @@ export const ProjectPage = ({
           onRunWorktreeModelIdsChange={onRunWorktreeModelIdsChange}
           onReasoningEffortChange={onReasoningEffortChange}
           onAnthropicEffortChange={onAnthropicEffortChange}
+          onExecutionModeChange={onExecutionModeChange}
           onYoloModeChange={onYoloModeChange}
           onDelegationEnabledChange={onDelegationEnabledChange}
         />
@@ -309,6 +316,7 @@ export const ProjectPage = ({
           projectRunStats={projectRunStats}
           reasoningEffort={reasoningEffort}
           anthropicEffort={anthropicEffort}
+          executionMode={executionMode}
           yoloMode={yoloMode}
           busy={busy}
           availableIntegratedSkills={availableIntegratedSkills}
@@ -320,6 +328,7 @@ export const ProjectPage = ({
           onRunWorktreeModelIdsChange={onRunWorktreeModelIdsChange}
           onReasoningEffortChange={onReasoningEffortChange}
           onAnthropicEffortChange={onAnthropicEffortChange}
+          onExecutionModeChange={onExecutionModeChange}
           onYoloModeChange={onYoloModeChange}
           onActiveIntegratedSkillIdsChange={onActiveIntegratedSkillIdsChange}
           onDeleteProject={onDeleteProject}

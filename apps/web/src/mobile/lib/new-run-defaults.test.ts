@@ -26,6 +26,7 @@ describe("new run defaults", () => {
       yoloMode: true,
       reasoningEffort: "high",
       anthropicEffort: "xhigh",
+      executionMode: "fast",
     });
     expect(resolve(settings)).toEqual({
       mode: "plan",
@@ -33,6 +34,7 @@ describe("new run defaults", () => {
       modelId: "m1",
       reasoningEffort: "high",
       anthropicEffort: "xhigh",
+      executionMode: "fast",
       yoloMode: true,
     });
   });
@@ -56,8 +58,9 @@ describe("new run defaults", () => {
       mode: "code",
       workspaceType: "worktree",
       modelId: "m1",
-      reasoningEffort: "medium",
-      anthropicEffort: "medium",
+      reasoningEffort: "auto",
+      anthropicEffort: "auto",
+      executionMode: "auto",
       yoloMode: false,
     });
     expect(resolve({})).toEqual(expect.objectContaining({ mode: "code", workspaceType: "worktree", yoloMode: false }));

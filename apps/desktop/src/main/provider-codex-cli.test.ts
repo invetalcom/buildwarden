@@ -72,6 +72,108 @@ describe("Codex CLI plan progress", () => {
     });
   });
 
+  it("preserves advertised Codex effort levels, including ultra, and fast-mode capability", () => {
+    const page = parseCodexModelListPage({
+      data: [{
+        model: "gpt-5.6-sol",
+        displayName: "GPT-5.6 Sol",
+        defaultReasoningEffort: "low",
+        supportedReasoningEfforts: [
+          { reasoningEffort: "low", description: "Faster" },
+          { reasoningEffort: "ultra", description: "Deepest" },
+        ],
+      }],
+    });
+    expect(page.models[0]?.config).toEqual({
+      buildwardenExecutionProfile: {
+        source: "provider",
+        controls: [
+          {
+            id: "reasoningEffort",
+            label: "Effort",
+            defaultValue: "low",
+            options: [
+              { value: "auto", label: "Provider default" },
+              { value: "low", label: "Low", description: "Faster" },
+              { value: "ultra", label: "Ultra", description: "Deepest" },
+            ],
+          },
+          {
+            id: "serviceTier",
+            label: "Speed",
+            defaultValue: "auto",
+            options: [
+              { value: "auto", label: "Standard" },
+              { value: "fast", label: "Fast", description: "Use Codex fast mode (higher credit consumption)." },
+            ],
+          },
+        ],
+      },
+    });
+  });
+
+  it("does not add max or ultra to Codex GPT-5.5", () => {
+    const model = parseCodexModelListPage({
+      data: [{
+        model: "gpt-5.5",
+        supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+      }],
+    }).models[0]!;
+    const controls = (model.config as {
+      buildwardenExecutionProfile: { controls: Array<{ id: string; options: Array<{ value: string }> }> };
+    }).buildwardenExecutionProfile.controls;
+
+    expect(controls.find((control) => control.id === "reasoningEffort")?.options.map((entry) => entry.value))
+      .toEqual(["auto", "low", "medium", "high", "xhigh"]);
+    expect(controls.find((control) => control.id === "serviceTier")?.options.map((entry) => entry.value))
+      .toEqual(["auto", "fast"]);
+  });
+
+  it("does not infer controls for an unknown Codex model", () => {
+    expect(parseCodexModelListPage({ data: [{ model: "future-codex-model" }] }).models[0]?.config).toBeUndefined();
+  });
+
+  it("forwards selected Codex effort and fast service tier on turn/start", async () => {
+    const stdout = new PassThrough();
+    const stdin = new PassThrough();
+    const requests: Array<Record<string, unknown>> = [];
+    stdin.on("data", (chunk) => {
+      for (const line of String(chunk).trim().split("\n")) requests.push(JSON.parse(line) as Record<string, unknown>);
+    });
+    const child = Object.assign(new EventEmitter(), {
+      stdout,
+      stderr: new PassThrough(),
+      stdin,
+      killed: true,
+      kill: () => true,
+    }) as unknown as ChildProcessWithoutNullStreams;
+    const session = new CodexAppServerSession(child, "thread-1", "C:\\repo", undefined, undefined, vi.fn());
+    stdout.write(`${JSON.stringify({ method: "thread/started", params: { thread: { id: "thread-1" } } })}\n`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const resultPromise = session.startTurn({
+      prompt: "Inspect",
+      modelId: "gpt-5.6-sol",
+      mode: "code",
+      providerOptions: { reasoningEffort: "ultra", serviceTier: "fast" },
+      signal: new AbortController().signal,
+    });
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+    const request = requests[0]!;
+    expect(request).toMatchObject({ method: "turn/start" });
+    expect(request.params).toMatchObject({
+      model: "gpt-5.6-sol",
+      effort: "ultra",
+      serviceTier: "fast",
+      collaborationMode: { settings: { reasoning_effort: "ultra" } },
+    });
+    stdout.write(`${JSON.stringify({ id: request.id, result: { turn: { id: "turn-1" } } })}\n`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    stdout.write(`${JSON.stringify({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } } })}\n`);
+    await expect(resultPromise).resolves.toMatchObject({ threadId: "thread-1" });
+    session.stop();
+  });
+
   it("pages through Codex model/list cursors and deduplicates model ids", async () => {
     const requests: Array<{ method: string; params: unknown }> = [];
     const responses = [

@@ -13,6 +13,7 @@ import type {
   ProviderAdapter,
   ProviderAvailableModel,
   ProviderAvailableModelsContext,
+  ProviderExecutionOptions,
   RunExecutionRequest,
   RunToolCall,
   RunUserInputAnswers,
@@ -24,11 +25,13 @@ import type {
 import {
   getCodexCliRecommendedModelIds,
   MODEL_CONFIG_CODEX_REASONING_EFFORT_KEY,
+  MODEL_CONFIG_EXECUTION_PROFILE_KEY,
   PROVIDER_CONFIG_CODEX_BINARY_PATH_KEY,
   PROVIDER_CONFIG_CODEX_HOME_PATH_KEY,
   buildNetworkProxyUrl,
   buildRunSubagentChunk,
   formatRunPlanProgressContent,
+  getKnownModelExecutionProfile,
   isTerminalRunSubagentStatus,
   mergeRunSubagentInfo,
   normalizeRunPlanProgressPayload,
@@ -104,9 +107,7 @@ type TurnExecutionOptions = {
   networkProxy?: NetworkProxyRuntimeConfig;
   config?: Record<string, unknown>;
   modelConfig?: Record<string, unknown>;
-  providerOptions?: {
-    reasoningEffort?: string;
-  };
+  providerOptions?: ProviderExecutionOptions;
   yoloMode?: boolean;
   signal: AbortSignal;
   requestShellApproval?: (command: string) => Promise<ShellApprovalDecision>;
@@ -696,13 +697,13 @@ const buildPromptForMode = (input: {
 const buildCollaborationMode = (
   mode: RunExecutionRequest["mode"],
   modelId: string,
-  reasoningEffort: string,
+  reasoningEffort: string | undefined,
 ):
   | {
       mode: "default" | "plan";
       settings: {
         model: string;
-        reasoning_effort: string;
+        reasoning_effort: string | null;
         developer_instructions: string;
       };
     }
@@ -714,7 +715,7 @@ const buildCollaborationMode = (
       mode: mode === "plan" ? "plan" : "default",
       settings: {
         model: modelId || CODEX_DEFAULT_MODEL,
-        reasoning_effort: reasoningEffort,
+        reasoning_effort: reasoningEffort ?? null,
         developer_instructions: [
           mode === "plan" ? PLAN_COLLABORATION_INSTRUCTIONS : DEFAULT_COLLABORATION_INSTRUCTIONS,
           BUILDWARDEN_DEVELOPER_INSTRUCTIONS,
@@ -724,11 +725,18 @@ const buildCollaborationMode = (
 };
 
 const resolveCodexReasoningEffort = (
-  providerOptions: { reasoningEffort?: string } | undefined,
+  providerOptions: ProviderExecutionOptions | undefined,
   modelConfig: Record<string, unknown> | undefined,
-): string => {
-  const raw = providerOptions?.reasoningEffort || modelConfig?.[MODEL_CONFIG_CODEX_REASONING_EFFORT_KEY];
-  return typeof raw === "string" && raw.trim() ? raw.trim() : "medium";
+): string | undefined => {
+  const requested = providerOptions?.reasoningEffort;
+  if (requested === "auto") return undefined;
+  const raw = requested ?? modelConfig?.[MODEL_CONFIG_CODEX_REASONING_EFFORT_KEY];
+  return typeof raw === "string" && raw.trim() && raw !== "auto" ? raw.trim() : undefined;
+};
+
+const resolveCodexServiceTier = (providerOptions: ProviderExecutionOptions | undefined): string | undefined => {
+  const value = providerOptions?.serviceTier?.trim();
+  return value && value !== "auto" ? value : undefined;
 };
 
 const resolveCodexCliConfig = (config: Record<string, unknown> | undefined): CodexCliResolvedConfig => {
@@ -855,10 +863,64 @@ export const parseCodexModelListPage = (value: unknown): CodexModelListPage => {
         asString(itemRecord?.name)?.trim() ||
         asString(itemRecord?.label)?.trim() ||
         modelId;
+      const supportedReasoningEfforts = (asArray(itemRecord?.supportedReasoningEfforts) ?? asArray(itemRecord?.supported_reasoning_efforts) ?? [])
+        .flatMap((candidate) => {
+          if (typeof candidate === "string" && candidate.trim()) return [{ value: candidate.trim(), label: candidate.trim() }];
+          const effortRecord = asRecord(candidate);
+          const effort = asString(effortRecord?.reasoningEffort)?.trim() || asString(effortRecord?.reasoning_effort)?.trim();
+          if (!effort) return [];
+          return [{
+            value: effort,
+            label: effort === "xhigh" ? "Extra high" : effort[0]!.toUpperCase() + effort.slice(1),
+            ...(asString(effortRecord?.description)?.trim() ? { description: asString(effortRecord?.description)!.trim() } : {}),
+          }];
+        });
+      const advertisedServiceTiers = (asArray(itemRecord?.serviceTiers) ?? asArray(itemRecord?.supportedServiceTiers) ?? [])
+        .flatMap((candidate) => {
+          if (typeof candidate === "string" && candidate.trim()) return [{ value: candidate.trim(), label: candidate.trim() }];
+          const tierRecord = asRecord(candidate);
+          const tier = asString(tierRecord?.id)?.trim() || asString(tierRecord?.serviceTier)?.trim();
+          if (!tier) return [];
+          return [{
+            value: tier,
+            label: asString(tierRecord?.name)?.trim() || (tier === "fast" ? "Fast" : tier),
+            ...(asString(tierRecord?.description)?.trim() ? { description: asString(tierRecord?.description)!.trim() } : {}),
+          }];
+        });
+      const knownFastMode = getKnownModelExecutionProfile("codex-cli", null, modelId).controls
+        .find((control) => control.id === "serviceTier")?.options.some((option) => option.value === "fast") === true;
+      const serviceTiers = advertisedServiceTiers.length > 0
+        ? advertisedServiceTiers
+        : knownFastMode
+          ? [{ value: "fast", label: "Fast", description: "Use Codex fast mode (higher credit consumption)." }]
+          : [];
+      const defaultReasoningEffort =
+        asString(itemRecord?.defaultReasoningEffort)?.trim() || asString(itemRecord?.default_reasoning_effort)?.trim() || "auto";
+      const executionControls = [
+        ...(supportedReasoningEfforts.length > 0
+          ? [{
+              id: "reasoningEffort",
+              label: "Effort",
+              defaultValue: defaultReasoningEffort,
+              options: [{ value: "auto", label: "Provider default" }, ...supportedReasoningEfforts],
+            }]
+          : []),
+        ...(serviceTiers.length > 0
+          ? [{
+              id: "serviceTier",
+              label: "Speed",
+              defaultValue: "auto",
+              options: [{ value: "auto", label: "Standard" }, ...serviceTiers],
+            }]
+          : []),
+      ];
       return {
         modelId,
         displayName,
         source: "provider",
+        ...(executionControls.length > 0
+          ? { config: { [MODEL_CONFIG_EXECUTION_PROFILE_KEY]: { source: "provider", controls: executionControls } } }
+          : {}),
       };
     })
     .filter((model): model is ProviderAvailableModel => model !== null);
@@ -1230,9 +1292,7 @@ export class CodexAppServerSession {
     repoContext?: string;
     isChat?: boolean;
     modelConfig?: Record<string, unknown>;
-    providerOptions?: {
-      reasoningEffort?: string;
-    };
+    providerOptions?: ProviderExecutionOptions;
     signal: AbortSignal;
   }): Promise<TurnExecutionResult> {
     if (!this.threadId) {
@@ -1274,6 +1334,8 @@ export class CodexAppServerSession {
       });
     });
 
+    const reasoningEffort = resolveCodexReasoningEffort(input.providerOptions, input.modelConfig);
+    const serviceTier = resolveCodexServiceTier(input.providerOptions);
     const response = await this.sendRequest("turn/start", {
       threadId: this.threadId,
       input: buildTurnInput(
@@ -1287,10 +1349,12 @@ export class CodexAppServerSession {
         input.attachments,
       ),
       model: input.modelId,
+      ...(reasoningEffort ? { effort: reasoningEffort } : {}),
+      ...(serviceTier ? { serviceTier } : {}),
       collaborationMode: buildCollaborationMode(
         input.mode,
         input.modelId,
-        resolveCodexReasoningEffort(input.providerOptions, input.modelConfig),
+        reasoningEffort,
       ),
     });
     const turnId = asString(asRecord(asRecord(response)?.turn)?.id);
@@ -2204,6 +2268,8 @@ async function executeCodexTurn(options: TurnExecutionOptions): Promise<TurnExec
       mode: options.inputMode,
       repoContext: options.repoContext,
       isChat: options.isChat,
+      modelConfig: options.modelConfig,
+      providerOptions: options.providerOptions,
       signal: options.signal,
     });
   } finally {
@@ -2330,9 +2396,7 @@ export async function suggestCommitMessageWithCodexCli(input: {
   networkProxy?: NetworkProxyRuntimeConfig;
   config?: Record<string, unknown>;
   modelConfig?: Record<string, unknown>;
-  providerOptions?: {
-    reasoningEffort?: string;
-  };
+  providerOptions?: ProviderExecutionOptions;
   signal?: AbortSignal;
 }): Promise<string> {
   const result = await executeCodexTurn({
@@ -2358,9 +2422,7 @@ type GenerateAskTextWithCodexCliInput = {
   networkProxy?: NetworkProxyRuntimeConfig;
   config?: Record<string, unknown>;
   modelConfig?: Record<string, unknown>;
-  providerOptions?: {
-    reasoningEffort?: string;
-  };
+  providerOptions?: ProviderExecutionOptions;
   signal?: AbortSignal;
   devLogging?: {
     logDirPath: string;

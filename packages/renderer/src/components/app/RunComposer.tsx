@@ -13,6 +13,8 @@ import {
   parseLeadingComposerCommand,
   type ComposerCommandDescriptor,
   type ComposerCommandContext,
+  type ModelExecutionControl,
+  type ModelExecutionProfile,
   type RunMode,
   type RunWorkspaceType,
   type UnifiedProviderFamily,
@@ -24,6 +26,7 @@ import { Textarea } from "../ui/textarea";
 import { ContextWindowBadge } from "./ContextWindowBadge";
 import { AnchorDropdownPortal } from "../ui/dropdown-portal";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { intersectModelExecutionControls } from "./model-execution-controls";
 
 const RUN_MODES: RunMode[] = ["code", "plan", "ask"];
 
@@ -95,13 +98,14 @@ const MODE_LABELS: Record<RunMode, string> = {
 const composerTriggerClass =
   "inline-flex h-8 items-center gap-1.5 rounded-full bg-transparent px-2.5 text-[13px] font-medium text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] disabled:pointer-events-none disabled:opacity-50";
 
-interface ComposerSelectOption {
+export interface ComposerSelectOption {
   value: string;
   label: string;
   displayLabel?: string;
   contextModelId?: string;
   providerType?: ProviderType;
   providerFamily?: UnifiedProviderFamily | null;
+  executionProfile?: ModelExecutionProfile;
 }
 
 interface ComposerSelectProps {
@@ -529,6 +533,8 @@ interface RunComposerProps {
   anthropicEffort?: string;
   onReasoningEffortChange?: (value: string) => void;
   onAnthropicEffortChange?: (value: string) => void;
+  executionMode?: string;
+  onExecutionModeChange?: (value: string) => void;
   yoloMode?: boolean;
   onYoloModeChange?: (value: boolean) => void;
   delegationEnabled?: boolean;
@@ -582,6 +588,8 @@ export const RunComposer = ({
   anthropicEffort = "",
   onReasoningEffortChange,
   onAnthropicEffortChange,
+  executionMode = "auto",
+  onExecutionModeChange,
   yoloMode = false,
   onYoloModeChange,
   delegationEnabled = false,
@@ -740,43 +748,49 @@ export const RunComposer = ({
         : modelSelectOptions.filter((option) => option.value === selectedModelId),
     [modelSelectOptions, selectedModelId, selectedModelIds, useMultiModel],
   );
-  const supportsReasoning = (option: ComposerSelectOption) =>
-    option.providerType === "codex-cli" ||
-    option.providerType === "cursor-agent" ||
-    option.providerType === "claude-code" ||
-    (option.providerType === "ai-sdk" && (option.providerFamily === "openai" || option.providerFamily === "anthropic"));
-  const showMultiReasoningControl =
-    useMultiModel && selectedModelOptions.some(supportsReasoning) && (onReasoningEffortChange || onAnthropicEffortChange);
-  let normalizedMultiReasoning = "medium";
-  if (["low", "medium", "high"].includes(reasoningEffort)) {
-    normalizedMultiReasoning = reasoningEffort;
-  } else if (["low", "medium", "high"].includes(anthropicEffort)) {
-    normalizedMultiReasoning = anthropicEffort;
+  const reasoningControlFor = (optionEntry: ComposerSelectOption | null | undefined) =>
+    optionEntry?.executionProfile?.controls.find((entry) => entry.id === "reasoningEffort" || entry.id === "thinkingLevel");
+  const secondaryControlFor = (optionEntry: ComposerSelectOption | null | undefined) =>
+    optionEntry?.executionProfile?.controls.find((entry) => entry.id !== "reasoningEffort" && entry.id !== "thinkingLevel");
+  const isAnthropicOption = (optionEntry: ComposerSelectOption) =>
+    optionEntry.providerType === "claude-code" || (optionEntry.providerType === "ai-sdk" && optionEntry.providerFamily === "anthropic");
+  const toComposerOptions = (controlEntry: ModelExecutionControl | undefined): ComposerSelectOption[] =>
+    controlEntry?.options.map((entry) => ({
+      value: entry.value,
+      label: `${controlEntry.label}: ${entry.label}`,
+      displayLabel: entry.label,
+    })) ?? [];
+  const activeReasoningControl = reasoningControlFor(activeModelOption);
+  const selectedReasoningOptions = selectedModelOptions.filter((entry) => reasoningControlFor(entry));
+  const commonReasoningControl = useMultiModel
+    ? selectedReasoningOptions.length === selectedModelOptions.length
+      ? intersectModelExecutionControls(selectedReasoningOptions.map((entry) => reasoningControlFor(entry)!))
+      : undefined
+    : activeReasoningControl;
+  const selectedReasoningValues = selectedReasoningOptions.map((entry) => isAnthropicOption(entry) ? anthropicEffort : reasoningEffort);
+  const distinctReasoningValues = [...new Set(selectedReasoningValues)];
+  const rawReasoningValue = useMultiModel
+    ? distinctReasoningValues.length === 1 ? distinctReasoningValues[0]! : "__mixed__"
+    : activeModelOption && isAnthropicOption(activeModelOption) ? anthropicEffort : reasoningEffort;
+  const reasoningSelectOptions = toComposerOptions(commonReasoningControl);
+  if (rawReasoningValue === "__mixed__") {
+    reasoningSelectOptions.unshift({ value: "__mixed__", label: "Effort: Mixed", displayLabel: "Mixed" });
   }
-  const showReasoningControl =
-    !useMultiModel &&
-    (activeModelOption?.providerType === "codex-cli" ||
-      activeModelOption?.providerType === "cursor-agent" ||
-      (activeModelOption?.providerType === "ai-sdk" && activeModelOption.providerFamily === "openai"));
-  const showAnthropicControl =
-    !useMultiModel &&
-    (activeModelOption?.providerType === "claude-code" ||
-      (activeModelOption?.providerType === "ai-sdk" && activeModelOption.providerFamily === "anthropic"));
-  const reasoningSelectOptions =
-    activeModelOption?.providerType === "ai-sdk" && activeModelOption.providerFamily === "openai"
-      ? [
-          { value: "none", label: "Reasoning: None", displayLabel: "None" },
-          { value: "low", label: "Reasoning: Low", displayLabel: "Low" },
-          { value: "medium", label: "Reasoning: Medium", displayLabel: "Medium" },
-          { value: "high", label: "Reasoning: High", displayLabel: "High" },
-          { value: "xhigh", label: "Reasoning: XHigh", displayLabel: "XHigh" },
-        ]
-      : [
-          { value: "low", label: "Reasoning: Low", displayLabel: "Low" },
-          { value: "medium", label: "Reasoning: Medium", displayLabel: "Medium" },
-          { value: "high", label: "Reasoning: High", displayLabel: "High" },
-          { value: "xhigh", label: "Reasoning: XHigh", displayLabel: "XHigh" },
-        ];
+  const normalizedReasoningValue = reasoningSelectOptions.some((entry) => entry.value === rawReasoningValue)
+    ? rawReasoningValue
+    : "auto";
+  const showReasoningControl = Boolean(commonReasoningControl && reasoningSelectOptions.length > 0 && (onReasoningEffortChange || onAnthropicEffortChange));
+
+  const selectedSecondaryControls = selectedModelOptions.map(secondaryControlFor).filter((entry): entry is ModelExecutionControl => Boolean(entry));
+  const sameSecondaryControl = selectedSecondaryControls.length > 0 && selectedSecondaryControls.every((entry) => entry.id === selectedSecondaryControls[0]!.id);
+  const commonSecondaryControl = useMultiModel
+    ? sameSecondaryControl && selectedSecondaryControls.length === selectedModelOptions.length
+      ? intersectModelExecutionControls(selectedSecondaryControls)
+      : undefined
+    : secondaryControlFor(activeModelOption);
+  const executionModeOptions = toComposerOptions(commonSecondaryControl);
+  const normalizedExecutionMode = executionModeOptions.some((entry) => entry.value === executionMode) ? executionMode : "auto";
+  const showExecutionModeControl = Boolean(onExecutionModeChange && commonSecondaryControl && executionModeOptions.length > 1);
   const branchSelectOptions = branchOptions?.map((option) => ({
     value: option.value,
     label: option.label,
@@ -977,58 +991,38 @@ export const RunComposer = ({
                   selectedIconClassName="text-[var(--ec-accent)]"
                 />
               )}
-              {showReasoningControl && onReasoningEffortChange ? (
+              {showReasoningControl ? (
                 <ComposerSelect
-                  value={reasoningEffort || "medium"}
+                  value={normalizedReasoningValue}
                   icon={BrainCircuit}
                   iconClassName="text-[var(--ec-muted)]"
                   options={reasoningSelectOptions}
-                  onChange={onReasoningEffortChange}
+                  onChange={(value) => {
+                    if (value === "__mixed__") return;
+                    if (useMultiModel) {
+                      onReasoningEffortChange?.(value);
+                      onAnthropicEffortChange?.(value);
+                    } else if (activeModelOption && isAnthropicOption(activeModelOption)) {
+                      onAnthropicEffortChange?.(value);
+                    } else {
+                      onReasoningEffortChange?.(value);
+                    }
+                  }}
                   disabled={busy}
                   menuWidthPx={208}
                   menuSide={dropdownSide}
                   selectedIconClassName="text-[var(--ec-accent)]"
                 />
               ) : null}
-              {showMultiReasoningControl ? (
+              {showExecutionModeControl && onExecutionModeChange ? (
                 <ComposerSelect
-                  value={normalizedMultiReasoning}
-                  icon={BrainCircuit}
+                  value={normalizedExecutionMode}
+                  icon={SlidersHorizontal}
                   iconClassName="text-[var(--ec-muted)]"
-                  options={[
-                    { value: "low", label: "Reasoning: Low", displayLabel: "Low" },
-                    { value: "medium", label: "Reasoning: Medium", displayLabel: "Medium" },
-                    { value: "high", label: "Reasoning: High", displayLabel: "High" },
-                  ]}
-                  onChange={(value) => {
-                    onReasoningEffortChange?.(value);
-                    onAnthropicEffortChange?.(value);
-                  }}
+                  options={executionModeOptions}
+                  onChange={onExecutionModeChange}
                   disabled={busy}
-                  menuWidthPx={192}
-                  menuSide={dropdownSide}
-                  selectedIconClassName="text-[var(--ec-accent)]"
-                />
-              ) : null}
-              {showAnthropicControl && onAnthropicEffortChange ? (
-                <ComposerSelect
-                  value={anthropicEffort || "medium"}
-                  icon={BrainCircuit}
-                  iconClassName="text-[var(--ec-muted)]"
-                  options={[
-                    { value: "low", label: "Effort: Low", displayLabel: "Low" },
-                    { value: "medium", label: "Effort: Medium", displayLabel: "Medium" },
-                    { value: "high", label: "Effort: High", displayLabel: "High" },
-                    ...(activeModelOption?.providerType === "claude-code"
-                      ? [
-                          { value: "xhigh", label: "Effort: XHigh", displayLabel: "XHigh" },
-                          { value: "max", label: "Effort: Max", displayLabel: "Max" },
-                        ]
-                      : []),
-                  ]}
-                  onChange={onAnthropicEffortChange}
-                  disabled={busy}
-                  menuWidthPx={192}
+                  menuWidthPx={208}
                   menuSide={dropdownSide}
                   selectedIconClassName="text-[var(--ec-accent)]"
                 />

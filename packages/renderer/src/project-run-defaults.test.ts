@@ -18,6 +18,7 @@ describe("parseProjectRunDefaultsSetting", () => {
         worktreeModelIds: ["model-a", "model-b"],
         reasoningEffort: "high",
         anthropicEffort: "xhigh",
+        executionMode: "fast",
         yoloMode: true,
       },
     };

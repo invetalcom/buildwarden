@@ -1,4 +1,5 @@
 export * from "./provider-metadata";
+export * from "./model-execution-profiles";
 /**
  * The full skills catalog (~3.7 MB of literals) is deliberately NOT re-exported
  * here: a runtime re-export would pull it into the preload and renderer startup
@@ -1578,6 +1579,48 @@ export interface ProviderAvailableModel {
   unavailableReason?: string;
 }
 
+export type ModelExecutionControlId =
+  | "reasoningEffort"
+  | "serviceTier"
+  | "speed"
+  | "thinkingLevel"
+  | "contextMode"
+  | "workflowMode";
+
+export interface ModelExecutionControlOption {
+  value: string;
+  label: string;
+  description?: string;
+}
+
+/** Provider/model-specific controls discovered from the provider and stored with a configured model. */
+export interface ModelExecutionControl {
+  id: ModelExecutionControlId;
+  label: string;
+  options: ModelExecutionControlOption[];
+  /** Provider default. Clients should omit the corresponding request field when the user selects `auto`. */
+  defaultValue?: string;
+}
+
+export interface ModelExecutionProfile {
+  /** Whether controls came from a live provider response or BuildWarden's conservative catalog. */
+  source?: "provider" | "catalog";
+  controls: ModelExecutionControl[];
+}
+
+/** Runtime options after the selected model's UI controls have been mapped to its provider contract. */
+export interface ProviderExecutionOptions {
+  reasoningEffort?: string;
+  /** Backward-compatible Anthropic-specific effort input. */
+  anthropicEffort?: string;
+  serviceTier?: string;
+  speed?: string;
+  thinkingLevel?: string;
+  thinkingBudget?: number;
+  contextMode?: string;
+  workflowMode?: string;
+}
+
 export interface ListAvailableProviderModelsInput {
   providerAccountId: string;
 }
@@ -1598,6 +1641,7 @@ export interface ProviderAvailableModelsContext {
 export const MODEL_CONFIG_OPENAI_REASONING_EFFORT_KEY = "openaiReasoningEffort";
 export const MODEL_CONFIG_ANTHROPIC_EFFORT_KEY = "anthropicEffort";
 export const MODEL_CONFIG_CODEX_REASONING_EFFORT_KEY = "codexReasoningEffort";
+export const MODEL_CONFIG_EXECUTION_PROFILE_KEY = "buildwardenExecutionProfile";
 
 export interface ProjectInput {
   name?: string;
@@ -1642,6 +1686,7 @@ export interface RunInput {
   attachments?: ChatAttachmentPayload[];
   reasoningEffort?: string;
   anthropicEffort?: string;
+  executionOptions?: ProviderExecutionOptions;
   kind?: RunKind;
   labThreadId?: string | null;
   projectTaskId?: string | null;
@@ -1660,6 +1705,7 @@ export interface ContinueRunInput {
   includeWorkspaceChanges?: boolean;
   reasoningEffort?: string;
   anthropicEffort?: string;
+  executionOptions?: ProviderExecutionOptions;
   delegationEnabled?: boolean;
 }
 
@@ -1671,6 +1717,7 @@ export interface RunFollowUpOptions {
   attachments?: ChatAttachmentPayload[];
   reasoningEffort?: string;
   anthropicEffort?: string;
+  executionOptions?: ProviderExecutionOptions;
   delegationEnabled?: boolean;
 }
 
@@ -3029,10 +3076,7 @@ export interface RunExecutionRequest {
   skillContext?: string;
   config?: Record<string, unknown>;
   modelConfig?: Record<string, unknown>;
-  providerOptions?: {
-    reasoningEffort?: string;
-    anthropicEffort?: string;
-  };
+  providerOptions?: ProviderExecutionOptions;
   /** When true, runs as pure chat with no tools or repo context. */
   isChat?: boolean;
   /** User-attached files for chat turns (main/worker only). */
@@ -3140,6 +3184,7 @@ export interface ChatInput {
   attachments?: ChatAttachmentPayload[];
   reasoningEffort?: string;
   anthropicEffort?: string;
+  executionOptions?: ProviderExecutionOptions;
 }
 
 export interface RunChatInput {
@@ -3148,6 +3193,7 @@ export interface RunChatInput {
   attachments?: ChatAttachmentPayload[];
   reasoningEffort?: string;
   anthropicEffort?: string;
+  executionOptions?: ProviderExecutionOptions;
 }
 
 /**
@@ -3161,6 +3207,7 @@ export interface FollowUpChatOptions {
   attachments?: ChatAttachmentPayload[];
   reasoningEffort?: string;
   anthropicEffort?: string;
+  executionOptions?: ProviderExecutionOptions;
 }
 
 export interface HarnessRunChunk {
@@ -4569,6 +4616,8 @@ export interface ProjectRunDefaults {
   worktreeModelIds: string[];
   reasoningEffort: string;
   anthropicEffort: string;
+  /** Secondary provider control such as Fast/Priority speed or Cursor context mode. */
+  executionMode: string;
   /** Full Access: skip per-tool approvals for new runs. */
   yoloMode: boolean;
 }
@@ -4580,14 +4629,26 @@ export const buildDefaultProjectRunDefaults = (): ProjectRunDefaults => ({
   workspaceType: "worktree",
   modelId: "",
   worktreeModelIds: [],
-  reasoningEffort: "medium",
-  anthropicEffort: "medium",
+  reasoningEffort: "auto",
+  anthropicEffort: "auto",
+  executionMode: "auto",
   yoloMode: false,
 });
 
 const RUN_DEFAULT_MODES: readonly RunMode[] = ["code", "plan", "ask"];
 const RUN_DEFAULT_WORKSPACE_TYPES: readonly RunWorkspaceType[] = ["worktree", "local", "copy"];
-const RUN_DEFAULT_EFFORTS: readonly string[] = ["low", "medium", "high", "xhigh"];
+const RUN_DEFAULT_EFFORTS: readonly string[] = [
+  "auto",
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+  "ultracode",
+];
 
 const parseProjectRunDefaultsRecord = (value: unknown): ProjectRunDefaults | null => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -4604,6 +4665,10 @@ const parseProjectRunDefaultsRecord = (value: unknown): ProjectRunDefaults | nul
       : defaults.worktreeModelIds,
     reasoningEffort: RUN_DEFAULT_EFFORTS.includes(record.reasoningEffort as string) ? (record.reasoningEffort as string) : defaults.reasoningEffort,
     anthropicEffort: RUN_DEFAULT_EFFORTS.includes(record.anthropicEffort as string) ? (record.anthropicEffort as string) : defaults.anthropicEffort,
+    executionMode:
+      typeof record.executionMode === "string" && record.executionMode.trim().length > 0 && record.executionMode.length <= 64
+        ? record.executionMode.trim()
+        : defaults.executionMode,
     yoloMode: record.yoloMode === true,
   };
 };
