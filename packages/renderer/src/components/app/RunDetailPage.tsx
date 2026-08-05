@@ -613,11 +613,9 @@ export const RunDetailPage = ({
   );
 
   const removeBrowserElementCapture = useCallback((captureId: string) => {
-    setBrowserElementCaptures((current) => {
-      const next = current.filter((capture) => capture.id !== captureId);
-      browserElementCapturesRef.current = next;
-      return next;
-    });
+    const next = browserElementCapturesRef.current.filter((capture) => capture.id !== captureId);
+    browserElementCapturesRef.current = next;
+    setBrowserElementCaptures(next);
     void buildwarden.runBrowserAction({
       runId: runDetail.run.id,
       action: "remove-annotation",
