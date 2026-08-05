@@ -16,6 +16,7 @@ import {
   type ProviderExecutionOptions,
   type ProviderType,
   type RunDetail,
+  type RunModelConfiguration,
   type RunRecord,
   type RunTokenUsage,
   type RunWorkspaceLayoutPreference,
@@ -285,6 +286,18 @@ export interface RunReasoningInput {
   anthropicEffort?: string;
   executionOptions?: ProviderExecutionOptions;
 }
+
+export const resolveRunModelConfiguration = (
+  modelId: string,
+  configurations: Readonly<Record<string, RunModelConfiguration>>,
+  reasoningEffort: string,
+  anthropicEffort: string,
+  executionMode: string,
+  isAnthropic: boolean,
+): RunModelConfiguration => configurations[modelId] ?? {
+  effort: isAnthropic ? anthropicEffort : reasoningEffort,
+  executionMode,
+};
 
 export const buildRunReasoningInput = (
   providerType: ProviderType,

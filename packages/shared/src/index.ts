@@ -4606,6 +4606,13 @@ export const serializeProjectLabSettingsSetting = (value: ProjectLabSettingsByPr
     ),
   );
 
+export interface RunModelConfiguration {
+  /** Generic effort value; mapped to the selected model's provider when the run starts. */
+  effort: string;
+  /** Model-specific secondary control such as speed, service tier, or context mode. */
+  executionMode: string;
+}
+
 /** Per-project defaults applied to new agent runs, persisted across app restarts. */
 export interface ProjectRunDefaults {
   mode: RunMode;
@@ -4614,6 +4621,8 @@ export interface ProjectRunDefaults {
   modelId: string;
   /** Models used for isolated workspace (worktree/copy) runs. Empty = fall back to {@link modelId}. */
   worktreeModelIds: string[];
+  /** Per-model values used by the composer model chips. */
+  modelConfigurations: Record<string, RunModelConfiguration>;
   reasoningEffort: string;
   anthropicEffort: string;
   /** Secondary provider control such as Fast/Priority speed or Cursor context mode. */
@@ -4629,6 +4638,7 @@ export const buildDefaultProjectRunDefaults = (): ProjectRunDefaults => ({
   workspaceType: "worktree",
   modelId: "",
   worktreeModelIds: [],
+  modelConfigurations: {},
   reasoningEffort: "auto",
   anthropicEffort: "auto",
   executionMode: "auto",
@@ -4650,6 +4660,24 @@ const RUN_DEFAULT_EFFORTS: readonly string[] = [
   "ultracode",
 ];
 
+const parseRunModelConfigurations = (value: unknown): Record<string, RunModelConfiguration> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const result: Record<string, RunModelConfiguration> = {};
+  for (const [rawModelId, rawConfiguration] of Object.entries(value as Record<string, unknown>).slice(0, 100)) {
+    const modelId = rawModelId.trim();
+    if (!modelId || modelId.length > 256 || !rawConfiguration || typeof rawConfiguration !== "object" || Array.isArray(rawConfiguration)) continue;
+    const configuration = rawConfiguration as Record<string, unknown>;
+    result[modelId] = {
+      effort: RUN_DEFAULT_EFFORTS.includes(configuration.effort as string) ? (configuration.effort as string) : "auto",
+      executionMode:
+        typeof configuration.executionMode === "string" && configuration.executionMode.trim().length > 0 && configuration.executionMode.length <= 64
+          ? configuration.executionMode.trim()
+          : "auto",
+    };
+  }
+  return result;
+};
+
 const parseProjectRunDefaultsRecord = (value: unknown): ProjectRunDefaults | null => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
@@ -4663,6 +4691,7 @@ const parseProjectRunDefaultsRecord = (value: unknown): ProjectRunDefaults | nul
     worktreeModelIds: Array.isArray(record.worktreeModelIds)
       ? [...new Set(record.worktreeModelIds.filter((item): item is string => typeof item === "string" && item.trim().length > 0))]
       : defaults.worktreeModelIds,
+    modelConfigurations: parseRunModelConfigurations(record.modelConfigurations),
     reasoningEffort: RUN_DEFAULT_EFFORTS.includes(record.reasoningEffort as string) ? (record.reasoningEffort as string) : defaults.reasoningEffort,
     anthropicEffort: RUN_DEFAULT_EFFORTS.includes(record.anthropicEffort as string) ? (record.anthropicEffort as string) : defaults.anthropicEffort,
     executionMode:

@@ -455,8 +455,20 @@ describe("renderer component states", () => {
       onModeChange: vi.fn(),
       selectedModelId: "model-1",
       modelOptions: [
-        { value: "model-1", label: "GPT-5", providerType: "ai-sdk" as const, providerFamily: "openai" as const },
-        { value: "model-2", label: "Claude", providerType: "claude-code" as const },
+        {
+          value: "model-1",
+          label: "GPT-5",
+          providerType: "ai-sdk" as const,
+          providerFamily: "openai" as const,
+          executionProfile: {
+            controls: [{
+              id: "reasoningEffort" as const,
+              label: "Effort",
+              options: [{ value: "auto", label: "Provider default" }, { value: "high", label: "High" }],
+            }],
+          },
+        },
+        { value: "model-2", label: "Claude", providerType: "claude-code" as const, executionProfile: { controls: [] } },
       ],
       onModelChange: vi.fn(),
       selectedBranch: "main",
@@ -473,14 +485,25 @@ describe("renderer component states", () => {
         modelSelectionMode="multi"
         selectedModelIds={["model-1", "model-2"]}
         onModelIdsChange={vi.fn()}
+        modelConfigurations={{
+          "model-1": { effort: "high", executionMode: "auto" },
+          "model-2": { effort: "auto", executionMode: "auto" },
+        }}
+        onModelConfigurationsChange={vi.fn()}
         onYoloModeChange={vi.fn()}
         reasoningEffort="high"
         onReasoningEffortChange={vi.fn()}
       />,
     );
     expect(runMarkup).toContain("Full access");
+    expect(runMarkup).toContain('aria-label="Configure GPT-5"');
+    expect(runMarkup).toContain('aria-label="Configure Claude"');
+    expect(runMarkup).toContain('aria-label="Add model"');
+    expect(runMarkup).not.toContain("2 models");
     const chatMarkup = renderToStaticMarkup(<RunComposer {...commonProps} variant="chat" submitLabel="Send chat" />);
     expect(chatMarkup).toContain("Send chat");
+    expect(chatMarkup).toContain('aria-label="Configure GPT-5"');
+    expect(chatMarkup).not.toContain('aria-label="Add model"');
   });
 
   it("intersects effort choices across every selected model", () => {

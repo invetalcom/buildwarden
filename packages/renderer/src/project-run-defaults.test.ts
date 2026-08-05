@@ -16,6 +16,10 @@ describe("parseProjectRunDefaultsSetting", () => {
         workspaceType: "local",
         modelId: "model-a",
         worktreeModelIds: ["model-a", "model-b"],
+        modelConfigurations: {
+          "model-a": { effort: "high", executionMode: "fast" },
+          "model-b": { effort: "xhigh", executionMode: "auto" },
+        },
         reasoningEffort: "high",
         anthropicEffort: "xhigh",
         executionMode: "fast",
@@ -34,7 +38,11 @@ describe("parseProjectRunDefaultsSetting", () => {
           mode: "yeet",
           workspaceType: 42,
           modelId: 7,
-          worktreeModelIds: ["ok", "", 3, "ok"],
+            worktreeModelIds: ["ok", "", 3, "ok"],
+            modelConfigurations: {
+              ok: { effort: "medium", executionMode: "priority" },
+              broken: { effort: "extreme", executionMode: "" },
+            },
           reasoningEffort: "extreme",
           anthropicEffort: "medium",
           yoloMode: "yes",
@@ -45,6 +53,10 @@ describe("parseProjectRunDefaultsSetting", () => {
     expect(parsed["project-1"]).toEqual({
       ...buildDefaultProjectRunDefaults(),
       worktreeModelIds: ["ok"],
+      modelConfigurations: {
+        ok: { effort: "medium", executionMode: "priority" },
+        broken: { effort: "auto", executionMode: "auto" },
+      },
       anthropicEffort: "medium",
     });
   });

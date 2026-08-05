@@ -38,6 +38,7 @@ import {
   type RunDetail,
   type RunDeletionImpact,
   type RunMode,
+  type RunModelConfiguration,
   type RunRecord,
   type RunTokenUsage,
   type RunTimelineDensity,
@@ -95,6 +96,7 @@ import {
   parseRunDragPayload,
   readRunTokenUsage,
   removeRunIdsFromOpenPanes,
+  resolveRunModelConfiguration,
   resolveProviderComposerPrompt,
   runIdIsOpenInPanes,
   snapshotContainsRunId,
@@ -237,6 +239,7 @@ export const App = () => {
   const [runProjectId, setRunProjectId] = useState("");
   const [runModelId, setRunModelId] = useState("");
   const [runWorktreeModelIds, setRunWorktreeModelIds] = useState<string[]>([]);
+  const [runModelConfigurations, setRunModelConfigurations] = useState<Record<string, RunModelConfiguration>>({});
   const [runMode, setRunMode] = useState<RunMode>("code");
   const [runWorkspaceType, setRunWorkspaceType] = useState<RunWorkspaceType>("worktree");
   const [runPrompt, setRunPrompt] = useState("");
@@ -1122,6 +1125,7 @@ export const App = () => {
     changeRunYoloMode,
     changeRunModel,
     changeRunWorktreeModelIds,
+    changeRunModelConfigurations,
   } = useProjectRunDefaults({
     buildwarden,
     snapshotLoaded,
@@ -1137,6 +1141,7 @@ export const App = () => {
     setRunYoloMode,
     setRunModelId,
     setRunWorktreeModelIds,
+    setRunModelConfigurations,
     onRunModelChange: handleRunModelChange,
     onRunWorktreeModelIdsChange: handleRunWorktreeModelIdsChangeAndPersist,
     onError: setError,
@@ -1810,13 +1815,21 @@ export const App = () => {
     }
     const providerFamilyForModel =
       selectedProvider.providerType === "ai-sdk" ? getAiSdkProviderFamilyFromConfigJson(selectedProvider.configJson) : null;
+    const modelConfiguration = resolveRunModelConfiguration(
+      mid,
+      runWorkspaceType === "local" ? {} : runModelConfigurations,
+      runReasoningEffort,
+      runAnthropicEffort,
+      runExecutionMode,
+      selectedProvider.providerType === "claude-code" || (selectedProvider.providerType === "ai-sdk" && providerFamilyForModel === "anthropic"),
+    );
     const reasoningInput = buildRunReasoningInput(
       selectedProvider.providerType,
       providerFamilyForModel,
-      runReasoningEffort,
-      runAnthropicEffort,
+      modelConfiguration.effort,
+      modelConfiguration.effort,
       buildModelExecutionProfile(selectedProvider.providerType, providerFamilyForModel, selectedModel.modelId, selectedModel.configJson),
-      runExecutionMode,
+      modelConfiguration.executionMode,
     );
     const commandInput = resolveProviderComposerPrompt(prompt, selectedProvider.providerType, "run");
     if (commandInput.goalText !== undefined && !commandInput.prompt.trim() && !(attachments?.length ?? 0)) {
@@ -3807,6 +3820,7 @@ export const App = () => {
               runBaseBranch={runBaseBranch}
               runModelId={runModelId}
               runWorktreeModelIds={runWorktreeModelIds}
+              runModelConfigurations={runModelConfigurations}
               submitShortcut={keyboardShortcuts.submitComposer}
               projectRunStats={projectRunStats}
               busy={busy}
@@ -3837,6 +3851,7 @@ export const App = () => {
               onProjectBaseBranchChange={(branchName) => updateProjectBaseBranch(project.project.id, branchName)}
               onRunModelChange={changeRunModel}
               onRunWorktreeModelIdsChange={changeRunWorktreeModelIds}
+              onRunModelConfigurationsChange={changeRunModelConfigurations}
               availableIntegratedSkills={enabledIntegratedSkills}
               activeIntegratedSkillIds={projectActiveSkillsByProjectId[project.project.id] ?? []}
               onActiveIntegratedSkillIdsChange={(skillIds) => void updateProjectActiveSkills(project.project.id, skillIds)}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderType, UnifiedProviderFamily } from "@buildwarden/shared";
-import { buildModelExecutionProfile, buildRunReasoningInput, harnessTypeForProvider, removeRunIdsFromOpenPanes } from "./app-model";
+import { buildModelExecutionProfile, buildRunReasoningInput, harnessTypeForProvider, removeRunIdsFromOpenPanes, resolveRunModelConfiguration } from "./app-model";
 
 describe("harnessTypeForProvider", () => {
   const cases: Array<[ProviderType, string]> = [
@@ -17,6 +17,25 @@ describe("harnessTypeForProvider", () => {
 });
 
 describe("buildRunReasoningInput", () => {
+  it("resolves independent values for each selected model chip", () => {
+    const configurations = {
+      openai: { effort: "high", executionMode: "priority" },
+      claude: { effort: "xhigh", executionMode: "auto" },
+    };
+    expect(resolveRunModelConfiguration("openai", configurations, "low", "medium", "auto", false)).toEqual({
+      effort: "high",
+      executionMode: "priority",
+    });
+    expect(resolveRunModelConfiguration("claude", configurations, "low", "medium", "fast", true)).toEqual({
+      effort: "xhigh",
+      executionMode: "auto",
+    });
+    expect(resolveRunModelConfiguration("missing", configurations, "low", "medium", "fast", true)).toEqual({
+      effort: "medium",
+      executionMode: "fast",
+    });
+  });
+
   it("maps Codex effort and fast mode without conflating the two controls", () => {
     const profile = buildModelExecutionProfile("codex-cli", null, "gpt-5.6-sol");
     expect(buildRunReasoningInput("codex-cli", null, "ultra", "auto", profile, "fast")).toEqual({

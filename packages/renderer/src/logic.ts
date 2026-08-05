@@ -18,6 +18,7 @@ export {
   latestRunTokenUsage,
   pickProjectBranch,
   readRunTokenUsage,
+  resolveRunModelConfiguration,
   resolveProviderComposerPrompt,
   snapshotContainsRunId,
   type RunReasoningInput,

@@ -32,6 +32,8 @@ describe("new run defaults", () => {
       mode: "plan",
       workspaceType: "local",
       modelId: "m1",
+      modelIds: ["m1"],
+      modelConfigurations: {},
       reasoningEffort: "high",
       anthropicEffort: "xhigh",
       executionMode: "fast",
@@ -43,6 +45,22 @@ describe("new run defaults", () => {
     expect(resolve(settingsFor("p1", { modelId: "m2" })).modelId).toBe("m2");
     expect(resolve(settingsFor("p1", { modelId: "removed" })).modelId).toBe("m1");
     expect(resolve(settingsFor("p1", { modelId: "" })).modelId).toBe("m1");
+  });
+
+  it("restores per-model chip settings for isolated runs", () => {
+    const resolved = resolve(settingsFor("p1", {
+      modelId: "m1",
+      worktreeModelIds: ["m1", "m2"],
+      modelConfigurations: {
+        m1: { effort: "high", executionMode: "priority" },
+        m2: { effort: "xhigh", executionMode: "auto" },
+      },
+    }));
+    expect(resolved.modelIds).toEqual(["m1", "m2"]);
+    expect(resolved.modelConfigurations).toEqual({
+      m1: { effort: "high", executionMode: "priority" },
+      m2: { effort: "xhigh", executionMode: "auto" },
+    });
   });
 
   it("keeps the workspace within what the project kind allows", () => {
@@ -58,6 +76,8 @@ describe("new run defaults", () => {
       mode: "code",
       workspaceType: "worktree",
       modelId: "m1",
+      modelIds: ["m1"],
+      modelConfigurations: {},
       reasoningEffort: "auto",
       anthropicEffort: "auto",
       executionMode: "auto",

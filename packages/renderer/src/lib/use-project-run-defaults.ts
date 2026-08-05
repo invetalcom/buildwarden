@@ -4,6 +4,7 @@ import {
   parseProjectRunDefaultsSetting,
   type ProjectRunDefaults,
   type ProjectRunDefaultsByProjectId,
+  type RunModelConfiguration,
   type RunMode,
   type RunWorkspaceType,
 } from "@buildwarden/shared";
@@ -28,6 +29,7 @@ interface UseProjectRunDefaultsInput {
   setRunYoloMode: (value: boolean) => void;
   setRunModelId: (value: string) => void;
   setRunWorktreeModelIds: (value: string[]) => void;
+  setRunModelConfigurations: (value: Record<string, RunModelConfiguration>) => void;
   /** Existing model-change handler (also persists the global last-used model id). */
   onRunModelChange: (modelId: string) => void;
   /** Existing worktree model-set handler (also persists the global last-used model id). */
@@ -55,6 +57,7 @@ export const useProjectRunDefaults = ({
   setRunYoloMode,
   setRunModelId,
   setRunWorktreeModelIds,
+  setRunModelConfigurations,
   onRunModelChange,
   onRunWorktreeModelIdsChange,
   onError,
@@ -121,6 +124,7 @@ export const useProjectRunDefaults = ({
       resolvedWorktreeModelIds = resolvedModelId ? [resolvedModelId] : [];
     }
     setRunWorktreeModelIds(resolvedWorktreeModelIds);
+    setRunModelConfigurations(defaults.modelConfigurations);
   }, [
     models,
     preferredRunModelId,
@@ -133,6 +137,7 @@ export const useProjectRunDefaults = ({
     setRunReasoningEffort,
     setRunWorkspaceType,
     setRunWorktreeModelIds,
+    setRunModelConfigurations,
     setRunYoloMode,
     snapshotLoaded,
   ]);
@@ -201,6 +206,14 @@ export const useProjectRunDefaults = ({
     [onRunWorktreeModelIdsChange, persistProjectRunDefaults],
   );
 
+  const changeRunModelConfigurations = useCallback(
+    (configurations: Record<string, RunModelConfiguration>) => {
+      setRunModelConfigurations(configurations);
+      persistProjectRunDefaults({ modelConfigurations: configurations });
+    },
+    [persistProjectRunDefaults, setRunModelConfigurations],
+  );
+
   return {
     changeRunMode,
     changeRunWorkspaceType,
@@ -210,5 +223,6 @@ export const useProjectRunDefaults = ({
     changeRunYoloMode,
     changeRunModel,
     changeRunWorktreeModelIds,
+    changeRunModelConfigurations,
   };
 };

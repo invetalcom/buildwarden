@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { APP_SETTING_KEYS, type ProjectKind, type RunMode, type RunWorkspaceType } from "@buildwarden/shared";
-import { buildRunReasoningInput } from "@buildwarden/renderer/logic";
-import { ChevronDown, Sparkles } from "lucide-react";
+import { APP_SETTING_KEYS, type ProjectKind, type RunMode, type RunModelConfiguration, type RunWorkspaceType } from "@buildwarden/shared";
+import { buildRunReasoningInput, resolveRunModelConfiguration } from "@buildwarden/renderer/logic";
+import { Bot, ChevronDown, Plus, Sparkles, X } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
 import { defaultProjectId, defaultRunModel, runModelOptions } from "../data/selectors";
 import { useAction } from "../data/use-action";
@@ -98,7 +98,10 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
   );
 
   const [prompt, setPrompt] = useState("");
-  const [modelId, setModelId] = useState(defaults.modelId);
+  const [modelIds, setModelIds] = useState(defaults.modelIds);
+  const [modelConfigurations, setModelConfigurations] = useState<Record<string, RunModelConfiguration>>(defaults.modelConfigurations);
+  const [activeModelId, setActiveModelId] = useState<string | null>(null);
+  const [addModelsOpen, setAddModelsOpen] = useState(false);
   const [mode, setMode] = useState<RunMode>(defaults.mode);
   const [workspaceType, setWorkspaceType] = useState<RunWorkspaceType>(defaults.workspaceType);
   const [yoloMode, setYoloMode] = useState(defaults.yoloMode);
@@ -131,7 +134,9 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
     setMode(defaults.mode);
     setWorkspaceType(defaults.workspaceType);
     setYoloMode(defaults.yoloMode);
-    setModelId(defaults.modelId);
+    setModelIds(defaults.modelIds);
+    setModelConfigurations(defaults.modelConfigurations);
+    setActiveModelId(null);
     setReasoningEffort(defaults.reasoningEffort);
     setAnthropicEffort(defaults.anthropicEffort);
     setExecutionMode(defaults.executionMode);
@@ -139,45 +144,119 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
 
   // Models arrive with the first snapshot, which can land after this screen mounts.
   useEffect(() => {
-    if (!modelId && models.length > 0) setModelId(defaults.modelId || models[0].modelId);
-  }, [defaults.modelId, modelId, models]);
+    const validIds = modelIds.filter((id) => models.some((option) => option.modelId === id));
+    if (validIds.length !== modelIds.length || validIds.length === 0) {
+      const fallbackIds = defaults.modelIds.length > 0 ? defaults.modelIds : models[0] ? [models[0].modelId] : [];
+      setModelIds(validIds.length > 0 ? validIds : fallbackIds);
+    }
+  }, [defaults.modelIds, modelIds, models]);
 
-  const model = models.find((option) => option.modelId === modelId) ?? null;
+  useEffect(() => {
+    if (workspaceType !== "local" || modelIds.length <= 1) return;
+    const firstModelId = modelIds[0];
+    setModelIds([firstModelId]);
+    if (activeModelId && activeModelId !== firstModelId) setActiveModelId(null);
+  }, [activeModelId, modelIds, workspaceType]);
+
+  const selectedModelId = activeModelId && modelIds.includes(activeModelId) ? activeModelId : modelIds[0] ?? "";
+  const model = models.find((option) => option.modelId === selectedModelId) ?? null;
   const reasoningControl = model?.executionProfile.controls.find((control) => control.id === "reasoningEffort" || control.id === "thinkingLevel");
   const secondaryControl = model?.executionProfile.controls.find((control) => control.id !== "reasoningEffort" && control.id !== "thinkingLevel");
   const selectedEffort = model?.providerType === "claude-code" || (model?.providerType === "ai-sdk" && model.providerFamily === "anthropic")
-    ? anthropicEffort
-    : reasoningEffort;
+    ? modelConfigurations[selectedModelId]?.effort ?? anthropicEffort
+    : modelConfigurations[selectedModelId]?.effort ?? reasoningEffort;
+  const selectedExecutionMode = modelConfigurations[selectedModelId]?.executionMode ?? executionMode;
   const workspaces = WORKSPACES[projectKind];
+  const changeModelConfiguration = (next: RunModelConfiguration) => {
+    if (!selectedModelId) return;
+    setModelConfigurations((current) => ({ ...current, [selectedModelId]: next }));
+  };
+  const replaceSelectedModel = (nextModelId: string) => {
+    if (!selectedModelId || nextModelId === selectedModelId) return;
+    const nextModel = models.find((entry) => entry.modelId === nextModelId);
+    if (!nextModel) return;
+    const nextReasoningControl = nextModel.executionProfile.controls.find((control) => control.id === "reasoningEffort" || control.id === "thinkingLevel");
+    const nextSecondaryControl = nextModel.executionProfile.controls.find((control) => control.id !== "reasoningEffort" && control.id !== "thinkingLevel");
+    const nextConfiguration = {
+      effort: nextReasoningControl?.options.some((option) => option.value === selectedEffort) ? selectedEffort : "auto",
+      executionMode: nextSecondaryControl?.options.some((option) => option.value === selectedExecutionMode) ? selectedExecutionMode : "auto",
+    };
+    setModelIds((current) => current.map((id) => id === selectedModelId ? nextModelId : id));
+    setModelConfigurations((current) => {
+      const next = { ...current };
+      delete next[selectedModelId];
+      next[nextModelId] = nextConfiguration;
+      return next;
+    });
+    setActiveModelId(nextModelId);
+  };
+  const removeModel = (modelIdToRemove: string) => {
+    if (modelIds.length <= 1) return;
+    setModelIds((current) => current.filter((id) => id !== modelIdToRemove));
+    setModelConfigurations((current) => {
+      const next = { ...current };
+      delete next[modelIdToRemove];
+      return next;
+    });
+    if (activeModelId === modelIdToRemove) setActiveModelId(null);
+  };
+  const addModel = (nextModelId: string) => {
+    if (modelIds.includes(nextModelId)) return;
+    setModelIds((current) => [...current, nextModelId]);
+    setModelConfigurations((current) => ({ ...current, [nextModelId]: { effort: "auto", executionMode: "auto" } }));
+    setActiveModelId(nextModelId);
+    setAddModelsOpen(false);
+  };
+  const unselectedModels = models.filter((entry) => !modelIds.includes(entry.modelId));
 
   const start = async () => {
-    if (!model || !project || !prompt.trim()) return;
-    const run = await action.run(
-      () =>
-        client.createRun({
-          projectId: project.project.id,
-          providerAccountId: model.providerAccountId,
-          modelId: model.modelId,
-          harnessType: model.harnessType,
-          mode,
-          workspaceType,
-          yoloMode,
-          delegationEnabled: delegation,
-          baseBranch: project.project.baseBranch,
-          prompt: prompt.trim(),
-          ...buildRunReasoningInput(
-            model.providerType,
-            model.providerFamily,
+    if (!project || !prompt.trim()) return;
+    const selectedModels = (workspaceType === "local" ? modelIds.slice(0, 1) : modelIds)
+      .flatMap((id) => {
+        const entry = models.find((option) => option.modelId === id);
+        return entry ? [entry] : [];
+      });
+    if (selectedModels.length === 0) return;
+    const runs = await action.run(
+      async () => {
+        const created = [];
+        for (const selectedModel of selectedModels) {
+          const configuration = resolveRunModelConfiguration(
+            selectedModel.modelId,
+            modelConfigurations,
             reasoningEffort,
             anthropicEffort,
-            model.executionProfile,
             executionMode,
-          ),
-        }),
+            selectedModel.providerType === "claude-code" || (selectedModel.providerType === "ai-sdk" && selectedModel.providerFamily === "anthropic"),
+          );
+          created.push(await client.createRun({
+            projectId: project.project.id,
+            providerAccountId: selectedModel.providerAccountId,
+            modelId: selectedModel.modelId,
+            harnessType: selectedModel.harnessType,
+            mode,
+            workspaceType,
+            yoloMode,
+            delegationEnabled: delegation,
+            baseBranch: project.project.baseBranch,
+            prompt: prompt.trim(),
+            ...buildRunReasoningInput(
+              selectedModel.providerType,
+              selectedModel.providerFamily,
+              configuration.effort,
+              configuration.effort,
+              selectedModel.executionProfile,
+              configuration.executionMode,
+            ),
+          }));
+        }
+        return created;
+      },
       "The run did not start.",
     );
+    const run = runs?.at(-1);
     if (!run) return;
-    await client.setAppSetting(APP_SETTING_KEYS.lastUsedRunModelId, model.modelId).catch(() => undefined);
+    await client.setAppSetting(APP_SETTING_KEYS.lastUsedRunModelId, run.modelId).catch(() => undefined);
     await snapshotStore.refresh();
     router.replace({ name: "run", runId: run.id, segment: "activity" });
   };
@@ -228,20 +307,139 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
             </select>
           </label>
 
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Model</span>
-            <select
-              value={modelId}
-              onChange={(event) => setModelId(event.target.value)}
-              className="m-tap w-full rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-3 text-[var(--ec-text)]"
-            >
-              {models.map((option) => (
-                <option key={option.modelId} value={option.modelId}>
-                  {option.label} · {option.providerLabel}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Models</span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {modelIds.flatMap((id) => {
+                const entry = models.find((option) => option.modelId === id);
+                if (!entry) return [];
+                const configuration = resolveRunModelConfiguration(
+                  id,
+                  modelConfigurations,
+                  reasoningEffort,
+                  anthropicEffort,
+                  executionMode,
+                  entry.providerType === "claude-code" || (entry.providerType === "ai-sdk" && entry.providerFamily === "anthropic"),
+                );
+                const effortControl = entry.executionProfile.controls.find((control) => control.id === "reasoningEffort" || control.id === "thinkingLevel");
+                const effortLabel = effortControl?.options.find((option) => option.value === configuration.effort)?.label;
+                const isActive = activeModelId === id;
+                return [
+                  <span
+                    key={id}
+                    className={cn(
+                      "inline-flex h-9 max-w-full items-center overflow-hidden rounded-full border bg-[var(--ec-input)] transition",
+                      isActive ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)]" : "border-[var(--ec-border)]",
+                    )}
+                  >
+                    <button
+                      type="button"
+                      aria-label={`Configure ${entry.label}`}
+                      onClick={() => {
+                        setActiveModelId(isActive ? null : id);
+                        setAddModelsOpen(false);
+                      }}
+                      className="flex min-w-0 items-center gap-1.5 px-3 text-[12px] font-medium"
+                    >
+                      <Bot className="size-3.5 shrink-0 text-[var(--ec-muted)]" />
+                      <span className="truncate">{entry.label}</span>
+                      {configuration.effort !== "auto" && effortLabel ? (
+                        <span className="shrink-0 text-[11px] font-normal text-[var(--ec-muted)]">{effortLabel}</span>
+                      ) : null}
+                      <ChevronDown className={cn("size-3.5 shrink-0 text-[var(--ec-faint)] transition", isActive && "rotate-180")} />
+                    </button>
+                    {workspaceType !== "local" && modelIds.length > 1 ? (
+                      <button
+                        type="button"
+                        aria-label={`Remove ${entry.label}`}
+                        onClick={() => removeModel(id)}
+                        className="flex h-full items-center border-l border-[var(--ec-border)] px-2 text-[var(--ec-faint)] hover:text-[var(--ec-text)]"
+                      >
+                        <X className="size-3.5" />
+                      </button>
+                    ) : null}
+                  </span>,
+                ];
+              })}
+              {workspaceType !== "local" ? (
+                <button
+                  type="button"
+                  aria-label="Add model"
+                  disabled={unselectedModels.length === 0}
+                  onClick={() => {
+                    setAddModelsOpen((current) => !current);
+                    setActiveModelId(null);
+                  }}
+                  className="flex size-9 items-center justify-center rounded-full border border-dashed border-[var(--ec-border-strong)] text-[var(--ec-muted)] transition hover:border-[var(--ec-accent-ring)] hover:text-[var(--ec-text)] disabled:opacity-40"
+                >
+                  <Plus className={cn("size-4 transition", addModelsOpen && "rotate-45")} />
+                </button>
+              ) : null}
+            </div>
+
+            {addModelsOpen && unselectedModels.length > 0 ? (
+              <div className="flex max-h-48 flex-col overflow-y-auto rounded-lg border border-[var(--ec-border)] bg-[var(--ec-input)] p-1 shadow-lg">
+                {unselectedModels.map((entry) => (
+                  <button
+                    key={entry.modelId}
+                    type="button"
+                    onClick={() => addModel(entry.modelId)}
+                    className="flex min-h-10 items-center gap-2 rounded-md px-2.5 text-left hover:bg-[var(--ec-hover)]"
+                  >
+                    <Bot className="size-3.5 shrink-0 text-[var(--ec-muted)]" />
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{entry.label}</span>
+                    <span className="shrink-0 text-[11px] text-[var(--ec-faint)]">{entry.providerLabel}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            {activeModelId && model ? (
+              <div className="grid gap-1 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-input)] p-1.5 shadow-lg">
+                <label className="grid min-h-10 grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-2 rounded-md px-2 hover:bg-[var(--ec-hover)]">
+                  <span className="text-[12px] font-medium">Model</span>
+                  <select
+                    aria-label={`Model for ${model.label}`}
+                    value={selectedModelId}
+                    onChange={(event) => replaceSelectedModel(event.target.value)}
+                    className="min-w-0 bg-transparent text-right text-[12px] text-[var(--ec-muted)] outline-none"
+                  >
+                    {models.map((option) => (
+                      <option key={option.modelId} value={option.modelId} disabled={option.modelId !== selectedModelId && modelIds.includes(option.modelId)}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {reasoningControl ? (
+                  <label className="grid min-h-10 grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-2 rounded-md px-2 hover:bg-[var(--ec-hover)]">
+                    <span className="text-[12px] font-medium">{reasoningControl.label}</span>
+                    <select
+                      aria-label={`${reasoningControl.label} for ${model.label}`}
+                      value={reasoningControl.options.some((option) => option.value === selectedEffort) ? selectedEffort : "auto"}
+                      onChange={(event) => changeModelConfiguration({ effort: event.target.value, executionMode: selectedExecutionMode })}
+                      className="min-w-0 bg-transparent text-right text-[12px] text-[var(--ec-muted)] outline-none"
+                    >
+                      {reasoningControl.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                  </label>
+                ) : null}
+                {secondaryControl ? (
+                  <label className="grid min-h-10 grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-2 rounded-md px-2 hover:bg-[var(--ec-hover)]">
+                    <span className="text-[12px] font-medium">{secondaryControl.label}</span>
+                    <select
+                      aria-label={`${secondaryControl.label} for ${model.label}`}
+                      value={secondaryControl.options.some((option) => option.value === selectedExecutionMode) ? selectedExecutionMode : "auto"}
+                      onChange={(event) => changeModelConfiguration({ effort: selectedEffort, executionMode: event.target.value })}
+                      className="min-w-0 bg-transparent text-right text-[12px] text-[var(--ec-muted)] outline-none"
+                    >
+                      {secondaryControl.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                  </label>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </div>
 
         <button
@@ -260,36 +458,6 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
           <>
             <OptionGroup label="Mode" options={MODES} value={mode} onChange={setMode} />
             <OptionGroup label="Workspace" options={workspaces} value={workspaceType} onChange={setWorkspaceType} />
-            {reasoningControl ? (
-              <label className="flex flex-col gap-1.5 px-4 py-2">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">{reasoningControl.label}</span>
-                <select
-                  value={reasoningControl.options.some((option) => option.value === selectedEffort) ? selectedEffort : "auto"}
-                  onChange={(event) => {
-                    if (model?.providerType === "claude-code" || (model?.providerType === "ai-sdk" && model.providerFamily === "anthropic")) {
-                      setAnthropicEffort(event.target.value);
-                    } else {
-                      setReasoningEffort(event.target.value);
-                    }
-                  }}
-                  className="m-tap w-full rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-3 text-[var(--ec-text)]"
-                >
-                  {reasoningControl.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-              </label>
-            ) : null}
-            {secondaryControl && secondaryControl.options.length > 1 ? (
-              <label className="flex flex-col gap-1.5 px-4 py-2">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">{secondaryControl.label}</span>
-                <select
-                  value={secondaryControl.options.some((option) => option.value === executionMode) ? executionMode : "auto"}
-                  onChange={(event) => setExecutionMode(event.target.value)}
-                  className="m-tap w-full rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-3 text-[var(--ec-text)]"
-                >
-                  {secondaryControl.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-              </label>
-            ) : null}
             <div className="flex flex-col gap-1 px-4 py-2">
               <div className="m-tap flex items-center gap-3">
                 <span className="flex flex-1 flex-col">
@@ -313,7 +481,7 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
       </div>
 
       <div className="m-safe-bottom shrink-0 border-t border-[var(--ec-border)] bg-[var(--ec-sidebar)] px-4 py-3">
-        <Button block className="h-12" busy={action.busy} disabled={!prompt.trim() || !model} onClick={() => void start()}>
+        <Button block className="h-12" busy={action.busy} disabled={!prompt.trim() || modelIds.length === 0} onClick={() => void start()}>
           <Sparkles className="size-4" />
           Start run
         </Button>

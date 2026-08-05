@@ -1,4 +1,4 @@
-import type { ProjectKind, RunMode, RunWorkspaceType } from "@buildwarden/shared";
+import type { ProjectKind, RunMode, RunModelConfiguration, RunWorkspaceType } from "@buildwarden/shared";
 import { readProjectRunDefaults } from "./project-settings";
 
 /**
@@ -23,6 +23,8 @@ export interface NewRunDefaults {
   mode: RunMode;
   workspaceType: RunWorkspaceType;
   modelId: string;
+  modelIds: string[];
+  modelConfigurations: Record<string, RunModelConfiguration>;
   reasoningEffort: string;
   anthropicEffort: string;
   executionMode: string;
@@ -46,15 +48,26 @@ export const resolveNewRunDefaults = ({
 }): NewRunDefaults => {
   const stored = readProjectRunDefaults(settings, projectId);
   const workspaceTypes = NEW_RUN_WORKSPACE_TYPES[projectKind];
+  const workspaceType = workspaceTypes.includes(stored.workspaceType) ? stored.workspaceType : workspaceTypes[0];
+  const modelId = stored.modelId && modelIds.includes(stored.modelId) ? stored.modelId : fallbackModelId;
+  const storedModelIds = stored.worktreeModelIds.filter((id) => modelIds.includes(id));
+  const selectedModelIds = workspaceType === "local"
+    ? modelId ? [modelId] : []
+    : storedModelIds.length > 0 ? storedModelIds : modelId ? [modelId] : [];
+  const modelConfigurations = Object.fromEntries(
+    Object.entries(stored.modelConfigurations).filter(([id]) => modelIds.includes(id)),
+  );
 
   return {
     mode: stored.mode,
     // A stored workspace can outlive the project kind that allowed it (or predate this rule), and
     // an option the composer does not offer would leave the group with nothing selected.
-    workspaceType: workspaceTypes.includes(stored.workspaceType) ? stored.workspaceType : workspaceTypes[0],
+    workspaceType,
     // Same precedence as the desktop: the project's stored model wins over the last used one, but
     // only while it is still configured.
-    modelId: stored.modelId && modelIds.includes(stored.modelId) ? stored.modelId : fallbackModelId,
+    modelId,
+    modelIds: selectedModelIds,
+    modelConfigurations,
     reasoningEffort: stored.reasoningEffort,
     anthropicEffort: stored.anthropicEffort,
     executionMode: stored.executionMode,

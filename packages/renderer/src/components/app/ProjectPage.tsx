@@ -9,6 +9,7 @@ import type {
   ProjectTaskStatus,
   ProviderType,
   RunMode,
+  RunModelConfiguration,
   RunWorkspaceType,
   SupportedIdeKind,
   UnifiedProviderFamily,
@@ -42,6 +43,7 @@ interface ProjectPageProps {
   runBaseBranch: string;
   runModelId: string;
   runWorktreeModelIds: string[];
+  runModelConfigurations?: Record<string, RunModelConfiguration>;
   submitShortcut: string;
   projectRunStats: ProjectRunStats;
   busy: boolean;
@@ -72,6 +74,7 @@ interface ProjectPageProps {
   onProjectBaseBranchChange: (value: string) => void | Promise<void>;
   onRunModelChange: (modelId: string) => void;
   onRunWorktreeModelIdsChange: (modelIds: string[]) => void;
+  onRunModelConfigurationsChange?: (configurations: Record<string, RunModelConfiguration>) => void;
   availableIntegratedSkills: IntegratedSkillMetadata[];
   activeIntegratedSkillIds: string[];
   onActiveIntegratedSkillIdsChange: (skillIds: string[]) => void | Promise<void>;
@@ -131,6 +134,7 @@ export const ProjectPage = ({
   runBaseBranch,
   runModelId,
   runWorktreeModelIds,
+  runModelConfigurations = {},
   submitShortcut,
   projectRunStats,
   busy,
@@ -161,6 +165,7 @@ export const ProjectPage = ({
   onProjectBaseBranchChange,
   onRunModelChange,
   onRunWorktreeModelIdsChange,
+  onRunModelConfigurationsChange,
   availableIntegratedSkills,
   activeIntegratedSkillIds,
   onActiveIntegratedSkillIdsChange,
@@ -203,6 +208,7 @@ export const ProjectPage = ({
           runBaseBranch={runBaseBranch}
           runModelId={runModelId}
           runWorktreeModelIds={runWorktreeModelIds}
+          runModelConfigurations={runModelConfigurations}
           submitShortcut={submitShortcut}
           projectRunStats={projectRunStats}
           busy={busy}
@@ -221,6 +227,7 @@ export const ProjectPage = ({
           onRunBaseBranchChange={onRunBaseBranchChange}
           onRunModelChange={onRunModelChange}
           onRunWorktreeModelIdsChange={onRunWorktreeModelIdsChange}
+          onRunModelConfigurationsChange={onRunModelConfigurationsChange}
           onReasoningEffortChange={onReasoningEffortChange}
           onAnthropicEffortChange={onAnthropicEffortChange}
           onExecutionModeChange={onExecutionModeChange}
