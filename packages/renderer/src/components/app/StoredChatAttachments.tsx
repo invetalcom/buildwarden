@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ChatAttachmentPayload } from "@buildwarden/shared";
 import {
@@ -225,7 +225,10 @@ const BrowserElementAttachmentRow = ({
   onOpen: () => void;
 }) => {
   const [expanded, setExpanded] = useState(false);
-  const info = getStoredBrowserElementDisplayInfo(contextAttachment, screenshotAttachment, fallbackNumber);
+  const info = useMemo(
+    () => getStoredBrowserElementDisplayInfo(contextAttachment, screenshotAttachment, fallbackNumber),
+    [contextAttachment, screenshotAttachment, fallbackNumber],
+  );
   const label = info.accessibleName || `<${info.tagName}>`;
   const noteIsLong = info.comment.length > 180 || info.comment.split("\n").length > 3;
 
