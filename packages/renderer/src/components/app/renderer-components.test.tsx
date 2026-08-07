@@ -510,6 +510,17 @@ describe("renderer component states", () => {
     expect(runMarkup).toContain(">2 models<");
     expect(runMarkup).toContain(">High<");
     expect(runMarkup).toContain(">Fast<");
+    const staleModelMarkup = renderToStaticMarkup(
+      <RunComposer
+        {...commonProps}
+        modelSelectionMode="multi"
+        selectedModelIds={["removed-model"]}
+        onModelIdsChange={vi.fn()}
+      />,
+    );
+    const staleModelTrigger = staleModelMarkup.match(/<button[^>]*aria-label="Configure Select model"[^>]*>/)?.[0];
+    expect(staleModelTrigger).toBeDefined();
+    expect(staleModelTrigger).not.toContain("disabled");
     const chatMarkup = renderToStaticMarkup(<RunComposer {...commonProps} variant="chat" submitLabel="Send chat" />);
     expect(chatMarkup).toContain("Send chat");
     expect(chatMarkup).toContain('aria-label="Configure GPT-5"');

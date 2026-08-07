@@ -416,7 +416,6 @@ const ComposerMultiModelControl = ({
   useEffect(() => {
     if (selectedOptions.length === 0) {
       setActiveModelId("");
-      setOpen(false);
       return;
     }
     if (!selectedOptions.some((entry) => entry.value === activeModelId)) setActiveModelId(selectedOptions[0]!.value);
@@ -438,9 +437,11 @@ const ComposerMultiModelControl = ({
   };
   const groupSummary = [groupSummaryForControl("effort"), groupSummaryForControl("secondary")]
     .filter((entry): entry is string => Boolean(entry));
-  const groupLabel = selectedOptions.length === 1
-    ? selectedOptions[0]?.displayLabel ?? selectedOptions[0]?.label ?? "Model"
-    : `${selectedOptions.length} models`;
+  const groupLabel = selectedOptions.length === 0
+    ? "Select model"
+    : selectedOptions.length === 1
+      ? selectedOptions[0]?.displayLabel ?? selectedOptions[0]?.label ?? "Model"
+      : `${selectedOptions.length} models`;
   const tooltip = selectedModels.map(({ optionEntry, configuration }) => {
     const values = modelConfigurationSummaryValues(optionEntry, configuration);
     return `${optionEntry.displayLabel ?? optionEntry.label}${values.length > 0 ? ` — ${values.join(" · ")}` : ""}`;
@@ -478,11 +479,11 @@ const ComposerMultiModelControl = ({
         title={tooltip}
         className="inline-flex h-8 min-w-0 max-w-[24rem] items-center gap-1.5 rounded-full bg-[var(--ec-control)] px-2.5 text-[13px] font-medium text-[var(--ec-text)] ring-1 ring-inset ring-[var(--ec-border)] transition hover:bg-[var(--ec-hover)] hover:ring-[var(--ec-border-strong)] focus-visible:ring-2 focus-visible:ring-[var(--ec-accent-ring)]"
         onClick={() => {
-          setAdding(false);
+          setAdding(selectedOptions.length === 0);
           setSection("model");
           setOpen((current) => !current);
         }}
-        disabled={disabled || selectedOptions.length === 0}
+        disabled={disabled || options.length === 0}
       >
         <Bot className="h-3.5 w-3.5 shrink-0 text-[var(--ec-muted)]" />
         <span className="max-w-36 shrink-0 truncate">{groupLabel}</span>
