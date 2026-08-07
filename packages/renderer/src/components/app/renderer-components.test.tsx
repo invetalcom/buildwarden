@@ -28,7 +28,7 @@ import { ProjectSettingsPage } from "./ProjectSettingsPage";
 import { ProviderModelPanelButtons, ProviderModelsOverview } from "./provider-models-overview";
 import { RunEmbeddedBrowser } from "./RunEmbeddedBrowser";
 import { RunComposer } from "./RunComposer";
-import { intersectModelExecutionControls } from "./model-execution-controls";
+import { intersectModelExecutionControls, nextModelChipSection } from "./model-execution-controls";
 import { RunDetailHeader } from "./RunDetailHeader";
 import { RunPlanProgressPill } from "./RunPlanProgressPill";
 import { RunPlanSteps } from "./RunPlanSteps";
@@ -499,11 +499,31 @@ describe("renderer component states", () => {
     expect(runMarkup).toContain('aria-label="Configure GPT-5"');
     expect(runMarkup).toContain('aria-label="Configure Claude"');
     expect(runMarkup).toContain('aria-label="Add model"');
+    expect(runMarkup).toContain('data-model-chip-rail="true"');
+    expect(runMarkup).not.toContain(">High<");
     expect(runMarkup).not.toContain("2 models");
     const chatMarkup = renderToStaticMarkup(<RunComposer {...commonProps} variant="chat" submitLabel="Send chat" />);
     expect(chatMarkup).toContain("Send chat");
     expect(chatMarkup).toContain('aria-label="Configure GPT-5"');
     expect(chatMarkup).not.toContain('aria-label="Add model"');
+  });
+
+  it("keeps model configuration moving through the same menu after replacement", () => {
+    expect(nextModelChipSection({
+      controls: [{
+        id: "reasoningEffort",
+        label: "Effort",
+        options: [{ value: "auto", label: "Provider default" }, { value: "high", label: "High" }],
+      }],
+    })).toBe("effort");
+    expect(nextModelChipSection({
+      controls: [{
+        id: "speed",
+        label: "Speed",
+        options: [{ value: "auto", label: "Provider default" }, { value: "fast", label: "Fast" }],
+      }],
+    })).toBe("secondary");
+    expect(nextModelChipSection({ controls: [] })).toBe("model");
   });
 
   it("intersects effort choices across every selected model", () => {

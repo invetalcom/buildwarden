@@ -1,4 +1,13 @@
-import type { ModelExecutionControl } from "@buildwarden/shared";
+import type { ModelExecutionControl, ModelExecutionProfile } from "@buildwarden/shared";
+
+export type ModelChipSection = "model" | "effort" | "secondary";
+
+/** Chooses the next useful row after replacing a model without closing its configuration menu. */
+export const nextModelChipSection = (executionProfile: ModelExecutionProfile | undefined): ModelChipSection => {
+  if (executionProfile?.controls.some((entry) => entry.id === "reasoningEffort" || entry.id === "thinkingLevel")) return "effort";
+  if (executionProfile?.controls.some((entry) => entry.id !== "reasoningEffort" && entry.id !== "thinkingLevel")) return "secondary";
+  return "model";
+};
 
 /** Returns only values accepted by every supplied model control. */
 export const intersectModelExecutionControls = (

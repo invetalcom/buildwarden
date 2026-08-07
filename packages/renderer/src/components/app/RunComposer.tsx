@@ -27,6 +27,7 @@ import { Textarea } from "../ui/textarea";
 import { ContextWindowBadge } from "./ContextWindowBadge";
 import { AnchorDropdownPortal } from "../ui/dropdown-portal";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { nextModelChipSection, type ModelChipSection } from "./model-execution-controls";
 
 const RUN_MODES: RunMode[] = ["code", "plan", "ask"];
 
@@ -191,8 +192,6 @@ export const ComposerSelect = ({
   );
 };
 
-type ModelChipSection = "model" | "effort" | "secondary";
-
 const reasoningControlForModel = (optionEntry: ComposerSelectOption | null | undefined) =>
   optionEntry?.executionProfile?.controls.find((entry) => entry.id === "reasoningEffort" || entry.id === "thinkingLevel");
 
@@ -223,6 +222,7 @@ const ComposerModelChip = ({
   options,
   configuration,
   allowRemove,
+  compact,
   disabled,
   menuSide,
   onReplace,
@@ -235,6 +235,7 @@ const ComposerModelChip = ({
   options: ComposerSelectOption[];
   configuration: RunModelConfiguration;
   allowRemove: boolean;
+  compact: boolean;
   disabled: boolean;
   menuSide: "top" | "bottom";
   onReplace: (nextModelId: string, nextConfiguration: RunModelConfiguration) => void;
@@ -270,12 +271,13 @@ const ComposerModelChip = ({
       : configuration.executionMode;
 
   return (
-    <div className="relative z-10 inline-flex h-8 min-w-0 items-stretch rounded-full bg-[var(--ec-control)] ring-1 ring-inset ring-[var(--ec-border)] transition hover:ring-[var(--ec-border-strong)]">
+    <div className="relative z-10 inline-flex h-8 min-w-0 shrink-0 items-stretch rounded-full bg-[var(--ec-control)] ring-1 ring-inset ring-[var(--ec-border)] transition hover:ring-[var(--ec-border-strong)]">
       <button
         ref={anchorRef}
         type="button"
         aria-label={`Configure ${optionEntry.label}`}
-        className="inline-flex min-w-0 items-center gap-1.5 rounded-full px-2.5 text-[13px] font-medium text-[var(--ec-text)] outline-none transition hover:bg-[var(--ec-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-accent-ring)]"
+        title={[optionEntry.displayLabel ?? optionEntry.label, ...summaryValues].join(" · ")}
+        className={`inline-flex min-w-0 items-center gap-1.5 rounded-full text-[13px] font-medium text-[var(--ec-text)] outline-none transition hover:bg-[var(--ec-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-accent-ring)] ${compact ? "px-2" : "px-2.5"}`}
         onClick={() => {
           setSection("model");
           setOpen((current) => !current);
@@ -283,8 +285,8 @@ const ComposerModelChip = ({
         disabled={disabled}
       >
         <Bot className="h-3.5 w-3.5 shrink-0 text-[var(--ec-muted)]" />
-        <span className="max-w-36 truncate">{optionEntry.displayLabel ?? optionEntry.label}</span>
-        {summaryValues.map((value) => <span key={value} className="hidden max-w-24 truncate text-xs font-normal text-[var(--ec-muted)] sm:inline">{value}</span>)}
+        <span className={`${compact ? "max-w-28" : "max-w-36"} truncate`}>{optionEntry.displayLabel ?? optionEntry.label}</span>
+        {!compact ? summaryValues.map((value) => <span key={value} className="hidden max-w-24 truncate text-xs font-normal text-[var(--ec-muted)] sm:inline">{value}</span>) : null}
         <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-[var(--ec-faint)] transition-transform duration-150 ${open ? "rotate-180" : ""}`} />
       </button>
       {allowRemove ? (
@@ -292,7 +294,10 @@ const ComposerModelChip = ({
           type="button"
           aria-label={`Remove ${optionEntry.label}`}
           className="mr-1 my-1 inline-flex w-6 items-center justify-center rounded-full text-[var(--ec-faint)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-accent-ring)]"
-          onClick={onRemove}
+          onClick={() => {
+            setOpen(false);
+            onRemove();
+          }}
           disabled={disabled}
         >
           <X className="h-3 w-3" />
@@ -339,6 +344,7 @@ const ComposerModelChip = ({
                     if (section === "model") {
                       const nextOption = options.find((candidate) => candidate.value === entry.value);
                       onReplace(entry.value, normalizedModelConfiguration(nextOption, configuration));
+                      setSection(nextModelChipSection(nextOption?.executionProfile));
                       return;
                     }
                     onConfigurationChange(section === "effort"
@@ -1092,35 +1098,45 @@ export const RunComposer = ({
                 </button>
               ) : null}
             </div>
-            <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
-              {selectedModelOptions.length > 0 ? selectedModelOptions.map((optionEntry) => (
-                <ComposerModelChip
-                  key={optionEntry.value}
-                  selectedId={optionEntry.value}
-                  selectedIds={useMultiModel ? selectedModelIds : [selectedModelId]}
-                  optionEntry={optionEntry}
-                  options={modelSelectOptions}
-                  configuration={configurationForModel(optionEntry)}
-                  allowRemove={useMultiModel && selectedModelOptions.length > 1}
-                  disabled={busy}
-                  menuSide={dropdownSide}
-                  onReplace={(nextModelId, nextConfiguration) => replaceSelectedModel(optionEntry.value, nextModelId, nextConfiguration)}
-                  onConfigurationChange={(next) => changeModelConfiguration(optionEntry.value, next)}
-                  onRemove={() => removeSelectedModel(optionEntry.value)}
-                />
-              )) : !useMultiModel ? (
-                <ComposerSelect
-                  value={selectedModelId}
-                  icon={Bot}
-                  iconClassName="text-[var(--ec-muted)]"
-                  options={modelSelectOptions}
-                  onChange={onModelChange}
-                  disabled={busy}
-                  menuWidthPx={352}
-                  menuSide={dropdownSide}
-                  selectedIconClassName="text-[var(--ec-accent)]"
-                />
-              ) : null}
+            <div className="flex min-w-0 items-center justify-end gap-1.5">
+              <div
+                data-model-chip-rail={useMultiModel ? "true" : undefined}
+                className={`flex min-w-0 items-center gap-1.5 ${
+                  useMultiModel
+                    ? "max-w-[min(42vw,38rem)] overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                    : ""
+                }`}
+              >
+                {selectedModelOptions.length > 0 ? selectedModelOptions.map((optionEntry, chipIndex) => (
+                  <ComposerModelChip
+                    key={useMultiModel ? `model-chip-${chipIndex}` : "model-chip"}
+                    selectedId={optionEntry.value}
+                    selectedIds={useMultiModel ? selectedModelIds : [selectedModelId]}
+                    optionEntry={optionEntry}
+                    options={modelSelectOptions}
+                    configuration={configurationForModel(optionEntry)}
+                    allowRemove={useMultiModel && selectedModelOptions.length > 1}
+                    compact={useMultiModel && selectedModelOptions.length > 1}
+                    disabled={busy}
+                    menuSide={dropdownSide}
+                    onReplace={(nextModelId, nextConfiguration) => replaceSelectedModel(optionEntry.value, nextModelId, nextConfiguration)}
+                    onConfigurationChange={(next) => changeModelConfiguration(optionEntry.value, next)}
+                    onRemove={() => removeSelectedModel(optionEntry.value)}
+                  />
+                )) : !useMultiModel ? (
+                  <ComposerSelect
+                    value={selectedModelId}
+                    icon={Bot}
+                    iconClassName="text-[var(--ec-muted)]"
+                    options={modelSelectOptions}
+                    onChange={onModelChange}
+                    disabled={busy}
+                    menuWidthPx={352}
+                    menuSide={dropdownSide}
+                    selectedIconClassName="text-[var(--ec-accent)]"
+                  />
+                ) : null}
+              </div>
               {useMultiModel ? (
                 <ComposerAddModelChip
                   options={modelSelectOptions.filter((entry) => !selectedModelIds.includes(entry.value))}

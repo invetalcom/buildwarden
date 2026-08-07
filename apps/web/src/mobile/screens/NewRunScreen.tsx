@@ -309,58 +309,68 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
 
           <div className="flex flex-col gap-1.5">
             <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Models</span>
-            <div className="flex flex-wrap items-center gap-1.5">
-              {modelIds.flatMap((id) => {
-                const entry = models.find((option) => option.modelId === id);
-                if (!entry) return [];
-                const configuration = resolveRunModelConfiguration(
-                  id,
-                  modelConfigurations,
-                  reasoningEffort,
-                  anthropicEffort,
-                  executionMode,
-                  entry.providerType === "claude-code" || (entry.providerType === "ai-sdk" && entry.providerFamily === "anthropic"),
-                );
-                const effortControl = entry.executionProfile.controls.find((control) => control.id === "reasoningEffort" || control.id === "thinkingLevel");
-                const effortLabel = effortControl?.options.find((option) => option.value === configuration.effort)?.label;
-                const isActive = activeModelId === id;
-                return [
-                  <span
-                    key={id}
-                    className={cn(
-                      "inline-flex h-9 max-w-full items-center overflow-hidden rounded-full border bg-[var(--ec-input)] transition",
-                      isActive ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)]" : "border-[var(--ec-border)]",
-                    )}
-                  >
-                    <button
-                      type="button"
-                      aria-label={`Configure ${entry.label}`}
-                      onClick={() => {
-                        setActiveModelId(isActive ? null : id);
-                        setAddModelsOpen(false);
-                      }}
-                      className="flex min-w-0 items-center gap-1.5 px-3 text-[12px] font-medium"
+            <div className="flex min-w-0 items-center gap-1.5">
+              <div
+                data-model-chip-rail="true"
+                className="flex min-w-0 flex-1 snap-x items-center gap-1.5 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              >
+                {modelIds.flatMap((id) => {
+                  const entry = models.find((option) => option.modelId === id);
+                  if (!entry) return [];
+                  const configuration = resolveRunModelConfiguration(
+                    id,
+                    modelConfigurations,
+                    reasoningEffort,
+                    anthropicEffort,
+                    executionMode,
+                    entry.providerType === "claude-code" || (entry.providerType === "ai-sdk" && entry.providerFamily === "anthropic"),
+                  );
+                  const effortControl = entry.executionProfile.controls.find((control) => control.id === "reasoningEffort" || control.id === "thinkingLevel");
+                  const effortLabel = effortControl?.options.find((option) => option.value === configuration.effort)?.label;
+                  const isActive = activeModelId === id;
+                  const isCompact = modelIds.length > 1;
+                  return [
+                    <span
+                      key={id}
+                      className={cn(
+                        "inline-flex h-9 max-w-full shrink-0 snap-start items-center overflow-hidden rounded-full border bg-[var(--ec-input)] transition",
+                        isActive ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)]" : "border-[var(--ec-border)]",
+                      )}
                     >
-                      <Bot className="size-3.5 shrink-0 text-[var(--ec-muted)]" />
-                      <span className="truncate">{entry.label}</span>
-                      {configuration.effort !== "auto" && effortLabel ? (
-                        <span className="shrink-0 text-[11px] font-normal text-[var(--ec-muted)]">{effortLabel}</span>
-                      ) : null}
-                      <ChevronDown className={cn("size-3.5 shrink-0 text-[var(--ec-faint)] transition", isActive && "rotate-180")} />
-                    </button>
-                    {workspaceType !== "local" && modelIds.length > 1 ? (
                       <button
                         type="button"
-                        aria-label={`Remove ${entry.label}`}
-                        onClick={() => removeModel(id)}
-                        className="flex h-full items-center border-l border-[var(--ec-border)] px-2 text-[var(--ec-faint)] hover:text-[var(--ec-text)]"
+                        aria-label={`Configure ${entry.label}`}
+                        title={[entry.label, configuration.effort !== "auto" ? effortLabel : null].filter(Boolean).join(" · ")}
+                        onClick={() => {
+                          setActiveModelId(isActive ? null : id);
+                          setAddModelsOpen(false);
+                        }}
+                        className={cn(
+                          "flex min-w-0 items-center gap-1.5 text-[12px] font-medium",
+                          isCompact ? "max-w-36 px-2" : "max-w-52 px-3",
+                        )}
                       >
-                        <X className="size-3.5" />
+                        <Bot className="size-3.5 shrink-0 text-[var(--ec-muted)]" />
+                        <span className="truncate">{entry.label}</span>
+                        {!isCompact && configuration.effort !== "auto" && effortLabel ? (
+                          <span className="shrink-0 text-[11px] font-normal text-[var(--ec-muted)]">{effortLabel}</span>
+                        ) : null}
+                        <ChevronDown className={cn("size-3.5 shrink-0 text-[var(--ec-faint)] transition", isActive && "rotate-180")} />
                       </button>
-                    ) : null}
-                  </span>,
-                ];
-              })}
+                      {workspaceType !== "local" && modelIds.length > 1 ? (
+                        <button
+                          type="button"
+                          aria-label={`Remove ${entry.label}`}
+                          onClick={() => removeModel(id)}
+                          className="flex h-full items-center border-l border-[var(--ec-border)] px-2 text-[var(--ec-faint)] hover:text-[var(--ec-text)]"
+                        >
+                          <X className="size-3.5" />
+                        </button>
+                      ) : null}
+                    </span>,
+                  ];
+                })}
+              </div>
               {workspaceType !== "local" ? (
                 <button
                   type="button"
@@ -370,7 +380,7 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
                     setAddModelsOpen((current) => !current);
                     setActiveModelId(null);
                   }}
-                  className="flex size-9 items-center justify-center rounded-full border border-dashed border-[var(--ec-border-strong)] text-[var(--ec-muted)] transition hover:border-[var(--ec-accent-ring)] hover:text-[var(--ec-text)] disabled:opacity-40"
+                  className="flex size-9 shrink-0 items-center justify-center rounded-full border border-dashed border-[var(--ec-border-strong)] text-[var(--ec-muted)] transition hover:border-[var(--ec-accent-ring)] hover:text-[var(--ec-text)] disabled:opacity-40"
                 >
                   <Plus className={cn("size-4 transition", addModelsOpen && "rotate-45")} />
                 </button>
