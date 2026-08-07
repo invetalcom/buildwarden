@@ -4660,6 +4660,12 @@ const RUN_DEFAULT_EFFORTS: readonly string[] = [
   "ultracode",
 ];
 
+const parseRunExecutionMode = (value: unknown, fallback: string): string => {
+  if (typeof value !== "string") return fallback;
+  const normalized = value.trim();
+  return normalized.length > 0 && normalized.length <= 64 ? normalized : fallback;
+};
+
 const parseRunModelConfigurations = (value: unknown): Record<string, RunModelConfiguration> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const result: Record<string, RunModelConfiguration> = {};
@@ -4669,10 +4675,7 @@ const parseRunModelConfigurations = (value: unknown): Record<string, RunModelCon
     const configuration = rawConfiguration as Record<string, unknown>;
     result[modelId] = {
       effort: RUN_DEFAULT_EFFORTS.includes(configuration.effort as string) ? (configuration.effort as string) : "auto",
-      executionMode:
-        typeof configuration.executionMode === "string" && configuration.executionMode.trim().length > 0 && configuration.executionMode.length <= 64
-          ? configuration.executionMode.trim()
-          : "auto",
+      executionMode: parseRunExecutionMode(configuration.executionMode, "auto"),
     };
   }
   return result;
@@ -4694,10 +4697,7 @@ const parseProjectRunDefaultsRecord = (value: unknown): ProjectRunDefaults | nul
     modelConfigurations: parseRunModelConfigurations(record.modelConfigurations),
     reasoningEffort: RUN_DEFAULT_EFFORTS.includes(record.reasoningEffort as string) ? (record.reasoningEffort as string) : defaults.reasoningEffort,
     anthropicEffort: RUN_DEFAULT_EFFORTS.includes(record.anthropicEffort as string) ? (record.anthropicEffort as string) : defaults.anthropicEffort,
-    executionMode:
-      typeof record.executionMode === "string" && record.executionMode.trim().length > 0 && record.executionMode.length <= 64
-        ? record.executionMode.trim()
-        : defaults.executionMode,
+    executionMode: parseRunExecutionMode(record.executionMode, defaults.executionMode),
     yoloMode: record.yoloMode === true,
   };
 };

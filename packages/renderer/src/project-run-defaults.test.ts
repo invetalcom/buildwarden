@@ -61,6 +61,21 @@ describe("parseProjectRunDefaultsSetting", () => {
     });
   });
 
+  it("validates execution-mode length after trimming surrounding whitespace", () => {
+    const paddedMode = `${" ".repeat(65)}priority${" ".repeat(65)}`;
+    const parsed = parseProjectRunDefaultsSetting(JSON.stringify({
+      "project-1": {
+        executionMode: paddedMode,
+        modelConfigurations: {
+          "model-a": { effort: "high", executionMode: paddedMode },
+        },
+      },
+    }));
+
+    expect(parsed["project-1"]?.executionMode).toBe("priority");
+    expect(parsed["project-1"]?.modelConfigurations["model-a"]?.executionMode).toBe("priority");
+  });
+
   it("skips entries that are not objects", () => {
     const parsed = parseProjectRunDefaultsSetting(
       JSON.stringify({ "project-1": "nope", "project-2": null, "project-3": buildDefaultProjectRunDefaults() }),
