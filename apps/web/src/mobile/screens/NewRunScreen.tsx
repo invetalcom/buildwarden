@@ -3,7 +3,7 @@ import { APP_SETTING_KEYS, type ModelExecutionControl, type ProjectKind, type Ru
 import { buildRunReasoningInput, resolveRunModelConfiguration } from "@buildwarden/renderer/logic";
 import { Bot, ChevronDown, Plus, Sparkles, X } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
-import { defaultProjectId, defaultRunModel, runModelOptions } from "../data/selectors";
+import { defaultProjectId, defaultRunModel, runModelOptions, type RunModelOption } from "../data/selectors";
 import { useAction } from "../data/use-action";
 import { createNewRunsIndependently } from "../lib/new-run-creation";
 import { reconcileNewRunModelIds, resolveNewRunDefaults } from "../lib/new-run-defaults";
@@ -72,10 +72,16 @@ const OptionGroup = <Value extends string>({
   </div>
 );
 
+const isReasoningControl = (control: Pick<ModelExecutionControl, "id">): boolean =>
+  control.id === "reasoningEffort" || control.id === "thinkingLevel";
+
+const isAnthropicModel = (model: Pick<RunModelOption, "providerType" | "providerFamily"> | null | undefined): boolean =>
+  model?.providerType === "claude-code" || (model?.providerType === "ai-sdk" && model.providerFamily === "anthropic");
+
 const mobileControlSummaryLabel = (control: ModelExecutionControl, value: string): string => {
   const label = control.options.find((option) => option.value === value)?.label ?? "Provider default";
   if (value !== "auto") return label;
-  const noun = control.id === "reasoningEffort" || control.id === "thinkingLevel" ? "effort" : control.label.toLocaleLowerCase();
+  const noun = isReasoningControl(control) ? "effort" : control.label.toLocaleLowerCase();
   return `Default ${noun}`;
 };
 
@@ -167,9 +173,9 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
 
   const selectedModelId = activeModelId && modelIds.includes(activeModelId) ? activeModelId : modelIds[0] ?? "";
   const model = models.find((option) => option.modelId === selectedModelId) ?? null;
-  const reasoningControl = model?.executionProfile.controls.find((control) => control.id === "reasoningEffort" || control.id === "thinkingLevel");
-  const secondaryControl = model?.executionProfile.controls.find((control) => control.id !== "reasoningEffort" && control.id !== "thinkingLevel");
-  const selectedEffort = model?.providerType === "claude-code" || (model?.providerType === "ai-sdk" && model.providerFamily === "anthropic")
+  const reasoningControl = model?.executionProfile.controls.find(isReasoningControl);
+  const secondaryControl = model?.executionProfile.controls.find((control) => !isReasoningControl(control));
+  const selectedEffort = isAnthropicModel(model)
     ? modelConfigurations[selectedModelId]?.effort ?? anthropicEffort
     : modelConfigurations[selectedModelId]?.effort ?? reasoningEffort;
   const selectedExecutionMode = modelConfigurations[selectedModelId]?.executionMode ?? executionMode;
@@ -182,8 +188,8 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
     if (!selectedModelId || nextModelId === selectedModelId) return;
     const nextModel = models.find((entry) => entry.modelId === nextModelId);
     if (!nextModel) return;
-    const nextReasoningControl = nextModel.executionProfile.controls.find((control) => control.id === "reasoningEffort" || control.id === "thinkingLevel");
-    const nextSecondaryControl = nextModel.executionProfile.controls.find((control) => control.id !== "reasoningEffort" && control.id !== "thinkingLevel");
+    const nextReasoningControl = nextModel.executionProfile.controls.find(isReasoningControl);
+    const nextSecondaryControl = nextModel.executionProfile.controls.find((control) => !isReasoningControl(control));
     const nextConfiguration = {
       effort: nextReasoningControl?.options.some((option) => option.value === selectedEffort) ? selectedEffort : "auto",
       executionMode: nextSecondaryControl?.options.some((option) => option.value === selectedExecutionMode) ? selectedExecutionMode : "auto",
@@ -224,10 +230,10 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
       reasoningEffort,
       anthropicEffort,
       executionMode,
-      entry.providerType === "claude-code" || (entry.providerType === "ai-sdk" && entry.providerFamily === "anthropic"),
+      isAnthropicModel(entry),
     );
-    const effortControl = entry.executionProfile.controls.find((control) => control.id === "reasoningEffort" || control.id === "thinkingLevel");
-    const secondaryEntry = entry.executionProfile.controls.find((control) => control.id !== "reasoningEffort" && control.id !== "thinkingLevel");
+    const effortControl = entry.executionProfile.controls.find(isReasoningControl);
+    const secondaryEntry = entry.executionProfile.controls.find((control) => !isReasoningControl(control));
     const summary = [
       effortControl ? mobileControlSummaryLabel(effortControl, configuration.effort) : null,
       secondaryEntry ? mobileControlSummaryLabel(secondaryEntry, configuration.executionMode) : null,
@@ -269,7 +275,7 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
             reasoningEffort,
             anthropicEffort,
             executionMode,
-            selectedModel.providerType === "claude-code" || (selectedModel.providerType === "ai-sdk" && selectedModel.providerFamily === "anthropic"),
+            isAnthropicModel(selectedModel),
           );
           return client.createRun({
             projectId: project.project.id,
