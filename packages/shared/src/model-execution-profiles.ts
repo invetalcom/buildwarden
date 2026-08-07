@@ -8,7 +8,7 @@ import type { UnifiedProviderFamily } from "./provider-metadata";
 
 const emptyProfile = (): ModelExecutionProfile => ({ controls: [] });
 
-const optionLabel = (value: string): string => {
+export const formatModelExecutionOptionLabel = (value: string): string => {
   if (value === "xhigh") return "Extra high";
   return value[0]!.toUpperCase() + value.slice(1);
 };
@@ -23,7 +23,7 @@ const control = (
   defaultValue: "auto",
   options: [
     { value: "auto", label: "Provider default" },
-    ...values.map((value) => ({ value, label: optionLabel(value) })),
+    ...values.map((value) => ({ value, label: formatModelExecutionOptionLabel(value) })),
   ],
 });
 

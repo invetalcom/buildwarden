@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   APP_SETTING_KEYS,
+  formatModelExecutionOptionLabel,
   type IntegratedSkillMetadata,
   type ProjectRunDefaults,
   type ProjectSnapshot,
@@ -48,8 +49,9 @@ const FOLDER_WORKSPACES: ReadonlyArray<{ value: RunWorkspaceType; label: string 
 ];
 
 const EFFORTS = ["auto", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "ultracode"] as const;
-const effortOptions = EFFORTS.map((value) => ({ value, label: value }));
-const executionModeOptions = ["auto", "standard", "fast", "flex", "priority"].map((value) => ({ value, label: value }));
+const settingOptionLabel = (value: string): string => value === "auto" ? "Provider default" : formatModelExecutionOptionLabel(value);
+const effortOptions = EFFORTS.map((value) => ({ value, label: settingOptionLabel(value) }));
+const executionModeOptions = ["auto", "standard", "fast", "flex", "priority"].map((value) => ({ value, label: settingOptionLabel(value) }));
 
 export const ProjectSettingsPanel = ({ project }: { project: ProjectSnapshot }) => {
   const { client, snapshot, snapshotStore, router } = useMobileApp();
