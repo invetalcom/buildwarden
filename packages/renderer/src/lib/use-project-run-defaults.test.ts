@@ -40,6 +40,9 @@ describe("project run model defaults", () => {
       "project-1": {
         modelId: "removed-model",
         worktreeModelIds: ["removed-model"],
+        modelConfigurations: {
+          "removed-model": { effort: "high", executionMode: "fast" },
+        },
       },
     }));
 

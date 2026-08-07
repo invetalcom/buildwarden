@@ -40,10 +40,13 @@ export const resolveProjectRunModelSelection = ({
     : modelId
       ? [modelId]
       : [];
+  const modelConfigurations = Object.fromEntries(
+    Object.entries(stored?.modelConfigurations ?? {}).filter(([configuredModelId]) => validModelIds.has(configuredModelId)),
+  );
   return {
     modelId,
     worktreeModelIds,
-    modelConfigurations: stored?.modelConfigurations ?? {},
+    modelConfigurations,
   };
 };
 
