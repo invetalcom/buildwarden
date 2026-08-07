@@ -70,6 +70,22 @@ describe("new run defaults", () => {
     });
   });
 
+  it("drops model selections and configurations that are no longer enabled", () => {
+    const resolved = resolve(settingsFor("p1", {
+      modelId: "m1",
+      worktreeModelIds: ["m1", "removed-model"],
+      modelConfigurations: {
+        m1: { effort: "high", executionMode: "auto" },
+        "removed-model": { effort: "low", executionMode: "fast" },
+      },
+    }));
+
+    expect(resolved.modelIds).toEqual(["m1"]);
+    expect(resolved.modelConfigurations).toEqual({
+      m1: { effort: "high", executionMode: "auto" },
+    });
+  });
+
   it("keeps the workspace within what the project kind allows", () => {
     // A git project's stored "copy" and a folder project's stored "worktree" are both offered by
     // neither composer, so they fall back to that kind's first option.
