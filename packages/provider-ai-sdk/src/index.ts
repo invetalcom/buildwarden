@@ -629,7 +629,7 @@ export const buildAiSdkProviderOptions = (
     const thinkingBudget = requestProviderOptions?.thinkingBudget;
     const thinkingConfig = {
       ...(thinkingLevel && thinkingLevel !== "auto" ? { thinkingLevel } : {}),
-      ...(typeof thinkingBudget === "number" ? { thinkingBudget } : {}),
+      ...(typeof thinkingBudget === "number" && Number.isFinite(thinkingBudget) ? { thinkingBudget } : {}),
     };
     const google = {
       ...(Object.keys(thinkingConfig).length > 0 ? { thinkingConfig } : {}),

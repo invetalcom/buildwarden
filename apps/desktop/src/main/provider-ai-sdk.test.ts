@@ -474,4 +474,12 @@ describe("buildAiSdkProviderOptions prompt cache key", () => {
     expect(buildAiSdkProviderOptions("openai", "gpt-5.6", { reasoningEffort: "auto", serviceTier: "auto" }, undefined)).toBeUndefined();
     expect(buildAiSdkProviderOptions("anthropic", "claude-opus-4-8", { anthropicEffort: "auto", speed: "auto" }, undefined)).toBeUndefined();
   });
+
+  it("omits non-finite Google thinking budgets", () => {
+    expect(buildAiSdkProviderOptions("google", "gemini-2.5-pro", { thinkingBudget: Number.NaN }, undefined)).toBeUndefined();
+    expect(buildAiSdkProviderOptions("google", "gemini-2.5-pro", { thinkingBudget: Number.POSITIVE_INFINITY }, undefined)).toBeUndefined();
+    expect(buildAiSdkProviderOptions("google", "gemini-2.5-pro", { thinkingBudget: 8_192 }, undefined)).toEqual({
+      google: { thinkingConfig: { thinkingBudget: 8_192 } },
+    });
+  });
 });
