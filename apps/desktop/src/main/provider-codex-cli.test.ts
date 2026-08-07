@@ -120,11 +120,13 @@ describe("Codex CLI plan progress", () => {
       }],
     }).models[0]!;
     const controls = (model.config as {
-      buildwardenExecutionProfile: { controls: Array<{ id: string; options: Array<{ value: string }> }> };
+      buildwardenExecutionProfile: { controls: Array<{ id: string; options: Array<{ value: string; label: string }> }> };
     }).buildwardenExecutionProfile.controls;
 
     expect(controls.find((control) => control.id === "reasoningEffort")?.options.map((entry) => entry.value))
       .toEqual(["auto", "low", "medium", "high", "xhigh"]);
+    expect(controls.find((control) => control.id === "reasoningEffort")?.options.map((entry) => entry.label))
+      .toEqual(["Provider default", "Low", "Medium", "High", "Extra high"]);
     expect(controls.find((control) => control.id === "serviceTier")?.options.map((entry) => entry.value))
       .toEqual(["auto", "fast"]);
   });

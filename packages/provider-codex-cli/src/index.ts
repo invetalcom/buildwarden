@@ -30,6 +30,7 @@ import {
   PROVIDER_CONFIG_CODEX_HOME_PATH_KEY,
   buildNetworkProxyUrl,
   buildRunSubagentChunk,
+  formatModelExecutionOptionLabel,
   formatRunPlanProgressContent,
   getKnownModelExecutionProfile,
   isTerminalRunSubagentStatus,
@@ -865,13 +866,16 @@ export const parseCodexModelListPage = (value: unknown): CodexModelListPage => {
         modelId;
       const supportedReasoningEfforts = (asArray(itemRecord?.supportedReasoningEfforts) ?? asArray(itemRecord?.supported_reasoning_efforts) ?? [])
         .flatMap((candidate) => {
-          if (typeof candidate === "string" && candidate.trim()) return [{ value: candidate.trim(), label: candidate.trim() }];
+          if (typeof candidate === "string" && candidate.trim()) {
+            const effort = candidate.trim();
+            return [{ value: effort, label: formatModelExecutionOptionLabel(effort) }];
+          }
           const effortRecord = asRecord(candidate);
           const effort = asString(effortRecord?.reasoningEffort)?.trim() || asString(effortRecord?.reasoning_effort)?.trim();
           if (!effort) return [];
           return [{
             value: effort,
-            label: effort === "xhigh" ? "Extra high" : effort[0]!.toUpperCase() + effort.slice(1),
+            label: formatModelExecutionOptionLabel(effort),
             ...(asString(effortRecord?.description)?.trim() ? { description: asString(effortRecord?.description)!.trim() } : {}),
           }];
         });
