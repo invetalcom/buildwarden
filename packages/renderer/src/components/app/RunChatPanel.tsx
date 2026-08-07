@@ -95,17 +95,29 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
 
   const steps = useMemo(() => detail?.steps ?? [], [detail]);
 
-  useEffect(() => {
+  const latestUserMessageOptions = useMemo(() => {
     const latestUserStep = [...steps].reverse().find((step) => safeParseMetadata(step.metadataJson).source === "user");
-    if (!latestUserStep) return;
+    if (!latestUserStep) return null;
     const metadata = safeParseMetadata(latestUserStep.metadataJson);
     const executionOptions = metadata.executionOptions && typeof metadata.executionOptions === "object" && !Array.isArray(metadata.executionOptions)
       ? metadata.executionOptions as ProviderExecutionOptions
       : undefined;
-    setSelectedReasoningEffort(typeof metadata.reasoningEffort === "string" ? metadata.reasoningEffort : executionOptions?.reasoningEffort ?? "auto");
-    setSelectedAnthropicEffort(typeof metadata.anthropicEffort === "string" ? metadata.anthropicEffort : executionOptions?.anthropicEffort ?? "auto");
-    setSelectedExecutionMode(executionOptions?.serviceTier ?? executionOptions?.speed ?? executionOptions?.contextMode ?? executionOptions?.workflowMode ?? "auto");
+    return {
+      reasoningEffort: typeof metadata.reasoningEffort === "string" ? metadata.reasoningEffort : executionOptions?.reasoningEffort ?? "auto",
+      anthropicEffort: typeof metadata.anthropicEffort === "string" ? metadata.anthropicEffort : executionOptions?.anthropicEffort ?? "auto",
+      executionMode: executionOptions?.serviceTier ?? executionOptions?.speed ?? executionOptions?.contextMode ?? executionOptions?.workflowMode ?? "auto",
+    };
   }, [steps]);
+  const latestReasoningEffort = latestUserMessageOptions?.reasoningEffort;
+  const latestAnthropicEffort = latestUserMessageOptions?.anthropicEffort;
+  const latestExecutionMode = latestUserMessageOptions?.executionMode;
+
+  useEffect(() => {
+    if (latestReasoningEffort === undefined || latestAnthropicEffort === undefined || latestExecutionMode === undefined) return;
+    setSelectedReasoningEffort(latestReasoningEffort);
+    setSelectedAnthropicEffort(latestAnthropicEffort);
+    setSelectedExecutionMode(latestExecutionMode);
+  }, [latestAnthropicEffort, latestExecutionMode, latestReasoningEffort]);
 
   const visibleSteps = useMemo(
     () => steps.filter((step) => safeParseMetadata(step.metadataJson).source !== RUN_CHAT_CONTEXT_SOURCE),
