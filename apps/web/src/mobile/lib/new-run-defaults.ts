@@ -31,6 +31,18 @@ export interface NewRunDefaults {
   yoloMode: boolean;
 }
 
+export const reconcileNewRunModelIds = (
+  currentIds: readonly string[],
+  configuredIds: readonly string[],
+  fallbackIds: readonly string[],
+): readonly string[] => {
+  const validIds = currentIds.filter((id) => configuredIds.includes(id));
+  const nextIds = validIds.length > 0 ? validIds : fallbackIds;
+  return nextIds.length === currentIds.length && nextIds.every((id, index) => id === currentIds[index])
+    ? currentIds
+    : nextIds;
+};
+
 export const resolveNewRunDefaults = ({
   settings,
   projectId,

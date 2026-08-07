@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { APP_SETTING_KEYS, buildDefaultProjectRunDefaults } from "@buildwarden/shared";
-import { resolveNewRunDefaults } from "./new-run-defaults";
+import { reconcileNewRunModelIds, resolveNewRunDefaults } from "./new-run-defaults";
 
 const settingsFor = (projectId: string, defaults: Partial<ReturnType<typeof buildDefaultProjectRunDefaults>>) => ({
   [APP_SETTING_KEYS.projectRunDefaults]: JSON.stringify({
@@ -19,6 +19,13 @@ const resolve = (settings: Record<string, string>, overrides: Partial<Parameters
   });
 
 describe("new run defaults", () => {
+  it("keeps the current model-list identity when empty reconciliation has no work", () => {
+    const currentIds: string[] = [];
+
+    expect(reconcileNewRunModelIds(currentIds, [], [])).toBe(currentIds);
+    expect(reconcileNewRunModelIds(["gone"], ["m1"], ["m1"])).toEqual(["m1"]);
+  });
+
   it("preselects the project's stored mode, workspace, efforts and Full Access", () => {
     const settings = settingsFor("p1", {
       mode: "plan",

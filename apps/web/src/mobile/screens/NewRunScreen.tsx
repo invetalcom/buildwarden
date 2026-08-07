@@ -5,7 +5,7 @@ import { Bot, ChevronDown, Plus, Sparkles, X } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
 import { defaultProjectId, defaultRunModel, runModelOptions } from "../data/selectors";
 import { useAction } from "../data/use-action";
-import { resolveNewRunDefaults } from "../lib/new-run-defaults";
+import { reconcileNewRunModelIds, resolveNewRunDefaults } from "../lib/new-run-defaults";
 import { AppBar } from "../components/AppBar";
 import { Button, EmptyState, InlineError, Textarea, Toggle } from "../components/primitives";
 import { cn } from "../lib/cn";
@@ -151,11 +151,10 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
 
   // Models arrive with the first snapshot, which can land after this screen mounts.
   useEffect(() => {
-    const validIds = modelIds.filter((id) => models.some((option) => option.modelId === id));
-    if (validIds.length !== modelIds.length || validIds.length === 0) {
-      const fallbackIds = defaults.modelIds.length > 0 ? defaults.modelIds : models[0] ? [models[0].modelId] : [];
-      setModelIds(validIds.length > 0 ? validIds : fallbackIds);
-    }
+    const configuredIds = models.map((option) => option.modelId);
+    const fallbackIds = defaults.modelIds.length > 0 ? defaults.modelIds : models[0] ? [models[0].modelId] : [];
+    const nextIds = reconcileNewRunModelIds(modelIds, configuredIds, fallbackIds);
+    if (nextIds !== modelIds) setModelIds([...nextIds]);
   }, [defaults.modelIds, modelIds, models]);
 
   useEffect(() => {
