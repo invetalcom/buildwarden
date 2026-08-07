@@ -640,7 +640,10 @@ export const RunDetailPage = ({
     }
     try {
       const selectedModel = modelOptions.find((option) => option.id === selectedModelId);
-      if (!selectedModel) return;
+      if (!selectedModel) {
+        window.alert("Select a configured model.");
+        return;
+      }
       await onFollowUpRun(runDetail.run, trimmed, {
         mode: selectedMode,
         modelId: selectedModelId,
