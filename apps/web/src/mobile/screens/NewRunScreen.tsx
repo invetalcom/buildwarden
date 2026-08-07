@@ -5,6 +5,7 @@ import { Bot, ChevronDown, Plus, Sparkles, X } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
 import { defaultProjectId, defaultRunModel, runModelOptions } from "../data/selectors";
 import { useAction } from "../data/use-action";
+import { createNewRunsIndependently } from "../lib/new-run-creation";
 import { reconcileNewRunModelIds, resolveNewRunDefaults } from "../lib/new-run-defaults";
 import { AppBar } from "../components/AppBar";
 import { Button, EmptyState, InlineError, Textarea, Toggle } from "../components/primitives";
@@ -258,10 +259,10 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
         return entry ? [entry] : [];
       });
     if (selectedModels.length === 0) return;
-    const runs = await action.run(
-      async () => {
-        const created = [];
-        for (const selectedModel of selectedModels) {
+    const result = await action.run(
+      () => createNewRunsIndependently(
+        selectedModels,
+        async (selectedModel) => {
           const configuration = resolveRunModelConfiguration(
             selectedModel.modelId,
             modelConfigurations,
@@ -270,7 +271,7 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
             executionMode,
             selectedModel.providerType === "claude-code" || (selectedModel.providerType === "ai-sdk" && selectedModel.providerFamily === "anthropic"),
           );
-          created.push(await client.createRun({
+          return client.createRun({
             projectId: project.project.id,
             providerAccountId: selectedModel.providerAccountId,
             modelId: selectedModel.modelId,
@@ -289,13 +290,17 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
               selectedModel.executionProfile,
               configuration.executionMode,
             ),
-          }));
-        }
-        return created;
-      },
+          });
+        },
+      ),
       "The run did not start.",
     );
-    const run = runs?.at(-1);
+    if (!result) return;
+    if (result.failures.length > 0) {
+      const failedModels = result.failures.map(({ model: failedModel }) => failedModel.label).join(", ");
+      window.alert(`Could not start runs for: ${failedModels}.`);
+    }
+    const run = result.runs.at(-1);
     if (!run) return;
     await client.setAppSetting(APP_SETTING_KEYS.lastUsedRunModelId, run.modelId).catch(() => undefined);
     await snapshotStore.refresh();
