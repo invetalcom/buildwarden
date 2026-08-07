@@ -11,6 +11,42 @@ import {
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { reportRendererError } from "./report-renderer-error";
 
+interface ResolveProjectRunModelSelectionInput {
+  stored: ProjectRunDefaults | undefined;
+  models: ReadonlyArray<{ id: string }>;
+  preferredRunModelId: string;
+}
+
+export const resolveProjectRunModelSelection = ({
+  stored,
+  models,
+  preferredRunModelId,
+}: ResolveProjectRunModelSelectionInput): {
+  modelId: string;
+  worktreeModelIds: string[];
+  modelConfigurations: Record<string, RunModelConfiguration>;
+} => {
+  const validModelIds = new Set(models.map((model) => model.id));
+  let modelId = models[0]?.id ?? "";
+  if (preferredRunModelId && validModelIds.has(preferredRunModelId)) {
+    modelId = preferredRunModelId;
+  }
+  if (stored?.modelId && validModelIds.has(stored.modelId)) {
+    modelId = stored.modelId;
+  }
+  const storedWorktreeModelIds = (stored?.worktreeModelIds ?? []).filter((id) => validModelIds.has(id));
+  const worktreeModelIds = storedWorktreeModelIds.length > 0
+    ? storedWorktreeModelIds
+    : modelId
+      ? [modelId]
+      : [];
+  return {
+    modelId,
+    worktreeModelIds,
+    modelConfigurations: stored?.modelConfigurations ?? {},
+  };
+};
+
 interface UseProjectRunDefaultsInput {
   /** Preload bridge; only `setAppSetting` is needed. Undefined outside Electron. */
   buildwarden: { setAppSetting(key: string, value: string): Promise<void> } | undefined;
@@ -109,22 +145,10 @@ export const useProjectRunDefaults = ({
     // previous project's models. Without a stored value, fall back to the last used model like
     // loadSnapshot does (setting "" would leave local-mode runs without a model until the next
     // snapshot refresh, because the reconciliation effect never writes runModelId back).
-    const validModelIds = new Set(models.map((model) => model.id));
-    let resolvedModelId = models[0]?.id ?? "";
-    if (preferredRunModelId && validModelIds.has(preferredRunModelId)) {
-      resolvedModelId = preferredRunModelId;
-    }
-    if (stored?.modelId && validModelIds.has(stored.modelId)) {
-      resolvedModelId = stored.modelId;
-    }
-    setRunModelId(resolvedModelId);
-    const storedWorktreeModelIds = (stored?.worktreeModelIds ?? []).filter((id) => validModelIds.has(id));
-    let resolvedWorktreeModelIds = storedWorktreeModelIds;
-    if (resolvedWorktreeModelIds.length === 0) {
-      resolvedWorktreeModelIds = resolvedModelId ? [resolvedModelId] : [];
-    }
-    setRunWorktreeModelIds(resolvedWorktreeModelIds);
-    setRunModelConfigurations(defaults.modelConfigurations);
+    const modelSelection = resolveProjectRunModelSelection({ stored, models, preferredRunModelId });
+    setRunModelId(modelSelection.modelId);
+    setRunWorktreeModelIds(modelSelection.worktreeModelIds);
+    setRunModelConfigurations(modelSelection.modelConfigurations);
   }, [
     models,
     preferredRunModelId,

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { BuildWardenDatabase } from "@buildwarden/db";
+import { APP_SETTING_KEYS, parseProjectRunDefaultsSetting } from "@buildwarden/shared";
 import { afterEach, describe, expect, it } from "vitest";
 
 type TestDatabase = {
@@ -92,6 +93,36 @@ describe("node:sqlite WAL persistence", () => {
     expect(busyTimeout.timeout).toBe(5_000);
     expect(autoCheckpoint.wal_autocheckpoint).toBe(1_000);
     expect(readSetting(path, "streaming")).toBe("visible");
+  });
+
+  it("restores the last selected run models and their settings after the application database is reopened", async () => {
+    const entry = await createDatabase();
+    const persistedDefaults = {
+      "project-1": {
+        mode: "code",
+        workspaceType: "worktree",
+        modelId: "model-a",
+        worktreeModelIds: ["model-a", "model-b"],
+        modelConfigurations: {
+          "model-a": { effort: "high", executionMode: "fast" },
+          "model-b": { effort: "xhigh", executionMode: "auto" },
+        },
+        reasoningEffort: "high",
+        anthropicEffort: "xhigh",
+        executionMode: "fast",
+        yoloMode: false,
+      },
+    };
+    entry.database.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify(persistedDefaults));
+
+    await entry.database.close();
+    entry.database = new BuildWardenDatabase(entry.path);
+    await entry.database.init();
+
+    const restored = parseProjectRunDefaultsSetting(
+      entry.database.getSnapshot().settings[APP_SETTING_KEYS.projectRunDefaults],
+    );
+    expect(restored).toEqual(persistedDefaults);
   });
 
   it("creates a pre-WAL backup only while converting an existing rollback-journal database", async () => {
