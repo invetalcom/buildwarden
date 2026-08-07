@@ -8548,28 +8548,18 @@ export class AppController
   }
 
   private getLatestRunExecutionOptions(runId: string, provider: ProviderAccountRecord): ProviderExecutionOptions | undefined {
-    for (const step of [...this.db.getRunSteps(runId)].reverse()) {
-      try {
-        const metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
-        if (metadata.source !== "user") continue;
-        const stored = metadata.executionOptions;
-        const executionOptions = stored && typeof stored === "object" && !Array.isArray(stored)
-          ? (stored as ProviderExecutionOptions)
-          : undefined;
-        return resolveProviderExecutionOptions(provider, {
-          ...(typeof metadata.reasoningEffort === "string" ? { reasoningEffort: metadata.reasoningEffort } : {}),
-          ...(typeof metadata.anthropicEffort === "string" ? { anthropicEffort: metadata.anthropicEffort } : {}),
-          ...(executionOptions ? { executionOptions } : {}),
-        });
-      } catch {
-        // Skip malformed historical metadata and keep looking for the last user turn.
-      }
-    }
-    return undefined;
+    return this.getLatestExecutionOptionsFromSteps(this.db.getRunSteps(runId), provider);
   }
 
   private getLatestChatExecutionOptions(chatId: string, provider: ProviderAccountRecord): ProviderExecutionOptions | undefined {
-    for (const step of [...this.db.getChatSteps(chatId)].reverse()) {
+    return this.getLatestExecutionOptionsFromSteps(this.db.getChatSteps(chatId), provider);
+  }
+
+  private getLatestExecutionOptionsFromSteps(
+    steps: ReadonlyArray<{ metadataJson: string }>,
+    provider: ProviderAccountRecord,
+  ): ProviderExecutionOptions | undefined {
+    for (const step of [...steps].reverse()) {
       try {
         const metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
         if (metadata.source !== "user") continue;
