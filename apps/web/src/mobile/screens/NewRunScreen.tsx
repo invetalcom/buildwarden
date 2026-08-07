@@ -210,7 +210,6 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
   const addModel = (nextModelId: string) => {
     if (modelIds.includes(nextModelId)) return;
     setModelIds((current) => [...current, nextModelId]);
-    setModelConfigurations((current) => ({ ...current, [nextModelId]: { effort: "auto", executionMode: "auto" } }));
     setActiveModelId(nextModelId);
     setAddModelsOpen(false);
   };
