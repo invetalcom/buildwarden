@@ -1,13 +1,17 @@
 import {
   APP_SETTING_KEYS,
+  getAiSdkProviderFamilyFromConfigJson,
   type AppSnapshot,
   type HarnessType,
+  type ModelExecutionProfile,
   type ProjectSnapshot,
   type ProviderType,
   type RunRecord,
+  type UnifiedProviderFamily,
 } from "@buildwarden/shared";
 import {
   PROVIDER_TYPE_LABELS,
+  buildModelExecutionProfile,
   harnessTypeForProvider,
   isRunDisplayStatusActive,
   parseSearchTerms,
@@ -117,6 +121,8 @@ export interface RunModelOption {
   providerType: ProviderType;
   providerLabel: string;
   harnessType: HarnessType;
+  providerFamily: UnifiedProviderFamily | null;
+  executionProfile: ModelExecutionProfile;
 }
 
 /** Every enabled model paired with the provider wiring `createRun` needs. */
@@ -124,6 +130,7 @@ export const runModelOptions = (snapshot: AppSnapshot): RunModelOption[] =>
   snapshot.models.flatMap((model) => {
     const account = snapshot.providerAccounts.find((entry) => entry.id === model.providerAccountId);
     if (!account || model.enabled === 0) return [];
+    const providerFamily = account.providerType === "ai-sdk" ? getAiSdkProviderFamilyFromConfigJson(account.configJson) : null;
     return [{
       modelId: model.id,
       label: model.displayName || model.modelId,
@@ -131,6 +138,8 @@ export const runModelOptions = (snapshot: AppSnapshot): RunModelOption[] =>
       providerType: account.providerType,
       providerLabel: account.label || PROVIDER_TYPE_LABELS[account.providerType],
       harnessType: harnessTypeForProvider(account.providerType),
+      providerFamily,
+      executionProfile: buildModelExecutionProfile(account.providerType, providerFamily, model.modelId, model.configJson),
     }];
   });
 

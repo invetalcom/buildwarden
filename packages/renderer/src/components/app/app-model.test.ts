@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderType, UnifiedProviderFamily } from "@buildwarden/shared";
-import { buildRunReasoningInput, harnessTypeForProvider, removeRunIdsFromOpenPanes } from "./app-model";
+import { buildModelExecutionProfile, buildRunReasoningInput, harnessTypeForProvider, removeRunIdsFromOpenPanes, resolveRunModelConfiguration } from "./app-model";
 
 describe("harnessTypeForProvider", () => {
   const cases: Array<[ProviderType, string]> = [
@@ -17,38 +17,181 @@ describe("harnessTypeForProvider", () => {
 });
 
 describe("buildRunReasoningInput", () => {
-  it("normalizes OpenAI-style reasoning effort for Codex CLI", () => {
-    expect(buildRunReasoningInput("codex-cli", null, "high", "medium")).toEqual({ reasoningEffort: "high" });
+  it("resolves independent values for each selected model chip", () => {
+    const configurations = {
+      openai: { effort: "high", executionMode: "priority" },
+      claude: { effort: "xhigh", executionMode: "auto" },
+    };
+    expect(resolveRunModelConfiguration("openai", configurations, "low", "medium", "auto", false)).toEqual({
+      effort: "high",
+      executionMode: "priority",
+    });
+    expect(resolveRunModelConfiguration("claude", configurations, "low", "medium", "fast", true)).toEqual({
+      effort: "xhigh",
+      executionMode: "auto",
+    });
+    expect(resolveRunModelConfiguration("missing", configurations, "low", "medium", "fast", true)).toEqual({
+      effort: "medium",
+      executionMode: "fast",
+    });
   });
 
-  it("normalizes OpenAI-style reasoning effort for Cursor Agent", () => {
-    expect(buildRunReasoningInput("cursor-agent", null, "xhigh", "medium")).toEqual({ reasoningEffort: "xhigh" });
+  it("maps Codex effort and fast mode without conflating the two controls", () => {
+    const profile = buildModelExecutionProfile("codex-cli", null, "gpt-5.6-sol");
+    expect(buildRunReasoningInput("codex-cli", null, "ultra", "auto", profile, "fast")).toEqual({
+      reasoningEffort: "ultra",
+      executionOptions: { reasoningEffort: "ultra", serviceTier: "fast" },
+    });
   });
 
-  it("falls back to medium reasoning effort for Cursor Agent when given an unsupported value", () => {
-    expect(buildRunReasoningInput("cursor-agent", null, "extreme", "medium")).toEqual({ reasoningEffort: "medium" });
+  it("maps only Cursor controls advertised through ACP", () => {
+    const profile = buildModelExecutionProfile("cursor-agent", null, "cursor-model", {
+      cursorAcpConfigOptions: [{
+        id: "reasoning_effort",
+        name: "Reasoning",
+        type: "select",
+        options: [{ value: "high", name: "High" }],
+      }],
+    });
+    expect(buildRunReasoningInput("cursor-agent", null, "high", "auto", profile)).toEqual({
+      reasoningEffort: "high",
+      executionOptions: { reasoningEffort: "high" },
+    });
   });
 
-  it("normalizes Anthropic-style effort for Claude Code", () => {
-    expect(buildRunReasoningInput("claude-code", null, "medium", "high")).toEqual({ anthropicEffort: "high" });
+  it("omits unsupported values instead of silently substituting medium", () => {
+    expect(buildRunReasoningInput("cursor-agent", null, "extreme", "medium")).toEqual({});
+  });
+
+  it("does not invent a Claude ultracode choice from xhigh support", () => {
+    const profile = buildModelExecutionProfile("claude-code", null, "claude-opus-4-8");
+    expect(profile.controls.find((control) => control.id === "reasoningEffort")?.options.map((entry) => entry.value))
+      .not.toContain("ultracode");
+    expect(buildRunReasoningInput("claude-code", null, "auto", "ultracode", profile)).toEqual({
+      executionOptions: { speed: "auto" },
+    });
   });
 
   it("routes AI SDK openai family through OpenAI-style reasoning effort", () => {
-    expect(buildRunReasoningInput("ai-sdk", "openai" as UnifiedProviderFamily, "low", "medium")).toEqual({
+    const profile = buildModelExecutionProfile("ai-sdk", "openai", "gpt-5.5");
+    expect(buildRunReasoningInput("ai-sdk", "openai" as UnifiedProviderFamily, "low", "medium", profile)).toEqual({
       reasoningEffort: "low",
+      executionOptions: { reasoningEffort: "low", serviceTier: "auto" },
     });
   });
 
   it("routes AI SDK anthropic family through Anthropic-style effort", () => {
-    expect(buildRunReasoningInput("ai-sdk", "anthropic" as UnifiedProviderFamily, "medium", "max")).toEqual({
+    const profile = buildModelExecutionProfile("ai-sdk", "anthropic", "claude-opus-4-8");
+    expect(buildRunReasoningInput("ai-sdk", "anthropic" as UnifiedProviderFamily, "medium", "max", profile)).toEqual({
       anthropicEffort: "max",
+      executionOptions: { anthropicEffort: "max", speed: "auto" },
     });
   });
 
-  it("returns no reasoning input for providers/families that do not support it", () => {
+  it("maps Google thinking levels using the Google provider option name", () => {
+    const profile = buildModelExecutionProfile("ai-sdk", "google", "gemini-3.1-pro-preview");
+    expect(buildRunReasoningInput("ai-sdk", "google", "high", "auto", profile)).toEqual({
+      executionOptions: { thinkingLevel: "high" },
+    });
+  });
+
+  it("keeps Azure Legacy completely outside the new execution-option contract", () => {
     expect(buildRunReasoningInput("azure-legacy", null, "high", "high")).toEqual({});
-    expect(buildRunReasoningInput("ai-sdk", "google" as UnifiedProviderFamily, "high", "high")).toEqual({});
-    expect(buildRunReasoningInput("ai-sdk", "xai" as UnifiedProviderFamily, "high", "high")).toEqual({});
+  });
+});
+
+describe("buildModelExecutionProfile", () => {
+  const values = (
+    providerType: ProviderType,
+    providerFamily: UnifiedProviderFamily | null,
+    modelId: string,
+    controlId: "reasoningEffort" | "thinkingLevel" | "speed" | "serviceTier",
+  ) => buildModelExecutionProfile(providerType, providerFamily, modelId).controls
+    .find((control) => control.id === controlId)?.options.map((entry) => entry.value) ?? [];
+
+  it("limits Codex GPT-5.5 to the four efforts advertised by Codex", () => {
+    expect(values("codex-cli", null, "gpt-5.5", "reasoningEffort")).toEqual([
+      "auto", "low", "medium", "high", "xhigh",
+    ]);
+    expect(values("codex-cli", null, "gpt-5.5", "reasoningEffort")).not.toContain("ultra");
+    expect(values("codex-cli", null, "gpt-5.6-sol", "reasoningEffort")).toContain("ultra");
+    expect(values("codex-cli", null, "gpt-5.6-luna", "reasoningEffort")).not.toContain("ultra");
+    expect(values("codex-cli", null, "gpt-5.4", "serviceTier")).toEqual(["auto", "fast"]);
+    expect(values("codex-cli", null, "gpt-5.4-mini", "serviceTier")).toEqual([]);
+  });
+
+  it("repairs stale inferred profiles but preserves provider-advertised metadata", () => {
+    const legacyConfig = {
+      buildwardenExecutionProfile: {
+        controls: [{
+          id: "reasoningEffort",
+          label: "Effort",
+          options: ["low", "medium", "high", "xhigh", "max", "ultra"].map((value) => ({ value, label: value })),
+        }],
+      },
+    };
+    expect(buildModelExecutionProfile("codex-cli", null, "gpt-5.5", legacyConfig).controls[0]?.options.map((entry) => entry.value))
+      .toEqual(["auto", "low", "medium", "high", "xhigh"]);
+
+    const providerConfig = {
+      buildwardenExecutionProfile: {
+        source: "provider",
+        controls: [{
+          id: "reasoningEffort",
+          label: "Effort",
+          options: [{ value: "high", label: "High" }],
+        }],
+      },
+    };
+    expect(buildModelExecutionProfile("codex-cli", null, "gpt-5.5", providerConfig).controls[0]?.options.map((entry) => entry.value))
+      .toEqual(["auto", "high"]);
+  });
+
+  it("keeps direct OpenAI API effort profiles distinct from Codex", () => {
+    expect(values("ai-sdk", "openai", "gpt-5.5", "reasoningEffort")).toEqual([
+      "auto", "none", "low", "medium", "high", "xhigh",
+    ]);
+    expect(values("ai-sdk", "openai", "gpt-5.5-pro", "reasoningEffort")).toEqual([
+      "auto", "medium", "high", "xhigh",
+    ]);
+    expect(values("ai-sdk", "openai", "gpt-5.6-sol", "reasoningEffort")).toEqual([
+      "auto", "none", "low", "medium", "high", "xhigh", "max",
+    ]);
+    expect(values("ai-sdk", "openai", "gpt-5.5", "serviceTier")).toEqual([
+      "auto", "default", "flex", "priority",
+    ]);
+  });
+
+  it("uses exact model-specific Claude, Gemini, and xAI controls", () => {
+    expect(values("ai-sdk", "anthropic", "claude-opus-4-8", "reasoningEffort")).toEqual([
+      "auto", "low", "medium", "high", "xhigh", "max",
+    ]);
+    expect(values("ai-sdk", "anthropic", "claude-opus-4-8", "speed")).toEqual([
+      "auto", "standard", "fast",
+    ]);
+    expect(values("ai-sdk", "anthropic", "claude-opus-4-7", "speed")).toEqual([]);
+    expect(values("ai-sdk", "google", "gemini-3.1-pro-preview", "thinkingLevel")).toEqual([
+      "auto", "low", "medium", "high",
+    ]);
+    expect(values("ai-sdk", "google", "gemini-3.5-flash", "thinkingLevel")).toEqual([
+      "auto", "minimal", "low", "medium", "high",
+    ]);
+    expect(values("ai-sdk", "xai", "grok-4.5", "reasoningEffort")).toEqual([
+      "auto", "low", "medium", "high",
+    ]);
+  });
+
+  it("repairs a stale Claude Code Sonnet alias with its current effort choices", () => {
+    expect(values("claude-code", null, "sonnet", "reasoningEffort")).toEqual([
+      "auto", "low", "medium", "high", "xhigh", "max",
+    ]);
+    expect(values("claude-code", null, "sonnet", "speed")).toEqual([]);
+  });
+
+  it("does not guess controls for custom OpenAI-compatible or unknown models", () => {
+    expect(buildModelExecutionProfile("ai-sdk", "openai-compatible", "custom-reasoner")).toEqual({ controls: [] });
+    expect(buildModelExecutionProfile("codex-cli", null, "future-codex-model")).toEqual({ controls: [] });
+    expect(buildModelExecutionProfile("claude-code", null, "future-claude-model")).toEqual({ controls: [] });
   });
 });
 

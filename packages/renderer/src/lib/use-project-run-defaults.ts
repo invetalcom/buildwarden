@@ -4,11 +4,51 @@ import {
   parseProjectRunDefaultsSetting,
   type ProjectRunDefaults,
   type ProjectRunDefaultsByProjectId,
+  type RunModelConfiguration,
   type RunMode,
   type RunWorkspaceType,
 } from "@buildwarden/shared";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { reportRendererError } from "./report-renderer-error";
+
+interface ResolveProjectRunModelSelectionInput {
+  stored: ProjectRunDefaults | undefined;
+  models: ReadonlyArray<{ id: string }>;
+  preferredRunModelId: string;
+}
+
+export const resolveProjectRunModelSelection = ({
+  stored,
+  models,
+  preferredRunModelId,
+}: ResolveProjectRunModelSelectionInput): {
+  modelId: string;
+  worktreeModelIds: string[];
+  modelConfigurations: Record<string, RunModelConfiguration>;
+} => {
+  const validModelIds = new Set(models.map((model) => model.id));
+  let modelId = models[0]?.id ?? "";
+  if (preferredRunModelId && validModelIds.has(preferredRunModelId)) {
+    modelId = preferredRunModelId;
+  }
+  if (stored?.modelId && validModelIds.has(stored.modelId)) {
+    modelId = stored.modelId;
+  }
+  const storedWorktreeModelIds = (stored?.worktreeModelIds ?? []).filter((id) => validModelIds.has(id));
+  const worktreeModelIds = storedWorktreeModelIds.length > 0
+    ? storedWorktreeModelIds
+    : modelId
+      ? [modelId]
+      : [];
+  const modelConfigurations = Object.fromEntries(
+    Object.entries(stored?.modelConfigurations ?? {}).filter(([configuredModelId]) => validModelIds.has(configuredModelId)),
+  );
+  return {
+    modelId,
+    worktreeModelIds,
+    modelConfigurations,
+  };
+};
 
 interface UseProjectRunDefaultsInput {
   /** Preload bridge; only `setAppSetting` is needed. Undefined outside Electron. */
@@ -24,9 +64,11 @@ interface UseProjectRunDefaultsInput {
   setRunWorkspaceType: (value: RunWorkspaceType) => void;
   setRunReasoningEffort: (value: string) => void;
   setRunAnthropicEffort: (value: string) => void;
+  setRunExecutionMode: (value: string) => void;
   setRunYoloMode: (value: boolean) => void;
   setRunModelId: (value: string) => void;
   setRunWorktreeModelIds: (value: string[]) => void;
+  setRunModelConfigurations: (value: Record<string, RunModelConfiguration>) => void;
   /** Existing model-change handler (also persists the global last-used model id). */
   onRunModelChange: (modelId: string) => void;
   /** Existing worktree model-set handler (also persists the global last-used model id). */
@@ -50,9 +92,11 @@ export const useProjectRunDefaults = ({
   setRunWorkspaceType,
   setRunReasoningEffort,
   setRunAnthropicEffort,
+  setRunExecutionMode,
   setRunYoloMode,
   setRunModelId,
   setRunWorktreeModelIds,
+  setRunModelConfigurations,
   onRunModelChange,
   onRunWorktreeModelIdsChange,
   onError,
@@ -98,37 +142,29 @@ export const useProjectRunDefaults = ({
     setRunWorkspaceType(defaults.workspaceType);
     setRunReasoningEffort(defaults.reasoningEffort);
     setRunAnthropicEffort(defaults.anthropicEffort);
+    setRunExecutionMode(defaults.executionMode);
     setRunYoloMode(defaults.yoloMode);
     // Always reset model selections so a project without stored defaults does not inherit the
     // previous project's models. Without a stored value, fall back to the last used model like
     // loadSnapshot does (setting "" would leave local-mode runs without a model until the next
     // snapshot refresh, because the reconciliation effect never writes runModelId back).
-    const validModelIds = new Set(models.map((model) => model.id));
-    let resolvedModelId = models[0]?.id ?? "";
-    if (preferredRunModelId && validModelIds.has(preferredRunModelId)) {
-      resolvedModelId = preferredRunModelId;
-    }
-    if (stored?.modelId && validModelIds.has(stored.modelId)) {
-      resolvedModelId = stored.modelId;
-    }
-    setRunModelId(resolvedModelId);
-    const storedWorktreeModelIds = (stored?.worktreeModelIds ?? []).filter((id) => validModelIds.has(id));
-    let resolvedWorktreeModelIds = storedWorktreeModelIds;
-    if (resolvedWorktreeModelIds.length === 0) {
-      resolvedWorktreeModelIds = resolvedModelId ? [resolvedModelId] : [];
-    }
-    setRunWorktreeModelIds(resolvedWorktreeModelIds);
+    const modelSelection = resolveProjectRunModelSelection({ stored, models, preferredRunModelId });
+    setRunModelId(modelSelection.modelId);
+    setRunWorktreeModelIds(modelSelection.worktreeModelIds);
+    setRunModelConfigurations(modelSelection.modelConfigurations);
   }, [
     models,
     preferredRunModelId,
     projectRunDefaultsByProjectId,
     selectedProjectId,
     setRunAnthropicEffort,
+    setRunExecutionMode,
     setRunMode,
     setRunModelId,
     setRunReasoningEffort,
     setRunWorkspaceType,
     setRunWorktreeModelIds,
+    setRunModelConfigurations,
     setRunYoloMode,
     snapshotLoaded,
   ]);
@@ -165,6 +201,14 @@ export const useProjectRunDefaults = ({
     [persistProjectRunDefaults, setRunAnthropicEffort],
   );
 
+  const changeRunExecutionMode = useCallback(
+    (value: string) => {
+      setRunExecutionMode(value);
+      persistProjectRunDefaults({ executionMode: value });
+    },
+    [persistProjectRunDefaults, setRunExecutionMode],
+  );
+
   const changeRunYoloMode = useCallback(
     (value: boolean) => {
       setRunYoloMode(value);
@@ -189,13 +233,23 @@ export const useProjectRunDefaults = ({
     [onRunWorktreeModelIdsChange, persistProjectRunDefaults],
   );
 
+  const changeRunModelConfigurations = useCallback(
+    (configurations: Record<string, RunModelConfiguration>) => {
+      setRunModelConfigurations(configurations);
+      persistProjectRunDefaults({ modelConfigurations: configurations });
+    },
+    [persistProjectRunDefaults, setRunModelConfigurations],
+  );
+
   return {
     changeRunMode,
     changeRunWorkspaceType,
     changeRunReasoningEffort,
     changeRunAnthropicEffort,
+    changeRunExecutionMode,
     changeRunYoloMode,
     changeRunModel,
     changeRunWorktreeModelIds,
+    changeRunModelConfigurations,
   };
 };

@@ -591,6 +591,18 @@ describe("CursorAgentProviderAdapter", () => {
         displayName: "Composer 2.5",
         source: "provider",
         config: {
+          buildwardenExecutionProfile: {
+            source: "provider",
+            controls: [{
+              id: "contextMode",
+              label: "Context",
+              defaultValue: "auto",
+              options: [
+                { value: "auto", label: "Provider default" },
+                { value: "1m", label: "1M" },
+              ],
+            }],
+          },
           cursorAcpConfigOptions: [
             {
               id: "context",
@@ -688,29 +700,75 @@ describe("CursorAgentProviderAdapter", () => {
     expect(resolveCursorAcpBaseModelId("plain-model")).toBe("plain-model");
   });
 
-  it("returns no config updates when no reasoning effort is requested or no matching option exists", () => {
+  it("returns no config updates when no model option is requested", () => {
     expect(resolveCursorAcpConfigUpdates(undefined, undefined)).toEqual([]);
-    expect(resolveCursorAcpConfigUpdates([], { reasoningEffort: "high" })).toEqual([]);
-    expect(
-      resolveCursorAcpConfigUpdates(
-        [{ id: "context", name: "Context Window", category: "model_config", type: "select" }],
-        { reasoningEffort: "high" },
-      ),
-    ).toEqual([]);
-    expect(
-      resolveCursorAcpConfigUpdates(
-        [
+    expect(resolveCursorAcpConfigUpdates([], { reasoningEffort: "auto" })).toEqual([]);
+  });
+
+  it("recognizes the standard ACP thought_level category without guessing speed", () => {
+    const model = parseCursorAvailableModelsResponse({
+      models: [{
+        value: "cursor-model",
+        configOptions: [
           {
-            id: "reasoning",
-            name: "Reasoning",
+            id: "depth",
+            name: "Depth",
+            category: "thought_level",
+            type: "select",
+            options: [{ value: "high", name: "High" }],
+          },
+          {
+            id: "quality",
+            name: "Quality",
             category: "model_config",
             type: "select",
-            options: [{ value: "low", name: "Low" }],
+            options: [{ value: "premium", name: "Premium" }],
           },
         ],
-        { reasoningEffort: "nonexistent" },
-      ),
-    ).toEqual([]);
+      }],
+    }).at(0);
+    const controls = (model?.config as {
+      buildwardenExecutionProfile: { controls: Array<{ id: string }> };
+    }).buildwardenExecutionProfile.controls;
+    expect(controls.map((control) => control.id)).toEqual(["reasoningEffort"]);
+  });
+
+  it("warns and skips unsupported Cursor controls so stale settings do not block startup", () => {
+    const warnings: string[] = [];
+    expect(resolveCursorAcpConfigUpdates([], { reasoningEffort: "high" }, (warning) => warnings.push(warning))).toEqual([]);
+    expect(resolveCursorAcpConfigUpdates(
+      [{ id: "context", name: "Context Window", category: "model_config", type: "select" }],
+      { reasoningEffort: "high" },
+      (warning) => warnings.push(warning),
+    )).toEqual([]);
+    expect(resolveCursorAcpConfigUpdates(
+      [
+        {
+          id: "reasoning",
+          name: "Reasoning",
+          category: "model_config",
+          type: "select",
+          options: [{ value: "low", name: "Low" }],
+        },
+      ],
+      { reasoningEffort: "nonexistent" },
+      (warning) => warnings.push(warning),
+    )).toEqual([]);
+    expect(warnings).toEqual([
+      expect.stringMatching(/does not advertise/i),
+      expect.stringMatching(/does not advertise/i),
+      expect.stringMatching(/does not support/i),
+    ]);
+  });
+
+  it("maps Cursor context and speed controls by their advertised ACP ids", () => {
+    expect(resolveCursorAcpConfigUpdates([
+      { id: "context_window", name: "Context", type: "select", options: [{ value: "1m", name: "1M" }] },
+      { id: "speed_mode", name: "Speed", type: "select", options: [{ value: "fast", name: "Fast" }] },
+    ], { contextMode: "1m", speed: "fast" })).toEqual([
+      { configId: "context_window", value: "1m" },
+      { configId: "speed_mode", value: "fast" },
+    ]);
   });
 
   it("returns null when there are no todos to map", () => {

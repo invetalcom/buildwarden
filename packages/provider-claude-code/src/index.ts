@@ -26,6 +26,7 @@ import type {
   ProviderAdapter,
   ProviderAvailableModel,
   ProviderAvailableModelsContext,
+  ProviderExecutionOptions,
   RunExecutionRequest,
   RunUserInputAnswers,
   RunUserInputQuestion,
@@ -35,11 +36,14 @@ import type {
   RunTokenUsage,
 } from "@buildwarden/shared";
 import {
+  MODEL_CONFIG_EXECUTION_PROFILE_KEY,
   PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY,
   PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY,
   buildNetworkProxyUrl,
   buildRunSubagentChunk,
+  formatModelExecutionOptionLabel,
   formatRunPlanProgressContent,
+  getKnownModelExecutionProfile,
   isTerminalRunSubagentStatus,
   mergeRunSubagentInfo,
   normalizeRunPlanProgressPayload,
@@ -98,9 +102,7 @@ type ClaudeTurnExecutionOptions = {
   attachments?: ChatAttachmentPayload[];
   networkProxy?: NetworkProxyRuntimeConfig;
   config?: Record<string, unknown>;
-  providerOptions?: {
-    anthropicEffort?: string;
-  };
+  providerOptions?: ProviderExecutionOptions;
   yoloMode?: boolean;
   signal: AbortSignal;
   requestShellApproval?: (command: string) => Promise<ShellApprovalDecision>;
@@ -222,9 +224,7 @@ const readClaudeResumeSessionId = (value: RunExecutionRequest["providerSessionRu
 export const buildClaudeCodeArgs = (input: {
   modelId: string;
   inputMode: RunExecutionRequest["mode"];
-  providerOptions?: {
-    anthropicEffort?: string;
-  };
+  providerOptions?: ProviderExecutionOptions;
   previousSessionId?: string | null;
   launchArgs?: string[];
   yoloMode?: boolean;
@@ -232,6 +232,8 @@ export const buildClaudeCodeArgs = (input: {
   let permissionMode: ClaudeAgentOptions["permissionMode"] = "plan";
   if (input.inputMode === "code") permissionMode = "acceptEdits";
   if (input.yoloMode === true) permissionMode = "bypassPermissions";
+  const effort = resolveClaudeCodeEffort(input.providerOptions);
+  const settings = resolveClaudeCodeSettings(input.providerOptions);
   return [
     "-p",
     "--output-format",
@@ -239,8 +241,8 @@ export const buildClaudeCodeArgs = (input: {
     "--verbose",
     "--model",
     normalizeClaudeCodeModelId(input.modelId || CLAUDE_DEFAULT_MODEL),
-    "--effort",
-    resolveClaudeCodeEffort(input.providerOptions),
+    ...(effort ? ["--effort", effort] : []),
+    ...(settings ? ["--settings", JSON.stringify(settings)] : []),
     "--permission-mode",
     permissionMode,
     ...(input.yoloMode === true ? ["--dangerously-skip-permissions"] : []),
@@ -321,10 +323,67 @@ export const normalizeClaudeCodeModelId = (modelId: string): string => {
   return legacyModelMap[trimmed] ?? trimmed;
 };
 
-const resolveClaudeCodeEffort = (providerOptions: { anthropicEffort?: string } | undefined): string => {
+const resolveClaudeCodeEffort = (providerOptions: ProviderExecutionOptions | undefined): string | undefined => {
   const effort = providerOptions?.anthropicEffort?.trim();
   const supportedEfforts = new Set(["low", "medium", "high", "xhigh", "max"]);
-  return effort && supportedEfforts.has(effort) ? effort : "medium";
+  return effort && effort !== "auto" && supportedEfforts.has(effort) ? effort : undefined;
+};
+
+const resolveClaudeCodeSettings = (providerOptions: ProviderExecutionOptions | undefined): Record<string, boolean> | undefined => {
+  const settings: Record<string, boolean> = {};
+  if (providerOptions?.workflowMode === "ultracode") settings.ultracode = true;
+  if (providerOptions?.speed === "fast") {
+    settings.fastMode = true;
+    settings.fastModePerSessionOptIn = true;
+  } else if (providerOptions?.speed === "standard") {
+    settings.fastMode = false;
+    settings.fastModePerSessionOptIn = true;
+  }
+  return Object.keys(settings).length > 0 ? settings : undefined;
+};
+
+const buildClaudeExecutionProfile = (modelId: string, supportedEfforts?: readonly string[], supportsFastMode?: boolean) => {
+  if (supportedEfforts === undefined && supportsFastMode === undefined) {
+    return {
+      [MODEL_CONFIG_EXECUTION_PROFILE_KEY]: {
+        ...getKnownModelExecutionProfile("claude-code", null, modelId),
+        source: "catalog",
+      },
+    };
+  }
+  const validEfforts = new Set(["low", "medium", "high", "xhigh", "max"]);
+  const efforts = [...new Set((supportedEfforts ?? []).map((value) => value.trim()).filter((value) => validEfforts.has(value)))];
+  const effortOptions = efforts.map((value) => ({
+    value,
+    label: formatModelExecutionOptionLabel(value),
+  }));
+  return {
+    [MODEL_CONFIG_EXECUTION_PROFILE_KEY]: {
+      source: "provider",
+      controls: [
+        ...(effortOptions.length > 0
+          ? [{
+              id: "reasoningEffort",
+              label: "Effort",
+              defaultValue: "auto",
+              options: [{ value: "auto", label: "Provider default" }, ...effortOptions],
+            }]
+          : []),
+        ...(supportsFastMode === true
+          ? [{
+              id: "speed",
+              label: "Speed",
+              defaultValue: "auto",
+              options: [
+                { value: "auto", label: "Provider default" },
+                { value: "standard", label: "Standard" },
+                { value: "fast", label: "Fast" },
+              ],
+            }]
+          : []),
+      ],
+    },
+  };
 };
 
 export const resolveClaudeCodeProcessLaunch = (binaryPath: string, args: string[]): ClaudeCodeProcessLaunch => {
@@ -396,6 +455,7 @@ export const getClaudeCodeAvailableModelsForVersion = (version: string | null): 
       modelId: entry.modelId,
       displayName: entry.displayName,
       source: "curated",
+      config: buildClaudeExecutionProfile(entry.modelId),
       ...(unavailableReason ? { unavailableReason } : {}),
     };
   });
@@ -461,6 +521,9 @@ export const parseClaudeCodeSupportedModels = (models: readonly ModelInfo[]): Pr
       modelId,
       displayName: model.displayName?.trim() || modelId,
       source: "provider",
+      ...(model.supportsEffort || model.supportedEffortLevels?.length || model.supportsFastMode
+        ? { config: buildClaudeExecutionProfile(modelId, model.supportedEffortLevels, model.supportsFastMode) }
+        : {}),
     });
   }
   return result;
@@ -1777,11 +1840,14 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
   let permissionMode: ClaudeAgentOptions["permissionMode"] = "plan";
   if (options.inputMode === "code") permissionMode = "acceptEdits";
   if (options.yoloMode === true) permissionMode = "bypassPermissions";
+  const effort = resolveClaudeCodeEffort(options.providerOptions);
+  const settings = resolveClaudeCodeSettings(options.providerOptions);
   const sdkOptions: ClaudeAgentOptions = {
     cwd: options.cwd,
     pathToClaudeCodeExecutable: binaryPath,
     model: normalizeClaudeCodeModelId(options.modelId || CLAUDE_DEFAULT_MODEL),
-    effort: resolveClaudeCodeEffort(options.providerOptions) as ClaudeAgentOptions["effort"],
+    ...(effort ? { effort: effort as ClaudeAgentOptions["effort"] } : {}),
+    ...(settings ? { settings } : {}),
     permissionMode,
     ...(permissionMode === "bypassPermissions" ? { allowDangerouslySkipPermissions: true } : {}),
     ...(options.previousSessionId ? { resume: options.previousSessionId } : {}),
@@ -1988,9 +2054,7 @@ export async function suggestCommitMessageWithClaudeCode(input: {
   modelId: string;
   networkProxy?: NetworkProxyRuntimeConfig;
   config?: Record<string, unknown>;
-  providerOptions?: {
-    anthropicEffort?: string;
-  };
+  providerOptions?: ProviderExecutionOptions;
   signal?: AbortSignal;
 }): Promise<string> {
   const result = await executeClaudeTurn({
@@ -2014,9 +2078,7 @@ type GenerateAskTextWithClaudeCodeInput = {
   modelId: string;
   networkProxy?: NetworkProxyRuntimeConfig;
   config?: Record<string, unknown>;
-  providerOptions?: {
-    anthropicEffort?: string;
-  };
+  providerOptions?: ProviderExecutionOptions;
   signal?: AbortSignal;
 };
 

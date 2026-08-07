@@ -16,8 +16,13 @@ describe("parseProjectRunDefaultsSetting", () => {
         workspaceType: "local",
         modelId: "model-a",
         worktreeModelIds: ["model-a", "model-b"],
+        modelConfigurations: {
+          "model-a": { effort: "high", executionMode: "fast" },
+          "model-b": { effort: "xhigh", executionMode: "auto" },
+        },
         reasoningEffort: "high",
         anthropicEffort: "xhigh",
+        executionMode: "fast",
         yoloMode: true,
       },
     };
@@ -33,7 +38,11 @@ describe("parseProjectRunDefaultsSetting", () => {
           mode: "yeet",
           workspaceType: 42,
           modelId: 7,
-          worktreeModelIds: ["ok", "", 3, "ok"],
+            worktreeModelIds: ["ok", "", 3, "ok"],
+            modelConfigurations: {
+              ok: { effort: "medium", executionMode: "priority" },
+              broken: { effort: "extreme", executionMode: "" },
+            },
           reasoningEffort: "extreme",
           anthropicEffort: "medium",
           yoloMode: "yes",
@@ -44,8 +53,27 @@ describe("parseProjectRunDefaultsSetting", () => {
     expect(parsed["project-1"]).toEqual({
       ...buildDefaultProjectRunDefaults(),
       worktreeModelIds: ["ok"],
+      modelConfigurations: {
+        ok: { effort: "medium", executionMode: "priority" },
+        broken: { effort: "auto", executionMode: "auto" },
+      },
       anthropicEffort: "medium",
     });
+  });
+
+  it("validates execution-mode length after trimming surrounding whitespace", () => {
+    const paddedMode = `${" ".repeat(65)}priority${" ".repeat(65)}`;
+    const parsed = parseProjectRunDefaultsSetting(JSON.stringify({
+      "project-1": {
+        executionMode: paddedMode,
+        modelConfigurations: {
+          "model-a": { effort: "high", executionMode: paddedMode },
+        },
+      },
+    }));
+
+    expect(parsed["project-1"]?.executionMode).toBe("priority");
+    expect(parsed["project-1"]?.modelConfigurations["model-a"]?.executionMode).toBe("priority");
   });
 
   it("skips entries that are not objects", () => {

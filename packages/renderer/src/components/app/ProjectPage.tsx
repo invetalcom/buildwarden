@@ -4,10 +4,12 @@ import type {
   ProjectLabMode,
   ProjectLabSettings,
   ProjectLoopAvailability,
+  ModelExecutionProfile,
   ProjectSnapshot,
   ProjectTaskStatus,
   ProviderType,
   RunMode,
+  RunModelConfiguration,
   RunWorkspaceType,
   SupportedIdeKind,
   UnifiedProviderFamily,
@@ -31,7 +33,7 @@ const ProjectGraphsTab = lazy(() => import("./ProjectGraphsTab").then((module) =
 interface ProjectPageProps {
   project: ProjectSnapshot;
   activeTab: ProjectPageTab;
-  modelOptions: Array<{ id: string; label: string; modelId: string; providerType: ProviderType; providerFamily: UnifiedProviderFamily | null }>;
+  modelOptions: Array<{ id: string; label: string; modelId: string; providerType: ProviderType; providerFamily: UnifiedProviderFamily | null; executionProfile?: ModelExecutionProfile }>;
   configuredIdeKinds: SupportedIdeKind[];
   availableBranches: string[];
   currentProjectBranch: string;
@@ -41,6 +43,7 @@ interface ProjectPageProps {
   runBaseBranch: string;
   runModelId: string;
   runWorktreeModelIds: string[];
+  runModelConfigurations?: Record<string, RunModelConfiguration>;
   submitShortcut: string;
   projectRunStats: ProjectRunStats;
   busy: boolean;
@@ -54,11 +57,13 @@ interface ProjectPageProps {
   onRestoreRunFromForLater: (runId: string) => void | Promise<void>;
   reasoningEffort: string;
   anthropicEffort: string;
+  executionMode: string;
   yoloMode: boolean;
   delegationEnabled: boolean;
   delegationAvailable: boolean;
   onReasoningEffortChange: (value: string) => void;
   onAnthropicEffortChange: (value: string) => void;
+  onExecutionModeChange: (value: string) => void;
   onYoloModeChange: (value: boolean) => void;
   onDelegationEnabledChange: (value: boolean) => void;
   onSelectRun: (runId: string) => void;
@@ -69,6 +74,7 @@ interface ProjectPageProps {
   onProjectBaseBranchChange: (value: string) => void | Promise<void>;
   onRunModelChange: (modelId: string) => void;
   onRunWorktreeModelIdsChange: (modelIds: string[]) => void;
+  onRunModelConfigurationsChange?: (configurations: Record<string, RunModelConfiguration>) => void;
   availableIntegratedSkills: IntegratedSkillMetadata[];
   activeIntegratedSkillIds: string[];
   onActiveIntegratedSkillIdsChange: (skillIds: string[]) => void | Promise<void>;
@@ -128,6 +134,7 @@ export const ProjectPage = ({
   runBaseBranch,
   runModelId,
   runWorktreeModelIds,
+  runModelConfigurations = {},
   submitShortcut,
   projectRunStats,
   busy,
@@ -141,11 +148,13 @@ export const ProjectPage = ({
   onRestoreRunFromForLater,
   reasoningEffort,
   anthropicEffort,
+  executionMode,
   yoloMode,
   delegationEnabled,
   delegationAvailable,
   onReasoningEffortChange,
   onAnthropicEffortChange,
+  onExecutionModeChange,
   onYoloModeChange,
   onDelegationEnabledChange,
   onSelectRun,
@@ -156,6 +165,7 @@ export const ProjectPage = ({
   onProjectBaseBranchChange,
   onRunModelChange,
   onRunWorktreeModelIdsChange,
+  onRunModelConfigurationsChange,
   availableIntegratedSkills,
   activeIntegratedSkillIds,
   onActiveIntegratedSkillIdsChange,
@@ -198,11 +208,13 @@ export const ProjectPage = ({
           runBaseBranch={runBaseBranch}
           runModelId={runModelId}
           runWorktreeModelIds={runWorktreeModelIds}
+          runModelConfigurations={runModelConfigurations}
           submitShortcut={submitShortcut}
           projectRunStats={projectRunStats}
           busy={busy}
           reasoningEffort={reasoningEffort}
           anthropicEffort={anthropicEffort}
+          executionMode={executionMode}
           yoloMode={yoloMode}
           delegationEnabled={delegationEnabled}
           delegationAvailable={delegationAvailable}
@@ -215,8 +227,10 @@ export const ProjectPage = ({
           onRunBaseBranchChange={onRunBaseBranchChange}
           onRunModelChange={onRunModelChange}
           onRunWorktreeModelIdsChange={onRunWorktreeModelIdsChange}
+          onRunModelConfigurationsChange={onRunModelConfigurationsChange}
           onReasoningEffortChange={onReasoningEffortChange}
           onAnthropicEffortChange={onAnthropicEffortChange}
+          onExecutionModeChange={onExecutionModeChange}
           onYoloModeChange={onYoloModeChange}
           onDelegationEnabledChange={onDelegationEnabledChange}
         />
@@ -309,6 +323,7 @@ export const ProjectPage = ({
           projectRunStats={projectRunStats}
           reasoningEffort={reasoningEffort}
           anthropicEffort={anthropicEffort}
+          executionMode={executionMode}
           yoloMode={yoloMode}
           busy={busy}
           availableIntegratedSkills={availableIntegratedSkills}
@@ -320,6 +335,7 @@ export const ProjectPage = ({
           onRunWorktreeModelIdsChange={onRunWorktreeModelIdsChange}
           onReasoningEffortChange={onReasoningEffortChange}
           onAnthropicEffortChange={onAnthropicEffortChange}
+          onExecutionModeChange={onExecutionModeChange}
           onYoloModeChange={onYoloModeChange}
           onActiveIntegratedSkillIdsChange={onActiveIntegratedSkillIdsChange}
           onDeleteProject={onDeleteProject}

@@ -1,14 +1,22 @@
 import type { DragEvent as ReactDragEvent } from "react";
 import {
   DEFAULT_KEYBOARD_SHORTCUTS,
+  getKnownModelExecutionProfile,
+  MODEL_CONFIG_EXECUTION_PROFILE_KEY,
   resolveComposerCommandPrompt,
   type AppLogDirectorySizeInfo,
   type AppSnapshot,
   type HarnessType,
   type KeyboardShortcutId,
+  type ModelExecutionControl,
+  type ModelExecutionControlId,
+  type ModelExecutionProfile,
+  type ModelRecord,
   type ProjectSnapshot,
+  type ProviderExecutionOptions,
   type ProviderType,
   type RunDetail,
+  type RunModelConfiguration,
   type RunRecord,
   type RunTokenUsage,
   type RunWorkspaceLayoutPreference,
@@ -155,14 +163,140 @@ const HARNESS_TYPE_BY_PROVIDER: Partial<Record<ProviderType, HarnessType>> = {
 export const harnessTypeForProvider = (providerType: ProviderType): HarnessType =>
   HARNESS_TYPE_BY_PROVIDER[providerType] ?? "ai-sdk";
 
-const normalizeOpenAiReasoningEffort = (value: string) => {
-  const allowed = new Set(["none", "low", "medium", "high", "xhigh"]);
-  return allowed.has(value) ? value : "medium";
+const option = (value: string, label: string, description?: string) => ({ value, label, description });
+const autoOption = option("auto", "Provider default", "Let the selected provider and model choose its default.");
+
+const control = (
+  id: ModelExecutionControlId,
+  label: string,
+  options: ModelExecutionControl["options"],
+  defaultValue = "auto",
+): ModelExecutionControl => ({ id, label, options: [autoOption, ...options.filter((entry) => entry.value !== "auto")], defaultValue });
+
+const normalizeExecutionProfile = (value: unknown): ModelExecutionProfile | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const rawControls = (value as { controls?: unknown }).controls;
+  if (!Array.isArray(rawControls)) return null;
+  const validIds = new Set<ModelExecutionControlId>([
+    "reasoningEffort",
+    "serviceTier",
+    "speed",
+    "thinkingLevel",
+    "contextMode",
+    "workflowMode",
+  ]);
+  const controls = rawControls.flatMap((candidate): ModelExecutionControl[] => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return [];
+    const entry = candidate as Record<string, unknown>;
+    if (!validIds.has(entry.id as ModelExecutionControlId) || typeof entry.label !== "string" || !Array.isArray(entry.options)) return [];
+    const options = entry.options.flatMap((candidateOption) => {
+      if (!candidateOption || typeof candidateOption !== "object" || Array.isArray(candidateOption)) return [];
+      const rawOption = candidateOption as Record<string, unknown>;
+      if (typeof rawOption.value !== "string" || typeof rawOption.label !== "string") return [];
+      return [{
+        value: rawOption.value,
+        label: rawOption.label,
+        ...(typeof rawOption.description === "string" ? { description: rawOption.description } : {}),
+      }];
+    });
+    if (options.length === 0) return [];
+    return [{
+      id: entry.id as ModelExecutionControlId,
+      label: entry.label,
+      options: options.some((entryOption) => entryOption.value === "auto") ? options : [autoOption, ...options],
+      ...(typeof entry.defaultValue === "string" ? { defaultValue: entry.defaultValue } : {}),
+    }];
+  });
+  const source = (value as { source?: unknown }).source;
+  return {
+    controls,
+    ...(source === "provider" || source === "catalog" ? { source } : {}),
+  };
 };
 
-const normalizeAnthropicEffort = (value: string) => {
-  const allowed = new Set(["low", "medium", "high", "xhigh", "max"]);
-  return allowed.has(value) ? value : "medium";
+const parseModelConfig = (config: ModelRecord["configJson"] | Record<string, unknown> | null | undefined) => {
+  if (!config) return {} as Record<string, unknown>;
+  if (typeof config !== "string") return config;
+  try {
+    const parsed = JSON.parse(config) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+};
+
+const cursorProfileFromConfig = (config: Record<string, unknown>): ModelExecutionProfile | null => {
+  const rawOptions = config.cursorAcpConfigOptions;
+  if (!Array.isArray(rawOptions)) return null;
+  const controls = rawOptions.flatMap((candidate): ModelExecutionControl[] => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return [];
+    const entry = candidate as Record<string, unknown>;
+    if (entry.type !== "select" || typeof entry.id !== "string" || !Array.isArray(entry.options)) return [];
+    const category = typeof entry.category === "string" ? entry.category : "";
+    const id = /thought|reason|effort/i.test(`${entry.id} ${category}`)
+      ? "reasoningEffort"
+      : /context/i.test(entry.id)
+        ? "contextMode"
+        : /speed|fast/i.test(entry.id)
+          ? "speed"
+          : null;
+    if (!id) return [];
+    const options = entry.options.flatMap((candidateOption) => {
+      if (!candidateOption || typeof candidateOption !== "object" || Array.isArray(candidateOption)) return [];
+      const rawOption = candidateOption as Record<string, unknown>;
+      const value = typeof rawOption.value === "string" ? rawOption.value : typeof rawOption.id === "string" ? rawOption.id : null;
+      if (!value) return [];
+      const label = typeof rawOption.name === "string" ? rawOption.name : typeof rawOption.label === "string" ? rawOption.label : value;
+      return [option(value, label, typeof rawOption.description === "string" ? rawOption.description : undefined)];
+    });
+    return options.length > 0 ? [control(id, id === "reasoningEffort" ? "Effort" : id === "contextMode" ? "Context" : "Speed", options)] : [];
+  });
+  return controls.length > 0 ? { controls } : null;
+};
+
+/** Returns the controls a configured model actually supports, using discovery metadata when available. */
+export const buildModelExecutionProfile = (
+  providerType: ProviderType,
+  providerFamily: UnifiedProviderFamily | null,
+  modelId: string,
+  modelConfig?: ModelRecord["configJson"] | Record<string, unknown> | null,
+): ModelExecutionProfile => {
+  if (providerType === "azure-legacy") return { controls: [] };
+  const config = parseModelConfig(modelConfig);
+  const discovered = normalizeExecutionProfile(config[MODEL_CONFIG_EXECUTION_PROFILE_KEY]);
+  if (discovered?.source === "provider") return discovered;
+  if (providerType === "cursor-agent") {
+    return discovered ?? cursorProfileFromConfig(config) ?? { controls: [] };
+  }
+  const known = getKnownModelExecutionProfile(providerType, providerFamily, modelId);
+  if (known.controls.length > 0 || discovered?.source === "catalog") return known;
+  // Older Codex discovery rows had no provenance. An unknown model could only
+  // receive such a profile from app-server, so it remains safe to trust.
+  if (providerType === "codex-cli" && discovered) return discovered;
+  return { controls: [] };
+};
+
+const selectedControlValue = (controlEntry: ModelExecutionControl | undefined, value: string) => {
+  if (!controlEntry || !value || value === "auto") return undefined;
+  return controlEntry.options.some((entry) => entry.value === value) ? value : undefined;
+};
+
+export interface RunReasoningInput {
+  reasoningEffort?: string;
+  anthropicEffort?: string;
+  executionOptions?: ProviderExecutionOptions;
+}
+
+export const resolveRunModelConfiguration = (
+  modelId: string,
+  configurations: Readonly<Record<string, RunModelConfiguration>>,
+  reasoningEffort: string,
+  anthropicEffort: string,
+  executionMode: string,
+  isAnthropic: boolean,
+): RunModelConfiguration => configurations[modelId] ?? {
+  effort: isAnthropic ? anthropicEffort : reasoningEffort,
+  executionMode,
 };
 
 export const buildRunReasoningInput = (
@@ -170,14 +304,58 @@ export const buildRunReasoningInput = (
   providerFamily: UnifiedProviderFamily | null,
   reasoningEffort: string,
   anthropicEffort: string,
-): { reasoningEffort?: string; anthropicEffort?: string } => {
-  if (providerType === "codex-cli" || providerType === "cursor-agent" || (providerType === "ai-sdk" && providerFamily === "openai")) {
-    return { reasoningEffort: normalizeOpenAiReasoningEffort(reasoningEffort) };
+  profile = buildModelExecutionProfile(providerType, providerFamily, ""),
+  executionMode = "auto",
+): RunReasoningInput => {
+  // Azure Legacy deliberately remains on its established request contract.
+  if (providerType === "azure-legacy") return {};
+
+  const reasoningControl = profile.controls.find((entry) => entry.id === "reasoningEffort" || entry.id === "thinkingLevel");
+  const rawEffort = providerType === "claude-code" || (providerType === "ai-sdk" && providerFamily === "anthropic")
+    ? anthropicEffort
+    : reasoningEffort;
+  const chosenEffort = selectedControlValue(reasoningControl, rawEffort);
+  const secondaryControl = profile.controls.find((entry) => entry !== reasoningControl);
+  const chosenMode = selectedControlValue(secondaryControl, executionMode);
+  const executionOptions: ProviderExecutionOptions = {};
+  const result: RunReasoningInput = {};
+
+  if (chosenEffort) {
+    if (providerType === "claude-code" || (providerType === "ai-sdk" && providerFamily === "anthropic")) {
+      const mappedEffort = chosenEffort === "ultracode" ? "xhigh" : chosenEffort;
+      result.anthropicEffort = mappedEffort;
+      executionOptions.anthropicEffort = mappedEffort;
+      if (chosenEffort === "ultracode") executionOptions.workflowMode = "ultracode";
+    } else if (reasoningControl?.id === "thinkingLevel") {
+      executionOptions.thinkingLevel = chosenEffort;
+    } else {
+      result.reasoningEffort = chosenEffort;
+      executionOptions.reasoningEffort = chosenEffort;
+    }
+  } else if (reasoningControl && rawEffort === "auto") {
+    if (providerType === "claude-code" || (providerType === "ai-sdk" && providerFamily === "anthropic")) {
+      executionOptions.anthropicEffort = "auto";
+    } else if (reasoningControl.id === "thinkingLevel") {
+      executionOptions.thinkingLevel = "auto";
+    } else {
+      executionOptions.reasoningEffort = "auto";
+    }
   }
-  if (providerType === "claude-code" || (providerType === "ai-sdk" && providerFamily === "anthropic")) {
-    return { anthropicEffort: normalizeAnthropicEffort(anthropicEffort) };
+
+  if (chosenMode && secondaryControl) {
+    if (secondaryControl.id === "serviceTier") executionOptions.serviceTier = chosenMode;
+    if (secondaryControl.id === "speed") executionOptions.speed = chosenMode;
+    if (secondaryControl.id === "contextMode") executionOptions.contextMode = chosenMode;
+    if (secondaryControl.id === "workflowMode") executionOptions.workflowMode = chosenMode;
+  } else if (secondaryControl && executionMode === "auto") {
+    if (secondaryControl.id === "serviceTier") executionOptions.serviceTier = "auto";
+    if (secondaryControl.id === "speed") executionOptions.speed = "auto";
+    if (secondaryControl.id === "contextMode") executionOptions.contextMode = "auto";
+    if (secondaryControl.id === "workflowMode") executionOptions.workflowMode = "auto";
   }
-  return {};
+
+  if (Object.keys(executionOptions).length > 0) result.executionOptions = executionOptions;
+  return result;
 };
 
 export const resolveProviderComposerPrompt = (

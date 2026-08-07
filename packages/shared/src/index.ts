@@ -1,4 +1,5 @@
 export * from "./provider-metadata";
+export * from "./model-execution-profiles";
 /**
  * The full skills catalog (~3.7 MB of literals) is deliberately NOT re-exported
  * here: a runtime re-export would pull it into the preload and renderer startup
@@ -1578,6 +1579,48 @@ export interface ProviderAvailableModel {
   unavailableReason?: string;
 }
 
+export type ModelExecutionControlId =
+  | "reasoningEffort"
+  | "serviceTier"
+  | "speed"
+  | "thinkingLevel"
+  | "contextMode"
+  | "workflowMode";
+
+export interface ModelExecutionControlOption {
+  value: string;
+  label: string;
+  description?: string;
+}
+
+/** Provider/model-specific controls discovered from the provider and stored with a configured model. */
+export interface ModelExecutionControl {
+  id: ModelExecutionControlId;
+  label: string;
+  options: ModelExecutionControlOption[];
+  /** Provider default. Clients should omit the corresponding request field when the user selects `auto`. */
+  defaultValue?: string;
+}
+
+export interface ModelExecutionProfile {
+  /** Whether controls came from a live provider response or BuildWarden's conservative catalog. */
+  source?: "provider" | "catalog";
+  controls: ModelExecutionControl[];
+}
+
+/** Runtime options after the selected model's UI controls have been mapped to its provider contract. */
+export interface ProviderExecutionOptions {
+  reasoningEffort?: string;
+  /** Backward-compatible Anthropic-specific effort input. */
+  anthropicEffort?: string;
+  serviceTier?: string;
+  speed?: string;
+  thinkingLevel?: string;
+  thinkingBudget?: number;
+  contextMode?: string;
+  workflowMode?: string;
+}
+
 export interface ListAvailableProviderModelsInput {
   providerAccountId: string;
 }
@@ -1598,6 +1641,7 @@ export interface ProviderAvailableModelsContext {
 export const MODEL_CONFIG_OPENAI_REASONING_EFFORT_KEY = "openaiReasoningEffort";
 export const MODEL_CONFIG_ANTHROPIC_EFFORT_KEY = "anthropicEffort";
 export const MODEL_CONFIG_CODEX_REASONING_EFFORT_KEY = "codexReasoningEffort";
+export const MODEL_CONFIG_EXECUTION_PROFILE_KEY = "buildwardenExecutionProfile";
 
 export interface ProjectInput {
   name?: string;
@@ -1642,6 +1686,7 @@ export interface RunInput {
   attachments?: ChatAttachmentPayload[];
   reasoningEffort?: string;
   anthropicEffort?: string;
+  executionOptions?: ProviderExecutionOptions;
   kind?: RunKind;
   labThreadId?: string | null;
   projectTaskId?: string | null;
@@ -1660,6 +1705,7 @@ export interface ContinueRunInput {
   includeWorkspaceChanges?: boolean;
   reasoningEffort?: string;
   anthropicEffort?: string;
+  executionOptions?: ProviderExecutionOptions;
   delegationEnabled?: boolean;
 }
 
@@ -1671,6 +1717,7 @@ export interface RunFollowUpOptions {
   attachments?: ChatAttachmentPayload[];
   reasoningEffort?: string;
   anthropicEffort?: string;
+  executionOptions?: ProviderExecutionOptions;
   delegationEnabled?: boolean;
 }
 
@@ -3046,10 +3093,7 @@ export interface RunExecutionRequest {
   skillContext?: string;
   config?: Record<string, unknown>;
   modelConfig?: Record<string, unknown>;
-  providerOptions?: {
-    reasoningEffort?: string;
-    anthropicEffort?: string;
-  };
+  providerOptions?: ProviderExecutionOptions;
   /** When true, runs as pure chat with no tools or repo context. */
   isChat?: boolean;
   /** User-attached files for chat turns (main/worker only). */
@@ -3157,6 +3201,7 @@ export interface ChatInput {
   attachments?: ChatAttachmentPayload[];
   reasoningEffort?: string;
   anthropicEffort?: string;
+  executionOptions?: ProviderExecutionOptions;
 }
 
 export interface RunChatInput {
@@ -3165,6 +3210,7 @@ export interface RunChatInput {
   attachments?: ChatAttachmentPayload[];
   reasoningEffort?: string;
   anthropicEffort?: string;
+  executionOptions?: ProviderExecutionOptions;
 }
 
 /**
@@ -3178,6 +3224,7 @@ export interface FollowUpChatOptions {
   attachments?: ChatAttachmentPayload[];
   reasoningEffort?: string;
   anthropicEffort?: string;
+  executionOptions?: ProviderExecutionOptions;
 }
 
 export interface HarnessRunChunk {
@@ -4586,6 +4633,13 @@ export const serializeProjectLabSettingsSetting = (value: ProjectLabSettingsByPr
     ),
   );
 
+export interface RunModelConfiguration {
+  /** Generic effort value; mapped to the selected model's provider when the run starts. */
+  effort: string;
+  /** Model-specific secondary control such as speed, service tier, or context mode. */
+  executionMode: string;
+}
+
 /** Per-project defaults applied to new agent runs, persisted across app restarts. */
 export interface ProjectRunDefaults {
   mode: RunMode;
@@ -4594,8 +4648,12 @@ export interface ProjectRunDefaults {
   modelId: string;
   /** Models used for isolated workspace (worktree/copy) runs. Empty = fall back to {@link modelId}. */
   worktreeModelIds: string[];
+  /** Per-model values used by the composer model chips. */
+  modelConfigurations: Record<string, RunModelConfiguration>;
   reasoningEffort: string;
   anthropicEffort: string;
+  /** Secondary provider control such as Fast/Priority speed or Cursor context mode. */
+  executionMode: string;
   /** Full Access: skip per-tool approvals for new runs. */
   yoloMode: boolean;
 }
@@ -4607,14 +4665,48 @@ export const buildDefaultProjectRunDefaults = (): ProjectRunDefaults => ({
   workspaceType: "worktree",
   modelId: "",
   worktreeModelIds: [],
-  reasoningEffort: "medium",
-  anthropicEffort: "medium",
+  modelConfigurations: {},
+  reasoningEffort: "auto",
+  anthropicEffort: "auto",
+  executionMode: "auto",
   yoloMode: false,
 });
 
 const RUN_DEFAULT_MODES: readonly RunMode[] = ["code", "plan", "ask"];
 const RUN_DEFAULT_WORKSPACE_TYPES: readonly RunWorkspaceType[] = ["worktree", "local", "copy"];
-const RUN_DEFAULT_EFFORTS: readonly string[] = ["low", "medium", "high", "xhigh"];
+const RUN_DEFAULT_EFFORTS: readonly string[] = [
+  "auto",
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+  "ultracode",
+];
+
+const parseRunExecutionMode = (value: unknown, fallback: string): string => {
+  if (typeof value !== "string") return fallback;
+  const normalized = value.trim();
+  return normalized.length > 0 && normalized.length <= 64 ? normalized : fallback;
+};
+
+const parseRunModelConfigurations = (value: unknown): Record<string, RunModelConfiguration> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const result: Record<string, RunModelConfiguration> = {};
+  for (const [rawModelId, rawConfiguration] of Object.entries(value as Record<string, unknown>).slice(0, 100)) {
+    const modelId = rawModelId.trim();
+    if (!modelId || modelId.length > 256 || !rawConfiguration || typeof rawConfiguration !== "object" || Array.isArray(rawConfiguration)) continue;
+    const configuration = rawConfiguration as Record<string, unknown>;
+    result[modelId] = {
+      effort: RUN_DEFAULT_EFFORTS.includes(configuration.effort as string) ? (configuration.effort as string) : "auto",
+      executionMode: parseRunExecutionMode(configuration.executionMode, "auto"),
+    };
+  }
+  return result;
+};
 
 const parseProjectRunDefaultsRecord = (value: unknown): ProjectRunDefaults | null => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -4629,8 +4721,10 @@ const parseProjectRunDefaultsRecord = (value: unknown): ProjectRunDefaults | nul
     worktreeModelIds: Array.isArray(record.worktreeModelIds)
       ? [...new Set(record.worktreeModelIds.filter((item): item is string => typeof item === "string" && item.trim().length > 0))]
       : defaults.worktreeModelIds,
+    modelConfigurations: parseRunModelConfigurations(record.modelConfigurations),
     reasoningEffort: RUN_DEFAULT_EFFORTS.includes(record.reasoningEffort as string) ? (record.reasoningEffort as string) : defaults.reasoningEffort,
     anthropicEffort: RUN_DEFAULT_EFFORTS.includes(record.anthropicEffort as string) ? (record.anthropicEffort as string) : defaults.anthropicEffort,
+    executionMode: parseRunExecutionMode(record.executionMode, defaults.executionMode),
     yoloMode: record.yoloMode === true,
   };
 };

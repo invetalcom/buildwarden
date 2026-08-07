@@ -28,6 +28,7 @@ import { ProjectSettingsPage } from "./ProjectSettingsPage";
 import { ProviderModelPanelButtons, ProviderModelsOverview } from "./provider-models-overview";
 import { RunEmbeddedBrowser } from "./RunEmbeddedBrowser";
 import { RunComposer } from "./RunComposer";
+import { intersectModelExecutionControls, nextModelChipSection } from "./model-execution-controls";
 import { RunDetailHeader } from "./RunDetailHeader";
 import { RunPlanProgressPill } from "./RunPlanProgressPill";
 import { RunPlanSteps } from "./RunPlanSteps";
@@ -454,8 +455,27 @@ describe("renderer component states", () => {
       onModeChange: vi.fn(),
       selectedModelId: "model-1",
       modelOptions: [
-        { value: "model-1", label: "GPT-5", providerType: "ai-sdk" as const, providerFamily: "openai" as const },
-        { value: "model-2", label: "Claude", providerType: "claude-code" as const },
+        {
+          value: "model-1",
+          label: "GPT-5",
+          providerType: "ai-sdk" as const,
+          providerFamily: "openai" as const,
+          executionProfile: {
+            controls: [
+              {
+                id: "reasoningEffort" as const,
+                label: "Effort",
+                options: [{ value: "auto", label: "Provider default" }, { value: "high", label: "High" }],
+              },
+              {
+                id: "speed" as const,
+                label: "Speed",
+                options: [{ value: "auto", label: "Provider default" }, { value: "fast", label: "Fast" }],
+              },
+            ],
+          },
+        },
+        { value: "model-2", label: "Claude", providerType: "claude-code" as const, executionProfile: { controls: [] } },
       ],
       onModelChange: vi.fn(),
       selectedBranch: "main",
@@ -472,14 +492,83 @@ describe("renderer component states", () => {
         modelSelectionMode="multi"
         selectedModelIds={["model-1", "model-2"]}
         onModelIdsChange={vi.fn()}
+        modelConfigurations={{
+          "model-1": { effort: "high", executionMode: "fast" },
+          "model-2": { effort: "auto", executionMode: "auto" },
+        }}
+        onModelConfigurationsChange={vi.fn()}
         onYoloModeChange={vi.fn()}
         reasoningEffort="high"
         onReasoningEffortChange={vi.fn()}
       />,
     );
     expect(runMarkup).toContain("Full access");
+    expect(runMarkup).toContain('aria-label="Configure 2 models"');
+    expect(runMarkup).not.toContain('aria-label="Configure GPT-5"');
+    expect(runMarkup).not.toContain('aria-label="Configure Claude"');
+    expect(runMarkup).not.toContain('data-model-chip-rail="true"');
+    expect(runMarkup).toContain(">2 models<");
+    expect(runMarkup).toContain(">High<");
+    expect(runMarkup).toContain(">Fast<");
+    const staleModelMarkup = renderToStaticMarkup(
+      <RunComposer
+        {...commonProps}
+        modelSelectionMode="multi"
+        selectedModelIds={["removed-model"]}
+        onModelIdsChange={vi.fn()}
+      />,
+    );
+    const staleModelTrigger = staleModelMarkup.match(/<button[^>]*aria-label="Configure Select model"[^>]*>/)?.[0];
+    expect(staleModelTrigger).toBeDefined();
+    expect(staleModelTrigger).not.toContain("disabled");
     const chatMarkup = renderToStaticMarkup(<RunComposer {...commonProps} variant="chat" submitLabel="Send chat" />);
     expect(chatMarkup).toContain("Send chat");
+    expect(chatMarkup).toContain('aria-label="Configure GPT-5"');
+    expect(chatMarkup).not.toContain('aria-label="Add model"');
+  });
+
+  it("keeps model configuration moving through the same menu after replacement", () => {
+    expect(nextModelChipSection({
+      controls: [{
+        id: "reasoningEffort",
+        label: "Effort",
+        options: [{ value: "auto", label: "Provider default" }, { value: "high", label: "High" }],
+      }],
+    })).toBe("effort");
+    expect(nextModelChipSection({
+      controls: [{
+        id: "speed",
+        label: "Speed",
+        options: [{ value: "auto", label: "Provider default" }, { value: "fast", label: "Fast" }],
+      }],
+    })).toBe("secondary");
+    expect(nextModelChipSection({ controls: [] })).toBe("model");
+  });
+
+  it("intersects effort choices across every selected model", () => {
+    const common = intersectModelExecutionControls([
+      {
+        id: "reasoningEffort",
+        label: "Effort",
+        options: [
+          { value: "auto", label: "Provider default" },
+          { value: "low", label: "Low" },
+          { value: "high", label: "High" },
+          { value: "xhigh", label: "Extra high" },
+        ],
+      },
+      {
+        id: "reasoningEffort",
+        label: "Effort",
+        options: [
+          { value: "auto", label: "Provider default" },
+          { value: "medium", label: "Medium" },
+          { value: "high", label: "High" },
+        ],
+      },
+    ]);
+    expect(common?.options.map((option) => option.value)).toEqual(["auto", "high"]);
+    expect(intersectModelExecutionControls([])).toBeUndefined();
   });
 
   it("renders completed run header controls", () => {

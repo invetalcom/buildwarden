@@ -5,6 +5,8 @@ import {
   type ChatAttachmentPayload,
   type ChatDetail,
   type KeyboardShortcutId,
+  type ModelExecutionProfile,
+  type ProviderExecutionOptions,
   type ProviderType,
   type UnifiedProviderFamily,
 } from "@buildwarden/shared";
@@ -15,6 +17,7 @@ import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
 import { ChatTranscript } from "./ChatTranscript";
 import { RunComposer } from "./RunComposer";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { buildRunReasoningInput } from "./app-model";
 
 const safeParseMetadata = (value: string) => {
   try {
@@ -30,6 +33,7 @@ interface RunChatPanelModelOption {
   modelId: string;
   providerType: ProviderType;
   providerFamily: UnifiedProviderFamily | null;
+  executionProfile?: ModelExecutionProfile;
 }
 
 interface RunChatPanelProps {
@@ -50,8 +54,9 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
   const [prompt, setPrompt] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [selectedModelId, setSelectedModelId] = useState(defaultModelId);
-  const [selectedReasoningEffort, setSelectedReasoningEffort] = useState("medium");
-  const [selectedAnthropicEffort, setSelectedAnthropicEffort] = useState("medium");
+  const [selectedReasoningEffort, setSelectedReasoningEffort] = useState("auto");
+  const [selectedAnthropicEffort, setSelectedAnthropicEffort] = useState("auto");
+  const [selectedExecutionMode, setSelectedExecutionMode] = useState("auto");
   const [sending, setSending] = useState(false);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
@@ -89,6 +94,30 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
   }, [buildwarden, loadRunChat]);
 
   const steps = useMemo(() => detail?.steps ?? [], [detail]);
+
+  const latestUserMessageOptions = useMemo(() => {
+    const latestUserStep = [...steps].reverse().find((step) => safeParseMetadata(step.metadataJson).source === "user");
+    if (!latestUserStep) return null;
+    const metadata = safeParseMetadata(latestUserStep.metadataJson);
+    const executionOptions = metadata.executionOptions && typeof metadata.executionOptions === "object" && !Array.isArray(metadata.executionOptions)
+      ? metadata.executionOptions as ProviderExecutionOptions
+      : undefined;
+    return {
+      reasoningEffort: typeof metadata.reasoningEffort === "string" ? metadata.reasoningEffort : executionOptions?.reasoningEffort ?? "auto",
+      anthropicEffort: typeof metadata.anthropicEffort === "string" ? metadata.anthropicEffort : executionOptions?.anthropicEffort ?? "auto",
+      executionMode: executionOptions?.serviceTier ?? executionOptions?.speed ?? executionOptions?.contextMode ?? executionOptions?.workflowMode ?? "auto",
+    };
+  }, [steps]);
+  const latestReasoningEffort = latestUserMessageOptions?.reasoningEffort;
+  const latestAnthropicEffort = latestUserMessageOptions?.anthropicEffort;
+  const latestExecutionMode = latestUserMessageOptions?.executionMode;
+
+  useEffect(() => {
+    if (latestReasoningEffort === undefined || latestAnthropicEffort === undefined || latestExecutionMode === undefined) return;
+    setSelectedReasoningEffort(latestReasoningEffort);
+    setSelectedAnthropicEffort(latestAnthropicEffort);
+    setSelectedExecutionMode(latestExecutionMode);
+  }, [latestAnthropicEffort, latestExecutionMode, latestReasoningEffort]);
 
   const visibleSteps = useMemo(
     () => steps.filter((step) => safeParseMetadata(step.metadataJson).source !== RUN_CHAT_CONTEXT_SOURCE),
@@ -147,12 +176,20 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
     }
     setSending(true);
     try {
+      const selectedModel = modelOptions.find((option) => option.id === selectedModelId);
+      if (!selectedModel) throw new Error("Select a configured model.");
       const chat = await buildwarden.createRunChat(runId, {
         prompt: trimmed,
         modelId: selectedModelId,
         attachments,
-        reasoningEffort: selectedReasoningEffort,
-        anthropicEffort: selectedAnthropicEffort,
+        ...buildRunReasoningInput(
+          selectedModel.providerType,
+          selectedModel.providerFamily,
+          selectedReasoningEffort,
+          selectedAnthropicEffort,
+          selectedModel.executionProfile,
+          selectedExecutionMode,
+        ),
       });
       chatIdRef.current = chat.id;
       setPrompt("");
@@ -220,6 +257,7 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
             contextModelId: option.modelId,
             providerType: option.providerType,
             providerFamily: option.providerFamily,
+            executionProfile: option.executionProfile,
           }))}
           busy={sending}
           isRunActive={isChatActive}
@@ -236,6 +274,8 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
           anthropicEffort={selectedAnthropicEffort}
           onReasoningEffortChange={setSelectedReasoningEffort}
           onAnthropicEffortChange={setSelectedAnthropicEffort}
+          executionMode={selectedExecutionMode}
+          onExecutionModeChange={setSelectedExecutionMode}
           dropdownSide="top"
           dense
         />

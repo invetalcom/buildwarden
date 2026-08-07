@@ -1,4 +1,4 @@
-import { appendChatAttachmentFiles, type ChatAttachmentPayload, type HarnessType, type OrchestrationStatus, type ProjectKind, type ProviderType, type RunMode, type RunWorkspaceType, type RunWorkspaceVcs, type SupportedIdeKind, type UnifiedProviderFamily } from "@buildwarden/shared";
+import { appendChatAttachmentFiles, type ChatAttachmentPayload, type HarnessType, type ModelExecutionProfile, type OrchestrationStatus, type ProjectKind, type ProviderType, type RunMode, type RunModelConfiguration, type RunWorkspaceType, type RunWorkspaceVcs, type SupportedIdeKind, type UnifiedProviderFamily } from "@buildwarden/shared";
 import { Archive, Clock3, FolderOpen, Play, PlayCircle, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
@@ -43,7 +43,7 @@ interface ProjectOverviewTabProps {
     inputTokens: number;
     outputTokens: number;
   }>;
-  modelOptions: Array<{ id: string; label: string; modelId: string; providerType: ProviderType; providerFamily: UnifiedProviderFamily | null }>;
+  modelOptions: Array<{ id: string; label: string; modelId: string; providerType: ProviderType; providerFamily: UnifiedProviderFamily | null; executionProfile?: ModelExecutionProfile }>;
   configuredIdeKinds: SupportedIdeKind[];
   availableBranches: string[];
   currentProjectBranch: string;
@@ -53,11 +53,13 @@ interface ProjectOverviewTabProps {
   runBaseBranch: string;
   runModelId: string;
   runWorktreeModelIds: string[];
+  runModelConfigurations?: Record<string, RunModelConfiguration>;
   submitShortcut: string;
   projectRunStats: ProjectRunStats;
   busy: boolean;
   reasoningEffort: string;
   anthropicEffort: string;
+  executionMode?: string;
   yoloMode: boolean;
   delegationEnabled: boolean;
   delegationAvailable: boolean;
@@ -70,8 +72,10 @@ interface ProjectOverviewTabProps {
   onRunBaseBranchChange: (value: string) => void;
   onRunModelChange: (modelId: string) => void;
   onRunWorktreeModelIdsChange: (modelIds: string[]) => void;
+  onRunModelConfigurationsChange?: (configurations: Record<string, RunModelConfiguration>) => void;
   onReasoningEffortChange: (value: string) => void;
   onAnthropicEffortChange: (value: string) => void;
+  onExecutionModeChange?: (value: string) => void;
   onYoloModeChange: (value: boolean) => void;
   onDelegationEnabledChange: (value: boolean) => void;
 }
@@ -172,11 +176,13 @@ export const ProjectOverviewTab = ({
   runBaseBranch,
   runModelId,
   runWorktreeModelIds,
+  runModelConfigurations = {},
   submitShortcut,
   projectRunStats,
   busy,
   reasoningEffort,
   anthropicEffort,
+  executionMode = "auto",
   yoloMode,
   delegationEnabled,
   delegationAvailable,
@@ -189,8 +195,10 @@ export const ProjectOverviewTab = ({
   onRunBaseBranchChange,
   onRunModelChange,
   onRunWorktreeModelIdsChange,
+  onRunModelConfigurationsChange,
   onReasoningEffortChange,
   onAnthropicEffortChange,
+  onExecutionModeChange,
   onYoloModeChange,
   onDelegationEnabledChange,
 }: ProjectOverviewTabProps) => {
@@ -285,12 +293,15 @@ export const ProjectOverviewTab = ({
               modelSelectionMode={canUseMultiModel ? "multi" : "single"}
               selectedModelIds={runWorktreeModelIds}
               onModelIdsChange={onRunWorktreeModelIdsChange}
+              modelConfigurations={runModelConfigurations}
+              onModelConfigurationsChange={onRunModelConfigurationsChange}
               modelOptions={modelOptions.map((option) => ({
                 value: option.id,
                 label: option.label,
                 contextModelId: option.modelId,
                 providerType: option.providerType,
                 providerFamily: option.providerFamily,
+                executionProfile: option.executionProfile,
               }))}
               workspaceTypeOptions={workspaceTypeOptions}
               selectedBranch={selectedBranch}
@@ -323,6 +334,8 @@ export const ProjectOverviewTab = ({
               anthropicEffort={anthropicEffort}
               onReasoningEffortChange={onReasoningEffortChange}
               onAnthropicEffortChange={onAnthropicEffortChange}
+              executionMode={executionMode}
+              onExecutionModeChange={onExecutionModeChange}
               yoloMode={yoloMode}
               onYoloModeChange={onYoloModeChange}
               delegationEnabled={delegationEnabled}

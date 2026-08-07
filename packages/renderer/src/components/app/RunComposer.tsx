@@ -13,17 +13,21 @@ import {
   parseLeadingComposerCommand,
   type ComposerCommandDescriptor,
   type ComposerCommandContext,
+  type ModelExecutionControl,
+  type ModelExecutionProfile,
+  type RunModelConfiguration,
   type RunMode,
   type RunWorkspaceType,
   type UnifiedProviderFamily,
   type ProviderType,
 } from "@buildwarden/shared";
-import { ArrowUp, Bot, BrainCircuit, Check, ChevronDown, GitBranch, ShieldOff, SlidersHorizontal, UsersRound, WandSparkles } from "lucide-react";
+import { ArrowUp, Bot, Check, ChevronDown, ChevronRight, GitBranch, Plus, ShieldOff, SlidersHorizontal, UsersRound, WandSparkles, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { ContextWindowBadge } from "./ContextWindowBadge";
 import { AnchorDropdownPortal } from "../ui/dropdown-portal";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { nextModelChipSection, type ModelChipSection } from "./model-execution-controls";
 
 const RUN_MODES: RunMode[] = ["code", "plan", "ask"];
 
@@ -95,13 +99,14 @@ const MODE_LABELS: Record<RunMode, string> = {
 const composerTriggerClass =
   "inline-flex h-8 items-center gap-1.5 rounded-full bg-transparent px-2.5 text-[13px] font-medium text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] disabled:pointer-events-none disabled:opacity-50";
 
-interface ComposerSelectOption {
+export interface ComposerSelectOption {
   value: string;
   label: string;
   displayLabel?: string;
   contextModelId?: string;
   providerType?: ProviderType;
   providerFamily?: UnifiedProviderFamily | null;
+  executionProfile?: ModelExecutionProfile;
 }
 
 interface ComposerSelectProps {
@@ -187,74 +192,305 @@ export const ComposerSelect = ({
   );
 };
 
-interface ComposerMultiModelSelectProps {
-  selectedIds: string[];
-  icon: ComponentType<{ className?: string }>;
-  iconClassName: string;
-  options: ComposerSelectOption[];
-  onChange: (ids: string[]) => void;
-  disabled?: boolean;
-  buttonClassName?: string;
-  menuClassName?: string;
-  menuWidthPx?: number;
-  menuSide?: "top" | "bottom";
-  selectedIconClassName?: string;
-}
+const reasoningControlForModel = (optionEntry: ComposerSelectOption | null | undefined) =>
+  optionEntry?.executionProfile?.controls.find((entry) => entry.id === "reasoningEffort" || entry.id === "thinkingLevel");
 
-const ComposerMultiModelSelect = ({
-  selectedIds,
-  icon: Icon,
-  iconClassName,
-  options,
-  onChange,
-  disabled = false,
-  buttonClassName = "",
-  menuClassName = "",
-  menuWidthPx = 352,
-  menuSide = "top",
-  selectedIconClassName = "text-[var(--ec-accent)]",
-}: ComposerMultiModelSelectProps) => {
-  const [open, setOpen] = useState(false);
-  const anchorRef = useRef<HTMLButtonElement | null>(null);
-  const selectedSet = new Set(selectedIds);
+const secondaryControlForModel = (optionEntry: ComposerSelectOption | null | undefined) =>
+  optionEntry?.executionProfile?.controls.find((entry) => entry.id !== "reasoningEffort" && entry.id !== "thinkingLevel");
 
-  const summaryLabel = (() => {
-    if (selectedIds.length === 0) {
-      return "Select models";
-    }
-    if (selectedIds.length === 1) {
-      const one = options.find((o) => o.value === selectedIds[0]);
-      return one?.label ?? "1 model";
-    }
-    return `${selectedIds.length} models`;
-  })();
-
-  const toggleId = (id: string) => {
-    const next = new Set(selectedIds);
-    if (next.has(id)) {
-      if (next.size <= 1) {
-        return;
-      }
-      next.delete(id);
-    } else {
-      next.add(id);
-    }
-    const ordered = options.map((o) => o.value).filter((value) => next.has(value));
-    onChange(ordered);
+const normalizedModelConfiguration = (
+  optionEntry: ComposerSelectOption | undefined,
+  configuration: RunModelConfiguration,
+): RunModelConfiguration => {
+  const reasoningControl = reasoningControlForModel(optionEntry);
+  const secondaryControl = secondaryControlForModel(optionEntry);
+  return {
+    effort: reasoningControl?.options.some((entry) => entry.value === configuration.effort) ? configuration.effort : "auto",
+    executionMode: secondaryControl?.options.some((entry) => entry.value === configuration.executionMode)
+      ? configuration.executionMode
+      : "auto",
   };
+};
+
+const controlValueLabel = (controlEntry: ModelExecutionControl | undefined, value: string): string =>
+  controlEntry?.options.find((entry) => entry.value === value)?.label ?? "Provider default";
+
+const controlSummaryLabel = (controlEntry: ModelExecutionControl, value: string): string => {
+  if (value !== "auto") return controlValueLabel(controlEntry, value);
+  const noun = controlEntry.id === "reasoningEffort" || controlEntry.id === "thinkingLevel"
+    ? "effort"
+    : controlEntry.label.toLocaleLowerCase();
+  return `Default ${noun}`;
+};
+
+const modelConfigurationSummaryValues = (
+  optionEntry: ComposerSelectOption,
+  configuration: RunModelConfiguration,
+): string[] => {
+  const reasoningControl = reasoningControlForModel(optionEntry);
+  const secondaryControl = secondaryControlForModel(optionEntry);
+  return [
+    reasoningControl ? controlSummaryLabel(reasoningControl, configuration.effort) : null,
+    secondaryControl ? controlSummaryLabel(secondaryControl, configuration.executionMode) : null,
+  ].filter((entry): entry is string => Boolean(entry));
+};
+
+const ComposerModelChip = ({
+  selectedId,
+  selectedIds,
+  optionEntry,
+  options,
+  configuration,
+  allowRemove,
+  disabled,
+  menuSide,
+  onReplace,
+  onConfigurationChange,
+  onRemove,
+}: {
+  selectedId: string;
+  selectedIds: string[];
+  optionEntry: ComposerSelectOption;
+  options: ComposerSelectOption[];
+  configuration: RunModelConfiguration;
+  allowRemove: boolean;
+  disabled: boolean;
+  menuSide: "top" | "bottom";
+  onReplace: (nextModelId: string, nextConfiguration: RunModelConfiguration) => void;
+  onConfigurationChange: (next: RunModelConfiguration) => void;
+  onRemove: () => void;
+}) => {
+  const [open, setOpen] = useState(false);
+  const [section, setSection] = useState<ModelChipSection>("model");
+  const anchorRef = useRef<HTMLButtonElement | null>(null);
+  const reasoningControl = reasoningControlForModel(optionEntry);
+  const secondaryControl = secondaryControlForModel(optionEntry);
+  const effortLabel = controlValueLabel(reasoningControl, configuration.effort);
+  const secondaryLabel = controlValueLabel(secondaryControl, configuration.executionMode);
+  const summaryValues = modelConfigurationSummaryValues(optionEntry, configuration);
+  const availableModels = options.filter((entry) => entry.value === selectedId || !selectedIds.includes(entry.value));
+  const rows: Array<{ id: ModelChipSection; label: string; value: string }> = [
+    { id: "model", label: "Model", value: optionEntry.displayLabel ?? optionEntry.label },
+    ...(reasoningControl ? [{ id: "effort" as const, label: reasoningControl.label, value: effortLabel }] : []),
+    ...(secondaryControl ? [{ id: "secondary" as const, label: secondaryControl.label, value: secondaryLabel }] : []),
+  ];
+  const activeOptions = section === "model"
+    ? availableModels.map((entry) => ({ value: entry.value, label: entry.label }))
+    : section === "effort"
+      ? reasoningControl?.options ?? []
+      : secondaryControl?.options ?? [];
+  const activeValue = section === "model"
+    ? selectedId
+    : section === "effort"
+      ? configuration.effort
+      : configuration.executionMode;
+
+  return (
+    <div className="relative z-10 inline-flex h-8 min-w-0 shrink-0 items-stretch rounded-full bg-[var(--ec-control)] ring-1 ring-inset ring-[var(--ec-border)] transition hover:ring-[var(--ec-border-strong)]">
+      <button
+        ref={anchorRef}
+        type="button"
+        aria-label={`Configure ${optionEntry.label}`}
+        title={[optionEntry.displayLabel ?? optionEntry.label, ...summaryValues].join(" · ")}
+        className="inline-flex min-w-0 items-center gap-1.5 rounded-full px-2.5 text-[13px] font-medium text-[var(--ec-text)] outline-none transition hover:bg-[var(--ec-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-accent-ring)]"
+        onClick={() => {
+          setSection("model");
+          setOpen((current) => !current);
+        }}
+        disabled={disabled}
+      >
+        <Bot className="h-3.5 w-3.5 shrink-0 text-[var(--ec-muted)]" />
+        <span className="max-w-36 truncate">{optionEntry.displayLabel ?? optionEntry.label}</span>
+        {summaryValues.map((value) => <span key={value} className="hidden max-w-24 truncate text-xs font-normal text-[var(--ec-muted)] sm:inline">{value}</span>)}
+        <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-[var(--ec-faint)] transition-transform duration-150 ${open ? "rotate-180" : ""}`} />
+      </button>
+      {allowRemove ? (
+        <button
+          type="button"
+          aria-label={`Remove ${optionEntry.label}`}
+          className="mr-1 my-1 inline-flex w-6 items-center justify-center rounded-full text-[var(--ec-faint)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-accent-ring)]"
+          onClick={() => {
+            setOpen(false);
+            onRemove();
+          }}
+          disabled={disabled}
+        >
+          <X className="h-3 w-3" />
+        </button>
+      ) : null}
+      <AnchorDropdownPortal
+        open={open}
+        anchorRef={anchorRef}
+        onClose={() => setOpen(false)}
+        align="end"
+        placement={menuSide}
+        widthPx={500}
+        maxHeightPx={320}
+        className="glass-popover overflow-hidden"
+      >
+        <div className="grid min-h-44 grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+          <div className="border-r border-[var(--ec-border)] p-1.5">
+            {rows.map((row) => (
+              <button
+                key={row.id}
+                type="button"
+                className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${
+                  section === row.id ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+                }`}
+                onClick={() => setSection(row.id)}
+              >
+                <span className="min-w-0 flex-1 font-medium">{row.label}</span>
+                <span className="max-w-24 truncate text-xs text-[var(--ec-faint)]">{row.value}</span>
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--ec-faint)]" />
+              </button>
+            ))}
+          </div>
+          <div className="app-scrollbar app-dropdown-scrollbar max-h-80 overflow-y-auto p-1.5">
+            {activeOptions.map((entry) => {
+              const isSelected = entry.value === activeValue;
+              return (
+                <button
+                  key={entry.value}
+                  type="button"
+                  className={`flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${
+                    isSelected ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+                  }`}
+                  onClick={() => {
+                    if (section === "model") {
+                      const nextOption = options.find((candidate) => candidate.value === entry.value);
+                      onReplace(entry.value, normalizedModelConfiguration(nextOption, configuration));
+                      setSection(nextModelChipSection(nextOption?.executionProfile));
+                      return;
+                    }
+                    onConfigurationChange(section === "effort"
+                      ? { ...configuration, effort: entry.value }
+                      : { ...configuration, executionMode: entry.value });
+                  }}
+                >
+                  <span className="truncate">{entry.label}</span>
+                  {isSelected ? <Check className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" /> : null}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </AnchorDropdownPortal>
+    </div>
+  );
+};
+
+const ComposerMultiModelControl = ({
+  selectedOptions,
+  options,
+  configurationForModel,
+  disabled,
+  menuSide,
+  onReplace,
+  onConfigurationChange,
+  onAdd,
+  onRemove,
+}: {
+  selectedOptions: ComposerSelectOption[];
+  options: ComposerSelectOption[];
+  configurationForModel: (optionEntry: ComposerSelectOption) => RunModelConfiguration;
+  disabled: boolean;
+  menuSide: "top" | "bottom";
+  onReplace: (currentModelId: string, nextModelId: string, nextConfiguration: RunModelConfiguration) => void;
+  onConfigurationChange: (modelId: string, next: RunModelConfiguration) => void;
+  onAdd: (modelId: string) => void;
+  onRemove: (modelId: string) => void;
+}) => {
+  const [open, setOpen] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [activeModelId, setActiveModelId] = useState(selectedOptions[0]?.value ?? "");
+  const [section, setSection] = useState<ModelChipSection>("model");
+  const anchorRef = useRef<HTMLButtonElement | null>(null);
+  const selectedIds = selectedOptions.map((entry) => entry.value);
+  const selectedModels = selectedOptions.map((optionEntry) => ({
+    optionEntry,
+    configuration: configurationForModel(optionEntry),
+  }));
+  const activeModel = selectedModels.find((entry) => entry.optionEntry.value === activeModelId) ?? selectedModels[0];
+  const unselectedOptions = options.filter((entry) => !selectedIds.includes(entry.value));
+
+  useEffect(() => {
+    if (selectedOptions.length === 0) {
+      setActiveModelId("");
+      return;
+    }
+    if (!selectedOptions.some((entry) => entry.value === activeModelId)) setActiveModelId(selectedOptions[0]!.value);
+  }, [activeModelId, selectedOptions]);
+
+  const groupSummaryForControl = (kind: "effort" | "secondary"): string | null => {
+    const values = selectedModels.flatMap(({ optionEntry, configuration }) => {
+      const controlEntry = kind === "effort" ? reasoningControlForModel(optionEntry) : secondaryControlForModel(optionEntry);
+      if (!controlEntry) return [];
+      const value = kind === "effort" ? configuration.effort : configuration.executionMode;
+      return [{ controlEntry, value, label: controlSummaryLabel(controlEntry, value) }];
+    });
+    if (values.length === 0) return null;
+    const labels = [...new Set(values.map((entry) => entry.label))];
+    if (labels.length === 1) return labels[0]!;
+    if (kind === "effort") return "Mixed effort";
+    const controlLabels = [...new Set(values.map((entry) => entry.controlEntry.label.toLocaleLowerCase()))];
+    return `Mixed ${controlLabels.length === 1 ? controlLabels[0] : "speed"}`;
+  };
+  const groupSummary = [groupSummaryForControl("effort"), groupSummaryForControl("secondary")]
+    .filter((entry): entry is string => Boolean(entry));
+  const groupLabel = selectedOptions.length === 0
+    ? "Select model"
+    : selectedOptions.length === 1
+      ? selectedOptions[0]?.displayLabel ?? selectedOptions[0]?.label ?? "Model"
+      : `${selectedOptions.length} models`;
+  const tooltip = selectedModels.map(({ optionEntry, configuration }) => {
+    const values = modelConfigurationSummaryValues(optionEntry, configuration);
+    return `${optionEntry.displayLabel ?? optionEntry.label}${values.length > 0 ? ` — ${values.join(" · ")}` : ""}`;
+  }).join("\n");
+
+  const activeOption = activeModel?.optionEntry;
+  const activeConfiguration = activeModel?.configuration ?? { effort: "auto", executionMode: "auto" };
+  const reasoningControl = reasoningControlForModel(activeOption);
+  const secondaryControl = secondaryControlForModel(activeOption);
+  const effortLabel = controlValueLabel(reasoningControl, activeConfiguration.effort);
+  const secondaryLabel = controlValueLabel(secondaryControl, activeConfiguration.executionMode);
+  const rows: Array<{ id: ModelChipSection; label: string; value: string }> = activeOption ? [
+    { id: "model", label: "Model", value: activeOption.displayLabel ?? activeOption.label },
+    ...(reasoningControl ? [{ id: "effort" as const, label: reasoningControl.label, value: effortLabel }] : []),
+    ...(secondaryControl ? [{ id: "secondary" as const, label: secondaryControl.label, value: secondaryLabel }] : []),
+  ] : [];
+  const availableReplacementOptions = options.filter((entry) => entry.value === activeOption?.value || !selectedIds.includes(entry.value));
+  const activeOptions = section === "model"
+    ? availableReplacementOptions.map((entry) => ({ value: entry.value, label: entry.label }))
+    : section === "effort"
+      ? reasoningControl?.options ?? []
+      : secondaryControl?.options ?? [];
+  const activeValue = section === "model"
+    ? activeOption?.value ?? ""
+    : section === "effort"
+      ? activeConfiguration.effort
+      : activeConfiguration.executionMode;
 
   return (
     <div className="relative z-10">
       <button
         ref={anchorRef}
         type="button"
-        className={`${composerTriggerClass} ${buttonClassName}`}
-        onClick={() => setOpen((current) => !current)}
+        aria-label={`Configure ${groupLabel}`}
+        title={tooltip}
+        className="inline-flex h-8 min-w-0 max-w-[24rem] items-center gap-1.5 rounded-full bg-[var(--ec-control)] px-2.5 text-[13px] font-medium text-[var(--ec-text)] ring-1 ring-inset ring-[var(--ec-border)] transition hover:bg-[var(--ec-hover)] hover:ring-[var(--ec-border-strong)] focus-visible:ring-2 focus-visible:ring-[var(--ec-accent-ring)]"
+        onClick={() => {
+          setAdding(selectedOptions.length === 0);
+          setSection("model");
+          setOpen((current) => !current);
+        }}
         disabled={disabled || options.length === 0}
       >
-        <Icon className={`h-3.5 w-3.5 ${iconClassName}`} />
-        <span className="max-w-[16rem] truncate text-[var(--ec-text)]">{summaryLabel}</span>
-        <ChevronDown className={`h-3.5 w-3.5 text-[var(--ec-faint)] transition ${open ? "rotate-180" : ""}`} />
+        <Bot className="h-3.5 w-3.5 shrink-0 text-[var(--ec-muted)]" />
+        <span className="max-w-36 shrink-0 truncate">{groupLabel}</span>
+        {groupSummary.map((value) => (
+          <span key={value} className="hidden max-w-28 truncate text-xs font-normal text-[var(--ec-muted)] sm:inline">{value}</span>
+        ))}
+        <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-[var(--ec-faint)] transition-transform duration-150 ${open ? "rotate-180" : ""}`} />
       </button>
       <AnchorDropdownPortal
         open={open}
@@ -262,34 +498,139 @@ const ComposerMultiModelSelect = ({
         onClose={() => setOpen(false)}
         align="end"
         placement={menuSide}
-        widthPx={menuWidthPx}
-        maxHeightPx={288}
-        className={`glass-popover overflow-hidden ${menuClassName}`}
+        widthPx={660}
+        maxHeightPx={360}
+        className="glass-popover overflow-hidden"
       >
-        <div className="app-scrollbar app-dropdown-scrollbar overflow-y-auto p-1.5" style={{ maxHeight: "inherit" }}>
-          <p className="px-2 pb-1 text-[11px] uppercase tracking-wide text-[var(--ec-faint)]">Select one or more</p>
-          {options.map((option) => {
-            const isSelected = selectedSet.has(option.value);
-
-            return (
-              <button
-                key={option.value}
-                type="button"
-                className={`flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${
-                  isSelected
-                    ? "bg-[var(--ec-control)] text-[var(--ec-text)]"
-                    : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
-                }`}
-                onClick={(e) => {
-                  e.preventDefault();
-                  toggleId(option.value);
-                }}
-              >
-                <span className="truncate">{option.label}</span>
-                {isSelected ? <Check className={`h-3.5 w-3.5 shrink-0 ${selectedIconClassName}`} /> : null}
-              </button>
-            );
-          })}
+        <div className="grid min-h-52 grid-cols-[minmax(0,1fr)_190px_minmax(0,1.05fr)]">
+          <div className="app-scrollbar app-dropdown-scrollbar max-h-[22rem] overflow-y-auto border-r border-[var(--ec-border)] p-1.5">
+            <div className="flex items-center justify-between px-2 pb-1">
+              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--ec-faint)]">Selected models</p>
+              <span className="text-[11px] text-[var(--ec-faint)]">{selectedOptions.length}</span>
+            </div>
+            {selectedModels.map(({ optionEntry, configuration }) => {
+              const isActive = optionEntry.value === activeOption?.value && !adding;
+              const summary = modelConfigurationSummaryValues(optionEntry, configuration);
+              return (
+                <div
+                  key={optionEntry.value}
+                  className={`group flex items-center rounded-lg transition ${isActive ? "bg-[var(--ec-control)]" : "hover:bg-[var(--ec-hover)]"}`}
+                >
+                  <button
+                    type="button"
+                    className={`min-w-0 flex-1 px-2.5 py-2 text-left ${isActive ? "text-[var(--ec-text)]" : "text-[var(--ec-muted)]"}`}
+                    onClick={() => {
+                      setAdding(false);
+                      setActiveModelId(optionEntry.value);
+                      setSection("model");
+                    }}
+                  >
+                    <span className="block truncate text-[13px] font-medium">{optionEntry.displayLabel ?? optionEntry.label}</span>
+                    {summary.length > 0 ? <span className="block truncate text-[11px] text-[var(--ec-faint)]">{summary.join(" · ")}</span> : null}
+                  </button>
+                  {selectedOptions.length > 1 ? (
+                    <button
+                      type="button"
+                      aria-label={`Remove ${optionEntry.label}`}
+                      className="mr-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--ec-faint)] opacity-70 transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] group-hover:opacity-100"
+                      onClick={() => {
+                        const remaining = selectedOptions.filter((entry) => entry.value !== optionEntry.value);
+                        if (optionEntry.value === activeOption?.value) {
+                          setActiveModelId(remaining[0]?.value ?? "");
+                          setSection("model");
+                        }
+                        onRemove(optionEntry.value);
+                      }}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  ) : null}
+                </div>
+              );
+            })}
+            <button
+              type="button"
+              aria-label="Add model"
+              disabled={unselectedOptions.length === 0}
+              className={`mt-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${
+                adding ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+              }`}
+              onClick={() => setAdding(true)}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add model
+            </button>
+          </div>
+          {adding ? (
+            <div className="app-scrollbar app-dropdown-scrollbar col-span-2 max-h-[22rem] overflow-y-auto p-1.5">
+              <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--ec-faint)]">Add model</p>
+              {unselectedOptions.map((entry) => (
+                <button
+                  key={entry.value}
+                  type="button"
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+                  onClick={() => {
+                    onAdd(entry.value);
+                    setActiveModelId(entry.value);
+                    setAdding(false);
+                    setSection(nextModelChipSection(entry.executionProfile));
+                  }}
+                >
+                  <Bot className="h-3.5 w-3.5 shrink-0 text-[var(--ec-faint)]" />
+                  <span className="truncate">{entry.label}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <>
+              <div className="border-r border-[var(--ec-border)] p-1.5">
+                {rows.map((row) => (
+                  <button
+                    key={row.id}
+                    type="button"
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${
+                      section === row.id ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+                    }`}
+                    onClick={() => setSection(row.id)}
+                  >
+                    <span className="min-w-0 flex-1 font-medium">{row.label}</span>
+                    <span className="max-w-20 truncate text-[11px] text-[var(--ec-faint)]">{row.value}</span>
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--ec-faint)]" />
+                  </button>
+                ))}
+              </div>
+              <div className="app-scrollbar app-dropdown-scrollbar max-h-[22rem] overflow-y-auto p-1.5">
+                {activeOptions.map((entry) => {
+                  const isSelected = entry.value === activeValue;
+                  return (
+                    <button
+                      key={entry.value}
+                      type="button"
+                      className={`flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${
+                        isSelected ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+                      }`}
+                      onClick={() => {
+                        if (!activeOption) return;
+                        if (section === "model") {
+                          const nextOption = options.find((candidate) => candidate.value === entry.value);
+                          onReplace(activeOption.value, entry.value, normalizedModelConfiguration(nextOption, activeConfiguration));
+                          setActiveModelId(entry.value);
+                          setSection(nextModelChipSection(nextOption?.executionProfile));
+                          return;
+                        }
+                        onConfigurationChange(activeOption.value, section === "effort"
+                          ? { ...activeConfiguration, effort: entry.value }
+                          : { ...activeConfiguration, executionMode: entry.value });
+                      }}
+                    >
+                      <span className="truncate">{entry.label}</span>
+                      {isSelected ? <Check className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" /> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
         </div>
       </AnchorDropdownPortal>
     </div>
@@ -496,6 +837,8 @@ interface RunComposerProps {
   modelSelectionMode?: "single" | "multi";
   selectedModelIds?: string[];
   onModelIdsChange?: (modelIds: string[]) => void;
+  modelConfigurations?: Record<string, RunModelConfiguration>;
+  onModelConfigurationsChange?: (configurations: Record<string, RunModelConfiguration>) => void;
   selectedBranch?: string;
   branchOptions?: ComposerSelectOption[];
   onBranchChange?: (branch: string) => void;
@@ -529,6 +872,8 @@ interface RunComposerProps {
   anthropicEffort?: string;
   onReasoningEffortChange?: (value: string) => void;
   onAnthropicEffortChange?: (value: string) => void;
+  executionMode?: string;
+  onExecutionModeChange?: (value: string) => void;
   yoloMode?: boolean;
   onYoloModeChange?: (value: boolean) => void;
   delegationEnabled?: boolean;
@@ -551,6 +896,8 @@ export const RunComposer = ({
   modelSelectionMode = "single",
   selectedModelIds = [],
   onModelIdsChange,
+  modelConfigurations = {},
+  onModelConfigurationsChange,
   selectedBranch,
   branchOptions,
   onBranchChange,
@@ -582,6 +929,8 @@ export const RunComposer = ({
   anthropicEffort = "",
   onReasoningEffortChange,
   onAnthropicEffortChange,
+  executionMode = "auto",
+  onExecutionModeChange,
   yoloMode = false,
   onYoloModeChange,
   delegationEnabled = false,
@@ -733,55 +1082,68 @@ export const RunComposer = ({
     setShowAllComposerCommands(false);
     textareaRef.current?.focus();
   };
-  const selectedModelOptions = useMemo(
-    () =>
-      useMultiModel
-        ? modelSelectOptions.filter((option) => selectedModelIds.includes(option.value))
-        : modelSelectOptions.filter((option) => option.value === selectedModelId),
-    [modelSelectOptions, selectedModelId, selectedModelIds, useMultiModel],
+  const selectedModelOptions = useMemo(() => {
+    if (!useMultiModel) return modelSelectOptions.filter((option) => option.value === selectedModelId);
+    const byId = new Map(modelSelectOptions.map((option) => [option.value, option]));
+    return selectedModelIds.flatMap((id) => {
+      const optionEntry = byId.get(id);
+      return optionEntry ? [optionEntry] : [];
+    });
+  }, [modelSelectOptions, selectedModelId, selectedModelIds, useMultiModel]);
+  const isAnthropicOption = (optionEntry: ComposerSelectOption) =>
+    optionEntry.providerType === "claude-code" || (optionEntry.providerType === "ai-sdk" && optionEntry.providerFamily === "anthropic");
+  const configurationForModel = (optionEntry: ComposerSelectOption): RunModelConfiguration => normalizedModelConfiguration(
+    optionEntry,
+    (useMultiModel ? modelConfigurations[optionEntry.value] : undefined) ?? {
+      effort: isAnthropicOption(optionEntry) ? anthropicEffort : reasoningEffort,
+      executionMode,
+    },
   );
-  const supportsReasoning = (option: ComposerSelectOption) =>
-    option.providerType === "codex-cli" ||
-    option.providerType === "cursor-agent" ||
-    option.providerType === "claude-code" ||
-    (option.providerType === "ai-sdk" && (option.providerFamily === "openai" || option.providerFamily === "anthropic"));
-  const showMultiReasoningControl =
-    useMultiModel && selectedModelOptions.some(supportsReasoning) && (onReasoningEffortChange || onAnthropicEffortChange);
-  let normalizedMultiReasoning = "medium";
-  if (["low", "medium", "high"].includes(reasoningEffort)) {
-    normalizedMultiReasoning = reasoningEffort;
-  } else if (["low", "medium", "high"].includes(anthropicEffort)) {
-    normalizedMultiReasoning = anthropicEffort;
-  }
-  const showReasoningControl =
-    !useMultiModel &&
-    (activeModelOption?.providerType === "codex-cli" ||
-      activeModelOption?.providerType === "cursor-agent" ||
-      (activeModelOption?.providerType === "ai-sdk" && activeModelOption.providerFamily === "openai"));
-  const showAnthropicControl =
-    !useMultiModel &&
-    (activeModelOption?.providerType === "claude-code" ||
-      (activeModelOption?.providerType === "ai-sdk" && activeModelOption.providerFamily === "anthropic"));
-  const reasoningSelectOptions =
-    activeModelOption?.providerType === "ai-sdk" && activeModelOption.providerFamily === "openai"
-      ? [
-          { value: "none", label: "Reasoning: None", displayLabel: "None" },
-          { value: "low", label: "Reasoning: Low", displayLabel: "Low" },
-          { value: "medium", label: "Reasoning: Medium", displayLabel: "Medium" },
-          { value: "high", label: "Reasoning: High", displayLabel: "High" },
-          { value: "xhigh", label: "Reasoning: XHigh", displayLabel: "XHigh" },
-        ]
-      : [
-          { value: "low", label: "Reasoning: Low", displayLabel: "Low" },
-          { value: "medium", label: "Reasoning: Medium", displayLabel: "Medium" },
-          { value: "high", label: "Reasoning: High", displayLabel: "High" },
-          { value: "xhigh", label: "Reasoning: XHigh", displayLabel: "XHigh" },
-        ];
+  const applySingleModelConfiguration = (modelId: string, next: RunModelConfiguration) => {
+    const optionEntry = modelSelectOptions.find((entry) => entry.value === modelId);
+    if (optionEntry && isAnthropicOption(optionEntry)) onAnthropicEffortChange?.(next.effort);
+    else onReasoningEffortChange?.(next.effort);
+    onExecutionModeChange?.(next.executionMode);
+  };
+  const changeModelConfiguration = (modelId: string, next: RunModelConfiguration) => {
+    if (!useMultiModel) {
+      applySingleModelConfiguration(modelId, next);
+      return;
+    }
+    onModelConfigurationsChange?.({ ...modelConfigurations, [modelId]: next });
+  };
+  const replaceSelectedModel = (currentId: string, nextId: string, nextConfiguration: RunModelConfiguration) => {
+    if (!useMultiModel) {
+      onModelChange(nextId);
+      applySingleModelConfiguration(nextId, nextConfiguration);
+      return;
+    }
+    multiModelChange(selectedModelIds.map((id) => id === currentId ? nextId : id));
+    const nextConfigurations = { ...modelConfigurations };
+    delete nextConfigurations[currentId];
+    nextConfigurations[nextId] = nextConfiguration;
+    onModelConfigurationsChange?.(nextConfigurations);
+  };
+  const addSelectedModel = (modelId: string) => {
+    if (!useMultiModel || selectedModelIds.includes(modelId)) return;
+    multiModelChange([...selectedModelIds, modelId]);
+    onModelConfigurationsChange?.({
+      ...modelConfigurations,
+      [modelId]: { effort: "auto", executionMode: "auto" },
+    });
+  };
+  const removeSelectedModel = (modelId: string) => {
+    if (!useMultiModel || selectedModelIds.length <= 1) return;
+    multiModelChange(selectedModelIds.filter((id) => id !== modelId));
+    const nextConfigurations = { ...modelConfigurations };
+    delete nextConfigurations[modelId];
+    onModelConfigurationsChange?.(nextConfigurations);
+  };
   const branchSelectOptions = branchOptions?.map((option) => ({
     value: option.value,
     label: option.label,
   }));
-  const modelOk = useMultiModel ? selectedModelIds.length > 0 : Boolean(selectedModelId);
+  const modelOk = selectedModelOptions.length > 0;
   const isSubmitDisabled = submitDisabled ?? (busy || isRunActive || !prompt.trim() || !modelOk);
   const handlePromptKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     onPromptKeyDown?.(event);
@@ -951,88 +1313,47 @@ export const RunComposer = ({
                 </button>
               ) : null}
             </div>
-            <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+            <div className="flex min-w-0 items-center justify-end gap-1.5">
               {useMultiModel ? (
-                <ComposerMultiModelSelect
-                  selectedIds={selectedModelIds}
-                  icon={Bot}
-                  iconClassName="text-[var(--ec-muted)]"
+                <ComposerMultiModelControl
+                  selectedOptions={selectedModelOptions}
                   options={modelSelectOptions}
-                  onChange={multiModelChange}
+                  configurationForModel={configurationForModel}
                   disabled={busy}
-                  menuWidthPx={352}
                   menuSide={dropdownSide}
-                  selectedIconClassName="text-[var(--ec-accent)]"
+                  onReplace={replaceSelectedModel}
+                  onConfigurationChange={changeModelConfiguration}
+                  onAdd={addSelectedModel}
+                  onRemove={removeSelectedModel}
                 />
-              ) : (
-                <ComposerSelect
-                  value={selectedModelId}
-                  icon={Bot}
-                  iconClassName="text-[var(--ec-muted)]"
-                  options={modelSelectOptions}
-                  onChange={onModelChange}
-                  disabled={busy}
-                  menuWidthPx={352}
-                  menuSide={dropdownSide}
-                  selectedIconClassName="text-[var(--ec-accent)]"
-                />
-              )}
-              {showReasoningControl && onReasoningEffortChange ? (
-                <ComposerSelect
-                  value={reasoningEffort || "medium"}
-                  icon={BrainCircuit}
-                  iconClassName="text-[var(--ec-muted)]"
-                  options={reasoningSelectOptions}
-                  onChange={onReasoningEffortChange}
-                  disabled={busy}
-                  menuWidthPx={208}
-                  menuSide={dropdownSide}
-                  selectedIconClassName="text-[var(--ec-accent)]"
-                />
-              ) : null}
-              {showMultiReasoningControl ? (
-                <ComposerSelect
-                  value={normalizedMultiReasoning}
-                  icon={BrainCircuit}
-                  iconClassName="text-[var(--ec-muted)]"
-                  options={[
-                    { value: "low", label: "Reasoning: Low", displayLabel: "Low" },
-                    { value: "medium", label: "Reasoning: Medium", displayLabel: "Medium" },
-                    { value: "high", label: "Reasoning: High", displayLabel: "High" },
-                  ]}
-                  onChange={(value) => {
-                    onReasoningEffortChange?.(value);
-                    onAnthropicEffortChange?.(value);
-                  }}
-                  disabled={busy}
-                  menuWidthPx={192}
-                  menuSide={dropdownSide}
-                  selectedIconClassName="text-[var(--ec-accent)]"
-                />
-              ) : null}
-              {showAnthropicControl && onAnthropicEffortChange ? (
-                <ComposerSelect
-                  value={anthropicEffort || "medium"}
-                  icon={BrainCircuit}
-                  iconClassName="text-[var(--ec-muted)]"
-                  options={[
-                    { value: "low", label: "Effort: Low", displayLabel: "Low" },
-                    { value: "medium", label: "Effort: Medium", displayLabel: "Medium" },
-                    { value: "high", label: "Effort: High", displayLabel: "High" },
-                    ...(activeModelOption?.providerType === "claude-code"
-                      ? [
-                          { value: "xhigh", label: "Effort: XHigh", displayLabel: "XHigh" },
-                          { value: "max", label: "Effort: Max", displayLabel: "Max" },
-                        ]
-                      : []),
-                  ]}
-                  onChange={onAnthropicEffortChange}
-                  disabled={busy}
-                  menuWidthPx={192}
-                  menuSide={dropdownSide}
-                  selectedIconClassName="text-[var(--ec-accent)]"
-                />
-              ) : null}
+              ) : selectedModelOptions.length > 0 ? selectedModelOptions.map((optionEntry) => (
+                  <ComposerModelChip
+                    key="model-chip"
+                    selectedId={optionEntry.value}
+                    selectedIds={[selectedModelId]}
+                    optionEntry={optionEntry}
+                    options={modelSelectOptions}
+                    configuration={configurationForModel(optionEntry)}
+                    allowRemove={false}
+                    disabled={busy}
+                    menuSide={dropdownSide}
+                    onReplace={(nextModelId, nextConfiguration) => replaceSelectedModel(optionEntry.value, nextModelId, nextConfiguration)}
+                    onConfigurationChange={(next) => changeModelConfiguration(optionEntry.value, next)}
+                    onRemove={() => removeSelectedModel(optionEntry.value)}
+                  />
+                )) : (
+                  <ComposerSelect
+                    value={selectedModelId}
+                    icon={Bot}
+                    iconClassName="text-[var(--ec-muted)]"
+                    options={modelSelectOptions}
+                    onChange={onModelChange}
+                    disabled={busy}
+                    menuWidthPx={352}
+                    menuSide={dropdownSide}
+                    selectedIconClassName="text-[var(--ec-accent)]"
+                  />
+                )}
               {showContextBadge ? (
                 <ContextWindowBadge
                   modelIds={selectedContextModelIds}

@@ -2,6 +2,7 @@ import {
   MAX_PROJECT_FORGE_PR_MONITOR_INTERVAL_MINUTES,
   parseProjectForgePrMonitorIntervalMinutes,
   type IntegratedSkillMetadata,
+  type ModelExecutionProfile,
   type ProjectForgeAuthStatus,
   type ProjectSnapshot,
   type ProviderType,
@@ -40,7 +41,7 @@ import { ProjectSkillSelector } from "./project-skill-selector";
 
 interface ProjectSettingsPageProps {
   project: ProjectSnapshot;
-  modelOptions: Array<{ id: string; label: string; modelId: string; providerType: ProviderType; providerFamily: UnifiedProviderFamily | null }>;
+  modelOptions: Array<{ id: string; label: string; modelId: string; providerType: ProviderType; providerFamily: UnifiedProviderFamily | null; executionProfile?: ModelExecutionProfile }>;
   availableBranches: string[];
   currentProjectBranch: string;
   runMode: RunMode;
@@ -50,6 +51,7 @@ interface ProjectSettingsPageProps {
   projectRunStats: ProjectRunStats;
   reasoningEffort: string;
   anthropicEffort: string;
+  executionMode?: string;
   yoloMode: boolean;
   busy: boolean;
   availableIntegratedSkills: IntegratedSkillMetadata[];
@@ -61,6 +63,7 @@ interface ProjectSettingsPageProps {
   onRunWorktreeModelIdsChange: (modelIds: string[]) => void;
   onReasoningEffortChange: (value: string) => void;
   onAnthropicEffortChange: (value: string) => void;
+  onExecutionModeChange?: (value: string) => void;
   onYoloModeChange: (value: boolean) => void;
   onActiveIntegratedSkillIdsChange: (skillIds: string[]) => void | Promise<void>;
   onDeleteProject: () => void | Promise<void>;
@@ -82,7 +85,8 @@ const folderWorkspaceModes: Array<{ id: RunWorkspaceType; label: string; descrip
   { id: "local", label: "Folder", description: "Edit the project folder directly." },
 ];
 
-const effortOptions = ["low", "medium", "high", "xhigh"];
+const effortOptions = ["auto", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "ultracode"];
+const executionModeOptions = ["auto", "standard", "fast", "flex", "priority"];
 
 const SummaryTile = ({ icon, label, value, detail }: { icon: ReactNode; label: string; value: string; detail?: string }) => (
   <div className="min-w-0 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-2.5">
@@ -144,7 +148,7 @@ const EffortRow = ({
       <span className="truncate">{label}</span>
       <span className="ml-auto shrink-0 font-mono text-[11px] text-[var(--ec-faint)]">{value}</span>
     </div>
-    <div className="mt-2 grid grid-cols-4 gap-1">
+    <div className="mt-2 grid grid-cols-5 gap-1">
       {effortOptions.map((effort) => (
         <Button
           key={effort}
@@ -208,6 +212,7 @@ export const ProjectSettingsPage = ({
   projectRunStats,
   reasoningEffort,
   anthropicEffort,
+  executionMode = "auto",
   yoloMode,
   busy,
   availableIntegratedSkills,
@@ -219,6 +224,7 @@ export const ProjectSettingsPage = ({
   onRunWorktreeModelIdsChange,
   onReasoningEffortChange,
   onAnthropicEffortChange,
+  onExecutionModeChange,
   onYoloModeChange,
   onActiveIntegratedSkillIdsChange,
   onDeleteProject,
@@ -667,6 +673,25 @@ export const ProjectSettingsPage = ({
                 <div className={`${rowControlClass} grid gap-2 md:grid-cols-2`}>
                   <EffortRow label="OpenAI / Codex" value={reasoningEffort} onChange={onReasoningEffortChange} disabled={busy} />
                   <EffortRow label="Claude" value={anthropicEffort} onChange={onAnthropicEffortChange} disabled={busy} />
+                </div>
+              </SettingsRow>
+
+              <SettingsRow title="Speed / service" description="Optional provider mode. Unsupported values fall back to the selected model's provider default." align="start">
+                <div className={`${rowControlClass} rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-2.5`}>
+                  <div className="grid grid-cols-5 gap-1">
+                    {executionModeOptions.map((mode) => (
+                      <Button
+                        key={mode}
+                        type="button"
+                        size="xs"
+                        variant={executionMode === mode ? "default" : "secondary"}
+                        onClick={() => onExecutionModeChange?.(mode)}
+                        disabled={busy}
+                      >
+                        {mode}
+                      </Button>
+                    ))}
+                  </div>
                 </div>
               </SettingsRow>
 

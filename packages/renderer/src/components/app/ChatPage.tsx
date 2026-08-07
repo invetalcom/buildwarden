@@ -4,6 +4,8 @@ import {
   type ChatAttachmentPayload,
   type ChatDetail,
   type ChatRecord,
+  type ModelExecutionProfile,
+  type ProviderExecutionOptions,
   type ProviderType,
   type UnifiedProviderFamily,
 } from "@buildwarden/shared";
@@ -16,6 +18,7 @@ import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { buildRunReasoningInput } from "./app-model";
 
 const chatDetailMatchesSearch = (detail: ChatDetail, query: string): boolean => {
   if (!query.trim()) return true;
@@ -31,7 +34,7 @@ const chatDetailMatchesSearch = (detail: ChatDetail, query: string): boolean => 
 };
 
 interface ChatPageProps {
-  modelOptions: Array<{ id: string; label: string; modelId: string; providerType: ProviderType; providerFamily: UnifiedProviderFamily | null }>;
+  modelOptions: Array<{ id: string; label: string; modelId: string; providerType: ProviderType; providerFamily: UnifiedProviderFamily | null; executionProfile?: ModelExecutionProfile }>;
   defaultModelId: string;
   submitShortcut: string;
   onSelectChat: (chat: ChatRecord) => void;
@@ -41,11 +44,14 @@ interface ChatPageProps {
     attachments?: ChatAttachmentPayload[];
     reasoningEffort?: string;
     anthropicEffort?: string;
+    executionOptions?: ProviderExecutionOptions;
   }) => void | Promise<void>;
   reasoningEffort: string;
   anthropicEffort: string;
   onReasoningEffortChange: (value: string) => void;
   onAnthropicEffortChange: (value: string) => void;
+  executionMode?: string;
+  onExecutionModeChange?: (value: string) => void;
   onDeleteChat: (chatId: string) => void | Promise<void>;
 }
 
@@ -59,6 +65,8 @@ export const ChatPage = ({
   anthropicEffort,
   onReasoningEffortChange,
   onAnthropicEffortChange,
+  executionMode = "auto",
+  onExecutionModeChange,
   onDeleteChat,
 }: ChatPageProps) => {
   const [searchQuery, setSearchQuery] = useState("");
@@ -109,7 +117,21 @@ export const ChatPage = ({
       window.alert(e instanceof Error ? e.message : "Could not read attachments.");
       return;
     }
-    await onCreateChat({ prompt, modelId: selectedModelId, attachments, reasoningEffort, anthropicEffort });
+    const selectedModel = modelOptions.find((option) => option.id === selectedModelId);
+    if (!selectedModel) return;
+    await onCreateChat({
+      prompt,
+      modelId: selectedModelId,
+      attachments,
+      ...buildRunReasoningInput(
+        selectedModel.providerType,
+        selectedModel.providerFamily,
+        reasoningEffort,
+        anthropicEffort,
+        selectedModel.executionProfile,
+        executionMode,
+      ),
+    });
     setNewChatPrompt("");
     setNewChatFiles([]);
     void loadChats();
@@ -155,6 +177,7 @@ export const ChatPage = ({
           contextModelId: opt.modelId,
           providerType: opt.providerType,
           providerFamily: opt.providerFamily,
+          executionProfile: opt.executionProfile,
         }))}
         busy={loading}
         onSubmit={() => void handleNewChat()}
@@ -172,6 +195,8 @@ export const ChatPage = ({
         anthropicEffort={anthropicEffort}
         onReasoningEffortChange={onReasoningEffortChange}
         onAnthropicEffortChange={onAnthropicEffortChange}
+        executionMode={executionMode}
+        onExecutionModeChange={onExecutionModeChange}
       /> : null}
 
       <Card className="p-4">

@@ -147,8 +147,6 @@ describe("ClaudeCodeProviderAdapter", () => {
       "--verbose",
       "--model",
       "sonnet",
-      "--effort",
-      "medium",
       "--permission-mode",
       "acceptEdits",
       "--resume",
@@ -172,11 +170,105 @@ describe("ClaudeCodeProviderAdapter", () => {
       "--verbose",
       "--model",
       "sonnet",
-      "--effort",
-      "medium",
       "--permission-mode",
       "bypassPermissions",
       "--dangerously-skip-permissions",
+    ]);
+  });
+
+  it("preserves only the effort and fast-mode capabilities advertised by the Claude SDK", () => {
+    const models = parseClaudeCodeSupportedModels([
+      {
+        value: "claude-opus-4-8",
+        displayName: "Opus 4.8",
+        description: "",
+        supportsEffort: true,
+        supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+        supportsFastMode: true,
+      },
+      {
+        value: "claude-sonnet-4-6",
+        displayName: "Sonnet 4.6",
+        description: "",
+        supportsEffort: true,
+        supportedEffortLevels: ["low", "medium", "high", "max"],
+        supportsFastMode: false,
+      },
+      {
+        value: "provider-future-model",
+        displayName: "Future",
+        description: "",
+        supportsEffort: true,
+      },
+    ]);
+    const profile = (modelId: string) => (models.find((model) => model.modelId === modelId)?.config as {
+      buildwardenExecutionProfile?: { controls: Array<{ id: string; options: Array<{ value: string }> }> };
+    } | undefined)?.buildwardenExecutionProfile;
+
+    expect(profile("claude-opus-4-8")?.controls.find((control) => control.id === "reasoningEffort")?.options.map((entry) => entry.value))
+      .toEqual(["auto", "low", "medium", "high", "xhigh", "max"]);
+    expect(profile("claude-opus-4-8")?.controls.map((control) => control.id)).toEqual(["reasoningEffort", "speed"]);
+    expect(profile("claude-sonnet-4-6")?.controls.map((control) => control.id)).toEqual(["reasoningEffort"]);
+    expect(profile("provider-future-model")?.controls).toEqual([]);
+  });
+
+  it("filters malformed and duplicate Claude SDK effort metadata", () => {
+    const model = parseClaudeCodeSupportedModels([{
+      value: "claude-runtime-model",
+      displayName: "Runtime model",
+      description: "",
+      supportsEffort: true,
+      supportedEffortLevels: ["", "auto", "low", "low", "xhigh", "future"],
+    } as unknown as Parameters<typeof parseClaudeCodeSupportedModels>[0][number]])[0]!;
+    const controls = (model.config as {
+      buildwardenExecutionProfile: { controls: Array<{ options: Array<{ value: string; label: string }> }> };
+    }).buildwardenExecutionProfile.controls;
+
+    expect(controls[0]?.options).toEqual([
+      { value: "auto", label: "Provider default" },
+      { value: "low", label: "Low" },
+      { value: "xhigh", label: "Extra high" },
+    ]);
+  });
+
+  it("provides safe fallback controls for supported Claude Code aliases", () => {
+    const models = getClaudeCodeAvailableModelsForVersion(null);
+    const controls = (modelId: string) => ((models.find((model) => model.modelId === modelId)?.config as {
+      buildwardenExecutionProfile: { controls: Array<{ id: string; options: Array<{ value: string }> }> };
+    }).buildwardenExecutionProfile.controls);
+
+    expect(controls("claude-opus-4-8").map((control) => control.id)).toEqual(["reasoningEffort", "speed"]);
+    expect(controls("claude-opus-4-7").map((control) => control.id)).toEqual(["reasoningEffort"]);
+    expect(controls("claude-sonnet-4-6")[0]?.options.map((entry) => entry.value)).toEqual(["auto", "low", "medium", "high", "max"]);
+    expect(controls("sonnet")[0]?.options.map((entry) => entry.value)).toEqual([
+      "auto",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(controls("sonnet").map((control) => control.id)).toEqual(["reasoningEffort"]);
+  });
+
+  it("maps explicit Claude effort, ultracode, and per-session fast mode", () => {
+    expect(buildClaudeCodeArgs({
+      modelId: "claude-opus-4-8",
+      inputMode: "code",
+      providerOptions: { anthropicEffort: "xhigh", workflowMode: "ultracode", speed: "fast" },
+    })).toEqual([
+      "-p",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--model",
+      "claude-opus-4-8",
+      "--effort",
+      "xhigh",
+      "--settings",
+      JSON.stringify({ ultracode: true, fastMode: true, fastModePerSessionOptIn: true }),
+      "--permission-mode",
+      "acceptEdits",
     ]);
   });
 

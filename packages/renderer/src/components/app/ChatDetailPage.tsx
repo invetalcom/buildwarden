@@ -4,6 +4,8 @@ import {
   type ChatAttachmentPayload,
   type ChatDetail,
   type KeyboardShortcutId,
+  type ModelExecutionProfile,
+  type ProviderExecutionOptions,
 } from "@buildwarden/shared";
 import { ArrowUp, Bookmark, BookmarkCheck } from "lucide-react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
@@ -16,6 +18,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { buildRunReasoningInput } from "./app-model";
 
 const safeParseMetadata = (value: string) => {
   try {
@@ -28,9 +31,13 @@ const safeParseMetadata = (value: string) => {
 const getLatestUserMessageOptions = (steps: ChatDetail["steps"]) => {
   const latestUserStep = [...steps].reverse().find((step) => safeParseMetadata(step.metadataJson).source === "user");
   const metadata = latestUserStep ? safeParseMetadata(latestUserStep.metadataJson) : {};
+  const executionOptions = metadata.executionOptions && typeof metadata.executionOptions === "object" && !Array.isArray(metadata.executionOptions)
+    ? metadata.executionOptions as ProviderExecutionOptions
+    : undefined;
   return {
-    reasoningEffort: typeof metadata.reasoningEffort === "string" ? metadata.reasoningEffort : "medium",
-    anthropicEffort: typeof metadata.anthropicEffort === "string" ? metadata.anthropicEffort : "medium",
+    reasoningEffort: typeof metadata.reasoningEffort === "string" ? metadata.reasoningEffort : executionOptions?.reasoningEffort ?? "auto",
+    anthropicEffort: typeof metadata.anthropicEffort === "string" ? metadata.anthropicEffort : executionOptions?.anthropicEffort ?? "auto",
+    executionMode: executionOptions?.serviceTier ?? executionOptions?.speed ?? executionOptions?.contextMode ?? executionOptions?.workflowMode ?? "auto",
   };
 };
 
@@ -42,6 +49,7 @@ interface ChatDetailPageProps {
     modelId: string;
     providerType: import("@buildwarden/shared").ProviderType;
     providerFamily: import("@buildwarden/shared").UnifiedProviderFamily | null;
+    executionProfile?: ModelExecutionProfile;
   }>;
   keyboardShortcuts: Record<KeyboardShortcutId, string>;
   busy: boolean;
@@ -53,6 +61,7 @@ interface ChatDetailPageProps {
     attachments?: ChatAttachmentPayload[];
     reasoningEffort?: string;
     anthropicEffort?: string;
+    executionOptions?: ProviderExecutionOptions;
   }) => void | Promise<void>;
   onCancel: () => void;
   onAddBookmark: () => void | Promise<void>;
@@ -105,8 +114,9 @@ export const ChatDetailPage = ({
   const [followUpPrompt, setFollowUpPrompt] = useState("");
   const [followUpFiles, setFollowUpFiles] = useState<File[]>([]);
   const [selectedModelId, setSelectedModelId] = useState(chat.modelId);
-  const [selectedReasoningEffort, setSelectedReasoningEffort] = useState("medium");
-  const [selectedAnthropicEffort, setSelectedAnthropicEffort] = useState("medium");
+  const [selectedReasoningEffort, setSelectedReasoningEffort] = useState("auto");
+  const [selectedAnthropicEffort, setSelectedAnthropicEffort] = useState("auto");
+  const [selectedExecutionMode, setSelectedExecutionMode] = useState("auto");
   const activityContainerRef = useRef<HTMLDivElement>(null);
   const activityEndRef = useRef<HTMLDivElement>(null);
 
@@ -208,7 +218,8 @@ export const ChatDetailPage = ({
   useEffect(() => {
     setSelectedReasoningEffort(latestUserMessageOptions.reasoningEffort);
     setSelectedAnthropicEffort(latestUserMessageOptions.anthropicEffort);
-  }, [latestUserMessageOptions.anthropicEffort, latestUserMessageOptions.reasoningEffort]);
+    setSelectedExecutionMode(latestUserMessageOptions.executionMode);
+  }, [latestUserMessageOptions.anthropicEffort, latestUserMessageOptions.executionMode, latestUserMessageOptions.reasoningEffort]);
 
   const handleSubmit = async () => {
     const prompt = followUpPrompt.trim();
@@ -220,12 +231,20 @@ export const ChatDetailPage = ({
       window.alert(e instanceof Error ? e.message : "Could not read attachments.");
       return;
     }
+    const selectedModel = modelOptions.find((option) => option.id === selectedModelId);
+    if (!selectedModel) return;
     void onFollowUp({
       prompt,
       modelId: selectedModelId !== chat.modelId ? selectedModelId : undefined,
       attachments,
-      reasoningEffort: selectedReasoningEffort,
-      anthropicEffort: selectedAnthropicEffort,
+      ...buildRunReasoningInput(
+        selectedModel.providerType,
+        selectedModel.providerFamily,
+        selectedReasoningEffort,
+        selectedAnthropicEffort,
+        selectedModel.executionProfile,
+        selectedExecutionMode,
+      ),
     });
     setFollowUpPrompt("");
     setFollowUpFiles([]);
@@ -275,6 +294,7 @@ export const ChatDetailPage = ({
           contextModelId: opt.modelId,
           providerType: opt.providerType,
           providerFamily: opt.providerFamily,
+          executionProfile: opt.executionProfile,
         }))}
         busy={busy}
         isRunActive={isChatActive}
@@ -291,6 +311,8 @@ export const ChatDetailPage = ({
         anthropicEffort={selectedAnthropicEffort}
         onReasoningEffortChange={setSelectedReasoningEffort}
         onAnthropicEffortChange={setSelectedAnthropicEffort}
+        executionMode={selectedExecutionMode}
+        onExecutionModeChange={setSelectedExecutionMode}
         dense
       /> : null}
     </div>
