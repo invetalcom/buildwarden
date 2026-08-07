@@ -733,28 +733,32 @@ describe("CursorAgentProviderAdapter", () => {
     expect(controls.map((control) => control.id)).toEqual(["reasoningEffort"]);
   });
 
-  it("rejects unsupported Cursor controls instead of silently ignoring the selection", () => {
-    expect(() => resolveCursorAcpConfigUpdates([], { reasoningEffort: "high" })).toThrow(/does not advertise/i);
-    expect(() =>
-      resolveCursorAcpConfigUpdates(
-        [{ id: "context", name: "Context Window", category: "model_config", type: "select" }],
-        { reasoningEffort: "high" },
-      ),
-    ).toThrow(/does not advertise/i);
-    expect(() =>
-      resolveCursorAcpConfigUpdates(
-        [
-          {
-            id: "reasoning",
-            name: "Reasoning",
-            category: "model_config",
-            type: "select",
-            options: [{ value: "low", name: "Low" }],
-          },
-        ],
-        { reasoningEffort: "nonexistent" },
-      ),
-    ).toThrow(/does not support/i);
+  it("warns and skips unsupported Cursor controls so stale settings do not block startup", () => {
+    const warnings: string[] = [];
+    expect(resolveCursorAcpConfigUpdates([], { reasoningEffort: "high" }, (warning) => warnings.push(warning))).toEqual([]);
+    expect(resolveCursorAcpConfigUpdates(
+      [{ id: "context", name: "Context Window", category: "model_config", type: "select" }],
+      { reasoningEffort: "high" },
+      (warning) => warnings.push(warning),
+    )).toEqual([]);
+    expect(resolveCursorAcpConfigUpdates(
+      [
+        {
+          id: "reasoning",
+          name: "Reasoning",
+          category: "model_config",
+          type: "select",
+          options: [{ value: "low", name: "Low" }],
+        },
+      ],
+      { reasoningEffort: "nonexistent" },
+      (warning) => warnings.push(warning),
+    )).toEqual([]);
+    expect(warnings).toEqual([
+      expect.stringMatching(/does not advertise/i),
+      expect.stringMatching(/does not advertise/i),
+      expect.stringMatching(/does not support/i),
+    ]);
   });
 
   it("maps Cursor context and speed controls by their advertised ACP ids", () => {

@@ -872,6 +872,7 @@ const normalizeReasoningEffort = (value: string | undefined): string | undefined
 export const resolveCursorAcpConfigUpdates = (
   configOptions: readonly CursorAcpConfigOption[] | undefined,
   providerOptions: ProviderExecutionOptions | undefined,
+  onWarning?: (message: string) => void,
 ): Array<{ configId: string; value: string | boolean }> => {
   const requested = [
     {
@@ -898,11 +899,17 @@ export const resolveCursorAcpConfigUpdates = (
     if (!normalized || normalized === "auto") return [];
     const configOption = findConfigOption(configOptions, request.matcher);
     const configId = configOption ? configOptionId(configOption) : "";
-    if (!configId) throw new Error(`Cursor Agent does not advertise a ${request.label} control for this model.`);
+    if (!configId) {
+      onWarning?.(`Cursor Agent does not advertise a ${request.label} control for this model.`);
+      return [];
+    }
     const selected = flattenSelectOptions(configOption).find((candidate) =>
       request.normalize(candidate.value) === normalized || request.normalize(candidate.name) === normalized,
     );
-    if (!selected) throw new Error(`Cursor Agent does not support ${request.label} '${request.value ?? ""}' for this model.`);
+    if (!selected) {
+      onWarning?.(`Cursor Agent does not support ${request.label} '${request.value ?? ""}' for this model.`);
+      return [];
+    }
     return [{ configId, value: selected.value }];
   });
 };
@@ -2239,13 +2246,23 @@ class CursorAcpRuntime {
     }
 
     const liveConfigOptions = session.configOptions.length > 0 ? session.configOptions : cursorConfigOptionsFromModelConfig(this.options.modelConfig);
-    for (const update of resolveCursorAcpConfigUpdates(liveConfigOptions, this.options.providerOptions)) {
-      await this.connection.request("session/set_config_option", {
-        sessionId: session.sessionId,
-        configId: update.configId,
-        ...(typeof update.value === "boolean" ? { type: "boolean" } : {}),
-        value: update.value,
-      });
+    const reportOptionFallback = (message: string) => this.options.onChunk?.({
+      type: "status",
+      title: "Cursor option",
+      value: `${message} Using the provider default.`,
+      metadata: { provider: PROVIDER, cursorExecutionOptionFallback: true },
+    });
+    for (const update of resolveCursorAcpConfigUpdates(liveConfigOptions, this.options.providerOptions, reportOptionFallback)) {
+      try {
+        await this.connection.request("session/set_config_option", {
+          sessionId: session.sessionId,
+          configId: update.configId,
+          ...(typeof update.value === "boolean" ? { type: "boolean" } : {}),
+          value: update.value,
+        });
+      } catch {
+        reportOptionFallback(`Cursor Agent rejected the selected '${update.configId}' value.`);
+      }
     }
 
     const maxTokens =
