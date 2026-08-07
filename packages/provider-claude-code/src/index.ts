@@ -41,6 +41,7 @@ import {
   PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY,
   buildNetworkProxyUrl,
   buildRunSubagentChunk,
+  formatModelExecutionOptionLabel,
   formatRunPlanProgressContent,
   getKnownModelExecutionProfile,
   isTerminalRunSubagentStatus,
@@ -350,10 +351,11 @@ const buildClaudeExecutionProfile = (modelId: string, supportedEfforts?: readonl
       },
     };
   }
-  const efforts = [...new Set(supportedEfforts ?? [])];
+  const validEfforts = new Set(["low", "medium", "high", "xhigh", "max"]);
+  const efforts = [...new Set((supportedEfforts ?? []).map((value) => value.trim()).filter((value) => validEfforts.has(value)))];
   const effortOptions = efforts.map((value) => ({
     value,
-    label: value === "xhigh" ? "Extra high" : value[0]!.toUpperCase() + value.slice(1),
+    label: formatModelExecutionOptionLabel(value),
   }));
   return {
     [MODEL_CONFIG_EXECUTION_PROFILE_KEY]: {

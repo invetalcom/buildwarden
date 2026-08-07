@@ -212,6 +212,25 @@ describe("ClaudeCodeProviderAdapter", () => {
     expect(profile("provider-future-model")?.controls).toEqual([]);
   });
 
+  it("filters malformed and duplicate Claude SDK effort metadata", () => {
+    const model = parseClaudeCodeSupportedModels([{
+      value: "claude-runtime-model",
+      displayName: "Runtime model",
+      description: "",
+      supportsEffort: true,
+      supportedEffortLevels: ["", "auto", "low", "low", "xhigh", "future"],
+    } as unknown as Parameters<typeof parseClaudeCodeSupportedModels>[0][number]])[0]!;
+    const controls = (model.config as {
+      buildwardenExecutionProfile: { controls: Array<{ options: Array<{ value: string; label: string }> }> };
+    }).buildwardenExecutionProfile.controls;
+
+    expect(controls[0]?.options).toEqual([
+      { value: "auto", label: "Provider default" },
+      { value: "low", label: "Low" },
+      { value: "xhigh", label: "Extra high" },
+    ]);
+  });
+
   it("provides safe fallback controls for supported Claude Code aliases", () => {
     const models = getClaudeCodeAvailableModelsForVersion(null);
     const controls = (modelId: string) => ((models.find((model) => model.modelId === modelId)?.config as {
