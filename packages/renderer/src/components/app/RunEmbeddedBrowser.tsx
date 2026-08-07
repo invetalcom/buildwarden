@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, ExternalLink, Globe, Loader2, MousePointer2, RefreshCw, Square, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, ExternalLink, Globe, Loader2, MousePointer2, RefreshCw, Square } from "lucide-react";
 import type { RunBrowserElementCapture, RunBrowserEvent, RunBrowserFrame, RunBrowserInput, RunBrowserState } from "@buildwarden/shared";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -21,6 +21,7 @@ type Props = {
   uiActive?: boolean;
   className?: string;
   session: RunBrowserSessionState;
+  nextAnnotationNumber?: number;
   onSessionChange: (session: RunBrowserSessionState) => void;
   onElementSelected?: (capture: RunBrowserElementCapture) => void;
 };
@@ -41,6 +42,7 @@ export const RunEmbeddedBrowser = ({
   runId,
   uiActive = true,
   session,
+  nextAnnotationNumber = 1,
   onSessionChange,
   onElementSelected,
 }: Props) => {
@@ -56,6 +58,8 @@ export const RunEmbeddedBrowser = ({
   const lastRemotePointRef = useRef<{ x: number; y: number } | null>(null);
   const sessionRef = useRef(session);
   const addressFocusedRef = useRef(false);
+  const focusBeforeInspectRef = useRef<HTMLElement | null>(null);
+  const wasInspectingRef = useRef(false);
   const onSessionChangeRef = useRef(onSessionChange);
   const onElementSelectedRef = useRef(onElementSelected);
   const lastBoundsRef = useRef({ x: 0, y: 0, width: 1, height: 1 });
@@ -112,7 +116,21 @@ export const RunEmbeddedBrowser = ({
     setRemoteFrameReady(false);
     setReady(false);
     setError(null);
+    focusBeforeInspectRef.current = null;
+    wasInspectingRef.current = false;
   }, [runId]);
+
+  useEffect(() => {
+    const wasInspecting = wasInspectingRef.current;
+    wasInspectingRef.current = browserState.inspecting;
+    if (!wasInspecting || browserState.inspecting) return;
+    const target = focusBeforeInspectRef.current;
+    focusBeforeInspectRef.current = null;
+    if (!target?.isConnected) return;
+    requestAnimationFrame(() => {
+      if (target.isConnected) target.focus({ preventScroll: true });
+    });
+  }, [browserState.inspecting]);
 
   useEffect(() => {
     if (!browserControl) {
@@ -246,7 +264,10 @@ export const RunEmbeddedBrowser = ({
 
   const runAction = (action: "back" | "forward" | "reload" | "stop" | "start-inspect" | "cancel-inspect") => {
     setError(null);
-    void buildwarden.runBrowserAction({ runId, action }).catch((actionError: unknown) => {
+    const input = action === "start-inspect"
+      ? { runId, action, annotationStartNumber: nextAnnotationNumber } as const
+      : { runId, action } as const;
+    void buildwarden.runBrowserAction(input).catch((actionError: unknown) => {
       setError(actionError instanceof Error ? actionError.message : "The browser action failed.");
     });
   };
@@ -339,13 +360,18 @@ export const RunEmbeddedBrowser = ({
             type="button"
             variant={browserState.inspecting ? "secondary" : "ghost"}
             size="sm"
-            className={cn("h-7 w-7 p-0", browserState.inspecting && "text-sky-300")}
-            aria-label={browserState.inspecting ? "Cancel element picker" : "Pick page element"}
+            className={cn("h-7 p-0", browserState.inspecting ? "gap-1 px-2 text-sky-300" : "w-7")}
+            aria-label={browserState.inspecting ? "Finish annotating page" : "Annotate page elements"}
             aria-pressed={browserState.inspecting}
             disabled={!ready}
+            onPointerDownCapture={() => {
+              if (!browserState.inspecting) {
+                focusBeforeInspectRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+              }
+            }}
             onClick={() => runAction(browserState.inspecting ? "cancel-inspect" : "start-inspect")}
           >
-            {browserState.inspecting ? <X className="h-3.5 w-3.5" /> : <MousePointer2 className="h-3.5 w-3.5" />}
+            {browserState.inspecting ? <><Check className="h-3.5 w-3.5" /><span className="text-[11px]">Done</span></> : <MousePointer2 className="h-3.5 w-3.5" />}
           </Button>
           <Button
             type="button"
@@ -359,7 +385,7 @@ export const RunEmbeddedBrowser = ({
             <ExternalLink className="h-3.5 w-3.5" />
           </Button>
         </div>
-        {browserState.inspecting ? <p className="mt-1 text-[10px] text-sky-300">Click an element in the page; press Escape to cancel.</p> : null}
+        {browserState.inspecting ? <p className="mt-1 text-[10px] text-sky-300">Select an element, add an optional note, then attach. Continue picking or choose Done.</p> : null}
         {error ? <p className="mt-1 truncate text-[10px] text-rose-300" title={error}>{error}</p> : null}
       </div>
       <div ref={surfaceRef} className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-white" data-run-browser-surface={runId}>

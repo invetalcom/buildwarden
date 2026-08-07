@@ -527,9 +527,18 @@ const bootstrap = async (): Promise<void> => {
   });
   const validateRunBrowserNavigate = defineRemoteArgsValidator<"navigateRunBrowser">((args) =>
     args.length === 1 && hasRemoteStringFields(args[0], ["runId", "url"]));
-  const validateRunBrowserAction = defineRemoteArgsValidator<"runBrowserAction">((args) =>
-    args.length === 1 && isRemoteRecord(args[0]) && typeof args[0].runId === "string" &&
-    ["back", "forward", "reload", "stop", "start-inspect", "cancel-inspect"].includes(String(args[0].action)));
+  const validateRunBrowserAction = defineRemoteArgsValidator<"runBrowserAction">((args) => {
+    if (args.length !== 1 || !isRemoteRecord(args[0]) || typeof args[0].runId !== "string") return false;
+    const action = String(args[0].action);
+    if (!["back", "forward", "reload", "stop", "start-inspect", "cancel-inspect", "remove-annotation", "clear-annotations"].includes(action)) {
+      return false;
+    }
+    if (action === "remove-annotation") return typeof args[0].captureId === "string";
+    if (action === "start-inspect" && args[0].annotationStartNumber !== undefined) {
+      return Number.isInteger(args[0].annotationStartNumber) && Number(args[0].annotationStartNumber) >= 1 && Number(args[0].annotationStartNumber) <= 1_000;
+    }
+    return true;
+  });
   const validateRunBrowserViewport = defineRemoteArgsValidator<"setRunBrowserViewport">((args) => {
     if (args.length !== 1 || !isRemoteRecord(args[0]) || typeof args[0].runId !== "string" || !isRemoteRecord(args[0].viewport)) return false;
     const viewport = args[0].viewport;

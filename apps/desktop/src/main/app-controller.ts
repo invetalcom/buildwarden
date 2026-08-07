@@ -1731,10 +1731,7 @@ export class AppController
     const chat = this.db.createChat(input.providerAccountId, input.modelId, displayPrompt);
     this.db.setSetting(SELECTED_CHAT_KEY, chat.id);
 
-    const logContent = [
-      userText || "(no text)",
-      attachmentNames.length ? `\nAttachments: ${attachmentNames.join(", ")}` : "",
-    ].join("");
+    const logContent = userText || "(no text)";
 
     await this.appendChatEvent(chat.id, "log", "Initial message", logContent, {
       source: "user",
@@ -1892,10 +1889,7 @@ export class AppController
       runId,
     });
 
-    const logContent = [
-      userText || "(no text)",
-      attachmentNames.length ? `\nAttachments: ${attachmentNames.join(", ")}` : "",
-    ].join("");
+    const logContent = userText || "(no text)";
 
     await this.appendChatEvent(chat.id, "log", "Initial message", logContent, {
       source: "user",
@@ -1975,10 +1969,7 @@ export class AppController
       }
     }
 
-    const logContent = [
-      userText || "(no text)",
-      attachmentNames.length ? `\nAttachments: ${attachmentNames.join(", ")}` : "",
-    ].join("");
+    const logContent = userText || "(no text)";
 
     await this.appendChatEvent(chat.id, "log", "Follow-up", logContent, {
       source: "user",
@@ -2652,10 +2643,7 @@ export class AppController
     this.db.setSetting(SELECTED_PROJECT_KEY, project.id);
     this.db.setSetting(SELECTED_RUN_KEY, run.id);
 
-    const initialLogContent = [
-      userText || "(no text)",
-      attachmentNames.length ? `\nAttachments: ${attachmentNames.join(", ")}` : "",
-    ].join("");
+    const initialLogContent = userText || "(no text)";
 
     await this.appendRunEvent(run.id, "log", "Initial command", initialLogContent, {
       source: "user",
@@ -2952,10 +2940,7 @@ export class AppController
       throw new Error("Enter a follow-up command or attach at least one file.");
     }
 
-    const followUpLogContent = [
-      userText || "(no text)",
-      attachmentNames.length ? `\nAttachments: ${attachmentNames.join(", ")}` : "",
-    ].join("");
+    const followUpLogContent = userText || "(no text)";
 
     this.db.touchProject(project.id);
     this.db.setSetting(SELECTED_PROJECT_KEY, project.id);

@@ -2766,6 +2766,11 @@ export interface BrowserElementAttachmentSource {
   /** Sanitized page URL. Sensitive query parameters are removed by the browser host. */
   url: string;
   selector: string;
+  /** Optional display metadata. Older persisted captures only contain the fields above. */
+  annotationNumber?: number;
+  comment?: string;
+  tagName?: string;
+  accessibleName?: string;
 }
 
 /** Serializable file chunk for chat IPC (raw base64, no data: prefix). */
@@ -2829,6 +2834,7 @@ export function validateChatAttachmentPayloads(attachments: ChatAttachmentPayloa
     captureId: string;
     url: string;
     selector: string;
+    displayMetadata: string;
     roles: Set<BrowserElementAttachmentSource["role"]>;
   }>();
   for (const a of attachments) {
@@ -2844,16 +2850,23 @@ export function validateChatAttachmentPayloads(attachments: ChatAttachmentPayloa
       if (mimeType !== expectedMimeType) {
         throw new Error(`"${a.fileName}" has a browser element role that does not match its MIME type.`);
       }
+      const displayMetadata = JSON.stringify([
+        a.source.annotationNumber ?? null,
+        a.source.comment ?? null,
+        a.source.tagName ?? null,
+        a.source.accessibleName ?? null,
+      ]);
       const group = browserGroups.get(a.source.groupId);
       if (!group) {
         browserGroups.set(a.source.groupId, {
           captureId: a.source.captureId,
           url: a.source.url,
           selector: a.source.selector,
+          displayMetadata,
           roles: new Set([a.source.role]),
         });
       } else {
-        if (group.captureId !== a.source.captureId || group.url !== a.source.url || group.selector !== a.source.selector) {
+        if (group.captureId !== a.source.captureId || group.url !== a.source.url || group.selector !== a.source.selector || group.displayMetadata !== displayMetadata) {
           throw new Error(`"${a.fileName}" does not match the other attachment in its browser element group.`);
         }
         if (group.roles.has(a.source.role)) {
@@ -2892,7 +2905,11 @@ export function isBrowserElementAttachmentSource(value: unknown): value is Brows
     typeof source.captureId === "string" && source.captureId.trim().length > 0 && source.captureId.length <= 128 &&
     (source.role === "context" || source.role === "screenshot") &&
     typeof source.url === "string" && source.url.length <= 4_096 &&
-    typeof source.selector === "string" && source.selector.trim().length > 0 && source.selector.length <= 8_192;
+    typeof source.selector === "string" && source.selector.trim().length > 0 && source.selector.length <= 8_192 &&
+    (source.annotationNumber === undefined || (Number.isInteger(source.annotationNumber) && Number(source.annotationNumber) >= 1 && Number(source.annotationNumber) <= 10_000)) &&
+    (source.comment === undefined || (typeof source.comment === "string" && source.comment.length <= 1_000)) &&
+    (source.tagName === undefined || (typeof source.tagName === "string" && source.tagName.length <= 128)) &&
+    (source.accessibleName === undefined || (typeof source.accessibleName === "string" && source.accessibleName.length <= 1_000));
 }
 
 export function extractAttachmentNamesFromMetadata(metadata: Record<string, unknown>): string[] {
@@ -3326,12 +3343,20 @@ export interface NavigateRunBrowserInput {
   url: string;
 }
 
-export type RunBrowserAction = "back" | "forward" | "reload" | "stop" | "start-inspect" | "cancel-inspect";
+export type RunBrowserAction =
+  | "back"
+  | "forward"
+  | "reload"
+  | "stop"
+  | "start-inspect"
+  | "cancel-inspect"
+  | "remove-annotation"
+  | "clear-annotations";
 
-export interface RunBrowserActionInput {
-  runId: string;
-  action: RunBrowserAction;
-}
+export type RunBrowserActionInput =
+  | { runId: string; action: Exclude<RunBrowserAction, "remove-annotation" | "start-inspect"> }
+  | { runId: string; action: "start-inspect"; annotationStartNumber?: number }
+  | { runId: string; action: "remove-annotation"; captureId: string };
 
 export interface SetRunBrowserViewportInput {
   runId: string;
@@ -3389,6 +3414,8 @@ export interface RunBrowserElementCapture {
   id: string;
   runId: string;
   capturedAt: string;
+  annotationNumber: number;
+  comment: string;
   url: string;
   pageTitle: string;
   locator: RunBrowserElementLocator;

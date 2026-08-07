@@ -14,6 +14,7 @@ import { AgentChip, AgentLogRow, AgentPanel } from "./agent-worklog";
 import { RunPlanSteps } from "./RunPlanSteps";
 import { RunUserInputRequestCard } from "./RunUserInputRequestCard";
 import { StoredChatAttachments } from "./StoredChatAttachments";
+import { getStoredAttachmentMessageContent } from "./stored-chat-attachment-utils";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -95,6 +96,7 @@ export const SingleGroupActivityEntry = ({
             const mode = (metadata.mode as RunMode) ?? run.mode;
             const att = extractAttachmentNamesFromMetadata(metadata);
             const attachments = extractAttachmentPayloadsFromMetadata(metadata);
+            const promptContent = getStoredAttachmentMessageContent(step.content, att);
             const canUndoPrompt = !readOnly && step.id === restorablePromptStepId && Boolean(onUndoRunToLastPrompt);
             return (
               <div key={step.id} className="agent-panel agent-panel--prompt px-2.5 py-1.5">
@@ -140,8 +142,8 @@ export const SingleGroupActivityEntry = ({
                     <span className="agent-density-meta text-[10px] text-zinc-500">{new Date(step.createdAt).toLocaleTimeString()}</span>
                   </div>
                 </div>
+                {promptContent ? <ActivityMarkdownOrGitDiff content={promptContent} compact={compactContent} className="mt-1" onOpenWorkspaceFile={onOpenWorkspaceFile} /> : null}
                 <StoredChatAttachments attachments={attachments} fallbackNames={att} compact={compactContent} />
-                <ActivityMarkdownOrGitDiff content={step.content} compact={compactContent} className="mt-1" onOpenWorkspaceFile={onOpenWorkspaceFile} />
               </div>
             );
           })}
@@ -196,6 +198,7 @@ const renderUserActivityEntry = (entry: Extract<ActivityEntry, { kind: "single" 
   const timestamp = new Date(entry.step.createdAt).toLocaleTimeString();
   const att = extractAttachmentNamesFromMetadata(entry.metadata);
   const attachments = extractAttachmentPayloadsFromMetadata(entry.metadata);
+  const promptContent = getStoredAttachmentMessageContent(entry.step.content, att);
   const canUndoPrompt = !readOnly && entry.step.id === restorablePromptStepId && Boolean(onUndoRunToLastPrompt);
   return (
     <AgentLogRow key={entry.step.id} tone="prompt" label="Prompt" time={rowTime(timestamp)}>
@@ -242,8 +245,8 @@ const renderUserActivityEntry = (entry: Extract<ActivityEntry, { kind: "single" 
             <span className="agent-density-meta text-[10px] text-zinc-500">{timestamp}</span>
           </div>
         </div>
+        {promptContent ? <ActivityMarkdownOrGitDiff content={promptContent} compact={compactContent} className="mt-1 text-zinc-200" onOpenWorkspaceFile={onOpenWorkspaceFile} /> : null}
         <StoredChatAttachments attachments={attachments} fallbackNames={att} compact={compactContent} />
-        <ActivityMarkdownOrGitDiff content={entry.step.content} compact={compactContent} className="mt-1 text-zinc-200" onOpenWorkspaceFile={onOpenWorkspaceFile} />
       </div>
     </AgentLogRow>
   );

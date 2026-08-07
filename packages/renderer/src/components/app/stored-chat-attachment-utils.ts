@@ -25,6 +25,15 @@ export type StoredAttachmentDisplayItem =
       screenshotAttachment?: ChatAttachmentPayload;
     };
 
+export type StoredBrowserElementDisplayInfo = {
+  annotationNumber: number;
+  comment: string;
+  tagName: string;
+  accessibleName: string;
+  selector: string;
+  url: string;
+};
+
 export const groupStoredAttachments = (attachments: readonly ChatAttachmentPayload[]): StoredAttachmentDisplayItem[] => {
   const items: StoredAttachmentDisplayItem[] = [];
   const browserGroups = new Map<string, Extract<StoredAttachmentDisplayItem, { kind: "browser-element" }>>();
@@ -296,25 +305,67 @@ const isProbablyBinary = (bytes: Uint8Array): boolean => {
   return controlByteCount / sampleLength > 0.05;
 };
 
-export const getStoredAttachmentTextPreview = (attachment: ChatAttachmentPayload): string | null => {
+const decodeStoredTextAttachment = (attachment: ChatAttachmentPayload): string | null => {
   if (!canPreviewAsText(attachment) || attachment.dataBase64.length > TEXT_PREVIEW_BASE64_LIMIT) {
     return null;
   }
 
   try {
-    const binary = window.atob(attachment.dataBase64);
+    const binary = globalThis.atob(attachment.dataBase64);
     const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
     if (isProbablyBinary(bytes)) {
       return null;
     }
-    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/\r\n/g, "\n").trim();
-    if (decoded.length === 0) {
-      return "Empty file";
-    }
-    return decoded.length > TEXT_PREVIEW_LIMIT ? `${decoded.slice(0, TEXT_PREVIEW_LIMIT).trimEnd()}...` : decoded;
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/\r\n/g, "\n").trim();
   } catch {
     return null;
   }
+};
+
+export const getStoredAttachmentTextPreview = (attachment: ChatAttachmentPayload): string | null => {
+  const decoded = decodeStoredTextAttachment(attachment);
+  if (decoded === null) return null;
+  if (decoded.length === 0) return "Empty file";
+  return decoded.length > TEXT_PREVIEW_LIMIT ? `${decoded.slice(0, TEXT_PREVIEW_LIMIT).trimEnd()}...` : decoded;
+};
+
+const markdownValue = (markdown: string, pattern: RegExp): string => markdown.match(pattern)?.[1]?.trim() ?? "";
+
+export const getStoredBrowserElementDisplayInfo = (
+  contextAttachment: ChatAttachmentPayload | undefined,
+  screenshotAttachment: ChatAttachmentPayload | undefined,
+  fallbackNumber: number,
+): StoredBrowserElementDisplayInfo => {
+  const source = contextAttachment?.source?.kind === "browser-element"
+    ? contextAttachment.source
+    : screenshotAttachment?.source?.kind === "browser-element"
+      ? screenshotAttachment.source
+      : undefined;
+  const markdown = contextAttachment ? decodeStoredTextAttachment(contextAttachment) ?? "" : "";
+  const parsedNumber = Number(markdownValue(markdown, /^# Browser element #(\d+)$/m));
+  const parsedComment = markdownValue(markdown, /(?:^|\n)## User note\s*\n+([\s\S]*?)(?=\n+## |$)/);
+  const parsedTagName = markdownValue(markdown, /^- Element: `<([^>]+)>`$/m);
+  const parsedAccessibleName = markdownValue(markdown, /^- Accessible name: (.*)$/m);
+  const comment = source?.comment ?? (parsedComment === "(none)" ? "" : parsedComment);
+  const accessibleName = source?.accessibleName ?? (parsedAccessibleName === "(none)" ? "" : parsedAccessibleName);
+
+  return {
+    annotationNumber: source?.annotationNumber ?? (Number.isInteger(parsedNumber) && parsedNumber > 0 ? parsedNumber : fallbackNumber),
+    comment,
+    tagName: source?.tagName || parsedTagName || "element",
+    accessibleName,
+    selector: source?.selector || "Selected browser element",
+    url: source?.url || "",
+  };
+};
+
+export const getStoredAttachmentMessageContent = (content: string, attachmentNames: readonly string[]): string => {
+  if (attachmentNames.length === 0) return content;
+  const generatedSuffixIndex = content.lastIndexOf("\nAttachments:");
+  const withoutGeneratedSuffix = generatedSuffixIndex >= 0
+    ? content.slice(0, generatedSuffixIndex).trimEnd()
+    : content;
+  return withoutGeneratedSuffix.trim() === "(no text)" ? "" : withoutGeneratedSuffix;
 };
 
 export const getStoredAttachmentRenderMode = (attachment: ChatAttachmentPayload): StoredAttachmentRenderMode => {

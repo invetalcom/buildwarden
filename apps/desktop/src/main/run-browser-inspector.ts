@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { nativeImage, type WebContents } from "electron";
+import { nativeImage, type NativeImage, type WebContents } from "electron";
 import type {
   RunBrowserBounds,
   RunBrowserElementCapture,
@@ -11,12 +11,18 @@ import type {
   RunBrowserLocatorSegment,
   RunBrowserInput,
 } from "@buildwarden/shared";
+import {
+  CALL_RUN_BROWSER_ANNOTATION_MANAGER_SOURCE,
+  SHOW_RUN_BROWSER_ANNOTATION_EDITOR_SOURCE,
+} from "./run-browser-annotation-overlay";
 
 const INSPECTOR_PROTOCOL_VERSION = "1.3";
 const CAPTURE_TTL_MS = 2 * 60_000;
 const MAX_CAPTURE_COUNT = 8;
 const MAX_SCREENSHOT_WIDTH = 1_600;
 const MAX_SCREENSHOT_HEIGHT = 1_200;
+const SCREENSHOT_CROP_PADDING = 32;
+const MAX_ANNOTATION_COMMENT_LENGTH = 1_000;
 const SENSITIVE_NAME = /token|secret|auth|key|session|password/i;
 
 type CdpValueResult<T> = { result?: { value?: T; objectId?: string } };
@@ -41,6 +47,19 @@ type PageElementData = {
 
 type CachedCapture = { capture: RunBrowserElementCapture; expiresAt: number };
 type AttachedFrameTarget = { frameId: string; url: string; parentSessionId?: string };
+type AnnotationTarget = {
+  backendNodeId: number;
+  objectId: string;
+  token: string;
+  annotationNumber: number;
+  sessionId?: string;
+};
+
+type AnnotationBindingPayload = {
+  type: "commit" | "resume";
+  token: string;
+  comment?: string;
+};
 
 export interface RunBrowserInspectorOptions {
   runId: string;
@@ -196,6 +215,19 @@ const PAGE_COLLECTOR_SOURCE = String.raw`function (finderSource) {
     frameworkHints.push({ framework: "wordpress", name: wpClass?.replace(/^wp-block-/, ""), details: [document.body?.classList.contains("wp-admin") ? "WordPress admin" : "WordPress page"].filter(Boolean) });
   }
   const rect = this.getBoundingClientRect();
+  let viewportX = rect.x;
+  let viewportY = rect.y;
+  try {
+    let currentWindow = this.ownerDocument.defaultView;
+    while (currentWindow && currentWindow.frameElement) {
+      const frameRect = currentWindow.frameElement.getBoundingClientRect();
+      viewportX += frameRect.x;
+      viewportY += frameRect.y;
+      currentWindow = currentWindow.parent;
+    }
+  } catch {
+    // Cross-origin frame targets are cropped conservatively by the host.
+  }
   return {
     locatorSegments,
     fallback: structural(this, this.getRootNode()),
@@ -208,7 +240,7 @@ const PAGE_COLLECTOR_SOURCE = String.raw`function (finderSource) {
     computedStyles,
     ancestry,
     frameworkHints,
-    bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+    bounds: { x: viewportX, y: viewportY, width: rect.width, height: rect.height },
     url: safeUrl(location.href),
     title: document.title.slice(0, 1000),
   };
@@ -249,7 +281,7 @@ export const sanitizeRunBrowserUrl = (rawUrl: string): string => {
 
 const renderElementMarkdown = (capture: Omit<RunBrowserElementCapture, "contextAttachment" | "screenshotAttachment">): string => {
   const lines = [
-    "# Browser element",
+    `# Browser element #${String(capture.annotationNumber)}`,
     "",
     `- URL: ${capture.url}`,
     `- Page title: ${capture.pageTitle || "(untitled)"}`,
@@ -258,6 +290,10 @@ const renderElementMarkdown = (capture: Omit<RunBrowserElementCapture, "contextA
     `- Accessible role: ${capture.accessibleRole || "(none)"}`,
     `- Accessible name: ${capture.accessibleName || "(none)"}`,
     `- Bounds: x=${String(Math.round(capture.bounds.x))}, y=${String(Math.round(capture.bounds.y))}, width=${String(Math.round(capture.bounds.width))}, height=${String(Math.round(capture.bounds.height))}`,
+    "",
+    "## User note",
+    "",
+    capture.comment || "(none)",
     "",
     "## Visible text",
     "",
@@ -294,9 +330,14 @@ const valueFromAx = (value: CdpAxValue | undefined): string => typeof value?.val
 export class RunBrowserInspector {
   private readonly captures = new Map<string, CachedCapture>();
   private readonly frameTargets = new Map<string, AttachedFrameTarget>();
+  private readonly annotationTargets = new Map<string, AnnotationTarget>();
+  private readonly annotationBindingName = `__buildwardenAnnotation_${randomUUID().replaceAll("-", "")}`;
   private attached = false;
   private inspecting = false;
   private captureInFlight = false;
+  private openingSelection = false;
+  private pendingSelection: AnnotationTarget | null = null;
+  private nextAnnotationNumber = 1;
   private documentGeneration = 0;
 
   constructor(private readonly options: RunBrowserInspectorOptions) {
@@ -304,14 +345,21 @@ export class RunBrowserInspector {
     options.webContents.debugger.on("detach", this.handleDebuggerDetach);
   }
 
-  async start(): Promise<void> {
+  async start(annotationStartNumber?: number): Promise<void> {
+    if (Number.isInteger(annotationStartNumber) && Number(annotationStartNumber) > this.nextAnnotationNumber) {
+      this.nextAnnotationNumber = Number(annotationStartNumber);
+    }
     await this.ensureAttached();
+    if (this.pendingSelection) await this.dismissPendingSelection(false);
     await this.setInspectMode("searchForNode");
-    this.inspecting = true;
-    this.options.onInspectingChange(true);
+    if (!this.inspecting) {
+      this.inspecting = true;
+      this.options.onInspectingChange(true);
+    }
   }
 
   async cancel(): Promise<void> {
+    if (this.pendingSelection) await this.dismissPendingSelection(false);
     if (this.attached) await this.setInspectMode("none", true);
     if (this.inspecting) {
       this.inspecting = false;
@@ -361,10 +409,29 @@ export class RunBrowserInspector {
     return this.captures.get(captureId)?.capture ?? null;
   }
 
+  async removeAnnotation(captureId: string): Promise<void> {
+    this.captures.delete(captureId);
+    const target = this.annotationTargets.get(captureId);
+    if (!target) return;
+    this.annotationTargets.delete(captureId);
+    await this.releaseAnnotationTarget(target, true);
+  }
+
+  async clearAnnotations(): Promise<void> {
+    if (this.pendingSelection) await this.dismissPendingSelection(true);
+    const targets = [...this.annotationTargets.values()];
+    this.annotationTargets.clear();
+    this.captures.clear();
+    this.nextAnnotationNumber = 1;
+    await Promise.all(targets.map((target) => this.releaseAnnotationTarget(target, true)));
+  }
+
   handleNavigationReplacement(): void {
     this.documentGeneration += 1;
     this.captures.clear();
     this.frameTargets.clear();
+    this.annotationTargets.clear();
+    this.pendingSelection = null;
     if (this.inspecting) {
       this.inspecting = false;
       this.options.onInspectingChange(false);
@@ -375,6 +442,8 @@ export class RunBrowserInspector {
     this.documentGeneration += 1;
     this.captures.clear();
     this.frameTargets.clear();
+    this.annotationTargets.clear();
+    this.pendingSelection = null;
     this.options.webContents.debugger.removeListener("message", this.handleDebuggerMessage);
     this.options.webContents.debugger.removeListener("detach", this.handleDebuggerDetach);
     if (this.attached && this.options.webContents.debugger.isAttached()) {
@@ -391,11 +460,35 @@ export class RunBrowserInspector {
     sessionId?: string,
   ): void => {
     if (method === "Overlay.inspectNodeRequested" && typeof params.backendNodeId === "number") {
-      void this.captureSelection(params.backendNodeId, sessionId);
+      void this.openSelectionEditor(params.backendNodeId, sessionId || undefined);
       return;
     }
     if (method === "Overlay.inspectModeCanceled") {
+      if (this.openingSelection || this.pendingSelection || this.captureInFlight) return;
       void this.cancel();
+      return;
+    }
+    if (method === "Runtime.bindingCalled" && params.name === this.annotationBindingName && typeof params.payload === "string") {
+      let payload: AnnotationBindingPayload | null = null;
+      try {
+        const parsed = JSON.parse(params.payload) as Partial<AnnotationBindingPayload>;
+        if ((parsed.type === "commit" || parsed.type === "resume") && typeof parsed.token === "string") {
+          payload = {
+            type: parsed.type,
+            token: parsed.token,
+            ...(typeof parsed.comment === "string" ? { comment: parsed.comment } : {}),
+          };
+        }
+      } catch {
+        return;
+      }
+      if (!payload || !this.pendingSelection || payload.token !== this.pendingSelection.token) return;
+      if ((sessionId || undefined) !== this.pendingSelection.sessionId) return;
+      if (payload.type === "resume") {
+        void this.dismissPendingSelection(true);
+      } else {
+        void this.commitPendingSelection(payload.comment ?? "");
+      }
       return;
     }
     if (method === "Target.attachedToTarget") {
@@ -426,6 +519,8 @@ export class RunBrowserInspector {
     this.documentGeneration += 1;
     this.captures.clear();
     this.frameTargets.clear();
+    this.annotationTargets.clear();
+    this.pendingSelection = null;
     if (this.inspecting) {
       this.inspecting = false;
       this.options.onInspectingChange(false);
@@ -455,6 +550,7 @@ export class RunBrowserInspector {
     for (const domain of ["DOM", "Runtime", "CSS", "Accessibility", "Page", "Overlay"]) {
       await this.command(`${domain}.enable`, {}, sessionId);
     }
+    await this.command("Runtime.addBinding", { name: this.annotationBindingName }, sessionId);
   }
 
   private async setInspectMode(mode: "searchForNode" | "none", ignoreErrors = false): Promise<void> {
@@ -482,74 +578,171 @@ export class RunBrowserInspector {
     }, sessionId);
   }
 
-  private async captureSelection(backendNodeId: number, sessionId?: string): Promise<void> {
-    if (this.captureInFlight) return;
+  private async openSelectionEditor(backendNodeId: number, sessionId?: string): Promise<void> {
+    if (!this.inspecting || this.captureInFlight || this.openingSelection || this.pendingSelection) return;
+    this.openingSelection = true;
+    const documentGeneration = this.documentGeneration;
+    let objectId = "";
+    try {
+      await this.setInspectMode("none", true);
+      const resolved = await this.command("DOM.resolveNode", { backendNodeId }, sessionId) as CdpResolveNodeResult;
+      objectId = resolved.object?.objectId ?? "";
+      if (!objectId) throw new Error("The selected browser element is no longer available.");
+      if (!this.inspecting || documentGeneration !== this.documentGeneration) {
+        await this.command("Runtime.releaseObject", { objectId }, sessionId).catch(() => undefined);
+        objectId = "";
+        return;
+      }
+      const target: AnnotationTarget = {
+        backendNodeId,
+        objectId,
+        token: randomUUID(),
+        annotationNumber: this.nextAnnotationNumber,
+        ...(sessionId ? { sessionId } : {}),
+      };
+      this.pendingSelection = target;
+      await this.command("Runtime.callFunctionOn", {
+        objectId,
+        functionDeclaration: SHOW_RUN_BROWSER_ANNOTATION_EDITOR_SOURCE,
+        arguments: [
+          { value: this.annotationBindingName },
+          { value: target.token },
+          { value: target.annotationNumber },
+        ],
+        returnByValue: true,
+        awaitPromise: false,
+        userGesture: true,
+      }, sessionId);
+    } catch (error) {
+      if (this.pendingSelection?.objectId === objectId) this.pendingSelection = null;
+      if (objectId) await this.command("Runtime.releaseObject", { objectId }, sessionId).catch(() => undefined);
+      this.options.onError(error instanceof Error ? error.message : "Could not open the element annotation editor.", true);
+      if (this.inspecting) await this.setInspectMode("searchForNode", true);
+    } finally {
+      this.openingSelection = false;
+    }
+  }
+
+  private async dismissPendingSelection(resumeInspecting: boolean): Promise<void> {
+    const target = this.pendingSelection;
+    this.pendingSelection = null;
+    if (target) {
+      await this.callAnnotationManager(target, "dismiss", [target.token]).catch(() => undefined);
+      await this.command("Runtime.releaseObject", { objectId: target.objectId }, target.sessionId).catch(() => undefined);
+    }
+    if (resumeInspecting && this.inspecting) await this.setInspectMode("searchForNode", true);
+  }
+
+  private async commitPendingSelection(rawComment: string): Promise<void> {
+    const target = this.pendingSelection;
+    if (!target || this.captureInFlight) return;
     this.captureInFlight = true;
     const documentGeneration = this.documentGeneration;
     try {
-      await this.cancel();
-      const pageData = await this.collectPageData(backendNodeId, sessionId);
-      const segments = [...pageData.locatorSegments];
-      if (sessionId && !segments.some((segment) => segment.kind === "frame")) {
-        segments.unshift(...await this.resolveOwnerFrameSegments(sessionId));
-      }
-      const selector = selectorFromSegments(segments) || pageData.fallback;
-      const locator: RunBrowserElementLocator = { selector, segments, fallback: pageData.fallback };
-      const axTree = await this.command("Accessibility.getPartialAXTree", { backendNodeId, fetchRelatives: false }, sessionId) as { nodes?: CdpAxNode[] };
-      const axNode = axTree.nodes?.[0];
-      const url = sanitizeRunBrowserUrl(pageData.url || this.options.webContents.getURL());
-      const screenshotBase64 = await this.captureHighlightedScreenshot(backendNodeId, sessionId);
-      const id = randomUUID();
-      const capturedAt = new Date().toISOString();
-      const captureBase = {
-        id,
-        runId: this.options.runId,
-        capturedAt,
-        url,
-        pageTitle: pageData.title,
-        locator,
-        tagName: pageData.tagName,
-        accessibleRole: valueFromAx(axNode?.role),
-        accessibleName: valueFromAx(axNode?.name),
-        visibleText: pageData.visibleText,
-        sanitizedHtml: pageData.sanitizedHtml,
-        attributes: pageData.attributes,
-        computedStyles: pageData.computedStyles,
-        ancestry: pageData.ancestry,
-        frameworkHints: pageData.frameworkHints,
-        bounds: pageData.bounds,
-      } satisfies Omit<RunBrowserElementCapture, "contextAttachment" | "screenshotAttachment">;
-      const source = { kind: "browser-element" as const, groupId: id, captureId: id, url, selector };
-      const capture: RunBrowserElementCapture = {
-        ...captureBase,
-        contextAttachment: {
-          fileName: `browser-element-${id}.md`,
-          mimeType: "text/markdown",
-          dataBase64: Buffer.from(renderElementMarkdown(captureBase), "utf8").toString("base64"),
-          source: { ...source, role: "context" },
-        },
-        screenshotAttachment: {
-          fileName: `browser-element-${id}.jpg`,
-          mimeType: "image/jpeg",
-          dataBase64: screenshotBase64,
-          source: { ...source, role: "screenshot" },
-        },
-      };
-      if (documentGeneration !== this.documentGeneration) return;
+      await this.callAnnotationManager(target, "prepare", [target.token]).catch(() => undefined);
+      const capture = await this.captureSelection(target, rawComment.trim().slice(0, MAX_ANNOTATION_COMMENT_LENGTH));
+      if (documentGeneration !== this.documentGeneration || this.pendingSelection !== target) return;
+      await this.callAnnotationManager(target, "accept", [target.token, target.annotationNumber]).catch(() => undefined);
+      this.pendingSelection = null;
+      this.annotationTargets.set(capture.id, target);
+      this.nextAnnotationNumber += 1;
       this.storeCapture(capture);
-      this.options.onSelection(id, {
+      this.options.onSelection(capture.id, {
         tagName: capture.tagName,
         accessibleName: capture.accessibleName,
-        selector,
-        url,
+        selector: capture.locator.selector,
+        url: capture.url,
       });
+      if (this.inspecting) await this.setInspectMode("searchForNode", true);
     } catch (error) {
-      if (documentGeneration === this.documentGeneration) {
-        this.options.onError(error instanceof Error ? error.message : "Could not capture the selected browser element.", true);
+      if (documentGeneration === this.documentGeneration && this.pendingSelection === target) {
+        const message = error instanceof Error ? error.message : "Could not capture the selected browser element.";
+        await this.callAnnotationManager(target, "reject", [target.token, message]).catch(() => undefined);
+        this.options.onError(message, true);
       }
     } finally {
       this.captureInFlight = false;
     }
+  }
+
+  private async captureSelection(target: AnnotationTarget, comment: string): Promise<RunBrowserElementCapture> {
+    const { backendNodeId, sessionId } = target;
+    const pageData = await this.collectPageData(backendNodeId, sessionId);
+    const segments = [...pageData.locatorSegments];
+    if (sessionId && !segments.some((segment) => segment.kind === "frame")) {
+      segments.unshift(...await this.resolveOwnerFrameSegments(sessionId));
+    }
+    const selector = selectorFromSegments(segments) || pageData.fallback;
+    const locator: RunBrowserElementLocator = { selector, segments, fallback: pageData.fallback };
+    const axTree = await this.command("Accessibility.getPartialAXTree", { backendNodeId, fetchRelatives: false }, sessionId) as { nodes?: CdpAxNode[] };
+    const axNode = axTree.nodes?.[0];
+    const url = sanitizeRunBrowserUrl(pageData.url || this.options.webContents.getURL());
+    const screenshotBase64 = await this.captureHighlightedScreenshot(backendNodeId, pageData.bounds, sessionId);
+    const id = randomUUID();
+    const capturedAt = new Date().toISOString();
+    const captureBase = {
+      id,
+      runId: this.options.runId,
+      capturedAt,
+      annotationNumber: target.annotationNumber,
+      comment,
+      url,
+      pageTitle: pageData.title,
+      locator,
+      tagName: pageData.tagName,
+      accessibleRole: valueFromAx(axNode?.role),
+      accessibleName: valueFromAx(axNode?.name),
+      visibleText: pageData.visibleText,
+      sanitizedHtml: pageData.sanitizedHtml,
+      attributes: pageData.attributes,
+      computedStyles: pageData.computedStyles,
+      ancestry: pageData.ancestry,
+      frameworkHints: pageData.frameworkHints,
+      bounds: pageData.bounds,
+    } satisfies Omit<RunBrowserElementCapture, "contextAttachment" | "screenshotAttachment">;
+    const source = {
+      kind: "browser-element" as const,
+      groupId: id,
+      captureId: id,
+      url,
+      selector,
+      annotationNumber: captureBase.annotationNumber,
+      comment: captureBase.comment,
+      tagName: captureBase.tagName,
+      accessibleName: captureBase.accessibleName,
+    };
+    const capture: RunBrowserElementCapture = {
+      ...captureBase,
+      contextAttachment: {
+        fileName: `browser-element-${id}.md`,
+        mimeType: "text/markdown",
+        dataBase64: Buffer.from(renderElementMarkdown(captureBase), "utf8").toString("base64"),
+        source: { ...source, role: "context" },
+      },
+      screenshotAttachment: {
+        fileName: `browser-element-${id}.jpg`,
+        mimeType: "image/jpeg",
+        dataBase64: screenshotBase64,
+        source: { ...source, role: "screenshot" },
+      },
+    };
+    return capture;
+  }
+
+  private callAnnotationManager(target: AnnotationTarget, method: string, args: unknown[]): Promise<unknown> {
+    return this.command("Runtime.callFunctionOn", {
+      objectId: target.objectId,
+      functionDeclaration: CALL_RUN_BROWSER_ANNOTATION_MANAGER_SOURCE,
+      arguments: [{ value: method }, { value: args }],
+      returnByValue: true,
+      awaitPromise: false,
+      userGesture: true,
+    }, target.sessionId);
+  }
+
+  private async releaseAnnotationTarget(target: AnnotationTarget, removeVisual: boolean): Promise<void> {
+    if (removeVisual) await this.callAnnotationManager(target, "remove", [target.token]).catch(() => undefined);
+    await this.command("Runtime.releaseObject", { objectId: target.objectId }, target.sessionId).catch(() => undefined);
   }
 
   private async collectPageData(backendNodeId: number, sessionId?: string): Promise<PageElementData> {
@@ -595,7 +788,11 @@ export class RunBrowserInspector {
     return segments;
   }
 
-  private async captureHighlightedScreenshot(backendNodeId: number, sessionId?: string): Promise<string> {
+  private async captureHighlightedScreenshot(
+    backendNodeId: number,
+    bounds: RunBrowserBounds,
+    sessionId?: string,
+  ): Promise<string> {
     await this.command("Overlay.highlightNode", {
       backendNodeId,
       highlightConfig: {
@@ -615,15 +812,40 @@ export class RunBrowserInspector {
       }) as { data?: string };
       if (!screenshot.data) throw new Error("The browser did not return a screenshot.");
       const image = nativeImage.createFromBuffer(Buffer.from(screenshot.data, "base64"));
-      const size = image.getSize();
+      const cropped = sessionId ? image : await this.cropScreenshotToElement(image, bounds);
+      const size = cropped.getSize();
       const scale = Math.min(1, MAX_SCREENSHOT_WIDTH / size.width, MAX_SCREENSHOT_HEIGHT / size.height);
       const output = scale < 1
-        ? image.resize({ width: Math.max(1, Math.round(size.width * scale)), height: Math.max(1, Math.round(size.height * scale)), quality: "best" })
-        : image;
+        ? cropped.resize({ width: Math.max(1, Math.round(size.width * scale)), height: Math.max(1, Math.round(size.height * scale)), quality: "best" })
+        : cropped;
       return output.toJPEG(85).toString("base64");
     } finally {
       await this.command("Overlay.hideHighlight", {}, sessionId).catch(() => undefined);
     }
+  }
+
+  private async cropScreenshotToElement(image: NativeImage, bounds: RunBrowserBounds): Promise<NativeImage> {
+    const metrics = await this.command("Page.getLayoutMetrics") as {
+      cssVisualViewport?: { clientWidth?: number; clientHeight?: number };
+    };
+    const viewportWidth = Number(metrics.cssVisualViewport?.clientWidth);
+    const viewportHeight = Number(metrics.cssVisualViewport?.clientHeight);
+    if (!Number.isFinite(viewportWidth) || !Number.isFinite(viewportHeight) || viewportWidth <= 0 || viewportHeight <= 0) {
+      return image;
+    }
+    const left = Math.max(0, bounds.x - SCREENSHOT_CROP_PADDING);
+    const top = Math.max(0, bounds.y - SCREENSHOT_CROP_PADDING);
+    const right = Math.min(viewportWidth, bounds.x + bounds.width + SCREENSHOT_CROP_PADDING);
+    const bottom = Math.min(viewportHeight, bounds.y + bounds.height + SCREENSHOT_CROP_PADDING);
+    if (right <= left || bottom <= top) return image;
+    const size = image.getSize();
+    const scaleX = size.width / viewportWidth;
+    const scaleY = size.height / viewportHeight;
+    const x = Math.max(0, Math.min(size.width - 1, Math.floor(left * scaleX)));
+    const y = Math.max(0, Math.min(size.height - 1, Math.floor(top * scaleY)));
+    const width = Math.max(1, Math.min(size.width - x, Math.ceil((right - left) * scaleX)));
+    const height = Math.max(1, Math.min(size.height - y, Math.ceil((bottom - top) * scaleY)));
+    return image.crop({ x, y, width, height });
   }
 
   private storeCapture(capture: RunBrowserElementCapture): void {

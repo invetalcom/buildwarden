@@ -18,6 +18,8 @@ const capture = (id: string): RunBrowserElementCapture => ({
   id,
   runId: "run-1",
   capturedAt: "2026-07-16T18:00:00.000Z",
+  annotationNumber: 1,
+  comment: "Use this control",
   url: "https://example.com/",
   pageTitle: "Example",
   locator: { selector: "button.save", segments: [{ kind: "element", selector: "button.save" }] },
