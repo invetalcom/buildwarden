@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { APP_SETTING_KEYS, type ProjectKind, type RunMode, type RunModelConfiguration, type RunWorkspaceType } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, type ModelExecutionControl, type ProjectKind, type RunMode, type RunModelConfiguration, type RunWorkspaceType } from "@buildwarden/shared";
 import { buildRunReasoningInput, resolveRunModelConfiguration } from "@buildwarden/renderer/logic";
 import { Bot, ChevronDown, Plus, Sparkles, X } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
@@ -70,6 +70,13 @@ const OptionGroup = <Value extends string>({
     </div>
   </div>
 );
+
+const mobileControlSummaryLabel = (control: ModelExecutionControl, value: string): string => {
+  const label = control.options.find((option) => option.value === value)?.label ?? "Provider default";
+  if (value !== "auto") return label;
+  const noun = control.id === "reasoningEffort" || control.id === "thinkingLevel" ? "effort" : control.label.toLocaleLowerCase();
+  return `Default ${noun}`;
+};
 
 /**
  * Full-screen run composer. The desktop packs project, model, mode, workspace, effort and toggles
@@ -192,13 +199,14 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
   };
   const removeModel = (modelIdToRemove: string) => {
     if (modelIds.length <= 1) return;
-    setModelIds((current) => current.filter((id) => id !== modelIdToRemove));
+    const remainingModelIds = modelIds.filter((id) => id !== modelIdToRemove);
+    setModelIds(remainingModelIds);
     setModelConfigurations((current) => {
       const next = { ...current };
       delete next[modelIdToRemove];
       return next;
     });
-    if (activeModelId === modelIdToRemove) setActiveModelId(null);
+    if (activeModelId === modelIdToRemove) setActiveModelId(remainingModelIds[0] ?? null);
   };
   const addModel = (nextModelId: string) => {
     if (modelIds.includes(nextModelId)) return;
@@ -208,6 +216,41 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
     setAddModelsOpen(false);
   };
   const unselectedModels = models.filter((entry) => !modelIds.includes(entry.modelId));
+  const selectedModelsWithConfiguration = modelIds.flatMap((id) => {
+    const entry = models.find((option) => option.modelId === id);
+    if (!entry) return [];
+    const configuration = resolveRunModelConfiguration(
+      id,
+      modelConfigurations,
+      reasoningEffort,
+      anthropicEffort,
+      executionMode,
+      entry.providerType === "claude-code" || (entry.providerType === "ai-sdk" && entry.providerFamily === "anthropic"),
+    );
+    const effortControl = entry.executionProfile.controls.find((control) => control.id === "reasoningEffort" || control.id === "thinkingLevel");
+    const secondaryEntry = entry.executionProfile.controls.find((control) => control.id !== "reasoningEffort" && control.id !== "thinkingLevel");
+    const summary = [
+      effortControl ? mobileControlSummaryLabel(effortControl, configuration.effort) : null,
+      secondaryEntry ? mobileControlSummaryLabel(secondaryEntry, configuration.executionMode) : null,
+    ].filter((value): value is string => Boolean(value));
+    return [{ entry, configuration, effortControl, secondaryControl: secondaryEntry, summary }];
+  });
+  const groupSummaryForControl = (kind: "effort" | "secondary"): string | null => {
+    const values = selectedModelsWithConfiguration.flatMap((selected) => {
+      const control = kind === "effort" ? selected.effortControl : selected.secondaryControl;
+      if (!control) return [];
+      const value = kind === "effort" ? selected.configuration.effort : selected.configuration.executionMode;
+      return [{ control, label: mobileControlSummaryLabel(control, value) }];
+    });
+    if (values.length === 0) return null;
+    const labels = [...new Set(values.map((value) => value.label))];
+    if (labels.length === 1) return labels[0]!;
+    if (kind === "effort") return "Mixed effort";
+    const controlLabels = [...new Set(values.map((value) => value.control.label.toLocaleLowerCase()))];
+    return `Mixed ${controlLabels.length === 1 ? controlLabels[0] : "speed"}`;
+  };
+  const modelGroupSummary = [groupSummaryForControl("effort"), groupSummaryForControl("secondary")]
+    .filter((value): value is string => Boolean(value));
 
   const start = async () => {
     if (!project || !prompt.trim()) return;
@@ -309,103 +352,104 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
 
           <div className="flex flex-col gap-1.5">
             <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Models</span>
-            <div className="flex min-w-0 items-center gap-1.5">
-              <div
-                data-model-chip-rail="true"
-                className="flex min-w-0 flex-1 snap-x items-center gap-1.5 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-              >
-                {modelIds.flatMap((id) => {
-                  const entry = models.find((option) => option.modelId === id);
-                  if (!entry) return [];
-                  const configuration = resolveRunModelConfiguration(
-                    id,
-                    modelConfigurations,
-                    reasoningEffort,
-                    anthropicEffort,
-                    executionMode,
-                    entry.providerType === "claude-code" || (entry.providerType === "ai-sdk" && entry.providerFamily === "anthropic"),
-                  );
-                  const effortControl = entry.executionProfile.controls.find((control) => control.id === "reasoningEffort" || control.id === "thinkingLevel");
-                  const effortLabel = effortControl?.options.find((option) => option.value === configuration.effort)?.label;
-                  const isActive = activeModelId === id;
-                  const isCompact = modelIds.length > 1;
-                  return [
-                    <span
-                      key={id}
-                      className={cn(
-                        "inline-flex h-9 max-w-full shrink-0 snap-start items-center overflow-hidden rounded-full border bg-[var(--ec-input)] transition",
-                        isActive ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)]" : "border-[var(--ec-border)]",
-                      )}
-                    >
-                      <button
-                        type="button"
-                        aria-label={`Configure ${entry.label}`}
-                        title={[entry.label, configuration.effort !== "auto" ? effortLabel : null].filter(Boolean).join(" · ")}
-                        onClick={() => {
-                          setActiveModelId(isActive ? null : id);
-                          setAddModelsOpen(false);
-                        }}
-                        className={cn(
-                          "flex min-w-0 items-center gap-1.5 text-[12px] font-medium",
-                          isCompact ? "max-w-36 px-2" : "max-w-52 px-3",
-                        )}
-                      >
-                        <Bot className="size-3.5 shrink-0 text-[var(--ec-muted)]" />
-                        <span className="truncate">{entry.label}</span>
-                        {!isCompact && configuration.effort !== "auto" && effortLabel ? (
-                          <span className="shrink-0 text-[11px] font-normal text-[var(--ec-muted)]">{effortLabel}</span>
-                        ) : null}
-                        <ChevronDown className={cn("size-3.5 shrink-0 text-[var(--ec-faint)] transition", isActive && "rotate-180")} />
-                      </button>
-                      {workspaceType !== "local" && modelIds.length > 1 ? (
+            <button
+              type="button"
+              aria-label={modelIds.length === 1 && selectedModelsWithConfiguration[0]
+                ? `Configure ${selectedModelsWithConfiguration[0].entry.label}`
+                : `Configure ${modelIds.length} models`}
+              onClick={() => {
+                if (activeModelId || addModelsOpen) {
+                  setActiveModelId(null);
+                  setAddModelsOpen(false);
+                } else {
+                  setActiveModelId(modelIds[0] ?? null);
+                }
+              }}
+              className="m-tap flex min-w-0 items-center gap-1.5 rounded-full border border-[var(--ec-border)] bg-[var(--ec-input)] px-3 text-left transition hover:border-[var(--ec-accent-ring)]"
+            >
+              <Bot className="size-3.5 shrink-0 text-[var(--ec-muted)]" />
+              <span className="min-w-0 shrink truncate text-[12px] font-medium">
+                {modelIds.length === 1 ? selectedModelsWithConfiguration[0]?.entry.label : `${modelIds.length} models`}
+              </span>
+              {modelGroupSummary.map((value) => (
+                <span key={value} className="max-w-28 shrink truncate text-[11px] text-[var(--ec-muted)]">{value}</span>
+              ))}
+              <ChevronDown className={cn("ml-auto size-3.5 shrink-0 text-[var(--ec-faint)] transition", (activeModelId || addModelsOpen) && "rotate-180")} />
+            </button>
+
+            {activeModelId || addModelsOpen ? (
+              <div className="overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-input)] shadow-lg">
+                <div className="border-b border-[var(--ec-border)] p-1.5">
+                  <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Selected models</p>
+                  {selectedModelsWithConfiguration.map((selected) => {
+                    const isActive = activeModelId === selected.entry.modelId && !addModelsOpen;
+                    return (
+                      <div key={selected.entry.modelId} className={cn("flex items-center rounded-md", isActive && "bg-[var(--ec-accent-soft)]")}>
                         <button
                           type="button"
-                          aria-label={`Remove ${entry.label}`}
-                          onClick={() => removeModel(id)}
-                          className="flex h-full items-center border-l border-[var(--ec-border)] px-2 text-[var(--ec-faint)] hover:text-[var(--ec-text)]"
+                          onClick={() => {
+                            setActiveModelId(selected.entry.modelId);
+                            setAddModelsOpen(false);
+                          }}
+                          className="min-w-0 flex-1 px-2.5 py-2 text-left"
                         >
-                          <X className="size-3.5" />
+                          <span className="block truncate text-[12px] font-medium">{selected.entry.label}</span>
+                          {selected.summary.length > 0 ? (
+                            <span className="block truncate text-[11px] text-[var(--ec-muted)]">{selected.summary.join(" · ")}</span>
+                          ) : null}
                         </button>
-                      ) : null}
-                    </span>,
-                  ];
-                })}
-              </div>
-              {workspaceType !== "local" ? (
-                <button
-                  type="button"
-                  aria-label="Add model"
-                  disabled={unselectedModels.length === 0}
-                  onClick={() => {
-                    setAddModelsOpen((current) => !current);
-                    setActiveModelId(null);
-                  }}
-                  className="flex size-9 shrink-0 items-center justify-center rounded-full border border-dashed border-[var(--ec-border-strong)] text-[var(--ec-muted)] transition hover:border-[var(--ec-accent-ring)] hover:text-[var(--ec-text)] disabled:opacity-40"
-                >
-                  <Plus className={cn("size-4 transition", addModelsOpen && "rotate-45")} />
-                </button>
-              ) : null}
-            </div>
+                        {workspaceType !== "local" && modelIds.length > 1 ? (
+                          <button
+                            type="button"
+                            aria-label={`Remove ${selected.entry.label}`}
+                            onClick={() => removeModel(selected.entry.modelId)}
+                            className="flex size-9 shrink-0 items-center justify-center text-[var(--ec-faint)] hover:text-[var(--ec-text)]"
+                          >
+                            <X className="size-3.5" />
+                          </button>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                  {workspaceType !== "local" ? (
+                    <button
+                      type="button"
+                      aria-label="Add model"
+                      disabled={unselectedModels.length === 0}
+                      onClick={() => {
+                        setAddModelsOpen(true);
+                        setActiveModelId(null);
+                      }}
+                      className={cn(
+                        "flex min-h-10 w-full items-center gap-2 rounded-md px-2.5 text-left text-[12px] text-[var(--ec-muted)] disabled:opacity-40",
+                        addModelsOpen && "bg-[var(--ec-accent-soft)] text-[var(--ec-text)]",
+                      )}
+                    >
+                      <Plus className="size-3.5" />
+                      Add model
+                    </button>
+                  ) : null}
+                </div>
 
-            {addModelsOpen && unselectedModels.length > 0 ? (
-              <div className="flex max-h-48 flex-col overflow-y-auto rounded-lg border border-[var(--ec-border)] bg-[var(--ec-input)] p-1 shadow-lg">
-                {unselectedModels.map((entry) => (
-                  <button
-                    key={entry.modelId}
-                    type="button"
-                    onClick={() => addModel(entry.modelId)}
-                    className="flex min-h-10 items-center gap-2 rounded-md px-2.5 text-left hover:bg-[var(--ec-hover)]"
-                  >
-                    <Bot className="size-3.5 shrink-0 text-[var(--ec-muted)]" />
-                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{entry.label}</span>
-                    <span className="shrink-0 text-[11px] text-[var(--ec-faint)]">{entry.providerLabel}</span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
+                {addModelsOpen && unselectedModels.length > 0 ? (
+                  <div className="flex max-h-48 flex-col overflow-y-auto p-1.5">
+                    {unselectedModels.map((entry) => (
+                      <button
+                        key={entry.modelId}
+                        type="button"
+                        onClick={() => addModel(entry.modelId)}
+                        className="flex min-h-10 items-center gap-2 rounded-md px-2.5 text-left hover:bg-[var(--ec-hover)]"
+                      >
+                        <Bot className="size-3.5 shrink-0 text-[var(--ec-muted)]" />
+                        <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{entry.label}</span>
+                        <span className="shrink-0 text-[11px] text-[var(--ec-faint)]">{entry.providerLabel}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
 
-            {activeModelId && model ? (
-              <div className="grid gap-1 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-input)] p-1.5 shadow-lg">
+                {activeModelId && model ? (
+                  <div className="grid gap-1 p-1.5">
                 <label className="grid min-h-10 grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-2 rounded-md px-2 hover:bg-[var(--ec-hover)]">
                   <span className="text-[12px] font-medium">Model</span>
                   <select
@@ -446,6 +490,8 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
                       {secondaryControl.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                     </select>
                   </label>
+                ) : null}
+                  </div>
                 ) : null}
               </div>
             ) : null}

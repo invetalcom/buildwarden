@@ -215,6 +215,26 @@ const normalizedModelConfiguration = (
 const controlValueLabel = (controlEntry: ModelExecutionControl | undefined, value: string): string =>
   controlEntry?.options.find((entry) => entry.value === value)?.label ?? "Provider default";
 
+const controlSummaryLabel = (controlEntry: ModelExecutionControl, value: string): string => {
+  if (value !== "auto") return controlValueLabel(controlEntry, value);
+  const noun = controlEntry.id === "reasoningEffort" || controlEntry.id === "thinkingLevel"
+    ? "effort"
+    : controlEntry.label.toLocaleLowerCase();
+  return `Default ${noun}`;
+};
+
+const modelConfigurationSummaryValues = (
+  optionEntry: ComposerSelectOption,
+  configuration: RunModelConfiguration,
+): string[] => {
+  const reasoningControl = reasoningControlForModel(optionEntry);
+  const secondaryControl = secondaryControlForModel(optionEntry);
+  return [
+    reasoningControl ? controlSummaryLabel(reasoningControl, configuration.effort) : null,
+    secondaryControl ? controlSummaryLabel(secondaryControl, configuration.executionMode) : null,
+  ].filter((entry): entry is string => Boolean(entry));
+};
+
 const ComposerModelChip = ({
   selectedId,
   selectedIds,
@@ -222,7 +242,6 @@ const ComposerModelChip = ({
   options,
   configuration,
   allowRemove,
-  compact,
   disabled,
   menuSide,
   onReplace,
@@ -235,7 +254,6 @@ const ComposerModelChip = ({
   options: ComposerSelectOption[];
   configuration: RunModelConfiguration;
   allowRemove: boolean;
-  compact: boolean;
   disabled: boolean;
   menuSide: "top" | "bottom";
   onReplace: (nextModelId: string, nextConfiguration: RunModelConfiguration) => void;
@@ -249,10 +267,7 @@ const ComposerModelChip = ({
   const secondaryControl = secondaryControlForModel(optionEntry);
   const effortLabel = controlValueLabel(reasoningControl, configuration.effort);
   const secondaryLabel = controlValueLabel(secondaryControl, configuration.executionMode);
-  const summaryValues = [
-    configuration.effort !== "auto" && reasoningControl ? effortLabel : null,
-    configuration.executionMode !== "auto" && secondaryControl ? secondaryLabel : null,
-  ].filter((entry): entry is string => Boolean(entry));
+  const summaryValues = modelConfigurationSummaryValues(optionEntry, configuration);
   const availableModels = options.filter((entry) => entry.value === selectedId || !selectedIds.includes(entry.value));
   const rows: Array<{ id: ModelChipSection; label: string; value: string }> = [
     { id: "model", label: "Model", value: optionEntry.displayLabel ?? optionEntry.label },
@@ -277,7 +292,7 @@ const ComposerModelChip = ({
         type="button"
         aria-label={`Configure ${optionEntry.label}`}
         title={[optionEntry.displayLabel ?? optionEntry.label, ...summaryValues].join(" · ")}
-        className={`inline-flex min-w-0 items-center gap-1.5 rounded-full text-[13px] font-medium text-[var(--ec-text)] outline-none transition hover:bg-[var(--ec-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-accent-ring)] ${compact ? "px-2" : "px-2.5"}`}
+        className="inline-flex min-w-0 items-center gap-1.5 rounded-full px-2.5 text-[13px] font-medium text-[var(--ec-text)] outline-none transition hover:bg-[var(--ec-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-accent-ring)]"
         onClick={() => {
           setSection("model");
           setOpen((current) => !current);
@@ -285,8 +300,8 @@ const ComposerModelChip = ({
         disabled={disabled}
       >
         <Bot className="h-3.5 w-3.5 shrink-0 text-[var(--ec-muted)]" />
-        <span className={`${compact ? "max-w-28" : "max-w-36"} truncate`}>{optionEntry.displayLabel ?? optionEntry.label}</span>
-        {!compact ? summaryValues.map((value) => <span key={value} className="hidden max-w-24 truncate text-xs font-normal text-[var(--ec-muted)] sm:inline">{value}</span>) : null}
+        <span className="max-w-36 truncate">{optionEntry.displayLabel ?? optionEntry.label}</span>
+        {summaryValues.map((value) => <span key={value} className="hidden max-w-24 truncate text-xs font-normal text-[var(--ec-muted)] sm:inline">{value}</span>)}
         <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-[var(--ec-faint)] transition-transform duration-150 ${open ? "rotate-180" : ""}`} />
       </button>
       {allowRemove ? (
@@ -364,31 +379,117 @@ const ComposerModelChip = ({
   );
 };
 
-const ComposerAddModelChip = ({
+const ComposerMultiModelControl = ({
+  selectedOptions,
   options,
+  configurationForModel,
   disabled,
   menuSide,
+  onReplace,
+  onConfigurationChange,
   onAdd,
+  onRemove,
 }: {
+  selectedOptions: ComposerSelectOption[];
   options: ComposerSelectOption[];
+  configurationForModel: (optionEntry: ComposerSelectOption) => RunModelConfiguration;
   disabled: boolean;
   menuSide: "top" | "bottom";
+  onReplace: (currentModelId: string, nextModelId: string, nextConfiguration: RunModelConfiguration) => void;
+  onConfigurationChange: (modelId: string, next: RunModelConfiguration) => void;
   onAdd: (modelId: string) => void;
+  onRemove: (modelId: string) => void;
 }) => {
   const [open, setOpen] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [activeModelId, setActiveModelId] = useState(selectedOptions[0]?.value ?? "");
+  const [section, setSection] = useState<ModelChipSection>("model");
   const anchorRef = useRef<HTMLButtonElement | null>(null);
+  const selectedIds = selectedOptions.map((entry) => entry.value);
+  const selectedModels = selectedOptions.map((optionEntry) => ({
+    optionEntry,
+    configuration: configurationForModel(optionEntry),
+  }));
+  const activeModel = selectedModels.find((entry) => entry.optionEntry.value === activeModelId) ?? selectedModels[0];
+  const unselectedOptions = options.filter((entry) => !selectedIds.includes(entry.value));
+
+  useEffect(() => {
+    if (selectedOptions.length === 0) {
+      setActiveModelId("");
+      setOpen(false);
+      return;
+    }
+    if (!selectedOptions.some((entry) => entry.value === activeModelId)) setActiveModelId(selectedOptions[0]!.value);
+  }, [activeModelId, selectedOptions]);
+
+  const groupSummaryForControl = (kind: "effort" | "secondary"): string | null => {
+    const values = selectedModels.flatMap(({ optionEntry, configuration }) => {
+      const controlEntry = kind === "effort" ? reasoningControlForModel(optionEntry) : secondaryControlForModel(optionEntry);
+      if (!controlEntry) return [];
+      const value = kind === "effort" ? configuration.effort : configuration.executionMode;
+      return [{ controlEntry, value, label: controlSummaryLabel(controlEntry, value) }];
+    });
+    if (values.length === 0) return null;
+    const labels = [...new Set(values.map((entry) => entry.label))];
+    if (labels.length === 1) return labels[0]!;
+    if (kind === "effort") return "Mixed effort";
+    const controlLabels = [...new Set(values.map((entry) => entry.controlEntry.label.toLocaleLowerCase()))];
+    return `Mixed ${controlLabels.length === 1 ? controlLabels[0] : "speed"}`;
+  };
+  const groupSummary = [groupSummaryForControl("effort"), groupSummaryForControl("secondary")]
+    .filter((entry): entry is string => Boolean(entry));
+  const groupLabel = selectedOptions.length === 1
+    ? selectedOptions[0]?.displayLabel ?? selectedOptions[0]?.label ?? "Model"
+    : `${selectedOptions.length} models`;
+  const tooltip = selectedModels.map(({ optionEntry, configuration }) => {
+    const values = modelConfigurationSummaryValues(optionEntry, configuration);
+    return `${optionEntry.displayLabel ?? optionEntry.label}${values.length > 0 ? ` — ${values.join(" · ")}` : ""}`;
+  }).join("\n");
+
+  const activeOption = activeModel?.optionEntry;
+  const activeConfiguration = activeModel?.configuration ?? { effort: "auto", executionMode: "auto" };
+  const reasoningControl = reasoningControlForModel(activeOption);
+  const secondaryControl = secondaryControlForModel(activeOption);
+  const effortLabel = controlValueLabel(reasoningControl, activeConfiguration.effort);
+  const secondaryLabel = controlValueLabel(secondaryControl, activeConfiguration.executionMode);
+  const rows: Array<{ id: ModelChipSection; label: string; value: string }> = activeOption ? [
+    { id: "model", label: "Model", value: activeOption.displayLabel ?? activeOption.label },
+    ...(reasoningControl ? [{ id: "effort" as const, label: reasoningControl.label, value: effortLabel }] : []),
+    ...(secondaryControl ? [{ id: "secondary" as const, label: secondaryControl.label, value: secondaryLabel }] : []),
+  ] : [];
+  const availableReplacementOptions = options.filter((entry) => entry.value === activeOption?.value || !selectedIds.includes(entry.value));
+  const activeOptions = section === "model"
+    ? availableReplacementOptions.map((entry) => ({ value: entry.value, label: entry.label }))
+    : section === "effort"
+      ? reasoningControl?.options ?? []
+      : secondaryControl?.options ?? [];
+  const activeValue = section === "model"
+    ? activeOption?.value ?? ""
+    : section === "effort"
+      ? activeConfiguration.effort
+      : activeConfiguration.executionMode;
+
   return (
     <div className="relative z-10">
       <button
         ref={anchorRef}
         type="button"
-        aria-label="Add model"
-        title="Add model"
-        className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[var(--ec-muted)] ring-1 ring-inset ring-[var(--ec-border)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] hover:ring-[var(--ec-border-strong)] focus-visible:ring-2 focus-visible:ring-[var(--ec-accent-ring)]"
-        onClick={() => setOpen((current) => !current)}
-        disabled={disabled || options.length === 0}
+        aria-label={`Configure ${groupLabel}`}
+        title={tooltip}
+        className="inline-flex h-8 min-w-0 max-w-[24rem] items-center gap-1.5 rounded-full bg-[var(--ec-control)] px-2.5 text-[13px] font-medium text-[var(--ec-text)] ring-1 ring-inset ring-[var(--ec-border)] transition hover:bg-[var(--ec-hover)] hover:ring-[var(--ec-border-strong)] focus-visible:ring-2 focus-visible:ring-[var(--ec-accent-ring)]"
+        onClick={() => {
+          setAdding(false);
+          setSection("model");
+          setOpen((current) => !current);
+        }}
+        disabled={disabled || selectedOptions.length === 0}
       >
-        <Plus className={`h-4 w-4 transition-transform duration-150 ${open ? "rotate-45" : ""}`} />
+        <Bot className="h-3.5 w-3.5 shrink-0 text-[var(--ec-muted)]" />
+        <span className="max-w-36 shrink-0 truncate">{groupLabel}</span>
+        {groupSummary.map((value) => (
+          <span key={value} className="hidden max-w-28 truncate text-xs font-normal text-[var(--ec-muted)] sm:inline">{value}</span>
+        ))}
+        <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-[var(--ec-faint)] transition-transform duration-150 ${open ? "rotate-180" : ""}`} />
       </button>
       <AnchorDropdownPortal
         open={open}
@@ -396,26 +497,139 @@ const ComposerAddModelChip = ({
         onClose={() => setOpen(false)}
         align="end"
         placement={menuSide}
-        widthPx={320}
-        maxHeightPx={288}
+        widthPx={660}
+        maxHeightPx={360}
         className="glass-popover overflow-hidden"
       >
-        <div className="app-scrollbar app-dropdown-scrollbar overflow-y-auto p-1.5" style={{ maxHeight: "inherit" }}>
-          <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--ec-faint)]">Add model</p>
-          {options.map((entry) => (
+        <div className="grid min-h-52 grid-cols-[minmax(0,1fr)_190px_minmax(0,1.05fr)]">
+          <div className="app-scrollbar app-dropdown-scrollbar max-h-[22rem] overflow-y-auto border-r border-[var(--ec-border)] p-1.5">
+            <div className="flex items-center justify-between px-2 pb-1">
+              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--ec-faint)]">Selected models</p>
+              <span className="text-[11px] text-[var(--ec-faint)]">{selectedOptions.length}</span>
+            </div>
+            {selectedModels.map(({ optionEntry, configuration }) => {
+              const isActive = optionEntry.value === activeOption?.value && !adding;
+              const summary = modelConfigurationSummaryValues(optionEntry, configuration);
+              return (
+                <div
+                  key={optionEntry.value}
+                  className={`group flex items-center rounded-lg transition ${isActive ? "bg-[var(--ec-control)]" : "hover:bg-[var(--ec-hover)]"}`}
+                >
+                  <button
+                    type="button"
+                    className={`min-w-0 flex-1 px-2.5 py-2 text-left ${isActive ? "text-[var(--ec-text)]" : "text-[var(--ec-muted)]"}`}
+                    onClick={() => {
+                      setAdding(false);
+                      setActiveModelId(optionEntry.value);
+                      setSection("model");
+                    }}
+                  >
+                    <span className="block truncate text-[13px] font-medium">{optionEntry.displayLabel ?? optionEntry.label}</span>
+                    {summary.length > 0 ? <span className="block truncate text-[11px] text-[var(--ec-faint)]">{summary.join(" · ")}</span> : null}
+                  </button>
+                  {selectedOptions.length > 1 ? (
+                    <button
+                      type="button"
+                      aria-label={`Remove ${optionEntry.label}`}
+                      className="mr-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--ec-faint)] opacity-70 transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] group-hover:opacity-100"
+                      onClick={() => {
+                        const remaining = selectedOptions.filter((entry) => entry.value !== optionEntry.value);
+                        if (optionEntry.value === activeOption?.value) {
+                          setActiveModelId(remaining[0]?.value ?? "");
+                          setSection("model");
+                        }
+                        onRemove(optionEntry.value);
+                      }}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  ) : null}
+                </div>
+              );
+            })}
             <button
-              key={entry.value}
               type="button"
-              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
-              onClick={() => {
-                onAdd(entry.value);
-                setOpen(false);
-              }}
+              aria-label="Add model"
+              disabled={unselectedOptions.length === 0}
+              className={`mt-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${
+                adding ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+              }`}
+              onClick={() => setAdding(true)}
             >
-              <Bot className="h-3.5 w-3.5 shrink-0 text-[var(--ec-faint)]" />
-              <span className="truncate">{entry.label}</span>
+              <Plus className="h-3.5 w-3.5" />
+              Add model
             </button>
-          ))}
+          </div>
+          {adding ? (
+            <div className="app-scrollbar app-dropdown-scrollbar col-span-2 max-h-[22rem] overflow-y-auto p-1.5">
+              <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--ec-faint)]">Add model</p>
+              {unselectedOptions.map((entry) => (
+                <button
+                  key={entry.value}
+                  type="button"
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+                  onClick={() => {
+                    onAdd(entry.value);
+                    setActiveModelId(entry.value);
+                    setAdding(false);
+                    setSection(nextModelChipSection(entry.executionProfile));
+                  }}
+                >
+                  <Bot className="h-3.5 w-3.5 shrink-0 text-[var(--ec-faint)]" />
+                  <span className="truncate">{entry.label}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <>
+              <div className="border-r border-[var(--ec-border)] p-1.5">
+                {rows.map((row) => (
+                  <button
+                    key={row.id}
+                    type="button"
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${
+                      section === row.id ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+                    }`}
+                    onClick={() => setSection(row.id)}
+                  >
+                    <span className="min-w-0 flex-1 font-medium">{row.label}</span>
+                    <span className="max-w-20 truncate text-[11px] text-[var(--ec-faint)]">{row.value}</span>
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--ec-faint)]" />
+                  </button>
+                ))}
+              </div>
+              <div className="app-scrollbar app-dropdown-scrollbar max-h-[22rem] overflow-y-auto p-1.5">
+                {activeOptions.map((entry) => {
+                  const isSelected = entry.value === activeValue;
+                  return (
+                    <button
+                      key={entry.value}
+                      type="button"
+                      className={`flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${
+                        isSelected ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+                      }`}
+                      onClick={() => {
+                        if (!activeOption) return;
+                        if (section === "model") {
+                          const nextOption = options.find((candidate) => candidate.value === entry.value);
+                          onReplace(activeOption.value, entry.value, normalizedModelConfiguration(nextOption, activeConfiguration));
+                          setActiveModelId(entry.value);
+                          setSection(nextModelChipSection(nextOption?.executionProfile));
+                          return;
+                        }
+                        onConfigurationChange(activeOption.value, section === "effort"
+                          ? { ...activeConfiguration, effort: entry.value }
+                          : { ...activeConfiguration, executionMode: entry.value });
+                      }}
+                    >
+                      <span className="truncate">{entry.label}</span>
+                      {isSelected ? <Check className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" /> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
         </div>
       </AnchorDropdownPortal>
     </div>
@@ -1099,31 +1313,34 @@ export const RunComposer = ({
               ) : null}
             </div>
             <div className="flex min-w-0 items-center justify-end gap-1.5">
-              <div
-                data-model-chip-rail={useMultiModel ? "true" : undefined}
-                className={`flex min-w-0 items-center gap-1.5 ${
-                  useMultiModel
-                    ? "max-w-[min(42vw,38rem)] overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                    : ""
-                }`}
-              >
-                {selectedModelOptions.length > 0 ? selectedModelOptions.map((optionEntry, chipIndex) => (
+              {useMultiModel ? (
+                <ComposerMultiModelControl
+                  selectedOptions={selectedModelOptions}
+                  options={modelSelectOptions}
+                  configurationForModel={configurationForModel}
+                  disabled={busy}
+                  menuSide={dropdownSide}
+                  onReplace={replaceSelectedModel}
+                  onConfigurationChange={changeModelConfiguration}
+                  onAdd={addSelectedModel}
+                  onRemove={removeSelectedModel}
+                />
+              ) : selectedModelOptions.length > 0 ? selectedModelOptions.map((optionEntry) => (
                   <ComposerModelChip
-                    key={useMultiModel ? `model-chip-${chipIndex}` : "model-chip"}
+                    key="model-chip"
                     selectedId={optionEntry.value}
-                    selectedIds={useMultiModel ? selectedModelIds : [selectedModelId]}
+                    selectedIds={[selectedModelId]}
                     optionEntry={optionEntry}
                     options={modelSelectOptions}
                     configuration={configurationForModel(optionEntry)}
-                    allowRemove={useMultiModel && selectedModelOptions.length > 1}
-                    compact={useMultiModel && selectedModelOptions.length > 1}
+                    allowRemove={false}
                     disabled={busy}
                     menuSide={dropdownSide}
                     onReplace={(nextModelId, nextConfiguration) => replaceSelectedModel(optionEntry.value, nextModelId, nextConfiguration)}
                     onConfigurationChange={(next) => changeModelConfiguration(optionEntry.value, next)}
                     onRemove={() => removeSelectedModel(optionEntry.value)}
                   />
-                )) : !useMultiModel ? (
+                )) : (
                   <ComposerSelect
                     value={selectedModelId}
                     icon={Bot}
@@ -1135,16 +1352,7 @@ export const RunComposer = ({
                     menuSide={dropdownSide}
                     selectedIconClassName="text-[var(--ec-accent)]"
                   />
-                ) : null}
-              </div>
-              {useMultiModel ? (
-                <ComposerAddModelChip
-                  options={modelSelectOptions.filter((entry) => !selectedModelIds.includes(entry.value))}
-                  disabled={busy}
-                  menuSide={dropdownSide}
-                  onAdd={addSelectedModel}
-                />
-              ) : null}
+                )}
               {showContextBadge ? (
                 <ContextWindowBadge
                   modelIds={selectedContextModelIds}

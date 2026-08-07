@@ -461,11 +461,18 @@ describe("renderer component states", () => {
           providerType: "ai-sdk" as const,
           providerFamily: "openai" as const,
           executionProfile: {
-            controls: [{
-              id: "reasoningEffort" as const,
-              label: "Effort",
-              options: [{ value: "auto", label: "Provider default" }, { value: "high", label: "High" }],
-            }],
+            controls: [
+              {
+                id: "reasoningEffort" as const,
+                label: "Effort",
+                options: [{ value: "auto", label: "Provider default" }, { value: "high", label: "High" }],
+              },
+              {
+                id: "speed" as const,
+                label: "Speed",
+                options: [{ value: "auto", label: "Provider default" }, { value: "fast", label: "Fast" }],
+              },
+            ],
           },
         },
         { value: "model-2", label: "Claude", providerType: "claude-code" as const, executionProfile: { controls: [] } },
@@ -486,7 +493,7 @@ describe("renderer component states", () => {
         selectedModelIds={["model-1", "model-2"]}
         onModelIdsChange={vi.fn()}
         modelConfigurations={{
-          "model-1": { effort: "high", executionMode: "auto" },
+          "model-1": { effort: "high", executionMode: "fast" },
           "model-2": { effort: "auto", executionMode: "auto" },
         }}
         onModelConfigurationsChange={vi.fn()}
@@ -496,12 +503,13 @@ describe("renderer component states", () => {
       />,
     );
     expect(runMarkup).toContain("Full access");
-    expect(runMarkup).toContain('aria-label="Configure GPT-5"');
-    expect(runMarkup).toContain('aria-label="Configure Claude"');
-    expect(runMarkup).toContain('aria-label="Add model"');
-    expect(runMarkup).toContain('data-model-chip-rail="true"');
-    expect(runMarkup).not.toContain(">High<");
-    expect(runMarkup).not.toContain("2 models");
+    expect(runMarkup).toContain('aria-label="Configure 2 models"');
+    expect(runMarkup).not.toContain('aria-label="Configure GPT-5"');
+    expect(runMarkup).not.toContain('aria-label="Configure Claude"');
+    expect(runMarkup).not.toContain('data-model-chip-rail="true"');
+    expect(runMarkup).toContain(">2 models<");
+    expect(runMarkup).toContain(">High<");
+    expect(runMarkup).toContain(">Fast<");
     const chatMarkup = renderToStaticMarkup(<RunComposer {...commonProps} variant="chat" submitLabel="Send chat" />);
     expect(chatMarkup).toContain("Send chat");
     expect(chatMarkup).toContain('aria-label="Configure GPT-5"');
