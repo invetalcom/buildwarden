@@ -300,11 +300,13 @@ export const RunDetailHeader = ({
                 )}
                 <span className="truncate font-mono text-[11px] text-[var(--ec-text)]">{workspaceLabel}</span>
               </button>
-              <RunTokenBadge
-                inputTokens={runDetail.run.inputTokens}
-                outputTokens={runDetail.run.outputTokens}
-                usage={tokenUsage}
-              />
+              {run.harnessType !== "cursor-acp" ? (
+                <RunTokenBadge
+                  inputTokens={runDetail.run.inputTokens}
+                  outputTokens={runDetail.run.outputTokens}
+                  usage={tokenUsage}
+                />
+              ) : null}
               <RunPlanProgressPill progress={planProgress} />
               <RunSubagentMenu subagents={subagents} onFocusSubagent={onFocusSubagent} />
             </>
