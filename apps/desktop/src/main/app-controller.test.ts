@@ -511,6 +511,7 @@ describe("AppController settings and lightweight workflows", () => {
       branchName: "feature",
     } as RunRecord;
     const cachedSummary = { number: 13 } as NonNullable<RunRecord["forgeRequest"]>;
+    const retryAfterAt = new Date(Date.now() + 60_000).toISOString();
     const harness = createHarness({
       getRun: vi.fn(() => run),
       getRunSteps: vi.fn(() => []),
@@ -526,17 +527,55 @@ describe("AppController settings and lightweight workflows", () => {
         etag: null,
         lastModified: null,
         errorCount: 1,
-        retryAfterAt: new Date(Date.now() + 60_000).toISOString(),
+        retryAfterAt,
       })),
     });
     const internalController = harness.controller as unknown as {
       syncRunForgeRequest: (runId: string, force: boolean, includeDetails: boolean) => Promise<RunRecord["forgeRequest"] | null>;
       createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
+      scheduleRunForgeRefresh: (runId: string, summary: RunRecord["forgeRequest"], delayOverride?: number) => void;
     };
     internalController.createProjectPrReviewProvider = vi.fn();
+    internalController.scheduleRunForgeRefresh = vi.fn();
 
     await expect(internalController.syncRunForgeRequest(run.id, false, false)).resolves.toBe(cachedSummary);
     expect(internalController.createProjectPrReviewProvider).not.toHaveBeenCalled();
+    expect(internalController.scheduleRunForgeRefresh).toHaveBeenCalledWith(
+      run.id,
+      cachedSummary,
+      expect.any(Number),
+    );
+    const retryDelay = vi.mocked(internalController.scheduleRunForgeRefresh).mock.calls[0]?.[2] ?? 0;
+    expect(retryDelay).toBeGreaterThan(0);
+    expect(retryDelay).toBeLessThanOrEqual(60_000);
+  });
+
+  it("retries stale terminal forge summaries but stops polling fresh terminal summaries", async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = createHarness();
+      const terminalSummary = {
+        state: "closed",
+        stale: false,
+        checks: { running: 0 },
+      } as NonNullable<RunRecord["forgeRequest"]>;
+      const internalController = harness.controller as unknown as {
+        scheduleRunForgeRefresh: (runId: string, summary: RunRecord["forgeRequest"], delayOverride?: number) => void;
+        syncRunForgeRequest: (runId: string, force: boolean, includeDetails: boolean) => Promise<RunRecord["forgeRequest"] | null>;
+        runForgeRefreshTimers: Map<string, ReturnType<typeof setTimeout>>;
+      };
+      internalController.syncRunForgeRequest = vi.fn(async () => null);
+
+      internalController.scheduleRunForgeRefresh("stale-run", { ...terminalSummary, stale: true }, 1_000);
+      expect(internalController.runForgeRefreshTimers.has("stale-run")).toBe(true);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(internalController.syncRunForgeRequest).toHaveBeenCalledWith("stale-run", true, false);
+
+      internalController.scheduleRunForgeRefresh("fresh-run", terminalSummary, 1_000);
+      expect(internalController.runForgeRefreshTimers.has("fresh-run")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not report a successful forge mutation as failed when refresh loses the association", async () => {

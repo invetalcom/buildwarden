@@ -4224,7 +4224,7 @@ export class AppController
     const existing = this.runForgeRefreshTimers.get(runId);
     if (existing) clearTimeout(existing);
     this.runForgeRefreshTimers.delete(runId);
-    if (summary?.state === "merged" || summary?.state === "closed") {
+    if ((summary?.state === "merged" || summary?.state === "closed") && !summary.stale) {
       this.runForgeActivePollCounts.delete(runId);
       return;
     }
@@ -4261,7 +4261,9 @@ export class AppController
 
     return this.serializeProjectForgeSync(run.projectId, async () => {
       const cached = this.db.getRunForgeRequestCache(runId);
-      if (!force && cached?.retryAfterAt && Date.parse(cached.retryAfterAt) > Date.now()) {
+      const retryAfterMs = cached?.retryAfterAt ? Date.parse(cached.retryAfterAt) - Date.now() : 0;
+      if (!force && cached && retryAfterMs > 0) {
+        this.scheduleRunForgeRefresh(runId, cached.summary, retryAfterMs);
         return cached.summary;
       }
       const [probedHeadSha, probedBranchName] = await Promise.all([
