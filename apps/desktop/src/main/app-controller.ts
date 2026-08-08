@@ -4261,7 +4261,11 @@ export class AppController
     return this.serializeProjectForgeSync(run.projectId, async () => {
       try {
         const provider = await this.createProjectPrReviewProvider(run.projectId);
-        let selected: ProjectForgeRequestSummary | null = cached?.summary && cached.branchName === branchName
+        // Open requests can stay on the lightweight status-refresh path. Terminal
+        // links must be re-probed so a newer request for the same branch can win.
+        let selected: ProjectForgeRequestSummary | null = cached?.summary &&
+          cached.branchName === branchName &&
+          cached.summary.state === "open"
           ? {
               provider: cached.summary.provider,
               number: cached.summary.number,
@@ -4310,7 +4314,8 @@ export class AppController
           return null;
         }
 
-        const shouldLoadDetails = includeDetails || !cached?.details;
+        const associationChanged = cached?.summary?.url !== selected.url;
+        const shouldLoadDetails = includeDetails || !cached?.details || associationChanged;
         const previousStatus: ForgeRequestStatusResult | null = cached?.summary?.url === selected.url ? {
           state: cached.summary.state,
           draft: cached.summary.draft,
@@ -4367,7 +4372,7 @@ export class AppController
           reviewThreads: detailResult.reviewThreads,
           checks: status.checks,
           warnings: detailResult.warnings,
-        } : cached?.details ? { ...cached.details, summary, checks: status.checks } : null;
+        } : cached?.details && !associationChanged ? { ...cached.details, summary, checks: status.checks } : null;
         this.db.saveRunForgeRequest(run.id, run.projectId, branchName, headSha, summary, details, {
           etag: status.etag ?? previousStatus?.etag ?? null,
           lastModified: status.lastModified ?? previousStatus?.lastModified ?? null,

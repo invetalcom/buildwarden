@@ -192,6 +192,136 @@ describe("AppController settings and lightweight workflows", () => {
     expect(forgeProvider.listRequests).toHaveBeenCalledTimes(2);
   });
 
+  it("relinks a terminal request to a newer open request on the same branch", async () => {
+    const run = {
+      id: "run-1",
+      projectId: project.id,
+      workspaceVcs: "git",
+      workspaceType: "local",
+      worktreePath: project.repoPath,
+      branchName: "feature",
+    } as RunRecord;
+    const oldRequest = {
+      provider: "github" as const,
+      number: 13,
+      title: "Closed request",
+      url: "https://github.com/acme/repo/pull/13",
+      state: "closed",
+      draft: false,
+      author: "author",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      createdAt: "2026-08-08T08:00:00.000Z",
+      updatedAt: "2026-08-08T09:00:00.000Z",
+    };
+    const newRequest = {
+      ...oldRequest,
+      number: 14,
+      title: "Replacement request",
+      url: "https://github.com/acme/repo/pull/14",
+      state: "open",
+      createdAt: "2026-08-08T10:00:00.000Z",
+      updatedAt: "2026-08-08T11:00:00.000Z",
+    };
+    const oldSummary = {
+      ...oldRequest,
+      state: "closed" as const,
+      readiness: "closed" as const,
+      mergeability: "unknown" as const,
+      reviewDecision: "none" as const,
+      headSha: "head-sha",
+      checks: { completed: 0, total: 0, successful: 0, failed: 0, running: 0 },
+      unresolvedThreadCount: 0,
+      supportedActions: ["refresh", "open", "reopen"] as const,
+      supportedMergeMethods: ["merge"] as const,
+      lastSyncedAt: "2026-08-08T09:00:00.000Z",
+      stale: false,
+      syncError: null,
+    };
+    const saveRunForgeRequest = vi.fn();
+    const harness = createHarness({
+      getRun: vi.fn(() => run),
+      getRunSteps: vi.fn(() => []),
+      getRunForgeRequestCache: vi.fn(() => ({
+        runId: run.id,
+        projectId: project.id,
+        branchName: "feature",
+        headSha: "head-sha",
+        lastProbeAt: oldSummary.lastSyncedAt,
+        negativeCacheUntil: null,
+        summary: oldSummary,
+        details: null,
+        etag: null,
+        lastModified: null,
+        errorCount: 0,
+        retryAfterAt: null,
+      })),
+      saveRunForgeRequest,
+      saveRunForgeSyncError: vi.fn(() => null),
+    });
+    vi.spyOn(GitService.prototype, "getHeadCommitSha").mockResolvedValue("head-sha");
+    vi.spyOn(GitService.prototype, "getCurrentBranch").mockResolvedValue("feature");
+    const forgeProvider = {
+      listRequests: vi.fn(async () => ({
+        provider: "github" as const,
+        webBaseUrl: "https://github.com/acme/repo",
+        repoLabel: "acme/repo",
+        items: [oldRequest, newRequest],
+      })),
+      getRequestStatus: vi.fn(async () => ({
+        state: "open" as const,
+        draft: false,
+        mergeability: "mergeable" as const,
+        reviewDecision: "none" as const,
+        headSha: "head-sha",
+        checks: [],
+        unresolvedThreadCount: 0,
+        supportedActions: ["refresh", "open", "mark-draft", "merge", "close"] as const,
+        supportedMergeMethods: ["merge"] as const,
+      })),
+      getRequestDetails: vi.fn(async () => ({
+        provider: "github" as const,
+        webBaseUrl: "https://github.com/acme/repo",
+        repoLabel: "acme/repo",
+        request: {
+          ...newRequest,
+          description: "Replacement details",
+          authorUser: null,
+          labels: [],
+          additions: 1,
+          deletions: 0,
+          changedFiles: 1,
+          commentCount: 0,
+          reviewCommentCount: 0,
+        },
+        activity: [],
+        commits: [],
+        files: [],
+        reviewThreads: [],
+        warnings: [],
+      })),
+    } as unknown as ProjectPrReviewProvider;
+    const internalController = harness.controller as unknown as {
+      createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
+    };
+    internalController.createProjectPrReviewProvider = vi.fn(async () => forgeProvider);
+
+    const result = await harness.controller.refreshRunForgeRequest(run.id);
+
+    expect(result?.number).toBe(14);
+    expect(forgeProvider.getRequestStatus).toHaveBeenCalledWith(expect.objectContaining({ prUrl: newRequest.url }));
+    expect(forgeProvider.getRequestDetails).toHaveBeenCalledWith({ prUrl: newRequest.url });
+    expect(saveRunForgeRequest).toHaveBeenCalledWith(
+      run.id,
+      project.id,
+      "feature",
+      "head-sha",
+      expect.objectContaining({ number: 14, url: newRequest.url }),
+      expect.objectContaining({ request: expect.objectContaining({ number: 14 }) }),
+      expect.any(Object),
+    );
+  });
+
   it("inherits full access only from the latest coordinator user turn", () => {
     expect(latestUserTurnUsedFullAccess([
       { metadataJson: JSON.stringify({ source: "user", commandType: "initial", yoloMode: true }) },
