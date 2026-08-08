@@ -71,6 +71,9 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
   const activeRef = useRef(true);
   const detailsRequestIdRef = useRef(0);
   const diffRequestIdRef = useRef(0);
+  const summaryHeadShaRef = useRef(initialSummary.headSha);
+  const hostedDiffHeadShaRef = useRef<string | null>(null);
+  const changesOpenRef = useRef(false);
   const canWrite = client.capabilities.gitMutations;
   const canRunAgent = client.capabilities.runMutations && !["queued", "preparing", "running"].includes(run.status);
 
@@ -102,14 +105,25 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
     setSummary(initialSummary);
     setDetails(null);
     setHostedDiff(null);
+    summaryHeadShaRef.current = initialSummary.headSha;
+    hostedDiffHeadShaRef.current = null;
+    changesOpenRef.current = false;
     diffRequestIdRef.current += 1;
     void load(false);
     return client.onRunForgeRequestChanged((payload) => {
       if (payload.runId !== run.id || !payload.forgeRequest) return;
+      const headChanged = summaryHeadShaRef.current !== payload.forgeRequest.headSha;
+      summaryHeadShaRef.current = payload.forgeRequest.headSha;
       detailsRequestIdRef.current += 1;
       setBusy(false);
       setSummary(payload.forgeRequest);
       setDetails((current) => current ? { ...current, summary: payload.forgeRequest! } : current);
+      if (headChanged) {
+        hostedDiffHeadShaRef.current = null;
+        diffRequestIdRef.current += 1;
+        setHostedDiff(null);
+        if (changesOpenRef.current) void loadHostedDiff(payload.forgeRequest.headSha);
+      }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, run.id]);
@@ -188,13 +202,20 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
     }
   };
 
-  const loadHostedDiff = async () => {
-    if (hostedDiff != null) return;
+  const loadHostedDiff = async (headSha = summaryHeadShaRef.current) => {
+    if (hostedDiff != null && hostedDiffHeadShaRef.current === headSha) return;
     const requestId = ++diffRequestIdRef.current;
     setBusy(true);
     try {
       const result = await client.getRunForgeRequestDiff(run.id);
-      if (activeRef.current && requestId === diffRequestIdRef.current) setHostedDiff(result?.diff ?? "");
+      if (
+        activeRef.current
+        && requestId === diffRequestIdRef.current
+        && summaryHeadShaRef.current === headSha
+      ) {
+        hostedDiffHeadShaRef.current = headSha;
+        setHostedDiff(result?.diff ?? "");
+      }
     } catch (caught) {
       if (activeRef.current && requestId === diffRequestIdRef.current) {
         setError(errorMessage(caught, "Could not load the hosted diff."));
@@ -282,7 +303,10 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
             </div>
           </Disclosure>
 
-          <Disclosure title="Changes" badge={details.files.length} onToggle={(open) => { if (open) void loadHostedDiff(); }}>
+          <Disclosure title="Changes" badge={details.files.length} onToggle={(open) => {
+            changesOpenRef.current = open;
+            if (open) void loadHostedDiff();
+          }}>
             {hostedDiff == null && busy ? <div className="grid min-h-40 place-items-center"><Loader2 className="size-5 animate-spin" /></div> : <DiffViewer diff={hostedDiff ?? ""} />}
           </Disclosure>
         </>
