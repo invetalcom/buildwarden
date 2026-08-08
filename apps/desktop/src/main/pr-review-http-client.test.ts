@@ -27,6 +27,25 @@ describe("PrReviewHttpClient", () => {
     expect(String(error)).toContain("GitHub API 429");
   });
 
+  it("ignores rate-limit reset headers on ordinary API failures", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      JSON.stringify({ message: "Not found" }),
+      {
+        status: 404,
+        headers: {
+          "Content-Type": "application/json",
+          "X-RateLimit-Remaining": "4999",
+          "X-RateLimit-Reset": String(Math.ceil(Date.now() / 1000) + 3_600),
+        },
+      },
+    )));
+    const client = new PrReviewHttpClient(context, "secret-token");
+
+    const error = await client.json("/missing").catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({ status: 404, retryAfterMs: null });
+  });
+
   it("returns a cache hit for an authorized conditional 304", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(null, {
       status: 304,

@@ -74,7 +74,7 @@ const prReviewErrorHint = (provider: ProjectForgeProvider, path: string, status:
   return null;
 };
 
-const retryDelayFromHeaders = (headers: Headers): number | null => {
+const retryDelayFromHeaders = (headers: Headers, status: number): number | null => {
   const retryAfter = headers.get("retry-after")?.trim();
   if (retryAfter) {
     const seconds = Number(retryAfter);
@@ -82,8 +82,10 @@ const retryDelayFromHeaders = (headers: Headers): number | null => {
     const retryAt = Date.parse(retryAfter);
     if (Number.isFinite(retryAt)) return Math.max(0, retryAt - Date.now());
   }
+  const remainingHeader = headers.get("x-ratelimit-remaining");
+  const rateLimitExhausted = remainingHeader !== null && Number(remainingHeader) === 0;
   const rateLimitReset = Number(headers.get("x-ratelimit-reset"));
-  if (Number.isFinite(rateLimitReset) && rateLimitReset > 0) {
+  if ((status === 403 || status === 429 || rateLimitExhausted) && Number.isFinite(rateLimitReset) && rateLimitReset > 0) {
     return Math.max(0, Math.round(rateLimitReset * 1_000 - Date.now()));
   }
   return null;
@@ -171,7 +173,7 @@ export class PrReviewHttpClient {
     return new PrReviewHttpError(
       `${providerName} API ${String(response.status)}: ${detail}`,
       response.status,
-      retryDelayFromHeaders(response.headers),
+      retryDelayFromHeaders(response.headers, response.status),
     );
   }
 }
