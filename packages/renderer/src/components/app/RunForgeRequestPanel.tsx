@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   RunForgeMergeMethod,
   RunForgeRequestDetailsResult,
@@ -103,24 +103,30 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
   const [promptAction, setPromptAction] = useState<RunForgeAgentAction | null>(null);
   const [prompt, setPrompt] = useState("");
   const [mergeMenuOpen, setMergeMenuOpen] = useState(false);
+  const detailsRequestIdRef = useRef(0);
   const canWriteForge = buildwarden.capabilities.gitMutations;
   const canRunAgent = buildwarden.capabilities.runMutations
     && !["queued", "preparing", "running"].includes(run.status);
 
   const loadDetails = async (refresh = false) => {
+    const requestId = ++detailsRequestIdRef.current;
     setPending(true);
     setError(null);
     try {
       const next = await buildwarden.getRunForgeRequestDetails(run.id, { refresh });
-      if (next) {
+      if (requestId === detailsRequestIdRef.current && next) {
         setDetails(next);
         setSummary(next.summary);
         onSummaryChange?.(next.summary);
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load request details.");
+      if (requestId === detailsRequestIdRef.current) {
+        setError(caught instanceof Error ? caught.message : "Could not load request details.");
+      }
     } finally {
-      setPending(false);
+      if (requestId === detailsRequestIdRef.current) {
+        setPending(false);
+      }
     }
   };
 
