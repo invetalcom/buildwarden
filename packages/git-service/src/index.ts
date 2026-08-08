@@ -523,6 +523,12 @@ export class GitService {
     return (await simpleGit(repoPath).revparse(["HEAD"])).trim();
   }
 
+  async getBranchCommitSha(repoPath: string, branchName: string): Promise<string> {
+    const trimmedBranchName = branchName.trim();
+    if (!trimmedBranchName) throw new Error("A branch name is required to resolve its commit.");
+    return (await simpleGit(repoPath).revparse(["--verify", `refs/heads/${trimmedBranchName}^{commit}`])).trim();
+  }
+
   async getCurrentBranch(repoPath: string): Promise<string> {
     const git = simpleGit(repoPath);
     const branchName = (await git.branch(["--show-current"])).current?.trim();

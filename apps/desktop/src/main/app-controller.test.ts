@@ -259,8 +259,7 @@ describe("AppController settings and lightweight workflows", () => {
       saveRunForgeRequest,
       saveRunForgeSyncError: vi.fn(() => null),
     });
-    vi.spyOn(GitService.prototype, "getHeadCommitSha").mockResolvedValue("head-sha");
-    vi.spyOn(GitService.prototype, "getCurrentBranch").mockResolvedValue("feature");
+    vi.spyOn(GitService.prototype, "getBranchCommitSha").mockResolvedValue("head-sha");
     const forgeProvider = {
       listRequests: vi.fn(async () => ({
         provider: "github" as const,
@@ -318,6 +317,136 @@ describe("AppController settings and lightweight workflows", () => {
       "head-sha",
       expect.objectContaining({ number: 14, url: newRequest.url }),
       expect.objectContaining({ request: expect.objectContaining({ number: 14 }) }),
+      expect.any(Object),
+    );
+  });
+
+  it("keeps local runs associated with their recorded branch when the shared checkout changes", async () => {
+    const run = {
+      id: "run-local-branch-a",
+      projectId: project.id,
+      workspaceVcs: "git",
+      workspaceType: "local",
+      worktreePath: project.repoPath,
+      branchName: "feature-a",
+    } as RunRecord;
+    const requestA = {
+      provider: "github" as const,
+      number: 16,
+      title: "Request A",
+      url: "https://github.com/acme/repo/pull/16",
+      state: "open" as const,
+      draft: false,
+      author: "author",
+      sourceBranch: "feature-a",
+      targetBranch: "main",
+      createdAt: "2026-08-08T08:00:00.000Z",
+      updatedAt: "2026-08-08T09:00:00.000Z",
+    };
+    const requestB = {
+      ...requestA,
+      number: 17,
+      title: "Request B",
+      url: "https://github.com/acme/repo/pull/17",
+      sourceBranch: "feature-b",
+      updatedAt: "2026-08-08T10:00:00.000Z",
+    };
+    const incorrectlyLinkedSummary = {
+      ...requestB,
+      readiness: "ready" as const,
+      mergeability: "mergeable" as const,
+      reviewDecision: "none" as const,
+      headSha: "sha-b",
+      checks: { completed: 0, total: 0, successful: 0, failed: 0, running: 0 },
+      unresolvedThreadCount: 0,
+      supportedActions: ["refresh", "open", "mark-draft", "merge", "close"] as const,
+      supportedMergeMethods: ["merge"] as const,
+      lastSyncedAt: "2026-08-08T10:00:00.000Z",
+      stale: false,
+      syncError: null,
+    };
+    const saveRunForgeRequest = vi.fn();
+    const harness = createHarness({
+      getRun: vi.fn(() => run),
+      getRunSteps: vi.fn(() => []),
+      getRunForgeRequestCache: vi.fn(() => ({
+        runId: run.id,
+        projectId: project.id,
+        branchName: requestB.sourceBranch,
+        headSha: "sha-b",
+        lastProbeAt: incorrectlyLinkedSummary.lastSyncedAt,
+        negativeCacheUntil: null,
+        summary: incorrectlyLinkedSummary,
+        details: null,
+        etag: null,
+        lastModified: null,
+        errorCount: 0,
+        retryAfterAt: null,
+      })),
+      saveRunForgeRequest,
+      saveRunForgeSyncError: vi.fn(() => null),
+    });
+    const getBranchCommitSha = vi.spyOn(GitService.prototype, "getBranchCommitSha").mockResolvedValue("sha-a");
+    const getHeadCommitSha = vi.spyOn(GitService.prototype, "getHeadCommitSha");
+    const getCurrentBranch = vi.spyOn(GitService.prototype, "getCurrentBranch").mockResolvedValue(requestB.sourceBranch);
+    const forgeProvider = {
+      listRequests: vi.fn(async () => ({
+        provider: "github" as const,
+        webBaseUrl: "https://github.com/acme/repo",
+        repoLabel: "acme/repo",
+        items: [requestA, requestB],
+      })),
+      getRequestStatus: vi.fn(async () => ({
+        state: "open" as const,
+        draft: false,
+        mergeability: "mergeable" as const,
+        reviewDecision: "none" as const,
+        headSha: "sha-a",
+        checks: [],
+        unresolvedThreadCount: 0,
+        supportedActions: ["refresh", "open", "mark-draft", "merge", "close"] as const,
+        supportedMergeMethods: ["merge"] as const,
+      })),
+      getRequestDetails: vi.fn(async () => ({
+        provider: "github" as const,
+        webBaseUrl: "https://github.com/acme/repo",
+        repoLabel: "acme/repo",
+        request: {
+          ...requestA,
+          description: "Request A details",
+          authorUser: null,
+          labels: [],
+          additions: 1,
+          deletions: 0,
+          changedFiles: 1,
+          commentCount: 0,
+          reviewCommentCount: 0,
+        },
+        activity: [],
+        commits: [],
+        files: [],
+        reviewThreads: [],
+        warnings: [],
+      })),
+    } as unknown as ProjectPrReviewProvider;
+    const internalController = harness.controller as unknown as {
+      createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
+    };
+    internalController.createProjectPrReviewProvider = vi.fn(async () => forgeProvider);
+
+    const result = await harness.controller.refreshRunForgeRequest(run.id);
+
+    expect(result).toMatchObject({ number: 16, sourceBranch: run.branchName, headSha: "sha-a" });
+    expect(getBranchCommitSha).toHaveBeenCalledWith(project.repoPath, run.branchName);
+    expect(getHeadCommitSha).not.toHaveBeenCalled();
+    expect(getCurrentBranch).not.toHaveBeenCalled();
+    expect(saveRunForgeRequest).toHaveBeenCalledWith(
+      run.id,
+      project.id,
+      run.branchName,
+      "sha-a",
+      expect.objectContaining({ number: 16, url: requestA.url }),
+      expect.objectContaining({ request: expect.objectContaining({ number: 16 }) }),
       expect.any(Object),
     );
   });
@@ -388,8 +517,7 @@ describe("AppController settings and lightweight workflows", () => {
       saveRunForgeRequest,
       saveRunForgeSyncError: vi.fn(() => null),
     });
-    vi.spyOn(GitService.prototype, "getHeadCommitSha").mockResolvedValue("head-sha");
-    vi.spyOn(GitService.prototype, "getCurrentBranch").mockResolvedValue(run.branchName);
+    vi.spyOn(GitService.prototype, "getBranchCommitSha").mockResolvedValue("head-sha");
     const forgeProvider = {
       listRequests: vi.fn(async () => ({
         provider: "github" as const,
@@ -473,8 +601,7 @@ describe("AppController settings and lightweight workflows", () => {
       saveRunForgeNegativeProbe: vi.fn(),
       saveRunForgeSyncError: vi.fn(() => null),
     });
-    vi.spyOn(GitService.prototype, "getHeadCommitSha").mockResolvedValue("head-sha");
-    vi.spyOn(GitService.prototype, "getCurrentBranch").mockResolvedValue("feature");
+    vi.spyOn(GitService.prototype, "getBranchCommitSha").mockResolvedValue("head-sha");
     const forgeProvider = {
       listRequests: vi.fn(async () => ({
         provider: "github" as const,

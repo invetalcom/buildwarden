@@ -4266,9 +4266,18 @@ export class AppController
         this.scheduleRunForgeRefresh(runId, cached.summary, retryAfterMs);
         return cached.summary;
       }
+      // Local runs share the project checkout. Another run can check out a
+      // different branch there, so the run's persisted branch—not the current
+      // checkout—must remain authoritative for Forge association.
+      const useRecordedBranch = run.workspaceType === "local" && run.branchName.trim().length > 0;
       const [probedHeadSha, probedBranchName] = await Promise.all([
-        this.gitService.getHeadCommitSha(workspacePath).catch(() => cached?.headSha ?? null),
-        this.gitService.getCurrentBranch(workspacePath).catch(() => run.branchName),
+        (useRecordedBranch
+          ? this.gitService.getBranchCommitSha(workspacePath, run.branchName)
+          : this.gitService.getHeadCommitSha(workspacePath)
+        ).catch(() => cached?.headSha ?? null),
+        useRecordedBranch
+          ? Promise.resolve(run.branchName)
+          : this.gitService.getCurrentBranch(workspacePath).catch(() => run.branchName),
       ]);
       const branchName = probedBranchName.trim() || run.branchName;
       const negativeProbeStillMatches = cached?.branchName === branchName && cached.headSha === probedHeadSha;

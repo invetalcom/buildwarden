@@ -30,6 +30,19 @@ afterEach(() => {
 });
 
 describe("project base branch detection", () => {
+  it("resolves a recorded branch commit independently of the checked-out branch", async () => {
+    const repoPath = createRepository();
+    git(repoPath, "checkout", "-b", "feature/recorded");
+    writeFileSync(join(repoPath, "feature.txt"), "recorded branch\n");
+    git(repoPath, "add", "feature.txt");
+    git(repoPath, "commit", "-m", "Feature commit");
+    const recordedCommit = git(repoPath, "rev-parse", "HEAD");
+    git(repoPath, "checkout", "main");
+
+    expect(await new GitService().getBranchCommitSha(repoPath, "feature/recorded")).toBe(recordedCommit);
+    expect(await new GitService().getHeadCommitSha(repoPath)).not.toBe(recordedCommit);
+  });
+
   it("uses origin/HEAD instead of the currently checked-out feature branch", async () => {
     const repoPath = createRepository();
     git(repoPath, "update-ref", "refs/remotes/origin/main", "HEAD");
