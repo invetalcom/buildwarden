@@ -6,6 +6,7 @@ import type {
   ProjectForgeRequestOpenPayload,
   ProjectLoopChangedPayload,
   ProjectTaskChangedPayload,
+  RunForgeRequestChangedPayload,
   RunEvent,
 } from "@buildwarden/shared";
 
@@ -16,6 +17,7 @@ export interface HostEventMap {
   loop: ProjectLoopChangedPayload;
   task: ProjectTaskChangedPayload;
   orchestration: OrchestrationChangedPayload;
+  forge: RunForgeRequestChangedPayload;
   forgeRequestOpen: ProjectForgeRequestOpenPayload;
   forgeRequestNotification: ProjectForgeRequestNotificationPayload;
   appMenuCommand: AppMenuCommand;

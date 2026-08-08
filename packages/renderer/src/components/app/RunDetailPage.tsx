@@ -14,6 +14,7 @@ import {
   type RunNoteRecord,
   type RunNoteStatus,
   type RunRecord,
+  type RunForgeRequestSummary,
   type RunTimelineDensity,
   type RunUserInputAnswers,
   type RunWorktreeDiffSummary,
@@ -29,6 +30,7 @@ import {
   ExternalLink,
   FileText,
   GitBranch,
+  GitPullRequest,
   Globe,
   ListTodo,
   Loader2,
@@ -76,6 +78,7 @@ import { Card } from "../ui/card";
 import { OrchestrationAgentsPanel } from "./OrchestrationAgentsPanel";
 import { shouldAutoOpenAgentsPanel } from "./run-workspace-layout";
 import { buildRunReasoningInput } from "./app-model";
+import { RunForgeRequestBadge, RunForgeRequestPanel } from "./RunForgeRequestPanel";
 
 const RunFilePanel = lazy(() => import("./RunFilePanel").then((module) => ({ default: module.RunFilePanel })));
 const RunWorktreeTerminal = lazy(() =>
@@ -122,7 +125,7 @@ type TilePanelId = RunWorkspacePanelId;
 // Kept for interface compatibility with the shared type.
 type TileLayoutState = Record<TilePanelId, RunWorkspaceTileSize>;
 
-type SecondaryPanelId = "agents" | "diff" | "terminal" | "browser" | "notes" | "chat" | "file";
+type SecondaryPanelId = "agents" | "diff" | "terminal" | "browser" | "notes" | "chat" | "pull-request" | "file";
 type SecondaryPanelPosition = "right" | "bottom";
 
 const pickVisibleSecondaryTab = (
@@ -130,7 +133,7 @@ const pickVisibleSecondaryTab = (
   visibility: Record<SecondaryPanelId, boolean>,
 ): SecondaryPanelId | null => {
   if (previous && visibility[previous]) return previous;
-  const order: SecondaryPanelId[] = ["file", "agents", "diff", "terminal", "browser", "notes", "chat"];
+  const order: SecondaryPanelId[] = ["file", "pull-request", "agents", "diff", "terminal", "browser", "notes", "chat"];
   return order.find((tab) => visibility[tab]) ?? null;
 };
 
@@ -234,6 +237,7 @@ export interface RunDetailPageProps {
   showBrowser: boolean;
   showNotes: boolean;
   showChat: boolean;
+  showPullRequest?: boolean;
   /** Requests the complete unified patch when a visible consumer needs it. */
   onRequestDiff: (runId: string) => void;
   /** Called when a panel should be toggled on or off from within the layout. */
@@ -291,6 +295,7 @@ export const RunDetailPage = ({
   showBrowser,
   showNotes,
   showChat,
+  showPullRequest = false,
   onRequestDiff,
   onTogglePanel,
   secondaryPanelPosition,
@@ -338,6 +343,7 @@ export const RunDetailPage = ({
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [noteEditDraft, setNoteEditDraft] = useState("");
   const [selectionMenu, setSelectionMenu] = useState<{ x: number; y: number; text: string } | null>(null);
+  const [forgeSummary, setForgeSummary] = useState<RunForgeRequestSummary | null>(runDetail.run.forgeRequest ?? null);
   const hasOrchestrationSurface = runDetail.run.kind !== "orchestration-task" &&
     (Boolean(runDetail.run.delegationEnabled) || Boolean(runDetail.orchestration));
   const agentsPanelVisible = showAgents && hasOrchestrationSurface;
@@ -373,6 +379,13 @@ export const RunDetailPage = ({
   const orderedSteps = useMemo(() => dedupeFinalSummarySteps(runDetail.steps), [runDetail.steps]);
   const contextHistoryText = useMemo(() => buildVisibleConversationHistory(runDetail.steps), [runDetail.steps]);
   const gitDiffPanelRef = useRef<GitDiffPreviewHandle>(null);
+
+  useEffect(() => {
+    setForgeSummary(runDetail.run.forgeRequest ?? null);
+    return buildwarden.onRunForgeRequestChanged((payload) => {
+      if (payload.runId === runDetail.run.id) setForgeSummary(payload.forgeRequest);
+    });
+  }, [buildwarden, runDetail.run.forgeRequest, runDetail.run.id]);
   const [allDiffFilesExpanded, setAllDiffFilesExpanded] = useState(false);
   const [modifiedFilesExpanded, setModifiedFilesExpanded] = useState(false);
   const diffStats = useMemo<RunWorktreeDiffSummary>(() => {
@@ -539,8 +552,9 @@ export const RunDetailPage = ({
       browser: showBrowser,
       notes: showNotes,
       chat: showChat,
+      "pull-request": showPullRequest && Boolean(forgeSummary),
     }));
-  }, [agentsPanelVisible, filePanelTarget, showDiff, showTerminal, showBrowser, showNotes, showChat]);
+  }, [agentsPanelVisible, filePanelTarget, forgeSummary, showDiff, showTerminal, showBrowser, showNotes, showChat, showPullRequest]);
 
   // Split-pane resize (works for both right and bottom positions)
   useEffect(() => {
@@ -597,10 +611,10 @@ export const RunDetailPage = ({
   const closeFilePanel = useCallback(() => {
     setFilePanelTarget(null);
     setActiveSecondaryTab((current) => (current === "file" ? null : current));
-    if (!showActivity && !agentsPanelVisible && !showDiff && !showTerminal && !showBrowser && !showNotes && !showChat) {
+    if (!showActivity && !agentsPanelVisible && !showDiff && !showTerminal && !showBrowser && !showNotes && !showChat && !showPullRequest) {
       onTogglePanel("activity");
     }
-  }, [agentsPanelVisible, onTogglePanel, showActivity, showBrowser, showChat, showDiff, showNotes, showTerminal]);
+  }, [agentsPanelVisible, onTogglePanel, showActivity, showBrowser, showChat, showDiff, showNotes, showPullRequest, showTerminal]);
 
   const openRunFileReference = useCallback((value: string | RunWorkspaceFileReference): boolean => {
     const reference = typeof value === "string" ? parseRunWorkspaceFileReference(value) : value;
@@ -701,6 +715,24 @@ export const RunDetailPage = ({
     } catch {
       /* App surfaces errors */
     }
+  };
+
+  const submitForgeAgentPrompt = async (prompt: string) => {
+    const selectedModel = modelOptions.find((option) => option.id === selectedModelId);
+    if (!selectedModel) throw new Error("Select a configured model.");
+    await onFollowUpRun(runDetail.run, prompt, {
+      mode: "code",
+      modelId: selectedModelId,
+      ...buildRunReasoningInput(
+        selectedModel.providerType,
+        selectedModel.providerFamily,
+        selectedReasoningEffort,
+        selectedAnthropicEffort,
+        selectedModel.executionProfile,
+        selectedExecutionMode,
+      ),
+      yoloMode: selectedYoloMode,
+    });
   };
 
   const saveGoalText = async (nextGoal: string | null) => {
@@ -924,8 +956,9 @@ export const RunDetailPage = ({
 
   // Derived visibility
   const hasFilePanel = Boolean(filePanelTarget);
-  const hasSecondaryPanels = agentsPanelVisible || showDiff || showTerminal || showBrowser || showNotes || showChat || hasFilePanel;
-  const visiblePanelCount = [showActivity, agentsPanelVisible, showDiff, showTerminal, showBrowser, showNotes, showChat, hasFilePanel].filter(Boolean).length;
+  const pullRequestPanelVisible = showPullRequest && Boolean(forgeSummary);
+  const hasSecondaryPanels = agentsPanelVisible || showDiff || showTerminal || showBrowser || showNotes || showChat || pullRequestPanelVisible || hasFilePanel;
+  const visiblePanelCount = [showActivity, agentsPanelVisible, showDiff, showTerminal, showBrowser, showNotes, showChat, pullRequestPanelVisible, hasFilePanel].filter(Boolean).length;
 
   const canHideAgents = agentsPanelVisible && visiblePanelCount > 1;
   const canHideDiff = showDiff && visiblePanelCount > 1 && !worktreeUnavailable;
@@ -933,6 +966,7 @@ export const RunDetailPage = ({
   const canHideBrowser = showBrowser && visiblePanelCount > 1;
   const canHideNotes = showNotes && visiblePanelCount > 1;
   const canHideChat = showChat && visiblePanelCount > 1;
+  const canHidePullRequest = pullRequestPanelVisible && visiblePanelCount > 1;
 
   const secondaryPanelDefs = [
     {
@@ -984,6 +1018,14 @@ export const RunDetailPage = ({
       canHide: canHideChat,
     },
     {
+      id: "pull-request" as const,
+      label: forgeSummary?.provider === "gitlab" ? "Merge Request" : "Pull Request",
+      Icon: GitPullRequest,
+      enabled: pullRequestPanelVisible,
+      canToggle: Boolean(forgeSummary),
+      canHide: canHidePullRequest,
+    },
+    {
       id: "file" as const,
       label: "File",
       Icon: FileText,
@@ -1003,7 +1045,6 @@ export const RunDetailPage = ({
   const fallbackFinishedAt = orderedSteps[orderedSteps.length - 1]?.createdAt ?? runDetail.run.updatedAt;
   const runDurationLabel = formatRunDuration(runDetail.run.startedAt ?? runDetail.run.createdAt, runDetail.run.finishedAt ?? fallbackFinishedAt);
   const modifiedFilesSummary = showModifiedFilesSummary ? (
-    <div className="pointer-events-none absolute bottom-2 left-0 right-0 z-20 flex justify-center px-2">
       <div
         className={cn(
           "pointer-events-auto overflow-hidden rounded-md border border-zinc-800/70 bg-zinc-900/95 shadow-lg shadow-black/20 backdrop-blur",
@@ -1085,12 +1126,29 @@ export const RunDetailPage = ({
             ))}
           </div>
         ) : null}
-      </div>
+    </div>
+  ) : null;
+
+  const showForgeBadge = Boolean(forgeSummary) && activeSecondaryTab !== "pull-request";
+  const runResultDock = showModifiedFilesSummary || showForgeBadge ? (
+    <div className="pointer-events-none absolute bottom-2 left-0 right-0 z-20 flex flex-wrap items-end justify-center gap-1.5 px-2">
+      {modifiedFilesSummary}
+      {forgeSummary && showForgeBadge ? (
+        <div className="pointer-events-auto">
+          <RunForgeRequestBadge
+            summary={forgeSummary}
+            onOpen={() => {
+              if (!showPullRequest) onTogglePanel("pull-request");
+              setActiveSecondaryTab("pull-request");
+            }}
+          />
+        </div>
+      ) : null}
     </div>
   ) : null;
 
   let activityTimelineFloatingClass = "agent-worklog--flush-end";
-  if (showModifiedFilesSummary) {
+  if (showModifiedFilesSummary || showForgeBadge) {
     activityTimelineFloatingClass = modifiedFilesExpanded ? "agent-worklog--floating-diff-expanded" : "agent-worklog--floating-diff";
   }
   let recoveryBadge: ReactNode = null;
@@ -1341,7 +1399,7 @@ export const RunDetailPage = ({
             style={activityPaneStyle}
           >
             {activityContent}
-            {modifiedFilesSummary}
+            {runResultDock}
           </div>
         ) : null}
 
@@ -1691,6 +1749,16 @@ export const RunDetailPage = ({
                   nextAnnotationNumber={browserElementCaptures.reduce((maximum, capture) => Math.max(maximum, capture.annotationNumber), 0) + 1}
                   onSessionChange={onBrowserSessionChange}
                   onElementSelected={handleBrowserElementSelected}
+                />
+              ) : null}
+
+              {/* Run-linked pull request / merge request inspector. */}
+              {pullRequestPanelVisible && forgeSummary && activeSecondaryTab === "pull-request" ? (
+                <RunForgeRequestPanel
+                  run={runDetail.run}
+                  initialSummary={forgeSummary}
+                  onSummaryChange={setForgeSummary}
+                  onAgentPrompt={submitForgeAgentPrompt}
                 />
               ) : null}
 

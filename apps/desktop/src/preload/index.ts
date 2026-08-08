@@ -23,6 +23,7 @@ import {
   type RunChatInput,
   type RunBrowserEvent,
   type RunEvent,
+  type RunForgeRequestChangedPayload,
   type RunFollowUpOptions,
   type RunInput,
   type RunUserInputAnswers,
@@ -109,6 +110,11 @@ const api: DesktopApi = {
     invoke(IPC_CHANNELS.listProjectForgeRequests, projectId, input),
   getProjectForgeRequestDetails: (projectId: string, input) =>
     invoke(IPC_CHANNELS.getProjectForgeRequestDetails, projectId, input),
+  getRunForgeRequestDetails: (runId: string, options) => invoke(IPC_CHANNELS.getRunForgeRequestDetails, runId, options),
+  refreshRunForgeRequest: (runId: string) => invoke(IPC_CHANNELS.refreshRunForgeRequest, runId),
+  getRunForgeRequestDiff: (runId: string) => invoke(IPC_CHANNELS.getRunForgeRequestDiff, runId),
+  updateRunForgeRequest: (runId: string, input) => invoke(IPC_CHANNELS.updateRunForgeRequest, runId, input),
+  mergeRunForgeRequest: (runId: string, input) => invoke(IPC_CHANNELS.mergeRunForgeRequest, runId, input),
   postProjectPrMrReview: (projectId: string, input) => invoke(IPC_CHANNELS.postProjectPrMrReview, projectId, input),
   submitProjectPrMrComments: (projectId: string, input) => invoke(IPC_CHANNELS.submitProjectPrMrComments, projectId, input),
   replyProjectPrMrReviewThread: (projectId: string, input) =>
@@ -289,6 +295,11 @@ const api: DesktopApi = {
     const wrapped = (_event: Electron.IpcRendererEvent, payload: ProjectForgeRequestNotificationPayload) => listener(payload);
     ipcRenderer.on(IPC_CHANNELS.projectForgeRequestNotification, wrapped);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.projectForgeRequestNotification, wrapped);
+  },
+  onRunForgeRequestChanged: (listener: (payload: RunForgeRequestChangedPayload) => void) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, payload: RunForgeRequestChangedPayload) => listener(payload);
+    ipcRenderer.on(IPC_CHANNELS.runForgeRequestChanged, wrapped);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.runForgeRequestChanged, wrapped);
   },
   showAppMenu: (section: AppMenuSection, x: number, y: number) => invoke(IPC_CHANNELS.showAppMenu, section, x, y),
   releaseRun: (runId: string) => invoke(IPC_CHANNELS.releaseRun, runId),

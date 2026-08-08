@@ -25,6 +25,7 @@ export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, settings, s
   const [runWorkspaceShowBrowser, setRunWorkspaceShowBrowser] = useState(false);
   const [runWorkspaceShowNotes, setRunWorkspaceShowNotes] = useState(false);
   const [runWorkspaceShowChat, setRunWorkspaceShowChat] = useState(false);
+  const [runWorkspaceShowPullRequest, setRunWorkspaceShowPullRequest] = useState(false);
   const [runWorkspaceSecondaryPosition, setRunWorkspaceSecondaryPosition] = useState<"right" | "bottom">("right");
   const [runWorkspaceLayoutsByRunId, setRunWorkspaceLayoutsByRunId] = useState<RunWorkspaceLayoutPreferencesByRunId>({});
   const runWorkspaceLayoutsByRunIdRef = useRef<RunWorkspaceLayoutPreferencesByRunId>({});
@@ -50,6 +51,7 @@ export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, settings, s
     setRunWorkspaceShowBrowser(selectedLayout.visiblePanels.browser);
     setRunWorkspaceShowNotes(selectedLayout.visiblePanels.notes);
     setRunWorkspaceShowChat(selectedLayout.visiblePanels.chat);
+    setRunWorkspaceShowPullRequest(selectedLayout.visiblePanels["pull-request"]);
     setRunWorkspaceSecondaryPosition(selectedLayout.secondaryPanelPosition);
   }, [selectedLayout]);
 
@@ -132,6 +134,7 @@ export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, settings, s
     runWorkspaceShowDiff,
     runWorkspaceShowNotes,
     runWorkspaceShowTerminal,
+    runWorkspaceShowPullRequest,
     setRunWorkspaceSecondaryPosition,
     setRunWorkspaceShowActivity,
     setRunWorkspaceShowAgents,
@@ -140,6 +143,7 @@ export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, settings, s
     setRunWorkspaceShowDiff,
     setRunWorkspaceShowNotes,
     setRunWorkspaceShowTerminal,
+    setRunWorkspaceShowPullRequest,
     updateRunWorkspaceLayout,
   };
 };

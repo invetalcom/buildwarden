@@ -27,6 +27,7 @@ describe("run workspace layout defaults", () => {
       browser: true,
       notes: true,
       chat: true,
+      "pull-request": false,
     }, {
       platform: "web",
       embeddedTerminal: false,
@@ -39,6 +40,7 @@ describe("run workspace layout defaults", () => {
       browser: false,
       notes: false,
       chat: false,
+      "pull-request": false,
     });
   });
 
@@ -51,6 +53,7 @@ describe("run workspace layout defaults", () => {
       browser: false,
       notes: false,
       chat: false,
+      "pull-request": false,
     }, {
       platform: "web",
       embeddedTerminal: false,

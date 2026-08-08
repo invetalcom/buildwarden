@@ -612,6 +612,17 @@ const bootstrap = async (): Promise<void> => {
   const validateForgeRequestDetails = defineRemoteArgsValidator<"getProjectForgeRequestDetails">(
     (args) => args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["prUrl"]),
   );
+  const validateRunForgeRequestDetails = defineRemoteArgsValidator<"getRunForgeRequestDetails">((args) =>
+    (args.length === 1 || args.length === 2) && typeof args[0] === "string" &&
+    (args[1] === undefined || (isRemoteRecord(args[1]) &&
+      (args[1].refresh === undefined || typeof args[1].refresh === "boolean"))));
+  const validateUpdateRunForgeRequest = defineRemoteArgsValidator<"updateRunForgeRequest">((args) =>
+    args.length === 2 && typeof args[0] === "string" && isRemoteRecord(args[1]) &&
+    ["mark-draft", "mark-ready", "close", "reopen"].includes(String(args[1].action)) &&
+    (args[1].expectedHeadSha === undefined || typeof args[1].expectedHeadSha === "string"));
+  const validateMergeRunForgeRequest = defineRemoteArgsValidator<"mergeRunForgeRequest">((args) =>
+    args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["method", "expectedHeadSha"]) &&
+    isRemoteRecord(args[1]) && ["merge", "squash", "rebase"].includes(String(args[1].method)));
   const validateFetchForgeDiff = defineRemoteArgsValidator<"fetchProjectPrMrDiff">((args) => {
     if (args.length !== 2 || typeof args[0] !== "string" || !hasRemoteStringFields(args[1], ["prUrl"]) ||
       !isRemoteRecord(args[1])) return false;
@@ -710,6 +721,9 @@ const bootstrap = async (): Promise<void> => {
     validateForgeRequestDetails,
     "git:write",
   );
+  remoteOperations.register("getRunForgeRequestDetails", (runId, options) => controller.getRunForgeRequestDetails(runId, options), validateRunForgeRequestDetails);
+  remoteOperations.register("refreshRunForgeRequest", (runId) => controller.refreshRunForgeRequest(runId), validateSingleRemoteStringArg);
+  remoteOperations.register("getRunForgeRequestDiff", (runId) => controller.getRunForgeRequestDiff(runId), validateSingleRemoteStringArg);
   remoteOperations.register(
     "fetchProjectPrMrDiff",
     (projectId, input) => controller.fetchProjectPrMrDiff(projectId, input),
@@ -884,6 +898,8 @@ const bootstrap = async (): Promise<void> => {
     "git:write",
     true,
   );
+  remoteOperations.register("updateRunForgeRequest", (runId, input) => controller.updateRunForgeRequest(runId, input), validateUpdateRunForgeRequest, "git:write", true);
+  remoteOperations.register("mergeRunForgeRequest", (runId, input) => controller.mergeRunForgeRequest(runId, input), validateMergeRunForgeRequest, "git:write", true);
 
   remoteOperations.register("commitRun", (runId, message) => controller.commitRun(runId, message), validateTwoRemoteStrings, "git:write", true);
   remoteOperations.register("createRunLocalBranch", (runId, branchName) => controller.createRunLocalBranch(runId, branchName), validateTwoRemoteStrings, "git:write", true);
@@ -991,6 +1007,7 @@ const bootstrap = async (): Promise<void> => {
         hostEvents.subscribe("loop", (payload) => listener({ event: "loop", payload })),
         hostEvents.subscribe("task", (payload) => listener({ event: "task", payload })),
         hostEvents.subscribe("orchestration", (payload) => listener({ event: "orchestration", payload })),
+        hostEvents.subscribe("forge", (payload) => listener({ event: "forge", payload })),
         hostTerminal.onData((payload) => listener({ event: "terminal-data", payload })),
         hostTerminal.onExit((payload) => listener({ event: "terminal-exit", payload })),
         hostBrowser.onEvent((payload) => listener({ event: "browser", payload })),
@@ -1250,6 +1267,12 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.getProjectForgeRequestDetails, (_, projectId: string, input) =>
     controller.getProjectForgeRequestDetails(projectId, input),
   );
+  ipcMain.handle(IPC_CHANNELS.getRunForgeRequestDetails, (_, runId: string, options) =>
+    controller.getRunForgeRequestDetails(runId, options));
+  ipcMain.handle(IPC_CHANNELS.refreshRunForgeRequest, (_, runId: string) => controller.refreshRunForgeRequest(runId));
+  ipcMain.handle(IPC_CHANNELS.getRunForgeRequestDiff, (_, runId: string) => controller.getRunForgeRequestDiff(runId));
+  ipcMain.handle(IPC_CHANNELS.updateRunForgeRequest, (_, runId: string, input) => controller.updateRunForgeRequest(runId, input));
+  ipcMain.handle(IPC_CHANNELS.mergeRunForgeRequest, (_, runId: string, input) => controller.mergeRunForgeRequest(runId, input));
   ipcMain.handle(IPC_CHANNELS.postProjectPrMrReview, (_, projectId: string, input) => controller.postProjectPrMrReview(projectId, input));
   ipcMain.handle(IPC_CHANNELS.submitProjectPrMrComments, (_, projectId: string, input) =>
     controller.submitProjectPrMrComments(projectId, input),

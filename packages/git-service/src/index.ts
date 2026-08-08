@@ -519,6 +519,10 @@ async function syncChangedFilesFromWorktree(sourceWorktreePath: string, targetWo
 }
 
 export class GitService {
+  async getHeadCommitSha(repoPath: string): Promise<string> {
+    return (await simpleGit(repoPath).revparse(["HEAD"])).trim();
+  }
+
   async getCurrentBranch(repoPath: string): Promise<string> {
     const git = simpleGit(repoPath);
     const branchName = (await git.branch(["--show-current"])).current?.trim();

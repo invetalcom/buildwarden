@@ -67,6 +67,8 @@ import type {
   UpdateProjectTaskInput,
   UpdateRunNoteInput,
   RunRecord,
+  RunForgeRequestDetailsResult,
+  RunForgeRequestSummary,
   RunStatus,
   RunStepRecord,
   WorktreeRecord,
@@ -96,6 +98,26 @@ const SQLITE_VARIABLE_BATCH_SIZE = 900;
 
 const nowIso = () => new Date().toISOString();
 const createId = () => crypto.randomUUID();
+
+export interface RunForgeRequestCacheRecord {
+  runId: string;
+  projectId: string;
+  branchName: string;
+  headSha: string | null;
+  lastProbeAt: string | null;
+  negativeCacheUntil: string | null;
+  summary: RunForgeRequestSummary | null;
+  details: RunForgeRequestDetailsResult | null;
+  etag: string | null;
+  lastModified: string | null;
+  errorCount: number;
+  retryAfterAt: string | null;
+}
+
+type StoredRunForgeRequestCacheRecord = Omit<RunForgeRequestCacheRecord, "summary" | "details"> & {
+  summaryJson: string | null;
+  detailsJson: string | null;
+};
 const chunkValues = <T>(values: readonly T[], size = SQLITE_VARIABLE_BATCH_SIZE): T[][] => {
   const chunks: T[][] = [];
   for (let index = 0; index < values.length; index += size) {
@@ -1672,6 +1694,8 @@ export class BuildWardenDatabase {
   }
 
   deleteProject(projectId: string): void {
+    this.run("delete from run_forge_links where run_id in (select id from runs where project_id = ?)", [projectId]);
+    this.run("delete from forge_requests where project_id = ?", [projectId]);
     this.run(
       `
       delete from run_notes
@@ -1920,8 +1944,20 @@ export class BuildWardenDatabase {
     }
 
     const runIds = runs.map((run) => run.id);
+    const forgeByRunId = new Map<string, RunForgeRequestSummary>();
     for (const batch of chunkValues(runIds)) {
       const placeholders = batch.map(() => "?").join(", ");
+      const forgeRows = this.all<{ runId: string; summaryJson: string }>(
+        `select l.run_id as runId, f.summary_json as summaryJson
+         from run_forge_links l
+         join forge_requests f on f.id = l.forge_request_id
+         where l.run_id in (${placeholders})`,
+        batch,
+      );
+      for (const row of forgeRows) {
+        const summary = this.parseJsonValue<RunForgeRequestSummary>(row.summaryJson);
+        if (summary) forgeByRunId.set(row.runId, summary);
+      }
       const steps = this.all<{
         runId: string;
         eventType: string;
@@ -1957,6 +1993,7 @@ export class BuildWardenDatabase {
       const derived = derivedByRunId.get(run.id);
       return {
         ...run,
+        forgeRequest: forgeByRunId.get(run.id) ?? null,
         pendingUserInputRequest: derived?.pendingUserInputRequest ?? false,
         userInputSearchText: derived ? [...derived.parts].join("\n") : "",
         lastUserInputAt: derived?.lastUserInputAt ?? run.createdAt,
@@ -2022,7 +2059,133 @@ export class BuildWardenDatabase {
     this.run("delete from worktrees where run_id = ?", [runId]);
     this.run("delete from chat_steps where chat_id in (select id from chats where run_id = ?)", [runId]);
     this.run("delete from chats where run_id = ?", [runId]);
+    this.run("delete from run_forge_links where run_id = ?", [runId]);
     this.run("delete from runs where id = ?", [runId]);
+  }
+
+  getRunForgeRequestCache(runId: string): RunForgeRequestCacheRecord | null {
+    const row = this.first<StoredRunForgeRequestCacheRecord>(
+      `select l.run_id as runId, r.project_id as projectId, l.branch_name as branchName,
+        l.head_sha as headSha, l.last_probe_at as lastProbeAt, l.negative_cache_until as negativeCacheUntil,
+        f.summary_json as summaryJson, f.details_json as detailsJson, f.etag,
+        f.last_modified as lastModified, coalesce(f.error_count, 0) as errorCount,
+        f.retry_after_at as retryAfterAt
+       from run_forge_links l
+       join runs r on r.id = l.run_id
+       left join forge_requests f on f.id = l.forge_request_id
+       where l.run_id = ?`,
+      [runId],
+    );
+    if (!row) return null;
+    const { summaryJson, detailsJson, ...cache } = row;
+    return {
+      ...cache,
+      summary: this.parseJsonValue<RunForgeRequestSummary>(summaryJson),
+      details: this.parseJsonValue<RunForgeRequestDetailsResult>(detailsJson),
+    };
+  }
+
+  saveRunForgeRequest(
+    runId: string,
+    projectId: string,
+    branchName: string,
+    headSha: string | null,
+    summary: RunForgeRequestSummary,
+    details: RunForgeRequestDetailsResult | null,
+    cache?: { etag?: string | null; lastModified?: string | null },
+  ): void {
+    const timestamp = nowIso();
+    const existing = this.first<{ id: string; detailsJson: string | null }>(
+      `select id, details_json as detailsJson from forge_requests
+       where project_id = ? and provider = ? and request_number = ?`,
+      [projectId, summary.provider, summary.number],
+    );
+    const requestId = existing?.id ?? createId();
+    this.run(
+      `insert into forge_requests (
+         id, project_id, provider, request_number, summary_json, details_json, checks_json,
+         etag, last_modified, last_synced_at, error_count, sync_error, retry_after_at, created_at, updated_at
+       ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, null, null, ?, ?)
+       on conflict(project_id, provider, request_number) do update set
+         summary_json = excluded.summary_json,
+         details_json = coalesce(excluded.details_json, forge_requests.details_json),
+         checks_json = excluded.checks_json,
+         etag = coalesce(excluded.etag, forge_requests.etag),
+         last_modified = coalesce(excluded.last_modified, forge_requests.last_modified),
+         last_synced_at = excluded.last_synced_at,
+         error_count = 0,
+         sync_error = null,
+         retry_after_at = null,
+         updated_at = excluded.updated_at`,
+      [
+        requestId,
+        projectId,
+        summary.provider,
+        summary.number,
+        JSON.stringify(summary),
+        details ? JSON.stringify(details) : null,
+        JSON.stringify(details?.checks ?? []),
+        cache?.etag ?? null,
+        cache?.lastModified ?? null,
+        summary.lastSyncedAt,
+        timestamp,
+        timestamp,
+      ],
+    );
+    this.run(
+      `insert into run_forge_links (
+         run_id, forge_request_id, branch_name, head_sha, last_probe_at, negative_cache_until, created_at, updated_at
+       ) values (?, ?, ?, ?, ?, null, ?, ?)
+       on conflict(run_id) do update set
+         forge_request_id = excluded.forge_request_id,
+         branch_name = excluded.branch_name,
+         head_sha = excluded.head_sha,
+         last_probe_at = excluded.last_probe_at,
+         negative_cache_until = null,
+         updated_at = excluded.updated_at`,
+      [runId, requestId, branchName, headSha, timestamp, timestamp, timestamp],
+    );
+  }
+
+  saveRunForgeNegativeProbe(
+    runId: string,
+    branchName: string,
+    headSha: string | null,
+    negativeCacheUntil: string,
+  ): void {
+    const timestamp = nowIso();
+    this.run(
+      `insert into run_forge_links (
+         run_id, forge_request_id, branch_name, head_sha, last_probe_at, negative_cache_until, created_at, updated_at
+       ) values (?, null, ?, ?, ?, ?, ?, ?)
+       on conflict(run_id) do update set
+         forge_request_id = null,
+         branch_name = excluded.branch_name,
+         head_sha = excluded.head_sha,
+         last_probe_at = excluded.last_probe_at,
+         negative_cache_until = excluded.negative_cache_until,
+         updated_at = excluded.updated_at`,
+      [runId, branchName, headSha, timestamp, negativeCacheUntil, timestamp, timestamp],
+    );
+  }
+
+  saveRunForgeSyncError(runId: string, message: string, retryAfterAt: string): RunForgeRequestSummary | null {
+    const cache = this.getRunForgeRequestCache(runId);
+    if (!cache?.summary) return null;
+    const timestamp = nowIso();
+    const staleSummary: RunForgeRequestSummary = {
+      ...cache.summary,
+      readiness: "unavailable",
+      stale: true,
+      syncError: message,
+    };
+    this.run(
+      `update forge_requests set summary_json = ?, error_count = error_count + 1,
+       sync_error = ?, retry_after_at = ?, updated_at = ?
+       where id = (select forge_request_id from run_forge_links where run_id = ?)`,
+      [JSON.stringify(staleSummary), message, retryAfterAt, timestamp, runId],
+    );
+    return staleSummary;
   }
 
   listRunNotes(runId: string): RunNoteRecord[] {
@@ -3707,6 +3870,39 @@ export class BuildWardenDatabase {
         foreign key(run_id) references runs(id)
       );
 
+      create table if not exists forge_requests (
+        id text primary key,
+        project_id text not null,
+        provider text not null,
+        request_number integer not null,
+        summary_json text not null,
+        details_json text,
+        checks_json text not null default '[]',
+        etag text,
+        last_modified text,
+        last_synced_at text not null,
+        error_count integer not null default 0,
+        sync_error text,
+        retry_after_at text,
+        created_at text not null,
+        updated_at text not null,
+        unique(project_id, provider, request_number),
+        foreign key(project_id) references projects(id)
+      );
+
+      create table if not exists run_forge_links (
+        run_id text primary key,
+        forge_request_id text,
+        branch_name text not null,
+        head_sha text,
+        last_probe_at text,
+        negative_cache_until text,
+        created_at text not null,
+        updated_at text not null,
+        foreign key(run_id) references runs(id),
+        foreign key(forge_request_id) references forge_requests(id)
+      );
+
       create table if not exists worktrees (
         id text primary key,
         project_id text not null,
@@ -4139,6 +4335,8 @@ export class BuildWardenDatabase {
       create index if not exists idx_orchestration_events_sequence on orchestration_events(orchestration_id, sequence);
       create index if not exists idx_orchestration_messages_status on orchestration_task_messages(task_id, status);
       create index if not exists idx_orchestration_cleanup_status on orchestration_cleanup_jobs(status, updated_at);
+      create index if not exists idx_forge_requests_project on forge_requests(project_id, updated_at desc);
+      create index if not exists idx_run_forge_links_request on run_forge_links(forge_request_id);
     `);
 
   }
@@ -4191,6 +4389,15 @@ export class BuildWardenDatabase {
     try {
       const parsed = JSON.parse(value) as unknown;
       return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private parseJsonValue<T>(value: string | null): T | null {
+    if (!value) return null;
+    try {
+      return JSON.parse(value) as T;
     } catch {
       return null;
     }

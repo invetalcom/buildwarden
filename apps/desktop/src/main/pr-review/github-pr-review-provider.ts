@@ -17,6 +17,7 @@ import type {
   ProjectForgeReviewActionResult,
   ProjectPrMrDiffResult,
   ProjectPrMrDiffComment,
+  RunForgeCheck,
   ReplyProjectPrMrReviewThreadInput,
   ResolveProjectPrMrReviewThreadInput,
   SubmitProjectPrMrCommentsInput,
@@ -25,9 +26,11 @@ import type { PrReviewHttpClient } from "./pr-review-http-client";
 import type {
   CreateForgeRequestInput,
   ForgeRequestApprovalStatus,
+  ForgeRequestStatusResult,
   MergeForgeRequestInput,
   ProjectPrReviewProvider,
   ProjectPrReviewRemoteContext,
+  UpdateForgeRequestInput,
 } from "./pr-review-types";
 import {
   assertDraftCommentsAreSubmittable,
@@ -443,6 +446,32 @@ const toGithubSingleReviewComment = (comment: ProjectPrMrDiffComment, commitId: 
   };
 };
 
+const githubCheckStatus = (status: string | null, conclusion: string | null): RunForgeCheck["status"] => {
+  const normalizedStatus = status?.toUpperCase();
+  const normalizedConclusion = conclusion?.toUpperCase();
+  if (normalizedStatus && normalizedStatus !== "COMPLETED") {
+    return normalizedStatus === "QUEUED" || normalizedStatus === "WAITING" || normalizedStatus === "PENDING" ? "queued" : "running";
+  }
+  if (normalizedConclusion === "SUCCESS") return "success";
+  if (normalizedConclusion === "NEUTRAL") return "neutral";
+  if (normalizedConclusion === "SKIPPED") return "skipped";
+  if (normalizedConclusion === "CANCELLED") return "cancelled";
+  return "failure";
+};
+
+const githubStatusContextStatus = (state: string | null): RunForgeCheck["status"] => {
+  const normalized = state?.toUpperCase();
+  if (normalized === "SUCCESS") return "success";
+  if (normalized === "PENDING" || normalized === "EXPECTED") return "running";
+  return "failure";
+};
+
+const durationBetween = (startedAt: string | null, completedAt: string | null): number | null => {
+  if (!startedAt || !completedAt) return null;
+  const duration = Date.parse(completedAt) - Date.parse(startedAt);
+  return Number.isFinite(duration) && duration >= 0 ? duration : null;
+};
+
 export class GithubPrReviewProvider implements ProjectPrReviewProvider {
   constructor(
     private readonly context: GithubPrReviewContext,
@@ -805,7 +834,11 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
     const parsed = parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
     const owner = encodeURIComponent(this.context.github.owner);
     const repo = encodeURIComponent(this.context.github.repo);
-    const body: Record<string, unknown> = { merge_method: "merge" };
+    if (input.expectedHeadSha) {
+      await this.assertExpectedHeadSha(parsed.number, input.expectedHeadSha);
+    }
+    const body: Record<string, unknown> = { merge_method: input.method ?? "merge" };
+    if (input.expectedHeadSha) body.sha = input.expectedHeadSha;
     if (input.mergeCommitTitle?.trim()) {
       body.commit_title = input.mergeCommitTitle.trim();
     }
@@ -848,6 +881,147 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
       approved: approvedBy.length > 0,
       approvedBy,
     };
+  }
+
+  async getRequestStatus(input: GetProjectForgeRequestDetailsInput): Promise<ForgeRequestStatusResult> {
+    const parsed = parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
+    const payload = await this.http.json("/graphql", {
+      method: "POST",
+      body: JSON.stringify({
+        query: `query RunPullRequestStatus($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            mergeCommitAllowed
+            squashMergeAllowed
+            rebaseMergeAllowed
+            pullRequest(number: $number) {
+              state isDraft mergedAt mergeable reviewDecision headRefOid
+              reviewThreads(first: 100) { nodes { isResolved } }
+              commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
+                __typename
+                ... on CheckRun { id databaseId name status conclusion detailsUrl startedAt completedAt }
+                ... on StatusContext { id context state targetUrl description createdAt }
+              } } } } } }
+            }
+          }
+        }`,
+        variables: {
+          owner: this.context.github.owner,
+          repo: this.context.github.repo,
+          number: parsed.number,
+        },
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!isRecord(payload) || (Array.isArray(payload.errors) && payload.errors.length > 0)) {
+      throw new Error("GitHub GraphQL could not load pull request status.");
+    }
+    const data = recordObject(payload, "data");
+    const repository = data ? recordObject(data, "repository") : null;
+    const request = repository ? recordObject(repository, "pullRequest") : null;
+    if (!request) throw new Error("GitHub did not return the pull request status.");
+
+    const threadsConnection = recordObject(request, "reviewThreads");
+    const threadNodes = Array.isArray(threadsConnection?.nodes) ? onlyRecords(threadsConnection.nodes) : [];
+    const commitsConnection = recordObject(request, "commits");
+    const commitNodes = Array.isArray(commitsConnection?.nodes) ? onlyRecords(commitsConnection.nodes) : [];
+    const commit = commitNodes[0] ? recordObject(commitNodes[0], "commit") : null;
+    const rollup = commit ? recordObject(commit, "statusCheckRollup") : null;
+    const contexts = rollup ? recordObject(rollup, "contexts") : null;
+    const contextNodes = Array.isArray(contexts?.nodes) ? onlyRecords(contexts.nodes) : [];
+    const checks: RunForgeCheck[] = contextNodes.map((node, index) => {
+      const typename = recordString(node, "__typename");
+      if (typename === "StatusContext") {
+        const startedAt = recordString(node, "createdAt");
+        return {
+          id: recordString(node, "id") ?? `github-status-${String(index)}`,
+          name: recordString(node, "context") ?? "Commit status",
+          status: githubStatusContextStatus(recordString(node, "state")),
+          url: recordString(node, "targetUrl"),
+          description: recordString(node, "description"),
+          startedAt,
+          completedAt: githubStatusContextStatus(recordString(node, "state")) === "running" ? null : startedAt,
+          durationMs: null,
+        };
+      }
+      const startedAt = recordString(node, "startedAt");
+      const completedAt = recordString(node, "completedAt");
+      return {
+        id: recordString(node, "id") ?? `github-check-${String(index)}`,
+        name: recordString(node, "name") ?? "Check run",
+        status: githubCheckStatus(recordString(node, "status"), recordString(node, "conclusion")),
+        url: recordString(node, "detailsUrl"),
+        description: null,
+        startedAt,
+        completedAt,
+        durationMs: durationBetween(startedAt, completedAt),
+      };
+    });
+
+    const rawState = recordString(request, "state")?.toUpperCase();
+    const state = rawState === "MERGED" || recordString(request, "mergedAt") ? "merged" : rawState === "CLOSED" ? "closed" : "open";
+    const draft = recordBoolean(request, "isDraft");
+    const rawMergeability = recordString(request, "mergeable")?.toUpperCase();
+    const mergeability = rawMergeability === "MERGEABLE" ? "mergeable" : rawMergeability === "CONFLICTING" ? "conflicting" : rawMergeability === "UNKNOWN" ? "checking" : "unknown";
+    const rawDecision = recordString(request, "reviewDecision")?.toUpperCase();
+    const reviewDecision = rawDecision === "APPROVED" ? "approved" : rawDecision === "CHANGES_REQUESTED" ? "changes-requested" : rawDecision === "REVIEW_REQUIRED" ? "review-required" : "none";
+    const supportedMergeMethods = [
+      ...(repository && recordBoolean(repository, "mergeCommitAllowed") ? (["merge"] as const) : []),
+      ...(repository && recordBoolean(repository, "squashMergeAllowed") ? (["squash"] as const) : []),
+      ...(repository && recordBoolean(repository, "rebaseMergeAllowed") ? (["rebase"] as const) : []),
+    ];
+    return {
+      state,
+      draft,
+      mergeability,
+      reviewDecision,
+      headSha: recordString(request, "headRefOid"),
+      checks,
+      unresolvedThreadCount: threadNodes.filter((thread) => !recordBoolean(thread, "isResolved")).length,
+      supportedActions: state === "open"
+        ? ["refresh", "open", draft ? "mark-ready" : "mark-draft", "merge", "close"]
+        : state === "closed" ? ["refresh", "open", "reopen"] : ["refresh", "open"],
+      supportedMergeMethods: supportedMergeMethods.length > 0 ? [...supportedMergeMethods] : ["merge"],
+    };
+  }
+
+  async updateRequest(input: UpdateForgeRequestInput): Promise<ProjectForgeReviewActionResult> {
+    const parsed = parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
+    if (input.expectedHeadSha) await this.assertExpectedHeadSha(parsed.number, input.expectedHeadSha);
+    const owner = encodeURIComponent(this.context.github.owner);
+    const repo = encodeURIComponent(this.context.github.repo);
+    if (input.action === "mark-ready") {
+      await this.http.json(`/repos/${owner}/${repo}/pulls/${String(parsed.number)}/ready_for_review`, { method: "POST" });
+    } else if (input.action === "mark-draft") {
+      const request = await this.http.json(`/repos/${owner}/${repo}/pulls/${String(parsed.number)}`);
+      const nodeId = isRecord(request) ? recordString(request, "node_id") : null;
+      if (!nodeId) throw new Error("GitHub did not return the pull request node ID.");
+      await this.http.json("/graphql", {
+        method: "POST",
+        body: JSON.stringify({
+          query: "mutation MarkDraft($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { pullRequest { id isDraft } } }",
+          variables: { id: nodeId },
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+    } else {
+      await this.http.json(`/repos/${owner}/${repo}/pulls/${String(parsed.number)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ state: input.action === "close" ? "closed" : "open" }),
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return { message: `Pull request updated: ${input.action.replace(/-/g, " ")}.`, url: input.prUrl.trim() };
+  }
+
+  private async assertExpectedHeadSha(pullNumber: number, expectedHeadSha: string): Promise<void> {
+    const request = await this.http.json(
+      `/repos/${encodeURIComponent(this.context.github.owner)}/${encodeURIComponent(this.context.github.repo)}/pulls/${String(pullNumber)}`,
+    );
+    const head = isRecord(request) ? recordObject(request, "head") : null;
+    const actual = head ? recordString(head, "sha") : null;
+    if (!actual || actual.toLowerCase() !== expectedHeadSha.trim().toLowerCase()) {
+      throw new Error("The pull request head changed. Refresh it before performing this action.");
+    }
   }
 
   private async assertPullRequestCanBeApprovedByToken(pullNumber: number): Promise<void> {

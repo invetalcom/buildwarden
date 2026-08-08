@@ -18,6 +18,7 @@ import { GitService } from "@buildwarden/git-service";
 import { AppController, latestUserTurnUsedFullAccess } from "./app-controller";
 import type { AppControllerDesktopServices } from "./desktop-platform-services";
 import { HostEventBus } from "./host-events";
+import type { ProjectPrReviewProvider } from "./pr-review/pr-review-types";
 
 const project = {
   id: "project-1",
@@ -154,6 +155,43 @@ const createMutableProjectHarness = () => {
 };
 
 describe("AppController settings and lightweight workflows", () => {
+  it("bypasses a cached forge request list for forced post-creation detection", async () => {
+    const harness = createHarness();
+    const empty = { provider: "github", webBaseUrl: "https://github.com/acme/repo", repoLabel: "acme/repo", items: [] } as const;
+    const withRequest = {
+      ...empty,
+      items: [{
+        provider: "github",
+        number: 13,
+        title: "New request",
+        url: "https://github.com/acme/repo/pull/13",
+        state: "open",
+        draft: false,
+        author: "author",
+        sourceBranch: "feature",
+        targetBranch: "main",
+        createdAt: null,
+        updatedAt: null,
+      }],
+    } as const;
+    const forgeProvider = {
+      listRequests: vi.fn().mockResolvedValueOnce(empty).mockResolvedValueOnce(withRequest),
+    } as unknown as ProjectPrReviewProvider;
+    const controller = harness.controller as unknown as {
+      loadProjectForgeRequests: (
+        projectId: string,
+        provider: ProjectPrReviewProvider,
+        input: { state: "all" },
+        bypassCache?: boolean,
+      ) => Promise<{ items: readonly unknown[] }>;
+    };
+
+    expect((await controller.loadProjectForgeRequests(project.id, forgeProvider, { state: "all" })).items).toHaveLength(0);
+    expect((await controller.loadProjectForgeRequests(project.id, forgeProvider, { state: "all" })).items).toHaveLength(0);
+    expect((await controller.loadProjectForgeRequests(project.id, forgeProvider, { state: "all" }, true)).items).toHaveLength(1);
+    expect(forgeProvider.listRequests).toHaveBeenCalledTimes(2);
+  });
+
   it("inherits full access only from the latest coordinator user turn", () => {
     expect(latestUserTurnUsedFullAccess([
       { metadataJson: JSON.stringify({ source: "user", commandType: "initial", yoloMode: true }) },

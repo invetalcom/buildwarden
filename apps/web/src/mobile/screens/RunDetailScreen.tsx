@@ -32,6 +32,8 @@ import { RunAgentsPanel } from "./run/RunAgentsPanel";
 import { RunFilesPanel } from "./run/RunFilesPanel";
 import { RunNotesPanel } from "./run/RunNotesPanel";
 import { RunUserInputCard } from "./run/RunUserInputCard";
+import { RunForgePanel } from "./run/RunForgePanel";
+import { mobileForgeColor } from "../lib/forge";
 
 type PendingConfirm = "delete" | "undo" | "cancel" | null;
 
@@ -64,10 +66,11 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
       { value: "files", label: "Files" },
     ];
     if (hasOrchestration && client.capabilities.orchestrationRead) options.push({ value: "agents", label: "Agents" });
+    if (detail?.run.forgeRequest) options.push({ value: "pull-request", label: detail.run.forgeRequest.provider === "github" ? "PR" : "MR" });
     options.push({ value: "notes", label: "Notes", ...(detail?.notes.length ? { badge: detail.notes.length } : {}) });
     if (client.capabilities.chatMutations) options.push({ value: "chat", label: "Chat" });
     return options;
-  }, [client.capabilities.chatMutations, client.capabilities.orchestrationRead, detail?.notes.length, hasOrchestration]);
+  }, [client.capabilities.chatMutations, client.capabilities.orchestrationRead, detail?.notes.length, detail?.run.forgeRequest, hasOrchestration]);
 
   // A segment can disappear (agents/chat depend on capabilities); fall back rather than blank out.
   const activeSegment = segments.some((option) => option.value === segment) ? segment : "activity";
@@ -159,6 +162,18 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
             {planProgress.done}/{planProgress.total} steps
           </span>
         ) : null}
+        {detail.run.forgeRequest ? (
+          <button
+            type="button"
+            className="m-tap inline-flex items-center gap-1.5 rounded-full border border-[var(--ec-border)] px-2.5 text-[11px]"
+            onClick={() => router.replace({ name: "run", runId, segment: "pull-request" })}
+            style={{ color: mobileForgeColor[detail.run.forgeRequest.readiness] }}
+          >
+            <GitPullRequest className="size-3.5" />
+            {detail.run.forgeRequest.provider === "github" ? "PR" : "MR"} #{detail.run.forgeRequest.number}
+            <span className="text-[var(--ec-muted)]">· {detail.run.forgeRequest.checks.completed}/{detail.run.forgeRequest.checks.total}</span>
+          </button>
+        ) : null}
       </div>
 
       <SegmentedTabs
@@ -200,6 +215,10 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
       {activeSegment === "agents" ? <RunAgentsPanel coordinatorRunId={runId} /> : null}
 
       {activeSegment === "notes" ? <RunNotesPanel detail={detail} onChanged={store.reload} /> : null}
+
+      {activeSegment === "pull-request" && detail.run.forgeRequest ? (
+        <RunForgePanel run={detail.run} initialSummary={detail.run.forgeRequest} onChanged={refreshAll} />
+      ) : null}
 
       {activeSegment === "chat" ? (
         <div className="m-scroll flex-1 py-2">
