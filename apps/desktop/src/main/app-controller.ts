@@ -857,7 +857,10 @@ const PROJECT_FORGE_TOKEN_SECRET_PREFIX = "project:forge-token:";
 const RUN_FORGE_STABLE_REFRESH_MS = 15 * 60_000;
 const RUN_FORGE_ACTIVE_REFRESH_MS = [60_000, 120_000, 5 * 60_000] as const;
 const RUN_FORGE_ERROR_BACKOFF_MS = [2 * 60_000, 5 * 60_000, 15 * 60_000, 30 * 60_000] as const;
+const RUN_FORGE_HEAD_PROBE_LIMIT = 3;
 const PROJECT_FORGE_LIST_CACHE_MS = 30_000;
+
+const isOpenForgeRequestState = (state: string): boolean => state === "open" || state === "opened";
 
 const summarizeForgeChecks = (checks: RunForgeCheck[]): RunForgeRequestSummary["checks"] => {
   const completed = checks.filter((check) => check.status !== "queued" && check.status !== "running").length;
@@ -4302,14 +4305,17 @@ export class AppController
           const exactBranch = requests
             .filter((request) => request.sourceBranch === branchName)
             .sort((left, right) => {
-              const score = (request: typeof left) => request.state === "open" && request.targetBranch === project.baseBranch ? 3 : request.state === "open" ? 2 : 1;
+              const score = (request: typeof left) => isOpenForgeRequestState(request.state) && request.targetBranch === project.baseBranch ? 3 : isOpenForgeRequestState(request.state) ? 2 : 1;
               const scoreDelta = score(right) - score(left);
               return scoreDelta || (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "");
             });
           selected = exactBranch[0] ?? null;
 
           if (!selected && headSha) {
-            for (const candidate of requests.slice(0, 12)) {
+            const headProbeCandidates = requests
+              .filter((request) => isOpenForgeRequestState(request.state))
+              .slice(0, RUN_FORGE_HEAD_PROBE_LIMIT);
+            for (const candidate of headProbeCandidates) {
               const status = await provider.getRequestStatus({ prUrl: candidate.url });
               if (status.headSha && status.headSha.toLowerCase() === headSha.toLowerCase()) {
                 selected = candidate;
