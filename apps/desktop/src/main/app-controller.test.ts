@@ -367,6 +367,44 @@ describe("AppController settings and lightweight workflows", () => {
     expect(getRunForgeRequestCache).toHaveBeenCalledOnce();
   });
 
+  it("honors a persisted forge retry delay on non-forced syncs", async () => {
+    const run = {
+      id: "run-backed-off",
+      projectId: project.id,
+      workspaceVcs: "git",
+      workspaceType: "local",
+      worktreePath: project.repoPath,
+      branchName: "feature",
+    } as RunRecord;
+    const cachedSummary = { number: 13 } as NonNullable<RunRecord["forgeRequest"]>;
+    const harness = createHarness({
+      getRun: vi.fn(() => run),
+      getRunSteps: vi.fn(() => []),
+      getRunForgeRequestCache: vi.fn(() => ({
+        runId: run.id,
+        projectId: project.id,
+        branchName: run.branchName,
+        headSha: "head-sha",
+        lastProbeAt: null,
+        negativeCacheUntil: null,
+        summary: cachedSummary,
+        details: null,
+        etag: null,
+        lastModified: null,
+        errorCount: 1,
+        retryAfterAt: new Date(Date.now() + 60_000).toISOString(),
+      })),
+    });
+    const internalController = harness.controller as unknown as {
+      syncRunForgeRequest: (runId: string, force: boolean, includeDetails: boolean) => Promise<RunRecord["forgeRequest"] | null>;
+      createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
+    };
+    internalController.createProjectPrReviewProvider = vi.fn();
+
+    await expect(internalController.syncRunForgeRequest(run.id, false, false)).resolves.toBe(cachedSummary);
+    expect(internalController.createProjectPrReviewProvider).not.toHaveBeenCalled();
+  });
+
   it("inherits full access only from the latest coordinator user turn", () => {
     expect(latestUserTurnUsedFullAccess([
       { metadataJson: JSON.stringify({ source: "user", commandType: "initial", yoloMode: true }) },

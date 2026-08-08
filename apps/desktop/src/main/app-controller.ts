@@ -4257,6 +4257,9 @@ export class AppController
 
     return this.serializeProjectForgeSync(run.projectId, async () => {
       const cached = this.db.getRunForgeRequestCache(runId);
+      if (!force && cached?.retryAfterAt && Date.parse(cached.retryAfterAt) > Date.now()) {
+        return cached.summary;
+      }
       const [probedHeadSha, probedBranchName] = await Promise.all([
         this.gitService.getHeadCommitSha(workspacePath).catch(() => cached?.headSha ?? null),
         this.gitService.getCurrentBranch(workspacePath).catch(() => run.branchName),
