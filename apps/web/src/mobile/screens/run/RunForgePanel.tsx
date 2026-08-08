@@ -79,6 +79,15 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
   const canRunAgent = client.capabilities.runMutations && !["queued", "preparing", "running"].includes(run.status);
   runIdRef.current = run.id;
   const isCurrentRun = (expectedRunId: string) => activeRef.current && runIdRef.current === expectedRunId;
+  const synchronizeSummaryHead = (headSha: string | null) => {
+    const headChanged = summaryHeadShaRef.current !== headSha;
+    summaryHeadShaRef.current = headSha;
+    if (!headChanged) return;
+    hostedDiffHeadShaRef.current = null;
+    diffRequestIdRef.current += 1;
+    setHostedDiff(null);
+    if (changesOpenRef.current) void loadHostedDiff(headSha);
+  };
 
   const load = async (refresh = false, expectedRunId = run.id) => {
     const requestId = ++detailsRequestIdRef.current;
@@ -87,6 +96,7 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
     try {
       const next = await client.getRunForgeRequestDetails(expectedRunId, { refresh });
       if (isCurrentRun(expectedRunId) && requestId === detailsRequestIdRef.current && next) {
+        synchronizeSummaryHead(next.summary.headSha);
         setDetails(next);
         setSummary(next.summary);
       }
@@ -115,18 +125,11 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
     void load(false);
     return client.onRunForgeRequestChanged((payload) => {
       if (payload.runId !== run.id || !payload.forgeRequest) return;
-      const headChanged = summaryHeadShaRef.current !== payload.forgeRequest.headSha;
-      summaryHeadShaRef.current = payload.forgeRequest.headSha;
+      synchronizeSummaryHead(payload.forgeRequest.headSha);
       detailsRequestIdRef.current += 1;
       setBusy(false);
       setSummary(payload.forgeRequest);
       setDetails((current) => current ? { ...current, summary: payload.forgeRequest! } : current);
-      if (headChanged) {
-        hostedDiffHeadShaRef.current = null;
-        diffRequestIdRef.current += 1;
-        setHostedDiff(null);
-        if (changesOpenRef.current) void loadHostedDiff(payload.forgeRequest.headSha);
-      }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, run.id]);
