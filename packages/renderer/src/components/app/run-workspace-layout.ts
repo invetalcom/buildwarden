@@ -10,7 +10,7 @@ export interface RunWorkspacePanelCapabilities {
   platform: "electron" | "web";
 }
 
-export const DEFAULT_TILE_ORDER: TilePanelId[] = ["activity", "agents", "diff", "terminal", "browser", "notes", "chat"];
+export const DEFAULT_TILE_ORDER: TilePanelId[] = ["activity", "agents", "diff", "terminal", "browser", "notes", "chat", "pull-request"];
 
 export const DEFAULT_TILE_LAYOUT: TileLayoutState = {
   activity: { colSpan: 7, rowSpan: 4 },
@@ -20,6 +20,7 @@ export const DEFAULT_TILE_LAYOUT: TileLayoutState = {
   browser: { colSpan: 7, rowSpan: 3 },
   notes: { colSpan: 5, rowSpan: 3 },
   chat: { colSpan: 5, rowSpan: 3 },
+  "pull-request": { colSpan: 5, rowSpan: 4 },
 };
 
 export const DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE: RunWorkspaceLayoutPreference = {
@@ -31,6 +32,7 @@ export const DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE: RunWorkspaceLayoutPreferen
     browser: false,
     notes: false,
     chat: false,
+    "pull-request": false,
   },
   tileOrder: DEFAULT_TILE_ORDER,
   tileLayout: DEFAULT_TILE_LAYOUT,

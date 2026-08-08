@@ -18,6 +18,7 @@ import { GitService } from "@buildwarden/git-service";
 import { AppController, latestUserTurnUsedFullAccess } from "./app-controller";
 import type { AppControllerDesktopServices } from "./desktop-platform-services";
 import { HostEventBus } from "./host-events";
+import type { ProjectPrReviewProvider } from "./pr-review/pr-review-types";
 
 const project = {
   id: "project-1",
@@ -154,6 +155,481 @@ const createMutableProjectHarness = () => {
 };
 
 describe("AppController settings and lightweight workflows", () => {
+  it("bypasses a cached forge request list for forced post-creation detection", async () => {
+    const harness = createHarness();
+    const empty = { provider: "github", webBaseUrl: "https://github.com/acme/repo", repoLabel: "acme/repo", items: [] } as const;
+    const withRequest = {
+      ...empty,
+      items: [{
+        provider: "github",
+        number: 13,
+        title: "New request",
+        url: "https://github.com/acme/repo/pull/13",
+        state: "open",
+        draft: false,
+        author: "author",
+        sourceBranch: "feature",
+        targetBranch: "main",
+        createdAt: null,
+        updatedAt: null,
+      }],
+    } as const;
+    const forgeProvider = {
+      listRequests: vi.fn().mockResolvedValueOnce(empty).mockResolvedValueOnce(withRequest),
+    } as unknown as ProjectPrReviewProvider;
+    const controller = harness.controller as unknown as {
+      loadProjectForgeRequests: (
+        projectId: string,
+        provider: ProjectPrReviewProvider,
+        input: { state: "all" },
+        bypassCache?: boolean,
+      ) => Promise<{ items: readonly unknown[] }>;
+    };
+
+    expect((await controller.loadProjectForgeRequests(project.id, forgeProvider, { state: "all" })).items).toHaveLength(0);
+    expect((await controller.loadProjectForgeRequests(project.id, forgeProvider, { state: "all" })).items).toHaveLength(0);
+    expect((await controller.loadProjectForgeRequests(project.id, forgeProvider, { state: "all" }, true)).items).toHaveLength(1);
+    expect(forgeProvider.listRequests).toHaveBeenCalledTimes(2);
+  });
+
+  it("relinks a terminal request to a newer open request on the same branch", async () => {
+    const run = {
+      id: "run-1",
+      projectId: project.id,
+      workspaceVcs: "git",
+      workspaceType: "local",
+      worktreePath: project.repoPath,
+      branchName: "feature",
+    } as RunRecord;
+    const oldRequest = {
+      provider: "github" as const,
+      number: 13,
+      title: "Closed request",
+      url: "https://github.com/acme/repo/pull/13",
+      state: "closed",
+      draft: false,
+      author: "author",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      createdAt: "2026-08-08T08:00:00.000Z",
+      updatedAt: "2026-08-08T09:00:00.000Z",
+    };
+    const newRequest = {
+      ...oldRequest,
+      number: 14,
+      title: "Replacement request",
+      url: "https://github.com/acme/repo/pull/14",
+      state: "open",
+      createdAt: "2026-08-08T10:00:00.000Z",
+      updatedAt: "2026-08-08T11:00:00.000Z",
+    };
+    const oldSummary = {
+      ...oldRequest,
+      state: "closed" as const,
+      readiness: "closed" as const,
+      mergeability: "unknown" as const,
+      reviewDecision: "none" as const,
+      headSha: "head-sha",
+      checks: { completed: 0, total: 0, successful: 0, failed: 0, running: 0 },
+      unresolvedThreadCount: 0,
+      supportedActions: ["refresh", "open", "reopen"] as const,
+      supportedMergeMethods: ["merge"] as const,
+      lastSyncedAt: "2026-08-08T09:00:00.000Z",
+      stale: false,
+      syncError: null,
+    };
+    const saveRunForgeRequest = vi.fn();
+    const harness = createHarness({
+      getRun: vi.fn(() => run),
+      getRunSteps: vi.fn(() => []),
+      getRunForgeRequestCache: vi.fn(() => ({
+        runId: run.id,
+        projectId: project.id,
+        branchName: "feature",
+        headSha: "head-sha",
+        lastProbeAt: oldSummary.lastSyncedAt,
+        negativeCacheUntil: null,
+        summary: oldSummary,
+        details: null,
+        etag: null,
+        lastModified: null,
+        errorCount: 0,
+        retryAfterAt: null,
+      })),
+      saveRunForgeRequest,
+      saveRunForgeSyncError: vi.fn(() => null),
+    });
+    vi.spyOn(GitService.prototype, "getHeadCommitSha").mockResolvedValue("head-sha");
+    vi.spyOn(GitService.prototype, "getCurrentBranch").mockResolvedValue("feature");
+    const forgeProvider = {
+      listRequests: vi.fn(async () => ({
+        provider: "github" as const,
+        webBaseUrl: "https://github.com/acme/repo",
+        repoLabel: "acme/repo",
+        items: [oldRequest, newRequest],
+      })),
+      getRequestStatus: vi.fn(async () => ({
+        state: "open" as const,
+        draft: false,
+        mergeability: "mergeable" as const,
+        reviewDecision: "none" as const,
+        headSha: "head-sha",
+        checks: [],
+        unresolvedThreadCount: 0,
+        supportedActions: ["refresh", "open", "mark-draft", "merge", "close"] as const,
+        supportedMergeMethods: ["merge"] as const,
+      })),
+      getRequestDetails: vi.fn(async () => ({
+        provider: "github" as const,
+        webBaseUrl: "https://github.com/acme/repo",
+        repoLabel: "acme/repo",
+        request: {
+          ...newRequest,
+          description: "Replacement details",
+          authorUser: null,
+          labels: [],
+          additions: 1,
+          deletions: 0,
+          changedFiles: 1,
+          commentCount: 0,
+          reviewCommentCount: 0,
+        },
+        activity: [],
+        commits: [],
+        files: [],
+        reviewThreads: [],
+        warnings: [],
+      })),
+    } as unknown as ProjectPrReviewProvider;
+    const internalController = harness.controller as unknown as {
+      createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
+    };
+    internalController.createProjectPrReviewProvider = vi.fn(async () => forgeProvider);
+
+    const result = await harness.controller.refreshRunForgeRequest(run.id);
+
+    expect(result?.number).toBe(14);
+    expect(forgeProvider.getRequestStatus).toHaveBeenCalledWith(expect.objectContaining({ prUrl: newRequest.url }));
+    expect(forgeProvider.getRequestDetails).toHaveBeenCalledWith({ prUrl: newRequest.url });
+    expect(saveRunForgeRequest).toHaveBeenCalledWith(
+      run.id,
+      project.id,
+      "feature",
+      "head-sha",
+      expect.objectContaining({ number: 14, url: newRequest.url }),
+      expect.objectContaining({ request: expect.objectContaining({ number: 14 }) }),
+      expect.any(Object),
+    );
+  });
+
+  it("prefers a newly created request URL over branch-based request priority", async () => {
+    const run = {
+      id: "run-created-request",
+      projectId: project.id,
+      workspaceVcs: "git",
+      workspaceType: "local",
+      worktreePath: project.repoPath,
+      branchName: "feature",
+    } as RunRecord;
+    const baseBranchRequest = {
+      provider: "github" as const,
+      number: 13,
+      title: "Existing request",
+      url: "https://github.com/acme/repo/pull/13",
+      state: "open" as const,
+      draft: false,
+      author: "author",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      createdAt: "2026-08-08T08:00:00.000Z",
+      updatedAt: "2026-08-08T09:00:00.000Z",
+    };
+    const createdRequest = {
+      ...baseBranchRequest,
+      number: 14,
+      title: "New release request",
+      url: "https://github.com/acme/repo/pull/14",
+      targetBranch: "release",
+      createdAt: "2026-08-08T10:00:00.000Z",
+      updatedAt: "2026-08-08T11:00:00.000Z",
+    };
+    const cachedSummary = {
+      ...baseBranchRequest,
+      readiness: "ready" as const,
+      mergeability: "mergeable" as const,
+      reviewDecision: "none" as const,
+      headSha: "head-sha",
+      checks: { completed: 0, total: 0, successful: 0, failed: 0, running: 0 },
+      unresolvedThreadCount: 0,
+      supportedActions: ["refresh", "open", "mark-draft", "merge", "close"] as const,
+      supportedMergeMethods: ["merge"] as const,
+      lastSyncedAt: "2026-08-08T09:00:00.000Z",
+      stale: false,
+      syncError: null,
+    };
+    const saveRunForgeRequest = vi.fn();
+    const harness = createHarness({
+      getRun: vi.fn(() => run),
+      getRunSteps: vi.fn(() => []),
+      getRunForgeRequestCache: vi.fn(() => ({
+        runId: run.id,
+        projectId: project.id,
+        branchName: run.branchName,
+        headSha: "head-sha",
+        lastProbeAt: cachedSummary.lastSyncedAt,
+        negativeCacheUntil: null,
+        summary: cachedSummary,
+        details: null,
+        etag: null,
+        lastModified: null,
+        errorCount: 0,
+        retryAfterAt: null,
+      })),
+      saveRunForgeRequest,
+      saveRunForgeSyncError: vi.fn(() => null),
+    });
+    vi.spyOn(GitService.prototype, "getHeadCommitSha").mockResolvedValue("head-sha");
+    vi.spyOn(GitService.prototype, "getCurrentBranch").mockResolvedValue(run.branchName);
+    const forgeProvider = {
+      listRequests: vi.fn(async () => ({
+        provider: "github" as const,
+        webBaseUrl: "https://github.com/acme/repo",
+        repoLabel: "acme/repo",
+        items: [baseBranchRequest, createdRequest],
+      })),
+      getRequestStatus: vi.fn(async () => ({
+        state: "open" as const,
+        draft: false,
+        mergeability: "mergeable" as const,
+        reviewDecision: "none" as const,
+        headSha: "head-sha",
+        checks: [],
+        unresolvedThreadCount: 0,
+        supportedActions: ["refresh", "open", "mark-draft", "merge", "close"] as const,
+        supportedMergeMethods: ["merge"] as const,
+      })),
+      getRequestDetails: vi.fn(async () => ({
+        provider: "github" as const,
+        webBaseUrl: "https://github.com/acme/repo",
+        repoLabel: "acme/repo",
+        request: {
+          ...createdRequest,
+          description: "New release request details",
+          authorUser: null,
+          labels: [],
+          additions: 1,
+          deletions: 0,
+          changedFiles: 1,
+          commentCount: 0,
+          reviewCommentCount: 0,
+        },
+        activity: [],
+        commits: [],
+        files: [],
+        reviewThreads: [],
+        warnings: [],
+      })),
+    } as unknown as ProjectPrReviewProvider;
+    const internalController = harness.controller as unknown as {
+      createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
+      syncRunForgeRequest: (
+        runId: string,
+        force: boolean,
+        includeDetails: boolean,
+        preferredRequestUrl?: string,
+      ) => Promise<RunRecord["forgeRequest"] | null>;
+    };
+    internalController.createProjectPrReviewProvider = vi.fn(async () => forgeProvider);
+
+    const result = await internalController.syncRunForgeRequest(run.id, true, true, createdRequest.url);
+
+    expect(result).toMatchObject({ number: 14, url: createdRequest.url, targetBranch: "release" });
+    expect(forgeProvider.getRequestStatus).toHaveBeenCalledWith(expect.objectContaining({ prUrl: createdRequest.url }));
+    expect(saveRunForgeRequest).toHaveBeenCalledWith(
+      run.id,
+      project.id,
+      run.branchName,
+      "head-sha",
+      expect.objectContaining({ number: 14, url: createdRequest.url }),
+      expect.objectContaining({ request: expect.objectContaining({ number: 14 }) }),
+      expect.any(Object),
+    );
+  });
+
+  it("reads the forge cache after entering the project sync queue", async () => {
+    const run = {
+      id: "run-queued-cache",
+      projectId: project.id,
+      workspaceVcs: "git",
+      workspaceType: "local",
+      worktreePath: project.repoPath,
+      branchName: "feature",
+    } as RunRecord;
+    const getRunForgeRequestCache = vi.fn(() => null);
+    const harness = createHarness({
+      getRun: vi.fn(() => run),
+      getRunSteps: vi.fn(() => []),
+      getRunForgeRequestCache,
+      saveRunForgeNegativeProbe: vi.fn(),
+      saveRunForgeSyncError: vi.fn(() => null),
+    });
+    vi.spyOn(GitService.prototype, "getHeadCommitSha").mockResolvedValue("head-sha");
+    vi.spyOn(GitService.prototype, "getCurrentBranch").mockResolvedValue("feature");
+    const forgeProvider = {
+      listRequests: vi.fn(async () => ({
+        provider: "github" as const,
+        webBaseUrl: "https://github.com/acme/repo",
+        repoLabel: "acme/repo",
+        items: [],
+      })),
+    } as unknown as ProjectPrReviewProvider;
+    const internalController = harness.controller as unknown as {
+      createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
+      serializeProjectForgeSync: <T>(projectId: string, operation: () => Promise<T>) => Promise<T>;
+    };
+    internalController.createProjectPrReviewProvider = vi.fn(async () => forgeProvider);
+    const gate = deferred<void>();
+    const blockingSync = internalController.serializeProjectForgeSync(project.id, () => gate.promise);
+
+    const refresh = harness.controller.refreshRunForgeRequest(run.id);
+    await Promise.resolve();
+    expect(getRunForgeRequestCache).not.toHaveBeenCalled();
+
+    gate.resolve();
+    await blockingSync;
+    await refresh;
+    expect(getRunForgeRequestCache).toHaveBeenCalledOnce();
+  });
+
+  it("honors a persisted forge retry delay on non-forced syncs", async () => {
+    const run = {
+      id: "run-backed-off",
+      projectId: project.id,
+      workspaceVcs: "git",
+      workspaceType: "local",
+      worktreePath: project.repoPath,
+      branchName: "feature",
+    } as RunRecord;
+    const cachedSummary = { number: 13 } as NonNullable<RunRecord["forgeRequest"]>;
+    const retryAfterAt = new Date(Date.now() + 60_000).toISOString();
+    const harness = createHarness({
+      getRun: vi.fn(() => run),
+      getRunSteps: vi.fn(() => []),
+      getRunForgeRequestCache: vi.fn(() => ({
+        runId: run.id,
+        projectId: project.id,
+        branchName: run.branchName,
+        headSha: "head-sha",
+        lastProbeAt: null,
+        negativeCacheUntil: null,
+        summary: cachedSummary,
+        details: null,
+        etag: null,
+        lastModified: null,
+        errorCount: 1,
+        retryAfterAt,
+      })),
+    });
+    const internalController = harness.controller as unknown as {
+      syncRunForgeRequest: (runId: string, force: boolean, includeDetails: boolean) => Promise<RunRecord["forgeRequest"] | null>;
+      createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
+      scheduleRunForgeRefresh: (runId: string, summary: RunRecord["forgeRequest"], delayOverride?: number) => void;
+    };
+    internalController.createProjectPrReviewProvider = vi.fn();
+    internalController.scheduleRunForgeRefresh = vi.fn();
+
+    await expect(internalController.syncRunForgeRequest(run.id, false, false)).resolves.toBe(cachedSummary);
+    expect(internalController.createProjectPrReviewProvider).not.toHaveBeenCalled();
+    expect(internalController.scheduleRunForgeRefresh).toHaveBeenCalledWith(
+      run.id,
+      cachedSummary,
+      expect.any(Number),
+    );
+    const retryDelay = vi.mocked(internalController.scheduleRunForgeRefresh).mock.calls[0]?.[2] ?? 0;
+    expect(retryDelay).toBeGreaterThan(0);
+    expect(retryDelay).toBeLessThanOrEqual(60_000);
+  });
+
+  it("retries stale terminal forge summaries but stops polling fresh terminal summaries", async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = createHarness();
+      const terminalSummary = {
+        state: "closed",
+        stale: false,
+        checks: { running: 0 },
+      } as NonNullable<RunRecord["forgeRequest"]>;
+      const internalController = harness.controller as unknown as {
+        scheduleRunForgeRefresh: (runId: string, summary: RunRecord["forgeRequest"], delayOverride?: number) => void;
+        syncRunForgeRequest: (runId: string, force: boolean, includeDetails: boolean) => Promise<RunRecord["forgeRequest"] | null>;
+        runForgeRefreshTimers: Map<string, ReturnType<typeof setTimeout>>;
+      };
+      internalController.syncRunForgeRequest = vi.fn(async () => null);
+
+      internalController.scheduleRunForgeRefresh("stale-run", { ...terminalSummary, stale: true }, 1_000);
+      expect(internalController.runForgeRefreshTimers.has("stale-run")).toBe(true);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(internalController.syncRunForgeRequest).toHaveBeenCalledWith("stale-run", true, false);
+
+      internalController.scheduleRunForgeRefresh("fresh-run", terminalSummary, 1_000);
+      expect(internalController.runForgeRefreshTimers.has("fresh-run")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not report a successful forge mutation as failed when refresh loses the association", async () => {
+    const run = { id: "run-mutation", projectId: project.id } as RunRecord;
+    const summary = {
+      provider: "github",
+      number: 13,
+      title: "Request",
+      url: "https://github.com/acme/repo/pull/13",
+      state: "open",
+      readiness: "ready",
+      draft: false,
+      mergeability: "mergeable",
+      reviewDecision: "approved",
+      author: "author",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      headSha: "head-sha",
+      checks: { completed: 1, total: 1, successful: 1, failed: 0, running: 0 },
+      unresolvedThreadCount: 0,
+      supportedActions: ["refresh", "open", "merge", "close"],
+      supportedMergeMethods: ["merge"],
+      updatedAt: null,
+      lastSyncedAt: "2026-08-08T09:00:00.000Z",
+      stale: false,
+      syncError: null,
+    } as NonNullable<RunRecord["forgeRequest"]>;
+    const harness = createHarness({
+      getRun: vi.fn(() => run),
+      getRunForgeRequestCache: vi.fn(() => ({ summary })),
+    });
+    const forgeProvider = {
+      updateRequest: vi.fn(async () => ({ message: "updated", url: summary.url })),
+      mergeRequest: vi.fn(async () => ({ message: "merged", url: summary.url })),
+    } as unknown as ProjectPrReviewProvider;
+    const internalController = harness.controller as unknown as {
+      createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
+      syncRunForgeRequest: (runId: string, force: boolean, includeDetails: boolean) => Promise<RunRecord["forgeRequest"] | null>;
+    };
+    internalController.createProjectPrReviewProvider = vi.fn(async () => forgeProvider);
+    internalController.syncRunForgeRequest = vi.fn(async () => null);
+
+    await expect(harness.controller.updateRunForgeRequest(run.id, { action: "close" })).resolves.toMatchObject({
+      readiness: "unavailable",
+      stale: true,
+      syncError: "The request was updated, but its state could not be refreshed.",
+    });
+    await expect(harness.controller.mergeRunForgeRequest(run.id, { method: "merge", expectedHeadSha: "head-sha" })).resolves.toMatchObject({
+      readiness: "unavailable",
+      stale: true,
+      syncError: "The request was merged, but its state could not be refreshed.",
+    });
+  });
+
   it("inherits full access only from the latest coordinator user turn", () => {
     expect(latestUserTurnUsedFullAccess([
       { metadataJson: JSON.stringify({ source: "user", commandType: "initial", yoloMode: true }) },

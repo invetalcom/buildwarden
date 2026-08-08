@@ -25,8 +25,9 @@ import {
 import { createFolderWorkspaceCopy, removeFolderWorkspaceCopy } from "./folder-workspace";
 import { getHarnessTypeForProvider } from "./harness-adapters";
 import { createProjectPrReviewProvider } from "./pr-review/pr-review-provider-factory";
+import { PrReviewHttpError } from "./pr-review/pr-review-http-client";
 import { resolveProjectPrReviewRemoteContext } from "./pr-review/pr-review-remote-context";
-import type { ProjectPrReviewProvider, ProjectPrReviewRemoteContext } from "./pr-review/pr-review-types";
+import type { ForgeRequestStatusResult, ProjectPrReviewProvider, ProjectPrReviewRemoteContext } from "./pr-review/pr-review-types";
 import {
   buildProjectActivityInsight,
   parseProjectActivityLog,
@@ -138,6 +139,7 @@ import {
   type ProjectForgePrMonitorSettings,
   type ProjectForgePrMonitorSettingsInput,
   type ProjectForgeRequestsResult,
+  type ProjectForgeRequestSummary,
   type ProjectForgeRequestDetailsResult,
   type ProjectForgeReviewActionResult,
   type GenerateProjectInsightInput,
@@ -162,6 +164,12 @@ import {
   isLoopCapableProviderType,
   type RunProjectLabInput,
   type RunRecord,
+  type RunForgeCheck,
+  type RunForgeReadiness,
+  type RunForgeRequestDetailsResult,
+  type RunForgeRequestSummary,
+  type MergeRunForgeRequestInput,
+  type UpdateRunForgeRequestInput,
   type RunWorkspaceFileInput,
   type RunWorkspaceFileResult,
   type ProjectPrMrDiffResult,
@@ -845,6 +853,39 @@ const SELECTED_RUN_KEY = "selectedRunId";
 const SELECTED_CHAT_KEY = "selectedChatId";
 const NETWORK_PROXY_SECRET_KEY = "app:network-proxy-password";
 const PROJECT_FORGE_TOKEN_SECRET_PREFIX = "project:forge-token:";
+
+const RUN_FORGE_STABLE_REFRESH_MS = 15 * 60_000;
+const RUN_FORGE_ACTIVE_REFRESH_MS = [60_000, 120_000, 5 * 60_000] as const;
+const RUN_FORGE_ERROR_BACKOFF_MS = [2 * 60_000, 5 * 60_000, 15 * 60_000, 30 * 60_000] as const;
+const RUN_FORGE_HEAD_PROBE_LIMIT = 3;
+const PROJECT_FORGE_LIST_CACHE_MS = 30_000;
+
+const isOpenForgeRequestState = (state: string): boolean => state === "open" || state === "opened";
+
+const summarizeForgeChecks = (checks: RunForgeCheck[]): RunForgeRequestSummary["checks"] => {
+  const completed = checks.filter((check) => check.status !== "queued" && check.status !== "running").length;
+  const successful = checks.filter((check) => check.status === "success" || check.status === "neutral" || check.status === "skipped").length;
+  const failed = checks.filter((check) => check.status === "failure" || check.status === "cancelled").length;
+  return {
+    completed,
+    total: checks.length,
+    successful,
+    failed,
+    running: checks.length - completed,
+  };
+};
+
+const forgeReadiness = (status: ForgeRequestStatusResult): RunForgeReadiness => {
+  if (status.state === "merged") return "merged";
+  if (status.state === "closed") return "closed";
+  const checks = summarizeForgeChecks(status.checks);
+  if (checks.failed > 0 || status.mergeability === "conflicting" || status.reviewDecision === "changes-requested") return "blocked";
+  if (
+    status.draft || checks.running > 0 || status.mergeability !== "mergeable" ||
+    status.reviewDecision === "review-required" || status.unresolvedThreadCount > 0
+  ) return "pending";
+  return "ready";
+};
 const ACTIVE_RUN_STATUSES = new Set<RunRecord["status"]>(["queued", "preparing", "running"]);
 const runCheckpointSettingKey = (runId: string) => `runCheckpoint:${runId}`;
 const runPromptRestorePointSettingKey = (runId: string) => `runPromptRestorePoint:${runId}`;
@@ -926,6 +967,7 @@ export class AppController
       | "onAppSettingsChanged"
       | "onProjectForgeRequestOpen"
       | "onProjectForgeRequestNotification"
+      | "onRunForgeRequestChanged"
       | "onProjectTaskChanged"
       | "onOrchestrationChanged"
       | "showAppMenu"
@@ -958,6 +1000,10 @@ export class AppController
   private readonly composerCommandCache = new Map<string, { expiresAt: number; commands: ComposerCommandDescriptor[] }>();
   private readonly composerCommandInflight = new Map<string, Promise<ComposerCommandDescriptor[]>>();
   private readonly runWorktreeDiffSummaryInflight = new Map<string, Promise<RunWorktreeDiffSummary>>();
+  private readonly projectForgeSyncQueues = new Map<string, Promise<unknown>>();
+  private readonly projectForgeRequestListCache = new Map<string, { expiresAt: number; result: ProjectForgeRequestsResult }>();
+  private readonly runForgeRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly runForgeActivePollCounts = new Map<string, number>();
   private readonly projectActivityCache = new Map<string, {
     expiresAt: number;
     commits: ProjectActivityCommit[];
@@ -986,6 +1032,7 @@ export class AppController
   }
 
   private notifyRunDeleted(runId: string): void {
+    this.clearRunForgeRefresh(runId);
     try {
       this.lifecycle.onRunDeleted?.(runId);
     } catch (error) {
@@ -2698,6 +2745,7 @@ export class AppController
     this.db.touchProject(project.id);
     this.db.setSetting(SELECTED_PROJECT_KEY, project.id);
     this.db.setSetting(SELECTED_RUN_KEY, run.id);
+    this.syncRunForgeRequestInBackground(run.id, false, false);
 
     const initialLogContent = userText || "(no text)";
 
@@ -3156,6 +3204,7 @@ export class AppController
       createdAt: new Date().toISOString(),
     });
     this.markLinkedRunTaskInReview(run);
+    this.syncRunForgeRequestInBackground(run.id, true, false);
   }
 
   async suggestCommitMessage(runId: string): Promise<string> {
@@ -4113,8 +4162,10 @@ export class AppController
     projectId: string,
     input?: ListProjectForgeRequestsInput,
   ): Promise<ProjectForgeRequestsResult> {
-    const provider = await this.createProjectPrReviewProvider(projectId);
-    return provider.listRequests(input);
+    return this.serializeProjectForgeSync(projectId, async () => {
+      const provider = await this.createProjectPrReviewProvider(projectId);
+      return this.loadProjectForgeRequests(projectId, provider, input);
+    });
   }
 
   async getProjectForgeRequestDetails(
@@ -4123,6 +4174,320 @@ export class AppController
   ): Promise<ProjectForgeRequestDetailsResult> {
     const provider = await this.createProjectPrReviewProvider(projectId);
     return provider.getRequestDetails(input);
+  }
+
+  // This queue is not reentrant: a callback must not invoke another serialized
+  // forge operation for the same project or it will wait on its own pending
+  // promise. syncRunForgeRequest uses loadProjectForgeRequests directly to avoid
+  // re-entering through the public listProjectForgeRequests operation.
+  private serializeProjectForgeSync<T>(projectId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.projectForgeSyncQueues.get(projectId) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(operation);
+    this.projectForgeSyncQueues.set(projectId, current);
+    return current.finally(() => {
+      if (this.projectForgeSyncQueues.get(projectId) === current) this.projectForgeSyncQueues.delete(projectId);
+    });
+  }
+
+  private publishRunForgeRequest(run: RunRecord, forgeRequest: RunForgeRequestSummary | null): void {
+    this.events.publish("forge", { runId: run.id, projectId: run.projectId, forgeRequest });
+  }
+
+  private async loadProjectForgeRequests(
+    projectId: string,
+    provider: ProjectPrReviewProvider,
+    input?: ListProjectForgeRequestsInput,
+    bypassCache = false,
+  ): Promise<ProjectForgeRequestsResult> {
+    const cacheKey = `${projectId}:${input?.state ?? "all"}`;
+    const cached = this.projectForgeRequestListCache.get(cacheKey);
+    if (!bypassCache && cached && cached.expiresAt > Date.now()) return cached.result;
+    const result = await provider.listRequests(input);
+    this.projectForgeRequestListCache.set(cacheKey, { expiresAt: Date.now() + PROJECT_FORGE_LIST_CACHE_MS, result });
+    return result;
+  }
+
+  private clearRunForgeRefresh(runId: string): void {
+    const timer = this.runForgeRefreshTimers.get(runId);
+    if (timer) clearTimeout(timer);
+    this.runForgeRefreshTimers.delete(runId);
+    this.runForgeActivePollCounts.delete(runId);
+  }
+
+  private syncRunForgeRequestInBackground(runId: string, force: boolean, includeDetails: boolean): void {
+    void this.syncRunForgeRequest(runId, force, includeDetails).catch((error) => {
+      this.logControllerWarn("Could not synchronize the run's forge request.", { runId, error });
+    });
+  }
+
+  private scheduleRunForgeRefresh(runId: string, summary: RunForgeRequestSummary | null, delayOverride?: number): void {
+    const existing = this.runForgeRefreshTimers.get(runId);
+    if (existing) clearTimeout(existing);
+    this.runForgeRefreshTimers.delete(runId);
+    if ((summary?.state === "merged" || summary?.state === "closed") && !summary.stale) {
+      this.runForgeActivePollCounts.delete(runId);
+      return;
+    }
+    let delayMs = delayOverride;
+    if (delayMs == null) {
+      if (summary && summary.checks.running > 0) {
+        const pollCount = this.runForgeActivePollCounts.get(runId) ?? 0;
+        delayMs = RUN_FORGE_ACTIVE_REFRESH_MS[Math.min(pollCount, RUN_FORGE_ACTIVE_REFRESH_MS.length - 1)]!;
+        this.runForgeActivePollCounts.set(runId, pollCount + 1);
+      } else {
+        this.runForgeActivePollCounts.delete(runId);
+        const jitter = 0.9 + Math.random() * 0.2;
+        delayMs = Math.round(RUN_FORGE_STABLE_REFRESH_MS * jitter);
+      }
+    }
+    const timer = setTimeout(() => {
+      this.runForgeRefreshTimers.delete(runId);
+      void this.syncRunForgeRequest(runId, true, false).catch(() => undefined);
+    }, delayMs);
+    timer.unref?.();
+    this.runForgeRefreshTimers.set(runId, timer);
+  }
+
+  private async syncRunForgeRequest(
+    runId: string,
+    force: boolean,
+    includeDetails: boolean,
+    preferredRequestUrl?: string,
+  ): Promise<RunForgeRequestSummary | null> {
+    const run = this.db.getRun(runId);
+    if (run.workspaceVcs !== "git") return null;
+    const project = this.db.getProject(run.projectId);
+    const workspacePath = this.getEffectiveRunWorkspacePath(run, project);
+
+    return this.serializeProjectForgeSync(run.projectId, async () => {
+      const cached = this.db.getRunForgeRequestCache(runId);
+      const retryAfterMs = cached?.retryAfterAt ? Date.parse(cached.retryAfterAt) - Date.now() : 0;
+      if (!force && cached && retryAfterMs > 0) {
+        this.scheduleRunForgeRefresh(runId, cached.summary, retryAfterMs);
+        return cached.summary;
+      }
+      const [probedHeadSha, probedBranchName] = await Promise.all([
+        this.gitService.getHeadCommitSha(workspacePath).catch(() => cached?.headSha ?? null),
+        this.gitService.getCurrentBranch(workspacePath).catch(() => run.branchName),
+      ]);
+      const branchName = probedBranchName.trim() || run.branchName;
+      const negativeProbeStillMatches = cached?.branchName === branchName && cached.headSha === probedHeadSha;
+      if (
+        !force &&
+        negativeProbeStillMatches &&
+        cached?.negativeCacheUntil &&
+        Date.parse(cached.negativeCacheUntil) > Date.now()
+      ) return null;
+
+      try {
+        const provider = await this.createProjectPrReviewProvider(run.projectId);
+        // Open requests can stay on the lightweight status-refresh path. Terminal
+        // links must be re-probed so a newer request for the same branch can win.
+        let selected: ProjectForgeRequestSummary | null = cached?.summary &&
+          cached.branchName === branchName &&
+          cached.summary.state === "open" &&
+          (!preferredRequestUrl || cached.summary.url === preferredRequestUrl)
+          ? {
+              provider: cached.summary.provider,
+              number: cached.summary.number,
+              title: cached.summary.title,
+              url: cached.summary.url,
+              state: cached.summary.state,
+              draft: cached.summary.draft,
+              author: cached.summary.author,
+              sourceBranch: cached.summary.sourceBranch,
+              targetBranch: cached.summary.targetBranch,
+              createdAt: cached.details?.request.createdAt ?? null,
+              updatedAt: cached.summary.updatedAt,
+            }
+          : null;
+        let selectedStatus: ForgeRequestStatusResult | null = null;
+        let headSha = probedHeadSha;
+
+        if (!selected) {
+          const requests = (await this.loadProjectForgeRequests(run.projectId, provider, { state: "all" }, force)).items;
+          const exactBranch = requests
+            .filter((request) => request.sourceBranch === branchName)
+            .sort((left, right) => {
+              const score = (request: typeof left) => isOpenForgeRequestState(request.state) && request.targetBranch === project.baseBranch ? 3 : isOpenForgeRequestState(request.state) ? 2 : 1;
+              const scoreDelta = score(right) - score(left);
+                return scoreDelta || (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "");
+            });
+          const preferredRequest = preferredRequestUrl
+            ? requests.find((request) => request.url === preferredRequestUrl) ?? null
+            : null;
+          selected = preferredRequest ?? exactBranch[0] ?? null;
+
+          if (!selected && headSha) {
+            const headProbeCandidates = requests
+              .filter((request) => isOpenForgeRequestState(request.state))
+              .slice(0, RUN_FORGE_HEAD_PROBE_LIMIT);
+            for (const candidate of headProbeCandidates) {
+              const status = await provider.getRequestStatus({ prUrl: candidate.url });
+              if (status.headSha && status.headSha.toLowerCase() === headSha.toLowerCase()) {
+                selected = candidate;
+                selectedStatus = status;
+                break;
+              }
+            }
+          }
+        }
+
+        if (!selected) {
+          const negativeUntil = new Date(Date.now() + RUN_FORGE_STABLE_REFRESH_MS).toISOString();
+          this.db.saveRunForgeNegativeProbe(run.id, branchName, headSha, negativeUntil);
+          this.publishRunForgeRequest(run, null);
+          this.scheduleRunForgeRefresh(run.id, null);
+          return null;
+        }
+
+        const associationChanged = cached?.summary?.url !== selected.url;
+        const shouldLoadDetails = includeDetails || !cached?.details || associationChanged;
+        const previousStatus: ForgeRequestStatusResult | null = cached?.summary?.url === selected.url ? {
+          state: cached.summary.state,
+          draft: cached.summary.draft,
+          mergeability: cached.summary.mergeability,
+          reviewDecision: cached.summary.reviewDecision,
+          headSha: cached.summary.headSha,
+          checks: cached.details?.checks ?? [],
+          unresolvedThreadCount: cached.summary.unresolvedThreadCount,
+          supportedActions: cached.summary.supportedActions,
+          supportedMergeMethods: cached.summary.supportedMergeMethods,
+          etag: cached.etag,
+          lastModified: cached.lastModified,
+        } : null;
+        const [status, detailResult] = await Promise.all([
+          selectedStatus ? Promise.resolve(selectedStatus) : provider.getRequestStatus({
+            prUrl: selected.url,
+            etag: previousStatus?.etag,
+            lastModified: previousStatus?.lastModified,
+            previousStatus,
+          }),
+          shouldLoadDetails ? provider.getRequestDetails({ prUrl: selected.url }) : Promise.resolve(null),
+        ]);
+        headSha = status.headSha ?? headSha;
+        const now = new Date().toISOString();
+        const summary: RunForgeRequestSummary = {
+          provider: selected.provider,
+          number: selected.number,
+          title: detailResult?.request.title ?? selected.title,
+          url: selected.url,
+          state: status.state,
+          readiness: forgeReadiness(status),
+          draft: status.draft,
+          mergeability: status.mergeability,
+          reviewDecision: status.reviewDecision,
+          author: detailResult?.request.author ?? selected.author,
+          sourceBranch: detailResult?.request.sourceBranch ?? selected.sourceBranch,
+          targetBranch: detailResult?.request.targetBranch ?? selected.targetBranch,
+          headSha: status.headSha,
+          checks: summarizeForgeChecks(status.checks),
+          unresolvedThreadCount: status.unresolvedThreadCount,
+          supportedActions: status.supportedActions,
+          supportedMergeMethods: status.supportedMergeMethods,
+          updatedAt: detailResult?.request.updatedAt ?? selected.updatedAt,
+          lastSyncedAt: now,
+          stale: false,
+          syncError: null,
+        };
+        const details: RunForgeRequestDetailsResult | null = detailResult ? {
+          summary,
+          request: detailResult.request,
+          activity: detailResult.activity,
+          commits: detailResult.commits,
+          files: detailResult.files,
+          reviewThreads: detailResult.reviewThreads,
+          checks: status.checks,
+          warnings: detailResult.warnings,
+        } : cached?.details && !associationChanged ? { ...cached.details, summary, checks: status.checks } : null;
+        this.db.saveRunForgeRequest(run.id, run.projectId, branchName, headSha, summary, details, {
+          etag: status.etag ?? previousStatus?.etag ?? null,
+          lastModified: status.lastModified ?? previousStatus?.lastModified ?? null,
+        });
+        this.publishRunForgeRequest(run, summary);
+        this.scheduleRunForgeRefresh(run.id, summary);
+        return summary;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const errorCount = cached?.errorCount ?? 0;
+        const configuredBackoffMs = RUN_FORGE_ERROR_BACKOFF_MS[Math.min(errorCount, RUN_FORGE_ERROR_BACKOFF_MS.length - 1)]!;
+        const backoffMs = error instanceof PrReviewHttpError && error.retryAfterMs != null
+          ? Math.max(1_000, error.retryAfterMs)
+          : configuredBackoffMs;
+        const retryAfterAt = new Date(Date.now() + backoffMs).toISOString();
+        const stale = this.db.saveRunForgeSyncError(run.id, message, retryAfterAt);
+        if (stale) {
+          this.publishRunForgeRequest(run, stale);
+          this.scheduleRunForgeRefresh(run.id, stale, backoffMs);
+        }
+        return stale;
+      }
+    });
+  }
+
+  async getRunForgeRequestDetails(
+    runId: string,
+    options?: { refresh?: boolean },
+  ): Promise<RunForgeRequestDetailsResult | null> {
+    let cache = this.db.getRunForgeRequestCache(runId);
+    if (options?.refresh || !cache?.summary || !cache.details) {
+      await this.syncRunForgeRequest(runId, options?.refresh === true, true);
+      cache = this.db.getRunForgeRequestCache(runId);
+    } else {
+      this.scheduleRunForgeRefresh(runId, cache.summary);
+    }
+    return cache?.details && cache.summary ? { ...cache.details, summary: cache.summary } : null;
+  }
+
+  async refreshRunForgeRequest(runId: string): Promise<RunForgeRequestSummary | null> {
+    return this.syncRunForgeRequest(runId, true, false);
+  }
+
+  async getRunForgeRequestDiff(runId: string): Promise<ProjectPrMrDiffResult | null> {
+    const run = this.db.getRun(runId);
+    const cache = this.db.getRunForgeRequestCache(runId);
+    if (!cache?.summary) return null;
+    const provider = await this.createProjectPrReviewProvider(run.projectId);
+    return provider.getRequestDiff({ prUrl: cache.summary.url });
+  }
+
+  async updateRunForgeRequest(runId: string, input: UpdateRunForgeRequestInput): Promise<RunForgeRequestSummary> {
+    const run = this.db.getRun(runId);
+    const cache = this.db.getRunForgeRequestCache(runId);
+    if (!cache?.summary) throw new Error("This run is not linked to a pull request or merge request.");
+    if (!cache.summary.supportedActions.includes(input.action)) throw new Error("This action is not supported for the linked request.");
+    const provider = await this.createProjectPrReviewProvider(run.projectId);
+    await provider.updateRequest({ prUrl: cache.summary.url, action: input.action, expectedHeadSha: input.expectedHeadSha });
+    const refreshed = await this.syncRunForgeRequest(runId, true, true);
+    return refreshed ?? {
+      ...cache.summary,
+      readiness: "unavailable",
+      stale: true,
+      syncError: "The request was updated, but its state could not be refreshed.",
+    };
+  }
+
+  async mergeRunForgeRequest(runId: string, input: MergeRunForgeRequestInput): Promise<RunForgeRequestSummary> {
+    const run = this.db.getRun(runId);
+    const cache = this.db.getRunForgeRequestCache(runId);
+    const summary = cache?.summary;
+    if (!summary) throw new Error("This run is not linked to a pull request or merge request.");
+    if (summary.state !== "open" || summary.draft || summary.readiness !== "ready") {
+      throw new Error("Only a green, open, ready request can be merged.");
+    }
+    if (!summary.headSha || summary.headSha.toLowerCase() !== input.expectedHeadSha.trim().toLowerCase()) {
+      throw new Error("The request head changed. Refresh it before merging.");
+    }
+    if (!summary.supportedMergeMethods.includes(input.method)) throw new Error("That merge method is not supported by this repository.");
+    const provider = await this.createProjectPrReviewProvider(run.projectId);
+    await provider.mergeRequest({ prUrl: summary.url, method: input.method, expectedHeadSha: input.expectedHeadSha });
+    const refreshed = await this.syncRunForgeRequest(runId, true, true);
+    return refreshed ?? {
+      ...summary,
+      readiness: "unavailable",
+      stale: true,
+      syncError: "The request was merged, but its state could not be refreshed.",
+    };
   }
 
   async postProjectPrMrReview(
@@ -5150,6 +5515,7 @@ export class AppController
       createdAt: new Date().toISOString(),
     });
     this.markLinkedRunTaskInReview(run, url);
+    await this.syncRunForgeRequest(run.id, true, true, url);
 
     if (createdCustomSourceBranch) {
       await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedSourceBranch);
@@ -5287,6 +5653,7 @@ export class AppController
       createdAt: new Date().toISOString(),
     });
     this.markLinkedRunTaskInReview(run);
+    this.syncRunForgeRequestInBackground(run.id, true, false);
 
     return content;
   }
@@ -7644,6 +8011,10 @@ export class AppController
     return this.events.subscribe("run", listener);
   }
 
+  onRunForgeRequestChanged(listener: (payload: import("@buildwarden/shared").RunForgeRequestChangedPayload) => void): () => void {
+    return this.events.subscribe("forge", listener);
+  }
+
   onAppWarning(listener: (warning: AppWarning) => void): () => void {
     return this.events.subscribe("warning", listener);
   }
@@ -8076,6 +8447,7 @@ export class AppController
         this.clearRunRequestStepIds(run.id);
         this.runWorkers.delete(run.id);
         await worker.terminate();
+        if (!wasCancelled) this.syncRunForgeRequestInBackground(run.id, true, false);
         if (!wasCancelled && run.kind === "lab-implementation") {
           try {
             await this.reviewCompletedProjectLabImplementation(this.db.getRun(run.id));

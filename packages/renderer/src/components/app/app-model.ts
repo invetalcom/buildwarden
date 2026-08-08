@@ -485,6 +485,7 @@ export const cloneDefaultRunWorkspaceLayoutPreference = (): RunWorkspaceLayoutPr
     browser: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.browser },
     notes: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.notes },
     chat: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.chat },
+    "pull-request": { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout["pull-request"] },
   },
   secondaryPanelPosition: DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.secondaryPanelPosition,
 });
