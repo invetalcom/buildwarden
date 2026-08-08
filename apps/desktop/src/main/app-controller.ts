@@ -2742,7 +2742,7 @@ export class AppController
     this.db.touchProject(project.id);
     this.db.setSetting(SELECTED_PROJECT_KEY, project.id);
     this.db.setSetting(SELECTED_RUN_KEY, run.id);
-    void this.syncRunForgeRequest(run.id, false, false);
+    this.syncRunForgeRequestInBackground(run.id, false, false);
 
     const initialLogContent = userText || "(no text)";
 
@@ -3201,7 +3201,7 @@ export class AppController
       createdAt: new Date().toISOString(),
     });
     this.markLinkedRunTaskInReview(run);
-    void this.syncRunForgeRequest(run.id, true, false);
+    this.syncRunForgeRequestInBackground(run.id, true, false);
   }
 
   async suggestCommitMessage(runId: string): Promise<string> {
@@ -4209,6 +4209,12 @@ export class AppController
     if (timer) clearTimeout(timer);
     this.runForgeRefreshTimers.delete(runId);
     this.runForgeActivePollCounts.delete(runId);
+  }
+
+  private syncRunForgeRequestInBackground(runId: string, force: boolean, includeDetails: boolean): void {
+    void this.syncRunForgeRequest(runId, force, includeDetails).catch((error) => {
+      this.logControllerWarn("Could not synchronize the run's forge request.", { runId, error });
+    });
   }
 
   private scheduleRunForgeRefresh(runId: string, summary: RunForgeRequestSummary | null, delayOverride?: number): void {
@@ -5622,7 +5628,7 @@ export class AppController
       createdAt: new Date().toISOString(),
     });
     this.markLinkedRunTaskInReview(run);
-    void this.syncRunForgeRequest(run.id, true, false);
+    this.syncRunForgeRequestInBackground(run.id, true, false);
 
     return content;
   }
@@ -8416,7 +8422,7 @@ export class AppController
         this.clearRunRequestStepIds(run.id);
         this.runWorkers.delete(run.id);
         await worker.terminate();
-        if (!wasCancelled) void this.syncRunForgeRequest(run.id, true, false);
+        if (!wasCancelled) this.syncRunForgeRequestInBackground(run.id, true, false);
         if (!wasCancelled && run.kind === "lab-implementation") {
           try {
             await this.reviewCompletedProjectLabImplementation(this.db.getRun(run.id));
