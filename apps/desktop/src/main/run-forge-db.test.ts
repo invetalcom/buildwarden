@@ -77,9 +77,12 @@ describe("run-linked forge persistence", () => {
 
     db.saveRunForgeRequest(first.id, project.id, first.branchName, summary.headSha, summary, null);
     db.saveRunForgeRequest(second.id, project.id, second.branchName, summary.headSha, summary, null);
+    const updatedSummary = { ...summary, title: "Updated forge status" };
+    db.saveRunForgeRequest(first.id, project.id, first.branchName, summary.headSha, updatedSummary, null);
 
     expect(db.listRunsForProject(project.id).filter((run) => run.forgeRequest?.number === 42)).toHaveLength(2);
     expect(db.getRunForgeRequestCache(first.id)?.summary?.checks).toEqual(summary.checks);
+    expect(db.getRunForgeRequestCache(second.id)?.summary?.title).toBe(updatedSummary.title);
     db.deleteRun(first.id);
     expect(db.getRunForgeRequestCache(second.id)?.summary?.url).toBe(summary.url);
   });
