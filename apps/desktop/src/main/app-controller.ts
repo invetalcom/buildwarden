@@ -4252,6 +4252,7 @@ export class AppController
     runId: string,
     force: boolean,
     includeDetails: boolean,
+    preferredRequestUrl?: string,
   ): Promise<RunForgeRequestSummary | null> {
     const run = this.db.getRun(runId);
     if (run.workspaceVcs !== "git") return null;
@@ -4282,7 +4283,8 @@ export class AppController
         // links must be re-probed so a newer request for the same branch can win.
         let selected: ProjectForgeRequestSummary | null = cached?.summary &&
           cached.branchName === branchName &&
-          cached.summary.state === "open"
+          cached.summary.state === "open" &&
+          (!preferredRequestUrl || cached.summary.url === preferredRequestUrl)
           ? {
               provider: cached.summary.provider,
               number: cached.summary.number,
@@ -4307,9 +4309,12 @@ export class AppController
             .sort((left, right) => {
               const score = (request: typeof left) => isOpenForgeRequestState(request.state) && request.targetBranch === project.baseBranch ? 3 : isOpenForgeRequestState(request.state) ? 2 : 1;
               const scoreDelta = score(right) - score(left);
-              return scoreDelta || (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "");
+                return scoreDelta || (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "");
             });
-          selected = exactBranch[0] ?? null;
+          const preferredRequest = preferredRequestUrl
+            ? requests.find((request) => request.url === preferredRequestUrl) ?? null
+            : null;
+          selected = preferredRequest ?? exactBranch[0] ?? null;
 
           if (!selected && headSha) {
             const headProbeCandidates = requests
@@ -5508,7 +5513,7 @@ export class AppController
       createdAt: new Date().toISOString(),
     });
     this.markLinkedRunTaskInReview(run, url);
-    await this.syncRunForgeRequest(run.id, true, true);
+    await this.syncRunForgeRequest(run.id, true, true, url);
 
     if (createdCustomSourceBranch) {
       await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedSourceBranch);
