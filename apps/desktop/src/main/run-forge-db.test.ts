@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
-import type { RunForgeRequestSummary } from "@buildwarden/shared";
+import type { RunForgeRequestDetailsResult, RunForgeRequestSummary } from "@buildwarden/shared";
 
 const directories: string[] = [];
 const databases: BuildWardenDatabase[] = [];
@@ -68,6 +68,37 @@ const summary: RunForgeRequestSummary = {
   syncError: null,
 };
 
+const details: RunForgeRequestDetailsResult = {
+  summary,
+  request: {
+    provider: summary.provider,
+    number: summary.number,
+    title: summary.title,
+    url: summary.url,
+    state: summary.state,
+    draft: summary.draft,
+    author: summary.author,
+    sourceBranch: summary.sourceBranch,
+    targetBranch: summary.targetBranch,
+    description: "Forge request details",
+    authorUser: null,
+    labels: [],
+    createdAt: "2026-08-08T08:00:00.000Z",
+    updatedAt: summary.updatedAt,
+    additions: 10,
+    deletions: 2,
+    changedFiles: 1,
+    commentCount: 0,
+    reviewCommentCount: 0,
+  },
+  activity: [],
+  commits: [],
+  files: [],
+  reviewThreads: [],
+  checks: [],
+  warnings: [],
+};
+
 describe("run-linked forge persistence", () => {
   it("hydrates summaries in run reads and shares one cached request across runs", async () => {
     const db = await createDb();
@@ -92,7 +123,7 @@ describe("run-linked forge persistence", () => {
     const { project, makeRun } = fixture(db);
     const linked = makeRun("feat/forge");
     const missing = makeRun("feat/no-request");
-    db.saveRunForgeRequest(linked.id, project.id, linked.branchName, summary.headSha, summary, null);
+    db.saveRunForgeRequest(linked.id, project.id, linked.branchName, summary.headSha, summary, details);
     db.saveRunForgeNegativeProbe(missing.id, missing.branchName, "def456", "2026-08-08T09:20:00.000Z");
     db.saveRunForgeSyncError(linked.id, "GitHub API 401", "2026-08-08T09:05:00.000Z");
     const filePath = db.getFilePath();
@@ -101,6 +132,10 @@ describe("run-linked forge persistence", () => {
     db = await createDb(filePath);
 
     expect(db.getRun(linked.id).forgeRequest).toMatchObject({ readiness: "unavailable", stale: true, syncError: "GitHub API 401" });
+    expect(db.getRunForgeRequestCache(linked.id)?.details).toMatchObject({
+      summary: { readiness: "unavailable", stale: true, syncError: "GitHub API 401" },
+      request: { description: "Forge request details" },
+    });
     expect(db.getRunForgeRequestCache(missing.id)).toMatchObject({ summary: null, headSha: "def456", negativeCacheUntil: "2026-08-08T09:20:00.000Z" });
   });
 });

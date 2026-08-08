@@ -2184,11 +2184,20 @@ export class BuildWardenDatabase {
       stale: true,
       syncError: message,
     };
+    const staleDetails = cache.details ? { ...cache.details, summary: staleSummary } : null;
     this.run(
-      `update forge_requests set summary_json = ?, error_count = error_count + 1,
+      `update forge_requests set summary_json = ?, details_json = coalesce(?, details_json),
+       error_count = error_count + 1,
        sync_error = ?, retry_after_at = ?, updated_at = ?
        where id = (select forge_request_id from run_forge_links where run_id = ?)`,
-      [JSON.stringify(staleSummary), message, retryAfterAt, timestamp, runId],
+      [
+        JSON.stringify(staleSummary),
+        staleDetails ? JSON.stringify(staleDetails) : null,
+        message,
+        retryAfterAt,
+        timestamp,
+        runId,
+      ],
     );
     return staleSummary;
   }
