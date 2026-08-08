@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   RunForgeMergeMethod,
   RunForgeRequestDetailsResult,
@@ -68,30 +68,46 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
   const [agentAction, setAgentAction] = useState<RunForgeAgentAction | null>(null);
   const [agentPrompt, setAgentPrompt] = useState("");
   const [hostedDiff, setHostedDiff] = useState<string | null>(null);
+  const activeRef = useRef(true);
+  const detailsRequestIdRef = useRef(0);
+  const diffRequestIdRef = useRef(0);
   const canWrite = client.capabilities.gitMutations;
   const canRunAgent = client.capabilities.runMutations && !["queued", "preparing", "running"].includes(run.status);
 
   const load = async (refresh = false) => {
+    const requestId = ++detailsRequestIdRef.current;
     setBusy(true);
     setError(null);
     try {
       const next = await client.getRunForgeRequestDetails(run.id, { refresh });
-      if (next) {
+      if (activeRef.current && requestId === detailsRequestIdRef.current && next) {
         setDetails(next);
         setSummary(next.summary);
       }
     } catch (caught) {
-      setError(errorMessage(caught, "Could not load the request."));
+      if (activeRef.current && requestId === detailsRequestIdRef.current) {
+        setError(errorMessage(caught, "Could not load the request."));
+      }
     } finally {
-      setBusy(false);
+      if (activeRef.current && requestId === detailsRequestIdRef.current) setBusy(false);
     }
   };
 
   useEffect(() => {
+    activeRef.current = true;
+    return () => { activeRef.current = false; };
+  }, [run.id]);
+
+  useEffect(() => {
     setSummary(initialSummary);
+    setDetails(null);
+    setHostedDiff(null);
+    diffRequestIdRef.current += 1;
     void load(false);
     return client.onRunForgeRequestChanged((payload) => {
       if (payload.runId !== run.id || !payload.forgeRequest) return;
+      detailsRequestIdRef.current += 1;
+      setBusy(false);
       setSummary(payload.forgeRequest);
       setDetails((current) => current ? { ...current, summary: payload.forgeRequest! } : current);
     });
@@ -174,14 +190,17 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
 
   const loadHostedDiff = async () => {
     if (hostedDiff != null) return;
+    const requestId = ++diffRequestIdRef.current;
     setBusy(true);
     try {
       const result = await client.getRunForgeRequestDiff(run.id);
-      setHostedDiff(result?.diff ?? "");
+      if (activeRef.current && requestId === diffRequestIdRef.current) setHostedDiff(result?.diff ?? "");
     } catch (caught) {
-      setError(errorMessage(caught, "Could not load the hosted diff."));
+      if (activeRef.current && requestId === diffRequestIdRef.current) {
+        setError(errorMessage(caught, "Could not load the hosted diff."));
+      }
     } finally {
-      setBusy(false);
+      if (activeRef.current && requestId === diffRequestIdRef.current) setBusy(false);
     }
   };
 

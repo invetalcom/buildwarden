@@ -217,7 +217,7 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
       {activeSegment === "notes" ? <RunNotesPanel detail={detail} onChanged={store.reload} /> : null}
 
       {activeSegment === "pull-request" && detail.run.forgeRequest ? (
-        <RunForgePanel run={detail.run} initialSummary={detail.run.forgeRequest} onChanged={refreshAll} />
+        <RunForgePanel key={detail.run.id} run={detail.run} initialSummary={detail.run.forgeRequest} onChanged={refreshAll} />
       ) : null}
 
       {activeSegment === "chat" ? (
