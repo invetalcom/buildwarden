@@ -131,6 +131,7 @@ afterEach(async () => {
     mounted.container.remove();
   }
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("ProjectPrMrTab request actions", () => {
@@ -157,7 +158,7 @@ describe("ProjectPrMrTab request actions", () => {
   });
 
   it("forwards the selected merge method and expected HEAD, then applies the merged state", async () => {
-    Object.defineProperty(window, "confirm", { configurable: true, value: vi.fn(() => true) });
+    vi.stubGlobal("confirm", vi.fn(() => true));
     const merged = readyStatus({
       state: "merged",
       readiness: "merged",
