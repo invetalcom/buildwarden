@@ -322,6 +322,51 @@ describe("AppController settings and lightweight workflows", () => {
     );
   });
 
+  it("reads the forge cache after entering the project sync queue", async () => {
+    const run = {
+      id: "run-queued-cache",
+      projectId: project.id,
+      workspaceVcs: "git",
+      workspaceType: "local",
+      worktreePath: project.repoPath,
+      branchName: "feature",
+    } as RunRecord;
+    const getRunForgeRequestCache = vi.fn(() => null);
+    const harness = createHarness({
+      getRun: vi.fn(() => run),
+      getRunSteps: vi.fn(() => []),
+      getRunForgeRequestCache,
+      saveRunForgeNegativeProbe: vi.fn(),
+      saveRunForgeSyncError: vi.fn(() => null),
+    });
+    vi.spyOn(GitService.prototype, "getHeadCommitSha").mockResolvedValue("head-sha");
+    vi.spyOn(GitService.prototype, "getCurrentBranch").mockResolvedValue("feature");
+    const forgeProvider = {
+      listRequests: vi.fn(async () => ({
+        provider: "github" as const,
+        webBaseUrl: "https://github.com/acme/repo",
+        repoLabel: "acme/repo",
+        items: [],
+      })),
+    } as unknown as ProjectPrReviewProvider;
+    const internalController = harness.controller as unknown as {
+      createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
+      serializeProjectForgeSync: <T>(projectId: string, operation: () => Promise<T>) => Promise<T>;
+    };
+    internalController.createProjectPrReviewProvider = vi.fn(async () => forgeProvider);
+    const gate = deferred<void>();
+    const blockingSync = internalController.serializeProjectForgeSync(project.id, () => gate.promise);
+
+    const refresh = harness.controller.refreshRunForgeRequest(run.id);
+    await Promise.resolve();
+    expect(getRunForgeRequestCache).not.toHaveBeenCalled();
+
+    gate.resolve();
+    await blockingSync;
+    await refresh;
+    expect(getRunForgeRequestCache).toHaveBeenCalledOnce();
+  });
+
   it("inherits full access only from the latest coordinator user turn", () => {
     expect(latestUserTurnUsedFullAccess([
       { metadataJson: JSON.stringify({ source: "user", commandType: "initial", yoloMode: true }) },

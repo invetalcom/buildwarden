@@ -4253,22 +4253,23 @@ export class AppController
     const run = this.db.getRun(runId);
     if (run.workspaceVcs !== "git") return null;
     const project = this.db.getProject(run.projectId);
-    const cached = this.db.getRunForgeRequestCache(runId);
     const workspacePath = this.getEffectiveRunWorkspacePath(run, project);
-    const [probedHeadSha, probedBranchName] = await Promise.all([
-      this.gitService.getHeadCommitSha(workspacePath).catch(() => cached?.headSha ?? null),
-      this.gitService.getCurrentBranch(workspacePath).catch(() => run.branchName),
-    ]);
-    const branchName = probedBranchName.trim() || run.branchName;
-    const negativeProbeStillMatches = cached?.branchName === branchName && cached.headSha === probedHeadSha;
-    if (
-      !force &&
-      negativeProbeStillMatches &&
-      cached?.negativeCacheUntil &&
-      Date.parse(cached.negativeCacheUntil) > Date.now()
-    ) return null;
 
     return this.serializeProjectForgeSync(run.projectId, async () => {
+      const cached = this.db.getRunForgeRequestCache(runId);
+      const [probedHeadSha, probedBranchName] = await Promise.all([
+        this.gitService.getHeadCommitSha(workspacePath).catch(() => cached?.headSha ?? null),
+        this.gitService.getCurrentBranch(workspacePath).catch(() => run.branchName),
+      ]);
+      const branchName = probedBranchName.trim() || run.branchName;
+      const negativeProbeStillMatches = cached?.branchName === branchName && cached.headSha === probedHeadSha;
+      if (
+        !force &&
+        negativeProbeStillMatches &&
+        cached?.negativeCacheUntil &&
+        Date.parse(cached.negativeCacheUntil) > Date.now()
+      ) return null;
+
       try {
         const provider = await this.createProjectPrReviewProvider(run.projectId);
         // Open requests can stay on the lightweight status-refresh path. Terminal
