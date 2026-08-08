@@ -4173,6 +4173,10 @@ export class AppController
     return provider.getRequestDetails(input);
   }
 
+  // This queue is not reentrant: a callback must not invoke another serialized
+  // forge operation for the same project or it will wait on its own pending
+  // promise. syncRunForgeRequest uses loadProjectForgeRequests directly to avoid
+  // re-entering through the public listProjectForgeRequests operation.
   private serializeProjectForgeSync<T>(projectId: string, operation: () => Promise<T>): Promise<T> {
     const previous = this.projectForgeSyncQueues.get(projectId) ?? Promise.resolve();
     const current = previous.catch(() => undefined).then(operation);
