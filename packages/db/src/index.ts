@@ -2095,21 +2095,25 @@ export class BuildWardenDatabase {
     cache?: { etag?: string | null; lastModified?: string | null },
   ): void {
     const timestamp = nowIso();
-    const existing = this.first<{ id: string; detailsJson: string | null }>(
-      `select id, details_json as detailsJson from forge_requests
-       where project_id = ? and provider = ? and request_number = ?`,
-      [projectId, summary.provider, summary.number],
-    );
-    const requestId = existing?.id ?? createId();
-    this.run(
-      `insert into forge_requests (
+    this.transaction(() => {
+      const existing = this.first<{ id: string }>(
+        `select id from forge_requests
+         where project_id = ? and provider = ? and request_number = ?`,
+        [projectId, summary.provider, summary.number],
+      );
+      const requestId = existing?.id ?? createId();
+      this.run(
+        `insert into forge_requests (
          id, project_id, provider, request_number, summary_json, details_json, checks_json,
          etag, last_modified, last_synced_at, error_count, sync_error, retry_after_at, created_at, updated_at
-       ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, null, null, ?, ?)
+       ) values (?, ?, ?, ?, ?, ?, coalesce(?, '[]'), ?, ?, ?, 0, null, null, ?, ?)
        on conflict(project_id, provider, request_number) do update set
          summary_json = excluded.summary_json,
          details_json = coalesce(excluded.details_json, forge_requests.details_json),
-         checks_json = excluded.checks_json,
+         checks_json = case
+           when excluded.details_json is null then forge_requests.checks_json
+           else excluded.checks_json
+         end,
          etag = coalesce(excluded.etag, forge_requests.etag),
          last_modified = coalesce(excluded.last_modified, forge_requests.last_modified),
          last_synced_at = excluded.last_synced_at,
@@ -2124,16 +2128,16 @@ export class BuildWardenDatabase {
         summary.number,
         JSON.stringify(summary),
         details ? JSON.stringify(details) : null,
-        JSON.stringify(details?.checks ?? []),
+        details ? JSON.stringify(details.checks) : null,
         cache?.etag ?? null,
         cache?.lastModified ?? null,
         summary.lastSyncedAt,
         timestamp,
         timestamp,
       ],
-    );
-    this.run(
-      `insert into run_forge_links (
+      );
+      this.run(
+        `insert into run_forge_links (
          run_id, forge_request_id, branch_name, head_sha, last_probe_at, negative_cache_until, created_at, updated_at
        ) values (?, ?, ?, ?, ?, null, ?, ?)
        on conflict(run_id) do update set
@@ -2143,8 +2147,9 @@ export class BuildWardenDatabase {
          last_probe_at = excluded.last_probe_at,
          negative_cache_until = null,
          updated_at = excluded.updated_at`,
-      [runId, requestId, branchName, headSha, timestamp, timestamp, timestamp],
-    );
+        [runId, requestId, branchName, headSha, timestamp, timestamp, timestamp],
+      );
+    });
   }
 
   saveRunForgeNegativeProbe(
