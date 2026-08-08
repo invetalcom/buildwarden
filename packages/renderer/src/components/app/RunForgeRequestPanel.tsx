@@ -104,7 +104,8 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
   const [prompt, setPrompt] = useState("");
   const [mergeMenuOpen, setMergeMenuOpen] = useState(false);
   const canWriteForge = buildwarden.capabilities.gitMutations;
-  const canRunAgent = buildwarden.capabilities.runMutations && run.status !== "running" && run.status !== "queued";
+  const canRunAgent = buildwarden.capabilities.runMutations
+    && !["queued", "preparing", "running"].includes(run.status);
 
   const loadDetails = async (refresh = false) => {
     setPending(true);
