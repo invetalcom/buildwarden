@@ -109,6 +109,9 @@ describe("remote operation registry", () => {
       | "getProjectForgePrMonitorSettings"
       | "listProjectForgeRequests"
       | "getProjectForgeRequestDetails"
+      | "getRunForgeRequestDetails"
+      | "refreshRunForgeRequest"
+      | "getRunForgeRequestDiff"
       | "fetchProjectPrMrDiff"
       | "checkProjectGitConversion"
       | "getProjectBranchDeleteImpact"
@@ -167,6 +170,8 @@ describe("remote operation registry", () => {
       | "submitProjectPrMrComments"
       | "replyProjectPrMrReviewThread"
       | "resolveProjectPrMrReviewThread"
+      | "updateRunForgeRequest"
+      | "mergeRunForgeRequest"
       | "commitRun"
       | "createRunLocalBranch"
       | "publishRunBranch"
@@ -675,6 +680,7 @@ describe("remote access authentication", () => {
         "events:task",
         "events:terminal",
         "events:browser",
+        "events:forge",
       ],
       endpoints: { health: REMOTE_ACCESS_HEALTH_PATH, info: REMOTE_ACCESS_INFO_PATH, events: REMOTE_ACCESS_WEBSOCKET_PATH },
     });

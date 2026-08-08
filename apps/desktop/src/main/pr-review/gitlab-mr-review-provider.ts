@@ -17,6 +17,7 @@ import type {
   ProjectForgeReviewActionResult,
   ProjectPrMrDiffResult,
   ProjectPrMrDiffComment,
+  RunForgeCheck,
   ReplyProjectPrMrReviewThreadInput,
   ResolveProjectPrMrReviewThreadInput,
   SubmitProjectPrMrCommentsInput,
@@ -25,10 +26,13 @@ import type { PrReviewHttpClient } from "./pr-review-http-client";
 import type {
   CreateForgeRequestInput,
   ForgeRequestApprovalStatus,
+  ForgeRequestStatusInput,
+  ForgeRequestStatusResult,
   GitlabDiffRefs,
   MergeForgeRequestInput,
   ProjectPrReviewProvider,
   ProjectPrReviewRemoteContext,
+  UpdateForgeRequestInput,
 } from "./pr-review-types";
 import {
   assertDraftCommentsAreSubmittable,
@@ -299,6 +303,33 @@ const toGitlabDiscussionPosition = (comment: ProjectPrMrDiffComment, refs: Gitla
   }
 
   return position;
+};
+
+const gitlabCheckStatus = (status: string | null): RunForgeCheck["status"] => {
+  switch (status?.toLowerCase()) {
+    case "created":
+    case "waiting_for_resource":
+    case "preparing":
+    case "scheduled":
+    case "pending": return "queued";
+    case "canceling":
+    case "running": return "running";
+    case "success": return "success";
+    case "skipped":
+    case "manual": return "skipped";
+    case "canceled": return "cancelled";
+    default: return "failure";
+  }
+};
+
+const gitlabDurationMs = (record: Record<string, unknown>): number | null => {
+  const seconds = recordNumber(record, "duration");
+  if (seconds != null && seconds >= 0) return Math.round(seconds * 1000);
+  const startedAt = recordString(record, "started_at");
+  const finishedAt = recordString(record, "finished_at");
+  if (!startedAt || !finishedAt) return null;
+  const value = Date.parse(finishedAt) - Date.parse(startedAt);
+  return Number.isFinite(value) && value >= 0 ? value : null;
 };
 
 export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
@@ -675,6 +706,9 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
   async mergeRequest(input: MergeForgeRequestInput): Promise<ProjectForgeReviewActionResult> {
     const parsed = parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
     const body: Record<string, unknown> = {};
+    if (input.expectedHeadSha) body.sha = input.expectedHeadSha;
+    if (input.method === "squash") body.squash = true;
+    if (input.method === "rebase") throw new Error("GitLab does not expose rebase as a merge method for this action.");
     if (input.mergeCommitTitle?.trim()) {
       body.merge_commit_message = input.mergeCommitTitle.trim();
     }
@@ -715,6 +749,125 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
       approved: approvedFlag || approvedBy.length > 0,
       approvedBy,
     };
+  }
+
+  async getRequestStatus(input: ForgeRequestStatusInput): Promise<ForgeRequestStatusResult> {
+    const parsed = parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
+    const projectPath = this.context.gitlab.encodedProjectPath;
+    const iid = String(parsed.number);
+    const conditionalHeaders: Record<string, string> = {};
+    if (input.etag) conditionalHeaders["If-None-Match"] = input.etag;
+    if (input.lastModified) conditionalHeaders["If-Modified-Since"] = input.lastModified;
+    const requestResult = await this.http.jsonWithHeaders(
+      `/projects/${projectPath}/merge_requests/${iid}`,
+      Object.keys(conditionalHeaders).length > 0 ? { headers: conditionalHeaders } : {},
+    );
+    const requestPayload = isRecord(requestResult.payload) ? requestResult.payload : null;
+    if (!requestPayload && !(requestResult.notModified && input.previousStatus)) {
+      throw new Error("GitLab returned an unexpected merge request status response.");
+    }
+    const previousStatus = input.previousStatus ?? null;
+    const diffRefs = requestPayload ? recordObject(requestPayload, "diff_refs") : null;
+    const headSha = requestPayload
+      ? recordString(requestPayload, "sha") ?? (diffRefs ? recordString(diffRefs, "head_sha") : null)
+      : previousStatus!.headSha;
+    const pipelines = await this.http.json(`/projects/${projectPath}/merge_requests/${iid}/pipelines?per_page=1`);
+    const pipeline = Array.isArray(pipelines) && isRecord(pipelines[0])
+      ? pipelines[0]
+      : requestPayload ? recordObject(requestPayload, "head_pipeline") : null;
+    let jobRows: Record<string, unknown>[] = [];
+    const pipelineId = pipeline ? recordNumber(pipeline, "id") : null;
+    if (pipelineId) {
+      const jobs = await this.http.json(`/projects/${projectPath}/pipelines/${String(pipelineId)}/jobs?per_page=100&include_retried=false`);
+      if (Array.isArray(jobs)) jobRows = onlyRecords(jobs);
+    }
+    const checks: RunForgeCheck[] = jobRows.map((job, index) => ({
+      id: String(recordNumber(job, "id") ?? `gitlab-job-${String(index)}`),
+      name: recordString(job, "name") ?? "Pipeline job",
+      status: gitlabCheckStatus(recordString(job, "status")),
+      url: recordString(job, "web_url"),
+      description: recordString(job, "stage"),
+      startedAt: recordString(job, "started_at"),
+      completedAt: recordString(job, "finished_at"),
+      durationMs: gitlabDurationMs(job),
+    }));
+    if (checks.length === 0 && pipeline) {
+      checks.push({
+        id: String(recordNumber(pipeline, "id") ?? "gitlab-pipeline"),
+        name: "Pipeline",
+        status: gitlabCheckStatus(recordString(pipeline, "status")),
+        url: recordString(pipeline, "web_url"),
+        description: null,
+        startedAt: recordString(pipeline, "created_at"),
+        completedAt: recordString(pipeline, "updated_at"),
+        durationMs: null,
+      });
+    }
+
+    const rawState = requestPayload ? recordString(requestPayload, "state")?.toLowerCase() : null;
+    const state = requestPayload
+      ? rawState === "merged" ? "merged" : rawState === "closed" ? "closed" : "open"
+      : previousStatus!.state;
+    const detailedMergeStatus = requestPayload
+      ? (recordString(requestPayload, "detailed_merge_status") ?? recordString(requestPayload, "merge_status") ?? "").toLowerCase()
+      : "";
+    const mergeability = requestPayload
+      ? recordBoolean(requestPayload, "has_conflicts") || detailedMergeStatus.includes("conflict")
+        ? "conflicting"
+        : ["checking", "unchecked", "preparing", "approvals_syncing"].includes(detailedMergeStatus)
+          ? "checking"
+          : ["mergeable", "can_be_merged"].includes(detailedMergeStatus) ? "mergeable" : "unknown"
+      : previousStatus!.mergeability;
+    const approval = await this.getRequestApprovalStatus(input);
+    const approvalsRequired = requestPayload ? recordNumber(requestPayload, "approvals_before_merge") ?? 0 : 0;
+    const unresolvedThreadCount = requestPayload
+      ? recordBoolean(requestPayload, "blocking_discussions_resolved") ? 0 : 1
+      : previousStatus!.unresolvedThreadCount;
+    const reviewDecision = approval.approved
+      ? "approved"
+      : requestPayload ? approvalsRequired > 0 ? "review-required" : "none" : previousStatus!.reviewDecision;
+    const draft = requestPayload
+      ? recordBoolean(requestPayload, "draft") || recordBoolean(requestPayload, "work_in_progress")
+      : previousStatus!.draft;
+    return {
+      state,
+      draft,
+      mergeability,
+      reviewDecision,
+      headSha,
+      checks,
+      unresolvedThreadCount,
+      supportedActions: state === "open"
+        ? ["refresh", "open", draft ? "mark-ready" : "mark-draft", "merge", "close"]
+        : state === "closed" ? ["refresh", "open", "reopen"] : ["refresh", "open"],
+      supportedMergeMethods: ["merge", "squash"],
+      etag: requestResult.headers.get("etag") ?? input.etag ?? null,
+      lastModified: requestResult.headers.get("last-modified") ?? input.lastModified ?? null,
+    };
+  }
+
+  async updateRequest(input: UpdateForgeRequestInput): Promise<ProjectForgeReviewActionResult> {
+    const parsed = parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
+    const projectPath = this.context.gitlab.encodedProjectPath;
+    const iid = String(parsed.number);
+    if (input.expectedHeadSha) {
+      const request = await this.http.json(`/projects/${projectPath}/merge_requests/${iid}`);
+      const actual = isRecord(request) ? recordString(request, "sha") : null;
+      if (!actual || actual.toLowerCase() !== input.expectedHeadSha.trim().toLowerCase()) {
+        throw new Error("The merge request head changed. Refresh it before performing this action.");
+      }
+    }
+    const body: Record<string, unknown> = input.action === "mark-draft"
+      ? { draft: true }
+      : input.action === "mark-ready"
+        ? { draft: false }
+        : { state_event: input.action === "close" ? "close" : "reopen" };
+    await this.http.json(`/projects/${projectPath}/merge_requests/${iid}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json" },
+    });
+    return { message: `Merge request updated: ${input.action.replace(/-/g, " ")}.`, url: input.prUrl.trim() };
   }
 
   private async postNote(mergeRequestIid: number, body: string): Promise<void> {

@@ -54,6 +54,7 @@ import {
 import {
   Globe,
   GitBranch,
+  GitPullRequest,
   Loader2,
   MessageSquareText,
   MessagesSquare,
@@ -180,6 +181,7 @@ const RUN_PANEL_TOGGLE_DEFINITIONS: readonly RunPanelToggleDefinition[] = [
   { key: "browser", label: "Browser", icon: Globe, hiddenSubtitle: "Show in-app browser", requiresWorktree: false },
   { key: "notes", label: "Notes", icon: StickyNote, hiddenSubtitle: "Show run notes", requiresWorktree: false },
   { key: "chat", label: "Chat", icon: MessagesSquare, hiddenSubtitle: "Ask about this run", requiresWorktree: false },
+  { key: "pull-request", label: "Pull Request", icon: GitPullRequest, hiddenSubtitle: "Show review status", requiresWorktree: false },
 ];
 
 const addProjectForgeRequestToast = (
@@ -309,6 +311,7 @@ export const App = () => {
     runWorkspaceShowDiff,
     runWorkspaceShowNotes,
     runWorkspaceShowTerminal,
+    runWorkspaceShowPullRequest,
     setRunWorkspaceSecondaryPosition,
     setRunWorkspaceShowActivity,
     setRunWorkspaceShowAgents,
@@ -317,6 +320,7 @@ export const App = () => {
     setRunWorkspaceShowDiff,
     setRunWorkspaceShowNotes,
     setRunWorkspaceShowTerminal,
+    setRunWorkspaceShowPullRequest,
     updateRunWorkspaceLayout,
   } = useRunWorkspaceLayouts({
     buildwarden,
@@ -986,12 +990,17 @@ export const App = () => {
         void refreshRunDetailForActiveRunEvent(payload.coordinatorRunId, { immediate: true });
       }
     });
+    const unsubscribeForgeChanged = buildwarden.onRunForgeRequestChanged((payload) => {
+      scheduleSnapshotRefresh();
+      void refreshRunDetailForActiveRunEvent(payload.runId, { immediate: true });
+    });
 
     return () => {
       unsubscribe();
       unsubscribeWarning();
       unsubscribeLoopChanged();
       unsubscribeOrchestrationChanged();
+      unsubscribeForgeChanged();
     };
   }, [
     buildwarden,
@@ -1021,6 +1030,32 @@ export const App = () => {
     const intervalId = window.setInterval(refreshRemoteView, 3000);
     return () => window.clearInterval(intervalId);
   }, [buildwarden.capabilities.liveEvents, loadSnapshot, refreshOpenRunDetailForEvent]);
+
+  useEffect(() => {
+    if (typeof selectedRunId !== "string") return;
+    void buildwarden.refreshRunForgeRequest(selectedRunId)
+      .then(() => refreshOpenRunDetailForEvent(selectedRunId))
+      .catch(() => undefined);
+  }, [buildwarden, refreshOpenRunDetailForEvent, selectedRunId]);
+
+  useEffect(() => {
+    let lastRefreshAt = 0;
+    const refreshVisibleForgeRequests = () => {
+      const now = Date.now();
+      if (now - lastRefreshAt < 30_000) return;
+      lastRefreshAt = now;
+      const runIds = new Set<string>();
+      if (typeof selectedRunIdRef.current === "string") runIds.add(selectedRunIdRef.current);
+      for (const entry of getOpenRunPaneEntries(openRunPanesRef.current)) runIds.add(entry.runId);
+      for (const runId of runIds) {
+        void buildwarden.refreshRunForgeRequest(runId)
+          .then(() => refreshOpenRunDetailForEvent(runId))
+          .catch(() => undefined);
+      }
+    };
+    window.addEventListener("focus", refreshVisibleForgeRequests);
+    return () => window.removeEventListener("focus", refreshVisibleForgeRequests);
+  }, [buildwarden, refreshOpenRunDetailForEvent]);
 
   useEffect(() => {
     if (!settingsOpen) {
@@ -1291,6 +1326,7 @@ export const App = () => {
     browser: runWorkspaceShowBrowser,
     notes: runWorkspaceShowNotes,
     chat: runWorkspaceShowChat,
+    "pull-request": runWorkspaceShowPullRequest && Boolean(runDetail?.run.forgeRequest),
   }, buildwarden.capabilities);
   const runWorkspacePanelSetters: Record<RunWorkspacePanelId, (visible: boolean) => void> = {
     activity: setRunWorkspaceShowActivity,
@@ -1300,6 +1336,7 @@ export const App = () => {
     browser: setRunWorkspaceShowBrowser,
     notes: setRunWorkspaceShowNotes,
     chat: setRunWorkspaceShowChat,
+    "pull-request": setRunWorkspaceShowPullRequest,
   };
   const runWorkspaceVisiblePanelCount = Object.values(runWorkspacePanelVisibility).filter(Boolean).length;
 
@@ -1360,6 +1397,7 @@ export const App = () => {
 
   const runPanelToggleItems = RUN_PANEL_TOGGLE_DEFINITIONS
     .filter((definition) => definition.key !== "agents" || selectedRunHasOrchestrationSurface)
+    .filter((definition) => definition.key !== "pull-request" || Boolean(runDetail?.run.forgeRequest))
     .filter((definition) => isRunWorkspacePanelAvailable(definition.key, buildwarden.capabilities))
     .map((definition): RunPanelToggleItem => {
       const active = runWorkspacePanelVisibility[definition.key];
@@ -3225,6 +3263,7 @@ export const App = () => {
             browser: runWorkspaceShowBrowser,
             notes: runWorkspaceShowNotes,
             chat: runWorkspaceShowChat,
+            "pull-request": runWorkspaceShowPullRequest && Boolean(paneRun?.forgeRequest),
           }
         : paneLayout.visiblePanels,
       buildwarden.capabilities,
@@ -3313,6 +3352,7 @@ export const App = () => {
             showBrowser={paneVisiblePanels.browser}
             showNotes={paneVisiblePanels.notes}
             showChat={paneVisiblePanels.chat}
+            showPullRequest={paneVisiblePanels["pull-request"]}
             onRequestDiff={loadDiffForOpenRun}
             onTogglePanel={(panelId) => toggleRunWorkspacePanelForRun(
               paneDetail.run.id,
@@ -3748,6 +3788,7 @@ export const App = () => {
               showBrowser={runWorkspacePanelVisibility.browser}
               showNotes={runWorkspacePanelVisibility.notes}
               showChat={runWorkspacePanelVisibility.chat}
+              showPullRequest={runWorkspacePanelVisibility["pull-request"]}
               onRequestDiff={loadDiffForOpenRun}
               onTogglePanel={toggleSelectedRunWorkspacePanel}
               secondaryPanelPosition={runWorkspaceSecondaryPosition}

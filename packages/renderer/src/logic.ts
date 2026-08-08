@@ -80,3 +80,8 @@ export { deriveLatestRunPlanProgress, type DerivedRunPlanProgress } from "./lib/
 export { parseSearchTerms, runMatchesSearch, type RunSearchFields } from "./lib/run-search";
 export { bookmarkModelDisplay } from "./lib/bookmark-model";
 export { APP_VERSION, APP_VERSION_DATE } from "./lib/app-build-meta";
+export {
+  buildRunForgeAgentPrompt,
+  runForgeReadinessLabel,
+  type RunForgeAgentAction,
+} from "./components/app/run-forge-ui";

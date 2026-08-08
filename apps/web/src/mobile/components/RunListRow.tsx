@@ -1,9 +1,10 @@
 import { ProviderBrandIcon } from "@buildwarden/renderer/icons";
-import { GitBranch, MessageCircleQuestion } from "lucide-react";
+import { GitBranch, GitPullRequest, MessageCircleQuestion } from "lucide-react";
 import type { RunListItem } from "../data/selectors";
 import { needsAttention } from "../data/selectors";
 import { relativeTime, runTitle } from "../lib/format";
 import { RunStatusPill } from "./StatusPill";
+import { mobileForgeColor } from "../lib/forge";
 
 export const RunListRow = ({
   item,
@@ -35,6 +36,15 @@ export const RunListRow = ({
         {/* Rides the meta line at the same size as the icons already there, so rows keep their height. */}
         <ProviderBrandIcon harnessType={run.harnessType} className="size-3.5 shrink-0" />
         <RunStatusPill run={run} />
+        {run.forgeRequest ? (
+          <span
+            className="inline-flex items-center"
+            style={{ color: mobileForgeColor[run.forgeRequest.readiness] }}
+            aria-label={`${run.forgeRequest.provider === "github" ? "PR" : "MR"} #${String(run.forgeRequest.number)} ${run.forgeRequest.readiness}`}
+          >
+            <GitPullRequest className="size-3.5" />
+          </span>
+        ) : null}
         {attention ? (
           <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--ec-warning)]">
             <MessageCircleQuestion className="size-3" />

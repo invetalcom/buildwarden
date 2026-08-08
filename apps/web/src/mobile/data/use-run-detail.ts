@@ -39,6 +39,7 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
   // on still being the newest request.
   const loadRequestRef = useRef(0);
   const diffRequestRef = useRef(0);
+  const forgeProbeRunIdRef = useRef<string | null>(null);
 
   const load = useCallback(async (silent: boolean) => {
     const requestId = ++loadRequestRef.current;
@@ -64,12 +65,20 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
   const reload = useCallback(() => load(false), [load]);
 
   useEffect(() => {
+    let active = true;
     diffRequested.current = false;
     setDiff("");
     setDiffError(null);
     setDiffUnavailable(false);
     void load(false);
-  }, [load]);
+    if (runId && forgeProbeRunIdRef.current !== runId) {
+      forgeProbeRunIdRef.current = runId;
+      void client.refreshRunForgeRequest(runId)
+        .then(() => active ? load(true) : undefined)
+        .catch(() => undefined);
+    }
+    return () => { active = false; };
+  }, [client, load, runId]);
 
   const loadDiff = useCallback(async () => {
     if (!runId) return;
@@ -102,8 +111,13 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
         if (diffRequested.current) void loadDiff();
       }, RELOAD_DEBOUNCE_MS);
     });
+    const unsubscribeForge = client.onRunForgeRequestChanged((event) => {
+      if (event.runId !== runId) return;
+      void load(true);
+    });
     return () => {
       unsubscribe();
+      unsubscribeForge();
       if (timerRef.current !== null) {
         window.clearTimeout(timerRef.current);
         timerRef.current = null;
@@ -113,11 +127,15 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
 
   useEffect(() => {
     const onVisible = () => {
-      if (document.visibilityState === "visible") void load(true);
+      if (document.visibilityState !== "visible") return;
+      void load(true);
+      if (runId) {
+        void client.refreshRunForgeRequest(runId).catch(() => undefined);
+      }
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [load]);
+  }, [client, load, runId]);
 
   return { detail, loading, error, reload, diff, diffLoading, diffError, diffUnavailable, loadDiff };
 };

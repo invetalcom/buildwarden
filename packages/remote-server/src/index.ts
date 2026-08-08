@@ -64,6 +64,7 @@ const REMOTE_STREAM_EVENTS = [
   "terminal-data",
   "terminal-exit",
   "browser",
+  "forge",
 ] as const satisfies readonly RemoteStreamEventType[];
 const REMOTE_STREAM_EVENT_SET = new Set<string>(REMOTE_STREAM_EVENTS);
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;

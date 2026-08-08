@@ -91,6 +91,9 @@ const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
   "getProjectForgePrMonitorSettings",
   "listProjectForgeRequests",
   "getProjectForgeRequestDetails",
+  "getRunForgeRequestDetails",
+  "refreshRunForgeRequest",
+  "getRunForgeRequestDiff",
   "checkProjectGitConversion",
   "listHostDirectories",
   "listAvailableProviderModels",
@@ -159,6 +162,8 @@ const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
   "submitProjectPrMrComments",
   "replyProjectPrMrReviewThread",
   "resolveProjectPrMrReviewThread",
+  "updateRunForgeRequest",
+  "mergeRunForgeRequest",
   "commitRun",
   "createRunLocalBranch",
   "publishRunBranch",
@@ -207,7 +212,7 @@ const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAccessSco
     "fetchProjectBranches", "createProjectBranch", "renameProjectBranch", "deleteProjectBranch", "pullProjectBranch",
     "pushProjectBranch", "convertProjectToGit", "updateProjectBaseBranch",
     "analyzeProjectPrMrDiff", "postProjectPrMrReview", "submitProjectPrMrComments", "replyProjectPrMrReviewThread",
-    "resolveProjectPrMrReviewThread", "fetchProjectPrMrDiff",
+    "resolveProjectPrMrReviewThread", "fetchProjectPrMrDiff", "updateRunForgeRequest", "mergeRunForgeRequest",
   ].map((method) => [method as RemoteApiMethod, ["git:write"] as const] as const),
   ...[
     "addProject", "reorderProjects", "addProviderAccount", "addModel", "deleteProject", "deleteProviderAccount", "deleteModel",
@@ -300,6 +305,7 @@ const REMOTE_EVENT_TYPES = new Set<RemoteStreamEventType>([
   "terminal-data",
   "terminal-exit",
   "browser",
+  "forge",
 ]);
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -322,6 +328,8 @@ const isRemoteEventPayload = (event: RemoteStreamEventType, payload: unknown): b
   if (event === "terminal-exit") return typeof payload.sessionId === "string" && Number.isInteger(payload.exitCode);
   if (event === "browser") return typeof payload.runId === "string" &&
     (payload.type === "state" || payload.type === "selection-ready" || payload.type === "frame" || payload.type === "error");
+  if (event === "forge") return typeof payload.runId === "string" && typeof payload.projectId === "string" &&
+    (payload.forgeRequest === null || isObject(payload.forgeRequest));
   if (event === "orchestration") {
     return typeof payload.projectId === "string" && typeof payload.coordinatorRunId === "string" &&
       typeof payload.orchestrationId === "string" && typeof payload.status === "string" &&
@@ -606,6 +614,7 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     onProjectLoopChanged: (listener) => subscribe("loop", listener),
     onProjectTaskChanged: (listener) => subscribe("task", listener),
     onOrchestrationChanged: (listener) => subscribe("orchestration", listener),
+    onRunForgeRequestChanged: (listener) => subscribe("forge", listener),
     onRunTerminalData: (listener) => subscribe("terminal-data", listener),
     onRunTerminalExit: (listener) => subscribe("terminal-exit", listener),
     onRunBrowserEvent: (listener, runIds) => subscribe("browser", listener, runIds),

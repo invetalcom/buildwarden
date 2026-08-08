@@ -812,6 +812,8 @@ export interface RunRecord {
   projectTaskId: string | null;
   /** Allows the top-level run to create durable cross-provider child runs. */
   delegationEnabled: boolean | number;
+  /** Cached PR/MR association for this run's branch. Hydrated at read time and omitted for older snapshots. */
+  forgeRequest?: RunForgeRequestSummary | null;
   createdAt: string;
   updatedAt: string;
   startedAt: string | null;
@@ -2378,6 +2380,84 @@ export interface ProjectForgeRequestSummary {
   updatedAt: string | null;
 }
 
+export type RunForgeRequestState = "open" | "closed" | "merged";
+export type RunForgeReadiness = "ready" | "pending" | "blocked" | "merged" | "closed" | "unavailable";
+export type RunForgeMergeability = "mergeable" | "conflicting" | "checking" | "unknown";
+export type RunForgeReviewDecision = "approved" | "changes-requested" | "review-required" | "none";
+export type RunForgeCheckStatus = "queued" | "running" | "success" | "failure" | "cancelled" | "neutral" | "skipped";
+export type RunForgeAction = "refresh" | "open" | "mark-draft" | "mark-ready" | "merge" | "close" | "reopen";
+export type RunForgeMergeMethod = "merge" | "squash" | "rebase";
+
+export interface RunForgeCheck {
+  id: string;
+  name: string;
+  status: RunForgeCheckStatus;
+  url: string | null;
+  description: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+}
+
+export interface RunForgeCheckProgress {
+  completed: number;
+  total: number;
+  successful: number;
+  failed: number;
+  running: number;
+}
+
+export interface RunForgeRequestSummary {
+  provider: ProjectForgeProvider;
+  number: number;
+  title: string;
+  url: string;
+  state: RunForgeRequestState;
+  readiness: RunForgeReadiness;
+  draft: boolean;
+  mergeability: RunForgeMergeability;
+  reviewDecision: RunForgeReviewDecision;
+  author: string | null;
+  sourceBranch: string;
+  targetBranch: string;
+  headSha: string | null;
+  checks: RunForgeCheckProgress;
+  unresolvedThreadCount: number;
+  supportedActions: RunForgeAction[];
+  supportedMergeMethods: RunForgeMergeMethod[];
+  updatedAt: string | null;
+  lastSyncedAt: string;
+  stale: boolean;
+  syncError: string | null;
+}
+
+export interface RunForgeRequestDetailsResult {
+  summary: RunForgeRequestSummary;
+  request: ProjectForgeRequestDetails;
+  activity: ProjectForgeActivityItem[];
+  commits: ProjectForgeCommitSummary[];
+  files: ProjectForgeChangedFileSummary[];
+  reviewThreads: ProjectForgeReviewThread[];
+  checks: RunForgeCheck[];
+  warnings: string[];
+}
+
+export interface RunForgeRequestChangedPayload {
+  runId: string;
+  projectId: string;
+  forgeRequest: RunForgeRequestSummary | null;
+}
+
+export interface UpdateRunForgeRequestInput {
+  action: "mark-draft" | "mark-ready" | "close" | "reopen";
+  expectedHeadSha?: string;
+}
+
+export interface MergeRunForgeRequestInput {
+  method: RunForgeMergeMethod;
+  expectedHeadSha: string;
+}
+
 export interface ProjectForgeUserSummary {
   username: string;
   name: string | null;
@@ -3621,6 +3701,11 @@ export interface DesktopApi {
   saveProjectForgePrMonitorSettings(projectId: string, input: ProjectForgePrMonitorSettingsInput): Promise<ProjectForgePrMonitorSettings>;
   listProjectForgeRequests(projectId: string, input?: ListProjectForgeRequestsInput): Promise<ProjectForgeRequestsResult>;
   getProjectForgeRequestDetails(projectId: string, input: GetProjectForgeRequestDetailsInput): Promise<ProjectForgeRequestDetailsResult>;
+  getRunForgeRequestDetails(runId: string, options?: { refresh?: boolean }): Promise<RunForgeRequestDetailsResult | null>;
+  refreshRunForgeRequest(runId: string): Promise<RunForgeRequestSummary | null>;
+  getRunForgeRequestDiff(runId: string): Promise<ProjectPrMrDiffResult | null>;
+  updateRunForgeRequest(runId: string, input: UpdateRunForgeRequestInput): Promise<RunForgeRequestSummary>;
+  mergeRunForgeRequest(runId: string, input: MergeRunForgeRequestInput): Promise<RunForgeRequestSummary>;
   postProjectPrMrReview(projectId: string, input: PostProjectPrMrReviewInput): Promise<ProjectForgeReviewActionResult>;
   submitProjectPrMrComments(projectId: string, input: SubmitProjectPrMrCommentsInput): Promise<ProjectForgeReviewActionResult>;
   replyProjectPrMrReviewThread(projectId: string, input: ReplyProjectPrMrReviewThreadInput): Promise<ProjectForgeReviewActionResult>;
@@ -3727,6 +3812,7 @@ export interface DesktopApi {
   onAppSettingsChanged(listener: () => void): () => void;
   onProjectForgeRequestOpen(listener: (payload: ProjectForgeRequestOpenPayload) => void): () => void;
   onProjectForgeRequestNotification(listener: (payload: ProjectForgeRequestNotificationPayload) => void): () => void;
+  onRunForgeRequestChanged(listener: (payload: RunForgeRequestChangedPayload) => void): () => void;
   showAppMenu(section: AppMenuSection, x: number, y: number): Promise<void>;
 }
 
@@ -3785,6 +3871,7 @@ export const REMOTE_ACCESS_SERVER_CAPABILITIES = [
   "events:task",
   "events:terminal",
   "events:browser",
+  "events:forge",
 ] as const;
 
 export type RemoteAccessServerCapability = (typeof REMOTE_ACCESS_SERVER_CAPABILITIES)[number];
@@ -3797,7 +3884,8 @@ export type RemoteStreamEventType =
   | "orchestration"
   | "terminal-data"
   | "terminal-exit"
-  | "browser";
+  | "browser"
+  | "forge";
 
 export interface RemoteStreamEventPayloadMap {
   run: RunEvent;
@@ -3809,6 +3897,7 @@ export interface RemoteStreamEventPayloadMap {
   "terminal-data": RunTerminalDataPayload;
   "terminal-exit": RunTerminalExitPayload;
   browser: RunBrowserEvent;
+  forge: RunForgeRequestChangedPayload;
 }
 
 export type RemoteStreamEvent = {
@@ -3962,6 +4051,9 @@ export type RemoteOperationMap = {
   getProjectForgePrMonitorSettings: DesktopApi["getProjectForgePrMonitorSettings"];
   listProjectForgeRequests: DesktopApi["listProjectForgeRequests"];
   getProjectForgeRequestDetails: DesktopApi["getProjectForgeRequestDetails"];
+  getRunForgeRequestDetails: DesktopApi["getRunForgeRequestDetails"];
+  refreshRunForgeRequest: DesktopApi["refreshRunForgeRequest"];
+  getRunForgeRequestDiff: DesktopApi["getRunForgeRequestDiff"];
   fetchProjectPrMrDiff: DesktopApi["fetchProjectPrMrDiff"];
   checkProjectGitConversion: DesktopApi["checkProjectGitConversion"];
   getProjectBranchDeleteImpact: DesktopApi["getProjectBranchDeleteImpact"];
@@ -4020,6 +4112,8 @@ export type RemoteOperationMap = {
   submitProjectPrMrComments: DesktopApi["submitProjectPrMrComments"];
   replyProjectPrMrReviewThread: DesktopApi["replyProjectPrMrReviewThread"];
   resolveProjectPrMrReviewThread: DesktopApi["resolveProjectPrMrReviewThread"];
+  updateRunForgeRequest: DesktopApi["updateRunForgeRequest"];
+  mergeRunForgeRequest: DesktopApi["mergeRunForgeRequest"];
   commitRun: DesktopApi["commitRun"];
   createRunLocalBranch: DesktopApi["createRunLocalBranch"];
   publishRunBranch: DesktopApi["publishRunBranch"];
@@ -4234,6 +4328,11 @@ export const IPC_CHANNELS = {
   saveProjectForgePrMonitorSettings: "buildwarden:save-project-forge-pr-monitor-settings",
   listProjectForgeRequests: "buildwarden:list-project-forge-requests",
   getProjectForgeRequestDetails: "buildwarden:get-project-forge-request-details",
+  getRunForgeRequestDetails: "buildwarden:get-run-forge-request-details",
+  refreshRunForgeRequest: "buildwarden:refresh-run-forge-request",
+  getRunForgeRequestDiff: "buildwarden:get-run-forge-request-diff",
+  updateRunForgeRequest: "buildwarden:update-run-forge-request",
+  mergeRunForgeRequest: "buildwarden:merge-run-forge-request",
   postProjectPrMrReview: "buildwarden:post-project-pr-mr-review",
   submitProjectPrMrComments: "buildwarden:submit-project-pr-mr-comments",
   replyProjectPrMrReviewThread: "buildwarden:reply-project-pr-mr-review-thread",
@@ -4360,6 +4459,7 @@ export const IPC_CHANNELS = {
   appSettingsChanged: "buildwarden:app-settings-changed",
   projectForgeRequestOpen: "buildwarden:project-forge-request-open",
   projectForgeRequestNotification: "buildwarden:project-forge-request-notification",
+  runForgeRequestChanged: "buildwarden:run-forge-request-changed",
   showAppMenu: "buildwarden:show-app-menu",
 } as const;
 
@@ -4785,7 +4885,7 @@ export const WINDOWS_TITLEBAR_OVERLAY_BACKGROUND: Record<UiTheme, string> = {
   light: "#e7eef6",
 };
 
-export type RunWorkspacePanelId = "activity" | "agents" | "diff" | "terminal" | "browser" | "notes" | "chat";
+export type RunWorkspacePanelId = "activity" | "agents" | "diff" | "terminal" | "browser" | "notes" | "chat" | "pull-request";
 
 export interface RunWorkspaceTileSize {
   colSpan: number;
@@ -4802,7 +4902,7 @@ export interface RunWorkspaceLayoutPreference {
 
 export type RunWorkspaceLayoutPreferencesByRunId = Record<string, RunWorkspaceLayoutPreference>;
 
-const RUN_WORKSPACE_PANEL_IDS: readonly RunWorkspacePanelId[] = ["activity", "agents", "diff", "terminal", "browser", "notes", "chat"];
+const RUN_WORKSPACE_PANEL_IDS: readonly RunWorkspacePanelId[] = ["activity", "agents", "diff", "terminal", "browser", "notes", "chat", "pull-request"];
 
 const RUN_WORKSPACE_PANEL_DEFAULTS: Record<
   RunWorkspacePanelId,
@@ -4815,6 +4915,7 @@ const RUN_WORKSPACE_PANEL_DEFAULTS: Record<
   browser: { visible: false, size: { colSpan: 7, rowSpan: 3 } },
   notes: { visible: false, size: { colSpan: 5, rowSpan: 3 } },
   chat: { visible: false, size: { colSpan: 5, rowSpan: 3 } },
+  "pull-request": { visible: false, size: { colSpan: 5, rowSpan: 4 } },
 };
 
 const isRunWorkspacePanelId = (value: unknown): value is RunWorkspacePanelId =>

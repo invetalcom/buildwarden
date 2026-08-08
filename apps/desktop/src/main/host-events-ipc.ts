@@ -9,6 +9,7 @@ const IPC_EVENT_CHANNELS = {
   loop: IPC_CHANNELS.projectLoopChanged,
   task: IPC_CHANNELS.projectTaskChanged,
   orchestration: IPC_CHANNELS.orchestrationChanged,
+  forge: IPC_CHANNELS.runForgeRequestChanged,
   forgeRequestOpen: IPC_CHANNELS.projectForgeRequestOpen,
   forgeRequestNotification: IPC_CHANNELS.projectForgeRequestNotification,
   appMenuCommand: IPC_CHANNELS.appMenuCommand,

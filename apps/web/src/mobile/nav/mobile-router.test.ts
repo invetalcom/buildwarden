@@ -18,6 +18,7 @@ const ROUND_TRIP: MobileRoute[] = [
   { name: "bookmarks" },
   { name: "search" },
   { name: "run", runId: "run-1", segment: "diff" },
+  { name: "run", runId: "run-1", segment: "pull-request" },
   { name: "chat", chatId: "chat-1" },
   { name: "project", projectId: "proj-1", tab: "branches" },
   { name: "new-run" },

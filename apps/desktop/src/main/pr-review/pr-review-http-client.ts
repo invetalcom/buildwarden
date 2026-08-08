@@ -74,6 +74,34 @@ const prReviewErrorHint = (provider: ProjectForgeProvider, path: string, status:
   return null;
 };
 
+const retryDelayFromHeaders = (headers: Headers, status: number): number | null => {
+  const retryAfter = headers.get("retry-after")?.trim();
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1_000);
+    const retryAt = Date.parse(retryAfter);
+    if (Number.isFinite(retryAt)) return Math.max(0, retryAt - Date.now());
+  }
+  const remainingHeader = headers.get("x-ratelimit-remaining");
+  const rateLimitExhausted = remainingHeader !== null && Number(remainingHeader) === 0;
+  const rateLimitReset = Number(headers.get("x-ratelimit-reset"));
+  if ((status === 403 || status === 429 || rateLimitExhausted) && Number.isFinite(rateLimitReset) && rateLimitReset > 0) {
+    return Math.max(0, Math.round(rateLimitReset * 1_000 - Date.now()));
+  }
+  return null;
+};
+
+export class PrReviewHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly retryAfterMs: number | null,
+  ) {
+    super(message);
+    this.name = "PrReviewHttpError";
+  }
+}
+
 export class PrReviewHttpClient {
   constructor(
     private readonly context: ProjectPrReviewRemoteContext,
@@ -85,7 +113,7 @@ export class PrReviewHttpClient {
     return result.payload;
   }
 
-  async jsonWithHeaders(path: string, init: RequestInit = {}): Promise<{ payload: unknown; headers: Headers }> {
+  async jsonWithHeaders(path: string, init: RequestInit = {}): Promise<{ payload: unknown; headers: Headers; notModified?: boolean }> {
     const headers = new Headers(init.headers);
     if (this.context.provider === "github") {
       headers.set("Accept", "application/vnd.github+json");
@@ -100,6 +128,9 @@ export class PrReviewHttpClient {
       ...init,
       headers,
     });
+    if (response.status === 304) {
+      return { payload: null, headers: response.headers, notModified: true };
+    }
     if (!response.ok) {
       throw await this.buildApiError(response, path);
     }
@@ -134,11 +165,15 @@ export class PrReviewHttpClient {
     return response.text();
   }
 
-  private async buildApiError(response: Response, path: string): Promise<Error> {
+  private async buildApiError(response: Response, path: string): Promise<PrReviewHttpError> {
     const message = await responseErrorMessage(response);
     const hint = prReviewErrorHint(this.context.provider, path, response.status);
     const providerName = this.context.provider === "github" ? "GitHub" : "GitLab";
     const detail = hint ? `${message}. ${hint}` : message;
-    return new Error(`${providerName} API ${String(response.status)}: ${detail}`);
+    return new PrReviewHttpError(
+      `${providerName} API ${String(response.status)}: ${detail}`,
+      response.status,
+      retryDelayFromHeaders(response.headers, response.status),
+    );
   }
 }
