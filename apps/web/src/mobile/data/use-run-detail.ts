@@ -65,6 +65,7 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
   const reload = useCallback(() => load(false), [load]);
 
   useEffect(() => {
+    let active = true;
     diffRequested.current = false;
     setDiff("");
     setDiffError(null);
@@ -72,8 +73,11 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
     void load(false);
     if (runId && forgeProbeRunIdRef.current !== runId) {
       forgeProbeRunIdRef.current = runId;
-      void client.refreshRunForgeRequest(runId).then(() => load(true)).catch(() => undefined);
+      void client.refreshRunForgeRequest(runId)
+        .then(() => active ? load(true) : undefined)
+        .catch(() => undefined);
     }
+    return () => { active = false; };
   }, [client, load, runId]);
 
   const loadDiff = useCallback(async () => {
