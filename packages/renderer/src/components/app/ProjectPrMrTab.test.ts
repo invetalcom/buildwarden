@@ -45,6 +45,7 @@ describe("ProjectPrMrTab review helpers", () => {
   it("defaults restored tab state to Conversation", () => {
     expect(normalizeRequestDetailTab(undefined)).toBe("conversation");
     expect(normalizeRequestDetailTab("overview")).toBe("conversation");
+    expect(normalizeRequestDetailTab("checks")).toBe("checks");
     expect(normalizeRequestDetailTab("changes")).toBe("files");
   });
 
