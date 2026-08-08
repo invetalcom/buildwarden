@@ -156,7 +156,11 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
   const failedChecks = useMemo(() => details?.checks.filter((check) => check.status === "failure" || check.status === "cancelled") ?? [], [details]);
   const progress = summary.checks.total > 0 ? summary.checks.completed / summary.checks.total : summary.readiness === "ready" ? 1 : 0;
   const canToggleDraft = canWriteForge && summary.supportedActions.includes(summary.draft ? "mark-ready" : "mark-draft");
-  const canMerge = canWriteForge && summary.readiness === "ready" && summary.state === "open" && !summary.draft;
+  const canMerge = canWriteForge
+    && summary.supportedMergeMethods.length > 0
+    && summary.readiness === "ready"
+    && summary.state === "open"
+    && !summary.draft;
   const canClose = canWriteForge && summary.supportedActions.includes("close");
   const canReopen = canWriteForge && summary.supportedActions.includes("reopen");
   const hasRequestActions = canToggleDraft || canMerge || canClose || canReopen;
