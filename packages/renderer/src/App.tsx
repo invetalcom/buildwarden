@@ -726,6 +726,7 @@ export const App = () => {
       if (!buildwarden || !shouldLoadDiff) {
         return;
       }
+      mergeRunDetailForRun(eventRunId, (previous) => ({ ...previous, diffSummaryPending: true }));
       let result;
       try {
         result = await buildwarden.getRunWorktreeDiffSummary(eventRunId);
@@ -3324,6 +3325,7 @@ export const App = () => {
             setPublishMenuOpen={setPublishMenuOpen}
             publishMenuAnchorRef={publishMenuAnchorRef}
             onCommitRun={commitRun}
+            onRequestDiffSummary={loadDiffSummaryForOpenRun}
             onOpenPublishDialog={openPublishDialog}
             onOpenBranchPublishDialog={openBranchPublishDialog}
             onOpenInIde={openRunDetailInIde}
@@ -3988,6 +3990,7 @@ export const App = () => {
                   setPublishMenuOpen={setPublishMenuOpen}
                   publishMenuAnchorRef={publishMenuAnchorRef}
                   onCommitRun={commitRun}
+                  onRequestDiffSummary={loadDiffSummaryForOpenRun}
                   onOpenPublishDialog={openPublishDialog}
                   onOpenBranchPublishDialog={openBranchPublishDialog}
                   onOpenInIde={openRunDetailInIde}
