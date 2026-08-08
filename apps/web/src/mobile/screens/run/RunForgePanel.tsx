@@ -118,6 +118,10 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
     setSummary(initialSummary);
     setDetails(null);
     setHostedDiff(null);
+    setActionsOpen(false);
+    setConfirmation(null);
+    setAgentAction(null);
+    setAgentPrompt("");
     summaryHeadShaRef.current = initialSummary.headSha;
     hostedDiffHeadShaRef.current = null;
     changesOpenRef.current = false;
