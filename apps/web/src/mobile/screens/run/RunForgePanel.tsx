@@ -69,6 +69,7 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
   const [agentPrompt, setAgentPrompt] = useState("");
   const [hostedDiff, setHostedDiff] = useState<string | null>(null);
   const activeRef = useRef(true);
+  const runIdRef = useRef(run.id);
   const detailsRequestIdRef = useRef(0);
   const diffRequestIdRef = useRef(0);
   const summaryHeadShaRef = useRef(initialSummary.headSha);
@@ -76,23 +77,25 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
   const changesOpenRef = useRef(false);
   const canWrite = client.capabilities.gitMutations;
   const canRunAgent = client.capabilities.runMutations && !["queued", "preparing", "running"].includes(run.status);
+  runIdRef.current = run.id;
+  const isCurrentRun = (expectedRunId: string) => activeRef.current && runIdRef.current === expectedRunId;
 
-  const load = async (refresh = false) => {
+  const load = async (refresh = false, expectedRunId = run.id) => {
     const requestId = ++detailsRequestIdRef.current;
     setBusy(true);
     setError(null);
     try {
-      const next = await client.getRunForgeRequestDetails(run.id, { refresh });
-      if (activeRef.current && requestId === detailsRequestIdRef.current && next) {
+      const next = await client.getRunForgeRequestDetails(expectedRunId, { refresh });
+      if (isCurrentRun(expectedRunId) && requestId === detailsRequestIdRef.current && next) {
         setDetails(next);
         setSummary(next.summary);
       }
     } catch (caught) {
-      if (activeRef.current && requestId === detailsRequestIdRef.current) {
+      if (isCurrentRun(expectedRunId) && requestId === detailsRequestIdRef.current) {
         setError(errorMessage(caught, "Could not load the request."));
       }
     } finally {
-      if (activeRef.current && requestId === detailsRequestIdRef.current) setBusy(false);
+      if (isCurrentRun(expectedRunId) && requestId === detailsRequestIdRef.current) setBusy(false);
     }
   };
 
@@ -132,39 +135,50 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
   const failed = useMemo(() => details?.checks.filter((check) => check.status === "failure" || check.status === "cancelled") ?? [], [details]);
   const progress = summary.checks.total > 0 ? summary.checks.completed / summary.checks.total : summary.readiness === "ready" ? 1 : 0;
 
-  const reloadEverything = async () => {
-    await load(true);
+  const reloadEverything = async (expectedRunId = run.id) => {
+    await load(true, expectedRunId);
+    if (!isCurrentRun(expectedRunId)) return;
     await snapshotStore.refresh();
+    if (!isCurrentRun(expectedRunId)) return;
     await onChanged();
   };
 
   const updateRequest = async (action: "mark-draft" | "mark-ready" | "close" | "reopen") => {
+    const expectedRunId = run.id;
     setBusy(true);
     setError(null);
     try {
-      const next = await client.updateRunForgeRequest(run.id, { action, expectedHeadSha: summary.headSha ?? undefined });
+      const next = await client.updateRunForgeRequest(expectedRunId, { action, expectedHeadSha: summary.headSha ?? undefined });
+      if (!isCurrentRun(expectedRunId)) return;
       setSummary(next);
-      await reloadEverything();
+      await reloadEverything(expectedRunId);
     } catch (caught) {
-      setError(errorMessage(caught, "Could not update the request."));
+      if (isCurrentRun(expectedRunId)) setError(errorMessage(caught, "Could not update the request."));
     } finally {
-      setBusy(false);
+      if (isCurrentRun(expectedRunId)) {
+        setConfirmation(null);
+        setBusy(false);
+      }
     }
   };
 
   const merge = async (method: RunForgeMergeMethod) => {
     if (!summary.headSha) return;
+    const expectedRunId = run.id;
     setBusy(true);
     setError(null);
     try {
-      const next = await client.mergeRunForgeRequest(run.id, { method, expectedHeadSha: summary.headSha });
+      const next = await client.mergeRunForgeRequest(expectedRunId, { method, expectedHeadSha: summary.headSha });
+      if (!isCurrentRun(expectedRunId)) return;
       setSummary(next);
-      await reloadEverything();
+      await reloadEverything(expectedRunId);
     } catch (caught) {
-      setError(errorMessage(caught, "Could not merge the request."));
+      if (isCurrentRun(expectedRunId)) setError(errorMessage(caught, "Could not merge the request."));
     } finally {
-      setConfirmation(null);
-      setBusy(false);
+      if (isCurrentRun(expectedRunId)) {
+        setConfirmation(null);
+        setBusy(false);
+      }
     }
   };
 
@@ -176,40 +190,45 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
 
   const sendAgentPrompt = async () => {
     if (!agentPrompt.trim()) return;
+    const expectedRunId = run.id;
     setBusy(true);
     setError(null);
     try {
-      await client.followUpRun(run.id, agentPrompt.trim());
+      await client.followUpRun(expectedRunId, agentPrompt.trim());
+      if (!isCurrentRun(expectedRunId)) return;
       setAgentAction(null);
       setAgentPrompt("");
       await onChanged();
     } catch (caught) {
-      setError(errorMessage(caught, "Could not send the follow-up."));
+      if (isCurrentRun(expectedRunId)) setError(errorMessage(caught, "Could not send the follow-up."));
     } finally {
-      setBusy(false);
+      if (isCurrentRun(expectedRunId)) setBusy(false);
     }
   };
 
   const resolveThread = async (threadId: string, resolved: boolean) => {
+    const expectedRunId = run.id;
     setBusy(true);
     try {
       await client.resolveProjectPrMrReviewThread(run.projectId, { prUrl: summary.url, threadId, resolved });
-      await reloadEverything();
+      if (!isCurrentRun(expectedRunId)) return;
+      await reloadEverything(expectedRunId);
     } catch (caught) {
-      setError(errorMessage(caught, "Could not update the thread."));
+      if (isCurrentRun(expectedRunId)) setError(errorMessage(caught, "Could not update the thread."));
     } finally {
-      setBusy(false);
+      if (isCurrentRun(expectedRunId)) setBusy(false);
     }
   };
 
   const loadHostedDiff = async (headSha = summaryHeadShaRef.current) => {
     if (hostedDiff != null && hostedDiffHeadShaRef.current === headSha) return;
+    const expectedRunId = run.id;
     const requestId = ++diffRequestIdRef.current;
     setBusy(true);
     try {
-      const result = await client.getRunForgeRequestDiff(run.id);
+      const result = await client.getRunForgeRequestDiff(expectedRunId);
       if (
-        activeRef.current
+        isCurrentRun(expectedRunId)
         && requestId === diffRequestIdRef.current
         && summaryHeadShaRef.current === headSha
       ) {
@@ -217,11 +236,11 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
         setHostedDiff(result?.diff ?? "");
       }
     } catch (caught) {
-      if (activeRef.current && requestId === diffRequestIdRef.current) {
+      if (isCurrentRun(expectedRunId) && requestId === diffRequestIdRef.current) {
         setError(errorMessage(caught, "Could not load the hosted diff."));
       }
     } finally {
-      if (activeRef.current && requestId === diffRequestIdRef.current) setBusy(false);
+      if (isCurrentRun(expectedRunId) && requestId === diffRequestIdRef.current) setBusy(false);
     }
   };
 
@@ -321,7 +340,7 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
         danger
         busy={busy}
         onClose={() => setConfirmation(null)}
-        onConfirm={() => void updateRequest("close").finally(() => setConfirmation(null))}
+        onConfirm={() => void updateRequest("close")}
       />
       <ConfirmSheet
         open={confirmation?.type === "merge"}
