@@ -405,6 +405,58 @@ describe("AppController settings and lightweight workflows", () => {
     expect(internalController.createProjectPrReviewProvider).not.toHaveBeenCalled();
   });
 
+  it("does not report a successful forge mutation as failed when refresh loses the association", async () => {
+    const run = { id: "run-mutation", projectId: project.id } as RunRecord;
+    const summary = {
+      provider: "github",
+      number: 13,
+      title: "Request",
+      url: "https://github.com/acme/repo/pull/13",
+      state: "open",
+      readiness: "ready",
+      draft: false,
+      mergeability: "mergeable",
+      reviewDecision: "approved",
+      author: "author",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      headSha: "head-sha",
+      checks: { completed: 1, total: 1, successful: 1, failed: 0, running: 0 },
+      unresolvedThreadCount: 0,
+      supportedActions: ["refresh", "open", "merge", "close"],
+      supportedMergeMethods: ["merge"],
+      updatedAt: null,
+      lastSyncedAt: "2026-08-08T09:00:00.000Z",
+      stale: false,
+      syncError: null,
+    } as NonNullable<RunRecord["forgeRequest"]>;
+    const harness = createHarness({
+      getRun: vi.fn(() => run),
+      getRunForgeRequestCache: vi.fn(() => ({ summary })),
+    });
+    const forgeProvider = {
+      updateRequest: vi.fn(async () => ({ message: "updated", url: summary.url })),
+      mergeRequest: vi.fn(async () => ({ message: "merged", url: summary.url })),
+    } as unknown as ProjectPrReviewProvider;
+    const internalController = harness.controller as unknown as {
+      createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
+      syncRunForgeRequest: (runId: string, force: boolean, includeDetails: boolean) => Promise<RunRecord["forgeRequest"] | null>;
+    };
+    internalController.createProjectPrReviewProvider = vi.fn(async () => forgeProvider);
+    internalController.syncRunForgeRequest = vi.fn(async () => null);
+
+    await expect(harness.controller.updateRunForgeRequest(run.id, { action: "close" })).resolves.toMatchObject({
+      readiness: "unavailable",
+      stale: true,
+      syncError: "The request was updated, but its state could not be refreshed.",
+    });
+    await expect(harness.controller.mergeRunForgeRequest(run.id, { method: "merge", expectedHeadSha: "head-sha" })).resolves.toMatchObject({
+      readiness: "unavailable",
+      stale: true,
+      syncError: "The request was merged, but its state could not be refreshed.",
+    });
+  });
+
   it("inherits full access only from the latest coordinator user turn", () => {
     expect(latestUserTurnUsedFullAccess([
       { metadataJson: JSON.stringify({ source: "user", commandType: "initial", yoloMode: true }) },

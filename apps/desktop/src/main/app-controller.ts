@@ -4452,8 +4452,12 @@ export class AppController
     const provider = await this.createProjectPrReviewProvider(run.projectId);
     await provider.updateRequest({ prUrl: cache.summary.url, action: input.action, expectedHeadSha: input.expectedHeadSha });
     const refreshed = await this.syncRunForgeRequest(runId, true, true);
-    if (!refreshed) throw new Error("The request was updated but could not be refreshed.");
-    return refreshed;
+    return refreshed ?? {
+      ...cache.summary,
+      readiness: "unavailable",
+      stale: true,
+      syncError: "The request was updated, but its state could not be refreshed.",
+    };
   }
 
   async mergeRunForgeRequest(runId: string, input: MergeRunForgeRequestInput): Promise<RunForgeRequestSummary> {
@@ -4471,8 +4475,12 @@ export class AppController
     const provider = await this.createProjectPrReviewProvider(run.projectId);
     await provider.mergeRequest({ prUrl: summary.url, method: input.method, expectedHeadSha: input.expectedHeadSha });
     const refreshed = await this.syncRunForgeRequest(runId, true, true);
-    if (!refreshed) throw new Error("The request was merged but could not be refreshed.");
-    return refreshed;
+    return refreshed ?? {
+      ...summary,
+      readiness: "unavailable",
+      stale: true,
+      syncError: "The request was merged, but its state could not be refreshed.",
+    };
   }
 
   async postProjectPrMrReview(
