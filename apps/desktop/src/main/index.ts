@@ -622,7 +622,8 @@ const bootstrap = async (): Promise<void> => {
     (args[1].expectedHeadSha === undefined || typeof args[1].expectedHeadSha === "string"));
   const validateMergeRunForgeRequest = defineRemoteArgsValidator<"mergeRunForgeRequest">((args) =>
     args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["method", "expectedHeadSha"]) &&
-    isRemoteRecord(args[1]) && ["merge", "squash", "rebase"].includes(String(args[1].method)));
+    isRemoteRecord(args[1]) && String(args[1].expectedHeadSha).trim().length > 0 &&
+    ["merge", "squash", "rebase"].includes(String(args[1].method)));
   const validateFetchForgeDiff = defineRemoteArgsValidator<"fetchProjectPrMrDiff">((args) => {
     if (args.length !== 2 || typeof args[0] !== "string" || !hasRemoteStringFields(args[1], ["prUrl"]) ||
       !isRemoteRecord(args[1])) return false;
