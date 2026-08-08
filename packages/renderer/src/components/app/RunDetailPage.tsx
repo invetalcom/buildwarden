@@ -1048,10 +1048,15 @@ export const RunDetailPage = ({
       <div
         className={cn(
           "pointer-events-auto overflow-hidden rounded-md border border-zinc-800/70 bg-zinc-900/95 shadow-lg shadow-black/20 backdrop-blur",
-          modifiedFilesExpanded ? "w-fit min-w-[22rem] max-w-full" : "w-[min(18rem,100%)]",
+          modifiedFilesExpanded ? "w-fit min-w-[22rem] max-w-full" : "h-8 w-[min(18rem,100%)]",
         )}
       >
-        <div className="grid min-h-8 grid-cols-[1.75rem_minmax(0,1fr)_auto] items-center gap-1 px-1.5 py-1">
+        <div
+          className={cn(
+            "grid grid-cols-[1.75rem_minmax(0,1fr)_auto] items-center gap-1 px-1.5",
+            modifiedFilesExpanded ? "min-h-8 py-1" : "h-full",
+          )}
+        >
           <span aria-hidden />
           <button
             type="button"

@@ -464,6 +464,32 @@ describe("PR/MR review providers", () => {
     ]);
   });
 
+  it("uses the supported GitHub GraphQL mutations for draft state transitions", async () => {
+    const fake = new FakePrReviewHttp({
+      "/repos/invetalcom/stockgenius/pulls/11": githubPull,
+      "/graphql": { data: {} },
+    });
+    const provider = new GithubPrReviewProvider(
+      githubContext as typeof githubContext & { provider: "github"; github: NonNullable<typeof githubContext.github> },
+      fake as unknown as PrReviewHttpClient,
+    );
+
+    await provider.updateRequest({ prUrl: githubPull.html_url, action: "mark-ready" });
+    await provider.updateRequest({ prUrl: githubPull.html_url, action: "mark-draft" });
+
+    const graphqlCalls = fake.calls.filter((call) => call.path === "/graphql");
+    expect(graphqlCalls).toHaveLength(2);
+    expect(JSON.parse(String(graphqlCalls[0]?.init?.body))).toMatchObject({
+      query: expect.stringContaining("markPullRequestReadyForReview"),
+      variables: { id: githubPull.node_id },
+    });
+    expect(JSON.parse(String(graphqlCalls[1]?.init?.body))).toMatchObject({
+      query: expect.stringContaining("convertPullRequestToDraft"),
+      variables: { id: githubPull.node_id },
+    });
+    expect(fake.calls.some((call) => call.path.endsWith("/ready_for_review"))).toBe(false);
+  });
+
   it("normalizes GitLab mergeability, approvals, and pipeline jobs", async () => {
     const fake = new FakePrReviewHttp({
       "/projects/group%2Fproject/merge_requests/7": {

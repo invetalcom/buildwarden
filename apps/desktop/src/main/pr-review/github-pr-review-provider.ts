@@ -989,20 +989,24 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
     if (input.expectedHeadSha) await this.assertExpectedHeadSha(parsed.number, input.expectedHeadSha);
     const owner = encodeURIComponent(this.context.github.owner);
     const repo = encodeURIComponent(this.context.github.repo);
-    if (input.action === "mark-ready") {
-      await this.http.json(`/repos/${owner}/${repo}/pulls/${String(parsed.number)}/ready_for_review`, { method: "POST" });
-    } else if (input.action === "mark-draft") {
+    if (input.action === "mark-ready" || input.action === "mark-draft") {
       const request = await this.http.json(`/repos/${owner}/${repo}/pulls/${String(parsed.number)}`);
       const nodeId = isRecord(request) ? recordString(request, "node_id") : null;
       if (!nodeId) throw new Error("GitHub did not return the pull request node ID.");
-      await this.http.json("/graphql", {
+      const markReady = input.action === "mark-ready";
+      const payload = await this.http.json("/graphql", {
         method: "POST",
         body: JSON.stringify({
-          query: "mutation MarkDraft($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { pullRequest { id isDraft } } }",
+          query: markReady
+            ? "mutation MarkReady($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { pullRequest { id isDraft } } }"
+            : "mutation MarkDraft($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { pullRequest { id isDraft } } }",
           variables: { id: nodeId },
         }),
         headers: { "Content-Type": "application/json" },
       });
+      if (!isRecord(payload) || (Array.isArray(payload.errors) && payload.errors.length > 0)) {
+        throw new Error(`GitHub GraphQL could not mark this pull request ${markReady ? "ready for review" : "as draft"}.`);
+      }
     } else {
       await this.http.json(`/repos/${owner}/${repo}/pulls/${String(parsed.number)}`, {
         method: "PATCH",

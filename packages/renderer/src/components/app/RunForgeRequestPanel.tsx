@@ -15,7 +15,9 @@ import {
   GitPullRequest,
   Loader2,
   MessageSquareText,
+  Pencil,
   RefreshCw,
+  RotateCcw,
   Send,
   ShieldCheck,
   X,
@@ -146,6 +148,11 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
   const unresolvedThreads = useMemo(() => details?.reviewThreads.filter((thread) => thread.resolved !== true) ?? [], [details]);
   const failedChecks = useMemo(() => details?.checks.filter((check) => check.status === "failure" || check.status === "cancelled") ?? [], [details]);
   const progress = summary.checks.total > 0 ? summary.checks.completed / summary.checks.total : summary.readiness === "ready" ? 1 : 0;
+  const canToggleDraft = canWriteForge && summary.supportedActions.includes(summary.draft ? "mark-ready" : "mark-draft");
+  const canMerge = canWriteForge && summary.readiness === "ready" && summary.state === "open" && !summary.draft;
+  const canClose = canWriteForge && summary.supportedActions.includes("close");
+  const canReopen = canWriteForge && summary.supportedActions.includes("reopen");
+  const hasRequestActions = canToggleDraft || canMerge || canClose || canReopen;
 
   const updateSummary = (next: RunForgeRequestSummary) => {
     setSummary(next);
@@ -223,70 +230,95 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--ec-panel)] text-zinc-200">
-      <div className="shrink-0 border-b border-zinc-800/80 px-3 py-2">
-        <div className="flex min-w-0 items-start gap-2">
+      <div className="relative z-30 shrink-0 border-b border-zinc-800/80 px-3 pb-2.5 pt-3">
+        <div className="flex min-w-0 items-start gap-2.5">
           <div
-            className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full border border-current/20 bg-zinc-950"
-            style={{ color: runForgeReadinessHex[summary.readiness] }}
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border bg-zinc-950/70 shadow-sm"
+            style={{
+              color: runForgeReadinessHex[summary.readiness],
+              borderColor: `${runForgeReadinessHex[summary.readiness]}40`,
+              backgroundColor: `${runForgeReadinessHex[summary.readiness]}0d`,
+            }}
           >
-            <GitPullRequest className="h-3.5 w-3.5" />
+            <GitPullRequest className="h-4 w-4" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
-              <span>{summary.provider === "github" ? "Pull request" : "Merge request"} #{summary.number}</span>
-              <span>·</span>
-              <span className={runForgeReadinessColor[summary.readiness]}>{runForgeReadinessLabel[summary.readiness]}</span>
-              {summary.stale ? <span>· cached</span> : null}
+            <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-zinc-500">
+              <span className="font-medium uppercase tracking-[0.08em]">{summary.provider === "github" ? "Pull request" : "Merge request"} #{summary.number}</span>
+              <span
+                className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 font-medium"
+                style={{
+                  color: runForgeReadinessHex[summary.readiness],
+                  borderColor: `${runForgeReadinessHex[summary.readiness]}35`,
+                  backgroundColor: `${runForgeReadinessHex[summary.readiness]}10`,
+                }}
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                {runForgeReadinessLabel[summary.readiness]}
+              </span>
+              {summary.stale ? <span className="rounded-full border border-zinc-800 px-1.5 py-0.5 text-zinc-500">Cached</span> : null}
             </div>
-            <h2 className="mt-0.5 line-clamp-2 text-sm font-semibold leading-5 text-zinc-100">{summary.title}</h2>
+            <h2 className="mt-1 line-clamp-2 text-[13px] font-semibold leading-[1.35rem] text-zinc-100">{summary.title}</h2>
           </div>
-          <div className="flex shrink-0 items-center gap-0.5">
-            <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => void loadDetails(true)} disabled={pending} title="Refresh">
+          <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-zinc-800/90 bg-zinc-950/45 p-0.5 shadow-sm">
+            <Button variant="ghost" size="icon" className="h-7 w-7 rounded-md p-0" onClick={() => void loadDetails(true)} disabled={pending} title="Refresh status" aria-label="Refresh status">
               <RefreshCw className={cn("h-3.5 w-3.5", pending && "animate-spin")} />
             </Button>
-            <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => void navigator.clipboard.writeText(summary.url)} title="Copy link">
+            <Button variant="ghost" size="icon" className="h-7 w-7 rounded-md p-0" onClick={() => void navigator.clipboard.writeText(summary.url)} title="Copy link" aria-label="Copy link">
               <Clipboard className="h-3.5 w-3.5" />
             </Button>
-            <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => void buildwarden.openExternalUrl(summary.url)} title="Open externally">
+            <Button variant="ghost" size="icon" className="h-7 w-7 rounded-md p-0" onClick={() => void buildwarden.openExternalUrl(summary.url)} title="Open externally" aria-label="Open externally">
               <ExternalLink className="h-3.5 w-3.5" />
             </Button>
           </div>
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          {canWriteForge && summary.supportedActions.includes(summary.draft ? "mark-ready" : "mark-draft") ? (
-            <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" disabled={pending} onClick={() => void runWriteAction(summary.draft ? "mark-ready" : "mark-draft")}>
-              {summary.draft ? "Mark ready" : "Mark draft"}
-            </Button>
-          ) : null}
-          {canWriteForge && summary.readiness === "ready" && summary.state === "open" && !summary.draft ? (
-            <div className="relative">
-              <Button size="sm" className="h-7 gap-1 px-2 text-[11px]" disabled={pending} onClick={() => setMergeMenuOpen((current) => !current)}>
-                <GitMerge className="h-3.5 w-3.5" /> Merge <ChevronDown className="h-3 w-3" />
+        {hasRequestActions ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-zinc-800/70 pt-2.5">
+            {canToggleDraft ? (
+              <Button variant="secondary" size="sm" className="h-8 gap-1.5 px-2.5 text-[11px]" disabled={pending} onClick={() => void runWriteAction(summary.draft ? "mark-ready" : "mark-draft")}>
+                {summary.draft ? <Check className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
+                {summary.draft ? "Mark ready" : "Mark draft"}
               </Button>
-              {mergeMenuOpen ? (
-                <div className="absolute left-0 top-full z-40 mt-1 min-w-32 overflow-hidden rounded-md border border-zinc-800 bg-zinc-950 py-1 shadow-xl">
-                  {summary.supportedMergeMethods.map((method) => (
-                    <button key={method} type="button" className="block w-full px-3 py-1.5 text-left text-xs capitalize hover:bg-zinc-800" onClick={() => void merge(method)}>{method}</button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          {canWriteForge && summary.supportedActions.includes("close") ? (
-            <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px] text-zinc-500 hover:text-red-300" disabled={pending} onClick={() => void runWriteAction("close")}>Close</Button>
-          ) : null}
-          {canWriteForge && summary.supportedActions.includes("reopen") ? (
-            <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" disabled={pending} onClick={() => void runWriteAction("reopen")}>Reopen</Button>
-          ) : null}
-        </div>
+            ) : null}
+            {canMerge ? (
+              <div className="relative">
+                <Button size="sm" className="h-8 gap-1.5 px-2.5 text-[11px]" disabled={pending} onClick={() => setMergeMenuOpen((current) => !current)} aria-expanded={mergeMenuOpen}>
+                  <GitMerge className="h-3.5 w-3.5" /> Merge <ChevronDown className="h-3 w-3 opacity-70" />
+                </Button>
+                {mergeMenuOpen ? (
+                  <div
+                    className="absolute left-0 top-full z-50 mt-1.5 min-w-36 isolate overflow-hidden rounded-lg border border-zinc-700 p-1 opacity-100 shadow-2xl shadow-black/70 ring-1 ring-black/50"
+                    style={{ backgroundColor: "#09090b" }}
+                  >
+                    {summary.supportedMergeMethods.map((method) => (
+                      <button key={method} type="button" className="block w-full rounded-md px-2.5 py-2 text-left text-xs capitalize text-zinc-300 transition hover:bg-zinc-800 hover:text-zinc-100" onClick={() => void merge(method)}>{method}</button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {canClose ? (
+              <Button variant="outline" size="sm" className="h-8 gap-1.5 border-rose-500/25 bg-rose-500/[0.03] px-2.5 text-[11px] text-rose-300/90 hover:bg-rose-500/10 hover:text-rose-200" disabled={pending} onClick={() => void runWriteAction("close")}>
+                <X className="h-3.5 w-3.5" /> Close
+              </Button>
+            ) : null}
+            {canReopen ? (
+              <Button variant="secondary" size="sm" className="h-8 gap-1.5 px-2.5 text-[11px]" disabled={pending} onClick={() => void runWriteAction("reopen")}>
+                <RotateCcw className="h-3.5 w-3.5" /> Reopen
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
-      <div className="flex h-8 shrink-0 items-end gap-0.5 border-b border-zinc-800/80 px-2">
-        {tabs.map((item) => (
-          <button key={item.id} type="button" onClick={() => setTab(item.id)} className={cn("h-8 border-b-2 px-2 text-[11px] transition", tab === item.id ? "border-zinc-200 text-zinc-100" : "border-transparent text-zinc-500 hover:text-zinc-300")}>
-            {item.label}{item.count != null && item.count > 0 ? <span className="ml-1 text-[10px] text-zinc-600">{item.count}</span> : null}
-          </button>
-        ))}
+      <div className="app-scrollbar shrink-0 overflow-x-auto border-b border-zinc-800/80 px-3 py-1.5">
+        <div className="flex min-w-max items-center gap-0.5 rounded-lg border border-zinc-800/80 bg-zinc-950/35 p-0.5">
+          {tabs.map((item) => (
+            <button key={item.id} type="button" onClick={() => setTab(item.id)} className={cn("flex h-7 items-center rounded-md px-2.5 text-[11px] transition-colors", tab === item.id ? "bg-zinc-800/90 text-zinc-100 shadow-sm" : "text-zinc-500 hover:bg-zinc-800/45 hover:text-zinc-300")}>
+              {item.label}{item.count != null && item.count > 0 ? <span className={cn("ml-1.5 rounded-full px-1.5 py-0.5 text-[9px] leading-none", tab === item.id ? "bg-zinc-700 text-zinc-300" : "bg-zinc-900 text-zinc-600")}>{item.count}</span> : null}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto">
