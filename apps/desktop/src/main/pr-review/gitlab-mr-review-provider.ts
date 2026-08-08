@@ -310,7 +310,9 @@ const gitlabCheckStatus = (status: string | null): RunForgeCheck["status"] => {
     case "created":
     case "waiting_for_resource":
     case "preparing":
+    case "scheduled":
     case "pending": return "queued";
+    case "canceling":
     case "running": return "running";
     case "success": return "success";
     case "skipped":

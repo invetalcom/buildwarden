@@ -513,6 +513,8 @@ describe("PR/MR review providers", () => {
           finished_at: "2026-08-08T09:03:00Z",
           duration: 180,
         },
+        { id: 992, name: "scheduled deploy", status: "scheduled" },
+        { id: 993, name: "cancelling lint", status: "canceling" },
       ],
       "/projects/group%2Fproject/merge_requests/7/approvals": {
         approved: false,
@@ -531,7 +533,11 @@ describe("PR/MR review providers", () => {
       unresolvedThreadCount: 1,
       supportedMergeMethods: ["merge", "squash"],
     });
-    expect(result.checks).toMatchObject([{ name: "browser tests", status: "failure", durationMs: 180_000 }]);
+    expect(result.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "browser tests", status: "failure", durationMs: 180_000 }),
+      expect.objectContaining({ name: "scheduled deploy", status: "queued" }),
+      expect.objectContaining({ name: "cancelling lint", status: "running" }),
+    ]));
   });
 
   it("rejects a GitLab write when the expected head is stale", async () => {
