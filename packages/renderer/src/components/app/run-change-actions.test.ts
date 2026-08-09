@@ -40,6 +40,11 @@ describe("run change actions", () => {
       canPublish: false,
       canCreateLocalBranch: false,
     });
+    expect(deriveRunChangeActionAvailability({ changeState, hasCommit: true, canManageChanges: true })).toEqual({
+      canCommit: false,
+      canPublish: false,
+      canCreateLocalBranch: false,
+    });
   });
 
   it("enables publishing only for a known clean workspace with an existing commit", () => {

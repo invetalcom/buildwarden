@@ -22,5 +22,5 @@ export const deriveRunChangeActionAvailability = ({
 }>) => ({
   canCommit: canManageChanges && changeState === "dirty",
   canPublish: canManageChanges && changeState === "clean" && hasCommit,
-  canCreateLocalBranch: canManageChanges && (changeState === "dirty" || hasCommit),
+  canCreateLocalBranch: canManageChanges && changeState !== "unknown" && (changeState === "dirty" || hasCommit),
 });
