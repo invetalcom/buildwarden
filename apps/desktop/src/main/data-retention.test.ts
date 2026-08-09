@@ -1,4 +1,5 @@
 import type { ChatRecord, ProjectLabThreadRecord, ProjectLoopRecord, RunRecord } from "@buildwarden/shared";
+import { DEFAULT_DATA_RETENTION_CLEANUP_DAYS, parseDataRetentionCleanupDaysSetting } from "@buildwarden/shared";
 import { describe, expect, it } from "vitest";
 import { buildDataRetentionCleanupPlan } from "./data-retention";
 
@@ -196,5 +197,14 @@ describe("data-retention cleanup planning", () => {
     expect(result.runIds).toEqual([labRun.id]);
     expect(result.chatIds).toEqual(["lab-chat"]);
     expect(result.deletionRootRunIds).toEqual([]);
+  });
+});
+
+describe("data-retention day parsing", () => {
+  it("uses the default for missing and blank settings", () => {
+    expect(parseDataRetentionCleanupDaysSetting(null)).toBe(DEFAULT_DATA_RETENTION_CLEANUP_DAYS);
+    expect(parseDataRetentionCleanupDaysSetting(undefined)).toBe(DEFAULT_DATA_RETENTION_CLEANUP_DAYS);
+    expect(parseDataRetentionCleanupDaysSetting("")).toBe(DEFAULT_DATA_RETENTION_CLEANUP_DAYS);
+    expect(parseDataRetentionCleanupDaysSetting("   ")).toBe(DEFAULT_DATA_RETENTION_CLEANUP_DAYS);
   });
 });

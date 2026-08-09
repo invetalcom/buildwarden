@@ -4693,6 +4693,9 @@ export const parseRecentRunDaysSetting = (raw: string | number | undefined | nul
 };
 
 export const parseDataRetentionCleanupDaysSetting = (raw: string | number | undefined | null): number => {
+  if (raw == null || (typeof raw === "string" && raw.trim() === "")) {
+    return DEFAULT_DATA_RETENTION_CLEANUP_DAYS;
+  }
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) {
     return DEFAULT_DATA_RETENTION_CLEANUP_DAYS;
