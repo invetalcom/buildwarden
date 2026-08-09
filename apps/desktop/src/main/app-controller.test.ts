@@ -1607,6 +1607,34 @@ describe("AppController settings and lightweight workflows", () => {
     expect(deleteRun).toHaveBeenCalledWith("orphaned-child-run");
   });
 
+  it("deletes an orphaned orchestration child through the real run cleanup path", async () => {
+    const orphanedRun = {
+      id: "orphaned-child-run",
+      projectId: project.id,
+      workspaceType: "local",
+      workspaceVcs: "git",
+      branchName: project.baseBranch,
+      worktreePath: project.repoPath,
+    } as RunRecord;
+    const deleteRunRow = vi.fn();
+    const harness = createHarness({
+      getRun: vi.fn(() => orphanedRun),
+      getOrchestrationTaskByChildRunId: vi.fn(() => ({
+        orchestrationId: "missing-orchestration",
+      } as OrchestrationTaskRecord)),
+      getOrchestration: vi.fn(() => { throw new Error("Orchestration not found"); }),
+      getChatsForRun: vi.fn(() => []),
+      deleteProviderSessionRuntime: vi.fn(),
+      deleteRun: deleteRunRow,
+    });
+    tempDirs.push(harness.logDir);
+
+    await expect(harness.controller.deleteRun(orphanedRun.id)).resolves.toBeUndefined();
+
+    expect(deleteRunRow).toHaveBeenCalledWith(orphanedRun.id);
+    expect(harness.lifecycle.onRunDeleted).toHaveBeenCalledWith(orphanedRun.id);
+  });
+
   it("removes unusable orchestration roles and reassigns mixed-role preferences", async () => {
     const harness = createHarness();
     tempDirs.push(harness.logDir);
