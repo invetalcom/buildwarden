@@ -28,14 +28,14 @@ afterAll(() => {
 });
 
 describe("App initial render", () => {
-  it("renders the landing shell before the preload snapshot arrives", () => {
+  it("renders the startup retention gate before the preload snapshot arrives", () => {
     const client = createElectronBuildWardenClient((window as unknown as { buildwarden: DesktopApi }).buildwarden);
     const markup = renderToStaticMarkup(
       <BuildWardenClientProvider client={client}>
         <App />
       </BuildWardenClientProvider>,
     );
-    expect(markup).toContain("Select project");
-    expect(markup).toContain("Boot Message");
+    expect(markup).toContain("Checking saved data");
+    expect(markup).not.toContain("Select project");
   });
 });

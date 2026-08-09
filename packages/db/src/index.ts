@@ -452,6 +452,11 @@ export class BuildWardenDatabase {
     );
   }
 
+  listAllChats(): ChatRecord[] {
+    return this.all<{ id: string }>("select id from chats order by updated_at desc")
+      .map((row) => this.getChat(row.id));
+  }
+
   getLatestChatForRun(runId: string): ChatRecord | null {
     const row = this.first<{ id: string }>(
       "select id from chats where run_id = ? order by created_at desc limit 1",

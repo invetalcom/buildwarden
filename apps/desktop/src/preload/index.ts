@@ -169,6 +169,9 @@ const api: DesktopApi = {
   getOrchestrationAdoptionPreview: (taskId: string) =>
     invoke(IPC_CHANNELS.getOrchestrationAdoptionPreview, taskId),
   getRunDeletionImpact: (runId: string) => invoke(IPC_CHANNELS.getRunDeletionImpact, runId),
+  getDataRetentionCleanupImpact: (dayCount: number) => invoke(IPC_CHANNELS.getDataRetentionCleanupImpact, dayCount),
+  deleteDataRetentionCandidates: (dayCount: number, cutoffAt: string) =>
+    invoke(IPC_CHANNELS.deleteDataRetentionCandidates, dayCount, cutoffAt),
   pauseOrchestration: (coordinatorRunId: string) =>
     invoke(IPC_CHANNELS.pauseOrchestration, coordinatorRunId),
   resumeOrchestration: (coordinatorRunId: string) =>

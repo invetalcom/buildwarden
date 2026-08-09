@@ -87,6 +87,8 @@ import {
   parseNetworkProxySettings,
   parseIdePathConfig,
   parseIntegratedSkillsDisabledSetting,
+  MAX_DATA_RETENTION_CLEANUP_DAYS,
+  MIN_DATA_RETENTION_CLEANUP_DAYS,
   parseProjectForgePrMonitorIntervalMinutes,
   parseProjectForgePrMonitorSettingsSetting,
   parseProjectLabSettingsSetting,
@@ -208,6 +210,7 @@ import {
   type RunFollowUpOptions,
   type RunInput,
   type ModelDeletionImpact,
+  type DataRetentionCleanupImpact,
   type RunDeletionImpact,
   type RunListVisibility,
   type RunNoteRecord,
@@ -227,6 +230,7 @@ import {
   parseProjectRunDefaultsSetting,
 } from "@buildwarden/shared";
 import { logError, logInfo, logWarn } from "./logger";
+import { buildDataRetentionCleanupPlan, type DataRetentionCleanupPlan } from "./data-retention";
 import type { AppControllerDesktopServices } from "./desktop-platform-services";
 import { HostEventBus } from "./host-events";
 import type { HostTerminal } from "./host-terminal-service";
@@ -7397,6 +7401,136 @@ export class AppController
       artifactPaths: [...new Set(artifactPaths)],
       lockedOrMissingPaths: [...ownedDirectories, ...artifactPaths].filter((path) => !existsSync(path)),
     };
+  }
+
+  private createDataRetentionCleanupPlan(dayCount: number, reviewedCutoffAt?: string): DataRetentionCleanupPlan {
+    if (!Number.isInteger(dayCount) || dayCount < MIN_DATA_RETENTION_CLEANUP_DAYS || dayCount > MAX_DATA_RETENTION_CLEANUP_DAYS) {
+      throw new Error(
+        `Data-retention days must be a whole number from ${MIN_DATA_RETENTION_CLEANUP_DAYS} to ${MAX_DATA_RETENTION_CLEANUP_DAYS}.`,
+      );
+    }
+
+    const nowMs = Date.now();
+    const thresholdMs = dayCount * 24 * 60 * 60 * 1_000;
+    const cutoffAt = reviewedCutoffAt ?? new Date(nowMs - thresholdMs).toISOString();
+    const cutoffMs = Date.parse(cutoffAt);
+    if (!Number.isFinite(cutoffMs) || cutoffMs > nowMs - thresholdMs + 5_000) {
+      throw new Error("The reviewed data-retention cutoff is invalid.");
+    }
+
+    const projects = this.db.listProjects();
+    const runs = projects.flatMap((project) => this.db.listRunsForProject(project.id));
+    const runsById = new Map(runs.map((run) => [run.id, run]));
+    const rootRunIdByRunId = new Map<string, string>();
+    for (const run of runs) {
+      let rootRunId = run.id;
+      const childTask = this.db.getOrchestrationTaskByChildRunId(run.id);
+      if (childTask) {
+        try {
+          rootRunId = this.db.getOrchestration(childTask.orchestrationId).coordinatorRunId;
+        } catch {
+          rootRunId = run.id;
+        }
+      }
+      rootRunIdByRunId.set(run.id, runsById.has(rootRunId) ? rootRunId : run.id);
+    }
+
+    const projectLabThreads = projects.flatMap((project) => this.db.listProjectLabThreads(project.id));
+    const projectLoops = projects.flatMap((project) => this.db.listProjectLoops(project.id).map((loop) => ({
+      loop,
+      runIds: this.db.listProjectLoopIterations(loop.id).flatMap((iteration) => iteration.runId ? [iteration.runId] : []),
+    })));
+    return buildDataRetentionCleanupPlan({
+      dayCount,
+      cutoffAt,
+      runs,
+      chats: this.db.listAllChats(),
+      bookmarks: this.db.listBookmarks(),
+      chatBookmarks: this.db.listChatBookmarks(),
+      projectLabThreads,
+      projectLoops,
+      rootRunIdByRunId,
+    });
+  }
+
+  async getDataRetentionCleanupImpact(dayCount: number): Promise<DataRetentionCleanupImpact> {
+    const plan = this.createDataRetentionCleanupPlan(dayCount);
+    return {
+      dayCount: plan.dayCount,
+      cutoffAt: plan.cutoffAt,
+      runIds: plan.runIds,
+      chatIds: plan.chatIds,
+      projectLabThreadIds: plan.projectLabThreadIds,
+      projectLoopIds: plan.projectLoopIds,
+      runCount: plan.runCount,
+      chatCount: plan.chatCount,
+      projectLabThreadCount: plan.projectLabThreadCount,
+      projectLoopCount: plan.projectLoopCount,
+    };
+  }
+
+  async deleteDataRetentionCandidates(dayCount: number, cutoffAt: string): Promise<DataRetentionCleanupImpact> {
+    const plan = this.createDataRetentionCleanupPlan(dayCount, cutoffAt);
+    const { deletionRootRunIds, ...impact } = plan;
+    const previousSelection = this.db.getSettings();
+
+    try {
+      for (const threadId of plan.projectLabThreadIds) {
+        try {
+          this.db.getProjectLabThread(threadId);
+        } catch {
+          continue;
+        }
+        await this.deleteProjectLabThread(threadId);
+      }
+      for (const loopId of plan.projectLoopIds) {
+        try {
+          this.db.getProjectLoop(loopId);
+        } catch {
+          continue;
+        }
+        await this.loopRunner.deleteLoop(loopId);
+      }
+      for (const runId of deletionRootRunIds) {
+        try {
+          this.db.getRun(runId);
+        } catch {
+          continue;
+        }
+        await this.deleteRun(runId);
+      }
+      for (const chatId of plan.chatIds) {
+        try {
+          this.db.getChat(chatId);
+        } catch {
+          continue;
+        }
+        await this.deleteChat(chatId);
+      }
+
+      const remainingRunIds = plan.runIds.filter((runId) => {
+        try {
+          this.db.getRun(runId);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      const remainingChatIds = plan.chatIds.filter((chatId) => {
+        try {
+          this.db.getChat(chatId);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      if (remainingRunIds.length > 0 || remainingChatIds.length > 0) {
+        throw new Error("Some old run or chat data could not be deleted. Retry on the next startup.");
+      }
+      return impact;
+    } finally {
+      this.restoreSelectionAfterDeletion(previousSelection);
+    }
   }
 
   async deleteRun(runId: string): Promise<void> {

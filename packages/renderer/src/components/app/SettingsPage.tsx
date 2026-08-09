@@ -72,6 +72,8 @@ interface SettingsPageProps {
   modelBaseUrl: string;
   autoCheckoutRunBranchOnOpen: boolean;
   autoReleaseRunBranchOnLeave: boolean;
+  dataRetentionCleanupEnabled: boolean;
+  dataRetentionCleanupDays: number;
   recentRunDays: number;
   uiTheme: UiTheme;
   sidebarContrast: boolean;
@@ -99,6 +101,8 @@ interface SettingsPageProps {
   onDeleteModel: (modelId: string) => void;
   onAutoCheckoutRunBranchOnOpenChange: (value: boolean) => void;
   onAutoReleaseRunBranchOnLeaveChange: (value: boolean) => void;
+  onDataRetentionCleanupEnabledChange: (value: boolean) => void;
+  onDataRetentionCleanupDaysChange: (value: number) => void | Promise<void>;
   onRecentRunDaysChange: (value: number) => void | Promise<void>;
   onUiThemeChange: (theme: UiTheme) => void;
   onSidebarContrastChange: (value: boolean) => void;
@@ -187,6 +191,8 @@ export const SettingsPage = ({
   modelBaseUrl,
   autoCheckoutRunBranchOnOpen,
   autoReleaseRunBranchOnLeave,
+  dataRetentionCleanupEnabled,
+  dataRetentionCleanupDays,
   recentRunDays,
   uiTheme,
   sidebarContrast,
@@ -214,6 +220,8 @@ export const SettingsPage = ({
   onDeleteModel,
   onAutoCheckoutRunBranchOnOpenChange,
   onAutoReleaseRunBranchOnLeaveChange,
+  onDataRetentionCleanupEnabledChange,
+  onDataRetentionCleanupDaysChange,
   onRecentRunDaysChange,
   onUiThemeChange,
   onSidebarContrastChange,
@@ -511,6 +519,8 @@ export const SettingsPage = ({
           projectFolderGitWarning={projectFolderGitWarning}
           autoCheckoutRunBranchOnOpen={autoCheckoutRunBranchOnOpen}
           autoReleaseRunBranchOnLeave={autoReleaseRunBranchOnLeave}
+          dataRetentionCleanupEnabled={dataRetentionCleanupEnabled}
+          dataRetentionCleanupDays={dataRetentionCleanupDays}
           worktreeRootDraft={worktreeRootDraft}
           worktreeRootOverrideSettingValue={worktreeRootOverrideSettingValue}
           worktreeRootDirty={worktreeRootDirty}
@@ -525,6 +535,8 @@ export const SettingsPage = ({
           onDeleteProject={onDeleteProject}
           onAutoCheckoutRunBranchOnOpenChange={onAutoCheckoutRunBranchOnOpenChange}
           onAutoReleaseRunBranchOnLeaveChange={onAutoReleaseRunBranchOnLeaveChange}
+          onDataRetentionCleanupEnabledChange={onDataRetentionCleanupEnabledChange}
+          onDataRetentionCleanupDaysChange={onDataRetentionCleanupDaysChange}
           onProjectNameChange={onProjectNameChange}
           onProjectPathChange={onProjectPathChange}
           onWorktreeRootDraftChange={setWorktreeRootDraft}

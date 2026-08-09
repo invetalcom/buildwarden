@@ -1389,6 +1389,10 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.getOrchestrationAdoptionPreview, (_, taskId: string) =>
     controller.getOrchestrationAdoptionPreview(taskId));
   ipcMain.handle(IPC_CHANNELS.getRunDeletionImpact, (_, runId: string) => controller.getRunDeletionImpact(runId));
+  ipcMain.handle(IPC_CHANNELS.getDataRetentionCleanupImpact, (_, dayCount: number) =>
+    controller.getDataRetentionCleanupImpact(dayCount));
+  ipcMain.handle(IPC_CHANNELS.deleteDataRetentionCandidates, (_, dayCount: number, cutoffAt: string) =>
+    controller.deleteDataRetentionCandidates(dayCount, cutoffAt));
   ipcMain.handle(IPC_CHANNELS.pauseOrchestration, (_, coordinatorRunId: string) =>
     controller.pauseOrchestration(coordinatorRunId));
   ipcMain.handle(IPC_CHANNELS.resumeOrchestration, (_, coordinatorRunId: string) =>

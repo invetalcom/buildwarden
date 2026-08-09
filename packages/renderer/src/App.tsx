@@ -8,6 +8,7 @@ import {
   getAiSdkProviderFamilyFromConfigJson,
   DEFAULT_ADD_MODEL_DRAFT,
   DEFAULT_SHELL_ALLOWLIST_PATTERN_SOURCES,
+  parseDataRetentionCleanupDaysSetting,
   parseRecentRunDaysSetting,
   parseRemoteAccessEnabledSetting,
   parseRunTimelineDensitySetting,
@@ -109,6 +110,7 @@ import {
   type RunPaneId,
 } from "./components/app/app-model";
 import { buildRunDeletionPlan } from "./components/app/run-deletion-plan";
+import { StartupDataRetentionDialog, type StartupDataRetentionState } from "./components/app/StartupDataRetentionDialog";
 import {
   AppNotifications,
   type ProjectForgeRequestToast,
@@ -293,6 +295,10 @@ export const App = () => {
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [landingPageJoke] = useState(() => pickRandomLandingJoke());
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
+  const [startupDataRetentionState, setStartupDataRetentionState] = useState<StartupDataRetentionState>(
+    () => buildwarden.capabilities.platform === "electron" ? { status: "checking" } : { status: "ready" },
+  );
+  const startupDataRetentionCheckStartedRef = useRef(false);
   const [publishMenuOpen, setPublishMenuOpen] = useState(false);
   const [runPanelsMenuOpen, setRunPanelsMenuOpen] = useState(false);
   const [runDensityMenuOpen, setRunDensityMenuOpen] = useState(false);
@@ -415,6 +421,26 @@ export const App = () => {
       return next.selectedRunId || next.projects[0]?.recentRuns[0]?.id || null;
     });
   }, [buildwarden]);
+
+  const checkStartupDataRetention = useCallback(async () => {
+    if (buildwarden.capabilities.platform !== "electron" || snapshot.settings[APP_SETTING_KEYS.dataRetentionCleanupEnabled] !== "true") {
+      setStartupDataRetentionState({ status: "ready" });
+      return;
+    }
+    const dayCount = parseDataRetentionCleanupDaysSetting(snapshot.settings[APP_SETTING_KEYS.dataRetentionCleanupDays]);
+    setStartupDataRetentionState({ status: "checking" });
+    try {
+      const impact = await buildwarden.getDataRetentionCleanupImpact(dayCount);
+      const totalCount = impact.runCount + impact.chatCount + impact.projectLabThreadCount + impact.projectLoopCount;
+      setStartupDataRetentionState(totalCount > 0 ? { status: "review", impact } : { status: "ready" });
+    } catch (caught) {
+      setStartupDataRetentionState({
+        status: "error",
+        phase: "checking",
+        message: caught instanceof Error ? caught.message : "Could not inspect old saved data.",
+      });
+    }
+  }, [buildwarden, snapshot.settings]);
 
   const loadAppPaths = useCallback(async () => {
     if (!buildwarden) {
@@ -967,6 +993,24 @@ export const App = () => {
     }
   }, [clearDiffRefreshTimer, removeRunWorkspaceLayoutsForRuns, removeShellApprovalsByRunId]);
 
+  const confirmStartupDataRetentionCleanup = useCallback(async () => {
+    if (startupDataRetentionState.status !== "review") return;
+    const impact = startupDataRetentionState.impact;
+    setStartupDataRetentionState({ status: "deleting", impact });
+    try {
+      const deleted = await buildwarden.deleteDataRetentionCandidates(impact.dayCount, impact.cutoffAt);
+      purgeDeletedRunState(deleted.runIds);
+      await loadSnapshot();
+      setStartupDataRetentionState({ status: "ready" });
+    } catch (caught) {
+      setStartupDataRetentionState({
+        status: "error",
+        phase: "deleting",
+        message: caught instanceof Error ? caught.message : "Could not delete all selected old data.",
+      });
+    }
+  }, [buildwarden, loadSnapshot, purgeDeletedRunState, startupDataRetentionState]);
+
   useEffect(
     () => () => {
       for (const timer of Object.values(runDetailRefreshTimersRef.current)) {
@@ -1088,6 +1132,12 @@ export const App = () => {
     purgeDeletedRunState,
     scheduleSnapshotRefresh,
   ]);
+
+  useEffect(() => {
+    if (!snapshotLoaded || startupDataRetentionCheckStartedRef.current) return;
+    startupDataRetentionCheckStartedRef.current = true;
+    void checkStartupDataRetention();
+  }, [checkStartupDataRetention, snapshotLoaded]);
 
   useEffect(() => {
     if (buildwarden.capabilities.liveEvents) return;
@@ -1300,6 +1350,8 @@ export const App = () => {
 
   const autoCheckoutRunBranchOnOpen = snapshot.settings[APP_SETTING_KEYS.autoCheckoutRunBranchOnOpen] !== "false";
   const autoReleaseRunBranchOnLeave = snapshot.settings[APP_SETTING_KEYS.autoReleaseRunBranchOnLeave] !== "false";
+  const dataRetentionCleanupEnabled = snapshot.settings[APP_SETTING_KEYS.dataRetentionCleanupEnabled] === "true";
+  const dataRetentionCleanupDays = parseDataRetentionCleanupDaysSetting(snapshot.settings[APP_SETTING_KEYS.dataRetentionCleanupDays]);
   const recentRunDays = parseRecentRunDaysSetting(snapshot.settings[APP_SETTING_KEYS.recentRunDays]);
   const uiTheme = parseUiTheme(snapshot.settings);
   const sidebarContrast = snapshot.settings[APP_SETTING_KEYS.sidebarContrast] === "true";
@@ -3664,6 +3716,8 @@ export const App = () => {
               modelBaseUrl={modelBaseUrl}
               autoCheckoutRunBranchOnOpen={autoCheckoutRunBranchOnOpen}
               autoReleaseRunBranchOnLeave={autoReleaseRunBranchOnLeave}
+              dataRetentionCleanupEnabled={dataRetentionCleanupEnabled}
+              dataRetentionCleanupDays={dataRetentionCleanupDays}
               recentRunDays={recentRunDays}
               uiTheme={uiTheme}
               sidebarContrast={sidebarContrast}
@@ -3690,6 +3744,17 @@ export const App = () => {
               onDeleteModel={(modelId) => void deleteModel(modelId)}
               onAutoCheckoutRunBranchOnOpenChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.autoCheckoutRunBranchOnOpen, value)}
               onAutoReleaseRunBranchOnLeaveChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.autoReleaseRunBranchOnLeave, value)}
+              onDataRetentionCleanupEnabledChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.dataRetentionCleanupEnabled, value)}
+              onDataRetentionCleanupDaysChange={(value) =>
+                void handleAction(async () => {
+                  if (!buildwarden) throw new Error("The Electron desktop bridge is unavailable.");
+                  await buildwarden.setAppSetting(
+                    APP_SETTING_KEYS.dataRetentionCleanupDays,
+                    String(parseDataRetentionCleanupDaysSetting(value)),
+                  );
+                  await loadSnapshot();
+                })
+              }
               onRecentRunDaysChange={(value) =>
                 void handleAction(async () => {
                   if (!buildwarden) {
@@ -4214,6 +4279,34 @@ export const App = () => {
                 </Card>,
             );
   };
+
+  if (startupDataRetentionState.status !== "ready") {
+    return (
+      <div
+        className={cn(
+          "app-shell flex h-screen min-h-0 flex-col overflow-hidden",
+          uiTheme === "light" ? "theme-light" : "theme-dark",
+          sidebarContrast && "sidebar-contrast",
+        )}
+      >
+        {showCustomWindowsTitleBar ? (
+          <AppTitleBar
+            uiTheme={uiTheme}
+            syncWindowsCaptionStrip
+            onOpenMenu={(section, anchor) => void openAppMenuSection(section, anchor)}
+          />
+        ) : null}
+        <main className="flex min-h-0 flex-1 items-center justify-center bg-[var(--ec-bg)] p-6 text-[var(--ec-text)]">
+          <StartupDataRetentionDialog
+            state={startupDataRetentionState}
+            onConfirm={() => void confirmStartupDataRetentionCleanup()}
+            onSkip={() => setStartupDataRetentionState({ status: "ready" })}
+            onRetry={() => void checkStartupDataRetention()}
+          />
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div
