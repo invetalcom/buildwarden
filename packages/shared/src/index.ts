@@ -2121,6 +2121,8 @@ export interface RunDeletionImpact {
 export interface ModelDeletionImpact {
   modelId: string;
   modelDisplayName: string;
+  runIds: string[];
+  chatIds: string[];
   runCount: number;
   chatCount: number;
   projectInsightCount: number;

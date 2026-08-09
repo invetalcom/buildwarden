@@ -2834,6 +2834,8 @@ export class AppController
     return {
       modelId: model.id,
       modelDisplayName: model.displayName,
+      runIds: targets.runIds,
+      chatIds: targets.chatIds,
       runCount: targets.runIds.length,
       chatCount: targets.chatIds.length,
       projectInsightCount: targets.projectInsightIds.length,

@@ -239,6 +239,8 @@ describe("remote operation registry", () => {
     const impact = {
       modelId: "model-1",
       modelDisplayName: "GPT-5",
+      runIds: ["run-1", "run-2"],
+      chatIds: ["chat-1"],
       runCount: 2,
       chatCount: 1,
       projectInsightCount: 0,

@@ -117,6 +117,7 @@ import { createAppKeyboardShortcutHandler } from "./components/app/app-keyboard-
 import {
   computeMainViewFlags,
   normalizeProjectFeatureTab,
+  reconcileSettingsPreviousPageAfterModelDeletion,
   type SettingsPreviousPageState,
 } from "./components/app/app-navigation";
 import { buildCommandPaletteItems } from "./components/app/command-palette-items";
@@ -3260,6 +3261,13 @@ export const App = () => {
 
     await handleAction(async () => {
       await buildwarden.deleteModel(modelId);
+      const deletedChatIds = new Set(deletionImpact.chatIds);
+      purgeDeletedRunState(deletionImpact.runIds);
+      setSelectedChat((current) => current && deletedChatIds.has(current.id) ? null : current);
+      setChatDetail((current) => current && deletedChatIds.has(current.chat.id) ? null : current);
+      setSettingsPreviousPage((current) => current
+        ? reconcileSettingsPreviousPageAfterModelDeletion(current, deletionImpact.runIds, deletionImpact.chatIds)
+        : current);
       await loadSnapshot();
     });
   };
