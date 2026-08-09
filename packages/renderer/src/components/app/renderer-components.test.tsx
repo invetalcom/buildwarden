@@ -14,6 +14,7 @@ import {
   type ProjectSnapshot,
 } from "@buildwarden/shared";
 import { AllRunsPage } from "./AllRunsPage";
+import { AgentRunHoverCard } from "./AgentRunHoverCard";
 import { BookmarksPage } from "./BookmarksPage";
 import { ChatPage } from "./ChatPage";
 import { ContextWindowBadge } from "./ContextWindowBadge";
@@ -256,6 +257,65 @@ describe("renderer component states", () => {
       <AllRunsPage projects={[{ ...projectEntry, runs: [runRecord({ harnessType: "claude-code" })] }]} onSelectRun={vi.fn()} />,
     );
     expect(claudeMarkup).toContain("<title>Claude Code</title>");
+  });
+
+  it("renders the shared agent run hover card with expanded run context", () => {
+    const markup = renderToStaticMarkup(
+      <AgentRunHoverCard
+        projectName="BuildWarden"
+        run={runRecord({
+          prompt: "Inspect the complete sidebar prompt and preserve the compact navigation layout.",
+          branchName: "feat/run-hover-card",
+          harnessType: "codex-app-server",
+        })}
+      />,
+    );
+
+    expect(markup).toContain("data-agent-run-hover-card");
+    expect(markup).toContain("Inspect the complete sidebar prompt");
+    expect(markup).toContain("BuildWarden");
+    expect(markup).toContain("feat/run-hover-card");
+    expect(markup).toContain("Codex CLI");
+    expect(markup).toContain("line-clamp-6");
+    expect(markup).toContain("var(--ec-text)");
+    expect(markup).not.toContain("data-agent-run-forge-request");
+
+    const pullRequestMarkup = renderToStaticMarkup(
+      <AgentRunHoverCard
+        projectName="BuildWarden"
+        run={runRecord({
+          forgeRequest: {
+            provider: "github",
+            number: 42,
+            title: "Show pull request context in the sidebar hover card",
+            url: "https://github.com/example/buildwarden/pull/42",
+            state: "open",
+            readiness: "pending",
+            draft: false,
+            mergeability: "checking",
+            reviewDecision: "review-required",
+            author: "octocat",
+            sourceBranch: "feat/run-hover-card",
+            targetBranch: "main",
+            headSha: "abcdef1234567890",
+            checks: { completed: 4, total: 7, successful: 4, failed: 0, running: 3 },
+            unresolvedThreadCount: 0,
+            supportedActions: [],
+            supportedMergeMethods: [],
+            updatedAt: "2026-01-01T00:04:00.000Z",
+            lastSyncedAt: "2026-01-01T00:05:00.000Z",
+            stale: false,
+            syncError: null,
+          },
+        })}
+      />,
+    );
+
+    expect(pullRequestMarkup).toContain("data-agent-run-forge-request");
+    expect(pullRequestMarkup).toContain("Pull request #42");
+    expect(pullRequestMarkup).toContain("Show pull request context in the sidebar hover card");
+    expect(pullRequestMarkup).toContain("Waiting");
+    expect(pullRequestMarkup).toContain(">4 of 7</span> checks");
   });
 
   it("renders plan, token, and context summaries", () => {

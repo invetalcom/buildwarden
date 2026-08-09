@@ -40,6 +40,9 @@ import { Separator } from "../ui/separator";
 import { cn } from "../../lib/cn";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { runForgeReadinessColor, runForgeReadinessLabel } from "./run-forge-ui";
+import { AgentRunHoverCard } from "./AgentRunHoverCard";
+import { HoverCard } from "../ui/hover-card";
+import { formatRunDuration, formatRunRelativeTime } from "./run-summary-format";
 
 const ACTIVE_RUN_STATUSES = new Set(["queued", "preparing", "running"]);
 
@@ -128,29 +131,6 @@ const projectToolVisible = (
     return true;
   }
   return tab !== "branches" && tab !== "reviews";
-};
-
-const formatRelativeTime = (dateString: string | null) => {
-  if (!dateString) return "just now";
-  const diffMinutes = Math.max(0, Math.floor((Date.now() - new Date(dateString).getTime()) / 60000));
-  if (diffMinutes < 1) return "just now";
-  if (diffMinutes < 60) return `${diffMinutes}m ago`;
-  const diffHours = Math.floor(diffMinutes / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-  return `${Math.floor(diffHours / 24)}d ago`;
-};
-
-const formatRunDuration = (run: SidebarRun) => {
-  const start = new Date(run.startedAt ?? run.createdAt).getTime();
-  const end = new Date(run.finishedAt ?? run.updatedAt).getTime();
-  const totalSeconds = Math.max(0, Math.floor((end - start) / 1000));
-  if (totalSeconds < 5) return "< 5s";
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  if (minutes > 0) return `${minutes}m ${seconds}s`;
-  return `${seconds}s`;
 };
 
 const formatRecentRunWindowLabel = (days: number) => `${days} ${days === 1 ? "day" : "days"}`;
@@ -442,9 +422,8 @@ const SidebarComponent = ({
     const highlighted = highlightedRunId === run.id;
     const waitingForInput = run.pendingUserInputRequest === true || run.pendingUserInputRequest === 1;
     const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
-    return (
+    const trigger = (
       <button
-        key={run.id}
         type="button"
         draggable
         data-sidebar-run-entry-size={runEntrySize}
@@ -513,11 +492,16 @@ const SidebarComponent = ({
               <GitPullRequest className="size-3" aria-hidden />
             </span>
           ) : null}
-          <span className="truncate">{formatRelativeTime(run.finishedAt ?? run.updatedAt)}</span>
+          <span className="truncate">{formatRunRelativeTime(run.finishedAt ?? run.updatedAt)}</span>
           <span className="size-1 shrink-0 rounded-full bg-[var(--ec-faint)]" />
           <span className="shrink-0">{formatRunDuration(run)}</span>
         </span>
       </button>
+    );
+    return (
+      <HoverCard key={run.id} content={<AgentRunHoverCard projectName={project.project.name} run={run} />}>
+        {trigger}
+      </HoverCard>
     );
   };
 
