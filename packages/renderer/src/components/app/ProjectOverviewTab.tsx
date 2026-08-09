@@ -160,9 +160,12 @@ export const RunHistory = ({ runs, orchestratedRuns, treeRows, matchingRunCount,
   return (
     <Card className="flex min-h-0 flex-1 flex-col">
       <CardHeader className="shrink-0 flex-row flex-wrap items-center justify-between gap-3">
-        <div>
-          <CardTitle>Run History</CardTitle>
-          <CardDescription>{runCountDescription}.</CardDescription>
+        <div className="flex items-start gap-2">
+          <Clock3 className="mt-0.5 size-4 shrink-0 text-[var(--ec-muted)]" aria-hidden />
+          <div>
+            <CardTitle>Run History</CardTitle>
+            <CardDescription>{runCountDescription}.</CardDescription>
+          </div>
         </div>
         <div className="flex min-w-0 flex-1 items-center justify-end gap-3">
           <span className="relative block min-w-[14rem] max-w-md flex-1">
@@ -187,7 +190,6 @@ export const RunHistory = ({ runs, orchestratedRuns, treeRows, matchingRunCount,
               onCancel={cancelSelection}
             />
           ) : null}
-          <Clock3 className="size-4 shrink-0 text-[var(--ec-muted)]" />
         </div>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-b-lg p-0">

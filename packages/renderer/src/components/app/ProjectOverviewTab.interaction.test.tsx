@@ -79,6 +79,12 @@ describe("project run history selection", () => {
       />,
     ));
 
+    const historyHeading = [...container.querySelectorAll("h3")]
+      .find((heading) => heading.textContent === "Run History");
+    expect(historyHeading?.parentElement?.previousElementSibling?.getAttribute("class")).toContain("lucide-clock-3");
+    const searchInput = container.querySelector<HTMLInputElement>('input[aria-label="Search runs"]');
+    expect(searchInput?.parentElement?.parentElement?.querySelector(".lucide-clock-3")).toBeNull();
+
     const selectButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
       .find((button) => button.textContent?.trim() === "Select");
     await act(async () => selectButton?.click());
