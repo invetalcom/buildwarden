@@ -16,6 +16,17 @@ const renderConfirmation = (
 } as unknown as ComponentProps<typeof RunActionDialogs>)} />);
 
 describe("RunActionDialogs confirmation", () => {
+  it("uses an opaque panel surface over the blurred workspace", () => {
+    const markup = renderConfirmation({
+      title: "Delete selected runs",
+      message: "Selected runs will be deleted.",
+      confirmLabel: "Delete selected runs",
+      confirmVariant: "danger",
+    });
+
+    expect(markup).toContain("!bg-zinc-900");
+  });
+
   it("renders grouped deletion impact counts", () => {
     const markup = renderConfirmation({
       title: "Delete model",

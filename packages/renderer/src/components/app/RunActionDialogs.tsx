@@ -304,7 +304,7 @@ export const RunActionDialogs = ({
           }
         }}
       >
-        <Card className="shadow-[var(--ec-popover-shadow)] w-full max-w-lg p-5">
+        <Card className="w-full max-w-lg !bg-zinc-900 p-5 shadow-[var(--ec-popover-shadow)]">
           <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Confirm action</p>
           <h3 className="mt-2 text-xl font-semibold text-zinc-100">{confirmDialog.title}</h3>
           <p className="mt-3 text-sm leading-relaxed text-zinc-400">{confirmDialog.message}</p>
