@@ -942,6 +942,7 @@ export const App = () => {
       Object.fromEntries(Object.entries(current).filter(([runId]) => !deletedIds.has(runId)));
 
     for (const runId of deletedIds) {
+      delete diffSummaryLoadGenerationRef.current[runId];
       clearDiffRefreshTimer(runId);
       const refreshTimer = runDetailRefreshTimersRef.current[runId];
       if (refreshTimer !== undefined) {
