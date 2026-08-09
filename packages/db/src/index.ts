@@ -4236,6 +4236,8 @@ export class BuildWardenDatabase {
       );
 
       create index if not exists idx_project_loops_project_id on project_loops(project_id);
+      create index if not exists idx_project_loops_runner_model_id on project_loops(runner_model_id);
+      create index if not exists idx_project_loops_review_model_id on project_loops(review_model_id);
       create index if not exists idx_project_loop_iterations_loop_id on project_loop_iterations(loop_id, iteration_index);
       create unique index if not exists idx_project_loop_iterations_loop_index_unique on project_loop_iterations(loop_id, iteration_index);
       create index if not exists idx_project_loop_events_loop_id on project_loop_events(loop_id, created_at);
@@ -4243,14 +4245,19 @@ export class BuildWardenDatabase {
 
       create unique index if not exists idx_project_insights_project_kind on project_insights(project_id, kind);
       create index if not exists idx_project_lab_threads_project_id on project_lab_threads(project_id);
+      create index if not exists idx_project_lab_threads_implementation_model_id on project_lab_threads(implementation_model_id);
+      create index if not exists idx_project_lab_threads_review_model_id on project_lab_threads(review_model_id);
       create index if not exists idx_project_lab_events_thread_id on project_lab_events(thread_id);
       create index if not exists idx_runs_project_created_at on runs(project_id, created_at desc);
+      create index if not exists idx_runs_model_id on runs(model_id);
       create index if not exists idx_runs_status on runs(status);
       create index if not exists idx_runs_parent_run_id on runs(parent_run_id);
       create index if not exists idx_runs_root_run_id on runs(root_run_id);
       create index if not exists idx_run_steps_run_created_at on run_steps(run_id, created_at);
       create index if not exists idx_run_notes_run_status_updated on run_notes(run_id, status, updated_at desc);
       create index if not exists idx_chat_steps_chat_created_at on chat_steps(chat_id, created_at);
+      create index if not exists idx_chats_model_id on chats(model_id);
+      create index if not exists idx_project_insights_model_id on project_insights(model_id);
       create index if not exists idx_worktrees_run_id on worktrees(run_id);
       create index if not exists idx_bookmarks_original_run_id on bookmarks(original_run_id);
       create index if not exists idx_chat_bookmarks_original_chat_id on chat_bookmarks(original_chat_id);
@@ -4441,6 +4448,7 @@ export class BuildWardenDatabase {
       create unique index if not exists idx_orchestration_waves_number on orchestration_waves(orchestration_id, wave_index);
       create index if not exists idx_orchestration_tasks_status on orchestration_tasks(orchestration_id, status);
       create index if not exists idx_orchestration_tasks_child_run on orchestration_tasks(child_run_id);
+      create index if not exists idx_orchestration_tasks_model_id on orchestration_tasks(model_id);
       create index if not exists idx_orchestration_events_sequence on orchestration_events(orchestration_id, sequence);
       create index if not exists idx_orchestration_messages_status on orchestration_task_messages(task_id, status);
       create index if not exists idx_orchestration_cleanup_status on orchestration_cleanup_jobs(status, updated_at);
