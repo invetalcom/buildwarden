@@ -62,4 +62,18 @@ describe("HoverCard", () => {
 
     expect(document.querySelector('[role="tooltip"]')?.textContent).toContain("Expanded prompt context");
   });
+
+  it("stays open on pointer exit while the trigger retains keyboard focus", async () => {
+    const button = await renderHoverCard();
+
+    await act(async () => button.focus());
+    await act(async () => {
+      button.dispatchEvent(new PointerEvent("pointerout", { bubbles: true, relatedTarget: document.body }));
+    });
+
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain("Expanded prompt context");
+
+    await act(async () => button.blur());
+    expect(document.querySelector('[role="tooltip"]')).toBeNull();
+  });
 });

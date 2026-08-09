@@ -141,7 +141,7 @@ export const HoverCard = ({
       onPointerEnter={() => openCard()}
       onPointerLeave={() => {
         pointerDownRef.current = false;
-        closeCard();
+        if (!triggerRef.current?.contains(document.activeElement)) closeCard();
       }}
       onPointerDownCapture={() => {
         pointerDownRef.current = true;
