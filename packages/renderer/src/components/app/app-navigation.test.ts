@@ -85,18 +85,19 @@ describe("reconcileSettingsPreviousPageAfterModelDeletion", () => {
       },
     } as unknown as SettingsPreviousPageState;
 
-    expect(reconcileSettingsPreviousPageAfterModelDeletion(
+    const reconciled = reconcileSettingsPreviousPageAfterModelDeletion(
       state,
       ["deleted-run"],
       ["deleted-chat"],
-    )).toMatchObject({
+    );
+    expect(reconciled).toMatchObject({
       selectedChat: null,
       chatDetail: null,
       selectedRunId: "surviving-run",
       runDetail: survivingRunDetail,
-      openRunPanes: { right: "surviving-run" },
       focusedRunPane: "right",
-      runDetailsById: { "surviving-run": survivingRunDetail },
     });
+    expect(reconciled.openRunPanes).toEqual({ right: "surviving-run" });
+    expect(reconciled.runDetailsById).toEqual({ "surviving-run": survivingRunDetail });
   });
 });
