@@ -40,6 +40,11 @@ import { Separator } from "../ui/separator";
 import { cn } from "../../lib/cn";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { runForgeReadinessColor, runForgeReadinessLabel } from "./run-forge-ui";
+import { AgentRunHoverCard } from "./AgentRunHoverCard";
+import { HoverCard } from "../ui/hover-card";
+import { formatRunDuration, formatRunRelativeTime } from "./run-summary-format";
+import { buildRunHierarchyRows, findRunHierarchyScopeRoots, runHierarchyLabel, type RunHierarchyRow } from "./run-hierarchy";
+import { RunHierarchyIndent, RunHierarchyToggle } from "./RunHierarchy";
 
 const ACTIVE_RUN_STATUSES = new Set(["queued", "preparing", "running"]);
 
@@ -130,30 +135,8 @@ const projectToolVisible = (
   return tab !== "branches" && tab !== "reviews";
 };
 
-const formatRelativeTime = (dateString: string | null) => {
-  if (!dateString) return "just now";
-  const diffMinutes = Math.max(0, Math.floor((Date.now() - new Date(dateString).getTime()) / 60000));
-  if (diffMinutes < 1) return "just now";
-  if (diffMinutes < 60) return `${diffMinutes}m ago`;
-  const diffHours = Math.floor(diffMinutes / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-  return `${Math.floor(diffHours / 24)}d ago`;
-};
-
-const formatRunDuration = (run: SidebarRun) => {
-  const start = new Date(run.startedAt ?? run.createdAt).getTime();
-  const end = new Date(run.finishedAt ?? run.updatedAt).getTime();
-  const totalSeconds = Math.max(0, Math.floor((end - start) / 1000));
-  if (totalSeconds < 5) return "< 5s";
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  if (minutes > 0) return `${minutes}m ${seconds}s`;
-  return `${seconds}s`;
-};
-
 const formatRecentRunWindowLabel = (days: number) => `${days} ${days === 1 ? "day" : "days"}`;
+const compareRecentRuns = (left: SidebarRun, right: SidebarRun) => recentRunOrderTimestamp(right) - recentRunOrderTimestamp(left);
 
 const runDotClassName = (status: RunDisplayStatus) => {
   if (status === "completed") return "bg-[var(--ec-success)]";
@@ -268,6 +251,7 @@ const SidebarComponent = ({
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [projectToolsExpanded, setProjectToolsExpanded] = useState(true);
   const [expandedRecentProjectIds, setExpandedRecentProjectIds] = useState<Record<string, boolean>>({});
+  const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<RunContextMenuState | null>(null);
   const [isResizing, setIsResizing] = useState(false);
   const projectMenuRef = useRef<HTMLDivElement>(null);
@@ -298,18 +282,29 @@ const SidebarComponent = ({
     const now = Date.now();
     return projects
       .map((entry) => {
-        const runsById = new Map<string, SidebarRun>();
-        for (const run of entry.runs) {
+        const recentActivityById = new Map<string, SidebarRun>();
+        for (const run of [...entry.runs, ...entry.orchestratedRuns]) {
           const timestamp = recentRunOrderTimestamp(run);
           if (Number.isFinite(timestamp) && now - timestamp <= recentRunWindowMs) {
-            runsById.set(run.id, run);
+            recentActivityById.set(run.id, run);
           }
         }
-        const runs = [...runsById.values()].sort((a, b) => recentRunOrderTimestamp(b) - recentRunOrderTimestamp(a));
-        return { project: entry, runs };
+        const recentActivityRuns = [...recentActivityById.values()]
+          .sort((a, b) => recentRunOrderTimestamp(b) - recentRunOrderTimestamp(a));
+        const runs = findRunHierarchyScopeRoots(
+          recentActivityRuns,
+          entry.runs,
+          entry.orchestratedRuns,
+          [...entry.runs, ...entry.forLaterRuns],
+        );
+        return {
+          project: entry,
+          runs,
+          newestActivityAt: recentActivityRuns[0] ? recentRunOrderTimestamp(recentActivityRuns[0]) : 0,
+        };
       })
       .filter((entry) => entry.runs.length > 0)
-      .sort((a, b) => recentRunOrderTimestamp(b.runs[0]!) - recentRunOrderTimestamp(a.runs[0]!));
+      .sort((a, b) => b.newestActivityAt - a.newestActivityAt);
   }, [projects, recentRunWindowMs]);
 
   const recentRuns = useMemo(
@@ -319,6 +314,18 @@ const SidebarComponent = ({
         .sort((left, right) => recentRunOrderTimestamp(right.run) - recentRunOrderTimestamp(left.run)),
     [recentRunsByProject],
   );
+
+  const recentRunTreeRows = useMemo(() => {
+    const projectById = new Map(projects.map((entry) => [entry.project.id, entry]));
+    return buildRunHierarchyRows(
+      recentRuns.map(({ run }) => run),
+      projects.flatMap((entry) => entry.orchestratedRuns),
+      { expandedRunIds, compareRuns: compareRecentRuns },
+    ).flatMap((row) => {
+      const project = projectById.get(row.run.projectId);
+      return project ? [{ project, row }] : [];
+    });
+  }, [expandedRunIds, projects, recentRuns]);
 
   useEffect(() => {
     const firstProjectId = recentRunsByProject[0]?.project.project.id;
@@ -412,6 +419,15 @@ const SidebarComponent = ({
     setExpandedRecentProjectIds((current) => ({ ...current, [projectId]: !(current[projectId] ?? false) }));
   };
 
+  const toggleRunHierarchy = useCallback((runId: string) => {
+    setExpandedRunIds((current) => {
+      const next = new Set(current);
+      if (next.has(runId)) next.delete(runId);
+      else next.add(runId);
+      return next;
+    });
+  }, []);
+
   const selectProjectFeature = (projectId: string, tab: ProjectPageTab) => {
     onSelectProjectFeature(projectId, tab);
   };
@@ -436,27 +452,20 @@ const SidebarComponent = ({
   const runEntryStyles = SIDEBAR_RUN_ENTRY_SIZE_STYLES[runEntrySize];
   const renderRecentRunEntry = (
     project: AppSnapshot["projects"][number],
-    run: SidebarRun,
+    row: RunHierarchyRow,
     showProjectName: boolean,
   ) => {
+    const { run, depth, descendantCount, expanded } = row;
     const highlighted = highlightedRunId === run.id;
     const waitingForInput = run.pendingUserInputRequest === true || run.pendingUserInputRequest === 1;
     const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
-    return (
+    const showProjectLabel = showProjectName && depth === 0;
+    const trigger = (
       <button
-        key={run.id}
         type="button"
         draggable
         data-sidebar-run-entry-size={runEntrySize}
-        className={cn(
-          "group relative w-full min-w-0 overflow-hidden rounded-md border text-left transition",
-          runEntryStyles.button,
-          highlighted
-            ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)]"
-            : showProjectName
-              ? "border-[var(--ec-border)] bg-[var(--ec-panel-soft)] shadow-[var(--ec-panel-shadow)] hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-control)]"
-              : "border-transparent bg-[var(--ec-panel)] hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-control)]",
-        )}
+        className={cn("group relative flex w-full min-w-0 items-center gap-1 overflow-hidden text-left", runEntryStyles.button)}
         onDragStart={(event) => {
           onRunDragStart(event, project.project.id, run.id);
         }}
@@ -474,24 +483,17 @@ const SidebarComponent = ({
         }}
       >
         <span className={cn("absolute left-0 w-0.5 rounded-r-full", runEntryStyles.indicator, runDotClassName(displayStatus))} />
-        <span className="flex min-w-0 items-start justify-between gap-2 pl-1">
-          <span className={cn("min-w-0 flex-1 truncate font-semibold text-[var(--ec-text)]", runEntryStyles.title)}>{run.prompt}</span>
-          <span className="flex shrink-0 items-center gap-1">
+        <span className="min-w-0 flex-1 pl-1">
+          <span className="flex min-w-0 items-center gap-1">
+            <span className={cn("min-w-0 flex-1 truncate font-semibold text-[var(--ec-text)]", runEntryStyles.title)}>{runHierarchyLabel(run)}</span>
             {waitingForInput ? (
-              <span title="Waiting for user feedback" aria-label="Waiting for user feedback">
+              <span className="shrink-0" title="Waiting for user feedback" aria-label="Waiting for user feedback">
                 <CircleAlert className={cn(runEntryStyles.alert, "text-amber-300")} />
               </span>
             ) : null}
-            <span
-              className={cn("rounded-full border font-semibold leading-none", runEntryStyles.status, runStatusPillClassName(displayStatus))}
-              title={displayStatus === "waiting" ? "Coordinator turn completed; waiting for orchestrated tasks." : undefined}
-            >
-              {RUN_DISPLAY_STATUS_LABELS[displayStatus]}
-            </span>
           </span>
-        </span>
-        <span className={cn("flex min-w-0 items-center gap-1.5 pl-1 font-mono text-[var(--ec-muted)]", runEntryStyles.meta)}>
-          {showProjectName ? (
+          <span className={cn("flex min-w-0 items-center gap-1.5 font-mono text-[var(--ec-muted)]", runEntryStyles.meta)}>
+          {showProjectLabel ? (
             <>
               <span
                 className="max-w-[45%] truncate font-sans font-medium text-[var(--ec-text)]"
@@ -513,11 +515,51 @@ const SidebarComponent = ({
               <GitPullRequest className="size-3" aria-hidden />
             </span>
           ) : null}
-          <span className="truncate">{formatRelativeTime(run.finishedAt ?? run.updatedAt)}</span>
+          <span className="truncate">{formatRunRelativeTime(run.finishedAt ?? run.updatedAt)}</span>
           <span className="size-1 shrink-0 rounded-full bg-[var(--ec-faint)]" />
           <span className="shrink-0">{formatRunDuration(run)}</span>
+          </span>
+        </span>
+        <span
+          data-sidebar-run-status
+          className={cn("shrink-0 rounded-full border font-semibold leading-none", runEntryStyles.status, runStatusPillClassName(displayStatus))}
+          title={displayStatus === "waiting" ? "Coordinator turn completed; waiting for orchestrated tasks." : undefined}
+        >
+          {RUN_DISPLAY_STATUS_LABELS[displayStatus]}
         </span>
       </button>
+    );
+    return (
+      <RunHierarchyIndent key={run.id} depth={depth} indentPx={10}>
+        <div
+          data-run-hierarchy-run={run.id}
+          className={cn(
+            "relative flex w-full min-w-0 items-center overflow-hidden rounded-md border transition",
+            highlighted
+              ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)]"
+              : showProjectLabel
+                ? "border-[var(--ec-border)] bg-[var(--ec-panel-soft)] shadow-[var(--ec-panel-shadow)] hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-control)]"
+                : "border-transparent bg-[var(--ec-panel)] hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-control)]",
+          )}
+        >
+          <div className="min-w-0 flex-1">
+            <HoverCard content={<AgentRunHoverCard projectName={project.project.name} run={run} />}>
+              {trigger}
+            </HoverCard>
+          </div>
+          {descendantCount > 0 ? (
+            <RunHierarchyToggle
+              runId={run.id}
+              runLabel={runHierarchyLabel(run)}
+              descendantCount={descendantCount}
+              expanded={expanded}
+              compact
+              className="mr-1"
+              onToggle={toggleRunHierarchy}
+            />
+          ) : null}
+        </div>
+      </RunHierarchyIndent>
     );
   };
 
@@ -762,6 +804,10 @@ const SidebarComponent = ({
           <div className={cn("px-2", runEntryStyles.groupGap)}>
             {recentRunsByProject.map(({ project, runs }) => {
               const expanded = expandedRecentProjectIds[project.project.id] ?? false;
+              const runTreeRows = buildRunHierarchyRows(runs, project.orchestratedRuns, {
+                expandedRunIds,
+                compareRuns: compareRecentRuns,
+              });
               return (
                 <div
                   key={project.project.id}
@@ -788,7 +834,7 @@ const SidebarComponent = ({
                   </button>
                   {expanded ? (
                     <div className={cn("px-0.5 pb-0.5", runEntryStyles.rowGap)}>
-                      {runs.map((run) => renderRecentRunEntry(project, run, false))}
+                      {runTreeRows.map((row) => renderRecentRunEntry(project, row, false))}
                     </div>
                   ) : null}
                 </div>
@@ -797,7 +843,7 @@ const SidebarComponent = ({
           </div>
         ) : (
           <div className={cn("px-2", runEntryStyles.rowGap)}>
-            {recentRuns.map(({ project, run }) => renderRecentRunEntry(project, run, true))}
+            {recentRunTreeRows.map(({ project, row }) => renderRecentRunEntry(project, row, true))}
           </div>
         )}
       </div>

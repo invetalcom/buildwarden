@@ -1,6 +1,6 @@
-import { appendChatAttachmentFiles, type ChatAttachmentPayload, type HarnessType, type ModelExecutionProfile, type OrchestrationStatus, type ProjectKind, type ProviderType, type RunMode, type RunModelConfiguration, type RunWorkspaceType, type RunWorkspaceVcs, type SupportedIdeKind, type UnifiedProviderFamily } from "@buildwarden/shared";
+import { appendChatAttachmentFiles, type ChatAttachmentPayload, type ModelExecutionProfile, type ProjectKind, type ProviderType, type RunMode, type RunModelConfiguration, type RunRecord, type RunWorkspaceType, type SupportedIdeKind, type UnifiedProviderFamily } from "@buildwarden/shared";
 import { Archive, Clock3, FolderOpen, Play, PlayCircle, Search, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { parseSearchTerms, runMatchesSearch } from "../../lib/run-search";
@@ -21,28 +21,18 @@ import { OpenInIdeControl } from "./open-in-ide-control";
 import type { ProjectRunStats } from "./ProjectStatisticsCard";
 import { ProviderBrandIcon } from "./provider-brand-icons";
 import { RunComposer } from "./RunComposer";
-import { resolveRunDisplayStatus, runDisplayStatusTone } from "./run-display-status";
+import { resolveRunDisplayStatus, RUN_DISPLAY_STATUS_LABELS, runDisplayStatusTone } from "./run-display-status";
+import { appendUnreachableSubagentRoots, buildRunHierarchyRows, runHierarchyLabel, type RunHierarchyRow } from "./run-hierarchy";
+import { RunHierarchyIndent, RunHierarchyToggle } from "./RunHierarchy";
 
 interface ProjectOverviewTabProps {
   projectId: string;
   projectName: string;
   repoPath: string;
   projectKind: ProjectKind;
-  runs: Array<{
-    id: string;
-    prompt: string;
-    goalText?: string | null;
-    userInputSearchText?: string;
-    branchName: string;
-    harnessType: HarnessType;
-    workspaceType: RunWorkspaceType;
-    workspaceVcs: RunWorkspaceVcs;
-    createdAt: string;
-    status: "queued" | "preparing" | "running" | "completed" | "failed" | "cancelled";
-    orchestrationStatus?: OrchestrationStatus | null;
-    inputTokens: number;
-    outputTokens: number;
-  }>;
+  runs: RunRecord[];
+  knownPrimaryRuns?: RunRecord[];
+  orchestratedRuns: RunRecord[];
   modelOptions: Array<{ id: string; label: string; modelId: string; providerType: ProviderType; providerFamily: UnifiedProviderFamily | null; executionProfile?: ModelExecutionProfile }>;
   configuredIdeKinds: SupportedIdeKind[];
   availableBranches: string[];
@@ -80,7 +70,7 @@ interface ProjectOverviewTabProps {
   onDelegationEnabledChange: (value: boolean) => void;
 }
 
-const formatRunMeta = (run: { branchName: string; workspaceType: RunWorkspaceType; workspaceVcs: RunWorkspaceVcs; createdAt: string }) => {
+const formatRunMeta = (run: Pick<RunRecord, "branchName" | "workspaceType" | "workspaceVcs" | "createdAt">) => {
   let workspaceLabel = run.branchName;
   if (run.workspaceVcs === "folder") workspaceLabel = run.workspaceType === "copy" ? "Folder copy" : "Project folder";
   return `${workspaceLabel} - ${new Date(run.createdAt).toLocaleString()}`;
@@ -100,22 +90,31 @@ const EmptyRunList = ({ hasRunSearch, hasRuns, readOnly }: Readonly<{ hasRunSear
   </Empty>
 );
 
-const RunHistory = ({ runs, visibleRuns, searchQuery, onSearchChange, onSelectRun, onSetRunForLater, readOnly }: {
+const RunHistory = ({ runs, orchestratedRuns, treeRows, matchingRunCount, searchQuery, onSearchChange, onSelectRun, onSetRunForLater, onToggleRun, readOnly }: {
   runs: ProjectOverviewTabProps["runs"];
-  visibleRuns: ProjectOverviewTabProps["runs"];
+  orchestratedRuns: ProjectOverviewTabProps["orchestratedRuns"];
+  treeRows: RunHierarchyRow[];
+  matchingRunCount: number;
   searchQuery: string;
   onSearchChange: (value: string) => void;
   onSelectRun: ProjectOverviewTabProps["onSelectRun"];
   onSetRunForLater: ProjectOverviewTabProps["onSetRunForLater"];
+  onToggleRun: (runId: string) => void;
   readOnly: boolean;
 }) => {
   const hasRunSearch = searchQuery.trim().length > 0;
+  const totalRunCount = runs.length + orchestratedRuns.length;
+  const runCountDescription = hasRunSearch
+    ? `${String(matchingRunCount)} matching of ${String(totalRunCount)}`
+    : orchestratedRuns.length > 0
+      ? `${String(runs.length)} primary, ${String(orchestratedRuns.length)} subagent ${orchestratedRuns.length === 1 ? "run" : "runs"}`
+      : `${String(runs.length)} visible runs in this project`;
   return (
     <Card className="flex min-h-0 flex-1 flex-col">
       <CardHeader className="shrink-0 flex-row flex-wrap items-center justify-between gap-3">
         <div>
           <CardTitle>Run History</CardTitle>
-          <CardDescription>{hasRunSearch ? `${visibleRuns.length} matching of ${runs.length}` : `${runs.length} visible`} runs in this project.</CardDescription>
+          <CardDescription>{runCountDescription}.</CardDescription>
         </div>
         <div className="flex min-w-0 flex-1 items-center justify-end gap-3">
           <span className="relative block min-w-[14rem] max-w-md flex-1">
@@ -131,26 +130,45 @@ const RunHistory = ({ runs, visibleRuns, searchQuery, onSearchChange, onSelectRu
         </div>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-b-lg p-0">
-        {visibleRuns.length === 0 ? <EmptyRunList hasRunSearch={hasRunSearch} hasRuns={runs.length > 0} readOnly={readOnly} /> : (
+        {treeRows.length === 0 ? <EmptyRunList hasRunSearch={hasRunSearch} hasRuns={totalRunCount > 0} readOnly={readOnly} /> : (
           <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto">
-            {visibleRuns.map((run) => {
+            {treeRows.map(({ run, depth, descendantCount, expanded }) => {
               const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
               return (
-                <div key={run.id} className="flex items-center gap-3 border-t border-[var(--ec-border)] px-4 py-3 transition hover:bg-[var(--ec-hover)]">
-                  <button className="flex min-w-0 flex-1 items-center gap-2.5 text-left" onClick={() => onSelectRun(run.id)} type="button">
-                    {/* Sits beside the two-line text block, so the mark never drives the row height. */}
-                    <ProviderBrandIcon harnessType={run.harnessType} className="size-4 shrink-0" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-semibold text-[var(--ec-text)]">{run.prompt}</span>
-                      <span className="mt-0.5 block truncate font-mono text-xs text-[var(--ec-muted)]">{formatRunMeta(run)}</span>
-                    </span>
-                  </button>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <Badge dot tone={runDisplayStatusTone(displayStatus)}>{displayStatus}</Badge>
-                    <span className="font-mono text-xs text-[var(--ec-muted)]">{(run.inputTokens + run.outputTokens).toLocaleString()}</span>
-                    {!readOnly ? <Button type="button" size="icon" variant="ghost" title="Move to For later" onClick={() => void onSetRunForLater(run.id)}><Archive className="size-3.5" /></Button> : null}
+                <RunHierarchyIndent
+                  key={run.id}
+                  depth={depth}
+                  indentPx={18}
+                  className={depth > 0 ? "border-t border-[var(--ec-border)] bg-[var(--ec-panel-soft)]" : "border-t border-[var(--ec-border)]"}
+                >
+                  <div data-run-hierarchy-run={run.id} className="flex items-center gap-3 px-4 py-3 transition hover:bg-[var(--ec-hover)]">
+                    <button className="flex min-w-0 flex-1 items-center gap-2.5 text-left" onClick={() => onSelectRun(run.id)} type="button">
+                      {/* Sits beside the two-line text block, so the mark never drives the row height. */}
+                      <ProviderBrandIcon harnessType={run.harnessType} className="size-4 shrink-0" />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <span className="truncate text-sm font-semibold text-[var(--ec-text)]">{runHierarchyLabel(run)}</span>
+                          {depth > 0 ? <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.12em] text-[var(--ec-accent)]">Subagent</span> : null}
+                        </span>
+                        <span className="mt-0.5 block truncate font-mono text-xs text-[var(--ec-muted)]">{formatRunMeta(run)}</span>
+                      </span>
+                    </button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {descendantCount > 0 ? (
+                        <RunHierarchyToggle
+                          runId={run.id}
+                          runLabel={runHierarchyLabel(run)}
+                          descendantCount={descendantCount}
+                          expanded={expanded}
+                          onToggle={onToggleRun}
+                        />
+                      ) : null}
+                      <Badge dot tone={runDisplayStatusTone(displayStatus)}>{RUN_DISPLAY_STATUS_LABELS[displayStatus]}</Badge>
+                      <span className="font-mono text-xs text-[var(--ec-muted)]">{(run.inputTokens + run.outputTokens).toLocaleString()}</span>
+                      {!readOnly && run.kind !== "orchestration-task" ? <Button type="button" size="icon" variant="ghost" title="Move to For later" onClick={() => void onSetRunForLater(run.id)}><Archive className="size-3.5" /></Button> : null}
+                    </div>
                   </div>
-                </div>
+                </RunHierarchyIndent>
               );
             })}
           </div>
@@ -166,6 +184,8 @@ export const ProjectOverviewTab = ({
   repoPath,
   projectKind,
   runs,
+  knownPrimaryRuns = runs,
+  orchestratedRuns,
   modelOptions,
   configuredIdeKinds,
   availableBranches,
@@ -206,8 +226,34 @@ export const ProjectOverviewTab = ({
   const readOnly = !buildwarden.capabilities.runMutations;
   const [runAttachmentFiles, setRunAttachmentFiles] = useState<File[]>([]);
   const [runSearchQuery, setRunSearchQuery] = useState("");
+  const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
   const runSearchTerms = useMemo(() => parseSearchTerms(runSearchQuery), [runSearchQuery]);
-  const visibleRuns = useMemo(() => runs.filter((run) => runMatchesSearch(run, runSearchTerms)), [runs, runSearchTerms]);
+  const hasRunSearch = runSearchTerms.length > 0;
+  const hierarchyRoots = useMemo(
+    () => appendUnreachableSubagentRoots(runs, orchestratedRuns, knownPrimaryRuns),
+    [knownPrimaryRuns, orchestratedRuns, runs],
+  );
+  const treeRows = useMemo(
+    () => buildRunHierarchyRows(hierarchyRoots, orchestratedRuns, {
+      expandedRunIds,
+      matches: hasRunSearch ? (run) => runMatchesSearch(run, runSearchTerms) : undefined,
+    }),
+    [expandedRunIds, hasRunSearch, hierarchyRoots, orchestratedRuns, runSearchTerms],
+  );
+  const matchingRunCount = useMemo(
+    () => hasRunSearch
+      ? [...runs, ...orchestratedRuns].filter((run) => runMatchesSearch(run, runSearchTerms)).length
+      : runs.length + orchestratedRuns.length,
+    [hasRunSearch, orchestratedRuns, runSearchTerms, runs],
+  );
+  const toggleRunHierarchy = useCallback((runId: string) => {
+    setExpandedRunIds((current) => {
+      const next = new Set(current);
+      if (next.has(runId)) next.delete(runId);
+      else next.add(runId);
+      return next;
+    });
+  }, []);
   const isFolderProject = projectKind === "folder";
   const workspaceTypeOptions: RunWorkspaceType[] = isFolderProject ? ["copy", "local"] : ["worktree", "local"];
   let branchOptions: string[] = [];
@@ -346,7 +392,18 @@ export const ProjectOverviewTab = ({
         </Card>
       </section>
 
-      <RunHistory runs={runs} visibleRuns={visibleRuns} searchQuery={runSearchQuery} onSearchChange={setRunSearchQuery} onSelectRun={onSelectRun} onSetRunForLater={onSetRunForLater} readOnly={readOnly} />
+      <RunHistory
+        runs={runs}
+        orchestratedRuns={orchestratedRuns}
+        treeRows={treeRows}
+        matchingRunCount={matchingRunCount}
+        searchQuery={runSearchQuery}
+        onSearchChange={setRunSearchQuery}
+        onSelectRun={onSelectRun}
+        onSetRunForLater={onSetRunForLater}
+        onToggleRun={toggleRunHierarchy}
+        readOnly={readOnly}
+      />
     </div>
   );
 };

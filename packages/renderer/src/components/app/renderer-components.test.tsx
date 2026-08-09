@@ -14,6 +14,7 @@ import {
   type ProjectSnapshot,
 } from "@buildwarden/shared";
 import { AllRunsPage } from "./AllRunsPage";
+import { AgentRunHoverCard } from "./AgentRunHoverCard";
 import { BookmarksPage } from "./BookmarksPage";
 import { ChatPage } from "./ChatPage";
 import { ContextWindowBadge } from "./ContextWindowBadge";
@@ -258,6 +259,65 @@ describe("renderer component states", () => {
     expect(claudeMarkup).toContain("<title>Claude Code</title>");
   });
 
+  it("renders the shared agent run hover card with expanded run context", () => {
+    const markup = renderToStaticMarkup(
+      <AgentRunHoverCard
+        projectName="BuildWarden"
+        run={runRecord({
+          prompt: "Inspect the complete sidebar prompt and preserve the compact navigation layout.",
+          branchName: "feat/run-hover-card",
+          harnessType: "codex-app-server",
+        })}
+      />,
+    );
+
+    expect(markup).toContain("data-agent-run-hover-card");
+    expect(markup).toContain("Inspect the complete sidebar prompt");
+    expect(markup).toContain("BuildWarden");
+    expect(markup).toContain("feat/run-hover-card");
+    expect(markup).toContain("Codex CLI");
+    expect(markup).toContain("line-clamp-6");
+    expect(markup).toContain("var(--ec-text)");
+    expect(markup).not.toContain("data-agent-run-forge-request");
+
+    const pullRequestMarkup = renderToStaticMarkup(
+      <AgentRunHoverCard
+        projectName="BuildWarden"
+        run={runRecord({
+          forgeRequest: {
+            provider: "github",
+            number: 42,
+            title: "Show pull request context in the sidebar hover card",
+            url: "https://github.com/example/buildwarden/pull/42",
+            state: "open",
+            readiness: "pending",
+            draft: false,
+            mergeability: "checking",
+            reviewDecision: "review-required",
+            author: "octocat",
+            sourceBranch: "feat/run-hover-card",
+            targetBranch: "main",
+            headSha: "abcdef1234567890",
+            checks: { completed: 4, total: 7, successful: 4, failed: 0, running: 3 },
+            unresolvedThreadCount: 0,
+            supportedActions: [],
+            supportedMergeMethods: [],
+            updatedAt: "2026-01-01T00:04:00.000Z",
+            lastSyncedAt: "2026-01-01T00:05:00.000Z",
+            stale: false,
+            syncError: null,
+          },
+        })}
+      />,
+    );
+
+    expect(pullRequestMarkup).toContain("data-agent-run-forge-request");
+    expect(pullRequestMarkup).toContain("Pull request #42");
+    expect(pullRequestMarkup).toContain("Show pull request context in the sidebar hover card");
+    expect(pullRequestMarkup).toContain("Waiting");
+    expect(pullRequestMarkup).toContain(">4 of 7</span> checks");
+  });
+
   it("renders plan, token, and context summaries", () => {
     const planMarkup = renderToStaticMarkup(
       <RunPlanSteps content={"1. [x] Inspect\n2. [-] Refactor\n3. [ ] Verify"} />,
@@ -318,13 +378,23 @@ describe("renderer component states", () => {
     const modelOptions = [
       { id: "model-1", label: "GPT-5", modelId: "gpt-5", providerType: "ai-sdk" as const, providerFamily: "openai" as const },
     ];
+    const overviewRun = runRecord({ orchestrationStatus: "deletion-failed" });
+    const overviewSubagent = runRecord({
+      id: "subagent-1",
+      kind: "orchestration-task",
+      parentRunId: overviewRun.id,
+      rootRunId: overviewRun.id,
+      lineageTitle: "Implement the run hierarchy",
+      prompt: "Implement a reusable hierarchical run list across the renderer.",
+    });
     const overviewMarkup = renderToStaticMarkup(
       <ProjectOverviewTab
         projectId="project-1"
         projectName="BuildWarden"
         repoPath="C:/repo"
         projectKind="git"
-        runs={[runRecord()]}
+        runs={[overviewRun]}
+        orchestratedRuns={[overviewSubagent]}
         modelOptions={modelOptions}
         configuredIdeKinds={[]}
         availableBranches={["main"]}
@@ -360,6 +430,12 @@ describe("renderer component states", () => {
     );
     expect(overviewMarkup).toContain("BuildWarden");
     expect(overviewMarkup).toContain("Improve renderer coverage");
+    expect(overviewMarkup).toContain('data-run-hierarchy-toggle="run-1"');
+    expect(overviewMarkup).toContain('aria-expanded="false"');
+    expect(overviewMarkup).toContain("1 primary, 1 subagent run");
+    expect(overviewMarkup).toContain("Cleanup failed");
+    expect(overviewMarkup).not.toContain(">deletion-failed</span>");
+    expect(overviewMarkup).not.toContain("Implement the run hierarchy");
     expect(overviewMarkup).toContain("Orchestration");
     expect(overviewMarkup).not.toContain("Allow delegation");
 
@@ -795,6 +871,7 @@ describe("renderer component states", () => {
       },
       runs: [run],
       forLaterRuns: [],
+      orchestratedRuns: [],
       activeRuns: [],
       recentRuns: [run],
       tasks: [],
@@ -983,15 +1060,68 @@ describe("renderer component states", () => {
     expect(remoteSidebarMarkup).not.toContain("PR Review");
     expect(remoteSidebarMarkup).not.toContain("Loops");
 
+    const sidebarSubagent = runRecord({
+      id: "sidebar-subagent",
+      kind: "orchestration-task",
+      parentRunId: run.id,
+      rootRunId: run.id,
+      lineageTitle: "Inspect the sidebar hierarchy",
+    });
     const flatSidebarMarkup = renderToStaticMarkup(
-      <Sidebar {...sidebarProps} recentRunDays={10_000} runEntrySize="small" groupRunsByProject={false} />,
+      <Sidebar
+        {...sidebarProps}
+        projects={[{ ...projectSnapshot, orchestratedRuns: [sidebarSubagent] }]}
+        recentRunDays={10_000}
+        runEntrySize="small"
+        groupRunsByProject={false}
+      />,
       {} as DesktopApi,
       remoteRunCapabilities,
     );
     expect(flatSidebarMarkup).toContain('data-sidebar-run-entry-size="small"');
     expect(flatSidebarMarkup).toContain('data-sidebar-run-project="true"');
     expect(flatSidebarMarkup).toContain("BuildWarden");
+    expect(flatSidebarMarkup).toContain('data-run-hierarchy-toggle="run-1"');
+    expect(flatSidebarMarkup).toContain('aria-expanded="false"');
+    expect(flatSidebarMarkup).not.toContain("Inspect the sidebar hierarchy");
     expect(flatSidebarMarkup).not.toContain("data-sidebar-run-group");
+
+    const recentTimestamp = new Date().toISOString();
+    const oldTimestamp = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const oldSidebarParent = runRecord({
+      createdAt: oldTimestamp,
+      updatedAt: oldTimestamp,
+      startedAt: oldTimestamp,
+      finishedAt: oldTimestamp,
+    });
+    const recentSidebarChild = runRecord({
+      id: "recent-sidebar-subagent",
+      kind: "orchestration-task",
+      parentRunId: oldSidebarParent.id,
+      rootRunId: oldSidebarParent.id,
+      lineageTitle: "Recent delegated work",
+      createdAt: recentTimestamp,
+      updatedAt: recentTimestamp,
+      startedAt: recentTimestamp,
+      finishedAt: recentTimestamp,
+    });
+    const recentChildSidebarMarkup = renderToStaticMarkup(
+      <Sidebar
+        {...sidebarProps}
+        projects={[{
+          ...projectSnapshot,
+          runs: [oldSidebarParent],
+          recentRuns: [],
+          orchestratedRuns: [recentSidebarChild],
+        }]}
+        recentRunDays={2}
+        groupRunsByProject={false}
+      />,
+      {} as DesktopApi,
+      remoteRunCapabilities,
+    );
+    expect(recentChildSidebarMarkup).toContain('data-run-hierarchy-toggle="run-1"');
+    expect(recentChildSidebarMarkup).toContain("1 subagent");
 
     const controlLabMarkup = renderToStaticMarkup(
       <ProjectLabTab

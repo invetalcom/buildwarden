@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { AppSnapshot } from "@buildwarden/shared";
 import { Activity, Bot, FolderGit2, PlayCircle, Settings2, Sparkles, WalletCards } from "lucide-react";
 import { Badge } from "../ui/badge";
@@ -18,6 +18,8 @@ import {
   resolveRunDisplayStatus,
   runDisplayStatusTone,
 } from "./run-display-status";
+import { buildRunHierarchyRows, findRunHierarchyScopeRoots, runHierarchyLabel } from "./run-hierarchy";
+import { RunHierarchyIndent, RunHierarchyToggle } from "./RunHierarchy";
 
 interface LandingPageProps {
   snapshot: AppSnapshot;
@@ -82,6 +84,7 @@ const buildTodayActivity = (runs: AppSnapshot["projects"][number]["runs"]) => {
 export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRun, onOpenChats, onOpenSettings }: LandingPageProps) => {
   const buildwarden = useBuildWardenClient();
   const readOnly = !buildwarden.capabilities.mutations;
+  const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
   const allRuns = useMemo(
     () =>
       snapshot.projects.flatMap((entry) =>
@@ -91,6 +94,10 @@ export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRu
           projectName: entry.project.name,
         })),
       ),
+    [snapshot.projects],
+  );
+  const allSubagentRuns = useMemo(
+    () => snapshot.projects.flatMap((entry) => entry.orchestratedRuns),
     [snapshot.projects],
   );
 
@@ -118,12 +125,37 @@ export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRu
     [snapshot.projects],
   );
 
-  const recentRuns = useMemo(
-    () => allRuns.slice().sort((left, right) => right.createdAt.localeCompare(left.createdAt)).slice(0, 5),
-    [allRuns],
+  const recentActivityRuns = useMemo(
+    () => [...allRuns, ...allSubagentRuns]
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .slice(0, 5),
+    [allRuns, allSubagentRuns],
   );
+  const recentRunRows = useMemo(() => {
+    const projectNames = new Map(snapshot.projects.map((entry) => [entry.project.id, entry.project.name]));
+    const knownPrimaryRuns = snapshot.projects.flatMap((entry) => [...entry.runs, ...entry.forLaterRuns]);
+    const hierarchyRoots = findRunHierarchyScopeRoots(
+      recentActivityRuns,
+      allRuns,
+      allSubagentRuns,
+      knownPrimaryRuns,
+    );
+    return buildRunHierarchyRows(
+      hierarchyRoots,
+      allSubagentRuns,
+      { expandedRunIds },
+    ).map((row) => ({ ...row, projectName: projectNames.get(row.run.projectId) ?? "Unknown project" }));
+  }, [allRuns, allSubagentRuns, expandedRunIds, recentActivityRuns, snapshot.projects]);
+  const toggleRunHierarchy = useCallback((runId: string) => {
+    setExpandedRunIds((current) => {
+      const next = new Set(current);
+      if (next.has(runId)) next.delete(runId);
+      else next.add(runId);
+      return next;
+    });
+  }, []);
 
-  const latestRun = recentRuns[0] ?? null;
+  const latestRun = recentActivityRuns[0] ?? null;
   const todayActivity = useMemo(() => buildTodayActivity(allRuns), [allRuns]);
 
   const metrics: LandingMetric[] = [
@@ -259,28 +291,46 @@ export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRu
             </CardAction>
           </CardHeader>
           <CardContent>
-            {recentRuns.length > 0 ? (
+            {recentRunRows.length > 0 ? (
               <div className="overflow-hidden rounded-md border border-[var(--ec-border)]">
-                {recentRuns.map((run) => {
+                {recentRunRows.map(({ run, projectName, depth, descendantCount, expanded }) => {
                   const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
                   return (
-                    <button
+                    <RunHierarchyIndent
                       key={run.id}
-                      type="button"
-                      className="flex w-full items-center justify-between gap-3 border-b border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-4 py-3 text-left transition last:border-b-0 hover:bg-[var(--ec-hover)]"
-                      onClick={() => onSelectRun(run.projectId, run.id)}
+                      depth={depth}
+                      indentPx={18}
+                      className="border-b border-[var(--ec-border)] bg-[var(--ec-panel-soft)] last:border-b-0"
                     >
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold text-[var(--ec-text)]">{run.prompt}</p>
-                        <p className="mt-1 truncate font-mono text-xs text-[var(--ec-muted)]">
-                          {run.projectName} - {formatRunDate(run.createdAt)}
-                        </p>
+                      <div data-run-hierarchy-run={run.id} className="flex w-full items-center gap-3 px-4 py-3 transition hover:bg-[var(--ec-hover)]">
+                        <button
+                          type="button"
+                          className="min-w-0 flex-1 text-left"
+                          onClick={() => onSelectRun(run.projectId, run.id)}
+                        >
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <span className="truncate text-sm font-semibold text-[var(--ec-text)]">{runHierarchyLabel(run)}</span>
+                            {depth > 0 ? <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.12em] text-[var(--ec-accent)]">Subagent</span> : null}
+                          </span>
+                          <span className="mt-1 block truncate font-mono text-xs text-[var(--ec-muted)]">
+                            {projectName} - {formatRunDate(run.createdAt)}
+                          </span>
+                        </button>
+                        {descendantCount > 0 ? (
+                          <RunHierarchyToggle
+                            runId={run.id}
+                            runLabel={runHierarchyLabel(run)}
+                            descendantCount={descendantCount}
+                            expanded={expanded}
+                            onToggle={toggleRunHierarchy}
+                          />
+                        ) : null}
+                        <div className="shrink-0 text-right">
+                          <Badge dot tone={runDisplayStatusTone(displayStatus)}>{displayStatus}</Badge>
+                          <p className="mt-1 font-mono text-xs text-[var(--ec-muted)]">{formatTokens(run.inputTokens + run.outputTokens)} tokens</p>
+                        </div>
                       </div>
-                      <div className="shrink-0 text-right">
-                        <Badge dot tone={runDisplayStatusTone(displayStatus)}>{displayStatus}</Badge>
-                        <p className="mt-1 font-mono text-xs text-[var(--ec-muted)]">{formatTokens(run.inputTokens + run.outputTokens)} tokens</p>
-                      </div>
-                    </button>
+                    </RunHierarchyIndent>
                   );
                 })}
               </div>

@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
-import type { ProviderType, UnifiedProviderFamily } from "@buildwarden/shared";
-import { buildModelExecutionProfile, buildRunReasoningInput, harnessTypeForProvider, removeRunIdsFromOpenPanes, resolveRunModelConfiguration } from "./app-model";
+import type { ProjectSnapshot, ProviderType, RunRecord, UnifiedProviderFamily } from "@buildwarden/shared";
+import {
+  buildModelExecutionProfile,
+  buildRunReasoningInput,
+  findProjectRun,
+  harnessTypeForProvider,
+  removeRunIdsFromOpenPanes,
+  resolveRunModelConfiguration,
+  snapshotContainsRunId,
+} from "./app-model";
 
 describe("harnessTypeForProvider", () => {
   const cases: Array<[ProviderType, string]> = [
@@ -205,5 +213,41 @@ describe("removeRunIdsFromOpenPanes", () => {
       { left: "child-1", right: "run-2" },
       new Set(["coordinator-1", "child-1"]),
     )).toEqual({ right: "run-2" });
+  });
+});
+
+describe("orchestrated run lookup", () => {
+  it("finds durable subagent runs for direct selection and restoration", () => {
+    const child = {
+      id: "child-1",
+      projectId: "project-1",
+      kind: "orchestration-task",
+    } as RunRecord;
+    const project = {
+      project: {
+        id: "project-1",
+        name: "BuildWarden",
+        repoPath: "C:/repo",
+        baseBranch: "main",
+        kind: "git",
+        cumulativeInputTokens: 0,
+        cumulativeOutputTokens: 0,
+        createdAt: "2026-08-09T10:00:00.000Z",
+        updatedAt: "2026-08-09T10:00:00.000Z",
+        lastOpenedAt: "2026-08-09T10:00:00.000Z",
+      },
+      runs: [],
+      forLaterRuns: [],
+      orchestratedRuns: [child],
+      activeRuns: [],
+      recentRuns: [],
+      tasks: [],
+      insights: [],
+      labThreads: [],
+      loops: [],
+    } satisfies ProjectSnapshot;
+
+    expect(findProjectRun([project], child.id)).toEqual({ project, run: child });
+    expect(snapshotContainsRunId([project], child.id)).toBe(true);
   });
 });
