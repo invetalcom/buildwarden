@@ -202,6 +202,7 @@ describe("data-retention cleanup planning", () => {
 
 describe("data-retention day parsing", () => {
   it("uses the default for missing and blank settings", () => {
+    expect(DEFAULT_DATA_RETENTION_CLEANUP_DAYS).toBe(30);
     expect(parseDataRetentionCleanupDaysSetting(null)).toBe(DEFAULT_DATA_RETENTION_CLEANUP_DAYS);
     expect(parseDataRetentionCleanupDaysSetting(undefined)).toBe(DEFAULT_DATA_RETENTION_CLEANUP_DAYS);
     expect(parseDataRetentionCleanupDaysSetting("")).toBe(DEFAULT_DATA_RETENTION_CLEANUP_DAYS);
