@@ -93,6 +93,7 @@ import {
   parseProjectActiveSkillsSetting,
   parseShellAllowlistExtraSetting,
   serializeProjectForgePrMonitorSettingsSetting,
+  serializeProjectLabSettingsSetting,
   validateChatAttachmentPayloads,
   type UnifiedProviderFamily,
   type StoredAttachmentMetadata,
@@ -2792,6 +2793,24 @@ export class AppController
 
   private removeModelFromPersistedSettings(modelId: string): void {
     const settings = this.db.getSettings();
+    const projectLabSettingsJson = settings[APP_SETTING_KEYS.projectLabSettings];
+    if (projectLabSettingsJson?.includes(modelId)) {
+      const projectLabSettings = parseProjectLabSettingsSetting(projectLabSettingsJson);
+      const nextProjectLabSettings = Object.fromEntries(
+        Object.entries(projectLabSettings).map(([projectId, projectSettings]) => [projectId, {
+          ...projectSettings,
+          implementationModelId: projectSettings.implementationModelId === modelId
+            ? null
+            : projectSettings.implementationModelId,
+          reviewModelId: projectSettings.reviewModelId === modelId ? null : projectSettings.reviewModelId,
+        }]),
+      );
+      this.db.setSetting(
+        APP_SETTING_KEYS.projectLabSettings,
+        serializeProjectLabSettingsSetting(nextProjectLabSettings),
+      );
+    }
+
     const runDefaultsJson = settings[APP_SETTING_KEYS.projectRunDefaults];
     if (runDefaultsJson?.includes(modelId)) {
       const runDefaults = parseProjectRunDefaultsSetting(runDefaultsJson);

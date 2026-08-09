@@ -1650,6 +1650,42 @@ describe("AppController settings and lightweight workflows", () => {
     })]);
   });
 
+  it("clears deleted model references from Project Lab settings", async () => {
+    const harness = createHarness();
+    tempDirs.push(harness.logDir);
+    harness.settings[APP_SETTING_KEYS.projectLabSettings] = JSON.stringify({
+      [project.id]: {
+        enabled: true,
+        maxThreadsPerDay: 5,
+        maxConcurrentThreads: 2,
+        implementationModelId: model.id,
+        reviewModelId: "surviving-review-model",
+      },
+      "project-2": {
+        enabled: false,
+        maxThreadsPerDay: 2,
+        maxConcurrentThreads: 1,
+        implementationModelId: "surviving-implementation-model",
+        reviewModelId: model.id,
+      },
+    });
+
+    await harness.controller.deleteModel(model.id);
+
+    const persistedSettings = JSON.parse(harness.settings[APP_SETTING_KEYS.projectLabSettings] ?? "{}") as Record<
+      string,
+      { implementationModelId: string | null; reviewModelId: string | null }
+    >;
+    expect(persistedSettings[project.id]).toMatchObject({
+      implementationModelId: null,
+      reviewModelId: "surviving-review-model",
+    });
+    expect(persistedSettings["project-2"]).toMatchObject({
+      implementationModelId: "surviving-implementation-model",
+      reviewModelId: null,
+    });
+  });
+
   it("registers and removes chat listeners", () => {
     const harness = createHarness();
     tempDirs.push(harness.logDir);
