@@ -1610,6 +1610,55 @@ describe("AppController settings and lightweight workflows", () => {
     expect(deleteChat).not.toHaveBeenCalled();
   });
 
+  it("executes retention deletion for eligible runs and standalone chats", async () => {
+    const oldRun = {
+      id: "old-run",
+      projectId: project.id,
+      updatedAt: "2020-01-01T00:00:00.000Z",
+      listVisibility: "default",
+    } as RunRecord;
+    const oldChat = {
+      id: "old-chat",
+      runId: null,
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    } as ChatRecord;
+    let runExists = true;
+    let chatExists = true;
+    const harness = createHarness({
+      listRunsForProject: vi.fn(() => [oldRun]),
+      listAllChats: vi.fn(() => [oldChat]),
+      listBookmarks: vi.fn(() => []),
+      listChatBookmarks: vi.fn(() => []),
+      listProjectLabThreads: vi.fn(() => []),
+      listProjectLoops: vi.fn(() => []),
+      getRun: vi.fn(() => {
+        if (!runExists) throw new Error("Run not found");
+        return oldRun;
+      }),
+      getChat: vi.fn(() => {
+        if (!chatExists) throw new Error("Chat not found");
+        return oldChat;
+      }),
+    });
+    tempDirs.push(harness.logDir);
+    const deleteRun = vi.spyOn(harness.controller, "deleteRun").mockImplementation(async () => {
+      runExists = false;
+    });
+    const deleteChat = vi.spyOn(harness.controller, "deleteChat").mockImplementation(async () => {
+      chatExists = false;
+    });
+    const cutoffAt = new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000).toISOString();
+
+    await expect(harness.controller.deleteDataRetentionCandidates(30, cutoffAt)).resolves.toMatchObject({
+      runCount: 1,
+      chatCount: 1,
+      projectLabThreadCount: 0,
+      projectLoopCount: 0,
+    });
+    expect(deleteRun).toHaveBeenCalledWith(oldRun.id);
+    expect(deleteChat).toHaveBeenCalledWith(oldChat.id);
+  });
+
   it("deletes surviving child runs when stale orchestration tasks reference missing owners", async () => {
     const staleTask = { orchestrationId: "missing-orchestration" } as OrchestrationTaskRecord;
     const targets = {
