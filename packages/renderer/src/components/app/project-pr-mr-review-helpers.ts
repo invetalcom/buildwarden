@@ -6,7 +6,7 @@ import type {
 } from "@buildwarden/shared";
 import type { DiffPreviewFileSummary, DiffPreviewManualComment } from "./git-diff-preview";
 
-export type RequestDetailTab = "conversation" | "commits" | "files";
+export type RequestDetailTab = "conversation" | "checks" | "commits" | "files";
 
 export type DraftDiffComment = ProjectPrMrDiffComment & {
   id: string;
@@ -49,7 +49,7 @@ export const pathsMatch = (left: string | null | undefined, right: string | null
 export const normalizeRequestDetailTab = (value: unknown): RequestDetailTab => {
   if (value === "overview") return "conversation";
   if (value === "changes") return "files";
-  return value === "conversation" || value === "commits" || value === "files" ? value : "conversation";
+  return value === "conversation" || value === "checks" || value === "commits" || value === "files" ? value : "conversation";
 };
 
 const parseHunkHeader = (line: string): { oldLine: number; newLine: number } | null => {

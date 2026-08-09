@@ -3,12 +3,15 @@ import type {
   ProjectForgeAuthStatus,
   ProjectForgeCommitSummary,
   ProjectForgeRequestDetailsResult,
+  ProjectForgeRequestStatus,
   ProjectForgeRequestState,
   ProjectForgeRequestSummary,
   ProjectForgeReviewThread,
   ProjectPrMrDiffComment,
   ProjectPrMrDiffResult,
   ProviderType,
+  RunForgeMergeMethod,
+  UpdateRunForgeRequestInput,
   RunDiffReviewFinding,
   RunDiffReviewResult,
   UnifiedProviderFamily,
@@ -44,6 +47,9 @@ import { Input } from "../ui/input";
 import { Select } from "../ui/select";
 import { ActivityRichText } from "../ui/activity-rich-text";
 import { DiffReviewPanel, type DiffReviewPanelState } from "./diff-review-panel";
+import { ForgeRequestActionBar } from "./ForgeRequestActionBar";
+import { ForgeChecksView } from "./ForgeChecksView";
+import type { ForgeRequestActionTarget } from "./forge-request-actions";
 import { AnchorDropdownPortal } from "./anchor-dropdown-portal";
 import {
   GitDiffPreview,
@@ -596,6 +602,11 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const [listBusy, setListBusy] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [postBusy, setPostBusy] = useState(false);
+  const [requestActionBusy, setRequestActionBusy] = useState(false);
+  const [requestStatusBusy, setRequestStatusBusy] = useState(false);
+  const [requestStatusError, setRequestStatusError] = useState<string | null>(null);
+  const [requestStatusSnapshot, setRequestStatusSnapshot] = useState<{ url: string; status: ProjectForgeRequestStatus } | null>(null);
+  const [requestStatusRefreshVersion, setRequestStatusRefreshVersion] = useState(0);
   const [postMessage, setPostMessage] = useState<string | null>(null);
   const [postError, setPostError] = useState<string | null>(null);
   const [replyThreadId, setReplyThreadId] = useState<string | null>(null);
@@ -912,6 +923,10 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     setListError(null);
     setPostMessage(null);
     setPostError(null);
+    setRequestActionBusy(false);
+    setRequestStatusBusy(false);
+    setRequestStatusError(null);
+    setRequestStatusSnapshot(null);
     clearDraftEditor();
     setDraftComments([]);
     setReviewDraftMode(false);
@@ -940,6 +955,46 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const visibleRequestDetails = requestDetails?.request.url === activeUrl ? requestDetails : null;
   const overviewRequest = visibleRequestDetails?.request ?? selectedRequest;
   const canUseForgeApi = forgeAuthStatus?.hasToken === true;
+  const visibleRequestStatus = requestStatusSnapshot?.url === activeUrl ? requestStatusSnapshot.status : null;
+  const requestActionTarget: ForgeRequestActionTarget | null = overviewRequest && visibleRequestStatus ? {
+    provider: overviewRequest.provider,
+    number: overviewRequest.number,
+    state: visibleRequestStatus.state,
+    readiness: visibleRequestStatus.readiness,
+    draft: visibleRequestStatus.draft,
+    headSha: visibleRequestStatus.headSha,
+    supportedActions: visibleRequestStatus.supportedActions,
+    supportedMergeMethods: visibleRequestStatus.supportedMergeMethods,
+  } : null;
+
+  useEffect(() => {
+    const url = activeUrl.trim();
+    if (!canUseForgeApi || !url) {
+      setRequestStatusBusy(false);
+      setRequestStatusError(null);
+      setRequestStatusSnapshot(null);
+      return;
+    }
+    let cancelled = false;
+    setRequestStatusBusy(true);
+    setRequestStatusError(null);
+    void buildwarden.getProjectForgeRequestStatus(projectId, { prUrl: url })
+      .then((status) => {
+        if (!cancelled) setRequestStatusSnapshot({ url, status });
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setRequestStatusSnapshot(null);
+          setRequestStatusError(formatAppErrorMessage(error, "Could not load request actions."));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setRequestStatusBusy(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeUrl, buildwarden, canUseForgeApi, projectId, requestStatusRefreshVersion]);
 
   useEffect(() => {
     activeRequestUrlRef.current = activeUrl.trim();
@@ -1200,6 +1255,8 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     setBaseBranch(request.targetBranch);
     resetLoadedDiff();
     setActiveDetailTab("conversation");
+    setRequestStatusSnapshot(null);
+    setRequestStatusRefreshVersion((version) => version + 1);
     const cachedDetails = requestDetailsCacheRef.current.get(request.url);
     if (cachedDetails) {
       setRequestDetails(cachedDetails);
@@ -1320,6 +1377,8 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     resetLoadedDiff();
     setPrUrl(targetUrl);
     activeRequestUrlRef.current = targetUrl;
+    setRequestStatusSnapshot(null);
+    setRequestStatusRefreshVersion((version) => version + 1);
     await loadDiff();
   };
 
@@ -1334,6 +1393,8 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     setPrUrl(targetUrl);
     setBaseBranch("");
     setActiveDetailTab("conversation");
+    setRequestStatusSnapshot(null);
+    setRequestStatusRefreshVersion((version) => version + 1);
     resetLoadedDiff();
 
     if (canUseForgeApi) {
@@ -1428,6 +1489,11 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     setActiveDetailTab("commits");
   };
 
+  const showChecks = () => {
+    leaveCommitDiffScope();
+    setActiveDetailTab("checks");
+  };
+
   const showFiles = () => {
     setActiveDetailTab("files");
     loadCurrentFilesDiffIfNeeded();
@@ -1485,6 +1551,72 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     }
   };
 
+  const applyRequestStatus = (url: string, status: ProjectForgeRequestStatus) => {
+    setRequestStatusSnapshot({ url, status });
+    setSelectedRequest((current) => current?.url === url ? { ...current, state: status.state, draft: status.draft } : current);
+    setRequestItems((current) => current.map((request) =>
+      request.url === url ? { ...request, state: status.state, draft: status.draft } : request));
+
+    const cached = requestDetailsCacheRef.current.get(url);
+    const nextCached = cached ? {
+      ...cached,
+      request: { ...cached.request, state: status.state, draft: status.draft },
+    } : null;
+    if (nextCached) requestDetailsCacheRef.current.set(url, nextCached);
+    setRequestDetails((current) => current?.request.url === url
+      ? nextCached ?? { ...current, request: { ...current.request, state: status.state, draft: status.draft } }
+      : current);
+  };
+
+  const updateProjectRequest = async (action: UpdateRunForgeRequestInput["action"]) => {
+    const url = activeUrl.trim();
+    if (!url || !visibleRequestStatus) return;
+    setRequestActionBusy(true);
+    setPostMessage(null);
+    setPostError(null);
+    try {
+      const status = await buildwarden.updateProjectForgeRequest(projectId, {
+        prUrl: url,
+        action,
+        expectedHeadSha: visibleRequestStatus.headSha ?? undefined,
+      });
+      applyRequestStatus(url, status);
+      const label = `${overviewRequest?.provider === "gitlab" ? "MR" : "PR"} #${String(overviewRequest?.number ?? "")}`;
+      setPostMessage(action === "mark-ready"
+        ? `${label} is ready for review.`
+        : action === "mark-draft"
+          ? `${label} is now a draft.`
+          : action === "close"
+            ? `${label} was closed.`
+            : `${label} was reopened.`);
+    } catch (error) {
+      setPostError(formatAppErrorMessage(error, "Could not update the PR/MR."));
+    } finally {
+      setRequestActionBusy(false);
+    }
+  };
+
+  const mergeProjectRequest = async (method: RunForgeMergeMethod) => {
+    const url = activeUrl.trim();
+    const expectedHeadSha = visibleRequestStatus?.headSha;
+    if (!url || !expectedHeadSha) {
+      setPostError("Refresh the request before merging so its current HEAD can be verified.");
+      return;
+    }
+    setRequestActionBusy(true);
+    setPostMessage(null);
+    setPostError(null);
+    try {
+      const status = await buildwarden.mergeProjectForgeRequest(projectId, { prUrl: url, method, expectedHeadSha });
+      applyRequestStatus(url, status);
+      setPostMessage(`${overviewRequest?.provider === "gitlab" ? "MR" : "PR"} #${String(overviewRequest?.number ?? "")} was merged.`);
+    } catch (error) {
+      setPostError(formatAppErrorMessage(error, "Could not merge the PR/MR."));
+    } finally {
+      setRequestActionBusy(false);
+    }
+  };
+
   const postReview = async (event: "comment" | "approve") => {
     if (event === "comment" && !reviewPanel.result) {
       setPostError("Run the AI review before posting a review comment.");
@@ -1500,6 +1632,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
         event,
       });
       setPostMessage(result.message);
+      if (event === "approve") setRequestStatusRefreshVersion((version) => version + 1);
     } catch (error) {
       setPostError(formatAppErrorMessage(error, "Could not update the PR/MR."));
     } finally {
@@ -2421,6 +2554,58 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     return null;
   };
 
+  const renderChecksCard = () => {
+    if (!canUseForgeApi) {
+      return (
+        <Card className="flex min-h-0 flex-1 items-center justify-center border-zinc-800/80 bg-zinc-950/30 p-4">
+          <div className="max-w-md text-center">
+            <p className="text-sm font-semibold text-zinc-100">Checks need a hosting token</p>
+            <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+              Add a GitHub or GitLab token in Project Settings to load check runs and pipeline jobs.
+            </p>
+          </div>
+        </Card>
+      );
+    }
+
+    if (requestStatusBusy && !visibleRequestStatus) {
+      return (
+        <Card className="flex min-h-0 flex-1 items-center justify-center border-zinc-800/80 bg-zinc-950/30 p-4">
+          <span className="inline-flex items-center gap-2 text-xs text-zinc-500">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            Loading checks
+          </span>
+        </Card>
+      );
+    }
+
+    if (!visibleRequestStatus) {
+      return (
+        <Card className="flex min-h-0 flex-1 items-center justify-center border-zinc-800/80 bg-zinc-950/30 p-4">
+          <div className="max-w-md text-center">
+            <p className="text-sm font-semibold text-zinc-100">Checks are unavailable</p>
+            <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+              {requestStatusError ?? "Fetch the selected request again to retry its status and checks."}
+            </p>
+          </div>
+        </Card>
+      );
+    }
+
+    return (
+      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-zinc-800/80 bg-zinc-950/40 p-0">
+        <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto">
+          <ForgeChecksView
+            progress={visibleRequestStatus.checks}
+            checks={visibleRequestStatus.checkRuns ?? []}
+            readiness={visibleRequestStatus.readiness}
+            onOpenExternal={(url) => buildwarden.openExternalUrl(url)}
+          />
+        </div>
+      </Card>
+    );
+  };
+
   const renderCommitsCard = () => {
     const commits = visibleRequestDetails?.commits ?? [];
 
@@ -2524,20 +2709,20 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
         <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className={cn("rounded-full border px-1.5 py-px text-[8px] font-semibold uppercase", requestStateTone(overviewRequest.state))}>
-                {overviewRequest.state}
+              <span className={cn("rounded-full border px-1.5 py-px text-[8px] font-semibold uppercase", requestStateTone(visibleRequestStatus?.state ?? overviewRequest.state))}>
+                {visibleRequestStatus?.state ?? overviewRequest.state}
               </span>
               <span className="font-mono text-[10px] text-zinc-500">
                 {providerLabel(overviewRequest.provider)} #{String(overviewRequest.number)}
               </span>
-              {overviewRequest.draft ? <span className="text-[10px] text-amber-200">draft</span> : null}
+              {(visibleRequestStatus?.draft ?? overviewRequest.draft) ? <span className="text-[10px] text-amber-200">draft</span> : null}
             </div>
             <p className="mt-1 truncate text-sm font-semibold leading-snug text-zinc-100">{overviewRequest.title}</p>
             <p className="mt-0.5 truncate font-mono text-[9px] text-zinc-600">
               {overviewRequest.sourceBranch || "head"} -&gt; {overviewRequest.targetBranch || "base"}
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
             <Button
               type="button"
               size="icon"
@@ -2555,11 +2740,27 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
               variant="ghost"
               className="h-7 border border-emerald-500/20 bg-emerald-500/[0.05] px-2 text-[10px] text-emerald-200 hover:bg-emerald-500/[0.1]"
               onClick={() => void postReview("approve")}
-              disabled={postBusy || !activeUrl.trim()}
+              disabled={postBusy || requestActionBusy || requestStatusBusy || !activeUrl.trim()}
             >
               {postBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <CheckCircle2 className="mr-1 h-3.5 w-3.5" aria-hidden />}
               Approve
             </Button>
+            {requestStatusBusy && !requestActionTarget ? (
+              <span className="grid h-7 w-7 place-items-center text-zinc-500" title="Loading request actions">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              </span>
+            ) : null}
+            {requestActionTarget ? (
+              <ForgeRequestActionBar
+                request={requestActionTarget}
+                canWrite={canUseForgeApi && buildwarden.capabilities.gitMutations}
+                busy={requestActionBusy || requestStatusBusy || postBusy}
+                compact
+                className="border-l border-zinc-800/80 pl-1.5"
+                onUpdate={updateProjectRequest}
+                onMerge={mergeProjectRequest}
+              />
+            ) : null}
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-zinc-800/70 px-2 py-1">
@@ -2574,6 +2775,25 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
             >
               Conversation
               <span className="font-mono text-[9px] text-zinc-500">{String(totalActivityCount)}</span>
+            </button>
+            <button
+              type="button"
+              className={cn(
+                "flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium transition-colors",
+                activeDetailTab === "checks" ? "bg-zinc-800/75 text-zinc-100" : "text-zinc-500 hover:bg-zinc-900/70 hover:text-zinc-300",
+                !canUseForgeApi && "cursor-not-allowed opacity-60 hover:text-zinc-500",
+              )}
+              onClick={() => {
+                if (canUseForgeApi) showChecks();
+              }}
+              disabled={!canUseForgeApi}
+              title={canUseForgeApi ? "View checks" : "Checks require a Git hosting token"}
+            >
+              {requestStatusBusy ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
+              Checks
+              {(visibleRequestStatus?.checks.total ?? 0) > 0 ? (
+                <span className="font-mono text-[9px] text-zinc-500">{String(visibleRequestStatus?.checks.total ?? 0)}</span>
+              ) : null}
             </button>
             <button
               type="button"
@@ -2615,6 +2835,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
           {activeDetailTab === "files" && diffText.trim() ? <div className="ml-auto flex min-w-0 items-center">{renderFilesChangedToolbar()}</div> : null}
         </div>
         {postMessage ? <p className="border-t border-zinc-800/80 px-3 py-1 text-[9px] text-emerald-300">{postMessage}</p> : null}
+        {requestStatusError ? <p className="border-t border-zinc-800/80 px-3 py-1 text-[9px] text-rose-300">{requestStatusError}</p> : null}
         {postError ? <p className="border-t border-zinc-800/80 px-3 py-1 text-[9px] text-rose-300">{postError}</p> : null}
       </section>
     );
@@ -2825,8 +3046,9 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
           {renderRequestHeader()}
 
           {activeDetailTab === "conversation" ? renderConversationTab() : null}
+          {activeDetailTab === "checks" ? renderChecksCard() : null}
           {activeDetailTab === "commits" ? renderCommitsCard() : null}
-          {activeDetailTab !== "conversation" && activeDetailTab !== "commits" && !hasDiff ? (
+          {activeDetailTab === "files" && !hasDiff ? (
             <Card className="flex min-h-0 flex-1 items-center justify-center border-zinc-800/80 bg-zinc-950/30 p-4">
               <div className="max-w-md text-center">
                 <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full border border-cyan-500/25 bg-cyan-500/[0.07] text-cyan-200">
@@ -2858,7 +3080,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
               </div>
             </Card>
           ) : null}
-          {activeDetailTab !== "conversation" && activeDetailTab !== "commits" && hasDiff ? renderDiffCard() : null}
+          {activeDetailTab === "files" && hasDiff ? renderDiffCard() : null}
         </div>
       </div>
     </div>

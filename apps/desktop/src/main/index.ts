@@ -624,6 +624,14 @@ const bootstrap = async (): Promise<void> => {
     args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["method", "expectedHeadSha"]) &&
     isRemoteRecord(args[1]) && String(args[1].expectedHeadSha).trim().length > 0 &&
     ["merge", "squash", "rebase"].includes(String(args[1].method)));
+  const validateUpdateProjectForgeRequest = defineRemoteArgsValidator<"updateProjectForgeRequest">((args) =>
+    args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["prUrl", "action"]) &&
+    isRemoteRecord(args[1]) && ["mark-draft", "mark-ready", "close", "reopen"].includes(String(args[1].action)) &&
+    (args[1].expectedHeadSha === undefined || typeof args[1].expectedHeadSha === "string"));
+  const validateMergeProjectForgeRequest = defineRemoteArgsValidator<"mergeProjectForgeRequest">((args) =>
+    args.length === 2 && typeof args[0] === "string" &&
+    hasRemoteStringFields(args[1], ["prUrl", "method", "expectedHeadSha"]) && isRemoteRecord(args[1]) &&
+    String(args[1].expectedHeadSha).trim().length > 0 && ["merge", "squash", "rebase"].includes(String(args[1].method)));
   const validateFetchForgeDiff = defineRemoteArgsValidator<"fetchProjectPrMrDiff">((args) => {
     if (args.length !== 2 || typeof args[0] !== "string" || !hasRemoteStringFields(args[1], ["prUrl"]) ||
       !isRemoteRecord(args[1])) return false;
@@ -719,6 +727,12 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register(
     "getProjectForgeRequestDetails",
     (projectId, input) => controller.getProjectForgeRequestDetails(projectId, input),
+    validateForgeRequestDetails,
+    "git:write",
+  );
+  remoteOperations.register(
+    "getProjectForgeRequestStatus",
+    (projectId, input) => controller.getProjectForgeRequestStatus(projectId, input),
     validateForgeRequestDetails,
     "git:write",
   );
@@ -901,6 +915,8 @@ const bootstrap = async (): Promise<void> => {
   );
   remoteOperations.register("updateRunForgeRequest", (runId, input) => controller.updateRunForgeRequest(runId, input), validateUpdateRunForgeRequest, "git:write", true);
   remoteOperations.register("mergeRunForgeRequest", (runId, input) => controller.mergeRunForgeRequest(runId, input), validateMergeRunForgeRequest, "git:write", true);
+  remoteOperations.register("updateProjectForgeRequest", (projectId, input) => controller.updateProjectForgeRequest(projectId, input), validateUpdateProjectForgeRequest, "git:write", true);
+  remoteOperations.register("mergeProjectForgeRequest", (projectId, input) => controller.mergeProjectForgeRequest(projectId, input), validateMergeProjectForgeRequest, "git:write", true);
 
   remoteOperations.register("commitRun", (runId, message) => controller.commitRun(runId, message), validateTwoRemoteStrings, "git:write", true);
   remoteOperations.register("createRunLocalBranch", (runId, branchName) => controller.createRunLocalBranch(runId, branchName), validateTwoRemoteStrings, "git:write", true);
@@ -1267,6 +1283,15 @@ const bootstrap = async (): Promise<void> => {
   );
   ipcMain.handle(IPC_CHANNELS.getProjectForgeRequestDetails, (_, projectId: string, input) =>
     controller.getProjectForgeRequestDetails(projectId, input),
+  );
+  ipcMain.handle(IPC_CHANNELS.getProjectForgeRequestStatus, (_, projectId: string, input) =>
+    controller.getProjectForgeRequestStatus(projectId, input),
+  );
+  ipcMain.handle(IPC_CHANNELS.updateProjectForgeRequest, (_, projectId: string, input) =>
+    controller.updateProjectForgeRequest(projectId, input),
+  );
+  ipcMain.handle(IPC_CHANNELS.mergeProjectForgeRequest, (_, projectId: string, input) =>
+    controller.mergeProjectForgeRequest(projectId, input),
   );
   ipcMain.handle(IPC_CHANNELS.getRunForgeRequestDetails, (_, runId: string, options) =>
     controller.getRunForgeRequestDetails(runId, options));

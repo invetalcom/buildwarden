@@ -96,6 +96,7 @@ const createHarness = (overrides: DbOverrides = {}) => {
     updateRunListVisibility: vi.fn((_runId: string, visibility: string) => ({ id: "run-1", listVisibility: visibility } as RunRecord)),
     getOrchestrationTaskByChildRunId: vi.fn(() => null),
     getOrchestrationByCoordinatorRunId: vi.fn(() => null),
+    listRunsForProject: vi.fn(() => []),
   };
   const db = { ...defaults, ...overrides } as unknown as BuildWardenDatabase;
   const secrets = {
@@ -754,6 +755,150 @@ describe("AppController settings and lightweight workflows", () => {
       readiness: "unavailable",
       stale: true,
       syncError: "The request was merged, but its state could not be refreshed.",
+    });
+  });
+
+  it("updates project-level request state without requiring a run association", async () => {
+    const harness = createHarness();
+    const readyStatus = {
+      state: "open",
+      draft: false,
+      mergeability: "mergeable",
+      reviewDecision: "approved",
+      headSha: "head-sha",
+      checks: [{
+        id: "check-1",
+        name: "Unit tests",
+        status: "success",
+        url: "https://ci.example/unit-tests",
+        description: "test",
+        startedAt: null,
+        completedAt: null,
+        durationMs: 8_000,
+      }],
+      unresolvedThreadCount: 0,
+      supportedActions: ["refresh", "open", "mark-draft", "merge", "close"],
+      supportedMergeMethods: ["merge", "squash"],
+    } as const;
+    const draftStatus = {
+      ...readyStatus,
+      draft: true,
+      supportedActions: ["refresh", "open", "mark-ready", "merge", "close"],
+    } as const;
+    const closedStatus = {
+      ...draftStatus,
+      state: "closed",
+      supportedActions: ["refresh", "open", "reopen"],
+    } as const;
+    const forgeProvider = {
+      getRequestStatus: vi.fn()
+        .mockResolvedValueOnce(readyStatus)
+        .mockResolvedValueOnce(draftStatus)
+        .mockResolvedValueOnce(draftStatus)
+        .mockResolvedValueOnce(closedStatus),
+      updateRequest: vi.fn(async () => ({ message: "updated" })),
+    } as unknown as ProjectPrReviewProvider;
+    const internalController = harness.controller as unknown as {
+      createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
+    };
+    internalController.createProjectPrReviewProvider = vi.fn(async () => forgeProvider);
+    const prUrl = "https://github.com/acme/repo/pull/17";
+
+    await expect(harness.controller.updateProjectForgeRequest(project.id, {
+      prUrl,
+      action: "mark-draft",
+      expectedHeadSha: "head-sha",
+    })).resolves.toMatchObject({
+      state: "open",
+      draft: true,
+      readiness: "pending",
+      checks: { completed: 1, total: 1, successful: 1, failed: 0, running: 0 },
+      checkRuns: [{ id: "check-1", name: "Unit tests", status: "success" }],
+    });
+    await expect(harness.controller.updateProjectForgeRequest(project.id, {
+      prUrl,
+      action: "close",
+      expectedHeadSha: "head-sha",
+    })).resolves.toMatchObject({ state: "closed", readiness: "closed" });
+
+    expect(forgeProvider.updateRequest).toHaveBeenNthCalledWith(1, {
+      prUrl,
+      action: "mark-draft",
+      expectedHeadSha: "head-sha",
+    });
+    expect(forgeProvider.updateRequest).toHaveBeenNthCalledWith(2, {
+      prUrl,
+      action: "close",
+      expectedHeadSha: "head-sha",
+    });
+  });
+
+  it("uses normalized readiness and expected HEAD validation for project-level merges", async () => {
+    const harness = createHarness();
+    const readyStatus = {
+      state: "open",
+      draft: false,
+      mergeability: "mergeable",
+      reviewDecision: "approved",
+      headSha: "head-sha",
+      checks: [],
+      unresolvedThreadCount: 0,
+      supportedActions: ["refresh", "open", "mark-draft", "merge", "close"],
+      supportedMergeMethods: ["squash"],
+    } as const;
+    const mergedStatus = {
+      ...readyStatus,
+      state: "merged",
+      supportedActions: ["refresh", "open"],
+    } as const;
+    const forgeProvider = {
+      getRequestStatus: vi.fn().mockResolvedValueOnce(readyStatus).mockResolvedValueOnce(mergedStatus),
+      mergeRequest: vi.fn(async () => ({ message: "merged" })),
+    } as unknown as ProjectPrReviewProvider;
+    const internalController = harness.controller as unknown as {
+      createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
+    };
+    internalController.createProjectPrReviewProvider = vi.fn(async () => forgeProvider);
+    const prUrl = "https://github.com/acme/repo/pull/17";
+
+    await expect(harness.controller.mergeProjectForgeRequest(project.id, {
+      prUrl,
+      method: "squash",
+      expectedHeadSha: "head-sha",
+    })).resolves.toMatchObject({ state: "merged", readiness: "merged" });
+    expect(forgeProvider.mergeRequest).toHaveBeenCalledWith({ prUrl, method: "squash", expectedHeadSha: "head-sha" });
+  });
+
+  it("keeps a successful project request mutation usable when its immediate refresh fails", async () => {
+    const harness = createHarness();
+    const currentStatus = {
+      state: "open",
+      draft: false,
+      mergeability: "mergeable",
+      reviewDecision: "approved",
+      headSha: "head-sha",
+      checks: [],
+      unresolvedThreadCount: 0,
+      supportedActions: ["refresh", "open", "mark-draft", "merge", "close"],
+      supportedMergeMethods: ["merge"],
+    } as const;
+    const forgeProvider = {
+      getRequestStatus: vi.fn().mockResolvedValueOnce(currentStatus).mockRejectedValueOnce(new Error("refresh unavailable")),
+      updateRequest: vi.fn(async () => ({ message: "closed" })),
+    } as unknown as ProjectPrReviewProvider;
+    const internalController = harness.controller as unknown as {
+      createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
+    };
+    internalController.createProjectPrReviewProvider = vi.fn(async () => forgeProvider);
+
+    await expect(harness.controller.updateProjectForgeRequest(project.id, {
+      prUrl: "https://github.com/acme/repo/pull/17",
+      action: "close",
+      expectedHeadSha: "head-sha",
+    })).resolves.toMatchObject({
+      state: "closed",
+      readiness: "closed",
+      supportedActions: ["refresh", "open", "reopen"],
     });
   });
 

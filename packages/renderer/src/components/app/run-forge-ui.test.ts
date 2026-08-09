@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RunForgeRequestDetailsResult } from "@buildwarden/shared";
 import { buildRunForgeAgentPrompt, runForgeReadinessLabel } from "./run-forge-ui";
+import { forgeRequestActionAvailability } from "./forge-request-actions";
 
 const details = {
   summary: {
@@ -46,5 +47,25 @@ describe("run forge UI model", () => {
   it("keeps terminal and unavailable states distinct", () => {
     expect(runForgeReadinessLabel.merged).toBe("Merged");
     expect(runForgeReadinessLabel.unavailable).toBe("Unavailable");
+  });
+
+  it("shares the same safe action visibility between run and project request surfaces", () => {
+    expect(forgeRequestActionAvailability(details.summary, true)).toMatchObject({
+      canToggleDraft: false,
+      canMerge: false,
+      canClose: true,
+      canReopen: false,
+    });
+    expect(forgeRequestActionAvailability({
+      ...details.summary,
+      readiness: "ready",
+      supportedActions: ["mark-draft", "merge", "close"],
+    }, true)).toMatchObject({ canToggleDraft: true, canMerge: true, canClose: true });
+    expect(forgeRequestActionAvailability({
+      ...details.summary,
+      state: "closed",
+      readiness: "closed",
+      supportedActions: ["reopen"],
+    }, true)).toMatchObject({ canMerge: false, canClose: false, canReopen: true });
   });
 });
