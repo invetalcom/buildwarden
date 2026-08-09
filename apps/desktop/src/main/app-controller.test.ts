@@ -84,7 +84,15 @@ const createHarness = (overrides: DbOverrides = {}) => {
     deleteProviderAccount: vi.fn(),
     getModel: vi.fn(() => model),
     addModel: vi.fn((input: object) => ({ ...model, ...input })),
-    countRunsForModel: vi.fn(() => 0),
+    getModelDeletionTargets: vi.fn(() => ({
+      runIds: [],
+      chatIds: [],
+      projectInsightIds: [],
+      projectLabThreadIds: [],
+      projectLoopIds: [],
+      orchestrationIds: [],
+    })),
+    deleteProjectInsights: vi.fn(),
     deleteModel: vi.fn(),
     createProjectTask: vi.fn((_projectId: string, input: object) => ({ ...task, ...input })),
     getProjectTask: vi.fn(() => task),
@@ -1459,6 +1467,65 @@ describe("AppController settings and lightweight workflows", () => {
     expect(paths.logDirectorySize).toMatchObject({ totalBytes: 5, fileCount: 1, unreadableEntryCount: 0 });
     await expect(harness.controller.getSnapshot()).resolves.toMatchObject({ projects: [] });
     await expect(harness.controller.refreshSnapshot()).resolves.toMatchObject({ projects: [] });
+  });
+
+  it("summarizes and deletes chats that reference a model", async () => {
+    const targets = {
+      runIds: [],
+      chatIds: ["chat-1"],
+      projectInsightIds: [],
+      projectLabThreadIds: [],
+      projectLoopIds: [],
+      orchestrationIds: [],
+    };
+    const emptyTargets = { ...targets, chatIds: [] };
+    const getModelDeletionTargets = vi.fn()
+      .mockReturnValueOnce(targets)
+      .mockReturnValueOnce(targets)
+      .mockReturnValueOnce(emptyTargets);
+    const deleteChatRow = vi.fn();
+    const deleteModelRow = vi.fn();
+    const harness = createHarness({
+      getModelDeletionTargets,
+      getChat: vi.fn(() => ({ id: "chat-1", runId: null })),
+      deleteProviderSessionRuntime: vi.fn(),
+      deleteChat: deleteChatRow,
+      deleteModel: deleteModelRow,
+    });
+    tempDirs.push(harness.logDir);
+    harness.settings[APP_SETTING_KEYS.projectRunDefaults] = JSON.stringify({
+      [project.id]: {
+        modelId: model.id,
+        worktreeModelIds: [model.id],
+        modelConfigurations: { [model.id]: { effort: "high", executionMode: "auto" } },
+      },
+    });
+    harness.settings[APP_SETTING_KEYS.orchestrationTeam] = JSON.stringify({
+      version: 1,
+      maxConcurrentTasks: 3,
+      maxTasksPerOrchestration: 12,
+      models: [{ modelId: model.id, enabled: true, maxConcurrent: 1 }],
+      roles: [],
+    });
+
+    await expect(harness.controller.getModelDeletionImpact(model.id)).resolves.toMatchObject({
+      modelId: model.id,
+      modelDisplayName: model.displayName,
+      chatCount: 1,
+      runCount: 0,
+    });
+    await harness.controller.deleteModel(model.id);
+
+    expect(deleteChatRow).toHaveBeenCalledWith("chat-1");
+    expect(deleteModelRow).toHaveBeenCalledWith(model.id);
+    const persistedRunDefaults = JSON.parse(harness.settings[APP_SETTING_KEYS.projectRunDefaults] ?? "{}") as Record<string, {
+      modelId: string;
+      worktreeModelIds: string[];
+      modelConfigurations: Record<string, unknown>;
+    }>;
+    expect(persistedRunDefaults[project.id]).toMatchObject({ modelId: "", worktreeModelIds: [], modelConfigurations: {} });
+    const persistedTeam = JSON.parse(harness.settings[APP_SETTING_KEYS.orchestrationTeam] ?? "{}") as { models: unknown[] };
+    expect(persistedTeam.models).toEqual([]);
   });
 
   it("registers and removes chat listeners", () => {

@@ -114,6 +114,15 @@ export interface RunForgeRequestCacheRecord {
   retryAfterAt: string | null;
 }
 
+export interface ModelDeletionTargets {
+  runIds: string[];
+  chatIds: string[];
+  projectInsightIds: string[];
+  projectLabThreadIds: string[];
+  projectLoopIds: string[];
+  orchestrationIds: string[];
+}
+
 type StoredRunForgeRequestCacheRecord = Omit<RunForgeRequestCacheRecord, "summary" | "details"> & {
   summaryJson: string | null;
   detailsJson: string | null;
@@ -1847,6 +1856,109 @@ export class BuildWardenDatabase {
     );
   }
 
+  getModelDeletionTargets(modelId: string): ModelDeletionTargets {
+    const rows = this.all<{ kind: string; id: string }>(
+      `
+      with recursive related(kind, id) as (
+        select 'run', id from runs where model_id = ?
+        union
+        select 'project-lab-thread', id
+        from project_lab_threads
+        where implementation_model_id = ? or review_model_id = ?
+        union
+        select 'project-loop', id
+        from project_loops
+        where runner_model_id = ? or review_model_id = ?
+        union
+        select 'orchestration', orchestration_id
+        from orchestration_tasks
+        where model_id = ?
+        union
+        select 'orchestration', id
+        from orchestrations
+        where instr(team_snapshot_json, '"' || ? || '"') > 0
+        union
+        select 'run', thread.implementation_run_id
+        from related
+        join project_lab_threads thread
+          on related.kind = 'project-lab-thread' and thread.id = related.id
+        where thread.implementation_run_id is not null
+        union
+        select 'project-lab-thread', thread.id
+        from related
+        join project_lab_threads thread
+          on related.kind = 'run' and thread.implementation_run_id = related.id
+        union
+        select 'run', iteration.run_id
+        from related
+        join project_loop_iterations iteration
+          on related.kind = 'project-loop' and iteration.loop_id = related.id
+        where iteration.run_id is not null
+        union
+        select 'project-loop', iteration.loop_id
+        from related
+        join project_loop_iterations iteration
+          on related.kind = 'run' and iteration.run_id = related.id
+        union
+        select 'run', orchestration.coordinator_run_id
+        from related
+        join orchestrations orchestration
+          on related.kind = 'orchestration' and orchestration.id = related.id
+        union
+        select 'run', task.child_run_id
+        from related
+        join orchestration_tasks task
+          on related.kind = 'orchestration' and task.orchestration_id = related.id
+        where task.child_run_id is not null
+        union
+        select 'orchestration', orchestration.id
+        from related
+        join orchestrations orchestration
+          on related.kind = 'run' and orchestration.coordinator_run_id = related.id
+        union
+        select 'orchestration', task.orchestration_id
+        from related
+        join orchestration_tasks task
+          on related.kind = 'run' and task.child_run_id = related.id
+      )
+      select kind, id from related
+      union
+      select 'chat', chat.id
+      from chats chat
+      where chat.model_id = ?
+        or exists (
+          select 1 from related
+          where related.kind = 'run' and related.id = chat.run_id
+        )
+      union
+      select 'project-insight', id
+      from project_insights
+      where model_id = ?
+      order by kind, id
+      `,
+      [modelId, modelId, modelId, modelId, modelId, modelId, modelId, modelId, modelId],
+    );
+    const idsFor = (kind: string): string[] => rows.filter((row) => row.kind === kind).map((row) => row.id);
+    return {
+      runIds: idsFor("run"),
+      chatIds: idsFor("chat"),
+      projectInsightIds: idsFor("project-insight"),
+      projectLabThreadIds: idsFor("project-lab-thread"),
+      projectLoopIds: idsFor("project-loop"),
+      orchestrationIds: idsFor("orchestration"),
+    };
+  }
+
+  deleteProjectInsights(projectInsightIds: string[]): void {
+    this.transaction(() => {
+      for (const batch of chunkValues([...new Set(projectInsightIds)])) {
+        if (batch.length === 0) continue;
+        const placeholders = batch.map(() => "?").join(", ");
+        this.run(`delete from project_insights where id in (${placeholders})`, batch);
+      }
+    });
+  }
+
   deleteModel(modelId: string): void {
     this.run("delete from models where id = ?", [modelId]);
   }
@@ -2476,19 +2588,6 @@ export class BuildWardenDatabase {
       where provider_account_id = ?
       `,
       [providerAccountId],
-    );
-
-    return Number(row?.count ?? 0);
-  }
-
-  countRunsForModel(modelId: string): number {
-    const row = this.first<{ count: number }>(
-      `
-      select count(*) as count
-      from runs
-      where model_id = ?
-      `,
-      [modelId],
     );
 
     return Number(row?.count ?? 0);

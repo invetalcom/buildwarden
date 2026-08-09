@@ -439,6 +439,11 @@ const bootstrap = async (): Promise<void> => {
     (runId) => controller.getRunDeletionImpact(runId),
     validateSingleRemoteStringArg,
   );
+  remoteOperations.register(
+    "getModelDeletionImpact",
+    (modelId) => controller.getModelDeletionImpact(modelId),
+    validateSingleRemoteStringArg,
+  );
   remoteOperations.register("getRunWorktreeDiff", (runId) => controller.getRunWorktreeDiff(runId), validateSingleRemoteStringArg);
   remoteOperations.register(
     "getRunWorktreeDiffSummary",
@@ -1374,6 +1379,7 @@ const bootstrap = async (): Promise<void> => {
     controller.deleteProviderAccount(providerAccountId),
   );
   ipcMain.handle(IPC_CHANNELS.deleteRun, (_, runId: string) => controller.deleteRun(runId));
+  ipcMain.handle(IPC_CHANNELS.getModelDeletionImpact, (_, modelId: string) => controller.getModelDeletionImpact(modelId));
   ipcMain.handle(IPC_CHANNELS.deleteModel, (_, modelId: string) => controller.deleteModel(modelId));
   ipcMain.handle(IPC_CHANNELS.getRunDetail, (_, runId: string) => controller.getRunDetail(runId));
   ipcMain.handle(IPC_CHANNELS.getOrchestrationDetail, (_, coordinatorRunId: string) =>

@@ -1,4 +1,4 @@
-import type { ComponentProps, KeyboardEvent, KeyboardEventHandler } from "react";
+import type { KeyboardEvent, KeyboardEventHandler } from "react";
 import type { RunPublishOptions, RunRecord } from "@buildwarden/shared";
 import { Loader2, Sparkles } from "lucide-react";
 import { Button } from "../ui/button";
@@ -6,6 +6,7 @@ import { Card } from "../ui/card";
 import { Input } from "../ui/input";
 import { Select } from "../ui/select";
 import { Textarea } from "../ui/textarea";
+import type { ConfirmDialogState } from "./app-model";
 
 type RunModelOption = {
   id: string;
@@ -15,14 +16,6 @@ type RunModelOption = {
 type PublishDialogKeyDownEvent = KeyboardEvent<
   HTMLInputElement | HTMLButtonElement | HTMLDivElement | HTMLSelectElement | HTMLTextAreaElement
 >;
-
-type ConfirmDialogState = {
-  title: string;
-  message: string;
-  confirmLabel: string;
-  cancelLabel?: string;
-  confirmVariant?: Exclude<ComponentProps<typeof Button>["variant"], undefined>;
-};
 
 interface RunActionDialogsProps {
   busy: boolean;
@@ -315,6 +308,19 @@ export const RunActionDialogs = ({
           <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Confirm action</p>
           <h3 className="mt-2 text-xl font-semibold text-zinc-100">{confirmDialog.title}</h3>
           <p className="mt-3 text-sm leading-relaxed text-zinc-400">{confirmDialog.message}</p>
+          {confirmDialog.impactItems ? (
+            <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Related data</p>
+              <dl className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                {confirmDialog.impactItems.map((item) => (
+                  <div key={item.label} className="contents">
+                    <dt className="text-zinc-400">{item.label}</dt>
+                    <dd className="text-right font-medium tabular-nums text-zinc-200">{item.count}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          ) : null}
           <div className="mt-5 flex items-center justify-end gap-3">
             <Button variant="outline" onClick={() => onResolveConfirmation(false)} autoFocus>
               {confirmDialog.cancelLabel ?? "Cancel"}

@@ -93,6 +93,7 @@ describe("remote operation registry", () => {
       | "getOrchestrationTaskDetail"
       | "getOrchestrationAdoptionPreview"
       | "getRunDeletionImpact"
+      | "getModelDeletionImpact"
       | "getRunWorktreeDiff"
       | "getRunWorktreeDiffSummary"
       | "getRunWorkspaceFile"

@@ -2118,6 +2118,17 @@ export interface RunDeletionImpact {
   lockedOrMissingPaths: string[];
 }
 
+export interface ModelDeletionImpact {
+  modelId: string;
+  modelDisplayName: string;
+  runCount: number;
+  chatCount: number;
+  projectInsightCount: number;
+  projectLabThreadCount: number;
+  projectLoopCount: number;
+  orchestrationCount: number;
+}
+
 /** Result of computing the worktree patch for a run (potentially slow; use after `getRunDetail`). */
 export interface RunWorktreeDiffResult {
   diff: string;
@@ -3746,6 +3757,7 @@ export interface DesktopApi {
   deleteProject(projectId: string): Promise<void>;
   deleteProviderAccount(providerAccountId: string): Promise<void>;
   deleteRun(runId: string): Promise<void>;
+  getModelDeletionImpact(modelId: string): Promise<ModelDeletionImpact>;
   deleteModel(modelId: string): Promise<void>;
   getRunDetail(runId: string): Promise<RunDetail>;
   addRunNote(runId: string, input: RunNoteInput): Promise<RunNoteRecord>;
@@ -4065,6 +4077,7 @@ export type RemoteOperationMap = {
   getOrchestrationTaskDetail: DesktopApi["getOrchestrationTaskDetail"];
   getOrchestrationAdoptionPreview: DesktopApi["getOrchestrationAdoptionPreview"];
   getRunDeletionImpact: DesktopApi["getRunDeletionImpact"];
+  getModelDeletionImpact: DesktopApi["getModelDeletionImpact"];
   getProjectLoopUiReviewImage: DesktopApi["getProjectLoopUiReviewImage"];
   getProjectLoopDetail: DesktopApi["getProjectLoopDetail"];
   getProjectLoopAvailability: DesktopApi["getProjectLoopAvailability"];
@@ -4379,6 +4392,7 @@ export const IPC_CHANNELS = {
   getOrchestrationTaskDetail: "buildwarden:get-orchestration-task-detail",
   getOrchestrationAdoptionPreview: "buildwarden:get-orchestration-adoption-preview",
   getRunDeletionImpact: "buildwarden:get-run-deletion-impact",
+  getModelDeletionImpact: "buildwarden:get-model-deletion-impact",
   pauseOrchestration: "buildwarden:pause-orchestration",
   resumeOrchestration: "buildwarden:resume-orchestration",
   cancelOrchestration: "buildwarden:cancel-orchestration",
