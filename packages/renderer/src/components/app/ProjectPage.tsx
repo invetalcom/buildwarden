@@ -8,6 +8,7 @@ import type {
   ProjectSnapshot,
   ProjectTaskStatus,
   ProviderType,
+  RunRecord,
   RunMode,
   RunModelConfiguration,
   RunWorkspaceType,
@@ -54,6 +55,7 @@ interface ProjectPageProps {
   onStartTask: (taskId: string, prompt: string, modelId: string) => void | Promise<void>;
   onGenerateInsight: (kind: ProjectInsightKind, modelId?: string) => Promise<void>;
   onSetRunForLater: (runId: string) => void | Promise<void>;
+  onDeleteRuns: (runs: RunRecord[]) => Promise<boolean>;
   onRestoreRunFromForLater: (runId: string) => void | Promise<void>;
   reasoningEffort: string;
   anthropicEffort: string;
@@ -145,6 +147,7 @@ export const ProjectPage = ({
   onStartTask,
   onGenerateInsight,
   onSetRunForLater,
+  onDeleteRuns,
   onRestoreRunFromForLater,
   reasoningEffort,
   anthropicEffort,
@@ -222,6 +225,7 @@ export const ProjectPage = ({
           delegationAvailable={delegationAvailable}
           onSubmitRun={onSubmitRun}
           onSetRunForLater={onSetRunForLater}
+          onDeleteRuns={onDeleteRuns}
           onSelectRun={onSelectRun}
           onRunPromptChange={onRunPromptChange}
           onRunModeChange={onRunModeChange}

@@ -24,6 +24,7 @@ import { RunComposer } from "./RunComposer";
 import { resolveRunDisplayStatus, RUN_DISPLAY_STATUS_LABELS, runDisplayStatusTone } from "./run-display-status";
 import { appendUnreachableSubagentRoots, buildRunHierarchyRows, runHierarchyLabel, type RunHierarchyRow } from "./run-hierarchy";
 import { RunHierarchyIndent, RunHierarchyToggle } from "./RunHierarchy";
+import { RunListSelectionToolbar } from "./RunListSelectionToolbar";
 
 interface ProjectOverviewTabProps {
   projectId: string;
@@ -55,6 +56,7 @@ interface ProjectOverviewTabProps {
   delegationAvailable: boolean;
   onSubmitRun: (payload: { attachments?: ChatAttachmentPayload[] }) => void | Promise<void>;
   onSetRunForLater: (runId: string) => void | Promise<void>;
+  onDeleteRuns?: (runs: RunRecord[]) => Promise<boolean>;
   onSelectRun: (runId: string) => void;
   onRunPromptChange: (value: string) => void;
   onRunModeChange: (value: RunMode) => void;
@@ -90,7 +92,7 @@ const EmptyRunList = ({ hasRunSearch, hasRuns, readOnly }: Readonly<{ hasRunSear
   </Empty>
 );
 
-const RunHistory = ({ runs, orchestratedRuns, treeRows, matchingRunCount, searchQuery, onSearchChange, onSelectRun, onSetRunForLater, onToggleRun, readOnly }: {
+export const RunHistory = ({ runs, orchestratedRuns, treeRows, matchingRunCount, searchQuery, onSearchChange, onSelectRun, onSetRunForLater, onDeleteRuns, onToggleRun, readOnly }: {
   runs: ProjectOverviewTabProps["runs"];
   orchestratedRuns: ProjectOverviewTabProps["orchestratedRuns"];
   treeRows: RunHierarchyRow[];
@@ -99,16 +101,62 @@ const RunHistory = ({ runs, orchestratedRuns, treeRows, matchingRunCount, search
   onSearchChange: (value: string) => void;
   onSelectRun: ProjectOverviewTabProps["onSelectRun"];
   onSetRunForLater: ProjectOverviewTabProps["onSetRunForLater"];
+  onDeleteRuns?: ProjectOverviewTabProps["onDeleteRuns"];
   onToggleRun: (runId: string) => void;
   readOnly: boolean;
 }) => {
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(() => new Set());
+  const [selectionBusy, setSelectionBusy] = useState(false);
   const hasRunSearch = searchQuery.trim().length > 0;
   const totalRunCount = runs.length + orchestratedRuns.length;
+  const runById = useMemo(() => new Map([...runs, ...orchestratedRuns].map((run) => [run.id, run])), [orchestratedRuns, runs]);
+  const visibleRunIds = useMemo(() => treeRows.map((row) => row.run.id), [treeRows]);
+  const selectedRuns = useMemo(
+    () => [...selectedRunIds].flatMap((runId) => {
+      const run = runById.get(runId);
+      return run ? [run] : [];
+    }),
+    [runById, selectedRunIds],
+  );
+  const allVisibleSelected = visibleRunIds.length > 0 && visibleRunIds.every((runId) => selectedRunIds.has(runId));
   const runCountDescription = hasRunSearch
     ? `${String(matchingRunCount)} matching of ${String(totalRunCount)}`
     : orchestratedRuns.length > 0
       ? `${String(runs.length)} primary, ${String(orchestratedRuns.length)} subagent ${orchestratedRuns.length === 1 ? "run" : "runs"}`
       : `${String(runs.length)} visible runs in this project`;
+  const cancelSelection = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedRunIds(new Set());
+  }, []);
+  const toggleRunSelection = useCallback((runId: string) => {
+    setSelectedRunIds((current) => {
+      const next = new Set(current);
+      if (next.has(runId)) next.delete(runId);
+      else next.add(runId);
+      return next;
+    });
+  }, []);
+  const toggleAllVisible = useCallback(() => {
+    setSelectedRunIds((current) => {
+      const next = new Set(current);
+      const clearVisible = visibleRunIds.length > 0 && visibleRunIds.every((runId) => next.has(runId));
+      for (const runId of visibleRunIds) {
+        if (clearVisible) next.delete(runId);
+        else next.add(runId);
+      }
+      return next;
+    });
+  }, [visibleRunIds]);
+  const deleteSelectedRuns = useCallback(async () => {
+    if (!onDeleteRuns || selectedRuns.length === 0) return;
+    setSelectionBusy(true);
+    try {
+      if (await onDeleteRuns(selectedRuns)) cancelSelection();
+    } finally {
+      setSelectionBusy(false);
+    }
+  }, [cancelSelection, onDeleteRuns, selectedRuns]);
   return (
     <Card className="flex min-h-0 flex-1 flex-col">
       <CardHeader className="shrink-0 flex-row flex-wrap items-center justify-between gap-3">
@@ -126,6 +174,19 @@ const RunHistory = ({ runs, orchestratedRuns, treeRows, matchingRunCount, search
               </Button>
             )}
           </span>
+          {!readOnly && onDeleteRuns ? (
+            <RunListSelectionToolbar
+              selectionMode={selectionMode}
+              selectedCount={selectedRuns.length}
+              visibleCount={visibleRunIds.length}
+              allVisibleSelected={allVisibleSelected}
+              busy={selectionBusy}
+              onBegin={() => setSelectionMode(true)}
+              onToggleAllVisible={toggleAllVisible}
+              onDelete={() => void deleteSelectedRuns()}
+              onCancel={cancelSelection}
+            />
+          ) : null}
           <Clock3 className="size-4 shrink-0 text-[var(--ec-muted)]" />
         </div>
       </CardHeader>
@@ -134,6 +195,7 @@ const RunHistory = ({ runs, orchestratedRuns, treeRows, matchingRunCount, search
           <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto">
             {treeRows.map(({ run, depth, descendantCount, expanded }) => {
               const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
+              const selected = selectedRunIds.has(run.id);
               return (
                 <RunHierarchyIndent
                   key={run.id}
@@ -141,8 +203,27 @@ const RunHistory = ({ runs, orchestratedRuns, treeRows, matchingRunCount, search
                   indentPx={18}
                   className={depth > 0 ? "border-t border-[var(--ec-border)] bg-[var(--ec-panel-soft)]" : "border-t border-[var(--ec-border)]"}
                 >
-                  <div data-run-hierarchy-run={run.id} className="flex items-center gap-3 px-4 py-3 transition hover:bg-[var(--ec-hover)]">
-                    <button className="flex min-w-0 flex-1 items-center gap-2.5 text-left" onClick={() => onSelectRun(run.id)} type="button">
+                  <div
+                    data-run-hierarchy-run={run.id}
+                    data-run-selected={selected ? "true" : undefined}
+                    className={`flex items-center gap-3 px-4 py-3 transition hover:bg-[var(--ec-hover)] ${selected ? "bg-[var(--ec-accent-soft)]" : ""}`}
+                  >
+                    {selectionMode ? (
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        disabled={selectionBusy}
+                        onChange={() => toggleRunSelection(run.id)}
+                        aria-label={`Select ${runHierarchyLabel(run)}`}
+                        className="size-4 shrink-0 cursor-pointer rounded border border-[var(--ec-border)] accent-[var(--ec-accent)] disabled:cursor-not-allowed"
+                      />
+                    ) : null}
+                    <button
+                      className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+                      disabled={selectionBusy}
+                      onClick={() => selectionMode ? toggleRunSelection(run.id) : onSelectRun(run.id)}
+                      type="button"
+                    >
                       {/* Sits beside the two-line text block, so the mark never drives the row height. */}
                       <ProviderBrandIcon harnessType={run.harnessType} className="size-4 shrink-0" />
                       <span className="min-w-0 flex-1">
@@ -165,7 +246,7 @@ const RunHistory = ({ runs, orchestratedRuns, treeRows, matchingRunCount, search
                       ) : null}
                       <Badge dot tone={runDisplayStatusTone(displayStatus)}>{RUN_DISPLAY_STATUS_LABELS[displayStatus]}</Badge>
                       <span className="font-mono text-xs text-[var(--ec-muted)]">{(run.inputTokens + run.outputTokens).toLocaleString()}</span>
-                      {!readOnly && run.kind !== "orchestration-task" ? <Button type="button" size="icon" variant="ghost" title="Move to For later" onClick={() => void onSetRunForLater(run.id)}><Archive className="size-3.5" /></Button> : null}
+                      {!selectionMode && !readOnly && run.kind !== "orchestration-task" ? <Button type="button" size="icon" variant="ghost" title="Move to For later" onClick={() => void onSetRunForLater(run.id)}><Archive className="size-3.5" /></Button> : null}
                     </div>
                   </div>
                 </RunHierarchyIndent>
@@ -208,6 +289,7 @@ export const ProjectOverviewTab = ({
   delegationAvailable,
   onSubmitRun,
   onSetRunForLater,
+  onDeleteRuns,
   onSelectRun,
   onRunPromptChange,
   onRunModeChange,
@@ -393,6 +475,7 @@ export const ProjectOverviewTab = ({
       </section>
 
       <RunHistory
+        key={projectId}
         runs={runs}
         orchestratedRuns={orchestratedRuns}
         treeRows={treeRows}
@@ -401,6 +484,7 @@ export const ProjectOverviewTab = ({
         onSearchChange={setRunSearchQuery}
         onSelectRun={onSelectRun}
         onSetRunForLater={onSetRunForLater}
+        onDeleteRuns={onDeleteRuns}
         onToggleRun={toggleRunHierarchy}
         readOnly={readOnly}
       />

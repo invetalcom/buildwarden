@@ -115,4 +115,35 @@ describe("AllRunsPage hierarchy", () => {
     await act(async () => toggle.click());
     expect(container.querySelector('[data-run-hierarchy-run="child-run"]')).toBeNull();
   });
+
+  it("selects visible runs and sends one batch to the deletion flow", async () => {
+    const onSelectRun = vi.fn();
+    const onDeleteRuns = vi.fn<(runs: RunRecord[]) => Promise<boolean>>().mockResolvedValue(true);
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(
+      <AllRunsPage projects={projects} onSelectRun={onSelectRun} onDeleteRuns={onDeleteRuns} />,
+    ));
+
+    await act(async () => container?.querySelector<HTMLButtonElement>('[data-run-hierarchy-toggle="root-run"]')?.click());
+    const selectButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.trim() === "Select");
+    await act(async () => selectButton?.click());
+
+    expect(container.querySelectorAll('input[type="checkbox"]')).toHaveLength(2);
+    const selectAllButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.trim() === "Select all");
+    await act(async () => selectAllButton?.click());
+    expect(container.textContent).toContain("2 selected");
+
+    const deleteButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.trim() === "Delete");
+    await act(async () => deleteButton?.click());
+
+    expect(onDeleteRuns).toHaveBeenCalledTimes(1);
+    expect(onDeleteRuns.mock.calls[0]?.[0].map((run) => run.id)).toEqual(["root-run", "child-run"]);
+    expect(onSelectRun).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="toolbar"][aria-label="Run selection actions"]')).toBeNull();
+  });
 });

@@ -108,6 +108,7 @@ import {
   type RunDragPayload,
   type RunPaneId,
 } from "./components/app/app-model";
+import { buildRunDeletionPlan } from "./components/app/run-deletion-plan";
 import {
   AppNotifications,
   type ProjectForgeRequestToast,
@@ -3110,81 +3111,146 @@ export const App = () => {
     });
   };
 
-  const deleteRun = useCallback(async (run: RunRecord) => {
+  const deleteRuns = useCallback(async (runs: RunRecord[]): Promise<boolean> => {
     if (!buildwarden) {
       setError("The Electron desktop bridge is unavailable.");
-      return;
+      return false;
     }
 
-    if (pendingDeleteRunIds[run.id]) {
-      return;
+    const requestedRuns = [...new Map(runs.map((run) => [run.id, run])).values()];
+    if (requestedRuns.length === 0) {
+      return true;
+    }
+    if (requestedRuns.some((run) => pendingDeleteRunIds[run.id])) {
+      return false;
     }
 
-    let deletionImpact: RunDeletionImpact;
+    let requestedImpacts: RunDeletionImpact[];
     try {
-      deletionImpact = await buildwarden.getRunDeletionImpact(run.id);
+      requestedImpacts = await Promise.all(requestedRuns.map((run) => buildwarden.getRunDeletionImpact(run.id)));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not inspect the run deletion impact.");
-      return;
+      return false;
     }
-    const isCascade = deletionImpact.orchestrationId != null;
-    const impactSummary = isCascade
-      ? [
-          `This permanently deletes the coordinator and ${Math.max(0, deletionImpact.runIds.length - 1)} child run(s).`,
-          `${deletionImpact.runningRunIds.length} process(es) will be cancelled.`,
-          `${deletionImpact.ownedDirectories.length} owned workspace(s), ${deletionImpact.branches.length} branch(es), and ${deletionImpact.artifactPaths.length} orchestration artifact path(s) will be removed.`,
-          deletionImpact.lockedOrMissingPaths.length
-            ? `${deletionImpact.lockedOrMissingPaths.length} path(s) are currently unavailable and may require a cleanup retry.`
-            : "Every owned path and database row must be verified removed before deletion succeeds.",
-          run.workspaceType === "local"
-            ? "The original repository and previously adopted project changes are never deleted."
-            : "",
-          "Child cleanup is mandatory and cannot be deselected.",
-        ].filter(Boolean).join("\n\n")
-      : run.workspaceType === "local"
-        ? "Delete this local run and remove its logs, diff history, and persisted run data? Repository files will not be deleted."
-        : "Delete this run, its worktree, logs, diff history, and persisted run data?";
+
+    // Selecting both an orchestration coordinator and one of its children must
+    // result in exactly one cascade deletion, initiated through the coordinator.
+    const deletionPlan = buildRunDeletionPlan(requestedImpacts);
+    const {
+      impacts: deletionImpacts,
+      affectedRunIds,
+      runningRunIds,
+      ownedDirectories,
+      branches,
+      artifactPaths,
+      lockedOrMissingPaths,
+    } = deletionPlan;
+    if ([...affectedRunIds].some((runId) => pendingDeleteRunIds[runId])) {
+      return false;
+    }
+
+    const singleRun = requestedRuns.length === 1 ? requestedRuns[0] : null;
+    const singleImpact = deletionImpacts.length === 1 ? deletionImpacts[0] : null;
+    const isSingleCascade = singleRun != null && singleImpact?.orchestrationId != null;
+    const impactSummary = singleRun && singleImpact
+      ? isSingleCascade
+        ? [
+            `This permanently deletes the coordinator and ${Math.max(0, singleImpact.runIds.length - 1)} child run(s).`,
+            `${singleImpact.runningRunIds.length} process(es) will be cancelled.`,
+            `${singleImpact.ownedDirectories.length} owned workspace(s), ${singleImpact.branches.length} branch(es), and ${singleImpact.artifactPaths.length} orchestration artifact path(s) will be removed.`,
+            singleImpact.lockedOrMissingPaths.length
+              ? `${singleImpact.lockedOrMissingPaths.length} path(s) are currently unavailable and may require a cleanup retry.`
+              : "Every owned path and database row must be verified removed before deletion succeeds.",
+            singleRun.workspaceType === "local"
+              ? "The original repository and previously adopted project changes are never deleted."
+              : "",
+            "Child cleanup is mandatory and cannot be deselected.",
+          ].filter(Boolean).join("\n\n")
+        : singleRun.workspaceType === "local"
+          ? "Delete this local run and remove its logs, diff history, and persisted run data? Repository files will not be deleted."
+          : "Delete this run, its worktree, logs, diff history, and persisted run data?"
+      : [
+          `Permanently delete ${requestedRuns.length} selected runs${affectedRunIds.size !== requestedRuns.length ? ` and all ${affectedRunIds.size} affected runs` : ""}?`,
+          `${runningRunIds.size} active process(es) will be cancelled.`,
+          `${ownedDirectories.size} app-owned workspace(s), ${branches.size} branch(es), and ${artifactPaths.size} orchestration artifact path(s) will be removed.`,
+          lockedOrMissingPaths.size
+            ? `${lockedOrMissingPaths.size} path(s) are currently unavailable and may require a cleanup retry.`
+            : "All related logs, history, bookmarks, checkpoints, chats, and persisted run data will be removed.",
+          "Original project repositories are never deleted.",
+        ].join("\n\n");
     const confirmed = await requestConfirmation({
-      title: isCascade ? "Delete orchestration and all children" : "Delete run",
+      title: singleRun
+        ? isSingleCascade ? "Delete orchestration and all children" : "Delete run"
+        : `Delete ${requestedRuns.length} selected runs`,
       message: impactSummary,
-      confirmLabel: isCascade ? "Delete orchestration" : "Delete run",
+      impactItems: singleRun ? undefined : [
+        { label: "Agent runs", count: affectedRunIds.size },
+        { label: "Active processes", count: runningRunIds.size },
+        { label: "Owned workspaces", count: ownedDirectories.size },
+        { label: "Branches", count: branches.size },
+        { label: "Orchestration artifacts", count: artifactPaths.size },
+      ],
+      confirmLabel: singleRun ? isSingleCascade ? "Delete orchestration" : "Delete run" : "Delete selected runs",
       confirmVariant: "danger",
     });
 
     if (!confirmed) {
-      return;
+      return false;
     }
 
-    const runId = run.id;
-    const deletedRunIds = new Set(deletionImpact.runIds);
-    const wasViewingDeletedRun = typeof selectedRunId === "string" && deletedRunIds.has(selectedRunId);
+    setPendingDeleteRunIds((current) => {
+      const next = { ...current };
+      for (const runId of affectedRunIds) next[runId] = true;
+      return next;
+    });
 
-    setPendingDeleteRunIds((current) => ({ ...current, [runId]: true }));
+    const successfullyDeletedRunIds = new Set<string>();
+    let deletionFailure: unknown = null;
+    try {
+      for (const [index, impact] of deletionImpacts.entries()) {
+        try {
+          await buildwarden.deleteRun(deletionPlan.targetRunIds[index]);
+          for (const runId of impact.runIds) successfullyDeletedRunIds.add(runId);
+        } catch (caught) {
+          deletionFailure = caught;
+          break;
+        }
+      }
 
-    void (async () => {
-      try {
-        await buildwarden.deleteRun(runId);
-        const nextPanes = removeRunIdsFromOpenPanes(openRunPanesRef.current, deletedRunIds);
+      if (successfullyDeletedRunIds.size > 0) {
+        const wasViewingDeletedRun = typeof selectedRunId === "string" && successfullyDeletedRunIds.has(selectedRunId);
+        const nextPanes = removeRunIdsFromOpenPanes(openRunPanesRef.current, successfullyDeletedRunIds);
         const remainingRunId = firstOpenRunId(nextPanes);
         const remainingPaneId = remainingRunId ? paneForOpenRunId(nextPanes, remainingRunId) ?? "left" : "left";
-        purgeDeletedRunState(deletionImpact.runIds);
+        purgeDeletedRunState([...successfullyDeletedRunIds]);
         if (wasViewingDeletedRun && remainingRunId) {
-          await setFocusedRunSelection(remainingPaneId, remainingRunId);
+          try {
+            await setFocusedRunSelection(remainingPaneId, remainingRunId);
+          } catch (caught) {
+            setError(caught instanceof Error ? caught.message : "The remaining open run could not be restored.");
+          }
         } else if (wasViewingDeletedRun) {
           setFocusedRunPane("left");
         }
+      }
+
+      if (deletionFailure) {
+        setError(deletionFailure instanceof Error ? deletionFailure.message : "Could not delete all selected runs.");
+      }
+      try {
         await loadSnapshot();
       } catch (caught) {
-        setError(caught instanceof Error ? caught.message : "Could not delete run.");
-        await loadSnapshot();
-      } finally {
-        setPendingDeleteRunIds((current) => {
-          const next = { ...current };
-          delete next[runId];
-          return next;
-        });
+        setError(caught instanceof Error ? caught.message : "Could not refresh runs after deletion.");
       }
-    })();
+    } finally {
+      setPendingDeleteRunIds((current) => {
+        const next = { ...current };
+        for (const runId of affectedRunIds) delete next[runId];
+        return next;
+      });
+    }
+
+    return deletionFailure == null;
   }, [
     buildwarden,
     loadSnapshot,
@@ -3194,6 +3260,10 @@ export const App = () => {
     selectedRunId,
     setFocusedRunSelection,
   ]);
+
+  const deleteRun = useCallback(async (run: RunRecord) => {
+    await deleteRuns([run]);
+  }, [deleteRuns]);
 
   const deleteProviderAccount = async (providerAccountId: string) => {
     if (!buildwarden) {
@@ -3763,6 +3833,7 @@ export const App = () => {
     <AllRunsPage
       projects={snapshot.projects}
       onSelectRun={(projectId, runId) => void handleRunSelect(projectId, runId)}
+      onDeleteRuns={buildwarden.capabilities.runMutations ? deleteRuns : undefined}
     />
   );
 
@@ -3974,6 +4045,7 @@ export const App = () => {
               onStartTask={(taskId, prompt, modelId) => submitRunFromPrompt(prompt, modelId, taskId)}
               onGenerateInsight={(kind, modelId) => generateProjectInsight(project.project.id, kind, modelId)}
               onSetRunForLater={(runId) => void setRunForLater(runId)}
+              onDeleteRuns={deleteRuns}
               onRestoreRunFromForLater={(runId) => void restoreRunFromForLater(runId)}
               reasoningEffort={runReasoningEffort}
               anthropicEffort={runAnthropicEffort}
