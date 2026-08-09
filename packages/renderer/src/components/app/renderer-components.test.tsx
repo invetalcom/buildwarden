@@ -683,6 +683,51 @@ describe("renderer component states", () => {
     );
     expect(markup).toContain("feat/coverage");
     expect(markup).toContain("Changes");
+    expect(markup).toContain('title="Run token usage"');
+  });
+
+  it("hides token usage controls for Cursor runs", () => {
+    const run = runRecord({
+      providerAccountId: "provider-cursor-agent",
+      harnessType: "cursor-acp",
+      inputTokens: 0,
+      outputTokens: 0,
+    });
+    const runDetail: RunDetail = { run, steps: [], notes: [], diff: "" };
+    const markup = renderToStaticMarkup(
+      <RunDetailHeader
+        run={run}
+        runDetail={runDetail}
+        tokenUsage={{ inputTokens: 0, outputTokens: 0, totalProcessedTokens: 0 }}
+        busy={false}
+        pendingDelete={false}
+        configuredIdeKinds={[]}
+        canContinueRun
+        runTimelineDensity="comfortable"
+        onRunTimelineDensityChange={vi.fn()}
+        runDensityMenuOpen={false}
+        setRunDensityMenuOpen={vi.fn()}
+        runDensityMenuAnchorRef={createRef<HTMLDivElement>()}
+        runPanelToggleItems={[]}
+        runWorkspaceVisiblePanelCount={0}
+        runPanelsMenuOpen={false}
+        setRunPanelsMenuOpen={vi.fn()}
+        runPanelsMenuAnchorRef={createRef<HTMLDivElement>()}
+        publishMenuOpen={false}
+        setPublishMenuOpen={vi.fn()}
+        publishMenuAnchorRef={createRef<HTMLDivElement>()}
+        onCommitRun={vi.fn()}
+        onOpenPublishDialog={vi.fn()}
+        onOpenBranchPublishDialog={vi.fn()}
+        onOpenInIde={vi.fn()}
+        onOpenFileManager={vi.fn()}
+        onOpenContinueRunDialog={vi.fn()}
+        onDeleteRun={vi.fn()}
+      />,
+    );
+
+    expect(markup).not.toContain('title="Run token usage"');
+    expect(markup).not.toContain("Token Usage");
   });
 
   it("shows the orchestration status while the coordinator provider turn is idle", () => {
