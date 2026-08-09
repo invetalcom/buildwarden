@@ -118,4 +118,46 @@ describe("data-retention settings and startup review", () => {
     expect(onConfirm).toHaveBeenCalledOnce();
     expect(onSkip).not.toHaveBeenCalled();
   });
+
+  it("allows retrying or skipping after a startup retention error", async () => {
+    const onRetry = vi.fn();
+    const onSkip = vi.fn();
+    await render(
+      <StartupDataRetentionDialog
+        state={{ status: "error", phase: "checking", message: "Snapshot unavailable" }}
+        onConfirm={vi.fn()}
+        onSkip={onSkip}
+        onRetry={onRetry}
+      />,
+    );
+
+    const buttons = [...(container?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
+    await act(async () => buttons.find((button) => button.textContent?.includes("Retry check"))?.click());
+    await act(async () => buttons.find((button) => button.textContent?.includes("Continue to app"))?.click());
+    expect(onRetry).toHaveBeenCalledOnce();
+    expect(onSkip).toHaveBeenCalledOnce();
+  });
+
+  it("disables both actions while old data is being deleted", async () => {
+    const onConfirm = vi.fn();
+    const onSkip = vi.fn();
+    await render(
+      <StartupDataRetentionDialog
+        state={{ status: "deleting", impact }}
+        onConfirm={onConfirm}
+        onSkip={onSkip}
+        onRetry={vi.fn()}
+      />,
+    );
+
+    const buttons = [...(container?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
+    const skipButton = buttons.find((button) => button.textContent?.includes("Not now"));
+    const deleteButton = buttons.find((button) => button.textContent?.includes("Deleting old data"));
+    expect(skipButton?.disabled).toBe(true);
+    expect(deleteButton?.disabled).toBe(true);
+    await act(async () => skipButton?.click());
+    await act(async () => deleteButton?.click());
+    expect(onSkip).not.toHaveBeenCalled();
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
 });
