@@ -100,4 +100,22 @@ describe("reconcileSettingsPreviousPageAfterModelDeletion", () => {
     expect(reconciled.openRunPanes).toEqual({ right: "surviving-run" });
     expect(reconciled.runDetailsById).toEqual({ "surviving-run": survivingRunDetail });
   });
+
+  it("moves focus when a different selected run survives in another pane", () => {
+    const survivingRunDetail = { run: { id: "surviving-run" } } as SettingsPreviousPageState["runDetail"];
+    const state = {
+      selectedRunId: "surviving-run",
+      runDetail: survivingRunDetail,
+      openRunPanes: { left: "deleted-run", right: "surviving-run" },
+      focusedRunPane: "left",
+      runDetailsById: { "surviving-run": survivingRunDetail },
+      selectedChat: null,
+      chatDetail: null,
+    } as unknown as SettingsPreviousPageState;
+
+    const reconciled = reconcileSettingsPreviousPageAfterModelDeletion(state, ["deleted-run"], []);
+
+    expect(reconciled.selectedRunId).toBe("surviving-run");
+    expect(reconciled.focusedRunPane).toBe("right");
+  });
 });
