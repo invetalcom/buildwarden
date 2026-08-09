@@ -94,6 +94,8 @@ describe("data-retention settings and startup review", () => {
       setInputValue(input, "0");
     });
     expect(container?.textContent).toContain("Enter a whole number");
+    expect(input?.getAttribute("aria-describedby")).toBe("data-retention-days-error");
+    expect(container?.querySelector("#data-retention-days-error")).not.toBeNull();
     expect(save?.disabled).toBe(true);
   });
 

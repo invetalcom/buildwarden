@@ -91,6 +91,7 @@ const SettingsRow = ({ title, description, children, align = "center" }: Setting
 );
 
 const rowControlClass = "w-full md:max-w-[42rem]";
+const DATA_RETENTION_DAYS_ERROR_ID = "data-retention-days-error";
 
 export const DataRetentionSettingsControl = ({
   busy,
@@ -126,6 +127,7 @@ export const DataRetentionSettingsControl = ({
             onChange={(event) => setDayCountDraft(event.target.value)}
             aria-label="Old data retention days"
             aria-invalid={!dayCountValid}
+            aria-describedby={!dayCountValid ? DATA_RETENTION_DAYS_ERROR_ID : undefined}
             className="h-8 w-24 font-mono text-xs tabular-nums"
           />
           <span className="text-xs text-[var(--ec-muted)]">days</span>
@@ -146,7 +148,7 @@ export const DataRetentionSettingsControl = ({
         aria-label="Delete old data at startup"
       />
       {enabled && !dayCountValid ? (
-        <p className="basis-full text-xs text-[var(--ec-danger)] md:text-right">
+        <p id={DATA_RETENTION_DAYS_ERROR_ID} className="basis-full text-xs text-[var(--ec-danger)] md:text-right">
           Enter a whole number from {MIN_DATA_RETENTION_CLEANUP_DAYS.toLocaleString()} to {MAX_DATA_RETENTION_CLEANUP_DAYS.toLocaleString()}.
         </p>
       ) : null}
