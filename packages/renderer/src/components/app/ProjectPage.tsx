@@ -198,6 +198,7 @@ export const ProjectPage = ({
           repoPath={project.project.repoPath}
           projectKind={project.project.kind}
           runs={project.runs}
+          knownPrimaryRuns={[...project.runs, ...project.forLaterRuns]}
           orchestratedRuns={project.orchestratedRuns}
           modelOptions={modelOptions}
           configuredIdeKinds={configuredIdeKinds}

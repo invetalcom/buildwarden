@@ -15,7 +15,13 @@ import {
   runDisplayStatusTone,
 } from "./run-display-status";
 import { formatRunDuration, formatRunRelativeTime } from "./run-summary-format";
-import { buildRunHierarchyRows, findSubagentHierarchyRoots, runHierarchyLabel, type RunHierarchyRow } from "./run-hierarchy";
+import {
+  appendUnreachableSubagentRoots,
+  buildRunHierarchyRows,
+  findSubagentHierarchyRoots,
+  runHierarchyLabel,
+  type RunHierarchyRow,
+} from "./run-hierarchy";
 import { RunHierarchyIndent, RunHierarchyToggle } from "./RunHierarchy";
 
 interface AllRunsPageProps {
@@ -132,7 +138,9 @@ export const AllRunsPage = ({ projects, onSelectRun }: AllRunsPageProps) => {
   const subagentRuns = useMemo(() => projects.flatMap((entry) => entry.orchestratedRuns), [projects]);
   const sourceRuns = view === "orchestrated" ? subagentRuns : [...primaryRuns, ...subagentRuns];
   const hierarchyRoots = useMemo(
-    () => view === "orchestrated" ? findSubagentHierarchyRoots(subagentRuns) : primaryRuns,
+    () => view === "orchestrated"
+      ? findSubagentHierarchyRoots(subagentRuns)
+      : appendUnreachableSubagentRoots(primaryRuns, subagentRuns),
     [primaryRuns, subagentRuns, view],
   );
   const activeCount = sourceRuns.filter((run) =>

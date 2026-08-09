@@ -1,6 +1,11 @@
 import type { RunRecord } from "@buildwarden/shared";
 import { describe, expect, it } from "vitest";
-import { buildRunHierarchyRows, findSubagentHierarchyRoots, runHierarchyLabel } from "./run-hierarchy";
+import {
+  appendUnreachableSubagentRoots,
+  buildRunHierarchyRows,
+  findSubagentHierarchyRoots,
+  runHierarchyLabel,
+} from "./run-hierarchy";
 
 const runRecord = (overrides: Partial<RunRecord> = {}): RunRecord => ({
   id: "root-run",
@@ -91,5 +96,33 @@ describe("run hierarchy", () => {
 
     expect(runHierarchyLabel(parent)).toBe("Implement the UI");
     expect(findSubagentHierarchyRoots([parent, nested]).map((run) => run.id)).toEqual([parent.id]);
+  });
+
+  it("recovers a disconnected subagent hierarchy exactly once", () => {
+    const orphan = childRun("orphan", "Recover durable work", "2026-08-09T10:02:00.000Z");
+    orphan.parentRunId = "missing-parent";
+    orphan.rootRunId = "missing-root";
+    const nested = childRun("nested", "Keep nested work", "2026-08-09T10:03:00.000Z");
+    nested.parentRunId = orphan.id;
+    nested.rootRunId = "missing-root";
+
+    const roots = appendUnreachableSubagentRoots([runRecord()], [orphan, nested]);
+    expect(roots.map((run) => run.id)).toEqual(["root-run", "orphan"]);
+    expect(buildRunHierarchyRows(roots, [orphan, nested], {
+      expandedRunIds: new Set([orphan.id]),
+    }).map(({ run, depth }) => [run.id, depth])).toEqual([
+      ["orphan", 0],
+      ["nested", 1],
+      ["root-run", 0],
+    ]);
+  });
+
+  it("does not recover a subagent whose primary ancestor is intentionally hidden", () => {
+    const hiddenParent = runRecord({ id: "for-later-parent" });
+    const child = childRun("hidden-child", "Stay with hidden parent", "2026-08-09T10:02:00.000Z");
+    child.parentRunId = hiddenParent.id;
+    child.rootRunId = hiddenParent.id;
+
+    expect(appendUnreachableSubagentRoots([], [child], [hiddenParent])).toEqual([]);
   });
 });

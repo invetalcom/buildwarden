@@ -22,7 +22,7 @@ import type { ProjectRunStats } from "./ProjectStatisticsCard";
 import { ProviderBrandIcon } from "./provider-brand-icons";
 import { RunComposer } from "./RunComposer";
 import { resolveRunDisplayStatus, runDisplayStatusTone } from "./run-display-status";
-import { buildRunHierarchyRows, runHierarchyLabel, type RunHierarchyRow } from "./run-hierarchy";
+import { appendUnreachableSubagentRoots, buildRunHierarchyRows, runHierarchyLabel, type RunHierarchyRow } from "./run-hierarchy";
 import { RunHierarchyIndent, RunHierarchyToggle } from "./RunHierarchy";
 
 interface ProjectOverviewTabProps {
@@ -31,6 +31,7 @@ interface ProjectOverviewTabProps {
   repoPath: string;
   projectKind: ProjectKind;
   runs: RunRecord[];
+  knownPrimaryRuns?: RunRecord[];
   orchestratedRuns: RunRecord[];
   modelOptions: Array<{ id: string; label: string; modelId: string; providerType: ProviderType; providerFamily: UnifiedProviderFamily | null; executionProfile?: ModelExecutionProfile }>;
   configuredIdeKinds: SupportedIdeKind[];
@@ -183,6 +184,7 @@ export const ProjectOverviewTab = ({
   repoPath,
   projectKind,
   runs,
+  knownPrimaryRuns = runs,
   orchestratedRuns,
   modelOptions,
   configuredIdeKinds,
@@ -227,12 +229,16 @@ export const ProjectOverviewTab = ({
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
   const runSearchTerms = useMemo(() => parseSearchTerms(runSearchQuery), [runSearchQuery]);
   const hasRunSearch = runSearchTerms.length > 0;
+  const hierarchyRoots = useMemo(
+    () => appendUnreachableSubagentRoots(runs, orchestratedRuns, knownPrimaryRuns),
+    [knownPrimaryRuns, orchestratedRuns, runs],
+  );
   const treeRows = useMemo(
-    () => buildRunHierarchyRows(runs, orchestratedRuns, {
+    () => buildRunHierarchyRows(hierarchyRoots, orchestratedRuns, {
       expandedRunIds,
       matches: hasRunSearch ? (run) => runMatchesSearch(run, runSearchTerms) : undefined,
     }),
-    [expandedRunIds, hasRunSearch, orchestratedRuns, runSearchTerms, runs],
+    [expandedRunIds, hasRunSearch, hierarchyRoots, orchestratedRuns, runSearchTerms],
   );
   const matchingRunCount = useMemo(
     () => hasRunSearch

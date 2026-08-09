@@ -28,6 +28,27 @@ export const findSubagentHierarchyRoots = (runs: readonly RunRecord[]) => {
 };
 
 /**
+ * Adds the first durable subagent in each disconnected hierarchy as a recovery
+ * root. Primary runs that are intentionally hidden from a surface can still be
+ * supplied through `knownPrimaryRuns` so their descendants stay hidden with
+ * them instead of being mistaken for orphaned data.
+ */
+export const appendUnreachableSubagentRoots = (
+  roots: readonly RunRecord[],
+  subagentRuns: readonly RunRecord[],
+  knownPrimaryRuns: readonly RunRecord[] = roots,
+) => {
+  const knownPrimaryIds = new Set(knownPrimaryRuns.map((run) => run.id));
+  const knownRunIds = new Set([...knownPrimaryIds, ...subagentRuns.map((run) => run.id)]);
+  const recoveryRoots = subagentRuns.filter((run) => {
+    const parentIsKnown = Boolean(run.parentRunId && knownRunIds.has(run.parentRunId));
+    const rootIsKnown = Boolean(run.rootRunId && knownPrimaryIds.has(run.rootRunId));
+    return !parentIsKnown && !rootIsKnown;
+  });
+  return [...new Map([...roots, ...recoveryRoots].map((run) => [run.id, run])).values()];
+};
+
+/**
  * Flattens primary runs and their durable orchestration-task descendants into
  * visible tree rows. During search, matching descendants reveal their ancestry
  * even when the branch was previously collapsed.
