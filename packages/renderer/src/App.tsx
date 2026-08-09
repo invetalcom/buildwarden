@@ -385,6 +385,7 @@ export const App = () => {
   const loadSnapshot = useCallback(async () => {
     if (!buildwarden) {
       setError("The Electron desktop bridge is unavailable. Restart the app with `pnpm dev`.");
+      setSnapshotLoaded(true);
       return;
     }
 
@@ -1042,7 +1043,10 @@ export const App = () => {
       return;
     }
 
-    void loadSnapshot();
+    void loadSnapshot().catch((caught) => {
+      setError(caught instanceof Error ? caught.message : "Could not load the app snapshot.");
+      setSnapshotLoaded(true);
+    });
     void loadDetectedCodexInstallation();
     void loadDetectedClaudeInstallation();
     void loadDetectedCursorInstallation();
