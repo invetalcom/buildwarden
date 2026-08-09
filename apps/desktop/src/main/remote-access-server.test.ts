@@ -93,6 +93,7 @@ describe("remote operation registry", () => {
       | "getOrchestrationTaskDetail"
       | "getOrchestrationAdoptionPreview"
       | "getRunDeletionImpact"
+      | "getModelDeletionImpact"
       | "getRunWorktreeDiff"
       | "getRunWorktreeDiffSummary"
       | "getRunWorkspaceFile"
@@ -231,6 +232,36 @@ describe("remote operation registry", () => {
       ok: true,
       result: emptySnapshot,
     });
+  });
+
+  it("dispatches model deletion impact requests with their model id", async () => {
+    const registry = new RemoteOperationRegistry();
+    const impact = {
+      modelId: "model-1",
+      modelDisplayName: "GPT-5",
+      runIds: ["run-1", "run-2"],
+      chatIds: ["chat-1"],
+      runCount: 2,
+      chatCount: 1,
+      projectInsightCount: 0,
+      projectLabThreadCount: 0,
+      projectLoopCount: 0,
+      orchestrationCount: 1,
+    };
+    const getModelDeletionImpact = vi.fn(async () => impact);
+    const validateModelId = (args: unknown[]): args is [string] =>
+      args.length === 1 && typeof args[0] === "string";
+    registry.register("getModelDeletionImpact", getModelDeletionImpact, validateModelId);
+
+    const response = await registry.dispatch({
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      requestId: "model-impact-1",
+      method: "getModelDeletionImpact",
+      args: ["model-1"],
+    }, ["state:read"]);
+
+    expect(getModelDeletionImpact).toHaveBeenCalledWith("model-1");
+    expect(response).toMatchObject({ ok: true, result: impact });
   });
 
   it("rejects incompatible, unavailable, under-scoped, and failed operations without exposing internals", async () => {

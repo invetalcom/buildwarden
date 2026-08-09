@@ -1,6 +1,12 @@
 import type { ChatDetail, ChatRecord, ProjectSnapshot, RunDetail } from "@buildwarden/shared";
 import type { BookmarkItem } from "./BookmarksPage";
-import type { OpenRunPanes, RunPaneId } from "./app-model";
+import {
+  firstOpenRunId,
+  paneForOpenRunId,
+  removeRunIdsFromOpenPanes,
+  type OpenRunPanes,
+  type RunPaneId,
+} from "./app-model";
 import type { ProjectPageTab } from "./project-page-tabs";
 
 export interface SettingsPreviousPageState {
@@ -18,6 +24,39 @@ export interface SettingsPreviousPageState {
   focusedRunPane: RunPaneId;
   runDetailsById: Record<string, RunDetail>;
 }
+
+export const reconcileSettingsPreviousPageAfterModelDeletion = (
+  state: SettingsPreviousPageState,
+  runIds: readonly string[],
+  chatIds: readonly string[],
+): SettingsPreviousPageState => {
+  const deletedRunIds = new Set(runIds);
+  const deletedChatIds = new Set(chatIds);
+  const openRunPanes = removeRunIdsFromOpenPanes(state.openRunPanes, deletedRunIds);
+  const runDetailsById = Object.fromEntries(
+    Object.entries(state.runDetailsById).filter(([runId]) => !deletedRunIds.has(runId)),
+  );
+  const selectedRunWasDeleted = typeof state.selectedRunId === "string" && deletedRunIds.has(state.selectedRunId);
+  const selectedRunId = selectedRunWasDeleted ? firstOpenRunId(openRunPanes) : state.selectedRunId;
+  const focusedPaneStillOpen = openRunPanes[state.focusedRunPane] !== undefined;
+  const focusedRunPane = selectedRunWasDeleted || !focusedPaneStillOpen
+    ? (selectedRunId ? paneForOpenRunId(openRunPanes, selectedRunId) ?? "left" : "left")
+    : state.focusedRunPane;
+  const runDetail = selectedRunWasDeleted
+    ? (selectedRunId ? runDetailsById[selectedRunId] ?? null : null)
+    : state.runDetail?.run.id && deletedRunIds.has(state.runDetail.run.id) ? null : state.runDetail;
+
+  return {
+    ...state,
+    selectedChat: state.selectedChat && deletedChatIds.has(state.selectedChat.id) ? null : state.selectedChat,
+    chatDetail: state.chatDetail && deletedChatIds.has(state.chatDetail.chat.id) ? null : state.chatDetail,
+    selectedRunId,
+    runDetail,
+    openRunPanes,
+    focusedRunPane,
+    runDetailsById,
+  };
+};
 
 export interface MainViewFlagInput {
   settingsOpen: boolean;

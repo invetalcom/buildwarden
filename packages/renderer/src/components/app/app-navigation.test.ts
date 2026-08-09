@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { computeMainViewFlags, normalizeProjectFeatureTab, type MainViewFlagInput } from "./app-navigation";
+import {
+  computeMainViewFlags,
+  normalizeProjectFeatureTab,
+  reconcileSettingsPreviousPageAfterModelDeletion,
+  type MainViewFlagInput,
+  type SettingsPreviousPageState,
+} from "./app-navigation";
 
 const baseInput = (overrides: Partial<MainViewFlagInput> = {}): MainViewFlagInput => ({
   settingsOpen: false,
@@ -53,5 +59,63 @@ describe("normalizeProjectFeatureTab", () => {
   it("preserves supported folder tabs and all Git project tabs", () => {
     expect(normalizeProjectFeatureTab("folder", "tasks")).toBe("tasks");
     expect(normalizeProjectFeatureTab("git", "reviews")).toBe("reviews");
+  });
+});
+
+describe("reconcileSettingsPreviousPageAfterModelDeletion", () => {
+  it("removes deleted run and chat state while selecting a surviving run pane", () => {
+    const deletedRunDetail = { run: { id: "deleted-run" } } as SettingsPreviousPageState["runDetail"];
+    const survivingRunDetail = { run: { id: "surviving-run" } } as SettingsPreviousPageState["runDetail"];
+    const state = {
+      landingSelected: false,
+      allRunsSelected: false,
+      bookmarksSelected: false,
+      chatsSelected: false,
+      projectPageTab: "overview",
+      selectedBookmark: null,
+      selectedChat: { id: "deleted-chat" },
+      chatDetail: { chat: { id: "deleted-chat" } },
+      selectedRunId: "deleted-run",
+      runDetail: deletedRunDetail,
+      openRunPanes: { left: "deleted-run", right: "surviving-run" },
+      focusedRunPane: "left",
+      runDetailsById: {
+        "deleted-run": deletedRunDetail,
+        "surviving-run": survivingRunDetail,
+      },
+    } as unknown as SettingsPreviousPageState;
+
+    const reconciled = reconcileSettingsPreviousPageAfterModelDeletion(
+      state,
+      ["deleted-run"],
+      ["deleted-chat"],
+    );
+    expect(reconciled).toMatchObject({
+      selectedChat: null,
+      chatDetail: null,
+      selectedRunId: "surviving-run",
+      runDetail: survivingRunDetail,
+      focusedRunPane: "right",
+    });
+    expect(reconciled.openRunPanes).toEqual({ right: "surviving-run" });
+    expect(reconciled.runDetailsById).toEqual({ "surviving-run": survivingRunDetail });
+  });
+
+  it("moves focus when a different selected run survives in another pane", () => {
+    const survivingRunDetail = { run: { id: "surviving-run" } } as SettingsPreviousPageState["runDetail"];
+    const state = {
+      selectedRunId: "surviving-run",
+      runDetail: survivingRunDetail,
+      openRunPanes: { left: "deleted-run", right: "surviving-run" },
+      focusedRunPane: "left",
+      runDetailsById: { "surviving-run": survivingRunDetail },
+      selectedChat: null,
+      chatDetail: null,
+    } as unknown as SettingsPreviousPageState;
+
+    const reconciled = reconcileSettingsPreviousPageAfterModelDeletion(state, ["deleted-run"], []);
+
+    expect(reconciled.selectedRunId).toBe("surviving-run");
+    expect(reconciled.focusedRunPane).toBe("right");
   });
 });

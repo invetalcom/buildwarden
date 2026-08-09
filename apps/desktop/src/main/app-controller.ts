@@ -35,7 +35,7 @@ import {
   type ProjectActivityCommit,
 } from "./project-activity";
 import { ProjectLoopRunner } from "./loop/loop-runner";
-import { BuildWardenDatabase } from "@buildwarden/db";
+import { BuildWardenDatabase, type ModelDeletionTargets } from "@buildwarden/db";
 import {
   computePrMrDiffViaFetch,
   GitService,
@@ -93,6 +93,7 @@ import {
   parseProjectActiveSkillsSetting,
   parseShellAllowlistExtraSetting,
   serializeProjectForgePrMonitorSettingsSetting,
+  serializeProjectLabSettingsSetting,
   validateChatAttachmentPayloads,
   type UnifiedProviderFamily,
   type StoredAttachmentMetadata,
@@ -206,6 +207,7 @@ import {
   type RunWorktreeDiffSummaryResult,
   type RunFollowUpOptions,
   type RunInput,
+  type ModelDeletionImpact,
   type RunDeletionImpact,
   type RunListVisibility,
   type RunNoteRecord,
@@ -222,6 +224,7 @@ import {
   type SupportedIdeKind,
   type WorktreeStatus,
   parseOrchestrationTeamSettings,
+  parseProjectRunDefaultsSetting,
 } from "@buildwarden/shared";
 import { logError, logInfo, logWarn } from "./logger";
 import type { AppControllerDesktopServices } from "./desktop-platform-services";
@@ -2674,13 +2677,191 @@ export class AppController
   }
 
   async deleteModel(modelId: string): Promise<void> {
-    const runCount = this.db.countRunsForModel(modelId);
+    this.db.getModel(modelId);
+    const targets = this.db.getModelDeletionTargets(modelId);
+    const previousSelection = this.db.getSettings();
 
-    if (runCount > 0) {
-      throw new Error("This model cannot be deleted because existing runs reference it.");
+    try {
+      await this.deleteModelRelatedData(modelId, targets);
+    } finally {
+      this.restoreSelectionAfterDeletion(previousSelection);
+    }
+  }
+
+  private async deleteModelRelatedData(modelId: string, targets: ModelDeletionTargets): Promise<void> {
+
+    for (const threadId of targets.projectLabThreadIds) {
+      try {
+        this.db.getProjectLabThread(threadId);
+      } catch {
+        continue;
+      }
+      await this.deleteProjectLabThread(threadId);
     }
 
+    for (const loopId of targets.projectLoopIds) {
+      try {
+        this.db.getProjectLoop(loopId);
+      } catch {
+        continue;
+      }
+      await this.loopRunner.deleteLoop(loopId);
+    }
+
+    for (const orchestrationId of targets.orchestrationIds) {
+      let orchestration: OrchestrationRecord;
+      try {
+        orchestration = this.db.getOrchestration(orchestrationId);
+      } catch {
+        continue;
+      }
+      try {
+        this.db.getRun(orchestration.coordinatorRunId);
+      } catch {
+        continue;
+      }
+      await this.deleteRun(orchestration.coordinatorRunId);
+    }
+
+    for (const runId of targets.runIds) {
+      try {
+        this.db.getRun(runId);
+      } catch {
+        continue;
+      }
+      const ownedTask = this.db.getOrchestrationTaskByChildRunId(runId);
+      if (ownedTask) {
+        let orchestration: OrchestrationRecord | null = null;
+        try {
+          orchestration = this.db.getOrchestration(ownedTask.orchestrationId);
+        } catch {
+          /* A stale task row must not prevent deleting its surviving child run. */
+        }
+        await this.deleteRun(orchestration?.coordinatorRunId ?? runId);
+      } else {
+        await this.deleteRun(runId);
+      }
+    }
+
+    for (const chatId of targets.chatIds) {
+      try {
+        this.db.getChat(chatId);
+      } catch {
+        continue;
+      }
+      await this.deleteChat(chatId);
+    }
+
+    this.db.deleteProjectInsights(targets.projectInsightIds);
+    const remainingTargets = this.db.getModelDeletionTargets(modelId);
+    if (
+      remainingTargets.runIds.length > 0 ||
+      remainingTargets.chatIds.length > 0 ||
+      remainingTargets.projectInsightIds.length > 0 ||
+      remainingTargets.projectLabThreadIds.length > 0 ||
+      remainingTargets.projectLoopIds.length > 0 ||
+      remainingTargets.orchestrationIds.length > 0
+    ) {
+      throw new Error("Some model-related data could not be deleted. Retry after active work has stopped.");
+    }
+    this.removeModelFromPersistedSettings(modelId);
     this.db.deleteModel(modelId);
+  }
+
+  private restoreSelectionAfterDeletion(previousSelection: Record<string, string>): void {
+    const restoreExisting = (
+      key: string,
+      lookup: (id: string) => unknown,
+    ) => {
+      const previousId = previousSelection[key];
+      if (previousId) {
+        try {
+          lookup(previousId);
+          this.db.setSetting(key, previousId);
+          return;
+        } catch {
+          /* The previously selected object was part of the deletion cascade. */
+        }
+      }
+      this.db.deleteSetting(key);
+    };
+
+    restoreExisting(SELECTED_PROJECT_KEY, (id) => this.db.getProject(id));
+    restoreExisting(SELECTED_RUN_KEY, (id) => this.db.getRun(id));
+    restoreExisting(SELECTED_CHAT_KEY, (id) => this.db.getChat(id));
+  }
+
+  private removeModelFromPersistedSettings(modelId: string): void {
+    const settings = this.db.getSettings();
+    const projectLabSettingsJson = settings[APP_SETTING_KEYS.projectLabSettings];
+    if (projectLabSettingsJson?.includes(modelId)) {
+      const projectLabSettings = parseProjectLabSettingsSetting(projectLabSettingsJson);
+      const nextProjectLabSettings = Object.fromEntries(
+        Object.entries(projectLabSettings).map(([projectId, projectSettings]) => [projectId, {
+          ...projectSettings,
+          implementationModelId: projectSettings.implementationModelId === modelId
+            ? null
+            : projectSettings.implementationModelId,
+          reviewModelId: projectSettings.reviewModelId === modelId ? null : projectSettings.reviewModelId,
+        }]),
+      );
+      this.db.setSetting(
+        APP_SETTING_KEYS.projectLabSettings,
+        serializeProjectLabSettingsSetting(nextProjectLabSettings),
+      );
+    }
+
+    const runDefaultsJson = settings[APP_SETTING_KEYS.projectRunDefaults];
+    if (runDefaultsJson?.includes(modelId)) {
+      const runDefaults = parseProjectRunDefaultsSetting(runDefaultsJson);
+      const nextRunDefaults = Object.fromEntries(Object.entries(runDefaults).map(([projectId, defaults]) => {
+        const modelConfigurations = { ...defaults.modelConfigurations };
+        delete modelConfigurations[modelId];
+        return [projectId, {
+          ...defaults,
+          modelId: defaults.modelId === modelId ? "" : defaults.modelId,
+          worktreeModelIds: defaults.worktreeModelIds.filter((id) => id !== modelId),
+          modelConfigurations,
+        }];
+      }));
+      this.db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify(nextRunDefaults));
+    }
+
+    const orchestrationTeamJson = settings[APP_SETTING_KEYS.orchestrationTeam];
+    if (orchestrationTeamJson?.includes(modelId)) {
+      const team = parseOrchestrationTeamSettings(orchestrationTeamJson);
+      const roles = team.roles.flatMap((role) => {
+        const eligibleModelIds = role.eligibleModelIds.filter((id) => id !== modelId);
+        if (eligibleModelIds.length === 0) return [];
+        return [{
+          ...role,
+          eligibleModelIds,
+          preferredModelId: role.preferredModelId === modelId ? eligibleModelIds[0] : role.preferredModelId,
+        }];
+      });
+      this.db.setSetting(APP_SETTING_KEYS.orchestrationTeam, JSON.stringify({
+        ...team,
+        models: team.models.filter((entry) => entry.modelId !== modelId),
+        roles,
+      }));
+    }
+  }
+
+  async getModelDeletionImpact(modelId: string): Promise<ModelDeletionImpact> {
+    const model = this.db.getModel(modelId);
+    const targets = this.db.getModelDeletionTargets(modelId);
+    return {
+      modelId: model.id,
+      modelDisplayName: model.displayName,
+      runIds: targets.runIds,
+      chatIds: targets.chatIds,
+      runCount: targets.runIds.length,
+      chatCount: targets.chatIds.length,
+      projectInsightCount: targets.projectInsightIds.length,
+      projectLabThreadCount: targets.projectLabThreadIds.length,
+      projectLoopCount: targets.projectLoopIds.length,
+      orchestrationCount: targets.orchestrationIds.length,
+    };
   }
 
   async createRun(input: RunInput): Promise<RunRecord> {
@@ -3590,18 +3771,30 @@ export class AppController
   async deleteProjectLabThread(threadId: string): Promise<void> {
     this.cancelledProjectLabThreadIds.add(threadId);
     const thread = this.db.getProjectLabThread(threadId);
-    if (thread.implementationRunId) {
-      const run = this.db.getRun(thread.implementationRunId);
-      const project = this.db.getProject(run.projectId);
-      this.terminal.killForRunId(run.id);
-      this.clearRunCheckpoint(run.id);
-      this.clearRunPromptRestorePoint(run.id);
-      this.db.deleteProviderSessionRuntime(run.id, "run");
-      await this.deleteRunResources(project.repoPath, run, "run");
-      this.db.deleteRun(run.id);
-      this.notifyRunDeleted(run.id);
-    }
+    const implementationRun = thread.implementationRunId
+      ? (() => {
+          try {
+            return this.db.getRun(thread.implementationRunId);
+          } catch {
+            return null;
+          }
+        })()
+      : null;
     this.db.deleteProjectLabThread(threadId);
+    if (implementationRun) {
+      const ownedTask = this.db.getOrchestrationTaskByChildRunId(implementationRun.id);
+      if (ownedTask) {
+        let orchestration: OrchestrationRecord | null = null;
+        try {
+          orchestration = this.db.getOrchestration(ownedTask.orchestrationId);
+        } catch {
+          /* Fall through to the implementation run when orchestration metadata is stale. */
+        }
+        await this.deleteRun(orchestration?.coordinatorRunId ?? implementationRun.id);
+      } else {
+        await this.deleteRun(implementationRun.id);
+      }
+    }
   }
 
   /**
@@ -7210,8 +7403,15 @@ export class AppController
     const run = this.db.getRun(runId);
     const ownedTask = this.db.getOrchestrationTaskByChildRunId(runId);
     if (ownedTask) {
-      const owner = this.db.getOrchestration(ownedTask.orchestrationId);
-      throw new Error(`This run is owned by an orchestration. Delete coordinator run ${owner.coordinatorRunId} instead.`);
+      let owner: OrchestrationRecord | null = null;
+      try {
+        owner = this.db.getOrchestration(ownedTask.orchestrationId);
+      } catch {
+        /* Treat an orphaned task reference as stale and delete the surviving run normally. */
+      }
+      if (owner) {
+        throw new Error(`This run is owned by an orchestration. Delete coordinator run ${owner.coordinatorRunId} instead.`);
+      }
     }
     const orchestration = this.db.getOrchestrationByCoordinatorRunId(runId);
     if (orchestration) {

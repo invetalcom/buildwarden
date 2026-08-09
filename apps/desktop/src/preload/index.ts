@@ -159,6 +159,7 @@ const api: DesktopApi = {
   deleteProviderAccount: (providerAccountId: string) =>
     invoke(IPC_CHANNELS.deleteProviderAccount, providerAccountId),
   deleteRun: (runId: string) => invoke(IPC_CHANNELS.deleteRun, runId),
+  getModelDeletionImpact: (modelId: string) => invoke(IPC_CHANNELS.getModelDeletionImpact, modelId),
   deleteModel: (modelId: string) => invoke(IPC_CHANNELS.deleteModel, modelId),
   getRunDetail: (runId: string) => invoke(IPC_CHANNELS.getRunDetail, runId),
   getOrchestrationDetail: (coordinatorRunId: string) =>

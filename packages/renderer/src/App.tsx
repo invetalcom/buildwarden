@@ -25,6 +25,7 @@ import {
   type ChatDetail,
   type ChatRecord,
   type KeyboardShortcutId,
+  type ModelDeletionImpact,
   type NetworkProxySettingsSnapshot,
   type ProjectFolderGitStatus,
   type ProjectForgeRequestOpenPayload,
@@ -116,6 +117,7 @@ import { createAppKeyboardShortcutHandler } from "./components/app/app-keyboard-
 import {
   computeMainViewFlags,
   normalizeProjectFeatureTab,
+  reconcileSettingsPreviousPageAfterModelDeletion,
   type SettingsPreviousPageState,
 } from "./components/app/app-navigation";
 import { buildCommandPaletteItems } from "./components/app/command-palette-items";
@@ -3222,9 +3224,33 @@ export const App = () => {
       return;
     }
 
+    let deletionImpact: ModelDeletionImpact;
+    try {
+      deletionImpact = await buildwarden.getModelDeletionImpact(modelId);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not inspect the model deletion impact.");
+      return;
+    }
+    const relatedObjectCount =
+      deletionImpact.runCount +
+      deletionImpact.chatCount +
+      deletionImpact.projectInsightCount +
+      deletionImpact.projectLabThreadCount +
+      deletionImpact.projectLoopCount +
+      deletionImpact.orchestrationCount;
     const confirmed = await requestConfirmation({
       title: "Delete model",
-      message: "Delete this model from BuildWarden? Models referenced by existing runs cannot be deleted.",
+      message: relatedObjectCount > 0
+        ? `Permanently delete ${deletionImpact.modelDisplayName} and all related data? App-owned run workspaces and files will also be removed.`
+        : `Permanently delete ${deletionImpact.modelDisplayName}? This model has no related data.`,
+      impactItems: [
+        { label: "Agent runs", count: deletionImpact.runCount },
+        { label: "Chats", count: deletionImpact.chatCount },
+        { label: "Project insights", count: deletionImpact.projectInsightCount },
+        { label: "Project Lab threads", count: deletionImpact.projectLabThreadCount },
+        { label: "Project loops", count: deletionImpact.projectLoopCount },
+        { label: "Orchestrations", count: deletionImpact.orchestrationCount },
+      ],
       confirmLabel: "Delete model",
       confirmVariant: "danger",
     });
@@ -3235,6 +3261,13 @@ export const App = () => {
 
     await handleAction(async () => {
       await buildwarden.deleteModel(modelId);
+      const deletedChatIds = new Set(deletionImpact.chatIds);
+      purgeDeletedRunState(deletionImpact.runIds);
+      setSelectedChat((current) => current && deletedChatIds.has(current.id) ? null : current);
+      setChatDetail((current) => current && deletedChatIds.has(current.chat.id) ? null : current);
+      setSettingsPreviousPage((current) => current
+        ? reconcileSettingsPreviousPageAfterModelDeletion(current, deletionImpact.runIds, deletionImpact.chatIds)
+        : current);
       await loadSnapshot();
     });
   };

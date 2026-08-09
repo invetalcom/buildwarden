@@ -62,6 +62,7 @@ export interface RunBrowserSessionState {
 export interface ConfirmDialogState {
   title: string;
   message: string;
+  impactItems?: Array<{ label: string; count: number }>;
   confirmLabel: string;
   cancelLabel?: string;
   confirmVariant?: "default" | "danger";

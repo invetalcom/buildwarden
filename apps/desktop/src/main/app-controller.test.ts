@@ -84,7 +84,15 @@ const createHarness = (overrides: DbOverrides = {}) => {
     deleteProviderAccount: vi.fn(),
     getModel: vi.fn(() => model),
     addModel: vi.fn((input: object) => ({ ...model, ...input })),
-    countRunsForModel: vi.fn(() => 0),
+    getModelDeletionTargets: vi.fn(() => ({
+      runIds: [],
+      chatIds: [],
+      projectInsightIds: [],
+      projectLabThreadIds: [],
+      projectLoopIds: [],
+      orchestrationIds: [],
+    })),
+    deleteProjectInsights: vi.fn(),
     deleteModel: vi.fn(),
     createProjectTask: vi.fn((_projectId: string, input: object) => ({ ...task, ...input })),
     getProjectTask: vi.fn(() => task),
@@ -1459,6 +1467,251 @@ describe("AppController settings and lightweight workflows", () => {
     expect(paths.logDirectorySize).toMatchObject({ totalBytes: 5, fileCount: 1, unreadableEntryCount: 0 });
     await expect(harness.controller.getSnapshot()).resolves.toMatchObject({ projects: [] });
     await expect(harness.controller.refreshSnapshot()).resolves.toMatchObject({ projects: [] });
+  });
+
+  it("summarizes and deletes chats that reference a model", async () => {
+    const targets = {
+      runIds: [],
+      chatIds: ["chat-1"],
+      projectInsightIds: [],
+      projectLabThreadIds: [],
+      projectLoopIds: [],
+      orchestrationIds: [],
+    };
+    const emptyTargets = { ...targets, chatIds: [] };
+    const getModelDeletionTargets = vi.fn()
+      .mockReturnValueOnce(targets)
+      .mockReturnValueOnce(targets)
+      .mockReturnValueOnce(emptyTargets);
+    const deleteChatRow = vi.fn();
+    const deleteModelRow = vi.fn();
+    const harness = createHarness({
+      getModelDeletionTargets,
+      getChat: vi.fn(() => ({ id: "chat-1", runId: null })),
+      deleteProviderSessionRuntime: vi.fn(),
+      deleteChat: deleteChatRow,
+      deleteModel: deleteModelRow,
+    });
+    tempDirs.push(harness.logDir);
+    harness.settings[APP_SETTING_KEYS.projectRunDefaults] = JSON.stringify({
+      [project.id]: {
+        modelId: model.id,
+        worktreeModelIds: [model.id],
+        modelConfigurations: { [model.id]: { effort: "high", executionMode: "auto" } },
+      },
+    });
+    harness.settings[APP_SETTING_KEYS.orchestrationTeam] = JSON.stringify({
+      version: 1,
+      maxConcurrentTasks: 3,
+      maxTasksPerOrchestration: 12,
+      models: [{ modelId: model.id, enabled: true, maxConcurrent: 1 }],
+      roles: [],
+    });
+
+    await expect(harness.controller.getModelDeletionImpact(model.id)).resolves.toMatchObject({
+      modelId: model.id,
+      modelDisplayName: model.displayName,
+      chatCount: 1,
+      runCount: 0,
+    });
+    await harness.controller.deleteModel(model.id);
+
+    expect(deleteChatRow).toHaveBeenCalledWith("chat-1");
+    expect(deleteModelRow).toHaveBeenCalledWith(model.id);
+    const persistedRunDefaults = JSON.parse(harness.settings[APP_SETTING_KEYS.projectRunDefaults] ?? "{}") as Record<string, {
+      modelId: string;
+      worktreeModelIds: string[];
+      modelConfigurations: Record<string, unknown>;
+    }>;
+    expect(persistedRunDefaults[project.id]).toMatchObject({ modelId: "", worktreeModelIds: [], modelConfigurations: {} });
+    const persistedTeam = JSON.parse(harness.settings[APP_SETTING_KEYS.orchestrationTeam] ?? "{}") as { models: unknown[] };
+    expect(persistedTeam.models).toEqual([]);
+  });
+
+  it("preserves selected runs and chats that are outside a model deletion cascade", async () => {
+    const targets = {
+      runIds: ["deleted-run"],
+      chatIds: ["deleted-chat"],
+      projectInsightIds: [],
+      projectLabThreadIds: [],
+      projectLoopIds: [],
+      orchestrationIds: [],
+    };
+    const harness = createHarness({
+      getModelDeletionTargets: vi.fn()
+        .mockReturnValueOnce(targets)
+        .mockReturnValueOnce({ ...targets, runIds: [], chatIds: [] }),
+      getRun: vi.fn((runId: string) => ({ id: runId, projectId: project.id } as RunRecord)),
+      getChat: vi.fn((chatId: string) => ({ id: chatId, runId: null })),
+    });
+    tempDirs.push(harness.logDir);
+    harness.settings.selectedProjectId = project.id;
+    harness.settings.selectedRunId = "surviving-run";
+    harness.settings.selectedChatId = "surviving-chat";
+    vi.spyOn(harness.controller, "deleteRun").mockImplementation(async () => {
+      harness.calls.deleteSetting("selectedRunId");
+      harness.calls.setSetting("selectedProjectId", project.id);
+    });
+    vi.spyOn(harness.controller, "deleteChat").mockImplementation(async () => {
+      harness.calls.deleteSetting("selectedChatId");
+    });
+
+    await harness.controller.deleteModel(model.id);
+
+    expect(harness.settings).toMatchObject({
+      selectedProjectId: project.id,
+      selectedRunId: "surviving-run",
+      selectedChatId: "surviving-chat",
+    });
+  });
+
+  it("deletes surviving child runs when stale orchestration tasks reference missing owners", async () => {
+    const staleTask = { orchestrationId: "missing-orchestration" } as OrchestrationTaskRecord;
+    const targets = {
+      runIds: ["orphaned-child-run"],
+      chatIds: [],
+      projectInsightIds: [],
+      projectLabThreadIds: [],
+      projectLoopIds: [],
+      orchestrationIds: [],
+    };
+    const harness = createHarness({
+      getModelDeletionTargets: vi.fn()
+        .mockReturnValueOnce(targets)
+        .mockReturnValueOnce({ ...targets, runIds: [] }),
+      getRun: vi.fn((runId: string) => ({ id: runId, projectId: project.id } as RunRecord)),
+      getOrchestrationTaskByChildRunId: vi.fn(() => staleTask),
+      getOrchestration: vi.fn(() => { throw new Error("Orchestration not found"); }),
+    });
+    tempDirs.push(harness.logDir);
+    const deleteRun = vi.spyOn(harness.controller, "deleteRun").mockResolvedValue();
+
+    await harness.controller.deleteModel(model.id);
+
+    expect(deleteRun).toHaveBeenCalledWith("orphaned-child-run");
+  });
+
+  it("deletes a Lab implementation run when its orchestration owner is missing", async () => {
+    const harness = createHarness({
+      getProjectLabThread: vi.fn(() => ({ id: "lab-1", implementationRunId: "orphaned-child-run" })),
+      getRun: vi.fn((runId: string) => ({ id: runId, projectId: project.id } as RunRecord)),
+      deleteProjectLabThread: vi.fn(),
+      getOrchestrationTaskByChildRunId: vi.fn(() => ({ orchestrationId: "missing-orchestration" } as OrchestrationTaskRecord)),
+      getOrchestration: vi.fn(() => { throw new Error("Orchestration not found"); }),
+    });
+    tempDirs.push(harness.logDir);
+    const deleteRun = vi.spyOn(harness.controller, "deleteRun").mockResolvedValue();
+
+    await harness.controller.deleteProjectLabThread("lab-1");
+
+    expect(deleteRun).toHaveBeenCalledWith("orphaned-child-run");
+  });
+
+  it("deletes an orphaned orchestration child through the real run cleanup path", async () => {
+    const orphanedRun = {
+      id: "orphaned-child-run",
+      projectId: project.id,
+      workspaceType: "local",
+      workspaceVcs: "git",
+      branchName: project.baseBranch,
+      worktreePath: project.repoPath,
+    } as RunRecord;
+    const deleteRunRow = vi.fn();
+    const harness = createHarness({
+      getRun: vi.fn(() => orphanedRun),
+      getOrchestrationTaskByChildRunId: vi.fn(() => ({
+        orchestrationId: "missing-orchestration",
+      } as OrchestrationTaskRecord)),
+      getOrchestration: vi.fn(() => { throw new Error("Orchestration not found"); }),
+      getChatsForRun: vi.fn(() => []),
+      deleteProviderSessionRuntime: vi.fn(),
+      deleteRun: deleteRunRow,
+    });
+    tempDirs.push(harness.logDir);
+
+    await expect(harness.controller.deleteRun(orphanedRun.id)).resolves.toBeUndefined();
+
+    expect(deleteRunRow).toHaveBeenCalledWith(orphanedRun.id);
+    expect(harness.lifecycle.onRunDeleted).toHaveBeenCalledWith(orphanedRun.id);
+  });
+
+  it("removes unusable orchestration roles and reassigns mixed-role preferences", async () => {
+    const harness = createHarness();
+    tempDirs.push(harness.logDir);
+    harness.settings[APP_SETTING_KEYS.orchestrationTeam] = JSON.stringify({
+      version: 1,
+      maxConcurrentTasks: 3,
+      maxTasksPerOrchestration: 12,
+      models: [
+        { modelId: model.id, enabled: true, maxConcurrent: 1 },
+        { modelId: "surviving-model", enabled: true, maxConcurrent: 1 },
+      ],
+      roles: [
+        {
+          id: "deleted-only",
+          name: "Deleted only",
+          description: "Can only use the deleted model",
+          eligibleModelIds: [model.id],
+          preferredModelId: model.id,
+          maxConcurrent: 1,
+        },
+        {
+          id: "mixed",
+          name: "Mixed",
+          description: "Can use either model",
+          eligibleModelIds: [model.id, "surviving-model"],
+          preferredModelId: model.id,
+          maxConcurrent: 1,
+        },
+      ],
+    });
+
+    await harness.controller.deleteModel(model.id);
+
+    const persistedTeam = JSON.parse(harness.settings[APP_SETTING_KEYS.orchestrationTeam] ?? "{}") as {
+      roles: Array<{ id: string; eligibleModelIds: string[]; preferredModelId: string }>;
+    };
+    expect(persistedTeam.roles).toEqual([expect.objectContaining({
+      id: "mixed",
+      eligibleModelIds: ["surviving-model"],
+      preferredModelId: "surviving-model",
+    })]);
+  });
+
+  it("clears deleted model references from Project Lab settings", async () => {
+    const harness = createHarness();
+    tempDirs.push(harness.logDir);
+    harness.settings[APP_SETTING_KEYS.projectLabSettings] = JSON.stringify({
+      [project.id]: {
+        enabled: true,
+        maxThreadsPerDay: 5,
+        maxConcurrentThreads: 2,
+        implementationModelId: model.id,
+        reviewModelId: "surviving-review-model",
+      },
+      "project-2": {
+        enabled: false,
+        maxThreadsPerDay: 2,
+        maxConcurrentThreads: 1,
+        implementationModelId: "surviving-implementation-model",
+        reviewModelId: model.id,
+      },
+    });
+
+    await harness.controller.deleteModel(model.id);
+
+    const persistedSettings = JSON.parse(harness.settings[APP_SETTING_KEYS.projectLabSettings] ?? "{}") as Record<
+      string,
+      { implementationModelId: string | null; reviewModelId: string | null }
+    >;
+    expect(persistedSettings[project.id]).toMatchObject({
+      implementationModelId: null,
+      reviewModelId: "surviving-review-model",
+    });
+    expect(persistedSettings["project-2"]).toMatchObject({
+      implementationModelId: "surviving-implementation-model",
+      reviewModelId: null,
+    });
   });
 
   it("registers and removes chat listeners", () => {

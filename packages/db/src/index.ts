@@ -114,6 +114,15 @@ export interface RunForgeRequestCacheRecord {
   retryAfterAt: string | null;
 }
 
+export interface ModelDeletionTargets {
+  runIds: string[];
+  chatIds: string[];
+  projectInsightIds: string[];
+  projectLabThreadIds: string[];
+  projectLoopIds: string[];
+  orchestrationIds: string[];
+}
+
 type StoredRunForgeRequestCacheRecord = Omit<RunForgeRequestCacheRecord, "summary" | "details"> & {
   summaryJson: string | null;
   detailsJson: string | null;
@@ -1847,6 +1856,105 @@ export class BuildWardenDatabase {
     );
   }
 
+  getModelDeletionTargets(modelId: string): ModelDeletionTargets {
+    const rows = this.all<{ kind: string; id: string }>(
+      `
+      with recursive related(kind, id) as (
+        select 'run', id from runs where model_id = ?
+        union
+        select 'project-lab-thread', id
+        from project_lab_threads
+        where implementation_model_id = ? or review_model_id = ?
+        union
+        select 'project-loop', id
+        from project_loops
+        where runner_model_id = ? or review_model_id = ?
+        union
+        select 'orchestration', orchestration_id
+        from orchestration_tasks
+        where model_id = ?
+        union
+        select 'run', thread.implementation_run_id
+        from related
+        join project_lab_threads thread
+          on related.kind = 'project-lab-thread' and thread.id = related.id
+        where thread.implementation_run_id is not null
+        union
+        select 'project-lab-thread', thread.id
+        from related
+        join project_lab_threads thread
+          on related.kind = 'run' and thread.implementation_run_id = related.id
+        union
+        select 'run', iteration.run_id
+        from related
+        join project_loop_iterations iteration
+          on related.kind = 'project-loop' and iteration.loop_id = related.id
+        where iteration.run_id is not null
+        union
+        select 'project-loop', iteration.loop_id
+        from related
+        join project_loop_iterations iteration
+          on related.kind = 'run' and iteration.run_id = related.id
+        union
+        select 'run', orchestration.coordinator_run_id
+        from related
+        join orchestrations orchestration
+          on related.kind = 'orchestration' and orchestration.id = related.id
+        union
+        select 'run', task.child_run_id
+        from related
+        join orchestration_tasks task
+          on related.kind = 'orchestration' and task.orchestration_id = related.id
+        where task.child_run_id is not null
+        union
+        select 'orchestration', orchestration.id
+        from related
+        join orchestrations orchestration
+          on related.kind = 'run' and orchestration.coordinator_run_id = related.id
+        union
+        select 'orchestration', task.orchestration_id
+        from related
+        join orchestration_tasks task
+          on related.kind = 'run' and task.child_run_id = related.id
+      )
+      select kind, id from related
+      union
+      select 'chat', chat.id
+      from chats chat
+      where chat.model_id = ?
+        or exists (
+          select 1 from related
+          where related.kind = 'run' and related.id = chat.run_id
+        )
+      union
+      select 'project-insight', id
+      from project_insights
+      where model_id = ?
+      order by kind, id
+      `,
+      [modelId, modelId, modelId, modelId, modelId, modelId, modelId, modelId],
+    );
+    const idsFor = (kind: string): string[] => rows.filter((row) => row.kind === kind).map((row) => row.id);
+    return {
+      runIds: idsFor("run"),
+      chatIds: idsFor("chat"),
+      projectInsightIds: idsFor("project-insight"),
+      projectLabThreadIds: idsFor("project-lab-thread"),
+      projectLoopIds: idsFor("project-loop"),
+      orchestrationIds: idsFor("orchestration"),
+    };
+  }
+
+  deleteProjectInsights(projectInsightIds: string[]): void {
+    this.transaction(() => {
+      for (const batch of chunkValues([...new Set(projectInsightIds)])) {
+        if (batch.length === 0) continue;
+        const placeholders = batch.map(() => "?").join(", ");
+        this.run(`delete from project_insights where id in (${placeholders})`, batch);
+      }
+    });
+  }
+
   deleteModel(modelId: string): void {
     this.run("delete from models where id = ?", [modelId]);
   }
@@ -2476,19 +2584,6 @@ export class BuildWardenDatabase {
       where provider_account_id = ?
       `,
       [providerAccountId],
-    );
-
-    return Number(row?.count ?? 0);
-  }
-
-  countRunsForModel(modelId: string): number {
-    const row = this.first<{ count: number }>(
-      `
-      select count(*) as count
-      from runs
-      where model_id = ?
-      `,
-      [modelId],
     );
 
     return Number(row?.count ?? 0);
@@ -4141,6 +4236,8 @@ export class BuildWardenDatabase {
       );
 
       create index if not exists idx_project_loops_project_id on project_loops(project_id);
+      create index if not exists idx_project_loops_runner_model_id on project_loops(runner_model_id);
+      create index if not exists idx_project_loops_review_model_id on project_loops(review_model_id);
       create index if not exists idx_project_loop_iterations_loop_id on project_loop_iterations(loop_id, iteration_index);
       create unique index if not exists idx_project_loop_iterations_loop_index_unique on project_loop_iterations(loop_id, iteration_index);
       create index if not exists idx_project_loop_events_loop_id on project_loop_events(loop_id, created_at);
@@ -4148,14 +4245,19 @@ export class BuildWardenDatabase {
 
       create unique index if not exists idx_project_insights_project_kind on project_insights(project_id, kind);
       create index if not exists idx_project_lab_threads_project_id on project_lab_threads(project_id);
+      create index if not exists idx_project_lab_threads_implementation_model_id on project_lab_threads(implementation_model_id);
+      create index if not exists idx_project_lab_threads_review_model_id on project_lab_threads(review_model_id);
       create index if not exists idx_project_lab_events_thread_id on project_lab_events(thread_id);
       create index if not exists idx_runs_project_created_at on runs(project_id, created_at desc);
+      create index if not exists idx_runs_model_id on runs(model_id);
       create index if not exists idx_runs_status on runs(status);
       create index if not exists idx_runs_parent_run_id on runs(parent_run_id);
       create index if not exists idx_runs_root_run_id on runs(root_run_id);
       create index if not exists idx_run_steps_run_created_at on run_steps(run_id, created_at);
       create index if not exists idx_run_notes_run_status_updated on run_notes(run_id, status, updated_at desc);
       create index if not exists idx_chat_steps_chat_created_at on chat_steps(chat_id, created_at);
+      create index if not exists idx_chats_model_id on chats(model_id);
+      create index if not exists idx_project_insights_model_id on project_insights(model_id);
       create index if not exists idx_worktrees_run_id on worktrees(run_id);
       create index if not exists idx_bookmarks_original_run_id on bookmarks(original_run_id);
       create index if not exists idx_chat_bookmarks_original_chat_id on chat_bookmarks(original_chat_id);
@@ -4346,6 +4448,7 @@ export class BuildWardenDatabase {
       create unique index if not exists idx_orchestration_waves_number on orchestration_waves(orchestration_id, wave_index);
       create index if not exists idx_orchestration_tasks_status on orchestration_tasks(orchestration_id, status);
       create index if not exists idx_orchestration_tasks_child_run on orchestration_tasks(child_run_id);
+      create index if not exists idx_orchestration_tasks_model_id on orchestration_tasks(model_id);
       create index if not exists idx_orchestration_events_sequence on orchestration_events(orchestration_id, sequence);
       create index if not exists idx_orchestration_messages_status on orchestration_task_messages(task_id, status);
       create index if not exists idx_orchestration_cleanup_status on orchestration_cleanup_jobs(status, updated_at);
