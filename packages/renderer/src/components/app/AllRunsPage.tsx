@@ -23,10 +23,12 @@ import {
   type RunHierarchyRow,
 } from "./run-hierarchy";
 import { RunHierarchyIndent, RunHierarchyToggle } from "./RunHierarchy";
+import { RunListSelectionToolbar } from "./RunListSelectionToolbar";
 
 interface AllRunsPageProps {
   projects: AppSnapshot["projects"];
   onSelectRun: (projectId: string, runId: string) => void;
+  onDeleteRuns?: (runs: RunRecord[]) => Promise<boolean>;
 }
 
 const formatRunWorkspaceLabel = (run: RunRecord) => {
@@ -46,12 +48,20 @@ const AllRunsContent = ({
   hasSearch,
   onSelectRun,
   onToggleRun,
+  selectionMode,
+  selectedRunIds,
+  selectionBusy,
+  onToggleSelection,
 }: {
   rows: AllRunRow[];
   allRowsCount: number;
   hasSearch: boolean;
   onSelectRun: (projectId: string, runId: string) => void;
   onToggleRun: (runId: string) => void;
+  selectionMode: boolean;
+  selectedRunIds: ReadonlySet<string>;
+  selectionBusy: boolean;
+  onToggleSelection: (runId: string) => void;
 }) => {
   if (rows.length === 0) {
     const searchIsEmpty = hasSearch && allRowsCount > 0;
@@ -74,6 +84,7 @@ const AllRunsContent = ({
     <div className="divide-y divide-[var(--ec-border)]">
       {rows.map(({ project, run, depth, descendantCount, expanded }) => {
         const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
+        const selected = selectedRunIds.has(run.id);
         return (
           <RunHierarchyIndent
             key={run.id}
@@ -81,12 +92,28 @@ const AllRunsContent = ({
             indentPx={18}
             className={depth > 0 ? "bg-[var(--ec-panel-soft)]" : undefined}
           >
-            <div data-run-hierarchy-run={run.id} className="flex w-full min-w-0 items-center gap-3 px-4 py-3 transition hover:bg-[var(--ec-hover)]">
-              <span className={depth > 0 ? "size-2 shrink-0 rounded-full bg-[var(--ec-faint)]" : "size-2 shrink-0 rounded-full bg-[var(--ec-accent)]"} aria-hidden />
+            <div
+              data-run-hierarchy-run={run.id}
+              data-run-selected={selected ? "true" : undefined}
+              className={`flex w-full min-w-0 items-center gap-3 px-4 py-3 transition hover:bg-[var(--ec-hover)] ${selected ? "bg-[var(--ec-accent-soft)]" : ""}`}
+            >
+              {selectionMode ? (
+                <input
+                  type="checkbox"
+                  checked={selected}
+                  disabled={selectionBusy}
+                  onChange={() => onToggleSelection(run.id)}
+                  aria-label={`Select ${runHierarchyLabel(run)}`}
+                  className="size-4 shrink-0 cursor-pointer rounded border border-[var(--ec-border)] accent-[var(--ec-accent)] disabled:cursor-not-allowed"
+                />
+              ) : (
+                <span className={depth > 0 ? "size-2 shrink-0 rounded-full bg-[var(--ec-faint)]" : "size-2 shrink-0 rounded-full bg-[var(--ec-accent)]"} aria-hidden />
+              )}
               <button
                 type="button"
                 className="min-w-0 flex-1 text-left"
-                onClick={() => onSelectRun(project.id, run.id)}
+                disabled={selectionBusy}
+                onClick={() => selectionMode ? onToggleSelection(run.id) : onSelectRun(project.id, run.id)}
               >
                 <span className="flex min-w-0 items-center gap-1.5">
                   <span className="truncate text-sm font-semibold text-[var(--ec-text)]">{runHierarchyLabel(run)}</span>
@@ -123,10 +150,13 @@ const AllRunsContent = ({
   );
 };
 
-export const AllRunsPage = ({ projects, onSelectRun }: AllRunsPageProps) => {
+export const AllRunsPage = ({ projects, onSelectRun, onDeleteRuns }: AllRunsPageProps) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [view, setView] = useState<"runs" | "orchestrated">("runs");
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(() => new Set());
+  const [selectionBusy, setSelectionBusy] = useState(false);
   const projectById = useMemo(
     () => new Map(projects.map((entry) => [entry.project.id, entry.project])),
     [projects],
@@ -136,7 +166,11 @@ export const AllRunsPage = ({ projects, onSelectRun }: AllRunsPageProps) => {
     [projects],
   );
   const subagentRuns = useMemo(() => projects.flatMap((entry) => entry.orchestratedRuns), [projects]);
-  const sourceRuns = view === "orchestrated" ? subagentRuns : [...primaryRuns, ...subagentRuns];
+  const sourceRuns = useMemo(
+    () => view === "orchestrated" ? subagentRuns : [...primaryRuns, ...subagentRuns],
+    [primaryRuns, subagentRuns, view],
+  );
+  const sourceRunById = useMemo(() => new Map(sourceRuns.map((run) => [run.id, run])), [sourceRuns]);
   const hierarchyRoots = useMemo(
     () => view === "orchestrated"
       ? findSubagentHierarchyRoots(subagentRuns)
@@ -160,6 +194,15 @@ export const AllRunsPage = ({ projects, onSelectRun }: AllRunsPageProps) => {
   const matchingRunCount = hasSearch
     ? sourceRuns.filter((run) => runMatchesSearch(run, searchTerms)).length
     : sourceRuns.length;
+  const visibleRunIds = useMemo(() => visibleRows.map((row) => row.run.id), [visibleRows]);
+  const allVisibleSelected = visibleRunIds.length > 0 && visibleRunIds.every((runId) => selectedRunIds.has(runId));
+  const selectedRuns = useMemo(
+    () => [...selectedRunIds].flatMap((runId) => {
+      const run = sourceRunById.get(runId);
+      return run ? [run] : [];
+    }),
+    [selectedRunIds, sourceRunById],
+  );
   const toggleRunHierarchy = useCallback((runId: string) => {
     setExpandedRunIds((current) => {
       const next = new Set(current);
@@ -168,6 +211,43 @@ export const AllRunsPage = ({ projects, onSelectRun }: AllRunsPageProps) => {
       return next;
     });
   }, []);
+  const cancelSelection = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedRunIds(new Set());
+  }, []);
+  const toggleRunSelection = useCallback((runId: string) => {
+    setSelectedRunIds((current) => {
+      const next = new Set(current);
+      if (next.has(runId)) next.delete(runId);
+      else next.add(runId);
+      return next;
+    });
+  }, []);
+  const toggleAllVisible = useCallback(() => {
+    setSelectedRunIds((current) => {
+      const next = new Set(current);
+      const clearVisible = visibleRunIds.length > 0 && visibleRunIds.every((runId) => next.has(runId));
+      for (const runId of visibleRunIds) {
+        if (clearVisible) next.delete(runId);
+        else next.add(runId);
+      }
+      return next;
+    });
+  }, [visibleRunIds]);
+  const changeView = useCallback((nextView: "runs" | "orchestrated") => {
+    setView(nextView);
+    setSelectionMode(false);
+    setSelectedRunIds(new Set());
+  }, []);
+  const deleteSelectedRuns = useCallback(async () => {
+    if (!onDeleteRuns || selectedRuns.length === 0) return;
+    setSelectionBusy(true);
+    try {
+      if (await onDeleteRuns(selectedRuns)) cancelSelection();
+    } finally {
+      setSelectionBusy(false);
+    }
+  }, [cancelSelection, onDeleteRuns, selectedRuns]);
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-3">
@@ -182,10 +262,10 @@ export const AllRunsPage = ({ projects, onSelectRun }: AllRunsPageProps) => {
           </div>
           <div className="flex min-w-0 flex-1 flex-wrap items-end justify-end gap-2">
             <div className="flex h-8 items-center rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-0.5">
-              <button type="button" aria-pressed={view === "runs"} className={`h-7 rounded px-2.5 text-xs ${view === "runs" ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)]"}`} onClick={() => setView("runs")}>
+              <button type="button" aria-pressed={view === "runs"} className={`h-7 rounded px-2.5 text-xs ${view === "runs" ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)]"}`} onClick={() => changeView("runs")}>
                 Runs
               </button>
-              <button type="button" aria-pressed={view === "orchestrated"} className={`flex h-7 items-center gap-1.5 rounded px-2.5 text-xs ${view === "orchestrated" ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)]"}`} onClick={() => setView("orchestrated")}>
+              <button type="button" aria-pressed={view === "orchestrated"} className={`flex h-7 items-center gap-1.5 rounded px-2.5 text-xs ${view === "orchestrated" ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)]"}`} onClick={() => changeView("orchestrated")}>
                 <UsersRound className="size-3" /> Orchestrated
               </button>
             </div>
@@ -214,6 +294,19 @@ export const AllRunsPage = ({ projects, onSelectRun }: AllRunsPageProps) => {
                 ) : null}
               </span>
             </label>
+            {onDeleteRuns ? (
+              <RunListSelectionToolbar
+                selectionMode={selectionMode}
+                selectedCount={selectedRuns.length}
+                visibleCount={visibleRunIds.length}
+                allVisibleSelected={allVisibleSelected}
+                busy={selectionBusy}
+                onBegin={() => setSelectionMode(true)}
+                onToggleAllVisible={toggleAllVisible}
+                onDelete={() => void deleteSelectedRuns()}
+                onCancel={cancelSelection}
+              />
+            ) : null}
             <div className="min-w-20 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-2 text-right">
               <p className="font-mono text-lg font-semibold text-[var(--ec-text)]">{activeCount}</p>
               <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--ec-faint)]">active</p>
@@ -230,6 +323,10 @@ export const AllRunsPage = ({ projects, onSelectRun }: AllRunsPageProps) => {
             hasSearch={hasSearch}
             onSelectRun={onSelectRun}
             onToggleRun={toggleRunHierarchy}
+            selectionMode={selectionMode}
+            selectedRunIds={selectedRunIds}
+            selectionBusy={selectionBusy}
+            onToggleSelection={toggleRunSelection}
           />
         </CardContent>
       </Card>

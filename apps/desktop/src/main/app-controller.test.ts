@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { BuildWardenDatabase } from "@buildwarden/db";
 import { APP_SETTING_KEYS } from "@buildwarden/shared";
 import type {
+  ChatRecord,
   ModelRecord,
   OrchestrationRecord,
   OrchestrationTaskRecord,
@@ -1563,6 +1564,99 @@ describe("AppController settings and lightweight workflows", () => {
       selectedRunId: "surviving-run",
       selectedChatId: "surviving-chat",
     });
+  });
+
+  it("does not execute retention deletion for bookmarked, For later, or favorite-chat data", async () => {
+    const bookmarkedRun = {
+      id: "bookmarked-run",
+      projectId: project.id,
+      updatedAt: "2020-01-01T00:00:00.000Z",
+      listVisibility: "default",
+    } as RunRecord;
+    const forLaterRun = {
+      ...bookmarkedRun,
+      id: "for-later-run",
+      listVisibility: "for-later",
+    } as RunRecord;
+    const favoriteChatRun = {
+      ...bookmarkedRun,
+      id: "favorite-chat-run",
+    } as RunRecord;
+    const chats = [
+      { id: "bookmarked-run-chat", runId: bookmarkedRun.id, updatedAt: "2020-01-01T00:00:00.000Z" },
+      { id: "for-later-run-chat", runId: forLaterRun.id, updatedAt: "2020-01-01T00:00:00.000Z" },
+      { id: "favorite-chat", runId: favoriteChatRun.id, updatedAt: "2020-01-01T00:00:00.000Z" },
+    ] as ChatRecord[];
+    const harness = createHarness({
+      listRunsForProject: vi.fn(() => [bookmarkedRun, forLaterRun, favoriteChatRun]),
+      listAllChats: vi.fn(() => chats),
+      listBookmarks: vi.fn(() => [{ id: "bookmark-1", originalRunId: bookmarkedRun.id }]),
+      listChatBookmarks: vi.fn(() => [{ id: "chat-bookmark-1", originalChatId: "favorite-chat" }]),
+      listProjectLabThreads: vi.fn(() => []),
+      listProjectLoops: vi.fn(() => []),
+    });
+    tempDirs.push(harness.logDir);
+    const deleteRun = vi.spyOn(harness.controller, "deleteRun");
+    const deleteChat = vi.spyOn(harness.controller, "deleteChat");
+    const cutoffAt = new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000).toISOString();
+
+    await expect(harness.controller.deleteDataRetentionCandidates(30, cutoffAt)).resolves.toMatchObject({
+      runCount: 0,
+      chatCount: 0,
+      projectLabThreadCount: 0,
+      projectLoopCount: 0,
+    });
+    expect(deleteRun).not.toHaveBeenCalled();
+    expect(deleteChat).not.toHaveBeenCalled();
+  });
+
+  it("executes retention deletion for eligible runs and standalone chats", async () => {
+    const oldRun = {
+      id: "old-run",
+      projectId: project.id,
+      updatedAt: "2020-01-01T00:00:00.000Z",
+      listVisibility: "default",
+    } as RunRecord;
+    const oldChat = {
+      id: "old-chat",
+      runId: null,
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    } as ChatRecord;
+    let runExists = true;
+    let chatExists = true;
+    const harness = createHarness({
+      listRunsForProject: vi.fn(() => [oldRun]),
+      listAllChats: vi.fn(() => [oldChat]),
+      listBookmarks: vi.fn(() => []),
+      listChatBookmarks: vi.fn(() => []),
+      listProjectLabThreads: vi.fn(() => []),
+      listProjectLoops: vi.fn(() => []),
+      getRun: vi.fn(() => {
+        if (!runExists) throw new Error("Run not found");
+        return oldRun;
+      }),
+      getChat: vi.fn(() => {
+        if (!chatExists) throw new Error("Chat not found");
+        return oldChat;
+      }),
+    });
+    tempDirs.push(harness.logDir);
+    const deleteRun = vi.spyOn(harness.controller, "deleteRun").mockImplementation(async () => {
+      runExists = false;
+    });
+    const deleteChat = vi.spyOn(harness.controller, "deleteChat").mockImplementation(async () => {
+      chatExists = false;
+    });
+    const cutoffAt = new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000).toISOString();
+
+    await expect(harness.controller.deleteDataRetentionCandidates(30, cutoffAt)).resolves.toMatchObject({
+      runCount: 1,
+      chatCount: 1,
+      projectLabThreadCount: 0,
+      projectLoopCount: 0,
+    });
+    expect(deleteRun).toHaveBeenCalledWith(oldRun.id);
+    expect(deleteChat).toHaveBeenCalledWith(oldChat.id);
   });
 
   it("deletes surviving child runs when stale orchestration tasks reference missing owners", async () => {

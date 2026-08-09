@@ -2118,6 +2118,19 @@ export interface RunDeletionImpact {
   lockedOrMissingPaths: string[];
 }
 
+export interface DataRetentionCleanupImpact {
+  dayCount: number;
+  cutoffAt: string;
+  runIds: string[];
+  chatIds: string[];
+  projectLabThreadIds: string[];
+  projectLoopIds: string[];
+  runCount: number;
+  chatCount: number;
+  projectLabThreadCount: number;
+  projectLoopCount: number;
+}
+
 export interface ModelDeletionImpact {
   modelId: string;
   modelDisplayName: string;
@@ -3702,6 +3715,8 @@ export interface DesktopApi {
   getOrchestrationTaskDetail(taskId: string): Promise<OrchestrationTaskRecord>;
   getOrchestrationAdoptionPreview(taskId: string): Promise<OrchestrationAdoptionPreview>;
   getRunDeletionImpact(runId: string): Promise<RunDeletionImpact>;
+  getDataRetentionCleanupImpact(dayCount: number): Promise<DataRetentionCleanupImpact>;
+  deleteDataRetentionCandidates(dayCount: number, cutoffAt: string): Promise<DataRetentionCleanupImpact>;
   pauseOrchestration(coordinatorRunId: string): Promise<void>;
   resumeOrchestration(coordinatorRunId: string): Promise<void>;
   cancelOrchestration(coordinatorRunId: string): Promise<void>;
@@ -4394,6 +4409,8 @@ export const IPC_CHANNELS = {
   getOrchestrationTaskDetail: "buildwarden:get-orchestration-task-detail",
   getOrchestrationAdoptionPreview: "buildwarden:get-orchestration-adoption-preview",
   getRunDeletionImpact: "buildwarden:get-run-deletion-impact",
+  getDataRetentionCleanupImpact: "buildwarden:get-data-retention-cleanup-impact",
+  deleteDataRetentionCandidates: "buildwarden:delete-data-retention-candidates",
   getModelDeletionImpact: "buildwarden:get-model-deletion-impact",
   pauseOrchestration: "buildwarden:pause-orchestration",
   resumeOrchestration: "buildwarden:resume-orchestration",
@@ -4530,6 +4547,10 @@ export const APP_SETTING_KEYS = {
   recentRunDays: "recentRunDays",
   autoCheckoutRunBranchOnOpen: "autoCheckoutRunBranchOnOpen",
   autoReleaseRunBranchOnLeave: "autoReleaseRunBranchOnLeave",
+  /** Opt-in startup check for old runs, chats, Project Lab threads, and loops. */
+  dataRetentionCleanupEnabled: "dataRetentionCleanupEnabled",
+  /** Whole day threshold used by the opt-in startup data-retention check. */
+  dataRetentionCleanupDays: "dataRetentionCleanupDays",
   /** Optional absolute directory used as the parent root for app-managed worktrees. Blank = default sibling-folder logic. */
   worktreeRootOverride: "worktreeRootOverride",
   enableDevMode: "enableDevMode",
@@ -4619,6 +4640,9 @@ export const serializeRemoteAccessWebOriginsSetting = (origins: Iterable<string>
 export const DEFAULT_RECENT_RUN_DAYS = 2;
 export const MIN_RECENT_RUN_DAYS = 1;
 export const MAX_RECENT_RUN_DAYS = 365;
+export const DEFAULT_DATA_RETENTION_CLEANUP_DAYS = 30;
+export const MIN_DATA_RETENTION_CLEANUP_DAYS = 1;
+export const MAX_DATA_RETENTION_CLEANUP_DAYS = 36_500;
 
 export type RunTimelineDensity = "compact" | "comfortable" | "detailed";
 
@@ -4666,6 +4690,20 @@ export const parseRecentRunDaysSetting = (raw: string | number | undefined | nul
     return DEFAULT_RECENT_RUN_DAYS;
   }
   return Math.min(MAX_RECENT_RUN_DAYS, Math.max(MIN_RECENT_RUN_DAYS, Math.round(parsed)));
+};
+
+export const parseDataRetentionCleanupDaysSetting = (raw: string | number | undefined | null): number => {
+  if (raw == null || (typeof raw === "string" && raw.trim() === "")) {
+    return DEFAULT_DATA_RETENTION_CLEANUP_DAYS;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_DATA_RETENTION_CLEANUP_DAYS;
+  }
+  return Math.min(
+    MAX_DATA_RETENTION_CLEANUP_DAYS,
+    Math.max(MIN_DATA_RETENTION_CLEANUP_DAYS, Math.round(parsed)),
+  );
 };
 
 export const DEFAULT_PROJECT_FORGE_PR_MONITOR_INTERVAL_MINUTES = 0;

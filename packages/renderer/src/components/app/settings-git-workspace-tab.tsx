@@ -1,5 +1,6 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { AppSnapshot } from "@buildwarden/shared";
+import { MAX_DATA_RETENTION_CLEANUP_DAYS, MIN_DATA_RETENTION_CLEANUP_DAYS } from "@buildwarden/shared";
 import { AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -14,6 +15,8 @@ export type GitWorkspaceSettingsTabProps = {
   projectFolderGitWarning: string | null;
   autoCheckoutRunBranchOnOpen: boolean;
   autoReleaseRunBranchOnLeave: boolean;
+  dataRetentionCleanupEnabled: boolean;
+  dataRetentionCleanupDays: number;
   worktreeRootDraft: string;
   worktreeRootOverrideSettingValue: string;
   worktreeRootDirty: boolean;
@@ -28,6 +31,8 @@ export type GitWorkspaceSettingsTabProps = {
   onDeleteProject: (projectId: string) => void;
   onAutoCheckoutRunBranchOnOpenChange: (value: boolean) => void;
   onAutoReleaseRunBranchOnLeaveChange: (value: boolean) => void;
+  onDataRetentionCleanupEnabledChange: (value: boolean) => void;
+  onDataRetentionCleanupDaysChange: (value: number) => void | Promise<void>;
   onProjectNameChange: (value: string) => void;
   onProjectPathChange: (value: string) => void;
   onWorktreeRootDraftChange: (value: string) => void;
@@ -86,6 +91,70 @@ const SettingsRow = ({ title, description, children, align = "center" }: Setting
 );
 
 const rowControlClass = "w-full md:max-w-[42rem]";
+const DATA_RETENTION_DAYS_ERROR_ID = "data-retention-days-error";
+
+export const DataRetentionSettingsControl = ({
+  busy,
+  enabled,
+  dayCount,
+  onEnabledChange,
+  onDayCountChange,
+}: {
+  busy: boolean;
+  enabled: boolean;
+  dayCount: number;
+  onEnabledChange: (value: boolean) => void;
+  onDayCountChange: (value: number) => void | Promise<void>;
+}) => {
+  const [dayCountDraft, setDayCountDraft] = useState(String(dayCount));
+  useEffect(() => setDayCountDraft(String(dayCount)), [dayCount]);
+  const parsedDayCount = Number(dayCountDraft);
+  const dayCountValid = Number.isInteger(parsedDayCount)
+    && parsedDayCount >= MIN_DATA_RETENTION_CLEANUP_DAYS
+    && parsedDayCount <= MAX_DATA_RETENTION_CLEANUP_DAYS;
+  const dayCountDirty = dayCountValid && parsedDayCount !== dayCount;
+
+  return (
+    <div className={`${rowControlClass} flex flex-wrap items-center justify-start gap-2 md:justify-end`}>
+      {enabled ? (
+        <>
+          <Input
+            type="number"
+            min={MIN_DATA_RETENTION_CLEANUP_DAYS}
+            max={MAX_DATA_RETENTION_CLEANUP_DAYS}
+            step={1}
+            value={dayCountDraft}
+            onChange={(event) => setDayCountDraft(event.target.value)}
+            aria-label="Old data retention days"
+            aria-invalid={!dayCountValid}
+            aria-describedby={!dayCountValid ? DATA_RETENTION_DAYS_ERROR_ID : undefined}
+            className="h-8 w-24 font-mono text-xs tabular-nums"
+          />
+          <span className="text-xs text-[var(--ec-muted)]">days</span>
+          <Button
+            type="button"
+            size="xs"
+            variant="secondary"
+            disabled={busy || !dayCountDirty}
+            onClick={() => void onDayCountChange(parsedDayCount)}
+          >
+            Save
+          </Button>
+        </>
+      ) : null}
+      <Switch
+        checked={enabled}
+        onCheckedChange={onEnabledChange}
+        aria-label="Delete old data at startup"
+      />
+      {enabled && !dayCountValid ? (
+        <p id={DATA_RETENTION_DAYS_ERROR_ID} className="basis-full text-xs text-[var(--ec-danger)] md:text-right">
+          Enter a whole number from {MIN_DATA_RETENTION_CLEANUP_DAYS.toLocaleString()} to {MAX_DATA_RETENTION_CLEANUP_DAYS.toLocaleString()}.
+        </p>
+      ) : null}
+    </div>
+  );
+};
 
 export const ProjectSetupFields = ({
   busy,
@@ -133,6 +202,8 @@ export const GitWorkspaceSettingsTab = ({
   projectFolderGitWarning,
   autoCheckoutRunBranchOnOpen,
   autoReleaseRunBranchOnLeave,
+  dataRetentionCleanupEnabled,
+  dataRetentionCleanupDays,
   worktreeRootDraft,
   worktreeRootOverrideSettingValue,
   worktreeRootDirty,
@@ -147,6 +218,8 @@ export const GitWorkspaceSettingsTab = ({
   onDeleteProject,
   onAutoCheckoutRunBranchOnOpenChange,
   onAutoReleaseRunBranchOnLeaveChange,
+  onDataRetentionCleanupEnabledChange,
+  onDataRetentionCleanupDaysChange,
   onProjectNameChange,
   onProjectPathChange,
   onWorktreeRootDraftChange,
@@ -230,6 +303,18 @@ export const GitWorkspaceSettingsTab = ({
               aria-label="Auto release idle run branch on leave"
             />
           </div>
+        </SettingsRow>
+        <SettingsRow
+          title="Delete old data at startup"
+          description="At startup, offer to remove runs, chats, Project Lab threads, and loops not updated within the threshold. Bookmarked and For later data stays protected."
+        >
+          <DataRetentionSettingsControl
+            busy={busy}
+            enabled={dataRetentionCleanupEnabled}
+            dayCount={dataRetentionCleanupDays}
+            onEnabledChange={onDataRetentionCleanupEnabledChange}
+            onDayCountChange={onDataRetentionCleanupDaysChange}
+          />
         </SettingsRow>
       </SettingsSection>
 

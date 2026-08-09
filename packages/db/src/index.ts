@@ -452,6 +452,29 @@ export class BuildWardenDatabase {
     );
   }
 
+  listAllChats(): ChatRecord[] {
+    return this.all<ChatRecord>(
+      `
+      select
+        id,
+        provider_account_id as providerAccountId,
+        model_id as modelId,
+        run_id as runId,
+        prompt,
+        status,
+        last_provider_response_id as lastProviderResponseId,
+        input_tokens as inputTokens,
+        output_tokens as outputTokens,
+        created_at as createdAt,
+        updated_at as updatedAt,
+        started_at as startedAt,
+        finished_at as finishedAt
+      from chats
+      order by updated_at desc
+      `,
+    );
+  }
+
   getLatestChatForRun(runId: string): ChatRecord | null {
     const row = this.first<{ id: string }>(
       "select id from chats where run_id = ? order by created_at desc limit 1",
