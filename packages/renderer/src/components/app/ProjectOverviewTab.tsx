@@ -21,7 +21,7 @@ import { OpenInIdeControl } from "./open-in-ide-control";
 import type { ProjectRunStats } from "./ProjectStatisticsCard";
 import { ProviderBrandIcon } from "./provider-brand-icons";
 import { RunComposer } from "./RunComposer";
-import { resolveRunDisplayStatus, runDisplayStatusTone } from "./run-display-status";
+import { resolveRunDisplayStatus, RUN_DISPLAY_STATUS_LABELS, runDisplayStatusTone } from "./run-display-status";
 import { appendUnreachableSubagentRoots, buildRunHierarchyRows, runHierarchyLabel, type RunHierarchyRow } from "./run-hierarchy";
 import { RunHierarchyIndent, RunHierarchyToggle } from "./RunHierarchy";
 
@@ -163,7 +163,7 @@ const RunHistory = ({ runs, orchestratedRuns, treeRows, matchingRunCount, search
                           onToggle={onToggleRun}
                         />
                       ) : null}
-                      <Badge dot tone={runDisplayStatusTone(displayStatus)}>{displayStatus}</Badge>
+                      <Badge dot tone={runDisplayStatusTone(displayStatus)}>{RUN_DISPLAY_STATUS_LABELS[displayStatus]}</Badge>
                       <span className="font-mono text-xs text-[var(--ec-muted)]">{(run.inputTokens + run.outputTokens).toLocaleString()}</span>
                       {!readOnly && run.kind !== "orchestration-task" ? <Button type="button" size="icon" variant="ghost" title="Move to For later" onClick={() => void onSetRunForLater(run.id)}><Archive className="size-3.5" /></Button> : null}
                     </div>

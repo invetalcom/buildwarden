@@ -378,7 +378,7 @@ describe("renderer component states", () => {
     const modelOptions = [
       { id: "model-1", label: "GPT-5", modelId: "gpt-5", providerType: "ai-sdk" as const, providerFamily: "openai" as const },
     ];
-    const overviewRun = runRecord();
+    const overviewRun = runRecord({ orchestrationStatus: "deletion-failed" });
     const overviewSubagent = runRecord({
       id: "subagent-1",
       kind: "orchestration-task",
@@ -433,6 +433,8 @@ describe("renderer component states", () => {
     expect(overviewMarkup).toContain('data-run-hierarchy-toggle="run-1"');
     expect(overviewMarkup).toContain('aria-expanded="false"');
     expect(overviewMarkup).toContain("1 primary, 1 subagent run");
+    expect(overviewMarkup).toContain("Cleanup failed");
+    expect(overviewMarkup).not.toContain(">deletion-failed</span>");
     expect(overviewMarkup).not.toContain("Implement the run hierarchy");
     expect(overviewMarkup).toContain("Orchestration");
     expect(overviewMarkup).not.toContain("Allow delegation");
