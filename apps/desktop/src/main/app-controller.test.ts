@@ -1607,6 +1607,49 @@ describe("AppController settings and lightweight workflows", () => {
     expect(deleteRun).toHaveBeenCalledWith("orphaned-child-run");
   });
 
+  it("removes unusable orchestration roles and reassigns mixed-role preferences", async () => {
+    const harness = createHarness();
+    tempDirs.push(harness.logDir);
+    harness.settings[APP_SETTING_KEYS.orchestrationTeam] = JSON.stringify({
+      version: 1,
+      maxConcurrentTasks: 3,
+      maxTasksPerOrchestration: 12,
+      models: [
+        { modelId: model.id, enabled: true, maxConcurrent: 1 },
+        { modelId: "surviving-model", enabled: true, maxConcurrent: 1 },
+      ],
+      roles: [
+        {
+          id: "deleted-only",
+          name: "Deleted only",
+          description: "Can only use the deleted model",
+          eligibleModelIds: [model.id],
+          preferredModelId: model.id,
+          maxConcurrent: 1,
+        },
+        {
+          id: "mixed",
+          name: "Mixed",
+          description: "Can use either model",
+          eligibleModelIds: [model.id, "surviving-model"],
+          preferredModelId: model.id,
+          maxConcurrent: 1,
+        },
+      ],
+    });
+
+    await harness.controller.deleteModel(model.id);
+
+    const persistedTeam = JSON.parse(harness.settings[APP_SETTING_KEYS.orchestrationTeam] ?? "{}") as {
+      roles: Array<{ id: string; eligibleModelIds: string[]; preferredModelId: string }>;
+    };
+    expect(persistedTeam.roles).toEqual([expect.objectContaining({
+      id: "mixed",
+      eligibleModelIds: ["surviving-model"],
+      preferredModelId: "surviving-model",
+    })]);
+  });
+
   it("registers and removes chat listeners", () => {
     const harness = createHarness();
     tempDirs.push(harness.logDir);
