@@ -4,6 +4,7 @@ import {
   appendUnreachableSubagentRoots,
   buildRunHierarchyRows,
   findSubagentHierarchyRoots,
+  findRunHierarchyScopeRoots,
   runHierarchyLabel,
 } from "./run-hierarchy";
 
@@ -124,5 +125,16 @@ describe("run hierarchy", () => {
     child.rootRunId = hiddenParent.id;
 
     expect(appendUnreachableSubagentRoots([], [child], [hiddenParent])).toEqual([]);
+  });
+
+  it("includes an older primary ancestor when its child is in the recent scope", () => {
+    const olderParent = runRecord({ updatedAt: "2026-08-01T10:00:00.000Z" });
+    const recentChild = childRun("recent-child", "Recent delegated work", "2026-08-09T10:02:00.000Z");
+
+    expect(findRunHierarchyScopeRoots(
+      [recentChild],
+      [olderParent],
+      [recentChild],
+    ).map((run) => run.id)).toEqual([olderParent.id]);
   });
 });

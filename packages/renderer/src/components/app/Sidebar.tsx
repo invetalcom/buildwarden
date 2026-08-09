@@ -43,7 +43,7 @@ import { runForgeReadinessColor, runForgeReadinessLabel } from "./run-forge-ui";
 import { AgentRunHoverCard } from "./AgentRunHoverCard";
 import { HoverCard } from "../ui/hover-card";
 import { formatRunDuration, formatRunRelativeTime } from "./run-summary-format";
-import { buildRunHierarchyRows, runHierarchyLabel, type RunHierarchyRow } from "./run-hierarchy";
+import { buildRunHierarchyRows, findRunHierarchyScopeRoots, runHierarchyLabel, type RunHierarchyRow } from "./run-hierarchy";
 import { RunHierarchyIndent, RunHierarchyToggle } from "./RunHierarchy";
 
 const ACTIVE_RUN_STATUSES = new Set(["queued", "preparing", "running"]);
@@ -282,18 +282,29 @@ const SidebarComponent = ({
     const now = Date.now();
     return projects
       .map((entry) => {
-        const runsById = new Map<string, SidebarRun>();
-        for (const run of entry.runs) {
+        const recentActivityById = new Map<string, SidebarRun>();
+        for (const run of [...entry.runs, ...entry.orchestratedRuns]) {
           const timestamp = recentRunOrderTimestamp(run);
           if (Number.isFinite(timestamp) && now - timestamp <= recentRunWindowMs) {
-            runsById.set(run.id, run);
+            recentActivityById.set(run.id, run);
           }
         }
-        const runs = [...runsById.values()].sort((a, b) => recentRunOrderTimestamp(b) - recentRunOrderTimestamp(a));
-        return { project: entry, runs };
+        const recentActivityRuns = [...recentActivityById.values()]
+          .sort((a, b) => recentRunOrderTimestamp(b) - recentRunOrderTimestamp(a));
+        const runs = findRunHierarchyScopeRoots(
+          recentActivityRuns,
+          entry.runs,
+          entry.orchestratedRuns,
+          [...entry.runs, ...entry.forLaterRuns],
+        );
+        return {
+          project: entry,
+          runs,
+          newestActivityAt: recentActivityRuns[0] ? recentRunOrderTimestamp(recentActivityRuns[0]) : 0,
+        };
       })
       .filter((entry) => entry.runs.length > 0)
-      .sort((a, b) => recentRunOrderTimestamp(b.runs[0]!) - recentRunOrderTimestamp(a.runs[0]!));
+      .sort((a, b) => b.newestActivityAt - a.newestActivityAt);
   }, [projects, recentRunWindowMs]);
 
   const recentRuns = useMemo(

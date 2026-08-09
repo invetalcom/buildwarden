@@ -1039,6 +1039,43 @@ describe("renderer component states", () => {
     expect(flatSidebarMarkup).not.toContain("Inspect the sidebar hierarchy");
     expect(flatSidebarMarkup).not.toContain("data-sidebar-run-group");
 
+    const recentTimestamp = new Date().toISOString();
+    const oldTimestamp = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const oldSidebarParent = runRecord({
+      createdAt: oldTimestamp,
+      updatedAt: oldTimestamp,
+      startedAt: oldTimestamp,
+      finishedAt: oldTimestamp,
+    });
+    const recentSidebarChild = runRecord({
+      id: "recent-sidebar-subagent",
+      kind: "orchestration-task",
+      parentRunId: oldSidebarParent.id,
+      rootRunId: oldSidebarParent.id,
+      lineageTitle: "Recent delegated work",
+      createdAt: recentTimestamp,
+      updatedAt: recentTimestamp,
+      startedAt: recentTimestamp,
+      finishedAt: recentTimestamp,
+    });
+    const recentChildSidebarMarkup = renderToStaticMarkup(
+      <Sidebar
+        {...sidebarProps}
+        projects={[{
+          ...projectSnapshot,
+          runs: [oldSidebarParent],
+          recentRuns: [],
+          orchestratedRuns: [recentSidebarChild],
+        }]}
+        recentRunDays={2}
+        groupRunsByProject={false}
+      />,
+      {} as DesktopApi,
+      remoteRunCapabilities,
+    );
+    expect(recentChildSidebarMarkup).toContain('data-run-hierarchy-toggle="run-1"');
+    expect(recentChildSidebarMarkup).toContain("1 subagent");
+
     const controlLabMarkup = renderToStaticMarkup(
       <ProjectLabTab
         project={projectSnapshot}

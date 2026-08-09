@@ -18,7 +18,7 @@ import {
   resolveRunDisplayStatus,
   runDisplayStatusTone,
 } from "./run-display-status";
-import { buildRunHierarchyRows, runHierarchyLabel } from "./run-hierarchy";
+import { buildRunHierarchyRows, findRunHierarchyScopeRoots, runHierarchyLabel } from "./run-hierarchy";
 import { RunHierarchyIndent, RunHierarchyToggle } from "./RunHierarchy";
 
 interface LandingPageProps {
@@ -96,6 +96,10 @@ export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRu
       ),
     [snapshot.projects],
   );
+  const allSubagentRuns = useMemo(
+    () => snapshot.projects.flatMap((entry) => entry.orchestratedRuns),
+    [snapshot.projects],
+  );
 
   const totals = useMemo(() => {
     const inputTokens = snapshot.projects.reduce((sum, entry) => sum + entry.project.cumulativeInputTokens, 0);
@@ -121,18 +125,27 @@ export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRu
     [snapshot.projects],
   );
 
-  const recentRuns = useMemo(
-    () => allRuns.slice().sort((left, right) => right.createdAt.localeCompare(left.createdAt)).slice(0, 5),
-    [allRuns],
+  const recentActivityRuns = useMemo(
+    () => [...allRuns, ...allSubagentRuns]
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .slice(0, 5),
+    [allRuns, allSubagentRuns],
   );
   const recentRunRows = useMemo(() => {
     const projectNames = new Map(snapshot.projects.map((entry) => [entry.project.id, entry.project.name]));
+    const knownPrimaryRuns = snapshot.projects.flatMap((entry) => [...entry.runs, ...entry.forLaterRuns]);
+    const hierarchyRoots = findRunHierarchyScopeRoots(
+      recentActivityRuns,
+      allRuns,
+      allSubagentRuns,
+      knownPrimaryRuns,
+    );
     return buildRunHierarchyRows(
-      recentRuns,
-      snapshot.projects.flatMap((entry) => entry.orchestratedRuns),
+      hierarchyRoots,
+      allSubagentRuns,
       { expandedRunIds },
     ).map((row) => ({ ...row, projectName: projectNames.get(row.run.projectId) ?? "Unknown project" }));
-  }, [expandedRunIds, recentRuns, snapshot.projects]);
+  }, [allRuns, allSubagentRuns, expandedRunIds, recentActivityRuns, snapshot.projects]);
   const toggleRunHierarchy = useCallback((runId: string) => {
     setExpandedRunIds((current) => {
       const next = new Set(current);
@@ -142,7 +155,7 @@ export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRu
     });
   }, []);
 
-  const latestRun = recentRuns[0] ?? null;
+  const latestRun = recentActivityRuns[0] ?? null;
   const todayActivity = useMemo(() => buildTodayActivity(allRuns), [allRuns]);
 
   const metrics: LandingMetric[] = [
@@ -278,7 +291,7 @@ export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRu
             </CardAction>
           </CardHeader>
           <CardContent>
-            {recentRuns.length > 0 ? (
+            {recentRunRows.length > 0 ? (
               <div className="overflow-hidden rounded-md border border-[var(--ec-border)]">
                 {recentRunRows.map(({ run, projectName, depth, descendantCount, expanded }) => {
                   const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);

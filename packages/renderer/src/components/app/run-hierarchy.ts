@@ -48,6 +48,59 @@ export const appendUnreachableSubagentRoots = (
   return [...new Map([...roots, ...recoveryRoots].map((run) => [run.id, run])).values()];
 };
 
+/** Resolves a limited activity scope back to the visible roots needed to render it. */
+export const findRunHierarchyScopeRoots = (
+  scopedRuns: readonly RunRecord[],
+  visiblePrimaryRuns: readonly RunRecord[],
+  subagentRuns: readonly RunRecord[],
+  knownPrimaryRuns: readonly RunRecord[] = visiblePrimaryRuns,
+) => {
+  const visiblePrimaryById = new Map(visiblePrimaryRuns.map((run) => [run.id, run]));
+  const knownPrimaryIds = new Set(knownPrimaryRuns.map((run) => run.id));
+  const subagentById = new Map(subagentRuns.map((run) => [run.id, run]));
+  const roots = new Map<string, RunRecord>();
+
+  for (const scopedRun of scopedRuns) {
+    const primaryRun = visiblePrimaryById.get(scopedRun.id);
+    if (primaryRun) {
+      roots.set(primaryRun.id, primaryRun);
+      continue;
+    }
+    if (scopedRun.kind !== "orchestration-task") continue;
+
+    const durableRoot = scopedRun.rootRunId ? visiblePrimaryById.get(scopedRun.rootRunId) : undefined;
+    if (durableRoot) {
+      roots.set(durableRoot.id, durableRoot);
+      continue;
+    }
+    if (scopedRun.rootRunId && knownPrimaryIds.has(scopedRun.rootRunId)) continue;
+
+    let recoveryRoot = scopedRun;
+    const path = new Set<string>();
+    while (recoveryRoot.parentRunId && !path.has(recoveryRoot.id)) {
+      path.add(recoveryRoot.id);
+      const visibleParent = visiblePrimaryById.get(recoveryRoot.parentRunId);
+      if (visibleParent) {
+        roots.set(visibleParent.id, visibleParent);
+        recoveryRoot = visibleParent;
+        break;
+      }
+      if (knownPrimaryIds.has(recoveryRoot.parentRunId)) break;
+      const parentSubagent = subagentById.get(recoveryRoot.parentRunId);
+      if (!parentSubagent) {
+        roots.set(recoveryRoot.id, recoveryRoot);
+        break;
+      }
+      recoveryRoot = parentSubagent;
+    }
+    if (!recoveryRoot.parentRunId && recoveryRoot.kind === "orchestration-task") {
+      roots.set(recoveryRoot.id, recoveryRoot);
+    }
+  }
+
+  return [...roots.values()];
+};
+
 /**
  * Flattens primary runs and their durable orchestration-task descendants into
  * visible tree rows. During search, matching descendants reveal their ancestry
