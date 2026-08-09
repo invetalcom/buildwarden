@@ -386,6 +386,7 @@ export const findProjectRun = (projects: ProjectSnapshot[], runId: string) => {
     const run =
       findRunInList(project.runs, runId) ??
       findRunInList(project.forLaterRuns, runId) ??
+      findRunInList(project.orchestratedRuns, runId) ??
       findRunInList(project.activeRuns, runId) ??
       findRunInList(project.recentRuns, runId);
 
@@ -416,6 +417,7 @@ export const snapshotContainsRunId = (projects: ProjectSnapshot[], runId: string
     (entry) =>
       entry.runs.some((run) => run.id === runId) ||
       entry.forLaterRuns.some((run) => run.id === runId) ||
+      entry.orchestratedRuns.some((run) => run.id === runId) ||
       entry.labThreads.some((detail) => detail.implementationRun?.id === runId || detail.thread.implementationRunId === runId) ||
       entry.loops.some((item) => item.iterations.some((iteration) => iteration.runId === runId)),
   );

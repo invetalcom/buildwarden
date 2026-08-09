@@ -30,7 +30,7 @@ export const AgentRunHoverCard = ({ projectName, run }: { projectName: string; r
       <header className="flex items-center justify-between gap-3">
         <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--ec-faint)]">
           <Bot className="size-3.5 text-[var(--ec-accent)]" aria-hidden />
-          Agent run
+          {run.kind === "orchestration-task" ? "Subagent run" : "Agent run"}
         </span>
         <Badge tone={runDisplayStatusTone(displayStatus)} dot className="px-2 py-0.5 text-[10px] leading-4">
           {RUN_DISPLAY_STATUS_LABELS[displayStatus]}

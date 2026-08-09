@@ -1,6 +1,6 @@
 import type { AppSnapshot, RunRecord } from "@buildwarden/shared";
 import { Clock3, FolderGit2, PlayCircle, Search, UsersRound, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { parseSearchTerms, runMatchesSearch } from "../../lib/run-search";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -14,34 +14,14 @@ import {
   RUN_DISPLAY_STATUS_LABELS,
   runDisplayStatusTone,
 } from "./run-display-status";
+import { formatRunDuration, formatRunRelativeTime } from "./run-summary-format";
+import { buildRunHierarchyRows, findSubagentHierarchyRoots, runHierarchyLabel, type RunHierarchyRow } from "./run-hierarchy";
+import { RunHierarchyIndent, RunHierarchyToggle } from "./RunHierarchy";
 
 interface AllRunsPageProps {
   projects: AppSnapshot["projects"];
   onSelectRun: (projectId: string, runId: string) => void;
 }
-
-const formatRelativeTime = (value: string | null) => {
-  if (!value) return "just now";
-  const diffMinutes = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60000));
-  if (diffMinutes < 1) return "just now";
-  if (diffMinutes < 60) return `${diffMinutes}m ago`;
-  const diffHours = Math.floor(diffMinutes / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-  return `${Math.floor(diffHours / 24)}d ago`;
-};
-
-const formatRunDuration = (run: RunRecord) => {
-  const start = new Date(run.startedAt ?? run.createdAt).getTime();
-  const end = new Date(run.finishedAt ?? run.updatedAt).getTime();
-  const totalSeconds = Math.max(0, Math.floor((end - start) / 1000));
-  if (totalSeconds < 5) return "< 5s";
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  if (minutes > 0) return `${minutes}m ${seconds}s`;
-  return `${seconds}s`;
-};
 
 const formatRunWorkspaceLabel = (run: RunRecord) => {
   if (run.workspaceVcs !== "folder") {
@@ -52,19 +32,20 @@ const formatRunWorkspaceLabel = (run: RunRecord) => {
 
 type AllRunRow = {
   project: AppSnapshot["projects"][number]["project"];
-  run: RunRecord;
-};
+} & RunHierarchyRow;
 
 const AllRunsContent = ({
   rows,
   allRowsCount,
   hasSearch,
   onSelectRun,
+  onToggleRun,
 }: {
   rows: AllRunRow[];
   allRowsCount: number;
   hasSearch: boolean;
   onSelectRun: (projectId: string, runId: string) => void;
+  onToggleRun: (runId: string) => void;
 }) => {
   if (rows.length === 0) {
     const searchIsEmpty = hasSearch && allRowsCount > 0;
@@ -85,33 +66,51 @@ const AllRunsContent = ({
 
   return (
     <div className="divide-y divide-[var(--ec-border)]">
-      {rows.map(({ project, run }) => {
+      {rows.map(({ project, run, depth, descendantCount, expanded }) => {
         const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
         return (
-          <button
+          <RunHierarchyIndent
             key={run.id}
-            type="button"
-            className="flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left transition hover:bg-[var(--ec-hover)]"
-            onClick={() => onSelectRun(project.id, run.id)}
+            depth={depth}
+            indentPx={18}
+            className={depth > 0 ? "bg-[var(--ec-panel-soft)]" : undefined}
           >
-            <span className="size-2 shrink-0 rounded-full bg-[var(--ec-accent)]" aria-hidden />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-[var(--ec-text)]">{run.prompt}</p>
-              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--ec-muted)]">
-                <span className="inline-flex min-w-0 items-center gap-1">
-                  <FolderGit2 className="size-3 shrink-0" />
-                  <span className="truncate">{project.name}</span>
-                  <ProviderBrandIcon harnessType={run.harnessType} className="size-3 shrink-0" />
+            <div data-run-hierarchy-run={run.id} className="flex w-full min-w-0 items-center gap-3 px-4 py-3 transition hover:bg-[var(--ec-hover)]">
+              <span className={depth > 0 ? "size-2 shrink-0 rounded-full bg-[var(--ec-faint)]" : "size-2 shrink-0 rounded-full bg-[var(--ec-accent)]"} aria-hidden />
+              <button
+                type="button"
+                className="min-w-0 flex-1 text-left"
+                onClick={() => onSelectRun(project.id, run.id)}
+              >
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate text-sm font-semibold text-[var(--ec-text)]">{runHierarchyLabel(run)}</span>
+                  {depth > 0 ? <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.12em] text-[var(--ec-accent)]">Subagent</span> : null}
                 </span>
-                <span className="inline-flex items-center gap-1 font-mono">
-                  <Clock3 className="size-3" />
-                  {formatRelativeTime(run.finishedAt ?? run.updatedAt)} - {formatRunDuration(run)}
+                <span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--ec-muted)]">
+                  <span className="inline-flex min-w-0 items-center gap-1">
+                    <FolderGit2 className="size-3 shrink-0" />
+                    <span className="truncate">{project.name}</span>
+                    <ProviderBrandIcon harnessType={run.harnessType} className="size-3 shrink-0" />
+                  </span>
+                  <span className="inline-flex items-center gap-1 font-mono">
+                    <Clock3 className="size-3" />
+                    {formatRunRelativeTime(run.finishedAt ?? run.updatedAt)} - {formatRunDuration(run)}
+                  </span>
+                  <span className="truncate font-mono">{formatRunWorkspaceLabel(run)}</span>
                 </span>
-                <span className="truncate font-mono">{formatRunWorkspaceLabel(run)}</span>
-              </div>
+              </button>
+              {descendantCount > 0 ? (
+                <RunHierarchyToggle
+                  runId={run.id}
+                  runLabel={runHierarchyLabel(run)}
+                  descendantCount={descendantCount}
+                  expanded={expanded}
+                  onToggle={onToggleRun}
+                />
+              ) : null}
+              <Badge dot tone={runDisplayStatusTone(displayStatus)}>{RUN_DISPLAY_STATUS_LABELS[displayStatus]}</Badge>
             </div>
-            <Badge dot tone={runDisplayStatusTone(displayStatus)}>{RUN_DISPLAY_STATUS_LABELS[displayStatus]}</Badge>
-          </button>
+          </RunHierarchyIndent>
         );
       })}
     </div>
@@ -121,26 +120,46 @@ const AllRunsContent = ({
 export const AllRunsPage = ({ projects, onSelectRun }: AllRunsPageProps) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [view, setView] = useState<"runs" | "orchestrated">("runs");
-  const rows = useMemo(
-    () =>
-      projects
-        .flatMap((entry) => {
-          const runsById = new Map<string, RunRecord>();
-          const sourceRuns = view === "orchestrated" ? entry.orchestratedRuns : [...entry.runs, ...entry.forLaterRuns];
-          for (const run of sourceRuns) {
-            runsById.set(run.id, run);
-          }
-          return [...runsById.values()].map((run) => ({ project: entry.project, run }));
-        })
-        .sort((a, b) => new Date(b.run.updatedAt).getTime() - new Date(a.run.updatedAt).getTime()),
-    [projects, view],
+  const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
+  const projectById = useMemo(
+    () => new Map(projects.map((entry) => [entry.project.id, entry.project])),
+    [projects],
   );
-
-  const activeCount = rows.filter(({ run }) =>
+  const primaryRuns = useMemo(
+    () => projects.flatMap((entry) => [...new Map([...entry.runs, ...entry.forLaterRuns].map((run) => [run.id, run])).values()]),
+    [projects],
+  );
+  const subagentRuns = useMemo(() => projects.flatMap((entry) => entry.orchestratedRuns), [projects]);
+  const sourceRuns = view === "orchestrated" ? subagentRuns : [...primaryRuns, ...subagentRuns];
+  const hierarchyRoots = useMemo(
+    () => view === "orchestrated" ? findSubagentHierarchyRoots(subagentRuns) : primaryRuns,
+    [primaryRuns, subagentRuns, view],
+  );
+  const activeCount = sourceRuns.filter((run) =>
     isRunDisplayStatusActive(resolveRunDisplayStatus(run.status, run.orchestrationStatus))).length;
   const searchTerms = useMemo(() => parseSearchTerms(searchQuery), [searchQuery]);
-  const visibleRows = useMemo(() => rows.filter(({ run }) => runMatchesSearch(run, searchTerms)), [rows, searchTerms]);
   const hasSearch = searchTerms.length > 0;
+  const visibleRows = useMemo(
+    () => buildRunHierarchyRows(hierarchyRoots, subagentRuns, {
+      expandedRunIds,
+      matches: hasSearch ? (run) => runMatchesSearch(run, searchTerms) : undefined,
+    }).flatMap((row) => {
+      const project = projectById.get(row.run.projectId);
+      return project ? [{ ...row, project }] : [];
+    }),
+    [expandedRunIds, hasSearch, hierarchyRoots, projectById, searchTerms, subagentRuns],
+  );
+  const matchingRunCount = hasSearch
+    ? sourceRuns.filter((run) => runMatchesSearch(run, searchTerms)).length
+    : sourceRuns.length;
+  const toggleRunHierarchy = useCallback((runId: string) => {
+    setExpandedRunIds((current) => {
+      const next = new Set(current);
+      if (next.has(runId)) next.delete(runId);
+      else next.add(runId);
+      return next;
+    });
+  }, []);
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-3">
@@ -150,7 +169,7 @@ export const AllRunsPage = ({ projects, onSelectRun }: AllRunsPageProps) => {
             <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--ec-accent)]">Workspace</p>
             <CardTitle className="mt-1 text-2xl">All Runs</CardTitle>
             <CardDescription>
-              {hasSearch ? `${visibleRows.length} matching of ${rows.length}` : `${rows.length} total`} runs across {projects.length} projects.
+              {hasSearch ? `${matchingRunCount} matching of ${sourceRuns.length}` : `${sourceRuns.length} total`} runs across {projects.length} projects.
             </CardDescription>
           </div>
           <div className="flex min-w-0 flex-1 flex-wrap items-end justify-end gap-2">
@@ -199,9 +218,10 @@ export const AllRunsPage = ({ projects, onSelectRun }: AllRunsPageProps) => {
         <CardContent className="p-0">
           <AllRunsContent
             rows={visibleRows}
-            allRowsCount={rows.length}
+            allRowsCount={sourceRuns.length}
             hasSearch={hasSearch}
             onSelectRun={onSelectRun}
+            onToggleRun={toggleRunHierarchy}
           />
         </CardContent>
       </Card>
