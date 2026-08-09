@@ -2431,6 +2431,22 @@ export interface RunForgeRequestSummary {
   syncError: string | null;
 }
 
+/** Provider-neutral request state used by project-level PR/MR actions. */
+export interface ProjectForgeRequestStatus {
+  state: RunForgeRequestState;
+  readiness: RunForgeReadiness;
+  draft: boolean;
+  mergeability: RunForgeMergeability;
+  reviewDecision: RunForgeReviewDecision;
+  headSha: string | null;
+  checks: RunForgeCheckProgress;
+  checkRuns: RunForgeCheck[];
+  unresolvedThreadCount: number;
+  supportedActions: RunForgeAction[];
+  supportedMergeMethods: RunForgeMergeMethod[];
+  lastSyncedAt: string;
+}
+
 export interface RunForgeRequestDetailsResult {
   summary: RunForgeRequestSummary;
   request: ProjectForgeRequestDetails;
@@ -2456,6 +2472,14 @@ export interface UpdateRunForgeRequestInput {
 export interface MergeRunForgeRequestInput {
   method: RunForgeMergeMethod;
   expectedHeadSha: string;
+}
+
+export interface UpdateProjectForgeRequestInput extends UpdateRunForgeRequestInput {
+  prUrl: string;
+}
+
+export interface MergeProjectForgeRequestInput extends MergeRunForgeRequestInput {
+  prUrl: string;
 }
 
 export interface ProjectForgeUserSummary {
@@ -3701,6 +3725,9 @@ export interface DesktopApi {
   saveProjectForgePrMonitorSettings(projectId: string, input: ProjectForgePrMonitorSettingsInput): Promise<ProjectForgePrMonitorSettings>;
   listProjectForgeRequests(projectId: string, input?: ListProjectForgeRequestsInput): Promise<ProjectForgeRequestsResult>;
   getProjectForgeRequestDetails(projectId: string, input: GetProjectForgeRequestDetailsInput): Promise<ProjectForgeRequestDetailsResult>;
+  getProjectForgeRequestStatus(projectId: string, input: GetProjectForgeRequestDetailsInput): Promise<ProjectForgeRequestStatus>;
+  updateProjectForgeRequest(projectId: string, input: UpdateProjectForgeRequestInput): Promise<ProjectForgeRequestStatus>;
+  mergeProjectForgeRequest(projectId: string, input: MergeProjectForgeRequestInput): Promise<ProjectForgeRequestStatus>;
   getRunForgeRequestDetails(runId: string, options?: { refresh?: boolean }): Promise<RunForgeRequestDetailsResult | null>;
   refreshRunForgeRequest(runId: string): Promise<RunForgeRequestSummary | null>;
   getRunForgeRequestDiff(runId: string): Promise<ProjectPrMrDiffResult | null>;
@@ -4051,6 +4078,7 @@ export type RemoteOperationMap = {
   getProjectForgePrMonitorSettings: DesktopApi["getProjectForgePrMonitorSettings"];
   listProjectForgeRequests: DesktopApi["listProjectForgeRequests"];
   getProjectForgeRequestDetails: DesktopApi["getProjectForgeRequestDetails"];
+  getProjectForgeRequestStatus: DesktopApi["getProjectForgeRequestStatus"];
   getRunForgeRequestDetails: DesktopApi["getRunForgeRequestDetails"];
   refreshRunForgeRequest: DesktopApi["refreshRunForgeRequest"];
   getRunForgeRequestDiff: DesktopApi["getRunForgeRequestDiff"];
@@ -4112,6 +4140,8 @@ export type RemoteOperationMap = {
   submitProjectPrMrComments: DesktopApi["submitProjectPrMrComments"];
   replyProjectPrMrReviewThread: DesktopApi["replyProjectPrMrReviewThread"];
   resolveProjectPrMrReviewThread: DesktopApi["resolveProjectPrMrReviewThread"];
+  updateProjectForgeRequest: DesktopApi["updateProjectForgeRequest"];
+  mergeProjectForgeRequest: DesktopApi["mergeProjectForgeRequest"];
   updateRunForgeRequest: DesktopApi["updateRunForgeRequest"];
   mergeRunForgeRequest: DesktopApi["mergeRunForgeRequest"];
   commitRun: DesktopApi["commitRun"];
@@ -4328,6 +4358,7 @@ export const IPC_CHANNELS = {
   saveProjectForgePrMonitorSettings: "buildwarden:save-project-forge-pr-monitor-settings",
   listProjectForgeRequests: "buildwarden:list-project-forge-requests",
   getProjectForgeRequestDetails: "buildwarden:get-project-forge-request-details",
+  getProjectForgeRequestStatus: "buildwarden:get-project-forge-request-status",
   getRunForgeRequestDetails: "buildwarden:get-run-forge-request-details",
   refreshRunForgeRequest: "buildwarden:refresh-run-forge-request",
   getRunForgeRequestDiff: "buildwarden:get-run-forge-request-diff",
@@ -4337,6 +4368,8 @@ export const IPC_CHANNELS = {
   submitProjectPrMrComments: "buildwarden:submit-project-pr-mr-comments",
   replyProjectPrMrReviewThread: "buildwarden:reply-project-pr-mr-review-thread",
   resolveProjectPrMrReviewThread: "buildwarden:resolve-project-pr-mr-review-thread",
+  updateProjectForgeRequest: "buildwarden:update-project-forge-request",
+  mergeProjectForgeRequest: "buildwarden:merge-project-forge-request",
   createRunPullRequest: "buildwarden:create-run-pull-request",
   suggestRunPullRequestDescription: "buildwarden:suggest-run-pull-request-description",
   createRunLocalBranch: "buildwarden:create-run-local-branch",

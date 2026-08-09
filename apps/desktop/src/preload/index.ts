@@ -110,6 +110,12 @@ const api: DesktopApi = {
     invoke(IPC_CHANNELS.listProjectForgeRequests, projectId, input),
   getProjectForgeRequestDetails: (projectId: string, input) =>
     invoke(IPC_CHANNELS.getProjectForgeRequestDetails, projectId, input),
+  getProjectForgeRequestStatus: (projectId: string, input) =>
+    invoke(IPC_CHANNELS.getProjectForgeRequestStatus, projectId, input),
+  updateProjectForgeRequest: (projectId: string, input) =>
+    invoke(IPC_CHANNELS.updateProjectForgeRequest, projectId, input),
+  mergeProjectForgeRequest: (projectId: string, input) =>
+    invoke(IPC_CHANNELS.mergeProjectForgeRequest, projectId, input),
   getRunForgeRequestDetails: (runId: string, options) => invoke(IPC_CHANNELS.getRunForgeRequestDetails, runId, options),
   refreshRunForgeRequest: (runId: string) => invoke(IPC_CHANNELS.refreshRunForgeRequest, runId),
   getRunForgeRequestDiff: (runId: string) => invoke(IPC_CHANNELS.getRunForgeRequestDiff, runId),
