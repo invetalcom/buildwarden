@@ -113,4 +113,72 @@ describe("model deletion targets", () => {
       orchestrationIds: [],
     });
   });
+
+  it("does not delete an orchestration merely because its frozen team lists an unused model", async () => {
+    const db = await makeDatabase();
+    const project = db.addProject({ repoPath: "C:\\repo", baseBranch: "main", resolvedName: "Repo" });
+    const provider = db.addProviderAccount({
+      providerType: "ai-sdk",
+      label: "AI SDK",
+      apiBaseUrl: null,
+      apiKeyRef: "",
+      configJson: "{}",
+    });
+    const targetModel = db.addModel({
+      providerAccountId: provider.id,
+      modelId: "unused-model",
+      displayName: "Unused model",
+      config: {},
+      capabilities: {},
+    });
+    const activeModel = db.addModel({
+      providerAccountId: provider.id,
+      modelId: "active-model",
+      displayName: "Active model",
+      config: {},
+      capabilities: {},
+    });
+    const coordinator = db.createRun({
+      projectId: project.id,
+      providerAccountId: provider.id,
+      modelId: activeModel.id,
+      harnessType: "ai-sdk",
+      mode: "code",
+      workspaceType: "local",
+      prompt: "Coordinate",
+      branchName: "main",
+      worktreePath: project.repoPath,
+      delegationEnabled: true,
+    });
+    db.createOrchestration({
+      projectId: project.id,
+      coordinatorRunId: coordinator.id,
+      teamSnapshot: {
+        version: 1,
+        maxConcurrentTasks: 2,
+        maxTasksPerOrchestration: 4,
+        models: [
+          { modelId: targetModel.id, enabled: false, maxConcurrent: 1 },
+          { modelId: activeModel.id, enabled: true, maxConcurrent: 1 },
+        ],
+        roles: [{
+          id: "implementer",
+          name: "Implementer",
+          description: `Does not use ${targetModel.id}`,
+          eligibleModelIds: [activeModel.id],
+          preferredModelId: activeModel.id,
+          maxConcurrent: 1,
+        }],
+      },
+    });
+
+    expect(db.getModelDeletionTargets(targetModel.id)).toEqual({
+      runIds: [],
+      chatIds: [],
+      projectInsightIds: [],
+      projectLabThreadIds: [],
+      projectLoopIds: [],
+      orchestrationIds: [],
+    });
+  });
 });

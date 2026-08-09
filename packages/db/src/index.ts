@@ -1874,10 +1874,6 @@ export class BuildWardenDatabase {
         from orchestration_tasks
         where model_id = ?
         union
-        select 'orchestration', id
-        from orchestrations
-        where instr(team_snapshot_json, '"' || ? || '"') > 0
-        union
         select 'run', thread.implementation_run_id
         from related
         join project_lab_threads thread
@@ -1936,7 +1932,7 @@ export class BuildWardenDatabase {
       where model_id = ?
       order by kind, id
       `,
-      [modelId, modelId, modelId, modelId, modelId, modelId, modelId, modelId, modelId],
+      [modelId, modelId, modelId, modelId, modelId, modelId, modelId, modelId],
     );
     const idsFor = (kind: string): string[] => rows.filter((row) => row.kind === kind).map((row) => row.id);
     return {
