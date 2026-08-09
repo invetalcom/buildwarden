@@ -1003,6 +1003,7 @@ export const App = () => {
       await loadSnapshot();
       setStartupDataRetentionState({ status: "ready" });
     } catch (caught) {
+      await loadSnapshot().catch(() => undefined);
       setStartupDataRetentionState({
         status: "error",
         phase: "deleting",
