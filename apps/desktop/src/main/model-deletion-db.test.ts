@@ -181,4 +181,86 @@ describe("model deletion targets", () => {
       orchestrationIds: [],
     });
   });
+
+  it("expands a task model through its orchestration coordinator and child runs", async () => {
+    const db = await makeDatabase();
+    const project = db.addProject({ repoPath: "C:\\repo", baseBranch: "main", resolvedName: "Repo" });
+    const provider = db.addProviderAccount({
+      providerType: "ai-sdk",
+      label: "AI SDK",
+      apiBaseUrl: null,
+      apiKeyRef: "",
+      configJson: "{}",
+    });
+    const targetModel = db.addModel({
+      providerAccountId: provider.id,
+      modelId: "target-model",
+      displayName: "Target model",
+      config: {},
+      capabilities: {},
+    });
+    const coordinatorModel = db.addModel({
+      providerAccountId: provider.id,
+      modelId: "coordinator-model",
+      displayName: "Coordinator model",
+      config: {},
+      capabilities: {},
+    });
+    const createRun = (branchName: string, parentRunId?: string) => db.createRun({
+      projectId: project.id,
+      providerAccountId: provider.id,
+      modelId: coordinatorModel.id,
+      harnessType: "ai-sdk",
+      mode: "code",
+      workspaceType: "local",
+      prompt: branchName,
+      branchName,
+      worktreePath: project.repoPath,
+      kind: parentRunId ? "orchestration-task" : "standard",
+      parentRunId,
+      rootRunId: parentRunId,
+      delegationEnabled: !parentRunId,
+    });
+    const coordinator = createRun("coordinator");
+    const child = createRun("child", coordinator.id);
+    const orchestration = db.createOrchestration({
+      projectId: project.id,
+      coordinatorRunId: coordinator.id,
+      teamSnapshot: {
+        version: 1,
+        maxConcurrentTasks: 2,
+        maxTasksPerOrchestration: 4,
+        models: [{ modelId: targetModel.id, enabled: true, maxConcurrent: 1 }],
+        roles: [{
+          id: "implementer",
+          name: "Implementer",
+          description: "Implements tasks",
+          eligibleModelIds: [targetModel.id],
+          preferredModelId: targetModel.id,
+          maxConcurrent: 1,
+        }],
+      },
+    });
+    const wave = db.createOrchestrationWave(orchestration.id);
+    db.createOrchestrationTask({
+      orchestrationId: orchestration.id,
+      waveId: wave.id,
+      clientTaskId: "task-1",
+      title: "Implement",
+      prompt: "Implement the change",
+      roleId: "implementer",
+      modelId: targetModel.id,
+      intent: "implement",
+      childRunId: child.id,
+    });
+
+    expect(db.getModelDeletionTargets(targetModel.id)).toEqual({
+      runIds: [child.id, coordinator.id].sort(),
+      chatIds: [],
+      projectInsightIds: [],
+      projectLabThreadIds: [],
+      projectLoopIds: [],
+      orchestrationIds: [orchestration.id],
+    });
+  });
 });
