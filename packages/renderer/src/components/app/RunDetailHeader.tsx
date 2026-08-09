@@ -33,6 +33,7 @@ import { resolveRunDisplayStatus, runDisplayStatusTone } from "./run-display-sta
 import { RunPlanProgressPill } from "./RunPlanProgressPill";
 import { RunTokenBadge } from "./RunTokenBadge";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { deriveRunChangeActionAvailability, resolveRunWorkspaceChangeState } from "./run-change-actions";
 
 const RUN_TIMELINE_DENSITY_LABELS: Record<RunTimelineDensity, string> = {
   compact: "Compact",
@@ -83,6 +84,7 @@ interface RunDetailHeaderProps {
   setPublishMenuOpen: Dispatch<SetStateAction<boolean>>;
   publishMenuAnchorRef: RefObject<HTMLDivElement | null>;
   onCommitRun: (run: RunRecord) => void | Promise<void>;
+  onRequestDiffSummary?: (runId: string) => void | Promise<void>;
   onOpenPublishDialog: (run: RunRecord) => void | Promise<void>;
   onOpenBranchPublishDialog: (run: RunRecord, mode: "publish" | "local") => void;
   onOpenInIde: (runDetail: RunDetail, ideKind: SupportedIdeKind) => void;
@@ -222,6 +224,7 @@ export const RunDetailHeader = ({
   setPublishMenuOpen,
   publishMenuAnchorRef,
   onCommitRun,
+  onRequestDiffSummary,
   onOpenPublishDialog,
   onOpenBranchPublishDialog,
   onOpenInIde,
@@ -244,11 +247,17 @@ export const RunDetailHeader = ({
   }
   const workspaceCopyValue = isGitRun ? run.branchName : run.worktreePath;
   const hasCommit = runDetail?.steps.some((step) => Boolean(safeParseMetadata(step.metadataJson).commitHash)) ?? false;
-  const hasOpenChanges = Boolean(runDetail?.diff.trim());
+  const changeState = resolveRunWorkspaceChangeState(runDetail);
+  const hasOpenChanges = changeState === "dirty";
   const canManageChanges = buildwarden.capabilities.gitMutations && isGitRun && run.status === "completed" && runDetail?.worktreeUnavailable !== true;
-  const canCommit = buildwarden.capabilities.gitMutations && run.status === "completed" && hasOpenChanges;
-  const canPublish = canManageChanges && !hasOpenChanges && hasCommit;
-  const canCreateLocalBranch = canManageChanges && (hasOpenChanges || hasCommit);
+  const { canCommit, canPublish, canCreateLocalBranch } = deriveRunChangeActionAvailability({
+    changeState,
+    hasCommit,
+    canManageChanges,
+  });
+  const changeStateMessage = runDetail?.diffSummaryPending === true
+    ? "Checking workspace changes."
+    : "Workspace changes are unavailable.";
   const planProgress = useMemo(
     () => deriveLatestRunPlanProgress(runDetail?.steps ?? [], run.mode),
     [run.mode, runDetail?.steps],
@@ -449,7 +458,13 @@ export const RunDetailHeader = ({
                 disabled={busy}
                 className="border border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] text-[var(--ec-success)] hover:border-[var(--ec-success-ring)] hover:bg-[var(--ec-hover)]"
                 title="Commit, publish branch, or open a merge request"
-                onClick={() => setPublishMenuOpen((current) => !current)}
+                onClick={() => {
+                  const opening = !publishMenuOpen;
+                  setPublishMenuOpen(opening);
+                  if (opening && changeState === "unknown" && runDetail?.diffSummaryPending !== true) {
+                    void onRequestDiffSummary?.(run.id);
+                  }
+                }}
               >
                 <GitBranch className="mr-2 h-4 w-4 shrink-0 text-[var(--ec-success)]" aria-hidden />
                 Changes
@@ -474,6 +489,16 @@ export const RunDetailHeader = ({
                   >
                     Create commit
                   </button>
+                ) : changeState === "unknown" ? (
+                  <button
+                    type="button"
+                    className="flex w-full cursor-not-allowed items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-[var(--ec-faint)]"
+                    disabled
+                    title={changeStateMessage}
+                  >
+                    {runDetail?.diffSummaryPending === true ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
+                    {runDetail?.diffSummaryPending === true ? "Checking changes" : "Changes unavailable"}
+                  </button>
                 ) : null}
                 <button
                   type="button"
@@ -482,7 +507,9 @@ export const RunDetailHeader = ({
                     canCreateLocalBranch ? "text-[var(--ec-text)] hover:bg-[var(--ec-hover)]" : "cursor-not-allowed text-[var(--ec-faint)]",
                   )}
                   disabled={!canCreateLocalBranch}
-                  title={!canCreateLocalBranch ? "Create changes before creating a local branch." : undefined}
+                  title={!canCreateLocalBranch
+                    ? changeState === "unknown" ? changeStateMessage : "Create changes before creating a local branch."
+                    : undefined}
                   onClick={() => {
                     if (!canCreateLocalBranch) return;
                     setPublishMenuOpen(false);
@@ -498,7 +525,9 @@ export const RunDetailHeader = ({
                     canPublish ? "text-[var(--ec-text)] hover:bg-[var(--ec-hover)]" : "cursor-not-allowed text-[var(--ec-faint)]",
                   )}
                   disabled={!canPublish}
-                  title={hasOpenChanges ? "Create a commit before creating a merge request or pull request." : undefined}
+                  title={changeState === "unknown"
+                    ? changeStateMessage
+                    : hasOpenChanges ? "Create a commit before creating a merge request or pull request." : undefined}
                   onClick={() => {
                     if (!canPublish) return;
                     setPublishMenuOpen(false);
@@ -514,7 +543,9 @@ export const RunDetailHeader = ({
                     canPublish ? "text-[var(--ec-text)] hover:bg-[var(--ec-hover)]" : "cursor-not-allowed text-[var(--ec-faint)]",
                   )}
                   disabled={!canPublish}
-                  title={hasOpenChanges ? "Create a commit before publishing the branch." : undefined}
+                  title={changeState === "unknown"
+                    ? changeStateMessage
+                    : hasOpenChanges ? "Create a commit before publishing the branch." : undefined}
                   onClick={() => {
                     if (!canPublish) return;
                     setPublishMenuOpen(false);
