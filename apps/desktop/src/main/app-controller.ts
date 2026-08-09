@@ -141,6 +141,7 @@ import {
   type ProjectForgeRequestsResult,
   type ProjectForgeRequestSummary,
   type ProjectForgeRequestDetailsResult,
+  type ProjectForgeRequestStatus,
   type ProjectForgeReviewActionResult,
   type GenerateProjectInsightInput,
   type ArchitectureGraphInsightData,
@@ -168,7 +169,9 @@ import {
   type RunForgeReadiness,
   type RunForgeRequestDetailsResult,
   type RunForgeRequestSummary,
+  type MergeProjectForgeRequestInput,
   type MergeRunForgeRequestInput,
+  type UpdateProjectForgeRequestInput,
   type UpdateRunForgeRequestInput,
   type RunWorkspaceFileInput,
   type RunWorkspaceFileResult,
@@ -885,6 +888,43 @@ const forgeReadiness = (status: ForgeRequestStatusResult): RunForgeReadiness => 
     status.reviewDecision === "review-required" || status.unresolvedThreadCount > 0
   ) return "pending";
   return "ready";
+};
+
+const toProjectForgeRequestStatus = (status: ForgeRequestStatusResult): ProjectForgeRequestStatus => ({
+  state: status.state,
+  readiness: forgeReadiness(status),
+  draft: status.draft,
+  mergeability: status.mergeability,
+  reviewDecision: status.reviewDecision,
+  headSha: status.headSha,
+  checks: summarizeForgeChecks(status.checks),
+  checkRuns: status.checks,
+  unresolvedThreadCount: status.unresolvedThreadCount,
+  supportedActions: status.supportedActions,
+  supportedMergeMethods: status.supportedMergeMethods,
+  lastSyncedAt: new Date().toISOString(),
+});
+
+const assertForgeUpdateSupported = (
+  supportedActions: RunForgeRequestSummary["supportedActions"],
+  action: UpdateRunForgeRequestInput["action"],
+): void => {
+  if (!supportedActions.includes(action)) throw new Error("This action is not supported for the request.");
+};
+
+const assertForgeMergeAllowed = (
+  request: Pick<RunForgeRequestSummary, "state" | "draft" | "readiness" | "headSha" | "supportedMergeMethods">,
+  input: MergeRunForgeRequestInput,
+): void => {
+  if (request.state !== "open" || request.draft || request.readiness !== "ready") {
+    throw new Error("Only a green, open, ready request can be merged.");
+  }
+  if (!request.headSha || request.headSha.toLowerCase() !== input.expectedHeadSha.trim().toLowerCase()) {
+    throw new Error("The request head changed. Refresh it before merging.");
+  }
+  if (!request.supportedMergeMethods.includes(input.method)) {
+    throw new Error("That merge method is not supported by this repository.");
+  }
 };
 const ACTIVE_RUN_STATUSES = new Set<RunRecord["status"]>(["queued", "preparing", "running"]);
 const runCheckpointSettingKey = (runId: string) => `runCheckpoint:${runId}`;
@@ -4176,6 +4216,74 @@ export class AppController
     return provider.getRequestDetails(input);
   }
 
+  async getProjectForgeRequestStatus(
+    projectId: string,
+    input: GetProjectForgeRequestDetailsInput,
+  ): Promise<ProjectForgeRequestStatus> {
+    return this.serializeProjectForgeSync(projectId, async () => {
+      const provider = await this.createProjectPrReviewProvider(projectId);
+      return toProjectForgeRequestStatus(await provider.getRequestStatus(input));
+    });
+  }
+
+  async updateProjectForgeRequest(
+    projectId: string,
+    input: UpdateProjectForgeRequestInput,
+  ): Promise<ProjectForgeRequestStatus> {
+    const result = await this.serializeProjectForgeSync(projectId, async () => {
+      const provider = await this.createProjectPrReviewProvider(projectId);
+      const current = await provider.getRequestStatus({ prUrl: input.prUrl });
+      assertForgeUpdateSupported(current.supportedActions, input.action);
+      await provider.updateRequest(input);
+      this.clearProjectForgeRequestListCache(projectId);
+      try {
+        return toProjectForgeRequestStatus(await provider.getRequestStatus({ prUrl: input.prUrl }));
+      } catch {
+        const state = input.action === "close" ? "closed" as const : input.action === "reopen" ? "open" as const : current.state;
+        const draft = input.action === "mark-draft" ? true : input.action === "mark-ready" ? false : current.draft;
+        const optimistic = {
+          ...current,
+          state,
+          draft,
+          supportedActions: state === "closed"
+            ? ["refresh", "open", "reopen"] as RunForgeRequestSummary["supportedActions"]
+            : ["refresh", "open", draft ? "mark-ready" : "mark-draft", "merge", "close"] as RunForgeRequestSummary["supportedActions"],
+        };
+        return toProjectForgeRequestStatus(optimistic);
+      }
+    });
+    this.refreshLinkedRunForgeRequests(projectId, input.prUrl);
+    return result;
+  }
+
+  async mergeProjectForgeRequest(
+    projectId: string,
+    input: MergeProjectForgeRequestInput,
+  ): Promise<ProjectForgeRequestStatus> {
+    const result = await this.serializeProjectForgeSync(projectId, async () => {
+      const provider = await this.createProjectPrReviewProvider(projectId);
+      const current = toProjectForgeRequestStatus(await provider.getRequestStatus({ prUrl: input.prUrl }));
+      assertForgeMergeAllowed(current, input);
+      await provider.mergeRequest(input);
+      this.clearProjectForgeRequestListCache(projectId);
+      try {
+        return toProjectForgeRequestStatus(await provider.getRequestStatus({ prUrl: input.prUrl }));
+      } catch {
+        return {
+          ...current,
+          state: "merged" as const,
+          readiness: "merged" as const,
+          draft: false,
+          supportedActions: ["refresh", "open"] as ProjectForgeRequestStatus["supportedActions"],
+          supportedMergeMethods: [] as ProjectForgeRequestStatus["supportedMergeMethods"],
+          lastSyncedAt: new Date().toISOString(),
+        };
+      }
+    });
+    this.refreshLinkedRunForgeRequests(projectId, input.prUrl);
+    return result;
+  }
+
   // This queue is not reentrant: a callback must not invoke another serialized
   // forge operation for the same project or it will wait on its own pending
   // promise. syncRunForgeRequest uses loadProjectForgeRequests directly to avoid
@@ -4205,6 +4313,20 @@ export class AppController
     const result = await provider.listRequests(input);
     this.projectForgeRequestListCache.set(cacheKey, { expiresAt: Date.now() + PROJECT_FORGE_LIST_CACHE_MS, result });
     return result;
+  }
+
+  private clearProjectForgeRequestListCache(projectId: string): void {
+    for (const key of this.projectForgeRequestListCache.keys()) {
+      if (key.startsWith(`${projectId}:`)) this.projectForgeRequestListCache.delete(key);
+    }
+  }
+
+  private refreshLinkedRunForgeRequests(projectId: string, prUrl: string): void {
+    for (const run of this.db.listRunsForProject(projectId)) {
+      if (this.db.getRunForgeRequestCache(run.id)?.summary?.url === prUrl) {
+        this.syncRunForgeRequestInBackground(run.id, true, false);
+      }
+    }
   }
 
   private clearRunForgeRefresh(runId: string): void {
@@ -4464,7 +4586,7 @@ export class AppController
     const run = this.db.getRun(runId);
     const cache = this.db.getRunForgeRequestCache(runId);
     if (!cache?.summary) throw new Error("This run is not linked to a pull request or merge request.");
-    if (!cache.summary.supportedActions.includes(input.action)) throw new Error("This action is not supported for the linked request.");
+    assertForgeUpdateSupported(cache.summary.supportedActions, input.action);
     const provider = await this.createProjectPrReviewProvider(run.projectId);
     await provider.updateRequest({ prUrl: cache.summary.url, action: input.action, expectedHeadSha: input.expectedHeadSha });
     const refreshed = await this.syncRunForgeRequest(runId, true, true);
@@ -4481,13 +4603,7 @@ export class AppController
     const cache = this.db.getRunForgeRequestCache(runId);
     const summary = cache?.summary;
     if (!summary) throw new Error("This run is not linked to a pull request or merge request.");
-    if (summary.state !== "open" || summary.draft || summary.readiness !== "ready") {
-      throw new Error("Only a green, open, ready request can be merged.");
-    }
-    if (!summary.headSha || summary.headSha.toLowerCase() !== input.expectedHeadSha.trim().toLowerCase()) {
-      throw new Error("The request head changed. Refresh it before merging.");
-    }
-    if (!summary.supportedMergeMethods.includes(input.method)) throw new Error("That merge method is not supported by this repository.");
+    assertForgeMergeAllowed(summary, input);
     const provider = await this.createProjectPrReviewProvider(run.projectId);
     await provider.mergeRequest({ prUrl: summary.url, method: input.method, expectedHeadSha: input.expectedHeadSha });
     const refreshed = await this.syncRunForgeRequest(runId, true, true);

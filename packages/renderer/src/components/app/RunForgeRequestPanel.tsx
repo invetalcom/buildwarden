@@ -7,17 +7,13 @@ import type {
 } from "@buildwarden/shared";
 import {
   AlertTriangle,
-  Check,
-  ChevronDown,
   Clipboard,
   ExternalLink,
   GitMerge,
   GitPullRequest,
   Loader2,
   MessageSquareText,
-  Pencil,
   RefreshCw,
-  RotateCcw,
   Send,
   ShieldCheck,
   X,
@@ -26,6 +22,8 @@ import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { GitDiffPreview } from "./git-diff-preview";
+import { ForgeRequestActionBar } from "./ForgeRequestActionBar";
+import { ForgeChecksView } from "./ForgeChecksView";
 import {
   buildRunForgeAgentPrompt,
   runForgeReadinessColor,
@@ -39,22 +37,6 @@ type PanelTab = "summary" | "checks" | "feedback" | "changes";
 const formatTimestamp = (value: string | null) => value
   ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value))
   : "Unknown";
-
-const formatDuration = (milliseconds: number | null) => {
-  if (milliseconds == null) return null;
-  const seconds = Math.round(milliseconds / 1000);
-  return seconds < 60 ? `${String(seconds)}s` : `${String(Math.floor(seconds / 60))}m ${String(seconds % 60)}s`;
-};
-
-const checkStatusLabel = (status: RunForgeRequestDetailsResult["checks"][number]["status"]) => ({
-  queued: "Queued",
-  running: "Running",
-  success: "Passed",
-  failure: "Failed",
-  cancelled: "Cancelled",
-  neutral: "Neutral",
-  skipped: "Skipped",
-})[status];
 
 export const RunForgeStatusGlyph = ({ summary, className }: { summary: RunForgeRequestSummary; className?: string }) => (
   <GitPullRequest
@@ -102,7 +84,6 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
   const [diff, setDiff] = useState<string | null>(null);
   const [promptAction, setPromptAction] = useState<RunForgeAgentAction | null>(null);
   const [prompt, setPrompt] = useState("");
-  const [mergeMenuOpen, setMergeMenuOpen] = useState(false);
   const detailsRequestIdRef = useRef(0);
   const canWriteForge = buildwarden.capabilities.gitMutations;
   const canRunAgent = buildwarden.capabilities.runMutations
@@ -154,17 +135,6 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
 
   const unresolvedThreads = useMemo(() => details?.reviewThreads.filter((thread) => thread.resolved !== true) ?? [], [details]);
   const failedChecks = useMemo(() => details?.checks.filter((check) => check.status === "failure" || check.status === "cancelled") ?? [], [details]);
-  const progress = summary.checks.total > 0 ? summary.checks.completed / summary.checks.total : summary.readiness === "ready" ? 1 : 0;
-  const canToggleDraft = canWriteForge && summary.supportedActions.includes(summary.draft ? "mark-ready" : "mark-draft");
-  const canMerge = canWriteForge
-    && summary.supportedMergeMethods.length > 0
-    && summary.readiness === "ready"
-    && summary.state === "open"
-    && !summary.draft;
-  const canClose = canWriteForge && summary.supportedActions.includes("close");
-  const canReopen = canWriteForge && summary.supportedActions.includes("reopen");
-  const hasRequestActions = canToggleDraft || canMerge || canClose || canReopen;
-
   const updateSummary = (next: RunForgeRequestSummary) => {
     setSummary(next);
     setDetails((current) => current ? { ...current, summary: next } : current);
@@ -172,7 +142,6 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
   };
 
   const runWriteAction = async (action: "mark-draft" | "mark-ready" | "close" | "reopen") => {
-    if ((action === "close" || action === "reopen") && !window.confirm(`${action === "close" ? "Close" : "Reopen"} this request?`)) return;
     setPending(true);
     setError(null);
     try {
@@ -186,8 +155,7 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
   };
 
   const merge = async (method: RunForgeMergeMethod) => {
-    setMergeMenuOpen(false);
-    if (!summary.headSha || !window.confirm(`Merge ${summary.provider === "github" ? "PR" : "MR"} #${String(summary.number)} using ${method}? The source branch will be kept.`)) return;
+    if (!summary.headSha) return;
     setPending(true);
     setError(null);
     try {
@@ -283,43 +251,14 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
             </Button>
           </div>
         </div>
-        {hasRequestActions ? (
-          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-zinc-800/70 pt-2.5">
-            {canToggleDraft ? (
-              <Button variant="secondary" size="sm" className="h-8 gap-1.5 px-2.5 text-[11px]" disabled={pending} onClick={() => void runWriteAction(summary.draft ? "mark-ready" : "mark-draft")}>
-                {summary.draft ? <Check className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
-                {summary.draft ? "Mark ready" : "Mark draft"}
-              </Button>
-            ) : null}
-            {canMerge ? (
-              <div className="relative">
-                <Button size="sm" className="h-8 gap-1.5 px-2.5 text-[11px]" disabled={pending} onClick={() => setMergeMenuOpen((current) => !current)} aria-expanded={mergeMenuOpen}>
-                  <GitMerge className="h-3.5 w-3.5" /> Merge <ChevronDown className="h-3 w-3 opacity-70" />
-                </Button>
-                {mergeMenuOpen ? (
-                  <div
-                    className="absolute left-0 top-full z-50 mt-1.5 min-w-36 isolate overflow-hidden rounded-lg border border-zinc-700 p-1 opacity-100 shadow-2xl shadow-black/70 ring-1 ring-black/50"
-                    style={{ backgroundColor: "#09090b" }}
-                  >
-                    {summary.supportedMergeMethods.map((method) => (
-                      <button key={method} type="button" className="block w-full rounded-md px-2.5 py-2 text-left text-xs capitalize text-zinc-300 transition hover:bg-zinc-800 hover:text-zinc-100" onClick={() => void merge(method)}>{method}</button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-            {canClose ? (
-              <Button variant="outline" size="sm" className="h-8 gap-1.5 border-rose-500/25 bg-rose-500/[0.03] px-2.5 text-[11px] text-rose-300/90 hover:bg-rose-500/10 hover:text-rose-200" disabled={pending} onClick={() => void runWriteAction("close")}>
-                <X className="h-3.5 w-3.5" /> Close
-              </Button>
-            ) : null}
-            {canReopen ? (
-              <Button variant="secondary" size="sm" className="h-8 gap-1.5 px-2.5 text-[11px]" disabled={pending} onClick={() => void runWriteAction("reopen")}>
-                <RotateCcw className="h-3.5 w-3.5" /> Reopen
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
+        <ForgeRequestActionBar
+          request={summary}
+          canWrite={canWriteForge}
+          busy={pending}
+          className="mt-3 border-t border-zinc-800/70 pt-2.5"
+          onUpdate={runWriteAction}
+          onMerge={merge}
+        />
       </div>
 
       <div className="app-scrollbar shrink-0 overflow-x-auto border-b border-zinc-800/80 px-3 py-1.5">
@@ -370,24 +309,12 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
         ) : null}
 
         {details && tab === "checks" ? (
-          <div>
-            <div className="flex items-center gap-3 border-b border-zinc-800/70 px-3 py-3">
-              <div className="relative h-10 w-10 shrink-0 rounded-full" style={{ background: `conic-gradient(${runForgeReadinessHex[summary.readiness]} ${String(progress * 360)}deg, #27272a 0deg)` }}>
-                <div className="absolute inset-[3px] grid place-items-center rounded-full bg-[var(--ec-panel)] text-[10px] font-semibold">{summary.checks.completed}/{summary.checks.total}</div>
-              </div>
-              <div><p className="text-sm font-medium">{summary.checks.completed} of {summary.checks.total} complete</p><p className="text-[11px] text-zinc-500">{summary.checks.successful} passed · {summary.checks.failed} failed · {summary.checks.running} running</p></div>
-            </div>
-            <div className="divide-y divide-zinc-800/70">
-              {details.checks.map((check) => (
-                <div key={check.id} className="flex items-center gap-2.5 px-3 py-2.5">
-                  {check.status === "success" || check.status === "neutral" || check.status === "skipped" ? <Check className="h-3.5 w-3.5 text-zinc-500" /> : check.status === "running" || check.status === "queued" ? <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-500" /> : <X className="h-3.5 w-3.5 text-zinc-500" />}
-                  <div className="min-w-0 flex-1"><p className="truncate text-xs text-zinc-200">{check.name}</p><p className="text-[10px] text-zinc-600">{checkStatusLabel(check.status)}{formatDuration(check.durationMs) ? ` · ${formatDuration(check.durationMs)}` : ""}{check.description ? ` · ${check.description}` : ""}</p></div>
-                  {check.url ? <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => void buildwarden.openExternalUrl(check.url!)}><ExternalLink className="h-3.5 w-3.5" /></Button> : null}
-                </div>
-              ))}
-              {details.checks.length === 0 ? <p className="px-3 py-8 text-center text-xs text-zinc-600">No checks were reported.</p> : null}
-            </div>
-          </div>
+          <ForgeChecksView
+            progress={summary.checks}
+            checks={details.checks}
+            readiness={summary.readiness}
+            onOpenExternal={(url) => buildwarden.openExternalUrl(url)}
+          />
         ) : null}
 
         {details && tab === "feedback" ? (
