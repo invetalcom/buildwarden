@@ -264,6 +264,7 @@ export const App = () => {
   const runDetailLoadTokenRef = useRef<Record<string, number>>({});
   const diffLoadPromisesRef = useRef<Partial<Record<string, Promise<void>>>>({});
   const diffLoadGenerationRef = useRef<Record<string, number>>({});
+  const diffSummaryLoadGenerationRef = useRef<Record<string, number>>({});
   const [landingSelected, setLandingSelected] = useState(true);
   const [allRunsSelected, setAllRunsSelected] = useState(false);
   const [bookmarksSelected, setBookmarksSelected] = useState(false);
@@ -682,6 +683,8 @@ export const App = () => {
       if (runDetailLoadTokenRef.current[runId] !== loadToken) {
         return;
       }
+      const summaryGeneration = (diffSummaryLoadGenerationRef.current[runId] ?? 0) + 1;
+      diffSummaryLoadGenerationRef.current[runId] = summaryGeneration;
       replaceRunDetailForRun(runId, {
         ...fast,
         diff: "",
@@ -693,6 +696,7 @@ export const App = () => {
 
       try {
         const summaryResult = await buildwarden.getRunWorktreeDiffSummary(runId);
+        if (diffSummaryLoadGenerationRef.current[runId] !== summaryGeneration) return;
         if (runDetailLoadTokenRef.current[runId] !== loadToken) return;
         mergeRunDetailForRun(runId, (previous) => ({
           ...previous,
@@ -701,6 +705,7 @@ export const App = () => {
           worktreeUnavailable: summaryResult.worktreeUnavailable,
         }));
       } catch {
+        if (diffSummaryLoadGenerationRef.current[runId] !== summaryGeneration) return;
         if (runDetailLoadTokenRef.current[runId] !== loadToken) return;
         mergeRunDetailForRun(runId, (previous) => ({ ...previous, diffSummaryPending: false }));
       }
@@ -726,14 +731,18 @@ export const App = () => {
       if (!buildwarden || !shouldLoadDiff) {
         return;
       }
+      const generation = (diffSummaryLoadGenerationRef.current[eventRunId] ?? 0) + 1;
+      diffSummaryLoadGenerationRef.current[eventRunId] = generation;
       mergeRunDetailForRun(eventRunId, (previous) => ({ ...previous, diffSummaryPending: true }));
       let result;
       try {
         result = await buildwarden.getRunWorktreeDiffSummary(eventRunId);
       } catch {
+        if (diffSummaryLoadGenerationRef.current[eventRunId] !== generation) return;
         mergeRunDetailForRun(eventRunId, (previous) => ({ ...previous, diffSummaryPending: false }));
         return;
       }
+      if (diffSummaryLoadGenerationRef.current[eventRunId] !== generation) return;
       const stillShouldApply =
         selectedRunIdRef.current === eventRunId || runIdIsOpenInPanes(openRunPanesRef.current, eventRunId);
       if (!stillShouldApply) {
@@ -802,6 +811,7 @@ export const App = () => {
       const previous = runDetailsByIdRef.current[eventRunId];
       if (options?.refreshDiff) {
         diffLoadGenerationRef.current[eventRunId] = (diffLoadGenerationRef.current[eventRunId] ?? 0) + 1;
+        diffSummaryLoadGenerationRef.current[eventRunId] = (diffSummaryLoadGenerationRef.current[eventRunId] ?? 0) + 1;
       }
       replaceRunDetailForRun(eventRunId, {
         ...fast,
