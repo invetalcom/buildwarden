@@ -1528,6 +1528,43 @@ describe("AppController settings and lightweight workflows", () => {
     expect(persistedTeam.models).toEqual([]);
   });
 
+  it("preserves selected runs and chats that are outside a model deletion cascade", async () => {
+    const targets = {
+      runIds: ["deleted-run"],
+      chatIds: ["deleted-chat"],
+      projectInsightIds: [],
+      projectLabThreadIds: [],
+      projectLoopIds: [],
+      orchestrationIds: [],
+    };
+    const harness = createHarness({
+      getModelDeletionTargets: vi.fn()
+        .mockReturnValueOnce(targets)
+        .mockReturnValueOnce({ ...targets, runIds: [], chatIds: [] }),
+      getRun: vi.fn((runId: string) => ({ id: runId, projectId: project.id } as RunRecord)),
+      getChat: vi.fn((chatId: string) => ({ id: chatId, runId: null })),
+    });
+    tempDirs.push(harness.logDir);
+    harness.settings.selectedProjectId = project.id;
+    harness.settings.selectedRunId = "surviving-run";
+    harness.settings.selectedChatId = "surviving-chat";
+    vi.spyOn(harness.controller, "deleteRun").mockImplementation(async () => {
+      harness.calls.deleteSetting("selectedRunId");
+      harness.calls.setSetting("selectedProjectId", project.id);
+    });
+    vi.spyOn(harness.controller, "deleteChat").mockImplementation(async () => {
+      harness.calls.deleteSetting("selectedChatId");
+    });
+
+    await harness.controller.deleteModel(model.id);
+
+    expect(harness.settings).toMatchObject({
+      selectedProjectId: project.id,
+      selectedRunId: "surviving-run",
+      selectedChatId: "surviving-chat",
+    });
+  });
+
   it("registers and removes chat listeners", () => {
     const harness = createHarness();
     tempDirs.push(harness.logDir);

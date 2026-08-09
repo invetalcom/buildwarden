@@ -35,7 +35,7 @@ import {
   type ProjectActivityCommit,
 } from "./project-activity";
 import { ProjectLoopRunner } from "./loop/loop-runner";
-import { BuildWardenDatabase } from "@buildwarden/db";
+import { BuildWardenDatabase, type ModelDeletionTargets } from "@buildwarden/db";
 import {
   computePrMrDiffViaFetch,
   GitService,
@@ -2678,6 +2678,16 @@ export class AppController
   async deleteModel(modelId: string): Promise<void> {
     this.db.getModel(modelId);
     const targets = this.db.getModelDeletionTargets(modelId);
+    const previousSelection = this.db.getSettings();
+
+    try {
+      await this.deleteModelRelatedData(modelId, targets);
+    } finally {
+      this.restoreSelectionAfterDeletion(previousSelection);
+    }
+  }
+
+  private async deleteModelRelatedData(modelId: string, targets: ModelDeletionTargets): Promise<void> {
 
     for (const threadId of targets.projectLabThreadIds) {
       try {
@@ -2750,6 +2760,29 @@ export class AppController
     }
     this.removeModelFromPersistedSettings(modelId);
     this.db.deleteModel(modelId);
+  }
+
+  private restoreSelectionAfterDeletion(previousSelection: Record<string, string>): void {
+    const restoreExisting = (
+      key: string,
+      lookup: (id: string) => unknown,
+    ) => {
+      const previousId = previousSelection[key];
+      if (previousId) {
+        try {
+          lookup(previousId);
+          this.db.setSetting(key, previousId);
+          return;
+        } catch {
+          /* The previously selected object was part of the deletion cascade. */
+        }
+      }
+      this.db.deleteSetting(key);
+    };
+
+    restoreExisting(SELECTED_PROJECT_KEY, (id) => this.db.getProject(id));
+    restoreExisting(SELECTED_RUN_KEY, (id) => this.db.getRun(id));
+    restoreExisting(SELECTED_CHAT_KEY, (id) => this.db.getChat(id));
   }
 
   private removeModelFromPersistedSettings(modelId: string): void {
