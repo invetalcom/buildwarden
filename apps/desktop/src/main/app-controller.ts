@@ -2730,8 +2730,13 @@ export class AppController
       }
       const ownedTask = this.db.getOrchestrationTaskByChildRunId(runId);
       if (ownedTask) {
-        const orchestration = this.db.getOrchestration(ownedTask.orchestrationId);
-        await this.deleteRun(orchestration.coordinatorRunId);
+        let orchestration: OrchestrationRecord | null = null;
+        try {
+          orchestration = this.db.getOrchestration(ownedTask.orchestrationId);
+        } catch {
+          /* A stale task row must not prevent deleting its surviving child run. */
+        }
+        await this.deleteRun(orchestration?.coordinatorRunId ?? runId);
       } else {
         await this.deleteRun(runId);
       }
@@ -3758,8 +3763,13 @@ export class AppController
     if (implementationRun) {
       const ownedTask = this.db.getOrchestrationTaskByChildRunId(implementationRun.id);
       if (ownedTask) {
-        const orchestration = this.db.getOrchestration(ownedTask.orchestrationId);
-        await this.deleteRun(orchestration.coordinatorRunId);
+        let orchestration: OrchestrationRecord | null = null;
+        try {
+          orchestration = this.db.getOrchestration(ownedTask.orchestrationId);
+        } catch {
+          /* Fall through to the implementation run when orchestration metadata is stale. */
+        }
+        await this.deleteRun(orchestration?.coordinatorRunId ?? implementationRun.id);
       } else {
         await this.deleteRun(implementationRun.id);
       }
@@ -7372,8 +7382,15 @@ export class AppController
     const run = this.db.getRun(runId);
     const ownedTask = this.db.getOrchestrationTaskByChildRunId(runId);
     if (ownedTask) {
-      const owner = this.db.getOrchestration(ownedTask.orchestrationId);
-      throw new Error(`This run is owned by an orchestration. Delete coordinator run ${owner.coordinatorRunId} instead.`);
+      let owner: OrchestrationRecord | null = null;
+      try {
+        owner = this.db.getOrchestration(ownedTask.orchestrationId);
+      } catch {
+        /* Treat an orphaned task reference as stale and delete the surviving run normally. */
+      }
+      if (owner) {
+        throw new Error(`This run is owned by an orchestration. Delete coordinator run ${owner.coordinatorRunId} instead.`);
+      }
     }
     const orchestration = this.db.getOrchestrationByCoordinatorRunId(runId);
     if (orchestration) {

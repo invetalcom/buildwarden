@@ -1565,6 +1565,48 @@ describe("AppController settings and lightweight workflows", () => {
     });
   });
 
+  it("deletes surviving child runs when stale orchestration tasks reference missing owners", async () => {
+    const staleTask = { orchestrationId: "missing-orchestration" } as OrchestrationTaskRecord;
+    const targets = {
+      runIds: ["orphaned-child-run"],
+      chatIds: [],
+      projectInsightIds: [],
+      projectLabThreadIds: [],
+      projectLoopIds: [],
+      orchestrationIds: [],
+    };
+    const harness = createHarness({
+      getModelDeletionTargets: vi.fn()
+        .mockReturnValueOnce(targets)
+        .mockReturnValueOnce({ ...targets, runIds: [] }),
+      getRun: vi.fn((runId: string) => ({ id: runId, projectId: project.id } as RunRecord)),
+      getOrchestrationTaskByChildRunId: vi.fn(() => staleTask),
+      getOrchestration: vi.fn(() => { throw new Error("Orchestration not found"); }),
+    });
+    tempDirs.push(harness.logDir);
+    const deleteRun = vi.spyOn(harness.controller, "deleteRun").mockResolvedValue();
+
+    await harness.controller.deleteModel(model.id);
+
+    expect(deleteRun).toHaveBeenCalledWith("orphaned-child-run");
+  });
+
+  it("deletes a Lab implementation run when its orchestration owner is missing", async () => {
+    const harness = createHarness({
+      getProjectLabThread: vi.fn(() => ({ id: "lab-1", implementationRunId: "orphaned-child-run" })),
+      getRun: vi.fn((runId: string) => ({ id: runId, projectId: project.id } as RunRecord)),
+      deleteProjectLabThread: vi.fn(),
+      getOrchestrationTaskByChildRunId: vi.fn(() => ({ orchestrationId: "missing-orchestration" } as OrchestrationTaskRecord)),
+      getOrchestration: vi.fn(() => { throw new Error("Orchestration not found"); }),
+    });
+    tempDirs.push(harness.logDir);
+    const deleteRun = vi.spyOn(harness.controller, "deleteRun").mockResolvedValue();
+
+    await harness.controller.deleteProjectLabThread("lab-1");
+
+    expect(deleteRun).toHaveBeenCalledWith("orphaned-child-run");
+  });
+
   it("registers and removes chat listeners", () => {
     const harness = createHarness();
     tempDirs.push(harness.logDir);
