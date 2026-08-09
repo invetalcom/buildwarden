@@ -678,21 +678,41 @@ export const App = () => {
       clearDiffRefreshTimer(runId);
       const loadToken = (runDetailLoadTokenRef.current[runId] ?? 0) + 1;
       runDetailLoadTokenRef.current[runId] = loadToken;
+      const summaryGeneration = (diffSummaryLoadGenerationRef.current[runId] ?? 0) + 1;
+      diffSummaryLoadGenerationRef.current[runId] = summaryGeneration;
+      mergeRunDetailForRun(runId, (previous) => ({ ...previous, diffSummaryPending: true }));
 
-      const fast = await buildwarden.getRunDetail(runId);
+      let fast: RunDetail;
+      try {
+        fast = await buildwarden.getRunDetail(runId);
+      } catch (caught) {
+        if (
+          diffSummaryLoadGenerationRef.current[runId] === summaryGeneration
+          && runDetailLoadTokenRef.current[runId] === loadToken
+        ) {
+          mergeRunDetailForRun(runId, (previous) => ({
+            ...previous,
+            diffSummary: undefined,
+            diffSummaryPending: false,
+          }));
+        }
+        throw caught;
+      }
       if (runDetailLoadTokenRef.current[runId] !== loadToken) {
         return;
       }
-      const summaryGeneration = (diffSummaryLoadGenerationRef.current[runId] ?? 0) + 1;
-      diffSummaryLoadGenerationRef.current[runId] = summaryGeneration;
+      const summaryLoadIsCurrent = diffSummaryLoadGenerationRef.current[runId] === summaryGeneration;
+      const previous = runDetailsByIdRef.current[runId];
       replaceRunDetailForRun(runId, {
         ...fast,
         diff: "",
         diffLoaded: false,
         diffPending: false,
-        diffSummaryPending: true,
-        worktreeUnavailable: false,
+        diffSummary: summaryLoadIsCurrent ? undefined : previous?.diffSummary,
+        diffSummaryPending: summaryLoadIsCurrent ? true : (previous?.diffSummaryPending ?? false),
+        worktreeUnavailable: summaryLoadIsCurrent ? false : (previous?.worktreeUnavailable ?? false),
       });
+      if (!summaryLoadIsCurrent) return;
 
       try {
         const summaryResult = await buildwarden.getRunWorktreeDiffSummary(runId);
@@ -801,17 +821,51 @@ export const App = () => {
         return;
       }
 
-      const fast = await buildwarden.getRunDetail(eventRunId);
+      const summaryGeneration = options?.refreshDiff
+        ? (diffSummaryLoadGenerationRef.current[eventRunId] ?? 0) + 1
+        : undefined;
+      if (summaryGeneration !== undefined) {
+        diffSummaryLoadGenerationRef.current[eventRunId] = summaryGeneration;
+        mergeRunDetailForRun(eventRunId, (previous) => ({ ...previous, diffSummaryPending: true }));
+      }
+
+      let fast: RunDetail;
+      try {
+        fast = await buildwarden.getRunDetail(eventRunId);
+      } catch (caught) {
+        if (
+          summaryGeneration !== undefined
+          && diffSummaryLoadGenerationRef.current[eventRunId] === summaryGeneration
+        ) {
+          mergeRunDetailForRun(eventRunId, (previous) => ({
+            ...previous,
+            diffSummary: undefined,
+            diffSummaryPending: false,
+          }));
+        }
+        throw caught;
+      }
       const stillOpen =
         selectedRunIdRef.current === eventRunId || runIdIsOpenInPanes(openRunPanesRef.current, eventRunId);
       if (!stillOpen) {
+        if (
+          summaryGeneration !== undefined
+          && diffSummaryLoadGenerationRef.current[eventRunId] === summaryGeneration
+        ) {
+          mergeRunDetailForRun(eventRunId, (previous) => ({
+            ...previous,
+            diffSummary: undefined,
+            diffSummaryPending: false,
+          }));
+        }
         return;
       }
 
       const previous = runDetailsByIdRef.current[eventRunId];
+      const summaryRefreshIsCurrent = summaryGeneration !== undefined
+        && diffSummaryLoadGenerationRef.current[eventRunId] === summaryGeneration;
       if (options?.refreshDiff) {
         diffLoadGenerationRef.current[eventRunId] = (diffLoadGenerationRef.current[eventRunId] ?? 0) + 1;
-        diffSummaryLoadGenerationRef.current[eventRunId] = (diffSummaryLoadGenerationRef.current[eventRunId] ?? 0) + 1;
       }
       replaceRunDetailForRun(eventRunId, {
         ...fast,
@@ -819,11 +873,13 @@ export const App = () => {
         diffLoaded: options?.refreshDiff ? false : (previous?.diffLoaded ?? false),
         worktreeUnavailable: previous?.worktreeUnavailable ?? false,
         diffPending: options?.refreshDiff ? Boolean(diffLoadPromisesRef.current[eventRunId]) : false,
-        diffSummary: options?.refreshDiff ? undefined : previous?.diffSummary,
-        diffSummaryPending: options?.refreshDiff ? true : (previous?.diffSummaryPending ?? false),
+        diffSummary: options?.refreshDiff && summaryRefreshIsCurrent ? undefined : previous?.diffSummary,
+        diffSummaryPending: options?.refreshDiff && summaryRefreshIsCurrent
+          ? true
+          : (previous?.diffSummaryPending ?? false),
       });
 
-      if (options?.refreshDiff) {
+      if (options?.refreshDiff && summaryRefreshIsCurrent) {
         clearDiffRefreshTimer(eventRunId);
         diffRefreshTimersRef.current[eventRunId] = setTimeout(() => {
           delete diffRefreshTimersRef.current[eventRunId];
@@ -831,7 +887,7 @@ export const App = () => {
         }, 500);
       }
     },
-    [buildwarden, clearDiffRefreshTimer, loadDiffSummaryForOpenRun, replaceRunDetailForRun],
+    [buildwarden, clearDiffRefreshTimer, loadDiffSummaryForOpenRun, mergeRunDetailForRun, replaceRunDetailForRun],
   );
 
   /**
