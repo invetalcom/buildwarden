@@ -50,7 +50,7 @@ export const CommitSheet = ({ runId, open, onClose, onDone }: { runId: string; o
         <Textarea rows={5} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Commit message" />
         <Button tone="neutral" size="sm" busy={action.busy} onClick={() => void suggest()}>
           <Sparkles className="size-4" />
-          Suggest from the diff
+          Generate commit message
         </Button>
       </div>
     </Sheet>
@@ -299,7 +299,7 @@ export const PullRequestSheet = ({
 
           <Button tone="neutral" size="sm" busy={action.busy} onClick={() => void generate()}>
             <Sparkles className="size-4" />
-            Draft with the run model
+            Generate PR description
           </Button>
         </div>
       )}
