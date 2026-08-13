@@ -1936,9 +1936,11 @@ export const App = () => {
     branchPublishName,
     setBranchPublishName,
     branchPublishMode,
+    branchSuggestBusy,
     openBranchPublishDialog,
     closeBranchPublishDialog,
     handleBranchPublishDialogKeyDown,
+    suggestBranchNameWithAi,
     publishBranch,
   } = useRunActionDialogs({
     buildwarden,
@@ -4539,8 +4541,10 @@ export const App = () => {
         branchPublishDialogRun={branchPublishDialogRun}
         branchPublishName={branchPublishName}
         branchPublishMode={branchPublishMode}
+        branchSuggestBusy={branchSuggestBusy}
         onBranchPublishNameChange={setBranchPublishName}
         onBranchPublishDialogKeyDown={handleBranchPublishDialogKeyDown}
+        onSuggestBranchName={() => void suggestBranchNameWithAi()}
         onPublishBranch={() => void publishBranch()}
         onCloseBranchPublishDialog={closeBranchPublishDialog}
         continueDialogRun={continueDialogRun}

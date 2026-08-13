@@ -925,6 +925,7 @@ const bootstrap = async (): Promise<void> => {
 
   remoteOperations.register("commitRun", (runId, message) => controller.commitRun(runId, message), validateTwoRemoteStrings, "git:write", true);
   remoteOperations.register("createRunLocalBranch", (runId, branchName) => controller.createRunLocalBranch(runId, branchName), validateTwoRemoteStrings, "git:write", true);
+  remoteOperations.register("suggestRunBranchName", (runId) => controller.suggestRunBranchName(runId), validateSingleRemoteStringArg, "git:write", true);
   remoteOperations.register("publishRunBranch", (runId, branchName) => controller.publishRunBranch(runId, branchName), validateOptionalSecondString, "git:write", true);
   remoteOperations.register(
     "createRunPullRequest",
@@ -1349,6 +1350,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.createRunLocalBranch, (_, runId: string, branchName: string) =>
     controller.createRunLocalBranch(runId, branchName),
   );
+  ipcMain.handle(IPC_CHANNELS.suggestRunBranchName, (_, runId: string) => controller.suggestRunBranchName(runId));
   ipcMain.handle(IPC_CHANNELS.followUpRun, (_, runId: string, prompt: string, options) => controller.followUpRun(runId, prompt, options));
   ipcMain.handle(IPC_CHANNELS.publishRunBranch, (_, runId: string, branchName?: string) =>
     controller.publishRunBranch(runId, branchName),

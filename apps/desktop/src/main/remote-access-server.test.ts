@@ -178,6 +178,7 @@ describe("remote operation registry", () => {
       | "mergeRunForgeRequest"
       | "commitRun"
       | "createRunLocalBranch"
+      | "suggestRunBranchName"
       | "publishRunBranch"
       | "createRunPullRequest"
       | "checkoutProjectBranch"

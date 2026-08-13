@@ -6,6 +6,7 @@ import {
   BookmarkCheck,
   Clock,
   GitCommit,
+  GitBranch,
   GitPullRequest,
   MoreHorizontal,
   RotateCcw,
@@ -27,7 +28,7 @@ import { RichText } from "../components/RichText";
 import { ActionSheet, ConfirmSheet } from "../components/Sheet";
 import { RunStatusPill } from "../components/StatusPill";
 import { CenteredSpinner, EmptyState, IconButton, InlineError, SegmentedTabs, type SegmentOption } from "../components/primitives";
-import { CommitSheet, PublishBranchSheet, PullRequestSheet } from "./run/RunGitSheets";
+import { CommitSheet, LocalBranchSheet, PublishBranchSheet, PullRequestSheet } from "./run/RunGitSheets";
 import { RunAgentsPanel } from "./run/RunAgentsPanel";
 import { RunFilesPanel } from "./run/RunFilesPanel";
 import { RunNotesPanel } from "./run/RunNotesPanel";
@@ -43,7 +44,7 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
   const action = useAction();
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirm, setConfirm] = useState<PendingConfirm>(null);
-  const [gitSheet, setGitSheet] = useState<"commit" | "branch" | "pr" | null>(null);
+  const [gitSheet, setGitSheet] = useState<"commit" | "local-branch" | "branch" | "pr" | null>(null);
   const [runChat, setRunChat] = useState<ChatDetail | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -275,6 +276,12 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
             onSelect: () => setGitSheet("commit"),
           },
           {
+            label: "Create local branch",
+            icon: <GitBranch className="size-4" />,
+            disabled: !client.capabilities.gitMutations,
+            onSelect: () => setGitSheet("local-branch"),
+          },
+          {
             label: "Publish branch",
             icon: <UploadCloud className="size-4" />,
             disabled: !client.capabilities.gitMutations,
@@ -352,6 +359,17 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
       />
 
       <CommitSheet runId={runId} open={gitSheet === "commit"} onClose={() => setGitSheet(null)} onDone={refreshAll} />
+
+      <LocalBranchSheet
+        runId={runId}
+        defaultName={detail.run.branchName}
+        open={gitSheet === "local-branch"}
+        onClose={() => setGitSheet(null)}
+        onDone={async (branchName) => {
+          setNotice(`Created local branch ${branchName}.`);
+          await refreshAll();
+        }}
+      />
 
       <PublishBranchSheet
         runId={runId}

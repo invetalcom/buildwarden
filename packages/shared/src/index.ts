@@ -3729,6 +3729,8 @@ export interface DesktopApi {
   createRunPullRequest(runId: string, targetBranch: string, title: string, sourceBranchName?: string, description?: string): Promise<string>;
   suggestRunPullRequestDescription(runId: string, targetBranch: string, title: string): Promise<string>;
   createRunLocalBranch(runId: string, branchName: string): Promise<string>;
+  /** Uses the run's model + prompt to propose a concise, Git-safe local branch name. */
+  suggestRunBranchName(runId: string): Promise<string>;
   publishRunBranch(runId: string, branchName?: string): Promise<string>;
   commitRun(runId: string, message: string): Promise<void>;
   /** Uses the run's model + provider (chat completions) to propose a message from the worktree diff. */
@@ -4176,6 +4178,7 @@ export type RemoteOperationMap = {
   mergeRunForgeRequest: DesktopApi["mergeRunForgeRequest"];
   commitRun: DesktopApi["commitRun"];
   createRunLocalBranch: DesktopApi["createRunLocalBranch"];
+  suggestRunBranchName: DesktopApi["suggestRunBranchName"];
   publishRunBranch: DesktopApi["publishRunBranch"];
   createRunPullRequest: DesktopApi["createRunPullRequest"];
   checkoutProjectBranch: DesktopApi["checkoutProjectBranch"];
@@ -4403,6 +4406,7 @@ export const IPC_CHANNELS = {
   createRunPullRequest: "buildwarden:create-run-pull-request",
   suggestRunPullRequestDescription: "buildwarden:suggest-run-pull-request-description",
   createRunLocalBranch: "buildwarden:create-run-local-branch",
+  suggestRunBranchName: "buildwarden:suggest-run-branch-name",
   createRun: "buildwarden:create-run",
   continueRun: "buildwarden:continue-run",
   getOrchestrationDetail: "buildwarden:get-orchestration-detail",

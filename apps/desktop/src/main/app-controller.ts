@@ -15,6 +15,7 @@ import {
 import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
 import { readRunWorkspaceFileForPreview } from "./run-workspace-file";
 import { normalizeJsonResponse } from "./json-response";
+import { normalizeSuggestedBranchName } from "./branch-name-suggestion";
 import {
   createFolderSnapshot,
   deleteFolderSnapshot,
@@ -6030,6 +6031,36 @@ export class AppController
     });
 
     return content;
+  }
+
+  async suggestRunBranchName(runId: string): Promise<string> {
+    const run = this.db.getRun(runId);
+    this.requireGitRun(run, "Branch name suggestions");
+    const project = this.db.getProject(run.projectId);
+    this.requireGitProject(project, "Branch name suggestions");
+    const context = await this.resolveModelInvocationContext(run.modelId);
+    const prompt = [
+      `Project: ${project.name}`,
+      `Task: ${run.prompt}`,
+      `Current branch: ${run.branchName}`,
+      "",
+      "Suggest a new branch name for this task.",
+      "Use lowercase ASCII letters, numbers, hyphens, and optional forward slashes only.",
+      "Use a short conventional prefix such as feat/, fix/, refactor/, docs/, test/, or chore/ when appropriate.",
+      "Output only the branch name, with no quotes, markdown, or commentary.",
+    ].join("\n");
+    const raw = await this.askModelForText(run.worktreePath, context, {
+      prompt,
+      systemPrompt: "You generate concise, valid Git branch names. Output only the branch name.",
+      maxTokens: 80,
+      temperature: 0.2,
+      usageProjectId: run.projectId,
+    });
+    const branchName = normalizeSuggestedBranchName(raw);
+    if (!branchName) {
+      throw new Error("The model returned an empty branch name.");
+    }
+    return branchName;
   }
 
   async releaseRun(runId: string): Promise<void> {

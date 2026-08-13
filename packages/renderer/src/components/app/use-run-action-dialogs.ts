@@ -332,10 +332,11 @@ const usePublishDialog = (deps: RunActionDialogDeps) => {
 
 /** Branch-publish dialog: push the run branch to the remote or create a local branch from it. */
 const useBranchPublishDialog = (deps: RunActionDialogDeps) => {
-  const { buildwarden, handleAction } = deps;
+  const { buildwarden, handleAction, setError } = deps;
   const [branchPublishDialogRun, setBranchPublishDialogRun] = useState<RunRecord | null>(null);
   const [branchPublishName, setBranchPublishName] = useState("");
   const [branchPublishMode, setBranchPublishMode] = useState<"publish" | "local">("publish");
+  const [branchSuggestBusy, setBranchSuggestBusy] = useState(false);
 
   const openBranchPublishDialog = (run: RunRecord, mode: "publish" | "local") => {
     setBranchPublishDialogRun(run);
@@ -347,6 +348,23 @@ const useBranchPublishDialog = (deps: RunActionDialogDeps) => {
     setBranchPublishDialogRun(null);
     setBranchPublishName("");
     setBranchPublishMode("publish");
+  };
+
+  const suggestBranchNameWithAi = async () => {
+    if (!branchPublishDialogRun || branchPublishMode !== "local" || !buildwarden) {
+      return;
+    }
+
+    setBranchSuggestBusy(true);
+    setError(null);
+    try {
+      const branchName = await buildwarden.suggestRunBranchName(branchPublishDialogRun.id);
+      setBranchPublishName(branchName);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not generate a branch name.");
+    } finally {
+      setBranchSuggestBusy(false);
+    }
   };
 
   const publishBranch = async () => {
@@ -375,14 +393,14 @@ const useBranchPublishDialog = (deps: RunActionDialogDeps) => {
     });
   };
 
-  const handleBranchPublishDialogKeyDown = (event: ReactKeyboardEvent<HTMLInputElement | HTMLDivElement>) => {
+  const handleBranchPublishDialogKeyDown = (event: ReactKeyboardEvent<HTMLInputElement | HTMLButtonElement | HTMLDivElement>) => {
     if (event.key === "Escape") {
       event.preventDefault();
       closeBranchPublishDialog();
       return;
     }
 
-    if (isPlainEnter(event)) {
+    if (!(event.target instanceof HTMLButtonElement) && isPlainEnter(event)) {
       event.preventDefault();
       void publishBranch();
     }
@@ -393,9 +411,11 @@ const useBranchPublishDialog = (deps: RunActionDialogDeps) => {
     branchPublishName,
     setBranchPublishName,
     branchPublishMode,
+    branchSuggestBusy,
     openBranchPublishDialog,
     closeBranchPublishDialog,
     handleBranchPublishDialogKeyDown,
+    suggestBranchNameWithAi,
     publishBranch,
   };
 };

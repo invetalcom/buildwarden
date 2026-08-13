@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { RunPublishOptions } from "@buildwarden/shared";
-import { Sparkles } from "lucide-react";
+import { Loader2, Sparkles } from "lucide-react";
 import { useMobileApp } from "../../data/mobile-app-context";
 import { useAction } from "../../data/use-action";
 import { errorMessage } from "../../lib/format";
@@ -102,6 +102,88 @@ export const PublishBranchSheet = ({
         {action.error ? <InlineError message={action.error} /> : null}
         <label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Branch name</label>
         <Input value={name} onChange={(event) => setName(event.target.value)} spellCheck={false} autoCapitalize="none" className="m-mono text-[13px]" />
+      </div>
+    </Sheet>
+  );
+};
+
+export const LocalBranchSheet = ({
+  runId,
+  defaultName,
+  open,
+  onClose,
+  onDone,
+}: {
+  runId: string;
+  defaultName: string;
+  open: boolean;
+  onClose: () => void;
+  onDone: (branchName: string) => Promise<void>;
+}) => {
+  const { client } = useMobileApp();
+  const action = useAction();
+  const [name, setName] = useState(defaultName);
+
+  useEffect(() => {
+    if (open) setName(defaultName);
+  }, [defaultName, open]);
+
+  const suggest = async () => {
+    const suggestion = await action.run(
+      () => client.suggestRunBranchName(runId),
+      "Could not suggest a branch name.",
+    );
+    if (suggestion) setName(suggestion);
+  };
+
+  const submit = async () => {
+    const branchName = name.trim();
+    if (!branchName) return;
+    const result = await action.run(
+      () => client.createRunLocalBranch(runId, branchName),
+      "Could not create the local branch.",
+    );
+    if (result !== undefined) {
+      onClose();
+      await onDone(branchName);
+    }
+  };
+
+  return (
+    <Sheet
+      open={open}
+      onClose={onClose}
+      title="Create local branch"
+      dismissable={!action.busy}
+      footer={
+        <Button block busy={action.busy} disabled={!name.trim()} onClick={() => void submit()}>
+          Create local branch
+        </Button>
+      }
+    >
+      <div className="flex flex-col gap-2 px-4 py-3">
+        {action.error ? <InlineError message={action.error} /> : null}
+        <label htmlFor="local-branch-name" className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Branch name</label>
+        <div className="relative">
+          <Input
+            id="local-branch-name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            spellCheck={false}
+            autoCapitalize="none"
+            className="m-mono pr-12 text-[13px]"
+          />
+          <button
+            type="button"
+            aria-label="Generate branch name with AI"
+            title="Generate branch name with AI"
+            disabled={action.busy}
+            onClick={() => void suggest()}
+            className="absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-md border-l border-[var(--ec-border)] text-[var(--ec-muted)] transition active:bg-[var(--ec-hover)] active:text-[var(--ec-text)] disabled:opacity-40"
+          >
+            {action.busy ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+          </button>
+        </div>
       </div>
     </Sheet>
   );

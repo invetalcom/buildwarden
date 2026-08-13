@@ -170,6 +170,7 @@ const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
   "mergeRunForgeRequest",
   "commitRun",
   "createRunLocalBranch",
+  "suggestRunBranchName",
   "publishRunBranch",
   "createRunPullRequest",
   "checkoutProjectBranch",
@@ -212,7 +213,7 @@ const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAccessSco
   ...["createChat", "followUpChat", "cancelChat", "deleteChat", "addChatBookmark", "removeChatBookmark", "removeChatBookmarkById"]
     .map((method) => [method as RemoteApiMethod, ["chat:operate"] as const] as const),
   ...[
-    "commitRun", "createRunLocalBranch", "publishRunBranch", "createRunPullRequest", "checkoutProjectBranch",
+    "commitRun", "createRunLocalBranch", "suggestRunBranchName", "publishRunBranch", "createRunPullRequest", "checkoutProjectBranch",
     "fetchProjectBranches", "createProjectBranch", "renameProjectBranch", "deleteProjectBranch", "pullProjectBranch",
     "pushProjectBranch", "convertProjectToGit", "updateProjectBaseBranch",
     "analyzeProjectPrMrDiff", "postProjectPrMrReview", "submitProjectPrMrComments", "replyProjectPrMrReviewThread",

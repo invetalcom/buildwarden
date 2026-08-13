@@ -14,6 +14,7 @@ const renderDialogs = (overrides: Partial<ComponentProps<typeof RunActionDialogs
   branchPublishDialogRun: null,
   branchPublishName: "",
   branchPublishMode: "local",
+  branchSuggestBusy: false,
   continueDialogRun: null,
   confirmDialog: null,
   onResolveConfirmation: vi.fn(),
@@ -51,7 +52,18 @@ describe("RunActionDialogs run actions", () => {
     });
 
     expect(markup).toContain("Create local branch");
+    expect(markup).toContain("Generate branch name with AI");
     expect(markup).not.toContain(longPrompt);
+  });
+
+  it("keeps the branch name suggestion button out of the publish dialog", () => {
+    const markup = renderDialogs({
+      branchPublishDialogRun: dialogRun(longPrompt),
+      branchPublishName: "feature/update-cards",
+      branchPublishMode: "publish",
+    });
+
+    expect(markup).not.toContain("Generate branch name with AI");
   });
 });
 
