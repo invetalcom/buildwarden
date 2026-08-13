@@ -171,6 +171,46 @@ describe("remote BuildWarden client", () => {
       .rejects.toThrow("not available for this remote session");
   });
 
+  it("dispatches mobile run helpers through their scoped remote operations", async () => {
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as { method: string; requestId: string };
+      const result = request.method === "suggestCommitMessage"
+        ? "Generated commit message"
+        : request.method === "suggestRunPullRequestDescription"
+          ? "Generated PR description"
+          : null;
+      return rpcResponse(result, request.requestId);
+    });
+    const client = createRemoteBuildWardenClient({
+      fetch: fetcher as typeof fetch,
+      scopes: ["state:read", "run:operate", "chat:operate", "git:write"],
+    });
+
+    await expect(client.suggestCommitMessage("run-1")).resolves.toBe("Generated commit message");
+    await expect(client.suggestRunPullRequestDescription("run-1", "main", "Title"))
+      .resolves.toBe("Generated PR description");
+    await client.addRunNote("run-1", { content: "Remember this" });
+    await client.updateRunNote("note-1", { status: "closed" });
+    await client.deleteRunNote("note-1");
+    await expect(client.getRunChat("run-1")).resolves.toBeNull();
+    await client.createRunChat("run-1", { modelId: "model-1", prompt: "What changed?" });
+
+    const requests = fetcher.mock.calls.map(([, init]) =>
+      JSON.parse(String((init as RequestInit).body)) as { method: string; idempotencyKey?: string });
+    expect(requests.map(({ method }) => method)).toEqual([
+      "suggestCommitMessage",
+      "suggestRunPullRequestDescription",
+      "addRunNote",
+      "updateRunNote",
+      "deleteRunNote",
+      "getRunChat",
+      "createRunChat",
+    ]);
+    expect(requests.filter(({ method }) => method !== "getRunChat"))
+      .toSatisfy((items: Array<{ idempotencyKey?: string }>) => items.every((item) => item.idempotencyKey === "request-id"));
+    expect(requests.find(({ method }) => method === "getRunChat")?.idempotencyKey).toBeUndefined();
+  });
+
   it("requires both run operation and admin scopes to refresh orchestration settings", () => {
     const adminOnly = createRemoteBuildWardenClient({
       fetch: vi.fn(async () => rpcResponse(snapshot)) as typeof fetch,

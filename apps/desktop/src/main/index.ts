@@ -452,6 +452,7 @@ const bootstrap = async (): Promise<void> => {
   );
   remoteOperations.register("getRunWorkspaceFile", (input) => controller.getRunWorkspaceFile(input), validateRunWorkspaceFileRemoteArgs);
   remoteOperations.register("getProjectLoopUiReviewImage", (reviewId) => controller.getProjectLoopUiReviewImage(reviewId), validateSingleRemoteStringArg);
+  remoteOperations.register("getRunChat", (runId) => controller.getRunChat(runId), validateSingleRemoteStringArg);
   remoteOperations.register("getChatDetail", (chatId) => controller.getChatDetail(chatId), validateSingleRemoteStringArg);
   remoteOperations.register("listChatsWithSteps", () => controller.listChatsWithSteps(), validateNoRemoteArgs);
   remoteOperations.register("getBookmarksWithSteps", () => controller.getBookmarksWithSteps(), validateNoRemoteArgs);
@@ -497,6 +498,22 @@ const bootstrap = async (): Promise<void> => {
       (Array.isArray(answer) && answer.every((item) => typeof item === "string"))));
   const validateChatInput = defineRemoteArgsValidator<"createChat">(
     (args) => args.length === 1 && hasRemoteStringFields(args[0], ["providerAccountId", "modelId", "prompt"]),
+  );
+  const validateRunChatInput = defineRemoteArgsValidator<"createRunChat">(
+    (args) => args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["modelId", "prompt"]),
+  );
+  const validateRunNoteCreate = defineRemoteArgsValidator<"addRunNote">(
+    (args) => args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["content"]),
+  );
+  const validateRunNoteUpdate = defineRemoteArgsValidator<"updateRunNote">((args) => {
+    if (args.length !== 2 || typeof args[0] !== "string" || !isRemoteRecord(args[1])) return false;
+    const input = args[1];
+    return Object.keys(input).length > 0 && Object.keys(input).every((field) => field === "content" || field === "status") &&
+      (input.content === undefined || typeof input.content === "string") &&
+      (input.status === undefined || input.status === "open" || input.status === "closed");
+  });
+  const validateSuggestPullRequestDescription = defineRemoteArgsValidator<"suggestRunPullRequestDescription">(
+    (args) => args.length === 3 && args.every((value) => typeof value === "string"),
   );
   const validateOptionalSecondString = defineRemoteArgsValidator<"publishRunBranch">(
     (args) => (args.length === 1 || args.length === 2) && typeof args[0] === "string" &&
@@ -842,6 +859,9 @@ const bootstrap = async (): Promise<void> => {
   for (const method of ["addBookmark", "removeBookmark", "removeBookmarkById"] as const) {
     remoteOperations.register(method, (id) => controller[method](id), validateSingleRemoteStringArg, "run:operate", true);
   }
+  remoteOperations.register("addRunNote", (runId, input) => controller.addRunNote(runId, input), validateRunNoteCreate, "run:operate", true);
+  remoteOperations.register("updateRunNote", (noteId, input) => controller.updateRunNote(noteId, input), validateRunNoteUpdate, "run:operate", true);
+  remoteOperations.register("deleteRunNote", (noteId) => controller.deleteRunNote(noteId), validateSingleRemoteStringArg, "run:operate", true);
   remoteOperations.register(
     "respondToShellApproval",
     (runId, requestId, decision, options) => controller.respondToShellApproval(runId, requestId, decision, options),
@@ -857,6 +877,7 @@ const bootstrap = async (): Promise<void> => {
     true,
   );
   remoteOperations.register("createChat", (input) => controller.createChat(input), validateChatInput, "chat:operate", true);
+  remoteOperations.register("createRunChat", (runId, input) => controller.createRunChat(runId, input), validateRunChatInput, "chat:operate", true);
   remoteOperations.register("followUpChat", (chatId, prompt, options) => controller.followUpChat(chatId, prompt, options), validateFollowUpChat, "chat:operate", true);
   remoteOperations.register("cancelChat", (chatId) => controller.cancelChat(chatId), validateSingleRemoteStringArg, "chat:operate", true);
   remoteOperations.register("deleteChat", (chatId) => controller.deleteChat(chatId), validateSingleRemoteStringArg, "chat:operate", true);
@@ -924,6 +945,7 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("mergeProjectForgeRequest", (projectId, input) => controller.mergeProjectForgeRequest(projectId, input), validateMergeProjectForgeRequest, "git:write", true);
 
   remoteOperations.register("commitRun", (runId, message) => controller.commitRun(runId, message), validateTwoRemoteStrings, "git:write", true);
+  remoteOperations.register("suggestCommitMessage", (runId) => controller.suggestCommitMessage(runId), validateSingleRemoteStringArg, "git:write", true);
   remoteOperations.register("createRunLocalBranch", (runId, branchName) => controller.createRunLocalBranch(runId, branchName), validateTwoRemoteStrings, "git:write", true);
   remoteOperations.register("suggestRunBranchName", (runId) => controller.suggestRunBranchName(runId), validateSingleRemoteStringArg, "git:write", true);
   remoteOperations.register("publishRunBranch", (runId, branchName) => controller.publishRunBranch(runId, branchName), validateOptionalSecondString, "git:write", true);
@@ -932,6 +954,13 @@ const bootstrap = async (): Promise<void> => {
     (runId, targetBranch, title, sourceBranchName, description) =>
       controller.createRunPullRequest(runId, targetBranch, title, sourceBranchName, description),
     validatePullRequest,
+    "git:write",
+    true,
+  );
+  remoteOperations.register(
+    "suggestRunPullRequestDescription",
+    (runId, targetBranch, title) => controller.suggestRunPullRequestDescription(runId, targetBranch, title),
+    validateSuggestPullRequestDescription,
     "git:write",
     true,
   );

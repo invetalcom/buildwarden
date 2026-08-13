@@ -4100,6 +4100,7 @@ export type RemoteOperationMap = {
   getProjectLoopUiReviewImage: DesktopApi["getProjectLoopUiReviewImage"];
   getProjectLoopDetail: DesktopApi["getProjectLoopDetail"];
   getProjectLoopAvailability: DesktopApi["getProjectLoopAvailability"];
+  getRunChat: DesktopApi["getRunChat"];
   getChatDetail: DesktopApi["getChatDetail"];
   listChatsWithSteps: DesktopApi["listChatsWithSteps"];
   getBookmarksWithSteps: DesktopApi["getBookmarksWithSteps"];
@@ -4146,9 +4147,13 @@ export type RemoteOperationMap = {
   addBookmark: DesktopApi["addBookmark"];
   removeBookmark: DesktopApi["removeBookmark"];
   removeBookmarkById: DesktopApi["removeBookmarkById"];
+  addRunNote: DesktopApi["addRunNote"];
+  updateRunNote: DesktopApi["updateRunNote"];
+  deleteRunNote: DesktopApi["deleteRunNote"];
   respondToShellApproval: DesktopApi["respondToShellApproval"];
   respondToRunUserInput: DesktopApi["respondToRunUserInput"];
   createChat: DesktopApi["createChat"];
+  createRunChat: DesktopApi["createRunChat"];
   followUpChat: DesktopApi["followUpChat"];
   cancelChat: DesktopApi["cancelChat"];
   deleteChat: DesktopApi["deleteChat"];
@@ -4177,10 +4182,12 @@ export type RemoteOperationMap = {
   updateRunForgeRequest: DesktopApi["updateRunForgeRequest"];
   mergeRunForgeRequest: DesktopApi["mergeRunForgeRequest"];
   commitRun: DesktopApi["commitRun"];
+  suggestCommitMessage: DesktopApi["suggestCommitMessage"];
   createRunLocalBranch: DesktopApi["createRunLocalBranch"];
   suggestRunBranchName: DesktopApi["suggestRunBranchName"];
   publishRunBranch: DesktopApi["publishRunBranch"];
   createRunPullRequest: DesktopApi["createRunPullRequest"];
+  suggestRunPullRequestDescription: DesktopApi["suggestRunPullRequestDescription"];
   checkoutProjectBranch: DesktopApi["checkoutProjectBranch"];
   fetchProjectBranches: DesktopApi["fetchProjectBranches"];
   createProjectBranch: DesktopApi["createProjectBranch"];
