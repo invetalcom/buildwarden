@@ -87,7 +87,6 @@ const CommitDialog = (props: RunActionDialogsProps) => {
     <DialogOverlay onKeyDown={props.onCommitDialogKeyDown}>
       <Card className="shadow-[var(--ec-popover-shadow)] w-full max-w-xl p-5">
         <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Create commit</p>
-        <h3 className="mt-2 text-xl font-semibold">{run.prompt}</h3>
         <p className="mt-1 text-sm text-zinc-500">
           Choose the commit message for this run&apos;s {run.workspaceType === "local" ? "local repository" : "worktree"} changes.
           <span className="mt-1 block text-[11px] text-zinc-600">Ctrl+Enter (Cmd+Enter on Mac) to commit.</span>
@@ -197,7 +196,9 @@ export const RunActionDialogs = ({
           <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">
             {branchPublishMode === "local" ? "Create local branch" : "Publish branch"}
           </p>
-          <h3 className="mt-2 text-xl font-semibold">{branchPublishDialogRun.prompt}</h3>
+          {branchPublishMode === "publish" ? (
+            <h3 className="mt-2 text-xl font-semibold">{branchPublishDialogRun.prompt}</h3>
+          ) : null}
           <label className="mt-4 block text-sm">
             <span className="mb-1 block text-zinc-300">Branch name</span>
             <Input
