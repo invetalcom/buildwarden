@@ -795,7 +795,14 @@ describe("remote access authentication", () => {
   });
 
   it("streams validated host events over a version-negotiated WebSocket", async () => {
-    const { auth, info, publishEvent } = await startServer();
+    const onServerError = vi.fn();
+    const { auth, info, publishEvent } = await startServer(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { onServerError },
+    );
     const { cookie } = await pair(info.baseUrl, auth);
     const socket = new WebSocket(
       `${info.baseUrl.replace("http://", "ws://")}${REMOTE_ACCESS_WEBSOCKET_PATH}?protocolVersion=${String(REMOTE_ACCESS_PROTOCOL_VERSION)}`,
@@ -818,9 +825,13 @@ describe("remote access authentication", () => {
       protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
       type: "subscribe",
       requestId: "subscribe-1",
-      events: ["task"],
+      events: ["task", "forge", "orchestration"],
     }));
-    await expect(subscribed).resolves.toMatchObject({ type: "subscribed", requestId: "subscribe-1", events: ["task"] });
+    await expect(subscribed).resolves.toMatchObject({
+      type: "subscribed",
+      requestId: "subscribe-1",
+      events: ["task", "forge", "orchestration"],
+    });
 
     const streamed = new Promise<Record<string, unknown>>((resolve) => {
       socket.addEventListener("message", (event) => resolve(JSON.parse(String(event.data)) as Record<string, unknown>), { once: true });
@@ -831,6 +842,76 @@ describe("remote access authentication", () => {
       event: "task",
       payload: { projectId: "project-1", taskId: "task-1", status: "in_progress" },
     });
+
+    const forgeCleared = new Promise<Record<string, unknown>>((resolve) => {
+      socket.addEventListener("message", (event) => resolve(JSON.parse(String(event.data)) as Record<string, unknown>), { once: true });
+    });
+    publishEvent({ event: "forge", payload: { runId: "run-1", projectId: "project-1", forgeRequest: null } });
+    await expect(forgeCleared).resolves.toMatchObject({
+      type: "event",
+      event: "forge",
+      payload: { runId: "run-1", projectId: "project-1", forgeRequest: null },
+    });
+
+    const forgeUpdated = new Promise<Record<string, unknown>>((resolve) => {
+      socket.addEventListener("message", (event) => resolve(JSON.parse(String(event.data)) as Record<string, unknown>), { once: true });
+    });
+    publishEvent({
+      event: "forge",
+      payload: {
+        runId: "run-1",
+        projectId: "project-1",
+        forgeRequest: {
+          provider: "github",
+          number: 42,
+          title: "Update cards",
+          url: "https://github.example.test/org/repo/pull/42",
+          state: "open",
+          readiness: "ready",
+          draft: false,
+          mergeability: "mergeable",
+          reviewDecision: "none",
+          author: "octocat",
+          sourceBranch: "feat/update-cards",
+          targetBranch: "main",
+          headSha: "abc123",
+          checks: { completed: 1, total: 1, successful: 1, failed: 0, running: 0 },
+          unresolvedThreadCount: 0,
+          supportedActions: ["refresh", "open"],
+          supportedMergeMethods: ["merge", "squash"],
+          updatedAt: "2026-08-13T12:00:00.000Z",
+          lastSyncedAt: "2026-08-13T12:00:01.000Z",
+          stale: false,
+          syncError: null,
+        },
+      },
+    });
+    await expect(forgeUpdated).resolves.toMatchObject({
+      type: "event",
+      event: "forge",
+      payload: { runId: "run-1", forgeRequest: { provider: "github", number: 42 } },
+    });
+
+    const orchestrationUpdated = new Promise<Record<string, unknown>>((resolve) => {
+      socket.addEventListener("message", (event) => resolve(JSON.parse(String(event.data)) as Record<string, unknown>), { once: true });
+    });
+    publishEvent({
+      event: "orchestration",
+      payload: {
+        projectId: "project-1",
+        coordinatorRunId: "run-1",
+        orchestrationId: "orchestration-1",
+        taskId: null,
+        status: "active",
+        sequence: 0,
+      },
+    });
+    await expect(orchestrationUpdated).resolves.toMatchObject({
+      type: "event",
+      event: "orchestration",
+      payload: { orchestrationId: "orchestration-1", status: "active", sequence: 0 },
+    });
+    expect(onServerError).not.toHaveBeenCalled();
 
     const rejected = new Promise<Record<string, unknown>>((resolve) => {
       socket.addEventListener("message", (event) => resolve(JSON.parse(String(event.data)) as Record<string, unknown>), { once: true });
