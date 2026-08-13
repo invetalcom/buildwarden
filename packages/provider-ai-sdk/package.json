@@ -18,6 +18,6 @@
     "@ai-sdk/openai-compatible": "^3.0.7",
     "@ai-sdk/xai": "^4.0.10",
     "p-retry": "^6.2.1",
-    "undici": "^7.28.0"
+    "undici": "^7.29.0"
   }
 }
