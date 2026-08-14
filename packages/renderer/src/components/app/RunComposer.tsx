@@ -325,7 +325,7 @@ const ComposerModelChip = ({
         ref={anchorRef}
         type="button"
         data-model-readout="single"
-        aria-label={`Configure ${optionEntry.label}`}
+        aria-label={`Configure ${[optionEntry.label, ...summaryItems.map((entry) => entry.label)].join(", ")}`}
         title={[optionEntry.displayLabel ?? optionEntry.label, ...summaryItems.map((entry) => entry.label)].join(" · ")}
         className="inline-flex min-w-0 items-center gap-1.5 rounded-lg px-2 text-[var(--ec-text)] outline-none transition hover:bg-[var(--ec-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-accent-ring)]"
         onClick={() => {
@@ -515,7 +515,7 @@ const ComposerMultiModelControl = ({
         ref={anchorRef}
         type="button"
         data-model-readout="multi"
-        aria-label={`Configure ${groupLabel}`}
+        aria-label={`Configure ${[groupLabel, ...groupSummary.map((entry) => entry.label)].join(", ")}`}
         title={tooltip}
         className="inline-flex h-9 min-w-0 items-center gap-1.5 rounded-lg bg-[var(--ec-control)] px-2 text-[var(--ec-text)] ring-1 ring-inset ring-[var(--ec-border)] transition hover:bg-[var(--ec-hover)] hover:ring-[var(--ec-border-strong)] focus-visible:ring-2 focus-visible:ring-[var(--ec-accent-ring)]"
         onClick={() => {

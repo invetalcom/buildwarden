@@ -585,7 +585,7 @@ describe("renderer component states", () => {
     expect(fullAccessButton).toBeDefined();
     expect(fullAccessButton).toContain("lucide-shield-off");
     expect(fullAccessButton).not.toContain(">Full access<");
-    expect(runMarkup).toContain('aria-label="Configure 2 models"');
+    expect(runMarkup).toContain('aria-label="Configure 2 models, High, Fast"');
     expect(runMarkup).not.toContain('aria-label="Configure GPT-5"');
     expect(runMarkup).not.toContain('aria-label="Configure Claude"');
     expect(runMarkup).not.toContain('data-model-chip-rail="true"');
@@ -612,7 +612,7 @@ describe("renderer component states", () => {
     expect(staleModelTrigger).not.toContain("disabled");
     const chatMarkup = renderToStaticMarkup(<RunComposer {...commonProps} variant="chat" submitLabel="Send chat" />);
     expect(chatMarkup).toContain("Send chat");
-    expect(chatMarkup).toContain('aria-label="Configure GPT-5"');
+    expect(chatMarkup).toContain('aria-label="Configure GPT-5, Default effort, Default speed"');
     expect(chatMarkup).not.toContain('aria-label="Add model"');
     expect(chatMarkup).toContain('data-model-readout="single"');
     const singleModelReadout = chatMarkup.match(/<button[^>]*data-model-readout="single"[^>]*>[\s\S]*?<\/button>/)?.[0];
