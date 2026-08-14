@@ -1,6 +1,12 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { AppSnapshot } from "@buildwarden/shared";
-import { MAX_DATA_RETENTION_CLEANUP_DAYS, MIN_DATA_RETENTION_CLEANUP_DAYS } from "@buildwarden/shared";
+import {
+  DEFAULT_PASTED_TEXT_ATTACHMENT_THRESHOLD,
+  MAX_DATA_RETENTION_CLEANUP_DAYS,
+  MAX_PASTED_TEXT_ATTACHMENT_THRESHOLD,
+  MIN_DATA_RETENTION_CLEANUP_DAYS,
+  MIN_PASTED_TEXT_ATTACHMENT_THRESHOLD,
+} from "@buildwarden/shared";
 import { AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -17,6 +23,7 @@ export type GitWorkspaceSettingsTabProps = {
   autoReleaseRunBranchOnLeave: boolean;
   dataRetentionCleanupEnabled: boolean;
   dataRetentionCleanupDays: number;
+  pastedTextAttachmentThreshold: number;
   worktreeRootDraft: string;
   worktreeRootOverrideSettingValue: string;
   worktreeRootDirty: boolean;
@@ -33,6 +40,7 @@ export type GitWorkspaceSettingsTabProps = {
   onAutoReleaseRunBranchOnLeaveChange: (value: boolean) => void;
   onDataRetentionCleanupEnabledChange: (value: boolean) => void;
   onDataRetentionCleanupDaysChange: (value: number) => void | Promise<void>;
+  onPastedTextAttachmentThresholdChange: (value: number) => void | Promise<void>;
   onProjectNameChange: (value: string) => void;
   onProjectPathChange: (value: string) => void;
   onWorktreeRootDraftChange: (value: string) => void;
@@ -92,6 +100,8 @@ const SettingsRow = ({ title, description, children, align = "center" }: Setting
 
 const rowControlClass = "w-full md:max-w-[42rem]";
 const DATA_RETENTION_DAYS_ERROR_ID = "data-retention-days-error";
+const PASTED_TEXT_ATTACHMENT_THRESHOLD_ERROR_ID = "pasted-text-attachment-threshold-error";
+const PASTED_TEXT_ATTACHMENT_AUTOSAVE_DELAY_MS = 400;
 
 export const DataRetentionSettingsControl = ({
   busy,
@@ -156,6 +166,65 @@ export const DataRetentionSettingsControl = ({
   );
 };
 
+export const PastedTextAttachmentThresholdControl = ({
+  busy,
+  threshold,
+  onThresholdChange,
+}: {
+  busy: boolean;
+  threshold: number;
+  onThresholdChange: (value: number) => void | Promise<void>;
+}) => {
+  const [thresholdDraft, setThresholdDraft] = useState(String(threshold));
+  const lastSubmittedThresholdRef = useRef<number | null>(null);
+  useEffect(() => {
+    setThresholdDraft(String(threshold));
+    lastSubmittedThresholdRef.current = null;
+  }, [threshold]);
+  const parsedThreshold = Number(thresholdDraft);
+  const thresholdValid = Number.isInteger(parsedThreshold)
+    && parsedThreshold >= MIN_PASTED_TEXT_ATTACHMENT_THRESHOLD
+    && parsedThreshold <= MAX_PASTED_TEXT_ATTACHMENT_THRESHOLD;
+  const thresholdDirty = thresholdValid && parsedThreshold !== threshold;
+
+  useEffect(() => {
+    if (busy || !thresholdDirty || lastSubmittedThresholdRef.current === parsedThreshold) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      lastSubmittedThresholdRef.current = parsedThreshold;
+      void onThresholdChange(parsedThreshold);
+    }, PASTED_TEXT_ATTACHMENT_AUTOSAVE_DELAY_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, [busy, onThresholdChange, parsedThreshold, thresholdDirty]);
+
+  return (
+    <div className={`${rowControlClass} flex flex-wrap items-center justify-start md:justify-end`}>
+      <Input
+        type="number"
+        min={MIN_PASTED_TEXT_ATTACHMENT_THRESHOLD}
+        max={MAX_PASTED_TEXT_ATTACHMENT_THRESHOLD}
+        step={1}
+        value={thresholdDraft}
+        disabled={busy}
+        onChange={(event) => {
+          lastSubmittedThresholdRef.current = null;
+          setThresholdDraft(event.target.value);
+        }}
+        aria-label="Pasted text attachment threshold"
+        aria-invalid={!thresholdValid}
+        aria-describedby={!thresholdValid ? PASTED_TEXT_ATTACHMENT_THRESHOLD_ERROR_ID : undefined}
+        className="h-8 w-28 font-mono text-xs tabular-nums"
+      />
+      {!thresholdValid ? (
+        <p id={PASTED_TEXT_ATTACHMENT_THRESHOLD_ERROR_ID} className="basis-full text-xs text-[var(--ec-danger)] md:text-right">
+          Enter a whole number from {MIN_PASTED_TEXT_ATTACHMENT_THRESHOLD.toLocaleString()} to {MAX_PASTED_TEXT_ATTACHMENT_THRESHOLD.toLocaleString()}.
+        </p>
+      ) : null}
+    </div>
+  );
+};
+
 export const ProjectSetupFields = ({
   busy,
   projectName,
@@ -204,6 +273,7 @@ export const GitWorkspaceSettingsTab = ({
   autoReleaseRunBranchOnLeave,
   dataRetentionCleanupEnabled,
   dataRetentionCleanupDays,
+  pastedTextAttachmentThreshold,
   worktreeRootDraft,
   worktreeRootOverrideSettingValue,
   worktreeRootDirty,
@@ -220,6 +290,7 @@ export const GitWorkspaceSettingsTab = ({
   onAutoReleaseRunBranchOnLeaveChange,
   onDataRetentionCleanupEnabledChange,
   onDataRetentionCleanupDaysChange,
+  onPastedTextAttachmentThresholdChange,
   onProjectNameChange,
   onProjectPathChange,
   onWorktreeRootDraftChange,
@@ -314,6 +385,16 @@ export const GitWorkspaceSettingsTab = ({
             dayCount={dataRetentionCleanupDays}
             onEnabledChange={onDataRetentionCleanupEnabledChange}
             onDayCountChange={onDataRetentionCleanupDaysChange}
+          />
+        </SettingsRow>
+        <SettingsRow
+          title="Long pasted text"
+          description={`Automatically turn pasted text into a .txt attachment at this length. Default: ${DEFAULT_PASTED_TEXT_ATTACHMENT_THRESHOLD.toLocaleString()} characters.`}
+        >
+          <PastedTextAttachmentThresholdControl
+            busy={busy}
+            threshold={pastedTextAttachmentThreshold}
+            onThresholdChange={onPastedTextAttachmentThresholdChange}
           />
         </SettingsRow>
       </SettingsSection>

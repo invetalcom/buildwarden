@@ -9,6 +9,7 @@ import {
   DEFAULT_ADD_MODEL_DRAFT,
   DEFAULT_SHELL_ALLOWLIST_PATTERN_SOURCES,
   parseDataRetentionCleanupDaysSetting,
+  parsePastedTextAttachmentThresholdSetting,
   parseRecentRunDaysSetting,
   parseRemoteAccessEnabledSetting,
   parseRunTimelineDensitySetting,
@@ -156,6 +157,7 @@ import { useRendererErrorReporting } from "./lib/use-renderer-error-reporting";
 import { useStableCallback } from "./lib/use-stable-callback";
 import { reportRendererError, reportRendererLog } from "./lib/report-renderer-error";
 import { useBuildWardenClient } from "./lib/buildwarden-client";
+import { PastedTextAttachmentThresholdProvider } from "./lib/pasted-text-attachment-settings";
 
 const isLocalProviderType = (type: ProviderType): boolean =>
   type === "codex-cli" || type === "claude-code" || type === "cursor-agent";
@@ -1357,6 +1359,9 @@ export const App = () => {
   const autoReleaseRunBranchOnLeave = snapshot.settings[APP_SETTING_KEYS.autoReleaseRunBranchOnLeave] !== "false";
   const dataRetentionCleanupEnabled = snapshot.settings[APP_SETTING_KEYS.dataRetentionCleanupEnabled] === "true";
   const dataRetentionCleanupDays = parseDataRetentionCleanupDaysSetting(snapshot.settings[APP_SETTING_KEYS.dataRetentionCleanupDays]);
+  const pastedTextAttachmentThreshold = parsePastedTextAttachmentThresholdSetting(
+    snapshot.settings[APP_SETTING_KEYS.pastedTextAttachmentThreshold],
+  );
   const recentRunDays = parseRecentRunDaysSetting(snapshot.settings[APP_SETTING_KEYS.recentRunDays]);
   const uiTheme = parseUiTheme(snapshot.settings);
   const sidebarContrast = snapshot.settings[APP_SETTING_KEYS.sidebarContrast] === "true";
@@ -3725,6 +3730,7 @@ export const App = () => {
               autoReleaseRunBranchOnLeave={autoReleaseRunBranchOnLeave}
               dataRetentionCleanupEnabled={dataRetentionCleanupEnabled}
               dataRetentionCleanupDays={dataRetentionCleanupDays}
+              pastedTextAttachmentThreshold={pastedTextAttachmentThreshold}
               recentRunDays={recentRunDays}
               uiTheme={uiTheme}
               sidebarContrast={sidebarContrast}
@@ -3758,6 +3764,16 @@ export const App = () => {
                   await buildwarden.setAppSetting(
                     APP_SETTING_KEYS.dataRetentionCleanupDays,
                     String(parseDataRetentionCleanupDaysSetting(value)),
+                  );
+                  await loadSnapshot();
+                })
+              }
+              onPastedTextAttachmentThresholdChange={(value) =>
+                void handleAction(async () => {
+                  if (!buildwarden) throw new Error("The Electron desktop bridge is unavailable.");
+                  await buildwarden.setAppSetting(
+                    APP_SETTING_KEYS.pastedTextAttachmentThreshold,
+                    String(parsePastedTextAttachmentThresholdSetting(value)),
                   );
                   await loadSnapshot();
                 })
@@ -4397,7 +4413,9 @@ export const App = () => {
               </div>
             }
           >
-          {renderMainContent()}
+          <PastedTextAttachmentThresholdProvider threshold={pastedTextAttachmentThreshold}>
+            {renderMainContent()}
+          </PastedTextAttachmentThresholdProvider>
 
           </Suspense>
         </section>

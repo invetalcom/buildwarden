@@ -4,7 +4,10 @@ import type { DataRetentionCleanupImpact } from "@buildwarden/shared";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { DataRetentionSettingsControl } from "./settings-git-workspace-tab";
+import {
+  DataRetentionSettingsControl,
+  PastedTextAttachmentThresholdControl,
+} from "./settings-git-workspace-tab";
 import { StartupDataRetentionDialog } from "./StartupDataRetentionDialog";
 
 let root: Root | null = null;
@@ -15,6 +18,7 @@ beforeAll(() => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
   if (root) await act(async () => root?.unmount());
   container?.remove();
   root = null;
@@ -161,5 +165,38 @@ describe("data-retention settings and startup review", () => {
     await act(async () => deleteButton?.click());
     expect(onSkip).not.toHaveBeenCalled();
     expect(onConfirm).not.toHaveBeenCalled();
+  });
+});
+
+describe("pasted-text attachment threshold settings", () => {
+  it("auto-saves a valid threshold and rejects values outside the supported range", async () => {
+    vi.useFakeTimers();
+    const onThresholdChange = vi.fn<(value: number) => Promise<void>>().mockResolvedValue();
+    await render(
+      <PastedTextAttachmentThresholdControl
+        busy={false}
+        threshold={2_000}
+        onThresholdChange={onThresholdChange}
+      />,
+    );
+
+    const input = container?.querySelector<HTMLInputElement>('input[aria-label="Pasted text attachment threshold"]');
+    await act(async () => {
+      if (!input) return;
+      setInputValue(input, "3500");
+    });
+    expect(container?.querySelector("button")).toBeNull();
+    expect(container?.textContent).not.toContain("Use default");
+    await act(async () => vi.advanceTimersByTimeAsync(400));
+    expect(onThresholdChange).toHaveBeenCalledWith(3_500);
+
+    await act(async () => {
+      if (!input) return;
+      setInputValue(input, "0");
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(400));
+    expect(container?.textContent).toContain("Enter a whole number");
+    expect(input?.getAttribute("aria-describedby")).toBe("pasted-text-attachment-threshold-error");
+    expect(onThresholdChange).toHaveBeenCalledTimes(1);
   });
 });

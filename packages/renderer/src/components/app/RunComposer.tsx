@@ -27,6 +27,9 @@ import { Textarea } from "../ui/textarea";
 import { ContextWindowBadge } from "./ContextWindowBadge";
 import { AnchorDropdownPortal } from "../ui/dropdown-portal";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { createPastedTextAttachmentFile, shouldAttachPastedText } from "../../lib/pasted-text-attachment";
+import { usePastedTextAttachmentThreshold } from "../../lib/pasted-text-attachment-settings";
+import { ComposerPastedTextRestoreProvider } from "./composer-pasted-text-restore";
 import { nextModelChipSection, type ModelChipSection } from "./model-execution-controls";
 
 const RUN_MODES: RunMode[] = ["code", "plan", "ask"];
@@ -940,6 +943,7 @@ export const RunComposer = ({
   const buildwarden = useBuildWardenClient();
   const isChat = variant === "chat";
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const pastedTextAttachmentThreshold = usePastedTextAttachmentThreshold();
   const modelSelectOptions = modelOptions;
   const multiModelChange = onModelIdsChange;
   const useMultiModel = !isChat && modelSelectionMode === "multi" && typeof multiModelChange === "function";
@@ -1166,10 +1170,29 @@ export const RunComposer = ({
     }
     const pasted = collectFilesFromClipboardData(event.clipboardData);
     if (pasted.length === 0) {
+      const pastedText = event.clipboardData.getData("text/plain");
+      if (!shouldAttachPastedText(pastedText, pastedTextAttachmentThreshold)) {
+        return;
+      }
+      event.preventDefault();
+      onAddAttachmentFiles([createPastedTextAttachmentFile(pastedText)]);
       return;
     }
     event.preventDefault();
     onAddAttachmentFiles(pasted);
+  };
+
+  const restorePastedText = (value: string) => {
+    const textarea = textareaRef.current;
+    const selectionStart = Math.min(textarea?.selectionStart ?? prompt.length, prompt.length);
+    const selectionEnd = Math.min(textarea?.selectionEnd ?? selectionStart, prompt.length);
+    const nextPrompt = `${prompt.slice(0, selectionStart)}${value}${prompt.slice(selectionEnd)}`;
+    const nextCursorPosition = selectionStart + value.length;
+    onPromptChange(nextPrompt);
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextCursorPosition, nextCursorPosition);
+    });
   };
 
   let textareaMinClass = dense ? "min-h-24" : "min-h-32";
@@ -1249,7 +1272,9 @@ export const RunComposer = ({
           ) : null}
           <div className="app-composer-toolbar flex flex-col gap-2 px-3 pb-2.5 pt-1 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-              {attachments}
+              <ComposerPastedTextRestoreProvider onRestore={restorePastedText}>
+                {attachments}
+              </ComposerPastedTextRestoreProvider>
               {!isChat ? (
                 <ComposerRunSettingsButton
                   selectedMode={selectedMode}

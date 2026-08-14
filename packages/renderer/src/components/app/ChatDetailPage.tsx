@@ -305,6 +305,7 @@ export const ChatDetailPage = ({
         placeholder="Send a follow-up... (optional if you attach files)"
         submitShortcut={keyboardShortcuts.submitComposer}
         onAddAttachmentFiles={(incoming) => setFollowUpFiles((prev) => appendChatAttachmentFiles(prev, incoming))}
+        submitDisabled={busy || isChatActive || !selectedModelId || (!followUpPrompt.trim() && followUpFiles.length === 0)}
         contextHistoryText={contextHistoryText}
         contextAttachmentFiles={followUpFiles}
         reasoningEffort={selectedReasoningEffort}
