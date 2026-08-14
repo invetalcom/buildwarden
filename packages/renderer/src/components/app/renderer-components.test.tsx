@@ -436,7 +436,10 @@ describe("renderer component states", () => {
     expect(overviewMarkup).toContain("Cleanup failed");
     expect(overviewMarkup).not.toContain(">deletion-failed</span>");
     expect(overviewMarkup).not.toContain("Implement the run hierarchy");
-    expect(overviewMarkup).toContain("Orchestration");
+    const orchestrationButton = overviewMarkup.match(/<button[^>]*aria-label="Orchestration"[^>]*>[\s\S]*?<\/button>/)?.[0];
+    expect(orchestrationButton).toBeDefined();
+    expect(orchestrationButton).toContain("lucide-workflow");
+    expect(orchestrationButton).not.toContain(">Orchestration<");
     expect(overviewMarkup).not.toContain("Allow delegation");
 
     const taskMarkup = renderToStaticMarkup(
@@ -578,7 +581,10 @@ describe("renderer component states", () => {
         onReasoningEffortChange={vi.fn()}
       />,
     );
-    expect(runMarkup).toContain("Full access");
+    const fullAccessButton = runMarkup.match(/<button[^>]*aria-label="Full access"[^>]*>[\s\S]*?<\/button>/)?.[0];
+    expect(fullAccessButton).toBeDefined();
+    expect(fullAccessButton).toContain("lucide-shield-off");
+    expect(fullAccessButton).not.toContain(">Full access<");
     expect(runMarkup).toContain('aria-label="Configure 2 models"');
     expect(runMarkup).not.toContain('aria-label="Configure GPT-5"');
     expect(runMarkup).not.toContain('aria-label="Configure Claude"');

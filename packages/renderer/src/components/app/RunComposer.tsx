@@ -21,7 +21,7 @@ import {
   type UnifiedProviderFamily,
   type ProviderType,
 } from "@buildwarden/shared";
-import { ArrowUp, Bot, Check, ChevronDown, ChevronRight, GitBranch, Plus, ShieldOff, SlidersHorizontal, UsersRound, WandSparkles, X } from "lucide-react";
+import { ArrowUp, Bot, Check, ChevronDown, ChevronRight, GitBranch, Plus, ShieldOff, SlidersHorizontal, WandSparkles, Workflow, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { ContextWindowBadge } from "./ContextWindowBadge";
@@ -1294,6 +1294,7 @@ export const RunComposer = ({
               {!isChat && onYoloModeChange ? (
                 <button
                   type="button"
+                  aria-label="Full access"
                   aria-pressed={yoloMode}
                   title={
                     yoloMode
@@ -1303,7 +1304,7 @@ export const RunComposer = ({
                   disabled={busy}
                   onClick={() => onYoloModeChange(!yoloMode)}
                   className={[
-                    "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-[13px] font-medium transition",
+                    "inline-flex size-8 shrink-0 items-center justify-center rounded-full p-0 transition",
                     yoloMode
                       ? "bg-[var(--ec-danger-soft)] text-[var(--ec-danger)] ring-1 ring-inset ring-[var(--ec-danger-ring)]"
                       : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
@@ -1311,12 +1312,12 @@ export const RunComposer = ({
                   ].join(" ")}
                 >
                   <ShieldOff className={["h-3.5 w-3.5", yoloMode ? "text-[var(--ec-danger)]" : "text-[var(--ec-muted)]"].join(" ")} />
-                  Full access
                 </button>
               ) : null}
               {!isChat && onDelegationEnabledChange ? (
                 <button
                   type="button"
+                  aria-label="Orchestration"
                   aria-pressed={delegationEnabled}
                   title={
                     delegationAvailable
@@ -1326,15 +1327,14 @@ export const RunComposer = ({
                   disabled={busy || !delegationAvailable}
                   onClick={() => onDelegationEnabledChange(!delegationEnabled)}
                   className={[
-                    "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-[13px] font-medium transition",
+                    "inline-flex size-8 shrink-0 items-center justify-center rounded-full p-0 transition",
                     delegationEnabled
                       ? "bg-[var(--ec-accent-soft)] text-[var(--ec-accent)] ring-1 ring-inset ring-[var(--ec-accent-ring)]"
                       : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
                     busy || !delegationAvailable ? "cursor-not-allowed opacity-50" : "",
                   ].join(" ")}
                 >
-                  <UsersRound className="h-3.5 w-3.5" />
-                  Orchestration
+                  <Workflow className="h-3.5 w-3.5" />
                 </button>
               ) : null}
             </div>
