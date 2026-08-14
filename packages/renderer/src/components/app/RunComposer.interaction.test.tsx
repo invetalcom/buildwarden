@@ -40,6 +40,7 @@ const pasteEvent = (text: string): Event => {
 describe("RunComposer pasted text attachments", () => {
   it("turns a long paste into an attachment that can be restored to the prompt", async () => {
     const addedFiles = vi.fn<(files: File[]) => void>();
+    const promptChanges = vi.fn<(value: string) => void>();
     const client = createElectronBuildWardenClient({} as DesktopApi);
 
     const Harness = () => {
@@ -52,7 +53,10 @@ describe("RunComposer pasted text attachments", () => {
               variant="chat"
               attachments={<ChatAttachmentPicker variant="footer" files={files} onChange={setFiles} />}
               prompt={prompt}
-              onPromptChange={setPrompt}
+              onPromptChange={(value) => {
+                promptChanges(value);
+                setPrompt(value);
+              }}
               selectedMode="ask"
               onModeChange={vi.fn()}
               selectedModelId="model-1"
@@ -100,12 +104,31 @@ describe("RunComposer pasted text attachments", () => {
     expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')?.disabled).toBe(false);
 
     const restoreButton = container.querySelector<HTMLButtonElement>(`button[aria-label="Paste ${file?.name ?? ""} back into prompt"]`);
+    if (!file || !restoreButton) {
+      throw new Error("Expected the pasted-text attachment and its restore button.");
+    }
+    let resolveFileText: ((value: string) => void) | undefined;
+    const pendingFileText = new Promise<string>((resolve) => {
+      resolveFileText = resolve;
+    });
+    const fileText = vi.spyOn(file, "text").mockReturnValue(pendingFileText);
     await act(async () => {
-      restoreButton?.click();
+      restoreButton.click();
+      restoreButton.click();
+      await Promise.resolve();
+    });
+
+    expect(fileText).toHaveBeenCalledOnce();
+    expect(promptChanges).not.toHaveBeenCalled();
+    await act(async () => {
+      resolveFileText?.(longText);
+      await pendingFileText;
       await Promise.resolve();
     });
 
     expect(container.textContent).not.toContain("Pasted text");
+    expect(promptChanges).toHaveBeenCalledOnce();
+    expect(promptChanges).toHaveBeenCalledWith(longText);
     expect(textarea?.value).toBe(longText);
     expect(document.activeElement).toBe(textarea);
     expect(textarea?.selectionStart).toBe(longText.length);

@@ -17,6 +17,7 @@ interface ChatAttachmentPickerProps {
 
 export const ChatAttachmentPicker = ({ files, onChange, disabled, variant = "default", reservedFileSlots = 0 }: ChatAttachmentPickerProps) => {
   const inputRef = useRef<HTMLInputElement>(null);
+  const restoringPastedTextFilesRef = useRef(new Set<File>());
   const inputId = useId();
   const restorePastedText = useComposerPastedTextRestore();
   const acceptedFileTypes = "image/*,application/pdf,text/*,application/json,.md,.txt,.pdf,.json";
@@ -36,15 +37,23 @@ export const ChatAttachmentPicker = ({ files, onChange, disabled, variant = "def
 
   const restoreAt = async (index: number) => {
     const file = files[index];
-    if (!file || !isPastedTextAttachmentFile(file) || !restorePastedText) {
+    if (
+      !file ||
+      !isPastedTextAttachmentFile(file) ||
+      !restorePastedText ||
+      restoringPastedTextFilesRef.current.has(file)
+    ) {
       return;
     }
+    restoringPastedTextFilesRef.current.add(file);
     try {
       const value = await file.text();
       restorePastedText(value);
       removeAt(index);
     } catch {
       window.alert(`Could not paste "${file.name}" back into the prompt.`);
+    } finally {
+      restoringPastedTextFilesRef.current.delete(file);
     }
   };
 
