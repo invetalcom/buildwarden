@@ -268,6 +268,7 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
           placeholder="Ask about the output or changes…"
           submitShortcut={keyboardShortcuts.submitComposer}
           onAddAttachmentFiles={(incoming) => setFiles((prev) => appendChatAttachmentFiles(prev, incoming))}
+          submitDisabled={sending || isChatActive || !selectedModelId || (!prompt.trim() && files.length === 0)}
           contextHistoryText={contextHistoryText}
           contextAttachmentFiles={files}
           reasoningEffort={selectedReasoningEffort}

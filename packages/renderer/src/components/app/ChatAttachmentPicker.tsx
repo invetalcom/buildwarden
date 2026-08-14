@@ -1,7 +1,9 @@
 import { useId, useRef } from "react";
 import { appendChatAttachmentFiles, CHAT_ATTACHMENT_LIMITS } from "@buildwarden/shared";
-import { Paperclip, X } from "lucide-react";
+import { FileText, Paperclip, TextCursorInput, X } from "lucide-react";
+import { getPastedTextAttachmentTitle, isPastedTextAttachmentFile } from "../../lib/pasted-text-attachment";
 import { Button } from "../ui/button";
+import { useComposerPastedTextRestore } from "./composer-pasted-text-restore";
 
 interface ChatAttachmentPickerProps {
   files: File[];
@@ -16,6 +18,7 @@ interface ChatAttachmentPickerProps {
 export const ChatAttachmentPicker = ({ files, onChange, disabled, variant = "default", reservedFileSlots = 0 }: ChatAttachmentPickerProps) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const inputId = useId();
+  const restorePastedText = useComposerPastedTextRestore();
   const acceptedFileTypes = "image/*,application/pdf,text/*,application/json,.md,.txt,.pdf,.json";
 
   const addFromList = (list: FileList | null) => {
@@ -31,29 +34,74 @@ export const ChatAttachmentPicker = ({ files, onChange, disabled, variant = "def
     onChange(files.filter((_, i) => i !== index));
   };
 
-  const limitsTitle = `Attach files · up to ${String(CHAT_ATTACHMENT_LIMITS.maxFileCount)} files, ${String(CHAT_ATTACHMENT_LIMITS.maxBytesPerFile / (1024 * 1024))} MB each · paste files in the prompt (Ctrl+V or ⌘+V)`;
+  const restoreAt = async (index: number) => {
+    const file = files[index];
+    if (!file || !isPastedTextAttachmentFile(file) || !restorePastedText) {
+      return;
+    }
+    try {
+      const value = await file.text();
+      restorePastedText(value);
+      removeAt(index);
+    } catch {
+      window.alert(`Could not paste "${file.name}" back into the prompt.`);
+    }
+  };
+
+  const limitsTitle = `Attach files · up to ${String(CHAT_ATTACHMENT_LIMITS.maxFileCount)} files, ${String(CHAT_ATTACHMENT_LIMITS.maxBytesPerFile / (1024 * 1024))} MB each · paste files or long text in the prompt (Ctrl+V or ⌘+V)`;
 
   const fileList = (
     <ul className="flex min-w-0 flex-wrap content-center gap-1.5">
-      {files.map((file, index) => (
-        <li
-          key={`${file.name}-${String(index)}-${String(file.size)}`}
-          className="flex max-w-[min(100%,14rem)] items-center gap-1 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] pl-2 pr-1 py-0.5 text-[11px] text-[var(--ec-text)]"
-        >
-          <span className="truncate" title={file.name}>
-            {file.name}
-          </span>
-          <button
-            type="button"
-            className="shrink-0 rounded p-0.5 text-[var(--ec-faint)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
-            onClick={() => removeAt(index)}
-            disabled={disabled}
-            aria-label={`Remove ${file.name}`}
+      {files.map((file, index) => {
+        const isPastedText = isPastedTextAttachmentFile(file);
+        return (
+          <li
+            key={`${file.name}-${String(index)}-${String(file.size)}`}
+            className={isPastedText
+              ? "flex h-10 max-w-[min(100%,18rem)] items-center gap-2 rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] py-1 pl-1.5 pr-1 text-[var(--ec-text)]"
+              : "flex max-w-[min(100%,14rem)] items-center gap-1 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] py-0.5 pl-2 pr-1 text-[11px] text-[var(--ec-text)]"}
           >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </li>
-      ))}
+            {isPastedText ? (
+              <>
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--ec-control)] text-[var(--ec-muted)]">
+                  <FileText className="h-3.5 w-3.5" />
+                </span>
+                <span className="min-w-0 flex-1 leading-tight">
+                  <span className="block truncate text-[11px] font-medium" title={getPastedTextAttachmentTitle(file)}>
+                    {getPastedTextAttachmentTitle(file)}
+                  </span>
+                  <span className="mt-0.5 block text-[10px] text-[var(--ec-faint)]">Pasted text</span>
+                </span>
+              </>
+            ) : (
+              <span className="truncate" title={file.name}>
+                {file.name}
+              </span>
+            )}
+            {isPastedText && restorePastedText ? (
+              <button
+                type="button"
+                className="shrink-0 rounded p-0.5 text-[var(--ec-faint)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+                onClick={() => void restoreAt(index)}
+                disabled={disabled}
+                title="Paste back into prompt"
+                aria-label={`Paste ${file.name} back into prompt`}
+              >
+                <TextCursorInput className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="shrink-0 rounded p-0.5 text-[var(--ec-faint)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+              onClick={() => removeAt(index)}
+              disabled={disabled}
+              aria-label={`Remove ${file.name}`}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </li>
+        );
+      })}
     </ul>
   );
 
