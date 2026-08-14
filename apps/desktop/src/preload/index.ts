@@ -134,6 +134,7 @@ const api: DesktopApi = {
   suggestRunPullRequestDescription: (runId: string, targetBranch: string, title: string) =>
     invoke(IPC_CHANNELS.suggestRunPullRequestDescription, runId, targetBranch, title),
   createRunLocalBranch: (runId: string, branchName: string) => invoke(IPC_CHANNELS.createRunLocalBranch, runId, branchName),
+  suggestRunBranchName: (runId: string) => invoke(IPC_CHANNELS.suggestRunBranchName, runId),
   getProjectBranches: (projectId: string) => invoke(IPC_CHANNELS.getProjectBranches, projectId),
   getProjectCurrentBranch: (projectId: string) => invoke(IPC_CHANNELS.getProjectCurrentBranch, projectId),
   getProjectBranchOverview: (projectId: string) => invoke(IPC_CHANNELS.getProjectBranchOverview, projectId),

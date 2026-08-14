@@ -823,6 +823,37 @@ const isRunEventPayload = (value: unknown): boolean =>
   typeof value.createdAt === "string" &&
   (value.metadata === undefined || isPlainObject(value.metadata));
 
+const isRunForgeRequestSummary = (value: unknown): boolean =>
+  isPlainObject(value) &&
+  (value.provider === "github" || value.provider === "gitlab") &&
+  Number.isSafeInteger(value.number) && Number(value.number) > 0 &&
+  typeof value.title === "string" &&
+  typeof value.url === "string" &&
+  (value.state === "open" || value.state === "closed" || value.state === "merged") &&
+  ["ready", "pending", "blocked", "merged", "closed", "unavailable"].includes(String(value.readiness)) &&
+  typeof value.draft === "boolean" &&
+  typeof value.sourceBranch === "string" &&
+  typeof value.targetBranch === "string" &&
+  typeof value.lastSyncedAt === "string" &&
+  typeof value.stale === "boolean";
+
+const isForgeEventPayload = (value: unknown): boolean =>
+  isPlainObject(value) &&
+  typeof value.runId === "string" &&
+  typeof value.projectId === "string" &&
+  (value.forgeRequest === null || isRunForgeRequestSummary(value.forgeRequest));
+
+const isOrchestrationEventPayload = (value: unknown): boolean =>
+  isPlainObject(value) &&
+  typeof value.projectId === "string" &&
+  typeof value.coordinatorRunId === "string" &&
+  typeof value.orchestrationId === "string" &&
+  (value.taskId === undefined || value.taskId === null || typeof value.taskId === "string") &&
+  ["active", "waiting", "paused", "attention", "deleting", "deletion-failed", "completed", "cancelled", "failed"]
+    .includes(String(value.status)) &&
+  Number.isSafeInteger(value.sequence) && Number(value.sequence) >= 0 &&
+  (value.deletedRunIds === undefined || (Array.isArray(value.deletedRunIds) && value.deletedRunIds.every((runId) => typeof runId === "string")));
+
 const isRemoteEventPayload = (event: RemoteStreamEventType, payload: unknown): boolean => {
   if (event === "run") return isRunEventPayload(payload);
   if (event === "chat") return isRunEventPayload(payload) && isPlainObject(payload) && typeof payload.chatId === "string";
@@ -843,6 +874,8 @@ const isRemoteEventPayload = (event: RemoteStreamEventType, payload: unknown): b
     return isPlainObject(payload) && typeof payload.runId === "string" &&
       (payload.type === "state" || payload.type === "selection-ready" || payload.type === "frame" || payload.type === "error");
   }
+  if (event === "forge") return isForgeEventPayload(payload);
+  if (event === "orchestration") return isOrchestrationEventPayload(payload);
   return isPlainObject(payload) && typeof payload.projectId === "string" && typeof payload.taskId === "string" &&
     (payload.status === "open" || payload.status === "in_progress" || payload.status === "in_review" || payload.status === "done");
 };

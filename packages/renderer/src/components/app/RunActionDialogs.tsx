@@ -47,8 +47,10 @@ interface RunActionDialogsProps {
   branchPublishDialogRun: RunRecord | null;
   branchPublishName: string;
   branchPublishMode: "publish" | "local";
+  branchSuggestBusy: boolean;
   onBranchPublishNameChange: (value: string) => void;
   onBranchPublishDialogKeyDown: KeyboardEventHandler<HTMLDivElement>;
+  onSuggestBranchName: () => void;
   onPublishBranch: () => void;
   onCloseBranchPublishDialog: () => void;
   continueDialogRun: RunRecord | null;
@@ -87,7 +89,6 @@ const CommitDialog = (props: RunActionDialogsProps) => {
     <DialogOverlay onKeyDown={props.onCommitDialogKeyDown}>
       <Card className="shadow-[var(--ec-popover-shadow)] w-full max-w-xl p-5">
         <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Create commit</p>
-        <h3 className="mt-2 text-xl font-semibold">{run.prompt}</h3>
         <p className="mt-1 text-sm text-zinc-500">
           Choose the commit message for this run&apos;s {run.workspaceType === "local" ? "local repository" : "worktree"} changes.
           <span className="mt-1 block text-[11px] text-zinc-600">Ctrl+Enter (Cmd+Enter on Mac) to commit.</span>
@@ -170,8 +171,10 @@ export const RunActionDialogs = ({
   branchPublishDialogRun,
   branchPublishName,
   branchPublishMode,
+  branchSuggestBusy,
   onBranchPublishNameChange,
   onBranchPublishDialogKeyDown,
+  onSuggestBranchName,
   onPublishBranch,
   onCloseBranchPublishDialog,
   continueDialogRun,
@@ -188,8 +191,8 @@ export const RunActionDialogs = ({
   onResolveConfirmation,
 }: RunActionDialogsProps) => (
   <>
-    <CommitDialog {...{ busy, commitDialogRun, commitMessage, commitSuggestBusy, onCommitMessageChange, onCommitDialogKeyDown, onSuggestCommitMessage, onSubmitCommitRun, onCloseCommitDialog, publishDialogRun, publishOptions, pullRequestSourceBranchMode, pullRequestSourceBranchName, pullRequestTargetBranch, pullRequestTitle, pullRequestDescription, pullRequestDescriptionBusy, onPullRequestSourceBranchModeChange, onPullRequestSourceBranchNameChange, onPullRequestTargetBranchChange, onPullRequestTitleChange, onPullRequestDescriptionChange, onPublishDialogKeyDown, onGeneratePullRequestDescription, onSubmitPullRequest, onClosePublishDialog, branchPublishDialogRun, branchPublishName, branchPublishMode, onBranchPublishNameChange, onBranchPublishDialogKeyDown, onPublishBranch, onCloseBranchPublishDialog, continueDialogRun, continuePrompt, continueModelId, continueIncludeWorkspaceChanges, continueModelOptions, onContinuePromptChange, onContinueModelIdChange, onContinueIncludeWorkspaceChangesChange, onSubmitContinueRun, onCloseContinueRunDialog, confirmDialog, onResolveConfirmation }} />
-    <PublishDialog {...{ busy, commitDialogRun, commitMessage, commitSuggestBusy, onCommitMessageChange, onCommitDialogKeyDown, onSuggestCommitMessage, onSubmitCommitRun, onCloseCommitDialog, publishDialogRun, publishOptions, pullRequestSourceBranchMode, pullRequestSourceBranchName, pullRequestTargetBranch, pullRequestTitle, pullRequestDescription, pullRequestDescriptionBusy, onPullRequestSourceBranchModeChange, onPullRequestSourceBranchNameChange, onPullRequestTargetBranchChange, onPullRequestTitleChange, onPullRequestDescriptionChange, onPublishDialogKeyDown, onGeneratePullRequestDescription, onSubmitPullRequest, onClosePublishDialog, branchPublishDialogRun, branchPublishName, branchPublishMode, onBranchPublishNameChange, onBranchPublishDialogKeyDown, onPublishBranch, onCloseBranchPublishDialog, continueDialogRun, continuePrompt, continueModelId, continueIncludeWorkspaceChanges, continueModelOptions, onContinuePromptChange, onContinueModelIdChange, onContinueIncludeWorkspaceChangesChange, onSubmitContinueRun, onCloseContinueRunDialog, confirmDialog, onResolveConfirmation }} />
+    <CommitDialog {...{ busy, commitDialogRun, commitMessage, commitSuggestBusy, onCommitMessageChange, onCommitDialogKeyDown, onSuggestCommitMessage, onSubmitCommitRun, onCloseCommitDialog, publishDialogRun, publishOptions, pullRequestSourceBranchMode, pullRequestSourceBranchName, pullRequestTargetBranch, pullRequestTitle, pullRequestDescription, pullRequestDescriptionBusy, onPullRequestSourceBranchModeChange, onPullRequestSourceBranchNameChange, onPullRequestTargetBranchChange, onPullRequestTitleChange, onPullRequestDescriptionChange, onPublishDialogKeyDown, onGeneratePullRequestDescription, onSubmitPullRequest, onClosePublishDialog, branchPublishDialogRun, branchPublishName, branchPublishMode, branchSuggestBusy, onBranchPublishNameChange, onBranchPublishDialogKeyDown, onSuggestBranchName, onPublishBranch, onCloseBranchPublishDialog, continueDialogRun, continuePrompt, continueModelId, continueIncludeWorkspaceChanges, continueModelOptions, onContinuePromptChange, onContinueModelIdChange, onContinueIncludeWorkspaceChangesChange, onSubmitContinueRun, onCloseContinueRunDialog, confirmDialog, onResolveConfirmation }} />
+    <PublishDialog {...{ busy, commitDialogRun, commitMessage, commitSuggestBusy, onCommitMessageChange, onCommitDialogKeyDown, onSuggestCommitMessage, onSubmitCommitRun, onCloseCommitDialog, publishDialogRun, publishOptions, pullRequestSourceBranchMode, pullRequestSourceBranchName, pullRequestTargetBranch, pullRequestTitle, pullRequestDescription, pullRequestDescriptionBusy, onPullRequestSourceBranchModeChange, onPullRequestSourceBranchNameChange, onPullRequestTargetBranchChange, onPullRequestTitleChange, onPullRequestDescriptionChange, onPublishDialogKeyDown, onGeneratePullRequestDescription, onSubmitPullRequest, onClosePublishDialog, branchPublishDialogRun, branchPublishName, branchPublishMode, branchSuggestBusy, onBranchPublishNameChange, onBranchPublishDialogKeyDown, onSuggestBranchName, onPublishBranch, onCloseBranchPublishDialog, continueDialogRun, continuePrompt, continueModelId, continueIncludeWorkspaceChanges, continueModelOptions, onContinuePromptChange, onContinueModelIdChange, onContinueIncludeWorkspaceChangesChange, onSubmitContinueRun, onCloseContinueRunDialog, confirmDialog, onResolveConfirmation }} />
 
     {branchPublishDialogRun ? (
       <DialogOverlay onKeyDown={onBranchPublishDialogKeyDown}>
@@ -197,15 +200,32 @@ export const RunActionDialogs = ({
           <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">
             {branchPublishMode === "local" ? "Create local branch" : "Publish branch"}
           </p>
-          <h3 className="mt-2 text-xl font-semibold">{branchPublishDialogRun.prompt}</h3>
+          {branchPublishMode === "publish" ? (
+            <h3 className="mt-2 text-xl font-semibold">{branchPublishDialogRun.prompt}</h3>
+          ) : null}
           <label className="mt-4 block text-sm">
             <span className="mb-1 block text-zinc-300">Branch name</span>
-            <Input
-              value={branchPublishName}
-              onChange={(event) => onBranchPublishNameChange(event.target.value)}
-              placeholder="feature/my-custom-branch"
-              autoFocus
-            />
+            <div className="relative">
+              <Input
+                className={branchPublishMode === "local" ? "pr-11" : undefined}
+                value={branchPublishName}
+                onChange={(event) => onBranchPublishNameChange(event.target.value)}
+                placeholder="feature/my-custom-branch"
+                autoFocus
+              />
+              {branchPublishMode === "local" ? (
+                <button
+                  type="button"
+                  className="absolute right-1 top-1 rounded-md border border-zinc-700 bg-zinc-900/95 p-2 text-zinc-400 shadow-sm transition hover:border-cyan-500/40 hover:text-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
+                  title="Generate branch name with AI"
+                  aria-label="Generate branch name with AI"
+                  disabled={busy || branchSuggestBusy}
+                  onClick={onSuggestBranchName}
+                >
+                  {branchSuggestBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Sparkles className="h-4 w-4" aria-hidden />}
+                </button>
+              ) : null}
+            </div>
           </label>
           <div className="mt-4 flex items-center justify-end gap-3">
             <Button variant="outline" onClick={onCloseBranchPublishDialog}>

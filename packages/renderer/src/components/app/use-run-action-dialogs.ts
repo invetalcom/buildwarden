@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type {
   AppSnapshot,
   ContinueRunInput,
@@ -332,21 +332,50 @@ const usePublishDialog = (deps: RunActionDialogDeps) => {
 
 /** Branch-publish dialog: push the run branch to the remote or create a local branch from it. */
 const useBranchPublishDialog = (deps: RunActionDialogDeps) => {
-  const { buildwarden, handleAction } = deps;
+  const { buildwarden, handleAction, setError } = deps;
   const [branchPublishDialogRun, setBranchPublishDialogRun] = useState<RunRecord | null>(null);
   const [branchPublishName, setBranchPublishName] = useState("");
   const [branchPublishMode, setBranchPublishMode] = useState<"publish" | "local">("publish");
+  const [branchSuggestBusy, setBranchSuggestBusy] = useState(false);
+  const branchSuggestionRequestRef = useRef(0);
 
   const openBranchPublishDialog = (run: RunRecord, mode: "publish" | "local") => {
+    branchSuggestionRequestRef.current += 1;
+    setBranchSuggestBusy(false);
     setBranchPublishDialogRun(run);
     setBranchPublishName(run.branchName);
     setBranchPublishMode(mode);
   };
 
   const closeBranchPublishDialog = () => {
+    branchSuggestionRequestRef.current += 1;
+    setBranchSuggestBusy(false);
     setBranchPublishDialogRun(null);
     setBranchPublishName("");
     setBranchPublishMode("publish");
+  };
+
+  const suggestBranchNameWithAi = async () => {
+    if (!branchPublishDialogRun || branchPublishMode !== "local" || !buildwarden) {
+      return;
+    }
+
+    const requestId = branchSuggestionRequestRef.current + 1;
+    branchSuggestionRequestRef.current = requestId;
+    setBranchSuggestBusy(true);
+    setError(null);
+    try {
+      const branchName = await buildwarden.suggestRunBranchName(branchPublishDialogRun.id);
+      if (branchSuggestionRequestRef.current !== requestId) return;
+      setBranchPublishName(branchName);
+    } catch (e) {
+      if (branchSuggestionRequestRef.current !== requestId) return;
+      setError(e instanceof Error ? e.message : "Could not generate a branch name.");
+    } finally {
+      if (branchSuggestionRequestRef.current === requestId) {
+        setBranchSuggestBusy(false);
+      }
+    }
   };
 
   const publishBranch = async () => {
@@ -375,14 +404,14 @@ const useBranchPublishDialog = (deps: RunActionDialogDeps) => {
     });
   };
 
-  const handleBranchPublishDialogKeyDown = (event: ReactKeyboardEvent<HTMLInputElement | HTMLDivElement>) => {
+  const handleBranchPublishDialogKeyDown = (event: ReactKeyboardEvent<HTMLInputElement | HTMLButtonElement | HTMLDivElement>) => {
     if (event.key === "Escape") {
       event.preventDefault();
       closeBranchPublishDialog();
       return;
     }
 
-    if (isPlainEnter(event)) {
+    if (!(event.target instanceof HTMLButtonElement) && isPlainEnter(event)) {
       event.preventDefault();
       void publishBranch();
     }
@@ -393,9 +422,11 @@ const useBranchPublishDialog = (deps: RunActionDialogDeps) => {
     branchPublishName,
     setBranchPublishName,
     branchPublishMode,
+    branchSuggestBusy,
     openBranchPublishDialog,
     closeBranchPublishDialog,
     handleBranchPublishDialogKeyDown,
+    suggestBranchNameWithAi,
     publishBranch,
   };
 };

@@ -73,6 +73,9 @@ describe("preload DesktopApi bridge", () => {
     await api.deleteRun("run-1");
     expect(electronMocks.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.deleteRun, "run-1");
 
+    await api.suggestRunBranchName("run-2");
+    expect(electronMocks.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.suggestRunBranchName, "run-2");
+
     await api.setAppSetting("theme", "dark");
     expect(electronMocks.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.setAppSetting, "theme", "dark");
 

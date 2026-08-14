@@ -3729,6 +3729,8 @@ export interface DesktopApi {
   createRunPullRequest(runId: string, targetBranch: string, title: string, sourceBranchName?: string, description?: string): Promise<string>;
   suggestRunPullRequestDescription(runId: string, targetBranch: string, title: string): Promise<string>;
   createRunLocalBranch(runId: string, branchName: string): Promise<string>;
+  /** Uses the run's model + prompt to propose a concise, Git-safe local branch name. */
+  suggestRunBranchName(runId: string): Promise<string>;
   publishRunBranch(runId: string, branchName?: string): Promise<string>;
   commitRun(runId: string, message: string): Promise<void>;
   /** Uses the run's model + provider (chat completions) to propose a message from the worktree diff. */
@@ -4098,6 +4100,7 @@ export type RemoteOperationMap = {
   getProjectLoopUiReviewImage: DesktopApi["getProjectLoopUiReviewImage"];
   getProjectLoopDetail: DesktopApi["getProjectLoopDetail"];
   getProjectLoopAvailability: DesktopApi["getProjectLoopAvailability"];
+  getRunChat: DesktopApi["getRunChat"];
   getChatDetail: DesktopApi["getChatDetail"];
   listChatsWithSteps: DesktopApi["listChatsWithSteps"];
   getBookmarksWithSteps: DesktopApi["getBookmarksWithSteps"];
@@ -4144,9 +4147,13 @@ export type RemoteOperationMap = {
   addBookmark: DesktopApi["addBookmark"];
   removeBookmark: DesktopApi["removeBookmark"];
   removeBookmarkById: DesktopApi["removeBookmarkById"];
+  addRunNote: DesktopApi["addRunNote"];
+  updateRunNote: DesktopApi["updateRunNote"];
+  deleteRunNote: DesktopApi["deleteRunNote"];
   respondToShellApproval: DesktopApi["respondToShellApproval"];
   respondToRunUserInput: DesktopApi["respondToRunUserInput"];
   createChat: DesktopApi["createChat"];
+  createRunChat: DesktopApi["createRunChat"];
   followUpChat: DesktopApi["followUpChat"];
   cancelChat: DesktopApi["cancelChat"];
   deleteChat: DesktopApi["deleteChat"];
@@ -4175,9 +4182,12 @@ export type RemoteOperationMap = {
   updateRunForgeRequest: DesktopApi["updateRunForgeRequest"];
   mergeRunForgeRequest: DesktopApi["mergeRunForgeRequest"];
   commitRun: DesktopApi["commitRun"];
+  suggestCommitMessage: DesktopApi["suggestCommitMessage"];
   createRunLocalBranch: DesktopApi["createRunLocalBranch"];
+  suggestRunBranchName: DesktopApi["suggestRunBranchName"];
   publishRunBranch: DesktopApi["publishRunBranch"];
   createRunPullRequest: DesktopApi["createRunPullRequest"];
+  suggestRunPullRequestDescription: DesktopApi["suggestRunPullRequestDescription"];
   checkoutProjectBranch: DesktopApi["checkoutProjectBranch"];
   fetchProjectBranches: DesktopApi["fetchProjectBranches"];
   createProjectBranch: DesktopApi["createProjectBranch"];
@@ -4403,6 +4413,7 @@ export const IPC_CHANNELS = {
   createRunPullRequest: "buildwarden:create-run-pull-request",
   suggestRunPullRequestDescription: "buildwarden:suggest-run-pull-request-description",
   createRunLocalBranch: "buildwarden:create-run-local-branch",
+  suggestRunBranchName: "buildwarden:suggest-run-branch-name",
   createRun: "buildwarden:create-run",
   continueRun: "buildwarden:continue-run",
   getOrchestrationDetail: "buildwarden:get-orchestration-detail",
