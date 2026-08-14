@@ -21,7 +21,7 @@ import {
   type UnifiedProviderFamily,
   type ProviderType,
 } from "@buildwarden/shared";
-import { ArrowUp, Bot, Check, ChevronDown, ChevronRight, GitBranch, Plus, ShieldOff, SlidersHorizontal, WandSparkles, Workflow, X } from "lucide-react";
+import { ArrowUp, Bot, BrainCircuit, Check, ChevronDown, ChevronRight, Gauge, GitBranch, Plus, ShieldOff, SlidersHorizontal, WandSparkles, Workflow, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { ContextWindowBadge } from "./ContextWindowBadge";
@@ -226,17 +226,48 @@ const controlSummaryLabel = (controlEntry: ModelExecutionControl, value: string)
   return `Default ${noun}`;
 };
 
-const modelConfigurationSummaryValues = (
+type ModelConfigurationSummaryItem = {
+  kind: "effort" | "secondary";
+  label: string;
+};
+
+const modelConfigurationSummaryItems = (
   optionEntry: ComposerSelectOption,
   configuration: RunModelConfiguration,
-): string[] => {
+): ModelConfigurationSummaryItem[] => {
   const reasoningControl = reasoningControlForModel(optionEntry);
   const secondaryControl = secondaryControlForModel(optionEntry);
   return [
-    reasoningControl ? controlSummaryLabel(reasoningControl, configuration.effort) : null,
-    secondaryControl ? controlSummaryLabel(secondaryControl, configuration.executionMode) : null,
-  ].filter((entry): entry is string => Boolean(entry));
+    reasoningControl
+      ? { kind: "effort" as const, label: controlSummaryLabel(reasoningControl, configuration.effort) }
+      : null,
+    secondaryControl
+      ? { kind: "secondary" as const, label: controlSummaryLabel(secondaryControl, configuration.executionMode) }
+      : null,
+  ].filter((entry): entry is ModelConfigurationSummaryItem => entry != null);
 };
+
+const modelConfigurationSummaryValues = (
+  optionEntry: ComposerSelectOption,
+  configuration: RunModelConfiguration,
+): string[] => modelConfigurationSummaryItems(optionEntry, configuration).map((entry) => entry.label);
+
+const ModelConfigurationReadout = ({ items }: { items: ModelConfigurationSummaryItem[] }) => items.length > 0 ? (
+  <span
+    data-model-readout-meta="true"
+    className="flex items-center gap-2 whitespace-nowrap text-[10px] font-normal leading-none text-[var(--ec-muted)]"
+  >
+    {items.map((item) => {
+      const Icon = item.kind === "effort" ? BrainCircuit : Gauge;
+      return (
+        <span key={item.kind} className="inline-flex items-center gap-0.5">
+          <Icon className="size-3 shrink-0 text-[var(--ec-faint)]" aria-hidden />
+          <span>{item.label}</span>
+        </span>
+      );
+    })}
+  </span>
+) : null;
 
 const ComposerModelChip = ({
   selectedId,
@@ -270,7 +301,7 @@ const ComposerModelChip = ({
   const secondaryControl = secondaryControlForModel(optionEntry);
   const effortLabel = controlValueLabel(reasoningControl, configuration.effort);
   const secondaryLabel = controlValueLabel(secondaryControl, configuration.executionMode);
-  const summaryValues = modelConfigurationSummaryValues(optionEntry, configuration);
+  const summaryItems = modelConfigurationSummaryItems(optionEntry, configuration);
   const availableModels = options.filter((entry) => entry.value === selectedId || !selectedIds.includes(entry.value));
   const rows: Array<{ id: ModelChipSection; label: string; value: string }> = [
     { id: "model", label: "Model", value: optionEntry.displayLabel ?? optionEntry.label },
@@ -289,29 +320,32 @@ const ComposerModelChip = ({
       : configuration.executionMode;
 
   return (
-    <div className="relative z-10 inline-flex h-8 min-w-0 shrink-0 items-stretch rounded-full bg-[var(--ec-control)] ring-1 ring-inset ring-[var(--ec-border)] transition hover:ring-[var(--ec-border-strong)]">
+    <div className="relative z-10 inline-flex h-9 min-w-0 shrink-0 items-stretch rounded-lg bg-[var(--ec-control)] ring-1 ring-inset ring-[var(--ec-border)] transition hover:ring-[var(--ec-border-strong)]">
       <button
         ref={anchorRef}
         type="button"
+        data-model-readout="single"
         aria-label={`Configure ${optionEntry.label}`}
-        title={[optionEntry.displayLabel ?? optionEntry.label, ...summaryValues].join(" · ")}
-        className="inline-flex min-w-0 items-center gap-1.5 rounded-full px-2.5 text-[13px] font-medium text-[var(--ec-text)] outline-none transition hover:bg-[var(--ec-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-accent-ring)]"
+        title={[optionEntry.displayLabel ?? optionEntry.label, ...summaryItems.map((entry) => entry.label)].join(" · ")}
+        className="inline-flex min-w-0 items-center gap-1.5 rounded-lg px-2 text-[var(--ec-text)] outline-none transition hover:bg-[var(--ec-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-accent-ring)]"
         onClick={() => {
           setSection("model");
           setOpen((current) => !current);
         }}
         disabled={disabled}
       >
-        <Bot className="h-3.5 w-3.5 shrink-0 text-[var(--ec-muted)]" />
-        <span className="max-w-36 truncate">{optionEntry.displayLabel ?? optionEntry.label}</span>
-        {summaryValues.map((value) => <span key={value} className="hidden max-w-24 truncate text-xs font-normal text-[var(--ec-muted)] sm:inline">{value}</span>)}
-        <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-[var(--ec-faint)] transition-transform duration-150 ${open ? "rotate-180" : ""}`} />
+        <Bot className="size-3.5 shrink-0 text-[var(--ec-muted)]" />
+        <span className="grid gap-0.5 text-left">
+          <span className="whitespace-nowrap text-xs font-semibold leading-none">{optionEntry.displayLabel ?? optionEntry.label}</span>
+          <ModelConfigurationReadout items={summaryItems} />
+        </span>
+        <ChevronDown className={`size-3 shrink-0 text-[var(--ec-faint)] transition-transform duration-150 ${open ? "rotate-180" : ""}`} />
       </button>
       {allowRemove ? (
         <button
           type="button"
           aria-label={`Remove ${optionEntry.label}`}
-          className="mr-1 my-1 inline-flex w-6 items-center justify-center rounded-full text-[var(--ec-faint)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-accent-ring)]"
+          className="m-1 ml-0 inline-flex w-7 items-center justify-center rounded-md text-[var(--ec-faint)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-accent-ring)]"
           onClick={() => {
             setOpen(false);
             onRemove();
@@ -438,8 +472,10 @@ const ComposerMultiModelControl = ({
     const controlLabels = [...new Set(values.map((entry) => entry.controlEntry.label.toLocaleLowerCase()))];
     return `Mixed ${controlLabels.length === 1 ? controlLabels[0] : "speed"}`;
   };
-  const groupSummary = [groupSummaryForControl("effort"), groupSummaryForControl("secondary")]
-    .filter((entry): entry is string => Boolean(entry));
+  const groupSummary = [
+    { kind: "effort" as const, label: groupSummaryForControl("effort") },
+    { kind: "secondary" as const, label: groupSummaryForControl("secondary") },
+  ].filter((entry): entry is ModelConfigurationSummaryItem => entry.label != null);
   const groupLabel = selectedOptions.length === 0
     ? "Select model"
     : selectedOptions.length === 1
@@ -478,9 +514,10 @@ const ComposerMultiModelControl = ({
       <button
         ref={anchorRef}
         type="button"
+        data-model-readout="multi"
         aria-label={`Configure ${groupLabel}`}
         title={tooltip}
-        className="inline-flex h-8 min-w-0 max-w-[24rem] items-center gap-1.5 rounded-full bg-[var(--ec-control)] px-2.5 text-[13px] font-medium text-[var(--ec-text)] ring-1 ring-inset ring-[var(--ec-border)] transition hover:bg-[var(--ec-hover)] hover:ring-[var(--ec-border-strong)] focus-visible:ring-2 focus-visible:ring-[var(--ec-accent-ring)]"
+        className="inline-flex h-9 min-w-0 items-center gap-1.5 rounded-lg bg-[var(--ec-control)] px-2 text-[var(--ec-text)] ring-1 ring-inset ring-[var(--ec-border)] transition hover:bg-[var(--ec-hover)] hover:ring-[var(--ec-border-strong)] focus-visible:ring-2 focus-visible:ring-[var(--ec-accent-ring)]"
         onClick={() => {
           setAdding(selectedOptions.length === 0);
           setSection("model");
@@ -488,12 +525,12 @@ const ComposerMultiModelControl = ({
         }}
         disabled={disabled || options.length === 0}
       >
-        <Bot className="h-3.5 w-3.5 shrink-0 text-[var(--ec-muted)]" />
-        <span className="max-w-36 shrink-0 truncate">{groupLabel}</span>
-        {groupSummary.map((value) => (
-          <span key={value} className="hidden max-w-28 truncate text-xs font-normal text-[var(--ec-muted)] sm:inline">{value}</span>
-        ))}
-        <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-[var(--ec-faint)] transition-transform duration-150 ${open ? "rotate-180" : ""}`} />
+        <Bot className="size-3.5 shrink-0 text-[var(--ec-muted)]" />
+        <span className="grid gap-0.5 text-left">
+          <span className="whitespace-nowrap text-xs font-semibold leading-none">{groupLabel}</span>
+          <ModelConfigurationReadout items={groupSummary} />
+        </span>
+        <ChevronDown className={`size-3 shrink-0 text-[var(--ec-faint)] transition-transform duration-150 ${open ? "rotate-180" : ""}`} />
       </button>
       <AnchorDropdownPortal
         open={open}

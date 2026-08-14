@@ -589,6 +589,13 @@ describe("renderer component states", () => {
     expect(runMarkup).not.toContain('aria-label="Configure GPT-5"');
     expect(runMarkup).not.toContain('aria-label="Configure Claude"');
     expect(runMarkup).not.toContain('data-model-chip-rail="true"');
+    expect(runMarkup).toContain('data-model-readout="multi"');
+    expect(runMarkup).toContain('data-model-readout-meta="true"');
+    expect(runMarkup).toContain("lucide-brain-circuit");
+    expect(runMarkup).toContain("lucide-gauge");
+    const multiModelReadout = runMarkup.match(/<button[^>]*data-model-readout="multi"[^>]*>[\s\S]*?<\/button>/)?.[0];
+    expect(multiModelReadout).toBeDefined();
+    expect(multiModelReadout).not.toContain("truncate");
     expect(runMarkup).toContain(">2 models<");
     expect(runMarkup).toContain(">High<");
     expect(runMarkup).toContain(">Fast<");
@@ -607,6 +614,10 @@ describe("renderer component states", () => {
     expect(chatMarkup).toContain("Send chat");
     expect(chatMarkup).toContain('aria-label="Configure GPT-5"');
     expect(chatMarkup).not.toContain('aria-label="Add model"');
+    expect(chatMarkup).toContain('data-model-readout="single"');
+    const singleModelReadout = chatMarkup.match(/<button[^>]*data-model-readout="single"[^>]*>[\s\S]*?<\/button>/)?.[0];
+    expect(singleModelReadout).toBeDefined();
+    expect(singleModelReadout).not.toContain("truncate");
   });
 
   it("keeps model configuration moving through the same menu after replacement", () => {
