@@ -139,11 +139,11 @@ export const LocalBranchSheet = ({
   const submit = async () => {
     const branchName = name.trim();
     if (!branchName) return;
-    const result = await action.run(
+    const created = await action.ok(
       () => client.createRunLocalBranch(runId, branchName),
       "Could not create the local branch.",
     );
-    if (result !== undefined) {
+    if (created) {
       onClose();
       await onDone(branchName);
     }
