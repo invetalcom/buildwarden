@@ -5,7 +5,10 @@ const stripSuggestionWrapper = (raw: string): string => {
   }
   return value
     .split(/\r?\n/)
-    .find((line) => line.trim().length > 0)
+    .find((line) => {
+      const candidate = line.trim();
+      return candidate.length > 0 && !/^(?:branch(?:\s+name)?|name)\s*:\s*$/i.test(candidate);
+    })
     ?.trim()
     .replace(/^(?:branch(?:\s+name)?|name)\s*:\s*/i, "")
     .replace(/^["'`]+|["'`]+$/g, "")

@@ -6,6 +6,10 @@ describe("normalizeSuggestedBranchName", () => {
     expect(normalizeSuggestedBranchName("Branch name: `feat/redesign-kanban-cards`")).toBe("feat/redesign-kanban-cards");
   });
 
+  it("skips a standalone label before the suggested branch", () => {
+    expect(normalizeSuggestedBranchName("Branch name:\nfeat/redesign-kanban-cards")).toBe("feat/redesign-kanban-cards");
+  });
+
   it("normalizes model prose into a Git-safe branch name", () => {
     expect(normalizeSuggestedBranchName("```text\nFix/Crème brûlée: cards?\n```")).toBe("fix/creme-brulee-cards");
   });
