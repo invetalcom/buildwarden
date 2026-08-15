@@ -164,4 +164,60 @@ describe("useRunActionDialogs pull request publishing", () => {
       "Generated commit message",
     );
   });
+
+  it("rejects keyboard submission when open changes have no commit message", async () => {
+    const createRunPullRequest = vi.fn(async () => "https://example.test/pull/1");
+    const setError = vi.fn();
+    const deps: RunActionDialogDeps = {
+      buildwarden: {
+        getRunPublishOptions: vi.fn(async () => ({
+          defaultTargetBranch: "main",
+          defaultSourceBranch: "feat/open-changes",
+          defaultDescription: "Default description",
+          defaultCommitMessage: "",
+          hasOpenChanges: true,
+          suggestedTitle: "Publish open changes",
+          targetBranches: ["main"],
+        })),
+        createRunPullRequest,
+      } as unknown as DesktopApi,
+      snapshot,
+      runYoloMode: false,
+      handleAction: async (action) => {
+        try {
+          await action();
+        } catch (error) {
+          setError(error instanceof Error ? error.message : String(error));
+        }
+      },
+      setError,
+      onRunMutated: vi.fn(async () => undefined),
+      onRunContinued: vi.fn(async () => undefined),
+    };
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push({ root, container });
+    await act(async () => root.render(<HookHarness deps={deps} />));
+    await act(async () => dialogs().openPublishDialog(run("run-1", "feat/open-changes")));
+
+    const preventDefault = vi.fn();
+    const input = document.createElement("input");
+    await act(async () => {
+      dialogs().handlePublishDialogKeyDown({
+        key: "Enter",
+        shiftKey: false,
+        ctrlKey: false,
+        metaKey: false,
+        altKey: false,
+        target: input,
+        preventDefault,
+      } as unknown as Parameters<ReturnType<typeof useRunActionDialogs>["handlePublishDialogKeyDown"]>[0]);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(setError).toHaveBeenCalledWith("Enter a commit message for the open changes.");
+    expect(createRunPullRequest).not.toHaveBeenCalled();
+  });
 });

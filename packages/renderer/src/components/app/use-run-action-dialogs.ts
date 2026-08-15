@@ -265,6 +265,7 @@ const usePublishDialog = (deps: RunActionDialogDeps) => {
       const trimmedTitle = pullRequestTitle.trim();
       const trimmedTargetBranch = pullRequestTargetBranch.trim();
       const trimmedSourceBranch = pullRequestSourceBranchName.trim();
+      const trimmedCommitMessage = pullRequestCommitMessage.trim();
 
       if (!trimmedTitle) {
         throw new Error("Enter a merge request or pull request title.");
@@ -272,6 +273,10 @@ const usePublishDialog = (deps: RunActionDialogDeps) => {
 
       if (!trimmedTargetBranch) {
         throw new Error("Select a target branch.");
+      }
+
+      if (publishOptions?.hasOpenChanges && !trimmedCommitMessage) {
+        throw new Error("Enter a commit message for the open changes.");
       }
 
       if (pullRequestSourceBranchMode === "custom") {
@@ -289,7 +294,7 @@ const usePublishDialog = (deps: RunActionDialogDeps) => {
         trimmedTitle,
         pullRequestSourceBranchMode === "custom" ? trimmedSourceBranch : undefined,
         pullRequestDescription.trim(),
-        publishOptions?.hasOpenChanges ? pullRequestCommitMessage.trim() : undefined,
+        publishOptions?.hasOpenChanges ? trimmedCommitMessage : undefined,
       );
       await deps.onRunMutated(publishDialogRun.id, publishDialogRun.projectId);
       closePublishDialog();
