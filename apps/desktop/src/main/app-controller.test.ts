@@ -264,12 +264,16 @@ describe("AppController settings and lightweight workflows", () => {
       status: "completed",
     } as RunRecord;
     const harness = createHarness({ getRun: vi.fn(() => run) });
-    const askModelForText = vi.fn(async (_cwd: string, _context: unknown, _input: { prompt: string }) =>
-      JSON.stringify({
+    const askModelForText = vi.fn(async (cwd: string, context: unknown, input: { prompt: string }) => {
+      expect(cwd).toBe(project.repoPath);
+      expect(context).toEqual({});
+      expect(input.prompt).toContain("Committed PR diff against the target branch merge base:");
+      return JSON.stringify({
         title: "Generated committed change",
         commitMessage: null,
         description: "## Summary\n\nCommitted change",
-      }));
+      });
+    });
     const controllerInternals = harness.controller as unknown as {
       gitService: { getPullRequestContext: () => Promise<unknown> };
       resolveModelInvocationContext: () => Promise<unknown>;
