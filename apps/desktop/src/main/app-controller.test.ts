@@ -264,16 +264,15 @@ describe("AppController settings and lightweight workflows", () => {
       status: "completed",
     } as RunRecord;
     const harness = createHarness({ getRun: vi.fn(() => run) });
-    const askModelForText = vi.fn(async (cwd: string, context: unknown, input: { prompt: string }) => {
-      expect(cwd).toBe(project.repoPath);
-      expect(context).toEqual({});
-      expect(input.prompt).toContain("Committed PR diff against the target branch merge base:");
-      return JSON.stringify({
+    const askModelForText = vi.fn<(
+      cwd: string,
+      context: unknown,
+      input: { prompt: string },
+    ) => Promise<string>>().mockResolvedValue(JSON.stringify({
         title: "Generated committed change",
         commitMessage: null,
         description: "## Summary\n\nCommitted change",
-      });
-    });
+      }));
     const controllerInternals = harness.controller as unknown as {
       gitService: { getPullRequestContext: () => Promise<unknown> };
       resolveModelInvocationContext: () => Promise<unknown>;
@@ -298,9 +297,60 @@ describe("AppController settings and lightweight workflows", () => {
     });
 
     const prompt = askModelForText.mock.calls[0]?.[2].prompt ?? "";
+    expect(askModelForText.mock.calls[0]?.[0]).toBe(project.repoPath);
+    expect(askModelForText.mock.calls[0]?.[1]).toEqual({});
     expect(prompt).toContain("Committed PR diff against the target branch merge base:");
     expect(prompt).toContain("+committed change");
     expect(prompt).not.toContain("(empty diff)");
+  });
+
+  it("falls back to the generated PR title when an open-change draft omits its commit message", async () => {
+    const run = {
+      id: "run-1",
+      projectId: project.id,
+      modelId: model.id,
+      workspaceVcs: "git",
+      workspaceType: "local",
+      worktreePath: project.repoPath,
+      branchName: "feature/open-change",
+      prompt: "Implement the open change",
+      status: "completed",
+    } as RunRecord;
+    const harness = createHarness({ getRun: vi.fn(() => run) });
+    const askModelForText = vi.fn<(
+      cwd: string,
+      context: unknown,
+      input: { prompt: string },
+    ) => Promise<string>>().mockResolvedValue(JSON.stringify({
+      title: "Generated open change",
+      commitMessage: "",
+      description: "## Summary\n\nOpen change",
+    }));
+    const controllerInternals = harness.controller as unknown as {
+      gitService: { getPullRequestContext: () => Promise<unknown> };
+      resolveModelInvocationContext: () => Promise<unknown>;
+      askModelForText: typeof askModelForText;
+    };
+    controllerInternals.gitService = {
+      getPullRequestContext: vi.fn(async () => ({
+        targetRef: "refs/heads/main",
+        mergeBase: "base",
+        commits: [],
+        hasOpenChanges: true,
+        diff: "diff --git a/file.ts b/file.ts\n+open change",
+      })),
+    };
+    controllerInternals.resolveModelInvocationContext = vi.fn(async () => ({}));
+    controllerInternals.askModelForText = askModelForText;
+
+    await expect(harness.controller.suggestRunPullRequestDraft(run.id, "main")).resolves.toEqual({
+      title: "Generated open change",
+      commitMessage: "Generated open change",
+      description: "## Summary\n\nOpen change",
+    });
+    expect(askModelForText.mock.calls[0]?.[2].prompt).toContain(
+      "Prospective PR diff, including open changes that BuildWarden will commit before publishing:",
+    );
   });
 
   it("keeps publish options available when target-relative context cannot be resolved", async () => {
