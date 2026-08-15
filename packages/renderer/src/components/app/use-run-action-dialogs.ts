@@ -201,8 +201,12 @@ const usePublishDialog = (deps: RunActionDialogDeps) => {
   const [pullRequestCommitMessage, setPullRequestCommitMessage] = useState("");
   const [pullRequestDescription, setPullRequestDescription] = useState("");
   const [pullRequestDraftBusy, setPullRequestDraftBusy] = useState(false);
+  const publishDialogSessionRef = useRef(0);
+  const pullRequestDraftRequestRef = useRef(0);
 
   const closePublishDialog = () => {
+    publishDialogSessionRef.current += 1;
+    pullRequestDraftRequestRef.current += 1;
     setPublishDialogRun(null);
     setPublishOptions(null);
     setPullRequestTitle("");
@@ -215,10 +219,17 @@ const usePublishDialog = (deps: RunActionDialogDeps) => {
   };
 
   const openPublishDialog = async (run: RunRecord) => {
+    const dialogSession = publishDialogSessionRef.current + 1;
+    publishDialogSessionRef.current = dialogSession;
+    pullRequestDraftRequestRef.current += 1;
+    setPullRequestDraftBusy(false);
     await handleAction(async () => {
       const bridge = requireBridge(buildwarden);
 
       const options = await bridge.getRunPublishOptions(run.id);
+      if (publishDialogSessionRef.current !== dialogSession) {
+        return;
+      }
       setPublishDialogRun(run);
       setPublishOptions(options);
       setPullRequestTitle(options.suggestedTitle);
@@ -235,22 +246,42 @@ const usePublishDialog = (deps: RunActionDialogDeps) => {
       return;
     }
 
+    const dialogSession = publishDialogSessionRef.current;
+    const requestId = pullRequestDraftRequestRef.current + 1;
+    pullRequestDraftRequestRef.current = requestId;
+    const runId = publishDialogRun.id;
     setPullRequestDraftBusy(true);
     setError(null);
     try {
       const draft = await buildwarden.suggestRunPullRequestDraft(
-        publishDialogRun.id,
+        runId,
         pullRequestTargetBranch.trim(),
       );
+      if (
+        publishDialogSessionRef.current !== dialogSession
+        || pullRequestDraftRequestRef.current !== requestId
+      ) {
+        return;
+      }
       setPullRequestTitle(draft.title);
       if (draft.commitMessage) {
         setPullRequestCommitMessage(draft.commitMessage);
       }
       setPullRequestDescription(draft.description);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not generate the merge request or pull request draft.");
+      if (
+        publishDialogSessionRef.current === dialogSession
+        && pullRequestDraftRequestRef.current === requestId
+      ) {
+        setError(e instanceof Error ? e.message : "Could not generate the merge request or pull request draft.");
+      }
     } finally {
-      setPullRequestDraftBusy(false);
+      if (
+        publishDialogSessionRef.current === dialogSession
+        && pullRequestDraftRequestRef.current === requestId
+      ) {
+        setPullRequestDraftBusy(false);
+      }
     }
   };
 
@@ -261,6 +292,10 @@ const usePublishDialog = (deps: RunActionDialogDeps) => {
 
     await handleAction(async () => {
       const bridge = requireBridge(buildwarden);
+
+      if (pullRequestDraftBusy) {
+        throw new Error("Wait for pull request content generation to finish.");
+      }
 
       const trimmedTitle = pullRequestTitle.trim();
       const trimmedTargetBranch = pullRequestTargetBranch.trim();
