@@ -5827,16 +5827,25 @@ export class AppController
     const targetBranches = await this.gitService.listTargetBranches(run.worktreePath);
     const defaultTargetBranch =
       targetBranches.includes(project.baseBranch) ? project.baseBranch : (targetBranches[0] ?? project.baseBranch);
-    const publishContext = await this.gitService.getPullRequestContext(run.worktreePath, defaultTargetBranch);
+    const publishContext = await this.gitService
+      .getPullRequestContext(run.worktreePath, defaultTargetBranch)
+      .catch((error: unknown) => {
+        this.logControllerWarn("Could not resolve target-relative Git context for the publish dialog.", {
+          runId: run.id,
+          targetBranch: defaultTargetBranch,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      });
     const defaultCommitMessage = this.buildRunCommitMessage(run.prompt);
-    const suggestedTitle = publishContext.commits[0]?.subject || defaultCommitMessage;
+    const suggestedTitle = publishContext?.commits[0]?.subject || defaultCommitMessage;
 
     return {
       defaultTargetBranch,
       defaultSourceBranch: run.branchName,
       defaultDescription: this.buildRunPullRequestBody(project.name, run.prompt, defaultTargetBranch),
       defaultCommitMessage,
-      hasOpenChanges: publishContext.hasOpenChanges,
+      hasOpenChanges: publishContext?.hasOpenChanges ?? (await this.gitService.hasChanges(run.worktreePath)),
       suggestedTitle,
       targetBranches,
     };

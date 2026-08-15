@@ -303,6 +303,47 @@ describe("AppController settings and lightweight workflows", () => {
     expect(prompt).not.toContain("(empty diff)");
   });
 
+  it("keeps publish options available when target-relative context cannot be resolved", async () => {
+    const run = {
+      id: "run-1",
+      projectId: project.id,
+      workspaceVcs: "git",
+      workspaceType: "local",
+      worktreePath: project.repoPath,
+      branchName: "feature/open-changes",
+      prompt: "Publish changes",
+      status: "completed",
+    } as RunRecord;
+    const harness = createHarness({ getRun: vi.fn(() => run) });
+    const gitService = {
+      listTargetBranches: vi.fn(async () => [] as string[]),
+      getPullRequestContext: vi.fn(async () => {
+        throw new Error("Target branch was not found.");
+      }),
+      hasChanges: vi.fn(async () => true),
+    };
+    const logControllerWarn = vi.fn();
+    const controllerInternals = harness.controller as unknown as {
+      gitService: typeof gitService;
+      logControllerWarn: typeof logControllerWarn;
+    };
+    controllerInternals.gitService = gitService;
+    controllerInternals.logControllerWarn = logControllerWarn;
+
+    await expect(harness.controller.getRunPublishOptions(run.id)).resolves.toMatchObject({
+      defaultTargetBranch: project.baseBranch,
+      defaultSourceBranch: run.branchName,
+      defaultCommitMessage: "buildwarden: Publish changes",
+      hasOpenChanges: true,
+      suggestedTitle: "buildwarden: Publish changes",
+      targetBranches: [],
+    });
+    expect(logControllerWarn).toHaveBeenCalledWith(
+      "Could not resolve target-relative Git context for the publish dialog.",
+      expect.objectContaining({ runId: run.id, targetBranch: project.baseBranch }),
+    );
+  });
+
   it("bypasses a cached forge request list for forced post-creation detection", async () => {
     const harness = createHarness();
     const empty = { provider: "github", webBaseUrl: "https://github.com/acme/repo", repoLabel: "acme/repo", items: [] } as const;
