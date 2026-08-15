@@ -76,4 +76,28 @@ describe("GitService pull request context", () => {
     expect(context.commits).toEqual([]);
     expect(context.diff).toBe("");
   });
+
+  it("refreshes and prefers the remote target branch ref", async () => {
+    const { path, git } = await createRepository();
+    const remotePath = await mkdtemp(join(tmpdir(), "buildwarden-pr-context-remote-"));
+    temporaryRepositories.push(remotePath);
+    await simpleGit(remotePath).init(true);
+    await git.addRemote("origin", remotePath);
+    await git.push("origin", "main");
+    const staleTargetSha = (await git.revparse(["main"])).trim();
+
+    await git.checkout("main");
+    await writeFile(join(path, "tracked.txt"), "updated target\n", "utf8");
+    await git.add(["tracked.txt"]);
+    await git.commit("Advance target branch");
+    const currentTargetSha = (await git.revparse(["HEAD"])).trim();
+    await git.push("origin", "main");
+    await git.checkout("feature/publish-context");
+    await git.raw(["update-ref", "refs/remotes/origin/main", staleTargetSha]);
+
+    const context = await new GitService().getPullRequestContext(path, "main");
+
+    expect(context.targetRef).toBe("refs/remotes/origin/main");
+    expect((await git.revparse(["refs/remotes/origin/main"])).trim()).toBe(currentTargetSha);
+  });
 });

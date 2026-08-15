@@ -1028,6 +1028,12 @@ export class GitService {
       throw new Error(`"${trimmedTargetBranch}" is not a valid target branch name.`);
     }
 
+    try {
+      await this.fetchProjectBranches(worktreePath);
+    } catch {
+      // Keep local-only and temporarily offline repositories usable with their existing refs.
+    }
+
     let targetRef = "";
     for (const candidate of [`refs/remotes/origin/${trimmedTargetBranch}`, `refs/heads/${trimmedTargetBranch}`]) {
       try {
