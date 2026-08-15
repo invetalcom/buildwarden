@@ -10,6 +10,12 @@ import { LocalBranchSheet, PullRequestSheet } from "./RunGitSheets";
 
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
+const setTextareaValue = (textarea: HTMLTextAreaElement, value: string) => {
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+  setter?.call(textarea, value);
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+};
+
 beforeAll(() => {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
@@ -128,5 +134,115 @@ describe("PullRequestSheet", () => {
     const textareaValues = Array.from(container.querySelectorAll<HTMLTextAreaElement>("textarea")).map((textarea) => textarea.value);
     expect(textareaValues).toContain("Generated commit message");
     expect(textareaValues).toContain("## Summary\n\nGenerated description");
+  });
+
+  it("requires and trims the commit message when submitting open changes", async () => {
+    const createRunPullRequest = vi.fn(async () => "https://example.test/pull/1");
+    const value = {
+      client: {
+        getRunPublishOptions: vi.fn(async () => ({
+          defaultTargetBranch: "main",
+          defaultSourceBranch: "feat/mobile-pr",
+          defaultDescription: "Default description",
+          defaultCommitMessage: "Default commit",
+          hasOpenChanges: true,
+          suggestedTitle: "Mobile PR title",
+          targetBranches: ["main"],
+        })),
+        createRunPullRequest,
+      } as unknown as BuildWardenClient,
+    } as MobileAppValue;
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push({ root, container });
+    await act(async () => {
+      root.render(
+        <MobileAppProvider value={value}>
+          <PullRequestSheet runId="run-1" open onClose={vi.fn()} onDone={vi.fn(async () => undefined)} />
+        </MobileAppProvider>,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const commitMessage = container.querySelector<HTMLTextAreaElement>('textarea[placeholder="Commit message"]');
+    const createButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent?.trim() === "Create pull request");
+    expect(commitMessage).not.toBeNull();
+    expect(createButton).toBeDefined();
+
+    await act(async () => {
+      if (commitMessage) {
+        setTextareaValue(commitMessage, "   ");
+      }
+    });
+    expect(createButton?.disabled).toBe(true);
+
+    await act(async () => {
+      if (commitMessage) {
+        setTextareaValue(commitMessage, "  Commit mobile changes  ");
+      }
+    });
+    expect(createButton?.disabled).toBe(false);
+
+    await act(async () => {
+      createButton?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(createRunPullRequest).toHaveBeenCalledWith(
+      "run-1",
+      "main",
+      "Mobile PR title",
+      undefined,
+      "Default description",
+      "Commit mobile changes",
+    );
+  });
+
+  it("omits the commit message when submitting a clean workspace", async () => {
+    const createRunPullRequest = vi.fn(async () => "https://example.test/pull/1");
+    const value = {
+      client: {
+        getRunPublishOptions: vi.fn(async () => ({
+          defaultTargetBranch: "main",
+          defaultSourceBranch: "feat/mobile-pr",
+          defaultDescription: "Default description",
+          defaultCommitMessage: "Unused commit",
+          hasOpenChanges: false,
+          suggestedTitle: "Mobile PR title",
+          targetBranches: ["main"],
+        })),
+        createRunPullRequest,
+      } as unknown as BuildWardenClient,
+    } as MobileAppValue;
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push({ root, container });
+    await act(async () => {
+      root.render(
+        <MobileAppProvider value={value}>
+          <PullRequestSheet runId="run-1" open onClose={vi.fn()} onDone={vi.fn(async () => undefined)} />
+        </MobileAppProvider>,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(container.querySelector('textarea[placeholder="Commit message"]')).toBeNull();
+    const createButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent?.trim() === "Create pull request");
+    await act(async () => {
+      createButton?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(createRunPullRequest).toHaveBeenCalledWith(
+      "run-1",
+      "main",
+      "Mobile PR title",
+      undefined,
+      "Default description",
+      undefined,
+    );
   });
 });
