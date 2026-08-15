@@ -310,7 +310,7 @@ export const PullRequestSheet = ({
           </label>
 
           {options.hasOpenChanges ? (
-            <div className="flex flex-col gap-2 rounded-md border border-amber-500/20 bg-amber-500/5 p-3">
+            <div className="flex flex-col gap-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-3">
               <div>
                 <p className="text-[12px] font-medium text-[var(--ec-text)]">Commit open changes before publishing</p>
                 <p className="mt-0.5 text-[11px] text-[var(--ec-muted)]">The commit is created only when you create the request.</p>
