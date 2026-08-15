@@ -176,6 +176,8 @@ describe("remote BuildWarden client", () => {
       const request = JSON.parse(String(init?.body)) as { method: string; requestId: string };
       const result = request.method === "suggestCommitMessage"
         ? "Generated commit message"
+        : request.method === "suggestRunPullRequestDraft"
+          ? { title: "Generated title", commitMessage: "Generated commit", description: "Generated description" }
         : request.method === "suggestRunPullRequestDescription"
           ? "Generated PR description"
           : null;
@@ -189,6 +191,19 @@ describe("remote BuildWarden client", () => {
     await expect(client.suggestCommitMessage("run-1")).resolves.toBe("Generated commit message");
     await expect(client.suggestRunPullRequestDescription("run-1", "main", "Title"))
       .resolves.toBe("Generated PR description");
+    await expect(client.suggestRunPullRequestDraft("run-1", "main")).resolves.toEqual({
+      title: "Generated title",
+      commitMessage: "Generated commit",
+      description: "Generated description",
+    });
+    await client.createRunPullRequest(
+      "run-1",
+      "main",
+      "Title",
+      undefined,
+      "Generated PR description",
+      "Commit open changes",
+    );
     await client.addRunNote("run-1", { content: "Remember this" });
     await client.updateRunNote("note-1", { status: "closed" });
     await client.deleteRunNote("note-1");
@@ -200,6 +215,8 @@ describe("remote BuildWarden client", () => {
     expect(requests.map(({ method }) => method)).toEqual([
       "suggestCommitMessage",
       "suggestRunPullRequestDescription",
+      "suggestRunPullRequestDraft",
+      "createRunPullRequest",
       "addRunNote",
       "updateRunNote",
       "deleteRunNote",
@@ -209,6 +226,17 @@ describe("remote BuildWarden client", () => {
     expect(requests.filter(({ method }) => method !== "getRunChat"))
       .toSatisfy((items: Array<{ idempotencyKey?: string }>) => items.every((item) => item.idempotencyKey === "request-id"));
     expect(requests.find(({ method }) => method === "getRunChat")?.idempotencyKey).toBeUndefined();
+    const createRequest = fetcher.mock.calls
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)) as { method: string; args: unknown[] })
+      .find(({ method }) => method === "createRunPullRequest");
+    expect(createRequest?.args).toEqual([
+      "run-1",
+      "main",
+      "Title",
+      null,
+      "Generated PR description",
+      "Commit open changes",
+    ]);
   });
 
   it("requires both run operation and admin scopes to refresh orchestration settings", () => {

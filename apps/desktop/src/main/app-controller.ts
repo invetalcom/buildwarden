@@ -208,6 +208,8 @@ import {
   type RunWorktreeDiffResult,
   type RunWorktreeDiffSummary,
   type RunWorktreeDiffSummaryResult,
+  type RunPublishOptions,
+  type RunPullRequestDraft,
   type RunFollowUpOptions,
   type RunInput,
   type ModelDeletionImpact,
@@ -3455,6 +3457,12 @@ export class AppController
   }
 
   async commitRun(runId: string, message: string): Promise<void> {
+    const initialRun = this.db.getRun(runId);
+    this.requireGitRun(initialRun, "Committing");
+    return this.serializeProjectBranchMutation(initialRun.projectId, () => this.commitRunUnlocked(runId, message));
+  }
+
+  private async commitRunUnlocked(runId: string, message: string): Promise<void> {
     const run = this.db.getRun(runId);
     this.requireGitRun(run, "Committing");
 
@@ -5148,7 +5156,7 @@ export class AppController
     if (provider.providerType === "codex-cli") {
       const result = await generateAskTextResultWithCodexCli({
         cwd,
-        prompt: input.prompt,
+        prompt: [input.systemPrompt, input.prompt].filter((part) => part.trim()).join("\n\n"),
         modelId: model.modelId,
         config: providerConfig,
         modelConfig,
@@ -5806,21 +5814,29 @@ export class AppController
     return normalized.split("/")[0] || "root";
   }
 
-  async getRunPublishOptions(runId: string): Promise<{ defaultTargetBranch: string; defaultSourceBranch: string; defaultDescription: string; suggestedTitle: string; targetBranches: string[] }> {
+  async getRunPublishOptions(runId: string): Promise<RunPublishOptions> {
     const run = this.db.getRun(runId);
     this.requireGitRun(run, "Publishing");
     const project = this.db.getProject(run.projectId);
     this.requireGitProject(project, "Publishing");
 
+    if (run.workspaceType === "worktree") {
+      await this.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
+    }
+
     const targetBranches = await this.gitService.listTargetBranches(run.worktreePath);
     const defaultTargetBranch =
       targetBranches.includes(project.baseBranch) ? project.baseBranch : (targetBranches[0] ?? project.baseBranch);
-    const suggestedTitle = (await this.gitService.getLatestCommitMessage(run.worktreePath, run.branchName)) || this.buildRunCommitMessage(run.prompt);
+    const publishContext = await this.gitService.getPullRequestContext(run.worktreePath, defaultTargetBranch);
+    const defaultCommitMessage = this.buildRunCommitMessage(run.prompt);
+    const suggestedTitle = publishContext.commits[0]?.subject || defaultCommitMessage;
 
     return {
       defaultTargetBranch,
       defaultSourceBranch: run.branchName,
       defaultDescription: this.buildRunPullRequestBody(project.name, run.prompt, defaultTargetBranch),
+      defaultCommitMessage,
+      hasOpenChanges: publishContext.hasOpenChanges,
       suggestedTitle,
       targetBranches,
     };
@@ -5832,6 +5848,23 @@ export class AppController
     title: string,
     sourceBranchName?: string,
     description?: string,
+    commitMessage?: string,
+  ): Promise<string> {
+    const initialRun = this.db.getRun(runId);
+    this.requireGitRun(initialRun, "Pull and merge request creation");
+    const initialProject = this.db.getProject(initialRun.projectId);
+    this.requireGitProject(initialProject, "Pull and merge request creation");
+    return this.serializeProjectBranchMutation(initialProject.id, () =>
+      this.createRunPullRequestUnlocked(runId, targetBranch, title, sourceBranchName, description, commitMessage));
+  }
+
+  private async createRunPullRequestUnlocked(
+    runId: string,
+    targetBranch: string,
+    title: string,
+    sourceBranchName?: string,
+    description?: string,
+    commitMessage?: string,
   ): Promise<string> {
     let run = this.db.getRun(runId);
     this.requireGitRun(run, "Pull and merge request creation");
@@ -5851,13 +5884,28 @@ export class AppController
       throw new Error("Select a target branch.");
     }
 
-    if (await this.gitService.hasChanges(run.worktreePath)) {
-      throw new Error("Commit or discard open changes before creating a merge request or pull request.");
+    if (run.workspaceType === "worktree") {
+      await this.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
+    }
+
+    const prospectiveContext = await this.gitService.getPullRequestContext(run.worktreePath, trimmedTargetBranch);
+    if (!prospectiveContext.diff.trim()) {
+      throw new Error(`The source branch has no changes against "${trimmedTargetBranch}".`);
     }
 
     if (createdCustomSourceBranch) {
       await this.gitService.createPublishBranchFromHead(run.worktreePath, trimmedSourceBranch);
       run = this.db.updateRunBranchName(run.id, trimmedSourceBranch);
+    }
+
+    if (await this.gitService.hasChanges(run.worktreePath)) {
+      await this.commitRunUnlocked(run.id, commitMessage?.trim() || trimmedTitle);
+      run = this.db.getRun(run.id);
+    }
+
+    const publishContext = await this.gitService.getPullRequestContext(run.worktreePath, trimmedTargetBranch);
+    if (!publishContext.diff.trim()) {
+      throw new Error(`The source branch has no changes against "${trimmedTargetBranch}".`);
     }
 
     const result = await this.gitService.createPullRequest(
@@ -5911,79 +5959,116 @@ export class AppController
     return url;
   }
 
+  async suggestRunPullRequestDraft(runId: string, targetBranch: string): Promise<RunPullRequestDraft> {
+    return this.generateRunPullRequestDraft(runId, targetBranch);
+  }
+
   async suggestRunPullRequestDescription(runId: string, targetBranch: string, title: string): Promise<string> {
-    const run = this.db.getRun(runId);
-    this.requireGitRun(run, "Pull and merge request description generation");
-    const project = this.db.getProject(run.projectId);
-    this.requireGitProject(project, "Pull and merge request description generation");
-    const trimmedTargetBranch = targetBranch.trim();
     const trimmedTitle = title.trim();
-
-    if (!trimmedTargetBranch) {
-      throw new Error("Select a target branch before generating a description.");
-    }
-
     if (!trimmedTitle) {
       throw new Error("Enter a merge request or pull request title before generating a description.");
+    }
+    return (await this.generateRunPullRequestDraft(runId, targetBranch, trimmedTitle)).description;
+  }
+
+  private async generateRunPullRequestDraft(
+    runId: string,
+    targetBranch: string,
+    preferredTitle?: string,
+  ): Promise<RunPullRequestDraft> {
+    const run = this.db.getRun(runId);
+    this.requireGitRun(run, "Pull and merge request draft generation");
+    const project = this.db.getProject(run.projectId);
+    this.requireGitProject(project, "Pull and merge request draft generation");
+    const trimmedTargetBranch = targetBranch.trim();
+
+    if (!trimmedTargetBranch) {
+      throw new Error("Select a target branch before generating a pull request draft.");
     }
 
     if (run.workspaceType === "worktree") {
       await this.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
     }
 
-    const diffOutcome = await runWorktreeDiffInWorker(run.worktreePath);
-    if (!diffOutcome.ok) {
-      throw new Error("Could not read the worktree diff.");
+    const publishContext = await this.gitService.getPullRequestContext(run.worktreePath, trimmedTargetBranch);
+    let diff = publishContext.diff;
+    if (!diff.trim()) {
+      throw new Error(`The source branch has no changes against "${trimmedTargetBranch}".`);
     }
-    let diff = diffOutcome.diff;
     if (diff.length > MAX_DIFF_CHARS_FOR_REVIEW) {
       diff = `${diff.slice(0, MAX_DIFF_CHARS_FOR_REVIEW)}\n\n[Diff truncated for MR/PR description generation.]`;
     }
+    const commitContext = publishContext.commits.length > 0
+      ? publishContext.commits.map((commit) => `- ${commit.hash.slice(0, 12)} ${commit.subject}`).join("\n")
+      : "(no committed source-branch changes yet; open changes will be committed before publishing)";
 
     const context = await this.resolveModelInvocationContext(run.modelId);
+    const defaultTitle = preferredTitle?.trim() || publishContext.commits[0]?.subject || this.buildRunCommitMessage(run.prompt);
+    const defaultCommitMessage = this.buildRunCommitMessage(run.prompt);
     const defaultDescription = this.buildRunPullRequestBody(project.name, run.prompt, trimmedTargetBranch);
     const prompt = [
-      "Write a concise merge request / pull request description for these code changes.",
-      "Use plain markdown only.",
-      "Keep it practical and scannable.",
-      "Prefer these sections when useful:",
-      "## Summary",
-      "## What Changed",
-      "## Validation",
+      "Create a complete merge request / pull request draft for these code changes.",
+      "Return exactly one JSON object with this shape:",
+      '{"title":"Concise PR title","commitMessage":"Concise git commit message or null","description":"Markdown PR body"}',
+      "The title should be specific, concise, and should not use a conventional-commit prefix unless it improves clarity.",
+      publishContext.hasOpenChanges
+        ? "The commitMessage must describe the open changes that BuildWarden will commit before publishing."
+        : "Set commitMessage to null because the workspace is clean.",
+      "Keep the description practical and scannable, using ## Summary, ## What Changed, and ## Validation when useful.",
       "If validation is unknown, say so briefly instead of inventing it.",
-      "Output only the final description body.",
+      "Encode the markdown description as a JSON string. Do not output markdown fences or commentary outside the JSON object.",
       "",
       `Project: ${project.name}`,
       `Source branch: ${run.branchName}`,
       `Target branch: ${trimmedTargetBranch}`,
-      `Title: ${trimmedTitle}`,
       "",
       "Original run prompt:",
       run.prompt || "(no prompt available)",
       "",
-      "Current default description:",
+      "Current defaults:",
+      `Title: ${defaultTitle}`,
+      `Commit message: ${publishContext.hasOpenChanges ? defaultCommitMessage : "(not needed)"}`,
+      "Description:",
       defaultDescription,
       "",
-      "Git diff of current changes:",
-      diff || "(empty diff)",
+      "Source-branch commits since the target merge base:",
+      commitContext,
+      "",
+      publishContext.hasOpenChanges
+        ? "Prospective PR diff, including open changes that BuildWarden will commit before publishing:"
+        : "Committed PR diff against the target branch merge base:",
+      diff,
     ].join("\n");
 
     try {
       const text = await this.askModelForText(run.worktreePath, context, {
         prompt,
-        systemPrompt: "You write strong engineering pull request descriptions. Output only the final markdown body.",
-        maxTokens: 1_000,
+        systemPrompt: "You write strong engineering pull request drafts. Output only the requested JSON object.",
+        maxTokens: 1_300,
         temperature: 0.2,
         usageProjectId: run.projectId,
       });
-      const normalized = text.trim();
-      if (!normalized) {
-        throw new Error("The model returned an empty description.");
+      const parsed = JSON.parse(normalizeJsonResponse(text)) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("The model did not return a JSON object.");
       }
-      return normalized;
+      const record = parsed as Record<string, unknown>;
+      const generatedTitle = typeof record.title === "string" ? record.title.replace(/\s+/g, " ").trim() : "";
+      const generatedDescription = typeof record.description === "string" ? record.description.trim() : "";
+      const generatedCommitMessage = typeof record.commitMessage === "string"
+        ? normalizeSuggestedCommitMessage(record.commitMessage)
+        : "";
+      if (!generatedTitle || !generatedDescription) {
+        throw new Error("The model returned an incomplete pull request draft.");
+      }
+      return {
+        title: generatedTitle,
+        description: generatedDescription,
+        commitMessage: publishContext.hasOpenChanges ? generatedCommitMessage || generatedTitle : null,
+      };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      throw new Error(`Could not generate a merge request or pull request description. Detail: ${msg}`);
+      throw new Error(`Could not generate a merge request or pull request draft. Detail: ${msg}`);
     }
   }
 

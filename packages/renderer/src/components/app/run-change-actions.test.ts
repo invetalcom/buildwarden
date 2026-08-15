@@ -23,7 +23,7 @@ describe("run change actions", () => {
     expect(changeState).toBe("dirty");
     expect(deriveRunChangeActionAvailability({ changeState, hasCommit: false, canManageChanges: true })).toEqual({
       canCommit: true,
-      canPublish: false,
+      canPublish: true,
       canCreateLocalBranch: true,
     });
   });

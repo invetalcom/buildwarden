@@ -172,6 +172,133 @@ const createMutableProjectHarness = () => {
 };
 
 describe("AppController settings and lightweight workflows", () => {
+  it("commits open run changes before creating a pull request", async () => {
+    const run = {
+      id: "run-1",
+      projectId: project.id,
+      workspaceVcs: "git",
+      workspaceType: "local",
+      worktreePath: project.repoPath,
+      branchName: "feature/open-changes",
+      prompt: "Publish the open changes",
+      status: "completed",
+      projectTaskId: null,
+    } as RunRecord;
+    const appendRunStep = vi.fn(async () => undefined);
+    const harness = createHarness({
+      getRun: vi.fn(() => run),
+      appendRunStep,
+    });
+    const commitAllChanges = vi.fn(async () => ({ commitHash: "abc123def456" }));
+    const createPullRequest = vi.fn(async () => ({
+      url: "https://example.test/pull/1",
+      mode: "created" as const,
+      requestKind: "pull-request" as const,
+    }));
+    const gitService = {
+      getPullRequestContext: vi.fn()
+        .mockResolvedValueOnce({
+          targetRef: "refs/heads/main",
+          mergeBase: "base",
+          commits: [],
+          hasOpenChanges: true,
+          diff: "prospective diff",
+        })
+        .mockResolvedValueOnce({
+          targetRef: "refs/heads/main",
+          mergeBase: "base",
+          commits: [{ hash: "abc123def456", subject: "Commit open changes" }],
+          hasOpenChanges: false,
+          diff: "committed diff",
+        }),
+      hasChanges: vi.fn(async () => true),
+      commitAllChanges,
+      createPullRequest,
+    };
+    const controllerInternals = harness.controller as unknown as {
+      gitService: typeof gitService;
+      syncRunForgeRequest: () => Promise<void>;
+      syncRunForgeRequestInBackground: () => void;
+    };
+    controllerInternals.gitService = gitService;
+    controllerInternals.syncRunForgeRequest = vi.fn(async () => undefined);
+    controllerInternals.syncRunForgeRequestInBackground = vi.fn();
+
+    await expect(harness.controller.createRunPullRequest(
+      run.id,
+      "main",
+      "Publish open changes",
+      undefined,
+      "Description",
+      "Commit open changes",
+    )).resolves.toBe("https://example.test/pull/1");
+
+    expect(commitAllChanges).toHaveBeenCalledWith(project.repoPath, "Commit open changes");
+    expect(createPullRequest).toHaveBeenCalledWith(
+      project.repoPath,
+      run.branchName,
+      "main",
+      "Publish open changes",
+      "Description",
+    );
+    expect(commitAllChanges.mock.invocationCallOrder[0]).toBeLessThan(createPullRequest.mock.invocationCallOrder[0]!);
+    expect(appendRunStep).toHaveBeenCalledWith(
+      run.id,
+      "status",
+      "Commit created",
+      expect.stringContaining("abc123def456"),
+      expect.stringContaining('"commitMessage":"Commit open changes"'),
+    );
+  });
+
+  it("generates a complete PR draft from the target-relative committed diff", async () => {
+    const run = {
+      id: "run-1",
+      projectId: project.id,
+      modelId: model.id,
+      workspaceVcs: "git",
+      workspaceType: "local",
+      worktreePath: project.repoPath,
+      branchName: "feature/committed-change",
+      prompt: "Implement the committed change",
+      status: "completed",
+    } as RunRecord;
+    const harness = createHarness({ getRun: vi.fn(() => run) });
+    const askModelForText = vi.fn(async (_cwd: string, _context: unknown, _input: { prompt: string }) =>
+      JSON.stringify({
+        title: "Generated committed change",
+        commitMessage: null,
+        description: "## Summary\n\nCommitted change",
+      }));
+    const controllerInternals = harness.controller as unknown as {
+      gitService: { getPullRequestContext: () => Promise<unknown> };
+      resolveModelInvocationContext: () => Promise<unknown>;
+      askModelForText: typeof askModelForText;
+    };
+    controllerInternals.gitService = {
+      getPullRequestContext: vi.fn(async () => ({
+        targetRef: "refs/heads/main",
+        mergeBase: "base",
+        commits: [{ hash: "abc123def456", subject: "Implement the committed change" }],
+        hasOpenChanges: false,
+        diff: "diff --git a/file.ts b/file.ts\n+committed change",
+      })),
+    };
+    controllerInternals.resolveModelInvocationContext = vi.fn(async () => ({}));
+    controllerInternals.askModelForText = askModelForText;
+
+    await expect(harness.controller.suggestRunPullRequestDraft(run.id, "main")).resolves.toEqual({
+      title: "Generated committed change",
+      commitMessage: null,
+      description: "## Summary\n\nCommitted change",
+    });
+
+    const prompt = askModelForText.mock.calls[0]?.[2].prompt ?? "";
+    expect(prompt).toContain("Committed PR diff against the target branch merge base:");
+    expect(prompt).toContain("+committed change");
+    expect(prompt).not.toContain("(empty diff)");
+  });
+
   it("bypasses a cached forge request list for forced post-creation detection", async () => {
     const harness = createHarness();
     const empty = { provider: "github", webBaseUrl: "https://github.com/acme/repo", repoLabel: "acme/repo", items: [] } as const;

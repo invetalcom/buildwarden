@@ -109,3 +109,59 @@ describe("useRunActionDialogs branch suggestions", () => {
     expect(dialogs().branchSuggestBusy).toBe(false);
   });
 });
+
+describe("useRunActionDialogs pull request publishing", () => {
+  it("passes the configured commit message when publishing open changes", async () => {
+    const createRunPullRequest = vi.fn(async () => "https://example.test/pull/1");
+    const suggestRunPullRequestDraft = vi.fn(async () => ({
+      title: "Generated PR title",
+      commitMessage: "Generated commit message",
+      description: "## Summary\n\nGenerated description",
+    }));
+    const deps: RunActionDialogDeps = {
+      buildwarden: {
+        getRunPublishOptions: vi.fn(async () => ({
+          defaultTargetBranch: "main",
+          defaultSourceBranch: "feat/open-changes",
+          defaultDescription: "Default description",
+          defaultCommitMessage: "Commit open changes",
+          hasOpenChanges: true,
+          suggestedTitle: "Publish open changes",
+          targetBranches: ["main"],
+        })),
+        suggestRunPullRequestDraft,
+        createRunPullRequest,
+      } as unknown as DesktopApi,
+      snapshot,
+      runYoloMode: false,
+      handleAction: async (action) => action(),
+      setError: vi.fn(),
+      onRunMutated: vi.fn(async () => undefined),
+      onRunContinued: vi.fn(async () => undefined),
+    };
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push({ root, container });
+    await act(async () => root.render(<HookHarness deps={deps} />));
+
+    await act(async () => dialogs().openPublishDialog(run("run-1", "feat/open-changes")));
+    expect(dialogs().pullRequestCommitMessage).toBe("Commit open changes");
+
+    await act(async () => dialogs().generatePullRequestDraft());
+    expect(dialogs().pullRequestTitle).toBe("Generated PR title");
+    expect(dialogs().pullRequestCommitMessage).toBe("Generated commit message");
+    expect(dialogs().pullRequestDescription).toContain("Generated description");
+
+    await act(async () => dialogs().submitPullRequest());
+
+    expect(createRunPullRequest).toHaveBeenCalledWith(
+      "run-1",
+      "main",
+      "Generated PR title",
+      undefined,
+      "## Summary\n\nGenerated description",
+      "Generated commit message",
+    );
+  });
+});

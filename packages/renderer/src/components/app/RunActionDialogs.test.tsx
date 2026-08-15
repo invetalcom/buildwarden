@@ -65,6 +65,34 @@ describe("RunActionDialogs run actions", () => {
 
     expect(markup).not.toContain("Generate branch name with AI");
   });
+
+  it("shows the pending commit message only when the PR includes open changes", () => {
+    const markup = renderDialogs({
+      publishDialogRun: dialogRun(longPrompt),
+      publishOptions: {
+        defaultTargetBranch: "main",
+        defaultSourceBranch: "feature/test-run",
+        defaultDescription: "Description",
+        defaultCommitMessage: "Commit open changes",
+        hasOpenChanges: true,
+        suggestedTitle: "Update cards",
+        targetBranches: ["main"],
+      },
+      pullRequestSourceBranchMode: "worktree",
+      pullRequestSourceBranchName: "feature/test-run",
+      pullRequestTargetBranch: "main",
+      pullRequestTitle: "Update cards",
+      pullRequestCommitMessage: "Commit open changes",
+      pullRequestDescription: "Description",
+      pullRequestDraftBusy: false,
+    });
+
+    expect(markup).toContain("Commit open changes before publishing");
+    expect(markup).toContain("Commit open changes");
+    expect(markup.match(/Generate PR content/g)).toHaveLength(1);
+    expect(markup).not.toContain("Choose the branches");
+    expect(markup).not.toContain("Generate commit message with AI");
+  });
 });
 
 describe("RunActionDialogs confirmation", () => {

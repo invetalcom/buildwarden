@@ -205,6 +205,7 @@ export const PullRequestSheet = ({
   const [options, setOptions] = useState<RunPublishOptions | null>(null);
   const [target, setTarget] = useState("");
   const [title, setTitle] = useState("");
+  const [commitMessage, setCommitMessage] = useState("");
   const [description, setDescription] = useState("");
 
   const [optionsError, setOptionsError] = useState<string | null>(null);
@@ -221,6 +222,7 @@ export const PullRequestSheet = ({
         setOptions(next);
         setTarget(next.defaultTargetBranch);
         setTitle(next.suggestedTitle);
+        setCommitMessage(next.defaultCommitMessage);
         setDescription(next.defaultDescription);
       })
       // Without this the sheet sits on "Loading branches" forever after a dropped connection, and
@@ -234,16 +236,26 @@ export const PullRequestSheet = ({
   }, [client, open, reloadNonce, runId]);
 
   const generate = async () => {
-    const suggestion = await action.run(
-      () => client.suggestRunPullRequestDescription(runId, target, title),
-      "Could not draft a description.",
+    const draft = await action.run(
+      () => client.suggestRunPullRequestDraft(runId, target),
+      "Could not generate the pull request draft.",
     );
-    if (suggestion) setDescription(suggestion);
+    if (!draft) return;
+    setTitle(draft.title);
+    if (draft.commitMessage) setCommitMessage(draft.commitMessage);
+    setDescription(draft.description);
   };
 
   const submit = async () => {
     const url = await action.run(
-      () => client.createRunPullRequest(runId, target, title.trim(), undefined, description),
+      () => client.createRunPullRequest(
+        runId,
+        target,
+        title.trim(),
+        undefined,
+        description,
+        options?.hasOpenChanges ? commitMessage.trim() : undefined,
+      ),
       "The pull request was not created.",
     );
     if (url) {
@@ -259,7 +271,7 @@ export const PullRequestSheet = ({
       title="Create pull request"
       dismissable={!action.busy}
       footer={
-        <Button block busy={action.busy} disabled={!title.trim() || !target} onClick={() => void submit()}>
+        <Button block busy={action.busy} disabled={!title.trim() || !target || (options?.hasOpenChanges === true && !commitMessage.trim())} onClick={() => void submit()}>
           Create pull request
         </Button>
       }
@@ -271,6 +283,11 @@ export const PullRequestSheet = ({
       ) : (
         <div className="flex flex-col gap-3 px-4 py-3">
           {action.error ? <InlineError message={action.error} /> : null}
+
+          <Button tone="neutral" busy={action.busy} onClick={() => void generate()}>
+            <Sparkles className="size-4" />
+            Generate PR content
+          </Button>
 
           <label className="flex flex-col gap-1.5">
             <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Target branch</span>
@@ -292,15 +309,21 @@ export const PullRequestSheet = ({
             <Input value={title} onChange={(event) => setTitle(event.target.value)} />
           </label>
 
+          {options.hasOpenChanges ? (
+            <div className="flex flex-col gap-2 rounded-md border border-amber-500/20 bg-amber-500/5 p-3">
+              <div>
+                <p className="text-[12px] font-medium text-[var(--ec-text)]">Commit open changes before publishing</p>
+                <p className="mt-0.5 text-[11px] text-[var(--ec-muted)]">The commit is created only when you create the request.</p>
+              </div>
+              <Textarea rows={3} value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} placeholder="Commit message" />
+            </div>
+          ) : null}
+
           <label className="flex flex-col gap-1.5">
             <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Description</span>
             <Textarea rows={6} value={description} onChange={(event) => setDescription(event.target.value)} />
           </label>
 
-          <Button tone="neutral" size="sm" busy={action.busy} onClick={() => void generate()}>
-            <Sparkles className="size-4" />
-            Generate PR description
-          </Button>
         </div>
       )}
     </Sheet>

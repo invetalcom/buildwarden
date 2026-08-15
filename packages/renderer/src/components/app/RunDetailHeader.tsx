@@ -529,7 +529,7 @@ export const RunDetailHeader = ({
                   disabled={!canPublish}
                   title={changeState === "unknown"
                     ? changeStateMessage
-                    : hasOpenChanges ? "Create a commit before creating a merge request or pull request." : undefined}
+                    : hasOpenChanges ? "Open changes will be committed when the merge request or pull request is created." : undefined}
                   onClick={() => {
                     if (!canPublish) return;
                     setPublishMenuOpen(false);

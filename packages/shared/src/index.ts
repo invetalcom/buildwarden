@@ -2706,8 +2706,16 @@ export interface RunPublishOptions {
   defaultTargetBranch: string;
   defaultSourceBranch: string;
   defaultDescription: string;
+  defaultCommitMessage: string;
+  hasOpenChanges: boolean;
   suggestedTitle: string;
   targetBranches: string[];
+}
+
+export interface RunPullRequestDraft {
+  title: string;
+  description: string;
+  commitMessage: string | null;
 }
 
 export interface BookmarkSummary {
@@ -3726,7 +3734,15 @@ export interface DesktopApi {
   decideOrchestrationAdoption(input: OrchestrationAdoptionDecisionInput): Promise<void>;
   refreshOrchestrationTeam(coordinatorRunId: string): Promise<void>;
   onOrchestrationChanged(listener: (payload: OrchestrationChangedPayload) => void): () => void;
-  createRunPullRequest(runId: string, targetBranch: string, title: string, sourceBranchName?: string, description?: string): Promise<string>;
+  createRunPullRequest(
+    runId: string,
+    targetBranch: string,
+    title: string,
+    sourceBranchName?: string,
+    description?: string,
+    commitMessage?: string,
+  ): Promise<string>;
+  suggestRunPullRequestDraft(runId: string, targetBranch: string): Promise<RunPullRequestDraft>;
   suggestRunPullRequestDescription(runId: string, targetBranch: string, title: string): Promise<string>;
   createRunLocalBranch(runId: string, branchName: string): Promise<string>;
   /** Uses the run's model + prompt to propose a concise, Git-safe local branch name. */
@@ -4187,6 +4203,7 @@ export type RemoteOperationMap = {
   suggestRunBranchName: DesktopApi["suggestRunBranchName"];
   publishRunBranch: DesktopApi["publishRunBranch"];
   createRunPullRequest: DesktopApi["createRunPullRequest"];
+  suggestRunPullRequestDraft: DesktopApi["suggestRunPullRequestDraft"];
   suggestRunPullRequestDescription: DesktopApi["suggestRunPullRequestDescription"];
   checkoutProjectBranch: DesktopApi["checkoutProjectBranch"];
   fetchProjectBranches: DesktopApi["fetchProjectBranches"];
@@ -4411,6 +4428,7 @@ export const IPC_CHANNELS = {
   updateProjectForgeRequest: "buildwarden:update-project-forge-request",
   mergeProjectForgeRequest: "buildwarden:merge-project-forge-request",
   createRunPullRequest: "buildwarden:create-run-pull-request",
+  suggestRunPullRequestDraft: "buildwarden:suggest-run-pull-request-draft",
   suggestRunPullRequestDescription: "buildwarden:suggest-run-pull-request-description",
   createRunLocalBranch: "buildwarden:create-run-local-branch",
   suggestRunBranchName: "buildwarden:suggest-run-branch-name",

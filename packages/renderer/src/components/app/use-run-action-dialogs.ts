@@ -198,8 +198,9 @@ const usePublishDialog = (deps: RunActionDialogDeps) => {
   const [pullRequestTargetBranch, setPullRequestTargetBranch] = useState("");
   const [pullRequestSourceBranchMode, setPullRequestSourceBranchMode] = useState<"worktree" | "custom">("worktree");
   const [pullRequestSourceBranchName, setPullRequestSourceBranchName] = useState("");
+  const [pullRequestCommitMessage, setPullRequestCommitMessage] = useState("");
   const [pullRequestDescription, setPullRequestDescription] = useState("");
-  const [pullRequestDescriptionBusy, setPullRequestDescriptionBusy] = useState(false);
+  const [pullRequestDraftBusy, setPullRequestDraftBusy] = useState(false);
 
   const closePublishDialog = () => {
     setPublishDialogRun(null);
@@ -208,8 +209,9 @@ const usePublishDialog = (deps: RunActionDialogDeps) => {
     setPullRequestTargetBranch("");
     setPullRequestSourceBranchMode("worktree");
     setPullRequestSourceBranchName("");
+    setPullRequestCommitMessage("");
     setPullRequestDescription("");
-    setPullRequestDescriptionBusy(false);
+    setPullRequestDraftBusy(false);
   };
 
   const openPublishDialog = async (run: RunRecord) => {
@@ -223,28 +225,32 @@ const usePublishDialog = (deps: RunActionDialogDeps) => {
       setPullRequestTargetBranch(options.defaultTargetBranch);
       setPullRequestSourceBranchMode("worktree");
       setPullRequestSourceBranchName(options.defaultSourceBranch);
+      setPullRequestCommitMessage(options.defaultCommitMessage);
       setPullRequestDescription(options.defaultDescription);
     });
   };
 
-  const generatePullRequestDescription = async () => {
+  const generatePullRequestDraft = async () => {
     if (!publishDialogRun || !buildwarden) {
       return;
     }
 
-    setPullRequestDescriptionBusy(true);
+    setPullRequestDraftBusy(true);
     setError(null);
     try {
-      const description = await buildwarden.suggestRunPullRequestDescription(
+      const draft = await buildwarden.suggestRunPullRequestDraft(
         publishDialogRun.id,
         pullRequestTargetBranch.trim(),
-        pullRequestTitle.trim(),
       );
-      setPullRequestDescription(description);
+      setPullRequestTitle(draft.title);
+      if (draft.commitMessage) {
+        setPullRequestCommitMessage(draft.commitMessage);
+      }
+      setPullRequestDescription(draft.description);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not generate a merge request or pull request description.");
+      setError(e instanceof Error ? e.message : "Could not generate the merge request or pull request draft.");
     } finally {
-      setPullRequestDescriptionBusy(false);
+      setPullRequestDraftBusy(false);
     }
   };
 
@@ -283,6 +289,7 @@ const usePublishDialog = (deps: RunActionDialogDeps) => {
         trimmedTitle,
         pullRequestSourceBranchMode === "custom" ? trimmedSourceBranch : undefined,
         pullRequestDescription.trim(),
+        publishOptions?.hasOpenChanges ? pullRequestCommitMessage.trim() : undefined,
       );
       await deps.onRunMutated(publishDialogRun.id, publishDialogRun.projectId);
       closePublishDialog();
@@ -319,13 +326,15 @@ const usePublishDialog = (deps: RunActionDialogDeps) => {
     setPullRequestSourceBranchMode,
     pullRequestSourceBranchName,
     setPullRequestSourceBranchName,
+    pullRequestCommitMessage,
+    setPullRequestCommitMessage,
     pullRequestDescription,
     setPullRequestDescription,
-    pullRequestDescriptionBusy,
+    pullRequestDraftBusy,
     openPublishDialog,
     closePublishDialog,
     handlePublishDialogKeyDown,
-    generatePullRequestDescription,
+    generatePullRequestDraft,
     submitPullRequest,
   };
 };

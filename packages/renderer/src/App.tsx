@@ -1929,13 +1929,15 @@ export const App = () => {
     setPullRequestSourceBranchMode,
     pullRequestSourceBranchName,
     setPullRequestSourceBranchName,
+    pullRequestCommitMessage,
+    setPullRequestCommitMessage,
     pullRequestDescription,
     setPullRequestDescription,
-    pullRequestDescriptionBusy,
+    pullRequestDraftBusy,
     openPublishDialog,
     closePublishDialog,
     handlePublishDialogKeyDown,
-    generatePullRequestDescription,
+    generatePullRequestDraft,
     submitPullRequest,
     branchPublishDialogRun,
     branchPublishName,
@@ -4545,15 +4547,17 @@ export const App = () => {
         pullRequestSourceBranchName={pullRequestSourceBranchName}
         pullRequestTargetBranch={pullRequestTargetBranch}
         pullRequestTitle={pullRequestTitle}
+        pullRequestCommitMessage={pullRequestCommitMessage}
         pullRequestDescription={pullRequestDescription}
-        pullRequestDescriptionBusy={pullRequestDescriptionBusy}
+        pullRequestDraftBusy={pullRequestDraftBusy}
         onPullRequestSourceBranchModeChange={setPullRequestSourceBranchMode}
         onPullRequestSourceBranchNameChange={setPullRequestSourceBranchName}
         onPullRequestTargetBranchChange={setPullRequestTargetBranch}
         onPullRequestTitleChange={setPullRequestTitle}
+        onPullRequestCommitMessageChange={setPullRequestCommitMessage}
         onPullRequestDescriptionChange={setPullRequestDescription}
         onPublishDialogKeyDown={handlePublishDialogKeyDown}
-        onGeneratePullRequestDescription={() => void generatePullRequestDescription()}
+        onGeneratePullRequestDraft={() => void generatePullRequestDraft()}
         onSubmitPullRequest={() => void submitPullRequest()}
         onClosePublishDialog={closePublishDialog}
         branchPublishDialogRun={branchPublishDialogRun}

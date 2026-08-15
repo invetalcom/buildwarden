@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { BuildWardenClient } from "@buildwarden/renderer";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { MobileAppProvider, type MobileAppValue } from "../../data/mobile-app-context";
-import { LocalBranchSheet } from "./RunGitSheets";
+import { LocalBranchSheet, PullRequestSheet } from "./RunGitSheets";
 
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
@@ -74,5 +74,59 @@ describe("LocalBranchSheet", () => {
     expect(createRunLocalBranch).toHaveBeenCalledWith("run-1", "feat/local-branch");
     expect(onClose).toHaveBeenCalledOnce();
     expect(onDone).toHaveBeenCalledWith("feat/local-branch");
+  });
+});
+
+describe("PullRequestSheet", () => {
+  it("uses one generator to populate the complete PR draft", async () => {
+    const suggestRunPullRequestDraft = vi.fn(async () => ({
+      title: "Generated PR title",
+      commitMessage: "Generated commit message",
+      description: "## Summary\n\nGenerated description",
+    }));
+    const value = {
+      client: {
+        getRunPublishOptions: vi.fn(async () => ({
+          defaultTargetBranch: "main",
+          defaultSourceBranch: "feat/mobile-pr",
+          defaultDescription: "Default description",
+          defaultCommitMessage: "Default commit",
+          hasOpenChanges: true,
+          suggestedTitle: "Default title",
+          targetBranches: ["main"],
+        })),
+        suggestRunPullRequestDraft,
+      } as unknown as BuildWardenClient,
+    } as MobileAppValue;
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push({ root, container });
+
+    await act(async () => {
+      root.render(
+        <MobileAppProvider value={value}>
+          <PullRequestSheet runId="run-1" open onClose={vi.fn()} onDone={vi.fn()} />
+        </MobileAppProvider>,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const generateButtons = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .filter((button) => button.textContent?.trim() === "Generate PR content");
+    expect(generateButtons).toHaveLength(1);
+    expect(container.textContent).not.toContain("Generate PR description");
+    expect(container.textContent).not.toContain("Generate commit message");
+
+    await act(async () => {
+      generateButtons[0]?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(suggestRunPullRequestDraft).toHaveBeenCalledWith("run-1", "main");
+    expect(Array.from(container.querySelectorAll<HTMLInputElement>("input")).some((input) => input.value === "Generated PR title")).toBe(true);
+    const textareaValues = Array.from(container.querySelectorAll<HTMLTextAreaElement>("textarea")).map((textarea) => textarea.value);
+    expect(textareaValues).toContain("Generated commit message");
+    expect(textareaValues).toContain("## Summary\n\nGenerated description");
   });
 });
