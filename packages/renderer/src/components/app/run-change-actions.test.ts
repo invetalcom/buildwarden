@@ -23,7 +23,8 @@ describe("run change actions", () => {
     expect(changeState).toBe("dirty");
     expect(deriveRunChangeActionAvailability({ changeState, hasCommit: false, canManageChanges: true })).toEqual({
       canCommit: true,
-      canPublish: true,
+      canPublishRequest: true,
+      canPublishBranch: false,
       canCreateLocalBranch: true,
     });
   });
@@ -37,12 +38,14 @@ describe("run change actions", () => {
     expect(changeState).toBe("unknown");
     expect(deriveRunChangeActionAvailability({ changeState, hasCommit: false, canManageChanges: true })).toEqual({
       canCommit: false,
-      canPublish: false,
+      canPublishRequest: false,
+      canPublishBranch: false,
       canCreateLocalBranch: false,
     });
     expect(deriveRunChangeActionAvailability({ changeState, hasCommit: true, canManageChanges: true })).toEqual({
       canCommit: false,
-      canPublish: false,
+      canPublishRequest: false,
+      canPublishBranch: false,
       canCreateLocalBranch: false,
     });
   });
@@ -55,7 +58,8 @@ describe("run change actions", () => {
     expect(cleanState).toBe("clean");
     expect(deriveRunChangeActionAvailability({ changeState: cleanState, hasCommit: true, canManageChanges: true })).toEqual({
       canCommit: false,
-      canPublish: true,
+      canPublishRequest: true,
+      canPublishBranch: true,
       canCreateLocalBranch: true,
     });
   });

@@ -250,7 +250,7 @@ export const RunDetailHeader = ({
   const changeState = resolveRunWorkspaceChangeState(runDetail);
   const hasOpenChanges = changeState === "dirty";
   const canManageChanges = buildwarden.capabilities.gitMutations && isGitRun && run.status === "completed" && runDetail?.worktreeUnavailable !== true;
-  const { canCommit, canPublish, canCreateLocalBranch } = deriveRunChangeActionAvailability({
+  const { canCommit, canPublishRequest, canPublishBranch, canCreateLocalBranch } = deriveRunChangeActionAvailability({
     changeState,
     hasCommit,
     canManageChanges,
@@ -524,14 +524,14 @@ export const RunDetailHeader = ({
                   type="button"
                   className={cn(
                     "block w-full rounded-lg px-3 py-2 text-left text-sm",
-                    canPublish ? "text-[var(--ec-text)] hover:bg-[var(--ec-hover)]" : "cursor-not-allowed text-[var(--ec-faint)]",
+                    canPublishRequest ? "text-[var(--ec-text)] hover:bg-[var(--ec-hover)]" : "cursor-not-allowed text-[var(--ec-faint)]",
                   )}
-                  disabled={!canPublish}
+                  disabled={!canPublishRequest}
                   title={changeState === "unknown"
                     ? changeStateMessage
                     : hasOpenChanges ? "Open changes will be committed when the merge request or pull request is created." : undefined}
                   onClick={() => {
-                    if (!canPublish) return;
+                    if (!canPublishRequest) return;
                     setPublishMenuOpen(false);
                     void onOpenPublishDialog(run);
                   }}
@@ -542,14 +542,14 @@ export const RunDetailHeader = ({
                   type="button"
                   className={cn(
                     "block w-full rounded-lg px-3 py-2 text-left text-sm",
-                    canPublish ? "text-[var(--ec-text)] hover:bg-[var(--ec-hover)]" : "cursor-not-allowed text-[var(--ec-faint)]",
+                    canPublishBranch ? "text-[var(--ec-text)] hover:bg-[var(--ec-hover)]" : "cursor-not-allowed text-[var(--ec-faint)]",
                   )}
-                  disabled={!canPublish}
+                  disabled={!canPublishBranch}
                   title={changeState === "unknown"
                     ? changeStateMessage
                     : hasOpenChanges ? "Create a commit before publishing the branch." : undefined}
                   onClick={() => {
-                    if (!canPublish) return;
+                    if (!canPublishBranch) return;
                     setPublishMenuOpen(false);
                     onOpenBranchPublishDialog(run, "publish");
                   }}
