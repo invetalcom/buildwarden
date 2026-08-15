@@ -7,6 +7,7 @@ import type {
   ChatRecord,
   ModelRecord,
   OrchestrationRecord,
+  OrchestrationTaskMessageRecord,
   OrchestrationTaskRecord,
   ProjectRecord,
   ProjectTaskRecord,
@@ -16,7 +17,13 @@ import type {
 import type { SecretStore } from "@buildwarden/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GitService } from "@buildwarden/git-service";
-import { AppController, latestUserTurnUsedFullAccess } from "./app-controller";
+import {
+  AppController,
+  latestRunExecutionSettings,
+  latestUserTurnUsedFullAccess,
+  mergeOrchestrationExecutionOptions,
+  resolveOrchestrationChildFullAccess,
+} from "./app-controller";
 import type { AppControllerDesktopServices } from "./desktop-platform-services";
 import { HostEventBus } from "./host-events";
 import type { ProjectPrReviewProvider } from "./pr-review/pr-review-types";
@@ -923,6 +930,118 @@ describe("AppController settings and lightweight workflows", () => {
       { metadataJson: JSON.stringify({ source: "user", commandType: "initial", yoloMode: false }) },
       { metadataJson: JSON.stringify({ source: "user", commandType: "follow-up", yoloMode: true }) },
     ])).toBe(true);
+  });
+
+  it("restores every persisted orchestration child execution setting", () => {
+    expect(latestRunExecutionSettings([
+      { metadataJson: JSON.stringify({ source: "user", commandType: "initial", yoloMode: false }) },
+      { metadataJson: "{malformed" },
+      {
+        metadataJson: JSON.stringify({
+          source: "orchestration",
+          commandType: "initial",
+          yoloMode: true,
+          reasoningEffort: "high",
+          anthropicEffort: "max",
+          executionOptions: { reasoningEffort: "high", serviceTier: "priority", contextMode: "max" },
+        }),
+      },
+    ])).toEqual({
+      yoloMode: true,
+      reasoningEffort: "high",
+      anthropicEffort: "max",
+      executionOptions: { reasoningEffort: "high", serviceTier: "priority", contextMode: "max" },
+    });
+  });
+
+  it("inherits parent execution options while honoring explicit orchestration effort overrides", () => {
+    expect(mergeOrchestrationExecutionOptions({
+      reasoningEffort: "medium",
+      anthropicEffort: "low",
+      serviceTier: "priority",
+      contextMode: "max",
+    }, undefined)).toEqual({
+      reasoningEffort: "medium",
+      anthropicEffort: "low",
+      serviceTier: "priority",
+      contextMode: "max",
+    });
+
+    expect(mergeOrchestrationExecutionOptions({
+      reasoningEffort: "medium",
+      serviceTier: "priority",
+    }, "high")).toEqual({
+      reasoningEffort: "high",
+      anthropicEffort: "high",
+      serviceTier: "priority",
+    });
+  });
+
+  it("uses the child's persisted Full Access setting for every task intent and recovery", () => {
+    const parentEnabled = [
+      { metadataJson: JSON.stringify({ source: "user", commandType: "initial", yoloMode: true }) },
+    ];
+    const childEnabled = [
+      { metadataJson: JSON.stringify({ source: "orchestration", commandType: "initial", yoloMode: true }) },
+    ];
+    const childDisabled = [
+      { metadataJson: JSON.stringify({ source: "orchestration", commandType: "initial", yoloMode: false }) },
+    ];
+
+    expect(resolveOrchestrationChildFullAccess("inspect", childEnabled, parentEnabled)).toBe(true);
+    expect(resolveOrchestrationChildFullAccess("implement", childDisabled, parentEnabled)).toBe(false);
+    expect(resolveOrchestrationChildFullAccess("inspect", [], parentEnabled)).toBe(false);
+    expect(resolveOrchestrationChildFullAccess("implement", [], parentEnabled)).toBe(true);
+  });
+
+  it("keeps inherited Full Access on queued orchestration child follow-ups", async () => {
+    const child = { id: "child-1", mode: "ask", modelId: model.id } as RunRecord;
+    const orchestrationTask = {
+      id: "orchestration-task-1",
+      childRunId: child.id,
+    } as OrchestrationTaskRecord;
+    const message = {
+      id: "message-1",
+      orchestrationId: "orchestration-1",
+      taskId: orchestrationTask.id,
+      source: "coordinator",
+      content: "Continue the inspection.",
+      status: "queued",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      deliveredAt: null,
+    } as OrchestrationTaskMessageRecord;
+    const updateMessage = vi.fn();
+    const updateTask = vi.fn();
+    const harness = createHarness({
+      listOrchestrationTaskMessages: vi.fn(() => [message]),
+      getRun: vi.fn(() => child),
+      getRunSteps: vi.fn(() => [
+        { metadataJson: JSON.stringify({ source: "orchestration", commandType: "initial", yoloMode: true }) },
+      ]),
+      updateOrchestrationTaskMessage: updateMessage,
+      updateOrchestrationTask: updateTask,
+    });
+    const followUp = vi.fn(async () => child);
+    const internalController = harness.controller as unknown as {
+      deliverQueuedOrchestrationMessages: (task: OrchestrationTaskRecord) => Promise<boolean>;
+      followUpRunInternal: (
+        runId: string,
+        prompt: string,
+        options?: { mode?: RunRecord["mode"]; modelId?: string; yoloMode?: boolean },
+        metadata?: Record<string, unknown>,
+      ) => Promise<RunRecord>;
+    };
+    internalController.followUpRunInternal = followUp;
+
+    await expect(internalController.deliverQueuedOrchestrationMessages(orchestrationTask)).resolves.toBe(true);
+    expect(followUp).toHaveBeenCalledWith(
+      child.id,
+      message.content,
+      { mode: "ask", modelId: model.id, yoloMode: true },
+      { orchestrationTaskId: orchestrationTask.id, orchestrationMessageIds: [message.id] },
+    );
+    expect(updateMessage).toHaveBeenCalledWith(message.id, "delivered");
+    expect(updateTask).toHaveBeenLastCalledWith(orchestrationTask.id, expect.objectContaining({ status: "running" }));
   });
 
   it("cancels the durable orchestration when its coordinator run is cancelled", async () => {

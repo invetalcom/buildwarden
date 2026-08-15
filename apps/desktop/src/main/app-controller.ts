@@ -289,23 +289,82 @@ const stableJsonValue = (value: unknown): unknown => {
 };
 const orchestrationRequestHash = (value: unknown): string =>
   createHash("sha256").update(JSON.stringify(stableJsonValue(value))).digest("hex");
-export const latestUserTurnUsedFullAccess = (
+
+export interface StoredRunExecutionSettings {
+  yoloMode?: boolean;
+  reasoningEffort?: string;
+  anthropicEffort?: string;
+  executionOptions?: ProviderExecutionOptions;
+}
+
+const latestStoredRunExecutionSettings = (
   steps: ReadonlyArray<{ metadataJson: string }>,
-): boolean => {
+  acceptedSources: ReadonlySet<string>,
+): StoredRunExecutionSettings | null => {
   for (const step of [...steps].reverse()) {
     try {
       const metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
       if (
-        metadata.source === "user" &&
+        acceptedSources.has(String(metadata.source ?? "")) &&
         (metadata.commandType === "initial" || metadata.commandType === "follow-up")
       ) {
-        return metadata.yoloMode === true;
+        const stored = metadata.executionOptions;
+        const executionOptions = stored && typeof stored === "object" && !Array.isArray(stored)
+          ? (stored as ProviderExecutionOptions)
+          : undefined;
+        const legacyOrchestrationEffort = metadata.source === "orchestration" && typeof metadata.effort === "string"
+          ? metadata.effort
+          : undefined;
+        const reasoningEffort = typeof metadata.reasoningEffort === "string"
+          ? metadata.reasoningEffort
+          : legacyOrchestrationEffort;
+        const anthropicEffort = typeof metadata.anthropicEffort === "string"
+          ? metadata.anthropicEffort
+          : legacyOrchestrationEffort;
+        return {
+          ...(typeof metadata.yoloMode === "boolean" ? { yoloMode: metadata.yoloMode } : {}),
+          ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+          ...(anthropicEffort !== undefined ? { anthropicEffort } : {}),
+          ...(executionOptions ? { executionOptions } : {}),
+        };
       }
     } catch {
-      // Ignore malformed historical metadata and keep looking for the latest user turn.
+      // Ignore malformed historical metadata and keep looking for the latest turn.
     }
   }
-  return false;
+  return null;
+};
+
+export const latestRunExecutionSettings = (
+  steps: ReadonlyArray<{ metadataJson: string }>,
+): StoredRunExecutionSettings | null => latestStoredRunExecutionSettings(steps, new Set(["user", "orchestration"]));
+
+export const mergeOrchestrationExecutionOptions = (
+  inherited: ProviderExecutionOptions | undefined,
+  effortOverride: string | undefined,
+): ProviderExecutionOptions | undefined => {
+  const merged: ProviderExecutionOptions = {
+    ...(inherited ?? {}),
+    ...(effortOverride
+      ? { reasoningEffort: effortOverride, anthropicEffort: effortOverride }
+      : {}),
+  };
+  return Object.keys(merged).length > 0 ? merged : undefined;
+};
+
+export const latestUserTurnUsedFullAccess = (
+  steps: ReadonlyArray<{ metadataJson: string }>,
+): boolean => latestStoredRunExecutionSettings(steps, new Set(["user"]))?.yoloMode === true;
+
+export const resolveOrchestrationChildFullAccess = (
+  taskIntent: OrchestrationTaskRecord["intent"],
+  childSteps: ReadonlyArray<{ metadataJson: string }>,
+  coordinatorSteps: ReadonlyArray<{ metadataJson: string }>,
+): boolean => {
+  const persistedChildSetting = latestRunExecutionSettings(childSteps)?.yoloMode;
+  if (persistedChildSetting !== undefined) return persistedChildSetting;
+  // Before child settings were persisted, only implementation tasks inherited Full Access.
+  return taskIntent === "implement" && latestUserTurnUsedFullAccess(coordinatorSteps);
 };
 const normalizeAssistantOutputText = (value: string) => value.replace(/\s+/g, " ").trim();
 const normalizeRunGoalText = (value: string | null | undefined): string | null => {
@@ -6557,6 +6616,12 @@ export class AppController
       worktreePath: child.worktreePath,
       status: "ready",
     });
+    const coordinatorSteps = this.db.getRunSteps(coordinator.id);
+    const inheritedFullAccess = latestUserTurnUsedFullAccess(coordinatorSteps);
+    const inheritedExecutionOptions = this.getLatestRunExecutionOptions(coordinator.id, provider);
+    const childExecutionOptions = resolveProviderExecutionOptions(provider, {
+      executionOptions: mergeOrchestrationExecutionOptions(inheritedExecutionOptions, effort),
+    });
     await this.appendRunEvent(child.id, "log", "Delegated task", task.prompt, {
       source: "orchestration",
       commandType: "initial",
@@ -6567,6 +6632,10 @@ export class AppController
       intent: task.intent,
       modelId: task.modelId,
       effort,
+      yoloMode: inheritedFullAccess,
+      reasoningEffort: childExecutionOptions?.reasoningEffort,
+      anthropicEffort: childExecutionOptions?.anthropicEffort,
+      executionOptions: childExecutionOptions,
     });
     child = this.db.updateRunStatus(child.id, "preparing");
     await this.captureFolderBaselineSnapshotOrFail(child, project);
@@ -6585,8 +6654,6 @@ export class AppController
       "",
       task.prompt,
     ].filter(Boolean).join("\n");
-    const coordinatorSteps = this.db.getRunSteps(coordinator.id);
-    const inheritedFullAccess = task.intent === "implement" && latestUserTurnUsedFullAccess(coordinatorSteps);
     const worker = this.startWorker(
       child,
       provider,
@@ -6596,7 +6663,7 @@ export class AppController
       {
         promptOverride: buildPromptWithRunGoal(prompt, coordinator.goalText),
         skillContext: this.buildIntegratedSkillContext(project.id),
-        providerOptions: resolveProviderExecutionOptions(provider, { reasoningEffort: effort, anthropicEffort: effort }),
+        providerOptions: childExecutionOptions,
         yoloMode: inheritedFullAccess,
       },
     );
@@ -6782,6 +6849,7 @@ export class AppController
     if (messages.length === 0) return false;
     const child = this.db.getRun(task.childRunId);
     if (this.runWorkers.has(child.id)) return false;
+    const childExecutionSettings = latestRunExecutionSettings(this.db.getRunSteps(child.id));
     for (const message of messages) this.db.updateOrchestrationTaskMessage(message.id, "delivered");
     this.db.updateOrchestrationTask(task.id, {
       status: "queued",
@@ -6793,7 +6861,7 @@ export class AppController
     await this.followUpRunInternal(
       child.id,
       messages.map((message) => message.content).join("\n\n"),
-      { mode: child.mode, modelId: child.modelId },
+      { mode: child.mode, modelId: child.modelId, yoloMode: childExecutionSettings?.yoloMode === true },
       { orchestrationTaskId: task.id, orchestrationMessageIds: messages.map((message) => message.id) },
     );
     this.db.updateOrchestrationTask(task.id, { status: "running", startedAt: new Date().toISOString() });
@@ -7853,7 +7921,7 @@ export class AppController
           const provider = this.db.getProviderAccount(model.providerAccountId);
           const steps = this.db.getRunSteps(child.id);
           const coordinatorSteps = this.db.getRunSteps(orchestration.coordinatorRunId);
-          const elevated = latestUserTurnUsedFullAccess(coordinatorSteps);
+          const elevated = resolveOrchestrationChildFullAccess(task.intent, steps, coordinatorSteps);
           const awaitingApproval = steps.some((step) => {
             try {
               const metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
@@ -7987,6 +8055,16 @@ export class AppController
     const modelProfile = orchestration.teamSnapshot.models.find((entry) => entry.modelId === task.modelId);
     const effort = role?.effortOverride ?? modelProfile?.defaultEffort;
     const coordinator = this.db.getRun(orchestration.coordinatorRunId);
+    const childSteps = this.db.getRunSteps(child.id);
+    const inheritedFullAccess = resolveOrchestrationChildFullAccess(
+      task.intent,
+      childSteps,
+      this.db.getRunSteps(coordinator.id),
+    );
+    const childExecutionOptions = this.getLatestRunExecutionOptions(child.id, provider) ??
+      resolveProviderExecutionOptions(provider, {
+        executionOptions: mergeOrchestrationExecutionOptions(undefined, effort),
+      });
     const prompt = [
       `You are the ${role?.name ?? task.roleId} child in a durable BuildWarden orchestration.`,
       role?.description?.trim() || "",
@@ -8007,8 +8085,8 @@ export class AppController
       {
         promptOverride: buildPromptWithRunGoal(prompt, coordinator.goalText),
         skillContext: this.buildIntegratedSkillContext(child.projectId),
-        providerOptions: resolveProviderExecutionOptions(provider, { reasoningEffort: effort, anthropicEffort: effort }),
-        yoloMode: false,
+        providerOptions: childExecutionOptions,
+        yoloMode: inheritedFullAccess,
       },
     );
     this.runWorkers.set(child.id, { worker, cancelled: false });
@@ -8072,6 +8150,7 @@ export class AppController
       promptOverride: this.buildInterruptedRunRecoveryPrompt(run),
       skillContext: this.buildIntegratedSkillContext(run.projectId),
       providerOptions: this.getLatestRunExecutionOptions(run.id, provider),
+      yoloMode: latestRunExecutionSettings(this.db.getRunSteps(run.id))?.yoloMode === true,
     });
     this.runWorkers.set(run.id, { worker, cancelled: false });
   }
@@ -9389,6 +9468,7 @@ export class AppController
     const worker = this.startWorker(run, provider, model, apiKey ?? "", await this.resolveNetworkProxyRuntimeConfig(), {
       skillContext: this.buildIntegratedSkillContext(run.projectId),
       providerOptions: this.getLatestRunExecutionOptions(run.id, provider),
+      yoloMode: latestRunExecutionSettings(this.db.getRunSteps(run.id))?.yoloMode === true,
     });
     this.runWorkers.set(run.id, { worker, cancelled: false });
     return true;
@@ -9406,24 +9486,9 @@ export class AppController
     steps: ReadonlyArray<{ metadataJson: string }>,
     provider: ProviderAccountRecord,
   ): ProviderExecutionOptions | undefined {
-    for (const step of [...steps].reverse()) {
-      try {
-        const metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
-        if (metadata.source !== "user") continue;
-        const stored = metadata.executionOptions;
-        const executionOptions = stored && typeof stored === "object" && !Array.isArray(stored)
-          ? (stored as ProviderExecutionOptions)
-          : undefined;
-        return resolveProviderExecutionOptions(provider, {
-          ...(typeof metadata.reasoningEffort === "string" ? { reasoningEffort: metadata.reasoningEffort } : {}),
-          ...(typeof metadata.anthropicEffort === "string" ? { anthropicEffort: metadata.anthropicEffort } : {}),
-          ...(executionOptions ? { executionOptions } : {}),
-        });
-      } catch {
-        // Skip malformed historical metadata and keep looking for the last user turn.
-      }
-    }
-    return undefined;
+    const settings = latestRunExecutionSettings(steps);
+    if (!settings) return undefined;
+    return resolveProviderExecutionOptions(provider, settings);
   }
 
   private buildInterruptedRunRecoveryPrompt(run: RunRecord): string {
