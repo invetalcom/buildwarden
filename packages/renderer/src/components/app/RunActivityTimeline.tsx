@@ -14,6 +14,7 @@ import { SingleActivityEntryView, SingleGroupActivityEntry, type ActivityRenderC
 import {
   ActivityDiffBatchRow,
   ActivityToolBatchGroup,
+  canCancelToolBatchShell,
   type DiffBatchSummarizedRow,
 } from "./run-activity-tool-rows";
 import { summarizeToolBatchItems } from "./run-activity-tool-model";
@@ -96,9 +97,17 @@ const estimateActivityEntrySize = (
   expandedReasoningStepIds: Record<string, boolean>,
   expandedToolBatchIds: Record<string, boolean>,
   toolCallCollapseThreshold: number,
+  run: RunActivityRun,
+  readOnly: boolean,
+  onCancelRunShell: ((run: RunActivityRun, toolCallId: string) => void) | undefined,
 ) => {
   if (entry.kind === "tool-batch") {
-    const collapsed = entry.items.length > toolCallCollapseThreshold && !expandedToolBatchIds[getToolBatchStableId(entry)];
+    const mustRemainExpanded = summarizeToolBatchItems(entry.items).some((item) =>
+      canCancelToolBatchShell(item, run, readOnly, onCancelRunShell),
+    );
+    const collapsed = entry.items.length > toolCallCollapseThreshold
+      && !mustRemainExpanded
+      && !expandedToolBatchIds[getToolBatchStableId(entry)];
     if (collapsed) return density === "detailed" ? 64 : 52;
     return Math.min(420, 42 + entry.items.length * (density === "detailed" ? 34 : 24));
   }
@@ -115,6 +124,9 @@ const estimateTimelineItemSize = (
   expandedReasoningStepIds: Record<string, boolean>,
   expandedToolBatchIds: Record<string, boolean>,
   toolCallCollapseThreshold: number,
+  run: RunActivityRun,
+  readOnly: boolean,
+  onCancelRunShell: ((run: RunActivityRun, toolCallId: string) => void) | undefined,
 ) => {
   if (!item) return 80;
   if (item.kind === "end") return density === "compact" ? 8 : 18;
@@ -126,6 +138,9 @@ const estimateTimelineItemSize = (
     expandedReasoningStepIds,
     expandedToolBatchIds,
     toolCallCollapseThreshold,
+    run,
+    readOnly,
+    onCancelRunShell,
   );
 };
 
@@ -192,7 +207,10 @@ const ActivityEntryView = ({ entry, context }: Readonly<{ entry: ActivityEntry; 
     const summarizedItems = summarizeToolBatchItems(entry.items);
     const latestTimestamp = summarizedItems[summarizedItems.length - 1]?.createdAt ?? entry.items[0]?.callStep?.createdAt;
     const batchId = getToolBatchStableId(entry);
-    const collapsible = entry.items.length > toolCallCollapseThreshold;
+    const hasCancellableShell = summarizedItems.some((item) =>
+      canCancelToolBatchShell(item, run, readOnly, onCancelRunShell),
+    );
+    const collapsible = entry.items.length > toolCallCollapseThreshold && !hasCancellableShell;
     const expanded = !collapsible || expandedToolBatchIds[batchId] === true;
 
     return (
@@ -294,6 +312,9 @@ type TimelineScrollOptions = {
   activeReasoningStepIds: Record<string, boolean>;
   expandedToolBatchIds: Record<string, boolean>;
   toolCallCollapseThreshold: number;
+  run: RunActivityRun;
+  readOnly: boolean;
+  onCancelRunShell?: (run: RunActivityRun, toolCallId: string) => void;
   virtualized: boolean;
   containerRef?: Ref<HTMLDivElement>;
   hasRenderableActivity: boolean;
@@ -312,6 +333,9 @@ const useTimelineScroll = ({
   activeReasoningStepIds,
   expandedToolBatchIds,
   toolCallCollapseThreshold,
+  run,
+  readOnly,
+  onCancelRunShell,
   virtualized,
   containerRef,
   hasRenderableActivity,
@@ -342,6 +366,9 @@ const rowVirtualizer = useVirtualizer({
     activeReasoningStepIds,
     expandedToolBatchIds,
     toolCallCollapseThreshold,
+    run,
+    readOnly,
+    onCancelRunShell,
   ),
   getItemKey: (index) => timelineItems[index]?.key ?? index,
   useAnimationFrameWithResizeObserver: true,
@@ -628,6 +655,9 @@ export function RunActivityTimeline({
     activeReasoningStepIds,
     expandedToolBatchIds,
     toolCallCollapseThreshold,
+    run,
+    readOnly,
+    onCancelRunShell,
     virtualized,
     containerRef,
     hasRenderableActivity,

@@ -2,7 +2,7 @@
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { RunToolCallCollapseThresholdProvider } from "../../lib/run-tool-call-collapse-settings";
 import { RunActivityTimeline } from "./RunActivityTimeline";
 import type { RunActivityStep } from "./run-activity-model";
@@ -141,5 +141,49 @@ describe("run activity tool-call collapse interaction", () => {
     await act(async () => collapseToggle?.click());
     expect(container.querySelector('[aria-label="Expand 4 consecutive tool calls"]')).not.toBeNull();
     expect(container.textContent).not.toContain("a.ts");
+  });
+
+  it("keeps cancellation visible for a running shell inside a virtual row", async () => {
+    container = document.createElement("div");
+    container.style.height = "600px";
+    document.body.append(container);
+    root = createRoot(container);
+    const onCancelRunShell = vi.fn();
+    const activeShellStreak = [
+      ...toolStreak.slice(0, 6),
+      step("call-shell", "tool-call", { callId: "shell", toolName: "run_shell", command: "pnpm test" }),
+      step("result-shell", "tool-result", {
+        callId: "shell",
+        toolName: "run_shell",
+        command: "pnpm test",
+        shellStreaming: true,
+      }),
+    ];
+    const run = { id: "virtual-running-shell", status: "running", mode: "code" } as const;
+
+    await act(async () => {
+      root?.render(
+        <RunToolCallCollapseThresholdProvider threshold={2}>
+          <RunActivityTimeline
+            steps={activeShellStreak}
+            run={run}
+            className="h-[600px] overflow-y-auto"
+            virtualized
+            initialScrollPosition="start"
+            onCancelRunShell={onCancelRunShell}
+          />
+        </RunToolCallCollapseThresholdProvider>,
+      );
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    });
+
+    expect(container.querySelector('[aria-label="Expand 4 consecutive tool calls"]')).toBeNull();
+    const cancelButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.trim() === "Cancel");
+    expect(cancelButton?.closest(".agent-virtual-row")).not.toBeNull();
+
+    await act(async () => cancelButton?.click());
+    expect(onCancelRunShell).toHaveBeenCalledOnce();
+    expect(onCancelRunShell).toHaveBeenCalledWith(run, "shell");
   });
 });

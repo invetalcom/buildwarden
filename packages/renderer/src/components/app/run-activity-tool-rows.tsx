@@ -188,11 +188,11 @@ const ToolBatchBody = ({
   );
 };
 
-const canCancelToolBatchShell = (
+export const canCancelToolBatchShell = (
   item: ToolBatchSummarizedRow,
   run: RunActivityRun,
   readOnly: boolean,
-  onCancelRunShell: ActivityToolBatchRowProps["onCancelRunShell"],
+  onCancelRunShell: ((run: RunActivityRun, toolCallId: string) => void) | undefined,
 ) =>
   !readOnly &&
   item.toolName === "run_shell" &&
