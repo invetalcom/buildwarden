@@ -515,13 +515,16 @@ const bootstrap = async (): Promise<void> => {
   const validateSuggestPullRequestDescription = defineRemoteArgsValidator<"suggestRunPullRequestDescription">(
     (args) => args.length === 3 && args.every((value) => typeof value === "string"),
   );
+  const validateSuggestPullRequestDraft = defineRemoteArgsValidator<"suggestRunPullRequestDraft">(
+    (args) => args.length === 2 && args.every((value) => typeof value === "string"),
+  );
   const validateOptionalSecondString = defineRemoteArgsValidator<"publishRunBranch">(
     (args) => (args.length === 1 || args.length === 2) && typeof args[0] === "string" &&
       (args[1] === undefined || typeof args[1] === "string"),
   );
   const validatePullRequest = defineRemoteArgsValidator<"createRunPullRequest">(
-    (args) => args.length >= 3 && args.length <= 5 && args.slice(0, 3).every((value) => typeof value === "string") &&
-      args.slice(3).every((value) => value === undefined || typeof value === "string"),
+    (args) => args.length >= 3 && args.length <= 6 && args.slice(0, 3).every((value) => typeof value === "string") &&
+      args.slice(3).every((value) => value == null || typeof value === "string"),
   );
   const validateProjectInput = defineRemoteArgsValidator<"addProject">(
     (args) => args.length === 1 && hasRemoteStringFields(args[0], ["repoPath"]) &&
@@ -951,9 +954,16 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("publishRunBranch", (runId, branchName) => controller.publishRunBranch(runId, branchName), validateOptionalSecondString, "git:write", true);
   remoteOperations.register(
     "createRunPullRequest",
-    (runId, targetBranch, title, sourceBranchName, description) =>
-      controller.createRunPullRequest(runId, targetBranch, title, sourceBranchName, description),
+    (runId, targetBranch, title, sourceBranchName, description, commitMessage) =>
+      controller.createRunPullRequest(runId, targetBranch, title, sourceBranchName, description, commitMessage),
     validatePullRequest,
+    "git:write",
+    true,
+  );
+  remoteOperations.register(
+    "suggestRunPullRequestDraft",
+    (runId, targetBranch) => controller.suggestRunPullRequestDraft(runId, targetBranch),
+    validateSuggestPullRequestDraft,
     "git:write",
     true,
   );
@@ -1370,11 +1380,21 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.continueRun, (_, input) => controller.continueRun(input));
   ipcMain.handle(
     IPC_CHANNELS.createRunPullRequest,
-    (_, runId: string, targetBranch: string, title: string, sourceBranchName?: string, description?: string) =>
-      controller.createRunPullRequest(runId, targetBranch, title, sourceBranchName, description),
+    (
+      _,
+      runId: string,
+      targetBranch: string,
+      title: string,
+      sourceBranchName?: string,
+      description?: string,
+      commitMessage?: string,
+    ) => controller.createRunPullRequest(runId, targetBranch, title, sourceBranchName, description, commitMessage),
   );
   ipcMain.handle(IPC_CHANNELS.suggestRunPullRequestDescription, (_, runId: string, targetBranch: string, title: string) =>
     controller.suggestRunPullRequestDescription(runId, targetBranch, title),
+  );
+  ipcMain.handle(IPC_CHANNELS.suggestRunPullRequestDraft, (_, runId: string, targetBranch: string) =>
+    controller.suggestRunPullRequestDraft(runId, targetBranch),
   );
   ipcMain.handle(IPC_CHANNELS.createRunLocalBranch, (_, runId: string, branchName: string) =>
     controller.createRunLocalBranch(runId, branchName),

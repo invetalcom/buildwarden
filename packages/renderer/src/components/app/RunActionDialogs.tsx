@@ -33,15 +33,17 @@ interface RunActionDialogsProps {
   pullRequestSourceBranchName: string;
   pullRequestTargetBranch: string;
   pullRequestTitle: string;
+  pullRequestCommitMessage: string;
   pullRequestDescription: string;
-  pullRequestDescriptionBusy: boolean;
+  pullRequestDraftBusy: boolean;
   onPullRequestSourceBranchModeChange: (value: "worktree" | "custom") => void;
   onPullRequestSourceBranchNameChange: (value: string) => void;
   onPullRequestTargetBranchChange: (value: string) => void;
   onPullRequestTitleChange: (value: string) => void;
+  onPullRequestCommitMessageChange: (value: string) => void;
   onPullRequestDescriptionChange: (value: string) => void;
   onPublishDialogKeyDown: (event: PublishDialogKeyDownEvent) => void;
-  onGeneratePullRequestDescription: () => void;
+  onGeneratePullRequestDraft: () => void;
   onSubmitPullRequest: () => void;
   onClosePublishDialog: () => void;
   branchPublishDialogRun: RunRecord | null;
@@ -118,7 +120,6 @@ const PublishDialog = (props: RunActionDialogsProps) => {
       <Card className="shadow-[var(--ec-popover-shadow)] w-full max-w-xl p-5">
         <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Create merge request / pull request</p>
         <h3 className="mt-2 text-xl font-semibold">{run.prompt}</h3>
-        <p className="mt-1 text-sm text-zinc-500">Choose the source branch, target branch, and review the generated title before publishing.</p>
         <div className="mt-4 space-y-3">
           <label className="block text-sm">
             <span className="mb-1 block text-zinc-300">Source branch</span>
@@ -127,14 +128,27 @@ const PublishDialog = (props: RunActionDialogsProps) => {
           {customSource && <label className="block text-sm"><span className="mb-1 block text-zinc-300">Custom source branch name</span><Input value={props.pullRequestSourceBranchName} onChange={(event) => props.onPullRequestSourceBranchNameChange(event.target.value)} onKeyDown={props.onPublishDialogKeyDown} placeholder="feature/my-custom-branch" autoFocus /></label>}
           <label className="block text-sm"><span className="mb-1 block text-zinc-300">Target branch</span><Select value={props.pullRequestTargetBranch} onValueChange={props.onPullRequestTargetBranchChange} onKeyDown={props.onPublishDialogKeyDown} options={options.targetBranches.map((branch) => ({ value: branch, label: branch }))} /></label>
           <label className="block text-sm"><span className="mb-1 block text-zinc-300">Merge request / pull request title</span><Input value={props.pullRequestTitle} onChange={(event) => props.onPullRequestTitleChange(event.target.value)} onKeyDown={props.onPublishDialogKeyDown} placeholder="Merge request / pull request title" autoFocus={!customSource} /></label>
+          {options.hasOpenChanges && (
+            <label className="block rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-sm">
+              <span className="block text-zinc-200">Commit open changes before publishing</span>
+              <span className="mt-0.5 block text-xs text-zinc-500">BuildWarden will create this commit only when you create the request.</span>
+              <Textarea className="mt-2 min-h-20 resize-y font-mono text-sm" value={props.pullRequestCommitMessage} onChange={(event) => props.onPullRequestCommitMessageChange(event.target.value)} onKeyDown={props.onPublishDialogKeyDown} placeholder="Commit message" rows={3} spellCheck={false} />
+            </label>
+          )}
           <label className="block text-sm">
-            <div className="mb-1 flex items-center justify-between gap-3"><span className="block text-zinc-300">Merge request / pull request description</span><Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={props.onGeneratePullRequestDescription} disabled={props.busy || props.pullRequestDescriptionBusy || !props.pullRequestTitle.trim() || !props.pullRequestTargetBranch.trim()}>{props.pullRequestDescriptionBusy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}Generate</Button></div>
+            <span className="mb-1 block text-zinc-300">Merge request / pull request description</span>
             <Textarea value={props.pullRequestDescription} onChange={(event) => props.onPullRequestDescriptionChange(event.target.value)} onKeyDown={props.onPublishDialogKeyDown} placeholder="Merge request / pull request description" className="min-h-36" />
           </label>
         </div>
-        <div className="mt-4 flex items-center justify-end gap-3">
-          <Button variant="outline" onClick={props.onClosePublishDialog}>Cancel</Button>
-          <Button onClick={props.onSubmitPullRequest} disabled={props.busy || !props.pullRequestTitle.trim() || !props.pullRequestTargetBranch.trim() || (customSource && !props.pullRequestSourceBranchName.trim())}>Create MR / PR</Button>
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <Button type="button" variant="outline" onClick={props.onGeneratePullRequestDraft} disabled={props.busy || props.pullRequestDraftBusy || !props.pullRequestTargetBranch.trim()}>
+            {props.pullRequestDraftBusy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Sparkles className="mr-1.5 h-3.5 w-3.5" />}
+            Generate PR content
+          </Button>
+          <div className="flex items-center gap-3">
+            <Button variant="outline" onClick={props.onClosePublishDialog}>Cancel</Button>
+            <Button onClick={props.onSubmitPullRequest} disabled={props.busy || !props.pullRequestTitle.trim() || !props.pullRequestTargetBranch.trim() || (customSource && !props.pullRequestSourceBranchName.trim()) || (options.hasOpenChanges && !props.pullRequestCommitMessage.trim())}>Create MR / PR</Button>
+          </div>
         </div>
       </Card>
     </DialogOverlay>
@@ -157,15 +171,17 @@ export const RunActionDialogs = ({
   pullRequestSourceBranchName,
   pullRequestTargetBranch,
   pullRequestTitle,
+  pullRequestCommitMessage,
   pullRequestDescription,
-  pullRequestDescriptionBusy,
+  pullRequestDraftBusy,
   onPullRequestSourceBranchModeChange,
   onPullRequestSourceBranchNameChange,
   onPullRequestTargetBranchChange,
   onPullRequestTitleChange,
+  onPullRequestCommitMessageChange,
   onPullRequestDescriptionChange,
   onPublishDialogKeyDown,
-  onGeneratePullRequestDescription,
+  onGeneratePullRequestDraft,
   onSubmitPullRequest,
   onClosePublishDialog,
   branchPublishDialogRun,
@@ -191,8 +207,8 @@ export const RunActionDialogs = ({
   onResolveConfirmation,
 }: RunActionDialogsProps) => (
   <>
-    <CommitDialog {...{ busy, commitDialogRun, commitMessage, commitSuggestBusy, onCommitMessageChange, onCommitDialogKeyDown, onSuggestCommitMessage, onSubmitCommitRun, onCloseCommitDialog, publishDialogRun, publishOptions, pullRequestSourceBranchMode, pullRequestSourceBranchName, pullRequestTargetBranch, pullRequestTitle, pullRequestDescription, pullRequestDescriptionBusy, onPullRequestSourceBranchModeChange, onPullRequestSourceBranchNameChange, onPullRequestTargetBranchChange, onPullRequestTitleChange, onPullRequestDescriptionChange, onPublishDialogKeyDown, onGeneratePullRequestDescription, onSubmitPullRequest, onClosePublishDialog, branchPublishDialogRun, branchPublishName, branchPublishMode, branchSuggestBusy, onBranchPublishNameChange, onBranchPublishDialogKeyDown, onSuggestBranchName, onPublishBranch, onCloseBranchPublishDialog, continueDialogRun, continuePrompt, continueModelId, continueIncludeWorkspaceChanges, continueModelOptions, onContinuePromptChange, onContinueModelIdChange, onContinueIncludeWorkspaceChangesChange, onSubmitContinueRun, onCloseContinueRunDialog, confirmDialog, onResolveConfirmation }} />
-    <PublishDialog {...{ busy, commitDialogRun, commitMessage, commitSuggestBusy, onCommitMessageChange, onCommitDialogKeyDown, onSuggestCommitMessage, onSubmitCommitRun, onCloseCommitDialog, publishDialogRun, publishOptions, pullRequestSourceBranchMode, pullRequestSourceBranchName, pullRequestTargetBranch, pullRequestTitle, pullRequestDescription, pullRequestDescriptionBusy, onPullRequestSourceBranchModeChange, onPullRequestSourceBranchNameChange, onPullRequestTargetBranchChange, onPullRequestTitleChange, onPullRequestDescriptionChange, onPublishDialogKeyDown, onGeneratePullRequestDescription, onSubmitPullRequest, onClosePublishDialog, branchPublishDialogRun, branchPublishName, branchPublishMode, branchSuggestBusy, onBranchPublishNameChange, onBranchPublishDialogKeyDown, onSuggestBranchName, onPublishBranch, onCloseBranchPublishDialog, continueDialogRun, continuePrompt, continueModelId, continueIncludeWorkspaceChanges, continueModelOptions, onContinuePromptChange, onContinueModelIdChange, onContinueIncludeWorkspaceChangesChange, onSubmitContinueRun, onCloseContinueRunDialog, confirmDialog, onResolveConfirmation }} />
+    <CommitDialog {...{ busy, commitDialogRun, commitMessage, commitSuggestBusy, onCommitMessageChange, onCommitDialogKeyDown, onSuggestCommitMessage, onSubmitCommitRun, onCloseCommitDialog, publishDialogRun, publishOptions, pullRequestSourceBranchMode, pullRequestSourceBranchName, pullRequestTargetBranch, pullRequestTitle, pullRequestCommitMessage, pullRequestDescription, pullRequestDraftBusy, onPullRequestSourceBranchModeChange, onPullRequestSourceBranchNameChange, onPullRequestTargetBranchChange, onPullRequestTitleChange, onPullRequestCommitMessageChange, onPullRequestDescriptionChange, onPublishDialogKeyDown, onGeneratePullRequestDraft, onSubmitPullRequest, onClosePublishDialog, branchPublishDialogRun, branchPublishName, branchPublishMode, branchSuggestBusy, onBranchPublishNameChange, onBranchPublishDialogKeyDown, onSuggestBranchName, onPublishBranch, onCloseBranchPublishDialog, continueDialogRun, continuePrompt, continueModelId, continueIncludeWorkspaceChanges, continueModelOptions, onContinuePromptChange, onContinueModelIdChange, onContinueIncludeWorkspaceChangesChange, onSubmitContinueRun, onCloseContinueRunDialog, confirmDialog, onResolveConfirmation }} />
+    <PublishDialog {...{ busy, commitDialogRun, commitMessage, commitSuggestBusy, onCommitMessageChange, onCommitDialogKeyDown, onSuggestCommitMessage, onSubmitCommitRun, onCloseCommitDialog, publishDialogRun, publishOptions, pullRequestSourceBranchMode, pullRequestSourceBranchName, pullRequestTargetBranch, pullRequestTitle, pullRequestCommitMessage, pullRequestDescription, pullRequestDraftBusy, onPullRequestSourceBranchModeChange, onPullRequestSourceBranchNameChange, onPullRequestTargetBranchChange, onPullRequestTitleChange, onPullRequestCommitMessageChange, onPullRequestDescriptionChange, onPublishDialogKeyDown, onGeneratePullRequestDraft, onSubmitPullRequest, onClosePublishDialog, branchPublishDialogRun, branchPublishName, branchPublishMode, branchSuggestBusy, onBranchPublishNameChange, onBranchPublishDialogKeyDown, onSuggestBranchName, onPublishBranch, onCloseBranchPublishDialog, continueDialogRun, continuePrompt, continueModelId, continueIncludeWorkspaceChanges, continueModelOptions, onContinuePromptChange, onContinueModelIdChange, onContinueIncludeWorkspaceChangesChange, onSubmitContinueRun, onCloseContinueRunDialog, confirmDialog, onResolveConfirmation }} />
 
     {branchPublishDialogRun ? (
       <DialogOverlay onKeyDown={onBranchPublishDialogKeyDown}>

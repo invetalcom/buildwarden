@@ -109,3 +109,226 @@ describe("useRunActionDialogs branch suggestions", () => {
     expect(dialogs().branchSuggestBusy).toBe(false);
   });
 });
+
+describe("useRunActionDialogs pull request publishing", () => {
+  it("passes the configured commit message when publishing open changes", async () => {
+    const createRunPullRequest = vi.fn(async () => "https://example.test/pull/1");
+    const suggestRunPullRequestDraft = vi.fn(async () => ({
+      title: "Generated PR title",
+      commitMessage: "Generated commit message",
+      description: "## Summary\n\nGenerated description",
+    }));
+    const deps: RunActionDialogDeps = {
+      buildwarden: {
+        getRunPublishOptions: vi.fn(async () => ({
+          defaultTargetBranch: "main",
+          defaultSourceBranch: "feat/open-changes",
+          defaultDescription: "Default description",
+          defaultCommitMessage: "Commit open changes",
+          hasOpenChanges: true,
+          suggestedTitle: "Publish open changes",
+          targetBranches: ["main"],
+        })),
+        suggestRunPullRequestDraft,
+        createRunPullRequest,
+      } as unknown as DesktopApi,
+      snapshot,
+      runYoloMode: false,
+      handleAction: async (action) => action(),
+      setError: vi.fn(),
+      onRunMutated: vi.fn(async () => undefined),
+      onRunContinued: vi.fn(async () => undefined),
+    };
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push({ root, container });
+    await act(async () => root.render(<HookHarness deps={deps} />));
+
+    await act(async () => dialogs().openPublishDialog(run("run-1", "feat/open-changes")));
+    expect(dialogs().pullRequestCommitMessage).toBe("Commit open changes");
+
+    await act(async () => dialogs().generatePullRequestDraft());
+    expect(dialogs().pullRequestTitle).toBe("Generated PR title");
+    expect(dialogs().pullRequestCommitMessage).toBe("Generated commit message");
+    expect(dialogs().pullRequestDescription).toContain("Generated description");
+
+    await act(async () => dialogs().submitPullRequest());
+
+    expect(createRunPullRequest).toHaveBeenCalledWith(
+      "run-1",
+      "main",
+      "Generated PR title",
+      undefined,
+      "## Summary\n\nGenerated description",
+      "Generated commit message",
+    );
+  });
+
+  it("rejects keyboard submission when open changes have no commit message", async () => {
+    const createRunPullRequest = vi.fn(async () => "https://example.test/pull/1");
+    const setError = vi.fn();
+    const deps: RunActionDialogDeps = {
+      buildwarden: {
+        getRunPublishOptions: vi.fn(async () => ({
+          defaultTargetBranch: "main",
+          defaultSourceBranch: "feat/open-changes",
+          defaultDescription: "Default description",
+          defaultCommitMessage: "",
+          hasOpenChanges: true,
+          suggestedTitle: "Publish open changes",
+          targetBranches: ["main"],
+        })),
+        createRunPullRequest,
+      } as unknown as DesktopApi,
+      snapshot,
+      runYoloMode: false,
+      handleAction: async (action) => {
+        try {
+          await action();
+        } catch (error) {
+          setError(error instanceof Error ? error.message : String(error));
+        }
+      },
+      setError,
+      onRunMutated: vi.fn(async () => undefined),
+      onRunContinued: vi.fn(async () => undefined),
+    };
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push({ root, container });
+    await act(async () => root.render(<HookHarness deps={deps} />));
+    await act(async () => dialogs().openPublishDialog(run("run-1", "feat/open-changes")));
+
+    const preventDefault = vi.fn();
+    const input = document.createElement("input");
+    await act(async () => {
+      dialogs().handlePublishDialogKeyDown({
+        key: "Enter",
+        shiftKey: false,
+        ctrlKey: false,
+        metaKey: false,
+        altKey: false,
+        target: input,
+        preventDefault,
+      } as unknown as Parameters<ReturnType<typeof useRunActionDialogs>["handlePublishDialogKeyDown"]>[0]);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(setError).toHaveBeenCalledWith("Enter a commit message for the open changes.");
+    expect(createRunPullRequest).not.toHaveBeenCalled();
+  });
+
+  it("ignores a stale PR draft after another run opens", async () => {
+    const firstDraft = deferred<{ title: string; commitMessage: string; description: string }>();
+    const suggestRunPullRequestDraft = vi.fn(() => firstDraft.promise);
+    const deps: RunActionDialogDeps = {
+      buildwarden: {
+        getRunPublishOptions: vi.fn(async (runId: string) => ({
+          defaultTargetBranch: "main",
+          defaultSourceBranch: runId === "run-1" ? "feat/first" : "feat/second",
+          defaultDescription: runId === "run-1" ? "First description" : "Second description",
+          defaultCommitMessage: runId === "run-1" ? "First commit" : "Second commit",
+          hasOpenChanges: true,
+          suggestedTitle: runId === "run-1" ? "First title" : "Second title",
+          targetBranches: ["main"],
+        })),
+        suggestRunPullRequestDraft,
+      } as unknown as DesktopApi,
+      snapshot,
+      runYoloMode: false,
+      handleAction: async (action) => action(),
+      setError: vi.fn(),
+      onRunMutated: vi.fn(async () => undefined),
+      onRunContinued: vi.fn(async () => undefined),
+    };
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push({ root, container });
+    await act(async () => root.render(<HookHarness deps={deps} />));
+    await act(async () => dialogs().openPublishDialog(run("run-1", "feat/first")));
+
+    let draftRequest!: Promise<void>;
+    await act(async () => {
+      draftRequest = dialogs().generatePullRequestDraft();
+      await Promise.resolve();
+    });
+    expect(dialogs().pullRequestDraftBusy).toBe(true);
+
+    await act(async () => {
+      dialogs().closePublishDialog();
+      await dialogs().openPublishDialog(run("run-2", "feat/second"));
+    });
+    await act(async () => {
+      firstDraft.resolve({
+        title: "Stale title",
+        commitMessage: "Stale commit",
+        description: "Stale description",
+      });
+      await draftRequest;
+    });
+
+    expect(dialogs().publishDialogRun?.id).toBe("run-2");
+    expect(dialogs().pullRequestTitle).toBe("Second title");
+    expect(dialogs().pullRequestCommitMessage).toBe("Second commit");
+    expect(dialogs().pullRequestDescription).toBe("Second description");
+    expect(dialogs().pullRequestDraftBusy).toBe(false);
+  });
+
+  it("blocks publishing while PR content generation is active", async () => {
+    const draft = deferred<{ title: string; commitMessage: string; description: string }>();
+    const createRunPullRequest = vi.fn(async () => "https://example.test/pull/1");
+    const setError = vi.fn();
+    const deps: RunActionDialogDeps = {
+      buildwarden: {
+        getRunPublishOptions: vi.fn(async () => ({
+          defaultTargetBranch: "main",
+          defaultSourceBranch: "feat/open-changes",
+          defaultDescription: "Default description",
+          defaultCommitMessage: "Default commit",
+          hasOpenChanges: true,
+          suggestedTitle: "Default title",
+          targetBranches: ["main"],
+        })),
+        suggestRunPullRequestDraft: vi.fn(() => draft.promise),
+        createRunPullRequest,
+      } as unknown as DesktopApi,
+      snapshot,
+      runYoloMode: false,
+      handleAction: async (action) => {
+        try {
+          await action();
+        } catch (error) {
+          setError(error instanceof Error ? error.message : String(error));
+        }
+      },
+      setError,
+      onRunMutated: vi.fn(async () => undefined),
+      onRunContinued: vi.fn(async () => undefined),
+    };
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push({ root, container });
+    await act(async () => root.render(<HookHarness deps={deps} />));
+    await act(async () => dialogs().openPublishDialog(run("run-1", "feat/open-changes")));
+
+    let draftRequest!: Promise<void>;
+    await act(async () => {
+      draftRequest = dialogs().generatePullRequestDraft();
+      await Promise.resolve();
+    });
+    await act(async () => dialogs().submitPullRequest());
+
+    expect(setError).toHaveBeenCalledWith("Wait for pull request content generation to finish.");
+    expect(createRunPullRequest).not.toHaveBeenCalled();
+
+    await act(async () => {
+      draft.resolve({ title: "Generated title", commitMessage: "Generated commit", description: "Generated description" });
+      await draftRequest;
+    });
+  });
+});

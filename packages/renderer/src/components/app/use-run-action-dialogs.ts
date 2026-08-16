@@ -198,53 +198,90 @@ const usePublishDialog = (deps: RunActionDialogDeps) => {
   const [pullRequestTargetBranch, setPullRequestTargetBranch] = useState("");
   const [pullRequestSourceBranchMode, setPullRequestSourceBranchMode] = useState<"worktree" | "custom">("worktree");
   const [pullRequestSourceBranchName, setPullRequestSourceBranchName] = useState("");
+  const [pullRequestCommitMessage, setPullRequestCommitMessage] = useState("");
   const [pullRequestDescription, setPullRequestDescription] = useState("");
-  const [pullRequestDescriptionBusy, setPullRequestDescriptionBusy] = useState(false);
+  const [pullRequestDraftBusy, setPullRequestDraftBusy] = useState(false);
+  const publishDialogSessionRef = useRef(0);
+  const pullRequestDraftRequestRef = useRef(0);
 
   const closePublishDialog = () => {
+    publishDialogSessionRef.current += 1;
+    pullRequestDraftRequestRef.current += 1;
     setPublishDialogRun(null);
     setPublishOptions(null);
     setPullRequestTitle("");
     setPullRequestTargetBranch("");
     setPullRequestSourceBranchMode("worktree");
     setPullRequestSourceBranchName("");
+    setPullRequestCommitMessage("");
     setPullRequestDescription("");
-    setPullRequestDescriptionBusy(false);
+    setPullRequestDraftBusy(false);
   };
 
   const openPublishDialog = async (run: RunRecord) => {
+    const dialogSession = publishDialogSessionRef.current + 1;
+    publishDialogSessionRef.current = dialogSession;
+    pullRequestDraftRequestRef.current += 1;
+    setPullRequestDraftBusy(false);
     await handleAction(async () => {
       const bridge = requireBridge(buildwarden);
 
       const options = await bridge.getRunPublishOptions(run.id);
+      if (publishDialogSessionRef.current !== dialogSession) {
+        return;
+      }
       setPublishDialogRun(run);
       setPublishOptions(options);
       setPullRequestTitle(options.suggestedTitle);
       setPullRequestTargetBranch(options.defaultTargetBranch);
       setPullRequestSourceBranchMode("worktree");
       setPullRequestSourceBranchName(options.defaultSourceBranch);
+      setPullRequestCommitMessage(options.defaultCommitMessage);
       setPullRequestDescription(options.defaultDescription);
     });
   };
 
-  const generatePullRequestDescription = async () => {
+  const generatePullRequestDraft = async () => {
     if (!publishDialogRun || !buildwarden) {
       return;
     }
 
-    setPullRequestDescriptionBusy(true);
+    const dialogSession = publishDialogSessionRef.current;
+    const requestId = pullRequestDraftRequestRef.current + 1;
+    pullRequestDraftRequestRef.current = requestId;
+    const runId = publishDialogRun.id;
+    setPullRequestDraftBusy(true);
     setError(null);
     try {
-      const description = await buildwarden.suggestRunPullRequestDescription(
-        publishDialogRun.id,
+      const draft = await buildwarden.suggestRunPullRequestDraft(
+        runId,
         pullRequestTargetBranch.trim(),
-        pullRequestTitle.trim(),
       );
-      setPullRequestDescription(description);
+      if (
+        publishDialogSessionRef.current !== dialogSession
+        || pullRequestDraftRequestRef.current !== requestId
+      ) {
+        return;
+      }
+      setPullRequestTitle(draft.title);
+      if (draft.commitMessage) {
+        setPullRequestCommitMessage(draft.commitMessage);
+      }
+      setPullRequestDescription(draft.description);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not generate a merge request or pull request description.");
+      if (
+        publishDialogSessionRef.current === dialogSession
+        && pullRequestDraftRequestRef.current === requestId
+      ) {
+        setError(e instanceof Error ? e.message : "Could not generate the merge request or pull request draft.");
+      }
     } finally {
-      setPullRequestDescriptionBusy(false);
+      if (
+        publishDialogSessionRef.current === dialogSession
+        && pullRequestDraftRequestRef.current === requestId
+      ) {
+        setPullRequestDraftBusy(false);
+      }
     }
   };
 
@@ -256,9 +293,14 @@ const usePublishDialog = (deps: RunActionDialogDeps) => {
     await handleAction(async () => {
       const bridge = requireBridge(buildwarden);
 
+      if (pullRequestDraftBusy) {
+        throw new Error("Wait for pull request content generation to finish.");
+      }
+
       const trimmedTitle = pullRequestTitle.trim();
       const trimmedTargetBranch = pullRequestTargetBranch.trim();
       const trimmedSourceBranch = pullRequestSourceBranchName.trim();
+      const trimmedCommitMessage = pullRequestCommitMessage.trim();
 
       if (!trimmedTitle) {
         throw new Error("Enter a merge request or pull request title.");
@@ -266,6 +308,10 @@ const usePublishDialog = (deps: RunActionDialogDeps) => {
 
       if (!trimmedTargetBranch) {
         throw new Error("Select a target branch.");
+      }
+
+      if (publishOptions?.hasOpenChanges && !trimmedCommitMessage) {
+        throw new Error("Enter a commit message for the open changes.");
       }
 
       if (pullRequestSourceBranchMode === "custom") {
@@ -283,6 +329,7 @@ const usePublishDialog = (deps: RunActionDialogDeps) => {
         trimmedTitle,
         pullRequestSourceBranchMode === "custom" ? trimmedSourceBranch : undefined,
         pullRequestDescription.trim(),
+        publishOptions?.hasOpenChanges ? trimmedCommitMessage : undefined,
       );
       await deps.onRunMutated(publishDialogRun.id, publishDialogRun.projectId);
       closePublishDialog();
@@ -319,13 +366,15 @@ const usePublishDialog = (deps: RunActionDialogDeps) => {
     setPullRequestSourceBranchMode,
     pullRequestSourceBranchName,
     setPullRequestSourceBranchName,
+    pullRequestCommitMessage,
+    setPullRequestCommitMessage,
     pullRequestDescription,
     setPullRequestDescription,
-    pullRequestDescriptionBusy,
+    pullRequestDraftBusy,
     openPublishDialog,
     closePublishDialog,
     handlePublishDialogKeyDown,
-    generatePullRequestDescription,
+    generatePullRequestDraft,
     submitPullRequest,
   };
 };

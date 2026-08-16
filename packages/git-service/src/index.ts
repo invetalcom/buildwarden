@@ -308,6 +308,23 @@ const createWorktreeDiffGit = (worktreePath: string): SimpleGit => simpleGit({
   timeout: { block: WORKTREE_DIFF_GIT_TIMEOUT_MS },
 });
 
+const renderUntrackedDiffSections = async (git: SimpleGit, filePaths: readonly string[]): Promise<string[]> => {
+  const sections = await mapWithConcurrency(filePaths, 4, async (filePath) => {
+    try {
+      const patch = (await git.raw(["diff", "--no-index", "--", "/dev/null", filePath])).trim();
+      return patch || null;
+    } catch (error) {
+      const output = extractCommandOutput(error);
+      if (output.includes("diff --git")) {
+        return output;
+      }
+
+      return `Unable to render patch for untracked file ${filePath}:\n${output}`;
+    }
+  });
+  return sections.filter((section): section is string => Boolean(section));
+};
+
 const parseNumstatValue = (value: string): number | null => (value === "-" ? null : Number.parseInt(value, 10) || 0);
 
 /** Parses `git diff --numstat -z`, including its three-NUL-field rename form. */
@@ -391,20 +408,7 @@ export async function computeWorktreeDiff(worktreePath: string): Promise<string>
     sections.push(staged);
   }
 
-  const untrackedSections = await mapWithConcurrency(status.not_added, 4, async (filePath) => {
-    try {
-      const untrackedPatch = (await git.raw(["diff", "--no-index", "--", "/dev/null", filePath])).trim();
-      return untrackedPatch || null;
-    } catch (error) {
-      const output = extractCommandOutput(error);
-      if (output.includes("diff --git")) {
-        return output;
-      }
-
-      return `Unable to render patch for untracked file ${filePath}:\n${output}`;
-    }
-  });
-  sections.push(...untrackedSections.filter((section): section is string => Boolean(section)));
+  sections.push(...await renderUntrackedDiffSections(git, status.not_added));
 
   if (sections.length === 0 && !status.isClean()) {
     sections.push(await formatGitStatusSummary(worktreePath));
@@ -516,6 +520,14 @@ async function syncChangedFilesFromWorktree(sourceWorktreePath: string, targetWo
       await rm(targetPath, { recursive: true, force: true });
     }
   }
+}
+
+export interface GitPullRequestContext {
+  targetRef: string;
+  mergeBase: string;
+  commits: Array<{ hash: string; subject: string }>;
+  hasOpenChanges: boolean;
+  diff: string;
 }
 
 export class GitService {
@@ -996,6 +1008,83 @@ export class GitService {
 
   async getDiffSummary(worktreePath: string): Promise<RunWorktreeDiffSummary> {
     return computeWorktreeDiffSummary(worktreePath);
+  }
+
+  /**
+   * Builds the net patch that a PR/MR would contain if the current workspace were committed now.
+   * The comparison includes committed, staged, unstaged, and untracked changes relative to the
+   * merge base with the selected target branch.
+   */
+  async getPullRequestContext(worktreePath: string, targetBranch: string): Promise<GitPullRequestContext> {
+    const git = createWorktreeDiffGit(worktreePath);
+    const trimmedTargetBranch = targetBranch.trim();
+    if (!trimmedTargetBranch) {
+      throw new Error("Select a target branch.");
+    }
+
+    try {
+      await runGitRaw(git, ["check-ref-format", "--branch", trimmedTargetBranch]);
+    } catch {
+      throw new Error(`"${trimmedTargetBranch}" is not a valid target branch name.`);
+    }
+
+    try {
+      await this.fetchProjectBranches(worktreePath);
+    } catch {
+      // Keep local-only and temporarily offline repositories usable with their existing refs.
+    }
+
+    let targetRef = "";
+    for (const candidate of [`refs/remotes/origin/${trimmedTargetBranch}`, `refs/heads/${trimmedTargetBranch}`]) {
+      try {
+        const resolvedRef = (await runGitRaw(git, ["rev-parse", "--verify", "--quiet", candidate])).trim();
+        if (resolvedRef) {
+          targetRef = candidate;
+          break;
+        }
+      } catch {
+        // Try the local branch after the remote-tracking branch.
+      }
+    }
+    if (!targetRef) {
+      throw new Error(`Target branch "${trimmedTargetBranch}" was not found locally or on origin.`);
+    }
+
+    const mergeBase = (await runGitRaw(git, ["merge-base", targetRef, "HEAD"])).trim();
+    if (!mergeBase) {
+      throw new Error(`Could not find a merge base between HEAD and "${trimmedTargetBranch}".`);
+    }
+
+    const [status, trackedDiff, commitLog] = await Promise.all([
+      git.status(),
+      runGitRaw(git, ["diff", "--find-renames", mergeBase, "--"]),
+      runGitRaw(git, ["log", "--format=%H%x09%s", `${mergeBase}..HEAD`]),
+    ]);
+    const sections: string[] = [];
+    const normalizedTrackedDiff = trackedDiff.trim();
+    if (normalizedTrackedDiff) {
+      sections.push(normalizedTrackedDiff);
+    }
+    sections.push(...await renderUntrackedDiffSections(git, status.not_added));
+
+    const commits = commitLog
+      .split(/\r?\n/)
+      .map((line) => {
+        const separatorIndex = line.indexOf("\t");
+        if (separatorIndex < 1) return null;
+        const hash = line.slice(0, separatorIndex).trim();
+        const subject = line.slice(separatorIndex + 1).trim();
+        return hash && subject ? { hash, subject } : null;
+      })
+      .filter((commit): commit is { hash: string; subject: string } => commit !== null);
+
+    return {
+      targetRef,
+      mergeBase,
+      commits,
+      hasOpenChanges: !status.isClean(),
+      diff: sections.join("\n\n"),
+    };
   }
 
   async getStatusSummary(worktreePath: string): Promise<string> {

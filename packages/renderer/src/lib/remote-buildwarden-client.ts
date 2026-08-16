@@ -179,6 +179,7 @@ const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
   "suggestRunBranchName",
   "publishRunBranch",
   "createRunPullRequest",
+  "suggestRunPullRequestDraft",
   "suggestRunPullRequestDescription",
   "checkoutProjectBranch",
   "fetchProjectBranches",
@@ -221,7 +222,7 @@ const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAccessSco
     .map((method) => [method as RemoteApiMethod, ["chat:operate"] as const] as const),
   ...[
     "commitRun", "suggestCommitMessage", "createRunLocalBranch", "suggestRunBranchName", "publishRunBranch",
-    "createRunPullRequest", "suggestRunPullRequestDescription", "checkoutProjectBranch",
+    "createRunPullRequest", "suggestRunPullRequestDraft", "suggestRunPullRequestDescription", "checkoutProjectBranch",
     "fetchProjectBranches", "createProjectBranch", "renameProjectBranch", "deleteProjectBranch", "pullProjectBranch",
     "pushProjectBranch", "convertProjectToGit", "updateProjectBaseBranch",
     "analyzeProjectPrMrDiff", "postProjectPrMrReview", "submitProjectPrMrComments", "replyProjectPrMrReviewThread",

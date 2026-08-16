@@ -187,6 +187,7 @@ describe("remote operation registry", () => {
       | "suggestRunBranchName"
       | "publishRunBranch"
       | "createRunPullRequest"
+      | "suggestRunPullRequestDraft"
       | "suggestRunPullRequestDescription"
       | "checkoutProjectBranch"
       | "fetchProjectBranches"
