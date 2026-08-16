@@ -9069,6 +9069,20 @@ export class AppController
           nextInputTokens - currentRun.inputTokens,
           nextOutputTokens - currentRun.outputTokens,
         );
+        const orchestration = run.delegationEnabled
+          ? this.db.getOrchestrationByCoordinatorRunId(run.id)
+          : null;
+        const waitingForSubagents = !wasCancelled && orchestration?.status === "waiting";
+        const terminalEventTitle = wasCancelled
+          ? "Run cancelled"
+          : waitingForSubagents
+            ? "Waiting for subagents to complete"
+            : "Run completed";
+        const terminalEventContent = wasCancelled
+          ? `Run cancellation finished cleanup.\nInput tokens: ${nextInputTokens}\nOutput tokens: ${nextOutputTokens}`
+          : waitingForSubagents
+            ? `The coordinator turn completed and is waiting for delegated subagents.\nInput tokens: ${nextInputTokens}\nOutput tokens: ${nextOutputTokens}`
+            : `Run completed successfully.\nInput tokens: ${nextInputTokens}\nOutput tokens: ${nextOutputTokens}`;
         this.db.updateRunStatus(run.id, wasCancelled ? "cancelled" : "completed", {
           summary: wasCancelled ? currentRun.summary : payload.result.summary,
           errorMessage: wasCancelled ? "Run cancelled by user." : null,
@@ -9081,29 +9095,27 @@ export class AppController
         await this.appendRunEvent(
           run.id,
           "status",
-          wasCancelled ? "Run cancelled" : "Run completed",
-          wasCancelled
-            ? `Run cancellation finished cleanup.\nInput tokens: ${nextInputTokens}\nOutput tokens: ${nextOutputTokens}`
-            : `Run completed successfully.\nInput tokens: ${nextInputTokens}\nOutput tokens: ${nextOutputTokens}`,
+          terminalEventTitle,
+          terminalEventContent,
           {
             inputTokens: nextInputTokens,
             outputTokens: nextOutputTokens,
             usageTotals: payload.result.usage,
             cancelled: wasCancelled,
+            waitingForSubagents,
           },
         );
         this.emitEvent({
           runId: run.id,
           type: "status",
-          title: wasCancelled ? "Run cancelled" : "Run completed",
-          content: wasCancelled
-            ? `Run cancellation finished cleanup.\nInput tokens: ${nextInputTokens}\nOutput tokens: ${nextOutputTokens}`
-            : `Run completed successfully.\nInput tokens: ${nextInputTokens}\nOutput tokens: ${nextOutputTokens}`,
+          title: terminalEventTitle,
+          content: terminalEventContent,
           metadata: {
             inputTokens: nextInputTokens,
             outputTokens: nextOutputTokens,
             usageTotals: payload.result.usage,
             cancelled: wasCancelled,
+            waitingForSubagents,
           },
           createdAt: new Date().toISOString(),
         });

@@ -1,6 +1,7 @@
 import {
   isTerminalRunSubagentStatus,
   normalizeRunSubagentInfo,
+  type OrchestrationStatus,
   type RunEventType,
   type RunMode,
   type RunStatus,
@@ -23,6 +24,7 @@ export type RunActivityRun = {
   id: string;
   status: RunStatus;
   mode: RunMode;
+  orchestrationStatus?: OrchestrationStatus | null;
 };
 
 const safeParseMetadata = (value: string) => {
@@ -77,7 +79,29 @@ export const shouldAutoCollapseReasoning = (content: string) => {
 export const isRunCompletionStatus = (step: RunActivityStep) => {
   if (step.eventType !== "status") return false;
   const text = `${step.title} ${step.content}`.toLowerCase();
-  return text.includes("run completed") || text.includes("completed successfully");
+  return (
+    text.includes("run completed")
+    || text.includes("completed successfully")
+    || text.includes("coordinator turn completed")
+  );
+};
+
+const WAITING_FOR_SUBAGENTS_TITLE = "Waiting for subagents to complete";
+const WAITING_FOR_SUBAGENTS_CONTENT = "The coordinator turn completed and is waiting for delegated subagents.";
+
+export const resolveRunStatusStepPresentation = (
+  step: RunActivityStep,
+  orchestrationStatus?: OrchestrationStatus | null,
+): Pick<RunActivityStep, "title" | "content"> => {
+  if (orchestrationStatus !== "waiting" || !isRunCompletionStatus(step)) {
+    return { title: step.title, content: step.content };
+  }
+
+  const usage = step.content.match(/(?:^|\r?\n)(Input tokens:[\s\S]*)$/i)?.[1];
+  return {
+    title: WAITING_FOR_SUBAGENTS_TITLE,
+    content: usage ? `${WAITING_FOR_SUBAGENTS_CONTENT}\n${usage}` : WAITING_FOR_SUBAGENTS_CONTENT,
+  };
 };
 
 
