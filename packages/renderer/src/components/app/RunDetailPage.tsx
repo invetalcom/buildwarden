@@ -1174,7 +1174,10 @@ export const RunDetailPage = ({
     <RunActivityTimeline
       key={runDetail.run.id}
       steps={orderedSteps}
-      run={runDetail.run}
+      run={{
+        ...runDetail.run,
+        orchestrationStatus: runDetail.orchestration?.orchestration.status ?? null,
+      }}
       busy={busy}
       className={cn(
         "app-scrollbar min-h-0 flex-1 overflow-y-auto overflow-x-hidden pt-1 pr-10",

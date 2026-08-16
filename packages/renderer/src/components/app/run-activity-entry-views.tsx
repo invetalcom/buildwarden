@@ -22,6 +22,7 @@ import {
   isRunCompletionStatus,
   readUserInputAnswers,
   readUserInputQuestions,
+  resolveRunStatusStepPresentation,
   runModeBadgeClassName,
   shouldAutoCollapseReasoning,
   type ActivityEntry,
@@ -65,23 +66,26 @@ export const SingleGroupActivityEntry = ({
       <AgentLogRow key={groupKey} tone="status" label="Status" time={rowTime(timeRange)}>
         <AgentPanel tone="status" className="px-2.5 py-1.5">
           <ul className="space-y-0.5">
-            {entry.items.map(({ step }) => (
-              <li
-                key={step.id}
-                className="flex items-start justify-between gap-2 border-t border-zinc-800/30 pt-0.5 first:border-t-0 first:pt-0"
-              >
-                <span className="min-w-0 flex-1 text-[10px] leading-snug text-zinc-400">
-                  <span className="text-zinc-500">{step.title}</span>
-                  {step.content ? <span className="text-zinc-500"> - {step.content}</span> : null}
-                  {isRunCompletionStatus(step) && runDurationLabel ? (
-                    <span className="text-[color:var(--ec-muted)]"> - Duration {runDurationLabel}</span>
-                  ) : null}
-                </span>
-                <span className="agent-density-meta shrink-0 text-[10px] text-zinc-600 tabular-nums">
-                  {new Date(step.createdAt).toLocaleTimeString()}
-                </span>
-              </li>
-            ))}
+            {entry.items.map(({ step }) => {
+              const presentation = resolveRunStatusStepPresentation(step, run.orchestrationStatus);
+              return (
+                <li
+                  key={step.id}
+                  className="flex items-start justify-between gap-2 border-t border-zinc-800/30 pt-0.5 first:border-t-0 first:pt-0"
+                >
+                  <span className="min-w-0 flex-1 text-[10px] leading-snug text-zinc-400">
+                    <span className="text-zinc-500">{presentation.title}</span>
+                    {presentation.content ? <span className="text-zinc-500"> - {presentation.content}</span> : null}
+                    {isRunCompletionStatus(step) && runDurationLabel ? (
+                      <span className="text-[color:var(--ec-muted)]"> - Duration {runDurationLabel}</span>
+                    ) : null}
+                  </span>
+                  <span className="agent-density-meta shrink-0 text-[10px] text-zinc-600 tabular-nums">
+                    {new Date(step.createdAt).toLocaleTimeString()}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         </AgentPanel>
       </AgentLogRow>
@@ -442,15 +446,16 @@ const DiffActivityEntry = ({ entry, context }: SingleEntryProps) => {
 const StatusActivityEntry = ({ entry, context }: SingleEntryProps) => {
   const timestamp = new Date(entry.step.createdAt).toLocaleTimeString();
   const statusDurationLabel = isRunCompletionStatus(entry.step) ? context.runDurationLabel : null;
+  const presentation = resolveRunStatusStepPresentation(entry.step, context.run.orchestrationStatus);
   return (
     <AgentLogRow tone="status" label="Status" time={context.rowTime(timestamp)}>
       <AgentPanel tone="status" className="px-2.5 py-1.5">
         <div className="flex items-start justify-between gap-3">
-          <p className="text-[11px] font-medium leading-snug text-[color:var(--ec-text)]">{entry.step.title}</p>
+          <p className="text-[11px] font-medium leading-snug text-[color:var(--ec-text)]">{presentation.title}</p>
           {statusDurationLabel ? <AgentChip className="shrink-0">Duration {statusDurationLabel}</AgentChip> : null}
         </div>
-        {entry.step.content ? (
-          <p className="mt-0.5 break-words text-[11px] leading-snug text-[color:var(--ec-muted)]">{entry.step.content}</p>
+        {presentation.content ? (
+          <p className="mt-0.5 break-words text-[11px] leading-snug text-[color:var(--ec-muted)]">{presentation.content}</p>
         ) : null}
       </AgentPanel>
     </AgentLogRow>

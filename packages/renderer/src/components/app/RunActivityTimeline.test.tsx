@@ -81,6 +81,35 @@ describe("run activity timeline shaping", () => {
     expect(renderToStaticMarkup(<RunActivityTimeline steps={[]} run={{ id: "empty", status: "completed", mode: "code" }} />)).toContain("No activity recorded");
   });
 
+  it("presents a completed coordinator turn as waiting while subagents are still running", () => {
+    const completion = step(
+      "completion",
+      "status",
+      {},
+      "Run completed successfully.\nInput tokens: 100\nOutput tokens: 20",
+    );
+    completion.title = "Run completed";
+
+    const waiting = renderToStaticMarkup(
+      <RunActivityTimeline
+        steps={[completion]}
+        run={{ id: "coordinator", status: "completed", mode: "code", orchestrationStatus: "waiting" }}
+      />,
+    );
+    const completed = renderToStaticMarkup(
+      <RunActivityTimeline
+        steps={[completion]}
+        run={{ id: "coordinator", status: "completed", mode: "code", orchestrationStatus: "completed" }}
+      />,
+    );
+
+    expect(waiting).toContain("Waiting for subagents to complete");
+    expect(waiting).toContain("The coordinator turn completed and is waiting for delegated subagents.");
+    expect(waiting).not.toContain("Run completed successfully");
+    expect(completed).toContain("Run completed");
+    expect(completed).not.toContain("Waiting for subagents to complete");
+  });
+
   it("cleans generated attachment text from single prompt entries", () => {
     const prompt = renderToStaticMarkup(
       <RunActivityTimeline
