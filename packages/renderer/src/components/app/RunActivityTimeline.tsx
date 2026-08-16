@@ -13,7 +13,7 @@ import { ActivitySubagentCard } from "./run-activity-subagent-card";
 import { SingleActivityEntryView, SingleGroupActivityEntry, type ActivityRenderContext } from "./run-activity-entry-views";
 import {
   ActivityDiffBatchRow,
-  ActivityToolBatchRow,
+  ActivityToolBatchGroup,
   type DiffBatchSummarizedRow,
 } from "./run-activity-tool-rows";
 import { summarizeToolBatchItems } from "./run-activity-tool-model";
@@ -21,6 +21,7 @@ import {
   buildActivityEntries,
   buildTimelineRenderItems,
   getLatestPlanDecisionText,
+  getToolBatchStableId,
   shouldAutoCollapseReasoning,
   type ActivityEntry,
   type RunActivityRun,
@@ -29,6 +30,7 @@ import {
 } from "./run-activity-model";
 import { scrollVirtualTimelineToBoundary } from "./run-activity-scroll";
 import { ScrollBoundaryControls } from "./ScrollBoundaryControls";
+import { useRunToolCallCollapseThreshold } from "../../lib/run-tool-call-collapse-settings";
 
 const assignTimelineRef = (ref: Ref<HTMLDivElement> | undefined, node: HTMLDivElement | null) => {
   if (!ref) return;
@@ -92,8 +94,14 @@ const estimateActivityEntrySize = (
   entry: ActivityEntry,
   density: RunTimelineDensity,
   expandedReasoningStepIds: Record<string, boolean>,
+  expandedToolBatchIds: Record<string, boolean>,
+  toolCallCollapseThreshold: number,
 ) => {
-  if (entry.kind === "tool-batch") return Math.min(420, 42 + entry.items.length * (density === "detailed" ? 34 : 24));
+  if (entry.kind === "tool-batch") {
+    const collapsed = entry.items.length > toolCallCollapseThreshold && !expandedToolBatchIds[getToolBatchStableId(entry)];
+    if (collapsed) return density === "detailed" ? 64 : 52;
+    return Math.min(420, 42 + entry.items.length * (density === "detailed" ? 34 : 24));
+  }
   if (entry.kind === "diff-batch") return Math.min(360, 42 + entry.items.length * 34);
   if (entry.kind === "tool") return 48;
   if (entry.kind === "subagent") return 96;
@@ -105,12 +113,20 @@ const estimateTimelineItemSize = (
   item: TimelineRenderItem | undefined,
   density: RunTimelineDensity,
   expandedReasoningStepIds: Record<string, boolean>,
+  expandedToolBatchIds: Record<string, boolean>,
+  toolCallCollapseThreshold: number,
 ) => {
   if (!item) return 80;
   if (item.kind === "end") return density === "compact" ? 8 : 18;
   if (item.kind === "loading") return 62;
   if (item.kind === "plan-decision") return 170;
-  return estimateActivityEntrySize(item.entry, density, expandedReasoningStepIds);
+  return estimateActivityEntrySize(
+    item.entry,
+    density,
+    expandedReasoningStepIds,
+    expandedToolBatchIds,
+    toolCallCollapseThreshold,
+  );
 };
 
 type TimelineRenderContext = ActivityRenderContext & {
@@ -118,12 +134,28 @@ type TimelineRenderContext = ActivityRenderContext & {
   activeSubagentFocus: { subagentId: string; nonce: number } | null;
   onCancelRunShell?: (run: RunActivityRun, toolCallId: string) => void;
   onSubmitPlanFeedback?: (feedback: string) => Promise<void>;
+  toolCallCollapseThreshold: number;
+  expandedToolBatchIds: Record<string, boolean>;
+  onToggleToolBatch: (batchId: string) => void;
   endRef?: Ref<HTMLDivElement>;
   endClassName?: string;
 };
 
 const ActivityEntryView = ({ entry, context }: Readonly<{ entry: ActivityEntry; context: TimelineRenderContext }>) => {
-  const { run, density, busy, readOnly, rowTime, compactContent, activeSubagentFocus, onCancelRunShell, onOpenWorkspaceFile } = context;
+  const {
+    run,
+    density,
+    busy,
+    readOnly,
+    rowTime,
+    compactContent,
+    activeSubagentFocus,
+    onCancelRunShell,
+    onOpenWorkspaceFile,
+    toolCallCollapseThreshold,
+    expandedToolBatchIds,
+    onToggleToolBatch,
+  } = context;
 
   if (entry.kind === "diff-batch") {
     const summarizedItems = entry.items.map<DiffBatchSummarizedRow>(({ step, metadata }) => {
@@ -159,6 +191,9 @@ const ActivityEntryView = ({ entry, context }: Readonly<{ entry: ActivityEntry; 
   if (entry.kind === "tool-batch") {
     const summarizedItems = summarizeToolBatchItems(entry.items);
     const latestTimestamp = summarizedItems[summarizedItems.length - 1]?.createdAt ?? entry.items[0]?.callStep?.createdAt;
+    const batchId = getToolBatchStableId(entry);
+    const collapsible = entry.items.length > toolCallCollapseThreshold;
+    const expanded = !collapsible || expandedToolBatchIds[batchId] === true;
 
     return (
       <AgentLogRow
@@ -166,21 +201,20 @@ const ActivityEntryView = ({ entry, context }: Readonly<{ entry: ActivityEntry; 
         label={`Tools (${entry.items.length})`}
         time={rowTime(latestTimestamp ? new Date(latestTimestamp).toLocaleTimeString() : null)}
       >
-        <div className="agent-tool-stack agent-tool-stack--bare">
-          {summarizedItems.map((item, index) => (
-            <ActivityToolBatchRow
-              key={`${item.toolName}-${item.detail ?? "detail"}-${index}`}
-              item={item}
-              itemIndex={index}
-              run={run}
-              density={density}
-              busy={busy}
-              readOnly={readOnly}
-              onCancelRunShell={onCancelRunShell}
-              onOpenWorkspaceFile={onOpenWorkspaceFile}
-            />
-          ))}
-        </div>
+        <ActivityToolBatchGroup
+          items={summarizedItems}
+          totalCount={entry.items.length}
+          batchId={batchId}
+          collapsible={collapsible}
+          expanded={expanded}
+          run={run}
+          density={density}
+          busy={busy}
+          readOnly={readOnly}
+          onToggle={() => onToggleToolBatch(batchId)}
+          onCancelRunShell={onCancelRunShell}
+          onOpenWorkspaceFile={onOpenWorkspaceFile}
+        />
       </AgentLogRow>
     );
   }
@@ -258,6 +292,8 @@ type TimelineScrollOptions = {
   timelineItems: TimelineRenderItem[];
   density: RunTimelineDensity;
   activeReasoningStepIds: Record<string, boolean>;
+  expandedToolBatchIds: Record<string, boolean>;
+  toolCallCollapseThreshold: number;
   virtualized: boolean;
   containerRef?: Ref<HTMLDivElement>;
   hasRenderableActivity: boolean;
@@ -274,6 +310,8 @@ const useTimelineScroll = ({
   timelineItems,
   density,
   activeReasoningStepIds,
+  expandedToolBatchIds,
+  toolCallCollapseThreshold,
   virtualized,
   containerRef,
   hasRenderableActivity,
@@ -298,7 +336,13 @@ const rowVirtualizer = useVirtualizer({
   enabled: virtualized,
   count: timelineItems.length,
   getScrollElement: () => scrollElementRef.current,
-  estimateSize: (index) => estimateTimelineItemSize(timelineItems[index], density, activeReasoningStepIds),
+  estimateSize: (index) => estimateTimelineItemSize(
+    timelineItems[index],
+    density,
+    activeReasoningStepIds,
+    expandedToolBatchIds,
+    toolCallCollapseThreshold,
+  ),
   getItemKey: (index) => timelineItems[index]?.key ?? index,
   useAnimationFrameWithResizeObserver: true,
   // Use a real initial offset. A maximum-number "scroll to end" sentinel can
@@ -499,6 +543,9 @@ export function RunActivityTimeline({
 }: RunActivityTimelineProps) {
   const [internalCopiedStepId, setInternalCopiedStepId] = useState<string | null>(null);
   const [internalExpandedReasoningStepIds, setInternalExpandedReasoningStepIds] = useState<Record<string, boolean>>({});
+  // Keep expansion above virtual rows so overscan unmounts do not reset a user's choice.
+  const [expandedToolBatchIds, setExpandedToolBatchIds] = useState<Record<string, boolean>>({});
+  const toolCallCollapseThreshold = useRunToolCallCollapseThreshold();
   const isRunActive = ["queued", "preparing", "running"].includes(run.status);
   const activityEntries = useMemo(() => buildActivityEntries(steps, { runActive: isRunActive }), [isRunActive, steps]);
   const activeCopiedStepId = copiedStepId ?? internalCopiedStepId;
@@ -547,6 +594,15 @@ export function RunActivityTimeline({
     [onToggleReasoningStep],
   );
 
+  const toggleToolBatch = useCallback((batchId: string) => {
+    setExpandedToolBatchIds((current) => {
+      const next = { ...current };
+      if (next[batchId]) delete next[batchId];
+      else next[batchId] = true;
+      return next;
+    });
+  }, []);
+
   const timelineItems = useMemo(
     () =>
       buildTimelineRenderItems({
@@ -570,6 +626,8 @@ export function RunActivityTimeline({
     timelineItems,
     density,
     activeReasoningStepIds,
+    expandedToolBatchIds,
+    toolCallCollapseThreshold,
     virtualized,
     containerRef,
     hasRenderableActivity,
@@ -603,6 +661,9 @@ export function RunActivityTimeline({
       activeSubagentFocus,
       onCancelRunShell,
       onSubmitPlanFeedback,
+      toolCallCollapseThreshold,
+      expandedToolBatchIds,
+      onToggleToolBatch: toggleToolBatch,
       endRef,
       endClassName,
     }),
@@ -627,6 +688,9 @@ export function RunActivityTimeline({
       activeSubagentFocus,
       onCancelRunShell,
       onSubmitPlanFeedback,
+      toolCallCollapseThreshold,
+      expandedToolBatchIds,
+      toggleToolBatch,
       endRef,
       endClassName,
     ],

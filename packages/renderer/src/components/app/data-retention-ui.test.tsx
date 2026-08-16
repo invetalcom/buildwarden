@@ -1,12 +1,19 @@
 /** @vitest-environment happy-dom */
 
-import type { DataRetentionCleanupImpact } from "@buildwarden/shared";
+import {
+  DEFAULT_CONSECUTIVE_TOOL_CALL_COLLAPSE_THRESHOLD,
+  MAX_CONSECUTIVE_TOOL_CALL_COLLAPSE_THRESHOLD,
+  MIN_CONSECUTIVE_TOOL_CALL_COLLAPSE_THRESHOLD,
+  parseConsecutiveToolCallCollapseThresholdSetting,
+  type DataRetentionCleanupImpact,
+} from "@buildwarden/shared";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   DataRetentionSettingsControl,
   PastedTextAttachmentThresholdControl,
+  ToolCallCollapseThresholdControl,
 } from "./settings-git-workspace-tab";
 import { StartupDataRetentionDialog } from "./StartupDataRetentionDialog";
 
@@ -197,6 +204,43 @@ describe("pasted-text attachment threshold settings", () => {
     await act(async () => vi.advanceTimersByTimeAsync(400));
     expect(container?.textContent).toContain("Enter a whole number");
     expect(input?.getAttribute("aria-describedby")).toBe("pasted-text-attachment-threshold-error");
+    expect(onThresholdChange).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("consecutive tool-call collapse threshold settings", () => {
+  it("normalizes missing, low, and high persisted values", () => {
+    expect(parseConsecutiveToolCallCollapseThresholdSetting(undefined)).toBe(DEFAULT_CONSECUTIVE_TOOL_CALL_COLLAPSE_THRESHOLD);
+    expect(parseConsecutiveToolCallCollapseThresholdSetting("0")).toBe(MIN_CONSECUTIVE_TOOL_CALL_COLLAPSE_THRESHOLD);
+    expect(parseConsecutiveToolCallCollapseThresholdSetting("1001")).toBe(MAX_CONSECUTIVE_TOOL_CALL_COLLAPSE_THRESHOLD);
+  });
+
+  it("auto-saves a valid threshold and rejects values outside the supported range", async () => {
+    vi.useFakeTimers();
+    const onThresholdChange = vi.fn<(value: number) => Promise<void>>().mockResolvedValue();
+    await render(
+      <ToolCallCollapseThresholdControl
+        busy={false}
+        threshold={DEFAULT_CONSECUTIVE_TOOL_CALL_COLLAPSE_THRESHOLD}
+        onThresholdChange={onThresholdChange}
+      />,
+    );
+
+    const input = container?.querySelector<HTMLInputElement>('input[aria-label="Consecutive tool call collapse threshold"]');
+    await act(async () => {
+      if (!input) return;
+      setInputValue(input, "8");
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(400));
+    expect(onThresholdChange).toHaveBeenCalledWith(8);
+
+    await act(async () => {
+      if (!input) return;
+      setInputValue(input, "1001");
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(400));
+    expect(input?.getAttribute("aria-describedby")).toBe("tool-call-collapse-threshold-error");
+    expect(container?.textContent).toContain("Enter a whole number");
     expect(onThresholdChange).toHaveBeenCalledTimes(1);
   });
 });

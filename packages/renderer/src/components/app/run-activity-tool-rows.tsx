@@ -287,6 +287,100 @@ export const ActivityToolBatchRow = ({
   );
 };
 
+const describeToolBatchMix = (items: ToolBatchSummarizedRow[]): string => {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    counts.set(item.toolName, (counts.get(item.toolName) ?? 0) + item.count);
+  }
+  const ranked = [...counts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+  const visible = ranked.slice(0, 3).map(([toolName, count]) => `${toolName} ×${String(count)}`);
+  if (ranked.length > visible.length) {
+    visible.push(`+${String(ranked.length - visible.length)} more`);
+  }
+  return visible.join("  ·  ");
+};
+
+export const ActivityToolBatchGroup = ({
+  items,
+  totalCount,
+  batchId,
+  collapsible,
+  expanded,
+  run,
+  density,
+  busy,
+  readOnly,
+  onToggle,
+  onCancelRunShell,
+  onOpenWorkspaceFile,
+}: Readonly<{
+  items: ToolBatchSummarizedRow[];
+  totalCount: number;
+  batchId: string;
+  collapsible: boolean;
+  expanded: boolean;
+  run: RunActivityRun;
+  density: RunTimelineDensity;
+  busy: boolean;
+  readOnly: boolean;
+  onToggle: () => void;
+  onCancelRunShell?: (run: RunActivityRun, toolCallId: string) => void;
+  onOpenWorkspaceFile?: (path: string) => void;
+}>) => {
+  const failedCount = items.reduce((count, item) => count + (item.failed ? item.count : 0), 0);
+  const runningCount = items.reduce((count, item) => count + (item.shellStreaming ? item.count : 0), 0);
+  const rowsId = `tool-batch-rows-${batchId}`;
+
+  return (
+    <div className="min-w-0">
+      {collapsible ? (
+        <button
+          type="button"
+          className={cn(
+            "group mb-1 flex w-full min-w-0 items-center gap-2 rounded-md border border-[color:var(--ec-border)] bg-[color:var(--ec-panel-soft)] px-2.5 py-1.5 text-left text-[11px] text-[color:var(--ec-muted)] transition-colors",
+            "hover:border-[color:var(--ec-border-strong)] hover:bg-[color:var(--ec-hover)] hover:text-[color:var(--ec-text)]",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ec-accent-ring)]",
+          )}
+          aria-expanded={expanded}
+          aria-controls={rowsId}
+          aria-label={`${expanded ? "Collapse" : "Expand"} ${String(totalCount)} consecutive tool calls`}
+          onClick={onToggle}
+        >
+          <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 text-[color:var(--ec-faint)] transition-transform", expanded && "rotate-90")} aria-hidden />
+          <span className="shrink-0 font-semibold text-[color:var(--ec-text)]">
+            {totalCount} tool call{totalCount === 1 ? "" : "s"}
+          </span>
+          <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-[color:var(--ec-faint)]">
+            {describeToolBatchMix(items)}
+          </span>
+          {runningCount > 0 ? <span className="shrink-0 text-[10px] font-medium text-[color:var(--ec-accent)]">{runningCount} running</span> : null}
+          {failedCount > 0 ? <span className="shrink-0 text-[10px] font-medium text-[color:var(--ec-danger)]">{failedCount} failed</span> : null}
+          <span className="shrink-0 text-[10px] font-medium text-[color:var(--ec-muted)] group-hover:text-[color:var(--ec-text)]">
+            {expanded ? "Hide" : "Show"}
+          </span>
+        </button>
+      ) : null}
+      {expanded ? (
+        <div id={rowsId} className="agent-tool-stack agent-tool-stack--bare">
+          {items.map((item, index) => (
+            <ActivityToolBatchRow
+              key={`${item.toolName}-${item.detail ?? "detail"}-${String(index)}`}
+              item={item}
+              itemIndex={index}
+              run={run}
+              density={density}
+              busy={busy}
+              readOnly={readOnly}
+              onCancelRunShell={onCancelRunShell}
+              onOpenWorkspaceFile={onOpenWorkspaceFile}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 export type DiffBatchSummarizedRow = {
   id: string;
   title: string;

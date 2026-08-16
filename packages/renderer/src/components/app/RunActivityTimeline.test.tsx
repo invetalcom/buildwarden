@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderWithBuildWardenClient as renderToStaticMarkup } from "../../lib/buildwarden-client-test-utils";
 import { RunActivityTimeline } from "./RunActivityTimeline";
+import { RunToolCallCollapseThresholdProvider } from "../../lib/run-tool-call-collapse-settings";
 import {
   buildActivityEntries,
   buildTimelineRenderItems,
@@ -158,6 +159,31 @@ describe("run activity timeline shaping", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]?.kind).toBe("tool-batch");
     expect(entries[0]?.kind === "tool-batch" ? entries[0].items : []).toHaveLength(2);
+  });
+
+  it("collapses only tool-call streaks that exceed the configured threshold", () => {
+    const steps = ["a.ts", "b.ts", "c.ts"].flatMap((path, index) => [
+      step(`call-${String(index)}`, "tool-call", { callId: String(index), toolName: "read_file", path }),
+      step(`result-${String(index)}`, "tool-result", { callId: String(index), toolName: "read_file", path }),
+    ]);
+    const renderAtThreshold = (threshold: number) => renderToStaticMarkup(
+      <RunToolCallCollapseThresholdProvider threshold={threshold}>
+        <RunActivityTimeline steps={steps} run={{ id: `run-${String(threshold)}`, status: "completed", mode: "code" }} />
+      </RunToolCallCollapseThresholdProvider>,
+    );
+
+    const collapsed = renderAtThreshold(2);
+    expect(collapsed).toContain('aria-label="Expand 3 consecutive tool calls"');
+    expect(collapsed).toContain('aria-expanded="false"');
+    expect(collapsed).toContain("3 tool calls");
+    expect(collapsed).toContain("read_file ×3");
+    expect(collapsed).not.toContain("a.ts");
+
+    const belowLimit = renderAtThreshold(3);
+    expect(belowLimit).not.toContain("consecutive tool calls");
+    expect(belowLimit).toContain("a.ts");
+    expect(belowLimit).toContain("b.ts");
+    expect(belowLimit).toContain("c.ts");
   });
 
   it("marks only workspace-file tool paths as openable", () => {
