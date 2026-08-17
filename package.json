@@ -18,6 +18,7 @@
     "build:linux:appimage": "pnpm --filter @buildwarden/desktop build:linux:appimage",
     "build:linux:deb": "pnpm --filter @buildwarden/desktop build:linux:deb",
     "build:mac": "pnpm --filter @buildwarden/desktop build:mac",
+    "build:web": "pnpm --filter @buildwarden/web build:embedded",
     "build:all": "pnpm --filter @buildwarden/desktop build:all",
     "dev": "pnpm --filter @buildwarden/desktop dev",
     "lint": "pnpm --filter @buildwarden/desktop lint && pnpm --filter @buildwarden/renderer lint && pnpm --filter @buildwarden/web lint",
