@@ -34,7 +34,8 @@ import {
   type ProjectForgeRequestOpenPayload,
   type ProjectLoopAvailability,
   type ProjectSnapshot,
-  type ProjectTaskStatus,
+  type ProjectTaskInput,
+  type UpdateProjectTaskInput,
   type ProjectInsightKind,
   type ProviderExecutionOptions,
   type FollowUpChatOptions,
@@ -2098,7 +2099,7 @@ export const App = () => {
     }
   };
 
-  const createProjectTask = async (projectId: string, input: { title: string; prompt: string }) => {
+  const createProjectTask = async (projectId: string, input: ProjectTaskInput) => {
     await handleAction(async () => {
       if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
@@ -2110,7 +2111,7 @@ export const App = () => {
 
   const updateProjectTask = async (
     taskId: string,
-    input: { title?: string; prompt?: string; status?: ProjectTaskStatus },
+    input: UpdateProjectTaskInput,
   ) => {
     await handleAction(async () => {
       if (!buildwarden) {

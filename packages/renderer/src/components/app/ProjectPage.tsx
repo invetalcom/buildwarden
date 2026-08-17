@@ -6,7 +6,7 @@ import type {
   ProjectLoopAvailability,
   ModelExecutionProfile,
   ProjectSnapshot,
-  ProjectTaskStatus,
+  ProjectTaskInput,
   ProviderType,
   RunRecord,
   RunMode,
@@ -14,6 +14,7 @@ import type {
   RunWorkspaceType,
   SupportedIdeKind,
   UnifiedProviderFamily,
+  UpdateProjectTaskInput,
 } from "@buildwarden/shared";
 import { Suspense, lazy, useMemo } from "react";
 import { cn } from "../../lib/cn";
@@ -49,8 +50,8 @@ interface ProjectPageProps {
   projectRunStats: ProjectRunStats;
   busy: boolean;
   onSubmitRun: (payload: { attachments?: import("@buildwarden/shared").ChatAttachmentPayload[] }) => void | Promise<void>;
-  onCreateTask: (input: { title: string; prompt: string }) => void | Promise<void>;
-  onUpdateTask: (taskId: string, input: { title?: string; prompt?: string; status?: ProjectTaskStatus }) => void | Promise<void>;
+  onCreateTask: (input: ProjectTaskInput) => void | Promise<void>;
+  onUpdateTask: (taskId: string, input: UpdateProjectTaskInput) => void | Promise<void>;
   onDeleteTask: (taskId: string) => void | Promise<void>;
   onStartTask: (taskId: string, prompt: string, modelId: string) => void | Promise<void>;
   onGenerateInsight: (kind: ProjectInsightKind, modelId?: string) => Promise<void>;

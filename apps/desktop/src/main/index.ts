@@ -582,7 +582,8 @@ const bootstrap = async (): Promise<void> => {
       Number(args[0].cols) <= 500 && Number(args[0].rows) >= 2 && Number(args[0].rows) <= 300,
   );
   const validateProjectTaskCreate = defineRemoteArgsValidator<"createProjectTask">(
-    (args) => args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["title", "prompt"]),
+    (args) => args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["title", "prompt"]) &&
+      isRemoteRecord(args[1]) && (args[1].attachments === undefined || Array.isArray(args[1].attachments)),
   );
   const validateProjectTaskUpdate = defineRemoteArgsValidator<"updateProjectTask">((args) => {
     if (args.length !== 2 || typeof args[0] !== "string" || !isRemoteRecord(args[1])) return false;
@@ -590,6 +591,7 @@ const bootstrap = async (): Promise<void> => {
     const statuses = new Set(["open", "in_progress", "in_review", "done"]);
     return (input.title === undefined || typeof input.title === "string") &&
       (input.prompt === undefined || typeof input.prompt === "string") &&
+      (input.attachments === undefined || Array.isArray(input.attachments)) &&
       (input.status === undefined || (typeof input.status === "string" && statuses.has(input.status)));
   });
   const validateProjectTaskPrompt = defineRemoteArgsValidator<"generateProjectTaskRunPrompt">(

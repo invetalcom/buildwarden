@@ -21,6 +21,7 @@ import {
   AppController,
   latestRunExecutionSettings,
   latestUserTurnUsedFullAccess,
+  mergeProjectTaskRunAttachments,
   mergeOrchestrationExecutionOptions,
   resolveOrchestrationChildFullAccess,
 } from "./app-controller";
@@ -63,10 +64,13 @@ const task = {
   projectId: project.id,
   title: "Task",
   prompt: "Prompt",
+  attachments: [],
   status: "open",
   runId: null,
   pullRequestUrl: null,
-} as ProjectTaskRecord;
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+} satisfies ProjectTaskRecord;
 
 type DbOverrides = Partial<Record<keyof BuildWardenDatabase, unknown>>;
 
@@ -172,6 +176,15 @@ const createMutableProjectHarness = () => {
 };
 
 describe("AppController settings and lightweight workflows", () => {
+  it("combines task and launch attachments without sending duplicates to a run", () => {
+    const taskAttachment = { fileName: "design.png", mimeType: "image/png", dataBase64: "AA==" };
+    const launchAttachment = { fileName: "notes.md", mimeType: "text/markdown", dataBase64: "Iw==" };
+    expect(mergeProjectTaskRunAttachments([taskAttachment], [taskAttachment, launchAttachment])).toEqual([
+      taskAttachment,
+      launchAttachment,
+    ]);
+  });
+
   it("commits open run changes before creating a pull request", async () => {
     const run = {
       id: "run-1",
@@ -1780,9 +1793,12 @@ describe("AppController settings and lightweight workflows", () => {
 
     await expect(harness.controller.createProjectTask(project.id, { title: " ", prompt: "prompt" })).rejects.toThrow("title");
     await expect(harness.controller.createProjectTask(project.id, { title: "title", prompt: " " })).rejects.toThrow("prompt");
-    await expect(harness.controller.createProjectTask(project.id, { title: " Title ", prompt: " Prompt " })).resolves.toMatchObject({ title: "Title", prompt: "Prompt" });
+    await expect(harness.controller.createProjectTask(project.id, { title: "title", prompt: "prompt", attachments: [{ fileName: "", mimeType: "image/png", dataBase64: "AA==" }] })).rejects.toThrow("file name");
+    const attachment = { fileName: "design.png", mimeType: "image/png", dataBase64: "AA==" };
+    await expect(harness.controller.createProjectTask(project.id, { title: " Title ", prompt: " Prompt ", attachments: [attachment] })).resolves.toMatchObject({ title: "Title", prompt: "Prompt", attachments: [attachment] });
     await expect(harness.controller.updateProjectTask(task.id, { title: " Updated " })).resolves.toMatchObject({ title: "Updated", prompt: task.prompt });
     await expect(harness.controller.updateProjectTask(task.id, { status: "in_progress" })).resolves.toMatchObject({ status: "in_progress" });
+    await expect(harness.controller.updateProjectTask(task.id, { attachments: [attachment] })).resolves.toMatchObject({ attachments: [attachment] });
     await expect(harness.controller.updateProjectTask(task.id, { status: "invalid" as "open" })).rejects.toThrow("Unsupported");
     await expect(harness.controller.updateProjectTask(task.id, { title: " " })).rejects.toThrow("title");
     await expect(harness.controller.updateProjectTask(task.id, { prompt: " " })).rejects.toThrow("prompt");

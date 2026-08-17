@@ -23,6 +23,7 @@ const ROUND_TRIP: MobileRoute[] = [
   { name: "project", projectId: "proj-1", tab: "branches" },
   { name: "new-run" },
   { name: "new-run", projectId: "proj-1" },
+  { name: "new-run", projectId: "proj-1", taskId: "task-1" },
   { name: "settings" },
   { name: "settings", section: "models" },
 ];

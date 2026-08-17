@@ -13,6 +13,7 @@ const inProgressTask: ProjectTaskRecord = {
   projectId: "project-1",
   title: "Improve runtime",
   prompt: "Reduce startup time",
+  attachments: [{ fileName: "design.png", mimeType: "image/png", dataBase64: "AA==" }],
   status: "in_progress",
   runId: "run-2",
   pullRequestUrl: null,
@@ -69,6 +70,7 @@ describe("project task run actions", () => {
     const taskDialog = container.querySelector<HTMLElement>('[role="dialog"][aria-labelledby="view-task-title"]');
     const dialogButtons = [...(taskDialog?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
     expect(dialogButtons.some((button) => button.textContent?.trim() === "Edit")).toBe(false);
+    expect(taskDialog?.textContent).toContain("design.png");
 
     await act(async () => dialogButtons.find((button) => button.textContent?.trim() === "Open run")?.click());
     expect(onOpenRun).toHaveBeenCalledOnce();

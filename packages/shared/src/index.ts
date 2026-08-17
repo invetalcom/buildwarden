@@ -848,6 +848,8 @@ export interface ProjectTaskRecord {
   projectId: string;
   title: string;
   prompt: string;
+  /** Files stored with the task and forwarded whenever a run is launched from it. */
+  attachments: ChatAttachmentPayload[];
   status: ProjectTaskStatus;
   /** Most recent run launched from this task. */
   runId: string | null;
@@ -860,11 +862,14 @@ export interface ProjectTaskRecord {
 export interface ProjectTaskInput {
   title: string;
   prompt: string;
+  attachments?: ChatAttachmentPayload[];
 }
 
 export interface UpdateProjectTaskInput {
   title?: string;
   prompt?: string;
+  /** Replaces the task's attachments; an empty array removes all files. */
+  attachments?: ChatAttachmentPayload[];
   status?: ProjectTaskStatus;
 }
 

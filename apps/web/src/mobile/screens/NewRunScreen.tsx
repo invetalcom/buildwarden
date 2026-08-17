@@ -9,6 +9,7 @@ import { createNewRunsIndependently } from "../lib/new-run-creation";
 import { reconcileNewRunModelIds, resolveNewRunDefaults } from "../lib/new-run-defaults";
 import { AppBar } from "../components/AppBar";
 import { Button, EmptyState, InlineError, Textarea, Toggle } from "../components/primitives";
+import { MobileStoredAttachments } from "../components/TaskAttachments";
 import { cn } from "../lib/cn";
 
 const MODES: { value: RunMode; label: string; hint: string }[] = [
@@ -90,13 +91,14 @@ const mobileControlSummaryLabel = (control: ModelExecutionControl, value: string
  * into one dense row; on a phone the prompt gets the whole first screen and everything else lives
  * under a collapsed "Options" section, which is what a user changes least often.
  */
-export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
+export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId?: string }) => {
   const { client, snapshot, snapshotStore, router } = useMobileApp();
   const action = useAction();
 
   const models = useMemo(() => runModelOptions(snapshot), [snapshot]);
   const [selectedProjectId, setSelectedProjectId] = useState(projectId ?? defaultProjectId(snapshot) ?? "");
   const project = snapshot.projects.find((entry) => entry.project.id === selectedProjectId) ?? null;
+  const task = project?.tasks.find((entry) => entry.id === taskId) ?? null;
   const projectKind: ProjectKind = project?.project.kind ?? "git";
 
   const defaults = useMemo(
@@ -111,7 +113,7 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
     [models, projectKind, selectedProjectId, snapshot],
   );
 
-  const [prompt, setPrompt] = useState("");
+  const [prompt, setPrompt] = useState(task?.prompt ?? "");
   const [modelIds, setModelIds] = useState(defaults.modelIds);
   const [modelConfigurations, setModelConfigurations] = useState<Record<string, RunModelConfiguration>>(defaults.modelConfigurations);
   const [activeModelId, setActiveModelId] = useState<string | null>(null);
@@ -124,6 +126,13 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
   const [executionMode, setExecutionMode] = useState(defaults.executionMode);
   const [delegation, setDelegation] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const hydratedTaskIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!task || hydratedTaskIdRef.current === task.id) return;
+    hydratedTaskIdRef.current = task.id;
+    setPrompt(task.prompt);
+  }, [task]);
 
   // The screen can mount before the first snapshot arrives (a reload straight onto this route), so
   // there may be no project to read defaults from yet. Adopt the host's project once it shows up;
@@ -288,6 +297,7 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
             delegationEnabled: delegation,
             baseBranch: project.project.baseBranch,
             prompt: prompt.trim(),
+            ...(task ? { projectTaskId: task.id } : {}),
             ...buildRunReasoningInput(
               selectedModel.providerType,
               selectedModel.providerFamily,
@@ -325,14 +335,19 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
     );
   }
 
+  if (taskId && snapshotStore.loaded && !task) {
+    return <><AppBar title="Start task" onBack={router.back} /><EmptyState title="Task unavailable" message="It may have been removed on the host." /></>;
+  }
+
   return (
     <>
-      <AppBar title="New run" onBack={router.back} />
+      <AppBar title={task ? "Start task" : "New run"} subtitle={task?.title} onBack={router.back} />
 
       <div className="m-scroll m-screen-enter flex-1">
         {action.error ? <InlineError message={action.error} /> : null}
 
         <div className="px-4 pt-3">
+          {task?.attachments.length ? <div className="mb-3"><p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Task attachments</p><MobileStoredAttachments attachments={task.attachments} /></div> : null}
           <Textarea
             autoFocus
             rows={7}
@@ -348,8 +363,9 @@ export const NewRunScreen = ({ projectId }: { projectId?: string }) => {
             <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Project</span>
             <select
               value={selectedProjectId}
+              disabled={Boolean(task)}
               onChange={(event) => setSelectedProjectId(event.target.value)}
-              className="m-tap w-full rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-3 text-[var(--ec-text)]"
+              className="m-tap w-full rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-3 text-[var(--ec-text)] disabled:opacity-60"
             >
               {snapshot.projects.map((entry) => (
                 <option key={entry.project.id} value={entry.project.id}>

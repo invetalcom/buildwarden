@@ -368,6 +368,22 @@ export const resolveOrchestrationChildFullAccess = (
   // Before child settings were persisted, only implementation tasks inherited Full Access.
   return taskIntent === "implement" && latestUserTurnUsedFullAccess(coordinatorSteps);
 };
+
+export const mergeProjectTaskRunAttachments = (
+  taskAttachments: ChatAttachmentPayload[],
+  runAttachments: ChatAttachmentPayload[] | undefined,
+): ChatAttachmentPayload[] | undefined => {
+  if (taskAttachments.length === 0) return runAttachments;
+  if (!runAttachments?.length) return taskAttachments;
+  const seen = new Set<string>();
+  return [...taskAttachments, ...runAttachments].filter((attachment) => {
+    const key = `${attachment.fileName}\u0000${attachment.mimeType}\u0000${attachment.dataBase64}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
 const normalizeAssistantOutputText = (value: string) => value.replace(/\s+/g, " ").trim();
 const normalizeRunGoalText = (value: string | null | undefined): string | null => {
   if (typeof value !== "string") {
@@ -2932,9 +2948,10 @@ export class AppController
 
   async createRun(input: RunInput): Promise<RunRecord> {
     const project = this.db.getProject(input.projectId);
+    let projectTask: ProjectTaskRecord | null = null;
     if (input.projectTaskId) {
-      const task = this.db.getProjectTask(input.projectTaskId);
-      if (task.projectId !== project.id) {
+      projectTask = this.db.getProjectTask(input.projectTaskId);
+      if (projectTask.projectId !== project.id) {
         throw new Error("The selected task does not belong to this project.");
       }
     }
@@ -2948,9 +2965,12 @@ export class AppController
       throw new Error("The provider API key could not be resolved from secure storage.");
     }
 
-    validateChatAttachmentPayloads(input.attachments);
+    const initialAttachments = projectTask
+      ? mergeProjectTaskRunAttachments(projectTask.attachments, input.attachments)
+      : input.attachments;
+    validateChatAttachmentPayloads(initialAttachments);
     const userText = input.prompt.trim();
-    const attachmentNames = input.attachments?.map((a) => a.fileName) ?? [];
+    const attachmentNames = initialAttachments?.map((a) => a.fileName) ?? [];
     if (!userText && attachmentNames.length === 0) {
       throw new Error("Enter a task description or attach at least one file.");
     }
@@ -2959,7 +2979,7 @@ export class AppController
     const goalText = normalizeRunGoalText(input.goalText);
     const initialPromptForHarness = buildPromptWithRunGoal(displayPrompt, goalText);
 
-    const { attachments: initialAttachments, ...runInsertInput } = input;
+    const runInsertInput = input;
 
     const workspaceType = input.workspaceType ?? (project.kind === "folder" ? "copy" : "worktree");
     const workspaceVcs: RunWorkspaceVcs = project.kind === "folder" ? "folder" : "git";
@@ -3663,8 +3683,9 @@ export class AppController
     if (!prompt) {
       throw new Error("Enter a task prompt.");
     }
+    validateChatAttachmentPayloads(input.attachments);
     this.db.getProject(projectId);
-    const task = this.db.createProjectTask(projectId, { title, prompt });
+    const task = this.db.createProjectTask(projectId, { title, prompt, attachments: input.attachments });
     this.events.publish("task", { projectId: task.projectId, taskId: task.id, status: task.status });
     return task;
   }
@@ -3679,11 +3700,12 @@ export class AppController
     if (!prompt) {
       throw new Error("Enter a task prompt.");
     }
+    validateChatAttachmentPayloads(input.attachments);
     const status = input.status ?? existing.status;
     if (!(status === "open" || status === "in_progress" || status === "in_review" || status === "done")) {
       throw new Error(`Unsupported project task status: ${String(status)}`);
     }
-    const task = this.db.updateProjectTask(taskId, { title, prompt, status });
+    const task = this.db.updateProjectTask(taskId, { title, prompt, status, attachments: input.attachments });
     this.events.publish("task", { projectId: task.projectId, taskId: task.id, status: task.status });
     return task;
   }

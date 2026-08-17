@@ -109,7 +109,7 @@ const CurrentScreen = () => {
     case "search":
       return <SearchScreen />;
     case "new-run":
-      return <NewRunScreen projectId={route.projectId} />;
+      return <NewRunScreen projectId={route.projectId} taskId={route.taskId} />;
     case "settings":
       return <SettingsScreen section={route.section} />;
   }
