@@ -247,7 +247,7 @@ const TaskViewDialog = ({ task, busy, hasModels, canManageTasks, canStartRuns, o
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-zinc-800 px-5 py-3">
           <div>{task.pullRequestUrl ? <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs text-zinc-400" onClick={() => void buildwarden.openExternalUrl(task.pullRequestUrl!)}><ExternalLink className="h-3.5 w-3.5" />Open linked PR/MR</Button> : null}</div>
           <div className="flex items-center gap-2">
-            {canManageTasks ? <Button type="button" variant="secondary" size="sm" className="h-8 px-3 text-xs" onClick={() => onEdit(task)}><Pencil className="h-3.5 w-3.5" />Edit</Button> : null}
+            {canManageTasks && task.status === "open" ? <Button type="button" variant="secondary" size="sm" className="h-8 px-3 text-xs" onClick={() => onEdit(task)}><Pencil className="h-3.5 w-3.5" />Edit</Button> : null}
             {task.status !== "open" && canStartRuns ? <Button type="button" variant="secondary" size="sm" className="h-8 px-3 text-xs" disabled={busy || !hasModels} onClick={() => onLaunch(task)}><RefreshCw className="h-3.5 w-3.5" />Re-run</Button> : null}
             {task.status === "open" && canStartRuns ? <Button type="button" size="sm" className="h-8 px-3 text-xs" disabled={busy || !hasModels} onClick={() => onLaunch(task)}><Play className="h-3.5 w-3.5" />Start run</Button> : null}
             {task.status !== "open" && linkedRunId ? <Button type="button" size="sm" className="h-8 px-3 text-xs" onClick={() => onOpenRun(linkedRunId)}><ExternalLink className="h-3.5 w-3.5" />Open run</Button> : null}
