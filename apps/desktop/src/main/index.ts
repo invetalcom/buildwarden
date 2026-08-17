@@ -1195,8 +1195,6 @@ const bootstrap = async (): Promise<void> => {
     });
     return remoteAccessSync;
   };
-  await syncRemoteAccessServer();
-
   ipcMain.handle(IPC_CHANNELS.getSnapshot, () => remoteOperations.invoke("getSnapshot", []));
   ipcMain.handle(IPC_CHANNELS.getRemoteAccessStatus, async () => {
     const info = remoteAccessServer?.getInfo() ?? null;
@@ -1581,6 +1579,12 @@ const bootstrap = async (): Promise<void> => {
     dbReadyAfterMs: dbReadyAt - bootStartedAt,
     handlersReadyAfterMs: Date.now() - bootStartedAt,
     processUptimeMs: Math.round(process.uptime() * 1000),
+  });
+  void syncRemoteAccessServer().catch((error) => {
+    // Remote access is optional and Tailscale CLI operations can take longer
+    // than the renderer's early IPC retry window. Keep desktop startup usable
+    // while remote access initializes in the background.
+    logWarn("Remote access startup synchronization failed; standalone Electron mode remains available.", { error });
   });
   await refreshProjectForgePrMonitors(controller);
 };
