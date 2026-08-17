@@ -445,7 +445,12 @@ describe("renderer component states", () => {
     const taskMarkup = renderToStaticMarkup(
       <ProjectTasksTab
         projectId="project-1"
-        tasks={[{ id: "task-1", projectId: "project-1", title: "Raise quality", prompt: "Add tests", status: "open", runId: null, pullRequestUrl: null, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" }]}
+        tasks={[
+          { id: "task-1", projectId: "project-1", title: "Raise quality", prompt: "Add tests", status: "open", runId: null, pullRequestUrl: null, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+          { id: "task-2", projectId: "project-1", title: "Improve runtime", prompt: "Reduce startup time", status: "in_progress", runId: "run-2", pullRequestUrl: null, createdAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
+          { id: "task-3", projectId: "project-1", title: "Review output", prompt: "Check the generated patch", status: "in_review", runId: "run-3", pullRequestUrl: null, createdAt: "2026-01-03T00:00:00.000Z", updatedAt: "2026-01-03T00:00:00.000Z" },
+          { id: "task-4", projectId: "project-1", title: "Ship release", prompt: "Complete the release", status: "done", runId: "run-4", pullRequestUrl: null, createdAt: "2026-01-04T00:00:00.000Z", updatedAt: "2026-01-04T00:00:00.000Z" },
+        ]}
         modelOptions={modelOptions}
         defaultTaskModelId="model-1"
         busy={false}
@@ -453,6 +458,7 @@ describe("renderer component states", () => {
         onUpdateTask={vi.fn()}
         onDeleteTask={vi.fn()}
         onStartTask={vi.fn()}
+        onOpenRun={vi.fn()}
       />,
     );
     expect(taskMarkup).toContain("Raise quality");
@@ -461,6 +467,10 @@ describe("renderer component states", () => {
     expect(taskMarkup).toContain("In Progress");
     expect(taskMarkup).toContain("In Review");
     expect(taskMarkup).toContain("Done");
+    expect(taskMarkup.match(/Start run/g)).toHaveLength(1);
+    expect(taskMarkup.match(/Open run/g)).toHaveLength(3);
+    expect(taskMarkup.match(/Re-run task/g)).toHaveLength(3);
+    expect(taskMarkup.match(/title="Edit task"/g)).toHaveLength(1);
 
     const remoteTaskMarkup = renderToStaticMarkup(
       <ProjectTasksTab
@@ -473,6 +483,7 @@ describe("renderer component states", () => {
         onUpdateTask={vi.fn()}
         onDeleteTask={vi.fn()}
         onStartTask={vi.fn()}
+        onOpenRun={vi.fn()}
       />,
       {} as DesktopApi,
       remoteRunCapabilities,

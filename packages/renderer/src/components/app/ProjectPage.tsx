@@ -253,6 +253,7 @@ export const ProjectPage = ({
           onUpdateTask={onUpdateTask}
           onDeleteTask={onDeleteTask}
           onStartTask={onStartTask}
+          onOpenRun={onSelectRun}
         />
       ) : null}
 
