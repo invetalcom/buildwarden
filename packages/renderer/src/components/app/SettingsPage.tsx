@@ -75,6 +75,7 @@ interface SettingsPageProps {
   dataRetentionCleanupEnabled: boolean;
   dataRetentionCleanupDays: number;
   pastedTextAttachmentThreshold: number;
+  consecutiveToolCallCollapseThreshold: number;
   recentRunDays: number;
   uiTheme: UiTheme;
   sidebarContrast: boolean;
@@ -105,6 +106,7 @@ interface SettingsPageProps {
   onDataRetentionCleanupEnabledChange: (value: boolean) => void;
   onDataRetentionCleanupDaysChange: (value: number) => void | Promise<void>;
   onPastedTextAttachmentThresholdChange: (value: number) => void | Promise<void>;
+  onConsecutiveToolCallCollapseThresholdChange: (value: number) => void | Promise<void>;
   onRecentRunDaysChange: (value: number) => void | Promise<void>;
   onUiThemeChange: (theme: UiTheme) => void;
   onSidebarContrastChange: (value: boolean) => void;
@@ -196,6 +198,7 @@ export const SettingsPage = ({
   dataRetentionCleanupEnabled,
   dataRetentionCleanupDays,
   pastedTextAttachmentThreshold,
+  consecutiveToolCallCollapseThreshold,
   recentRunDays,
   uiTheme,
   sidebarContrast,
@@ -226,6 +229,7 @@ export const SettingsPage = ({
   onDataRetentionCleanupEnabledChange,
   onDataRetentionCleanupDaysChange,
   onPastedTextAttachmentThresholdChange,
+  onConsecutiveToolCallCollapseThresholdChange,
   onRecentRunDaysChange,
   onUiThemeChange,
   onSidebarContrastChange,
@@ -526,6 +530,7 @@ export const SettingsPage = ({
           dataRetentionCleanupEnabled={dataRetentionCleanupEnabled}
           dataRetentionCleanupDays={dataRetentionCleanupDays}
           pastedTextAttachmentThreshold={pastedTextAttachmentThreshold}
+          consecutiveToolCallCollapseThreshold={consecutiveToolCallCollapseThreshold}
           worktreeRootDraft={worktreeRootDraft}
           worktreeRootOverrideSettingValue={worktreeRootOverrideSettingValue}
           worktreeRootDirty={worktreeRootDirty}
@@ -543,6 +548,7 @@ export const SettingsPage = ({
           onDataRetentionCleanupEnabledChange={onDataRetentionCleanupEnabledChange}
           onDataRetentionCleanupDaysChange={onDataRetentionCleanupDaysChange}
           onPastedTextAttachmentThresholdChange={onPastedTextAttachmentThresholdChange}
+          onConsecutiveToolCallCollapseThresholdChange={onConsecutiveToolCallCollapseThresholdChange}
           onProjectNameChange={onProjectNameChange}
           onProjectPathChange={onProjectPathChange}
           onWorktreeRootDraftChange={setWorktreeRootDraft}

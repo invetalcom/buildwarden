@@ -166,10 +166,15 @@ export type TimelineRenderItem =
     };
 
 
+export const getToolBatchStableId = (entry: Extract<ActivityEntry, { kind: "tool-batch" }>): string => {
+  const first = entry.items[0];
+  return first?.callStep?.id ?? first?.resultStep?.id ?? "empty-tool-batch";
+};
+
 const getActivityEntryKey = (entry: ActivityEntry, index: number) => {
   if (entry.kind === "tool-batch") {
-    const first = entry.items[0];
-    const id = first?.callStep?.id ?? first?.resultStep?.id ?? `tool-batch-${index}`;
+    const stableId = getToolBatchStableId(entry);
+    const id = stableId === "empty-tool-batch" ? `tool-batch-${index}` : stableId;
     return `${id}-tools`;
   }
   if (entry.kind === "diff-batch") {

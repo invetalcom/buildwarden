@@ -4582,6 +4582,8 @@ export const APP_SETTING_KEYS = {
   dataRetentionCleanupDays: "dataRetentionCleanupDays",
   /** Character count at which pasted text becomes an in-memory `.txt` attachment. */
   pastedTextAttachmentThreshold: "pastedTextAttachmentThreshold",
+  /** Collapse consecutive run timeline tool calls after this many visible calls. */
+  consecutiveToolCallCollapseThreshold: "consecutiveToolCallCollapseThreshold",
   /** Optional absolute directory used as the parent root for app-managed worktrees. Blank = default sibling-folder logic. */
   worktreeRootOverride: "worktreeRootOverride",
   enableDevMode: "enableDevMode",
@@ -4677,6 +4679,9 @@ export const MAX_DATA_RETENTION_CLEANUP_DAYS = 36_500;
 export const DEFAULT_PASTED_TEXT_ATTACHMENT_THRESHOLD = 2_000;
 export const MIN_PASTED_TEXT_ATTACHMENT_THRESHOLD = 1;
 export const MAX_PASTED_TEXT_ATTACHMENT_THRESHOLD = CHAT_ATTACHMENT_LIMITS.maxEmbeddedTextChars;
+export const DEFAULT_CONSECUTIVE_TOOL_CALL_COLLAPSE_THRESHOLD = 5;
+export const MIN_CONSECUTIVE_TOOL_CALL_COLLAPSE_THRESHOLD = 1;
+export const MAX_CONSECUTIVE_TOOL_CALL_COLLAPSE_THRESHOLD = 1_000;
 
 export type RunTimelineDensity = "compact" | "comfortable" | "detailed";
 
@@ -4751,6 +4756,22 @@ export const parsePastedTextAttachmentThresholdSetting = (raw: string | number |
   return Math.min(
     MAX_PASTED_TEXT_ATTACHMENT_THRESHOLD,
     Math.max(MIN_PASTED_TEXT_ATTACHMENT_THRESHOLD, Math.round(parsed)),
+  );
+};
+
+export const parseConsecutiveToolCallCollapseThresholdSetting = (
+  raw: string | number | undefined | null,
+): number => {
+  if (raw == null || (typeof raw === "string" && raw.trim() === "")) {
+    return DEFAULT_CONSECUTIVE_TOOL_CALL_COLLAPSE_THRESHOLD;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_CONSECUTIVE_TOOL_CALL_COLLAPSE_THRESHOLD;
+  }
+  return Math.min(
+    MAX_CONSECUTIVE_TOOL_CALL_COLLAPSE_THRESHOLD,
+    Math.max(MIN_CONSECUTIVE_TOOL_CALL_COLLAPSE_THRESHOLD, Math.round(parsed)),
   );
 };
 

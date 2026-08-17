@@ -8,6 +8,7 @@ import {
   getAiSdkProviderFamilyFromConfigJson,
   DEFAULT_ADD_MODEL_DRAFT,
   DEFAULT_SHELL_ALLOWLIST_PATTERN_SOURCES,
+  parseConsecutiveToolCallCollapseThresholdSetting,
   parseDataRetentionCleanupDaysSetting,
   parsePastedTextAttachmentThresholdSetting,
   parseRecentRunDaysSetting,
@@ -158,6 +159,7 @@ import { useStableCallback } from "./lib/use-stable-callback";
 import { reportRendererError, reportRendererLog } from "./lib/report-renderer-error";
 import { useBuildWardenClient } from "./lib/buildwarden-client";
 import { PastedTextAttachmentThresholdProvider } from "./lib/pasted-text-attachment-settings";
+import { RunToolCallCollapseThresholdProvider } from "./lib/run-tool-call-collapse-settings";
 
 const isLocalProviderType = (type: ProviderType): boolean =>
   type === "codex-cli" || type === "claude-code" || type === "cursor-agent";
@@ -1361,6 +1363,9 @@ export const App = () => {
   const dataRetentionCleanupDays = parseDataRetentionCleanupDaysSetting(snapshot.settings[APP_SETTING_KEYS.dataRetentionCleanupDays]);
   const pastedTextAttachmentThreshold = parsePastedTextAttachmentThresholdSetting(
     snapshot.settings[APP_SETTING_KEYS.pastedTextAttachmentThreshold],
+  );
+  const consecutiveToolCallCollapseThreshold = parseConsecutiveToolCallCollapseThresholdSetting(
+    snapshot.settings[APP_SETTING_KEYS.consecutiveToolCallCollapseThreshold],
   );
   const recentRunDays = parseRecentRunDaysSetting(snapshot.settings[APP_SETTING_KEYS.recentRunDays]);
   const uiTheme = parseUiTheme(snapshot.settings);
@@ -3733,6 +3738,7 @@ export const App = () => {
               dataRetentionCleanupEnabled={dataRetentionCleanupEnabled}
               dataRetentionCleanupDays={dataRetentionCleanupDays}
               pastedTextAttachmentThreshold={pastedTextAttachmentThreshold}
+              consecutiveToolCallCollapseThreshold={consecutiveToolCallCollapseThreshold}
               recentRunDays={recentRunDays}
               uiTheme={uiTheme}
               sidebarContrast={sidebarContrast}
@@ -3776,6 +3782,16 @@ export const App = () => {
                   await buildwarden.setAppSetting(
                     APP_SETTING_KEYS.pastedTextAttachmentThreshold,
                     String(parsePastedTextAttachmentThresholdSetting(value)),
+                  );
+                  await loadSnapshot();
+                })
+              }
+              onConsecutiveToolCallCollapseThresholdChange={(value) =>
+                void handleAction(async () => {
+                  if (!buildwarden) throw new Error("The Electron desktop bridge is unavailable.");
+                  await buildwarden.setAppSetting(
+                    APP_SETTING_KEYS.consecutiveToolCallCollapseThreshold,
+                    String(parseConsecutiveToolCallCollapseThresholdSetting(value)),
                   );
                   await loadSnapshot();
                 })
@@ -4415,9 +4431,11 @@ export const App = () => {
               </div>
             }
           >
-          <PastedTextAttachmentThresholdProvider threshold={pastedTextAttachmentThreshold}>
-            {renderMainContent()}
-          </PastedTextAttachmentThresholdProvider>
+          <RunToolCallCollapseThresholdProvider threshold={consecutiveToolCallCollapseThreshold}>
+            <PastedTextAttachmentThresholdProvider threshold={pastedTextAttachmentThreshold}>
+              {renderMainContent()}
+            </PastedTextAttachmentThresholdProvider>
+          </RunToolCallCollapseThresholdProvider>
 
           </Suspense>
         </section>
