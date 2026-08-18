@@ -1121,7 +1121,12 @@ const bootstrap = async (): Promise<void> => {
 
   let remoteAccessServer: RemoteAccessServer | null = null;
   let remoteAccessSync = Promise.resolve();
+  let appShutdownStarted = false;
+  let appShutdownComplete = false;
   const syncRemoteAccessServer = (): Promise<void> => {
+    if (appShutdownStarted) {
+      return Promise.reject(new Error("Remote access is unavailable while BuildWarden is shutting down."));
+    }
     remoteAccessSync = remoteAccessSync.catch(() => undefined).then(async () => {
       const enabled = parseRemoteAccessEnabledSetting(db.getSettings()[APP_SETTING_KEYS.remoteAccessEnabled]);
       if (!enabled) {
@@ -1550,23 +1555,40 @@ const bootstrap = async (): Promise<void> => {
 
   registerHostEventIpc(hostEvents, () => mainWindow);
   registerRunTerminalIpc(hostTerminal, desktopPlatform);
-  app.on("before-quit", () => {
-    void disposeWorktreeDiffWorker();
-    void remoteAccessServer?.stop().catch((error) => {
-      logWarn("Remote access server did not stop cleanly.", { error });
-    });
-    hostTerminal.disposeAll();
-    hostBrowser.disposeAll();
-    activeHostBrowser = null;
-    for (const state of projectForgeMonitorStates.values()) {
-      clearInterval(state.timer);
-    }
-    projectForgeMonitorStates.clear();
-    try {
-      db.flushToDiskSync();
-    } catch (error) {
-      logError("Failed to flush database during shutdown.", { error });
-    }
+  app.on("before-quit", (event) => {
+    if (appShutdownComplete) return;
+    event.preventDefault();
+    if (appShutdownStarted) return;
+    appShutdownStarted = true;
+
+    void (async () => {
+      await remoteAccessSync.catch((error) => {
+        logWarn("Remote access synchronization did not finish cleanly during shutdown.", { error });
+      });
+      await disposeWorktreeDiffWorker();
+      if (remoteAccessServer) {
+        try {
+          await remoteAccessServer.stop();
+          remoteAccessServer = null;
+        } catch (error) {
+          logWarn("Remote access server did not stop cleanly.", { error });
+        }
+      }
+      hostTerminal.disposeAll();
+      hostBrowser.disposeAll();
+      activeHostBrowser = null;
+      for (const state of projectForgeMonitorStates.values()) {
+        clearInterval(state.timer);
+      }
+      projectForgeMonitorStates.clear();
+      try {
+        db.flushToDiskSync();
+      } catch (error) {
+        logError("Failed to flush database during shutdown.", { error });
+      }
+      appShutdownComplete = true;
+      app.quit();
+    })();
   });
 
   hostEvents.subscribe("run", (event) => {
