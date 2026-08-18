@@ -116,6 +116,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
   const [taskDetail, setTaskDetail] = useState<ProjectTaskRecord | null>(null);
   const [taskLoadError, setTaskLoadError] = useState<string | null>(null);
   const [prompt, setPrompt] = useState(taskSummary?.prompt ?? "");
+  const editedPromptTaskIdRef = useRef<string | null>(null);
   const [modelIds, setModelIds] = useState(defaults.modelIds);
   const [modelConfigurations, setModelConfigurations] = useState<Record<string, RunModelConfiguration>>(defaults.modelConfigurations);
   const [activeModelId, setActiveModelId] = useState<string | null>(null);
@@ -129,9 +130,14 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
   const [delegation, setDelegation] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
   useEffect(() => {
+    editedPromptTaskIdRef.current = null;
+    setTaskDetail(null);
+    setTaskLoadError(null);
+    setPrompt("");
+  }, [taskId]);
+
+  useEffect(() => {
     if (!taskId) {
-      setTaskDetail(null);
-      setTaskLoadError(null);
       return;
     }
     let cancelled = false;
@@ -139,7 +145,9 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
       if (cancelled) return;
       setTaskDetail(detail);
       setTaskLoadError(null);
-      setPrompt(detail.prompt);
+      if (editedPromptTaskIdRef.current !== taskId) {
+        setPrompt(detail.prompt);
+      }
     }).catch((caught: unknown) => {
       if (!cancelled) setTaskLoadError(caught instanceof Error ? caught.message : "Could not load task attachments.");
     });
@@ -365,7 +373,10 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
             autoFocus
             rows={7}
             value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
+            onChange={(event) => {
+              if (taskId) editedPromptTaskIdRef.current = taskId;
+              setPrompt(event.target.value);
+            }}
             placeholder="What should the agent do?"
             className="text-[15px] leading-6"
           />
