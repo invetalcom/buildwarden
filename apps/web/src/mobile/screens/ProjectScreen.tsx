@@ -11,7 +11,7 @@ import { RunListRow } from "../components/RunListRow";
 import { Badge, Button, CenteredSpinner, EmptyState, InlineError, Input, ListRow, SectionAction, SectionLabel, SegmentedTabs, Textarea, type SegmentOption } from "../components/primitives";
 import { Sheet } from "../components/Sheet";
 import { MobileStoredAttachments, MobileTaskAttachmentField } from "../components/TaskAttachments";
-import { readMobileAttachmentFiles } from "../lib/task-attachments";
+import { mergeMobileTaskAttachments, readMobileAttachmentFiles } from "../lib/task-attachments";
 import { ProjectSettingsPanel } from "./project/ProjectSettingsPanel";
 
 const TASK_TONES = { open: "neutral", in_progress: "accent", in_review: "warning", done: "success" } as const;
@@ -55,7 +55,7 @@ const TaskEditorSheet = ({
   const save = async () => {
     if (!title.trim() || !prompt.trim()) return;
     const result = await action.run(async () => {
-      const attachments = [...storedAttachments, ...await readMobileAttachmentFiles(files)];
+      const attachments = mergeMobileTaskAttachments(storedAttachments, await readMobileAttachmentFiles(files));
       if (task) {
         await client.updateProjectTask(task.id, { title: title.trim(), prompt: prompt.trim(), attachments });
       } else {

@@ -97,6 +97,7 @@ import {
   parseShellAllowlistExtraSetting,
   serializeProjectForgePrMonitorSettingsSetting,
   serializeProjectLabSettingsSetting,
+  dedupeChatAttachmentPayloads,
   validateChatAttachmentPayloads,
   type UnifiedProviderFamily,
   type StoredAttachmentMetadata,
@@ -375,13 +376,7 @@ export const mergeProjectTaskRunAttachments = (
 ): ChatAttachmentPayload[] | undefined => {
   if (taskAttachments.length === 0) return runAttachments;
   if (!runAttachments?.length) return taskAttachments;
-  const seen = new Set<string>();
-  return [...taskAttachments, ...runAttachments].filter((attachment) => {
-    const key = `${attachment.fileName}\u0000${attachment.mimeType}\u0000${attachment.dataBase64}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  return dedupeChatAttachmentPayloads(taskAttachments, runAttachments);
 };
 
 const normalizeAssistantOutputText = (value: string) => value.replace(/\s+/g, " ").trim();

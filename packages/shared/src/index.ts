@@ -2997,6 +2997,19 @@ export function appendChatAttachmentFiles(existing: readonly File[], incoming: r
   return next;
 }
 
+/** Deduplicate persisted attachment payloads while preserving their first-seen order. */
+export function dedupeChatAttachmentPayloads(
+  ...collections: Array<readonly ChatAttachmentPayload[] | undefined>
+): ChatAttachmentPayload[] {
+  const seen = new Set<string>();
+  return collections.flatMap((attachments) => attachments ?? []).filter((attachment) => {
+    const key = `${attachment.fileName}\u0000${attachment.mimeType}\u0000${attachment.dataBase64}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /** Approximate decoded byte length of a standard base64 string (no data: URL prefix). */
 export function estimateBase64ByteLength(base64: string): number {
   const t = base64.replace(/\s/g, "");

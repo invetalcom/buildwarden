@@ -1,4 +1,4 @@
-import { CHAT_ATTACHMENT_LIMITS, type ChatAttachmentPayload } from "@buildwarden/shared";
+import { CHAT_ATTACHMENT_LIMITS, dedupeChatAttachmentPayloads, type ChatAttachmentPayload } from "@buildwarden/shared";
 
 const readFileAsBase64 = (file: File): Promise<string> => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -33,3 +33,8 @@ export const readMobileAttachmentFiles = async (files: readonly File[]): Promise
   }
   return attachments;
 };
+
+export const mergeMobileTaskAttachments = (
+  stored: readonly ChatAttachmentPayload[],
+  incoming: readonly ChatAttachmentPayload[],
+): ChatAttachmentPayload[] => dedupeChatAttachmentPayloads(stored, incoming);
