@@ -130,6 +130,9 @@ describe("folder project persistence", () => {
 
     expect(task).toMatchObject({ status: "open", runId: null, pullRequestUrl: null, attachments: [attachment] });
     expect(db.listProjectTasks(project.id)[0]?.attachments).toEqual([attachment]);
+    const snapshotTask = db.getSnapshot().projects[0]?.tasks[0];
+    expect(snapshotTask).toMatchObject({ id: task.id, attachmentCount: 1 });
+    expect(JSON.stringify(snapshotTask)).not.toContain(attachment.dataBase64);
 
     const run = db.createRun({
       projectId: project.id,

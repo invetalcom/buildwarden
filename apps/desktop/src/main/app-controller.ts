@@ -3685,6 +3685,10 @@ export class AppController
     return task;
   }
 
+  async getProjectTask(taskId: string): Promise<ProjectTaskRecord> {
+    return this.db.getProjectTask(taskId);
+  }
+
   async updateProjectTask(taskId: string, input: UpdateProjectTaskInput): Promise<ProjectTaskRecord> {
     const existing = this.db.getProjectTask(taskId);
     const title = input.title === undefined ? existing.title : input.title.trim();

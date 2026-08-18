@@ -891,6 +891,7 @@ const bootstrap = async (): Promise<void> => {
   }
 
   remoteOperations.register("createProjectTask", (projectId, input) => controller.createProjectTask(projectId, input), validateProjectTaskCreate, "admin", true);
+  remoteOperations.register("getProjectTask", (taskId) => controller.getProjectTask(taskId), validateSingleRemoteStringArg);
   remoteOperations.register("updateProjectTask", (taskId, input) => controller.updateProjectTask(taskId, input), validateProjectTaskUpdate, "admin", true);
   remoteOperations.register("deleteProjectTask", (taskId) => controller.deleteProjectTask(taskId), validateSingleRemoteStringArg, "admin", true);
   remoteOperations.register("generateProjectTaskRunPrompt", (input) => controller.generateProjectTaskRunPrompt(input), validateProjectTaskPrompt, "admin", true);
@@ -1357,6 +1358,7 @@ const bootstrap = async (): Promise<void> => {
     controller.resolveProjectPrMrReviewThread(projectId, input),
   );
   ipcMain.handle(IPC_CHANNELS.createProjectTask, (_, projectId: string, input) => controller.createProjectTask(projectId, input));
+  ipcMain.handle(IPC_CHANNELS.getProjectTask, (_, taskId: string) => controller.getProjectTask(taskId));
   ipcMain.handle(IPC_CHANNELS.updateProjectTask, (_, taskId: string, input) => controller.updateProjectTask(taskId, input));
   ipcMain.handle(IPC_CHANNELS.deleteProjectTask, (_, taskId: string) => controller.deleteProjectTask(taskId));
   ipcMain.handle(IPC_CHANNELS.runProjectLab, (_, input) => controller.runProjectLab(input));

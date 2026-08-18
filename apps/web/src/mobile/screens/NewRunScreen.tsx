@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { APP_SETTING_KEYS, type ModelExecutionControl, type ProjectKind, type RunMode, type RunModelConfiguration, type RunWorkspaceType } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, type ModelExecutionControl, type ProjectKind, type ProjectTaskRecord, type RunMode, type RunModelConfiguration, type RunWorkspaceType } from "@buildwarden/shared";
 import { buildRunReasoningInput, resolveRunModelConfiguration } from "@buildwarden/renderer/logic";
 import { Bot, ChevronDown, Plus, Sparkles, X } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
@@ -98,7 +98,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
   const models = useMemo(() => runModelOptions(snapshot), [snapshot]);
   const [selectedProjectId, setSelectedProjectId] = useState(projectId ?? defaultProjectId(snapshot) ?? "");
   const project = snapshot.projects.find((entry) => entry.project.id === selectedProjectId) ?? null;
-  const task = project?.tasks.find((entry) => entry.id === taskId) ?? null;
+  const taskSummary = project?.tasks.find((entry) => entry.id === taskId) ?? null;
   const projectKind: ProjectKind = project?.project.kind ?? "git";
 
   const defaults = useMemo(
@@ -113,7 +113,9 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
     [models, projectKind, selectedProjectId, snapshot],
   );
 
-  const [prompt, setPrompt] = useState(task?.prompt ?? "");
+  const [taskDetail, setTaskDetail] = useState<ProjectTaskRecord | null>(null);
+  const [taskLoadError, setTaskLoadError] = useState<string | null>(null);
+  const [prompt, setPrompt] = useState(taskSummary?.prompt ?? "");
   const [modelIds, setModelIds] = useState(defaults.modelIds);
   const [modelConfigurations, setModelConfigurations] = useState<Record<string, RunModelConfiguration>>(defaults.modelConfigurations);
   const [activeModelId, setActiveModelId] = useState<string | null>(null);
@@ -126,13 +128,23 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
   const [executionMode, setExecutionMode] = useState(defaults.executionMode);
   const [delegation, setDelegation] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
-  const hydratedTaskIdRef = useRef<string | null>(null);
-
   useEffect(() => {
-    if (!task || hydratedTaskIdRef.current === task.id) return;
-    hydratedTaskIdRef.current = task.id;
-    setPrompt(task.prompt);
-  }, [task]);
+    if (!taskId) {
+      setTaskDetail(null);
+      setTaskLoadError(null);
+      return;
+    }
+    let cancelled = false;
+    void client.getProjectTask(taskId).then((detail) => {
+      if (cancelled) return;
+      setTaskDetail(detail);
+      setTaskLoadError(null);
+      setPrompt(detail.prompt);
+    }).catch((caught: unknown) => {
+      if (!cancelled) setTaskLoadError(caught instanceof Error ? caught.message : "Could not load task attachments.");
+    });
+    return () => { cancelled = true; };
+  }, [client, taskId]);
 
   // The screen can mount before the first snapshot arrives (a reload straight onto this route), so
   // there may be no project to read defaults from yet. Adopt the host's project once it shows up;
@@ -297,7 +309,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
             delegationEnabled: delegation,
             baseBranch: project.project.baseBranch,
             prompt: prompt.trim(),
-            ...(task ? { projectTaskId: task.id } : {}),
+            ...(taskId ? { projectTaskId: taskId } : {}),
             ...buildRunReasoningInput(
               selectedModel.providerType,
               selectedModel.providerFamily,
@@ -335,19 +347,20 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
     );
   }
 
-  if (taskId && snapshotStore.loaded && !task) {
+  if (taskId && snapshotStore.loaded && !taskSummary) {
     return <><AppBar title="Start task" onBack={router.back} /><EmptyState title="Task unavailable" message="It may have been removed on the host." /></>;
   }
 
   return (
     <>
-      <AppBar title={task ? "Start task" : "New run"} subtitle={task?.title} onBack={router.back} />
+      <AppBar title={taskId ? "Start task" : "New run"} subtitle={taskDetail?.title ?? taskSummary?.title} onBack={router.back} />
 
       <div className="m-scroll m-screen-enter flex-1">
         {action.error ? <InlineError message={action.error} /> : null}
+        {taskLoadError ? <InlineError message={taskLoadError} /> : null}
 
         <div className="px-4 pt-3">
-          {task?.attachments.length ? <div className="mb-3"><p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Task attachments</p><MobileStoredAttachments attachments={task.attachments} /></div> : null}
+          {taskDetail?.attachments.length ? <div className="mb-3"><p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Task attachments</p><MobileStoredAttachments attachments={taskDetail.attachments} /></div> : null}
           <Textarea
             autoFocus
             rows={7}
@@ -363,7 +376,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
             <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Project</span>
             <select
               value={selectedProjectId}
-              disabled={Boolean(task)}
+              disabled={Boolean(taskId)}
               onChange={(event) => setSelectedProjectId(event.target.value)}
               className="m-tap w-full rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-3 text-[var(--ec-text)] disabled:opacity-60"
             >

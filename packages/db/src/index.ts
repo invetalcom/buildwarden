@@ -49,6 +49,7 @@ import type {
   ProjectLoopUiReviewStatus,
   ProjectTaskInput,
   ProjectTaskRecord,
+  ProjectTaskSummary,
   ProjectRecord,
   ProjectSnapshot,
   ProviderAccountRecord,
@@ -302,7 +303,7 @@ export class BuildWardenDatabase {
           ["queued", "preparing", "running"].includes(run.status) || activeCoordinatorIds.has(run.id),
         ),
         recentRuns: runs.slice(0, 12),
-        tasks: this.listProjectTasks(project.id),
+        tasks: this.listProjectTaskSummaries(project.id),
         insights: this.listProjectInsights(project.id),
         labThreads: this.listProjectLabThreadDetails(project.id),
         loops: this.listProjectLoopListItems(project.id),
@@ -681,6 +682,28 @@ export class BuildWardenDatabase {
       `,
       [projectId],
     ).map((task) => this.hydrateProjectTask(task));
+  }
+
+  listProjectTaskSummaries(projectId: string): ProjectTaskSummary[] {
+    return this.all<ProjectTaskSummary>(
+      `
+      select
+        id,
+        project_id as projectId,
+        title,
+        prompt,
+        case when json_valid(attachments_json) then json_array_length(attachments_json) else 0 end as attachmentCount,
+        status,
+        run_id as runId,
+        pull_request_url as pullRequestUrl,
+        created_at as createdAt,
+        updated_at as updatedAt
+      from project_tasks
+      where project_id = ?
+      order by updated_at desc, created_at desc
+      `,
+      [projectId],
+    );
   }
 
   deleteProjectTask(taskId: string): void {

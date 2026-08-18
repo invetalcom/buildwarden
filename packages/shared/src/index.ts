@@ -859,6 +859,11 @@ export interface ProjectTaskRecord {
   updatedAt: string;
 }
 
+/** Task list metadata. Full attachment payloads are loaded with {@link DesktopApi.getProjectTask}. */
+export interface ProjectTaskSummary extends Omit<ProjectTaskRecord, "attachments"> {
+  attachmentCount: number;
+}
+
 export interface ProjectTaskInput {
   title: string;
   prompt: string;
@@ -1777,7 +1782,7 @@ export interface ProjectSnapshot {
   orchestratedRuns: RunRecord[];
   activeRuns: RunRecord[];
   recentRuns: RunRecord[];
-  tasks: ProjectTaskRecord[];
+  tasks: ProjectTaskSummary[];
   insights: ProjectInsightRecord[];
   labThreads: ProjectLabThreadDetail[];
   loops: ProjectLoopListItem[];
@@ -3717,6 +3722,7 @@ export interface DesktopApi {
   listAvailableProviderModels(input: ListAvailableProviderModelsInput): Promise<ListAvailableProviderModelsResult>;
   listComposerCommands(input: ListComposerCommandsInput): Promise<ComposerCommandDescriptor[]>;
   createProjectTask(projectId: string, input: ProjectTaskInput): Promise<ProjectTaskRecord>;
+  getProjectTask(taskId: string): Promise<ProjectTaskRecord>;
   updateProjectTask(taskId: string, input: UpdateProjectTaskInput): Promise<ProjectTaskRecord>;
   deleteProjectTask(taskId: string): Promise<void>;
   onProjectTaskChanged(listener: (payload: ProjectTaskChangedPayload) => void): () => void;
@@ -4134,6 +4140,7 @@ export type RemoteOperationMap = {
   getProjectLoopUiReviewImage: DesktopApi["getProjectLoopUiReviewImage"];
   getProjectLoopDetail: DesktopApi["getProjectLoopDetail"];
   getProjectLoopAvailability: DesktopApi["getProjectLoopAvailability"];
+  getProjectTask: DesktopApi["getProjectTask"];
   getRunChat: DesktopApi["getRunChat"];
   getChatDetail: DesktopApi["getChatDetail"];
   listChatsWithSteps: DesktopApi["listChatsWithSteps"];
@@ -4399,6 +4406,7 @@ export const IPC_CHANNELS = {
   addModel: "buildwarden:add-model",
   listAvailableProviderModels: "buildwarden:list-available-provider-models",
   createProjectTask: "buildwarden:create-project-task",
+  getProjectTask: "buildwarden:get-project-task",
   updateProjectTask: "buildwarden:update-project-task",
   deleteProjectTask: "buildwarden:delete-project-task",
   projectTaskChanged: "buildwarden:project-task-changed",

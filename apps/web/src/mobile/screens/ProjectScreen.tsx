@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ChatAttachmentPayload, ProjectGitBranchOverview, ProjectTaskRecord } from "@buildwarden/shared";
+import type { ChatAttachmentPayload, ProjectGitBranchOverview, ProjectTaskRecord, ProjectTaskSummary } from "@buildwarden/shared";
 import { GitBranch, Paperclip, Pencil, Play, Plus } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
 import { filterRuns, flattenRuns } from "../data/selectors";
@@ -16,7 +16,7 @@ import { ProjectSettingsPanel } from "./project/ProjectSettingsPanel";
 
 const TASK_TONES = { open: "neutral", in_progress: "accent", in_review: "warning", done: "success" } as const;
 
-const TaskList = ({ tasks, onSelect }: { tasks: readonly ProjectTaskRecord[]; onSelect: (task: ProjectTaskRecord) => void }) =>
+const TaskList = ({ tasks, onSelect }: { tasks: readonly ProjectTaskSummary[]; onSelect: (task: ProjectTaskSummary) => void }) =>
   tasks.length === 0 ? (
     <EmptyState title="No tasks" message="Tasks created on the board appear here." />
   ) : (
@@ -26,7 +26,7 @@ const TaskList = ({ tasks, onSelect }: { tasks: readonly ProjectTaskRecord[]; on
           key={task.id}
           title={task.title}
           subtitle={task.prompt || undefined}
-          trailing={<>{task.attachments.length > 0 ? <span className="inline-flex items-center gap-1"><Paperclip className="size-3.5" />{task.attachments.length}</span> : null}<Badge tone={TASK_TONES[task.status]}>{task.status.replace("_", " ")}</Badge></>}
+          trailing={<>{task.attachmentCount > 0 ? <span className="inline-flex items-center gap-1"><Paperclip className="size-3.5" />{task.attachmentCount}</span> : null}<Badge tone={TASK_TONES[task.status]}>{task.status.replace("_", " ")}</Badge></>}
           onClick={() => onSelect(task)}
           className="border-b border-[var(--ec-border)]"
         />
@@ -177,8 +177,8 @@ export const ProjectScreen = ({ projectId, tab }: { projectId: string; tab: Proj
   const { snapshot, router, client, selectProject } = useMobileApp();
   const project = snapshot.projects.find((entry) => entry.project.id === projectId) ?? null;
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedTask, setSelectedTask] = useState<ProjectTaskRecord | null>(null);
   const [taskEditor, setTaskEditor] = useState<{ key: string; task: ProjectTaskRecord | null } | null>(null);
-  const selectedTask = project?.tasks.find((task) => task.id === selectedTaskId) ?? null;
 
   const runs = useMemo(
     () => (project ? filterRuns(flattenRuns([project]), "all", "") : []),
@@ -192,6 +192,23 @@ export const ProjectScreen = ({ projectId, tab }: { projectId: string; tab: Proj
   useEffect(() => {
     if (project) selectProject(project.project.id);
   }, [project, selectProject]);
+
+  useEffect(() => {
+    if (selectedTaskId && !project?.tasks.some((task) => task.id === selectedTaskId)) {
+      setSelectedTaskId(null);
+      setSelectedTask(null);
+    }
+  }, [project?.tasks, selectedTaskId]);
+
+  const openTaskDetail = async (task: ProjectTaskSummary) => {
+    try {
+      const detail = await client.getProjectTask(task.id);
+      setSelectedTask(detail);
+      setSelectedTaskId(detail.id);
+    } catch (caught) {
+      window.alert(errorMessage(caught, "Could not load task attachments."));
+    }
+  };
 
   const options = useMemo<SegmentOption<ProjectTab>[]>(() => {
     const base: SegmentOption<ProjectTab>[] = [
@@ -281,7 +298,7 @@ export const ProjectScreen = ({ projectId, tab }: { projectId: string; tab: Proj
       {activeTab === "tasks" ? (
         <div className="m-scroll m-screen-enter flex-1">
           <SectionLabel action={client.capabilities.taskMutations ? <SectionAction onClick={() => setTaskEditor({ key: `new-${Date.now().toString()}`, task: null })}>Add task</SectionAction> : undefined}>Task board</SectionLabel>
-          <TaskList tasks={project.tasks} onSelect={(task) => setSelectedTaskId(task.id)} />
+          <TaskList tasks={project.tasks} onSelect={(task) => void openTaskDetail(task)} />
           <div className="h-6" />
         </div>
       ) : null}
@@ -316,9 +333,9 @@ export const ProjectScreen = ({ projectId, tab }: { projectId: string; tab: Proj
 
       <TaskDetailSheet
         task={selectedTask}
-        onClose={() => setSelectedTaskId(null)}
-        onEdit={(task) => { setSelectedTaskId(null); setTaskEditor({ key: task.id, task }); }}
-        onStart={(task) => { setSelectedTaskId(null); router.push({ name: "new-run", projectId, taskId: task.id }); }}
+        onClose={() => { setSelectedTaskId(null); setSelectedTask(null); }}
+        onEdit={(task) => { setSelectedTaskId(null); setSelectedTask(null); setTaskEditor({ key: task.id, task }); }}
+        onStart={(task) => { setSelectedTaskId(null); setSelectedTask(null); router.push({ name: "new-run", projectId, taskId: task.id }); }}
       />
       {taskEditor ? <TaskEditorSheet key={taskEditor.key} projectId={projectId} task={taskEditor.task} open onClose={() => setTaskEditor(null)} /> : null}
     </>
