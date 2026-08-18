@@ -1,23 +1,28 @@
-import type { ProjectTaskRecord, ProjectTaskStatus, ProviderType, UnifiedProviderFamily } from "@buildwarden/shared";
-import { Check, ExternalLink, Eye, GripVertical, ListTodo, Loader2, Pencil, Play, Plus, RefreshCw, Trash2, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type DragEvent } from "react";
+import { appendChatAttachmentFiles, CHAT_ATTACHMENT_LIMITS, type ChatAttachmentPayload, type ProjectTaskInput, type ProjectTaskRecord, type ProjectTaskStatus, type ProjectTaskSummary, type ProviderType, type UnifiedProviderFamily, type UpdateProjectTaskInput } from "@buildwarden/shared";
+import { Check, ExternalLink, Eye, GripVertical, ListTodo, Loader2, Paperclip, Pencil, Play, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type ClipboardEvent, type DragEvent } from "react";
 import { cn } from "../../lib/cn";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
+import { createPastedTextAttachmentFile, shouldAttachPastedText } from "../../lib/pasted-text-attachment";
+import { usePastedTextAttachmentThreshold } from "../../lib/pasted-text-attachment-settings";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
 import { Select } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { BetaBadge } from "./BetaBadge";
+import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
+import { StoredChatAttachments } from "./StoredChatAttachments";
 
 interface ProjectTasksTabProps {
   projectId: string;
-  tasks: ProjectTaskRecord[];
+  tasks: ProjectTaskSummary[];
   modelOptions: Array<{ id: string; label: string; modelId: string; providerType: ProviderType; providerFamily: UnifiedProviderFamily | null }>;
   defaultTaskModelId: string;
   busy: boolean;
-  onCreateTask: (input: { title: string; prompt: string }) => void | Promise<void>;
-  onUpdateTask: (taskId: string, input: { title?: string; prompt?: string; status?: ProjectTaskStatus }) => void | Promise<void>;
+  onCreateTask: (input: ProjectTaskInput) => void | Promise<void>;
+  onUpdateTask: (taskId: string, input: UpdateProjectTaskInput) => void | Promise<void>;
   onDeleteTask: (taskId: string) => void | Promise<void>;
   onStartTask: (taskId: string, prompt: string, modelId: string) => void | Promise<void>;
   onOpenRun: (runId: string) => void;
@@ -33,7 +38,7 @@ const LANES: Array<{ status: ProjectTaskStatus; label: string; dot: string }> = 
 const statusOptions = LANES.map((lane) => ({ value: lane.status, label: lane.label }));
 
 const buildTaskModelSelections = (
-  tasks: ProjectTaskRecord[],
+  tasks: ProjectTaskSummary[],
   current: Record<string, string>,
   validModelIds: Set<string>,
   defaultTaskModelId: string,
@@ -42,11 +47,22 @@ const buildTaskModelSelections = (
   return [task.id, candidate && validModelIds.has(candidate) ? candidate : defaultTaskModelId];
 }));
 
-const isTaskPending = (task: ProjectTaskRecord | null, pendingTaskIds: Set<string>) =>
+const isTaskPending = (task: Pick<ProjectTaskSummary, "id"> | null, pendingTaskIds: Set<string>) =>
   task ? pendingTaskIds.has(task.id) : false;
 
+const collectTaskClipboardFiles = (data: DataTransfer): File[] => {
+  if (data.files.length > 0) return Array.from(data.files);
+  const files: File[] = [];
+  for (const item of Array.from(data.items)) {
+    if (item.kind !== "file") continue;
+    const file = item.getAsFile();
+    if (file) files.push(file);
+  }
+  return files;
+};
+
 const useTaskModelSelections = (
-  tasks: ProjectTaskRecord[],
+  tasks: ProjectTaskSummary[],
   modelOptions: ProjectTasksTabProps["modelOptions"],
   defaultTaskModelId: string,
 ) => {
@@ -59,7 +75,7 @@ const useTaskModelSelections = (
 };
 
 interface TaskBoardCardProps {
-  task: ProjectTaskRecord;
+  task: ProjectTaskSummary;
   busy: boolean;
   isTaskBusy: boolean;
   hasModels: boolean;
@@ -88,6 +104,7 @@ const TaskBoardCard = ({
         <div className="min-w-0 flex-1 overflow-hidden">
           <h5 className="max-h-10 overflow-hidden break-words text-xs font-semibold leading-5 text-zinc-100">{task.title}</h5>
           <p className="mt-1 max-h-12 overflow-hidden break-words whitespace-pre-wrap text-[11px] leading-4 text-zinc-400">{task.prompt}</p>
+          {task.attachmentCount > 0 ? <span className="mt-1 inline-flex items-center gap-1 text-[10px] text-zinc-500"><Paperclip className="h-3 w-3" />{task.attachmentCount}</span> : null}
         </div>
         {isTaskBusy ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-zinc-500" /> : null}
       </div>
@@ -111,7 +128,7 @@ const TaskBoardCard = ({
 };
 
 interface TaskBoardProps {
-  tasks: ProjectTaskRecord[];
+  tasks: ProjectTaskSummary[];
   pendingTaskIds: Set<string>;
   busy: boolean;
   hasModels: boolean;
@@ -120,16 +137,16 @@ interface TaskBoardProps {
   draggedTaskId: string | null;
   dragOverStatus: ProjectTaskStatus | null;
   onView: (taskId: string) => void;
-  onEdit: (task: ProjectTaskRecord) => void;
+  onEdit: (task: ProjectTaskSummary) => void;
   onDelete: (taskId: string) => void | Promise<void>;
-  onLaunch: (task: ProjectTaskRecord) => void;
+  onLaunch: (task: ProjectTaskSummary) => void;
   onOpenRun: (runId: string) => void;
   onDraggedTaskChange: (taskId: string | null) => void;
   onDragOverStatusChange: (status: ProjectTaskStatus | null) => void;
   onDrop: (event: DragEvent<HTMLDivElement>, status: ProjectTaskStatus) => void;
 }
 
-const confirmTaskDeletion = (task: ProjectTaskRecord, onDelete: TaskBoardProps["onDelete"]) => {
+const confirmTaskDeletion = (task: ProjectTaskSummary, onDelete: TaskBoardProps["onDelete"]) => {
   if (window.confirm(`Delete “${task.title}”?`)) {
     void onDelete(task.id);
   }
@@ -149,11 +166,11 @@ const getEmptyTaskLaneText = (draggedTaskId: string | null, laneLabel: string) =
 
 interface TaskBoardLaneProps extends Omit<TaskBoardProps, "tasks"> {
   lane: (typeof LANES)[number];
-  tasks: ProjectTaskRecord[];
+  tasks: ProjectTaskSummary[];
 }
 
 interface ConnectedTaskBoardCardProps extends Omit<TaskBoardLaneProps, "lane" | "tasks" | "dragOverStatus" | "onDrop"> {
-  task: ProjectTaskRecord;
+  task: ProjectTaskSummary;
 }
 
 const ConnectedTaskBoardCard = ({
@@ -217,7 +234,7 @@ interface TaskViewDialogProps {
   canStartRuns: boolean;
   onClose: () => void;
   onEdit: (task: ProjectTaskRecord) => void;
-  onLaunch: (task: ProjectTaskRecord) => void;
+  onLaunch: (task: Pick<ProjectTaskSummary, "id" | "prompt">) => void;
   onOpenRun: (runId: string) => void;
 }
 
@@ -243,6 +260,7 @@ const TaskViewDialog = ({ task, busy, hasModels, canManageTasks, canStartRuns, o
         <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto px-5 py-4">
           <p className="mb-2 text-[10px] font-medium uppercase tracking-[0.16em] text-zinc-500">Agent prompt</p>
           <div className="break-words whitespace-pre-wrap text-sm leading-6 text-zinc-300">{task.prompt}</div>
+          {task.attachments.length > 0 ? <div className="mt-4"><p className="mb-2 text-[10px] font-medium uppercase tracking-[0.16em] text-zinc-500">Attachments</p><StoredChatAttachments attachments={task.attachments} fallbackNames={[]} /></div> : null}
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-zinc-800 px-5 py-3">
           <div>{task.pullRequestUrl ? <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs text-zinc-400" onClick={() => void buildwarden.openExternalUrl(task.pullRequestUrl!)}><ExternalLink className="h-3.5 w-3.5" />Open linked PR/MR</Button> : null}</div>
@@ -276,11 +294,15 @@ export const ProjectTasksTab = ({
   const [createOpen, setCreateOpen] = useState(false);
   const [taskBusy, setTaskBusy] = useState(false);
   const [pendingTaskIds, setPendingTaskIds] = useState<Set<string>>(() => new Set());
+  const [taskDetailsById, setTaskDetailsById] = useState<Record<string, ProjectTaskRecord>>({});
   const [viewingTaskId, setViewingTaskId] = useState<string | null>(null);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [taskEditTitle, setTaskEditTitle] = useState("");
   const [taskEditPrompt, setTaskEditPrompt] = useState("");
   const [taskEditStatus, setTaskEditStatus] = useState<ProjectTaskStatus>("open");
+  const [taskExistingAttachments, setTaskExistingAttachments] = useState<ChatAttachmentPayload[]>([]);
+  const [taskNewAttachmentFiles, setTaskNewAttachmentFiles] = useState<File[]>([]);
+  const pastedTextAttachmentThreshold = usePastedTextAttachmentThreshold();
   const [taskModelById, setTaskModelById] = useTaskModelSelections(tasks, modelOptions, defaultTaskModelId);
   const [launchTaskId, setLaunchTaskId] = useState<string | null>(null);
   const [launchPromptDraft, setLaunchPromptDraft] = useState("");
@@ -291,8 +313,8 @@ export const ProjectTasksTab = ({
   const [statusOverrides, setStatusOverrides] = useState<Record<string, ProjectTaskStatus>>({});
 
   const launchTask = useMemo(() => tasks.find((task) => task.id === launchTaskId) ?? null, [launchTaskId, tasks]);
-  const viewingTask = useMemo(() => tasks.find((task) => task.id === viewingTaskId) ?? null, [tasks, viewingTaskId]);
-  const editingTask = useMemo(() => tasks.find((task) => task.id === editingTaskId) ?? null, [editingTaskId, tasks]);
+  const viewingTask = viewingTaskId ? taskDetailsById[viewingTaskId] ?? null : null;
+  const editingTask = editingTaskId ? taskDetailsById[editingTaskId] ?? null : null;
   const visibleTasks = useMemo(
     () => tasks.map((task) => ({ ...task, status: statusOverrides[task.id] ?? task.status })),
     [statusOverrides, tasks],
@@ -307,6 +329,7 @@ export const ProjectTasksTab = ({
 
   useEffect(() => {
     setPendingTaskIds(new Set());
+    setTaskDetailsById({});
     setTaskBusy(false);
     setViewingTaskId(null);
     setEditingTaskId(null);
@@ -314,6 +337,8 @@ export const ProjectTasksTab = ({
     setTaskEditTitle("");
     setTaskEditPrompt("");
     setTaskEditStatus("open");
+    setTaskExistingAttachments([]);
+    setTaskNewAttachmentFiles([]);
     setLaunchTaskId(null);
     setLaunchPromptDraft("");
     setLaunchGenerateBusy(false);
@@ -344,6 +369,8 @@ export const ProjectTasksTab = ({
       setEditingTaskId(null);
       setTaskEditTitle("");
       setTaskEditPrompt("");
+      setTaskExistingAttachments([]);
+      setTaskNewAttachmentFiles([]);
       closeLaunchDialog();
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -356,10 +383,15 @@ export const ProjectTasksTab = ({
     if (!title || !prompt) return;
     setTaskBusy(true);
     try {
-      await onCreateTask({ title, prompt });
+      const attachments = await readFilesAsChatPayloads(taskNewAttachmentFiles);
+      await onCreateTask({ title, prompt, attachments });
       setCreateOpen(false);
       setTaskEditTitle("");
       setTaskEditPrompt("");
+      setTaskExistingAttachments([]);
+      setTaskNewAttachmentFiles([]);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Could not save task attachments.");
     } finally {
       setTaskBusy(false);
     }
@@ -371,7 +403,32 @@ export const ProjectTasksTab = ({
     setTaskEditTitle("");
     setTaskEditPrompt("");
     setTaskEditStatus("open");
+    setTaskExistingAttachments([]);
+    setTaskNewAttachmentFiles([]);
     setCreateOpen(true);
+  };
+
+  const loadTaskDetail = async (taskId: string): Promise<ProjectTaskRecord | null> => {
+    setPendingTaskIds((current) => new Set(current).add(taskId));
+    try {
+      const detail = await buildwarden.getProjectTask(taskId);
+      setTaskDetailsById((current) => ({ ...current, [taskId]: detail }));
+      return detail;
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Could not load task attachments.");
+      return null;
+    } finally {
+      setPendingTaskIds((current) => {
+        const next = new Set(current);
+        next.delete(taskId);
+        return next;
+      });
+    }
+  };
+
+  const openTaskDetail = async (taskId: string) => {
+    const detail = await loadTaskDetail(taskId);
+    if (detail) setViewingTaskId(taskId);
   };
 
   const startEditingTask = (task: ProjectTaskRecord) => {
@@ -381,12 +438,21 @@ export const ProjectTasksTab = ({
     setTaskEditTitle(task.title);
     setTaskEditPrompt(task.prompt);
     setTaskEditStatus(task.status);
+    setTaskExistingAttachments(task.attachments);
+    setTaskNewAttachmentFiles([]);
+  };
+
+  const openEditingTask = async (task: ProjectTaskSummary) => {
+    const detail = await loadTaskDetail(task.id);
+    if (detail) startEditingTask(detail);
   };
 
   const cancelEditingTask = () => {
     setEditingTaskId(null);
     setTaskEditTitle("");
     setTaskEditPrompt("");
+    setTaskExistingAttachments([]);
+    setTaskNewAttachmentFiles([]);
   };
 
   const closeTaskForm = () => {
@@ -401,11 +467,15 @@ export const ProjectTasksTab = ({
     if (!title || !prompt) return;
     setPendingTaskIds((current) => new Set(current).add(task.id));
     try {
-      await onUpdateTask(task.id, { title, prompt, status: taskEditStatus });
+      const newAttachments = await readFilesAsChatPayloads(taskNewAttachmentFiles);
+      await onUpdateTask(task.id, { title, prompt, status: taskEditStatus, attachments: [...taskExistingAttachments, ...newAttachments] });
       cancelEditingTask();
-    } catch {
+    } catch (error) {
       // App already surfaces the bridge error. Keep the form open for retry and
       // consume the propagated rejection so the click handler stays handled.
+      if (taskNewAttachmentFiles.length > 0) {
+        window.alert(error instanceof Error ? error.message : "Could not save task attachments.");
+      }
     } finally {
       setPendingTaskIds((current) => {
         const next = new Set(current);
@@ -423,7 +493,23 @@ export const ProjectTasksTab = ({
     }
   };
 
-  const moveTask = async (task: ProjectTaskRecord, status: ProjectTaskStatus) => {
+  const handleTaskPromptPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (taskFormBusy) return;
+    const available = Math.max(0, CHAT_ATTACHMENT_LIMITS.maxFileCount - taskExistingAttachments.length);
+    const pastedFiles = collectTaskClipboardFiles(event.clipboardData);
+    if (pastedFiles.length > 0) {
+      event.preventDefault();
+      setTaskNewAttachmentFiles((current) => appendChatAttachmentFiles(current, pastedFiles).slice(0, available));
+      return;
+    }
+    const pastedText = event.clipboardData.getData("text/plain");
+    if (shouldAttachPastedText(pastedText, pastedTextAttachmentThreshold)) {
+      event.preventDefault();
+      setTaskNewAttachmentFiles((current) => appendChatAttachmentFiles(current, [createPastedTextAttachmentFile(pastedText)]).slice(0, available));
+    }
+  };
+
+  const moveTask = async (task: ProjectTaskSummary, status: ProjectTaskStatus) => {
     if (task.status === status || pendingTaskIds.has(task.id)) return;
     setStatusOverrides((current) => ({ ...current, [task.id]: status }));
     setPendingTaskIds((current) => new Set(current).add(task.id));
@@ -455,7 +541,7 @@ export const ProjectTasksTab = ({
     if (task) void moveTask(task, status);
   };
 
-  const openLaunchDialog = (task: ProjectTaskRecord) => {
+  const openLaunchDialog = (task: Pick<ProjectTaskSummary, "id" | "prompt">) => {
     setLaunchTaskId(task.id);
     setLaunchPromptDraft(task.prompt);
   };
@@ -522,8 +608,8 @@ export const ProjectTasksTab = ({
         canStartRuns={canStartRuns}
         draggedTaskId={draggedTaskId}
         dragOverStatus={dragOverStatus}
-        onView={setViewingTaskId}
-        onEdit={startEditingTask}
+        onView={(taskId) => void openTaskDetail(taskId)}
+        onEdit={(task) => void openEditingTask(task)}
         onDelete={onDeleteTask}
         onLaunch={openLaunchDialog}
         onOpenRun={onOpenRun}
@@ -566,8 +652,13 @@ export const ProjectTasksTab = ({
               </label>
               <label className="block">
                 <span className="mb-1.5 block text-xs font-medium text-zinc-400">Agent prompt</span>
-                <Textarea value={taskEditPrompt} onChange={(event) => setTaskEditPrompt(event.target.value)} className="min-h-[320px] max-h-[55vh] resize-y text-sm leading-6" placeholder="Prompt for the agent run" />
+                <Textarea value={taskEditPrompt} onChange={(event) => setTaskEditPrompt(event.target.value)} onPaste={handleTaskPromptPaste} className="min-h-[320px] max-h-[55vh] resize-y text-sm leading-6" placeholder="Prompt for the agent run" />
               </label>
+              <div>
+                <span className="mb-1.5 block text-xs font-medium text-zinc-400">Attachments</span>
+                {taskExistingAttachments.length > 0 ? <div className="mb-2 grid gap-2 sm:grid-cols-2">{taskExistingAttachments.map((attachment, index) => <div key={`${attachment.fileName}-${String(index)}`} className="relative min-w-0 rounded-md border border-zinc-800 p-2 pr-9"><StoredChatAttachments attachments={[attachment]} fallbackNames={[]} compact /><Button type="button" variant="ghost" size="sm" className="absolute right-1 top-1 h-7 w-7 p-0" aria-label={`Remove ${attachment.fileName}`} disabled={taskFormBusy} onClick={() => setTaskExistingAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))}><X className="h-3.5 w-3.5" /></Button></div>)}</div> : null}
+                <ChatAttachmentPicker files={taskNewAttachmentFiles} onChange={setTaskNewAttachmentFiles} disabled={taskFormBusy} reservedFileSlots={taskExistingAttachments.length} />
+              </div>
               {editingTask ? (
                 <label className="block">
                   <span className="mb-1.5 block text-xs font-medium text-zinc-400">Status</span>

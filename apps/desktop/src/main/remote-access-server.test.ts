@@ -107,6 +107,7 @@ describe("remote operation registry", () => {
       | "getChatBookmarksWithSteps"
       | "getRunPublishOptions"
       | "getProjectBranchOverview"
+      | "getProjectTask"
       | "getProjectForgeAuthStatus"
       | "getProjectForgePrMonitorSettings"
       | "listProjectForgeRequests"

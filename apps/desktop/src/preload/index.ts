@@ -62,6 +62,7 @@ const api: DesktopApi = {
   listAvailableProviderModels: (input: ListAvailableProviderModelsInput) =>
     invoke(IPC_CHANNELS.listAvailableProviderModels, input),
   createProjectTask: (projectId: string, input) => invoke(IPC_CHANNELS.createProjectTask, projectId, input),
+  getProjectTask: (taskId: string) => invoke(IPC_CHANNELS.getProjectTask, taskId),
   updateProjectTask: (taskId: string, input) => invoke(IPC_CHANNELS.updateProjectTask, taskId, input),
   deleteProjectTask: (taskId: string) => invoke(IPC_CHANNELS.deleteProjectTask, taskId),
   onProjectTaskChanged: (listener: (payload: ProjectTaskChangedPayload) => void) => {

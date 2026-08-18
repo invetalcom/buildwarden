@@ -17,10 +17,14 @@ import type {
 import type { SecretStore } from "@buildwarden/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GitService } from "@buildwarden/git-service";
+import { hydratePriorMessageAttachments } from "@buildwarden/provider-ai-sdk";
 import {
   AppController,
+  buildPriorRunMessagesFromSteps,
+  extractInitialRunAttachmentsFromSteps,
   latestRunExecutionSettings,
   latestUserTurnUsedFullAccess,
+  mergeProjectTaskRunAttachments,
   mergeOrchestrationExecutionOptions,
   resolveOrchestrationChildFullAccess,
 } from "./app-controller";
@@ -63,10 +67,13 @@ const task = {
   projectId: project.id,
   title: "Task",
   prompt: "Prompt",
+  attachments: [],
   status: "open",
   runId: null,
   pullRequestUrl: null,
-} as ProjectTaskRecord;
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+} satisfies ProjectTaskRecord;
 
 type DbOverrides = Partial<Record<keyof BuildWardenDatabase, unknown>>;
 
@@ -112,11 +119,12 @@ const createHarness = (overrides: DbOverrides = {}) => {
     updateRunListVisibility: vi.fn((_runId: string, visibility: string) => ({ id: "run-1", listVisibility: visibility } as RunRecord)),
     getOrchestrationTaskByChildRunId: vi.fn(() => null),
     getOrchestrationByCoordinatorRunId: vi.fn(() => null),
+    getProviderSessionRuntime: vi.fn(() => null),
     listRunsForProject: vi.fn(() => []),
   };
   const db = { ...defaults, ...overrides } as unknown as BuildWardenDatabase;
   const secrets = {
-    readSecret: vi.fn(async () => null),
+    readSecret: vi.fn(async (): Promise<string | null> => null),
     saveSecret: vi.fn(async () => undefined),
     deleteSecret: vi.fn(async () => undefined),
   } satisfies SecretStore;
@@ -172,6 +180,132 @@ const createMutableProjectHarness = () => {
 };
 
 describe("AppController settings and lightweight workflows", () => {
+  it("combines task and launch attachments without sending duplicates to a run", () => {
+    const taskAttachment = { fileName: "design.png", mimeType: "image/png", dataBase64: "AA==" };
+    const launchAttachment = { fileName: "notes.md", mimeType: "text/markdown", dataBase64: "Iw==" };
+    expect(mergeProjectTaskRunAttachments([taskAttachment], [taskAttachment, launchAttachment])).toEqual([
+      taskAttachment,
+      launchAttachment,
+    ]);
+  });
+
+  it("rehydrates persisted initial attachments when run history is replayed", () => {
+    const attachment = { fileName: "design.png", mimeType: "image/png", dataBase64: "AA==" };
+    const steps = [
+      {
+        eventType: "log" as const,
+        title: "Initial command",
+        content: "Build the design",
+        metadataJson: JSON.stringify({ source: "user", commandType: "initial", attachments: [attachment] }),
+      },
+      {
+        eventType: "output" as const,
+        title: "Result",
+        content: "Initial work complete",
+        metadataJson: "{}",
+      },
+      {
+        eventType: "log" as const,
+        title: "Follow-up command",
+        content: "Continue",
+        metadataJson: JSON.stringify({ source: "user", commandType: "follow-up" }),
+      },
+    ];
+
+    expect(extractInitialRunAttachmentsFromSteps(steps)).toEqual([attachment]);
+    const priorMessages = buildPriorRunMessagesFromSteps(steps);
+    expect(priorMessages).toEqual([
+      { role: "user", content: "Build the design", attachments: [attachment] },
+      { role: "assistant", content: "Initial work complete" },
+    ]);
+    expect(hydratePriorMessageAttachments(priorMessages[0]!)).toEqual({
+      role: "user",
+      content: [
+        { type: "text", text: "Build the design" },
+        { type: "image", image: "data:image/png;base64,AA==", mediaType: "image/png" },
+      ],
+    });
+  });
+
+  it("forwards stored task attachments through createRun metadata and worker options", async () => {
+    const taskAttachment = { fileName: "design.png", mimeType: "image/png", dataBase64: "AA==" };
+    const launchAttachment = { fileName: "notes.md", mimeType: "text/markdown", dataBase64: "Iw==" };
+    let currentRun = {
+      id: "run-1",
+      projectId: project.id,
+      providerAccountId: provider.id,
+      modelId: model.id,
+      harnessType: "ai-sdk",
+      mode: "code",
+      workspaceType: "local",
+      workspaceVcs: "git",
+      branchName: "main",
+      worktreePath: project.repoPath,
+      prompt: task.prompt,
+      goalText: null,
+      status: "queued",
+      projectTaskId: task.id,
+    } as RunRecord;
+    const appendRunStep = vi.fn(async () => undefined);
+    const harness = createHarness({
+      getProjectTask: vi.fn(() => ({ ...task, attachments: [taskAttachment] })),
+      createRun: vi.fn((input: object) => {
+        currentRun = { ...currentRun, ...input };
+        return currentRun;
+      }),
+      getRun: vi.fn(() => currentRun),
+      updateRunStatus: vi.fn((_runId: string, status: RunRecord["status"]) => {
+        currentRun = { ...currentRun, status };
+        return currentRun;
+      }),
+      appendRunStep,
+      linkProjectTaskToRun: vi.fn(),
+    });
+    harness.secrets.readSecret.mockResolvedValue("test-key");
+    const startWorker = vi.fn(() => ({}));
+    const controllerInternals = harness.controller as unknown as {
+      gitService: { getCurrentBranch: (repoPath: string) => Promise<string> };
+      syncRunForgeRequestInBackground: () => void;
+      capturePromptRestorePoint: () => Promise<void>;
+      resolveNetworkProxyRuntimeConfig: () => Promise<undefined>;
+      startWorker: typeof startWorker;
+    };
+    controllerInternals.gitService = { getCurrentBranch: vi.fn(async () => "main") };
+    controllerInternals.syncRunForgeRequestInBackground = vi.fn();
+    controllerInternals.capturePromptRestorePoint = vi.fn(async () => undefined);
+    controllerInternals.resolveNetworkProxyRuntimeConfig = vi.fn(async () => undefined);
+    controllerInternals.startWorker = startWorker;
+
+    await harness.controller.createRun({
+      projectId: project.id,
+      providerAccountId: provider.id,
+      modelId: model.id,
+      harnessType: "ai-sdk",
+      mode: "code",
+      workspaceType: "local",
+      prompt: task.prompt,
+      attachments: [taskAttachment, launchAttachment],
+      projectTaskId: task.id,
+    });
+
+    const expectedAttachments = [taskAttachment, launchAttachment];
+    expect(appendRunStep).toHaveBeenCalledWith(
+      currentRun.id,
+      "log",
+      "Initial command",
+      task.prompt,
+      expect.stringContaining(`"attachments":${JSON.stringify(expectedAttachments)}`),
+    );
+    expect(startWorker).toHaveBeenCalledWith(
+      currentRun,
+      provider,
+      model,
+      "test-key",
+      undefined,
+      expect.objectContaining({ attachments: expectedAttachments }),
+    );
+  });
+
   it("commits open run changes before creating a pull request", async () => {
     const run = {
       id: "run-1",
@@ -1780,9 +1914,12 @@ describe("AppController settings and lightweight workflows", () => {
 
     await expect(harness.controller.createProjectTask(project.id, { title: " ", prompt: "prompt" })).rejects.toThrow("title");
     await expect(harness.controller.createProjectTask(project.id, { title: "title", prompt: " " })).rejects.toThrow("prompt");
-    await expect(harness.controller.createProjectTask(project.id, { title: " Title ", prompt: " Prompt " })).resolves.toMatchObject({ title: "Title", prompt: "Prompt" });
+    await expect(harness.controller.createProjectTask(project.id, { title: "title", prompt: "prompt", attachments: [{ fileName: "", mimeType: "image/png", dataBase64: "AA==" }] })).rejects.toThrow("file name");
+    const attachment = { fileName: "design.png", mimeType: "image/png", dataBase64: "AA==" };
+    await expect(harness.controller.createProjectTask(project.id, { title: " Title ", prompt: " Prompt ", attachments: [attachment] })).resolves.toMatchObject({ title: "Title", prompt: "Prompt", attachments: [attachment] });
     await expect(harness.controller.updateProjectTask(task.id, { title: " Updated " })).resolves.toMatchObject({ title: "Updated", prompt: task.prompt });
     await expect(harness.controller.updateProjectTask(task.id, { status: "in_progress" })).resolves.toMatchObject({ status: "in_progress" });
+    await expect(harness.controller.updateProjectTask(task.id, { attachments: [attachment] })).resolves.toMatchObject({ attachments: [attachment] });
     await expect(harness.controller.updateProjectTask(task.id, { status: "invalid" as "open" })).rejects.toThrow("Unsupported");
     await expect(harness.controller.updateProjectTask(task.id, { title: " " })).rejects.toThrow("title");
     await expect(harness.controller.updateProjectTask(task.id, { prompt: " " })).rejects.toThrow("prompt");

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ProjectGitBranchOverview, ProjectTaskRecord } from "@buildwarden/shared";
-import { GitBranch, Plus } from "lucide-react";
+import type { ChatAttachmentPayload, ProjectGitBranchOverview, ProjectTaskRecord, ProjectTaskSummary } from "@buildwarden/shared";
+import { GitBranch, Paperclip, Pencil, Play, Plus } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
 import { filterRuns, flattenRuns } from "../data/selectors";
 import { useAction } from "../data/use-action";
@@ -8,12 +8,15 @@ import { absoluteTime, compactNumber, errorMessage, relativeTime } from "../lib/
 import type { ProjectTab } from "../nav/mobile-router";
 import { AppBar } from "../components/AppBar";
 import { RunListRow } from "../components/RunListRow";
-import { Badge, Button, CenteredSpinner, EmptyState, InlineError, ListRow, SectionLabel, SegmentedTabs, type SegmentOption } from "../components/primitives";
+import { Badge, Button, CenteredSpinner, EmptyState, InlineError, Input, ListRow, SectionAction, SectionLabel, SegmentedTabs, Textarea, type SegmentOption } from "../components/primitives";
+import { Sheet } from "../components/Sheet";
+import { MobileStoredAttachments, MobileTaskAttachmentField } from "../components/TaskAttachments";
+import { mergeMobileTaskAttachments, readMobileAttachmentFiles } from "../lib/task-attachments";
 import { ProjectSettingsPanel } from "./project/ProjectSettingsPanel";
 
 const TASK_TONES = { open: "neutral", in_progress: "accent", in_review: "warning", done: "success" } as const;
 
-const TaskList = ({ tasks }: { tasks: readonly ProjectTaskRecord[] }) =>
+const TaskList = ({ tasks, onSelect }: { tasks: readonly ProjectTaskSummary[]; onSelect: (task: ProjectTaskSummary) => void }) =>
   tasks.length === 0 ? (
     <EmptyState title="No tasks" message="Tasks created on the board appear here." />
   ) : (
@@ -23,12 +26,89 @@ const TaskList = ({ tasks }: { tasks: readonly ProjectTaskRecord[] }) =>
           key={task.id}
           title={task.title}
           subtitle={task.prompt || undefined}
-          trailing={<Badge tone={TASK_TONES[task.status]}>{task.status.replace("_", " ")}</Badge>}
+          trailing={<>{task.attachmentCount > 0 ? <span className="inline-flex items-center gap-1"><Paperclip className="size-3.5" />{task.attachmentCount}</span> : null}<Badge tone={TASK_TONES[task.status]}>{task.status.replace("_", " ")}</Badge></>}
+          onClick={() => onSelect(task)}
           className="border-b border-[var(--ec-border)]"
         />
       ))}
     </>
   );
+
+const TaskEditorSheet = ({
+  projectId,
+  task,
+  open,
+  onClose,
+}: {
+  projectId: string;
+  task: ProjectTaskRecord | null;
+  open: boolean;
+  onClose: () => void;
+}) => {
+  const { client, snapshotStore } = useMobileApp();
+  const action = useAction();
+  const [title, setTitle] = useState(task?.title ?? "");
+  const [prompt, setPrompt] = useState(task?.prompt ?? "");
+  const [storedAttachments, setStoredAttachments] = useState<ChatAttachmentPayload[]>(task?.attachments ?? []);
+  const [files, setFiles] = useState<File[]>([]);
+
+  const save = async () => {
+    if (!title.trim() || !prompt.trim()) return;
+    const result = await action.run(async () => {
+      const attachments = mergeMobileTaskAttachments(storedAttachments, await readMobileAttachmentFiles(files));
+      if (task) {
+        await client.updateProjectTask(task.id, { title: title.trim(), prompt: prompt.trim(), attachments });
+      } else {
+        await client.createProjectTask(projectId, { title: title.trim(), prompt: prompt.trim(), attachments });
+      }
+      await snapshotStore.refresh();
+      return true;
+    }, "Could not save the task.");
+    if (result) onClose();
+  };
+
+  return (
+    <Sheet
+      open={open}
+      onClose={onClose}
+      dismissable={!action.busy}
+      full
+      title={task ? "Edit task" : "New task"}
+      footer={<div className="flex gap-2"><Button tone="neutral" block disabled={action.busy} onClick={onClose}>Cancel</Button><Button block busy={action.busy} disabled={!title.trim() || !prompt.trim()} onClick={() => void save()}>Save task</Button></div>}
+    >
+      {action.error ? <InlineError message={action.error} /> : null}
+      <div className="space-y-4 px-4 py-4">
+        <label className="block"><span className="mb-1.5 block text-xs font-medium text-[var(--ec-muted)]">Title</span><Input value={title} onChange={(event) => setTitle(event.target.value)} autoFocus /></label>
+        <label className="block"><span className="mb-1.5 block text-xs font-medium text-[var(--ec-muted)]">Agent prompt</span><Textarea rows={9} value={prompt} onChange={(event) => setPrompt(event.target.value)} /></label>
+        <div><span className="mb-1.5 block text-xs font-medium text-[var(--ec-muted)]">Attachments</span><MobileTaskAttachmentField stored={storedAttachments} onStoredChange={setStoredAttachments} files={files} onFilesChange={setFiles} disabled={action.busy} /></div>
+      </div>
+    </Sheet>
+  );
+};
+
+const TaskDetailSheet = ({
+  task,
+  onClose,
+  onEdit,
+  onStart,
+}: {
+  task: ProjectTaskRecord | null;
+  onClose: () => void;
+  onEdit: (task: ProjectTaskRecord) => void;
+  onStart: (task: ProjectTaskRecord) => void;
+}) => {
+  const { client } = useMobileApp();
+  return (
+    <Sheet
+      open={Boolean(task)}
+      onClose={onClose}
+      title={task?.title}
+      footer={task ? <div className="flex gap-2">{client.capabilities.taskMutations ? <Button tone="neutral" block onClick={() => onEdit(task)}><Pencil className="size-4" />Edit</Button> : null}{client.capabilities.runMutations ? <Button block onClick={() => onStart(task)}><Play className="size-4" />{task.status === "open" ? "Start run" : "Re-run"}</Button> : null}</div> : null}
+    >
+      {task ? <div className="space-y-4 px-4 py-4"><Badge tone={TASK_TONES[task.status]}>{task.status.replace("_", " ")}</Badge><p className="m-wrap-anywhere whitespace-pre-wrap text-sm leading-6 text-[var(--ec-muted)]">{task.prompt}</p>{task.attachments.length > 0 ? <div><SectionLabel>Attachments</SectionLabel><MobileStoredAttachments attachments={task.attachments} /></div> : null}</div> : null}
+    </Sheet>
+  );
+};
 
 const BranchesTab = ({ projectId }: { projectId: string }) => {
   const { client } = useMobileApp();
@@ -96,6 +176,9 @@ const BranchesTab = ({ projectId }: { projectId: string }) => {
 export const ProjectScreen = ({ projectId, tab }: { projectId: string; tab: ProjectTab }) => {
   const { snapshot, router, client, selectProject } = useMobileApp();
   const project = snapshot.projects.find((entry) => entry.project.id === projectId) ?? null;
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedTask, setSelectedTask] = useState<ProjectTaskRecord | null>(null);
+  const [taskEditor, setTaskEditor] = useState<{ key: string; task: ProjectTaskRecord | null } | null>(null);
 
   const runs = useMemo(
     () => (project ? filterRuns(flattenRuns([project]), "all", "") : []),
@@ -109,6 +192,23 @@ export const ProjectScreen = ({ projectId, tab }: { projectId: string; tab: Proj
   useEffect(() => {
     if (project) selectProject(project.project.id);
   }, [project, selectProject]);
+
+  useEffect(() => {
+    if (selectedTaskId && !project?.tasks.some((task) => task.id === selectedTaskId)) {
+      setSelectedTaskId(null);
+      setSelectedTask(null);
+    }
+  }, [project?.tasks, selectedTaskId]);
+
+  const openTaskDetail = async (task: ProjectTaskSummary) => {
+    try {
+      const detail = await client.getProjectTask(task.id);
+      setSelectedTask(detail);
+      setSelectedTaskId(detail.id);
+    } catch (caught) {
+      window.alert(errorMessage(caught, "Could not load task attachments."));
+    }
+  };
 
   const options = useMemo<SegmentOption<ProjectTab>[]>(() => {
     const base: SegmentOption<ProjectTab>[] = [
@@ -197,7 +297,8 @@ export const ProjectScreen = ({ projectId, tab }: { projectId: string; tab: Proj
 
       {activeTab === "tasks" ? (
         <div className="m-scroll m-screen-enter flex-1">
-          <TaskList tasks={project.tasks} />
+          <SectionLabel action={client.capabilities.taskMutations ? <SectionAction onClick={() => setTaskEditor({ key: `new-${Date.now().toString()}`, task: null })}>Add task</SectionAction> : undefined}>Task board</SectionLabel>
+          <TaskList tasks={project.tasks} onSelect={(task) => void openTaskDetail(task)} />
           <div className="h-6" />
         </div>
       ) : null}
@@ -218,7 +319,7 @@ export const ProjectScreen = ({ projectId, tab }: { projectId: string; tab: Proj
       ) : null}
 
       {/* The settings tab is a form; a floating action button would sit on top of its controls. */}
-      {client.capabilities.runMutations && activeTab !== "settings" ? (
+      {client.capabilities.runMutations && activeTab !== "settings" && activeTab !== "tasks" ? (
         <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center">
           <Button
             className="pointer-events-auto h-12 rounded-full px-5 shadow-[var(--ec-action-shadow)]"
@@ -229,6 +330,14 @@ export const ProjectScreen = ({ projectId, tab }: { projectId: string; tab: Proj
           </Button>
         </div>
       ) : null}
+
+      <TaskDetailSheet
+        task={selectedTask}
+        onClose={() => { setSelectedTaskId(null); setSelectedTask(null); }}
+        onEdit={(task) => { setSelectedTaskId(null); setSelectedTask(null); setTaskEditor({ key: task.id, task }); }}
+        onStart={(task) => { setSelectedTaskId(null); setSelectedTask(null); router.push({ name: "new-run", projectId, taskId: task.id }); }}
+      />
+      {taskEditor ? <TaskEditorSheet key={taskEditor.key} projectId={projectId} task={taskEditor.task} open onClose={() => setTaskEditor(null)} /> : null}
     </>
   );
 };

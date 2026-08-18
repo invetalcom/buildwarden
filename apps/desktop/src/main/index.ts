@@ -582,7 +582,8 @@ const bootstrap = async (): Promise<void> => {
       Number(args[0].cols) <= 500 && Number(args[0].rows) >= 2 && Number(args[0].rows) <= 300,
   );
   const validateProjectTaskCreate = defineRemoteArgsValidator<"createProjectTask">(
-    (args) => args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["title", "prompt"]),
+    (args) => args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["title", "prompt"]) &&
+      isRemoteRecord(args[1]) && (args[1].attachments === undefined || Array.isArray(args[1].attachments)),
   );
   const validateProjectTaskUpdate = defineRemoteArgsValidator<"updateProjectTask">((args) => {
     if (args.length !== 2 || typeof args[0] !== "string" || !isRemoteRecord(args[1])) return false;
@@ -590,6 +591,7 @@ const bootstrap = async (): Promise<void> => {
     const statuses = new Set(["open", "in_progress", "in_review", "done"]);
     return (input.title === undefined || typeof input.title === "string") &&
       (input.prompt === undefined || typeof input.prompt === "string") &&
+      (input.attachments === undefined || Array.isArray(input.attachments)) &&
       (input.status === undefined || (typeof input.status === "string" && statuses.has(input.status)));
   });
   const validateProjectTaskPrompt = defineRemoteArgsValidator<"generateProjectTaskRunPrompt">(
@@ -889,6 +891,7 @@ const bootstrap = async (): Promise<void> => {
   }
 
   remoteOperations.register("createProjectTask", (projectId, input) => controller.createProjectTask(projectId, input), validateProjectTaskCreate, "admin", true);
+  remoteOperations.register("getProjectTask", (taskId) => controller.getProjectTask(taskId), validateSingleRemoteStringArg);
   remoteOperations.register("updateProjectTask", (taskId, input) => controller.updateProjectTask(taskId, input), validateProjectTaskUpdate, "admin", true);
   remoteOperations.register("deleteProjectTask", (taskId) => controller.deleteProjectTask(taskId), validateSingleRemoteStringArg, "admin", true);
   remoteOperations.register("generateProjectTaskRunPrompt", (input) => controller.generateProjectTaskRunPrompt(input), validateProjectTaskPrompt, "admin", true);
@@ -1353,6 +1356,7 @@ const bootstrap = async (): Promise<void> => {
     controller.resolveProjectPrMrReviewThread(projectId, input),
   );
   ipcMain.handle(IPC_CHANNELS.createProjectTask, (_, projectId: string, input) => controller.createProjectTask(projectId, input));
+  ipcMain.handle(IPC_CHANNELS.getProjectTask, (_, taskId: string) => controller.getProjectTask(taskId));
   ipcMain.handle(IPC_CHANNELS.updateProjectTask, (_, taskId: string, input) => controller.updateProjectTask(taskId, input));
   ipcMain.handle(IPC_CHANNELS.deleteProjectTask, (_, taskId: string) => controller.deleteProjectTask(taskId));
   ipcMain.handle(IPC_CHANNELS.runProjectLab, (_, input) => controller.runProjectLab(input));

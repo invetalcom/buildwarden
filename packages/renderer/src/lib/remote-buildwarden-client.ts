@@ -81,6 +81,7 @@ const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
   "getProjectLoopUiReviewImage",
   "getProjectLoopDetail",
   "getProjectLoopAvailability",
+  "getProjectTask",
   "getRunChat",
   "getChatDetail",
   "listChatsWithSteps",

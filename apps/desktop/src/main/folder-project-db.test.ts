@@ -125,9 +125,14 @@ describe("folder project persistence", () => {
       resolvedName: "Repo",
     });
     const { provider, model } = addModelFixture(db);
-    const task = db.createProjectTask(project.id, { title: "Ship Kanban", prompt: "Build the board" });
+    const attachment = { fileName: "wireframe.png", mimeType: "image/png", dataBase64: "AA==" };
+    const task = db.createProjectTask(project.id, { title: "Ship Kanban", prompt: "Build the board", attachments: [attachment] });
 
-    expect(task).toMatchObject({ status: "open", runId: null, pullRequestUrl: null });
+    expect(task).toMatchObject({ status: "open", runId: null, pullRequestUrl: null, attachments: [attachment] });
+    expect(db.listProjectTasks(project.id)[0]?.attachments).toEqual([attachment]);
+    const snapshotTask = db.getSnapshot().projects[0]?.tasks[0];
+    expect(snapshotTask).toMatchObject({ id: task.id, attachmentCount: 1 });
+    expect(JSON.stringify(snapshotTask)).not.toContain(attachment.dataBase64);
 
     const run = db.createRun({
       projectId: project.id,
@@ -148,6 +153,6 @@ describe("folder project persistence", () => {
       status: "in_review",
       pullRequestUrl: "https://github.com/acme/repo/pull/42",
     });
-    expect(db.updateProjectTask(task.id, { status: "done" }).status).toBe("done");
+    expect(db.updateProjectTask(task.id, { status: "done", attachments: [] })).toMatchObject({ status: "done", attachments: [] });
   });
 });
