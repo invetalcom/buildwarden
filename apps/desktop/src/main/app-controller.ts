@@ -97,6 +97,8 @@ import {
   parseShellAllowlistExtraSetting,
   serializeProjectForgePrMonitorSettingsSetting,
   serializeProjectLabSettingsSetting,
+  dedupeChatAttachmentPayloads,
+  extractAttachmentPayloadsFromMetadata,
   validateChatAttachmentPayloads,
   type UnifiedProviderFamily,
   type StoredAttachmentMetadata,
@@ -368,6 +370,16 @@ export const resolveOrchestrationChildFullAccess = (
   // Before child settings were persisted, only implementation tasks inherited Full Access.
   return taskIntent === "implement" && latestUserTurnUsedFullAccess(coordinatorSteps);
 };
+
+export const mergeProjectTaskRunAttachments = (
+  taskAttachments: ChatAttachmentPayload[],
+  runAttachments: ChatAttachmentPayload[] | undefined,
+): ChatAttachmentPayload[] | undefined => {
+  if (taskAttachments.length === 0) return runAttachments;
+  if (!runAttachments?.length) return taskAttachments;
+  return dedupeChatAttachmentPayloads(taskAttachments, runAttachments);
+};
+
 const normalizeAssistantOutputText = (value: string) => value.replace(/\s+/g, " ").trim();
 const normalizeRunGoalText = (value: string | null | undefined): string | null => {
   if (typeof value !== "string") {
@@ -485,6 +497,56 @@ const parseMetadataRecord = (metadataJson: string): Record<string, unknown> => {
   } catch {
     return {};
   }
+};
+
+type PersistedRunMessageStep = Pick<RunDetail["steps"][number], "eventType" | "title" | "content" | "metadataJson">;
+
+export const extractInitialRunAttachmentsFromSteps = (
+  steps: ReadonlyArray<PersistedRunMessageStep>,
+): ChatAttachmentPayload[] => {
+  for (const step of steps) {
+    if (step.eventType !== "log") continue;
+    const metadata = parseMetadataRecord(step.metadataJson);
+    if (metadata.source === "user" && metadata.commandType === "initial") {
+      return extractAttachmentPayloadsFromMetadata(metadata);
+    }
+  }
+  return [];
+};
+
+export const buildPriorRunMessagesFromSteps = (
+  steps: ReadonlyArray<PersistedRunMessageStep>,
+): Array<Record<string, unknown>> => {
+  const messages: Array<Record<string, unknown>> = [];
+  let previousAssistantContent: string | null = null;
+  for (const step of steps) {
+    const metadata = parseMetadataRecord(step.metadataJson);
+
+    if (step.eventType === "log" && metadata.source === "user") {
+      const attachments = extractAttachmentPayloadsFromMetadata(metadata);
+      messages.push({
+        role: "user",
+        content: step.content,
+        ...(attachments.length > 0 ? { attachments } : {}),
+      });
+      continue;
+    }
+
+    if (step.eventType === "output") {
+      if (metadata.assistantKind === "reasoning" || step.title === "Reasoning") {
+        continue;
+      }
+      if (isDuplicateFinalSummaryStep(step, previousAssistantContent)) {
+        continue;
+      }
+      messages.push({ role: "assistant", content: step.content });
+      previousAssistantContent = normalizeAssistantOutputText(step.content);
+    }
+  }
+  if (messages.length > 0 && messages[messages.length - 1]?.role === "user") {
+    messages.pop();
+  }
+  return messages;
 };
 
 const findInterruptionTimestamps = (steps: RunDetail["steps"]): { latestInterruptedAt: string; latestRecoveryAt: string } => {
@@ -2932,9 +2994,10 @@ export class AppController
 
   async createRun(input: RunInput): Promise<RunRecord> {
     const project = this.db.getProject(input.projectId);
+    let projectTask: ProjectTaskRecord | null = null;
     if (input.projectTaskId) {
-      const task = this.db.getProjectTask(input.projectTaskId);
-      if (task.projectId !== project.id) {
+      projectTask = this.db.getProjectTask(input.projectTaskId);
+      if (projectTask.projectId !== project.id) {
         throw new Error("The selected task does not belong to this project.");
       }
     }
@@ -2948,9 +3011,12 @@ export class AppController
       throw new Error("The provider API key could not be resolved from secure storage.");
     }
 
-    validateChatAttachmentPayloads(input.attachments);
+    const initialAttachments = projectTask
+      ? mergeProjectTaskRunAttachments(projectTask.attachments, input.attachments)
+      : input.attachments;
+    validateChatAttachmentPayloads(initialAttachments);
     const userText = input.prompt.trim();
-    const attachmentNames = input.attachments?.map((a) => a.fileName) ?? [];
+    const attachmentNames = initialAttachments?.map((a) => a.fileName) ?? [];
     if (!userText && attachmentNames.length === 0) {
       throw new Error("Enter a task description or attach at least one file.");
     }
@@ -2959,7 +3025,7 @@ export class AppController
     const goalText = normalizeRunGoalText(input.goalText);
     const initialPromptForHarness = buildPromptWithRunGoal(displayPrompt, goalText);
 
-    const { attachments: initialAttachments, ...runInsertInput } = input;
+    const runInsertInput = input;
 
     const workspaceType = input.workspaceType ?? (project.kind === "folder" ? "copy" : "worktree");
     const workspaceVcs: RunWorkspaceVcs = project.kind === "folder" ? "folder" : "git";
@@ -3095,6 +3161,8 @@ export class AppController
     if (!existsSync(sourceRun.worktreePath) || !statSync(sourceRun.worktreePath).isDirectory()) {
       throw new Error("The source run workspace is no longer available.");
     }
+    const initialAttachments = this.getInitialRunAttachments(sourceRun.id);
+    validateChatAttachmentPayloads(initialAttachments);
 
     const project = this.db.getProject(sourceRun.projectId);
     const provider = this.db.getProviderAccount(input.providerAccountId);
@@ -3172,6 +3240,7 @@ export class AppController
       continuedFromRunId: sourceRun.id,
       continuedFromBranch: sourceRun.branchName,
       includeWorkspaceChanges: input.includeWorkspaceChanges !== false,
+      ...this.buildStoredAttachmentMetadata(initialAttachments),
     });
     await this.appendRunEvent(
       run.id,
@@ -3206,6 +3275,7 @@ export class AppController
       await this.resolveNetworkProxyRuntimeConfig(),
       {
         promptOverride: promptForHarness,
+        attachments: initialAttachments,
         skillContext: this.buildIntegratedSkillContext(project.id),
         providerOptions: executionOptions,
         yoloMode: input.yoloMode === true,
@@ -3321,6 +3391,15 @@ export class AppController
     }
 
     validateChatAttachmentPayloads(options?.attachments);
+    const providerSession = this.db.getProviderSessionRuntime(run.id, "run");
+    const needsInitialAttachmentReplay = provider.providerType === "azure-legacy" || (
+      provider.providerType !== "ai-sdk" &&
+      (providerSession?.providerType !== provider.providerType || !providerSession.resumeCursor)
+    );
+    const workerAttachments = needsInitialAttachmentReplay
+      ? mergeProjectTaskRunAttachments(this.getInitialRunAttachments(run.id), options?.attachments)
+      : options?.attachments;
+    validateChatAttachmentPayloads(workerAttachments);
 
     const userText = prompt.trim();
     const attachmentNames = options?.attachments?.map((a) => a.fileName) ?? [];
@@ -3391,7 +3470,7 @@ export class AppController
       await this.resolveNetworkProxyRuntimeConfig(),
       {
         promptOverride: followUpPromptForHarness,
-        attachments: options?.attachments,
+        attachments: workerAttachments,
         skillContext: this.buildIntegratedSkillContext(project.id),
         providerOptions: executionOptions,
         yoloMode: options?.yoloMode === true,
@@ -3663,10 +3742,15 @@ export class AppController
     if (!prompt) {
       throw new Error("Enter a task prompt.");
     }
+    validateChatAttachmentPayloads(input.attachments);
     this.db.getProject(projectId);
-    const task = this.db.createProjectTask(projectId, { title, prompt });
+    const task = this.db.createProjectTask(projectId, { title, prompt, attachments: input.attachments });
     this.events.publish("task", { projectId: task.projectId, taskId: task.id, status: task.status });
     return task;
+  }
+
+  async getProjectTask(taskId: string): Promise<ProjectTaskRecord> {
+    return this.db.getProjectTask(taskId);
   }
 
   async updateProjectTask(taskId: string, input: UpdateProjectTaskInput): Promise<ProjectTaskRecord> {
@@ -3679,11 +3763,12 @@ export class AppController
     if (!prompt) {
       throw new Error("Enter a task prompt.");
     }
+    validateChatAttachmentPayloads(input.attachments);
     const status = input.status ?? existing.status;
     if (!(status === "open" || status === "in_progress" || status === "in_review" || status === "done")) {
       throw new Error(`Unsupported project task status: ${String(status)}`);
     }
-    const task = this.db.updateProjectTask(taskId, { title, prompt, status });
+    const task = this.db.updateProjectTask(taskId, { title, prompt, status, attachments: input.attachments });
     this.events.publish("task", { projectId: task.projectId, taskId: task.id, status: task.status });
     return task;
   }
@@ -9417,31 +9502,11 @@ export class AppController
   }
 
   private buildPriorRunMessagesFromSteps(runId: string): Array<Record<string, unknown>> {
-    const messages: Array<Record<string, unknown>> = [];
-    let previousAssistantContent: string | null = null;
-    for (const step of this.db.getRunSteps(runId)) {
-      const metadata = parseMetadataRecord(step.metadataJson);
+    return buildPriorRunMessagesFromSteps(this.db.getRunSteps(runId));
+  }
 
-      if (step.eventType === "log" && metadata.source === "user") {
-        messages.push({ role: "user", content: step.content });
-        continue;
-      }
-
-      if (step.eventType === "output") {
-        if (metadata.assistantKind === "reasoning" || step.title === "Reasoning") {
-          continue;
-        }
-        if (isDuplicateFinalSummaryStep(step, previousAssistantContent)) {
-          continue;
-        }
-        messages.push({ role: "assistant", content: step.content });
-        previousAssistantContent = normalizeAssistantOutputText(step.content);
-      }
-    }
-    if (messages.length > 0 && messages[messages.length - 1]?.role === "user") {
-      messages.pop();
-    }
-    return messages;
+  private getInitialRunAttachments(runId: string): ChatAttachmentPayload[] {
+    return extractInitialRunAttachmentsFromSteps(this.db.getRunSteps(runId));
   }
 
   private buildPriorChatMessages(chatId: string): Array<Record<string, unknown>> {

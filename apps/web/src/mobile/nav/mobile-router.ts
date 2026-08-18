@@ -52,7 +52,7 @@ export type MobileRoute =
   | { name: "project"; projectId: string; tab: ProjectTab }
   | { name: "bookmarks" }
   | { name: "search" }
-  | { name: "new-run"; projectId?: string }
+  | { name: "new-run"; projectId?: string; taskId?: string }
   | { name: "settings"; section?: SettingsSection };
 
 export const HOME_ROUTE: MobileRoute = { name: "home" };
@@ -88,7 +88,9 @@ export const serializeRoute = (route: MobileRoute): string => {
     case "project":
       return `/project/${encodeURIComponent(route.projectId)}/${route.tab}`;
     case "new-run":
-      return route.projectId ? `/new-run/${encodeURIComponent(route.projectId)}` : "/new-run";
+      return route.projectId
+        ? `/new-run/${encodeURIComponent(route.projectId)}${route.taskId ? `/task/${encodeURIComponent(route.taskId)}` : ""}`
+        : "/new-run";
     case "settings":
       return route.section ? `/settings/${route.section}` : "/settings";
     default:
@@ -101,7 +103,7 @@ export const parseRoute = (path: string): MobileRoute | null => {
   if (segments.length === 0) {
     return HOME_ROUTE;
   }
-  const [head, first, second] = segments;
+  const [head, first, second, third] = segments;
   switch (head) {
     case "runs":
     case "chats":
@@ -117,7 +119,7 @@ export const parseRoute = (path: string): MobileRoute | null => {
     case "project":
       return first ? { name: "project", projectId: first, tab: includes(PROJECT_TABS, second ?? "") ? second as ProjectTab : "overview" } : null;
     case "new-run":
-      return first ? { name: "new-run", projectId: first } : { name: "new-run" };
+      return first ? { name: "new-run", projectId: first, ...(second === "task" && third ? { taskId: third } : {}) } : { name: "new-run" };
     case "settings":
       return includes(SETTINGS_SECTIONS, first ?? "") ? { name: "settings", section: first as SettingsSection } : { name: "settings" };
     default:

@@ -8,6 +8,7 @@ import type {
   BookmarkRecord,
   BookmarkStepRecord,
   BookmarkSummary,
+  ChatAttachmentPayload,
   ChatBookmarkRecord,
   ChatBookmarkSummary,
   ChatDetail,
@@ -48,6 +49,7 @@ import type {
   ProjectLoopUiReviewStatus,
   ProjectTaskInput,
   ProjectTaskRecord,
+  ProjectTaskSummary,
   ProjectRecord,
   ProjectSnapshot,
   ProviderAccountRecord,
@@ -91,6 +93,10 @@ const ORCHESTRATION_TASK_SELECT = `select id, orchestration_id as orchestrationI
 type StoredOrchestrationRecord = Omit<OrchestrationRecord, "teamSnapshot" | "wakeTaskIds"> & {
   teamSnapshotJson: string;
   wakeTaskIdsJson: string;
+};
+
+type StoredProjectTaskRecord = Omit<ProjectTaskRecord, "attachments"> & {
+  attachmentsJson: string;
 };
 
 const DEFAULT_DB_NAME = "buildwarden.sqlite";
@@ -297,7 +303,7 @@ export class BuildWardenDatabase {
           ["queued", "preparing", "running"].includes(run.status) || activeCoordinatorIds.has(run.id),
         ),
         recentRuns: runs.slice(0, 12),
-        tasks: this.listProjectTasks(project.id),
+        tasks: this.listProjectTaskSummaries(project.id),
         insights: this.listProjectInsights(project.id),
         labThreads: this.listProjectLabThreadDetails(project.id),
         loops: this.listProjectLoopListItems(project.id),
@@ -595,10 +601,10 @@ export class BuildWardenDatabase {
     const createdAt = nowIso();
     this.run(
       `
-      insert into project_tasks (id, project_id, title, prompt, status, run_id, pull_request_url, created_at, updated_at)
-      values (?, ?, ?, ?, 'open', null, null, ?, ?)
+      insert into project_tasks (id, project_id, title, prompt, attachments_json, status, run_id, pull_request_url, created_at, updated_at)
+      values (?, ?, ?, ?, ?, 'open', null, null, ?, ?)
       `,
-      [id, projectId, input.title, input.prompt, createdAt, createdAt],
+      [id, projectId, input.title, input.prompt, JSON.stringify(input.attachments ?? []), createdAt, createdAt],
     );
     return this.getProjectTask(id);
   }
@@ -607,6 +613,7 @@ export class BuildWardenDatabase {
     const existing = this.getProjectTask(taskId);
     const nextTitle = input.title === undefined ? existing.title : input.title.trim();
     const nextPrompt = input.prompt === undefined ? existing.prompt : input.prompt.trim();
+    const nextAttachments = input.attachments === undefined ? existing.attachments : input.attachments;
     if (!nextTitle) {
       throw new Error("Project task title cannot be empty.");
     }
@@ -622,22 +629,23 @@ export class BuildWardenDatabase {
     this.run(
       `
       update project_tasks
-      set title = ?, prompt = ?, status = ?, updated_at = ?
+      set title = ?, prompt = ?, attachments_json = ?, status = ?, updated_at = ?
       where id = ?
       `,
-      [nextTitle, nextPrompt, nextStatus, updatedAt, taskId],
+      [nextTitle, nextPrompt, JSON.stringify(nextAttachments), nextStatus, updatedAt, taskId],
     );
     return this.getProjectTask(taskId);
   }
 
   getProjectTask(taskId: string): ProjectTaskRecord {
-    const task = this.first<ProjectTaskRecord>(
+    const task = this.first<StoredProjectTaskRecord>(
       `
       select
         id,
         project_id as projectId,
         title,
         prompt,
+        attachments_json as attachmentsJson,
         status,
         run_id as runId,
         pull_request_url as pullRequestUrl,
@@ -651,17 +659,40 @@ export class BuildWardenDatabase {
     if (!task) {
       throw new Error(`Project task not found: ${taskId}`);
     }
-    return task;
+    return this.hydrateProjectTask(task);
   }
 
   listProjectTasks(projectId: string): ProjectTaskRecord[] {
-    return this.all<ProjectTaskRecord>(
+    return this.all<StoredProjectTaskRecord>(
       `
       select
         id,
         project_id as projectId,
         title,
         prompt,
+        attachments_json as attachmentsJson,
+        status,
+        run_id as runId,
+        pull_request_url as pullRequestUrl,
+        created_at as createdAt,
+        updated_at as updatedAt
+      from project_tasks
+      where project_id = ?
+      order by updated_at desc, created_at desc
+      `,
+      [projectId],
+    ).map((task) => this.hydrateProjectTask(task));
+  }
+
+  listProjectTaskSummaries(projectId: string): ProjectTaskSummary[] {
+    return this.all<ProjectTaskSummary>(
+      `
+      select
+        id,
+        project_id as projectId,
+        title,
+        prompt,
+        case when json_valid(attachments_json) then json_array_length(attachments_json) else 0 end as attachmentCount,
         status,
         run_id as runId,
         pull_request_url as pullRequestUrl,
@@ -4133,6 +4164,7 @@ export class BuildWardenDatabase {
         project_id text not null,
         title text not null,
         prompt text not null,
+        attachments_json text not null default '[]',
         status text not null default 'open',
         run_id text,
         pull_request_url text,
@@ -4492,6 +4524,7 @@ export class BuildWardenDatabase {
     this.ensureColumn("project_tasks", "status", "text not null default 'open'");
     this.ensureColumn("project_tasks", "run_id", "text");
     this.ensureColumn("project_tasks", "pull_request_url", "text");
+    this.ensureColumn("project_tasks", "attachments_json", "text not null default '[]'");
     this.ensureColumn("remote_pairing_grants", "client_origin", "text");
     this.ensureColumn("remote_access_sessions", "client_origin", "text");
   }
@@ -4541,6 +4574,20 @@ export class BuildWardenDatabase {
     } catch {
       return null;
     }
+  }
+
+  private hydrateProjectTask(task: StoredProjectTaskRecord): ProjectTaskRecord {
+    const { attachmentsJson, ...record } = task;
+    const parsed = this.parseJsonValue<unknown>(attachmentsJson);
+    const attachments = Array.isArray(parsed)
+      ? parsed.filter((value): value is ChatAttachmentPayload => {
+          if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+          const candidate = value as Partial<ChatAttachmentPayload>;
+          return typeof candidate.fileName === "string" && typeof candidate.mimeType === "string" &&
+            typeof candidate.dataBase64 === "string";
+        })
+      : [];
+    return { ...record, attachments };
   }
 
   private parseRemoteAccessScopes(value: string): RemoteAccessScope[] {

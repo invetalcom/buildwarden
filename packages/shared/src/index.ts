@@ -848,6 +848,8 @@ export interface ProjectTaskRecord {
   projectId: string;
   title: string;
   prompt: string;
+  /** Files stored with the task and forwarded whenever a run is launched from it. */
+  attachments: ChatAttachmentPayload[];
   status: ProjectTaskStatus;
   /** Most recent run launched from this task. */
   runId: string | null;
@@ -857,14 +859,22 @@ export interface ProjectTaskRecord {
   updatedAt: string;
 }
 
+/** Task list metadata. Full attachment payloads are loaded with {@link DesktopApi.getProjectTask}. */
+export interface ProjectTaskSummary extends Omit<ProjectTaskRecord, "attachments"> {
+  attachmentCount: number;
+}
+
 export interface ProjectTaskInput {
   title: string;
   prompt: string;
+  attachments?: ChatAttachmentPayload[];
 }
 
 export interface UpdateProjectTaskInput {
   title?: string;
   prompt?: string;
+  /** Replaces the task's attachments; an empty array removes all files. */
+  attachments?: ChatAttachmentPayload[];
   status?: ProjectTaskStatus;
 }
 
@@ -1772,7 +1782,7 @@ export interface ProjectSnapshot {
   orchestratedRuns: RunRecord[];
   activeRuns: RunRecord[];
   recentRuns: RunRecord[];
-  tasks: ProjectTaskRecord[];
+  tasks: ProjectTaskSummary[];
   insights: ProjectInsightRecord[];
   labThreads: ProjectLabThreadDetail[];
   loops: ProjectLoopListItem[];
@@ -2992,6 +3002,19 @@ export function appendChatAttachmentFiles(existing: readonly File[], incoming: r
   return next;
 }
 
+/** Deduplicate persisted attachment payloads while preserving their first-seen order. */
+export function dedupeChatAttachmentPayloads(
+  ...collections: Array<readonly ChatAttachmentPayload[] | undefined>
+): ChatAttachmentPayload[] {
+  const seen = new Set<string>();
+  return collections.flatMap((attachments) => attachments ?? []).filter((attachment) => {
+    const key = `${attachment.fileName}\u0000${attachment.mimeType}\u0000${attachment.dataBase64}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /** Approximate decoded byte length of a standard base64 string (no data: URL prefix). */
 export function estimateBase64ByteLength(base64: string): number {
   const t = base64.replace(/\s/g, "");
@@ -3699,6 +3722,7 @@ export interface DesktopApi {
   listAvailableProviderModels(input: ListAvailableProviderModelsInput): Promise<ListAvailableProviderModelsResult>;
   listComposerCommands(input: ListComposerCommandsInput): Promise<ComposerCommandDescriptor[]>;
   createProjectTask(projectId: string, input: ProjectTaskInput): Promise<ProjectTaskRecord>;
+  getProjectTask(taskId: string): Promise<ProjectTaskRecord>;
   updateProjectTask(taskId: string, input: UpdateProjectTaskInput): Promise<ProjectTaskRecord>;
   deleteProjectTask(taskId: string): Promise<void>;
   onProjectTaskChanged(listener: (payload: ProjectTaskChangedPayload) => void): () => void;
@@ -4116,6 +4140,7 @@ export type RemoteOperationMap = {
   getProjectLoopUiReviewImage: DesktopApi["getProjectLoopUiReviewImage"];
   getProjectLoopDetail: DesktopApi["getProjectLoopDetail"];
   getProjectLoopAvailability: DesktopApi["getProjectLoopAvailability"];
+  getProjectTask: DesktopApi["getProjectTask"];
   getRunChat: DesktopApi["getRunChat"];
   getChatDetail: DesktopApi["getChatDetail"];
   listChatsWithSteps: DesktopApi["listChatsWithSteps"];
@@ -4381,6 +4406,7 @@ export const IPC_CHANNELS = {
   addModel: "buildwarden:add-model",
   listAvailableProviderModels: "buildwarden:list-available-provider-models",
   createProjectTask: "buildwarden:create-project-task",
+  getProjectTask: "buildwarden:get-project-task",
   updateProjectTask: "buildwarden:update-project-task",
   deleteProjectTask: "buildwarden:delete-project-task",
   projectTaskChanged: "buildwarden:project-task-changed",
