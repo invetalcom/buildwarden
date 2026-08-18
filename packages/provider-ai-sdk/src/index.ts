@@ -37,6 +37,7 @@ import {
   PROVIDER_CONFIG_DEFAULT_HEADERS_KEY,
   buildNetworkProxyUrl,
   estimateBase64ByteLength,
+  extractAttachmentPayloadsFromMetadata,
   formatRunPlanProgressContent,
   getKnownModelExecutionProfile,
   getModelPresetsForProvider,
@@ -915,8 +916,22 @@ const downloadOpenAiContainerFile = async (
   };
 };
 
+export const hydratePriorMessageAttachments = (message: Record<string, unknown>): Record<string, unknown> => {
+  const attachments = extractAttachmentPayloadsFromMetadata(message);
+  if (message.role !== "user" || attachments.length === 0) {
+    return message;
+  }
+  const hydrated = { ...message };
+  delete hydrated.attachments;
+  delete hydrated.attachmentNames;
+  hydrated.content = buildAttachmentUserContent(typeof message.content === "string" ? message.content : "", attachments);
+  return hydrated;
+};
+
 const buildRunMessages = (input: RunExecutionRequest): Array<Record<string, unknown>> => {
-  const priorMessages = Array.isArray(input.priorMessages) ? [...input.priorMessages] : [];
+  const priorMessages = Array.isArray(input.priorMessages)
+    ? input.priorMessages.map(hydratePriorMessageAttachments)
+    : [];
   if (priorMessages.length > 0) {
     priorMessages.push({
       role: "user",

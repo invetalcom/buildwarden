@@ -17,8 +17,11 @@ import type {
 import type { SecretStore } from "@buildwarden/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GitService } from "@buildwarden/git-service";
+import { hydratePriorMessageAttachments } from "@buildwarden/provider-ai-sdk";
 import {
   AppController,
+  buildPriorRunMessagesFromSteps,
+  extractInitialRunAttachmentsFromSteps,
   latestRunExecutionSettings,
   latestUserTurnUsedFullAccess,
   mergeProjectTaskRunAttachments,
@@ -116,6 +119,7 @@ const createHarness = (overrides: DbOverrides = {}) => {
     updateRunListVisibility: vi.fn((_runId: string, visibility: string) => ({ id: "run-1", listVisibility: visibility } as RunRecord)),
     getOrchestrationTaskByChildRunId: vi.fn(() => null),
     getOrchestrationByCoordinatorRunId: vi.fn(() => null),
+    getProviderSessionRuntime: vi.fn(() => null),
     listRunsForProject: vi.fn(() => []),
   };
   const db = { ...defaults, ...overrides } as unknown as BuildWardenDatabase;
@@ -183,6 +187,44 @@ describe("AppController settings and lightweight workflows", () => {
       taskAttachment,
       launchAttachment,
     ]);
+  });
+
+  it("rehydrates persisted initial attachments when run history is replayed", () => {
+    const attachment = { fileName: "design.png", mimeType: "image/png", dataBase64: "AA==" };
+    const steps = [
+      {
+        eventType: "log" as const,
+        title: "Initial command",
+        content: "Build the design",
+        metadataJson: JSON.stringify({ source: "user", commandType: "initial", attachments: [attachment] }),
+      },
+      {
+        eventType: "output" as const,
+        title: "Result",
+        content: "Initial work complete",
+        metadataJson: "{}",
+      },
+      {
+        eventType: "log" as const,
+        title: "Follow-up command",
+        content: "Continue",
+        metadataJson: JSON.stringify({ source: "user", commandType: "follow-up" }),
+      },
+    ];
+
+    expect(extractInitialRunAttachmentsFromSteps(steps)).toEqual([attachment]);
+    const priorMessages = buildPriorRunMessagesFromSteps(steps);
+    expect(priorMessages).toEqual([
+      { role: "user", content: "Build the design", attachments: [attachment] },
+      { role: "assistant", content: "Initial work complete" },
+    ]);
+    expect(hydratePriorMessageAttachments(priorMessages[0]!)).toEqual({
+      role: "user",
+      content: [
+        { type: "text", text: "Build the design" },
+        { type: "image", image: "data:image/png;base64,AA==", mediaType: "image/png" },
+      ],
+    });
   });
 
   it("forwards stored task attachments through createRun metadata and worker options", async () => {

@@ -98,6 +98,7 @@ import {
   serializeProjectForgePrMonitorSettingsSetting,
   serializeProjectLabSettingsSetting,
   dedupeChatAttachmentPayloads,
+  extractAttachmentPayloadsFromMetadata,
   validateChatAttachmentPayloads,
   type UnifiedProviderFamily,
   type StoredAttachmentMetadata,
@@ -496,6 +497,56 @@ const parseMetadataRecord = (metadataJson: string): Record<string, unknown> => {
   } catch {
     return {};
   }
+};
+
+type PersistedRunMessageStep = Pick<RunDetail["steps"][number], "eventType" | "title" | "content" | "metadataJson">;
+
+export const extractInitialRunAttachmentsFromSteps = (
+  steps: ReadonlyArray<PersistedRunMessageStep>,
+): ChatAttachmentPayload[] => {
+  for (const step of steps) {
+    if (step.eventType !== "log") continue;
+    const metadata = parseMetadataRecord(step.metadataJson);
+    if (metadata.source === "user" && metadata.commandType === "initial") {
+      return extractAttachmentPayloadsFromMetadata(metadata);
+    }
+  }
+  return [];
+};
+
+export const buildPriorRunMessagesFromSteps = (
+  steps: ReadonlyArray<PersistedRunMessageStep>,
+): Array<Record<string, unknown>> => {
+  const messages: Array<Record<string, unknown>> = [];
+  let previousAssistantContent: string | null = null;
+  for (const step of steps) {
+    const metadata = parseMetadataRecord(step.metadataJson);
+
+    if (step.eventType === "log" && metadata.source === "user") {
+      const attachments = extractAttachmentPayloadsFromMetadata(metadata);
+      messages.push({
+        role: "user",
+        content: step.content,
+        ...(attachments.length > 0 ? { attachments } : {}),
+      });
+      continue;
+    }
+
+    if (step.eventType === "output") {
+      if (metadata.assistantKind === "reasoning" || step.title === "Reasoning") {
+        continue;
+      }
+      if (isDuplicateFinalSummaryStep(step, previousAssistantContent)) {
+        continue;
+      }
+      messages.push({ role: "assistant", content: step.content });
+      previousAssistantContent = normalizeAssistantOutputText(step.content);
+    }
+  }
+  if (messages.length > 0 && messages[messages.length - 1]?.role === "user") {
+    messages.pop();
+  }
+  return messages;
 };
 
 const findInterruptionTimestamps = (steps: RunDetail["steps"]): { latestInterruptedAt: string; latestRecoveryAt: string } => {
@@ -3110,6 +3161,8 @@ export class AppController
     if (!existsSync(sourceRun.worktreePath) || !statSync(sourceRun.worktreePath).isDirectory()) {
       throw new Error("The source run workspace is no longer available.");
     }
+    const initialAttachments = this.getInitialRunAttachments(sourceRun.id);
+    validateChatAttachmentPayloads(initialAttachments);
 
     const project = this.db.getProject(sourceRun.projectId);
     const provider = this.db.getProviderAccount(input.providerAccountId);
@@ -3187,6 +3240,7 @@ export class AppController
       continuedFromRunId: sourceRun.id,
       continuedFromBranch: sourceRun.branchName,
       includeWorkspaceChanges: input.includeWorkspaceChanges !== false,
+      ...this.buildStoredAttachmentMetadata(initialAttachments),
     });
     await this.appendRunEvent(
       run.id,
@@ -3221,6 +3275,7 @@ export class AppController
       await this.resolveNetworkProxyRuntimeConfig(),
       {
         promptOverride: promptForHarness,
+        attachments: initialAttachments,
         skillContext: this.buildIntegratedSkillContext(project.id),
         providerOptions: executionOptions,
         yoloMode: input.yoloMode === true,
@@ -3336,6 +3391,15 @@ export class AppController
     }
 
     validateChatAttachmentPayloads(options?.attachments);
+    const providerSession = this.db.getProviderSessionRuntime(run.id, "run");
+    const needsInitialAttachmentReplay = provider.providerType === "azure-legacy" || (
+      provider.providerType !== "ai-sdk" &&
+      (providerSession?.providerType !== provider.providerType || !providerSession.resumeCursor)
+    );
+    const workerAttachments = needsInitialAttachmentReplay
+      ? mergeProjectTaskRunAttachments(this.getInitialRunAttachments(run.id), options?.attachments)
+      : options?.attachments;
+    validateChatAttachmentPayloads(workerAttachments);
 
     const userText = prompt.trim();
     const attachmentNames = options?.attachments?.map((a) => a.fileName) ?? [];
@@ -3406,7 +3470,7 @@ export class AppController
       await this.resolveNetworkProxyRuntimeConfig(),
       {
         promptOverride: followUpPromptForHarness,
-        attachments: options?.attachments,
+        attachments: workerAttachments,
         skillContext: this.buildIntegratedSkillContext(project.id),
         providerOptions: executionOptions,
         yoloMode: options?.yoloMode === true,
@@ -9438,31 +9502,11 @@ export class AppController
   }
 
   private buildPriorRunMessagesFromSteps(runId: string): Array<Record<string, unknown>> {
-    const messages: Array<Record<string, unknown>> = [];
-    let previousAssistantContent: string | null = null;
-    for (const step of this.db.getRunSteps(runId)) {
-      const metadata = parseMetadataRecord(step.metadataJson);
+    return buildPriorRunMessagesFromSteps(this.db.getRunSteps(runId));
+  }
 
-      if (step.eventType === "log" && metadata.source === "user") {
-        messages.push({ role: "user", content: step.content });
-        continue;
-      }
-
-      if (step.eventType === "output") {
-        if (metadata.assistantKind === "reasoning" || step.title === "Reasoning") {
-          continue;
-        }
-        if (isDuplicateFinalSummaryStep(step, previousAssistantContent)) {
-          continue;
-        }
-        messages.push({ role: "assistant", content: step.content });
-        previousAssistantContent = normalizeAssistantOutputText(step.content);
-      }
-    }
-    if (messages.length > 0 && messages[messages.length - 1]?.role === "user") {
-      messages.pop();
-    }
-    return messages;
+  private getInitialRunAttachments(runId: string): ChatAttachmentPayload[] {
+    return extractInitialRunAttachmentsFromSteps(this.db.getRunSteps(runId));
   }
 
   private buildPriorChatMessages(chatId: string): Array<Record<string, unknown>> {
