@@ -120,7 +120,7 @@ const createHarness = (overrides: DbOverrides = {}) => {
   };
   const db = { ...defaults, ...overrides } as unknown as BuildWardenDatabase;
   const secrets = {
-    readSecret: vi.fn(async () => null),
+    readSecret: vi.fn(async (): Promise<string | null> => null),
     saveSecret: vi.fn(async () => undefined),
     deleteSecret: vi.fn(async () => undefined),
   } satisfies SecretStore;
@@ -183,6 +183,85 @@ describe("AppController settings and lightweight workflows", () => {
       taskAttachment,
       launchAttachment,
     ]);
+  });
+
+  it("forwards stored task attachments through createRun metadata and worker options", async () => {
+    const taskAttachment = { fileName: "design.png", mimeType: "image/png", dataBase64: "AA==" };
+    const launchAttachment = { fileName: "notes.md", mimeType: "text/markdown", dataBase64: "Iw==" };
+    let currentRun = {
+      id: "run-1",
+      projectId: project.id,
+      providerAccountId: provider.id,
+      modelId: model.id,
+      harnessType: "ai-sdk",
+      mode: "code",
+      workspaceType: "local",
+      workspaceVcs: "git",
+      branchName: "main",
+      worktreePath: project.repoPath,
+      prompt: task.prompt,
+      goalText: null,
+      status: "queued",
+      projectTaskId: task.id,
+    } as RunRecord;
+    const appendRunStep = vi.fn(async () => undefined);
+    const harness = createHarness({
+      getProjectTask: vi.fn(() => ({ ...task, attachments: [taskAttachment] })),
+      createRun: vi.fn((input: object) => {
+        currentRun = { ...currentRun, ...input };
+        return currentRun;
+      }),
+      getRun: vi.fn(() => currentRun),
+      updateRunStatus: vi.fn((_runId: string, status: RunRecord["status"]) => {
+        currentRun = { ...currentRun, status };
+        return currentRun;
+      }),
+      appendRunStep,
+      linkProjectTaskToRun: vi.fn(),
+    });
+    harness.secrets.readSecret.mockResolvedValue("test-key");
+    const startWorker = vi.fn(() => ({}));
+    const controllerInternals = harness.controller as unknown as {
+      gitService: { getCurrentBranch: (repoPath: string) => Promise<string> };
+      syncRunForgeRequestInBackground: () => void;
+      capturePromptRestorePoint: () => Promise<void>;
+      resolveNetworkProxyRuntimeConfig: () => Promise<undefined>;
+      startWorker: typeof startWorker;
+    };
+    controllerInternals.gitService = { getCurrentBranch: vi.fn(async () => "main") };
+    controllerInternals.syncRunForgeRequestInBackground = vi.fn();
+    controllerInternals.capturePromptRestorePoint = vi.fn(async () => undefined);
+    controllerInternals.resolveNetworkProxyRuntimeConfig = vi.fn(async () => undefined);
+    controllerInternals.startWorker = startWorker;
+
+    await harness.controller.createRun({
+      projectId: project.id,
+      providerAccountId: provider.id,
+      modelId: model.id,
+      harnessType: "ai-sdk",
+      mode: "code",
+      workspaceType: "local",
+      prompt: task.prompt,
+      attachments: [taskAttachment, launchAttachment],
+      projectTaskId: task.id,
+    });
+
+    const expectedAttachments = [taskAttachment, launchAttachment];
+    expect(appendRunStep).toHaveBeenCalledWith(
+      currentRun.id,
+      "log",
+      "Initial command",
+      task.prompt,
+      expect.stringContaining(`"attachments":${JSON.stringify(expectedAttachments)}`),
+    );
+    expect(startWorker).toHaveBeenCalledWith(
+      currentRun,
+      provider,
+      model,
+      "test-key",
+      undefined,
+      expect.objectContaining({ attachments: expectedAttachments }),
+    );
   });
 
   it("commits open run changes before creating a pull request", async () => {
