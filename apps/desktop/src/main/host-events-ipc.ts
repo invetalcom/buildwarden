@@ -6,6 +6,7 @@ const IPC_EVENT_CHANNELS = {
   run: IPC_CHANNELS.runEvent,
   chat: IPC_CHANNELS.chatEvent,
   warning: IPC_CHANNELS.appWarning,
+  automationStarted: IPC_CHANNELS.automationStarted,
   loop: IPC_CHANNELS.projectLoopChanged,
   task: IPC_CHANNELS.projectTaskChanged,
   orchestration: IPC_CHANNELS.orchestrationChanged,

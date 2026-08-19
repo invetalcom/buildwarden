@@ -942,6 +942,15 @@ export interface StartupAutomationCatchUpItem {
   scheduledAt: string;
 }
 
+export interface AutomationStartedNotificationPayload {
+  automationId: string;
+  automationName: string;
+  projectId: string;
+  projectName: string;
+  runId: string;
+  startedAt: string;
+}
+
 export type ProjectLabThreadKind = "implementation" | "rfc";
 export type ProjectLabMode = "new-feature" | "bugfix" | "refactoring" | "rfc-only";
 export type ProjectLabThreadStatus =
@@ -3793,6 +3802,7 @@ export interface DesktopApi {
   runProjectAutomationNow(automationId: string): Promise<RunRecord>;
   getStartupAutomationCatchUp(): Promise<StartupAutomationCatchUpItem[]>;
   resolveStartupAutomationCatchUp(automationIds: string[]): Promise<RunRecord[]>;
+  onAutomationStarted(listener: (payload: AutomationStartedNotificationPayload) => void): () => void;
   onProjectTaskChanged(listener: (payload: ProjectTaskChangedPayload) => void): () => void;
   runProjectLab(input: RunProjectLabInput): Promise<ProjectLabThreadRecord[]>;
   deleteProjectLabThread(threadId: string): Promise<void>;
@@ -4484,6 +4494,7 @@ export const IPC_CHANNELS = {
   runProjectAutomationNow: "buildwarden:run-project-automation-now",
   getStartupAutomationCatchUp: "buildwarden:get-startup-automation-catch-up",
   resolveStartupAutomationCatchUp: "buildwarden:resolve-startup-automation-catch-up",
+  automationStarted: "buildwarden:automation-started",
   projectTaskChanged: "buildwarden:project-task-changed",
   runProjectLab: "buildwarden:run-project-lab",
   deleteProjectLabThread: "buildwarden:delete-project-lab-thread",

@@ -9,6 +9,7 @@ import type {
   OrchestrationRecord,
   OrchestrationTaskMessageRecord,
   OrchestrationTaskRecord,
+  ProjectAutomationRecord,
   ProjectRecord,
   ProjectTaskRecord,
   ProviderAccountRecord,
@@ -74,6 +75,27 @@ const task = {
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
 } satisfies ProjectTaskRecord;
+
+const automation = {
+  id: "automation-1",
+  projectId: project.id,
+  name: "Daily review",
+  prompt: "Review the project",
+  attachments: [],
+  cronExpression: "0 9 * * *",
+  timeZone: "UTC",
+  modelId: model.id,
+  effort: "high",
+  executionOptions: { reasoningEffort: "high" },
+  workspaceType: "worktree",
+  onlyIfPreviousFinished: true,
+  enabled: true,
+  lastScheduledAt: null,
+  nextRunAt: "2026-08-20T09:00:00.000Z",
+  lastError: null,
+  createdAt: "2026-08-19T09:00:00.000Z",
+  updatedAt: "2026-08-19T09:00:00.000Z",
+} satisfies ProjectAutomationRecord;
 
 type DbOverrides = Partial<Record<keyof BuildWardenDatabase, unknown>>;
 
@@ -181,6 +203,36 @@ const createMutableProjectHarness = () => {
 };
 
 describe("AppController settings and lightweight workflows", () => {
+  it("publishes an automation-started notification after its run is created", async () => {
+    const setProjectAutomationError = vi.fn();
+    const harness = createHarness({
+      getProjectAutomation: vi.fn(() => automation),
+      setProjectAutomationError,
+    });
+    tempDirs.push(harness.logDir);
+    const run = {
+      id: "automation-run-1",
+      projectId: project.id,
+      createdAt: "2026-08-19T09:00:00.000Z",
+      startedAt: "2026-08-19T09:00:01.000Z",
+    } as RunRecord;
+    vi.spyOn(harness.controller, "createRun").mockResolvedValue(run);
+    const listener = vi.fn();
+    harness.controller.onAutomationStarted(listener);
+
+    await expect(harness.controller.runProjectAutomationNow(automation.id)).resolves.toBe(run);
+
+    expect(listener).toHaveBeenCalledWith({
+      automationId: automation.id,
+      automationName: automation.name,
+      projectId: project.id,
+      projectName: project.name,
+      runId: run.id,
+      startedAt: run.startedAt,
+    });
+    expect(setProjectAutomationError).toHaveBeenCalledWith(automation.id, null);
+  });
+
   it("combines task and launch attachments without sending duplicates to a run", () => {
     const taskAttachment = { fileName: "design.png", mimeType: "image/png", dataBase64: "AA==" };
     const launchAttachment = { fileName: "notes.md", mimeType: "text/markdown", dataBase64: "Iw==" };

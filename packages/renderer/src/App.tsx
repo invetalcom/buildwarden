@@ -24,6 +24,7 @@ import {
   type AppMenuSection,
   type AppSnapshot,
   type AppWarning,
+  type AutomationStartedNotificationPayload,
   type ChatAttachmentPayload,
   type ChatDetail,
   type ChatRecord,
@@ -200,6 +201,11 @@ const addProjectForgeRequestToast = (
   toast: ProjectForgeRequestToast,
 ): ProjectForgeRequestToast[] => [toast, ...current.filter((existing) => existing.id !== toast.id)].slice(0, 4);
 
+const addAutomationStartedToast = (
+  current: AutomationStartedNotificationPayload[],
+  toast: AutomationStartedNotificationPayload,
+): AutomationStartedNotificationPayload[] => [toast, ...current.filter((existing) => existing.runId !== toast.runId)].slice(0, 4);
+
 export const App = () => {
   const buildwarden = useBuildWardenClient();
   const readOnly = !buildwarden.capabilities.mutations;
@@ -220,6 +226,7 @@ export const App = () => {
   const [pendingDeleteRunIds, setPendingDeleteRunIds] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const [appWarning, setAppWarning] = useState<AppWarning | null>(null);
+  const [automationStartedToasts, setAutomationStartedToasts] = useState<AutomationStartedNotificationPayload[]>([]);
   const [projectForgeRequestToasts, setProjectForgeRequestToasts] = useState<ProjectForgeRequestToast[]>([]);
   const [projectName, setProjectName] = useState("");
   const [projectPath, setProjectPath] = useState("");
@@ -1142,6 +1149,11 @@ export const App = () => {
       setAppWarning(warning);
     });
 
+    const unsubscribeAutomationStarted = buildwarden.onAutomationStarted((payload) => {
+      setAutomationStartedToasts((current) => addAutomationStartedToast(current, payload));
+      scheduleSnapshotRefresh();
+    });
+
     const unsubscribeLoopChanged = buildwarden.onProjectLoopChanged(() => {
       scheduleSnapshotRefresh();
     });
@@ -1161,6 +1173,7 @@ export const App = () => {
     return () => {
       unsubscribe();
       unsubscribeWarning();
+      unsubscribeAutomationStarted();
       unsubscribeLoopChanged();
       unsubscribeOrchestrationChanged();
       unsubscribeForgeChanged();
@@ -1180,6 +1193,15 @@ export const App = () => {
     purgeDeletedRunState,
     scheduleSnapshotRefresh,
   ]);
+
+  useEffect(() => {
+    const oldest = automationStartedToasts.at(-1);
+    if (!oldest) return;
+    const timeoutId = window.setTimeout(() => {
+      setAutomationStartedToasts((current) => current.filter((toast) => toast.runId !== oldest.runId));
+    }, 8_000);
+    return () => window.clearTimeout(timeoutId);
+  }, [automationStartedToasts]);
 
   useEffect(() => {
     if (!snapshotLoaded || startupDataRetentionCheckStartedRef.current) return;
@@ -4608,6 +4630,8 @@ export const App = () => {
         }}
         appWarning={appWarning}
         onDismissAppWarning={() => setAppWarning(null)}
+        automationStartedToasts={automationStartedToasts}
+        onDismissAutomationStartedToast={(runId) => setAutomationStartedToasts((current) => current.filter((toast) => toast.runId !== runId))}
         projectForgeRequestToasts={projectForgeRequestToasts}
         onOpenProjectForgeRequest={openProjectForgeRequest}
         onDismissProjectForgeRequestToast={dismissProjectForgeRequestToast}

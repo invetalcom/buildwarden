@@ -3932,7 +3932,7 @@ export class AppController
     const provider = this.db.getProviderAccount(model.providerAccountId);
     const project = this.db.getProject(automation.projectId);
     const hasExecutionOptions = Object.keys(automation.executionOptions).length > 0;
-    return this.withPreservedRunSelection(() => this.createRun({
+    const run = await this.withPreservedRunSelection(() => this.createRun({
       projectId: automation.projectId,
       providerAccountId: provider.id,
       modelId: model.id,
@@ -3948,6 +3948,15 @@ export class AppController
       kind: "automation",
       automationId: automation.id,
     }));
+    this.events.publish("automationStarted", {
+      automationId: automation.id,
+      automationName: automation.name,
+      projectId: project.id,
+      projectName: project.name,
+      runId: run.id,
+      startedAt: run.startedAt ?? run.createdAt,
+    });
+    return run;
   }
 
   async runProjectAutomationNow(automationId: string): Promise<RunRecord> {
@@ -3978,6 +3987,7 @@ export class AppController
     const started: RunRecord[] = [];
     for (const item of due) {
       const automation = this.db.getProjectAutomation(item.automationId);
+      if (!automation.enabled) continue;
       const nextRunAt = nextAutomationRunAt(automation.cronExpression, automation.timeZone, now);
       this.db.markProjectAutomationScheduled(automation.id, item.scheduledAt, nextRunAt);
       if (!selected.has(automation.id)) continue;
@@ -4007,14 +4017,16 @@ export class AppController
         (automation) => Boolean(automation.enabled) && Date.parse(automation.nextRunAt) <= now.getTime(),
       );
       for (const automation of due) {
-        const scheduledAt = automation.nextRunAt;
-        const nextRunAt = nextAutomationRunAt(automation.cronExpression, automation.timeZone, now);
-        this.db.markProjectAutomationScheduled(automation.id, scheduledAt, nextRunAt);
+        const current = this.db.getProjectAutomation(automation.id);
+        if (!current.enabled || Date.parse(current.nextRunAt) > now.getTime()) continue;
+        const scheduledAt = current.nextRunAt;
+        const nextRunAt = nextAutomationRunAt(current.cronExpression, current.timeZone, now);
+        this.db.markProjectAutomationScheduled(current.id, scheduledAt, nextRunAt);
         try {
-          await this.executeProjectAutomation(automation);
+          await this.executeProjectAutomation(current);
         } catch (error) {
-          this.db.setProjectAutomationError(automation.id, error instanceof Error ? error.message : String(error));
-          this.logControllerError("Could not start a scheduled project automation.", error, { automationId: automation.id });
+          this.db.setProjectAutomationError(current.id, error instanceof Error ? error.message : String(error));
+          this.logControllerError("Could not start a scheduled project automation.", error, { automationId: current.id });
         }
       }
     } finally {
@@ -9716,6 +9728,10 @@ export class AppController
 
   private buildPriorRunMessagesFromSteps(runId: string): Array<Record<string, unknown>> {
     return buildPriorRunMessagesFromSteps(this.db.getRunSteps(runId));
+  }
+
+  onAutomationStarted(listener: (payload: import("@buildwarden/shared").AutomationStartedNotificationPayload) => void): () => void {
+    return this.events.subscribe("automationStarted", listener);
   }
 
   private getInitialRunAttachments(runId: string): ChatAttachmentPayload[] {

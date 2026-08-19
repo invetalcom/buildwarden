@@ -7,7 +7,7 @@ import type {
   RunRecord,
   RunWorkspaceType,
 } from "@buildwarden/shared";
-import { Activity, Bot, CalendarClock, Clock3, ExternalLink, Loader2, Pencil, Play, Plus, Trash2, Zap } from "lucide-react";
+import { Activity, Bot, CalendarClock, Clock3, ExternalLink, Loader2, Pause, Pencil, Play, Plus, Trash2, Zap } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
@@ -206,6 +206,22 @@ export const ProjectAutomationsPage = ({
     }
   };
 
+  const toggleEnabled = async () => {
+    if (!selectedItem) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await buildwarden.updateProjectAutomation(selectedItem.automation.id, {
+        enabled: !selectedItem.automation.enabled,
+      });
+      await onChanged();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not change this automation's schedule state.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const remove = async () => {
     if (!selectedItem || !window.confirm(`Delete “${selectedItem.automation.name}” and all of its run history?`)) return;
     setBusy(true);
@@ -310,7 +326,7 @@ export const ProjectAutomationsPage = ({
             <Card className="min-w-0 p-0">
               <div className="flex flex-wrap items-start justify-between gap-2 border-b border-[var(--ec-border)] p-4">
                 <div className="min-w-0"><div className="flex items-center gap-2"><h3 className="truncate text-sm font-semibold text-[var(--ec-text)]">{selectedItem.automation.name}</h3><Badge tone={selectedItem.automation.enabled ? "completed" : "neutral"} className="px-2 py-0.5 text-[10px]">{selectedItem.automation.enabled ? "Enabled" : "Paused"}</Badge></div><p className="mt-1 line-clamp-2 text-xs leading-5 text-[var(--ec-muted)]">{selectedItem.automation.prompt}</p></div>
-                <div className="flex gap-1"><Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => void runNow()}><Play className="size-3.5" />Run now</Button><Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => void editSelected()}><Pencil className="size-3.5" /></Button><Button type="button" size="sm" variant="ghost" disabled={busy} className="text-[var(--ec-danger)]" onClick={() => void remove()}><Trash2 className="size-3.5" /></Button></div>
+                <div className="flex flex-wrap justify-end gap-1"><Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => void toggleEnabled()}>{selectedItem.automation.enabled ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}{selectedItem.automation.enabled ? "Pause schedule" : "Resume schedule"}</Button><Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => void runNow()}><Play className="size-3.5" />Run now</Button><Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => void editSelected()}><Pencil className="size-3.5" /></Button><Button type="button" size="sm" variant="ghost" disabled={busy} className="text-[var(--ec-danger)]" onClick={() => void remove()}><Trash2 className="size-3.5" /></Button></div>
               </div>
               <div className="grid gap-px border-b border-[var(--ec-border)] bg-[var(--ec-border)] sm:grid-cols-4">
                 {[{ label: "Schedule", value: selectedItem.automation.cronExpression }, { label: "Next run", value: new Date(selectedItem.automation.nextRunAt).toLocaleString() }, { label: "Workspace", value: selectedItem.automation.workspaceType === "local" ? "Checked out" : "Isolated" }, { label: "Runs", value: String(selectedItem.runs.length) }].map((item) => <div key={item.label} className="bg-[var(--ec-panel)] p-3"><p className="text-[9px] uppercase tracking-[0.14em] text-[var(--ec-faint)]">{item.label}</p><p className="mt-1 truncate text-xs font-medium text-[var(--ec-text)]">{item.value}</p></div>)}

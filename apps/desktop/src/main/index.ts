@@ -1614,6 +1614,10 @@ const bootstrap = async (): Promise<void> => {
     }
   });
 
+  hostEvents.subscribe("automationStarted", (payload) => {
+    desktopPlatform.showAutomationStartedNotification(payload);
+  });
+
   logInfo("Startup timing.", {
     windowCreatedAfterMs: windowCreatedAt - bootStartedAt,
     dbReadyAfterMs: dbReadyAt - bootStartedAt,

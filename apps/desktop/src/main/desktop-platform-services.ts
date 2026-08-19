@@ -1,6 +1,7 @@
 import type {
   AppMenuCommand,
   AppMenuSection,
+  AutomationStartedNotificationPayload,
   OpenPathInFileManagerResult,
   ProjectForgeRequestNotificationPayload,
   RunEvent,
@@ -36,6 +37,7 @@ export interface DesktopPlatformServices {
   popupApplicationMenu(options: DesktopMenuOptions, section: AppMenuSection, x: number, y: number): void;
   showShellApprovalNotification(event: RunEvent): void;
   showRunUserInputNotification(event: RunEvent): void;
+  showAutomationStartedNotification(payload: AutomationStartedNotificationPayload): void;
   showProjectForgeRequestNotification(input: ProjectForgeDesktopNotification): void;
   showErrorDialog(title: string, message: string, detail?: string): Promise<void>;
 }

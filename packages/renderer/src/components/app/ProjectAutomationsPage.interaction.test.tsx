@@ -102,4 +102,39 @@ describe("project automations create flow", () => {
     expect(createProjectAutomation).toHaveBeenCalledWith("project-1", expect.objectContaining({ modelId: "model-1" }));
     expect(updateProjectAutomation).not.toHaveBeenCalled();
   });
+
+  it("pauses a saved automation without deleting it", async () => {
+    const updateProjectAutomation = vi.fn(async () => ({ ...existingAutomation, enabled: false }));
+    const api = { updateProjectAutomation } as unknown as DesktopApi;
+
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(
+      <BuildWardenClientProvider client={createElectronBuildWardenClient(api)}>
+        <ProjectAutomationsPage
+          projectId="project-1"
+          projectKind="git"
+          automations={[automationItem()]}
+          modelOptions={[{
+            id: "model-1",
+            label: "GPT-5.6",
+            modelId: "gpt-5.6-sol",
+            providerType: "codex-cli",
+            providerFamily: null,
+          }]}
+          defaultModelId="model-1"
+          onOpenRun={vi.fn()}
+          onChanged={vi.fn()}
+        />
+      </BuildWardenClientProvider>,
+    ));
+
+    const pause = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.trim() === "Pause schedule");
+    await act(async () => pause?.click());
+
+    expect(updateProjectAutomation).toHaveBeenCalledOnce();
+    expect(updateProjectAutomation).toHaveBeenCalledWith("automation-1", { enabled: false });
+  });
 });

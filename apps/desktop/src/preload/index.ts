@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import {
   IPC_CHANNELS,
   type AppWarning,
+  type AutomationStartedNotificationPayload,
   type AppMenuCommand,
   type AppMenuSection,
   type ChatInput,
@@ -72,6 +73,11 @@ const api: DesktopApi = {
   runProjectAutomationNow: (automationId: string) => invoke(IPC_CHANNELS.runProjectAutomationNow, automationId),
   getStartupAutomationCatchUp: () => invoke(IPC_CHANNELS.getStartupAutomationCatchUp),
   resolveStartupAutomationCatchUp: (automationIds: string[]) => invoke(IPC_CHANNELS.resolveStartupAutomationCatchUp, automationIds),
+  onAutomationStarted: (listener: (payload: AutomationStartedNotificationPayload) => void) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, payload: AutomationStartedNotificationPayload) => listener(payload);
+    ipcRenderer.on(IPC_CHANNELS.automationStarted, wrapped);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.automationStarted, wrapped);
+  },
   onProjectTaskChanged: (listener: (payload: ProjectTaskChangedPayload) => void) => {
     const wrapped = (_event: Electron.IpcRendererEvent, payload: ProjectTaskChangedPayload) => listener(payload);
     ipcRenderer.on(IPC_CHANNELS.projectTaskChanged, wrapped);

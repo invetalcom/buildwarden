@@ -10,7 +10,7 @@ import {
   shell,
   type MenuItemConstructorOptions,
 } from "electron";
-import type { AppMenuSection, OpenPathInFileManagerResult } from "@buildwarden/shared";
+import type { AppMenuSection, AutomationStartedNotificationPayload, OpenPathInFileManagerResult } from "@buildwarden/shared";
 import type {
   DesktopMenuOptions,
   DesktopPlatformServices,
@@ -212,6 +212,13 @@ export class ElectronDesktopPlatformServices implements DesktopPlatformServices 
   showRunUserInputNotification(event: import("@buildwarden/shared").RunEvent): void {
     const detail = event.content.replace(/\s+/g, " ").trim();
     this.showNotification("Agent feedback needed", detail || "An agent run is waiting for your input before it can continue.");
+  }
+
+  showAutomationStartedNotification(payload: AutomationStartedNotificationPayload): void {
+    this.showNotification(
+      `Automation started: ${payload.automationName}`,
+      `${payload.projectName} · The scheduled agent run is now active.`,
+    );
   }
 
   showProjectForgeRequestNotification(input: ProjectForgeDesktopNotification): void {
