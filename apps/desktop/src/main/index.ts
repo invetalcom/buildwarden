@@ -352,7 +352,8 @@ const bootstrap = async (): Promise<void> => {
     })
     .catch((error) => {
       logError("Failed to migrate project state or reconcile active sessions during startup; active loops were not auto-resumed.", { error });
-    });
+    })
+    .finally(() => controller.startAutomationScheduler());
 
   const applyUiTheme = async (next: UiTheme) => {
     await controller.setAppSetting(APP_SETTING_KEYS.uiTheme, next);
@@ -1364,6 +1365,19 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.getProjectTask, (_, taskId: string) => controller.getProjectTask(taskId));
   ipcMain.handle(IPC_CHANNELS.updateProjectTask, (_, taskId: string, input) => controller.updateProjectTask(taskId, input));
   ipcMain.handle(IPC_CHANNELS.deleteProjectTask, (_, taskId: string) => controller.deleteProjectTask(taskId));
+  ipcMain.handle(IPC_CHANNELS.createProjectAutomation, (_, projectId: string, input) =>
+    controller.createProjectAutomation(projectId, input));
+  ipcMain.handle(IPC_CHANNELS.getProjectAutomation, (_, automationId: string) =>
+    controller.getProjectAutomation(automationId));
+  ipcMain.handle(IPC_CHANNELS.updateProjectAutomation, (_, automationId: string, input) =>
+    controller.updateProjectAutomation(automationId, input));
+  ipcMain.handle(IPC_CHANNELS.deleteProjectAutomation, (_, automationId: string) =>
+    controller.deleteProjectAutomation(automationId));
+  ipcMain.handle(IPC_CHANNELS.runProjectAutomationNow, (_, automationId: string) =>
+    controller.runProjectAutomationNow(automationId));
+  ipcMain.handle(IPC_CHANNELS.getStartupAutomationCatchUp, () => controller.getStartupAutomationCatchUp());
+  ipcMain.handle(IPC_CHANNELS.resolveStartupAutomationCatchUp, (_, automationIds: string[]) =>
+    controller.resolveStartupAutomationCatchUp(automationIds));
   ipcMain.handle(IPC_CHANNELS.runProjectLab, (_, input) => controller.runProjectLab(input));
   ipcMain.handle(IPC_CHANNELS.deleteProjectLabThread, (_, threadId: string) => controller.deleteProjectLabThread(threadId));
   ipcMain.handle(IPC_CHANNELS.createProjectLoop, (_, input) => controller.createProjectLoop(input));

@@ -27,7 +27,7 @@ export type ProjectKind = "git" | "folder";
 export type RunWorkspaceType = "worktree" | "local" | "copy";
 export type RunWorkspaceVcs = "git" | "folder";
 export type RunListVisibility = "default" | "for-later";
-export type RunKind = "standard" | "lab-implementation" | "loop-iteration" | "orchestration-task";
+export type RunKind = "standard" | "lab-implementation" | "loop-iteration" | "orchestration-task" | "automation";
 
 export type ComposerCommandContext = "run" | "follow-up" | "chat";
 export type ComposerCommandEffect = "set-run-mode" | "set-goal" | "native-prompt";
@@ -810,6 +810,8 @@ export interface RunRecord {
   lineageTitle: string | null;
   /** Project-board task that launched this run, when applicable. */
   projectTaskId: string | null;
+  /** Scheduled project automation that created this hidden run. */
+  automationId?: string | null;
   /** Allows the top-level run to create durable cross-provider child runs. */
   delegationEnabled: boolean | number;
   /** Cached PR/MR association for this run's branch. Hydrated at read time and omitted for older snapshots. */
@@ -882,6 +884,62 @@ export interface ProjectTaskChangedPayload {
   projectId: string;
   taskId: string;
   status: ProjectTaskStatus;
+}
+
+export interface ProjectAutomationRecord {
+  id: string;
+  projectId: string;
+  name: string;
+  prompt: string;
+  attachments: ChatAttachmentPayload[];
+  cronExpression: string;
+  timeZone: string;
+  modelId: string;
+  effort: string;
+  /** Provider-normalized execution options captured for the selected model. */
+  executionOptions: ProviderExecutionOptions;
+  workspaceType: RunWorkspaceType;
+  onlyIfPreviousFinished: boolean | number;
+  enabled: boolean | number;
+  lastScheduledAt: string | null;
+  nextRunAt: string;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectAutomationSummary extends Omit<ProjectAutomationRecord, "attachments"> {
+  attachmentCount: number;
+}
+
+export interface ProjectAutomationListItem {
+  automation: ProjectAutomationSummary;
+  /** Hidden automation runs, newest first. */
+  runs: RunRecord[];
+}
+
+export interface ProjectAutomationInput {
+  name: string;
+  prompt: string;
+  attachments?: ChatAttachmentPayload[];
+  cronExpression: string;
+  timeZone?: string;
+  modelId: string;
+  effort?: string;
+  executionOptions?: ProviderExecutionOptions;
+  workspaceType: RunWorkspaceType;
+  onlyIfPreviousFinished?: boolean;
+  enabled?: boolean;
+}
+
+export type UpdateProjectAutomationInput = Partial<ProjectAutomationInput>;
+
+export interface StartupAutomationCatchUpItem {
+  automationId: string;
+  automationName: string;
+  projectId: string;
+  projectName: string;
+  scheduledAt: string;
 }
 
 export type ProjectLabThreadKind = "implementation" | "rfc";
@@ -1702,6 +1760,7 @@ export interface RunInput {
   kind?: RunKind;
   labThreadId?: string | null;
   projectTaskId?: string | null;
+  automationId?: string | null;
   delegationEnabled?: boolean;
 }
 
@@ -1783,6 +1842,7 @@ export interface ProjectSnapshot {
   activeRuns: RunRecord[];
   recentRuns: RunRecord[];
   tasks: ProjectTaskSummary[];
+  automations?: ProjectAutomationListItem[];
   insights: ProjectInsightRecord[];
   labThreads: ProjectLabThreadDetail[];
   loops: ProjectLoopListItem[];
@@ -2152,6 +2212,7 @@ export interface ModelDeletionImpact {
   projectLabThreadCount: number;
   projectLoopCount: number;
   orchestrationCount: number;
+  automationCount?: number;
 }
 
 /** Result of computing the worktree patch for a run (potentially slow; use after `getRunDetail`). */
@@ -3725,6 +3786,13 @@ export interface DesktopApi {
   getProjectTask(taskId: string): Promise<ProjectTaskRecord>;
   updateProjectTask(taskId: string, input: UpdateProjectTaskInput): Promise<ProjectTaskRecord>;
   deleteProjectTask(taskId: string): Promise<void>;
+  createProjectAutomation(projectId: string, input: ProjectAutomationInput): Promise<ProjectAutomationRecord>;
+  getProjectAutomation(automationId: string): Promise<ProjectAutomationRecord>;
+  updateProjectAutomation(automationId: string, input: UpdateProjectAutomationInput): Promise<ProjectAutomationRecord>;
+  deleteProjectAutomation(automationId: string): Promise<void>;
+  runProjectAutomationNow(automationId: string): Promise<RunRecord>;
+  getStartupAutomationCatchUp(): Promise<StartupAutomationCatchUpItem[]>;
+  resolveStartupAutomationCatchUp(automationIds: string[]): Promise<RunRecord[]>;
   onProjectTaskChanged(listener: (payload: ProjectTaskChangedPayload) => void): () => void;
   runProjectLab(input: RunProjectLabInput): Promise<ProjectLabThreadRecord[]>;
   deleteProjectLabThread(threadId: string): Promise<void>;
@@ -4409,6 +4477,13 @@ export const IPC_CHANNELS = {
   getProjectTask: "buildwarden:get-project-task",
   updateProjectTask: "buildwarden:update-project-task",
   deleteProjectTask: "buildwarden:delete-project-task",
+  createProjectAutomation: "buildwarden:create-project-automation",
+  getProjectAutomation: "buildwarden:get-project-automation",
+  updateProjectAutomation: "buildwarden:update-project-automation",
+  deleteProjectAutomation: "buildwarden:delete-project-automation",
+  runProjectAutomationNow: "buildwarden:run-project-automation-now",
+  getStartupAutomationCatchUp: "buildwarden:get-startup-automation-catch-up",
+  resolveStartupAutomationCatchUp: "buildwarden:resolve-startup-automation-catch-up",
   projectTaskChanged: "buildwarden:project-task-changed",
   runProjectLab: "buildwarden:run-project-lab",
   deleteProjectLabThread: "buildwarden:delete-project-lab-thread",

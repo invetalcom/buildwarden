@@ -407,6 +407,11 @@ export const findProjectRun = (projects: ProjectSnapshot[], runId: string) => {
         return { project, run: loopRun };
       }
     }
+
+    for (const automationItem of project.automations ?? []) {
+      const automationRun = findRunInList(automationItem.runs, runId);
+      if (automationRun) return { project, run: automationRun };
+    }
   }
 
   return null;
@@ -420,7 +425,8 @@ export const snapshotContainsRunId = (projects: ProjectSnapshot[], runId: string
       entry.forLaterRuns.some((run) => run.id === runId) ||
       entry.orchestratedRuns.some((run) => run.id === runId) ||
       entry.labThreads.some((detail) => detail.implementationRun?.id === runId || detail.thread.implementationRunId === runId) ||
-      entry.loops.some((item) => item.iterations.some((iteration) => iteration.runId === runId)),
+      entry.loops.some((item) => item.iterations.some((iteration) => iteration.runId === runId)) ||
+      (entry.automations ?? []).some((item) => item.runs.some((run) => run.id === runId)),
   );
 
 /** Picks the branch to preselect: keep the current choice, fall back to the project base, then the first branch. */

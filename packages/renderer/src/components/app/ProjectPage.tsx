@@ -27,6 +27,7 @@ import { ProjectBranchesPage } from "./ProjectBranchesPage";
 import { ProjectPrMrTab } from "./ProjectPrMrTab";
 import { ProjectSettingsPage } from "./ProjectSettingsPage";
 import { ProjectTasksTab } from "./ProjectTasksTab";
+import { ProjectAutomationsPage } from "./ProjectAutomationsPage";
 import type { ProjectPageTab } from "./project-page-tabs";
 import type { ProjectRunStats } from "./ProjectStatisticsCard";
 
@@ -53,6 +54,7 @@ interface ProjectPageProps {
   onCreateTask: (input: ProjectTaskInput) => void | Promise<void>;
   onUpdateTask: (taskId: string, input: UpdateProjectTaskInput) => void | Promise<void>;
   onDeleteTask: (taskId: string) => void | Promise<void>;
+  onAutomationsChanged: () => void | Promise<void>;
   onStartTask: (taskId: string, prompt: string, modelId: string) => void | Promise<void>;
   onGenerateInsight: (kind: ProjectInsightKind, modelId?: string) => Promise<void>;
   onSetRunForLater: (runId: string) => void | Promise<void>;
@@ -145,6 +147,7 @@ export const ProjectPage = ({
   onCreateTask,
   onUpdateTask,
   onDeleteTask,
+  onAutomationsChanged,
   onStartTask,
   onGenerateInsight,
   onSetRunForLater,
@@ -192,7 +195,7 @@ export const ProjectPage = ({
         className={cn(
           "flex min-h-0 flex-1 flex-col",
           // Overview, Reviews, and Loops manage their own internal scrolling (Overview scrolls its run history, Loops pins its explainer footer).
-          activeTab === "overview" || activeTab === "tasks" || activeTab === "reviews" || activeTab === "loops" ? "overflow-hidden" : "overflow-y-auto",
+          activeTab === "overview" || activeTab === "tasks" || activeTab === "automations" || activeTab === "reviews" || activeTab === "loops" ? "overflow-hidden" : "overflow-y-auto",
         )}
       >
       {activeTab === "overview" ? (
@@ -255,6 +258,18 @@ export const ProjectPage = ({
           onDeleteTask={onDeleteTask}
           onStartTask={onStartTask}
           onOpenRun={onSelectRun}
+        />
+      ) : null}
+
+      {activeTab === "automations" ? (
+        <ProjectAutomationsPage
+          projectId={project.project.id}
+          projectKind={project.project.kind}
+          automations={project.automations ?? []}
+          modelOptions={modelOptions}
+          defaultModelId={defaultTaskModelId}
+          onOpenRun={onSelectRun}
+          onChanged={onAutomationsChanged}
         />
       ) : null}
 

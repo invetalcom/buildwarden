@@ -106,6 +106,7 @@ const createHarness = (overrides: DbOverrides = {}) => {
       projectLabThreadIds: [],
       projectLoopIds: [],
       orchestrationIds: [],
+      automationIds: [],
     })),
     deleteProjectInsights: vi.fn(),
     deleteModel: vi.fn(),
@@ -1956,6 +1957,7 @@ describe("AppController settings and lightweight workflows", () => {
       projectLabThreadIds: [],
       projectLoopIds: [],
       orchestrationIds: [],
+      automationIds: [],
     };
     const emptyTargets = { ...targets, chatIds: [] };
     const getModelDeletionTargets = vi.fn()
@@ -2015,6 +2017,7 @@ describe("AppController settings and lightweight workflows", () => {
       projectLabThreadIds: [],
       projectLoopIds: [],
       orchestrationIds: [],
+      automationIds: [],
     };
     const harness = createHarness({
       getModelDeletionTargets: vi.fn()
@@ -2146,6 +2149,7 @@ describe("AppController settings and lightweight workflows", () => {
       projectLabThreadIds: [],
       projectLoopIds: [],
       orchestrationIds: [],
+      automationIds: [],
     };
     const harness = createHarness({
       getModelDeletionTargets: vi.fn()

@@ -65,6 +65,13 @@ const api: DesktopApi = {
   getProjectTask: (taskId: string) => invoke(IPC_CHANNELS.getProjectTask, taskId),
   updateProjectTask: (taskId: string, input) => invoke(IPC_CHANNELS.updateProjectTask, taskId, input),
   deleteProjectTask: (taskId: string) => invoke(IPC_CHANNELS.deleteProjectTask, taskId),
+  createProjectAutomation: (projectId: string, input) => invoke(IPC_CHANNELS.createProjectAutomation, projectId, input),
+  getProjectAutomation: (automationId: string) => invoke(IPC_CHANNELS.getProjectAutomation, automationId),
+  updateProjectAutomation: (automationId: string, input) => invoke(IPC_CHANNELS.updateProjectAutomation, automationId, input),
+  deleteProjectAutomation: (automationId: string) => invoke(IPC_CHANNELS.deleteProjectAutomation, automationId),
+  runProjectAutomationNow: (automationId: string) => invoke(IPC_CHANNELS.runProjectAutomationNow, automationId),
+  getStartupAutomationCatchUp: () => invoke(IPC_CHANNELS.getStartupAutomationCatchUp),
+  resolveStartupAutomationCatchUp: (automationIds: string[]) => invoke(IPC_CHANNELS.resolveStartupAutomationCatchUp, automationIds),
   onProjectTaskChanged: (listener: (payload: ProjectTaskChangedPayload) => void) => {
     const wrapped = (_event: Electron.IpcRendererEvent, payload: ProjectTaskChangedPayload) => listener(payload);
     ipcRenderer.on(IPC_CHANNELS.projectTaskChanged, wrapped);

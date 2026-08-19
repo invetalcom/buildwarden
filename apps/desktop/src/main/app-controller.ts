@@ -25,6 +25,7 @@ import {
 } from "./folder-diff";
 import { createFolderWorkspaceCopy, removeFolderWorkspaceCopy } from "./folder-workspace";
 import { getHarnessTypeForProvider } from "./harness-adapters";
+import { nextAutomationRunAt, parseAutomationCron, validateAutomationTimeZone } from "./automation-schedule";
 import { createProjectPrReviewProvider } from "./pr-review/pr-review-provider-factory";
 import { PrReviewHttpError } from "./pr-review/pr-review-http-client";
 import { resolveProjectPrReviewRemoteContext } from "./pr-review/pr-review-remote-context";
@@ -136,6 +137,8 @@ import {
   type OrchestrationToolName,
   type OrchestrationWakeMode,
   type ProjectInput,
+  type ProjectAutomationInput,
+  type ProjectAutomationRecord,
   type ProjectBranchDeleteImpact,
   type ProjectFolderGitStatus,
   type ProjectGitBranchOverview,
@@ -191,6 +194,7 @@ import {
   type ProjectRecord,
   type ProjectTaskInput,
   type ProjectTaskRecord,
+  type StartupAutomationCatchUpItem,
   type ProviderAccountInput,
   type ProviderAdapter,
   type ProviderAvailableModel,
@@ -221,6 +225,7 @@ import {
   type RunNoteRecord,
   type RunWorkspaceVcs,
   type UpdateProjectTaskInput,
+  type UpdateProjectAutomationInput,
   type UpdateRunNoteInput,
   type RunTokenUsage,
   type RunToolResult,
@@ -1162,6 +1167,11 @@ export class AppController
   private readonly runChatCreations = new Map<string, Promise<ChatRecord>>();
   /** Serializes Git branch mutations per project while allowing different projects to proceed independently. */
   private readonly projectBranchMutations = new Map<string, Promise<unknown>>();
+  /** Prevents concurrent agents from mutating the same checked-out project workspace. */
+  private readonly projectLocalRunStarts = new Map<string, Promise<unknown>>();
+  private automationSchedulerTimer: ReturnType<typeof setInterval> | null = null;
+  private automationSchedulerBlockedForStartup = true;
+  private automationSchedulerTickActive = false;
   /** Serializes durable orchestration state transitions for each coordinator graph. */
   private readonly orchestrationMutations = new Map<string, Promise<unknown>>();
   /** Coalesces automatic and user-triggered coordinator continuations. */
@@ -2797,7 +2807,7 @@ export class AppController
     const runCount = this.db.countRunsForProviderAccount(providerAccountId);
 
     if (runCount > 0) {
-      throw new Error("This provider cannot be deleted because existing runs reference it.");
+      throw new Error("This provider cannot be deleted because existing runs or automations reference it.");
     }
 
     await this.secrets.deleteSecret(provider.apiKeyRef);
@@ -2881,6 +2891,13 @@ export class AppController
     }
 
     this.db.deleteProjectInsights(targets.projectInsightIds);
+    for (const automationId of targets.automationIds) {
+      try {
+        this.db.deleteProjectAutomation(automationId);
+      } catch {
+        /* Re-check below reports any surviving automation reference. */
+      }
+    }
     const remainingTargets = this.db.getModelDeletionTargets(modelId);
     if (
       remainingTargets.runIds.length > 0 ||
@@ -2888,7 +2905,8 @@ export class AppController
       remainingTargets.projectInsightIds.length > 0 ||
       remainingTargets.projectLabThreadIds.length > 0 ||
       remainingTargets.projectLoopIds.length > 0 ||
-      remainingTargets.orchestrationIds.length > 0
+      remainingTargets.orchestrationIds.length > 0 ||
+      remainingTargets.automationIds.length > 0
     ) {
       throw new Error("Some model-related data could not be deleted. Retry after active work has stopped.");
     }
@@ -2989,10 +3007,18 @@ export class AppController
       projectLabThreadCount: targets.projectLabThreadIds.length,
       projectLoopCount: targets.projectLoopIds.length,
       orchestrationCount: targets.orchestrationIds.length,
+      automationCount: targets.automationIds.length,
     };
   }
 
   async createRun(input: RunInput): Promise<RunRecord> {
+    if (input.workspaceType === "local") {
+      return this.serializeProjectLocalRunStart(input.projectId, () => this.createRunInternal(input));
+    }
+    return this.createRunInternal(input);
+  }
+
+  private async createRunInternal(input: RunInput): Promise<RunRecord> {
     const project = this.db.getProject(input.projectId);
     let projectTask: ProjectTaskRecord | null = null;
     if (input.projectTaskId) {
@@ -3055,6 +3081,12 @@ export class AppController
         throw new Error("Folder copy runs are only available for non-Git folder projects.");
       }
       if (workspaceType === "local") {
+        const activeLocalRun = this.db.listRunsForProject(project.id).find(
+          (candidate) => candidate.workspaceType === "local" && ACTIVE_RUN_STATUSES.has(candidate.status),
+        );
+        if (activeLocalRun) {
+          throw new Error("The checked-out project workspace is already used by an active run. Wait for it to finish or use an isolated worktree.");
+        }
         branchName = await this.gitService.getCurrentBranch(project.repoPath);
         worktreePath = project.repoPath;
       } else {
@@ -3749,6 +3781,15 @@ export class AppController
     return task;
   }
 
+  private serializeProjectLocalRunStart<T>(projectId: string, start: () => Promise<T>): Promise<T> {
+    const previous = this.projectLocalRunStarts.get(projectId) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(start);
+    this.projectLocalRunStarts.set(projectId, current);
+    return current.finally(() => {
+      if (this.projectLocalRunStarts.get(projectId) === current) this.projectLocalRunStarts.delete(projectId);
+    });
+  }
+
   async getProjectTask(taskId: string): Promise<ProjectTaskRecord> {
     return this.db.getProjectTask(taskId);
   }
@@ -3807,6 +3848,178 @@ export class AppController
     const existing = this.db.getProjectTask(taskId);
     this.db.deleteProjectTask(taskId);
     this.events.publish("task", { projectId: existing.projectId, taskId: existing.id, status: existing.status });
+  }
+
+  private validateProjectAutomationInput(
+    projectId: string,
+    input: ProjectAutomationInput,
+  ): { input: ProjectAutomationInput; timeZone: string; nextRunAt: string } {
+    const project = this.db.getProject(projectId);
+    const name = input.name.trim();
+    const prompt = input.prompt.trim();
+    if (!name) throw new Error("Enter an automation name.");
+    if (!prompt && (input.attachments?.length ?? 0) === 0) {
+      throw new Error("Enter a prompt or attach at least one file.");
+    }
+    validateChatAttachmentPayloads(input.attachments);
+    parseAutomationCron(input.cronExpression);
+    const timeZone = validateAutomationTimeZone(
+      input.timeZone?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    );
+    this.db.getModel(input.modelId);
+    const allowedWorkspaceTypes = project.kind === "git" ? ["local", "worktree"] : ["local", "copy"];
+    if (!allowedWorkspaceTypes.includes(input.workspaceType)) {
+      throw new Error(project.kind === "git" ? "Choose the checked-out branch or an isolated worktree." : "Choose the project folder or an isolated folder copy.");
+    }
+    return {
+      input: { ...input, name, prompt, cronExpression: input.cronExpression.trim() },
+      timeZone,
+      nextRunAt: nextAutomationRunAt(input.cronExpression, timeZone, new Date()),
+    };
+  }
+
+  async createProjectAutomation(projectId: string, input: ProjectAutomationInput): Promise<ProjectAutomationRecord> {
+    const validated = this.validateProjectAutomationInput(projectId, input);
+    return this.db.createProjectAutomation(projectId, validated.input, validated.nextRunAt, validated.timeZone);
+  }
+
+  async getProjectAutomation(automationId: string): Promise<ProjectAutomationRecord> {
+    return this.db.getProjectAutomation(automationId);
+  }
+
+  async updateProjectAutomation(automationId: string, input: UpdateProjectAutomationInput): Promise<ProjectAutomationRecord> {
+    const existing = this.db.getProjectAutomation(automationId);
+    const merged: ProjectAutomationInput = {
+      name: input.name ?? existing.name,
+      prompt: input.prompt ?? existing.prompt,
+      attachments: input.attachments ?? existing.attachments,
+      cronExpression: input.cronExpression ?? existing.cronExpression,
+      timeZone: input.timeZone ?? existing.timeZone,
+      modelId: input.modelId ?? existing.modelId,
+      effort: input.effort ?? existing.effort,
+      executionOptions: input.executionOptions ?? existing.executionOptions,
+      workspaceType: input.workspaceType ?? existing.workspaceType,
+      onlyIfPreviousFinished: input.onlyIfPreviousFinished ?? Boolean(existing.onlyIfPreviousFinished),
+      enabled: input.enabled ?? Boolean(existing.enabled),
+    };
+    const validated = this.validateProjectAutomationInput(existing.projectId, merged);
+    const scheduleChanged = merged.cronExpression !== existing.cronExpression || merged.timeZone !== existing.timeZone ||
+      (!existing.enabled && merged.enabled !== false);
+    return this.db.updateProjectAutomation(
+      automationId,
+      validated.input,
+      scheduleChanged ? validated.nextRunAt : undefined,
+      validated.timeZone,
+    );
+  }
+
+  async deleteProjectAutomation(automationId: string): Promise<void> {
+    const automation = this.db.getProjectAutomation(automationId);
+    const runs = this.db.listRunsForProject(automation.projectId).filter((run) => run.automationId === automationId);
+    if (runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status))) {
+      throw new Error("Wait for this automation's active run to finish before deleting it.");
+    }
+    for (const run of runs) await this.deleteRun(run.id);
+    this.db.deleteProjectAutomation(automationId);
+  }
+
+  private async executeProjectAutomation(automation: ProjectAutomationRecord): Promise<RunRecord | null> {
+    const previousActive = this.db.listRunsForProject(automation.projectId).some(
+      (run) => run.automationId === automation.id && ACTIVE_RUN_STATUSES.has(run.status),
+    );
+    if (automation.onlyIfPreviousFinished && previousActive) return null;
+    const model = this.db.getModel(automation.modelId);
+    const provider = this.db.getProviderAccount(model.providerAccountId);
+    const project = this.db.getProject(automation.projectId);
+    const hasExecutionOptions = Object.keys(automation.executionOptions).length > 0;
+    return this.withPreservedRunSelection(() => this.createRun({
+      projectId: automation.projectId,
+      providerAccountId: provider.id,
+      modelId: model.id,
+      harnessType: getHarnessTypeForProvider(provider.providerType),
+      mode: "code",
+      workspaceType: automation.workspaceType,
+      baseBranch: project.kind === "git" && automation.workspaceType === "worktree" ? project.baseBranch : undefined,
+      prompt: automation.prompt,
+      attachments: automation.attachments,
+      reasoningEffort: hasExecutionOptions ? automation.executionOptions.reasoningEffort : automation.effort,
+      anthropicEffort: hasExecutionOptions ? automation.executionOptions.anthropicEffort : automation.effort,
+      executionOptions: hasExecutionOptions ? automation.executionOptions : undefined,
+      kind: "automation",
+      automationId: automation.id,
+    }));
+  }
+
+  async runProjectAutomationNow(automationId: string): Promise<RunRecord> {
+    const automation = this.db.getProjectAutomation(automationId);
+    const run = await this.executeProjectAutomation(automation);
+    if (!run) throw new Error("The previous automation run is still active.");
+    this.db.setProjectAutomationError(automationId, null);
+    return run;
+  }
+
+  async getStartupAutomationCatchUp(): Promise<StartupAutomationCatchUpItem[]> {
+    const now = Date.now();
+    return this.db.listProjectAutomations()
+      .filter((automation) => Boolean(automation.enabled) && Date.parse(automation.nextRunAt) <= now)
+      .map((automation) => ({
+        automationId: automation.id,
+        automationName: automation.name,
+        projectId: automation.projectId,
+        projectName: this.db.getProject(automation.projectId).name,
+        scheduledAt: automation.nextRunAt,
+      }));
+  }
+
+  async resolveStartupAutomationCatchUp(automationIds: string[]): Promise<RunRecord[]> {
+    const selected = new Set(automationIds);
+    const due = await this.getStartupAutomationCatchUp();
+    const now = new Date();
+    const started: RunRecord[] = [];
+    for (const item of due) {
+      const automation = this.db.getProjectAutomation(item.automationId);
+      const nextRunAt = nextAutomationRunAt(automation.cronExpression, automation.timeZone, now);
+      this.db.markProjectAutomationScheduled(automation.id, item.scheduledAt, nextRunAt);
+      if (!selected.has(automation.id)) continue;
+      try {
+        const run = await this.executeProjectAutomation(automation);
+        if (run) started.push(run);
+      } catch (error) {
+        this.db.setProjectAutomationError(automation.id, error instanceof Error ? error.message : String(error));
+      }
+    }
+    this.automationSchedulerBlockedForStartup = false;
+    void this.runAutomationSchedulerTick();
+    return started;
+  }
+
+  startAutomationScheduler(): void {
+    if (this.automationSchedulerTimer) return;
+    this.automationSchedulerTimer = setInterval(() => void this.runAutomationSchedulerTick(), 30_000);
+  }
+
+  private async runAutomationSchedulerTick(): Promise<void> {
+    if (this.automationSchedulerBlockedForStartup || this.automationSchedulerTickActive) return;
+    this.automationSchedulerTickActive = true;
+    try {
+      const now = new Date();
+      const due = this.db.listProjectAutomations().filter(
+        (automation) => Boolean(automation.enabled) && Date.parse(automation.nextRunAt) <= now.getTime(),
+      );
+      for (const automation of due) {
+        const scheduledAt = automation.nextRunAt;
+        const nextRunAt = nextAutomationRunAt(automation.cronExpression, automation.timeZone, now);
+        this.db.markProjectAutomationScheduled(automation.id, scheduledAt, nextRunAt);
+        try {
+          await this.executeProjectAutomation(automation);
+        } catch (error) {
+          this.db.setProjectAutomationError(automation.id, error instanceof Error ? error.message : String(error));
+          this.logControllerError("Could not start a scheduled project automation.", error, { automationId: automation.id });
+        }
+      }
+    } finally {
+      this.automationSchedulerTickActive = false;
+    }
   }
 
   async runProjectLab(input: RunProjectLabInput): Promise<ProjectLabThreadRecord[]> {

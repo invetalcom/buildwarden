@@ -27,6 +27,10 @@ import type {
   OrchestrationTeamSettings,
   OrchestrationWaveRecord,
   ProjectInput,
+  ProjectAutomationInput,
+  ProjectAutomationListItem,
+  ProjectAutomationRecord,
+  ProjectAutomationSummary,
   ProjectInsightKind,
   ProjectInsightRecord,
   ProjectLabEventRecord,
@@ -52,6 +56,7 @@ import type {
   ProjectTaskSummary,
   ProjectRecord,
   ProjectSnapshot,
+  ProviderExecutionOptions,
   ProviderAccountRecord,
   ProviderSessionRuntimeInput,
   ProviderSessionRuntimeRecord,
@@ -67,6 +72,7 @@ import type {
   RunNoteRecord,
   RunNoteStatus,
   UpdateProjectTaskInput,
+  UpdateProjectAutomationInput,
   UpdateRunNoteInput,
   RunRecord,
   RunForgeRequestDetailsResult,
@@ -99,6 +105,11 @@ type StoredProjectTaskRecord = Omit<ProjectTaskRecord, "attachments"> & {
   attachmentsJson: string;
 };
 
+type StoredProjectAutomationRecord = Omit<ProjectAutomationRecord, "attachments" | "executionOptions"> & {
+  attachmentsJson: string;
+  executionOptionsJson: string;
+};
+
 const DEFAULT_DB_NAME = "buildwarden.sqlite";
 const SQLITE_VARIABLE_BATCH_SIZE = 900;
 
@@ -127,6 +138,7 @@ export interface ModelDeletionTargets {
   projectLabThreadIds: string[];
   projectLoopIds: string[];
   orchestrationIds: string[];
+  automationIds: string[];
 }
 
 type StoredRunForgeRequestCacheRecord = Omit<RunForgeRequestCacheRecord, "summary" | "details"> & {
@@ -304,6 +316,7 @@ export class BuildWardenDatabase {
         ),
         recentRuns: runs.slice(0, 12),
         tasks: this.listProjectTaskSummaries(project.id),
+        automations: this.listProjectAutomationItems(project.id),
         insights: this.listProjectInsights(project.id),
         labThreads: this.listProjectLabThreadDetails(project.id),
         loops: this.listProjectLoopListItems(project.id),
@@ -709,6 +722,107 @@ export class BuildWardenDatabase {
   deleteProjectTask(taskId: string): void {
     this.run("update runs set project_task_id = null where project_task_id = ?", [taskId]);
     this.run("delete from project_tasks where id = ?", [taskId]);
+  }
+
+  createProjectAutomation(projectId: string, input: ProjectAutomationInput, nextRunAt: string, timeZone: string): ProjectAutomationRecord {
+    const id = createId();
+    const createdAt = nowIso();
+    this.run(
+      `insert into project_automations (
+        id, project_id, name, prompt, attachments_json, cron_expression, time_zone, model_id, effort,
+        execution_options_json, workspace_type, only_if_previous_finished, enabled, last_scheduled_at, next_run_at,
+        last_error, created_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, ?, null, ?, ?)`,
+      [
+        id, projectId, input.name.trim(), input.prompt.trim(), JSON.stringify(input.attachments ?? []),
+        input.cronExpression.trim(), timeZone, input.modelId, input.effort?.trim() || "auto",
+        JSON.stringify(input.executionOptions ?? {}), input.workspaceType,
+        Number(input.onlyIfPreviousFinished !== false), Number(input.enabled !== false), nextRunAt, createdAt, createdAt,
+      ],
+    );
+    return this.getProjectAutomation(id);
+  }
+
+  getProjectAutomation(automationId: string): ProjectAutomationRecord {
+    const automation = this.first<StoredProjectAutomationRecord>(
+      `select id, project_id as projectId, name, prompt, attachments_json as attachmentsJson,
+        cron_expression as cronExpression, time_zone as timeZone, model_id as modelId, effort,
+        execution_options_json as executionOptionsJson,
+        workspace_type as workspaceType, only_if_previous_finished as onlyIfPreviousFinished, enabled,
+        last_scheduled_at as lastScheduledAt, next_run_at as nextRunAt, last_error as lastError,
+        created_at as createdAt, updated_at as updatedAt
+       from project_automations where id = ?`,
+      [automationId],
+    );
+    if (!automation) throw new Error(`Project automation not found: ${automationId}`);
+    return this.hydrateProjectAutomation(automation);
+  }
+
+  listProjectAutomations(projectId?: string): ProjectAutomationRecord[] {
+    const where = projectId ? "where project_id = ?" : "";
+    return this.all<StoredProjectAutomationRecord>(
+      `select id, project_id as projectId, name, prompt, attachments_json as attachmentsJson,
+        cron_expression as cronExpression, time_zone as timeZone, model_id as modelId, effort,
+        execution_options_json as executionOptionsJson,
+        workspace_type as workspaceType, only_if_previous_finished as onlyIfPreviousFinished, enabled,
+        last_scheduled_at as lastScheduledAt, next_run_at as nextRunAt, last_error as lastError,
+        created_at as createdAt, updated_at as updatedAt
+       from project_automations ${where} order by name collate nocase asc`,
+      projectId ? [projectId] : [],
+    ).map((automation) => this.hydrateProjectAutomation(automation));
+  }
+
+  listProjectAutomationItems(projectId: string): ProjectAutomationListItem[] {
+    const runs = this.listRunsForProject(projectId).filter((run) => run.kind === "automation" && run.automationId);
+    return this.listProjectAutomations(projectId).map((record) => {
+      const { attachments, ...automation } = record;
+      return {
+        automation: { ...automation, attachmentCount: attachments.length } satisfies ProjectAutomationSummary,
+        runs: runs.filter((run) => run.automationId === record.id),
+      };
+    });
+  }
+
+  updateProjectAutomation(automationId: string, input: UpdateProjectAutomationInput, nextRunAt?: string, timeZone?: string): ProjectAutomationRecord {
+    const existing = this.getProjectAutomation(automationId);
+    const updatedAt = nowIso();
+    this.run(
+      `update project_automations set name = ?, prompt = ?, attachments_json = ?, cron_expression = ?, time_zone = ?,
+        model_id = ?, effort = ?, execution_options_json = ?, workspace_type = ?, only_if_previous_finished = ?, enabled = ?,
+        next_run_at = ?, last_error = null, updated_at = ? where id = ?`,
+      [
+        input.name?.trim() ?? existing.name,
+        input.prompt?.trim() ?? existing.prompt,
+        JSON.stringify(input.attachments ?? existing.attachments),
+        input.cronExpression?.trim() ?? existing.cronExpression,
+        timeZone ?? existing.timeZone,
+        input.modelId ?? existing.modelId,
+        input.effort?.trim() ?? existing.effort,
+        JSON.stringify(input.executionOptions ?? existing.executionOptions),
+        input.workspaceType ?? existing.workspaceType,
+        Number(input.onlyIfPreviousFinished ?? Boolean(existing.onlyIfPreviousFinished)),
+        Number(input.enabled ?? Boolean(existing.enabled)),
+        nextRunAt ?? existing.nextRunAt,
+        updatedAt,
+        automationId,
+      ],
+    );
+    return this.getProjectAutomation(automationId);
+  }
+
+  markProjectAutomationScheduled(automationId: string, scheduledAt: string, nextRunAt: string, lastError: string | null = null): void {
+    this.run(
+      "update project_automations set last_scheduled_at = ?, next_run_at = ?, last_error = ?, updated_at = ? where id = ?",
+      [scheduledAt, nextRunAt, lastError, nowIso(), automationId],
+    );
+  }
+
+  setProjectAutomationError(automationId: string, lastError: string | null): void {
+    this.run("update project_automations set last_error = ?, updated_at = ? where id = ?", [lastError, nowIso(), automationId]);
+  }
+
+  deleteProjectAutomation(automationId: string): void {
+    this.run("delete from project_automations where id = ?", [automationId]);
   }
 
   linkProjectTaskToRun(taskId: string, runId: string): ProjectTaskRecord {
@@ -1757,6 +1871,7 @@ export class BuildWardenDatabase {
   }
 
   deleteProject(projectId: string): void {
+    this.run("delete from project_automations where project_id = ?", [projectId]);
     this.run("delete from run_forge_links where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from forge_requests where project_id = ?", [projectId]);
     this.run(
@@ -1928,6 +2043,14 @@ export class BuildWardenDatabase {
         from orchestration_tasks
         where model_id = ?
         union
+        select 'automation', id
+        from project_automations
+        where model_id = ?
+        union
+        select 'run', run.id
+        from related
+        join runs run on related.kind = 'automation' and run.automation_id = related.id
+        union
         select 'run', thread.implementation_run_id
         from related
         join project_lab_threads thread
@@ -1986,7 +2109,7 @@ export class BuildWardenDatabase {
       where model_id = ?
       order by kind, id
       `,
-      [modelId, modelId, modelId, modelId, modelId, modelId, modelId, modelId],
+      [modelId, modelId, modelId, modelId, modelId, modelId, modelId, modelId, modelId],
     );
     const idsFor = (kind: string): string[] => rows.filter((row) => row.kind === kind).map((row) => row.id);
     return {
@@ -1996,6 +2119,7 @@ export class BuildWardenDatabase {
       projectLabThreadIds: idsFor("project-lab-thread"),
       projectLoopIds: idsFor("project-loop"),
       orchestrationIds: idsFor("orchestration"),
+      automationIds: idsFor("automation"),
     };
   }
 
@@ -2056,8 +2180,8 @@ export class BuildWardenDatabase {
       insert into runs (
         id, project_id, provider_account_id, model_id, harness_type, run_mode, workspace_type, prompt, status,
         workspace_vcs, goal_text, branch_name, worktree_path, summary, error_message, last_provider_response_id, input_tokens, output_tokens, list_visibility, run_kind, lab_thread_id,
-        parent_run_id, root_run_id, lineage_title, project_task_id, delegation_enabled, created_at, updated_at, started_at, finished_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        parent_run_id, root_run_id, lineage_title, project_task_id, automation_id, delegation_enabled, created_at, updated_at, started_at, finished_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         id,
@@ -2085,6 +2209,7 @@ export class BuildWardenDatabase {
         input.rootRunId ?? null,
         input.lineageTitle ?? null,
         input.projectTaskId ?? null,
+        input.automationId ?? null,
         Number(input.delegationEnabled === true),
         createdAt,
         createdAt,
@@ -2196,6 +2321,7 @@ export class BuildWardenDatabase {
         root_run_id as rootRunId,
         lineage_title as lineageTitle,
         project_task_id as projectTaskId,
+        automation_id as automationId,
         delegation_enabled as delegationEnabled,
         created_at as createdAt,
         updated_at as updatedAt,
@@ -2486,6 +2612,7 @@ export class BuildWardenDatabase {
         root_run_id as rootRunId,
         lineage_title as lineageTitle,
         project_task_id as projectTaskId,
+        automation_id as automationId,
         delegation_enabled as delegationEnabled,
         created_at as createdAt,
         updated_at as updatedAt,
@@ -2537,6 +2664,7 @@ export class BuildWardenDatabase {
             root_run_id as rootRunId,
             lineage_title as lineageTitle,
             project_task_id as projectTaskId,
+            automation_id as automationId,
             delegation_enabled as delegationEnabled,
             created_at as createdAt,
             updated_at as updatedAt,
@@ -2587,6 +2715,7 @@ export class BuildWardenDatabase {
         root_run_id as rootRunId,
         lineage_title as lineageTitle,
         project_task_id as projectTaskId,
+        automation_id as automationId,
         delegation_enabled as delegationEnabled,
         created_at as createdAt,
         updated_at as updatedAt,
@@ -2633,11 +2762,13 @@ export class BuildWardenDatabase {
   countRunsForProviderAccount(providerAccountId: string): number {
     const row = this.first<{ count: number }>(
       `
-      select count(*) as count
-      from runs
-      where provider_account_id = ?
+      select
+        (select count(*) from runs where provider_account_id = ?) +
+        (select count(*) from project_automations automation
+          join models model on model.id = automation.model_id
+          where model.provider_account_id = ?) as count
       `,
-      [providerAccountId],
+      [providerAccountId, providerAccountId],
     );
 
     return Number(row?.count ?? 0);
@@ -4001,6 +4132,7 @@ export class BuildWardenDatabase {
         root_run_id text,
         lineage_title text,
         project_task_id text,
+        automation_id text,
         delegation_enabled integer not null default 0,
         created_at text not null,
         updated_at text not null,
@@ -4173,6 +4305,29 @@ export class BuildWardenDatabase {
         foreign key(project_id) references projects(id)
       );
 
+      create table if not exists project_automations (
+        id text primary key,
+        project_id text not null,
+        name text not null,
+        prompt text not null,
+        attachments_json text not null default '[]',
+        cron_expression text not null,
+        time_zone text not null,
+        model_id text not null,
+        effort text not null default 'auto',
+        execution_options_json text not null default '{}',
+        workspace_type text not null default 'worktree',
+        only_if_previous_finished integer not null default 1,
+        enabled integer not null default 1,
+        last_scheduled_at text,
+        next_run_at text not null,
+        last_error text,
+        created_at text not null,
+        updated_at text not null,
+        foreign key(project_id) references projects(id),
+        foreign key(model_id) references models(id)
+      );
+
       create table if not exists project_insights (
         id text primary key,
         project_id text not null,
@@ -4313,6 +4468,9 @@ export class BuildWardenDatabase {
       create index if not exists idx_chat_steps_chat_created_at on chat_steps(chat_id, created_at);
       create index if not exists idx_chats_model_id on chats(model_id);
       create index if not exists idx_project_insights_model_id on project_insights(model_id);
+      create index if not exists idx_project_automations_project on project_automations(project_id, name);
+      create index if not exists idx_project_automations_due on project_automations(enabled, next_run_at);
+      create index if not exists idx_project_automations_model on project_automations(model_id);
       create index if not exists idx_worktrees_run_id on worktrees(run_id);
       create index if not exists idx_bookmarks_original_run_id on bookmarks(original_run_id);
       create index if not exists idx_chat_bookmarks_original_chat_id on chat_bookmarks(original_chat_id);
@@ -4520,6 +4678,8 @@ export class BuildWardenDatabase {
     this.ensureColumn("project_loop_iterations", "ai_review_posted", "integer not null default 0");
     this.ensureColumn("chats", "run_id", "text");
     this.ensureColumn("runs", "project_task_id", "text");
+    this.ensureColumn("runs", "automation_id", "text");
+    this.ensureColumn("project_automations", "execution_options_json", "text not null default '{}'");
     this.ensureColumn("runs", "delegation_enabled", "integer not null default 0");
     this.ensureColumn("project_tasks", "status", "text not null default 'open'");
     this.ensureColumn("project_tasks", "run_id", "text");
@@ -4588,6 +4748,24 @@ export class BuildWardenDatabase {
         })
       : [];
     return { ...record, attachments };
+  }
+
+  private hydrateProjectAutomation(automation: StoredProjectAutomationRecord): ProjectAutomationRecord {
+    const { attachmentsJson, executionOptionsJson, ...record } = automation;
+    const parsed = this.parseJsonValue<unknown>(attachmentsJson);
+    const attachments = Array.isArray(parsed)
+      ? parsed.filter((value): value is ChatAttachmentPayload => {
+          if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+          const candidate = value as Partial<ChatAttachmentPayload>;
+          return typeof candidate.fileName === "string" && typeof candidate.mimeType === "string" &&
+            typeof candidate.dataBase64 === "string";
+        })
+      : [];
+    const parsedExecutionOptions = this.parseJsonValue<unknown>(executionOptionsJson);
+    const executionOptions = parsedExecutionOptions && typeof parsedExecutionOptions === "object" && !Array.isArray(parsedExecutionOptions)
+      ? parsedExecutionOptions as ProviderExecutionOptions
+      : {};
+    return { ...record, attachments, executionOptions };
   }
 
   private parseRemoteAccessScopes(value: string): RemoteAccessScope[] {
