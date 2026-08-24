@@ -271,6 +271,52 @@ describe("AppController settings and lightweight workflows", () => {
     }));
   });
 
+  it("isolates startup catch-up failures and always releases the scheduler", async () => {
+    const invalid = { ...automation, id: "invalid-automation", cronExpression: "invalid", nextRunAt: "2026-08-20T09:00:00.000Z" };
+    const valid = { ...automation, id: "valid-automation", nextRunAt: "2026-08-20T09:00:00.000Z" };
+    const setProjectAutomationError = vi.fn();
+    const markProjectAutomationScheduled = vi.fn();
+    const harness = createHarness({
+      listProjectAutomations: vi.fn(() => [invalid, valid]),
+      getProjectAutomation: vi.fn((automationId: string) => automationId === invalid.id ? invalid : valid),
+      setProjectAutomationError,
+      markProjectAutomationScheduled,
+    });
+    tempDirs.push(harness.logDir);
+    const run = { id: "catch-up-run", projectId: project.id } as RunRecord;
+    vi.spyOn(harness.controller, "createRun").mockResolvedValue(run);
+    const schedulerTick = vi.fn(async () => undefined);
+    const controllerInternals = harness.controller as unknown as {
+      automationSchedulerBlockedForStartup: boolean;
+      runAutomationSchedulerTick: typeof schedulerTick;
+    };
+    controllerInternals.runAutomationSchedulerTick = schedulerTick;
+
+    await expect(harness.controller.resolveStartupAutomationCatchUp([invalid.id, valid.id])).resolves.toEqual([run]);
+
+    expect(setProjectAutomationError).toHaveBeenCalledWith(invalid.id, expect.stringMatching(/five-field/));
+    expect(markProjectAutomationScheduled).toHaveBeenCalledWith(valid.id, valid.nextRunAt, expect.any(String));
+    expect(controllerInternals.automationSchedulerBlockedForStartup).toBe(false);
+    expect(schedulerTick).toHaveBeenCalledOnce();
+  });
+
+  it("releases the scheduler when startup catch-up retrieval fails", async () => {
+    const failure = new Error("database unavailable");
+    const harness = createHarness({ listProjectAutomations: vi.fn(() => { throw failure; }) });
+    tempDirs.push(harness.logDir);
+    const schedulerTick = vi.fn(async () => undefined);
+    const controllerInternals = harness.controller as unknown as {
+      automationSchedulerBlockedForStartup: boolean;
+      runAutomationSchedulerTick: typeof schedulerTick;
+    };
+    controllerInternals.runAutomationSchedulerTick = schedulerTick;
+
+    await expect(harness.controller.resolveStartupAutomationCatchUp([])).rejects.toBe(failure);
+
+    expect(controllerInternals.automationSchedulerBlockedForStartup).toBe(false);
+    expect(schedulerTick).toHaveBeenCalledOnce();
+  });
+
   it("combines task and launch attachments without sending duplicates to a run", () => {
     const taskAttachment = { fileName: "design.png", mimeType: "image/png", dataBase64: "AA==" };
     const launchAttachment = { fileName: "notes.md", mimeType: "text/markdown", dataBase64: "Iw==" };

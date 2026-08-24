@@ -3997,25 +3997,33 @@ export class AppController
 
   async resolveStartupAutomationCatchUp(automationIds: string[]): Promise<RunRecord[]> {
     const selected = new Set(automationIds);
-    const due = await this.getStartupAutomationCatchUp();
-    const now = new Date();
     const started: RunRecord[] = [];
-    for (const item of due) {
-      const automation = this.db.getProjectAutomation(item.automationId);
-      if (!automation.enabled) continue;
-      const nextRunAt = nextAutomationRunAt(automation.cronExpression, automation.timeZone, now);
-      this.db.markProjectAutomationScheduled(automation.id, item.scheduledAt, nextRunAt);
-      if (!selected.has(automation.id)) continue;
-      try {
-        const run = await this.executeProjectAutomation(automation);
-        if (run) started.push(run);
-      } catch (error) {
-        this.db.setProjectAutomationError(automation.id, error instanceof Error ? error.message : String(error));
+    try {
+      const due = await this.getStartupAutomationCatchUp();
+      const now = new Date();
+      for (const item of due) {
+        try {
+          const automation = this.db.getProjectAutomation(item.automationId);
+          if (!automation.enabled) continue;
+          const nextRunAt = nextAutomationRunAt(automation.cronExpression, automation.timeZone, now);
+          this.db.markProjectAutomationScheduled(automation.id, item.scheduledAt, nextRunAt);
+          if (!selected.has(automation.id)) continue;
+          const run = await this.executeProjectAutomation(automation);
+          if (run) started.push(run);
+        } catch (error) {
+          try {
+            this.db.setProjectAutomationError(item.automationId, error instanceof Error ? error.message : String(error));
+          } catch (recordError) {
+            this.logControllerError("Could not record a startup automation failure.", recordError, { automationId: item.automationId });
+          }
+          this.logControllerError("Could not resolve a startup project automation.", error, { automationId: item.automationId });
+        }
       }
+      return started;
+    } finally {
+      this.automationSchedulerBlockedForStartup = false;
+      void this.runAutomationSchedulerTick();
     }
-    this.automationSchedulerBlockedForStartup = false;
-    void this.runAutomationSchedulerTick();
-    return started;
   }
 
   startAutomationScheduler(): void {
