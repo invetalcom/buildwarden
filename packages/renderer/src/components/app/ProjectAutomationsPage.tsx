@@ -182,6 +182,9 @@ export const ProjectAutomationsPage = ({
   };
 
   const save = async () => {
+    const automationId = selectedId;
+    const requestId = editRequestIdRef.current + 1;
+    editRequestIdRef.current = requestId;
     setBusy(true);
     setError(null);
     try {
@@ -194,13 +197,16 @@ export const ProjectAutomationsPage = ({
         executionOptions: automationExecutionOptions(selectedModel, effort),
         attachments,
       };
-      const saved = selectedId
-        ? await buildwarden.updateProjectAutomation(selectedId, input)
+      const saved = automationId
+        ? await buildwarden.updateProjectAutomation(automationId, input)
         : await buildwarden.createProjectAutomation(projectId, input);
-      setSelectedId(saved.id);
-      setEditing(false);
+      if (editRequestIdRef.current === requestId) {
+        setSelectedId(saved.id);
+        setEditing(false);
+      }
       await onChanged();
     } catch (caught) {
+      if (editRequestIdRef.current !== requestId) return;
       setError(caught instanceof Error ? caught.message : "Could not save this automation.");
     } finally {
       setBusy(false);
