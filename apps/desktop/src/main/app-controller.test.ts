@@ -119,7 +119,7 @@ const createHarness = (overrides: DbOverrides = {}) => {
     deleteSetting: calls.deleteSetting,
     getProviderAccount: vi.fn(() => provider),
     addProviderAccount: vi.fn((input: object) => ({ ...provider, ...input })),
-    countRunsForProviderAccount: vi.fn(() => 0),
+    countProviderAccountReferences: vi.fn(() => 0),
     deleteProviderAccount: vi.fn(),
     getModel: vi.fn(() => model),
     addModel: vi.fn((input: object) => ({ ...model, ...input })),

@@ -2763,7 +2763,7 @@ export class BuildWardenDatabase {
     );
   }
 
-  countRunsForProviderAccount(providerAccountId: string): number {
+  countProviderAccountReferences(providerAccountId: string): number {
     const row = this.first<{ count: number }>(
       `
       select

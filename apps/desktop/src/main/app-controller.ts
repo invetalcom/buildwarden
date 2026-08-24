@@ -2804,9 +2804,9 @@ export class AppController
 
   async deleteProviderAccount(providerAccountId: string): Promise<void> {
     const provider = this.db.getProviderAccount(providerAccountId);
-    const runCount = this.db.countRunsForProviderAccount(providerAccountId);
+    const referenceCount = this.db.countProviderAccountReferences(providerAccountId);
 
-    if (runCount > 0) {
+    if (referenceCount > 0) {
       throw new Error("This provider cannot be deleted because existing runs or automations reference it.");
     }
 
