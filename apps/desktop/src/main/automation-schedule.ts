@@ -89,6 +89,22 @@ const cronMatches = (cron: ParsedCron, date: Date, timeZone: string): boolean =>
   return cron.minute.has(parts.minute) && cron.hour.has(parts.hour) && cron.month.has(parts.month) && dayMatches;
 };
 
+const MAX_DAYS_BY_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
+
+const assertCronCanMatchCalendar = (cron: ParsedCron): void => {
+  // A restricted weekday is ORed with a restricted day-of-month, so it always
+  // provides a possible date. Calendar validation is only needed when the
+  // weekday is a wildcard and the day-of-month must match.
+  if (cron.dayOfMonthWildcard || !cron.dayOfWeekWildcard) return;
+  const hasPossibleDate = [...cron.month].some((month) => {
+    const maximumDay = MAX_DAYS_BY_MONTH[month - 1] ?? 0;
+    return [...cron.dayOfMonth].some((day) => day <= maximumDay);
+  });
+  if (!hasPossibleDate) {
+    throw new Error("This cron schedule can never occur for the selected months.");
+  }
+};
+
 export const validateAutomationTimeZone = (timeZone: string): string => {
   const trimmed = timeZone.trim();
   try {
@@ -102,6 +118,7 @@ export const validateAutomationTimeZone = (timeZone: string): string => {
 export const nextAutomationRunAt = (expression: string, timeZone: string, after: Date): string => {
   const cron = parseAutomationCron(expression);
   const zone = validateAutomationTimeZone(timeZone);
+  assertCronCanMatchCalendar(cron);
   const start = Math.floor(after.getTime() / MINUTE_MS) * MINUTE_MS + MINUTE_MS;
   const limit = start + 2 * 366 * 24 * 60 * MINUTE_MS;
   for (let timestamp = start; timestamp <= limit; timestamp += MINUTE_MS) {

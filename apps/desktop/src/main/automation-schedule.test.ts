@@ -18,6 +18,11 @@ describe("automation schedules", () => {
       .toBe("2026-08-15T09:00:00.000Z");
   });
 
+  it("rejects impossible calendar schedules before scanning for a match", () => {
+    expect(() => nextAutomationRunAt("0 0 31 2 *", "UTC", new Date("2026-01-01T00:00:00Z")))
+      .toThrow(/never occur/);
+  });
+
   it("rejects malformed schedules and time zones", () => {
     expect(() => parseAutomationCron("every day")).toThrow(/five-field/);
     expect(() => validateAutomationTimeZone("Mars/Olympus")).toThrow(/Unknown time zone/);
