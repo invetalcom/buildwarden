@@ -4040,16 +4040,20 @@ export class AppController
         (automation) => Boolean(automation.enabled) && Date.parse(automation.nextRunAt) <= now.getTime(),
       );
       for (const automation of due) {
-        const current = this.db.getProjectAutomation(automation.id);
-        if (!current.enabled || Date.parse(current.nextRunAt) > now.getTime()) continue;
-        const scheduledAt = current.nextRunAt;
-        const nextRunAt = nextAutomationRunAt(current.cronExpression, current.timeZone, now);
-        this.db.markProjectAutomationScheduled(current.id, scheduledAt, nextRunAt);
         try {
+          const current = this.db.getProjectAutomation(automation.id);
+          if (!current.enabled || Date.parse(current.nextRunAt) > now.getTime()) continue;
+          const scheduledAt = current.nextRunAt;
+          const nextRunAt = nextAutomationRunAt(current.cronExpression, current.timeZone, now);
+          this.db.markProjectAutomationScheduled(current.id, scheduledAt, nextRunAt);
           await this.executeProjectAutomation(current);
         } catch (error) {
-          this.db.setProjectAutomationError(current.id, error instanceof Error ? error.message : String(error));
-          this.logControllerError("Could not start a scheduled project automation.", error, { automationId: current.id });
+          try {
+            this.db.setProjectAutomationError(automation.id, error instanceof Error ? error.message : String(error));
+          } catch (recordError) {
+            this.logControllerError("Could not record a scheduled automation failure.", recordError, { automationId: automation.id });
+          }
+          this.logControllerError("Could not start a scheduled project automation.", error, { automationId: automation.id });
         }
       }
     } finally {

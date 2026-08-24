@@ -317,6 +317,33 @@ describe("AppController settings and lightweight workflows", () => {
     expect(schedulerTick).toHaveBeenCalledOnce();
   });
 
+  it("continues a scheduler tick after one automation has an invalid schedule", async () => {
+    const invalid = { ...automation, id: "invalid-scheduled-automation", cronExpression: "invalid", nextRunAt: "2026-08-20T09:00:00.000Z" };
+    const valid = { ...automation, id: "valid-scheduled-automation", nextRunAt: "2026-08-20T09:00:00.000Z" };
+    const setProjectAutomationError = vi.fn();
+    const markProjectAutomationScheduled = vi.fn();
+    const harness = createHarness({
+      listProjectAutomations: vi.fn(() => [invalid, valid]),
+      getProjectAutomation: vi.fn((automationId: string) => automationId === invalid.id ? invalid : valid),
+      setProjectAutomationError,
+      markProjectAutomationScheduled,
+    });
+    tempDirs.push(harness.logDir);
+    const run = { id: "scheduled-run", projectId: project.id } as RunRecord;
+    vi.spyOn(harness.controller, "createRun").mockResolvedValue(run);
+    const controllerInternals = harness.controller as unknown as {
+      automationSchedulerBlockedForStartup: boolean;
+      runAutomationSchedulerTick: () => Promise<void>;
+    };
+    controllerInternals.automationSchedulerBlockedForStartup = false;
+
+    await controllerInternals.runAutomationSchedulerTick();
+
+    expect(setProjectAutomationError).toHaveBeenCalledWith(invalid.id, expect.stringMatching(/five-field/));
+    expect(markProjectAutomationScheduled).toHaveBeenCalledWith(valid.id, valid.nextRunAt, expect.any(String));
+    expect(harness.controller.createRun).toHaveBeenCalledOnce();
+  });
+
   it("combines task and launch attachments without sending duplicates to a run", () => {
     const taskAttachment = { fileName: "design.png", mimeType: "image/png", dataBase64: "AA==" };
     const launchAttachment = { fileName: "notes.md", mimeType: "text/markdown", dataBase64: "Iw==" };
