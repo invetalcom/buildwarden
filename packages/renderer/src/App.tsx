@@ -1051,8 +1051,12 @@ export const App = () => {
   }, [buildwarden, loadSnapshot, purgeDeletedRunState, startupDataRetentionState]);
 
   const resolveStartupAutomations = useCallback(async (start: boolean) => {
-    if (startupAutomationState.status !== "review" && startupAutomationState.status !== "error") return;
-    const items = startupAutomationState.status === "review" ? startupAutomationState.items : [];
+    if (startupAutomationState.status === "error") {
+      setStartupAutomationState({ status: "ready" });
+      return;
+    }
+    if (startupAutomationState.status !== "review") return;
+    const items = startupAutomationState.items;
     if (items.length > 0) setStartupAutomationState({ status: "starting", items });
     try {
       await buildwarden.resolveStartupAutomationCatchUp(start ? items.map((item) => item.automationId) : []);
