@@ -95,6 +95,13 @@ const ORCHESTRATION_TASK_SELECT = `select id, orchestration_id as orchestrationI
   input_tokens as inputTokens, output_tokens as outputTokens,
   created_at as createdAt, updated_at as updatedAt, started_at as startedAt, finished_at as finishedAt
   from orchestration_tasks`;
+const PROJECT_AUTOMATION_SELECT = `select id, project_id as projectId, name, prompt, attachments_json as attachmentsJson,
+  cron_expression as cronExpression, time_zone as timeZone, model_id as modelId, effort,
+  execution_options_json as executionOptionsJson, workspace_type as workspaceType, base_branch as baseBranch,
+  only_if_previous_finished as onlyIfPreviousFinished, enabled,
+  last_scheduled_at as lastScheduledAt, next_run_at as nextRunAt, last_error as lastError,
+  created_at as createdAt, updated_at as updatedAt
+  from project_automations`;
 
 type StoredOrchestrationRecord = Omit<OrchestrationRecord, "teamSnapshot" | "wakeTaskIds"> & {
   teamSnapshotJson: string;
@@ -745,14 +752,7 @@ export class BuildWardenDatabase {
 
   getProjectAutomation(automationId: string): ProjectAutomationRecord {
     const automation = this.first<StoredProjectAutomationRecord>(
-      `select id, project_id as projectId, name, prompt, attachments_json as attachmentsJson,
-        cron_expression as cronExpression, time_zone as timeZone, model_id as modelId, effort,
-        execution_options_json as executionOptionsJson,
-        workspace_type as workspaceType, base_branch as baseBranch,
-        only_if_previous_finished as onlyIfPreviousFinished, enabled,
-        last_scheduled_at as lastScheduledAt, next_run_at as nextRunAt, last_error as lastError,
-        created_at as createdAt, updated_at as updatedAt
-       from project_automations where id = ?`,
+      `${PROJECT_AUTOMATION_SELECT} where id = ?`,
       [automationId],
     );
     if (!automation) throw new Error(`Project automation not found: ${automationId}`);
@@ -762,14 +762,7 @@ export class BuildWardenDatabase {
   listProjectAutomations(projectId?: string): ProjectAutomationRecord[] {
     const where = projectId ? "where project_id = ?" : "";
     return this.all<StoredProjectAutomationRecord>(
-      `select id, project_id as projectId, name, prompt, attachments_json as attachmentsJson,
-        cron_expression as cronExpression, time_zone as timeZone, model_id as modelId, effort,
-        execution_options_json as executionOptionsJson,
-        workspace_type as workspaceType, base_branch as baseBranch,
-        only_if_previous_finished as onlyIfPreviousFinished, enabled,
-        last_scheduled_at as lastScheduledAt, next_run_at as nextRunAt, last_error as lastError,
-        created_at as createdAt, updated_at as updatedAt
-       from project_automations ${where} order by name collate nocase asc`,
+      `${PROJECT_AUTOMATION_SELECT} ${where} order by name collate nocase asc`,
       projectId ? [projectId] : [],
     ).map((automation) => this.hydrateProjectAutomation(automation));
   }
