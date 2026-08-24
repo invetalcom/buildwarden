@@ -316,7 +316,7 @@ export class BuildWardenDatabase {
         ),
         recentRuns: runs.slice(0, 12),
         tasks: this.listProjectTaskSummaries(project.id),
-        automations: this.listProjectAutomationItems(project.id),
+        automations: this.listProjectAutomationItems(project.id, allRuns),
         insights: this.listProjectInsights(project.id),
         labThreads: this.listProjectLabThreadDetails(project.id),
         loops: this.listProjectLoopListItems(project.id),
@@ -774,8 +774,8 @@ export class BuildWardenDatabase {
     ).map((automation) => this.hydrateProjectAutomation(automation));
   }
 
-  listProjectAutomationItems(projectId: string): ProjectAutomationListItem[] {
-    const runs = this.listRunsForProject(projectId).filter((run) => run.kind === "automation" && run.automationId);
+  listProjectAutomationItems(projectId: string, projectRuns: RunRecord[]): ProjectAutomationListItem[] {
+    const runs = projectRuns.filter((run) => run.kind === "automation" && run.automationId);
     return this.listProjectAutomations(projectId).map((record) => {
       const { attachments, ...automation } = record;
       return {
