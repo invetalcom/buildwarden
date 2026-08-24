@@ -24,6 +24,7 @@ const existingAutomation: ProjectAutomationRecord = {
   effort: "high",
   executionOptions: { reasoningEffort: "high" },
   workspaceType: "worktree",
+  baseBranch: "main",
   onlyIfPreviousFinished: true,
   enabled: true,
   lastScheduledAt: null,
@@ -87,6 +88,8 @@ describe("project automations create flow", () => {
             },
           }]}
           defaultModelId="model-1"
+          availableBranches={["main", "develop"]}
+          projectBaseBranch="main"
           onOpenRun={vi.fn()}
           onChanged={vi.fn()}
         />
@@ -96,10 +99,18 @@ describe("project automations create flow", () => {
     const button = (label: string) => [...container!.querySelectorAll<HTMLButtonElement>("button")]
       .find((candidate) => candidate.textContent?.trim() === label);
     await act(async () => button("New automation")?.click());
+    await act(async () => container?.querySelector<HTMLButtonElement>('[aria-label="Automation branch"]')?.click());
+    const develop = [...document.body.querySelectorAll<HTMLButtonElement>("button")]
+      .find((candidate) => candidate.textContent?.trim() === "develop");
+    await act(async () => develop?.click());
     await act(async () => button("Save automation")?.click());
 
     expect(createProjectAutomation).toHaveBeenCalledOnce();
-    expect(createProjectAutomation).toHaveBeenCalledWith("project-1", expect.objectContaining({ modelId: "model-1" }));
+    expect(createProjectAutomation).toHaveBeenCalledWith("project-1", expect.objectContaining({
+      baseBranch: "develop",
+      modelId: "model-1",
+      workspaceType: "worktree",
+    }));
     expect(updateProjectAutomation).not.toHaveBeenCalled();
   });
 
@@ -124,6 +135,8 @@ describe("project automations create flow", () => {
             providerFamily: null,
           }]}
           defaultModelId="model-1"
+          availableBranches={["main", "develop"]}
+          projectBaseBranch="main"
           onOpenRun={vi.fn()}
           onChanged={vi.fn()}
         />

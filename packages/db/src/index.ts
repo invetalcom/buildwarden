@@ -730,13 +730,13 @@ export class BuildWardenDatabase {
     this.run(
       `insert into project_automations (
         id, project_id, name, prompt, attachments_json, cron_expression, time_zone, model_id, effort,
-        execution_options_json, workspace_type, only_if_previous_finished, enabled, last_scheduled_at, next_run_at,
+        execution_options_json, workspace_type, base_branch, only_if_previous_finished, enabled, last_scheduled_at, next_run_at,
         last_error, created_at, updated_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, ?, null, ?, ?)`,
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, ?, null, ?, ?)`,
       [
         id, projectId, input.name.trim(), input.prompt.trim(), JSON.stringify(input.attachments ?? []),
         input.cronExpression.trim(), timeZone, input.modelId, input.effort?.trim() || "auto",
-        JSON.stringify(input.executionOptions ?? {}), input.workspaceType,
+        JSON.stringify(input.executionOptions ?? {}), input.workspaceType, input.baseBranch?.trim() || null,
         Number(input.onlyIfPreviousFinished !== false), Number(input.enabled !== false), nextRunAt, createdAt, createdAt,
       ],
     );
@@ -748,7 +748,8 @@ export class BuildWardenDatabase {
       `select id, project_id as projectId, name, prompt, attachments_json as attachmentsJson,
         cron_expression as cronExpression, time_zone as timeZone, model_id as modelId, effort,
         execution_options_json as executionOptionsJson,
-        workspace_type as workspaceType, only_if_previous_finished as onlyIfPreviousFinished, enabled,
+        workspace_type as workspaceType, base_branch as baseBranch,
+        only_if_previous_finished as onlyIfPreviousFinished, enabled,
         last_scheduled_at as lastScheduledAt, next_run_at as nextRunAt, last_error as lastError,
         created_at as createdAt, updated_at as updatedAt
        from project_automations where id = ?`,
@@ -764,7 +765,8 @@ export class BuildWardenDatabase {
       `select id, project_id as projectId, name, prompt, attachments_json as attachmentsJson,
         cron_expression as cronExpression, time_zone as timeZone, model_id as modelId, effort,
         execution_options_json as executionOptionsJson,
-        workspace_type as workspaceType, only_if_previous_finished as onlyIfPreviousFinished, enabled,
+        workspace_type as workspaceType, base_branch as baseBranch,
+        only_if_previous_finished as onlyIfPreviousFinished, enabled,
         last_scheduled_at as lastScheduledAt, next_run_at as nextRunAt, last_error as lastError,
         created_at as createdAt, updated_at as updatedAt
        from project_automations ${where} order by name collate nocase asc`,
@@ -788,7 +790,8 @@ export class BuildWardenDatabase {
     const updatedAt = nowIso();
     this.run(
       `update project_automations set name = ?, prompt = ?, attachments_json = ?, cron_expression = ?, time_zone = ?,
-        model_id = ?, effort = ?, execution_options_json = ?, workspace_type = ?, only_if_previous_finished = ?, enabled = ?,
+        model_id = ?, effort = ?, execution_options_json = ?, workspace_type = ?, base_branch = ?,
+        only_if_previous_finished = ?, enabled = ?,
         next_run_at = ?, last_error = null, updated_at = ? where id = ?`,
       [
         input.name?.trim() ?? existing.name,
@@ -800,6 +803,7 @@ export class BuildWardenDatabase {
         input.effort?.trim() ?? existing.effort,
         JSON.stringify(input.executionOptions ?? existing.executionOptions),
         input.workspaceType ?? existing.workspaceType,
+        input.baseBranch === undefined ? existing.baseBranch : input.baseBranch?.trim() || null,
         Number(input.onlyIfPreviousFinished ?? Boolean(existing.onlyIfPreviousFinished)),
         Number(input.enabled ?? Boolean(existing.enabled)),
         nextRunAt ?? existing.nextRunAt,
@@ -4317,6 +4321,7 @@ export class BuildWardenDatabase {
         effort text not null default 'auto',
         execution_options_json text not null default '{}',
         workspace_type text not null default 'worktree',
+        base_branch text,
         only_if_previous_finished integer not null default 1,
         enabled integer not null default 1,
         last_scheduled_at text,
@@ -4680,6 +4685,16 @@ export class BuildWardenDatabase {
     this.ensureColumn("runs", "project_task_id", "text");
     this.ensureColumn("runs", "automation_id", "text");
     this.ensureColumn("project_automations", "execution_options_json", "text not null default '{}'");
+    this.ensureColumn("project_automations", "base_branch", "text");
+    this.run(
+      `update project_automations
+       set base_branch = (select project.default_branch from projects project where project.id = project_automations.project_id)
+       where base_branch is null
+         and exists (
+           select 1 from projects project
+           where project.id = project_automations.project_id and project.project_kind = 'git'
+         )`,
+    );
     this.ensureColumn("runs", "delegation_enabled", "integer not null default 0");
     this.ensureColumn("project_tasks", "status", "text not null default 'open'");
     this.ensureColumn("project_tasks", "run_id", "text");

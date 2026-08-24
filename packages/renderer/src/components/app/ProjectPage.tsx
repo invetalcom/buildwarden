@@ -268,6 +268,8 @@ export const ProjectPage = ({
           automations={project.automations ?? []}
           modelOptions={modelOptions}
           defaultModelId={defaultTaskModelId}
+          availableBranches={availableBranches}
+          projectBaseBranch={project.project.baseBranch}
           onOpenRun={onSelectRun}
           onChanged={onAutomationsChanged}
         />

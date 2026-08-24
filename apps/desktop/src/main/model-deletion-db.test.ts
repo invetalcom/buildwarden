@@ -61,6 +61,7 @@ describe("model deletion targets", () => {
       effort: "high",
       executionOptions: { reasoningEffort: "high", serviceTier: "priority" },
       workspaceType: "worktree",
+      baseBranch: "develop",
     }, "2026-08-20T09:00:00.000Z", "UTC");
     const historicalRun = db.createRun({
       projectId: project.id,
@@ -81,6 +82,7 @@ describe("model deletion targets", () => {
         id: automation.id,
         attachmentCount: 1,
         effort: "high",
+        baseBranch: "develop",
         executionOptions: { reasoningEffort: "high", serviceTier: "priority" },
       },
       runs: [{ id: historicalRun.id, automationId: automation.id }],

@@ -899,6 +899,8 @@ export interface ProjectAutomationRecord {
   /** Provider-normalized execution options captured for the selected model. */
   executionOptions: ProviderExecutionOptions;
   workspaceType: RunWorkspaceType;
+  /** Fixed source branch for Git worktrees, or required checked-out branch for local Git runs. */
+  baseBranch: string | null;
   onlyIfPreviousFinished: boolean | number;
   enabled: boolean | number;
   lastScheduledAt: string | null;
@@ -928,6 +930,7 @@ export interface ProjectAutomationInput {
   effort?: string;
   executionOptions?: ProviderExecutionOptions;
   workspaceType: RunWorkspaceType;
+  baseBranch?: string | null;
   onlyIfPreviousFinished?: boolean;
   enabled?: boolean;
 }

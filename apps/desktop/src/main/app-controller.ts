@@ -3088,6 +3088,13 @@ export class AppController
           throw new Error("The checked-out project workspace is already used by an active run. Wait for it to finish or use an isolated worktree.");
         }
         branchName = await this.gitService.getCurrentBranch(project.repoPath);
+        const requiredAutomationBranch = input.kind === "automation" ? input.baseBranch?.trim() : undefined;
+        if (requiredAutomationBranch && branchName !== requiredAutomationBranch) {
+          throw new Error(
+            `Automation requires branch "${requiredAutomationBranch}", but the checked-out project is currently on "${branchName}". ` +
+            "BuildWarden did not switch branches. Check out the configured branch or use an isolated worktree.",
+          );
+        }
         worktreePath = project.repoPath;
       } else {
         const gitWorkspace = await this.gitService.createWorktreeForRun(
@@ -3850,10 +3857,11 @@ export class AppController
     this.events.publish("task", { projectId: existing.projectId, taskId: existing.id, status: existing.status });
   }
 
-  private validateProjectAutomationInput(
+  private async validateProjectAutomationInput(
     projectId: string,
     input: ProjectAutomationInput,
-  ): { input: ProjectAutomationInput; timeZone: string; nextRunAt: string } {
+    options?: { skipBranchExistenceCheck?: boolean },
+  ): Promise<{ input: ProjectAutomationInput; timeZone: string; nextRunAt: string }> {
     const project = this.db.getProject(projectId);
     const name = input.name.trim();
     const prompt = input.prompt.trim();
@@ -3871,15 +3879,22 @@ export class AppController
     if (!allowedWorkspaceTypes.includes(input.workspaceType)) {
       throw new Error(project.kind === "git" ? "Choose the checked-out branch or an isolated worktree." : "Choose the project folder or an isolated folder copy.");
     }
+    const baseBranch = project.kind === "git" ? input.baseBranch?.trim() || project.baseBranch : null;
+    if (project.kind === "git" && !options?.skipBranchExistenceCheck) {
+      const availableBranches = await this.getProjectBranches(project.id);
+      if (!baseBranch || !availableBranches.includes(baseBranch)) {
+        throw new Error(`Automation branch "${baseBranch}" is not available for this project. Refresh branches and choose an existing branch.`);
+      }
+    }
     return {
-      input: { ...input, name, prompt, cronExpression: input.cronExpression.trim() },
+      input: { ...input, name, prompt, cronExpression: input.cronExpression.trim(), baseBranch },
       timeZone,
       nextRunAt: nextAutomationRunAt(input.cronExpression, timeZone, new Date()),
     };
   }
 
   async createProjectAutomation(projectId: string, input: ProjectAutomationInput): Promise<ProjectAutomationRecord> {
-    const validated = this.validateProjectAutomationInput(projectId, input);
+    const validated = await this.validateProjectAutomationInput(projectId, input);
     return this.db.createProjectAutomation(projectId, validated.input, validated.nextRunAt, validated.timeZone);
   }
 
@@ -3899,10 +3914,14 @@ export class AppController
       effort: input.effort ?? existing.effort,
       executionOptions: input.executionOptions ?? existing.executionOptions,
       workspaceType: input.workspaceType ?? existing.workspaceType,
+      baseBranch: input.baseBranch === undefined ? existing.baseBranch : input.baseBranch,
       onlyIfPreviousFinished: input.onlyIfPreviousFinished ?? Boolean(existing.onlyIfPreviousFinished),
       enabled: input.enabled ?? Boolean(existing.enabled),
     };
-    const validated = this.validateProjectAutomationInput(existing.projectId, merged);
+    const disablingOnly = input.enabled === false && Object.keys(input).every((key) => key === "enabled");
+    const validated = await this.validateProjectAutomationInput(existing.projectId, merged, {
+      skipBranchExistenceCheck: disablingOnly,
+    });
     const scheduleChanged = merged.cronExpression !== existing.cronExpression || merged.timeZone !== existing.timeZone ||
       (!existing.enabled && merged.enabled !== false);
     return this.db.updateProjectAutomation(
@@ -3939,7 +3958,7 @@ export class AppController
       harnessType: getHarnessTypeForProvider(provider.providerType),
       mode: "code",
       workspaceType: automation.workspaceType,
-      baseBranch: project.kind === "git" && automation.workspaceType === "worktree" ? project.baseBranch : undefined,
+      baseBranch: project.kind === "git" ? automation.baseBranch ?? project.baseBranch : undefined,
       prompt: automation.prompt,
       attachments: automation.attachments,
       reasoningEffort: hasExecutionOptions ? automation.executionOptions.reasoningEffort : automation.effort,

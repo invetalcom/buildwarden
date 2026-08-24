@@ -88,6 +88,7 @@ const automation = {
   effort: "high",
   executionOptions: { reasoningEffort: "high" },
   workspaceType: "worktree",
+  baseBranch: "main",
   onlyIfPreviousFinished: true,
   enabled: true,
   lastScheduledAt: null,
@@ -222,6 +223,12 @@ describe("AppController settings and lightweight workflows", () => {
 
     await expect(harness.controller.runProjectAutomationNow(automation.id)).resolves.toBe(run);
 
+    expect(harness.controller.createRun).toHaveBeenCalledWith(expect.objectContaining({
+      baseBranch: "main",
+      kind: "automation",
+      workspaceType: "worktree",
+    }));
+
     expect(listener).toHaveBeenCalledWith({
       automationId: automation.id,
       automationName: automation.name,
@@ -231,6 +238,26 @@ describe("AppController settings and lightweight workflows", () => {
       startedAt: run.startedAt,
     });
     expect(setProjectAutomationError).toHaveBeenCalledWith(automation.id, null);
+  });
+
+  it("does not run a local automation on a different checked-out branch", async () => {
+    const harness = createHarness();
+    tempDirs.push(harness.logDir);
+    harness.secrets.readSecret.mockResolvedValue("provider-key");
+    vi.spyOn(GitService.prototype, "getCurrentBranch").mockResolvedValue("experimental");
+
+    await expect(harness.controller.createRun({
+      projectId: project.id,
+      providerAccountId: provider.id,
+      modelId: model.id,
+      harnessType: "ai-sdk",
+      mode: "code",
+      workspaceType: "local",
+      baseBranch: "main",
+      prompt: "Review the project",
+      kind: "automation",
+      automationId: automation.id,
+    })).rejects.toThrow('Automation requires branch "main", but the checked-out project is currently on "experimental"');
   });
 
   it("combines task and launch attachments without sending duplicates to a run", () => {
