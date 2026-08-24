@@ -13,6 +13,7 @@ import type {
   ProjectRecord,
   ProjectTaskRecord,
   ProviderAccountRecord,
+  RunInput,
   RunRecord,
 } from "@buildwarden/shared";
 import type { SecretStore } from "@buildwarden/shared";
@@ -240,19 +241,30 @@ describe("AppController settings and lightweight workflows", () => {
     expect(setProjectAutomationError).toHaveBeenCalledWith(automation.id, null);
   });
 
-  it("converts a legacy local automation to an isolated worktree when starting it", async () => {
-    const legacyAutomation = { ...automation, workspaceType: "local" } as unknown as ProjectAutomationRecord;
-    const harness = createHarness({
-      getProjectAutomation: vi.fn(() => legacyAutomation),
-      setProjectAutomationError: vi.fn(),
-    });
+  it("converts direct local automation run requests to an isolated worktree", async () => {
+    const harness = createHarness();
     tempDirs.push(harness.logDir);
     const run = { id: "legacy-automation-run", projectId: project.id } as RunRecord;
-    vi.spyOn(harness.controller, "createRun").mockResolvedValue(run);
+    const createRunInternal = vi.fn(async (input: RunInput) => {
+      expect(input.kind).toBe("automation");
+      return run;
+    });
+    (harness.controller as unknown as { createRunInternal: typeof createRunInternal }).createRunInternal = createRunInternal;
 
-    await expect(harness.controller.runProjectAutomationNow(legacyAutomation.id)).resolves.toBe(run);
+    await expect(harness.controller.createRun({
+      projectId: project.id,
+      providerAccountId: provider.id,
+      modelId: model.id,
+      harnessType: "ai-sdk",
+      mode: "code",
+      workspaceType: "local",
+      baseBranch: "main",
+      prompt: "Review the project",
+      kind: "automation",
+      automationId: automation.id,
+    })).resolves.toBe(run);
 
-    expect(harness.controller.createRun).toHaveBeenCalledWith(expect.objectContaining({
+    expect(createRunInternal).toHaveBeenCalledWith(expect.objectContaining({
       baseBranch: "main",
       kind: "automation",
       workspaceType: "worktree",
