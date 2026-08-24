@@ -96,6 +96,8 @@ describe("project automations create flow", () => {
       </BuildWardenClientProvider>,
     ));
 
+    expect(container.textContent).toContain("(UTC)");
+
     const button = (label: string) => [...container!.querySelectorAll<HTMLButtonElement>("button")]
       .find((candidate) => candidate.textContent?.trim() === label);
     await act(async () => button("New automation")?.click());
