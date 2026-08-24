@@ -150,4 +150,53 @@ describe("project automations create flow", () => {
     expect(updateProjectAutomation).toHaveBeenCalledOnce();
     expect(updateProjectAutomation).toHaveBeenCalledWith("automation-1", { enabled: false });
   });
+
+  it("discards an edit response after another automation is selected", async () => {
+    let resolveRecord!: (record: ProjectAutomationRecord) => void;
+    const getProjectAutomation = vi.fn(() => new Promise<ProjectAutomationRecord>((resolve) => {
+      resolveRecord = resolve;
+    }));
+    const secondAutomation = { ...existingAutomation, id: "automation-2", name: "Second automation" };
+    const secondItem = (): ProjectAutomationListItem => {
+      const { attachments, ...automation } = secondAutomation;
+      return { automation: { ...automation, attachmentCount: attachments.length }, runs: [] };
+    };
+    const api = { getProjectAutomation } as unknown as DesktopApi;
+
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(
+      <BuildWardenClientProvider client={createElectronBuildWardenClient(api)}>
+        <ProjectAutomationsPage
+          projectId="project-1"
+          projectKind="git"
+          automations={[automationItem(), secondItem()]}
+          modelOptions={[{
+            id: "model-1",
+            label: "GPT-5.6",
+            modelId: "gpt-5.6-sol",
+            providerType: "codex-cli",
+            providerFamily: null,
+          }]}
+          defaultModelId="model-1"
+          availableBranches={["main"]}
+          projectBaseBranch="main"
+          onOpenRun={vi.fn()}
+          onChanged={vi.fn()}
+        />
+      </BuildWardenClientProvider>,
+    ));
+
+    const editButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.querySelector(".lucide-pencil"));
+    await act(async () => editButton?.click());
+    const secondButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("Second automation"));
+    await act(async () => secondButton?.click());
+    await act(async () => resolveRecord(existingAutomation));
+
+    expect(container.textContent).toContain("Second automation");
+    expect(container.textContent).not.toContain("Edit automation");
+  });
 });

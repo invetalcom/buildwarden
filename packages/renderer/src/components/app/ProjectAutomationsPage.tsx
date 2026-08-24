@@ -7,7 +7,7 @@ import type {
   RunRecord,
 } from "@buildwarden/shared";
 import { Activity, Bot, CalendarClock, Clock3, ExternalLink, Loader2, Pause, Pencil, Play, Plus, Trash2, Zap } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Badge } from "../ui/badge";
@@ -122,6 +122,7 @@ export const ProjectAutomationsPage = ({
   const [newFiles, setNewFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const editRequestIdRef = useRef(0);
 
   const selectedItem = automations.find((item) => item.automation.id === selectedId) ?? null;
   const selectedModel = modelOptions.find((model) => model.id === draft.modelId);
@@ -144,6 +145,7 @@ export const ProjectAutomationsPage = ({
   const maxRunCount = Math.max(1, ...automations.map((item) => item.runs.length));
 
   const startNew = () => {
+    editRequestIdRef.current += 1;
     setSelectedId(null);
     setDraft(emptyDraft(projectKind, defaultModelId, modelOptions, projectBaseBranch));
     setStoredAttachments([]);
@@ -154,10 +156,14 @@ export const ProjectAutomationsPage = ({
 
   const editSelected = async () => {
     if (!selectedItem) return;
+    const automationId = selectedItem.automation.id;
+    const requestId = editRequestIdRef.current + 1;
+    editRequestIdRef.current = requestId;
     setBusy(true);
     setError(null);
     try {
-      const record = await buildwarden.getProjectAutomation(selectedItem.automation.id);
+      const record = await buildwarden.getProjectAutomation(automationId);
+      if (editRequestIdRef.current !== requestId || record.id !== automationId) return;
       const nextDraft = recordToDraft(record, projectBaseBranch);
       const model = modelOptions.find((option) => option.id === nextDraft.modelId);
       setDraft({ ...nextDraft, effort: normalizeAutomationEffort(model, nextDraft.effort) });
@@ -165,6 +171,7 @@ export const ProjectAutomationsPage = ({
       setNewFiles([]);
       setEditing(true);
     } catch (caught) {
+      if (editRequestIdRef.current !== requestId) return;
       setError(caught instanceof Error ? caught.message : "Could not load this automation.");
     } finally {
       setBusy(false);
@@ -268,7 +275,7 @@ export const ProjectAutomationsPage = ({
             <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-[var(--ec-text)]"><Activity className="size-3.5 text-[var(--ec-accent)]" />Runs by automation</div>
             <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
               {automations.map((item) => (
-                <button key={item.automation.id} type="button" className="rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] p-2 text-left hover:bg-[var(--ec-hover)]" onClick={() => { setSelectedId(item.automation.id); setEditing(false); }}>
+                <button key={item.automation.id} type="button" className="rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] p-2 text-left hover:bg-[var(--ec-hover)]" onClick={() => { editRequestIdRef.current += 1; setSelectedId(item.automation.id); setEditing(false); }}>
                   <div className="flex items-center justify-between gap-2 text-[11px]"><span className="truncate font-medium text-[var(--ec-text)]">{item.automation.name}</span><span className="font-mono text-[var(--ec-muted)]">{item.runs.length}</span></div>
                   <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[var(--ec-control)]"><span className="block h-full rounded-full bg-[var(--ec-accent)]" style={{ width: `${String(item.runs.length / maxRunCount * 100)}%` }} /></div>
                 </button>
@@ -283,7 +290,7 @@ export const ProjectAutomationsPage = ({
             {automations.length === 0 ? <div className="p-5 text-center text-xs text-[var(--ec-muted)]">No schedules yet.</div> : (
               <div className="divide-y divide-[var(--ec-border)]">
                 {automations.map((item) => (
-                  <button key={item.automation.id} type="button" onClick={() => { setSelectedId(item.automation.id); setEditing(false); setError(null); }} className={`w-full p-3 text-left transition ${selectedId === item.automation.id && !editing ? "bg-[var(--ec-accent-soft)]" : "hover:bg-[var(--ec-hover)]"}`}>
+                  <button key={item.automation.id} type="button" onClick={() => { editRequestIdRef.current += 1; setSelectedId(item.automation.id); setEditing(false); setError(null); }} className={`w-full p-3 text-left transition ${selectedId === item.automation.id && !editing ? "bg-[var(--ec-accent-soft)]" : "hover:bg-[var(--ec-hover)]"}`}>
                     <div className="flex items-center gap-2"><span className={`size-2 rounded-full ${item.automation.enabled ? "bg-[var(--ec-success)]" : "bg-[var(--ec-faint)]"}`} /><span className="min-w-0 flex-1 truncate text-xs font-semibold text-[var(--ec-text)]">{item.automation.name}</span></div>
                     <p className="mt-1 truncate font-mono text-[10px] text-[var(--ec-muted)]">{item.automation.cronExpression}</p>
                     <p className="mt-1 text-[10px] text-[var(--ec-faint)]">Next {new Date(item.automation.nextRunAt).toLocaleString()}</p>
