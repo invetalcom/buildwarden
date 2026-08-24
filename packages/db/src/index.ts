@@ -4762,31 +4762,27 @@ export class BuildWardenDatabase {
     }
   }
 
-  private hydrateProjectTask(task: StoredProjectTaskRecord): ProjectTaskRecord {
-    const { attachmentsJson, ...record } = task;
-    const parsed = this.parseJsonValue<unknown>(attachmentsJson);
-    const attachments = Array.isArray(parsed)
-      ? parsed.filter((value): value is ChatAttachmentPayload => {
-          if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-          const candidate = value as Partial<ChatAttachmentPayload>;
+  private parseChatAttachmentPayloads(value: string | null): ChatAttachmentPayload[] {
+    const parsed = this.parseJsonValue<unknown>(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is ChatAttachmentPayload => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+          const candidate = entry as Partial<ChatAttachmentPayload>;
           return typeof candidate.fileName === "string" && typeof candidate.mimeType === "string" &&
             typeof candidate.dataBase64 === "string";
         })
       : [];
+  }
+
+  private hydrateProjectTask(task: StoredProjectTaskRecord): ProjectTaskRecord {
+    const { attachmentsJson, ...record } = task;
+    const attachments = this.parseChatAttachmentPayloads(attachmentsJson);
     return { ...record, attachments };
   }
 
   private hydrateProjectAutomation(automation: StoredProjectAutomationRecord): ProjectAutomationRecord {
     const { attachmentsJson, executionOptionsJson, ...record } = automation;
-    const parsed = this.parseJsonValue<unknown>(attachmentsJson);
-    const attachments = Array.isArray(parsed)
-      ? parsed.filter((value): value is ChatAttachmentPayload => {
-          if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-          const candidate = value as Partial<ChatAttachmentPayload>;
-          return typeof candidate.fileName === "string" && typeof candidate.mimeType === "string" &&
-            typeof candidate.dataBase64 === "string";
-        })
-      : [];
+    const attachments = this.parseChatAttachmentPayloads(attachmentsJson);
     const parsedExecutionOptions = this.parseJsonValue<unknown>(executionOptionsJson);
     const executionOptions = parsedExecutionOptions && typeof parsedExecutionOptions === "object" && !Array.isArray(parsedExecutionOptions)
       ? parsedExecutionOptions as ProviderExecutionOptions
