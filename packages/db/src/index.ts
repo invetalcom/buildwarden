@@ -4695,6 +4695,17 @@ export class BuildWardenDatabase {
            where project.id = project_automations.project_id and project.project_kind = 'git'
          )`,
     );
+    this.run(
+      `update project_automations
+       set workspace_type = case
+         when exists (
+           select 1 from projects project
+           where project.id = project_automations.project_id and project.project_kind = 'folder'
+         ) then 'copy'
+         else 'worktree'
+       end
+       where workspace_type = 'local'`,
+    );
     this.ensureColumn("runs", "delegation_enabled", "integer not null default 0");
     this.ensureColumn("project_tasks", "status", "text not null default 'open'");
     this.ensureColumn("project_tasks", "run_id", "text");

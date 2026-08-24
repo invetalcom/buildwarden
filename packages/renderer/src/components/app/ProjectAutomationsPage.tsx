@@ -5,7 +5,6 @@ import type {
   ProjectAutomationRecord,
   ProjectKind,
   RunRecord,
-  RunWorkspaceType,
 } from "@buildwarden/shared";
 import { Activity, Bot, CalendarClock, Clock3, ExternalLink, Loader2, Pause, Pencil, Play, Plus, Trash2, Zap } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -47,7 +46,6 @@ type EditorDraft = {
   timeZone: string;
   modelId: string;
   effort: string;
-  workspaceType: RunWorkspaceType;
   baseBranch: string;
   onlyIfPreviousFinished: boolean;
   enabled: boolean;
@@ -66,7 +64,6 @@ const emptyDraft = (
   timeZone: localTimeZone(),
   modelId,
   effort: normalizeAutomationEffort(modelOptions.find((model) => model.id === modelId), "auto"),
-  workspaceType: projectKind === "git" ? "worktree" : "copy",
   baseBranch: projectKind === "git" ? projectBaseBranch : "",
   onlyIfPreviousFinished: true,
   enabled: true,
@@ -79,7 +76,6 @@ const recordToDraft = (record: ProjectAutomationRecord, projectBaseBranch: strin
   timeZone: record.timeZone,
   modelId: record.modelId,
   effort: record.effort,
-  workspaceType: record.workspaceType,
   baseBranch: record.baseBranch ?? projectBaseBranch,
   onlyIfPreviousFinished: Boolean(record.onlyIfPreviousFinished),
   enabled: Boolean(record.enabled),
@@ -183,6 +179,7 @@ export const ProjectAutomationsPage = ({
       const effort = normalizeAutomationEffort(selectedModel, draft.effort);
       const input: ProjectAutomationInput = {
         ...draft,
+        workspaceType: projectKind === "git" ? "worktree" : "copy",
         effort,
         executionOptions: automationExecutionOptions(selectedModel, effort),
         attachments,
@@ -245,15 +242,6 @@ export const ProjectAutomationsPage = ({
     }
   };
 
-  const workspaceOptions = projectKind === "git"
-    ? [
-        { value: "worktree", label: "Isolated worktree", description: "Safest for unattended runs" },
-        { value: "local", label: "Checked-out branch", description: "Serialized with other local agent runs" },
-      ]
-    : [
-        { value: "copy", label: "Isolated folder copy", description: "Safest for unattended runs" },
-        { value: "local", label: "Project folder", description: "Serialized with other local agent runs" },
-      ];
   const branchOptions = [...new Set([...availableBranches, projectBaseBranch].filter(Boolean))]
     .map((branch) => ({ value: branch, label: branch }));
 
@@ -322,10 +310,9 @@ export const ProjectAutomationsPage = ({
                 <label className="text-xs text-[var(--ec-muted)]">Cron schedule<Input className="mt-1 h-9 font-mono" value={draft.cronExpression} onChange={(event) => setDraft({ ...draft, cronExpression: event.target.value })} placeholder="0 9 * * 1-5" /><span className="mt-1 block text-[10px] text-[var(--ec-faint)]">minute hour day month weekday · e.g. <code>*/30 * * * *</code></span></label>
                 <label className="text-xs text-[var(--ec-muted)]">Time zone<Input className="mt-1 h-9" value={draft.timeZone} onChange={(event) => setDraft({ ...draft, timeZone: event.target.value })} /></label>
                 {effortControl ? <label className="text-xs text-[var(--ec-muted)]">{effortControl.label}<Select className="mt-1" value={draft.effort} options={effortControl.options} onValueChange={(effort) => setDraft({ ...draft, effort })} /></label> : null}
-                <label className="text-xs text-[var(--ec-muted)]">Workspace<Select className="mt-1" value={draft.workspaceType} options={workspaceOptions} onValueChange={(workspaceType) => setDraft({ ...draft, workspaceType: workspaceType as RunWorkspaceType })} /></label>
-                {projectKind === "git" ? <label className="text-xs text-[var(--ec-muted)]">{draft.workspaceType === "local" ? "Required checked-out branch" : "Worktree source branch"}<Select ariaLabel="Automation branch" className="mt-1" value={draft.baseBranch} options={branchOptions} onValueChange={(baseBranch) => setDraft({ ...draft, baseBranch })} searchable /></label> : null}
+                <div className="text-xs text-[var(--ec-muted)]">Workspace<div className="mt-1 flex h-9 items-center rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 text-xs font-medium text-[var(--ec-text)]">{projectKind === "git" ? "Isolated worktree" : "Isolated folder copy"}</div></div>
+                {projectKind === "git" ? <label className="text-xs text-[var(--ec-muted)]">Worktree source branch<Select ariaLabel="Automation branch" className="mt-1" value={draft.baseBranch} options={branchOptions} onValueChange={(baseBranch) => setDraft({ ...draft, baseBranch })} searchable /></label> : null}
               </div>
-              {draft.workspaceType === "local" ? <p className="mt-3 rounded-md border border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] p-2 text-[11px] leading-5 text-[var(--ec-warning)]">This automation only starts when the project is checked out on <span className="font-mono">{draft.baseBranch || "the configured branch"}</span>. BuildWarden will not switch branches automatically. Local runs are also serialized with other local agent runs.</p> : null}
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 <label className="flex items-center justify-between rounded-md border border-[var(--ec-border)] p-2 text-xs text-[var(--ec-text)]"><span><span className="block font-medium">Enabled</span><span className="text-[10px] text-[var(--ec-muted)]">Allow scheduled starts</span></span><Switch checked={draft.enabled} onCheckedChange={(enabled) => setDraft({ ...draft, enabled })} /></label>
                 <label className="flex items-center justify-between rounded-md border border-[var(--ec-border)] p-2 text-xs text-[var(--ec-text)]"><span><span className="block font-medium">Wait for previous run</span><span className="text-[10px] text-[var(--ec-muted)]">Skip an occurrence while active</span></span><Switch checked={draft.onlyIfPreviousFinished} onCheckedChange={(onlyIfPreviousFinished) => setDraft({ ...draft, onlyIfPreviousFinished })} /></label>
@@ -340,7 +327,7 @@ export const ProjectAutomationsPage = ({
                 <div className="flex flex-wrap justify-end gap-1"><Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => void toggleEnabled()}>{selectedItem.automation.enabled ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}{selectedItem.automation.enabled ? "Pause schedule" : "Resume schedule"}</Button><Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => void runNow()}><Play className="size-3.5" />Run now</Button><Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => void editSelected()}><Pencil className="size-3.5" /></Button><Button type="button" size="sm" variant="ghost" disabled={busy} className="text-[var(--ec-danger)]" onClick={() => void remove()}><Trash2 className="size-3.5" /></Button></div>
               </div>
               <div className={`grid gap-px border-b border-[var(--ec-border)] bg-[var(--ec-border)] ${projectKind === "git" ? "sm:grid-cols-5" : "sm:grid-cols-4"}`}>
-                {[{ label: "Schedule", value: selectedItem.automation.cronExpression }, { label: "Next run", value: new Date(selectedItem.automation.nextRunAt).toLocaleString() }, { label: "Workspace", value: selectedItem.automation.workspaceType === "local" ? "Checked out" : "Isolated" }, ...(projectKind === "git" ? [{ label: "Branch", value: selectedItem.automation.baseBranch ?? projectBaseBranch }] : []), { label: "Runs", value: String(selectedItem.runs.length) }].map((item) => <div key={item.label} className="bg-[var(--ec-panel)] p-3"><p className="text-[9px] uppercase tracking-[0.14em] text-[var(--ec-faint)]">{item.label}</p><p className="mt-1 truncate text-xs font-medium text-[var(--ec-text)]">{item.value}</p></div>)}
+                {[{ label: "Schedule", value: selectedItem.automation.cronExpression }, { label: "Next run", value: new Date(selectedItem.automation.nextRunAt).toLocaleString() }, { label: "Workspace", value: projectKind === "git" ? "Isolated worktree" : "Isolated folder copy" }, ...(projectKind === "git" ? [{ label: "Branch", value: selectedItem.automation.baseBranch ?? projectBaseBranch }] : []), { label: "Runs", value: String(selectedItem.runs.length) }].map((item) => <div key={item.label} className="bg-[var(--ec-panel)] p-3"><p className="text-[9px] uppercase tracking-[0.14em] text-[var(--ec-faint)]">{item.label}</p><p className="mt-1 truncate text-xs font-medium text-[var(--ec-text)]">{item.value}</p></div>)}
               </div>
               {selectedItem.automation.lastError ? <p className="m-3 rounded-md bg-[var(--ec-danger-soft)] p-2 text-xs text-[var(--ec-danger)]">Last start failed: {selectedItem.automation.lastError}</p> : null}
               <div className="p-3"><h4 className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-[var(--ec-text)]"><Clock3 className="size-3.5" />Run history</h4>{selectedItem.runs.length === 0 ? <p className="rounded-md border border-dashed border-[var(--ec-border)] p-6 text-center text-xs text-[var(--ec-muted)]">This automation has not run yet.</p> : <div className="divide-y divide-[var(--ec-border)] overflow-hidden rounded-md border border-[var(--ec-border)]">{selectedItem.runs.map((run) => <button key={run.id} type="button" className="flex w-full items-center gap-3 p-2.5 text-left hover:bg-[var(--ec-hover)]" onClick={() => onOpenRun(run.id)}><Bot className="size-4 shrink-0 text-[var(--ec-accent)]" /><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><Badge tone={statusTone(run.status)} dot className="px-2 py-0.5 text-[10px]">{run.status}</Badge><span className="truncate text-[11px] text-[var(--ec-muted)]">{formatRunRelativeTime(run.createdAt)}</span></div><p className="mt-1 truncate text-[10px] text-[var(--ec-faint)]">{formatRunDuration(run)} · {(run.inputTokens + run.outputTokens).toLocaleString()} tokens · {run.branchName}</p></div><ExternalLink className="size-3.5 shrink-0 text-[var(--ec-faint)]" /></button>)}</div>}</div>

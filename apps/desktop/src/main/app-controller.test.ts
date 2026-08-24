@@ -240,24 +240,23 @@ describe("AppController settings and lightweight workflows", () => {
     expect(setProjectAutomationError).toHaveBeenCalledWith(automation.id, null);
   });
 
-  it("does not run a local automation on a different checked-out branch", async () => {
-    const harness = createHarness();
+  it("converts a legacy local automation to an isolated worktree when starting it", async () => {
+    const legacyAutomation = { ...automation, workspaceType: "local" } as unknown as ProjectAutomationRecord;
+    const harness = createHarness({
+      getProjectAutomation: vi.fn(() => legacyAutomation),
+      setProjectAutomationError: vi.fn(),
+    });
     tempDirs.push(harness.logDir);
-    harness.secrets.readSecret.mockResolvedValue("provider-key");
-    vi.spyOn(GitService.prototype, "getCurrentBranch").mockResolvedValue("experimental");
+    const run = { id: "legacy-automation-run", projectId: project.id } as RunRecord;
+    vi.spyOn(harness.controller, "createRun").mockResolvedValue(run);
 
-    await expect(harness.controller.createRun({
-      projectId: project.id,
-      providerAccountId: provider.id,
-      modelId: model.id,
-      harnessType: "ai-sdk",
-      mode: "code",
-      workspaceType: "local",
+    await expect(harness.controller.runProjectAutomationNow(legacyAutomation.id)).resolves.toBe(run);
+
+    expect(harness.controller.createRun).toHaveBeenCalledWith(expect.objectContaining({
       baseBranch: "main",
-      prompt: "Review the project",
       kind: "automation",
-      automationId: automation.id,
-    })).rejects.toThrow('Automation requires branch "main", but the checked-out project is currently on "experimental"');
+      workspaceType: "worktree",
+    }));
   });
 
   it("combines task and launch attachments without sending duplicates to a run", () => {

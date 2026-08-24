@@ -3012,10 +3012,16 @@ export class AppController
   }
 
   async createRun(input: RunInput): Promise<RunRecord> {
-    if (input.workspaceType === "local") {
-      return this.serializeProjectLocalRunStart(input.projectId, () => this.createRunInternal(input));
+    const normalizedInput = input.kind === "automation"
+      ? {
+          ...input,
+          workspaceType: this.db.getProject(input.projectId).kind === "git" ? "worktree" as const : "copy" as const,
+        }
+      : input;
+    if (normalizedInput.workspaceType === "local") {
+      return this.serializeProjectLocalRunStart(normalizedInput.projectId, () => this.createRunInternal(normalizedInput));
     }
-    return this.createRunInternal(input);
+    return this.createRunInternal(normalizedInput);
   }
 
   private async createRunInternal(input: RunInput): Promise<RunRecord> {
@@ -3088,13 +3094,6 @@ export class AppController
           throw new Error("The checked-out project workspace is already used by an active run. Wait for it to finish or use an isolated worktree.");
         }
         branchName = await this.gitService.getCurrentBranch(project.repoPath);
-        const requiredAutomationBranch = input.kind === "automation" ? input.baseBranch?.trim() : undefined;
-        if (requiredAutomationBranch && branchName !== requiredAutomationBranch) {
-          throw new Error(
-            `Automation requires branch "${requiredAutomationBranch}", but the checked-out project is currently on "${branchName}". ` +
-            "BuildWarden did not switch branches. Check out the configured branch or use an isolated worktree.",
-          );
-        }
         worktreePath = project.repoPath;
       } else {
         const gitWorkspace = await this.gitService.createWorktreeForRun(
@@ -3875,10 +3874,7 @@ export class AppController
       input.timeZone?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     );
     this.db.getModel(input.modelId);
-    const allowedWorkspaceTypes = project.kind === "git" ? ["local", "worktree"] : ["local", "copy"];
-    if (!allowedWorkspaceTypes.includes(input.workspaceType)) {
-      throw new Error(project.kind === "git" ? "Choose the checked-out branch or an isolated worktree." : "Choose the project folder or an isolated folder copy.");
-    }
+    const workspaceType = project.kind === "git" ? "worktree" as const : "copy" as const;
     const baseBranch = project.kind === "git" ? input.baseBranch?.trim() || project.baseBranch : null;
     if (project.kind === "git" && !options?.skipBranchExistenceCheck) {
       const availableBranches = await this.getProjectBranches(project.id);
@@ -3887,7 +3883,7 @@ export class AppController
       }
     }
     return {
-      input: { ...input, name, prompt, cronExpression: input.cronExpression.trim(), baseBranch },
+      input: { ...input, name, prompt, cronExpression: input.cronExpression.trim(), workspaceType, baseBranch },
       timeZone,
       nextRunAt: nextAutomationRunAt(input.cronExpression, timeZone, new Date()),
     };
@@ -3957,7 +3953,7 @@ export class AppController
       modelId: model.id,
       harnessType: getHarnessTypeForProvider(provider.providerType),
       mode: "code",
-      workspaceType: automation.workspaceType,
+      workspaceType: project.kind === "git" ? "worktree" : "copy",
       baseBranch: project.kind === "git" ? automation.baseBranch ?? project.baseBranch : undefined,
       prompt: automation.prompt,
       attachments: automation.attachments,

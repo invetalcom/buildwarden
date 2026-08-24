@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BuildWardenDatabase } from "@buildwarden/db";
+import type { ProjectAutomationInput } from "@buildwarden/shared";
 import { afterEach, describe, expect, it } from "vitest";
 
 const tempDirs: string[] = [];
@@ -336,6 +337,53 @@ describe("model deletion targets", () => {
       projectLoopIds: [],
       orchestrationIds: [orchestration.id],
       automationIds: [],
+    });
+  });
+});
+
+describe("automation workspace migration", () => {
+  it("moves a legacy local Git automation to an isolated worktree", async () => {
+    const db = await makeDatabase();
+    const project = db.addProject({ repoPath: "C:\\automation-repo", baseBranch: "main", resolvedName: "Automation Repo" });
+    const provider = db.addProviderAccount({
+      providerType: "ai-sdk",
+      label: "AI SDK",
+      apiBaseUrl: null,
+      apiKeyRef: "",
+      configJson: "{}",
+    });
+    const model = db.addModel({
+      providerAccountId: provider.id,
+      modelId: "automation-model",
+      displayName: "Automation model",
+      config: {},
+      capabilities: {},
+    });
+    const legacyInput = {
+      name: "Legacy local automation",
+      prompt: "Review the project",
+      cronExpression: "0 9 * * *",
+      timeZone: "UTC",
+      modelId: model.id,
+      workspaceType: "local",
+      baseBranch: "main",
+    } as unknown as ProjectAutomationInput;
+    const automation = db.createProjectAutomation(
+      project.id,
+      legacyInput,
+      "2026-08-20T09:00:00.000Z",
+      "UTC",
+    );
+    const databasePath = db.getFilePath();
+    await db.close();
+
+    const reopened = new BuildWardenDatabase(databasePath);
+    await reopened.init();
+    databases.push(reopened);
+
+    expect(reopened.getProjectAutomation(automation.id)).toMatchObject({
+      workspaceType: "worktree",
+      baseBranch: "main",
     });
   });
 });

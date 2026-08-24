@@ -25,6 +25,7 @@ export type HarnessType = "ai-sdk" | "azure-legacy" | "codex-app-server" | "clau
 export type RunMode = "code" | "plan" | "ask";
 export type ProjectKind = "git" | "folder";
 export type RunWorkspaceType = "worktree" | "local" | "copy";
+export type ProjectAutomationWorkspaceType = Exclude<RunWorkspaceType, "local">;
 export type RunWorkspaceVcs = "git" | "folder";
 export type RunListVisibility = "default" | "for-later";
 export type RunKind = "standard" | "lab-implementation" | "loop-iteration" | "orchestration-task" | "automation";
@@ -898,8 +899,9 @@ export interface ProjectAutomationRecord {
   effort: string;
   /** Provider-normalized execution options captured for the selected model. */
   executionOptions: ProviderExecutionOptions;
-  workspaceType: RunWorkspaceType;
-  /** Fixed source branch for Git worktrees, or required checked-out branch for local Git runs. */
+  /** Isolated workspace type. Git automations use worktrees; folder automations use copies. */
+  workspaceType: ProjectAutomationWorkspaceType;
+  /** Fixed source branch for Git worktrees. */
   baseBranch: string | null;
   onlyIfPreviousFinished: boolean | number;
   enabled: boolean | number;
@@ -929,7 +931,7 @@ export interface ProjectAutomationInput {
   modelId: string;
   effort?: string;
   executionOptions?: ProviderExecutionOptions;
-  workspaceType: RunWorkspaceType;
+  workspaceType: ProjectAutomationWorkspaceType;
   baseBranch?: string | null;
   onlyIfPreviousFinished?: boolean;
   enabled?: boolean;
