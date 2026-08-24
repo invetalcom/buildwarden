@@ -39,6 +39,8 @@ const parseCronField = (raw: string, minimum: number, maximum: number, label: st
   return values;
 };
 
+const isCronWildcard = (field: string): boolean => field === "*" || field === "*/1";
+
 export const parseAutomationCron = (expression: string): ParsedCron => {
   const fields = expression.trim().split(/\s+/);
   if (fields.length !== 5) throw new Error("Use a five-field cron schedule: minute hour day-of-month month day-of-week.");
@@ -48,8 +50,8 @@ export const parseAutomationCron = (expression: string): ParsedCron => {
     dayOfMonth: parseCronField(fields[2]!, 1, 31, "Day of month"),
     month: parseCronField(fields[3]!, 1, 12, "Month"),
     dayOfWeek: parseCronField(fields[4]!, 0, 6, "Day of week"),
-    dayOfMonthWildcard: fields[2] === "*",
-    dayOfWeekWildcard: fields[4] === "*",
+    dayOfMonthWildcard: isCronWildcard(fields[2]!),
+    dayOfWeekWildcard: isCronWildcard(fields[4]!),
   };
 };
 
