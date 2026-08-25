@@ -254,7 +254,7 @@ describe("project automations create flow", () => {
     await act(async () => resolveSave(existingAutomation));
 
     expect(updateProjectAutomation).toHaveBeenCalledOnce();
-    expect(container.textContent).toContain("Second automation");
+    expect(container.querySelector("h3")?.textContent).toContain("Second automation");
     expect(container.textContent).not.toContain("Edit automation");
   });
 });
