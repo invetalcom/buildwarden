@@ -257,4 +257,54 @@ describe("project automations create flow", () => {
     expect(container.querySelector("h3")?.textContent).toContain("Second automation");
     expect(container.textContent).not.toContain("Edit automation");
   });
+
+  it("preserves a newer selection when deletion completes", async () => {
+    let resolveDelete!: () => void;
+    const deleteProjectAutomation = vi.fn(() => new Promise<void>((resolve) => {
+      resolveDelete = resolve;
+    }));
+    const secondAutomation = { ...existingAutomation, id: "automation-2", name: "Second automation" };
+    const secondItem = (): ProjectAutomationListItem => {
+      const { attachments, ...automation } = secondAutomation;
+      return { automation: { ...automation, attachmentCount: attachments.length }, runs: [] };
+    };
+    const api = { deleteProjectAutomation } as unknown as DesktopApi;
+    Object.defineProperty(window, "confirm", { configurable: true, value: vi.fn(() => true) });
+
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(
+      <BuildWardenClientProvider client={createElectronBuildWardenClient(api)}>
+        <ProjectAutomationsPage
+          projectId="project-1"
+          projectKind="git"
+          automations={[automationItem(), secondItem()]}
+          modelOptions={[{
+            id: "model-1",
+            label: "GPT-5.6",
+            modelId: "gpt-5.6-sol",
+            providerType: "codex-cli",
+            providerFamily: null,
+          }]}
+          defaultModelId="model-1"
+          availableBranches={["main"]}
+          projectBaseBranch="main"
+          onOpenRun={vi.fn()}
+          onChanged={vi.fn()}
+        />
+      </BuildWardenClientProvider>,
+    ));
+
+    const deleteButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.querySelector(".lucide-trash-2"));
+    await act(async () => deleteButton?.click());
+    const secondButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("Second automation"));
+    await act(async () => secondButton?.click());
+    await act(async () => resolveDelete());
+
+    expect(deleteProjectAutomation).toHaveBeenCalledWith(existingAutomation.id);
+    expect(container.querySelector("h3")?.textContent).toContain("Second automation");
+  });
 });

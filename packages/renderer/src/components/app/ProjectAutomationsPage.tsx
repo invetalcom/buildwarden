@@ -245,11 +245,12 @@ export const ProjectAutomationsPage = ({
 
   const remove = async () => {
     if (!selectedItem || !window.confirm(`Delete “${selectedItem.automation.name}” and all of its run history?`)) return;
+    const automationId = selectedItem.automation.id;
     setBusy(true);
     setError(null);
     try {
-      await buildwarden.deleteProjectAutomation(selectedItem.automation.id);
-      setSelectedId(null);
+      await buildwarden.deleteProjectAutomation(automationId);
+      setSelectedId((currentId) => currentId === automationId ? null : currentId);
       await onChanged();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not delete this automation.");
