@@ -59,7 +59,7 @@ const automationDraft = (
     cronExpression: record?.cronExpression ?? "0 9 * * 1-5",
     timeZone: record?.timeZone ?? localTimeZone(),
     modelId,
-    effort: normalizeAutomationEffort(model, record?.effort ?? "auto"),
+    effort: model || !record ? normalizeAutomationEffort(model, record?.effort ?? "auto") : record.effort,
     baseBranch: record?.baseBranch ?? baseBranch,
     enabled: record ? Boolean(record.enabled) : true,
     onlyIfPreviousFinished: record ? Boolean(record.onlyIfPreviousFinished) : true,
@@ -113,7 +113,8 @@ const AutomationEditorSheet = ({
     if (!valid) return;
     const saved = await action.run(async () => {
       const attachments = mergeMobileTaskAttachments(storedAttachments, await readMobileAttachmentFiles(files));
-      const effort = normalizeAutomationEffort(selectedModel, draft.effort);
+      const storedModelSettings = record && !selectedModel && draft.modelId === record.modelId ? record : null;
+      const effort = storedModelSettings?.effort ?? normalizeAutomationEffort(selectedModel, draft.effort);
       const input: ProjectAutomationInput = {
         name: draft.name.trim(),
         prompt: draft.prompt.trim(),
@@ -122,7 +123,7 @@ const AutomationEditorSheet = ({
         timeZone: draft.timeZone.trim(),
         modelId: draft.modelId,
         effort,
-        executionOptions: automationExecutionOptions(selectedModel, effort),
+        executionOptions: storedModelSettings?.executionOptions ?? automationExecutionOptions(selectedModel, effort),
         workspaceType: projectKind === "git" ? "worktree" : "copy",
         baseBranch: projectKind === "git" ? draft.baseBranch : null,
         enabled: draft.enabled,
@@ -155,7 +156,7 @@ const AutomationEditorSheet = ({
         <label className="block"><FieldLabel>Model</FieldLabel><select value={draft.modelId} onChange={(event) => {
           const modelId = event.target.value;
           setDraft({ ...draft, modelId, effort: normalizeAutomationEffort(models.find((model) => model.id === modelId), "auto") });
-        }} className="m-tap w-full rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-3 text-sm text-[var(--ec-text)]">{models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select></label>
+        }} className="m-tap w-full rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-3 text-sm text-[var(--ec-text)]">{!selectedModel && draft.modelId ? <option value={draft.modelId}>{draft.modelId} (unavailable)</option> : null}{models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select></label>
         {effortControl ? <label className="block"><FieldLabel>{effortControl.label}</FieldLabel><select value={normalizeAutomationEffort(selectedModel, draft.effort)} onChange={(event) => setDraft({ ...draft, effort: event.target.value })} className="m-tap w-full rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-3 text-sm text-[var(--ec-text)]">{effortControl.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label> : null}
         {projectKind === "git" ? <label className="block"><FieldLabel>Worktree source branch</FieldLabel><select value={draft.baseBranch} onChange={(event) => setDraft({ ...draft, baseBranch: event.target.value })} className="m-tap w-full rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-3 text-sm text-[var(--ec-text)]">{branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}</select></label> : null}
         <div className="overflow-hidden rounded-lg border border-[var(--ec-border)]">
