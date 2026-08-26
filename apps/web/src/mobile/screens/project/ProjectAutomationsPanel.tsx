@@ -2,12 +2,17 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type {
   AppSnapshot,
   ChatAttachmentPayload,
-  ModelRecord,
   ProjectAutomationInput,
   ProjectAutomationListItem,
   ProjectAutomationRecord,
   ProjectKind,
 } from "@buildwarden/shared";
+import {
+  automationEffortControl,
+  automationExecutionOptions,
+  normalizeAutomationEffort,
+  type AutomationModelOption,
+} from "@buildwarden/renderer/automation-model-effort";
 import { Bot, CalendarClock, Paperclip, Pencil, Play, Plus, Trash2 } from "lucide-react";
 import { useMobileApp } from "../../data/mobile-app-context";
 import { useAction } from "../../data/use-action";
@@ -43,19 +48,23 @@ interface AutomationDraft {
 
 const automationDraft = (
   record: ProjectAutomationRecord | null,
-  models: readonly ModelRecord[],
+  models: readonly AutomationModelOption[],
   baseBranch: string,
-): AutomationDraft => ({
-  name: record?.name ?? "",
-  prompt: record?.prompt ?? "",
-  cronExpression: record?.cronExpression ?? "0 9 * * 1-5",
-  timeZone: record?.timeZone ?? localTimeZone(),
-  modelId: record?.modelId ?? models.find((model) => Boolean(model.enabled))?.id ?? models[0]?.id ?? "",
-  effort: record?.effort ?? "auto",
-  baseBranch: record?.baseBranch ?? baseBranch,
-  enabled: record ? Boolean(record.enabled) : true,
-  onlyIfPreviousFinished: record ? Boolean(record.onlyIfPreviousFinished) : true,
-});
+): AutomationDraft => {
+  const modelId = record?.modelId ?? models[0]?.id ?? "";
+  const model = models.find((option) => option.id === modelId);
+  return {
+    name: record?.name ?? "",
+    prompt: record?.prompt ?? "",
+    cronExpression: record?.cronExpression ?? "0 9 * * 1-5",
+    timeZone: record?.timeZone ?? localTimeZone(),
+    modelId,
+    effort: normalizeAutomationEffort(model, record?.effort ?? "auto"),
+    baseBranch: record?.baseBranch ?? baseBranch,
+    enabled: record ? Boolean(record.enabled) : true,
+    onlyIfPreviousFinished: record ? Boolean(record.onlyIfPreviousFinished) : true,
+  };
+};
 
 const FieldLabel = ({ children }: { children: ReactNode }) => (
   <span className="mb-1.5 block text-xs font-medium text-[var(--ec-muted)]">{children}</span>
@@ -72,7 +81,7 @@ const AutomationEditorSheet = ({
   projectId: string;
   projectKind: ProjectKind;
   projectBaseBranch: string;
-  models: readonly ModelRecord[];
+  models: readonly AutomationModelOption[];
   record: ProjectAutomationRecord | null;
   onClose: () => void;
 }) => {
@@ -82,6 +91,8 @@ const AutomationEditorSheet = ({
   const [storedAttachments, setStoredAttachments] = useState<ChatAttachmentPayload[]>(record?.attachments ?? []);
   const [files, setFiles] = useState<File[]>([]);
   const [branches, setBranches] = useState<string[]>([projectBaseBranch]);
+  const selectedModel = models.find((model) => model.id === draft.modelId);
+  const effortControl = automationEffortControl(selectedModel);
 
   useEffect(() => {
     if (projectKind !== "git") return;
@@ -102,6 +113,7 @@ const AutomationEditorSheet = ({
     if (!valid) return;
     const saved = await action.run(async () => {
       const attachments = mergeMobileTaskAttachments(storedAttachments, await readMobileAttachmentFiles(files));
+      const effort = normalizeAutomationEffort(selectedModel, draft.effort);
       const input: ProjectAutomationInput = {
         name: draft.name.trim(),
         prompt: draft.prompt.trim(),
@@ -109,10 +121,8 @@ const AutomationEditorSheet = ({
         cronExpression: draft.cronExpression.trim(),
         timeZone: draft.timeZone.trim(),
         modelId: draft.modelId,
-        effort: draft.effort,
-        // Clearing provider-specific options makes the controller normalize the
-        // generic effort for whichever provider is selected on mobile.
-        executionOptions: {},
+        effort,
+        executionOptions: automationExecutionOptions(selectedModel, effort),
         workspaceType: projectKind === "git" ? "worktree" : "copy",
         baseBranch: projectKind === "git" ? draft.baseBranch : null,
         enabled: draft.enabled,
@@ -142,8 +152,11 @@ const AutomationEditorSheet = ({
         <div><FieldLabel>Attachments</FieldLabel><MobileTaskAttachmentField stored={storedAttachments} onStoredChange={setStoredAttachments} files={files} onFilesChange={setFiles} disabled={action.busy} /></div>
         <label className="block"><FieldLabel>Cron schedule</FieldLabel><Input className="m-mono" value={draft.cronExpression} autoCapitalize="none" autoCorrect="off" spellCheck={false} onChange={(event) => setDraft({ ...draft, cronExpression: event.target.value })} /><p className="mt-1 text-[11px] text-[var(--ec-faint)]">minute hour day month weekday</p></label>
         <label className="block"><FieldLabel>Time zone</FieldLabel><Input value={draft.timeZone} autoCapitalize="none" autoCorrect="off" spellCheck={false} onChange={(event) => setDraft({ ...draft, timeZone: event.target.value })} /></label>
-        <label className="block"><FieldLabel>Model</FieldLabel><select value={draft.modelId} onChange={(event) => setDraft({ ...draft, modelId: event.target.value, effort: "auto" })} className="m-tap w-full rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-3 text-sm text-[var(--ec-text)]">{models.filter((model) => Boolean(model.enabled) || model.id === draft.modelId).map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}</select></label>
-        <label className="block"><FieldLabel>Effort</FieldLabel><Input value={draft.effort} autoCapitalize="none" autoCorrect="off" spellCheck={false} onChange={(event) => setDraft({ ...draft, effort: event.target.value })} /></label>
+        <label className="block"><FieldLabel>Model</FieldLabel><select value={draft.modelId} onChange={(event) => {
+          const modelId = event.target.value;
+          setDraft({ ...draft, modelId, effort: normalizeAutomationEffort(models.find((model) => model.id === modelId), "auto") });
+        }} className="m-tap w-full rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-3 text-sm text-[var(--ec-text)]">{models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select></label>
+        {effortControl ? <label className="block"><FieldLabel>{effortControl.label}</FieldLabel><select value={normalizeAutomationEffort(selectedModel, draft.effort)} onChange={(event) => setDraft({ ...draft, effort: event.target.value })} className="m-tap w-full rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-3 text-sm text-[var(--ec-text)]">{effortControl.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label> : null}
         {projectKind === "git" ? <label className="block"><FieldLabel>Worktree source branch</FieldLabel><select value={draft.baseBranch} onChange={(event) => setDraft({ ...draft, baseBranch: event.target.value })} className="m-tap w-full rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-3 text-sm text-[var(--ec-text)]">{branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}</select></label> : null}
         <div className="overflow-hidden rounded-lg border border-[var(--ec-border)]">
           <ToggleRow title="Enabled" description="Allow scheduled starts" checked={draft.enabled} onChange={(enabled) => setDraft({ ...draft, enabled })} />
@@ -161,7 +174,7 @@ export const ProjectAutomationsPanel = ({
   onOpenRun,
 }: {
   project: ProjectSnapshot;
-  models: readonly ModelRecord[];
+  models: readonly AutomationModelOption[];
   onOpenRun: (runId: string) => void;
 }) => {
   const { client, snapshotStore } = useMobileApp();
@@ -176,7 +189,7 @@ export const ProjectAutomationsPanel = ({
     if (selectedId && !automations.some((item) => item.automation.id === selectedId)) setSelectedId(null);
   }, [automations, selectedId]);
 
-  const modelNames = useMemo(() => new Map(models.map((model) => [model.id, model.displayName])), [models]);
+  const modelNames = useMemo(() => new Map(models.map((model) => [model.id, model.label])), [models]);
 
   const edit = async () => {
     if (!canManage || !selected) return;

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ChatAttachmentPayload, ProjectGitBranchOverview, ProjectTaskRecord, ProjectTaskSummary } from "@buildwarden/shared";
+import type { AutomationModelOption } from "@buildwarden/renderer/automation-model-effort";
 import { GitBranch, Paperclip, Pencil, Play, Plus } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
-import { filterRuns, flattenRuns } from "../data/selectors";
+import { filterRuns, flattenRuns, runModelOptions } from "../data/selectors";
 import { useAction } from "../data/use-action";
 import { absoluteTime, compactNumber, errorMessage, relativeTime } from "../lib/format";
 import type { ProjectTab } from "../nav/mobile-router";
@@ -189,6 +190,14 @@ export const ProjectScreen = ({ projectId, tab }: { projectId: string; tab: Proj
     () => (project ? filterRuns(flattenRuns([project]), "for-later", "") : []),
     [project],
   );
+  const automationModels = useMemo<AutomationModelOption[]>(() => runModelOptions(snapshot).map((model) => ({
+    id: model.modelId,
+    label: model.label,
+    modelId: snapshot.models.find((record) => record.id === model.modelId)?.modelId ?? model.modelId,
+    providerType: model.providerType,
+    providerFamily: model.providerFamily,
+    executionProfile: model.executionProfile,
+  })), [snapshot]);
 
   useEffect(() => {
     if (project) selectProject(project.project.id);
@@ -307,7 +316,7 @@ export const ProjectScreen = ({ projectId, tab }: { projectId: string; tab: Proj
 
       {activeTab === "branches" ? <BranchesTab projectId={projectId} /> : null}
 
-      {activeTab === "automations" ? <ProjectAutomationsPanel project={project} models={snapshot.models} onOpenRun={openRun} /> : null}
+      {activeTab === "automations" ? <ProjectAutomationsPanel project={project} models={automationModels} onOpenRun={openRun} /> : null}
 
       {activeTab === "settings" ? <ProjectSettingsPanel project={project} /> : null}
 
