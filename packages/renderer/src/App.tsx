@@ -24,6 +24,7 @@ import {
   type AppMenuSection,
   type AppSnapshot,
   type AppWarning,
+  type AutomationStartedNotificationPayload,
   type ChatAttachmentPayload,
   type ChatDetail,
   type ChatRecord,
@@ -114,6 +115,7 @@ import {
 } from "./components/app/app-model";
 import { buildRunDeletionPlan } from "./components/app/run-deletion-plan";
 import { StartupDataRetentionDialog, type StartupDataRetentionState } from "./components/app/StartupDataRetentionDialog";
+import { StartupAutomationDialog, type StartupAutomationState } from "./components/app/StartupAutomationDialog";
 import {
   AppNotifications,
   type ProjectForgeRequestToast,
@@ -199,6 +201,11 @@ const addProjectForgeRequestToast = (
   toast: ProjectForgeRequestToast,
 ): ProjectForgeRequestToast[] => [toast, ...current.filter((existing) => existing.id !== toast.id)].slice(0, 4);
 
+const addAutomationStartedToast = (
+  current: AutomationStartedNotificationPayload[],
+  toast: AutomationStartedNotificationPayload,
+): AutomationStartedNotificationPayload[] => [toast, ...current.filter((existing) => existing.runId !== toast.runId)].slice(0, 4);
+
 export const App = () => {
   const buildwarden = useBuildWardenClient();
   const readOnly = !buildwarden.capabilities.mutations;
@@ -219,6 +226,7 @@ export const App = () => {
   const [pendingDeleteRunIds, setPendingDeleteRunIds] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const [appWarning, setAppWarning] = useState<AppWarning | null>(null);
+  const [automationStartedToasts, setAutomationStartedToasts] = useState<AutomationStartedNotificationPayload[]>([]);
   const [projectForgeRequestToasts, setProjectForgeRequestToasts] = useState<ProjectForgeRequestToast[]>([]);
   const [projectName, setProjectName] = useState("");
   const [projectPath, setProjectPath] = useState("");
@@ -304,6 +312,10 @@ export const App = () => {
     () => buildwarden.capabilities.platform === "electron" ? { status: "checking" } : { status: "ready" },
   );
   const startupDataRetentionCheckStartedRef = useRef(false);
+  const [startupAutomationState, setStartupAutomationState] = useState<StartupAutomationState>(
+    () => buildwarden.capabilities.platform === "electron" ? { status: "checking" } : { status: "ready" },
+  );
+  const startupAutomationCheckStartedRef = useRef(false);
   const [publishMenuOpen, setPublishMenuOpen] = useState(false);
   const [runPanelsMenuOpen, setRunPanelsMenuOpen] = useState(false);
   const [runDensityMenuOpen, setRunDensityMenuOpen] = useState(false);
@@ -447,6 +459,26 @@ export const App = () => {
       });
     }
   }, [buildwarden, snapshot.settings]);
+
+  const checkStartupAutomations = useCallback(async () => {
+    if (buildwarden.capabilities.platform !== "electron") {
+      setStartupAutomationState({ status: "ready" });
+      return;
+    }
+    setStartupAutomationState({ status: "checking" });
+    try {
+      const result = await buildwarden.getStartupAutomationCatchUp();
+      const items = Array.isArray(result) ? result : [];
+      if (items.length === 0) {
+        await buildwarden.resolveStartupAutomationCatchUp([]);
+        setStartupAutomationState({ status: "ready" });
+      } else {
+        setStartupAutomationState({ status: "review", items });
+      }
+    } catch (caught) {
+      setStartupAutomationState({ status: "error", message: caught instanceof Error ? caught.message : "Could not inspect missed automations." });
+    }
+  }, [buildwarden]);
 
   const loadAppPaths = useCallback(async () => {
     if (!buildwarden) {
@@ -1018,6 +1050,23 @@ export const App = () => {
     }
   }, [buildwarden, loadSnapshot, purgeDeletedRunState, startupDataRetentionState]);
 
+  const resolveStartupAutomations = useCallback(async (start: boolean) => {
+    if (startupAutomationState.status === "error") {
+      setStartupAutomationState({ status: "ready" });
+      return;
+    }
+    if (startupAutomationState.status !== "review") return;
+    const items = startupAutomationState.items;
+    if (items.length > 0) setStartupAutomationState({ status: "starting", items });
+    try {
+      await buildwarden.resolveStartupAutomationCatchUp(start ? items.map((item) => item.automationId) : []);
+      await loadSnapshot();
+      setStartupAutomationState({ status: "ready" });
+    } catch (caught) {
+      setStartupAutomationState({ status: "error", message: caught instanceof Error ? caught.message : "Could not resolve missed automations." });
+    }
+  }, [buildwarden, loadSnapshot, startupAutomationState]);
+
   useEffect(
     () => () => {
       for (const timer of Object.values(runDetailRefreshTimersRef.current)) {
@@ -1104,6 +1153,11 @@ export const App = () => {
       setAppWarning(warning);
     });
 
+    const unsubscribeAutomationStarted = buildwarden.onAutomationStarted((payload) => {
+      setAutomationStartedToasts((current) => addAutomationStartedToast(current, payload));
+      scheduleSnapshotRefresh();
+    });
+
     const unsubscribeLoopChanged = buildwarden.onProjectLoopChanged(() => {
       scheduleSnapshotRefresh();
     });
@@ -1123,6 +1177,7 @@ export const App = () => {
     return () => {
       unsubscribe();
       unsubscribeWarning();
+      unsubscribeAutomationStarted();
       unsubscribeLoopChanged();
       unsubscribeOrchestrationChanged();
       unsubscribeForgeChanged();
@@ -1144,10 +1199,25 @@ export const App = () => {
   ]);
 
   useEffect(() => {
+    const oldest = automationStartedToasts.at(-1);
+    if (!oldest) return;
+    const timeoutId = window.setTimeout(() => {
+      setAutomationStartedToasts((current) => current.filter((toast) => toast.runId !== oldest.runId));
+    }, 8_000);
+    return () => window.clearTimeout(timeoutId);
+  }, [automationStartedToasts]);
+
+  useEffect(() => {
     if (!snapshotLoaded || startupDataRetentionCheckStartedRef.current) return;
     startupDataRetentionCheckStartedRef.current = true;
     void checkStartupDataRetention();
   }, [checkStartupDataRetention, snapshotLoaded]);
+
+  useEffect(() => {
+    if (!snapshotLoaded || startupDataRetentionState.status !== "ready" || startupAutomationCheckStartedRef.current) return;
+    startupAutomationCheckStartedRef.current = true;
+    void checkStartupAutomations();
+  }, [checkStartupAutomations, snapshotLoaded, startupDataRetentionState.status]);
 
   useEffect(() => {
     if (buildwarden.capabilities.liveEvents) return;
@@ -3379,7 +3449,8 @@ export const App = () => {
       deletionImpact.projectInsightCount +
       deletionImpact.projectLabThreadCount +
       deletionImpact.projectLoopCount +
-      deletionImpact.orchestrationCount;
+      deletionImpact.orchestrationCount +
+      (deletionImpact.automationCount ?? 0);
     const confirmed = await requestConfirmation({
       title: "Delete model",
       message: relatedObjectCount > 0
@@ -3392,6 +3463,7 @@ export const App = () => {
         { label: "Project Lab threads", count: deletionImpact.projectLabThreadCount },
         { label: "Project loops", count: deletionImpact.projectLoopCount },
         { label: "Orchestrations", count: deletionImpact.orchestrationCount },
+        { label: "Automations", count: deletionImpact.automationCount ?? 0 },
       ],
       confirmLabel: "Delete model",
       confirmVariant: "danger",
@@ -4149,6 +4221,7 @@ export const App = () => {
               onCreateTask={(input) => createProjectTask(project.project.id, input)}
               onUpdateTask={(taskId, input) => updateProjectTask(taskId, input)}
               onDeleteTask={(taskId) => deleteProjectTask(taskId)}
+              onAutomationsChanged={loadSnapshot}
               onStartTask={(taskId, prompt, modelId) => submitRunFromPrompt(prompt, modelId, taskId)}
               onGenerateInsight={(kind, modelId) => generateProjectInsight(project.project.id, kind, modelId)}
               onSetRunForLater={(runId) => void setRunForLater(runId)}
@@ -4350,6 +4423,22 @@ export const App = () => {
     );
   }
 
+  if (startupAutomationState.status !== "ready") {
+    return (
+      <div className={cn("app-shell flex h-screen min-h-0 flex-col overflow-hidden", uiTheme === "light" ? "theme-light" : "theme-dark", sidebarContrast && "sidebar-contrast")}>
+        {showCustomWindowsTitleBar ? <AppTitleBar uiTheme={uiTheme} syncWindowsCaptionStrip onOpenMenu={(section, anchor) => void openAppMenuSection(section, anchor)} /> : null}
+        <main className="flex min-h-0 flex-1 items-center justify-center bg-[var(--ec-bg)] p-6 text-[var(--ec-text)]">
+          <StartupAutomationDialog
+            state={startupAutomationState}
+            onConfirm={() => void resolveStartupAutomations(true)}
+            onSkip={() => void resolveStartupAutomations(false)}
+            onRetry={() => void checkStartupAutomations()}
+          />
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn(
@@ -4545,6 +4634,8 @@ export const App = () => {
         }}
         appWarning={appWarning}
         onDismissAppWarning={() => setAppWarning(null)}
+        automationStartedToasts={automationStartedToasts}
+        onDismissAutomationStartedToast={(runId) => setAutomationStartedToasts((current) => current.filter((toast) => toast.runId !== runId))}
         projectForgeRequestToasts={projectForgeRequestToasts}
         onOpenProjectForgeRequest={openProjectForgeRequest}
         onDismissProjectForgeRequestToast={dismissProjectForgeRequestToast}

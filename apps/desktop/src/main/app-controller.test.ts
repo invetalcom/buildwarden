@@ -9,9 +9,11 @@ import type {
   OrchestrationRecord,
   OrchestrationTaskMessageRecord,
   OrchestrationTaskRecord,
+  ProjectAutomationRecord,
   ProjectRecord,
   ProjectTaskRecord,
   ProviderAccountRecord,
+  RunInput,
   RunRecord,
 } from "@buildwarden/shared";
 import type { SecretStore } from "@buildwarden/shared";
@@ -75,6 +77,28 @@ const task = {
   updatedAt: "2026-01-01T00:00:00.000Z",
 } satisfies ProjectTaskRecord;
 
+const automation = {
+  id: "automation-1",
+  projectId: project.id,
+  name: "Daily review",
+  prompt: "Review the project",
+  attachments: [],
+  cronExpression: "0 9 * * *",
+  timeZone: "UTC",
+  modelId: model.id,
+  effort: "high",
+  executionOptions: { reasoningEffort: "high" },
+  workspaceType: "worktree",
+  baseBranch: "main",
+  onlyIfPreviousFinished: true,
+  enabled: true,
+  lastScheduledAt: null,
+  nextRunAt: "2026-08-20T09:00:00.000Z",
+  lastError: null,
+  createdAt: "2026-08-19T09:00:00.000Z",
+  updatedAt: "2026-08-19T09:00:00.000Z",
+} satisfies ProjectAutomationRecord;
+
 type DbOverrides = Partial<Record<keyof BuildWardenDatabase, unknown>>;
 
 const createHarness = (overrides: DbOverrides = {}) => {
@@ -95,7 +119,7 @@ const createHarness = (overrides: DbOverrides = {}) => {
     deleteSetting: calls.deleteSetting,
     getProviderAccount: vi.fn(() => provider),
     addProviderAccount: vi.fn((input: object) => ({ ...provider, ...input })),
-    countRunsForProviderAccount: vi.fn(() => 0),
+    countProviderAccountReferences: vi.fn(() => 0),
     deleteProviderAccount: vi.fn(),
     getModel: vi.fn(() => model),
     addModel: vi.fn((input: object) => ({ ...model, ...input })),
@@ -106,6 +130,7 @@ const createHarness = (overrides: DbOverrides = {}) => {
       projectLabThreadIds: [],
       projectLoopIds: [],
       orchestrationIds: [],
+      automationIds: [],
     })),
     deleteProjectInsights: vi.fn(),
     deleteModel: vi.fn(),
@@ -180,6 +205,145 @@ const createMutableProjectHarness = () => {
 };
 
 describe("AppController settings and lightweight workflows", () => {
+  it("publishes an automation-started notification after its run is created", async () => {
+    const setProjectAutomationError = vi.fn();
+    const harness = createHarness({
+      getProjectAutomation: vi.fn(() => automation),
+      setProjectAutomationError,
+    });
+    tempDirs.push(harness.logDir);
+    const run = {
+      id: "automation-run-1",
+      projectId: project.id,
+      createdAt: "2026-08-19T09:00:00.000Z",
+      startedAt: "2026-08-19T09:00:01.000Z",
+    } as RunRecord;
+    vi.spyOn(harness.controller, "createRun").mockResolvedValue(run);
+    const listener = vi.fn();
+    harness.controller.onAutomationStarted(listener);
+
+    await expect(harness.controller.runProjectAutomationNow(automation.id)).resolves.toBe(run);
+
+    expect(harness.controller.createRun).toHaveBeenCalledWith(expect.objectContaining({
+      baseBranch: "main",
+      kind: "automation",
+      workspaceType: "worktree",
+    }));
+
+    expect(listener).toHaveBeenCalledWith({
+      automationId: automation.id,
+      automationName: automation.name,
+      projectId: project.id,
+      projectName: project.name,
+      runId: run.id,
+      startedAt: run.startedAt,
+    });
+    expect(setProjectAutomationError).toHaveBeenCalledWith(automation.id, null);
+  });
+
+  it("converts direct local automation run requests to an isolated worktree", async () => {
+    const harness = createHarness();
+    tempDirs.push(harness.logDir);
+    const run = { id: "legacy-automation-run", projectId: project.id } as RunRecord;
+    const createRunInternal = vi.fn(async (input: RunInput) => {
+      expect(input.kind).toBe("automation");
+      return run;
+    });
+    (harness.controller as unknown as { createRunInternal: typeof createRunInternal }).createRunInternal = createRunInternal;
+
+    await expect(harness.controller.createRun({
+      projectId: project.id,
+      providerAccountId: provider.id,
+      modelId: model.id,
+      harnessType: "ai-sdk",
+      mode: "code",
+      workspaceType: "local",
+      baseBranch: "main",
+      prompt: "Review the project",
+      kind: "automation",
+      automationId: automation.id,
+    })).resolves.toBe(run);
+
+    expect(createRunInternal).toHaveBeenCalledWith(expect.objectContaining({
+      baseBranch: "main",
+      kind: "automation",
+      workspaceType: "worktree",
+    }));
+  });
+
+  it("isolates startup catch-up failures and always releases the scheduler", async () => {
+    const invalid = { ...automation, id: "invalid-automation", cronExpression: "invalid", nextRunAt: "2026-08-20T09:00:00.000Z" };
+    const valid = { ...automation, id: "valid-automation", nextRunAt: "2026-08-20T09:00:00.000Z" };
+    const setProjectAutomationError = vi.fn();
+    const markProjectAutomationScheduled = vi.fn();
+    const harness = createHarness({
+      listProjectAutomations: vi.fn(() => [invalid, valid]),
+      getProjectAutomation: vi.fn((automationId: string) => automationId === invalid.id ? invalid : valid),
+      setProjectAutomationError,
+      markProjectAutomationScheduled,
+    });
+    tempDirs.push(harness.logDir);
+    const run = { id: "catch-up-run", projectId: project.id } as RunRecord;
+    vi.spyOn(harness.controller, "createRun").mockResolvedValue(run);
+    const schedulerTick = vi.fn(async () => undefined);
+    const controllerInternals = harness.controller as unknown as {
+      automationSchedulerBlockedForStartup: boolean;
+      runAutomationSchedulerTick: typeof schedulerTick;
+    };
+    controllerInternals.runAutomationSchedulerTick = schedulerTick;
+
+    await expect(harness.controller.resolveStartupAutomationCatchUp([invalid.id, valid.id])).resolves.toEqual([run]);
+
+    expect(setProjectAutomationError).toHaveBeenCalledWith(invalid.id, expect.stringMatching(/five-field/));
+    expect(markProjectAutomationScheduled).toHaveBeenCalledWith(valid.id, valid.nextRunAt, expect.any(String));
+    expect(controllerInternals.automationSchedulerBlockedForStartup).toBe(false);
+    expect(schedulerTick).toHaveBeenCalledOnce();
+  });
+
+  it("releases the scheduler when startup catch-up retrieval fails", async () => {
+    const failure = new Error("database unavailable");
+    const harness = createHarness({ listProjectAutomations: vi.fn(() => { throw failure; }) });
+    tempDirs.push(harness.logDir);
+    const schedulerTick = vi.fn(async () => undefined);
+    const controllerInternals = harness.controller as unknown as {
+      automationSchedulerBlockedForStartup: boolean;
+      runAutomationSchedulerTick: typeof schedulerTick;
+    };
+    controllerInternals.runAutomationSchedulerTick = schedulerTick;
+
+    await expect(harness.controller.resolveStartupAutomationCatchUp([])).rejects.toBe(failure);
+
+    expect(controllerInternals.automationSchedulerBlockedForStartup).toBe(false);
+    expect(schedulerTick).toHaveBeenCalledOnce();
+  });
+
+  it("continues a scheduler tick after one automation has an invalid schedule", async () => {
+    const invalid = { ...automation, id: "invalid-scheduled-automation", cronExpression: "invalid", nextRunAt: "2026-08-20T09:00:00.000Z" };
+    const valid = { ...automation, id: "valid-scheduled-automation", nextRunAt: "2026-08-20T09:00:00.000Z" };
+    const setProjectAutomationError = vi.fn();
+    const markProjectAutomationScheduled = vi.fn();
+    const harness = createHarness({
+      listProjectAutomations: vi.fn(() => [invalid, valid]),
+      getProjectAutomation: vi.fn((automationId: string) => automationId === invalid.id ? invalid : valid),
+      setProjectAutomationError,
+      markProjectAutomationScheduled,
+    });
+    tempDirs.push(harness.logDir);
+    const run = { id: "scheduled-run", projectId: project.id } as RunRecord;
+    vi.spyOn(harness.controller, "createRun").mockResolvedValue(run);
+    const controllerInternals = harness.controller as unknown as {
+      automationSchedulerBlockedForStartup: boolean;
+      runAutomationSchedulerTick: () => Promise<void>;
+    };
+    controllerInternals.automationSchedulerBlockedForStartup = false;
+
+    await controllerInternals.runAutomationSchedulerTick();
+
+    expect(setProjectAutomationError).toHaveBeenCalledWith(invalid.id, expect.stringMatching(/five-field/));
+    expect(markProjectAutomationScheduled).toHaveBeenCalledWith(valid.id, valid.nextRunAt, expect.any(String));
+    expect(harness.controller.createRun).toHaveBeenCalledOnce();
+  });
+
   it("combines task and launch attachments without sending duplicates to a run", () => {
     const taskAttachment = { fileName: "design.png", mimeType: "image/png", dataBase64: "AA==" };
     const launchAttachment = { fileName: "notes.md", mimeType: "text/markdown", dataBase64: "Iw==" };
@@ -1956,6 +2120,7 @@ describe("AppController settings and lightweight workflows", () => {
       projectLabThreadIds: [],
       projectLoopIds: [],
       orchestrationIds: [],
+      automationIds: [],
     };
     const emptyTargets = { ...targets, chatIds: [] };
     const getModelDeletionTargets = vi.fn()
@@ -2015,6 +2180,7 @@ describe("AppController settings and lightweight workflows", () => {
       projectLabThreadIds: [],
       projectLoopIds: [],
       orchestrationIds: [],
+      automationIds: [],
     };
     const harness = createHarness({
       getModelDeletionTargets: vi.fn()
@@ -2146,6 +2312,7 @@ describe("AppController settings and lightweight workflows", () => {
       projectLabThreadIds: [],
       projectLoopIds: [],
       orchestrationIds: [],
+      automationIds: [],
     };
     const harness = createHarness({
       getModelDeletionTargets: vi.fn()

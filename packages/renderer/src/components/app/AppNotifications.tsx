@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import {
   GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE,
   isDetachedHeadProjectErrorMessage,
+  type AutomationStartedNotificationPayload,
   type AppWarning,
   type ProjectForgeRequestNotificationPayload,
   type RunRecord,
   type ShellApprovalDecision,
 } from "@buildwarden/shared";
-import { AlertTriangle, ChevronRight, GitPullRequest, Loader2, ShieldCheck, SquareTerminal, X } from "lucide-react";
+import { AlertTriangle, CalendarClock, ChevronRight, GitPullRequest, Loader2, ShieldCheck, SquareTerminal, X } from "lucide-react";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -48,6 +49,8 @@ interface AppNotificationsProps {
   onDismissError: () => void;
   appWarning: AppWarning | null;
   onDismissAppWarning: () => void;
+  automationStartedToasts: AutomationStartedNotificationPayload[];
+  onDismissAutomationStartedToast: (runId: string) => void;
   projectForgeRequestToasts: ProjectForgeRequestToast[];
   onOpenProjectForgeRequest: (toast: ProjectForgeRequestToast) => void;
   onDismissProjectForgeRequestToast: (id: string) => void;
@@ -183,6 +186,8 @@ export const AppNotifications = ({
   onDismissError,
   appWarning,
   onDismissAppWarning,
+  automationStartedToasts,
+  onDismissAutomationStartedToast,
   projectForgeRequestToasts,
   onOpenProjectForgeRequest,
   onDismissProjectForgeRequestToast,
@@ -266,16 +271,38 @@ export const AppNotifications = ({
       </div>
     ) : null}
 
-    {projectForgeRequestToasts.length > 0 ? (
+    {automationStartedToasts.length > 0 || projectForgeRequestToasts.length > 0 ? (
       <div
         className={cn(
           "fixed right-4 z-[20039] flex w-[calc(100vw-2rem)] max-w-md flex-col gap-2",
-          appWarning ? "top-64" : "top-14",
+          appWarning || error ? "top-64" : "top-14",
         )}
         role="region"
         aria-live="polite"
-        aria-label="Pull request notifications"
+        aria-label="Application notifications"
       >
+        {automationStartedToasts.map((toast) => (
+          <Card key={toast.runId} className="border-cyan-500/35 bg-zinc-950/95 p-3 shadow-2xl shadow-cyan-950/20 backdrop-blur">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 rounded-full border border-cyan-500/30 bg-cyan-500/10 p-2 text-cyan-300">
+                <CalendarClock className="h-4 w-4" aria-hidden />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-300/80">Automation started</p>
+                <p className="mt-1 truncate text-sm font-semibold text-zinc-100" title={toast.automationName}>{toast.automationName}</p>
+                <p className="mt-1 truncate text-xs text-zinc-400">{toast.projectName} · Agent run is active</p>
+              </div>
+              <button
+                type="button"
+                className="rounded-lg border border-zinc-800 bg-zinc-900/80 p-1.5 text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
+                onClick={() => onDismissAutomationStartedToast(toast.runId)}
+                aria-label={`Dismiss ${toast.automationName} automation notification`}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </Card>
+        ))}
         {projectForgeRequestToasts.map((toast) => (
           <Card key={toast.id} className="border-cyan-500/35 bg-zinc-950/95 p-3 shadow-2xl shadow-cyan-950/20 backdrop-blur">
             <div className="flex items-start gap-3">

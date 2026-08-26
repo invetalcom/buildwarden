@@ -1,6 +1,7 @@
 import type {
   AppMenuCommand,
   AppWarning,
+  AutomationStartedNotificationPayload,
   OrchestrationChangedPayload,
   ProjectForgeRequestNotificationPayload,
   ProjectForgeRequestOpenPayload,
@@ -14,6 +15,7 @@ export interface HostEventMap {
   run: RunEvent;
   chat: RunEvent & { chatId: string };
   warning: AppWarning;
+  automationStarted: AutomationStartedNotificationPayload;
   loop: ProjectLoopChangedPayload;
   task: ProjectTaskChangedPayload;
   orchestration: OrchestrationChangedPayload;

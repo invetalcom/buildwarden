@@ -4,6 +4,7 @@ export type ProjectPageTab =
   | "loops"
   | "branches"
   | "tasks"
+  | "automations"
   | "reviews"
   | "graphs"
   | "ai-insights-history"

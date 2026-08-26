@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BuildWardenDatabase } from "@buildwarden/db";
+import type { ProjectAutomationInput } from "@buildwarden/shared";
 import { afterEach, describe, expect, it } from "vitest";
 
 const tempDirs: string[] = [];
@@ -26,6 +27,78 @@ afterEach(async () => {
 });
 
 describe("model deletion targets", () => {
+  it("links automation definitions and all of their hidden run history to the configured model", async () => {
+    const db = await makeDatabase();
+    const project = db.addProject({ repoPath: "C:\\automation-repo", baseBranch: "main", resolvedName: "Automation Repo" });
+    const provider = db.addProviderAccount({
+      providerType: "ai-sdk",
+      label: "AI SDK",
+      apiBaseUrl: null,
+      apiKeyRef: "",
+      configJson: "{}",
+    });
+    const targetModel = db.addModel({
+      providerAccountId: provider.id,
+      modelId: "target-model",
+      displayName: "Target model",
+      config: {},
+      capabilities: {},
+    });
+    const oldModel = db.addModel({
+      providerAccountId: provider.id,
+      modelId: "old-model",
+      displayName: "Old model",
+      config: {},
+      capabilities: {},
+    });
+    const attachment = { fileName: "instructions.md", mimeType: "text/markdown", dataBase64: "IyBUYXNr" };
+    const automation = db.createProjectAutomation(project.id, {
+      name: "Daily review",
+      prompt: "Review dependencies",
+      attachments: [attachment],
+      cronExpression: "0 9 * * *",
+      timeZone: "UTC",
+      modelId: targetModel.id,
+      effort: "high",
+      executionOptions: { reasoningEffort: "high", serviceTier: "priority" },
+      workspaceType: "worktree",
+      baseBranch: "develop",
+    }, "2026-08-20T09:00:00.000Z", "UTC");
+    const historicalRun = db.createRun({
+      projectId: project.id,
+      providerAccountId: provider.id,
+      modelId: oldModel.id,
+      harnessType: "ai-sdk",
+      mode: "code",
+      workspaceType: "worktree",
+      prompt: automation.prompt,
+      branchName: "automation/history",
+      worktreePath: "C:\\automation-worktree",
+      kind: "automation",
+      automationId: automation.id,
+    });
+
+    expect(db.getSnapshot().projects[0]?.automations?.[0]).toMatchObject({
+      automation: {
+        id: automation.id,
+        attachmentCount: 1,
+        effort: "high",
+        baseBranch: "develop",
+        executionOptions: { reasoningEffort: "high", serviceTier: "priority" },
+      },
+      runs: [{ id: historicalRun.id, automationId: automation.id }],
+    });
+    expect(db.getModelDeletionTargets(targetModel.id)).toEqual({
+      runIds: [historicalRun.id],
+      chatIds: [],
+      projectInsightIds: [],
+      projectLabThreadIds: [],
+      projectLoopIds: [],
+      orchestrationIds: [],
+      automationIds: [automation.id],
+    });
+  });
+
   it("expands related runs through Lab threads and project loops", async () => {
     const db = await makeDatabase();
     const project = db.addProject({ repoPath: "C:\\repo", baseBranch: "main", resolvedName: "Repo" });
@@ -111,6 +184,7 @@ describe("model deletion targets", () => {
       projectLabThreadIds: [labThread.id],
       projectLoopIds: [loop.id],
       orchestrationIds: [],
+      automationIds: [],
     });
   });
 
@@ -179,6 +253,7 @@ describe("model deletion targets", () => {
       projectLabThreadIds: [],
       projectLoopIds: [],
       orchestrationIds: [],
+      automationIds: [],
     });
   });
 
@@ -261,6 +336,54 @@ describe("model deletion targets", () => {
       projectLabThreadIds: [],
       projectLoopIds: [],
       orchestrationIds: [orchestration.id],
+      automationIds: [],
+    });
+  });
+});
+
+describe("automation workspace migration", () => {
+  it("moves a legacy local Git automation to an isolated worktree", async () => {
+    const db = await makeDatabase();
+    const project = db.addProject({ repoPath: "C:\\automation-repo", baseBranch: "main", resolvedName: "Automation Repo" });
+    const provider = db.addProviderAccount({
+      providerType: "ai-sdk",
+      label: "AI SDK",
+      apiBaseUrl: null,
+      apiKeyRef: "",
+      configJson: "{}",
+    });
+    const model = db.addModel({
+      providerAccountId: provider.id,
+      modelId: "automation-model",
+      displayName: "Automation model",
+      config: {},
+      capabilities: {},
+    });
+    const legacyInput = {
+      name: "Legacy local automation",
+      prompt: "Review the project",
+      cronExpression: "0 9 * * *",
+      timeZone: "UTC",
+      modelId: model.id,
+      workspaceType: "local",
+      baseBranch: "main",
+    } as unknown as ProjectAutomationInput;
+    const automation = db.createProjectAutomation(
+      project.id,
+      legacyInput,
+      "2026-08-20T09:00:00.000Z",
+      "UTC",
+    );
+    const databasePath = db.getFilePath();
+    await db.close();
+
+    const reopened = new BuildWardenDatabase(databasePath);
+    await reopened.init();
+    databases.push(reopened);
+
+    expect(reopened.getProjectAutomation(automation.id)).toMatchObject({
+      workspaceType: "worktree",
+      baseBranch: "main",
     });
   });
 });
