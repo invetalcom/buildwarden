@@ -118,6 +118,7 @@ const REMOTE_WEB_PROJECT_TABS = new Set<ProjectPageTab>([
   "graphs",
   "ai-insights-history",
   "tasks",
+  "automations",
   "lab",
   "for-later",
 ]);

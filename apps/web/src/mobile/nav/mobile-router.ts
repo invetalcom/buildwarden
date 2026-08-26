@@ -20,6 +20,7 @@ export const PROJECT_TABS = [
   "overview",
   "runs",
   "tasks",
+  "automations",
   "branches",
   "reviews",
   "loops",

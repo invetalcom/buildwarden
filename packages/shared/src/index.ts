@@ -4224,6 +4224,7 @@ export type RemoteOperationMap = {
   getProjectLoopDetail: DesktopApi["getProjectLoopDetail"];
   getProjectLoopAvailability: DesktopApi["getProjectLoopAvailability"];
   getProjectTask: DesktopApi["getProjectTask"];
+  getProjectAutomation: DesktopApi["getProjectAutomation"];
   getRunChat: DesktopApi["getRunChat"];
   getChatDetail: DesktopApi["getChatDetail"];
   listChatsWithSteps: DesktopApi["listChatsWithSteps"];
@@ -4288,6 +4289,10 @@ export type RemoteOperationMap = {
   updateProjectTask: DesktopApi["updateProjectTask"];
   deleteProjectTask: DesktopApi["deleteProjectTask"];
   generateProjectTaskRunPrompt: DesktopApi["generateProjectTaskRunPrompt"];
+  createProjectAutomation: DesktopApi["createProjectAutomation"];
+  updateProjectAutomation: DesktopApi["updateProjectAutomation"];
+  deleteProjectAutomation: DesktopApi["deleteProjectAutomation"];
+  runProjectAutomationNow: DesktopApi["runProjectAutomationNow"];
   generateProjectInsight: DesktopApi["generateProjectInsight"];
   runProjectLab: DesktopApi["runProjectLab"];
   deleteProjectLabThread: DesktopApi["deleteProjectLabThread"];
