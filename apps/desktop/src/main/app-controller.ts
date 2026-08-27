@@ -46,7 +46,12 @@ import {
   readRecentCommitLog,
   readTrackedProjectFiles,
 } from "@buildwarden/git-service";
-import { AiSdkProviderAdapter, generateAskTextResultWithAiSdk, suggestCommitMessageWithAiSdk } from "@buildwarden/provider-ai-sdk";
+import {
+  AiSdkProviderAdapter,
+  OpenRouterProviderAdapter,
+  generateAskTextResultWithAiSdk,
+  suggestCommitMessageWithAiSdk,
+} from "@buildwarden/provider-ai-sdk";
 import {
   ClaudeCodeProviderAdapter,
   assertClaudeCodeAvailable,
@@ -1154,6 +1159,7 @@ export class AppController
   private readonly gitService = new GitService();
   private readonly providerAdapters: Record<ProviderAccountInput["providerType"], ProviderAdapter> = {
     "ai-sdk": new AiSdkProviderAdapter(),
+    openrouter: new OpenRouterProviderAdapter(),
     "azure-legacy": new AzureLegacyProviderAdapter(),
     "codex-cli": new CodexCliProviderAdapter(),
     "claude-code": new ClaudeCodeProviderAdapter(),
@@ -2704,10 +2710,14 @@ export class AppController
 
     try {
       const networkProxy = await this.resolveNetworkProxyRuntimeConfig();
+      const apiKey = provider.providerType === "openrouter"
+        ? await this.secrets.readSecret(provider.apiKeyRef)
+        : null;
       const models = await adapter.listAvailableModels({
         providerAccountId: provider.id,
         providerType: provider.providerType,
         config: parseProviderConfigJson(provider.configJson),
+        ...(apiKey !== null ? { apiKey } : {}),
         apiBaseUrl: provider.apiBaseUrl,
         ...(networkProxy ? { networkProxy } : {}),
       });
@@ -3433,6 +3443,7 @@ export class AppController
     const providerSession = this.db.getProviderSessionRuntime(run.id, "run");
     const needsInitialAttachmentReplay = provider.providerType === "azure-legacy" || (
       provider.providerType !== "ai-sdk" &&
+      provider.providerType !== "openrouter" &&
       (providerSession?.providerType !== provider.providerType || !providerSession.resumeCursor)
     );
     const workerAttachments = needsInitialAttachmentReplay
@@ -3747,6 +3758,7 @@ export class AppController
       }
 
       const raw = await suggestCommitMessageWithAiSdk({
+        providerType: provider.providerType === "openrouter" ? "openrouter" : "ai-sdk",
         modelId: model.modelId,
         apiKey: apiKey ?? "",
         apiBaseUrl: baseURL,
@@ -5573,6 +5585,7 @@ export class AppController
     }
 
     const result = await generateAskTextResultWithAiSdk({
+      providerType: provider.providerType === "openrouter" ? "openrouter" : "ai-sdk",
       modelId: model.modelId,
       apiKey,
       apiBaseUrl: (model.baseUrlOverride ?? provider.apiBaseUrl)?.trim(),
@@ -9781,7 +9794,12 @@ export class AppController
         }
 
         if (step.eventType === "log" && (metadata.source === "user" || metadata.source === RUN_CHAT_CONTEXT_SOURCE)) {
-          return [{ role: "user", content: step.content }];
+          const attachments = extractAttachmentPayloadsFromMetadata(metadata);
+          return [{
+            role: "user",
+            content: step.content,
+            ...(attachments.length > 0 ? { attachments } : {}),
+          }];
         }
 
         if (step.eventType === "output") {

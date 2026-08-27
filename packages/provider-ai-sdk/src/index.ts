@@ -10,6 +10,7 @@ import {
   type OpenaiResponsesTextProviderMetadata,
 } from "@ai-sdk/openai";
 import { createXai } from "@ai-sdk/xai";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { generateText, jsonSchema, stepCountIs, streamText, tool, type GeneratedFile, type LanguageModel, type ToolSet } from "ai";
 import { ProxyAgent } from "undici";
 import type {
@@ -31,8 +32,11 @@ import {
   AI_SDK_RECOMMENDED_MODEL_IDS,
   CHAT_ATTACHMENT_LIMITS,
   MODEL_CONFIG_ANTHROPIC_EFFORT_KEY,
+  MODEL_CONFIG_CONTEXT_WINDOW_TOKENS_KEY,
   MODEL_CONFIG_EXECUTION_PROFILE_KEY,
+  MODEL_CONFIG_INPUT_MODALITIES_KEY,
   MODEL_CONFIG_OPENAI_REASONING_EFFORT_KEY,
+  MODEL_CONFIG_OUTPUT_MODALITIES_KEY,
   PROVIDER_CONFIG_AI_SDK_PROVIDER_FAMILY_KEY,
   PROVIDER_CONFIG_DEFAULT_HEADERS_KEY,
   buildNetworkProxyUrl,
@@ -228,6 +232,9 @@ const addUsage = (left: RunTokenUsage, right: RunTokenUsage): RunTokenUsage => {
     ...(cachedInputTokens > 0 ? { cachedInputTokens } : {}),
     ...(cacheCreationInputTokens > 0 ? { cacheCreationInputTokens } : {}),
     ...(totalTokens > 0 ? { totalTokens, totalProcessedTokens: totalTokens } : {}),
+    ...(right.usedTokens !== undefined ? { usedTokens: right.usedTokens } : left.usedTokens !== undefined ? { usedTokens: left.usedTokens } : {}),
+    ...(right.maxTokens !== undefined ? { maxTokens: right.maxTokens } : left.maxTokens !== undefined ? { maxTokens: left.maxTokens } : {}),
+    ...(right.lastUsedTokens !== undefined ? { lastUsedTokens: right.lastUsedTokens } : {}),
     ...(right.lastInputTokens !== undefined ? { lastInputTokens: right.lastInputTokens } : {}),
     ...(right.lastCachedInputTokens !== undefined ? { lastCachedInputTokens: right.lastCachedInputTokens } : {}),
     ...(right.lastOutputTokens !== undefined ? { lastOutputTokens: right.lastOutputTokens } : {}),
@@ -235,7 +242,10 @@ const addUsage = (left: RunTokenUsage, right: RunTokenUsage): RunTokenUsage => {
   };
 };
 
-export const normalizeAiSdkTokenUsage = (usage: unknown): RunTokenUsage => {
+export const normalizeAiSdkTokenUsage = (
+  usage: unknown,
+  modelConfig?: Record<string, unknown>,
+): RunTokenUsage => {
   const raw = (usage ?? {}) as {
     inputTokens?: number;
     outputTokens?: number;
@@ -276,6 +286,15 @@ export const normalizeAiSdkTokenUsage = (usage: unknown): RunTokenUsage => {
     result.totalTokens = totalTokens;
     result.totalProcessedTokens = totalTokens;
   }
+  const configuredContextWindow = finiteNumber(modelConfig?.[MODEL_CONFIG_CONTEXT_WINDOW_TOKENS_KEY]);
+  if (configuredContextWindow > 0) {
+    const currentContextTokens = totalTokens > 0 ? totalTokens : inputTokens + outputTokens;
+    result.maxTokens = configuredContextWindow;
+    if (currentContextTokens > 0) {
+      result.usedTokens = currentContextTokens;
+      result.lastUsedTokens = currentContextTokens;
+    }
+  }
   if (inputTokens > 0) {
     result.lastInputTokens = inputTokens;
   }
@@ -285,17 +304,36 @@ export const normalizeAiSdkTokenUsage = (usage: unknown): RunTokenUsage => {
   return result;
 };
 
-const extractErrorText = (error: unknown): string => {
-  if (error instanceof Error) {
-    return error.message;
+const extractProviderErrorTextInner = (error: unknown, seen: Set<unknown>): string => {
+  if ((typeof error === "object" && error !== null) || typeof error === "function") {
+    if (seen.has(error)) return "";
+    seen.add(error);
   }
-  if (typeof error === "object" && error) {
-    const maybeMessage = "message" in error ? String((error as { message?: unknown }).message ?? "") : "";
-    const maybeError = "error" in error ? String((error as { error?: unknown }).error ?? "") : "";
-    return `${maybeMessage} ${maybeError}`.trim();
+  if (isRecord(error)) {
+    const nestedError = extractProviderErrorTextInner(error.error, seen);
+    if (nestedError) return nestedError;
+    const nestedData = extractProviderErrorTextInner(error.data, seen);
+    if (nestedData) return nestedData;
+    const responseBody = asTrimmedString(error.responseBody);
+    if (responseBody) {
+      try {
+        const parsed = extractProviderErrorTextInner(JSON.parse(responseBody), seen);
+        if (parsed) return parsed;
+      } catch {
+        return responseBody;
+      }
+    }
+    const cause = extractProviderErrorTextInner(error.cause, seen);
+    if (cause) return cause;
+    const message = asTrimmedString(error.message);
+    if (message) return message;
   }
-  return String(error);
+  if (error instanceof Error) return error.message;
+  return typeof error === "string" ? error.trim() : "";
 };
+
+export const extractProviderErrorText = (error: unknown): string =>
+  extractProviderErrorTextInner(error, new Set());
 
 const shouldRetryProviderRequest = (error: unknown): boolean => {
   const status =
@@ -305,7 +343,7 @@ const shouldRetryProviderRequest = (error: unknown): boolean => {
   if (status === 429 || status === 408 || status >= 500) {
     return true;
   }
-  const text = extractErrorText(error).toLowerCase();
+  const text = extractProviderErrorText(error).toLowerCase();
   return ["rate limit", "too many requests", "temporarily unavailable", "overloaded", "network", "timed out"].some((pattern) =>
     text.includes(pattern),
   );
@@ -326,7 +364,7 @@ const withProviderRetry = async <T>(
         return await operation();
       } catch (error) {
         if (signal.aborted || !shouldRetryProviderRequest(error)) {
-          throw new AbortError(extractErrorText(error) || "Aborted");
+          throw new AbortError(extractProviderErrorText(error) || "Aborted");
         }
         throw error;
       }
@@ -371,9 +409,10 @@ const decodeAttachmentText = (attachment: ChatAttachmentPayload): string => {
   }
 };
 
-const buildAttachmentUserContent = (
+export const buildAttachmentUserContent = (
   promptText: string,
   attachments: ChatAttachmentPayload[] | undefined,
+  providerType?: RunExecutionRequest["providerType"],
 ): Array<Record<string, unknown>> => {
   const textParts: string[] = [];
   const trimmedPrompt = promptText.trim();
@@ -387,6 +426,16 @@ const buildAttachmentUserContent = (
     const mime = (attachment.mimeType || "application/octet-stream").toLowerCase();
     const fileName = attachment.fileName.trim() || "attachment";
 
+    if (providerType === "openrouter" && mime.startsWith("image/")) {
+      parts.push({
+        type: "file",
+        data: `data:${mime};base64,${attachment.dataBase64}`,
+        mediaType: mime,
+        filename: fileName,
+      });
+      continue;
+    }
+
     if (mime.startsWith("image/")) {
       parts.push({
         type: "image",
@@ -397,6 +446,16 @@ const buildAttachmentUserContent = (
     }
 
     if (mime === "application/pdf") {
+      parts.push({
+        type: "file",
+        data: `data:${mime};base64,${attachment.dataBase64}`,
+        mediaType: mime,
+        filename: fileName,
+      });
+      continue;
+    }
+
+    if (providerType === "openrouter" && (mime.startsWith("audio/") || mime.startsWith("video/"))) {
       parts.push({
         type: "file",
         data: `data:${mime};base64,${attachment.dataBase64}`,
@@ -419,6 +478,39 @@ const buildAttachmentUserContent = (
     parts.unshift({ type: "text", text: combined });
   }
   return parts;
+};
+
+const attachmentInputModality = (attachment: ChatAttachmentPayload): string | null => {
+  const mime = attachment.mimeType.toLowerCase();
+  if (mime.startsWith("image/")) return "image";
+  if (mime.startsWith("audio/")) return "audio";
+  if (mime.startsWith("video/")) return "video";
+  if (mime === "application/pdf") return "file";
+  return null;
+};
+
+export const assertOpenRouterAttachmentCompatibility = (input: Pick<
+  RunExecutionRequest,
+  "attachments" | "modelConfig" | "modelId" | "priorMessages" | "providerType"
+>): void => {
+  if (input.providerType !== "openrouter") return;
+  const inputModalities = normalizedStringArray(input.modelConfig?.[MODEL_CONFIG_INPUT_MODALITIES_KEY]);
+  if (inputModalities.length === 0) return;
+
+  const attachments = [
+    ...(input.attachments ?? []),
+    ...(input.priorMessages ?? []).flatMap((message) => extractAttachmentPayloadsFromMetadata(message)),
+  ];
+  const requiredModalities = attachments
+    .map(attachmentInputModality)
+    .filter((modality): modality is string => modality !== null);
+  const unsupportedModalities = [...new Set(requiredModalities.filter((modality) => !inputModalities.includes(modality)))];
+  if (unsupportedModalities.length === 0) return;
+
+  const mediaLabel = unsupportedModalities.join(", ");
+  throw new Error(
+    `OpenRouter model "${input.modelId}" does not support ${mediaLabel} input. Choose a model whose catalog entry lists ${mediaLabel} input, or enter a compatible model manually.`,
+  );
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -444,6 +536,7 @@ const getProviderFamily = (config: Record<string, unknown> | undefined): Unified
 };
 
 const AI_SDK_MODELS_API_URL = "https://ai-gateway.vercel.sh/v1/models";
+export const OPENROUTER_DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
 
 export const buildAiSdkExecutionProfile = (family: UnifiedProviderFamily, modelId: string): Record<string, unknown> => ({
   [MODEL_CONFIG_EXECUTION_PROFILE_KEY]: {
@@ -545,6 +638,130 @@ export const listAvailableModelsWithAiSdk = async (
     source: "curated" as const,
     config: buildAiSdkExecutionProfile(family, preset.modelId),
   }));
+};
+
+const openRouterModelsApiItems = (value: unknown): unknown[] =>
+  isRecord(value) ? asArray(value.data) : [];
+
+const openRouterModelSupportsTextOutput = (item: Record<string, unknown>): boolean => {
+  const architecture = isRecord(item.architecture) ? item.architecture : undefined;
+  const outputModalities = architecture ? asArray(architecture.output_modalities) : [];
+  return outputModalities.length === 0 || outputModalities.includes("text");
+};
+
+const normalizedStringArray = (value: unknown): string[] =>
+  asArray(value).flatMap((entry) => (typeof entry === "string" && entry.trim() ? [entry.trim().toLowerCase()] : []));
+
+const formatCompactTokenCount = (tokens: number): string => {
+  if (tokens >= 1_000_000) return `${Number((tokens / 1_000_000).toFixed(tokens % 1_000_000 === 0 ? 0 : 1))}M`;
+  if (tokens >= 1_000) return `${Number((tokens / 1_000).toFixed(tokens % 1_000 === 0 ? 0 : 1))}K`;
+  return String(tokens);
+};
+
+const openRouterExecutionProfile = (supportedParameters: readonly string[]): Record<string, unknown> | undefined =>
+  supportedParameters.includes("reasoning")
+    ? {
+        [MODEL_CONFIG_EXECUTION_PROFILE_KEY]: {
+          source: "provider",
+          controls: [
+            {
+              id: "reasoningEffort",
+              label: "Effort",
+              defaultValue: "auto",
+              options: [
+                { value: "auto", label: "Provider default" },
+                { value: "none", label: "None" },
+                { value: "minimal", label: "Minimal" },
+                { value: "low", label: "Low" },
+                { value: "medium", label: "Medium" },
+                { value: "high", label: "High" },
+                { value: "xhigh", label: "Extra high" },
+              ],
+            },
+          ],
+        },
+      }
+    : undefined;
+
+export const parseOpenRouterAvailableModels = (value: unknown): ProviderAvailableModel[] =>
+  openRouterModelsApiItems(value)
+    .flatMap((item) => {
+      if (!isRecord(item) || !openRouterModelSupportsTextOutput(item)) {
+        return [];
+      }
+      const modelId = asTrimmedString(item.id);
+      if (!modelId) {
+        return [];
+      }
+      const supportedParameters = asArray(item.supported_parameters).filter(
+        (parameter): parameter is string => typeof parameter === "string",
+      ).map((parameter) => parameter.toLowerCase());
+      const architecture = isRecord(item.architecture) ? item.architecture : undefined;
+      const inputModalities = normalizedStringArray(architecture?.input_modalities);
+      const outputModalities = normalizedStringArray(architecture?.output_modalities);
+      const contextWindow = Math.max(0, Math.floor(finiteNumber(item.context_length)));
+      const mediaInputs = inputModalities.filter((modality) => modality !== "text");
+      const mediaOutputs = outputModalities.filter((modality) => modality !== "text");
+      const description = [
+        contextWindow > 0 ? `${formatCompactTokenCount(contextWindow)} context` : "",
+        mediaInputs.length > 0 ? `${mediaInputs.join(", ")} input` : "",
+        mediaOutputs.length > 0 ? `${mediaOutputs.join(", ")} output` : "",
+        supportedParameters.includes("tools") ? "tools" : "",
+      ].filter(Boolean).join(" · ");
+      const executionProfile = openRouterExecutionProfile(supportedParameters);
+      return [
+        {
+          modelId,
+          displayName: asTrimmedString(item.name) ?? modelId,
+          source: "provider" as const,
+          ...(description ? { description } : {}),
+          capabilities: {
+            supportsStreaming: true,
+            supportsTools: supportedParameters.includes("tools"),
+            supportsCustomBaseUrl: true,
+          },
+          config: {
+            ...(contextWindow > 0 ? { [MODEL_CONFIG_CONTEXT_WINDOW_TOKENS_KEY]: contextWindow } : {}),
+            ...(inputModalities.length > 0 ? { [MODEL_CONFIG_INPUT_MODALITIES_KEY]: inputModalities } : {}),
+            ...(outputModalities.length > 0 ? { [MODEL_CONFIG_OUTPUT_MODALITIES_KEY]: outputModalities } : {}),
+            ...(executionProfile ?? {}),
+          },
+        },
+      ];
+    })
+    .sort((left, right) => left.displayName.localeCompare(right.displayName));
+
+export const requestOpenRouterAvailableModels = async (
+  context: ProviderAvailableModelsContext,
+  fetchImpl: ModelsApiFetch = fetch,
+): Promise<ProviderAvailableModel[]> => {
+  const apiKey = context.apiKey?.trim();
+  if (!apiKey) {
+    throw new Error("An OpenRouter API key is required to load models.");
+  }
+  const baseURL = (context.apiBaseUrl?.trim() || OPENROUTER_DEFAULT_BASE_URL).replace(/\/+$/, "");
+  const response = await fetchImpl(`${baseURL}/models`, {
+    headers: {
+      ...getDefaultHeaders(context.config),
+      Accept: "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`OpenRouter model catalog request failed (${String(response.status)} ${response.statusText}).`);
+  }
+  const models = parseOpenRouterAvailableModels(await response.json());
+  if (models.length === 0) {
+    throw new Error("OpenRouter did not report any text models.");
+  }
+  return models;
+};
+
+export const listAvailableModelsWithOpenRouter = async (
+  context: ProviderAvailableModelsContext,
+): Promise<ProviderAvailableModel[]> => {
+  const proxyFetch = createProxyAwareFetch(context.networkProxy);
+  return requestOpenRouterAvailableModels(context, proxyFetch ?? fetch);
 };
 
 const getDefaultHeaders = (config: Record<string, unknown> | undefined): Record<string, string> | undefined => {
@@ -654,6 +871,18 @@ export const buildAiSdkProviderOptions = (
   return undefined;
 };
 
+const OPENROUTER_REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
+
+export const buildOpenRouterProviderOptions = (
+  requestProviderOptions: ProviderExecutionOptions | undefined,
+): Record<string, unknown> | undefined => {
+  const effort = requestProviderOptions?.reasoningEffort?.trim().toLowerCase();
+  if (!effort || effort === "auto" || !OPENROUTER_REASONING_EFFORTS.has(effort)) {
+    return undefined;
+  }
+  return { openrouter: { reasoning: { effort } } };
+};
+
 const getRequestUrl = (input: RequestInfo | URL): string => {
   if (typeof input === "string") {
     return input;
@@ -710,6 +939,20 @@ const createLanguageModel = (input: RunExecutionRequest, devLogger?: { createLog
   const customFetch = createProxyAwareFetch(input.networkProxy);
   const loggedFetch = devLogger?.createLoggedFetch(customFetch ?? fetch);
   const selectedFetch = loggedFetch ?? customFetch;
+
+  if (input.providerType === "openrouter") {
+    if (!input.apiKey.trim()) {
+      throw new Error("An API key is required for OpenRouter.");
+    }
+    return createOpenRouter({
+      apiKey: input.apiKey,
+      baseURL: baseURL ?? OPENROUTER_DEFAULT_BASE_URL,
+      headers,
+      compatibility: "strict",
+      appName: "BuildWarden",
+      ...(selectedFetch ? { fetch: selectedFetch } : {}),
+    }).chat(input.modelId);
+  }
 
   if (family === "openai-compatible") {
     if (!baseURL) {
@@ -916,7 +1159,10 @@ const downloadOpenAiContainerFile = async (
   };
 };
 
-export const hydratePriorMessageAttachments = (message: Record<string, unknown>): Record<string, unknown> => {
+export const hydratePriorMessageAttachments = (
+  message: Record<string, unknown>,
+  providerType?: RunExecutionRequest["providerType"],
+): Record<string, unknown> => {
   const attachments = extractAttachmentPayloadsFromMetadata(message);
   if (message.role !== "user" || attachments.length === 0) {
     return message;
@@ -924,18 +1170,22 @@ export const hydratePriorMessageAttachments = (message: Record<string, unknown>)
   const hydrated = { ...message };
   delete hydrated.attachments;
   delete hydrated.attachmentNames;
-  hydrated.content = buildAttachmentUserContent(typeof message.content === "string" ? message.content : "", attachments);
+  hydrated.content = buildAttachmentUserContent(
+    typeof message.content === "string" ? message.content : "",
+    attachments,
+    providerType,
+  );
   return hydrated;
 };
 
 const buildRunMessages = (input: RunExecutionRequest): Array<Record<string, unknown>> => {
   const priorMessages = Array.isArray(input.priorMessages)
-    ? input.priorMessages.map(hydratePriorMessageAttachments)
+    ? input.priorMessages.map((message) => hydratePriorMessageAttachments(message, input.providerType))
     : [];
   if (priorMessages.length > 0) {
     priorMessages.push({
       role: "user",
-      content: buildAttachmentUserContent(input.prompt, input.attachments),
+      content: buildAttachmentUserContent(input.prompt, input.attachments, input.providerType),
     });
     return priorMessages;
   }
@@ -964,6 +1214,7 @@ const buildRunMessages = (input: RunExecutionRequest): Array<Record<string, unkn
           input.repoContext ? `Workspace context:\n${input.repoContext}` : "Workspace context is unavailable. Use tools to inspect the project files.",
         ].join("\n"),
         input.attachments,
+        input.providerType,
       ),
     },
   ];
@@ -1155,6 +1406,7 @@ export const buildInstructionsForFamily = (
     : instructions;
 
 type GenerateAskTextWithAiSdkInput = {
+  providerType?: "ai-sdk" | "openrouter";
   modelId: string;
   apiKey: string;
   apiBaseUrl?: string | null;
@@ -1179,7 +1431,7 @@ export const generateAskTextResultWithAiSdk = async (input: GenerateAskTextWithA
   const devLogger = createDevLogger({
     logDirPath: input.devLogging?.logDirPath,
     runId: input.devLogging?.runId ?? "ask-text",
-    providerType: "ai-sdk",
+    providerType: input.providerType ?? "ai-sdk",
     modelId: input.modelId,
     sessionType: input.devLogging?.sessionType ?? "run",
   });
@@ -1188,7 +1440,7 @@ export const generateAskTextResultWithAiSdk = async (input: GenerateAskTextWithA
     worktreePath: ".",
     mode: "ask",
     prompt: input.prompt,
-    providerType: "ai-sdk",
+    providerType: input.providerType ?? "ai-sdk",
     modelId: input.modelId,
     apiKey: input.apiKey,
     apiBaseUrl: input.apiBaseUrl,
@@ -1196,7 +1448,9 @@ export const generateAskTextResultWithAiSdk = async (input: GenerateAskTextWithA
     modelConfig: input.modelConfig,
     networkProxy: input.networkProxy,
   }, devLogger.enabled ? devLogger : undefined);
-  const providerOptions = buildAiSdkProviderOptions(getProviderFamily(input.config), input.modelId, input.providerOptions, input.modelConfig);
+  const providerOptions = input.providerType === "openrouter"
+    ? buildOpenRouterProviderOptions(input.providerOptions)
+    : buildAiSdkProviderOptions(getProviderFamily(input.config), input.modelId, input.providerOptions, input.modelConfig);
 
   const result = await generateText({
     model,
@@ -1212,7 +1466,7 @@ export const generateAskTextResultWithAiSdk = async (input: GenerateAskTextWithA
   });
   return {
     text: result.text.trim(),
-    usage: normalizeAiSdkTokenUsage(result.usage),
+    usage: normalizeAiSdkTokenUsage(result.usage, input.modelConfig),
   };
 };
 
@@ -1220,6 +1474,7 @@ export const generateAskTextWithAiSdk = async (input: GenerateAskTextWithAiSdkIn
   (await generateAskTextResultWithAiSdk(input)).text;
 
 export const suggestCommitMessageWithAiSdk = async (input: {
+  providerType?: "ai-sdk" | "openrouter";
   modelId: string;
   apiKey: string;
   apiBaseUrl?: string | null;
@@ -1261,6 +1516,24 @@ export class AiSdkProviderAdapter implements ProviderAdapter {
   }
 }
 
+export class OpenRouterProviderAdapter implements ProviderAdapter {
+  readonly providerType = "openrouter" as const;
+
+  listRecommendedModels(): string[] {
+    return [];
+  }
+
+  async listAvailableModels(context: ProviderAvailableModelsContext): Promise<ProviderAvailableModel[]> {
+    return listAvailableModelsWithOpenRouter(context);
+  }
+
+  validateConfiguration(input: ProviderAccountInput): void {
+    if (!input.apiKey.trim()) {
+      throw new Error("An API key is required for OpenRouter.");
+    }
+  }
+}
+
 export class AiSdkHarnessAdapter implements HarnessAdapter {
   readonly harnessType = "ai-sdk" as const;
 
@@ -1270,6 +1543,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
     onChunk: (chunk: HarnessRunChunk) => void,
     signal: AbortSignal,
   ): Promise<{ summary: string; responseId: string | null; usage: RunTokenUsage }> {
+    assertOpenRouterAttachmentCompatibility(input);
     const isChat = input.isChat === true;
     const providerFamily = getProviderFamily(input.config);
     const devLogger = createDevLogger({
@@ -1280,15 +1554,17 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
       sessionType: isChat ? "chat" : "run",
     });
     const model = createLanguageModel(input, devLogger.enabled ? devLogger : undefined);
-    const providerOptions = buildAiSdkProviderOptions(
-      providerFamily,
-      input.modelId,
-      input.providerOptions,
-      input.modelConfig,
-      input.runId,
-    );
+    const providerOptions = input.providerType === "openrouter"
+      ? buildOpenRouterProviderOptions(input.providerOptions)
+      : buildAiSdkProviderOptions(
+          providerFamily,
+          input.modelId,
+          input.providerOptions,
+          input.modelConfig,
+          input.runId,
+        );
     const openAiChatTools =
-      isChat && providerFamily === "openai"
+      isChat && input.providerType === "ai-sdk" && providerFamily === "openai"
         ? {
             code_interpreter: createConfiguredOpenAiProvider(input, devLogger.enabled ? devLogger : undefined).tools.codeInterpreter(),
           }
@@ -1303,11 +1579,11 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
         content: openAiChatTools ? CHAT_OPENAI_CODE_INTERPRETER_SYSTEM_PROMPT : CHAT_SYSTEM_PROMPT,
       });
       if (Array.isArray(input.priorMessages) && input.priorMessages.length > 0) {
-        startingMessages.push(...input.priorMessages);
+        startingMessages.push(...input.priorMessages.map((message) => hydratePriorMessageAttachments(message, input.providerType)));
       }
       startingMessages.push({
         role: "user",
-        content: buildAttachmentUserContent(input.prompt, input.attachments),
+        content: buildAttachmentUserContent(input.prompt, input.attachments, input.providerType),
       });
     }
 
@@ -1537,7 +1813,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
           return { messages: nextMessages as never };
         },
         onStepEnd: async (stepResult) => {
-          accumulatedUsage = addUsage(accumulatedUsage, normalizeAiSdkTokenUsage(stepResult.usage));
+          accumulatedUsage = addUsage(accumulatedUsage, normalizeAiSdkTokenUsage(stepResult.usage, input.modelConfig));
 
           if (!streamedReasoningSinceLastStep && stepResult.reasoningText?.trim()) {
             const novelReasoningText = trimCompletedReasoningPrefix(stepResult.reasoningText.trim());
@@ -1621,6 +1897,13 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
     const streamingToolNamesById = new Map<string, string>();
     for await (const part of result.stream as AsyncIterable<Record<string, unknown>>) {
       collectOpenAiContainerFileReferences(part, openAiContainerFileReferences);
+
+      if (part.type === "error") {
+        const providerError = part.error;
+        throw providerError instanceof Error
+          ? providerError
+          : new Error(extractProviderErrorText(providerError) || "The provider stream failed before producing output.");
+      }
 
       if (part.type === "text-delta" || part.type === "text") {
         resetReasoningSegment();
@@ -1729,7 +2012,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
           devLogger?.log("OpenAI.container_file.download.error", {
             containerId: reference.containerId,
             fileId: reference.fileId,
-            error: extractErrorText(error),
+            error: extractProviderErrorText(error),
           });
         }
       }

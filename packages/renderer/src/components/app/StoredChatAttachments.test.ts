@@ -25,8 +25,6 @@ describe("stored chat attachment preview decisions", () => {
     ["doc.docx"],
     ["slides.pptx"],
     ["bundle.zip"],
-    ["audio.mp3"],
-    ["movie.mp4"],
   ])("renders %s as an icon even when the MIME type is misleading text", (fileName) => {
     expect(getStoredAttachmentRenderMode(attachment(fileName))).toBe("icon");
   });
@@ -44,6 +42,8 @@ describe("stored chat attachment preview decisions", () => {
   it.each([
     ["diagram.png", "image"],
     ["document.pdf", "pdf"],
+    ["audio.mp3", "audio"],
+    ["movie.mp4", "video"],
   ] satisfies Array<[string, StoredAttachmentRenderMode]>)("keeps the dedicated %s preview mode", (fileName, mode) => {
     expect(getStoredAttachmentRenderMode(attachment(fileName, "application/octet-stream"))).toBe(mode);
   });

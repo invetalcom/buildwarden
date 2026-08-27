@@ -7,7 +7,7 @@ import type { ProviderType, RunRecord, RunStepRecord } from "@buildwarden/shared
  * the updated context re-sent inside the prompt.
  */
 export const providerReplaysChatHistory = (providerType: ProviderType): boolean =>
-  providerType === "ai-sdk" || providerType === "azure-legacy";
+  providerType === "ai-sdk" || providerType === "openrouter" || providerType === "azure-legacy";
 
 /** Character budgets keep the seeded context well inside typical model context windows. */
 const USER_PROMPTS_BUDGET = 6_000;

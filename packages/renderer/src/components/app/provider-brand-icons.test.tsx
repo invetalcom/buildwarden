@@ -22,6 +22,15 @@ describe("ProviderBrandIcon", () => {
     expect(renderToStaticMarkup(<ProviderBrandIcon harnessType="azure-legacy" />)).toContain("<title>Azure Legacy</title>");
   });
 
+  it("uses OpenRouter's own mark when it shares the AI SDK harness", () => {
+    const aiSdkMarkup = renderToStaticMarkup(<ProviderBrandIcon harnessType="ai-sdk" providerType="ai-sdk" />);
+    const openRouterMarkup = renderToStaticMarkup(<ProviderBrandIcon harnessType="ai-sdk" providerType="openrouter" />);
+
+    expect(openRouterMarkup).toContain("<title>OpenRouter</title>");
+    expect(openRouterMarkup).toContain("var(--ec-openrouter-brand)");
+    expect(openRouterMarkup).not.toBe(aiSdkMarkup);
+  });
+
   it("sizes itself in em so a run row never grows taller than its own line box", () => {
     const markup = renderToStaticMarkup(<ProviderBrandIcon harnessType="codex-app-server" className="size-3" />);
     expect(markup).toContain('width="1em"');

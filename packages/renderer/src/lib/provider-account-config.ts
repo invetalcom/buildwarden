@@ -50,7 +50,8 @@ const parseAiSdkConfigJson = (json: string): Record<string, unknown> => {
  */
 export const buildProviderAccountConfig = (draft: ProviderAccountConfigDraft): Record<string, unknown> => {
   const isType = (type: ProviderType): boolean => draft.providerType === type;
-  const config: Record<string, unknown> = isType("ai-sdk") ? parseAiSdkConfigJson(draft.providerConfigJson) : {};
+  const config: Record<string, unknown> =
+    isType("ai-sdk") || isType("openrouter") ? parseAiSdkConfigJson(draft.providerConfigJson) : {};
 
   if (isType("ai-sdk")) {
     config[PROVIDER_CONFIG_AI_SDK_PROVIDER_FAMILY_KEY] = draft.providerFamily;

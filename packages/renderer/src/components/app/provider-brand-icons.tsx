@@ -1,16 +1,16 @@
-import type { HarnessType } from "@buildwarden/shared";
-import { PROVIDER_BRAND_LABELS } from "./provider-brand-metadata";
+import type { HarnessType, ProviderType } from "@buildwarden/shared";
+import { PROVIDER_BRAND_LABELS, type ProviderBrandKey } from "./provider-brand-metadata";
 
 /**
  * Provider marks for run lists: which agent produced a run, readable at a glance.
  *
- * Keyed by {@link HarnessType} because that is the one provider fact every run row already carries
- * (`RunRecord.harnessType`) — no provider-account lookup, so the mobile web UI can render the same mark.
+ * Harness type remains the fallback for older callers. Provider type takes precedence when supplied,
+ * which distinguishes OpenRouter runs even though they deliberately reuse the AI SDK harness.
  *
  * Sized in `em` and never given vertical padding: the mark can only ever be as tall as the line box it
  * sits in, so dropping one into an existing row cannot make that row taller.
  *
- * Glyphs are the vendors' public single-colour marks (Anthropic, OpenAI, Cursor, Vercel, Azure), redrawn
+ * Glyphs are the vendors' public single-colour marks (Anthropic, OpenAI, Cursor, Vercel, OpenRouter, Azure), redrawn
  * as one path each so they stay legible around 12px. They identify the provider; they are not an
  * endorsement mark, same convention as {@link ./ide-brand-icons}.
  */
@@ -22,7 +22,7 @@ interface ProviderMark {
   readonly fillRule?: "evenodd";
 }
 
-const PROVIDER_MARKS: Readonly<Record<HarnessType, ProviderMark>> = {
+const PROVIDER_MARKS: Readonly<Record<ProviderBrandKey, ProviderMark>> = {
   "claude-code": {
     label: PROVIDER_BRAND_LABELS["claude-code"],
     // Claude's coral, the one colour that reads as "Anthropic" at this size.
@@ -52,6 +52,13 @@ const PROVIDER_MARKS: Readonly<Record<HarnessType, ProviderMark>> = {
     viewBox: "0 0 24 24",
     path: "m12 1.608 12 20.784H0Z",
   },
+  openrouter: {
+    label: PROVIDER_BRAND_LABELS.openrouter,
+    // Official 2026 OpenRouter OR glyph: lime in dark mode and purple in light mode.
+    color: "var(--ec-openrouter-brand)",
+    viewBox: "19.82 17.199 365.556 258.298",
+    path: "M303.9475 17.19926c42.79734 0 77.48933 34.69327 77.48933 77.48933s-34.69199 77.48933-77.48933 77.48933l76.86166 76.86244c9.76367 9.76313 2.84903 26.45667-10.95697 26.45667H148.96884c-71.32686 0-129.14889-57.82202-129.14889-129.14889S77.64197 17.19926 148.96884 17.19926h154.97866ZM148.96884 68.85881c-42.79607 0-77.48933 34.69327-77.48933 77.48933s34.69327 77.48933 77.48933 77.48933 77.48933-34.69327 77.48933-77.48933-34.69327-77.48933-77.48933-77.48933Z",
+  },
   "azure-legacy": {
     label: PROVIDER_BRAND_LABELS["azure-legacy"],
     color: "#4FB2F5",
@@ -66,12 +73,15 @@ const PROVIDER_MARKS: Readonly<Record<HarnessType, ProviderMark>> = {
  */
 export const ProviderBrandIcon = ({
   harnessType,
+  providerType,
   className,
 }: {
   harnessType: HarnessType;
+  providerType?: ProviderType | null;
   className?: string;
 }) => {
-  const mark = PROVIDER_MARKS[harnessType];
+  const brandKey: ProviderBrandKey = providerType === "openrouter" ? "openrouter" : harnessType;
+  const mark = PROVIDER_MARKS[brandKey];
   if (!mark) return null;
   return (
     <svg

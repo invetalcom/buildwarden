@@ -28,6 +28,7 @@ export const getHarnessTypeForProvider = (providerType: ProviderType): HarnessTy
     case "azure-legacy":
       return "azure-legacy";
     case "ai-sdk":
+    case "openrouter":
       return "ai-sdk";
   }
 };
@@ -43,6 +44,7 @@ export const createHarnessAdapter = (providerType: ProviderType, options: Harnes
     case "azure-legacy":
       return new AzureLegacyHarnessAdapter();
     case "ai-sdk":
+    case "openrouter":
       return new AiSdkHarnessAdapter();
   }
 };

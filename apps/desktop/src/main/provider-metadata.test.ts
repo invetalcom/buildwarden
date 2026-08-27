@@ -7,6 +7,16 @@ import {
 } from "@buildwarden/shared";
 
 describe("Cursor Agent provider metadata", () => {
+  it("treats OpenRouter as a bring-your-own-key provider with AI SDK capabilities", () => {
+    expect(connectionKindForProviderType("openrouter")).toBe("bring-your-own-key");
+    expect(PROVIDER_TYPES_BY_CONNECTION_KIND["bring-your-own-key"]).toContain("openrouter");
+    expect(getDefaultProviderCapabilities("openrouter")).toEqual({
+      supportsStreaming: true,
+      supportsTools: true,
+      supportsCustomBaseUrl: true,
+    });
+  });
+
   it("treats Cursor Agent as a local SDK/CLI connection", () => {
     expect(connectionKindForProviderType("cursor-agent")).toBe("local-sdk-cli");
     expect(PROVIDER_TYPES_BY_CONNECTION_KIND["local-sdk-cli"]).toContain("cursor-agent");

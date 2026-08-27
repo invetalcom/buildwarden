@@ -4,15 +4,22 @@ import { generateText } from "../../../../packages/provider-ai-sdk/node_modules/
 import { MockLanguageModelV4 } from "../../../../packages/provider-ai-sdk/node_modules/ai/dist/test/index";
 import {
   AiSdkProviderAdapter,
+  OpenRouterProviderAdapter,
   applyAnthropicCacheBreakpoints,
+  assertOpenRouterAttachmentCompatibility,
+  buildAttachmentUserContent,
   buildAiSdkExecutionProfile,
   buildAiSdkPlanProgressChunk,
   buildAiSdkProviderOptions,
+  buildOpenRouterProviderOptions,
+  extractProviderErrorText,
   buildInstructionsForFamily,
   parseAiSdkModelsApiAvailableModels,
+  parseOpenRouterAvailableModels,
   PRUNED_TOOL_OUTPUT_TEXT,
   pruneOldToolOutputs,
   requestAiSdkModelsApiAvailableModels,
+  requestOpenRouterAvailableModels,
   splitSystemMessagesIntoInstructions,
 } from "../../../../packages/provider-ai-sdk/src";
 
@@ -154,6 +161,156 @@ describe("AiSdkProviderAdapter", () => {
         }),
       } as Response)),
     ).rejects.toThrow("AI SDK model catalog did not report any google language models.");
+  });
+
+  it("normalizes OpenRouter text models and reports tool support", () => {
+    const models = parseOpenRouterAvailableModels({
+      data: [
+        {
+          id: "anthropic/claude-sonnet-4",
+          name: "Claude Sonnet 4",
+          context_length: 200000,
+          supported_parameters: ["tools", "reasoning"],
+          architecture: { input_modalities: ["text", "image", "file", "audio", "video"], output_modalities: ["text"] },
+        },
+        {
+          id: "openai/dall-e-3",
+          name: "DALL-E 3",
+          architecture: { output_modalities: ["image"] },
+        },
+        { id: "google/gemini-2.5-flash", name: "Gemini 2.5 Flash", supported_parameters: [] },
+      ],
+    });
+
+    expect(models.map(({ modelId, displayName }) => ({ modelId, displayName }))).toEqual([
+      { modelId: "anthropic/claude-sonnet-4", displayName: "Claude Sonnet 4" },
+      { modelId: "google/gemini-2.5-flash", displayName: "Gemini 2.5 Flash" },
+    ]);
+    expect(models[0]?.capabilities).toMatchObject({ supportsStreaming: true, supportsTools: true });
+    expect(models[0]?.description).toBe("200K context · image, file, audio, video input · tools");
+    expect(models[0]?.config).toMatchObject({
+      buildwardenContextWindowTokens: 200000,
+      buildwardenInputModalities: ["text", "image", "file", "audio", "video"],
+      buildwardenOutputModalities: ["text"],
+      buildwardenExecutionProfile: {
+        source: "provider",
+        controls: [expect.objectContaining({
+          id: "reasoningEffort",
+          options: expect.arrayContaining([expect.objectContaining({ value: "xhigh" })]),
+        })],
+      },
+    });
+    expect(models[1]?.capabilities).toMatchObject({ supportsTools: false });
+  });
+
+  it("converts OpenRouter image, audio, and video attachments into AI SDK file parts", () => {
+    expect(buildAttachmentUserContent("Review these", [
+      { fileName: "cats.png", mimeType: "image/png", dataBase64: "Ag==" },
+      { fileName: "sample.mp3", mimeType: "audio/mpeg", dataBase64: "AA==" },
+      { fileName: "clip.mp4", mimeType: "video/mp4", dataBase64: "AQ==" },
+    ], "openrouter")).toEqual([
+      { type: "text", text: "Review these" },
+      { type: "file", data: "data:image/png;base64,Ag==", mediaType: "image/png", filename: "cats.png" },
+      { type: "file", data: "data:audio/mpeg;base64,AA==", mediaType: "audio/mpeg", filename: "sample.mp3" },
+      { type: "file", data: "data:video/mp4;base64,AQ==", mediaType: "video/mp4", filename: "clip.mp4" },
+    ]);
+  });
+
+  it("rejects OpenRouter media that the selected catalog model cannot accept", () => {
+    expect(() => assertOpenRouterAttachmentCompatibility({
+      providerType: "openrouter",
+      modelId: "z-ai/glm-5.3",
+      modelConfig: { buildwardenInputModalities: ["text"] },
+      attachments: [{ fileName: "cats.png", mimeType: "image/png", dataBase64: "AA==" }],
+    })).toThrow(
+      'OpenRouter model "z-ai/glm-5.3" does not support image input. Choose a model whose catalog entry lists image input, or enter a compatible model manually.',
+    );
+  });
+
+  it("allows OpenRouter images for compatible and manually configured models", () => {
+    const attachment = { fileName: "cats.png", mimeType: "image/png", dataBase64: "AA==" };
+    expect(() => assertOpenRouterAttachmentCompatibility({
+      providerType: "openrouter",
+      modelId: "google/gemini-3.1-pro-preview",
+      modelConfig: { buildwardenInputModalities: ["text", "image"] },
+      attachments: [attachment],
+    })).not.toThrow();
+    expect(() => assertOpenRouterAttachmentCompatibility({
+      providerType: "openrouter",
+      modelId: "custom/vision-model",
+      modelConfig: {},
+      attachments: [attachment],
+    })).not.toThrow();
+  });
+
+  it("extracts actionable messages from provider stream error payloads", () => {
+    expect(extractProviderErrorText({
+      responseBody: JSON.stringify({ error: { message: "No endpoints support image input for this model." } }),
+    })).toBe("No endpoints support image input for this model.");
+    expect(extractProviderErrorText(Object.assign(new Error("Request failed."), {
+      responseBody: JSON.stringify({ error: { message: "The selected model only accepts text." } }),
+    }))).toBe("The selected model only accepts text.");
+  });
+
+  it("maps supported OpenRouter reasoning effort into provider options", () => {
+    expect(buildOpenRouterProviderOptions({ reasoningEffort: "high" })).toEqual({
+      openrouter: { reasoning: { effort: "high" } },
+    });
+    expect(buildOpenRouterProviderOptions({ reasoningEffort: "auto" })).toBeUndefined();
+    expect(buildOpenRouterProviderOptions({ reasoningEffort: "unsupported" })).toBeUndefined();
+  });
+
+  it("fetches OpenRouter models from a custom endpoint with authentication", async () => {
+    let requestUrl = "";
+    let requestInit: RequestInit | undefined;
+    const models = await requestOpenRouterAvailableModels(
+      {
+        providerAccountId: "provider-1",
+        providerType: "openrouter",
+        config: { defaultHeaders: { "X-Custom": "value" } },
+        apiKey: "secret",
+        apiBaseUrl: "https://router.example.test/api/v1/",
+      },
+      async (url, init) => {
+        requestUrl = url;
+        requestInit = init;
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: "openai/gpt-5", name: "GPT-5" }] }),
+        } as Response;
+      },
+    );
+
+    expect(requestUrl).toBe("https://router.example.test/api/v1/models");
+    expect(requestInit?.headers).toMatchObject({
+      Accept: "application/json",
+      Authorization: "Bearer secret",
+      "X-Custom": "value",
+    });
+    expect(models[0]?.modelId).toBe("openai/gpt-5");
+  });
+
+  it("propagates OpenRouter catalog failures so manual model entry can be used", async () => {
+    await expect(
+      requestOpenRouterAvailableModels(
+        {
+          providerAccountId: "provider-1",
+          providerType: "openrouter",
+          config: {},
+          apiKey: "secret",
+        },
+        async () => ({ ok: false, status: 503, statusText: "Service Unavailable" } as Response),
+      ),
+    ).rejects.toThrow("OpenRouter model catalog request failed (503 Service Unavailable).");
+  });
+
+  it("requires an API key for OpenRouter connections", () => {
+    const adapter = new OpenRouterProviderAdapter();
+    expect(() => adapter.validateConfiguration({
+      providerType: "openrouter",
+      label: "OpenRouter",
+      apiKey: "",
+    })).toThrow("An API key is required for OpenRouter.");
   });
 
   it("builds plan-progress chunks for the internal update_plan tool", () => {
