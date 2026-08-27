@@ -14,7 +14,7 @@ export type StoredAttachmentKind =
   | "text"
   | "video";
 
-export type StoredAttachmentRenderMode = "icon" | "image" | "pdf" | "text";
+export type StoredAttachmentRenderMode = "audio" | "icon" | "image" | "pdf" | "text" | "video";
 
 export type StoredAttachmentDisplayItem =
   | { kind: "attachment"; attachment: ChatAttachmentPayload }
@@ -377,6 +377,14 @@ export const getStoredAttachmentRenderMode = (attachment: ChatAttachmentPayload)
 
   if (kind === "pdf") {
     return "pdf";
+  }
+
+  if (kind === "audio") {
+    return "audio";
+  }
+
+  if (kind === "video") {
+    return "video";
   }
 
   if (canPreviewAsText(attachment)) {

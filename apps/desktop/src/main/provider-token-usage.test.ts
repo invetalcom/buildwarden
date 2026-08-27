@@ -233,4 +233,17 @@ describe("provider token usage normalization", () => {
       expect(comparableTokenUsage(usage), providerName).toEqual(expected);
     }
   });
+
+  it("uses model catalog context metadata for the AI SDK context meter", () => {
+    expect(normalizeAiSdkTokenUsage({ inputTokens: 12_000, outputTokens: 500, totalTokens: 12_500 }, {
+      buildwardenContextWindowTokens: 128_000,
+    })).toMatchObject({
+      inputTokens: 12_000,
+      outputTokens: 500,
+      usedTokens: 12_500,
+      lastUsedTokens: 12_500,
+      maxTokens: 128_000,
+      totalProcessedTokens: 12_500,
+    });
+  });
 });

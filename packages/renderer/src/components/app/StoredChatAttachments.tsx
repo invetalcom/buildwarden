@@ -211,6 +211,35 @@ const ImageAttachmentCard = ({
   </div>
 );
 
+const AudioAttachmentCard = ({ attachment, compact }: { attachment: ChatAttachmentPayload; compact: boolean }) => (
+  <div
+    className={`overflow-hidden rounded-lg border border-violet-400/20 bg-zinc-950/60 shadow-sm ${compact ? "w-52" : "w-64"}`}
+    title={attachment.fileName}
+  >
+    <div className="flex min-h-16 items-center gap-2 bg-violet-500/[0.06] px-2.5 py-2">
+      <FileAudio className="h-5 w-5 shrink-0 text-violet-300" aria-hidden />
+      <audio controls preload="metadata" src={toDataUrl(attachment)} className="h-8 min-w-0 flex-1" aria-label={attachment.fileName} />
+    </div>
+    <AttachmentFooter attachment={attachment} />
+  </div>
+);
+
+const VideoAttachmentCard = ({ attachment, compact }: { attachment: ChatAttachmentPayload; compact: boolean }) => (
+  <div
+    className={`overflow-hidden rounded-lg border border-rose-400/20 bg-zinc-950/60 shadow-sm ${compact ? "w-52" : "w-72"}`}
+    title={attachment.fileName}
+  >
+    <video
+      controls
+      preload="metadata"
+      src={toDataUrl(attachment)}
+      className={`${compact ? "h-28" : "h-36"} w-full bg-black object-contain`}
+      aria-label={attachment.fileName}
+    />
+    <AttachmentFooter attachment={attachment} />
+  </div>
+);
+
 const BrowserElementAttachmentRow = ({
   compact,
   contextAttachment,
@@ -446,6 +475,14 @@ export const StoredChatAttachments = ({
                   onOpen={() => setExpandedPdf(attachment)}
                 />
               );
+            }
+
+            if (renderMode === "audio") {
+              return <AudioAttachmentCard key={key} attachment={attachment} compact={compact} />;
+            }
+
+            if (renderMode === "video") {
+              return <VideoAttachmentCard key={key} attachment={attachment} compact={compact} />;
             }
 
             if (textPreview) {

@@ -27,6 +27,7 @@ import { RunListSelectionToolbar } from "./RunListSelectionToolbar";
 
 interface AllRunsPageProps {
   projects: AppSnapshot["projects"];
+  providerAccounts?: AppSnapshot["providerAccounts"];
   onSelectRun: (projectId: string, runId: string) => void;
   onDeleteRuns?: (runs: RunRecord[]) => Promise<boolean>;
 }
@@ -52,6 +53,7 @@ const AllRunsContent = ({
   selectedRunIds,
   selectionBusy,
   onToggleSelection,
+  providerTypeByAccountId,
 }: {
   rows: AllRunRow[];
   allRowsCount: number;
@@ -62,6 +64,7 @@ const AllRunsContent = ({
   selectedRunIds: ReadonlySet<string>;
   selectionBusy: boolean;
   onToggleSelection: (runId: string) => void;
+  providerTypeByAccountId: ReadonlyMap<string, AppSnapshot["providerAccounts"][number]["providerType"]>;
 }) => {
   if (rows.length === 0) {
     const searchIsEmpty = hasSearch && allRowsCount > 0;
@@ -123,7 +126,7 @@ const AllRunsContent = ({
                   <span className="inline-flex min-w-0 items-center gap-1">
                     <FolderGit2 className="size-3 shrink-0" />
                     <span className="truncate">{project.name}</span>
-                    <ProviderBrandIcon harnessType={run.harnessType} className="size-3 shrink-0" />
+                    <ProviderBrandIcon harnessType={run.harnessType} providerType={providerTypeByAccountId.get(run.providerAccountId)} className="size-3 shrink-0" />
                   </span>
                   <span className="inline-flex items-center gap-1 font-mono">
                     <Clock3 className="size-3" />
@@ -150,7 +153,7 @@ const AllRunsContent = ({
   );
 };
 
-export const AllRunsPage = ({ projects, onSelectRun, onDeleteRuns }: AllRunsPageProps) => {
+export const AllRunsPage = ({ projects, providerAccounts = [], onSelectRun, onDeleteRuns }: AllRunsPageProps) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [view, setView] = useState<"runs" | "orchestrated">("runs");
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
@@ -160,6 +163,10 @@ export const AllRunsPage = ({ projects, onSelectRun, onDeleteRuns }: AllRunsPage
   const projectById = useMemo(
     () => new Map(projects.map((entry) => [entry.project.id, entry.project])),
     [projects],
+  );
+  const providerTypeByAccountId = useMemo(
+    () => new Map(providerAccounts.map((provider) => [provider.id, provider.providerType])),
+    [providerAccounts],
   );
   const primaryRuns = useMemo(
     () => projects.flatMap((entry) => [...new Map([...entry.runs, ...entry.forLaterRuns].map((run) => [run.id, run])).values()]),
@@ -327,6 +334,7 @@ export const AllRunsPage = ({ projects, onSelectRun, onDeleteRuns }: AllRunsPage
             selectedRunIds={selectedRunIds}
             selectionBusy={selectionBusy}
             onToggleSelection={toggleRunSelection}
+            providerTypeByAccountId={providerTypeByAccountId}
           />
         </CardContent>
       </Card>

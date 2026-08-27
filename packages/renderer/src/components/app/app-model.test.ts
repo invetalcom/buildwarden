@@ -17,6 +17,7 @@ describe("harnessTypeForProvider", () => {
     ["cursor-agent", "cursor-acp"],
     ["azure-legacy", "azure-legacy"],
     ["ai-sdk", "ai-sdk"],
+    ["openrouter", "ai-sdk"],
   ];
 
   it.each(cases)("maps %s to harness type %s", (providerType, expected) => {

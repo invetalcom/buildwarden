@@ -4011,6 +4011,7 @@ export const App = () => {
   const renderAllRunsContent = (): ReactNode => (
     <AllRunsPage
       projects={snapshot.projects}
+      providerAccounts={snapshot.providerAccounts}
       onSelectRun={(projectId, runId) => void handleRunSelect(projectId, runId)}
       onDeleteRuns={buildwarden.capabilities.runMutations ? deleteRuns : undefined}
     />
@@ -4463,6 +4464,7 @@ export const App = () => {
         />
         <Sidebar
         projects={snapshot.projects}
+        providerAccounts={snapshot.providerAccounts}
         landingSelected={landingSelected}
         allRunsSelected={allRunsSelected}
         bookmarksSelected={bookmarksSelected}

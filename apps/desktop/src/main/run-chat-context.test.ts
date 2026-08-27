@@ -145,6 +145,7 @@ describe("run chat turn prompts", () => {
 
   it("classifies providers by how they carry conversation history", () => {
     expect(providerReplaysChatHistory("ai-sdk")).toBe(true);
+    expect(providerReplaysChatHistory("openrouter")).toBe(true);
     expect(providerReplaysChatHistory("azure-legacy")).toBe(true);
     expect(providerReplaysChatHistory("claude-code")).toBe(false);
     expect(providerReplaysChatHistory("codex-cli")).toBe(false);

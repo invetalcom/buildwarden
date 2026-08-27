@@ -155,6 +155,7 @@ export const parseKeyboardShortcuts = (json: string | undefined): Record<Keyboar
 };
 
 const HARNESS_TYPE_BY_PROVIDER: Partial<Record<ProviderType, HarnessType>> = {
+  openrouter: "ai-sdk",
   "codex-cli": "codex-app-server",
   "claude-code": "claude-code",
   "cursor-agent": "cursor-acp",

@@ -56,6 +56,30 @@ afterEach(async () => {
 });
 
 describe("project run history selection", () => {
+  it("shows the OpenRouter mark for runs using the shared AI SDK harness", async () => {
+    const run = runRecord({ harnessType: "ai-sdk" });
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(
+      <RunHistory
+        runs={[run]}
+        orchestratedRuns={[]}
+        treeRows={buildRunHierarchyRows([run], [], { expandedRunIds: new Set() })}
+        matchingRunCount={1}
+        searchQuery=""
+        onSearchChange={vi.fn()}
+        onSelectRun={vi.fn()}
+        onSetRunForLater={vi.fn()}
+        onToggleRun={vi.fn()}
+        providerTypeByModelId={new Map([[run.modelId, "openrouter"]])}
+        readOnly
+      />,
+    ));
+
+    expect(container.querySelector("svg title")?.textContent).toBe("OpenRouter");
+  });
+
   it("selects a row without navigating and uses the shared deletion callback", async () => {
     const runs = [runRecord(), runRecord({ id: "run-2", branchName: "feat/run-2", worktreePath: "C:/repo/run-2" })];
     const onSelectRun = vi.fn();

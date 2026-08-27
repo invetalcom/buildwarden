@@ -18,7 +18,7 @@ import type { IntegratedSkillDefinition as IntegratedSkillDefinitionType } from 
 /** Renderer-facing skill descriptor without the heavy body/reference payloads. */
 export type IntegratedSkillMetadata = Omit<IntegratedSkillDefinitionType, "content" | "references">;
 
-export type ProviderType = "ai-sdk" | "azure-legacy" | "codex-cli" | "claude-code" | "cursor-agent";
+export type ProviderType = "ai-sdk" | "openrouter" | "azure-legacy" | "codex-cli" | "claude-code" | "cursor-agent";
 
 export type HarnessType = "ai-sdk" | "azure-legacy" | "codex-app-server" | "claude-code" | "cursor-acp";
 
@@ -1658,6 +1658,8 @@ export interface ProviderAvailableModel {
   modelId: string;
   displayName: string;
   source: "provider" | "curated";
+  /** Compact provider-reported details such as context size and supported media. */
+  description?: string;
   capabilities?: Partial<ProviderCapabilityMap>;
   config?: Record<string, unknown>;
   unavailableReason?: string;
@@ -1718,6 +1720,8 @@ export interface ProviderAvailableModelsContext {
   providerAccountId: string;
   providerType: ProviderType;
   config: Record<string, unknown>;
+  /** Main-process-only credential used for authenticated provider catalog requests. */
+  apiKey?: string;
   apiBaseUrl?: string | null;
   networkProxy?: NetworkProxyRuntimeConfig;
 }
@@ -1726,6 +1730,9 @@ export const MODEL_CONFIG_OPENAI_REASONING_EFFORT_KEY = "openaiReasoningEffort";
 export const MODEL_CONFIG_ANTHROPIC_EFFORT_KEY = "anthropicEffort";
 export const MODEL_CONFIG_CODEX_REASONING_EFFORT_KEY = "codexReasoningEffort";
 export const MODEL_CONFIG_EXECUTION_PROFILE_KEY = "buildwardenExecutionProfile";
+export const MODEL_CONFIG_CONTEXT_WINDOW_TOKENS_KEY = "buildwardenContextWindowTokens";
+export const MODEL_CONFIG_INPUT_MODALITIES_KEY = "buildwardenInputModalities";
+export const MODEL_CONFIG_OUTPUT_MODALITIES_KEY = "buildwardenOutputModalities";
 
 export interface ProjectInput {
   name?: string;

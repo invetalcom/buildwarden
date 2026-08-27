@@ -4,6 +4,7 @@ import type { ProviderType } from "@buildwarden/shared";
 
 const providerHarnessTypes: Array<[ProviderType, ReturnType<typeof getHarnessTypeForProvider>]> = [
   ["ai-sdk", "ai-sdk"],
+  ["openrouter", "ai-sdk"],
   ["azure-legacy", "azure-legacy"],
   ["codex-cli", "codex-app-server"],
   ["claude-code", "claude-code"],

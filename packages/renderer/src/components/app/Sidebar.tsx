@@ -60,6 +60,7 @@ type RunContextMenuState = {
 
 interface SidebarProps {
   projects: AppSnapshot["projects"];
+  providerAccounts?: AppSnapshot["providerAccounts"];
   landingSelected: boolean;
   allRunsSelected: boolean;
   bookmarksSelected: boolean;
@@ -208,6 +209,7 @@ const SIDEBAR_RUN_ENTRY_SIZE_STYLES: Record<
 
 const SidebarComponent = ({
   projects,
+  providerAccounts = [],
   landingSelected,
   allRunsSelected,
   bookmarksSelected,
@@ -279,6 +281,10 @@ const SidebarComponent = ({
         left.project.name.localeCompare(right.project.name, undefined, { numeric: true, sensitivity: "base" }),
       ),
     [projects],
+  );
+  const providerTypeByAccountId = useMemo(
+    () => new Map(providerAccounts.map((provider) => [provider.id, provider.providerType])),
+    [providerAccounts],
   );
 
   const recentRunsByProject = useMemo(() => {
@@ -509,7 +515,7 @@ const SidebarComponent = ({
             </>
           ) : null}
           {/* The provider mark matches the line box, so it adds no row height. */}
-          <ProviderBrandIcon harnessType={run.harnessType} className="size-3 shrink-0" />
+          <ProviderBrandIcon harnessType={run.harnessType} providerType={providerTypeByAccountId.get(run.providerAccountId)} className="size-3 shrink-0" />
           {run.forgeRequest ? (
             <span
               className={cn("inline-flex shrink-0", runForgeReadinessColor[run.forgeRequest.readiness])}
@@ -546,7 +552,7 @@ const SidebarComponent = ({
           )}
         >
           <div className="min-w-0 flex-1">
-            <HoverCard content={<AgentRunHoverCard projectName={project.project.name} run={run} />}>
+            <HoverCard content={<AgentRunHoverCard projectName={project.project.name} run={run} providerType={providerTypeByAccountId.get(run.providerAccountId)} />}>
               {trigger}
             </HoverCard>
           </div>

@@ -92,7 +92,7 @@ const EmptyRunList = ({ hasRunSearch, hasRuns, readOnly }: Readonly<{ hasRunSear
   </Empty>
 );
 
-export const RunHistory = ({ runs, orchestratedRuns, treeRows, matchingRunCount, searchQuery, onSearchChange, onSelectRun, onSetRunForLater, onDeleteRuns, onToggleRun, readOnly }: {
+export const RunHistory = ({ runs, orchestratedRuns, treeRows, matchingRunCount, searchQuery, onSearchChange, onSelectRun, onSetRunForLater, onDeleteRuns, onToggleRun, providerTypeByModelId = new Map(), readOnly }: {
   runs: ProjectOverviewTabProps["runs"];
   orchestratedRuns: ProjectOverviewTabProps["orchestratedRuns"];
   treeRows: RunHierarchyRow[];
@@ -103,6 +103,7 @@ export const RunHistory = ({ runs, orchestratedRuns, treeRows, matchingRunCount,
   onSetRunForLater: ProjectOverviewTabProps["onSetRunForLater"];
   onDeleteRuns?: ProjectOverviewTabProps["onDeleteRuns"];
   onToggleRun: (runId: string) => void;
+  providerTypeByModelId?: ReadonlyMap<string, ProviderType>;
   readOnly: boolean;
 }) => {
   const [selectionMode, setSelectionMode] = useState(false);
@@ -227,7 +228,7 @@ export const RunHistory = ({ runs, orchestratedRuns, treeRows, matchingRunCount,
                       type="button"
                     >
                       {/* Sits beside the two-line text block, so the mark never drives the row height. */}
-                      <ProviderBrandIcon harnessType={run.harnessType} className="size-4 shrink-0" />
+                      <ProviderBrandIcon harnessType={run.harnessType} providerType={providerTypeByModelId.get(run.modelId)} className="size-4 shrink-0" />
                       <span className="min-w-0 flex-1">
                         <span className="flex min-w-0 items-center gap-1.5">
                           <span className="truncate text-sm font-semibold text-[var(--ec-text)]">{runHierarchyLabel(run)}</span>
@@ -345,6 +346,10 @@ export const ProjectOverviewTab = ({
   let selectedBranch: string | undefined;
   if (!isFolderProject) selectedBranch = runWorkspaceType === "local" ? currentProjectBranch : runBaseBranch;
   const canUseMultiModel = runWorkspaceType === "worktree" || runWorkspaceType === "copy";
+  const providerTypeByModelId = useMemo(
+    () => new Map(modelOptions.map((option) => [option.id, option.providerType])),
+    [modelOptions],
+  );
 
   const openProjectInFileManager = async () => {
     const result = await buildwarden.openPathInFileManager(repoPath);
@@ -488,6 +493,7 @@ export const ProjectOverviewTab = ({
         onSetRunForLater={onSetRunForLater}
         onDeleteRuns={onDeleteRuns}
         onToggleRun={toggleRunHierarchy}
+        providerTypeByModelId={providerTypeByModelId}
         readOnly={readOnly}
       />
     </div>

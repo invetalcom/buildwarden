@@ -27,6 +27,7 @@ import { ProviderModelPanelButtons, ProviderModelsOverview } from "./provider-mo
 
 const DEFAULT_LABEL_BY_TYPE: Record<ProviderType, string> = {
   "ai-sdk": "AI SDK",
+  openrouter: "OpenRouter",
   "azure-legacy": "Azure Legacy",
   "codex-cli": "Codex CLI",
   "claude-code": "Claude Code",
@@ -54,6 +55,9 @@ const selectModelQuickPicks = (
 const getProviderBaseUrlHint = (providerType: ProviderType, providerFamily: UnifiedProviderFamily) => {
   if (providerType === "azure-legacy") {
     return "Deployment URL (includes deployment segment).";
+  }
+  if (providerType === "openrouter") {
+    return "OpenRouter API root; defaults to https://openrouter.ai/api/v1.";
   }
   if (providerFamily === "openai-compatible") {
     return "Root URL for the compatible server.";
@@ -112,7 +116,7 @@ const ModelQuickPickChooser = ({
     <>
       {state.status === "error" ? (
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs text-amber-300/90">Could not load live models. Showing curated quick picks.</p>
+          <p className="text-xs text-amber-300/90">Could not load live models. Enter a model ID manually or retry.</p>
           <Button
             type="button"
             variant="secondary"
@@ -300,6 +304,7 @@ export const ProviderModelsSettingsTab = ({
   const showProviderBaseUrlField =
     !isWelcomePresentation ||
     providerType === "azure-legacy" ||
+    providerType === "openrouter" ||
     (providerType === "ai-sdk" && providerFamily === "openai-compatible");
   const setOpenPanel = (next: ProviderModelsOpenPanel | ((current: ProviderModelsOpenPanel) => ProviderModelsOpenPanel)) => {
     const resolved = typeof next === "function" ? next(openPanel) : next;
@@ -351,7 +356,7 @@ export const ProviderModelsSettingsTab = ({
       availableModelsState.models.map((model) => ({
         modelId: model.modelId,
         displayName: model.displayName,
-        description: model.unavailableReason ?? (model.source === "provider" ? "Provider" : "Curated"),
+        description: model.unavailableReason ?? model.description ?? (model.source === "provider" ? "Provider" : "Curated"),
         disabled: Boolean(model.unavailableReason),
       })),
     [availableModelsState.models],
@@ -360,7 +365,7 @@ export const ProviderModelsSettingsTab = ({
     () => selectModelQuickPicks(availableModelsState.status, providerQuickPicks, fallbackQuickPicks),
     [availableModelsState.status, fallbackQuickPicks, providerQuickPicks],
   );
-  const quickPickSourceLabel = quickPicks.some((model) => model.description === "Provider")
+  const quickPickSourceLabel = availableModelsState.status === "loaded"
     ? "Available models reported for the selected account."
     : "Curated models for the selected account.";
   const quickPickMatch = quickPicks.find((preset) => preset.modelId === modelId.trim());
@@ -544,6 +549,23 @@ export const ProviderModelsSettingsTab = ({
                 </div>
               ) : null}
 
+              {providerType === "openrouter" ? (
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <SettingsField
+                    label="API key"
+                    hint="Used for model discovery and requests; stored only on this machine."
+                    compact={isWelcomePresentation}
+                  >
+                    <Input
+                      value={apiKey}
+                      onChange={(event) => onApiKeyChange(event.target.value)}
+                      type="password"
+                      placeholder="sk-or-v1-..."
+                    />
+                  </SettingsField>
+                </div>
+              ) : null}
+
               {providerType === "codex-cli" ? (
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
                   <SettingsField label="Codex binary path" hint="Leave blank to use `codex` on PATH." compact={isWelcomePresentation}>
@@ -640,7 +662,7 @@ export const ProviderModelsSettingsTab = ({
                 </div>
               ) : null}
 
-              {providerType === "ai-sdk" && !isWelcomePresentation ? (
+              {(providerType === "ai-sdk" || providerType === "openrouter") && !isWelcomePresentation ? (
                 <div className="mt-3">
                   <SettingsField label="Advanced provider config JSON" hint="Optional extra headers, etc.">
                     <Textarea
@@ -682,6 +704,7 @@ export const ProviderModelsSettingsTab = ({
                   busy ||
                   !providerLabel ||
                   (providerType === "azure-legacy" && !providerBaseUrl.trim()) ||
+                  (providerType === "openrouter" && !apiKey.trim()) ||
                   (providerType === "ai-sdk" && providerFamily === "openai-compatible" && !providerBaseUrl.trim()) ||
                   (providerType === "ai-sdk" && providerFamily !== "openai-compatible" && !apiKey.trim())
                 }

@@ -1,4 +1,4 @@
-import type { RunForgeReadiness, RunRecord } from "@buildwarden/shared";
+import type { ProviderType, RunForgeReadiness, RunRecord } from "@buildwarden/shared";
 import { Bot, CircleAlert, Clock3, FolderGit2, GitBranch, GitPullRequest, ListChecks } from "lucide-react";
 import { Badge, type BadgeProps } from "../ui/badge";
 import { ProviderBrandIcon } from "./provider-brand-icons";
@@ -20,10 +20,10 @@ const FORGE_READINESS_BADGE_TONE: Record<RunForgeReadiness, NonNullable<BadgePro
   unavailable: "neutral",
 };
 
-export const AgentRunHoverCard = ({ projectName, run }: { projectName: string; run: RunRecord }) => {
+export const AgentRunHoverCard = ({ projectName, run, providerType }: { projectName: string; run: RunRecord; providerType?: ProviderType | null }) => {
   const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
   const waitingForInput = run.pendingUserInputRequest === true || run.pendingUserInputRequest === 1;
-  const providerLabel = PROVIDER_BRAND_LABELS[run.harnessType];
+  const providerLabel = PROVIDER_BRAND_LABELS[providerType === "openrouter" ? "openrouter" : run.harnessType];
 
   return (
     <article data-agent-run-hover-card className="p-3.5 text-[var(--ec-text)]">
@@ -101,7 +101,7 @@ export const AgentRunHoverCard = ({ projectName, run }: { projectName: string; r
 
       <footer className="mt-2.5 flex min-w-0 items-center gap-2 border-t border-[var(--ec-border)] pt-2.5 text-[10px] text-[var(--ec-muted)]">
         <span className="flex min-w-0 items-center gap-1.5">
-          <ProviderBrandIcon harnessType={run.harnessType} className="size-3.5 shrink-0" />
+          <ProviderBrandIcon harnessType={run.harnessType} providerType={providerType} className="size-3.5 shrink-0" />
           <span className="truncate">{providerLabel}</span>
         </span>
         <span className="size-1 shrink-0 rounded-full bg-[var(--ec-faint)]" aria-hidden />

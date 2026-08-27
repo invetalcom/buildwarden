@@ -259,6 +259,18 @@ describe("renderer component states", () => {
       <AllRunsPage projects={[{ ...projectEntry, runs: [runRecord({ harnessType: "claude-code" })] }]} onSelectRun={vi.fn()} />,
     );
     expect(claudeMarkup).toContain("<title>Claude Code</title>");
+    const openRouterAccount = providerAccount("openrouter");
+    const openRouterMarkup = renderToStaticMarkup(
+      <AllRunsPage
+        projects={[{
+          ...projectEntry,
+          runs: [runRecord({ providerAccountId: openRouterAccount.id, harnessType: "ai-sdk" })],
+        }]}
+        providerAccounts={[openRouterAccount]}
+        onSelectRun={vi.fn()}
+      />,
+    );
+    expect(openRouterMarkup).toContain("<title>OpenRouter</title>");
   });
 
   it("renders the shared agent run hover card with expanded run context", () => {
@@ -825,7 +837,7 @@ describe("renderer component states", () => {
     ).toContain("Unlocks after the connection");
   });
 
-  it.each<ProviderType>(["ai-sdk", "azure-legacy", "codex-cli", "claude-code", "cursor-agent"])(
+  it.each<ProviderType>(["ai-sdk", "openrouter", "azure-legacy", "codex-cli", "claude-code", "cursor-agent"])(
     "renders the %s connection form",
     (providerType) => {
       const markup = renderToStaticMarkup(
@@ -857,6 +869,8 @@ describe("renderer component states", () => {
       />,
     );
     expect(failed).toContain("Could not load live models");
+    expect(failed).toContain("Enter a model ID manually or retry");
+    expect(failed).toContain("Model ID");
   });
 
   it("renders branch and pull-request workflow shells", () => {

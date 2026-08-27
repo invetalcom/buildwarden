@@ -17,6 +17,7 @@
     "@ai-sdk/openai": "^4.0.11",
     "@ai-sdk/openai-compatible": "^3.0.7",
     "@ai-sdk/xai": "^4.0.10",
+    "@openrouter/ai-sdk-provider": "^3.0.0",
     "p-retry": "^6.2.1",
     "undici": "^7.29.0"
   }

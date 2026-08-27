@@ -20,7 +20,7 @@ export const ChatAttachmentPicker = ({ files, onChange, disabled, variant = "def
   const restoringPastedTextFilesRef = useRef(new Set<File>());
   const inputId = useId();
   const restorePastedText = useComposerPastedTextRestore();
-  const acceptedFileTypes = "image/*,application/pdf,text/*,application/json,.md,.txt,.pdf,.json";
+  const acceptedFileTypes = "image/*,audio/*,video/*,application/pdf,text/*,application/json,.md,.txt,.pdf,.json";
 
   const addFromList = (list: FileList | null) => {
     if (!list?.length) return;
