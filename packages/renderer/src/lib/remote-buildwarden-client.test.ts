@@ -90,6 +90,39 @@ describe("remote BuildWarden client", () => {
     });
   });
 
+  it("allows automation reads but rejects automation changes for read-only sessions", async () => {
+    const automation = { id: "automation-1", projectId: "project-1", attachments: [] };
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as { requestId: string };
+      return rpcResponse(automation, request.requestId);
+    });
+    const client = createRemoteBuildWardenClient({ fetch: fetcher as typeof fetch });
+
+    expect(client.capabilities.automationMutations).toBe(false);
+    await expect(client.getProjectAutomation("automation-1")).resolves.toEqual(automation);
+    await expect(client.runProjectAutomationNow("automation-1")).rejects.toThrow("read-only remote client");
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it("sends automation mutations only for admin sessions", async () => {
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as { requestId: string };
+      return rpcResponse(undefined, request.requestId);
+    });
+    const client = createRemoteBuildWardenClient({
+      fetch: fetcher as typeof fetch,
+      scopes: ["state:read", "admin"],
+    });
+
+    expect(client.capabilities.automationMutations).toBe(true);
+    await client.deleteProjectAutomation("automation-1");
+    expect(JSON.parse(String((fetcher.mock.calls[0]?.[1] as RequestInit | undefined)?.body))).toMatchObject({
+      method: "deleteProjectAutomation",
+      args: ["automation-1"],
+      idempotencyKey: "request-id",
+    });
+  });
+
   it("keeps navigation and UI preferences local without mutating the host", async () => {
     const fetcher = vi.fn(async () => rpcResponse(snapshot));
     const client = createRemoteBuildWardenClient({ fetch: fetcher as typeof fetch });
@@ -272,6 +305,7 @@ describe("remote BuildWarden client", () => {
       bookmarkMutations: true,
       runListVisibilityMutations: true,
       taskMutations: true,
+      automationMutations: true,
       insightMutations: true,
       projectLabMutations: true,
       projectLoopMutations: true,

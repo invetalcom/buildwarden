@@ -3015,6 +3015,7 @@ export class AppController
     const normalizedInput = input.kind === "automation"
       ? {
           ...input,
+          yoloMode: true,
           workspaceType: this.db.getProject(input.projectId).kind === "git" ? "worktree" as const : "copy" as const,
         }
       : input;
@@ -3953,6 +3954,9 @@ export class AppController
       modelId: model.id,
       harnessType: getHarnessTypeForProvider(provider.providerType),
       mode: "code",
+      // Keep the unattended-run invariant explicit at the automation launch
+      // site as well as in createRun's normalization boundary.
+      yoloMode: true,
       workspaceType: project.kind === "git" ? "worktree" : "copy",
       baseBranch: project.kind === "git" ? automation.baseBranch ?? project.baseBranch : undefined,
       prompt: automation.prompt,

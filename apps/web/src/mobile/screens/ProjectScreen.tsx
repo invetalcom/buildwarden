@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ChatAttachmentPayload, ProjectGitBranchOverview, ProjectTaskRecord, ProjectTaskSummary } from "@buildwarden/shared";
+import type { AutomationModelOption } from "@buildwarden/renderer/automation-model-effort";
 import { GitBranch, Paperclip, Pencil, Play, Plus } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
-import { filterRuns, flattenRuns } from "../data/selectors";
+import { filterRuns, flattenRuns, runModelOptions } from "../data/selectors";
 import { useAction } from "../data/use-action";
 import { absoluteTime, compactNumber, errorMessage, relativeTime } from "../lib/format";
 import type { ProjectTab } from "../nav/mobile-router";
@@ -13,6 +14,7 @@ import { Sheet } from "../components/Sheet";
 import { MobileStoredAttachments, MobileTaskAttachmentField } from "../components/TaskAttachments";
 import { mergeMobileTaskAttachments, readMobileAttachmentFiles } from "../lib/task-attachments";
 import { ProjectSettingsPanel } from "./project/ProjectSettingsPanel";
+import { ProjectAutomationsPanel } from "./project/ProjectAutomationsPanel";
 
 const TASK_TONES = { open: "neutral", in_progress: "accent", in_review: "warning", done: "success" } as const;
 
@@ -188,6 +190,14 @@ export const ProjectScreen = ({ projectId, tab }: { projectId: string; tab: Proj
     () => (project ? filterRuns(flattenRuns([project]), "for-later", "") : []),
     [project],
   );
+  const automationModels = useMemo<AutomationModelOption[]>(() => runModelOptions(snapshot).map((model) => ({
+    id: model.modelId,
+    label: model.label,
+    modelId: snapshot.models.find((record) => record.id === model.modelId)?.modelId ?? model.modelId,
+    providerType: model.providerType,
+    providerFamily: model.providerFamily,
+    executionProfile: model.executionProfile,
+  })), [snapshot]);
 
   useEffect(() => {
     if (project) selectProject(project.project.id);
@@ -215,12 +225,13 @@ export const ProjectScreen = ({ projectId, tab }: { projectId: string; tab: Proj
       { value: "overview", label: "Overview" },
       { value: "runs", label: "Runs", ...(runs.length ? { badge: runs.length } : {}) },
       { value: "tasks", label: "Tasks", ...(project?.tasks.length ? { badge: project.tasks.length } : {}) },
+      { value: "automations", label: "Automations", ...(project?.automations?.length ? { badge: project.automations.length } : {}) },
     ];
     if (project?.project.kind === "git") base.push({ value: "branches", label: "Branches" });
     base.push({ value: "for-later", label: "For later", ...(forLater.length ? { badge: forLater.length } : {}) });
     base.push({ value: "settings", label: "Settings" });
     return base;
-  }, [forLater.length, project?.project.kind, project?.tasks.length, runs.length]);
+  }, [forLater.length, project?.automations?.length, project?.project.kind, project?.tasks.length, runs.length]);
 
   const activeTab = options.some((option) => option.value === tab) ? tab : "overview";
 
@@ -305,6 +316,8 @@ export const ProjectScreen = ({ projectId, tab }: { projectId: string; tab: Proj
 
       {activeTab === "branches" ? <BranchesTab projectId={projectId} /> : null}
 
+      {activeTab === "automations" ? <ProjectAutomationsPanel project={project} models={automationModels} onOpenRun={openRun} /> : null}
+
       {activeTab === "settings" ? <ProjectSettingsPanel project={project} /> : null}
 
       {activeTab === "for-later" ? (
@@ -319,7 +332,7 @@ export const ProjectScreen = ({ projectId, tab }: { projectId: string; tab: Proj
       ) : null}
 
       {/* The settings tab is a form; a floating action button would sit on top of its controls. */}
-      {client.capabilities.runMutations && activeTab !== "settings" && activeTab !== "tasks" ? (
+      {client.capabilities.runMutations && activeTab !== "settings" && activeTab !== "tasks" && activeTab !== "automations" ? (
         <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center">
           <Button
             className="pointer-events-auto h-12 rounded-full px-5 shadow-[var(--ec-action-shadow)]"

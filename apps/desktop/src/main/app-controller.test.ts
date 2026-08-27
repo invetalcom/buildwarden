@@ -228,6 +228,7 @@ describe("AppController settings and lightweight workflows", () => {
       baseBranch: "main",
       kind: "automation",
       workspaceType: "worktree",
+      yoloMode: true,
     }));
 
     expect(listener).toHaveBeenCalledWith({
@@ -268,6 +269,7 @@ describe("AppController settings and lightweight workflows", () => {
       baseBranch: "main",
       kind: "automation",
       workspaceType: "worktree",
+      yoloMode: true,
     }));
   });
 

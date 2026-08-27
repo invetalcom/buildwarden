@@ -118,6 +118,7 @@ export const ProjectAutomationsPage = ({
   onChanged,
 }: ProjectAutomationsPageProps) => {
   const buildwarden = useBuildWardenClient();
+  const canManage = buildwarden.capabilities.automationMutations;
   const [selectedId, setSelectedId] = useState<string | null>(automations[0]?.automation.id ?? null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<EditorDraft>(() => emptyDraft(projectKind, defaultModelId, modelOptions, projectBaseBranch));
@@ -148,6 +149,7 @@ export const ProjectAutomationsPage = ({
   const maxRunCount = Math.max(1, ...automations.map((item) => item.runs.length));
 
   const startNew = () => {
+    if (!canManage) return;
     editRequestIdRef.current += 1;
     setSelectedId(null);
     setDraft(emptyDraft(projectKind, defaultModelId, modelOptions, projectBaseBranch));
@@ -158,7 +160,7 @@ export const ProjectAutomationsPage = ({
   };
 
   const editSelected = async () => {
-    if (!selectedItem) return;
+    if (!canManage || !selectedItem) return;
     const automationId = selectedItem.automation.id;
     const requestId = editRequestIdRef.current + 1;
     editRequestIdRef.current = requestId;
@@ -182,6 +184,7 @@ export const ProjectAutomationsPage = ({
   };
 
   const save = async () => {
+    if (!canManage) return;
     const automationId = selectedId;
     const requestId = editRequestIdRef.current + 1;
     editRequestIdRef.current = requestId;
@@ -214,7 +217,7 @@ export const ProjectAutomationsPage = ({
   };
 
   const runNow = async () => {
-    if (!selectedItem) return;
+    if (!canManage || !selectedItem) return;
     setBusy(true);
     setError(null);
     try {
@@ -228,7 +231,7 @@ export const ProjectAutomationsPage = ({
   };
 
   const toggleEnabled = async () => {
-    if (!selectedItem) return;
+    if (!canManage || !selectedItem) return;
     setBusy(true);
     setError(null);
     try {
@@ -244,7 +247,7 @@ export const ProjectAutomationsPage = ({
   };
 
   const remove = async () => {
-    if (!selectedItem || !window.confirm(`Delete “${selectedItem.automation.name}” and all of its run history?`)) return;
+    if (!canManage || !selectedItem || !window.confirm(`Delete “${selectedItem.automation.name}” and all of its run history?`)) return;
     const automationId = selectedItem.automation.id;
     setBusy(true);
     setError(null);
@@ -270,7 +273,9 @@ export const ProjectAutomationsPage = ({
             <h2 className="flex items-center gap-2 text-base font-semibold text-[var(--ec-text)]"><CalendarClock className="size-4 text-[var(--ec-accent)]" />Automations</h2>
             <p className="mt-0.5 text-xs text-[var(--ec-muted)]">Run saved prompts on a cron schedule. Times use each automation’s configured time zone.</p>
           </div>
-          <Button type="button" size="sm" onClick={startNew}><Plus className="size-3.5" />New automation</Button>
+          {canManage ? <Button type="button" size="sm" onClick={startNew}><Plus className="size-3.5" />New automation</Button> : (
+            <Badge tone="neutral" className="px-2 py-1 text-[10px]">Read only</Badge>
+          )}
         </div>
 
         <section className="grid grid-cols-2 gap-2 lg:grid-cols-4">
@@ -341,7 +346,7 @@ export const ProjectAutomationsPage = ({
             <Card className="min-w-0 p-0">
               <div className="flex flex-wrap items-start justify-between gap-2 border-b border-[var(--ec-border)] p-4">
                 <div className="min-w-0"><div className="flex items-center gap-2"><h3 className="truncate text-sm font-semibold text-[var(--ec-text)]">{selectedItem.automation.name}</h3><Badge tone={selectedItem.automation.enabled ? "completed" : "neutral"} className="px-2 py-0.5 text-[10px]">{selectedItem.automation.enabled ? "Enabled" : "Paused"}</Badge></div><p className="mt-1 line-clamp-2 text-xs leading-5 text-[var(--ec-muted)]">{selectedItem.automation.prompt}</p></div>
-                <div className="flex flex-wrap justify-end gap-1"><Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => void toggleEnabled()}>{selectedItem.automation.enabled ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}{selectedItem.automation.enabled ? "Pause schedule" : "Resume schedule"}</Button><Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => void runNow()}><Play className="size-3.5" />Run now</Button><Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => void editSelected()}><Pencil className="size-3.5" /></Button><Button type="button" size="sm" variant="ghost" disabled={busy} className="text-[var(--ec-danger)]" onClick={() => void remove()}><Trash2 className="size-3.5" /></Button></div>
+                {canManage ? <div className="flex flex-wrap justify-end gap-1"><Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => void toggleEnabled()}>{selectedItem.automation.enabled ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}{selectedItem.automation.enabled ? "Pause schedule" : "Resume schedule"}</Button><Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => void runNow()}><Play className="size-3.5" />Run now</Button><Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => void editSelected()}><Pencil className="size-3.5" /></Button><Button type="button" size="sm" variant="ghost" disabled={busy} className="text-[var(--ec-danger)]" onClick={() => void remove()}><Trash2 className="size-3.5" /></Button></div> : null}
               </div>
               <div className={`grid gap-px border-b border-[var(--ec-border)] bg-[var(--ec-border)] ${projectKind === "git" ? "sm:grid-cols-5" : "sm:grid-cols-4"}`}>
                 {[{ label: "Schedule", value: selectedItem.automation.cronExpression }, { label: "Next run", value: formatScheduledTime(selectedItem.automation.nextRunAt, selectedItem.automation.timeZone) }, { label: "Workspace", value: projectKind === "git" ? "Isolated worktree" : "Isolated folder copy" }, ...(projectKind === "git" ? [{ label: "Branch", value: selectedItem.automation.baseBranch ?? projectBaseBranch }] : []), { label: "Runs", value: String(selectedItem.runs.length) }].map((item) => <div key={item.label} className="bg-[var(--ec-panel)] p-3"><p className="text-[9px] uppercase tracking-[0.14em] text-[var(--ec-faint)]">{item.label}</p><p className="mt-1 truncate text-xs font-medium text-[var(--ec-text)]">{item.value}</p></div>)}
@@ -351,7 +356,7 @@ export const ProjectAutomationsPage = ({
               {error ? <p className="px-3 pb-3 text-xs text-[var(--ec-danger)]">{error}</p> : null}
             </Card>
           ) : (
-            <Card className="flex min-h-72 flex-col items-center justify-center p-8 text-center"><CalendarClock className="size-8 text-[var(--ec-faint)]" /><h3 className="mt-3 text-sm font-semibold text-[var(--ec-text)]">Schedule recurring agent work</h3><p className="mt-1 max-w-md text-xs leading-5 text-[var(--ec-muted)]">Save a prompt, attachments, model, effort, and cron schedule. Automation runs stay out of normal run lists while remaining fully inspectable here.</p><Button type="button" size="sm" className="mt-4" onClick={startNew}><Plus className="size-3.5" />Create automation</Button></Card>
+            <Card className="flex min-h-72 flex-col items-center justify-center p-8 text-center"><CalendarClock className="size-8 text-[var(--ec-faint)]" /><h3 className="mt-3 text-sm font-semibold text-[var(--ec-text)]">Schedule recurring agent work</h3><p className="mt-1 max-w-md text-xs leading-5 text-[var(--ec-muted)]">{canManage ? "Save a prompt, attachments, model, effort, and cron schedule. Automation runs stay out of normal run lists while remaining fully inspectable here." : "No automations have been configured for this project. This remote session is read-only."}</p>{canManage ? <Button type="button" size="sm" className="mt-4" onClick={startNew}><Plus className="size-3.5" />Create automation</Button> : null}</Card>
           )}
         </div>
       </div>

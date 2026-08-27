@@ -54,6 +54,39 @@ afterEach(async () => {
 });
 
 describe("project automations create flow", () => {
+  it("keeps automation history visible without mutation controls in read-only web sessions", async () => {
+    const electronClient = createElectronBuildWardenClient({} as DesktopApi);
+    const client = {
+      ...electronClient,
+      capabilities: { ...electronClient.capabilities, platform: "web" as const, automationMutations: false },
+    };
+
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(
+      <BuildWardenClientProvider client={client}>
+        <ProjectAutomationsPage
+          projectId="project-1"
+          projectKind="git"
+          automations={[automationItem()]}
+          modelOptions={[]}
+          defaultModelId="model-1"
+          availableBranches={["main"]}
+          projectBaseBranch="main"
+          onOpenRun={vi.fn()}
+          onChanged={vi.fn()}
+        />
+      </BuildWardenClientProvider>,
+    ));
+
+    expect(container.textContent).toContain("Existing automation");
+    expect(container.textContent).toContain("Read only");
+    expect(container.textContent).not.toContain("New automation");
+    expect(container.textContent).not.toContain("Pause schedule");
+    expect(container.textContent).not.toContain("Run now");
+  });
+
   it("creates a second automation instead of updating the selected one", async () => {
     const createdAutomation = { ...existingAutomation, id: "automation-2", name: "" };
     const createProjectAutomation = vi.fn(async () => createdAutomation);

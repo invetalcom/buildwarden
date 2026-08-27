@@ -8,6 +8,7 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./automation-model-effort": "./src/components/app/automation-model-effort.ts",
     "./logic": "./src/logic.ts",
     "./icons": "./src/icons.ts",
     "./styles.css": "./src/styles.css"

@@ -598,6 +598,28 @@ const bootstrap = async (): Promise<void> => {
   const validateProjectTaskPrompt = defineRemoteArgsValidator<"generateProjectTaskRunPrompt">(
     (args) => args.length === 1 && hasRemoteStringFields(args[0], ["projectId", "title", "notes", "modelId"]),
   );
+  const hasValidProjectAutomationFields = (input: Record<string, unknown>, partial: boolean): boolean => {
+    const allowedFields = new Set([
+      "name", "prompt", "attachments", "cronExpression", "timeZone", "modelId", "effort", "executionOptions",
+      "workspaceType", "baseBranch", "onlyIfPreviousFinished", "enabled",
+    ]);
+    if (!Object.keys(input).every((field) => allowedFields.has(field))) return false;
+    if (!partial && !["name", "prompt", "cronExpression", "modelId", "workspaceType"]
+      .every((field) => typeof input[field] === "string")) return false;
+    return ["name", "prompt", "cronExpression", "timeZone", "modelId", "effort"]
+      .every((field) => input[field] === undefined || typeof input[field] === "string") &&
+      (input.attachments === undefined || Array.isArray(input.attachments)) &&
+      (input.executionOptions === undefined || isRemoteRecord(input.executionOptions)) &&
+      (input.workspaceType === undefined || input.workspaceType === "worktree" || input.workspaceType === "copy") &&
+      (input.baseBranch === undefined || input.baseBranch === null || typeof input.baseBranch === "string") &&
+      ["onlyIfPreviousFinished", "enabled"].every((field) => input[field] === undefined || typeof input[field] === "boolean");
+  };
+  const validateProjectAutomationCreate = defineRemoteArgsValidator<"createProjectAutomation">((args) =>
+    args.length === 2 && typeof args[0] === "string" && isRemoteRecord(args[1]) &&
+    hasValidProjectAutomationFields(args[1], false));
+  const validateProjectAutomationUpdate = defineRemoteArgsValidator<"updateProjectAutomation">((args) =>
+    args.length === 2 && typeof args[0] === "string" && isRemoteRecord(args[1]) &&
+    Object.keys(args[1]).length > 0 && hasValidProjectAutomationFields(args[1], true));
   const validateProjectInsight = defineRemoteArgsValidator<"generateProjectInsight">((args) => {
     if (args.length !== 1 || !hasRemoteStringFields(args[0], ["projectId", "kind"])) return false;
     const input = args[0] as Record<string, unknown>;
@@ -896,6 +918,23 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("updateProjectTask", (taskId, input) => controller.updateProjectTask(taskId, input), validateProjectTaskUpdate, "admin", true);
   remoteOperations.register("deleteProjectTask", (taskId) => controller.deleteProjectTask(taskId), validateSingleRemoteStringArg, "admin", true);
   remoteOperations.register("generateProjectTaskRunPrompt", (input) => controller.generateProjectTaskRunPrompt(input), validateProjectTaskPrompt, "admin", true);
+  remoteOperations.register("getProjectAutomation", (automationId) => controller.getProjectAutomation(automationId), validateSingleRemoteStringArg);
+  remoteOperations.register(
+    "createProjectAutomation",
+    (projectId, input) => controller.createProjectAutomation(projectId, input),
+    validateProjectAutomationCreate,
+    "admin",
+    true,
+  );
+  remoteOperations.register(
+    "updateProjectAutomation",
+    (automationId, input) => controller.updateProjectAutomation(automationId, input),
+    validateProjectAutomationUpdate,
+    "admin",
+    true,
+  );
+  remoteOperations.register("deleteProjectAutomation", (automationId) => controller.deleteProjectAutomation(automationId), validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register("runProjectAutomationNow", (automationId) => controller.runProjectAutomationNow(automationId), validateSingleRemoteStringArg, "admin", true);
   remoteOperations.register("generateProjectInsight", (input) => controller.generateProjectInsight(input), validateProjectInsight, "admin", true);
   remoteOperations.register("queryProjectActivity", (input) => controller.queryProjectActivity(input), validateProjectActivityQuery);
   remoteOperations.register("runProjectLab", (input) => controller.runProjectLab(input), validateProjectLabRun, "admin", true);
