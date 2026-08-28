@@ -9103,8 +9103,18 @@ export class AppController
       },
     });
 
-    this.db.updateRunStatus(run.id, "running");
+    const runningRun = this.db.updateRunStatus(run.id, "running");
     this.updateWorktreeStatus(run, "busy");
+    // Step events intentionally omit their full run row on the remote wire. Publish the status
+    // transition separately so every client observes preparing -> running without bloating chunks.
+    this.emitEvent({
+      runId: run.id,
+      type: "status",
+      title: "Run started",
+      content: "The agent is running.",
+      createdAt: new Date().toISOString(),
+      run: runningRun,
+    });
 
     worker.on("message", async (message: unknown) => {
       const payload = message as
@@ -10151,6 +10161,14 @@ export class AppController
     });
 
     this.db.updateChatStatus(chat.id, "running");
+    // As with runs, keep streamed steps slim while sending the authoritative status transition once.
+    this.emitChatEvent(chat.id, {
+      runId: chat.id,
+      type: "status",
+      title: "Chat started",
+      content: "The assistant is responding.",
+      createdAt: new Date().toISOString(),
+    });
 
     worker.on("message", async (message: unknown) => {
       const payload = message as ChatWorkerPayload;
