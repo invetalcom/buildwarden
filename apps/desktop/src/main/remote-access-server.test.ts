@@ -42,6 +42,15 @@ const emptySnapshot = {
   settings: {},
 } as unknown as AppSnapshot;
 
+/** Fixed ceilings for deliberately repetitive fixtures, guarding the remote transport against regressions. */
+const REMOTE_TRANSFER_BUDGETS = {
+  brotliJsonRatio: 0.02,
+  gzipJsonRatio: 0.02,
+  brotliStaticRatio: 0.02,
+  projectedLiveEventBytes: 4_096,
+  projectedLiveEventRatio: 0.05,
+} as const;
+
 const startedServers: RemoteAccessServer[] = [];
 const databases: Array<{ db: BuildWardenDatabase; directory: string }> = [];
 const temporaryDirectories: string[] = [];
@@ -673,7 +682,9 @@ describe("remote access authentication", () => {
     expect(assetResponse.headers.get("cache-control")).toContain("immutable");
     expect(assetResponse.headers.get("content-encoding")).toBe("br");
     expect(assetResponse.headers.get("vary")).toContain("Accept-Encoding");
-    expect(Number(assetResponse.headers.get("content-length"))).toBeLessThan(Buffer.byteLength(assetBody));
+    expect(Number(assetResponse.headers.get("content-length"))).toBeLessThanOrEqual(
+      Buffer.byteLength(assetBody) * REMOTE_TRANSFER_BUDGETS.brotliStaticRatio,
+    );
     await expect(assetResponse.text()).resolves.toBe(assetBody);
 
     const headResponse = await fetch(`${info.baseUrl}/assets/app-ABC12345.js`, {
@@ -802,7 +813,13 @@ describe("remote access authentication", () => {
     expect(brotliResponse.headers.get("content-encoding")).toBe("br");
     expect(refused.headers.get("content-encoding")).toBeNull();
     expect(gzipResponse.headers.get("vary")).toContain("Accept-Encoding");
-    expect(Number(gzipResponse.headers.get("content-length"))).toBeLessThan(Number(identity.headers.get("content-length")));
+    const identityBytes = Number(identity.headers.get("content-length"));
+    expect(Number(gzipResponse.headers.get("content-length"))).toBeLessThanOrEqual(
+      identityBytes * REMOTE_TRANSFER_BUDGETS.gzipJsonRatio,
+    );
+    expect(Number(brotliResponse.headers.get("content-length"))).toBeLessThanOrEqual(
+      identityBytes * REMOTE_TRANSFER_BUDGETS.brotliJsonRatio,
+    );
     expect(Number(brotliResponse.headers.get("content-length"))).toBeLessThan(Number(gzipResponse.headers.get("content-length")));
     await expect(brotliResponse.json()).resolves.toMatchObject({ ok: true, result: largeSnapshot });
   });
@@ -1092,7 +1109,10 @@ describe("remote access authentication", () => {
       command: "pnpm test",
       attachmentNames: ["trace.txt"],
     });
-    expect(JSON.stringify(projected).length).toBeLessThan(JSON.stringify(fullEvent).length / 20);
+    const projectedBytes = Buffer.byteLength(JSON.stringify(projected));
+    const fullBytes = Buffer.byteLength(JSON.stringify(fullEvent));
+    expect(projectedBytes).toBeLessThanOrEqual(REMOTE_TRANSFER_BUDGETS.projectedLiveEventBytes);
+    expect(projectedBytes).toBeLessThanOrEqual(fullBytes * REMOTE_TRANSFER_BUDGETS.projectedLiveEventRatio);
   });
 
   it("keeps authoritative run rows on non-step events", () => {
