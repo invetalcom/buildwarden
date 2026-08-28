@@ -4,6 +4,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { extname, resolve, sep } from "node:path";
 import type { Duplex } from "node:stream";
+import { promisify } from "node:util";
+import { brotliCompress, constants as zlibConstants, gzip } from "node:zlib";
 import WebSocket, { WebSocketServer, type RawData } from "ws";
 import {
   DEFAULT_REMOTE_ACCESS_PORT,
@@ -71,6 +73,9 @@ const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
 const MAX_BROWSER_RUN_FILTERS = 8;
 const MAX_WEBSOCKET_BACKPRESSURE_BYTES = 1_048_576;
+const MIN_COMPRESSIBLE_RESPONSE_BYTES = 1_024;
+const gzipAsync = promisify(gzip);
+const brotliCompressAsync = promisify(brotliCompress);
 
 const STATIC_CONTENT_TYPES: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
@@ -586,20 +591,82 @@ const parseRemoteRpcRequest = (payload: unknown): ParsedRemoteRpcRequest => {
   };
 };
 
+type HttpContentEncoding = "br" | "gzip";
+
+const acceptedContentEncoding = (header: string | string[] | undefined): HttpContentEncoding | null => {
+  const raw = Array.isArray(header) ? header.join(",") : (header ?? "");
+  const qualities = new Map<string, number>();
+  for (const token of raw.split(",")) {
+    const [namePart, ...parameters] = token.trim().toLowerCase().split(";");
+    const name = namePart?.trim();
+    if (!name) continue;
+    let quality = 1;
+    for (const parameter of parameters) {
+      const match = /^q\s*=\s*(0(?:\.\d+)?|1(?:\.0+)?)$/.exec(parameter.trim());
+      if (match) quality = Number(match[1]);
+    }
+    qualities.set(name, Math.max(qualities.get(name) ?? 0, quality));
+  }
+  const wildcardQuality = qualities.get("*") ?? 0;
+  const brotliQuality = qualities.get("br") ?? wildcardQuality;
+  const gzipQuality = qualities.get("gzip") ?? wildcardQuality;
+  if (brotliQuality <= 0 && gzipQuality <= 0) return null;
+  return brotliQuality >= gzipQuality ? "br" : "gzip";
+};
+
+const appendVaryHeader = (response: ServerResponse, value: string): string => {
+  const existing = response.getHeader("Vary");
+  const values = (Array.isArray(existing) ? existing.join(",") : String(existing ?? ""))
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (!values.some((entry) => entry.toLowerCase() === value.toLowerCase())) values.push(value);
+  return values.join(", ");
+};
+
+const compressJsonBody = async (body: Buffer, encoding: HttpContentEncoding): Promise<Buffer> =>
+  encoding === "br"
+    ? brotliCompressAsync(body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 5 } })
+    : gzipAsync(body, { level: 6 });
+
 const writeJson = (
   response: ServerResponse,
   statusCode: number,
   body: unknown,
   extraHeaders: Record<string, string> = {},
 ): void => {
-  response.writeHead(statusCode, {
+  const serialized = Buffer.from(JSON.stringify(body));
+  const baseHeaders: Record<string, string> = {
     "Cache-Control": "no-store",
     "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
     "Content-Type": "application/json; charset=utf-8",
     "X-Content-Type-Options": "nosniff",
     ...extraHeaders,
+  };
+  const encoding = serialized.byteLength >= MIN_COMPRESSIBLE_RESPONSE_BYTES
+    ? acceptedContentEncoding(response.req.headers["accept-encoding"])
+    : null;
+  if (!encoding) {
+    response.writeHead(statusCode, { ...baseHeaders, "Content-Length": String(serialized.byteLength) });
+    response.end(serialized);
+    return;
+  }
+
+  void compressJsonBody(serialized, encoding).then((compressed) => {
+    if (response.destroyed) return;
+    const useCompressed = compressed.byteLength < serialized.byteLength;
+    response.writeHead(statusCode, {
+      ...baseHeaders,
+      "Content-Length": String(useCompressed ? compressed.byteLength : serialized.byteLength),
+      "Vary": appendVaryHeader(response, "Accept-Encoding"),
+      ...(useCompressed ? { "Content-Encoding": encoding } : {}),
+    });
+    response.end(useCompressed ? compressed : serialized);
+  }).catch(() => {
+    if (response.destroyed) return;
+    response.writeHead(statusCode, { ...baseHeaders, "Content-Length": String(serialized.byteLength) });
+    response.end(serialized);
   });
-  response.end(JSON.stringify(body));
 };
 
 const normalizedRequestOrigin = (originHeader: string | undefined): string | null => {

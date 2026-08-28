@@ -454,11 +454,12 @@ describe("remote access authentication", () => {
     trustedWebOrigins?: () => readonly string[],
     webSocketAuthenticationTimeoutMs?: number,
     browserOptions: Pick<RemoteAccessServerOptions, "onBrowserInput" | "onBrowserSubscriptionChange" | "onServerError"> = {},
+    snapshot: AppSnapshot = emptySnapshot,
   ) => {
     const db = await createDatabase();
     const auth = new RemoteAuthService({ store: db, credentialKey: new Uint8Array(32).fill(7) });
     const operations = new RemoteOperationRegistry();
-    operations.register("getSnapshot", async () => emptySnapshot, validateNoRemoteArgs);
+    operations.register("getSnapshot", async () => snapshot, validateNoRemoteArgs);
     let publishEvent: (event: RemoteStreamEvent) => void = () => undefined;
     const events: RemoteHostEventSource = {
       subscribe(listener) {
@@ -756,6 +757,38 @@ describe("remote access authentication", () => {
     });
 
     await expect(response.json()).resolves.toMatchObject({ ok: false, error: { code: "invalid-request" } });
+  });
+
+  it("compresses large JSON RPC responses with negotiated Brotli or gzip", async () => {
+    const largeSnapshot = {
+      ...emptySnapshot,
+      settings: { largeFixture: "compressible-buildwarden-data-".repeat(8_000) },
+    } satisfies AppSnapshot;
+    const { auth, info } = await startServer(undefined, undefined, undefined, undefined, {}, largeSnapshot);
+    const { cookie } = await pair(info.baseUrl, auth);
+    const fetchSnapshot = (acceptEncoding: string) => fetch(`${info.baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
+      method: "POST",
+      headers: {
+        "Accept-Encoding": acceptEncoding,
+        "Content-Type": "application/json",
+        Cookie: cookie,
+      },
+      body: rpcBody(`compression-${acceptEncoding.replace(/\W/g, "-")}`),
+    });
+
+    const identity = await fetchSnapshot("identity");
+    const gzipResponse = await fetchSnapshot("gzip");
+    const brotliResponse = await fetchSnapshot("br, gzip;q=0.8");
+    const refused = await fetchSnapshot("br;q=0, gzip;q=0");
+
+    expect(identity.headers.get("content-encoding")).toBeNull();
+    expect(gzipResponse.headers.get("content-encoding")).toBe("gzip");
+    expect(brotliResponse.headers.get("content-encoding")).toBe("br");
+    expect(refused.headers.get("content-encoding")).toBeNull();
+    expect(gzipResponse.headers.get("vary")).toContain("Accept-Encoding");
+    expect(Number(gzipResponse.headers.get("content-length"))).toBeLessThan(Number(identity.headers.get("content-length")));
+    expect(Number(brotliResponse.headers.get("content-length"))).toBeLessThan(Number(gzipResponse.headers.get("content-length")));
+    await expect(brotliResponse.json()).resolves.toMatchObject({ ok: true, result: largeSnapshot });
   });
 
   it("separates malformed and oversized request bodies from internal failures", async () => {
