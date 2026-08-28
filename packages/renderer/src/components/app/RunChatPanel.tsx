@@ -18,6 +18,7 @@ import { ChatTranscript } from "./ChatTranscript";
 import { RunComposer } from "./RunComposer";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { buildRunReasoningInput } from "./app-model";
+import { applyLiveChatEventToDetail } from "../../lib/live-state";
 
 const safeParseMetadata = (value: string) => {
   try {
@@ -88,7 +89,10 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
   useEffect(() => {
     const unsubscribe = buildwarden.onChatEvent((event) => {
       if (event.chatId !== chatIdRef.current) return;
-      void loadRunChat();
+      if (event.step || event.chat) {
+        setDetail((current) => current ? applyLiveChatEventToDetail(current, event) : current);
+      }
+      if (!event.step) void loadRunChat();
     });
     return unsubscribe;
   }, [buildwarden, loadRunChat]);

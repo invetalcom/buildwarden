@@ -138,6 +138,12 @@ import {
 } from "./components/app/run-workspace-layout";
 import { useShellApprovalQueue } from "./components/app/use-shell-approval-queue";
 import { useSkillsSettings } from "./components/app/use-skills-settings";
+import {
+  applyLiveChatEventToDetail,
+  applyLiveChatToSnapshot,
+  applyLiveRunEventToDetail,
+  applyLiveRunToSnapshot,
+} from "./lib/live-state";
 import { useWelcomeFlow } from "./components/app/use-welcome-flow";
 import { buildProviderAccountConfig } from "./lib/provider-account-config";
 import { RunActionDialogs } from "./components/app/RunActionDialogs";
@@ -1140,13 +1146,34 @@ export const App = () => {
         removeShellApprovalsByRunId(event.runId);
       }
 
-      scheduleSnapshotRefresh();
       const isTerminalRunEvent =
         event.title === "Run completed" || event.title === "Run failed" || event.title === "Run cancelled";
-      void refreshRunDetailForActiveRunEvent(event.runId, {
-        immediate: isTerminalRunEvent,
-        refreshDiff: event.type === "diff-updated" || isTerminalRunEvent,
-      });
+      if (event.run) {
+        setSnapshot((current) => applyLiveRunToSnapshot(current, event.run!));
+      } else {
+        scheduleSnapshotRefresh();
+      }
+      if (event.step || event.run) {
+        mergeRunDetailForRun(event.runId, (detail) => applyLiveRunEventToDetail(detail, event));
+      }
+      if (!event.step || event.type === "diff-updated" || isTerminalRunEvent) {
+        void refreshRunDetailForActiveRunEvent(event.runId, {
+          immediate: isTerminalRunEvent,
+          refreshDiff: event.type === "diff-updated" || isTerminalRunEvent,
+        });
+      }
+    });
+
+    const unsubscribeChat = buildwarden.onChatEvent((event) => {
+      if (event.chat) {
+        setSnapshot((current) => applyLiveChatToSnapshot(current, event.chat!));
+        setSelectedChat((current) => current?.id === event.chatId ? event.chat! : current);
+      } else {
+        scheduleSnapshotRefresh();
+      }
+      if (event.step || event.chat) {
+        setChatDetail((current) => current?.chat.id === event.chatId ? applyLiveChatEventToDetail(current, event) : current);
+      }
     });
 
     const unsubscribeWarning = buildwarden.onAppWarning((warning) => {
@@ -1176,6 +1203,7 @@ export const App = () => {
 
     return () => {
       unsubscribe();
+      unsubscribeChat();
       unsubscribeWarning();
       unsubscribeAutomationStarted();
       unsubscribeLoopChanged();
@@ -1190,6 +1218,7 @@ export const App = () => {
     loadDetectedCursorInstallation,
     loadNetworkProxySettings,
     loadSnapshot,
+    mergeRunDetailForRun,
     enqueueShellApproval,
     refreshRunDetailForActiveRunEvent,
     removeShellApprovalByRequestId,

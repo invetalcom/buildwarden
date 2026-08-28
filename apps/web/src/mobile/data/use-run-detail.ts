@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RunDetail, RunWorktreeDiffResult } from "@buildwarden/shared";
 import type { BuildWardenClient } from "@buildwarden/renderer";
+import { applyLiveRunEventToDetail } from "@buildwarden/renderer/logic";
 import { errorMessage } from "../lib/format";
 
 const RELOAD_DEBOUNCE_MS = 400;
@@ -103,6 +104,10 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
     if (!runId) return;
     const unsubscribe = client.onRunEvent((event) => {
       if (event.runId !== runId) return;
+      if (event.step || event.run) {
+        setDetail((current) => current ? applyLiveRunEventToDetail(current, event) : current);
+      }
+      if (event.step) return;
       if (timerRef.current !== null) return;
       timerRef.current = window.setTimeout(() => {
         timerRef.current = null;

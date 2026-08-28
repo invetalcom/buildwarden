@@ -1714,20 +1714,21 @@ export class BuildWardenDatabase {
     title: string,
     content: string,
     metadata?: Record<string, unknown>,
-  ): { id: string } {
+  ): ChatStepRecord {
     const id = createId();
     const metadataJson = JSON.stringify(metadata ?? {});
+    const createdAt = nowIso();
     this.run(
       `
       insert into chat_steps (id, chat_id, event_type, title, content, metadata_json, created_at)
       values (?, ?, ?, ?, ?, ?, ?)
       `,
-      [id, chatId, eventType, title, content, metadataJson, nowIso()],
+      [id, chatId, eventType, title, content, metadataJson, createdAt],
     );
-    return { id };
+    return { id, chatId, eventType, title, content, metadataJson, createdAt };
   }
 
-  updateChatStep(stepId: string, updates: { title?: string; content?: string; metadataJson?: string }): void {
+  updateChatStep(stepId: string, updates: { title?: string; content?: string; metadataJson?: string }): ChatStepRecord {
     const parts: string[] = [];
     const values: unknown[] = [];
     if (updates.title !== undefined) {
@@ -1742,9 +1743,17 @@ export class BuildWardenDatabase {
       parts.push("metadata_json = ?");
       values.push(updates.metadataJson);
     }
-    if (parts.length === 0) return;
-    values.push(stepId);
-    this.run(`update chat_steps set ${parts.join(", ")} where id = ?`, values);
+    if (parts.length > 0) {
+      values.push(stepId);
+      this.run(`update chat_steps set ${parts.join(", ")} where id = ?`, values);
+    }
+    const step = this.first<ChatStepRecord>(
+      `select id, chat_id as chatId, event_type as eventType, title, content,
+        metadata_json as metadataJson, created_at as createdAt from chat_steps where id = ?`,
+      [stepId],
+    );
+    if (!step) throw new Error(`Chat step not found: ${stepId}`);
+    return step;
   }
 
   deleteChat(chatId: string): void {

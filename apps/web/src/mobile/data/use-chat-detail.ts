@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatDetail } from "@buildwarden/shared";
 import type { BuildWardenClient } from "@buildwarden/renderer";
+import { applyLiveChatEventToDetail } from "@buildwarden/renderer/logic";
 import { errorMessage } from "../lib/format";
 
 const RELOAD_DEBOUNCE_MS = 300;
@@ -49,7 +50,12 @@ export const useChatDetail = (client: BuildWardenClient, chatId: string | null):
   useEffect(() => {
     if (!chatId) return;
     const unsubscribe = client.onChatEvent((event) => {
-      if (event.chatId !== chatId || timerRef.current !== null) return;
+      if (event.chatId !== chatId) return;
+      if (event.step || event.chat) {
+        setDetail((current) => current ? applyLiveChatEventToDetail(current, event) : current);
+      }
+      if (event.step) return;
+      if (timerRef.current !== null) return;
       timerRef.current = window.setTimeout(() => {
         timerRef.current = null;
         void load(true);
