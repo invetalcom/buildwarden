@@ -1113,6 +1113,23 @@ describe("remote access authentication", () => {
     const fullBytes = Buffer.byteLength(JSON.stringify(fullEvent));
     expect(projectedBytes).toBeLessThanOrEqual(REMOTE_TRANSFER_BUDGETS.projectedLiveEventBytes);
     expect(projectedBytes).toBeLessThanOrEqual(fullBytes * REMOTE_TRANSFER_BUDGETS.projectedLiveEventRatio);
+
+    const unicodeContent = "😀".repeat(5_000);
+    const unicodeEvent = {
+      ...fullEvent,
+      payload: {
+        ...projected.payload,
+        content: unicodeContent,
+        step: { ...projected.payload.step!, content: unicodeContent },
+      },
+    } as RemoteStreamEvent;
+    const unicodeProjected = projectRemoteStreamEvent(unicodeEvent);
+    if (unicodeProjected.event !== "run") throw new Error("Expected a run event.");
+    const unicodePreview = unicodeProjected.payload.step?.content ?? "";
+    const unicodeHead = unicodePreview.split("\n\n…", 1)[0] ?? "";
+    expect(Buffer.byteLength(unicodePreview)).toBeLessThanOrEqual(2_048);
+    expect(unicodeHead).not.toContain("�");
+    expect([...unicodeHead].every((character) => character === "😀")).toBe(true);
   });
 
   it("keeps authoritative run rows on non-step events", () => {

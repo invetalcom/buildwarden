@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { extname, resolve, sep } from "node:path";
 import type { Duplex } from "node:stream";
+import { StringDecoder } from "node:string_decoder";
 import { promisify } from "node:util";
 import { brotliCompress, constants as zlibConstants, gzip } from "node:zlib";
 import WebSocket, { WebSocketServer, type RawData } from "ws";
@@ -1070,12 +1071,12 @@ export const shouldCompressRemoteWebSocketMessage = (message: RemoteWebSocketSer
 const REMOTE_INTERNAL_METADATA_KEYS = new Set(["providerSessionRuntime", "resumeCheckpoint"]);
 
 const truncateRemoteLiveText = (value: string, maximumBytes: number): string => {
-  if (Buffer.byteLength(value) <= maximumBytes) return value;
+  const encoded = Buffer.from(value, "utf8");
+  if (encoded.byteLength <= maximumBytes) return value;
   const suffix = "\n\n… live preview truncated; full content is available after refresh.";
-  const suffixBytes = Buffer.byteLength(suffix);
-  let end = Math.min(value.length, Math.max(0, maximumBytes - suffixBytes));
-  while (end > 0 && Buffer.byteLength(value.slice(0, end)) + suffixBytes > maximumBytes) end -= 1;
-  return `${value.slice(0, end)}${suffix}`;
+  const keepBytes = Math.max(0, maximumBytes - Buffer.byteLength(suffix));
+  const head = new StringDecoder("utf8").write(encoded.subarray(0, keepBytes));
+  return `${head}${suffix}`;
 };
 
 const projectRemoteMetadata = (metadata: Record<string, unknown> | undefined): Record<string, unknown> | undefined => {
