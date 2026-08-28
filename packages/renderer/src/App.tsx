@@ -1150,7 +1150,7 @@ export const App = () => {
         event.title === "Run completed" || event.title === "Run failed" || event.title === "Run cancelled";
       if (event.run) {
         setSnapshot((current) => applyLiveRunToSnapshot(current, event.run!));
-      } else {
+      } else if (!event.step) {
         scheduleSnapshotRefresh();
       }
       if (event.step || event.run) {
@@ -1168,7 +1168,7 @@ export const App = () => {
       if (event.chat) {
         setSnapshot((current) => applyLiveChatToSnapshot(current, event.chat!));
         setSelectedChat((current) => current?.id === event.chatId ? event.chat! : current);
-      } else {
+      } else if (!event.step) {
         scheduleSnapshotRefresh();
       }
       if (event.step || event.chat) {

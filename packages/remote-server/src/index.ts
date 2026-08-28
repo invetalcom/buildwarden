@@ -76,6 +76,8 @@ const MAX_BROWSER_RUN_FILTERS = 8;
 const MAX_WEBSOCKET_BACKPRESSURE_BYTES = 1_048_576;
 const MIN_COMPRESSIBLE_WEBSOCKET_BYTES = 512;
 const MIN_COMPRESSIBLE_RESPONSE_BYTES = 1_024;
+const MAX_REMOTE_LIVE_TOOL_CONTENT_BYTES = 2_048;
+const MAX_REMOTE_LIVE_METADATA_STRING_BYTES = 8_192;
 const MAX_STATIC_COMPRESSION_CACHE_BYTES = 64 * 1_024 * 1_024;
 const gzipAsync = promisify(gzip);
 const brotliCompressAsync = promisify(brotliCompress);
@@ -1065,6 +1067,90 @@ export const shouldCompressRemoteWebSocketMessage = (message: RemoteWebSocketSer
   message.type !== "event" || message.event !== "browser" ||
   (message.payload as RemoteStreamEventPayloadMap["browser"]).type !== "frame";
 
+const REMOTE_INTERNAL_METADATA_KEYS = new Set(["providerSessionRuntime", "resumeCheckpoint"]);
+
+const truncateRemoteLiveText = (value: string, maximumBytes: number): string => {
+  if (Buffer.byteLength(value) <= maximumBytes) return value;
+  const suffix = "\n\n… live preview truncated; full content is available after refresh.";
+  const suffixBytes = Buffer.byteLength(suffix);
+  let end = Math.min(value.length, Math.max(0, maximumBytes - suffixBytes));
+  while (end > 0 && Buffer.byteLength(value.slice(0, end)) + suffixBytes > maximumBytes) end -= 1;
+  return `${value.slice(0, end)}${suffix}`;
+};
+
+const projectRemoteMetadata = (metadata: Record<string, unknown> | undefined): Record<string, unknown> | undefined => {
+  if (!metadata) return undefined;
+  const projected: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    if (REMOTE_INTERNAL_METADATA_KEYS.has(key) || key === "attachments") continue;
+    projected[key] = typeof value === "string"
+      ? truncateRemoteLiveText(value, MAX_REMOTE_LIVE_METADATA_STRING_BYTES)
+      : value;
+  }
+  if (Array.isArray(metadata.attachments)) {
+    const attachmentNames = metadata.attachments.flatMap((attachment) =>
+      isPlainObject(attachment) && typeof attachment.fileName === "string" && attachment.fileName.trim()
+        ? [attachment.fileName.trim()]
+        : []);
+    if (attachmentNames.length > 0) projected.attachmentNames = attachmentNames;
+  }
+  return projected;
+};
+
+const projectRemoteStep = <Step extends { eventType: string; content: string; metadataJson: string }>(step: Step): Step => {
+  let metadata: Record<string, unknown> | undefined;
+  try {
+    const parsed = JSON.parse(step.metadataJson || "{}") as unknown;
+    metadata = isPlainObject(parsed) ? parsed : undefined;
+  } catch {
+    metadata = undefined;
+  }
+  const shouldLimitContent = step.eventType === "tool-result" || step.eventType === "tool-progress";
+  return {
+    ...step,
+    content: shouldLimitContent
+      ? truncateRemoteLiveText(step.content, MAX_REMOTE_LIVE_TOOL_CONTENT_BYTES)
+      : step.content,
+    metadataJson: JSON.stringify(projectRemoteMetadata(metadata) ?? {}),
+  };
+};
+
+/**
+ * Removes host-only and duplicated data from live remote events. Persisted records and desktop IPC
+ * remain lossless; remote clients retrieve the complete detail on terminal events and reconnect.
+ */
+export const projectRemoteStreamEvent = (event: RemoteStreamEvent): RemoteStreamEvent => {
+  if (event.event === "run") {
+    const payload = event.payload;
+    if (!payload.step) return event;
+    const { run: _run, ...withoutRun } = payload;
+    return {
+      event: "run",
+      payload: {
+        ...withoutRun,
+        content: "",
+        metadata: projectRemoteMetadata(payload.metadata),
+        step: projectRemoteStep(payload.step),
+      },
+    };
+  }
+  if (event.event === "chat") {
+    const payload = event.payload;
+    if (!payload.step) return event;
+    const { chat: _chat, ...withoutChat } = payload;
+    return {
+      event: "chat",
+      payload: {
+        ...withoutChat,
+        content: "",
+        metadata: projectRemoteMetadata(payload.metadata),
+        step: projectRemoteStep(payload.step),
+      },
+    };
+  }
+  return event;
+};
+
 const rejectUpgrade = (socket: Duplex, statusCode: number, statusText: string, message: string): void => {
   const body = JSON.stringify({ error: message });
   socket.write([
@@ -1588,12 +1674,13 @@ export class RemoteAccessServer {
         socket.close(1008, "Session is no longer authorized");
         return;
       }
+      const projectedEvent = projectRemoteStreamEvent(event);
       this.sendWebSocketMessage(socket, {
         protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
         type: "event",
         sequence: ++this.sequence,
-        event: event.event,
-        payload: event.payload,
+        event: projectedEvent.event,
+        payload: projectedEvent.payload,
       });
     });
     const authenticationTimer = connection.token ? null : setTimeout(() => {

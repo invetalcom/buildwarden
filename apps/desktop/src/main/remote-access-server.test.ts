@@ -8,6 +8,7 @@ import {
   RemoteAccessServer,
   RemoteAuthService,
   RemoteOperationRegistry,
+  projectRemoteStreamEvent,
   shouldCompressRemoteWebSocketMessage,
   validateNoRemoteArgs,
   type RemoteAccessServerOptions,
@@ -1042,6 +1043,72 @@ describe("remote access authentication", () => {
     } satisfies RemoteWebSocketServerMessage;
     expect(shouldCompressRemoteWebSocketMessage(frameMessage)).toBe(false);
     expect(shouldCompressRemoteWebSocketMessage(runMessage)).toBe(true);
+  });
+
+  it("projects durable live steps without leaking duplicate or host-only payloads", () => {
+    const hugeToolOutput = "tool-output-line\n".repeat(10_000);
+    const fullEvent = {
+      event: "run",
+      payload: {
+        runId: "run-1",
+        type: "tool-result",
+        title: "Shell result",
+        content: hugeToolOutput,
+        metadata: {
+          toolName: "run_shell",
+          providerSessionRuntime: { resumeCursor: "private-host-cursor" },
+          resumeCheckpoint: { messages: [hugeToolOutput] },
+        },
+        createdAt: "2026-08-28T12:00:00.000Z",
+        run: { id: "run-1", prompt: "duplicated run row" },
+        step: {
+          id: "step-1",
+          runId: "run-1",
+          eventType: "tool-result",
+          title: "Shell result",
+          content: hugeToolOutput,
+          metadataJson: JSON.stringify({
+            toolName: "run_shell",
+            command: "pnpm test",
+            attachments: [{ fileName: "trace.txt", mimeType: "text/plain", dataBase64: hugeToolOutput }],
+            providerSessionRuntime: { resumeCursor: "private-host-cursor" },
+            resumeCheckpoint: { messages: [hugeToolOutput] },
+          }),
+          createdAt: "2026-08-28T12:00:00.000Z",
+        },
+      },
+    } as unknown as RemoteStreamEvent;
+
+    const projected = projectRemoteStreamEvent(fullEvent);
+    expect(projected.event).toBe("run");
+    if (projected.event !== "run") throw new Error("Expected a run event.");
+    expect(projected.payload).not.toHaveProperty("run");
+    expect(projected.payload.content).toBe("");
+    expect(projected.payload.metadata).toEqual({ toolName: "run_shell" });
+    expect(projected.payload.step?.content).toContain("live preview truncated");
+    expect(Buffer.byteLength(projected.payload.step?.content ?? "")).toBeLessThanOrEqual(2_048);
+    expect(JSON.parse(projected.payload.step?.metadataJson ?? "{}") as unknown).toEqual({
+      toolName: "run_shell",
+      command: "pnpm test",
+      attachmentNames: ["trace.txt"],
+    });
+    expect(JSON.stringify(projected).length).toBeLessThan(JSON.stringify(fullEvent).length / 20);
+  });
+
+  it("keeps authoritative run rows on non-step events", () => {
+    const terminalEvent = {
+      event: "run",
+      payload: {
+        runId: "run-1",
+        type: "status",
+        title: "Run completed",
+        content: "Run completed successfully.",
+        createdAt: "2026-08-28T12:00:00.000Z",
+        run: { id: "run-1", status: "completed" },
+      },
+    } as unknown as RemoteStreamEvent;
+
+    expect(projectRemoteStreamEvent(terminalEvent)).toBe(terminalEvent);
   });
 
   it("filters browser events by run and validates scoped browser input", async () => {

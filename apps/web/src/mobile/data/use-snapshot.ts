@@ -87,11 +87,11 @@ export const useSnapshot = (client: BuildWardenClient): SnapshotStore => {
     const unsubscribers = [
       client.onRunEvent((event) => {
         if (event.run) setSnapshot((current) => applyLiveRunToSnapshot(current, event.run!));
-        else scheduleRefresh();
+        else if (!event.step) scheduleRefresh();
       }),
       client.onChatEvent((event) => {
         if (event.chat) setSnapshot((current) => applyLiveChatToSnapshot(current, event.chat!));
-        else scheduleRefresh();
+        else if (!event.step) scheduleRefresh();
       }),
       client.onOrchestrationChanged(scheduleRefresh),
       client.onProjectLoopChanged(scheduleRefresh),
