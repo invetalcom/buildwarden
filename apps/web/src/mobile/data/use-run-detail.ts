@@ -107,7 +107,7 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
       if (event.step || event.run) {
         setDetail((current) => current ? applyLiveRunEventToDetail(current, event) : current);
       }
-      if (event.step) return;
+      if (event.step && event.type !== "diff-updated") return;
       if (timerRef.current !== null) return;
       timerRef.current = window.setTimeout(() => {
         timerRef.current = null;
