@@ -48,6 +48,18 @@ describe("live remote state", () => {
     expect(next.recentRuns).toEqual([run]);
   });
 
+  it("prepends a newly observed standard run to the matching project", () => {
+    const newRun = {
+      ...run,
+      id: "run-2",
+      createdAt: "2026-08-28T10:01:00.000Z",
+    };
+    const next = applyLiveRunToSnapshot(snapshot, newRun).projects[0]!;
+    expect(next.runs.map(({ id }) => id)).toEqual([newRun.id, run.id]);
+    expect(next.activeRuns.map(({ id }) => id)).toEqual([newRun.id, run.id]);
+    expect(next.recentRuns.map(({ id }) => id)).toEqual([newRun.id, run.id]);
+  });
+
   it("upserts durable run steps instead of duplicating streaming replacements", () => {
     const originalStep = {
       id: "step-1", runId: run.id, eventType: "output", title: "Agent output", content: "a",
@@ -84,5 +96,16 @@ describe("live remote state", () => {
       createdAt: step.createdAt, chat, step,
     } satisfies ChatEvent;
     expect(applyLiveChatEventToDetail(detail, event).steps).toEqual([step]);
+  });
+
+  it("prepends absent standalone chats and excludes run-scoped chats", () => {
+    const standaloneChat = {
+      id: "chat-new", runId: null, prompt: "New chat", status: "preparing", createdAt: run.createdAt,
+    } as ChatRecord;
+    const withStandalone = applyLiveChatToSnapshot(snapshot, standaloneChat);
+    expect(withStandalone.chats).toEqual([expect.objectContaining({ id: standaloneChat.id })]);
+
+    const runChat = { ...standaloneChat, id: "chat-run", runId: run.id };
+    expect(applyLiveChatToSnapshot(withStandalone, runChat)).toBe(withStandalone);
   });
 });

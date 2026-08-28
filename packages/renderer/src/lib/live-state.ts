@@ -34,7 +34,10 @@ export const applyLiveRunToSnapshot = (snapshot: AppSnapshot, run: RunRecord): A
     if (entry.project.id !== run.projectId) return entry;
     const standardRuns = [...entry.runs, ...entry.forLaterRuns];
     const existingStandardIndex = standardRuns.findIndex((candidate) => candidate.id === run.id);
-    if (run.kind === "standard" && existingStandardIndex >= 0) standardRuns[existingStandardIndex] = run;
+    if (run.kind === "standard") {
+      if (existingStandardIndex >= 0) standardRuns[existingStandardIndex] = run;
+      else standardRuns.unshift(run);
+    }
     const runs = standardRuns.filter((candidate) => candidate.listVisibility !== "for-later");
     const forLaterRuns = standardRuns.filter((candidate) => candidate.listVisibility === "for-later");
     const orchestratedRuns = entry.orchestratedRuns.map((candidate) => candidate.id === run.id ? run : candidate);
@@ -51,16 +54,18 @@ export const applyLiveRunToSnapshot = (snapshot: AppSnapshot, run: RunRecord): A
 
 /** Applies one authoritative chat row to the lightweight chat list. */
 export const applyLiveChatToSnapshot = (snapshot: AppSnapshot, chat: ChatRecord): AppSnapshot => {
-  const index = snapshot.chats.findIndex((candidate) => candidate.id === chat.id);
-  if (index < 0) return snapshot;
-  const chats = [...snapshot.chats];
-  chats[index] = {
+  if (chat.runId !== null) return snapshot;
+  const summary = {
     id: chat.id,
     prompt: chat.prompt,
     status: chat.status,
     createdAt: chat.createdAt,
     runId: chat.runId,
   };
+  const index = snapshot.chats.findIndex((candidate) => candidate.id === chat.id);
+  if (index < 0) return { ...snapshot, chats: [summary, ...snapshot.chats] };
+  const chats = [...snapshot.chats];
+  chats[index] = summary;
   return { ...snapshot, chats };
 };
 
