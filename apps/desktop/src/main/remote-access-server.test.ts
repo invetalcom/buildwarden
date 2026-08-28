@@ -655,24 +655,37 @@ describe("remote access authentication", () => {
     temporaryDirectories.push(directory);
     await mkdir(join(directory, "assets"), { recursive: true });
     await writeFile(join(directory, "index.html"), "<!doctype html><title>BuildWarden Remote</title>", "utf8");
-    await writeFile(join(directory, "assets", "app.js"), "console.log('remote');", "utf8");
+    const assetBody = "console.log('compressible remote asset');\n".repeat(4_000);
+    await writeFile(join(directory, "assets", "app-ABC12345.js"), assetBody, "utf8");
+    await writeFile(join(directory, "manifest.webmanifest"), "{\"name\":\"BuildWarden\"}", "utf8");
     const { info } = await startServer(directory);
 
     const indexResponse = await fetch(`${info.baseUrl}/`);
     expect(indexResponse.status).toBe(200);
     expect(indexResponse.headers.get("content-security-policy")).toContain("default-src 'self'");
-    expect(indexResponse.headers.get("cache-control")).toBe("no-store");
+    expect(indexResponse.headers.get("cache-control")).toBe("no-cache");
     await expect(indexResponse.text()).resolves.toContain("BuildWarden Remote");
 
-    const assetResponse = await fetch(`${info.baseUrl}/assets/app.js`);
+    const assetResponse = await fetch(`${info.baseUrl}/assets/app-ABC12345.js`, { headers: { "Accept-Encoding": "br" } });
     expect(assetResponse.status).toBe(200);
     expect(assetResponse.headers.get("content-type")).toContain("text/javascript");
     expect(assetResponse.headers.get("cache-control")).toContain("immutable");
+    expect(assetResponse.headers.get("content-encoding")).toBe("br");
+    expect(assetResponse.headers.get("vary")).toContain("Accept-Encoding");
+    expect(Number(assetResponse.headers.get("content-length"))).toBeLessThan(Buffer.byteLength(assetBody));
+    await expect(assetResponse.text()).resolves.toBe(assetBody);
 
-    const headResponse = await fetch(`${info.baseUrl}/assets/app.js`, { method: "HEAD" });
+    const headResponse = await fetch(`${info.baseUrl}/assets/app-ABC12345.js`, {
+      method: "HEAD",
+      headers: { "Accept-Encoding": "identity" },
+    });
     expect(headResponse.status).toBe(200);
-    expect(headResponse.headers.get("content-length")).toBe(String(Buffer.byteLength("console.log('remote');")));
+    expect(headResponse.headers.get("content-length")).toBe(String(Buffer.byteLength(assetBody)));
     await expect(headResponse.text()).resolves.toBe("");
+
+    const manifestResponse = await fetch(`${info.baseUrl}/manifest.webmanifest`);
+    expect(manifestResponse.headers.get("content-type")).toContain("application/manifest+json");
+    expect(manifestResponse.headers.get("cache-control")).toBe("no-cache");
 
     const sessionResponse = await fetch(`${info.baseUrl}${REMOTE_ACCESS_SESSION_PATH}`);
     expect(sessionResponse.status).toBe(401);

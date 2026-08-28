@@ -76,6 +76,7 @@ const MAX_BROWSER_RUN_FILTERS = 8;
 const MAX_WEBSOCKET_BACKPRESSURE_BYTES = 1_048_576;
 const MIN_COMPRESSIBLE_WEBSOCKET_BYTES = 512;
 const MIN_COMPRESSIBLE_RESPONSE_BYTES = 1_024;
+const MAX_STATIC_COMPRESSION_CACHE_BYTES = 64 * 1_024 * 1_024;
 const gzipAsync = promisify(gzip);
 const brotliCompressAsync = promisify(brotliCompress);
 
@@ -92,7 +93,11 @@ const STATIC_CONTENT_TYPES: Record<string, string> = {
   ".webp": "image/webp",
   ".woff": "font/woff",
   ".woff2": "font/woff2",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
 };
+
+const COMPRESSIBLE_STATIC_EXTENSIONS = new Set([".css", ".html", ".js", ".json", ".svg", ".webmanifest"]);
+const HASHED_STATIC_ASSET_PATTERN = /^assets\/.+-[A-Za-z0-9_-]{6,}\.[^/]+$/;
 
 type RemoteOperationHandler<Method extends RemoteApiMethod> = (
   ...args: RemoteApiMethodArgs<Method>
@@ -626,7 +631,7 @@ const appendVaryHeader = (response: ServerResponse, value: string): string => {
   return values.join(", ");
 };
 
-const compressJsonBody = async (body: Buffer, encoding: HttpContentEncoding): Promise<Buffer> =>
+const compressBody = async (body: Buffer, encoding: HttpContentEncoding): Promise<Buffer> =>
   encoding === "br"
     ? brotliCompressAsync(body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 5 } })
     : gzipAsync(body, { level: 6 });
@@ -654,7 +659,7 @@ const writeJson = (
     return;
   }
 
-  void compressJsonBody(serialized, encoding).then((compressed) => {
+  void compressBody(serialized, encoding).then((compressed) => {
     if (response.destroyed) return;
     const useCompressed = compressed.byteLength < serialized.byteLength;
     response.writeHead(statusCode, {
@@ -770,6 +775,7 @@ const writeStaticResponse = (
   contentLength: number,
   body: Buffer | undefined,
   cacheControl: string,
+  contentEncoding?: HttpContentEncoding,
 ): void => {
   response.writeHead(statusCode, {
     "Cache-Control": cacheControl,
@@ -787,6 +793,7 @@ const writeStaticResponse = (
     ].join("; "),
     "Content-Length": String(contentLength),
     "Content-Type": contentType,
+    ...(contentEncoding ? { "Content-Encoding": contentEncoding, "Vary": appendVaryHeader(response, "Accept-Encoding") } : {}),
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -1080,6 +1087,8 @@ export class RemoteAccessServer {
   private stopPromise: Promise<void> | null = null;
   private readonly pairingAttempts = new Map<string, number[]>();
   private sequence = 0;
+  private readonly staticCompressionCache = new Map<string, Buffer>();
+  private staticCompressionCacheBytes = 0;
 
   constructor(private readonly options: RemoteAccessServerOptions) {}
 
@@ -1292,7 +1301,12 @@ export class RemoteAccessServer {
     }
 
     if ((request.method === "GET" || request.method === "HEAD") && !url.pathname.startsWith("/api/")) {
-      if (await this.serveStaticAsset(url.pathname, response, request.method === "HEAD")) {
+      if (await this.serveStaticAsset(
+        url.pathname,
+        response,
+        request.method === "HEAD",
+        request.headers["accept-encoding"],
+      )) {
         return;
       }
       writeJson(response, 404, { error: "Web application asset not found." });
@@ -1416,7 +1430,37 @@ export class RemoteAccessServer {
     return true;
   }
 
-  private async serveStaticAsset(pathname: string, response: ServerResponse, headOnly: boolean): Promise<boolean> {
+  private async compressedStaticBody(
+    cacheKey: string,
+    body: Buffer,
+    encoding: HttpContentEncoding,
+  ): Promise<Buffer | null> {
+    const cached = this.staticCompressionCache.get(cacheKey);
+    if (cached) {
+      this.staticCompressionCache.delete(cacheKey);
+      this.staticCompressionCache.set(cacheKey, cached);
+      return cached;
+    }
+    const compressed = await compressBody(body, encoding);
+    if (compressed.byteLength >= body.byteLength) return null;
+    this.staticCompressionCache.set(cacheKey, compressed);
+    this.staticCompressionCacheBytes += compressed.byteLength;
+    while (this.staticCompressionCacheBytes > MAX_STATIC_COMPRESSION_CACHE_BYTES) {
+      const oldestKey = this.staticCompressionCache.keys().next().value as string | undefined;
+      if (!oldestKey) break;
+      const removed = this.staticCompressionCache.get(oldestKey);
+      this.staticCompressionCache.delete(oldestKey);
+      this.staticCompressionCacheBytes -= removed?.byteLength ?? 0;
+    }
+    return compressed;
+  }
+
+  private async serveStaticAsset(
+    pathname: string,
+    response: ServerResponse,
+    headOnly: boolean,
+    acceptEncoding: string | string[] | undefined,
+  ): Promise<boolean> {
     if (!this.options.staticRoot) {
       return false;
     }
@@ -1437,15 +1481,27 @@ export class RemoteAccessServer {
       if (!fileStat.isFile()) {
         return false;
       }
-      const body = headOnly ? undefined : await readFile(candidate);
+      const sourceBody = await readFile(candidate);
       const extension = extname(candidate).toLowerCase();
+      const requestedEncoding = sourceBody.byteLength >= MIN_COMPRESSIBLE_RESPONSE_BYTES && COMPRESSIBLE_STATIC_EXTENSIONS.has(extension)
+        ? acceptedContentEncoding(acceptEncoding)
+        : null;
+      const compressedBody = requestedEncoding
+        ? await this.compressedStaticBody(
+            `${candidate}:${String(fileStat.mtimeMs)}:${String(fileStat.size)}:${requestedEncoding}`,
+            sourceBody,
+            requestedEncoding,
+          )
+        : null;
+      const responseBody = compressedBody ?? sourceBody;
       writeStaticResponse(
         response,
         200,
         STATIC_CONTENT_TYPES[extension] ?? "application/octet-stream",
-        body?.byteLength ?? fileStat.size,
-        body,
-        relativePath === "index.html" ? "no-store" : "public, max-age=31536000, immutable",
+        responseBody.byteLength,
+        headOnly ? undefined : responseBody,
+        HASHED_STATIC_ASSET_PATTERN.test(relativePath) ? "public, max-age=31536000, immutable" : "no-cache",
+        compressedBody ? requestedEncoding ?? undefined : undefined,
       );
       return true;
     } catch {
