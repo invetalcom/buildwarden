@@ -40,6 +40,7 @@ import {
   type RemoteRpcRequest,
   type RemoteRpcResponse,
   type RemoteStreamEvent,
+  type RemoteStreamEventPayloadMap,
   type RemoteStreamEventType,
   type RemoteWebSocketClientMessage,
   type RemoteWebSocketServerMessage,
@@ -73,6 +74,7 @@ const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
 const MAX_BROWSER_RUN_FILTERS = 8;
 const MAX_WEBSOCKET_BACKPRESSURE_BYTES = 1_048_576;
+const MIN_COMPRESSIBLE_WEBSOCKET_BYTES = 512;
 const MIN_COMPRESSIBLE_RESPONSE_BYTES = 1_024;
 const gzipAsync = promisify(gzip);
 const brotliCompressAsync = promisify(brotliCompress);
@@ -1051,6 +1053,11 @@ const validateServerMessage = (message: RemoteWebSocketServerMessage): boolean =
   return message.type === "pong" || (message.type === "error" && typeof message.message === "string");
 };
 
+/** Browser frames already contain JPEG bytes encoded as base64; recompressing them is CPU-heavy with negligible gain. */
+export const shouldCompressRemoteWebSocketMessage = (message: RemoteWebSocketServerMessage): boolean =>
+  message.type !== "event" || message.event !== "browser" ||
+  (message.payload as RemoteStreamEventPayloadMap["browser"]).type !== "frame";
+
 const rejectUpgrade = (socket: Duplex, statusCode: number, statusText: string, message: string): void => {
   const body = JSON.stringify({ error: message });
   socket.write([
@@ -1117,7 +1124,18 @@ export class RemoteAccessServer {
         }
       });
     });
-    const webSocketServer = new WebSocketServer({ noServer: true, clientTracking: true, maxPayload: MAX_WEBSOCKET_MESSAGE_BYTES });
+    const webSocketServer = new WebSocketServer({
+      noServer: true,
+      clientTracking: true,
+      maxPayload: MAX_WEBSOCKET_MESSAGE_BYTES,
+      perMessageDeflate: {
+        clientNoContextTakeover: true,
+        concurrencyLimit: 4,
+        serverNoContextTakeover: true,
+        threshold: MIN_COMPRESSIBLE_WEBSOCKET_BYTES,
+        zlibDeflateOptions: { level: 3 },
+      },
+    });
     webSocketServer.on("error", (error) => this.options.onServerError?.(error));
     server.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket, head, webSocketServer, startedAt));
 
@@ -1772,7 +1790,7 @@ export class RemoteAccessServer {
       return;
     }
     if (socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify(message));
+      socket.send(JSON.stringify(message), { compress: shouldCompressRemoteWebSocketMessage(message) });
     }
   }
 }

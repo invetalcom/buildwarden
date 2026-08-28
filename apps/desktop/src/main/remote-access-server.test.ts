@@ -8,6 +8,7 @@ import {
   RemoteAccessServer,
   RemoteAuthService,
   RemoteOperationRegistry,
+  shouldCompressRemoteWebSocketMessage,
   validateNoRemoteArgs,
   type RemoteAccessServerOptions,
   type RemoteHostEventSource,
@@ -24,6 +25,7 @@ import {
   type RemoteAccessPairingInput,
   type RemoteApiMethod,
   type RemoteStreamEvent,
+  type RemoteWebSocketServerMessage,
   type RunBrowserInput,
 } from "@buildwarden/shared";
 import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
@@ -863,6 +865,7 @@ describe("remote access authentication", () => {
       socket.addEventListener("open", () => resolve(), { once: true });
       socket.addEventListener("error", () => reject(new Error("WebSocket connection failed.")), { once: true });
     });
+    expect(socket.extensions).toContain("permessage-deflate");
     await expect(hello).resolves.toMatchObject({ type: "hello", protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION });
 
     const subscribed = new Promise<Record<string, unknown>>((resolve) => {
@@ -990,6 +993,42 @@ describe("remote access authentication", () => {
       code: "forbidden",
     });
     socket.close();
+  });
+
+  it("keeps WebSocket compression optional and skips already-compressed browser frames", async () => {
+    const { auth, info } = await startServer();
+    const { cookie } = await pair(info.baseUrl, auth);
+    const socket = new WebSocket(
+      `${info.baseUrl.replace("http://", "ws://")}${REMOTE_ACCESS_WEBSOCKET_PATH}?protocolVersion=${String(REMOTE_ACCESS_PROTOCOL_VERSION)}`,
+      { headers: { Cookie: cookie }, perMessageDeflate: false },
+    );
+    await new Promise<void>((resolve, reject) => {
+      socket.addEventListener("open", () => resolve(), { once: true });
+      socket.addEventListener("error", () => reject(new Error("WebSocket connection failed.")), { once: true });
+    });
+    expect(socket.extensions).toBe("");
+    socket.close();
+
+    const frameMessage = {
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "event",
+      sequence: 1,
+      event: "browser",
+      payload: {
+        type: "frame",
+        runId: "run-1",
+        frame: { runId: "run-1", sequence: 1, width: 1280, height: 720, mimeType: "image/jpeg", dataBase64: "jpeg" },
+      },
+    } satisfies RemoteWebSocketServerMessage;
+    const runMessage = {
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "event",
+      sequence: 2,
+      event: "run",
+      payload: { runId: "run-1", type: "output", title: "Output", content: "text", createdAt: new Date().toISOString() },
+    } satisfies RemoteWebSocketServerMessage;
+    expect(shouldCompressRemoteWebSocketMessage(frameMessage)).toBe(false);
+    expect(shouldCompressRemoteWebSocketMessage(runMessage)).toBe(true);
   });
 
   it("filters browser events by run and validates scoped browser input", async () => {
