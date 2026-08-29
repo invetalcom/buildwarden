@@ -1008,6 +1008,8 @@ describe("renderer component states", () => {
       anthropicEffort: "medium",
       yoloMode: false,
       verificationCommands: [],
+      maxRunMinutes: 0,
+      maxRunTokens: 0,
       busy: false,
       availableIntegratedSkills: [],
       activeIntegratedSkillIds: [],
@@ -1020,6 +1022,8 @@ describe("renderer component states", () => {
       onAnthropicEffortChange: vi.fn(),
       onYoloModeChange: vi.fn(),
       onVerificationCommandsChange: vi.fn(),
+      onMaxRunMinutesChange: vi.fn(),
+      onMaxRunTokensChange: vi.fn(),
       onActiveIntegratedSkillIdsChange: vi.fn(),
       onDeleteProject: vi.fn(),
     } satisfies ComponentProps<typeof ProjectSettingsPage>;

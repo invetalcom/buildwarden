@@ -5055,6 +5055,10 @@ export interface ProjectRunDefaults {
   yoloMode: boolean;
   /** Commands run sequentially after successful code-mode turns. */
   verificationCommands: string[];
+  /** Per-turn wall-clock ceiling in minutes. Zero disables the limit. */
+  maxRunMinutes: number;
+  /** Per-turn combined input/output token ceiling. Zero disables the limit. */
+  maxRunTokens: number;
 }
 
 export type ProjectRunDefaultsByProjectId = Record<string, ProjectRunDefaults>;
@@ -5070,6 +5074,8 @@ export const buildDefaultProjectRunDefaults = (): ProjectRunDefaults => ({
   executionMode: "auto",
   yoloMode: false,
   verificationCommands: [],
+  maxRunMinutes: 0,
+  maxRunTokens: 0,
 });
 
 const RUN_DEFAULT_MODES: readonly RunMode[] = ["code", "plan", "ask"];
@@ -5134,6 +5140,8 @@ const parseProjectRunDefaultsRecord = (value: unknown): ProjectRunDefaults | nul
           .slice(0, 10)
           .map((command) => command.slice(0, 500))
       : defaults.verificationCommands,
+    maxRunMinutes: Math.min(1_440, Math.max(0, Math.trunc(Number(record.maxRunMinutes) || 0))),
+    maxRunTokens: Math.min(10_000_000, Math.max(0, Math.trunc(Number(record.maxRunTokens) || 0))),
   };
 };
 

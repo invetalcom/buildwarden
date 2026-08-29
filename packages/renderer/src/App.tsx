@@ -274,6 +274,8 @@ export const App = () => {
   const [runExecutionMode, setRunExecutionMode] = useState("auto");
   const [runYoloMode, setRunYoloMode] = useState(false);
   const [runVerificationCommands, setRunVerificationCommands] = useState<string[]>([]);
+  const [runMaxMinutes, setRunMaxMinutes] = useState(0);
+  const [runMaxTokens, setRunMaxTokens] = useState(0);
   const [runDelegationEnabled, setRunDelegationEnabled] = useState(false);
   const [chatReasoningEffort, setChatReasoningEffort] = useState("auto");
   const [chatAnthropicEffort, setChatAnthropicEffort] = useState("auto");
@@ -1390,6 +1392,8 @@ export const App = () => {
     changeRunExecutionMode,
     changeRunYoloMode,
     changeRunVerificationCommands,
+    changeRunMaxMinutes,
+    changeRunMaxTokens,
     changeRunModel,
     changeRunWorktreeModelIds,
     changeRunModelConfigurations,
@@ -1407,6 +1411,8 @@ export const App = () => {
     setRunExecutionMode,
     setRunYoloMode,
     setRunVerificationCommands,
+    setRunMaxMinutes,
+    setRunMaxTokens,
     setRunModelId,
     setRunWorktreeModelIds,
     setRunModelConfigurations,
@@ -4265,6 +4271,8 @@ export const App = () => {
               executionMode={runExecutionMode}
               yoloMode={runYoloMode}
               verificationCommands={runVerificationCommands}
+              maxRunMinutes={runMaxMinutes}
+              maxRunTokens={runMaxTokens}
               delegationEnabled={runDelegationEnabled}
               delegationAvailable={delegationAvailable}
               onReasoningEffortChange={changeRunReasoningEffort}
@@ -4272,6 +4280,8 @@ export const App = () => {
               onExecutionModeChange={changeRunExecutionMode}
               onYoloModeChange={changeRunYoloMode}
               onVerificationCommandsChange={changeRunVerificationCommands}
+              onMaxRunMinutesChange={changeRunMaxMinutes}
+              onMaxRunTokensChange={changeRunMaxTokens}
               onDelegationEnabledChange={setRunDelegationEnabled}
               onSelectRun={(runId) => void handleRunSelect(project.project.id, runId)}
               onRunPromptChange={setRunPrompt}

@@ -25,6 +25,8 @@ describe("parseProjectRunDefaultsSetting", () => {
         executionMode: "fast",
         yoloMode: true,
         verificationCommands: ["pnpm typecheck", "pnpm test"],
+        maxRunMinutes: 45,
+        maxRunTokens: 120000,
       },
     };
 
@@ -41,6 +43,16 @@ describe("parseProjectRunDefaultsSetting", () => {
 
     expect(parsed["project-1"]?.verificationCommands).toHaveLength(10);
     expect(parsed["project-1"]?.verificationCommands[0]).toBe("pnpm typecheck");
+  });
+
+  it("clamps autonomy budgets and treats invalid values as unlimited", () => {
+    const parsed = parseProjectRunDefaultsSetting(JSON.stringify({
+      "project-1": { maxRunMinutes: 9999, maxRunTokens: -10 },
+      "project-2": { maxRunMinutes: "invalid", maxRunTokens: 2500.8 },
+    }));
+
+    expect(parsed["project-1"]).toMatchObject({ maxRunMinutes: 1440, maxRunTokens: 0 });
+    expect(parsed["project-2"]).toMatchObject({ maxRunMinutes: 0, maxRunTokens: 2500 });
   });
 
   it("falls back to defaults for invalid field values", () => {

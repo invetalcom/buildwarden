@@ -65,6 +65,8 @@ interface ProjectPageProps {
   executionMode: string;
   yoloMode: boolean;
   verificationCommands: string[];
+  maxRunMinutes: number;
+  maxRunTokens: number;
   delegationEnabled: boolean;
   delegationAvailable: boolean;
   onReasoningEffortChange: (value: string) => void;
@@ -72,6 +74,8 @@ interface ProjectPageProps {
   onExecutionModeChange: (value: string) => void;
   onYoloModeChange: (value: boolean) => void;
   onVerificationCommandsChange: (value: string[]) => void;
+  onMaxRunMinutesChange: (value: number) => void;
+  onMaxRunTokensChange: (value: number) => void;
   onDelegationEnabledChange: (value: boolean) => void;
   onSelectRun: (runId: string) => void;
   onRunPromptChange: (value: string) => void;
@@ -160,6 +164,8 @@ export const ProjectPage = ({
   executionMode,
   yoloMode,
   verificationCommands,
+  maxRunMinutes,
+  maxRunTokens,
   delegationEnabled,
   delegationAvailable,
   onReasoningEffortChange,
@@ -167,6 +173,8 @@ export const ProjectPage = ({
   onExecutionModeChange,
   onYoloModeChange,
   onVerificationCommandsChange,
+  onMaxRunMinutesChange,
+  onMaxRunTokensChange,
   onDelegationEnabledChange,
   onSelectRun,
   onRunPromptChange,
@@ -355,6 +363,8 @@ export const ProjectPage = ({
           executionMode={executionMode}
           yoloMode={yoloMode}
           verificationCommands={verificationCommands}
+          maxRunMinutes={maxRunMinutes}
+          maxRunTokens={maxRunTokens}
           busy={busy}
           availableIntegratedSkills={availableIntegratedSkills}
           activeIntegratedSkillIds={activeIntegratedSkillIds}
@@ -368,6 +378,8 @@ export const ProjectPage = ({
           onExecutionModeChange={onExecutionModeChange}
           onYoloModeChange={onYoloModeChange}
           onVerificationCommandsChange={onVerificationCommandsChange}
+          onMaxRunMinutesChange={onMaxRunMinutesChange}
+          onMaxRunTokensChange={onMaxRunTokensChange}
           onActiveIntegratedSkillIdsChange={onActiveIntegratedSkillIdsChange}
           onDeleteProject={onDeleteProject}
         />

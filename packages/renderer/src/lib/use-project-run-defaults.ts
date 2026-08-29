@@ -67,6 +67,8 @@ interface UseProjectRunDefaultsInput {
   setRunExecutionMode: (value: string) => void;
   setRunYoloMode: (value: boolean) => void;
   setRunVerificationCommands: (value: string[]) => void;
+  setRunMaxMinutes: (value: number) => void;
+  setRunMaxTokens: (value: number) => void;
   setRunModelId: (value: string) => void;
   setRunWorktreeModelIds: (value: string[]) => void;
   setRunModelConfigurations: (value: Record<string, RunModelConfiguration>) => void;
@@ -96,6 +98,8 @@ export const useProjectRunDefaults = ({
   setRunExecutionMode,
   setRunYoloMode,
   setRunVerificationCommands,
+  setRunMaxMinutes,
+  setRunMaxTokens,
   setRunModelId,
   setRunWorktreeModelIds,
   setRunModelConfigurations,
@@ -147,6 +151,8 @@ export const useProjectRunDefaults = ({
     setRunExecutionMode(defaults.executionMode);
     setRunYoloMode(defaults.yoloMode);
     setRunVerificationCommands(defaults.verificationCommands);
+    setRunMaxMinutes(defaults.maxRunMinutes);
+    setRunMaxTokens(defaults.maxRunTokens);
     // Always reset model selections so a project without stored defaults does not inherit the
     // previous project's models. Without a stored value, fall back to the last used model like
     // loadSnapshot does (setting "" would leave local-mode runs without a model until the next
@@ -170,6 +176,8 @@ export const useProjectRunDefaults = ({
     setRunModelConfigurations,
     setRunYoloMode,
     setRunVerificationCommands,
+    setRunMaxMinutes,
+    setRunMaxTokens,
     snapshotLoaded,
   ]);
 
@@ -229,6 +237,22 @@ export const useProjectRunDefaults = ({
     [persistProjectRunDefaults, setRunVerificationCommands],
   );
 
+  const changeRunMaxMinutes = useCallback(
+    (value: number) => {
+      setRunMaxMinutes(value);
+      persistProjectRunDefaults({ maxRunMinutes: value });
+    },
+    [persistProjectRunDefaults, setRunMaxMinutes],
+  );
+
+  const changeRunMaxTokens = useCallback(
+    (value: number) => {
+      setRunMaxTokens(value);
+      persistProjectRunDefaults({ maxRunTokens: value });
+    },
+    [persistProjectRunDefaults, setRunMaxTokens],
+  );
+
   const changeRunModel = useCallback(
     (modelId: string) => {
       onRunModelChange(modelId);
@@ -261,6 +285,8 @@ export const useProjectRunDefaults = ({
     changeRunExecutionMode,
     changeRunYoloMode,
     changeRunVerificationCommands,
+    changeRunMaxMinutes,
+    changeRunMaxTokens,
     changeRunModel,
     changeRunWorktreeModelIds,
     changeRunModelConfigurations,

@@ -54,6 +54,8 @@ interface ProjectSettingsPageProps {
   executionMode?: string;
   yoloMode: boolean;
   verificationCommands: string[];
+  maxRunMinutes: number;
+  maxRunTokens: number;
   busy: boolean;
   availableIntegratedSkills: IntegratedSkillMetadata[];
   activeIntegratedSkillIds: string[];
@@ -67,6 +69,8 @@ interface ProjectSettingsPageProps {
   onExecutionModeChange?: (value: string) => void;
   onYoloModeChange: (value: boolean) => void;
   onVerificationCommandsChange: (value: string[]) => void;
+  onMaxRunMinutesChange: (value: number) => void;
+  onMaxRunTokensChange: (value: number) => void;
   onActiveIntegratedSkillIdsChange: (skillIds: string[]) => void | Promise<void>;
   onDeleteProject: () => void | Promise<void>;
 }
@@ -217,6 +221,8 @@ export const ProjectSettingsPage = ({
   executionMode = "auto",
   yoloMode,
   verificationCommands,
+  maxRunMinutes,
+  maxRunTokens,
   busy,
   availableIntegratedSkills,
   activeIntegratedSkillIds,
@@ -230,6 +236,8 @@ export const ProjectSettingsPage = ({
   onExecutionModeChange,
   onYoloModeChange,
   onVerificationCommandsChange,
+  onMaxRunMinutesChange,
+  onMaxRunTokensChange,
   onActiveIntegratedSkillIdsChange,
   onDeleteProject,
 }: ProjectSettingsPageProps) => {
@@ -742,6 +750,40 @@ export const ProjectSettingsPage = ({
                     aria-label="Verification commands"
                   />
                   <p className="text-[11px] text-[var(--ec-faint)]">One command per line, up to 10. Commands run from the run workspace with a five-minute limit each.</p>
+                </div>
+              </SettingsRow>
+
+              <SettingsRow
+                title="Autonomy budget"
+                description="Stop an agent turn when either ceiling is reached. Use 0 to leave a ceiling unlimited."
+              >
+                <div className={`${rowControlClass} grid gap-2 sm:grid-cols-2`}>
+                  <label className="rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-2.5">
+                    <span className="text-xs font-medium text-[var(--ec-muted)]">Maximum minutes</span>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={1440}
+                      step={1}
+                      value={maxRunMinutes}
+                      onChange={(event) => onMaxRunMinutesChange(Math.min(1440, Math.max(0, Math.trunc(Number(event.target.value) || 0))))}
+                      className="mt-2 h-8 font-mono text-xs"
+                      disabled={busy}
+                    />
+                  </label>
+                  <label className="rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-2.5">
+                    <span className="text-xs font-medium text-[var(--ec-muted)]">Maximum tokens</span>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={10000000}
+                      step={1000}
+                      value={maxRunTokens}
+                      onChange={(event) => onMaxRunTokensChange(Math.min(10_000_000, Math.max(0, Math.trunc(Number(event.target.value) || 0))))}
+                      className="mt-2 h-8 font-mono text-xs"
+                      disabled={busy}
+                    />
+                  </label>
                 </div>
               </SettingsRow>
             </>
