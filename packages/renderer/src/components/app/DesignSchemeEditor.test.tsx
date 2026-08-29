@@ -29,7 +29,7 @@ describe("DesignSchemeEditor", () => {
     root = createRoot(container);
 
     await act(async () => root?.render(<DesignSchemeEditor scheme={scheme} busy={false} onChange={onChange} />));
-    const resetButton = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Reset to Crimson Grove"));
+    const resetButton = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Reset defaults"));
 
     expect(resetButton).toBeTruthy();
     await act(async () => resetButton?.click());

@@ -170,9 +170,9 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange }: Props) => {
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
           <div className="flex gap-2">
             <input ref={importRef} type="file" accept=".json,.buildwarden-theme.json,application/json" className="sr-only" aria-label="Import design scheme" onChange={(event) => void importFile(event.target.files?.[0])} />
-            <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => void resetToPreset()} title={`Restore the original ${resetPreset.name} colors`}><RotateCcw className="size-3.5" />Reset to {resetPreset.name}</Button>
+            <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => void resetToPreset()} title={`Restore the original ${resetPreset.name} colors`}><RotateCcw className="size-3.5" />Reset defaults</Button>
             <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => importRef.current?.click()}><Upload className="size-3.5" />Import</Button>
-            <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={download}><Download className="size-3.5" />Export selected</Button>
+            <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={download}><Download className="size-3.5" />Export theme</Button>
           </div>
           <Button type="button" size="sm" disabled={busy || !dirty || Boolean(invalidColor) || !name.trim()} onClick={() => void applyCustom()}>Apply custom scheme</Button>
         </div>

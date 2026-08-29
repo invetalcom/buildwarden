@@ -286,13 +286,9 @@ export const UserSettingsTab = ({
 }: UserSettingsTabProps) => (
   <div className="space-y-5">
     <SettingsSection title="Appearance">
-      <SettingsRow
-        title="Design scheme"
-        description="Choose a curated color pair, customize semantic colors, or move a design between desktop and web with import and export."
-        align="start"
-      >
-        <div className={rowControlClass}><DesignSchemeEditor scheme={designScheme} busy={busy} onChange={onDesignSchemeChange} /></div>
-      </SettingsRow>
+      <div className="p-3">
+        <DesignSchemeEditor scheme={designScheme} busy={busy} onChange={onDesignSchemeChange} />
+      </div>
     </SettingsSection>
 
     <SettingsSection title="Sidebar">
