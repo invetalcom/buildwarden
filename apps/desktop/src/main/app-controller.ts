@@ -6858,9 +6858,7 @@ export class AppController
       return;
     }
 
-    active.cancelled = true;
-    active.verificationAbortController?.abort();
-    active.worker.postMessage({ type: "cancel" });
+    this.requestRunWorkerStop(active);
     this.db.updateRunStatus(runId, "cancelled", { errorMessage: "Run cancelled by user." });
     await this.appendRunEvent(runId, "status", "Run cancelled", "Cancellation requested.");
     const run = this.db.getRun(runId);
@@ -6883,6 +6881,12 @@ export class AppController
       content: "Cancellation requested.",
       createdAt: new Date().toISOString(),
     });
+  }
+
+  private requestRunWorkerStop(active: ActiveWorker): void {
+    active.cancelled = true;
+    active.verificationAbortController?.abort();
+    active.worker.postMessage({ type: "cancel" });
   }
 
   async cancelRunShell(runId: string, toolCallId: string): Promise<void> {
@@ -8145,8 +8149,7 @@ export class AppController
     this.terminal.killForRunId(runId);
     const active = this.runWorkers.get(runId);
     if (active) {
-      active.cancelled = true;
-      active.worker.postMessage({ type: "cancel" });
+      this.requestRunWorkerStop(active);
       this.runWorkers.delete(runId);
       await active.worker.terminate();
     }
@@ -10488,8 +10491,7 @@ export class AppController
 
     if (active) {
       try {
-        active.cancelled = true;
-        active.worker.postMessage({ type: "cancel" });
+        this.requestRunWorkerStop(active);
         await active.worker.terminate();
       } catch (error) {
         cleanupErrors.push(`worker termination failed: ${error instanceof Error ? error.message : String(error)}`);
