@@ -1,15 +1,3 @@
-import { css } from "@codemirror/lang-css";
-import { go } from "@codemirror/lang-go";
-import { html } from "@codemirror/lang-html";
-import { java } from "@codemirror/lang-java";
-import { javascript } from "@codemirror/lang-javascript";
-import { json } from "@codemirror/lang-json";
-import { markdown } from "@codemirror/lang-markdown";
-import { python } from "@codemirror/lang-python";
-import { rust } from "@codemirror/lang-rust";
-import { sql } from "@codemirror/lang-sql";
-import { xml } from "@codemirror/lang-xml";
-import { yaml } from "@codemirror/lang-yaml";
 import type { Extension } from "@codemirror/state";
 
 export type CodeMirrorLanguageId =
@@ -71,37 +59,37 @@ export const codeMirrorLanguageIdForPath = (filePath: string): CodeMirrorLanguag
   return null;
 };
 
-export const codeMirrorLanguageExtensionForPath = (filePath: string): Extension => {
+export const loadCodeMirrorLanguageExtensionForPath = async (filePath: string): Promise<Extension> => {
   const lower = filePath.toLowerCase();
   const languageId = codeMirrorLanguageIdForPath(lower);
 
   switch (languageId) {
     case "typescript":
-      return javascript({ typescript: true, jsx: /\.tsx$/.test(lower) });
+      return (await import("@codemirror/lang-javascript")).javascript({ typescript: true, jsx: /\.tsx$/.test(lower) });
     case "javascript":
-      return javascript({ jsx: /\.jsx$/.test(lower) });
+      return (await import("@codemirror/lang-javascript")).javascript({ jsx: /\.jsx$/.test(lower) });
     case "json":
-      return json();
+      return (await import("@codemirror/lang-json")).json();
     case "css":
-      return css();
+      return (await import("@codemirror/lang-css")).css();
     case "go":
-      return go();
+      return (await import("@codemirror/lang-go")).go();
     case "html":
-      return html();
+      return (await import("@codemirror/lang-html")).html();
     case "xml":
-      return xml();
+      return (await import("@codemirror/lang-xml")).xml();
     case "markdown":
-      return markdown();
+      return (await import("@codemirror/lang-markdown")).markdown();
     case "python":
-      return python();
+      return (await import("@codemirror/lang-python")).python();
     case "java":
-      return java();
+      return (await import("@codemirror/lang-java")).java();
     case "rust":
-      return rust();
+      return (await import("@codemirror/lang-rust")).rust();
     case "sql":
-      return sql();
+      return (await import("@codemirror/lang-sql")).sql();
     case "yaml":
-      return yaml();
+      return (await import("@codemirror/lang-yaml")).yaml();
     case null:
       return [];
   }

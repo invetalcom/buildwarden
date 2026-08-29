@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { bracketMatching, foldGutter, indentOnInput, syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
 import { EditorState } from "@codemirror/state";
 import { EditorView, drawSelection, highlightActiveLine, highlightActiveLineGutter, lineNumbers } from "@codemirror/view";
-import { codeMirrorLanguageExtensionForPath } from "./code-mirror-languages";
+import { loadCodeMirrorLanguageExtensionForPath } from "./code-mirror-languages";
 
 const codeMirrorTheme = EditorView.theme(
   {
@@ -62,7 +62,6 @@ export interface CodeMirrorFileViewerProps {
 export const CodeMirrorFileViewer = ({ content, filePath, line, column, className }: CodeMirrorFileViewerProps) => {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const languageExtension = useMemo(() => codeMirrorLanguageExtensionForPath(filePath), [filePath]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -70,44 +69,52 @@ export const CodeMirrorFileViewer = ({ content, filePath, line, column, classNam
       return;
     }
 
-    const state = EditorState.create({
-      doc: content,
-      extensions: [
-        lineNumbers(),
-        foldGutter(),
-        highlightActiveLineGutter(),
-        drawSelection(),
-        indentOnInput(),
-        bracketMatching(),
-        highlightActiveLine(),
-        syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-        EditorState.readOnly.of(true),
-        EditorView.editable.of(false),
-        EditorView.lineWrapping,
-        codeMirrorTheme,
-        languageExtension,
-      ],
-    });
-    const view = new EditorView({ state, parent: host });
-    viewRef.current = view;
-
-    const targetLine = line && line <= view.state.doc.lines ? view.state.doc.line(line) : null;
-    if (targetLine) {
-      const columnOffset = column ? Math.max(0, Math.min(column - 1, targetLine.length)) : 0;
-      const position = targetLine.from + columnOffset;
-      view.dispatch({
-        selection: { anchor: position },
-        effects: EditorView.scrollIntoView(position, { y: "center" }),
+    let cancelled = false;
+    let view: EditorView | null = null;
+    void loadCodeMirrorLanguageExtensionForPath(filePath).then((languageExtension) => {
+      if (cancelled) {
+        return;
+      }
+      const state = EditorState.create({
+        doc: content,
+        extensions: [
+          lineNumbers(),
+          foldGutter(),
+          highlightActiveLineGutter(),
+          drawSelection(),
+          indentOnInput(),
+          bracketMatching(),
+          highlightActiveLine(),
+          syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+          EditorState.readOnly.of(true),
+          EditorView.editable.of(false),
+          EditorView.lineWrapping,
+          codeMirrorTheme,
+          languageExtension,
+        ],
       });
-    }
+      view = new EditorView({ state, parent: host });
+      viewRef.current = view;
+
+      const targetLine = line && line <= view.state.doc.lines ? view.state.doc.line(line) : null;
+      if (targetLine) {
+        const columnOffset = column ? Math.max(0, Math.min(column - 1, targetLine.length)) : 0;
+        const position = targetLine.from + columnOffset;
+        view.dispatch({
+          selection: { anchor: position },
+          effects: EditorView.scrollIntoView(position, { y: "center" }),
+        });
+      }
+    });
 
     return () => {
-      view.destroy();
+      cancelled = true;
+      view?.destroy();
       if (viewRef.current === view) {
         viewRef.current = null;
       }
     };
-  }, [column, content, languageExtension, line]);
+  }, [column, content, filePath, line]);
 
   return <div ref={hostRef} className={className} />;
 };

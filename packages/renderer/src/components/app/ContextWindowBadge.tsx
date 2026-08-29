@@ -39,6 +39,9 @@ export const ContextWindowBadge = ({
   useEffect(() => {
     let cancelled = false;
     setExactTextTokenCounts(null);
+    if (!open) {
+      return;
+    }
     const timer = window.setTimeout(() => {
       void requestExactContextWindowTokenCounts(deferredPrompt, deferredHistoryText).then((counts) => {
         if (!cancelled && counts) {
@@ -51,7 +54,7 @@ export const ContextWindowBadge = ({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [deferredHistoryText, deferredPrompt]);
+  }, [deferredHistoryText, deferredPrompt, open]);
 
   const estimate = useMemo(
     () =>
