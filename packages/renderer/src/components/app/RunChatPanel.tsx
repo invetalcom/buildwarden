@@ -86,8 +86,16 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
     activeLoadRequestRef.current = requestId;
     const revisionAtStart = liveEventRevisionRef.current;
     try {
-      const next = await buildwarden.getRunChat(runId);
+      let next = await buildwarden.getRunChat(runId);
       if (loadRequestRef.current !== requestId) return;
+      const sawRunChatCreation = next === null && recentLiveEventsRef.current.some(({ revision, event }) =>
+        revision > revisionAtStart && event.chat?.runId === runId);
+      if (sawRunChatCreation) {
+        // The first response raced creation on another client. Keep the request active so any
+        // subsequent events remain buffered, then perform one authoritative follow-up read.
+        next = await buildwarden.getRunChat(runId);
+        if (loadRequestRef.current !== requestId) return;
+      }
       const revisionAtCompletion = liveEventRevisionRef.current;
       const merged = next
         ? recentLiveEventsRef.current
