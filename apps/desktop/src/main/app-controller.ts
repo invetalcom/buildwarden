@@ -68,7 +68,6 @@ import {
   suggestCommitMessageWithCursorAgent,
 } from "@buildwarden/provider-cursor-agent";
 import { AzureLegacyProviderAdapter, createAzureLegacyClientFromParts, createAzureLegacyDevLogger } from "@buildwarden/provider-azure-legacy";
-import { INTEGRATED_SKILLS_BY_ID, INTEGRATED_SKILLS_CATALOG } from "@buildwarden/shared/integrated-skills-catalog";
 import {
   APP_SETTING_KEYS,
   buildNetworkProxyRuntimeConfig,
@@ -82,6 +81,7 @@ import {
   type AppLogDirectorySizeInfo,
   type ComposerCommandDescriptor,
   type ComposerCommandContext,
+  type IntegratedSkillDefinition,
   type IntegratedSkillMetadata,
   type NetworkProxyRuntimeConfig,
   type NetworkProxySettingsInput,
@@ -253,6 +253,11 @@ import type { AppControllerDesktopServices } from "./desktop-platform-services";
 import { HostEventBus } from "./host-events";
 import type { HostTerminal } from "./host-terminal-service";
 import { buildIntegratedSkillContext } from "./integrated-skill-context";
+
+type IntegratedSkillsCatalogModule = typeof import("@buildwarden/shared/integrated-skills-catalog");
+let integratedSkillsCatalogPromise: Promise<IntegratedSkillsCatalogModule> | null = null;
+const loadIntegratedSkillsCatalog = (): Promise<IntegratedSkillsCatalogModule> =>
+  integratedSkillsCatalogPromise ??= import("@buildwarden/shared/integrated-skills-catalog");
 import {
   buildRunChatContext,
   buildRunChatFirstTurnPrompt,
@@ -1320,7 +1325,8 @@ export class AppController
     }
   }
 
-  private getProjectActiveIntegratedSkills(projectId: string) {
+  private async getProjectActiveIntegratedSkills(projectId: string): Promise<IntegratedSkillDefinition[]> {
+    const { INTEGRATED_SKILLS_BY_ID } = await loadIntegratedSkillsCatalog();
     const settings = this.db.getSettings();
     const disabledSkillIds = new Set(
       parseIntegratedSkillsDisabledSetting(settings[APP_SETTING_KEYS.integratedSkillsDisabled]),
@@ -1329,11 +1335,11 @@ export class AppController
     const selectedSkillIds = projectSkillsById[projectId] ?? [];
     return selectedSkillIds
       .map((skillId) => INTEGRATED_SKILLS_BY_ID[skillId])
-      .filter((skill): skill is (typeof INTEGRATED_SKILLS_CATALOG)[number] => Boolean(skill) && !disabledSkillIds.has(skill.id));
+      .filter((skill): skill is IntegratedSkillDefinition => Boolean(skill) && !disabledSkillIds.has(skill.id));
   }
 
-  private buildIntegratedSkillContext(projectId: string): string | undefined {
-    return buildIntegratedSkillContext(this.getProjectActiveIntegratedSkills(projectId));
+  private async buildIntegratedSkillContext(projectId: string): Promise<string | undefined> {
+    return buildIntegratedSkillContext(await this.getProjectActiveIntegratedSkills(projectId));
   }
 
   private getProjectLabSettings(projectId: string): ProjectLabSettings {
@@ -3195,7 +3201,7 @@ export class AppController
       {
         promptOverride: initialPromptForHarness || undefined,
         attachments: initialAttachments,
-        skillContext: this.buildIntegratedSkillContext(project.id),
+        skillContext: await this.buildIntegratedSkillContext(project.id),
         providerOptions: executionOptions,
         yoloMode: input.yoloMode === true,
       },
@@ -3328,7 +3334,7 @@ export class AppController
       {
         promptOverride: promptForHarness,
         attachments: initialAttachments,
-        skillContext: this.buildIntegratedSkillContext(project.id),
+        skillContext: await this.buildIntegratedSkillContext(project.id),
         providerOptions: executionOptions,
         yoloMode: input.yoloMode === true,
       },
@@ -3524,7 +3530,7 @@ export class AppController
       {
         promptOverride: followUpPromptForHarness,
         attachments: workerAttachments,
-        skillContext: this.buildIntegratedSkillContext(project.id),
+        skillContext: await this.buildIntegratedSkillContext(project.id),
         providerOptions: executionOptions,
         yoloMode: options?.yoloMode === true,
       },
@@ -7113,7 +7119,7 @@ export class AppController
       await this.resolveNetworkProxyRuntimeConfig(),
       {
         promptOverride: buildPromptWithRunGoal(prompt, coordinator.goalText),
-        skillContext: this.buildIntegratedSkillContext(project.id),
+        skillContext: await this.buildIntegratedSkillContext(project.id),
         providerOptions: childExecutionOptions,
         yoloMode: inheritedFullAccess,
       },
@@ -8535,7 +8541,7 @@ export class AppController
       await this.resolveNetworkProxyRuntimeConfig(),
       {
         promptOverride: buildPromptWithRunGoal(prompt, coordinator.goalText),
-        skillContext: this.buildIntegratedSkillContext(child.projectId),
+        skillContext: await this.buildIntegratedSkillContext(child.projectId),
         providerOptions: childExecutionOptions,
         yoloMode: inheritedFullAccess,
       },
@@ -8599,7 +8605,7 @@ export class AppController
 
     const worker = this.startWorker(run, provider, model, apiKey ?? "", await this.resolveNetworkProxyRuntimeConfig(), {
       promptOverride: this.buildInterruptedRunRecoveryPrompt(run),
-      skillContext: this.buildIntegratedSkillContext(run.projectId),
+      skillContext: await this.buildIntegratedSkillContext(run.projectId),
       providerOptions: this.getLatestRunExecutionOptions(run.id, provider),
       yoloMode: latestRunExecutionSettings(this.db.getRunSteps(run.id))?.yoloMode === true,
     });
@@ -8822,7 +8828,8 @@ export class AppController
     return this.detectedCursorInstallation ?? Promise.resolve({ binaryPath: null });
   }
 
-  listIntegratedSkills(): Promise<IntegratedSkillMetadata[]> {
+  async listIntegratedSkills(): Promise<IntegratedSkillMetadata[]> {
+    const { INTEGRATED_SKILLS_CATALOG } = await loadIntegratedSkillsCatalog();
     const seen = new Set<string>();
     const metadata = INTEGRATED_SKILLS_CATALOG.filter((skill) => {
       const dedupeKey = `${skill.source}:${skill.name}`;
@@ -8842,11 +8849,12 @@ export class AppController
       relativeDir: skill.relativeDir,
       sourceUrl: skill.sourceUrl,
     }));
-    return Promise.resolve(metadata);
+    return metadata;
   }
 
-  getIntegratedSkillContent(skillId: string): Promise<string | null> {
-    return Promise.resolve(INTEGRATED_SKILLS_BY_ID[skillId]?.content ?? null);
+  async getIntegratedSkillContent(skillId: string): Promise<string | null> {
+    const { INTEGRATED_SKILLS_BY_ID } = await loadIntegratedSkillsCatalog();
+    return INTEGRATED_SKILLS_BY_ID[skillId]?.content ?? null;
   }
 
   async pickIdeExecutable(): Promise<string | null> {
@@ -9931,7 +9939,7 @@ export class AppController
     );
 
     const worker = this.startWorker(run, provider, model, apiKey ?? "", await this.resolveNetworkProxyRuntimeConfig(), {
-      skillContext: this.buildIntegratedSkillContext(run.projectId),
+      skillContext: await this.buildIntegratedSkillContext(run.projectId),
       providerOptions: this.getLatestRunExecutionOptions(run.id, provider),
       yoloMode: latestRunExecutionSettings(this.db.getRunSteps(run.id))?.yoloMode === true,
     });
