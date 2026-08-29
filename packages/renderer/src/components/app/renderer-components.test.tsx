@@ -1007,6 +1007,7 @@ describe("renderer component states", () => {
       reasoningEffort: "high",
       anthropicEffort: "medium",
       yoloMode: false,
+      verificationCommands: [],
       busy: false,
       availableIntegratedSkills: [],
       activeIntegratedSkillIds: [],
@@ -1018,6 +1019,7 @@ describe("renderer component states", () => {
       onReasoningEffortChange: vi.fn(),
       onAnthropicEffortChange: vi.fn(),
       onYoloModeChange: vi.fn(),
+      onVerificationCommandsChange: vi.fn(),
       onActiveIntegratedSkillIdsChange: vi.fn(),
       onDeleteProject: vi.fn(),
     } satisfies ComponentProps<typeof ProjectSettingsPage>;

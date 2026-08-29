@@ -273,6 +273,7 @@ export const App = () => {
   const [runAnthropicEffort, setRunAnthropicEffort] = useState("auto");
   const [runExecutionMode, setRunExecutionMode] = useState("auto");
   const [runYoloMode, setRunYoloMode] = useState(false);
+  const [runVerificationCommands, setRunVerificationCommands] = useState<string[]>([]);
   const [runDelegationEnabled, setRunDelegationEnabled] = useState(false);
   const [chatReasoningEffort, setChatReasoningEffort] = useState("auto");
   const [chatAnthropicEffort, setChatAnthropicEffort] = useState("auto");
@@ -1388,6 +1389,7 @@ export const App = () => {
     changeRunAnthropicEffort,
     changeRunExecutionMode,
     changeRunYoloMode,
+    changeRunVerificationCommands,
     changeRunModel,
     changeRunWorktreeModelIds,
     changeRunModelConfigurations,
@@ -1404,6 +1406,7 @@ export const App = () => {
     setRunAnthropicEffort,
     setRunExecutionMode,
     setRunYoloMode,
+    setRunVerificationCommands,
     setRunModelId,
     setRunWorktreeModelIds,
     setRunModelConfigurations,
@@ -4261,12 +4264,14 @@ export const App = () => {
               anthropicEffort={runAnthropicEffort}
               executionMode={runExecutionMode}
               yoloMode={runYoloMode}
+              verificationCommands={runVerificationCommands}
               delegationEnabled={runDelegationEnabled}
               delegationAvailable={delegationAvailable}
               onReasoningEffortChange={changeRunReasoningEffort}
               onAnthropicEffortChange={changeRunAnthropicEffort}
               onExecutionModeChange={changeRunExecutionMode}
               onYoloModeChange={changeRunYoloMode}
+              onVerificationCommandsChange={changeRunVerificationCommands}
               onDelegationEnabledChange={setRunDelegationEnabled}
               onSelectRun={(runId) => void handleRunSelect(project.project.id, runId)}
               onRunPromptChange={setRunPrompt}

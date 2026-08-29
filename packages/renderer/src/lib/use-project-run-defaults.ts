@@ -66,6 +66,7 @@ interface UseProjectRunDefaultsInput {
   setRunAnthropicEffort: (value: string) => void;
   setRunExecutionMode: (value: string) => void;
   setRunYoloMode: (value: boolean) => void;
+  setRunVerificationCommands: (value: string[]) => void;
   setRunModelId: (value: string) => void;
   setRunWorktreeModelIds: (value: string[]) => void;
   setRunModelConfigurations: (value: Record<string, RunModelConfiguration>) => void;
@@ -94,6 +95,7 @@ export const useProjectRunDefaults = ({
   setRunAnthropicEffort,
   setRunExecutionMode,
   setRunYoloMode,
+  setRunVerificationCommands,
   setRunModelId,
   setRunWorktreeModelIds,
   setRunModelConfigurations,
@@ -144,6 +146,7 @@ export const useProjectRunDefaults = ({
     setRunAnthropicEffort(defaults.anthropicEffort);
     setRunExecutionMode(defaults.executionMode);
     setRunYoloMode(defaults.yoloMode);
+    setRunVerificationCommands(defaults.verificationCommands);
     // Always reset model selections so a project without stored defaults does not inherit the
     // previous project's models. Without a stored value, fall back to the last used model like
     // loadSnapshot does (setting "" would leave local-mode runs without a model until the next
@@ -166,6 +169,7 @@ export const useProjectRunDefaults = ({
     setRunWorktreeModelIds,
     setRunModelConfigurations,
     setRunYoloMode,
+    setRunVerificationCommands,
     snapshotLoaded,
   ]);
 
@@ -217,6 +221,14 @@ export const useProjectRunDefaults = ({
     [persistProjectRunDefaults, setRunYoloMode],
   );
 
+  const changeRunVerificationCommands = useCallback(
+    (value: string[]) => {
+      setRunVerificationCommands(value);
+      persistProjectRunDefaults({ verificationCommands: value });
+    },
+    [persistProjectRunDefaults, setRunVerificationCommands],
+  );
+
   const changeRunModel = useCallback(
     (modelId: string) => {
       onRunModelChange(modelId);
@@ -248,6 +260,7 @@ export const useProjectRunDefaults = ({
     changeRunAnthropicEffort,
     changeRunExecutionMode,
     changeRunYoloMode,
+    changeRunVerificationCommands,
     changeRunModel,
     changeRunWorktreeModelIds,
     changeRunModelConfigurations,

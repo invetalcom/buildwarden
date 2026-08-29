@@ -64,12 +64,14 @@ interface ProjectPageProps {
   anthropicEffort: string;
   executionMode: string;
   yoloMode: boolean;
+  verificationCommands: string[];
   delegationEnabled: boolean;
   delegationAvailable: boolean;
   onReasoningEffortChange: (value: string) => void;
   onAnthropicEffortChange: (value: string) => void;
   onExecutionModeChange: (value: string) => void;
   onYoloModeChange: (value: boolean) => void;
+  onVerificationCommandsChange: (value: string[]) => void;
   onDelegationEnabledChange: (value: boolean) => void;
   onSelectRun: (runId: string) => void;
   onRunPromptChange: (value: string) => void;
@@ -157,12 +159,14 @@ export const ProjectPage = ({
   anthropicEffort,
   executionMode,
   yoloMode,
+  verificationCommands,
   delegationEnabled,
   delegationAvailable,
   onReasoningEffortChange,
   onAnthropicEffortChange,
   onExecutionModeChange,
   onYoloModeChange,
+  onVerificationCommandsChange,
   onDelegationEnabledChange,
   onSelectRun,
   onRunPromptChange,
@@ -350,6 +354,7 @@ export const ProjectPage = ({
           anthropicEffort={anthropicEffort}
           executionMode={executionMode}
           yoloMode={yoloMode}
+          verificationCommands={verificationCommands}
           busy={busy}
           availableIntegratedSkills={availableIntegratedSkills}
           activeIntegratedSkillIds={activeIntegratedSkillIds}
@@ -362,6 +367,7 @@ export const ProjectPage = ({
           onAnthropicEffortChange={onAnthropicEffortChange}
           onExecutionModeChange={onExecutionModeChange}
           onYoloModeChange={onYoloModeChange}
+          onVerificationCommandsChange={onVerificationCommandsChange}
           onActiveIntegratedSkillIdsChange={onActiveIntegratedSkillIdsChange}
           onDeleteProject={onDeleteProject}
         />

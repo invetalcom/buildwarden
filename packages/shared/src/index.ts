@@ -5053,6 +5053,8 @@ export interface ProjectRunDefaults {
   executionMode: string;
   /** Full Access: skip per-tool approvals for new runs. */
   yoloMode: boolean;
+  /** Commands run sequentially after successful code-mode turns. */
+  verificationCommands: string[];
 }
 
 export type ProjectRunDefaultsByProjectId = Record<string, ProjectRunDefaults>;
@@ -5067,6 +5069,7 @@ export const buildDefaultProjectRunDefaults = (): ProjectRunDefaults => ({
   anthropicEffort: "auto",
   executionMode: "auto",
   yoloMode: false,
+  verificationCommands: [],
 });
 
 const RUN_DEFAULT_MODES: readonly RunMode[] = ["code", "plan", "ask"];
@@ -5123,6 +5126,14 @@ const parseProjectRunDefaultsRecord = (value: unknown): ProjectRunDefaults | nul
     anthropicEffort: RUN_DEFAULT_EFFORTS.includes(record.anthropicEffort as string) ? (record.anthropicEffort as string) : defaults.anthropicEffort,
     executionMode: parseRunExecutionMode(record.executionMode, defaults.executionMode),
     yoloMode: record.yoloMode === true,
+    verificationCommands: Array.isArray(record.verificationCommands)
+      ? record.verificationCommands
+          .filter((command): command is string => typeof command === "string")
+          .map((command) => command.trim())
+          .filter(Boolean)
+          .slice(0, 10)
+          .map((command) => command.slice(0, 500))
+      : defaults.verificationCommands,
   };
 };
 

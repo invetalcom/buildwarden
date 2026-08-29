@@ -24,11 +24,23 @@ describe("parseProjectRunDefaultsSetting", () => {
         anthropicEffort: "xhigh",
         executionMode: "fast",
         yoloMode: true,
+        verificationCommands: ["pnpm typecheck", "pnpm test"],
       },
     };
 
     const parsed = parseProjectRunDefaultsSetting(JSON.stringify(stored));
     expect(parsed["project-1"]).toEqual(stored["project-1"]);
+  });
+
+  it("sanitizes verification commands and caps their count", () => {
+    const parsed = parseProjectRunDefaultsSetting(JSON.stringify({
+      "project-1": {
+        verificationCommands: ["  pnpm typecheck  ", "", 42, ...Array.from({ length: 12 }, (_, index) => `check-${index}`)],
+      },
+    }));
+
+    expect(parsed["project-1"]?.verificationCommands).toHaveLength(10);
+    expect(parsed["project-1"]?.verificationCommands[0]).toBe("pnpm typecheck");
   });
 
   it("falls back to defaults for invalid field values", () => {

@@ -253,6 +253,7 @@ import type { AppControllerDesktopServices } from "./desktop-platform-services";
 import { HostEventBus } from "./host-events";
 import type { HostTerminal } from "./host-terminal-service";
 import { buildIntegratedSkillContext } from "./integrated-skill-context";
+import { runProjectVerificationCommands, type ProjectVerificationResult } from "./project-verification";
 
 type IntegratedSkillsCatalogModule = typeof import("@buildwarden/shared/integrated-skills-catalog");
 let integratedSkillsCatalogPromise: Promise<IntegratedSkillsCatalogModule> | null = null;
@@ -1091,6 +1092,7 @@ const AZURE_LEGACY_AUTO_RECOVERY_KIND = "Azure Legacy-max-tool-rounds";
 interface ActiveWorker {
   worker: Worker;
   cancelled: boolean;
+  verificationAbortController?: AbortController;
 }
 
 type WorkerDoneResult = {
@@ -6850,6 +6852,7 @@ export class AppController
     }
 
     active.cancelled = true;
+    active.verificationAbortController?.abort();
     active.worker.postMessage({ type: "cancel" });
     this.db.updateRunStatus(runId, "cancelled", { errorMessage: "Run cancelled by user." });
     await this.appendRunEvent(runId, "status", "Run cancelled", "Cancellation requested.");
@@ -9397,7 +9400,7 @@ export class AppController
 
       if (payload.type === "done") {
         const active = this.runWorkers.get(run.id);
-        const wasCancelled = active?.cancelled === true;
+        let wasCancelled = active?.cancelled === true;
         const currentRun = this.db.getRun(run.id);
         const nextInputTokens = Math.max(currentRun.inputTokens, payload.result.usage.inputTokens);
         const nextOutputTokens = Math.max(currentRun.outputTokens, payload.result.usage.outputTokens);
@@ -9451,19 +9454,84 @@ export class AppController
           ? this.db.getOrchestrationByCoordinatorRunId(run.id)
           : null;
         const waitingForSubagents = !wasCancelled && orchestration?.status === "waiting";
+        const configuredVerificationCommands = parseProjectRunDefaultsSetting(
+          this.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults],
+        )[run.projectId]?.verificationCommands ?? [];
+        let verificationResults: ProjectVerificationResult[] = [];
+        if (!wasCancelled && !waitingForSubagents && run.mode === "code" && configuredVerificationCommands.length > 0) {
+          const verificationAbortController = new AbortController();
+          if (active) active.verificationAbortController = verificationAbortController;
+          const verificationStartedContent = configuredVerificationCommands.join("\n");
+          await this.appendRunEvent(
+            run.id,
+            "status",
+            "Verification started",
+            verificationStartedContent,
+            { verificationGate: true, commandCount: configuredVerificationCommands.length },
+          );
+          this.emitEvent({
+            runId: run.id,
+            type: "status",
+            title: "Verification started",
+            content: verificationStartedContent,
+            metadata: { verificationGate: true, commandCount: configuredVerificationCommands.length },
+            createdAt: new Date().toISOString(),
+          });
+          verificationResults = await runProjectVerificationCommands(
+            run.worktreePath,
+            configuredVerificationCommands,
+            undefined,
+            verificationAbortController.signal,
+          );
+          if (active) active.verificationAbortController = undefined;
+          wasCancelled = active?.cancelled === true;
+          if (!wasCancelled) {
+            for (const result of verificationResults) {
+              const title = result.ok ? "Verification passed" : "Verification failed";
+              const content = `$ ${result.command}\n${result.output}`;
+              const metadata = {
+                verificationGate: true,
+                command: result.command,
+                exitCode: result.exitCode,
+                durationMs: result.durationMs,
+                timedOut: result.timedOut,
+                ok: result.ok,
+              };
+              await this.appendRunEvent(run.id, result.ok ? "tool-result" : "error", title, content, metadata);
+              this.emitEvent({
+                runId: run.id,
+                type: result.ok ? "tool-result" : "error",
+                title,
+                content,
+                metadata,
+                createdAt: new Date().toISOString(),
+              });
+            }
+          }
+        }
+        const failedVerification = !wasCancelled && verificationResults.some((result) => !result.ok);
+        const failedVerificationResult = verificationResults.find((result) => !result.ok);
         const terminalEventTitle = wasCancelled
           ? "Run cancelled"
+          : failedVerification
+            ? "Verification gate failed"
           : waitingForSubagents
             ? "Waiting for subagents to complete"
             : "Run completed";
         const terminalEventContent = wasCancelled
           ? `Run cancellation finished cleanup.\nInput tokens: ${nextInputTokens}\nOutput tokens: ${nextOutputTokens}`
+          : failedVerification
+            ? `The agent turn finished, but the verification gate failed at: ${failedVerificationResult?.command ?? "unknown command"}.\nInput tokens: ${nextInputTokens}\nOutput tokens: ${nextOutputTokens}`
           : waitingForSubagents
             ? `The coordinator turn completed and is waiting for delegated subagents.\nInput tokens: ${nextInputTokens}\nOutput tokens: ${nextOutputTokens}`
             : `Run completed successfully.\nInput tokens: ${nextInputTokens}\nOutput tokens: ${nextOutputTokens}`;
-        this.db.updateRunStatus(run.id, wasCancelled ? "cancelled" : "completed", {
+        this.db.updateRunStatus(run.id, wasCancelled ? "cancelled" : failedVerification ? "failed" : "completed", {
           summary: wasCancelled ? currentRun.summary : payload.result.summary,
-          errorMessage: wasCancelled ? "Run cancelled by user." : null,
+          errorMessage: wasCancelled
+            ? "Run cancelled by user."
+            : failedVerification
+              ? `Verification failed: ${failedVerificationResult?.command ?? "unknown command"}`
+              : null,
           lastProviderResponseId: payload.result.responseId,
           inputTokens: nextInputTokens,
           outputTokens: nextOutputTokens,
@@ -9481,6 +9549,8 @@ export class AppController
             usageTotals: payload.result.usage,
             cancelled: wasCancelled,
             waitingForSubagents,
+            verificationGate: configuredVerificationCommands.length > 0,
+            verificationPassed: verificationResults.length > 0 && !failedVerification,
           },
         );
         this.emitEvent({
@@ -9494,19 +9564,23 @@ export class AppController
             usageTotals: payload.result.usage,
             cancelled: wasCancelled,
             waitingForSubagents,
+            verificationGate: configuredVerificationCommands.length > 0,
+            verificationPassed: verificationResults.length > 0 && !failedVerification,
           },
           createdAt: new Date().toISOString(),
         });
         this.clearRunRequestStepIds(run.id);
         this.runWorkers.delete(run.id);
         await worker.terminate();
-        if (!wasCancelled) this.syncRunForgeRequestInBackground(run.id, true, false);
-        if (!wasCancelled && run.kind === "lab-implementation") {
+        if (!wasCancelled && !failedVerification) this.syncRunForgeRequestInBackground(run.id, true, false);
+        if (!wasCancelled && !failedVerification && run.kind === "lab-implementation") {
           try {
             await this.reviewCompletedProjectLabImplementation(this.db.getRun(run.id));
           } catch (labReviewError) {
             this.logControllerError("Project Lab implementation review failed.", labReviewError, { runId: run.id });
           }
+        } else if (failedVerification && run.kind === "lab-implementation") {
+          this.cancelProjectLabImplementation(run, "The implementation did not pass its project verification gate.");
         } else if (wasCancelled && run.kind === "lab-implementation") {
           this.cancelProjectLabImplementation(run, "The implementation run was cancelled.");
         }

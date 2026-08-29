@@ -53,6 +53,7 @@ interface ProjectSettingsPageProps {
   anthropicEffort: string;
   executionMode?: string;
   yoloMode: boolean;
+  verificationCommands: string[];
   busy: boolean;
   availableIntegratedSkills: IntegratedSkillMetadata[];
   activeIntegratedSkillIds: string[];
@@ -65,6 +66,7 @@ interface ProjectSettingsPageProps {
   onAnthropicEffortChange: (value: string) => void;
   onExecutionModeChange?: (value: string) => void;
   onYoloModeChange: (value: boolean) => void;
+  onVerificationCommandsChange: (value: string[]) => void;
   onActiveIntegratedSkillIdsChange: (skillIds: string[]) => void | Promise<void>;
   onDeleteProject: () => void | Promise<void>;
 }
@@ -214,6 +216,7 @@ export const ProjectSettingsPage = ({
   anthropicEffort,
   executionMode = "auto",
   yoloMode,
+  verificationCommands,
   busy,
   availableIntegratedSkills,
   activeIntegratedSkillIds,
@@ -226,6 +229,7 @@ export const ProjectSettingsPage = ({
   onAnthropicEffortChange,
   onExecutionModeChange,
   onYoloModeChange,
+  onVerificationCommandsChange,
   onActiveIntegratedSkillIdsChange,
   onDeleteProject,
 }: ProjectSettingsPageProps) => {
@@ -262,6 +266,11 @@ export const ProjectSettingsPage = ({
   const [forgeMonitorError, setForgeMonitorError] = useState<string | null>(null);
   const [forgeMonitorMessage, setForgeMonitorMessage] = useState<string | null>(null);
   const forgeMonitorAutosaveTimerRef = useRef<number | null>(null);
+  const [verificationCommandsDraft, setVerificationCommandsDraft] = useState(() => verificationCommands.join("\n"));
+
+  useEffect(() => {
+    setVerificationCommandsDraft(verificationCommands.join("\n"));
+  }, [project.project.id, verificationCommands]);
 
   useEffect(() => {
     let cancelled = false;
@@ -710,6 +719,29 @@ export const ProjectSettingsPage = ({
                     <ShieldOff className="size-3.5 shrink-0 text-[var(--ec-danger)]" />
                     <span className="min-w-0">Full Access applies to future runs and should only be used for trusted project folders.</span>
                   </div>
+                </div>
+              </SettingsRow>
+
+              <SettingsRow
+                title="Verification gate"
+                description="Run these commands in order after each successful Code-mode turn. A failing command marks the run failed and blocks completed-run actions."
+                align="start"
+              >
+                <div className={`${rowControlClass} space-y-2`}>
+                  <textarea
+                    value={verificationCommandsDraft}
+                    onChange={(event) => setVerificationCommandsDraft(event.target.value)}
+                    onBlur={() =>
+                      onVerificationCommandsChange(
+                        verificationCommandsDraft.split(/\r?\n/).map((command) => command.trim()).filter(Boolean).slice(0, 10),
+                      )
+                    }
+                    className="app-scrollbar min-h-24 w-full resize-y rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-3 py-2 font-mono text-xs text-[var(--ec-text)] outline-none transition focus:border-[var(--ec-accent-ring)]"
+                    placeholder={"pnpm typecheck\npnpm test"}
+                    disabled={busy}
+                    aria-label="Verification commands"
+                  />
+                  <p className="text-[11px] text-[var(--ec-faint)]">One command per line, up to 10. Commands run from the run workspace with a five-minute limit each.</p>
                 </div>
               </SettingsRow>
             </>
