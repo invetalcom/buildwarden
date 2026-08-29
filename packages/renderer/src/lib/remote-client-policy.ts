@@ -41,7 +41,7 @@ export const webCapabilities = (scopes: readonly RemoteAccessScope[]): Readonly<
     orchestrationOperate: runMutations,
     orchestrationAdoption: runMutations && gitMutations,
     orchestrationSettings: runMutations && adminMutations,
-    liveEvents: true,
+    liveEvents: has("state:read"),
   });
 };
 
