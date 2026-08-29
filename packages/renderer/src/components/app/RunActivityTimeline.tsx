@@ -14,10 +14,9 @@ import { SingleActivityEntryView, SingleGroupActivityEntry, type ActivityRenderC
 import {
   ActivityDiffBatchRow,
   ActivityToolBatchGroup,
-  canCancelToolBatchShell,
   type DiffBatchSummarizedRow,
 } from "./run-activity-tool-rows";
-import { summarizeToolBatchItems } from "./run-activity-tool-model";
+import { canCancelToolBatchShell, summarizeToolBatchItems } from "./run-activity-tool-model";
 import {
   buildActivityEntries,
   buildTimelineRenderItems,
@@ -285,7 +284,7 @@ const TimelineItemView = ({ item, context }: Readonly<{ item: TimelineRenderItem
     return (
       <div key={item.key} className="agent-loading">
         <div className="run-activity-loading-bar mb-2" />
-        <div className="flex items-center gap-2 text-[11px] text-zinc-500">
+        <div className="flex items-center gap-2 text-[11px] text-[var(--ec-muted)]">
           <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[color:var(--ec-accent)]" aria-hidden />
           <span className="animate-pulse">Agent is working...</span>
         </div>

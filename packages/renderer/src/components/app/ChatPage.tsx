@@ -220,7 +220,7 @@ export const ChatPage = ({
         <div className="app-scrollbar max-h-[520px] overflow-y-auto">
           {loading ? (
             <div className="flex flex-col items-center justify-center gap-3 p-12 text-center">
-              <p className="text-sm text-zinc-400">Loading chats…</p>
+              <p className="text-sm text-[var(--ec-muted)]">Loading chats…</p>
             </div>
           ) : <>{filteredChats.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-3 p-12 text-center">
@@ -256,7 +256,7 @@ export const ChatPage = ({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-8 w-8 p-0 text-zinc-400 hover:text-rose-400"
+                      className="h-8 w-8 p-0 text-[var(--ec-muted)] hover:text-[var(--ec-danger-strong)]"
                       onClick={async () => {
                         await onDeleteChat(chat.id);
                         void loadChats();

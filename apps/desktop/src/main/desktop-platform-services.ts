@@ -5,7 +5,6 @@ import type {
   OpenPathInFileManagerResult,
   ProjectForgeRequestNotificationPayload,
   RunEvent,
-  UiTheme,
 } from "@buildwarden/shared";
 
 export interface ExternalUrlOpenResult {
@@ -15,9 +14,10 @@ export interface ExternalUrlOpenResult {
 
 export interface DesktopMenuOptions {
   logDirPath: string;
-  theme: UiTheme;
+  designSchemeId: string;
+  designSchemes: ReadonlyArray<{ id: string; name: string; mode: "dark" | "light" }>;
   onCommand: (command: AppMenuCommand) => void;
-  onThemeChange: (theme: UiTheme) => void;
+  onDesignSchemeChange: (schemeId: string) => void;
 }
 
 export interface ProjectForgeDesktopNotification {

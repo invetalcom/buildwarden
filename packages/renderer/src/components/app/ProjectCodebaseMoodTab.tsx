@@ -50,10 +50,10 @@ export const ProjectCodebaseMoodTab = ({ project, modelOptions, defaultModelId, 
     <Card className="p-4">
       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-center gap-2">
-          <Bot className="h-4 w-4 text-cyan-400" />
+          <Bot className="h-4 w-4 text-[var(--ec-accent)]" />
           <div className="min-w-0">
-            <h3 className="text-sm font-medium text-zinc-100">Codebase mood</h3>
-            <p className="text-xs text-zinc-500">{record?.summary ?? "Get a structured read on brittleness, inconsistency, and abstraction debt."}</p>
+            <h3 className="text-sm font-medium text-[var(--ec-text)]">Codebase mood</h3>
+            <p className="text-xs text-[var(--ec-muted)]">{record?.summary ?? "Get a structured read on brittleness, inconsistency, and abstraction debt."}</p>
           </div>
         </div>
         {canGenerateInsights ? <div className="flex flex-wrap items-center gap-2">
@@ -69,35 +69,35 @@ export const ProjectCodebaseMoodTab = ({ project, modelOptions, defaultModelId, 
           </Button>
         </div> : null}
       </div>
-      <p className="mb-3 text-xs text-zinc-500">Updated {formatGeneratedAt(record?.generatedAt)}</p>
+      <p className="mb-3 text-xs text-[var(--ec-muted)]">Updated {formatGeneratedAt(record?.generatedAt)}</p>
 
       {mood ? (
         <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2 text-sm text-zinc-200">
-            <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-cyan-100">Score {mood.overallScore}</span>
+          <div className="flex flex-wrap items-center gap-2 text-sm text-[var(--ec-text)]">
+            <span className="rounded-full border border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-2.5 py-1 text-[var(--ec-accent)]">Score {mood.overallScore}</span>
             <span>{mood.posture}</span>
           </div>
           <div className="grid gap-2 lg:grid-cols-3">
             {mood.sections.map((section) => (
-              <div key={section.label} className="rounded-xl border border-zinc-800/80 bg-zinc-950/50 p-3">
-                <p className="text-sm font-medium text-zinc-100">{section.label}</p>
-                <p className="mt-1 text-xs text-cyan-100">Score {section.score}</p>
-                <p className="mt-2 text-sm leading-relaxed text-zinc-300">{section.summary}</p>
+              <div key={section.label} className="rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] p-3">
+                <p className="text-sm font-medium text-[var(--ec-text)]">{section.label}</p>
+                <p className="mt-1 text-xs text-[var(--ec-accent)]">Score {section.score}</p>
+                <p className="mt-2 text-sm leading-relaxed text-[var(--ec-text)]">{section.summary}</p>
               </div>
             ))}
           </div>
           <div className="space-y-2">
             {mood.findings.map((finding) => (
-              <div key={`${finding.title}-${finding.filePath ?? ""}`} className="rounded-xl border border-zinc-800/80 bg-zinc-950/50 p-3">
-                <p className="text-sm font-medium text-zinc-100">{finding.title}</p>
-                {finding.filePath ? <p className="mt-1 text-xs text-zinc-500">{finding.filePath}</p> : null}
-                <p className="mt-2 text-sm leading-relaxed text-zinc-300">{finding.detail}</p>
+              <div key={`${finding.title}-${finding.filePath ?? ""}`} className="rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] p-3">
+                <p className="text-sm font-medium text-[var(--ec-text)]">{finding.title}</p>
+                {finding.filePath ? <p className="mt-1 text-xs text-[var(--ec-muted)]">{finding.filePath}</p> : null}
+                <p className="mt-2 text-sm leading-relaxed text-[var(--ec-text)]">{finding.detail}</p>
               </div>
             ))}
           </div>
         </div>
       ) : (
-        <div className="rounded-xl border border-dashed border-zinc-800/80 bg-zinc-950/40 px-4 py-10 text-center text-sm text-zinc-500">
+        <div className="rounded-xl border border-dashed border-[var(--ec-border)] bg-[var(--ec-panel)] px-4 py-10 text-center text-sm text-[var(--ec-muted)]">
           {canGenerateInsights ? "Generate a codebase mood report to see structural weak spots and likely maintenance pressure." : "No saved codebase mood report is available on the host."}
         </div>
       )}

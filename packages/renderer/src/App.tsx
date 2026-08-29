@@ -1,7 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type ReactNode } from "react";
 import {
   APP_SETTING_KEYS,
-  cycleUiTheme,
+  getDefaultDesignScheme,
   DEFAULT_NETWORK_PROXY_SETTINGS,
   buildDefaultProjectLabSettings,
   isDetachedHeadProjectErrorMessage,
@@ -16,7 +16,8 @@ import {
   parseRunTimelineDensitySetting,
   parseSidebarGroupRunsByProjectSetting,
   parseSidebarRunEntrySizeSetting,
-  parseUiTheme,
+  parseDesignScheme,
+  serializeDesignScheme,
   SUPPORTED_IDE_KINDS,
   parseIdePathConfig,
   parseOrchestrationTeamSettings,
@@ -28,6 +29,7 @@ import {
   type ChatAttachmentPayload,
   type ChatDetail,
   type ChatRecord,
+  type DesignScheme,
   type KeyboardShortcutId,
   type ModelDeletionImpact,
   type NetworkProxySettingsSnapshot,
@@ -54,10 +56,10 @@ import {
   type RunWorkspaceType,
   type ShellApprovalDecision,
   type SupportedIdeKind,
-  type UiTheme,
   type UnifiedProviderFamily,
   uiThemeToLegacyDarkMode,
 } from "@buildwarden/shared";
+import { applyDesignSchemeToDocument } from "./lib/design-scheme";
 import {
   Globe,
   GitBranch,
@@ -1481,7 +1483,8 @@ export const App = () => {
     snapshot.settings[APP_SETTING_KEYS.consecutiveToolCallCollapseThreshold],
   );
   const recentRunDays = parseRecentRunDaysSetting(snapshot.settings[APP_SETTING_KEYS.recentRunDays]);
-  const uiTheme = parseUiTheme(snapshot.settings);
+  const designScheme = useMemo(() => parseDesignScheme(snapshot.settings), [snapshot.settings]);
+  const uiTheme = designScheme.mode;
   const sidebarContrast = snapshot.settings[APP_SETTING_KEYS.sidebarContrast] === "true";
   const sidebarRunEntrySize = parseSidebarRunEntrySizeSetting(snapshot.settings[APP_SETTING_KEYS.sidebarRunEntrySize]);
   const sidebarGroupRunsByProject = parseSidebarGroupRunsByProjectSetting(snapshot.settings[APP_SETTING_KEYS.sidebarGroupRunsByProject]);
@@ -2757,12 +2760,13 @@ export const App = () => {
         if (!buildwarden) {
           throw new Error("The Electron desktop bridge is unavailable.");
         }
-        const next = cycleUiTheme(parseUiTheme(snapshot.settings));
-        await buildwarden.setAppSetting(APP_SETTING_KEYS.uiTheme, next);
-        await buildwarden.setAppSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next));
+        const next = getDefaultDesignScheme(designScheme.mode === "dark" ? "light" : "dark");
+        await buildwarden.setAppSetting(APP_SETTING_KEYS.designScheme, serializeDesignScheme(next));
+        await buildwarden.setAppSetting(APP_SETTING_KEYS.uiTheme, next.mode);
+        await buildwarden.setAppSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next.mode));
         await loadSnapshot();
       }),
-    [buildwarden, handleAction, loadSnapshot, snapshot.settings],
+    [buildwarden, designScheme.mode, handleAction, loadSnapshot],
   );
 
   useEffect(() => {
@@ -3574,9 +3578,8 @@ export const App = () => {
   ]);
 
   useEffect(() => {
-    document.body.dataset.theme = uiTheme;
-    document.documentElement.dataset.theme = uiTheme;
-  }, [uiTheme]);
+    applyDesignSchemeToDocument(designScheme);
+  }, [designScheme]);
 
   useEffect(() => {
     const clearRunPaneDropPreview = () => setRunPaneDropPreview(null);
@@ -3769,8 +3772,8 @@ export const App = () => {
           />
         ) : (
           <Card className="flex min-h-[400px] flex-1 flex-col items-center justify-center gap-4 p-8">
-            <Loader2 className="h-10 w-10 animate-spin text-cyan-400" />
-            <p className="text-sm text-zinc-500">Loading run...</p>
+            <Loader2 className="h-10 w-10 animate-spin text-[var(--ec-accent)]" />
+            <p className="text-sm text-[var(--ec-muted)]">Loading run...</p>
           </Card>
         )}
         {paneDropPreviewActive ? <RunPaneDropPreviewOverlay paneId={entry.paneId} mode="replace" /> : null}
@@ -3855,7 +3858,7 @@ export const App = () => {
               pastedTextAttachmentThreshold={pastedTextAttachmentThreshold}
               consecutiveToolCallCollapseThreshold={consecutiveToolCallCollapseThreshold}
               recentRunDays={recentRunDays}
-              uiTheme={uiTheme}
+              designScheme={designScheme}
               sidebarContrast={sidebarContrast}
               sidebarRunEntrySize={sidebarRunEntrySize}
               sidebarGroupRunsByProject={sidebarGroupRunsByProject}
@@ -3920,13 +3923,14 @@ export const App = () => {
                   await loadSnapshot();
                 })
               }
-              onUiThemeChange={(next: UiTheme) =>
+              onDesignSchemeChange={(next: DesignScheme) =>
                 void handleAction(async () => {
                   if (!buildwarden) {
                     throw new Error("The Electron desktop bridge is unavailable.");
                   }
-                  await buildwarden.setAppSetting(APP_SETTING_KEYS.uiTheme, next);
-                  await buildwarden.setAppSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next));
+                  await buildwarden.setAppSetting(APP_SETTING_KEYS.designScheme, serializeDesignScheme(next));
+                  await buildwarden.setAppSetting(APP_SETTING_KEYS.uiTheme, next.mode);
+                  await buildwarden.setAppSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next.mode));
                   await loadSnapshot();
                 })
               }
@@ -4418,8 +4422,8 @@ export const App = () => {
             if (selectedRunId) {
               return renderWorkspaceView(
             <Card className="flex min-h-[400px] flex-col items-center justify-center gap-4 p-8">
-              <Loader2 className="h-10 w-10 animate-spin text-cyan-400" />
-              <p className="text-sm text-zinc-500">Loading run...</p>
+              <Loader2 className="h-10 w-10 animate-spin text-[var(--ec-accent)]" />
+              <p className="text-sm text-[var(--ec-muted)]">Loading run...</p>
             </Card>,
               );
             }
@@ -4431,7 +4435,7 @@ export const App = () => {
             return renderWorkspaceView(
                 <Card className="p-8 text-center">
                   <p className="text-lg font-medium">No project selected</p>
-                  <p className="mt-2 text-sm text-zinc-500">{readOnly ? "No projects are configured on the BuildWarden host." : "Open Settings to add your first project, provider, and model."}</p>
+                  <p className="mt-2 text-sm text-[var(--ec-muted)]">{readOnly ? "No projects are configured on the BuildWarden host." : "Open Settings to add your first project, provider, and model."}</p>
                   {!readOnly ? <Button
                     className="mt-4"
                     variant="secondary"

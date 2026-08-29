@@ -4,10 +4,10 @@ import {
   KEYBOARD_SHORTCUT_IDS,
   SUPPORTED_IDE_KINDS,
   type AppLogDirectorySizeInfo,
+  type DesignScheme,
   type KeyboardShortcutId,
   type SidebarRunEntrySize,
   type SupportedIdeKind,
-  type UiTheme,
 } from "@buildwarden/shared";
 import { Keyboard, Loader2 } from "lucide-react";
 import { IdeBrandIcon } from "./ide-brand-icons";
@@ -15,6 +15,7 @@ import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
+import { DesignSchemeEditor } from "./DesignSchemeEditor";
 
 const SHORTCUT_LABELS: Record<KeyboardShortcutId, string> = {
   goHome: "Go to starting page",
@@ -33,11 +34,6 @@ const SHORTCUT_LABELS: Record<KeyboardShortcutId, string> = {
   openSettings: "Open settings",
   closeSettings: "Close settings",
 };
-
-const APPEARANCE_OPTIONS: Array<{ value: UiTheme; label: string; hint: string }> = [
-  { value: "dark", label: "Dark", hint: "Frosted glass over a deep dark backdrop." },
-  { value: "light", label: "Light", hint: "Frosted glass over a bright airy backdrop." },
-];
 
 const SIDEBAR_RUN_ENTRY_SIZE_OPTIONS: Array<{ value: SidebarRunEntrySize; label: string; hint: string }> = [
   { value: "small", label: "Small", hint: "More runs" },
@@ -223,7 +219,7 @@ const EditorPathCard = ({
 
 export type UserSettingsTabProps = {
   busy: boolean;
-  uiTheme: UiTheme;
+  designScheme: DesignScheme;
   sidebarContrast: boolean;
   sidebarRunEntrySize: SidebarRunEntrySize;
   sidebarGroupRunsByProject: boolean;
@@ -239,7 +235,7 @@ export type UserSettingsTabProps = {
   idePathsDirty: boolean;
   idePathsSaving: boolean;
   keyboardShortcuts: Record<KeyboardShortcutId, string>;
-  onUiThemeChange: (theme: UiTheme) => void;
+  onDesignSchemeChange: (scheme: DesignScheme) => void | Promise<void>;
   onSidebarContrastChange: (value: boolean) => void;
   onSidebarRunEntrySizeChange: (value: SidebarRunEntrySize) => void;
   onSidebarGroupRunsByProjectChange: (value: boolean) => void;
@@ -257,7 +253,7 @@ export type UserSettingsTabProps = {
 
 export const UserSettingsTab = ({
   busy,
-  uiTheme,
+  designScheme,
   sidebarContrast,
   sidebarRunEntrySize,
   sidebarGroupRunsByProject,
@@ -273,7 +269,7 @@ export const UserSettingsTab = ({
   idePathsDirty,
   idePathsSaving,
   keyboardShortcuts,
-  onUiThemeChange,
+  onDesignSchemeChange,
   onSidebarContrastChange,
   onSidebarRunEntrySizeChange,
   onSidebarGroupRunsByProjectChange,
@@ -291,29 +287,11 @@ export const UserSettingsTab = ({
   <div className="space-y-5">
     <SettingsSection title="Appearance">
       <SettingsRow
-        title="Interface theme"
-        description="Choose the dark or light liquid-glass shell. Same options appear at the top of the View menu."
+        title="Design scheme"
+        description="Choose a curated color pair, customize semantic colors, or move a design between desktop and web with import and export."
         align="start"
       >
-        <div className={`${rowControlClass} grid gap-2 sm:grid-cols-2`} role="radiogroup" aria-label="Interface appearance">
-          {APPEARANCE_OPTIONS.map((opt) => {
-            const selected = uiTheme === opt.value;
-            return (
-              <label
-                key={opt.value}
-                className={`cursor-pointer rounded-md border px-3 py-2.5 transition ${
-                  selected
-                    ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] shadow-[var(--ec-action-shadow)]"
-                    : "border-[var(--ec-border)] bg-[var(--ec-panel-soft)] hover:bg-[var(--ec-hover)]"
-                }`}
-              >
-                <input className="sr-only" type="radio" name="buildwarden-ui-theme" checked={selected} onChange={() => onUiThemeChange(opt.value)} />
-                <p className="text-sm font-medium text-[var(--ec-text)]">{opt.label}</p>
-                <p className="mt-1 text-xs leading-snug text-[var(--ec-muted)]">{opt.hint}</p>
-              </label>
-            );
-          })}
-        </div>
+        <div className={rowControlClass}><DesignSchemeEditor scheme={designScheme} busy={busy} onChange={onDesignSchemeChange} /></div>
       </SettingsRow>
     </SettingsSection>
 

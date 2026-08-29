@@ -75,7 +75,7 @@ describe("ForgeChecksView", () => {
       />,
     );
 
-    expect(markup).toContain("conic-gradient(#34d399 360deg");
-    expect(markup).not.toContain("conic-gradient(#fbbf24 360deg");
+    expect(markup).toContain("conic-gradient(var(--ec-success) 360deg");
+    expect(markup).not.toContain("conic-gradient(var(--ec-warning) 360deg");
   });
 });

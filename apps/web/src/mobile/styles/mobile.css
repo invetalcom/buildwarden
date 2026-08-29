@@ -3,6 +3,8 @@
 
 /* Only the mobile UI is scanned: no desktop renderer classes end up in this bundle. */
 @source "../**/*.{ts,tsx}";
+@source "../../../../../packages/renderer/src/components/app/DesignSchemeEditor.tsx";
+@source "../../../../../packages/renderer/src/components/ui/{button,card,color-input,input}.tsx";
 
 @theme {
   --radius-xs: 0.45rem;
@@ -28,6 +30,24 @@ body {
   overscroll-behavior: none;
   -webkit-tap-highlight-color: transparent;
   -webkit-font-smoothing: antialiased;
+}
+
+input,
+textarea,
+select,
+button {
+  color: inherit;
+  accent-color: var(--ec-accent);
+}
+
+select option {
+  background: var(--ec-bg-elevated);
+  color: var(--ec-text);
+}
+
+::selection {
+  background: var(--ec-accent-soft);
+  color: var(--ec-text);
 }
 
 /* The shell owns scrolling; the document never does. */

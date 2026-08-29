@@ -87,7 +87,7 @@ export const BookmarksPage = ({
 
       <Card className="p-4">
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--ec-muted)]" />
           <Input
             className="pl-10"
             placeholder="Search bookmarks (title, project, or activity log)..."
@@ -98,27 +98,27 @@ export const BookmarksPage = ({
       </Card>
 
       <Card className="overflow-hidden p-0">
-        <div className="border-b border-zinc-800 px-4 py-3">
-          <p className="text-sm font-medium text-zinc-100">
+        <div className="border-b border-[var(--ec-border)] px-4 py-3">
+          <p className="text-sm font-medium text-[var(--ec-text)]">
             {filteredBookmarks.length} {filteredBookmarks.length === 1 ? "bookmark" : "bookmarks"}
           </p>
         </div>
         <div className="app-scrollbar max-h-[520px] overflow-y-auto">
           {loading ? (
             <div className="flex flex-col items-center justify-center gap-3 p-12 text-center">
-              <p className="text-sm text-zinc-400">Loading bookmarks…</p>
+              <p className="text-sm text-[var(--ec-muted)]">Loading bookmarks…</p>
             </div>
           ) : <>{filteredBookmarks.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-3 p-12 text-center">
-              <Bookmark className="h-12 w-12 text-zinc-600" />
-              <p className="text-sm text-zinc-400">
+              <Bookmark className="h-12 w-12 text-[var(--ec-faint)]" />
+              <p className="text-sm text-[var(--ec-muted)]">
                 {bookmarks.length === 0
                   ? "No bookmarks yet. Right-click a run in the sidebar and choose Add to bookmarks."
                   : "No bookmarks match your search."}
               </p>
             </div>
           ) : (
-            <div className="divide-y divide-zinc-800">
+            <div className="divide-y divide-[var(--ec-border)]">
               {filteredBookmarks.map((bookmark) => (
                 <div
                   key={bookmark.id}
@@ -132,19 +132,19 @@ export const BookmarksPage = ({
                   >
                     <div className="flex items-center gap-2">
                       <Badge dot tone={bookmark.status}>{bookmark.status}</Badge>
-                      <span className="truncate text-xs text-zinc-500">
+                      <span className="truncate text-xs text-[var(--ec-muted)]">
                         {isChatBookmark(bookmark)
                           ? `Chat • ${new Date(bookmark.bookmarkedAt).toLocaleString()}`
                           : `${bookmark.projectName} • ${new Date(bookmark.bookmarkedAt).toLocaleString()}`}
                       </span>
                     </div>
-                    <p className="mt-1 truncate text-sm font-medium text-zinc-200">{bookmark.prompt}</p>
+                    <p className="mt-1 truncate text-sm font-medium text-[var(--ec-text)]">{bookmark.prompt}</p>
                   </button>
                   {(isChatBookmark(bookmark) ? buildwarden.capabilities.chatMutations : buildwarden.capabilities.runMutations) ? <div className="flex shrink-0 items-center gap-2">
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-8 w-8 p-0 text-zinc-400 hover:text-rose-400"
+                      className="h-8 w-8 p-0 text-[var(--ec-muted)] hover:text-[var(--ec-danger-strong)]"
                       onClick={async () => {
                         if (isChatBookmark(bookmark)) {
                           await onRemoveChatBookmarkById(bookmark.id);

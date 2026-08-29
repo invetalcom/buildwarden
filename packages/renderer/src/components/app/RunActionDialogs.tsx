@@ -77,7 +77,7 @@ const DialogOverlay = ({
   onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
 }) => (
   <div
-    className="absolute inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-6 backdrop-blur-sm"
+    className="absolute inset-0 z-50 flex items-center justify-center bg-[var(--ec-panel)] p-6 backdrop-blur-sm"
     onKeyDown={onKeyDown}
   >
     {children}
@@ -90,14 +90,14 @@ const CommitDialog = (props: RunActionDialogsProps) => {
   return (
     <DialogOverlay onKeyDown={props.onCommitDialogKeyDown}>
       <Card className="shadow-[var(--ec-popover-shadow)] w-full max-w-xl p-5">
-        <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Create commit</p>
-        <p className="mt-1 text-sm text-zinc-500">
+        <p className="text-xs uppercase tracking-[0.25em] text-[var(--ec-muted)]">Create commit</p>
+        <p className="mt-1 text-sm text-[var(--ec-muted)]">
           Choose the commit message for this run&apos;s {run.workspaceType === "local" ? "local repository" : "worktree"} changes.
-          <span className="mt-1 block text-[11px] text-zinc-600">Ctrl+Enter (Cmd+Enter on Mac) to commit.</span>
+          <span className="mt-1 block text-[11px] text-[var(--ec-faint)]">Ctrl+Enter (Cmd+Enter on Mac) to commit.</span>
         </p>
         <div className="relative mt-4">
           <Textarea className="min-h-32 resize-y pr-11 font-mono text-sm leading-relaxed" value={props.commitMessage} onChange={(event) => props.onCommitMessageChange(event.target.value)} placeholder={`Message (Ctrl+Enter to commit on "${run.branchName}")`} autoFocus rows={6} spellCheck={false} />
-          <button type="button" className="absolute right-2 top-2 rounded-md border border-zinc-700 bg-zinc-900/95 p-2 text-zinc-400 shadow-sm transition hover:border-cyan-500/40 hover:text-cyan-300 disabled:cursor-not-allowed disabled:opacity-50" title="Generate commit message with AI" aria-label="Generate commit message with AI" disabled={props.busy || props.commitSuggestBusy} onClick={props.onSuggestCommitMessage}>
+          <button type="button" className="absolute right-2 top-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] p-2 text-[var(--ec-muted)] shadow-sm transition hover:border-[var(--ec-accent-ring)] hover:text-[var(--ec-accent-strong)] disabled:cursor-not-allowed disabled:opacity-50" title="Generate commit message with AI" aria-label="Generate commit message with AI" disabled={props.busy || props.commitSuggestBusy} onClick={props.onSuggestCommitMessage}>
             {props.commitSuggestBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Sparkles className="h-4 w-4" aria-hidden />}
           </button>
         </div>
@@ -118,25 +118,25 @@ const PublishDialog = (props: RunActionDialogsProps) => {
   return (
     <DialogOverlay onKeyDown={props.onPublishDialogKeyDown}>
       <Card className="shadow-[var(--ec-popover-shadow)] w-full max-w-xl p-5">
-        <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Create merge request / pull request</p>
+        <p className="text-xs uppercase tracking-[0.25em] text-[var(--ec-muted)]">Create merge request / pull request</p>
         <h3 className="mt-2 text-xl font-semibold">{run.prompt}</h3>
         <div className="mt-4 space-y-3">
           <label className="block text-sm">
-            <span className="mb-1 block text-zinc-300">Source branch</span>
+            <span className="mb-1 block text-[var(--ec-text)]">Source branch</span>
             <Select value={props.pullRequestSourceBranchMode} onValueChange={(value) => props.onPullRequestSourceBranchModeChange(value === "custom" ? "custom" : "worktree")} onKeyDown={props.onPublishDialogKeyDown} options={[{ value: "worktree", label: `Keep worktree branch (${options.defaultSourceBranch})` }, { value: "custom", label: "Create and use a custom branch" }]} />
           </label>
-          {customSource && <label className="block text-sm"><span className="mb-1 block text-zinc-300">Custom source branch name</span><Input value={props.pullRequestSourceBranchName} onChange={(event) => props.onPullRequestSourceBranchNameChange(event.target.value)} onKeyDown={props.onPublishDialogKeyDown} placeholder="feature/my-custom-branch" autoFocus /></label>}
-          <label className="block text-sm"><span className="mb-1 block text-zinc-300">Target branch</span><Select value={props.pullRequestTargetBranch} onValueChange={props.onPullRequestTargetBranchChange} onKeyDown={props.onPublishDialogKeyDown} options={options.targetBranches.map((branch) => ({ value: branch, label: branch }))} /></label>
-          <label className="block text-sm"><span className="mb-1 block text-zinc-300">Merge request / pull request title</span><Input value={props.pullRequestTitle} onChange={(event) => props.onPullRequestTitleChange(event.target.value)} onKeyDown={props.onPublishDialogKeyDown} placeholder="Merge request / pull request title" autoFocus={!customSource} /></label>
+          {customSource && <label className="block text-sm"><span className="mb-1 block text-[var(--ec-text)]">Custom source branch name</span><Input value={props.pullRequestSourceBranchName} onChange={(event) => props.onPullRequestSourceBranchNameChange(event.target.value)} onKeyDown={props.onPublishDialogKeyDown} placeholder="feature/my-custom-branch" autoFocus /></label>}
+          <label className="block text-sm"><span className="mb-1 block text-[var(--ec-text)]">Target branch</span><Select value={props.pullRequestTargetBranch} onValueChange={props.onPullRequestTargetBranchChange} onKeyDown={props.onPublishDialogKeyDown} options={options.targetBranches.map((branch) => ({ value: branch, label: branch }))} /></label>
+          <label className="block text-sm"><span className="mb-1 block text-[var(--ec-text)]">Merge request / pull request title</span><Input value={props.pullRequestTitle} onChange={(event) => props.onPullRequestTitleChange(event.target.value)} onKeyDown={props.onPublishDialogKeyDown} placeholder="Merge request / pull request title" autoFocus={!customSource} /></label>
           {options.hasOpenChanges && (
-            <label className="block rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-sm">
-              <span className="block text-zinc-200">Commit open changes before publishing</span>
-              <span className="mt-0.5 block text-xs text-zinc-500">BuildWarden will create this commit only when you create the request.</span>
+            <label className="block rounded-lg border border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] p-3 text-sm">
+              <span className="block text-[var(--ec-text)]">Commit open changes before publishing</span>
+              <span className="mt-0.5 block text-xs text-[var(--ec-muted)]">BuildWarden will create this commit only when you create the request.</span>
               <Textarea className="mt-2 min-h-20 resize-y font-mono text-sm" value={props.pullRequestCommitMessage} onChange={(event) => props.onPullRequestCommitMessageChange(event.target.value)} onKeyDown={props.onPublishDialogKeyDown} placeholder="Commit message" rows={3} spellCheck={false} />
             </label>
           )}
           <label className="block text-sm">
-            <span className="mb-1 block text-zinc-300">Merge request / pull request description</span>
+            <span className="mb-1 block text-[var(--ec-text)]">Merge request / pull request description</span>
             <Textarea value={props.pullRequestDescription} onChange={(event) => props.onPullRequestDescriptionChange(event.target.value)} onKeyDown={props.onPublishDialogKeyDown} placeholder="Merge request / pull request description" className="min-h-36" />
           </label>
         </div>
@@ -213,14 +213,14 @@ export const RunActionDialogs = ({
     {branchPublishDialogRun ? (
       <DialogOverlay onKeyDown={onBranchPublishDialogKeyDown}>
         <Card className="shadow-[var(--ec-popover-shadow)] w-full max-w-md p-5">
-          <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">
+          <p className="text-xs uppercase tracking-[0.25em] text-[var(--ec-muted)]">
             {branchPublishMode === "local" ? "Create local branch" : "Publish branch"}
           </p>
           {branchPublishMode === "publish" ? (
             <h3 className="mt-2 text-xl font-semibold">{branchPublishDialogRun.prompt}</h3>
           ) : null}
           <label className="mt-4 block text-sm">
-            <span className="mb-1 block text-zinc-300">Branch name</span>
+            <span className="mb-1 block text-[var(--ec-text)]">Branch name</span>
             <div className="relative">
               <Input
                 className={branchPublishMode === "local" ? "pr-11" : undefined}
@@ -232,7 +232,7 @@ export const RunActionDialogs = ({
               {branchPublishMode === "local" ? (
                 <button
                   type="button"
-                  className="absolute right-1 top-1 rounded-md border border-zinc-700 bg-zinc-900/95 p-2 text-zinc-400 shadow-sm transition hover:border-cyan-500/40 hover:text-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="absolute right-1 top-1 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] p-2 text-[var(--ec-muted)] shadow-sm transition hover:border-[var(--ec-accent-ring)] hover:text-[var(--ec-accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
                   title="Generate branch name with AI"
                   aria-label="Generate branch name with AI"
                   disabled={busy || branchSuggestBusy}
@@ -279,20 +279,20 @@ export const RunActionDialogs = ({
         }}
       >
         <Card className="shadow-[var(--ec-popover-shadow)] w-full max-w-xl p-5">
-          <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Continue run</p>
+          <p className="text-xs uppercase tracking-[0.25em] text-[var(--ec-muted)]">Continue run</p>
           <h3 className="mt-2 text-xl font-semibold">{continueDialogRun.prompt}</h3>
-          <p className="mt-1 text-sm text-zinc-500">
+          <p className="mt-1 text-sm text-[var(--ec-muted)]">
             {continueDialogRun.workspaceVcs === "folder" ? (
               <>Start a new run in a fresh copied workspace from this run&apos;s current folder state.</>
             ) : (
               <>
-                Start a new run from branch <span className="font-medium text-zinc-300">{continueDialogRun.branchName}</span> in a fresh worktree.
+                Start a new run from branch <span className="font-medium text-[var(--ec-text)]">{continueDialogRun.branchName}</span> in a fresh worktree.
               </>
             )}
           </p>
           <div className="mt-4 space-y-3">
             <label className="block text-sm">
-              <span className="mb-1 block text-zinc-300">Continuation prompt</span>
+              <span className="mb-1 block text-[var(--ec-text)]">Continuation prompt</span>
               <Textarea
                 value={continuePrompt}
                 onChange={(event) => onContinuePromptChange(event.target.value)}
@@ -302,17 +302,17 @@ export const RunActionDialogs = ({
               />
             </label>
             <label className="block text-sm">
-              <span className="mb-1 block text-zinc-300">Model</span>
+              <span className="mb-1 block text-[var(--ec-text)]">Model</span>
               <Select
                 value={continueModelId}
                 onValueChange={onContinueModelIdChange}
                 options={continueModelOptions.map((option) => ({ value: option.id, label: option.label }))}
               />
             </label>
-            <label className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-sm text-zinc-300">
+            <label className="flex items-center gap-3 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2 text-sm text-[var(--ec-text)]">
               <input
                 type="checkbox"
-                className="h-4 w-4 rounded border border-zinc-700 bg-zinc-950 accent-[var(--ec-accent)]"
+                className="h-4 w-4 rounded border border-[var(--ec-border)] bg-[var(--ec-panel)] accent-[var(--ec-accent)]"
                 checked={continueIncludeWorkspaceChanges}
                 onChange={(event) => onContinueIncludeWorkspaceChangesChange(event.target.checked)}
               />
@@ -340,18 +340,18 @@ export const RunActionDialogs = ({
           }
         }}
       >
-        <Card className="w-full max-w-lg !bg-zinc-900 p-5 shadow-[var(--ec-popover-shadow)]">
-          <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Confirm action</p>
-          <h3 className="mt-2 text-xl font-semibold text-zinc-100">{confirmDialog.title}</h3>
-          <p className="mt-3 text-sm leading-relaxed text-zinc-400">{confirmDialog.message}</p>
+        <Card className="w-full max-w-lg !bg-[var(--ec-panel)] p-5 shadow-[var(--ec-popover-shadow)]">
+          <p className="text-xs uppercase tracking-[0.25em] text-[var(--ec-muted)]">Confirm action</p>
+          <h3 className="mt-2 text-xl font-semibold text-[var(--ec-text)]">{confirmDialog.title}</h3>
+          <p className="mt-3 text-sm leading-relaxed text-[var(--ec-muted)]">{confirmDialog.message}</p>
           {confirmDialog.impactItems ? (
-            <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2.5">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Related data</p>
+            <div className="mt-3 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-muted)]">Related data</p>
               <dl className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
                 {confirmDialog.impactItems.map((item) => (
                   <div key={item.label} className="contents">
-                    <dt className="text-zinc-400">{item.label}</dt>
-                    <dd className="text-right font-medium tabular-nums text-zinc-200">{item.count}</dd>
+                    <dt className="text-[var(--ec-muted)]">{item.label}</dt>
+                    <dd className="text-right font-medium tabular-nums text-[var(--ec-text)]">{item.count}</dd>
                   </div>
                 ))}
               </dl>

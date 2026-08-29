@@ -257,9 +257,9 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       {visibleSteps.length === 0 && !showPreResponseLoading ? (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 py-8 text-center">
-          <MessagesSquare className="h-8 w-8 text-zinc-700" aria-hidden />
-          <p className="text-sm font-medium text-zinc-400">Ask about this run</p>
-          <p className="max-w-sm text-xs text-zinc-600">
+          <MessagesSquare className="h-8 w-8 text-[var(--ec-faint)]" aria-hidden />
+          <p className="text-sm font-medium text-[var(--ec-muted)]">Ask about this run</p>
+          <p className="max-w-sm text-xs text-[var(--ec-faint)]">
             Questions about the agent&apos;s output or code changes — the run context and diff are attached
             automatically. This chat stays with the run and has no tools.
           </p>
@@ -274,7 +274,7 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
           showLoading={showPreResponseLoading}
         />
       )}
-      <div className="shrink-0 border-t border-zinc-800/80 p-2">
+      <div className="shrink-0 border-t border-[var(--ec-border)] p-2">
         <RunComposer
           variant="chat"
           attachments={

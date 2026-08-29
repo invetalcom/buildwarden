@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from "react";
+import { forwardRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from "react";
 import { ChevronRight, Loader2 } from "lucide-react";
 import { cn } from "../lib/cn";
 
@@ -84,8 +84,9 @@ export const Input = ({ className, ...props }: InputHTMLAttributes<HTMLInputElem
   />
 );
 
-export const Textarea = ({ className, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>) => (
+export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(({ className, ...props }, ref) => (
   <textarea
+    ref={ref}
     className={cn(
       "w-full resize-none rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-3 py-2.5",
       "text-[var(--ec-text)] placeholder:text-[var(--ec-faint)] focus:border-[var(--ec-accent-ring)] focus:outline-none",
@@ -93,7 +94,8 @@ export const Textarea = ({ className, ...props }: TextareaHTMLAttributes<HTMLTex
     )}
     {...props}
   />
-);
+));
+Textarea.displayName = "Textarea";
 
 export const Spinner = ({ label = "Loading", className }: { label?: string; className?: string }) => (
   <Loader2 className={cn("size-5 animate-spin text-[var(--ec-accent)]", className)} aria-label={label} />

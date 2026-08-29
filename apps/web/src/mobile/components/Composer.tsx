@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowUp, Square } from "lucide-react";
 import { cn } from "../lib/cn";
+import { Textarea } from "./primitives";
 
 /**
  * Sticky bottom composer.
@@ -60,7 +61,7 @@ export const Composer = ({
     >
       {accessory ? <div className="m-scroll-x flex gap-1.5 px-3 pt-2">{accessory}</div> : null}
       <div className="flex items-end gap-2 px-3 py-2">
-        <textarea
+        <Textarea
           ref={textareaRef}
           rows={1}
           value={value}
@@ -68,9 +69,7 @@ export const Composer = ({
           placeholder={placeholder}
           enterKeyHint="enter"
           className={cn(
-            "m-scroll-thin max-h-40 min-h-11 flex-1 resize-none rounded-2xl border border-[var(--ec-border)]",
-            "bg-[var(--ec-input)] px-3.5 py-2.5 text-[var(--ec-text)] placeholder:text-[var(--ec-faint)]",
-            "focus:border-[var(--ec-accent-ring)] focus:outline-none",
+            "m-scroll-thin max-h-40 min-h-11 flex-1 rounded-2xl px-3.5 py-2.5",
           )}
         />
         {onCancel ? (

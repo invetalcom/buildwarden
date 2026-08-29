@@ -94,7 +94,7 @@ const ModelQuickPickChooser = ({
     return (
       <div
         className={cn(
-          "mt-2 flex h-11 items-center gap-2 border border-zinc-800 bg-black/30 px-3 text-sm text-zinc-400",
+          "mt-2 flex h-11 items-center gap-2 border border-[var(--ec-border)] bg-black/30 px-3 text-sm text-[var(--ec-muted)]",
           welcome ? "rounded-lg" : "rounded-xl",
         )}
       >
@@ -106,7 +106,7 @@ const ModelQuickPickChooser = ({
 
   if (state.status === "loaded" && quickPicks.length === 0) {
     return (
-      <p className={cn("mt-2 border border-zinc-800/90 px-3 py-2 text-xs text-zinc-500", welcome ? "rounded-lg" : "rounded-xl")}>
+      <p className={cn("mt-2 border border-[var(--ec-border)] px-3 py-2 text-xs text-[var(--ec-muted)]", welcome ? "rounded-lg" : "rounded-xl")}>
         No models reported; enter a model ID manually.
       </p>
     );
@@ -116,7 +116,7 @@ const ModelQuickPickChooser = ({
     <>
       {state.status === "error" ? (
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs text-amber-300/90">Could not load live models. Enter a model ID manually or retry.</p>
+          <p className="text-xs text-[var(--ec-warning)]">Could not load live models. Enter a model ID manually or retry.</p>
           <Button
             type="button"
             variant="secondary"
@@ -172,8 +172,8 @@ const SettingsField = ({
 }) => (
   <label className={cn("block", compact ? "space-y-1.5" : "space-y-2")}>
     <div className="space-y-1">
-      <span className="block text-sm font-medium text-zinc-200">{label}</span>
-      {hint ? <span className={cn("block text-zinc-500", compact ? "text-[11px] leading-4" : "text-xs leading-relaxed")}>{hint}</span> : null}
+      <span className="block text-sm font-medium text-[var(--ec-text)]">{label}</span>
+      {hint ? <span className={cn("block text-[var(--ec-muted)]", compact ? "text-[11px] leading-4" : "text-xs leading-relaxed")}>{hint}</span> : null}
     </div>
     {children}
   </label>
@@ -432,15 +432,15 @@ export const ProviderModelsSettingsTab = ({
         <Card
           className={cn(
             "app-surface-settings-form-card overflow-hidden p-0",
-            isWelcomePresentation ? "rounded-lg border-[var(--ec-border)]" : "border-cyan-500/15",
+            isWelcomePresentation ? "rounded-lg border-[var(--ec-border)]" : "border-[var(--ec-accent-ring)]",
           )}
         >
           <div className={cn("border-b border-white/6", isWelcomePresentation ? "px-4 py-2.5" : "px-5 py-3")}>
-            <p className="text-[11px] uppercase tracking-[0.28em] text-cyan-300/60">New connection</p>
-            <h3 className={cn("mt-1 font-semibold text-zinc-50", isWelcomePresentation ? "text-base" : "text-lg")}>
+            <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--ec-accent)]">New connection</p>
+            <h3 className={cn("mt-1 font-semibold text-[var(--ec-text)]", isWelcomePresentation ? "text-base" : "text-lg")}>
               {isWelcomePresentation ? "Give BuildWarden a way to reach an AI" : "Set up a provider account"}
             </h3>
-            <p className={cn("mt-0.5 text-zinc-500", isWelcomePresentation ? "text-xs" : "text-sm")}>
+            <p className={cn("mt-0.5 text-[var(--ec-muted)]", isWelcomePresentation ? "text-xs" : "text-sm")}>
               Pick local tools or bring an API key. Nothing fancy required.
             </p>
           </div>
@@ -463,16 +463,16 @@ export const ProviderModelsSettingsTab = ({
                       "flex h-full flex-col items-start gap-1 border text-left transition",
                       isWelcomePresentation ? "min-h-[3.75rem] rounded-lg px-3 py-2.5" : "min-h-[4.5rem] rounded-2xl px-4 py-3",
                       active
-                        ? "border-cyan-400/40 bg-cyan-500/10"
-                        : "border-white/8 bg-zinc-950/40 hover:border-white/15",
+                        ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)]"
+                        : "border-white/8 bg-[var(--ec-panel)] hover:border-white/15",
                     )}
                   >
-                    <span className="inline-flex items-center gap-1.5 text-sm font-medium text-zinc-100">
-                      {kind === "local-sdk-cli" ? <Terminal className="h-4 w-4 text-cyan-300/90" /> : null}
-                      {kind === "bring-your-own-key" ? <KeyRound className="h-4 w-4 text-amber-200/80" /> : null}
+                    <span className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--ec-text)]">
+                      {kind === "local-sdk-cli" ? <Terminal className="h-4 w-4 text-[var(--ec-accent)]" /> : null}
+                      {kind === "bring-your-own-key" ? <KeyRound className="h-4 w-4 text-[var(--ec-warning)]" /> : null}
                       {PROVIDER_CONNECTION_KIND_LABELS[kind]}
                     </span>
-                    <span className={cn("text-zinc-500", isWelcomePresentation ? "text-[11px] leading-4" : "text-xs leading-relaxed")}>
+                    <span className={cn("text-[var(--ec-muted)]", isWelcomePresentation ? "text-[11px] leading-4" : "text-xs leading-relaxed")}>
                       {kind === "local-sdk-cli"
                         ? "Uses tools already on your machine (Codex, Claude Code, or Cursor Agent)."
                         : "You supply a key or endpoint: AI SDK or Azure deployments."}
@@ -483,7 +483,7 @@ export const ProviderModelsSettingsTab = ({
             </div>
 
             <div className="space-y-2">
-                <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Integration</p>
+                <p className="text-xs font-medium uppercase tracking-wide text-[var(--ec-muted)]">Integration</p>
                 <div className="flex flex-wrap gap-2">
                   {PROVIDER_TYPES_BY_CONNECTION_KIND[connectionKind ?? connectionKindForProviderType(providerType)].map((t) => (
                     <button
@@ -493,8 +493,8 @@ export const ProviderModelsSettingsTab = ({
                       className={cn(
                         "rounded-full border px-3.5 py-1.5 text-sm transition",
                         providerType === t
-                          ? "border-cyan-400/50 bg-cyan-500/15 text-cyan-100"
-                          : "border-zinc-700/80 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200",
+                          ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]"
+                          : "border-[var(--ec-border)] text-[var(--ec-muted)] hover:border-[var(--ec-border)] hover:text-[var(--ec-text)]",
                       )}
                     >
                       {PROVIDER_TYPE_LABELS[t]}
@@ -676,20 +676,20 @@ export const ProviderModelsSettingsTab = ({
               ) : null}
 
               {providerType === "codex-cli" ? (
-                <p className={cn("mt-3 border border-cyan-500/12 bg-cyan-500/[0.04] px-3 py-2 text-xs leading-relaxed text-zinc-500", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}>
-                  Runs and chats go through a local <code className="text-zinc-400">codex app-server</code> using your CLI login
+                <p className={cn("mt-3 border border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-3 py-2 text-xs leading-relaxed text-[var(--ec-muted)]", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}>
+                  Runs and chats go through a local <code className="text-[var(--ec-muted)]">codex app-server</code> using your CLI login
                   {detectedCodexBinaryPath ? <span> (detected: {detectedCodexBinaryPath})</span> : null}.
                 </p>
               ) : null}
               {providerType === "claude-code" ? (
-                <p className={cn("mt-3 border border-violet-500/12 bg-violet-500/[0.04] px-3 py-2 text-xs leading-relaxed text-zinc-500", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}>
-                  Uses <code className="text-zinc-400">claude -p</code> and your local Claude Code session
+                <p className={cn("mt-3 border border-[var(--ec-secondary-ring)] bg-[var(--ec-secondary-soft)] px-3 py-2 text-xs leading-relaxed text-[var(--ec-muted)]", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}>
+                  Uses <code className="text-[var(--ec-muted)]">claude -p</code> and your local Claude Code session
                   {detectedClaudeBinaryPath ? <span> (detected: {detectedClaudeBinaryPath})</span> : null}.
                 </p>
               ) : null}
               {providerType === "cursor-agent" ? (
-                <p className={cn("mt-3 border border-cyan-500/12 bg-cyan-500/[0.04] px-3 py-2 text-xs leading-relaxed text-zinc-500", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}>
-                  Uses <code className="text-zinc-400">agent acp</code> and your local Cursor CLI login
+                <p className={cn("mt-3 border border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-3 py-2 text-xs leading-relaxed text-[var(--ec-muted)]", isWelcomePresentation ? "rounded-lg" : "rounded-xl")}>
+                  Uses <code className="text-[var(--ec-muted)]">agent acp</code> and your local Cursor CLI login
                   {detectedCursorBinaryPath ? <span> (detected: {detectedCursorBinaryPath})</span> : null}.
                   {!detectedCursorBinaryPath && detectedCursorMessage ? <span> {detectedCursorMessage}</span> : null}
                 </p>
@@ -726,15 +726,15 @@ export const ProviderModelsSettingsTab = ({
         <Card
           className={cn(
             "app-surface-settings-form-card overflow-hidden p-0",
-            isWelcomePresentation ? "rounded-lg border-[var(--ec-border)]" : "border-fuchsia-500/12",
+            isWelcomePresentation ? "rounded-lg border-[var(--ec-border)]" : "border-[var(--ec-secondary-ring)]",
           )}
         >
           <div className={cn("border-b border-white/6", isWelcomePresentation ? "px-4 py-2.5" : "px-5 py-3")}>
-            <p className="text-[11px] uppercase tracking-[0.28em] text-fuchsia-300/50">New model</p>
-            <h3 className={cn("mt-1 font-semibold text-zinc-50", isWelcomePresentation ? "text-base" : "text-lg")}>
+            <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--ec-secondary)]">New model</p>
+            <h3 className={cn("mt-1 font-semibold text-[var(--ec-text)]", isWelcomePresentation ? "text-base" : "text-lg")}>
               {isWelcomePresentation ? "Pick the model BuildWarden should use first" : "Register a model for a connection"}
             </h3>
-            <p className={cn("mt-0.5 text-zinc-500", isWelcomePresentation ? "text-xs" : "text-sm")}>
+            <p className={cn("mt-0.5 text-[var(--ec-muted)]", isWelcomePresentation ? "text-xs" : "text-sm")}>
               Presets are filtered to match the selected connection.
             </p>
           </div>
@@ -756,9 +756,9 @@ export const ProviderModelsSettingsTab = ({
             </SettingsField>
 
             {selectedProviderId ? (
-              <div className={cn("border border-fuchsia-500/15 bg-fuchsia-500/[0.04] p-3", isWelcomePresentation ? "rounded-lg" : "rounded-2xl")}>
-                <p className="text-sm font-medium text-fuchsia-100/95">Quick picks</p>
-                <p className="mt-0.5 text-xs text-zinc-500">
+              <div className={cn("border border-[var(--ec-secondary-ring)] bg-[var(--ec-secondary-soft)] p-3", isWelcomePresentation ? "rounded-lg" : "rounded-2xl")}>
+                <p className="text-sm font-medium text-[var(--ec-secondary)]">Quick picks</p>
+                <p className="mt-0.5 text-xs text-[var(--ec-muted)]">
                   {availableModelsState.status === "loaded"
                     ? quickPickSourceLabel
                     : "Only models that apply to the selected account."}

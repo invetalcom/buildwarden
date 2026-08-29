@@ -45,7 +45,7 @@ export function RunPlanSteps({ content }: Readonly<{ content: string }>) {
   }
 
   return (
-    <div className="mt-2 overflow-hidden rounded-md border border-[color:var(--ec-border)] bg-[color:var(--ec-panel-muted)]">
+    <div className="mt-2 overflow-hidden rounded-md border border-[color:var(--ec-border)] bg-[color:var(--ec-panel-soft)]">
       <div className="flex items-center justify-between gap-2 px-2 py-1.5">
         <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[color:var(--ec-faint)]">Plan steps</p>
         <span className="text-[10px] text-[color:var(--ec-faint)]">

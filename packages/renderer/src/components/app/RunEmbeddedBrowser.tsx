@@ -326,10 +326,10 @@ export const RunEmbeddedBrowser = ({
   }, []);
 
   return (
-    <div className={cn("flex min-h-[320px] min-w-0 flex-1 flex-col overflow-hidden bg-[var(--ec-surface)]", className)}>
+    <div className={cn("flex min-h-[320px] min-w-0 flex-1 flex-col overflow-hidden bg-[var(--ec-panel)]", className)}>
       <div className="shrink-0 border-b border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 py-1.5">
         <div className="flex min-w-0 items-center gap-1.5">
-          <Globe className="h-3.5 w-3.5 shrink-0 text-sky-400" aria-hidden />
+          <Globe className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" aria-hidden />
           <span className="mr-0.5 text-[11px] font-medium text-[var(--ec-text)]">Browser</span>
           <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" aria-label="Go back" disabled={!ready || !browserState.canGoBack} onClick={() => runAction("back")}>
             <ArrowLeft className="h-3.5 w-3.5" />
@@ -360,7 +360,7 @@ export const RunEmbeddedBrowser = ({
             type="button"
             variant={browserState.inspecting ? "secondary" : "ghost"}
             size="sm"
-            className={cn("h-7 p-0", browserState.inspecting ? "gap-1 px-2 text-sky-300" : "w-7")}
+            className={cn("h-7 p-0", browserState.inspecting ? "gap-1 px-2 text-[var(--ec-accent)]" : "w-7")}
             aria-label={browserState.inspecting ? "Finish annotating page" : "Annotate page elements"}
             aria-pressed={browserState.inspecting}
             disabled={!ready}
@@ -385,8 +385,8 @@ export const RunEmbeddedBrowser = ({
             <ExternalLink className="h-3.5 w-3.5" />
           </Button>
         </div>
-        {browserState.inspecting ? <p className="mt-1 text-[10px] text-sky-300">Select an element, add an optional note, then attach. Continue picking or choose Done.</p> : null}
-        {error ? <p className="mt-1 truncate text-[10px] text-rose-300" title={error}>{error}</p> : null}
+        {browserState.inspecting ? <p className="mt-1 text-[10px] text-[var(--ec-accent)]">Select an element, add an optional note, then attach. Continue picking or choose Done.</p> : null}
+        {error ? <p className="mt-1 truncate text-[10px] text-[var(--ec-danger)]" title={error}>{error}</p> : null}
       </div>
       <div ref={surfaceRef} className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-white" data-run-browser-surface={runId}>
         {!desktopSurface && browserControl ? (
@@ -459,7 +459,7 @@ export const RunEmbeddedBrowser = ({
           </>
         ) : null}
         {!ready || (!desktopSurface && (!browserControl || !remoteFrameReady)) ? (
-          <div className="absolute inset-0 flex items-center justify-center bg-zinc-950 px-6 text-center text-xs text-zinc-400">
+          <div className="absolute inset-0 flex items-center justify-center bg-[var(--ec-panel)] px-6 text-center text-xs text-[var(--ec-muted)]">
             {!ready && browserControl
               ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Starting browser…</>
               : error || "Waiting for the host browser frame…"}

@@ -11,6 +11,7 @@
     "./automation-model-effort": "./src/components/app/automation-model-effort.ts",
     "./logic": "./src/logic.ts",
     "./icons": "./src/icons.ts",
+    "./design-scheme": "./src/lib/design-scheme.ts",
     "./styles.css": "./src/styles.css"
   },
   "scripts": {

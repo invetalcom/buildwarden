@@ -6,12 +6,12 @@ import { AnchorDropdownPortal } from "./anchor-dropdown-portal";
 
 const subagentStatusDotClass = (subagent: RunSubagentInfo) => {
   if (subagent.status === "running" || subagent.status === "pending") {
-    return "animate-pulse bg-sky-400";
+    return "animate-pulse bg-[var(--ec-accent)]";
   }
   if (subagent.status === "completed") {
-    return "bg-emerald-400";
+    return "bg-[var(--ec-success)]";
   }
-  return subagent.status === "failed" ? "bg-red-400" : "bg-amber-400";
+  return subagent.status === "failed" ? "bg-[var(--ec-danger)]" : "bg-[var(--ec-warning)]";
 };
 
 const subagentMenuTitle = (runningCount: number, totalCount: number) => {
@@ -39,7 +39,7 @@ export const RunSubagentMenu = ({
         className={cn(
           "inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition hover:brightness-125",
           runningCount > 0
-            ? "border-sky-400/30 bg-sky-500/10 text-sky-300"
+            ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]"
             : "border-[var(--ec-border)] bg-[var(--ec-panel-soft)] text-[var(--ec-muted)]",
         )}
         title={subagentMenuTitle(runningCount, subagents.length)}

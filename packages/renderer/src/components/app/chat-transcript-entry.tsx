@@ -67,7 +67,7 @@ const AssistantEntry = ({ item, metadata, timestamp, copied, onCopy }: EntryView
     <div className="chat-turn-stack">
       <div className="chat-bubble chat-bubble--assistant">
         <button type="button" className="chat-bubble-copy" onClick={onCopy} title={copied ? "Copied" : "Copy output"}>
-          {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+          {copied ? <Check className="h-3.5 w-3.5 text-[var(--ec-success)]" /> : <Copy className="h-3.5 w-3.5" />}
         </button>
         <div className="chat-bubble-meta"><span>Assistant</span><span>{timestamp}</span></div>
         <StoredChatAttachments attachments={extractAttachmentPayloadsFromMetadata(metadata)} fallbackNames={extractAttachmentNamesFromMetadata(metadata)} />

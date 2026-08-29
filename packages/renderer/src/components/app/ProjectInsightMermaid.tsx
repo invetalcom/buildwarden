@@ -7,12 +7,17 @@ interface ProjectInsightMermaidProps {
   emptyLabel?: string;
 }
 
-let mermaidInitialized = false;
-
 export const ProjectInsightMermaid = ({ chart, emptyLabel = "No graph generated yet." }: ProjectInsightMermaidProps) => {
   const [svg, setSvg] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+  const [themeRevision, setThemeRevision] = useState(0);
   const id = useId().replace(/:/g, "_");
+
+  useEffect(() => {
+    const observer = new MutationObserver(() => setThemeRevision((current) => current + 1));
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["style", "data-theme", "data-design-scheme"] });
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -35,14 +40,27 @@ export const ProjectInsightMermaid = ({ chart, emptyLabel = "No graph generated 
     });
     void import("mermaid")
       .then(({ default: mermaid }) => {
-        if (!mermaidInitialized) {
-          mermaid.initialize({
-            startOnLoad: false,
-            theme: document.body.dataset.theme === "light" ? "default" : "dark",
-            securityLevel: "loose",
-          });
-          mermaidInitialized = true;
-        }
+        const styles = getComputedStyle(document.documentElement);
+        const token = (name: string) => styles.getPropertyValue(name).trim();
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: "base",
+          securityLevel: "loose",
+          themeVariables: {
+            background: token("--ec-panel"),
+            primaryColor: token("--ec-panel-strong"),
+            primaryTextColor: token("--ec-text"),
+            primaryBorderColor: token("--ec-accent"),
+            secondaryColor: token("--ec-secondary-soft"),
+            tertiaryColor: token("--ec-accent-soft"),
+            lineColor: token("--ec-muted"),
+            textColor: token("--ec-text"),
+            titleColor: token("--ec-text"),
+            edgeLabelBackground: token("--ec-bg-elevated"),
+            clusterBkg: token("--ec-panel-soft"),
+            clusterBorder: token("--ec-border-strong"),
+          },
+        });
         return mermaid.render(`project-insight-${id}`, chart);
       })
       .then((result) => {
@@ -73,12 +91,12 @@ export const ProjectInsightMermaid = ({ chart, emptyLabel = "No graph generated 
     return () => {
       cancelled = true;
     };
-  }, [chart, id]);
+  }, [chart, id, themeRevision]);
 
   return (
-    <Card className="overflow-hidden border-zinc-800/80 bg-zinc-950/60 p-0">
-      {error ? <div className="px-4 py-6 text-sm text-rose-300">{error}</div> : null}
-      {!error && !svg ? <div className="px-4 py-6 text-sm text-zinc-500">{emptyLabel}</div> : null}
+    <Card className="overflow-hidden border-[var(--ec-border)] bg-[var(--ec-panel)] p-0">
+      {error ? <div className="px-4 py-6 text-sm text-[var(--ec-danger)]">{error}</div> : null}
+      {!error && !svg ? <div className="px-4 py-6 text-sm text-[var(--ec-muted)]">{emptyLabel}</div> : null}
       {svg ? (
         <div
           className="app-scrollbar overflow-auto px-2 py-2 [&_svg]:min-w-[720px] [&_svg]:bg-transparent"

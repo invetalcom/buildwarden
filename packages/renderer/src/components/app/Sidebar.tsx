@@ -497,7 +497,7 @@ const SidebarComponent = ({
             <span className={cn("min-w-0 flex-1 truncate font-semibold text-[var(--ec-text)]", runEntryStyles.title)}>{runHierarchyLabel(run)}</span>
             {waitingForInput ? (
               <span className="shrink-0" title="Waiting for user feedback" aria-label="Waiting for user feedback">
-                <CircleAlert className={cn(runEntryStyles.alert, "text-amber-300")} />
+                <CircleAlert className={cn(runEntryStyles.alert, "text-[var(--ec-warning)]")} />
               </span>
             ) : null}
           </span>

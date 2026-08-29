@@ -1,6 +1,7 @@
-import { APP_SETTING_KEYS, parseUiTheme, uiThemeToLegacyDarkMode, type UiTheme } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, parseDesignScheme, serializeDesignScheme, uiThemeToLegacyDarkMode, type DesignScheme } from "@buildwarden/shared";
+import { DesignSchemeEditor } from "@buildwarden/renderer";
 import { APP_VERSION, APP_VERSION_DATE } from "@buildwarden/renderer/logic";
-import { ChevronLeft, Moon, Smartphone, Sun } from "lucide-react";
+import { ChevronLeft, Smartphone } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
 import { useAppSettings } from "../data/use-app-settings";
 import { switchShell } from "../../shell/select-shell";
@@ -8,7 +9,6 @@ import type { SettingsSection } from "../nav/mobile-router";
 import { AppBar } from "../components/AppBar";
 import { SettingGroup, ToggleRow } from "../components/SettingControls";
 import { Divider, InlineError, ListRow } from "../components/primitives";
-import { cn } from "../lib/cn";
 import { NetworkSection } from "./settings/NetworkSection";
 import { OrchestrationSection } from "./settings/OrchestrationSection";
 import { ProvidersSection } from "./settings/ProvidersSection";
@@ -28,31 +28,16 @@ const SECTIONS: ReadonlyArray<{ id: SettingsSection; title: string; hint: string
 
 const SECTION_TITLES = Object.fromEntries(SECTIONS.map((entry) => [entry.id, entry.title])) as Record<SettingsSection, string>;
 
-const ThemeChoice = ({ theme, current, onSelect }: { theme: UiTheme; current: UiTheme; onSelect: (next: UiTheme) => void }) => (
-  <button
-    type="button"
-    onClick={() => onSelect(theme)}
-    className={cn(
-      "m-tap flex flex-1 flex-col items-center justify-center gap-1 rounded-md border py-2 transition",
-      theme === current
-        ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]"
-        : "border-[var(--ec-border)] text-[var(--ec-muted)]",
-    )}
-  >
-    {theme === "light" ? <Sun className="size-5" /> : <Moon className="size-5" />}
-    <span className="text-xs font-medium capitalize">{theme}</span>
-  </button>
-);
-
 const AppearanceSection = () => {
   const { snapshot, snapshotStore, client } = useMobileApp();
   const settings = useAppSettings();
-  const theme = parseUiTheme(snapshot.settings);
+  const scheme = parseDesignScheme(snapshot.settings);
 
-  const setTheme = async (next: UiTheme) => {
+  const setScheme = async (next: DesignScheme) => {
     const ok = await settings.writeMany([
-      [APP_SETTING_KEYS.uiTheme, next],
-      [APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next)],
+      [APP_SETTING_KEYS.designScheme, serializeDesignScheme(next)],
+      [APP_SETTING_KEYS.uiTheme, next.mode],
+      [APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next.mode)],
     ]);
     if (ok) await snapshotStore.refresh();
   };
@@ -60,10 +45,9 @@ const AppearanceSection = () => {
   return (
     <>
       {settings.error ? <InlineError message={settings.error} onRetry={settings.clearError} /> : null}
-      <SettingGroup title="Theme">
-        <div className="flex gap-2 px-4 py-2.5">
-          <ThemeChoice theme="dark" current={theme} onSelect={(next) => void setTheme(next)} />
-          <ThemeChoice theme="light" current={theme} onSelect={(next) => void setTheme(next)} />
+      <SettingGroup title="Design scheme">
+        <div className="px-3 py-2.5">
+          <DesignSchemeEditor scheme={scheme} busy={settings.saving} onChange={setScheme} />
         </div>
       </SettingGroup>
 

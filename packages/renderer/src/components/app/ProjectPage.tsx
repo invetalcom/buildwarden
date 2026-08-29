@@ -119,7 +119,7 @@ interface ProjectInsightsTabsProps {
 const ProjectInsightsTabs = ({ activeTab, project, modelOptions, defaultModelId, onGenerateInsight, onSelectRun, onRestoreRunFromForLater }: ProjectInsightsTabsProps) => (
   <>
     {activeTab === "graphs" && (
-      <Suspense fallback={<div className="px-3 py-2 text-xs text-zinc-500">Loading graphs...</div>}>
+      <Suspense fallback={<div className="px-3 py-2 text-xs text-[var(--ec-muted)]">Loading graphs...</div>}>
         <ProjectGraphsTab project={project} onGenerateInsight={onGenerateInsight} />
       </Suspense>
     )}

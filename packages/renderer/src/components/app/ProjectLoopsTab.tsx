@@ -182,7 +182,7 @@ const eventToneClass = (role: ProjectLoopEventRecord["role"]): string => {
     return "border-[var(--ec-info-ring)] bg-[var(--ec-info-soft)]";
   }
   if (role === "forge") {
-    return "border-violet-500/25 bg-violet-500/5";
+    return "border-[var(--ec-secondary-ring)] bg-[var(--ec-secondary-soft)]";
   }
   if (role === "ui-review" || role === "user") {
     return "border-[var(--ec-warning)]/25 bg-[var(--ec-warning)]/5";
@@ -190,13 +190,13 @@ const eventToneClass = (role: ProjectLoopEventRecord["role"]): string => {
   if (role === "audit") {
     return "border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)]";
   }
-  return "border-zinc-800 bg-zinc-950/50";
+  return "border-[var(--ec-border)] bg-[var(--ec-panel)]";
 };
 
 const eventRoleIcon = (role: ProjectLoopEventRecord["role"]) => {
   if (role === "runner") return <Rocket className="h-3.5 w-3.5 text-[var(--ec-info)]" />;
-  if (role === "planner") return <Bot className="h-3.5 w-3.5 text-cyan-300" />;
-  if (role === "forge") return <GitPullRequest className="h-3.5 w-3.5 text-violet-300" />;
+  if (role === "planner") return <Bot className="h-3.5 w-3.5 text-[var(--ec-accent)]" />;
+  if (role === "forge") return <GitPullRequest className="h-3.5 w-3.5 text-[var(--ec-secondary)]" />;
   if (role === "ui-review") return <ImageIcon className="h-3.5 w-3.5 text-[var(--ec-warning)]" />;
   if (role === "audit") return <ShieldCheck className="h-3.5 w-3.5 text-[var(--ec-success)]" />;
   if (role === "user") return <Check className="h-3.5 w-3.5 text-[var(--ec-warning)]" />;
@@ -285,12 +285,12 @@ const LoopsExplainer = () => {
   return (
     <Card className="p-4">
       <div className="flex items-center gap-2">
-        <Bot className="h-4 w-4 text-cyan-400" />
-        <h3 className="text-sm font-medium text-zinc-100">What are agent loops?</h3>
+        <Bot className="h-4 w-4 text-[var(--ec-accent)]" />
+        <h3 className="text-sm font-medium text-[var(--ec-text)]">What are agent loops?</h3>
         <BetaBadge />
         <button
           type="button"
-          className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-100"
+          className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
           aria-expanded={!collapsed}
           aria-label={collapsed ? "Expand explanation" : "Minimize explanation"}
           title={collapsed ? "Expand explanation" : "Minimize explanation"}
@@ -302,24 +302,24 @@ const LoopsExplainer = () => {
 
       {collapsed ? null : (
         <>
-          <p className="mt-1 max-w-3xl text-xs text-zinc-500">
+          <p className="mt-1 max-w-3xl text-xs text-[var(--ec-muted)]">
             A loop is a hands-off delivery pipeline: you describe a feature or fix once, and BuildWarden drives it from plan to merged
             pull requests - implementing, screenshotting, reviewing, and reacting to feedback until everything is on your target branch.
           </p>
 
           <div className="mt-4 grid gap-2 md:grid-cols-3 xl:grid-cols-5">
             {LOOP_EXPLAINER_STEPS.map(({ Icon, title, text }, index) => (
-              <div key={title} className="relative rounded-xl border border-zinc-800 bg-zinc-950/50 p-3">
+              <div key={title} className="relative rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] p-3">
                 <div className="flex items-center gap-2">
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-cyan-500/30 bg-cyan-500/10 font-mono text-[11px] text-cyan-200">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] font-mono text-[11px] text-[var(--ec-accent)]">
                     {index + 1}
                   </span>
-                  <Icon className="h-4 w-4 shrink-0 text-cyan-300" />
-                  <span className="truncate text-xs font-medium text-zinc-100">{title}</span>
+                  <Icon className="h-4 w-4 shrink-0 text-[var(--ec-accent)]" />
+                  <span className="truncate text-xs font-medium text-[var(--ec-text)]">{title}</span>
                 </div>
-                <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">{text}</p>
+                <p className="mt-2 text-[11px] leading-relaxed text-[var(--ec-muted)]">{text}</p>
                 {index < LOOP_EXPLAINER_STEPS.length - 1 ? (
-                  <ChevronRight className="absolute -right-2 top-1/2 hidden h-4 w-4 -translate-y-1/2 text-zinc-700 xl:block" />
+                  <ChevronRight className="absolute -right-2 top-1/2 hidden h-4 w-4 -translate-y-1/2 text-[var(--ec-faint)] xl:block" />
                 ) : null}
               </div>
             ))}
@@ -327,18 +327,18 @@ const LoopsExplainer = () => {
 
           <div className="mt-3 grid gap-2 md:grid-cols-3">
             {LOOP_EXPLAINER_FACTS.map(({ Icon, title, text }) => (
-              <div key={title} className="flex items-start gap-2.5 rounded-xl border border-zinc-800/70 bg-zinc-950/35 px-3 py-2.5">
-                <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-300" />
+              <div key={title} className="flex items-start gap-2.5 rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2.5">
+                <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--ec-success)]" />
                 <div className="min-w-0">
-                  <p className="text-xs font-medium text-zinc-200">{title}</p>
-                  <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500">{text}</p>
+                  <p className="text-xs font-medium text-[var(--ec-text)]">{title}</p>
+                  <p className="mt-0.5 text-[11px] leading-relaxed text-[var(--ec-muted)]">{text}</p>
                 </div>
               </div>
             ))}
           </div>
 
-          <p className="mt-3 flex items-center gap-1.5 text-[11px] text-zinc-600">
-            <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+          <p className="mt-3 flex items-center gap-1.5 text-[11px] text-[var(--ec-faint)]">
+            <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-[var(--ec-muted)]" />
             You stay in control: choose per loop whether PRs merge automatically or wait for approval, and how UI changes are reviewed.
             Loops can be cancelled, resumed, and deleted at any time.
           </p>
@@ -355,12 +355,12 @@ const LoopListRow = ({ item, onSelect }: { item: ProjectLoopListItem; onSelect: 
   return (
     <button
       type="button"
-      className="flex w-full flex-wrap items-center justify-between gap-2 rounded-xl border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-left transition hover:border-cyan-500/40"
+      className="flex w-full flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2 text-left transition hover:border-[var(--ec-accent-ring)]"
       onClick={() => onSelect(loop.id)}
     >
       <div className="flex min-w-0 flex-1 items-center gap-2">
-        {isActive ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-cyan-400" /> : null}
-        <span className="truncate text-sm text-zinc-100">{loop.name}</span>
+        {isActive ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--ec-accent)]" /> : null}
+        <span className="truncate text-sm text-[var(--ec-text)]">{loop.name}</span>
         <StatusPill kind="loop" status={loop.status} />
         {pendingUiReviewCount > 0 ? (
           <span className="shrink-0 rounded-full border border-[var(--ec-warning)] bg-[var(--ec-warning)]/10 px-2 py-0.5 text-[10px] text-[var(--ec-warning)]">
@@ -368,7 +368,7 @@ const LoopListRow = ({ item, onSelect }: { item: ProjectLoopListItem; onSelect: 
           </span>
         ) : null}
       </div>
-      <div className="flex shrink-0 items-center gap-3 text-[11px] text-zinc-500">
+      <div className="flex shrink-0 items-center gap-3 text-[11px] text-[var(--ec-muted)]">
         <span>
           {merged}/{iterations.length || "?"} merged
         </span>
@@ -481,12 +481,12 @@ const LoopUiReviewCard = ({
   };
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-3">
+    <div className="rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <ImageIcon className="h-4 w-4 shrink-0 text-[var(--ec-warning)]" />
-          <span className="truncate text-sm font-medium text-zinc-100">{review.pageName}</span>
-          <span className="shrink-0 rounded-full border border-zinc-800 bg-zinc-900/80 px-2 py-0.5 text-[10px] text-zinc-400">
+          <span className="truncate text-sm font-medium text-[var(--ec-text)]">{review.pageName}</span>
+          <span className="shrink-0 rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 py-0.5 text-[10px] text-[var(--ec-muted)]">
             round {review.round}
           </span>
         </div>
@@ -503,12 +503,12 @@ const LoopUiReviewCard = ({
           </span>
         ) : null}
       </div>
-      {review.description ? <p className="mt-1 text-xs text-zinc-500">{review.description}</p> : null}
-      <div className="mt-2 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950">
+      {review.description ? <p className="mt-1 text-xs text-[var(--ec-muted)]">{review.description}</p> : null}
+      <div className="mt-2 overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)]">
         {imageDataUrl ? (
           <button
             type="button"
-            className="block w-full cursor-zoom-in outline-none transition focus-visible:ring-2 focus-visible:ring-cyan-400"
+            className="block w-full cursor-zoom-in outline-none transition focus-visible:ring-2 focus-visible:ring-[var(--ec-accent-ring)]"
             title={`Open ${review.pageName} full size`}
             aria-label={`Open ${review.pageName} full size`}
             onClick={() => setLightboxOpen(true)}
@@ -516,7 +516,7 @@ const LoopUiReviewCard = ({
             <img src={imageDataUrl} alt={`Screenshot of ${review.pageName}`} className="max-h-[420px] w-full object-contain" />
           </button>
         ) : (
-          <div className="flex h-32 items-center justify-center text-xs text-zinc-600">
+          <div className="flex h-32 items-center justify-center text-xs text-[var(--ec-faint)]">
             {imageMissing ? "Screenshot is no longer available." : "Loading screenshot..."}
           </div>
         )}
@@ -530,7 +530,7 @@ const LoopUiReviewCard = ({
         />
       ) : null}
       {review.feedback ? (
-        <p className="mt-2 whitespace-pre-wrap break-words rounded-lg border border-zinc-800 bg-zinc-900/60 px-2.5 py-1.5 text-xs text-zinc-300">
+        <p className="mt-2 whitespace-pre-wrap break-words rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 py-1.5 text-xs text-[var(--ec-text)]">
           {review.feedback}
         </p>
       ) : null}
@@ -630,28 +630,28 @@ const LoopDetailHeader = ({ loop, busy, actionPending, error, mergedCount, itera
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <Button type="button" size="sm" variant="ghost" className="h-8 w-8 shrink-0 px-0" onClick={onBack} title="Back to loops"><ArrowLeft className="h-4 w-4" /></Button>
-          {isActive ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-cyan-400" /> : <RefreshCw className="h-4 w-4 shrink-0 text-cyan-400" />}
-          <h3 className="truncate text-sm font-medium text-zinc-100">{loop.name}</h3>
+          {isActive ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[var(--ec-accent)]" /> : <RefreshCw className="h-4 w-4 shrink-0 text-[var(--ec-accent)]" />}
+          <h3 className="truncate text-sm font-medium text-[var(--ec-text)]">{loop.name}</h3>
           <StatusPill kind="loop" status={loop.status} />
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           {isActive && <Button type="button" size="sm" variant="secondary" disabled={busy || actionPending} onClick={() => void runAction(() => buildwarden.cancelProjectLoop(loop.id))}><Square className="mr-1.5 h-3.5 w-3.5" />Cancel loop</Button>}
           {!isActive && loop.status !== "completed" && <Button type="button" size="sm" disabled={busy || actionPending} onClick={() => void runAction(() => buildwarden.resumeProjectLoop(loop.id))}><Play className="mr-1.5 h-3.5 w-3.5" />Resume</Button>}
-          <Button type="button" size="sm" variant="ghost" className="text-zinc-500 hover:text-rose-200" disabled={busy || actionPending} onClick={deleteLoop}><Trash2 className="h-3.5 w-3.5" /></Button>
+          <Button type="button" size="sm" variant="ghost" className="text-[var(--ec-muted)] hover:text-[var(--ec-danger-strong)]" disabled={busy || actionPending} onClick={deleteLoop}><Trash2 className="h-3.5 w-3.5" /></Button>
         </div>
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-zinc-500">
-        <span>Target <span className="font-mono text-zinc-300">{loop.baseBranch}</span></span>
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-[var(--ec-muted)]">
+        <span>Target <span className="font-mono text-[var(--ec-text)]">{loop.baseBranch}</span></span>
         <span>{MERGE_POLICY_OPTIONS.find((option) => option.value === loop.mergePolicy)?.label}</span>
         <span>UI: {UI_POLICY_OPTIONS.find((option) => option.value === loop.uiChangePolicy)?.label}</span>
         <span>Review: {PR_REVIEW_POLICY_OPTIONS.find((option) => option.value === loop.prReviewPolicy)?.label ?? "No automatic review"}</span>
         <span>{mergedCount}/{iterationCount || "?"} PRs merged</span>
         <span>{new Date(loop.createdAt).toLocaleString()}</span>
       </div>
-      <p className="mt-2 whitespace-pre-wrap break-words rounded-lg border border-zinc-800 bg-zinc-950/50 px-2.5 py-1.5 text-xs text-zinc-400">{loop.prompt}</p>
-      {loop.planSummary && <p className="mt-2 text-xs text-zinc-500">{loop.planSummary}</p>}
-      {loop.errorMessage && <p className="mt-2 text-xs text-rose-300">{loop.errorMessage}</p>}
-      {error && <p className="mt-2 text-xs text-rose-300">{error}</p>}
+      <p className="mt-2 whitespace-pre-wrap break-words rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 py-1.5 text-xs text-[var(--ec-muted)]">{loop.prompt}</p>
+      {loop.planSummary && <p className="mt-2 text-xs text-[var(--ec-muted)]">{loop.planSummary}</p>}
+      {loop.errorMessage && <p className="mt-2 text-xs text-[var(--ec-danger)]">{loop.errorMessage}</p>}
+      {error && <p className="mt-2 text-xs text-[var(--ec-danger)]">{error}</p>}
     </Card>
   );
 };
@@ -666,9 +666,9 @@ const PendingLoopReviews = ({ reviews, busy, onDecision }: {
     <Card className="border-[var(--ec-warning)]/40 p-3">
       <div className="flex items-center gap-2">
         <ImageIcon className="h-4 w-4 text-[var(--ec-warning)]" />
-        <h4 className="text-sm font-medium text-zinc-100">UI approval required ({reviews.length} page{reviews.length === 1 ? "" : "s"})</h4>
+        <h4 className="text-sm font-medium text-[var(--ec-text)]">UI approval required ({reviews.length} page{reviews.length === 1 ? "" : "s"})</h4>
       </div>
-      <p className="mt-1 text-xs text-zinc-500">The loop pauses until every page is approved. Requesting changes sends your feedback back to the implementation agent.</p>
+      <p className="mt-1 text-xs text-[var(--ec-muted)]">The loop pauses until every page is approved. Requesting changes sends your feedback back to the implementation agent.</p>
       <div className="mt-3 grid gap-3 xl:grid-cols-2">
         {reviews.map((review) => <LoopUiReviewCard key={review.id} review={review} busy={busy} onDecision={onDecision} />)}
       </div>
@@ -726,7 +726,7 @@ const LoopDetailView = ({
   if (!detail) {
     return (
       <Card className="flex min-h-[240px] items-center justify-center p-8">
-        {error ? <p className="text-sm text-rose-300">{error}</p> : <Loader2 className="h-8 w-8 animate-spin text-cyan-400" />}
+        {error ? <p className="text-sm text-[var(--ec-danger)]">{error}</p> : <Loader2 className="h-8 w-8 animate-spin text-[var(--ec-accent)]" />}
       </Card>
     );
   }
@@ -754,19 +754,19 @@ const LoopDetailView = ({
 
       <Card className="p-3">
         <div className="flex items-center gap-2">
-          <GitMerge className="h-4 w-4 text-cyan-400" />
-          <h4 className="text-sm font-medium text-zinc-100">Plan &amp; pull requests</h4>
+          <GitMerge className="h-4 w-4 text-[var(--ec-accent)]" />
+          <h4 className="text-sm font-medium text-[var(--ec-text)]">Plan &amp; pull requests</h4>
         </div>
         <div className="mt-2 space-y-2">
           {iterations.length === 0 ? (
-            <p className="text-xs text-zinc-500">The planning agent has not produced the iteration plan yet.</p>
+            <p className="text-xs text-[var(--ec-muted)]">The planning agent has not produced the iteration plan yet.</p>
           ) : (
             iterations.map((iteration) => {
               const run = iteration.runId ? runsById.get(iteration.runId) : undefined;
               const iterationReviews = uiReviews.filter((review) => review.iterationId === iteration.id && review.status !== "pending");
               const isExpanded = expandedIterationIds[iteration.id] ?? false;
               return (
-                <div key={iteration.id} className="rounded-xl border border-zinc-800 bg-zinc-950/50 px-3 py-2">
+                <div key={iteration.id} className="rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2">
                   <div
                     className="flex cursor-pointer flex-wrap items-center justify-between gap-2"
                     role="button"
@@ -780,12 +780,12 @@ const LoopDetailView = ({
                     }}
                   >
                     <div className="flex min-w-0 items-center gap-2">
-                      <span className="shrink-0 rounded-full border border-zinc-800 bg-zinc-900/80 px-2 py-0.5 font-mono text-[10px] text-zinc-400">
+                      <span className="shrink-0 rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 py-0.5 font-mono text-[10px] text-[var(--ec-muted)]">
                         {iteration.iterationIndex + 1}
                       </span>
-                      <span className="truncate text-sm text-zinc-100">{iteration.title}</span>
+                      <span className="truncate text-sm text-[var(--ec-text)]">{iteration.title}</span>
                       <StatusPill kind="iteration" status={iteration.status} />
-                      <span className="text-zinc-600">
+                      <span className="text-[var(--ec-faint)]">
                         {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                       </span>
                     </div>
@@ -795,7 +795,7 @@ const LoopDetailView = ({
                           type="button"
                           size="sm"
                           variant="ghost"
-                          className="h-7 px-2 text-xs text-zinc-400 hover:text-cyan-200"
+                          className="h-7 px-2 text-xs text-[var(--ec-muted)] hover:text-[var(--ec-accent-strong)]"
                           onClick={(event) => {
                             event.stopPropagation();
                             void buildwarden.openExternalUrl(iteration.prUrl ?? "");
@@ -810,7 +810,7 @@ const LoopDetailView = ({
                           type="button"
                           size="sm"
                           variant="ghost"
-                          className="h-7 px-2 text-xs text-zinc-400 hover:text-cyan-200"
+                          className="h-7 px-2 text-xs text-[var(--ec-muted)] hover:text-[var(--ec-accent-strong)]"
                           title="Open the agent run output"
                           onClick={(event) => {
                             event.stopPropagation();
@@ -824,14 +824,14 @@ const LoopDetailView = ({
                     </div>
                   </div>
                   {isExpanded ? (
-                    <div className="mt-2 space-y-2 border-t border-zinc-800/70 pt-2">
-                      <p className="whitespace-pre-wrap break-words text-xs text-zinc-400">{iteration.objective}</p>
+                    <div className="mt-2 space-y-2 border-t border-[var(--ec-border)] pt-2">
+                      <p className="whitespace-pre-wrap break-words text-xs text-[var(--ec-muted)]">{iteration.objective}</p>
                       {iteration.branchName ? (
-                        <p className="font-mono text-[11px] text-zinc-500">
+                        <p className="font-mono text-[11px] text-[var(--ec-muted)]">
                           {iteration.branchName} → {iteration.targetBranch ?? "?"}
                         </p>
                       ) : null}
-                      {iteration.errorMessage ? <p className="text-xs text-rose-300">{iteration.errorMessage}</p> : null}
+                      {iteration.errorMessage ? <p className="text-xs text-[var(--ec-danger)]">{iteration.errorMessage}</p> : null}
                       {iterationReviews.length > 0 ? (
                         <div className="grid gap-2 xl:grid-cols-2">
                           {iterationReviews.map((review) => (
@@ -851,8 +851,8 @@ const LoopDetailView = ({
       <Card className="p-3">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <Bot className="h-4 w-4 text-cyan-400" />
-            <h4 className="text-sm font-medium text-zinc-100">Activity</h4>
+            <Bot className="h-4 w-4 text-[var(--ec-accent)]" />
+            <h4 className="text-sm font-medium text-[var(--ec-text)]">Activity</h4>
           </div>
           {events.length > visibleEvents.length || showAllEvents ? (
             <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setShowAllEvents((v) => !v)}>
@@ -862,20 +862,20 @@ const LoopDetailView = ({
         </div>
         <div className="mt-2 space-y-1.5">
           {visibleEvents.length === 0 ? (
-            <p className="text-xs text-zinc-500">No activity yet.</p>
+            <p className="text-xs text-[var(--ec-muted)]">No activity yet.</p>
           ) : (
             visibleEvents.map((event) => (
               <div key={event.id} className={cn("rounded-lg border px-2.5 py-1.5 text-sm leading-relaxed", eventToneClass(event.role))}>
-                <div className="mb-0.5 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                <div className="mb-0.5 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.16em] text-[var(--ec-muted)]">
                   <span className="flex min-w-0 items-center gap-1.5">
                     {eventRoleIcon(event.role)}
                     <span className="truncate">{event.label}</span>
                   </span>
-                  <span className="shrink-0 font-normal normal-case tracking-normal text-zinc-600">
+                  <span className="shrink-0 font-normal normal-case tracking-normal text-[var(--ec-faint)]">
                     {new Date(event.createdAt).toLocaleString()}
                   </span>
                 </div>
-                <div className="whitespace-pre-wrap break-words text-xs text-zinc-300">{event.content}</div>
+                <div className="whitespace-pre-wrap break-words text-xs text-[var(--ec-text)]">{event.content}</div>
               </div>
             ))
           )}
@@ -992,9 +992,9 @@ export const ProjectLoopsTab = ({
     return (
       <div className="min-h-0 flex-1 overflow-y-auto">
       <Card className="p-6 text-center">
-        <RefreshCw className="mx-auto h-6 w-6 text-cyan-400" />
-        <p className="mt-3 text-sm font-medium text-zinc-100">Loops are not available for this project yet</p>
-        <p className="mx-auto mt-2 max-w-md text-xs text-zinc-500">
+        <RefreshCw className="mx-auto h-6 w-6 text-[var(--ec-accent)]" />
+        <p className="mt-3 text-sm font-medium text-[var(--ec-text)]">Loops are not available for this project yet</p>
+        <p className="mx-auto mt-2 max-w-md text-xs text-[var(--ec-muted)]">
           {loopUnavailableReasonText(availability)}
         </p>
       </Card>
@@ -1020,15 +1020,15 @@ export const ProjectLoopsTab = ({
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">
       <Card className="overflow-hidden p-0">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/80 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--ec-border)] px-4 py-3">
           <div className="flex min-w-0 items-center gap-3">
-            <RefreshCw className="h-4 w-4 text-cyan-400" />
+            <RefreshCw className="h-4 w-4 text-[var(--ec-accent)]" />
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-medium text-zinc-100">Loops</h3>
+                <h3 className="text-sm font-medium text-[var(--ec-text)]">Loops</h3>
                 <BetaBadge />
               </div>
-              <p className="mt-0.5 text-xs text-zinc-500">
+              <p className="mt-0.5 text-xs text-[var(--ec-muted)]">
                 Describe a feature or fix; the loop plans it, implements it PR by PR, waits for merges, and addresses review comments - fully in the background.
               </p>
             </div>
@@ -1043,7 +1043,7 @@ export const ProjectLoopsTab = ({
           <div className="px-4 py-4">
             <div className="grid gap-3 lg:grid-cols-2">
               <label className="space-y-1.5 lg:col-span-2">
-                <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">What should be built or fixed?</span>
+                <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">What should be built or fixed?</span>
                 <Textarea
                   value={prompt}
                   onChange={(event) => setPrompt(event.target.value)}
@@ -1052,11 +1052,11 @@ export const ProjectLoopsTab = ({
                 />
               </label>
               <label className="space-y-1.5">
-                <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Name (optional)</span>
+                <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Name (optional)</span>
                 <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Defaults to the prompt" />
               </label>
               <label className="space-y-1.5">
-                <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Target branch</span>
+                <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Target branch</span>
                 <Select
                   value={baseBranch || project.project.baseBranch}
                   onValueChange={setBaseBranch}
@@ -1067,7 +1067,7 @@ export const ProjectLoopsTab = ({
                 />
               </label>
               <label className="space-y-1.5">
-                <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Implementation model (local providers only)</span>
+                <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Implementation model (local providers only)</span>
                 <Select
                   value={effectiveRunnerModelId}
                   onValueChange={setRunnerModelId}
@@ -1079,7 +1079,7 @@ export const ProjectLoopsTab = ({
                 />
               </label>
               <label className="space-y-1.5">
-                <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Review model (optional)</span>
+                <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Review model (optional)</span>
                 <Select
                   value={reviewModelId}
                   onValueChange={setReviewModelId}
@@ -1090,7 +1090,7 @@ export const ProjectLoopsTab = ({
                 />
               </label>
               <label className="space-y-1.5">
-                <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Merging</span>
+                <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Merging</span>
                 <Select
                   value={mergePolicy}
                   onValueChange={(value) => setMergePolicy(value as ProjectLoopMergePolicy)}
@@ -1102,7 +1102,7 @@ export const ProjectLoopsTab = ({
                 />
               </label>
               <label className="space-y-1.5">
-                <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">UI changes</span>
+                <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">UI changes</span>
                 <Select
                   value={uiChangePolicy}
                   onValueChange={(value) => setUiChangePolicy(value as ProjectLoopUiChangePolicy)}
@@ -1114,7 +1114,7 @@ export const ProjectLoopsTab = ({
                 />
               </label>
               <label className="space-y-1.5">
-                <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">PR code review</span>
+                <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">PR code review</span>
                 <Select
                   value={prReviewPolicy}
                   onValueChange={(value) => setPrReviewPolicy(value as ProjectLoopPrReviewPolicy)}
@@ -1127,7 +1127,7 @@ export const ProjectLoopsTab = ({
               </label>
               {uiChangePolicy !== "auto" ? (
                 <label className="space-y-1.5 lg:col-span-2">
-                  <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Screenshot notes for the agent (optional)</span>
+                  <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Screenshot notes for the agent (optional)</span>
                   <Textarea
                     value={uiReviewInstructions}
                     onChange={(event) => setUiReviewInstructions(event.target.value)}
@@ -1137,7 +1137,7 @@ export const ProjectLoopsTab = ({
                 </label>
               ) : null}
             </div>
-            {createError ? <p className="mt-2 text-xs text-rose-300">{createError}</p> : null}
+            {createError ? <p className="mt-2 text-xs text-[var(--ec-danger)]">{createError}</p> : null}
             <div className="mt-3 flex items-center justify-end">
               <Button
                 type="button"
@@ -1156,11 +1156,11 @@ export const ProjectLoopsTab = ({
       <Card className="p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <GitMerge className="h-4 w-4 text-cyan-400" />
-            <h3 className="text-sm font-medium text-zinc-100">Loop runs</h3>
+            <GitMerge className="h-4 w-4 text-[var(--ec-accent)]" />
+            <h3 className="text-sm font-medium text-[var(--ec-text)]">Loop runs</h3>
           </div>
           {loops.length > 0 ? (
-            <div className="flex items-center rounded-lg border border-zinc-800 bg-zinc-950/60 p-0.5">
+            <div className="flex items-center rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] p-0.5">
               {(
                 [
                   { section: "open" as const, label: "Open", Icon: RefreshCw, count: openLoops.length },
@@ -1174,15 +1174,15 @@ export const ProjectLoopsTab = ({
                   className={cn(
                     "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition",
                     loopListSection === section
-                      ? "bg-zinc-800 text-zinc-100"
-                      : "text-zinc-500 hover:text-zinc-200",
+                      ? "bg-[var(--ec-control)] text-[var(--ec-text)]"
+                      : "text-[var(--ec-muted)] hover:text-[var(--ec-text)]",
                   )}
                   aria-pressed={loopListSection === section}
                   onClick={() => setLoopListSection(section)}
                 >
                   <Icon className="h-3 w-3" />
                   {label}
-                  <span className="rounded-full border border-zinc-700/70 bg-zinc-900/80 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400">
+                  <span className="rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--ec-muted)]">
                     {count}
                   </span>
                 </button>
@@ -1192,12 +1192,12 @@ export const ProjectLoopsTab = ({
         </div>
         <div className="mt-3 space-y-2">
           {loops.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 px-4 py-10 text-center text-sm text-zinc-500">
+            <div className="rounded-xl border border-dashed border-[var(--ec-border)] bg-[var(--ec-panel)] px-4 py-10 text-center text-sm text-[var(--ec-muted)]">
               No loops yet. Start one and BuildWarden plans, implements, opens PRs, waits for merges, and addresses review comments on its own.
             </div>
           ) : null}
           {loops.length > 0 && visibleLoops.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-zinc-800/70 bg-zinc-950/30 px-3 py-2 text-xs text-zinc-600">
+            <p className="rounded-lg border border-dashed border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2 text-xs text-[var(--ec-faint)]">
               {LOOP_LIST_EMPTY_MESSAGES[loopListSection]}
             </p>
           ) : null}

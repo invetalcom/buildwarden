@@ -62,6 +62,9 @@ body[data-theme="dark"] {
   --ec-accent-foreground: #04111f;
   --ec-accent-soft: rgba(96, 168, 255, 0.17);
   --ec-accent-ring: rgba(96, 168, 255, 0.4);
+  --ec-secondary: #9b8cff;
+  --ec-secondary-soft: rgba(155, 140, 255, 0.16);
+  --ec-secondary-ring: rgba(155, 140, 255, 0.38);
   --ec-openrouter-brand: #c8ff00;
   --ec-ring: rgba(96, 168, 255, 0.5);
   --ec-success: #3ad58a;
@@ -85,6 +88,9 @@ body[data-theme="dark"] {
   --ec-terminal-bg: #0d1013;
   --ec-terminal-fg: #e7ebee;
   --ec-terminal-cursor: #9fb1bf;
+  --ec-backdrop: #090c11;
+  --ec-backdrop-primary: rgba(85, 168, 255, 0.34);
+  --ec-backdrop-secondary: rgba(155, 140, 255, 0.3);
   --app-scrollbar-track: transparent;
   --app-scrollbar-thumb-start: rgba(255, 255, 255, 0.22);
   --app-scrollbar-thumb-end: rgba(255, 255, 255, 0.16);
@@ -123,6 +129,9 @@ body[data-theme="light"] {
   --ec-accent-foreground: #ffffff;
   --ec-accent-soft: rgba(10, 111, 222, 0.13);
   --ec-accent-ring: rgba(10, 111, 222, 0.32);
+  --ec-secondary: #7556d8;
+  --ec-secondary-soft: rgba(117, 86, 216, 0.12);
+  --ec-secondary-ring: rgba(117, 86, 216, 0.3);
   --ec-openrouter-brand: #7624f4;
   --ec-ring: rgba(10, 111, 222, 0.45);
   --ec-success: #0f7a43;
@@ -146,6 +155,9 @@ body[data-theme="light"] {
   --ec-terminal-bg: #f7fafc;
   --ec-terminal-fg: #1d2a36;
   --ec-terminal-cursor: #5a6c7c;
+  --ec-backdrop: #dceaf5;
+  --ec-backdrop-primary: rgba(8, 111, 214, 0.3);
+  --ec-backdrop-secondary: rgba(117, 86, 216, 0.25);
   --app-scrollbar-track: transparent;
   --app-scrollbar-thumb-start: rgba(22, 48, 70, 0.28);
   --app-scrollbar-thumb-end: rgba(22, 48, 70, 0.24);

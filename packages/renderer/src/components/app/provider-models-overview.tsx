@@ -36,7 +36,7 @@ const WelcomeReadiness = ({ providerReady, modelReady }: { providerReady: boolea
 );
 
 const EmptyRegistry = ({ children }: { children: React.ReactNode }) => (
-  <p className="rounded-xl border border-dashed border-zinc-800/80 px-3 py-4 text-center text-sm text-zinc-500">{children}</p>
+  <p className="rounded-xl border border-dashed border-[var(--ec-border)] px-3 py-4 text-center text-sm text-[var(--ec-muted)]">{children}</p>
 );
 
 const SavedConnections = ({
@@ -49,10 +49,10 @@ const SavedConnections = ({
   <Card className="app-surface-inset-soft border-white/8 p-4">
     <div className="flex items-center justify-between gap-2">
       <div>
-        <p className="text-[11px] uppercase tracking-[0.28em] text-cyan-300/60">Saved connections</p>
-        <p className="mt-0.5 text-sm text-zinc-400">Provider accounts on this device</p>
+        <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--ec-accent)]">Saved connections</p>
+        <p className="mt-0.5 text-sm text-[var(--ec-muted)]">Provider accounts on this device</p>
       </div>
-      <span className="rounded-full border border-white/8 bg-white/[0.04] px-2.5 py-0.5 text-xs text-zinc-400">
+      <span className="rounded-full border border-white/8 bg-white/[0.04] px-2.5 py-0.5 text-xs text-[var(--ec-muted)]">
         {accounts.length}
       </span>
     </div>
@@ -61,16 +61,16 @@ const SavedConnections = ({
       {accounts.map((provider) => (
         <div
           key={provider.id}
-          className="app-settings-list-row flex items-center justify-between gap-2 rounded-xl border border-zinc-800/90 px-3 py-2.5"
+          className="app-settings-list-row flex items-center justify-between gap-2 rounded-xl border border-[var(--ec-border)] px-3 py-2.5"
         >
           <div className="min-w-0">
-            <p className="truncate text-sm font-medium text-zinc-100">{provider.label}</p>
-            <p className="mt-0.5 truncate text-xs text-zinc-500">{PROVIDER_TYPE_LABELS[provider.providerType]}</p>
+            <p className="truncate text-sm font-medium text-[var(--ec-text)]">{provider.label}</p>
+            <p className="mt-0.5 truncate text-xs text-[var(--ec-muted)]">{PROVIDER_TYPE_LABELS[provider.providerType]}</p>
           </div>
           <Button
             variant="secondary"
             size="sm"
-            className="shrink-0 rounded-lg border border-zinc-800 bg-zinc-900/80 px-2 text-rose-400 hover:border-rose-500/25 hover:bg-zinc-900 hover:text-rose-300"
+            className="shrink-0 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 text-[var(--ec-danger)] hover:border-[var(--ec-danger-ring)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-danger-strong)]"
             onClick={() => onDelete(provider.id)}
             title="Delete provider"
             aria-label={`Delete provider ${provider.label}`}
@@ -95,10 +95,10 @@ const SavedModels = ({
   <Card className="app-surface-inset-soft border-white/8 p-4">
     <div className="flex items-center justify-between gap-2">
       <div>
-        <p className="text-[11px] uppercase tracking-[0.28em] text-fuchsia-300/50">Model registry</p>
-        <p className="mt-0.5 text-sm text-zinc-400">Registered for runs and chat</p>
+        <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--ec-secondary)]">Model registry</p>
+        <p className="mt-0.5 text-sm text-[var(--ec-muted)]">Registered for runs and chat</p>
       </div>
-      <span className="rounded-full border border-white/8 bg-white/[0.04] px-2.5 py-0.5 text-xs text-zinc-400">
+      <span className="rounded-full border border-white/8 bg-white/[0.04] px-2.5 py-0.5 text-xs text-[var(--ec-muted)]">
         {models.length}
       </span>
     </div>
@@ -109,11 +109,11 @@ const SavedModels = ({
         return (
           <div
             key={model.id}
-            className="app-settings-list-row flex items-center justify-between gap-2 rounded-xl border border-zinc-800/90 px-3 py-2.5"
+            className="app-settings-list-row flex items-center justify-between gap-2 rounded-xl border border-[var(--ec-border)] px-3 py-2.5"
           >
             <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-zinc-100">{model.displayName}</p>
-              <p className="mt-0.5 truncate text-xs text-zinc-500">
+              <p className="truncate text-sm font-medium text-[var(--ec-text)]">{model.displayName}</p>
+              <p className="mt-0.5 truncate text-xs text-[var(--ec-muted)]">
                 {model.modelId}
                 {provider ? ` · ${provider.label}` : ""}
               </p>
@@ -121,7 +121,7 @@ const SavedModels = ({
             <Button
               variant="secondary"
               size="sm"
-              className="shrink-0 rounded-lg border border-zinc-800 bg-zinc-900/80 px-2 text-rose-400 hover:border-rose-500/25 hover:bg-zinc-900 hover:text-rose-300"
+              className="shrink-0 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 text-[var(--ec-danger)] hover:border-[var(--ec-danger-ring)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-danger-strong)]"
               onClick={() => onDelete(model.id)}
               title="Delete model"
               aria-label={`Delete model ${model.displayName}`}
@@ -177,8 +177,8 @@ const PanelButton = ({
   const isConnection = panel === "connection";
   const open = openPanel === panel;
   const activeClass = isConnection
-    ? "border-cyan-400/35 bg-cyan-500/[0.08] text-cyan-100"
-    : "border-fuchsia-400/30 bg-fuchsia-500/[0.07] text-fuchsia-100";
+    ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]"
+    : "border-[var(--ec-secondary-ring)] bg-[var(--ec-secondary-soft)] text-[var(--ec-secondary)]";
   let title = `Add a ${panel}`;
   if (welcome) {
     title = isConnection ? "1. Connection" : "2. Model";
@@ -197,12 +197,12 @@ const PanelButton = ({
       className={cn(
         "flex w-full items-center justify-between gap-3 border text-left transition",
         welcome ? "rounded-lg px-3 py-2.5 disabled:cursor-not-allowed disabled:opacity-55" : "rounded-2xl px-4 py-3.5",
-        open ? activeClass : "border-white/8 bg-white/[0.02] text-zinc-200 hover:border-white/12 hover:bg-white/[0.04]",
+        open ? activeClass : "border-white/8 bg-white/[0.02] text-[var(--ec-text)] hover:border-white/12 hover:bg-white/[0.04]",
       )}
     >
       <div className="space-y-0.5">
         <p className="text-sm font-semibold">{title}</p>
-        <p className="text-xs text-zinc-500">{description}</p>
+        <p className="text-xs text-[var(--ec-muted)]">{description}</p>
       </div>
       {welcome && ready ? (
         <CheckCircle2 className="h-4 w-4 shrink-0 text-[var(--ec-success)]" aria-hidden />

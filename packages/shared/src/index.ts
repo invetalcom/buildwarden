@@ -4707,6 +4707,8 @@ export const APP_SETTING_KEYS = {
    * `"dark"` | `"light"`. When unset, {@link parseUiTheme} falls back to legacy {@link APP_SETTING_KEYS.darkMode}.
    */
   uiTheme: "uiTheme",
+  /** JSON encoded {@link DesignScheme}; supersedes the two-value `uiTheme` setting while keeping it in sync for compatibility. */
+  designScheme: "designScheme",
   /** `"true"` gives the app sidebar a distinct theme-aware surface color. */
   sidebarContrast: "sidebarContrast",
   /** `"small"` | `"medium"` | `"large"`. Controls the height of Recent Runs entries in the sidebar. */
@@ -5219,22 +5221,228 @@ export const parseProjectRunDefaultsSetting = (raw: string | undefined | null): 
   }
 };
 
-/** Visual theme: liquid-glass dark or liquid-glass light. */
+/** Base contrast mode retained for native chrome and third-party widgets. */
 export const UI_THEME_VALUES = ["dark", "light"] as const;
 export type UiTheme = (typeof UI_THEME_VALUES)[number];
 
 export const isUiTheme = (value: unknown): value is UiTheme =>
   typeof value === "string" && (UI_THEME_VALUES as readonly string[]).includes(value);
 
+export const DESIGN_SCHEME_COLOR_KEYS = [
+  "background",
+  "surface",
+  "surfaceElevated",
+  "text",
+  "textMuted",
+  "primary",
+  "secondary",
+  "border",
+  "success",
+  "warning",
+  "danger",
+] as const;
+
+export type DesignSchemeColorKey = (typeof DESIGN_SCHEME_COLOR_KEYS)[number];
+export type DesignSchemeColors = Record<DesignSchemeColorKey, string>;
+
+export interface DesignScheme {
+  version: 1;
+  /** Stable preset id, or `custom` after a user changes an individual color. */
+  id: string;
+  name: string;
+  description: string;
+  mode: UiTheme;
+  colors: DesignSchemeColors;
+}
+
+export interface DesignSchemeExport {
+  format: "buildwarden-design-scheme";
+  version: 1;
+  exportedAt: string;
+  scheme: DesignScheme;
+}
+
+const freezeDesignScheme = (scheme: DesignScheme): DesignScheme =>
+  Object.freeze({ ...scheme, colors: Object.freeze({ ...scheme.colors }) });
+
+/** Curated palettes. Every screen derives its semantic CSS tokens from one of these objects. */
+export const DESIGN_SCHEME_PRESETS: readonly DesignScheme[] = Object.freeze([
+  freezeDesignScheme({
+    version: 1,
+    id: "midnight-blue",
+    name: "Midnight Blue",
+    description: "Black glass with an electric blue primary and violet secondary.",
+    mode: "dark",
+    colors: {
+      background: "#090c11", surface: "#171d26", surfaceElevated: "#222b38", text: "#f4f7fb", textMuted: "#9aa8b8",
+      primary: "#55a8ff", secondary: "#9b8cff", border: "#3a4656", success: "#42d392", warning: "#f5c451", danger: "#ff6b7a",
+    },
+  }),
+  freezeDesignScheme({
+    version: 1,
+    id: "crimson-grove",
+    name: "Crimson Grove",
+    description: "Deep red surfaces balanced by a vivid green primary.",
+    mode: "dark",
+    colors: {
+      background: "#16090d", surface: "#291117", surfaceElevated: "#3b1921", text: "#fff5f5", textMuted: "#c8a3a9",
+      primary: "#55d878", secondary: "#ff5268", border: "#62303a", success: "#55d878", warning: "#ffc857", danger: "#ff5268",
+    },
+  }),
+  freezeDesignScheme({
+    version: 1,
+    id: "violet-ember",
+    name: "Violet Ember",
+    description: "Smoky violet with warm orange highlights.",
+    mode: "dark",
+    colors: {
+      background: "#100b18", surface: "#21172d", surfaceElevated: "#302040", text: "#fbf7ff", textMuted: "#b3a1c2",
+      primary: "#b47cff", secondary: "#ff8c42", border: "#503d62", success: "#4bd6a0", warning: "#ffbf69", danger: "#ff6577",
+    },
+  }),
+  freezeDesignScheme({
+    version: 1,
+    id: "ocean-mint",
+    name: "Ocean Mint",
+    description: "Dark ocean blue paired with crisp mint.",
+    mode: "dark",
+    colors: {
+      background: "#061216", surface: "#10272c", surfaceElevated: "#173940", text: "#effffd", textMuted: "#94b8b8",
+      primary: "#48d7c2", secondary: "#4ea5ff", border: "#2d555b", success: "#56dc92", warning: "#f1c75b", danger: "#ff7185",
+    },
+  }),
+  freezeDesignScheme({
+    version: 1,
+    id: "arctic-blue",
+    name: "Arctic Blue",
+    description: "Cool white surfaces with a precise blue primary.",
+    mode: "light",
+    colors: {
+      background: "#dceaf5", surface: "#f7fbff", surfaceElevated: "#ffffff", text: "#142332", textMuted: "#53687c",
+      primary: "#086fd6", secondary: "#7556d8", border: "#a8bdcf", success: "#147a49", warning: "#9a650c", danger: "#bd3044",
+    },
+  }),
+  freezeDesignScheme({
+    version: 1,
+    id: "paper-coral",
+    name: "Paper Coral",
+    description: "Warm paper, coral accents, and a teal counterpoint.",
+    mode: "light",
+    colors: {
+      background: "#f3e5dc", surface: "#fffaf6", surfaceElevated: "#ffffff", text: "#33231f", textMuted: "#735e57",
+      primary: "#d94f5c", secondary: "#087f78", border: "#d2b8ae", success: "#237b54", warning: "#a26308", danger: "#c33146",
+    },
+  }),
+]);
+
+export const DEFAULT_DESIGN_SCHEME_ID_BY_MODE: Readonly<Record<UiTheme, string>> = Object.freeze({
+  dark: "midnight-blue",
+  light: "arctic-blue",
+});
+
+export const getDesignSchemePreset = (id: string | undefined | null): DesignScheme | undefined =>
+  DESIGN_SCHEME_PRESETS.find((scheme) => scheme.id === id);
+
+export const getDefaultDesignScheme = (mode: UiTheme = "dark"): DesignScheme =>
+  getDesignSchemePreset(DEFAULT_DESIGN_SCHEME_ID_BY_MODE[mode]) ?? DESIGN_SCHEME_PRESETS[0]!;
+
+export const isDesignSchemeHexColor = (value: unknown): value is string =>
+  typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value.trim());
+
+const normalizeDesignScheme = (value: unknown): DesignScheme | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Partial<DesignScheme>;
+  if (candidate.version !== 1 || !isUiTheme(candidate.mode) || !candidate.colors || typeof candidate.colors !== "object") return null;
+  const colors = {} as DesignSchemeColors;
+  for (const key of DESIGN_SCHEME_COLOR_KEYS) {
+    const color = (candidate.colors as Partial<DesignSchemeColors>)[key];
+    if (!isDesignSchemeHexColor(color)) return null;
+    colors[key] = color.trim().toLowerCase();
+  }
+  const rawName = typeof candidate.name === "string" ? candidate.name.trim() : "";
+  const rawId = typeof candidate.id === "string" ? candidate.id.trim() : "";
+  if (!rawName || !rawId) return null;
+  return {
+    version: 1,
+    id: rawId.slice(0, 80),
+    name: rawName.slice(0, 80),
+    description: (typeof candidate.description === "string" ? candidate.description.trim() : "Custom BuildWarden design").slice(0, 240),
+    mode: candidate.mode,
+    colors,
+  };
+};
+
+export const parseDesignSchemeJson = (raw: string | undefined | null): DesignScheme | null => {
+  if (!raw?.trim()) return null;
+  try {
+    return normalizeDesignScheme(JSON.parse(raw) as unknown);
+  } catch {
+    return null;
+  }
+};
+
 /**
  * Resolve UI theme from persisted settings. Uses `uiTheme` when valid; otherwise maps legacy `darkMode`.
  */
 export const parseUiTheme = (settings: Record<string, string | undefined>): UiTheme => {
+  const schemeMode = parseDesignSchemeJson(settings[APP_SETTING_KEYS.designScheme])?.mode;
+  if (schemeMode) return schemeMode;
   const raw = settings[APP_SETTING_KEYS.uiTheme]?.trim().toLowerCase();
   if (isUiTheme(raw)) {
     return raw;
   }
   return settings[APP_SETTING_KEYS.darkMode] === "false" ? "light" : "dark";
+};
+
+export const parseDesignScheme = (settings: Record<string, string | undefined>): DesignScheme =>
+  parseDesignSchemeJson(settings[APP_SETTING_KEYS.designScheme]) ?? getDefaultDesignScheme(parseUiTheme(settings));
+
+export const serializeDesignScheme = (scheme: DesignScheme): string => {
+  const normalized = normalizeDesignScheme(scheme);
+  if (!normalized) throw new Error("The design scheme contains invalid or incomplete colors.");
+  return JSON.stringify(normalized);
+};
+
+export const createCustomDesignScheme = (
+  base: DesignScheme,
+  colors: Partial<DesignSchemeColors>,
+  options: { name?: string; mode?: UiTheme } = {},
+): DesignScheme => {
+  const next = normalizeDesignScheme({
+    ...base,
+    version: 1,
+    id: "custom",
+    name: options.name?.trim() || (base.id === "custom" ? base.name : `${base.name} Custom`),
+    description: "Custom BuildWarden design scheme.",
+    mode: options.mode ?? base.mode,
+    colors: { ...base.colors, ...colors },
+  });
+  if (!next) throw new Error("Use six-digit hexadecimal colors such as #55a8ff.");
+  return next;
+};
+
+export const exportDesignScheme = (scheme: DesignScheme, exportedAt = new Date().toISOString()): string => {
+  const normalized = normalizeDesignScheme(scheme);
+  if (!normalized) throw new Error("The design scheme contains invalid or incomplete colors.");
+  return JSON.stringify({ format: "buildwarden-design-scheme", version: 1, exportedAt, scheme: normalized } satisfies DesignSchemeExport, null, 2);
+};
+
+export const importDesignScheme = (raw: string): DesignScheme => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    throw new Error("This file is not valid JSON.");
+  }
+  const candidate = parsed && typeof parsed === "object" && !Array.isArray(parsed) && "scheme" in parsed
+    ? (parsed as { format?: unknown; scheme?: unknown })
+    : null;
+  if (!candidate || candidate.format !== "buildwarden-design-scheme") {
+    throw new Error("This is not a BuildWarden design-scheme export.");
+  }
+  const scheme = normalizeDesignScheme(candidate.scheme);
+  if (!scheme) throw new Error("The design scheme is incomplete or contains invalid colors.");
+  return { ...scheme, id: "custom", description: "Imported BuildWarden design scheme." };
 };
 
 /** Legacy key used by native chrome: only bright mode is “not dark”. */

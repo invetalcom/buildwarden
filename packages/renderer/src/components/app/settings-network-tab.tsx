@@ -108,10 +108,13 @@ const RemoteAccessSettings = ({
     let disposed = false;
     setPairingQrCode(null);
     if (!pairing?.pairingUrl) return;
+    const rootStyles = getComputedStyle(document.documentElement);
+    const qrForeground = rootStyles.getPropertyValue("--ec-terminal-fg").trim() || "#18181b";
+    const qrBackground = rootStyles.getPropertyValue("--ec-terminal-bg").trim() || "#ffffff";
     void QRCode.toDataURL(pairing.pairingUrl, {
       width: 176,
       margin: 1,
-      color: { dark: "#18181b", light: "#ffffff" },
+      color: { dark: qrForeground, light: qrBackground },
       errorCorrectionLevel: "M",
     }).then((dataUrl) => {
       if (!disposed) setPairingQrCode(dataUrl);
@@ -139,27 +142,27 @@ const RemoteAccessSettings = ({
     <Card className="p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
-          <div className="rounded-full border border-zinc-800 bg-zinc-900/70 p-2 text-emerald-300">
+          <div className="rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel)] p-2 text-[var(--ec-success)]">
             <Wifi className="h-4 w-4" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Remote access</p>
+            <p className="text-xs uppercase tracking-[0.25em] text-[var(--ec-muted)]">Remote access</p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <p className="text-sm font-medium text-zinc-100">Authenticated loopback server</p>
+              <p className="text-sm font-medium text-[var(--ec-text)]">Authenticated loopback server</p>
               <span className={`rounded-full border px-2 py-0.5 text-[11px] ${
                 enabled
-                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-                  : "border-zinc-700 bg-zinc-900 text-zinc-400"
+                  ? "border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] text-[var(--ec-success)]"
+                  : "border-[var(--ec-border)] bg-[var(--ec-panel)] text-[var(--ec-muted)]"
               }`}>
                 {enabled ? "Enabled" : "Off"}
               </span>
             </div>
-            <p className="mt-1 max-w-2xl text-sm text-zinc-400">
+            <p className="mt-1 max-w-2xl text-sm text-[var(--ec-muted)]">
               Opt in to a local-only server, then issue single-use pairing codes for revocable read sessions.
             </p>
           </div>
         </div>
-        <label className="flex shrink-0 items-center gap-2 text-sm text-zinc-300">
+        <label className="flex shrink-0 items-center gap-2 text-sm text-[var(--ec-text)]">
           <input
             className="h-4 w-4 accent-[var(--ec-accent)]"
             type="checkbox"
@@ -175,29 +178,29 @@ const RemoteAccessSettings = ({
         </label>
       </div>
 
-      <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-950/45 p-3">
+      <div className="mt-4 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] p-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-2.5">
-            <Network className="mt-0.5 size-4 shrink-0 text-cyan-300" />
+            <Network className="mt-0.5 size-4 shrink-0 text-[var(--ec-accent)]" />
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <p className="text-sm font-medium text-zinc-200">Tailscale Serve</p>
+                <p className="text-sm font-medium text-[var(--ec-text)]">Tailscale Serve</p>
                 {remoteStatus ? (
                   <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${
                     remoteStatus.tailscale.verified
-                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                      ? "border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] text-[var(--ec-success)]"
                       : remoteStatus.tailscale.state === "error" || remoteStatus.tailscale.state === "conflict"
-                        ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
-                        : "border-zinc-700 bg-zinc-900 text-zinc-400"
+                        ? "border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] text-[var(--ec-warning)]"
+                        : "border-[var(--ec-border)] bg-[var(--ec-panel)] text-[var(--ec-muted)]"
                   }`}>{remoteStatus.tailscale.state.replace("-", " ")}</span>
-                ) : <Loader2 className="size-3.5 animate-spin text-zinc-500" />}
+                ) : <Loader2 className="size-3.5 animate-spin text-[var(--ec-muted)]" />}
               </div>
-              <p className="mt-1 max-w-2xl text-xs leading-5 text-zinc-400">
+              <p className="mt-1 max-w-2xl text-xs leading-5 text-[var(--ec-muted)]">
                 {remoteStatus?.tailscale.message ?? "Checking the local Tailscale installation…"}
               </p>
             </div>
           </div>
-          <label className="flex shrink-0 items-center gap-2 text-xs text-zinc-300">
+          <label className="flex shrink-0 items-center gap-2 text-xs text-[var(--ec-text)]">
             <input
               className="size-4 accent-[var(--ec-accent)]"
               type="checkbox"
@@ -214,8 +217,8 @@ const RemoteAccessSettings = ({
         </div>
 
         {remoteStatus?.tailscale.verified && remoteStatus.tailscale.endpoint ? (
-          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-zinc-800 pt-3">
-            <code className="min-w-0 flex-1 truncate text-xs text-cyan-200">{remoteStatus.tailscale.endpoint}</code>
+          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--ec-border)] pt-3">
+            <code className="min-w-0 flex-1 truncate text-xs text-[var(--ec-accent)]">{remoteStatus.tailscale.endpoint}</code>
             <Button type="button" variant="secondary" size="sm" onClick={() => void navigator.clipboard.writeText(remoteStatus.tailscale.endpoint ?? "")}>
               <Copy className="mr-2 size-3.5" />
               Copy URL
@@ -226,18 +229,18 @@ const RemoteAccessSettings = ({
             </Button>
           </div>
         ) : remoteStatus?.tailscale.enableCommand ? (
-          <div className="mt-3 border-t border-zinc-800 pt-3">
-            <p className="text-[11px] text-zinc-500">Manual command</p>
-            <code className="mt-1 block overflow-x-auto rounded bg-zinc-900 px-2 py-1.5 text-[11px] text-zinc-300">{remoteStatus.tailscale.enableCommand}</code>
+          <div className="mt-3 border-t border-[var(--ec-border)] pt-3">
+            <p className="text-[11px] text-[var(--ec-muted)]">Manual command</p>
+            <code className="mt-1 block overflow-x-auto rounded bg-[var(--ec-panel)] px-2 py-1.5 text-[11px] text-[var(--ec-text)]">{remoteStatus.tailscale.enableCommand}</code>
           </div>
         ) : null}
       </div>
 
-      <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-950/45 p-3">
+      <div className="mt-4 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] p-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-zinc-200">Hosted website origins</p>
-            <p className="mt-1 text-xs leading-5 text-zinc-400">
+            <p className="text-sm font-medium text-[var(--ec-text)]">Hosted website origins</p>
+            <p className="mt-1 text-xs leading-5 text-[var(--ec-muted)]">
               Add exact HTTPS origins that may connect directly to this host, one per line. Wildcards and URL paths are rejected.
             </p>
           </div>
@@ -265,10 +268,10 @@ const RemoteAccessSettings = ({
         />
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-zinc-800 pt-4">
-        <div className="flex items-center rounded-md border border-zinc-800 bg-zinc-950/50 p-0.5 text-xs">
-          <button type="button" className={`rounded px-2 py-1 ${pairingTarget === "host" ? "bg-zinc-800 text-zinc-100" : "text-zinc-500"}`} onClick={() => setPairingTarget("host")}>Host-served</button>
-          <button type="button" className={`rounded px-2 py-1 ${pairingTarget === "hosted" ? "bg-zinc-800 text-zinc-100" : "text-zinc-500"}`} onClick={() => setPairingTarget("hosted")}>Hosted website</button>
+      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-[var(--ec-border)] pt-4">
+        <div className="flex items-center rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] p-0.5 text-xs">
+          <button type="button" className={`rounded px-2 py-1 ${pairingTarget === "host" ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)]"}`} onClick={() => setPairingTarget("host")}>Host-served</button>
+          <button type="button" className={`rounded px-2 py-1 ${pairingTarget === "hosted" ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)]"}`} onClick={() => setPairingTarget("hosted")}>Hosted website</button>
         </div>
         {pairingTarget === "hosted" ? (
           <Select
@@ -299,7 +302,7 @@ const RemoteAccessSettings = ({
           {working ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <KeyRound className="mr-2 h-4 w-4" />}
           Create pairing code
         </Button>
-        <label className="flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950/50 px-2.5 py-1.5 text-xs text-zinc-300">
+        <label className="flex items-center gap-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 py-1.5 text-xs text-[var(--ec-text)]">
           <input
             className="size-3.5 accent-[var(--ec-accent)]"
             type="checkbox"
@@ -309,18 +312,18 @@ const RemoteAccessSettings = ({
           />
           Allow runs, chats, approvals, Git, projects, terminal, and browser
         </label>
-        <span className="text-xs text-zinc-500">Codes expire after five minutes and work once.</span>
+        <span className="text-xs text-[var(--ec-muted)]">Codes expire after five minutes and work once.</span>
       </div>
-      <p className="mt-2 text-[11px] text-amber-300/80">
+      <p className="mt-2 text-[11px] text-[var(--ec-warning)]">
         Existing paired sessions do not gain browser control automatically. Revoke and re-pair a device to enable it.
       </p>
 
       {pairing ? (
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2.5">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] px-3 py-2.5">
           <div className="min-w-0 flex-1">
-            <p className="font-mono text-base font-semibold tracking-wider text-emerald-100">{pairing.code}</p>
-            <p className="mt-0.5 text-[11px] text-emerald-200/70">Expires {formatTimestamp(pairing.expiresAt)}</p>
-            {pairing.pairingUrl ? <p className="mt-1 truncate font-mono text-[10px] text-emerald-200/70">{pairing.pairingUrl}</p> : null}
+            <p className="font-mono text-base font-semibold tracking-wider text-[var(--ec-success)]">{pairing.code}</p>
+            <p className="mt-0.5 text-[11px] text-[var(--ec-success)]">Expires {formatTimestamp(pairing.expiresAt)}</p>
+            {pairing.pairingUrl ? <p className="mt-1 truncate font-mono text-[10px] text-[var(--ec-success)]">{pairing.pairingUrl}</p> : null}
           </div>
           <div className="flex items-center gap-2">
             {pairingQrCode ? <img className="size-24 rounded bg-white p-1" src={pairingQrCode} alt="Pair this device with BuildWarden" /> : null}
@@ -340,27 +343,27 @@ const RemoteAccessSettings = ({
         </div>
       ) : null}
 
-      {error ? <p className="mt-3 text-xs text-red-300">{error}</p> : null}
+      {error ? <p className="mt-3 text-xs text-[var(--ec-danger)]">{error}</p> : null}
 
-      <div className="mt-4 border-t border-zinc-800 pt-3">
+      <div className="mt-4 border-t border-[var(--ec-border)] pt-3">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Paired devices</p>
+          <p className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Paired devices</p>
           <Button type="button" variant="ghost" size="sm" disabled={working} onClick={() => void run(refreshSessions)}>
             Refresh
           </Button>
         </div>
         {sessions.length ? (
-          <div className="mt-2 divide-y divide-zinc-800">
+          <div className="mt-2 divide-y divide-[var(--ec-border)]">
             {sessions.map((session) => {
               const active = !session.revokedAt && session.expiresAt > new Date().toISOString();
               return (
                 <div key={session.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5">
                   <div className="min-w-0">
-                    <p className="truncate text-sm text-zinc-200">{session.label}</p>
-                    <p className="mt-0.5 text-[11px] text-zinc-500">
+                    <p className="truncate text-sm text-[var(--ec-text)]">{session.label}</p>
+                    <p className="mt-0.5 text-[11px] text-[var(--ec-muted)]">
                       {active ? `Last used ${formatTimestamp(session.lastUsedAt)}` : session.revokedAt ? "Revoked" : "Expired"}
                     </p>
-                    <p className="mt-0.5 text-[10px] text-zinc-600">{session.scopes.join(" · ")}</p>
+                    <p className="mt-0.5 text-[10px] text-[var(--ec-faint)]">{session.scopes.join(" · ")}</p>
                   </div>
                   {active ? (
                     <Button type="button" variant="secondary" size="sm" disabled={working} onClick={() => void run(async () => {
@@ -376,11 +379,11 @@ const RemoteAccessSettings = ({
             })}
           </div>
         ) : (
-          <p className="mt-2 text-xs text-zinc-500">No devices have been paired.</p>
+          <p className="mt-2 text-xs text-[var(--ec-muted)]">No devices have been paired.</p>
         )}
       </div>
 
-      <p className="mt-3 border-l border-amber-500/30 pl-3 text-xs leading-5 text-amber-200/75">
+      <p className="mt-3 border-l border-[var(--ec-warning-ring)] pl-3 text-xs leading-5 text-[var(--ec-warning)]">
         The BuildWarden server always stays on loopback. Tailscale Serve is optional and BuildWarden removes only the exact root handler it created.
       </p>
     </Card>
@@ -413,13 +416,13 @@ export const NetworkSettingsTab = ({
     <Card className="p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
-          <div className="rounded-full border border-zinc-800 bg-zinc-900/70 p-2 text-cyan-300">
+          <div className="rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel)] p-2 text-[var(--ec-accent)]">
             <Globe className="h-4 w-4" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Outbound proxy</p>
-            <p className="mt-2 text-sm font-medium text-zinc-100">App-wide network proxy</p>
-            <p className="mt-1 max-w-2xl text-sm text-zinc-400">Route provider and agent network calls through a proxy.</p>
+            <p className="text-xs uppercase tracking-[0.25em] text-[var(--ec-muted)]">Outbound proxy</p>
+            <p className="mt-2 text-sm font-medium text-[var(--ec-text)]">App-wide network proxy</p>
+            <p className="mt-1 max-w-2xl text-sm text-[var(--ec-muted)]">Route provider and agent network calls through a proxy.</p>
           </div>
         </div>
 
@@ -440,7 +443,7 @@ export const NetworkSettingsTab = ({
         </div>
       </div>
 
-      <label className="mt-4 flex items-start gap-3 rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-3">
+      <label className="mt-4 flex items-start gap-3 rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-3">
         <input
           className="mt-1 h-4 w-4 accent-[var(--ec-accent)]"
           type="checkbox"
@@ -448,14 +451,14 @@ export const NetworkSettingsTab = ({
           onChange={(event) => onDraftChange({ ...draft, enabled: event.target.checked })}
         />
         <div className="min-w-0">
-          <p className="text-sm font-medium text-zinc-100">Enable network proxy</p>
-          <p className="mt-1 text-xs text-zinc-500">When off, BuildWarden connects directly even if host details are filled in below.</p>
+          <p className="text-sm font-medium text-[var(--ec-text)]">Enable network proxy</p>
+          <p className="mt-1 text-xs text-[var(--ec-muted)]">When off, BuildWarden connects directly even if host details are filled in below.</p>
         </div>
       </label>
 
       <div className="mt-4 flex flex-wrap gap-3">
         <label className="min-w-48 flex-[0_1_12rem] space-y-1.5">
-          <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Protocol</span>
+          <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Protocol</span>
           <Select
             value={draft.protocol}
             onValueChange={(value) => onDraftChange({ ...draft, protocol: value as NetworkProxyProtocol })}
@@ -464,7 +467,7 @@ export const NetworkSettingsTab = ({
         </label>
 
         <label className="min-w-64 flex-[1_1_24rem] space-y-1.5">
-          <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Host</span>
+          <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Host</span>
           <Input
             value={draft.host}
             onChange={(event) => onDraftChange({ ...draft, host: event.target.value })}
@@ -474,7 +477,7 @@ export const NetworkSettingsTab = ({
         </label>
 
         <label className="min-w-32 flex-[0_1_8rem] space-y-1.5">
-          <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Port</span>
+          <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Port</span>
           <Input
             value={draft.port}
             onChange={(event) => onDraftChange({ ...draft, port: event.target.value })}
@@ -487,7 +490,7 @@ export const NetworkSettingsTab = ({
 
       <div className="mt-3 flex flex-wrap gap-3">
         <label className="min-w-64 flex-[1_1_20rem] space-y-1.5">
-          <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Username</span>
+          <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Username</span>
           <Input
             value={draft.username}
             onChange={(event) => onDraftChange({ ...draft, username: event.target.value })}
@@ -498,7 +501,7 @@ export const NetworkSettingsTab = ({
         </label>
 
         <label className="min-w-64 flex-[1_1_20rem] space-y-1.5">
-          <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Password</span>
+          <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Password</span>
           <Input
             type="password"
             value={draft.password}
@@ -516,9 +519,9 @@ export const NetworkSettingsTab = ({
         </label>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[var(--ec-muted)]">
         {draft.hasPassword && !draft.clearSavedPassword ? (
-          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 text-emerald-200">
+          <span className="inline-flex items-center gap-1 rounded-full border border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] px-2.5 py-1 text-[var(--ec-success)]">
             <ShieldCheck className="h-3.5 w-3.5" />
             Password saved securely
           </span>
@@ -546,21 +549,21 @@ export const NetworkSettingsTab = ({
     </Card>
 
     <Card className="p-4">
-      <div className="flex items-center gap-2 text-xs uppercase tracking-[0.25em] text-zinc-500">
-        <Info className="h-4 w-4 text-cyan-300" />
+      <div className="flex items-center gap-2 text-xs uppercase tracking-[0.25em] text-[var(--ec-muted)]">
+        <Info className="h-4 w-4 text-[var(--ec-accent)]" />
         Notes
       </div>
-      <div className="mt-3 flex flex-wrap gap-x-6 gap-y-3 text-xs leading-5 text-zinc-400">
-        <p className="min-w-52 flex-[1_1_14rem] border-l border-zinc-800 pl-3">
+      <div className="mt-3 flex flex-wrap gap-x-6 gap-y-3 text-xs leading-5 text-[var(--ec-muted)]">
+        <p className="min-w-52 flex-[1_1_14rem] border-l border-[var(--ec-border)] pl-3">
           Applied in the Electron main process and provider workers, so runs and chats share this setting.
         </p>
-        <p className="min-w-52 flex-[1_1_14rem] border-l border-zinc-800 pl-3">
+        <p className="min-w-52 flex-[1_1_14rem] border-l border-[var(--ec-border)] pl-3">
           Proxy passwords stay in BuildWarden&apos;s encrypted secret store, never in the SQLite settings database.
         </p>
-        <p className="min-w-52 flex-[1_1_14rem] border-l border-zinc-800 pl-3">
-          <code className="rounded bg-zinc-900 px-1 py-0.5 text-[11px]">localhost</code>,{" "}
-          <code className="rounded bg-zinc-900 px-1 py-0.5 text-[11px]">127.0.0.1</code>, and{" "}
-          <code className="rounded bg-zinc-900 px-1 py-0.5 text-[11px]">::1</code> bypass the proxy automatically.
+        <p className="min-w-52 flex-[1_1_14rem] border-l border-[var(--ec-border)] pl-3">
+          <code className="rounded bg-[var(--ec-panel)] px-1 py-0.5 text-[11px]">localhost</code>,{" "}
+          <code className="rounded bg-[var(--ec-panel)] px-1 py-0.5 text-[11px]">127.0.0.1</code>, and{" "}
+          <code className="rounded bg-[var(--ec-panel)] px-1 py-0.5 text-[11px]">::1</code> bypass the proxy automatically.
         </p>
       </div>
     </Card>

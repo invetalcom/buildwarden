@@ -276,7 +276,7 @@ export const OrchestrationAgentsPanel = ({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[var(--ec-surface)]">
+    <div className="flex h-full min-h-0 flex-col bg-[var(--ec-panel)]">
       <header className="shrink-0 border-b border-[var(--ec-border)] px-3 py-2">
         <div className="flex flex-wrap items-center gap-2">
           <Badge dot tone={detail.orchestration.status === "active" || detail.orchestration.status === "waiting" ? "running" : detail.orchestration.status === "completed" ? "completed" : detail.orchestration.status === "cancelled" ? "cancelled" : detail.orchestration.status === "paused" ? "queued" : "failed"}>

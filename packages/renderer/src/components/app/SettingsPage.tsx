@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type {
   AppLogDirectorySizeInfo,
   AppSnapshot,
+  DesignScheme,
   IntegratedSkillMetadata,
   NetworkProxySettingsInput,
   NetworkProxySettingsSnapshot,
@@ -11,7 +12,6 @@ import type {
   RemoteAccessSession,
   SidebarRunEntrySize,
   SupportedIdeKind,
-  UiTheme,
   UnifiedProviderFamily,
 } from "@buildwarden/shared";
 import {
@@ -77,7 +77,7 @@ interface SettingsPageProps {
   pastedTextAttachmentThreshold: number;
   consecutiveToolCallCollapseThreshold: number;
   recentRunDays: number;
-  uiTheme: UiTheme;
+  designScheme: DesignScheme;
   sidebarContrast: boolean;
   sidebarRunEntrySize: SidebarRunEntrySize;
   sidebarGroupRunsByProject: boolean;
@@ -108,7 +108,7 @@ interface SettingsPageProps {
   onPastedTextAttachmentThresholdChange: (value: number) => void | Promise<void>;
   onConsecutiveToolCallCollapseThresholdChange: (value: number) => void | Promise<void>;
   onRecentRunDaysChange: (value: number) => void | Promise<void>;
-  onUiThemeChange: (theme: UiTheme) => void;
+  onDesignSchemeChange: (scheme: DesignScheme) => void | Promise<void>;
   onSidebarContrastChange: (value: boolean) => void;
   onSidebarRunEntrySizeChange: (value: SidebarRunEntrySize) => void;
   onSidebarGroupRunsByProjectChange: (value: boolean) => void;
@@ -200,7 +200,7 @@ export const SettingsPage = ({
   pastedTextAttachmentThreshold,
   consecutiveToolCallCollapseThreshold,
   recentRunDays,
-  uiTheme,
+  designScheme,
   sidebarContrast,
   sidebarRunEntrySize,
   sidebarGroupRunsByProject,
@@ -231,7 +231,7 @@ export const SettingsPage = ({
   onPastedTextAttachmentThresholdChange,
   onConsecutiveToolCallCollapseThresholdChange,
   onRecentRunDaysChange,
-  onUiThemeChange,
+  onDesignSchemeChange,
   onSidebarContrastChange,
   onSidebarRunEntrySizeChange,
   onSidebarGroupRunsByProjectChange,
@@ -579,7 +579,7 @@ export const SettingsPage = ({
       {activeTab === "user" ? (
         <UserSettingsTab
           busy={busy}
-          uiTheme={uiTheme}
+          designScheme={designScheme}
           sidebarContrast={sidebarContrast}
           sidebarRunEntrySize={sidebarRunEntrySize}
           sidebarGroupRunsByProject={sidebarGroupRunsByProject}
@@ -595,7 +595,7 @@ export const SettingsPage = ({
           idePathsDirty={idePathsDirty}
           idePathsSaving={idePathsSaving}
           keyboardShortcuts={keyboardShortcuts}
-          onUiThemeChange={onUiThemeChange}
+          onDesignSchemeChange={onDesignSchemeChange}
           onSidebarContrastChange={onSidebarContrastChange}
           onSidebarRunEntrySizeChange={onSidebarRunEntrySizeChange}
           onSidebarGroupRunsByProjectChange={onSidebarGroupRunsByProjectChange}

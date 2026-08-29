@@ -17,8 +17,8 @@ const GitDiffPreview = lazy(async () => {
 });
 
 const PanelModuleFallback = ({ label }: { label: string }) => (
-  <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-xs text-zinc-500" role="status">
-    <Loader2 className="h-4 w-4 animate-spin text-cyan-400" aria-hidden />
+  <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-xs text-[var(--ec-muted)]" role="status">
+    <Loader2 className="h-4 w-4 animate-spin text-[var(--ec-accent)]" aria-hidden />
     {label}
   </div>
 );
@@ -110,14 +110,14 @@ const FilePreviewContent = ({
 }) => {
   if (loading) {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-xs text-zinc-500" role="status">
-        <Loader2 className="h-4 w-4 animate-spin text-cyan-400" aria-hidden />
+      <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-xs text-[var(--ec-muted)]" role="status">
+        <Loader2 className="h-4 w-4 animate-spin text-[var(--ec-accent)]" aria-hidden />
         Opening file...
       </div>
     );
   }
   if (message) {
-    return <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-center text-xs text-zinc-500">{message}</div>;
+    return <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-center text-xs text-[var(--ec-muted)]">{message}</div>;
   }
   if (result?.content == null) {
     return null;
@@ -125,7 +125,7 @@ const FilePreviewContent = ({
   return (
     <>
       {result.truncated ? (
-        <div className="shrink-0 border-b border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-200">
+        <div className="shrink-0 border-b border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] px-3 py-1.5 text-[11px] text-[var(--ec-warning)]">
           Preview truncated at {formatBytes(truncatedPreviewBytes(result.sizeBytes))} of {formatBytes(result.sizeBytes)}.
         </div>
       ) : null}
@@ -161,15 +161,15 @@ const FilePanelBody = ({
 }) => {
   if (view === "file") {
     return (
-      <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950/60">
+      <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)]">
         <FilePreviewContent loading={loading} message={message} result={result} />
       </div>
     );
   }
   if (diffPending) {
     return (
-      <div className="flex h-full items-center justify-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950/60 text-xs text-zinc-500">
-        <Loader2 className="h-4 w-4 animate-spin text-cyan-400" aria-hidden />
+      <div className="flex h-full items-center justify-center gap-2 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] text-xs text-[var(--ec-muted)]">
+        <Loader2 className="h-4 w-4 animate-spin text-[var(--ec-accent)]" aria-hidden />
         Computing file diff...
       </div>
     );
@@ -287,14 +287,14 @@ export const RunFilePanel = ({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="flex min-h-0 shrink-0 items-center gap-2 border-b border-zinc-800/80 px-3 py-2">
+      <div className="flex min-h-0 shrink-0 items-center gap-2 border-b border-[var(--ec-border)] px-3 py-2">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <FileText className="h-3.5 w-3.5 shrink-0 text-cyan-300" aria-hidden />
+          <FileText className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" aria-hidden />
           <div className="min-w-0">
-            <p className="truncate font-mono text-[11px] font-medium text-zinc-100" title={displayPath}>
+            <p className="truncate font-mono text-[11px] font-medium text-[var(--ec-text)]" title={displayPath}>
               {displayPath}
             </p>
-            <p className="truncate text-[10px] text-zinc-500">
+            <p className="truncate text-[10px] text-[var(--ec-muted)]">
               {result?.sizeBytes != null ? formatBytes(result.sizeBytes) : "Run workspace file"}
               {result?.line ? ` - line ${String(result.line)}` : ""}
             </p>
@@ -305,18 +305,18 @@ export const RunFilePanel = ({
             type="button"
             variant="ghost"
             size="sm"
-            className="h-7 w-7 p-0 text-zinc-400 hover:text-zinc-100"
+            className="h-7 w-7 p-0 text-[var(--ec-muted)] hover:text-[var(--ec-text)]"
             onClick={copyPath}
             title={copied ? "Copied" : "Copy path"}
             aria-label="Copy path"
           >
-            {copied ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <Copy className="h-3.5 w-3.5" />}
+            {copied ? <Check className="h-3.5 w-3.5 text-[var(--ec-success)]" /> : <Copy className="h-3.5 w-3.5" />}
           </Button>
           <Button
             type="button"
             variant="ghost"
             size="sm"
-            className="h-7 w-7 p-0 text-zinc-400 hover:text-zinc-100"
+            className="h-7 w-7 p-0 text-[var(--ec-muted)] hover:text-[var(--ec-text)]"
             onClick={() => setReloadKey((current) => current + 1)}
             disabled={loading}
             title="Reload file"
@@ -327,12 +327,12 @@ export const RunFilePanel = ({
         </div>
       </div>
 
-      <div className="flex h-8 shrink-0 items-stretch border-b border-zinc-800/80 bg-zinc-950/35 px-2">
+      <div className="flex h-8 shrink-0 items-stretch border-b border-[var(--ec-border)] bg-[var(--ec-panel)] px-2">
         <button
           type="button"
           className={cn(
             "flex items-center gap-1.5 border-b-2 px-2 text-[11px] transition",
-            view === "file" ? "border-cyan-500/70 text-zinc-100" : "border-transparent text-zinc-500 hover:text-zinc-200",
+            view === "file" ? "border-[var(--ec-accent-ring)] text-[var(--ec-text)]" : "border-transparent text-[var(--ec-muted)] hover:text-[var(--ec-text)]",
           )}
           onClick={() => setView("file")}
         >
@@ -344,7 +344,7 @@ export const RunFilePanel = ({
             type="button"
             className={cn(
               "flex items-center gap-1.5 border-b-2 px-2 text-[11px] transition",
-              view === "diff" ? "border-cyan-500/70 text-zinc-100" : "border-transparent text-zinc-500 hover:text-zinc-200",
+              view === "diff" ? "border-[var(--ec-accent-ring)] text-[var(--ec-text)]" : "border-transparent text-[var(--ec-muted)] hover:text-[var(--ec-text)]",
             )}
             onClick={() => {
               setView("diff");

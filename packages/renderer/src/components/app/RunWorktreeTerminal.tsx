@@ -30,7 +30,7 @@ const TerminalSurface = ({ disabled, error, cwd, containerRef, className }: Pick
   const buildwarden = useBuildWardenClient();
   if (disabled) {
     return (
-      <div className={cn("rounded-lg border border-zinc-800 bg-zinc-950/50 p-4 text-sm text-zinc-500", className)}>
+      <div className={cn("rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] p-4 text-sm text-[var(--ec-muted)]", className)}>
         Workspace path is not available. Open the project folder in your system terminal instead.
       </div>
     );
@@ -39,8 +39,8 @@ const TerminalSurface = ({ disabled, error, cwd, containerRef, className }: Pick
   return (
     <div className={cn("flex min-h-0 flex-col overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-terminal-bg)]", className)}>
       {error && (
-        <div className="flex flex-col gap-2 border-b border-rose-500/20 bg-rose-500/5 px-3 py-2">
-          <p className="text-xs text-rose-200">{error}</p>
+        <div className="flex flex-col gap-2 border-b border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] px-3 py-2">
+          <p className="text-xs text-[var(--ec-danger)]">{error}</p>
           <Button type="button" variant="secondary" size="sm" className="self-start" onClick={() => void buildwarden.openSystemTerminalAtPath(cwd)}>
             Open system terminal here
           </Button>
@@ -106,8 +106,7 @@ export const RunWorktreeTerminal = ({
     let startPromise: Promise<void> | null = null;
     setError(null);
 
-    const tokens = getComputedStyle(el);
-    const themeToken = (name: string, fallback: string): string => tokens.getPropertyValue(name).trim() || fallback;
+    const themeToken = (name: string, fallback: string): string => getComputedStyle(el).getPropertyValue(name).trim() || fallback;
     const term = new Terminal({
       cursorBlink: true,
       fontSize: 12,
@@ -131,6 +130,17 @@ export const RunWorktreeTerminal = ({
     term.open(el);
     termRef.current = term;
     fitRef.current = fit;
+
+    const syncTerminalTheme = () => {
+      term.options.theme = {
+        background: themeToken("--ec-terminal-bg", "#0d1013"),
+        foreground: themeToken("--ec-terminal-fg", "#e7ebee"),
+        cursor: themeToken("--ec-terminal-cursor", "#9fb1bf"),
+      };
+    };
+    const themeObserver = new MutationObserver(syncTerminalTheme);
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["style", "data-theme", "data-design-scheme"] });
+    themeObserver.observe(document.body, { attributes: true, attributeFilter: ["style", "data-theme", "data-design-scheme"] });
 
     configureTerminalClipboard(term);
 
@@ -190,6 +200,7 @@ export const RunWorktreeTerminal = ({
           startFailed = true;
           setError(result.error ?? "Could not start terminal.");
           ro?.disconnect();
+          themeObserver.disconnect();
           dataSub.dispose();
           unsubData();
           unsubExit();
@@ -228,6 +239,7 @@ export const RunWorktreeTerminal = ({
     return () => {
       cancelled = true;
       ro.disconnect();
+      themeObserver.disconnect();
       dataSub.dispose();
       unsubData();
       unsubExit();

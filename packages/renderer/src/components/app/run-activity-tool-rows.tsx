@@ -7,6 +7,7 @@ import { ActivityMarkdownOrGitDiff } from "./activity-message-body";
 import { GitDiffPreview } from "./git-diff-preview";
 import { looksLikeGitDiff } from "./git-diff-utils";
 import {
+  canCancelToolBatchShell,
   isOpenableToolPath,
   type ToolBatchSummarizedRow,
 } from "./run-activity-tool-model";
@@ -187,19 +188,6 @@ const ToolBatchBody = ({
     </details>
   );
 };
-
-export const canCancelToolBatchShell = (
-  item: ToolBatchSummarizedRow,
-  run: RunActivityRun,
-  readOnly: boolean,
-  onCancelRunShell: ((run: RunActivityRun, toolCallId: string) => void) | undefined,
-) =>
-  !readOnly &&
-  item.toolName === "run_shell" &&
-  item.shellStreaming === true &&
-  typeof item.toolCallId === "string" &&
-  ["queued", "preparing", "running"].includes(run.status) &&
-  Boolean(onCancelRunShell);
 
 const hasToolBatchInlineDiff = (item: ToolBatchSummarizedRow) =>
   !item.failed && Boolean(item.writeFileDiff) && looksLikeGitDiff(item.writeFileDiff ?? "");
@@ -416,7 +404,7 @@ export const ActivityDiffBatchRow = ({
               <span className="min-w-0 flex-1 truncate font-mono text-[color:var(--ec-muted)]">{detail}</span>
             )}
           </summary>
-          <div className="mt-1.5 rounded-md border border-[color:var(--ec-border)] bg-[color:var(--ec-panel-muted)] px-2 py-1.5">
+          <div className="mt-1.5 rounded-md border border-[color:var(--ec-border)] bg-[color:var(--ec-panel-soft)] px-2 py-1.5">
             {looksLikeGitDiff(item.content) ? (
               <GitDiffPreview
                 diffText={item.content}

@@ -429,10 +429,10 @@ export const ProjectBranchesPage = ({
                       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                         <p className="truncate font-mono text-sm font-semibold text-[var(--ec-text)]">{branch.name}</p>
                         {branch.isBase ? <span className="rounded-full border border-[var(--ec-border)] px-1.5 py-px text-[9px] text-[var(--ec-muted)]">base</span> : null}
-                        {branch.hasLocal ? <span className="rounded-full border border-emerald-500/25 bg-emerald-500/[0.08] px-1.5 py-px text-[9px] text-emerald-200">local</span> : null}
-                        {branch.hasRemote ? <span className="rounded-full border border-cyan-500/25 bg-cyan-500/[0.08] px-1.5 py-px text-[9px] text-cyan-100">remote</span> : null}
-                        {branch.ahead > 0 ? <span className="rounded-full border border-amber-500/25 px-1.5 py-px text-[9px] text-amber-200">ahead {branch.ahead}</span> : null}
-                        {branch.behind > 0 ? <span className="rounded-full border border-violet-500/25 px-1.5 py-px text-[9px] text-violet-200">behind {branch.behind}</span> : null}
+                        {branch.hasLocal ? <span className="rounded-full border border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] px-1.5 py-px text-[9px] text-[var(--ec-success)]">local</span> : null}
+                        {branch.hasRemote ? <span className="rounded-full border border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-1.5 py-px text-[9px] text-[var(--ec-accent)]">remote</span> : null}
+                        {branch.ahead > 0 ? <span className="rounded-full border border-[var(--ec-warning-ring)] px-1.5 py-px text-[9px] text-[var(--ec-warning)]">ahead {branch.ahead}</span> : null}
+                        {branch.behind > 0 ? <span className="rounded-full border border-[var(--ec-secondary-ring)] px-1.5 py-px text-[9px] text-[var(--ec-secondary)]">behind {branch.behind}</span> : null}
                       </div>
                       <p className="mt-0.5 truncate text-[11px] text-[var(--ec-muted)]">
                         {branchStatusText(branch)}

@@ -7,7 +7,7 @@ import { Badge } from "../ui/badge";
 import type { ActivityEntry, SubagentActivityEntry } from "./run-activity-model";
 
 const ExpandChevron = ({ expanded }: Readonly<{ expanded: boolean }>) =>
-  expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-500" /> : null;
+  expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[var(--ec-muted)]" /> : null;
 const formatSubagentDurationLabel = (info: RunSubagentInfo): string | null => {
   const durationMs =
     info.usage?.durationMs ??
@@ -28,11 +28,11 @@ const formatSubagentDurationLabel = (info: RunSubagentInfo): string | null => {
 };
 
 const subagentStatusBadge = (status: RunSubagentInfo["status"]): { label: string; className: string } => {
-  if (status === "completed") return { label: "done", className: "bg-emerald-500/10 text-emerald-300 ring-emerald-400/30" };
-  if (status === "failed") return { label: "failed", className: "bg-red-500/10 text-red-300 ring-red-400/30" };
-  if (status === "cancelled") return { label: "cancelled", className: "bg-amber-500/10 text-amber-300 ring-amber-400/30" };
-  if (status === "running") return { label: "running", className: "bg-sky-500/10 text-sky-300 ring-sky-400/30" };
-  return { label: "pending", className: "bg-zinc-500/10 text-zinc-300 ring-zinc-400/30" };
+  if (status === "completed") return { label: "done", className: "bg-[var(--ec-success-soft)] text-[var(--ec-success)] ring-[var(--ec-success-ring)]" };
+  if (status === "failed") return { label: "failed", className: "bg-[var(--ec-danger-soft)] text-[var(--ec-danger)] ring-[var(--ec-danger-ring)]" };
+  if (status === "cancelled") return { label: "cancelled", className: "bg-[var(--ec-warning-soft)] text-[var(--ec-warning)] ring-[var(--ec-warning-ring)]" };
+  if (status === "running") return { label: "running", className: "bg-[var(--ec-accent-soft)] text-[var(--ec-accent)] ring-[var(--ec-accent-ring)]" };
+  return { label: "pending", className: "bg-[var(--ec-muted-soft)] text-[var(--ec-text)] ring-[var(--ec-border)]" };
 };
 
 const buildSubagentStats = (info: RunSubagentInfo, durationLabel: string | null) => {
@@ -58,9 +58,9 @@ const SubagentExpandedContent = ({
   onOpenWorkspaceFile?: (path: string) => void;
   renderEntry: (nested: ActivityEntry, index: number) => ReactNode;
 }>) => (
-  <div className="mt-1.5 space-y-1.5 border-l border-zinc-800/60 pl-2">
+  <div className="mt-1.5 space-y-1.5 border-l border-[var(--ec-border)] pl-2">
     {entry.info.prompt?.trim() && entry.info.prompt.trim() !== heading ? (
-      <p className="whitespace-pre-wrap text-[10px] leading-snug text-zinc-500">{entry.info.prompt.trim()}</p>
+      <p className="whitespace-pre-wrap text-[10px] leading-snug text-[var(--ec-muted)]">{entry.info.prompt.trim()}</p>
     ) : null}
     {entry.entries.length > 0 ? (
       <div className="agent-worklog agent-worklog--nested">
@@ -123,24 +123,24 @@ export const ActivitySubagentCard = ({
           aria-expanded={expanded}
         >
           {isRunning ? (
-            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-sky-400" />
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--ec-accent)]" />
           ) : (
             <Bot className="h-3.5 w-3.5 shrink-0 text-[color:var(--ec-muted)]" />
           )}
-          <span className="shrink-0 text-[11px] font-medium text-zinc-200">{info.name ?? "agent"}</span>
+          <span className="shrink-0 text-[11px] font-medium text-[var(--ec-text)]">{info.name ?? "agent"}</span>
           <Badge tone="queued" className={`shrink-0 px-1.5 py-0 text-[10px] ${badge.className}`}>
             {badge.label}
           </Badge>
-          <span className="min-w-0 flex-1 truncate text-[11px] text-zinc-400" title={heading}>
+          <span className="min-w-0 flex-1 truncate text-[11px] text-[var(--ec-muted)]" title={heading}>
             {heading}
           </span>
           {stats.length > 0 ? (
-            <span className="agent-density-meta shrink-0 text-[10px] text-zinc-500 tabular-nums">{stats.join(" · ")}</span>
+            <span className="agent-density-meta shrink-0 text-[10px] text-[var(--ec-muted)] tabular-nums">{stats.join(" · ")}</span>
           ) : null}
           {hasExpandableContent ? <ExpandChevron expanded={expanded} /> : null}
         </button>
         {liveActivity ? (
-          <p className="mt-1 truncate pl-5 text-[10px] text-sky-300/80" title={liveActivity}>
+          <p className="mt-1 truncate pl-5 text-[10px] text-[var(--ec-accent)]" title={liveActivity}>
             {liveActivity}
           </p>
         ) : null}

@@ -46,10 +46,10 @@ export const ProjectRepoHistorianTab = ({ project, modelOptions, defaultModelId,
     <Card className="p-4">
       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-center gap-2">
-          <Clock3 className="h-4 w-4 text-cyan-400" />
+          <Clock3 className="h-4 w-4 text-[var(--ec-accent)]" />
           <div className="min-w-0">
-            <h3 className="text-sm font-medium text-zinc-100">Repo historian</h3>
-            <p className="text-xs text-zinc-500">{record?.summary ?? "Use recent history and structural signals to explain how the repo got here."}</p>
+            <h3 className="text-sm font-medium text-[var(--ec-text)]">Repo historian</h3>
+            <p className="text-xs text-[var(--ec-muted)]">{record?.summary ?? "Use recent history and structural signals to explain how the repo got here."}</p>
           </div>
         </div>
         {canGenerateInsights ? <div className="flex flex-wrap items-center gap-2">
@@ -65,30 +65,30 @@ export const ProjectRepoHistorianTab = ({ project, modelOptions, defaultModelId,
           </Button>
         </div> : null}
       </div>
-      <p className="mb-3 text-xs text-zinc-500">Updated {formatGeneratedAt(record?.generatedAt)}</p>
+      <p className="mb-3 text-xs text-[var(--ec-muted)]">Updated {formatGeneratedAt(record?.generatedAt)}</p>
 
       {historian ? (
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_24rem]">
           <div className="space-y-3">
-            <div className="rounded-xl border border-zinc-800/80 bg-zinc-950/50 p-3">
-              <p className="text-sm leading-relaxed text-zinc-200">{historian.synopsis}</p>
+            <div className="rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] p-3">
+              <p className="text-sm leading-relaxed text-[var(--ec-text)]">{historian.synopsis}</p>
             </div>
             <div className="space-y-2">
               {historian.sections.map((section) => (
-                <div key={section.title} className="rounded-xl border border-zinc-800/80 bg-zinc-950/50 p-3">
-                  <p className="text-sm font-medium text-zinc-100">{section.title}</p>
-                  <p className="mt-2 text-sm leading-relaxed text-zinc-300">{section.detail}</p>
+                <div key={section.title} className="rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] p-3">
+                  <p className="text-sm font-medium text-[var(--ec-text)]">{section.title}</p>
+                  <p className="mt-2 text-sm leading-relaxed text-[var(--ec-text)]">{section.detail}</p>
                 </div>
               ))}
             </div>
           </div>
-          <div className="rounded-xl border border-zinc-800/80 bg-zinc-950/50 p-3">
-            <p className="text-sm font-medium text-zinc-100">Notable commits</p>
+          <div className="rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] p-3">
+            <p className="text-sm font-medium text-[var(--ec-text)]">Notable commits</p>
             <div className="mt-3 space-y-2">
               {historian.notableCommits.map((commit) => (
-                <div key={commit.sha} className="rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2">
-                  <p className="text-sm text-zinc-100">{commit.title}</p>
-                  <p className="mt-1 text-xs text-zinc-500">
+                <div key={commit.sha} className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2">
+                  <p className="text-sm text-[var(--ec-text)]">{commit.title}</p>
+                  <p className="mt-1 text-xs text-[var(--ec-muted)]">
                     {commit.sha.slice(0, 7)} - {commit.author} - {commit.date}
                   </p>
                 </div>
@@ -97,7 +97,7 @@ export const ProjectRepoHistorianTab = ({ project, modelOptions, defaultModelId,
           </div>
         </div>
       ) : (
-        <div className="rounded-xl border border-dashed border-zinc-800/80 bg-zinc-950/40 px-4 py-10 text-center text-sm text-zinc-500">
+        <div className="rounded-xl border border-dashed border-[var(--ec-border)] bg-[var(--ec-panel)] px-4 py-10 text-center text-sm text-[var(--ec-muted)]">
           {canGenerateInsights ? "Generate the repo historian to summarize architectural turning points and recurring change themes." : "No saved repository history report is available on the host."}
         </div>
       )}
