@@ -9651,7 +9651,7 @@ export class AppController
             this.logControllerError("Project Lab implementation review failed.", labReviewError, { runId: run.id });
           }
         } else if ((budgetExhaustion || failedVerification) && run.kind === "lab-implementation") {
-          this.cancelProjectLabImplementation(
+          await this.failProjectLabImplementation(
             run,
             budgetExhaustion?.reason ?? "The implementation did not pass its project verification gate.",
           );
