@@ -69,6 +69,24 @@ describe("run tool context", () => {
     await expect(readFile(join(worktreePath, "src/example.ts"), "utf8")).rejects.toThrow();
   });
 
+  it("treats invalid search regexes as literal text and respects the global match cap", async () => {
+    const worktreePath = await makeTempDir();
+    await mkdir(join(worktreePath, "src"), { recursive: true });
+    await writeFile(join(worktreePath, "src", "one.ts"), "before\nvalue[one\nafter\nvalue[one\n", "utf8");
+    await writeFile(join(worktreePath, "src", "two.ts"), "value[two\n", "utf8");
+    const tools = createRunToolContext(worktreePath);
+
+    const result = await tools.executeTool({
+      id: "search-literal",
+      name: "search_repo",
+      arguments: { query: "value[", maxMatches: 2 },
+    });
+
+    expect(result.ok).toBe(true);
+    expect((result.metadata as { totalMatches?: number }).totalMatches).toBe(2);
+    expect(result.content).toContain("src/one.ts");
+  });
+
   it("includes writeFileUnifiedDiff in metadata for new and updated files", async () => {
     const worktreePath = await makeTempDir();
     const tools = createRunToolContext(worktreePath);

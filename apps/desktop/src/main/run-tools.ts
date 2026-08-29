@@ -503,6 +503,15 @@ const listFilesRecursive = async (root: string, currentPath: string, entries: st
 
 type SearchRepoHit = { lineNumber: number; excerpt: string };
 
+type RipgrepJsonEvent = {
+  type?: "match" | "context" | string;
+  data?: {
+    path?: { text?: string };
+    lines?: { text?: string };
+    line_number?: number;
+  };
+};
+
 const searchRepoFile = async (fullPath: string, matcher: RegExp, maxMatches: number): Promise<SearchRepoHit[]> => {
   const fileStat = await stat(fullPath);
   if (fileStat.size > MAX_FILE_BYTES) {
@@ -525,12 +534,133 @@ const searchRepoFile = async (fullPath: string, matcher: RegExp, maxMatches: num
   return hits;
 };
 
-const buildSearchRepoStructuredResult = async (root: string, query: string, maxMatches: number) => {
-  const matcher = createSearchMatcher(query);
-  const fileHits = new Map<string, Array<{ lineNumber: number; excerpt: string }>>();
-  let totalMatches = 0;
+const searchRepoWithRipgrep = async (
+  root: string,
+  query: string,
+  maxMatches: number,
+): Promise<Map<string, SearchRepoHit[]> | null> => {
+  const fixedString = (() => {
+    try {
+      new RegExp(query, "i");
+      return false;
+    } catch {
+      return true;
+    }
+  })();
+  const args = [
+    "--json",
+    "--ignore-case",
+    "--line-number",
+    "--context",
+    String(SEARCH_CONTEXT_RADIUS),
+    "--hidden",
+    "--glob",
+    "!.git/**",
+    "--glob",
+    "!node_modules/**",
+    ...(fixedString ? ["--fixed-strings"] : []),
+    "--",
+    query,
+    ".",
+  ];
 
-  const visit = async (dirPath: string): Promise<void> => {
+  return await new Promise((resolveSearch) => {
+    const child = spawn("rg", args, {
+      cwd: root,
+      windowsHide: true,
+      shell: false,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const matchingLines = new Map<string, number[]>();
+    const contextLines = new Map<string, Map<number, string>>();
+    let pending = "";
+    let totalMatches = 0;
+    let reachedLimit = false;
+    let unavailable = false;
+
+    const consumeLine = (rawLine: string) => {
+      if (!rawLine || reachedLimit) {
+        return;
+      }
+      let event: RipgrepJsonEvent;
+      try {
+        event = JSON.parse(rawLine) as RipgrepJsonEvent;
+      } catch {
+        return;
+      }
+      if (event.type !== "match" && event.type !== "context") {
+        return;
+      }
+      const rawPath = event.data?.path?.text;
+      const lineNumber = event.data?.line_number;
+      if (!rawPath || typeof lineNumber !== "number") {
+        return;
+      }
+      const path = toPosix(rawPath).replace(/^\.\//, "");
+      const lineText = (event.data?.lines?.text ?? "").replace(/\r?\n$/, "");
+      const lines = contextLines.get(path) ?? new Map<number, string>();
+      lines.set(lineNumber, lineText);
+      contextLines.set(path, lines);
+
+      if (event.type === "match") {
+        const matches = matchingLines.get(path) ?? [];
+        matches.push(lineNumber);
+        matchingLines.set(path, matches);
+        totalMatches += 1;
+        if (totalMatches >= maxMatches) {
+          reachedLimit = true;
+          child.kill();
+        }
+      }
+    };
+
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      pending += chunk;
+      const lines = pending.split(/\r?\n/);
+      pending = lines.pop() ?? "";
+      for (const line of lines) {
+        consumeLine(line);
+      }
+    });
+    child.on("error", (error: NodeJS.ErrnoException) => {
+      unavailable = error.code === "ENOENT";
+    });
+    child.on("close", (code) => {
+      consumeLine(pending);
+      if (unavailable || (!reachedLimit && code !== 0 && code !== 1)) {
+        resolveSearch(null);
+        return;
+      }
+
+      const results = new Map<string, SearchRepoHit[]>();
+      for (const [path, matches] of matchingLines) {
+        const lines = contextLines.get(path) ?? new Map<number, string>();
+        results.set(
+          path,
+          matches.map((lineNumber) => {
+            const excerpt: string[] = [];
+            for (let line = lineNumber - SEARCH_CONTEXT_RADIUS; line <= lineNumber + SEARCH_CONTEXT_RADIUS; line += 1) {
+              const content = lines.get(line);
+              if (content !== undefined) {
+                excerpt.push(`${line}|${content}`);
+              }
+            }
+            return { lineNumber, excerpt: excerpt.join("\n") };
+          }),
+        );
+      }
+      resolveSearch(results);
+    });
+  });
+};
+
+const buildSearchRepoStructuredResult = async (root: string, query: string, maxMatches: number) => {
+  const ripgrepHits = await searchRepoWithRipgrep(root, query, maxMatches);
+  const fileHits = ripgrepHits ?? new Map<string, SearchRepoHit[]>();
+  let totalMatches = [...fileHits.values()].reduce((total, hits) => total + hits.length, 0);
+
+  const visitWithFallback = async (dirPath: string, matcher: RegExp): Promise<void> => {
     if (totalMatches >= maxMatches) {
       return;
     }
@@ -546,7 +676,7 @@ const buildSearchRepoStructuredResult = async (root: string, query: string, maxM
 
       const fullPath = resolve(dirPath, child.name);
       if (child.isDirectory()) {
-        await visit(fullPath);
+        await visitWithFallback(fullPath, matcher);
         continue;
       }
       if (!isTextFile(fullPath)) {
@@ -563,7 +693,9 @@ const buildSearchRepoStructuredResult = async (root: string, query: string, maxM
     }
   };
 
-  await visit(root);
+  if (ripgrepHits === null) {
+    await visitWithFallback(root, createSearchMatcher(query));
+  }
 
   if (fileHits.size === 0) {
     return {
