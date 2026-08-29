@@ -964,7 +964,6 @@ export const createRunToolContext = (
 
       switch (call.name) {
         case "read_file": {
-          return await (async () => {
           const inputPath = String(call.arguments.path ?? "");
           const startLine = normalizeLineBound(call.arguments.startLine);
           const endLine = normalizeLineBound(call.arguments.endLine);
@@ -1000,11 +999,9 @@ export const createRunToolContext = (
               truncated: preview.truncated,
             },
           };
-          })();
         }
 
         case "write_file": {
-          return await (async () => {
           const target = resolveWorktreePath(worktreePath, String(call.arguments.path ?? ""));
           const rel = toPosix(relative(worktreePath, target));
           if (!rel || rel === "." || rel.startsWith(".git/")) {
@@ -1068,11 +1065,9 @@ export const createRunToolContext = (
               ...(unifiedDiff ? { writeFileUnifiedDiff: unifiedDiff } : {}),
             },
           };
-          })();
         }
 
         case "edit_file": {
-          return await (async () => {
           const target = resolveWorktreePath(worktreePath, String(call.arguments.file_path ?? ""));
           const rel = toPosix(relative(worktreePath, target));
           if (!rel || rel === "." || rel.startsWith(".git/")) {
@@ -1182,11 +1177,9 @@ export const createRunToolContext = (
               ...(unifiedDiff ? { writeFileUnifiedDiff: unifiedDiff } : {}),
             },
           };
-          })();
         }
 
         case "delete_file": {
-          return await (async () => {
           const inputPath = String(call.arguments.path ?? "");
           const target = resolveWorktreePath(worktreePath, inputPath);
           const rel = toPosix(relative(worktreePath, target));
@@ -1211,11 +1204,9 @@ export const createRunToolContext = (
               path: rel,
             },
           };
-          })();
         }
 
         case "list_files": {
-          return await (async () => {
           const inputPath = String(call.arguments.path ?? ".");
           const target = resolveWorktreePath(worktreePath, inputPath);
           let directoryStat;
@@ -1243,11 +1234,9 @@ export const createRunToolContext = (
               totalEntries: entries.length,
             },
           };
-          })();
         }
 
         case "search_repo": {
-          return await (async () => {
           const inputPath = String(call.arguments.path ?? ".");
           const target = resolveWorktreePath(worktreePath, inputPath);
           const query = String(call.arguments.query ?? "").trim();
@@ -1280,11 +1269,9 @@ export const createRunToolContext = (
               ...searchResult.metadata,
             },
           };
-          })();
         }
 
         case "run_shell": {
-          return await (async () => {
           const shellAbortController = new AbortController();
           hooks?.onShellCommandStart?.({
             callId: call.id,
@@ -1326,7 +1313,6 @@ export const createRunToolContext = (
           } finally {
             hooks?.onShellCommandEnd?.({ callId: call.id });
           }
-          })();
         }
 
         default:
