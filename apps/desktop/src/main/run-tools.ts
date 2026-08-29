@@ -577,6 +577,12 @@ const searchRepoWithRipgrep = async (
     let totalMatches = 0;
     let reachedLimit = false;
     let unavailable = false;
+    let cappedMatch: { path: string; lineNumber: number } | null = null;
+
+    const stopAtLimit = () => {
+      reachedLimit = true;
+      child.kill();
+    };
 
     const consumeLine = (rawLine: string) => {
       if (!rawLine || reachedLimit) {
@@ -586,6 +592,10 @@ const searchRepoWithRipgrep = async (
       try {
         event = JSON.parse(rawLine) as RipgrepJsonEvent;
       } catch {
+        return;
+      }
+      if (event.type === "end" && cappedMatch) {
+        stopAtLimit();
         return;
       }
       if (event.type !== "match" && event.type !== "context") {
@@ -602,14 +612,20 @@ const searchRepoWithRipgrep = async (
       lines.set(lineNumber, lineText);
       contextLines.set(path, lines);
 
+      if (cappedMatch) {
+        if (path !== cappedMatch.path || lineNumber >= cappedMatch.lineNumber + SEARCH_CONTEXT_RADIUS) {
+          stopAtLimit();
+        }
+        return;
+      }
+
       if (event.type === "match") {
         const matches = matchingLines.get(path) ?? [];
         matches.push(lineNumber);
         matchingLines.set(path, matches);
         totalMatches += 1;
         if (totalMatches >= maxMatches) {
-          reachedLimit = true;
-          child.kill();
+          cappedMatch = { path, lineNumber };
         }
       }
     };

@@ -87,6 +87,28 @@ describe("run tool context", () => {
     expect(result.content).toContain("src/one.ts");
   });
 
+  it("preserves trailing context for the final capped ripgrep match", async () => {
+    const worktreePath = await makeTempDir();
+    await mkdir(join(worktreePath, "src"), { recursive: true });
+    await writeFile(
+      join(worktreePath, "src", "context.ts"),
+      "before\nneedle\nafter-one\nafter-two\nneedle-again\n",
+      "utf8",
+    );
+    const tools = createRunToolContext(worktreePath);
+
+    const result = await tools.executeTool({
+      id: "search-context-cap",
+      name: "search_repo",
+      arguments: { query: "needle", maxMatches: 1 },
+    });
+
+    expect(result.ok).toBe(true);
+    expect((result.metadata as { totalMatches?: number }).totalMatches).toBe(1);
+    expect(result.content).toContain("3|after-one");
+    expect(result.content).toContain("4|after-two");
+  });
+
   it("includes writeFileUnifiedDiff in metadata for new and updated files", async () => {
     const worktreePath = await makeTempDir();
     const tools = createRunToolContext(worktreePath);
