@@ -1010,6 +1010,7 @@ describe("renderer component states", () => {
       verificationCommands: [],
       maxRunMinutes: 0,
       maxRunTokens: 0,
+      mcpServers: [],
       busy: false,
       availableIntegratedSkills: [],
       activeIntegratedSkillIds: [],
@@ -1024,6 +1025,7 @@ describe("renderer component states", () => {
       onVerificationCommandsChange: vi.fn(),
       onMaxRunMinutesChange: vi.fn(),
       onMaxRunTokensChange: vi.fn(),
+      onMcpServersChange: vi.fn(),
       onActiveIntegratedSkillIdsChange: vi.fn(),
       onDeleteProject: vi.fn(),
     } satisfies ComponentProps<typeof ProjectSettingsPage>;

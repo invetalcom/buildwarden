@@ -259,6 +259,7 @@ import {
   tokenBudgetExhaustion,
   type RunBudgetExhaustion,
 } from "./run-autonomy-budget";
+import { resolveMcpServerRuntimeConfigs } from "./mcp-server-registry";
 
 type IntegratedSkillsCatalogModule = typeof import("@buildwarden/shared/integrated-skills-catalog");
 let integratedSkillsCatalogPromise: Promise<IntegratedSkillsCatalogModule> | null = null;
@@ -9086,6 +9087,9 @@ export class AppController
     const runDefaults = parseProjectRunDefaultsSetting(settings[APP_SETTING_KEYS.projectRunDefaults])[run.projectId];
     const maxRunMinutes = runDefaults?.maxRunMinutes ?? 0;
     const maxRunTokens = runDefaults?.maxRunTokens ?? 0;
+    const mcpServers = provider.providerType === "claude-code" || provider.providerType === "cursor-agent"
+      ? resolveMcpServerRuntimeConfigs(runDefaults?.mcpServers ?? [])
+      : [];
     const devModeEnabled = settings[APP_SETTING_KEYS.enableDevMode] === "true";
     if (devModeEnabled) {
       mkdirSync(this.logDirPath, { recursive: true });
@@ -9113,6 +9117,7 @@ export class AppController
           providerOptions: options?.providerOptions,
           ...(networkProxy ? { networkProxy } : {}),
           shellAllowlistExtra,
+          ...(mcpServers.length > 0 ? { mcpServers } : {}),
           resumeCheckpoint: this.getRunCheckpoint(run.id),
           ...(devModeEnabled ? { devLogging: { logDirPath: this.logDirPath } } : {}),
           ...(options?.attachments?.length ? { attachments: options.attachments } : {}),

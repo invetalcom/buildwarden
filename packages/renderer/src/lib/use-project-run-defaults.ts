@@ -4,6 +4,7 @@ import {
   parseProjectRunDefaultsSetting,
   type ProjectRunDefaults,
   type ProjectRunDefaultsByProjectId,
+  type ProjectMcpServerConfig,
   type RunModelConfiguration,
   type RunMode,
   type RunWorkspaceType,
@@ -69,6 +70,7 @@ interface UseProjectRunDefaultsInput {
   setRunVerificationCommands: (value: string[]) => void;
   setRunMaxMinutes: (value: number) => void;
   setRunMaxTokens: (value: number) => void;
+  setRunMcpServers: (value: ProjectMcpServerConfig[]) => void;
   setRunModelId: (value: string) => void;
   setRunWorktreeModelIds: (value: string[]) => void;
   setRunModelConfigurations: (value: Record<string, RunModelConfiguration>) => void;
@@ -100,6 +102,7 @@ export const useProjectRunDefaults = ({
   setRunVerificationCommands,
   setRunMaxMinutes,
   setRunMaxTokens,
+  setRunMcpServers,
   setRunModelId,
   setRunWorktreeModelIds,
   setRunModelConfigurations,
@@ -153,6 +156,7 @@ export const useProjectRunDefaults = ({
     setRunVerificationCommands(defaults.verificationCommands);
     setRunMaxMinutes(defaults.maxRunMinutes);
     setRunMaxTokens(defaults.maxRunTokens);
+    setRunMcpServers(defaults.mcpServers);
     // Always reset model selections so a project without stored defaults does not inherit the
     // previous project's models. Without a stored value, fall back to the last used model like
     // loadSnapshot does (setting "" would leave local-mode runs without a model until the next
@@ -178,6 +182,7 @@ export const useProjectRunDefaults = ({
     setRunVerificationCommands,
     setRunMaxMinutes,
     setRunMaxTokens,
+    setRunMcpServers,
     snapshotLoaded,
   ]);
 
@@ -253,6 +258,14 @@ export const useProjectRunDefaults = ({
     [persistProjectRunDefaults, setRunMaxTokens],
   );
 
+  const changeRunMcpServers = useCallback(
+    (value: ProjectMcpServerConfig[]) => {
+      setRunMcpServers(value);
+      persistProjectRunDefaults({ mcpServers: value });
+    },
+    [persistProjectRunDefaults, setRunMcpServers],
+  );
+
   const changeRunModel = useCallback(
     (modelId: string) => {
       onRunModelChange(modelId);
@@ -287,6 +300,7 @@ export const useProjectRunDefaults = ({
     changeRunVerificationCommands,
     changeRunMaxMinutes,
     changeRunMaxTokens,
+    changeRunMcpServers,
     changeRunModel,
     changeRunWorktreeModelIds,
     changeRunModelConfigurations,

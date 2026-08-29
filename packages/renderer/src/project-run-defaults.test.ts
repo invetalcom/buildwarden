@@ -27,6 +27,13 @@ describe("parseProjectRunDefaultsSetting", () => {
         verificationCommands: ["pnpm typecheck", "pnpm test"],
         maxRunMinutes: 45,
         maxRunTokens: 120000,
+        mcpServers: [{
+          id: "docs",
+          name: "Docs",
+          url: "https://example.test/mcp",
+          enabled: true,
+          headers: [{ name: "Authorization", environmentVariable: "DOCS_MCP_TOKEN" }],
+        }],
       },
     };
 
@@ -53,6 +60,28 @@ describe("parseProjectRunDefaultsSetting", () => {
 
     expect(parsed["project-1"]).toMatchObject({ maxRunMinutes: 1440, maxRunTokens: 0 });
     expect(parsed["project-2"]).toMatchObject({ maxRunMinutes: 0, maxRunTokens: 2500 });
+  });
+
+  it("drops malformed MCP entries and header bindings", () => {
+    const parsed = parseProjectRunDefaultsSetting(JSON.stringify({
+      "project-1": {
+        mcpServers: [
+          { id: "docs", name: "Docs", url: "https://example.test/mcp", enabled: true, headers: [
+            { name: "Authorization", environmentVariable: "DOCS_TOKEN" },
+            { name: "Bad Header", environmentVariable: "bad-var" },
+          ] },
+          { id: "local", name: "Local", url: "file:///tmp/mcp", enabled: true, headers: [] },
+        ],
+      },
+    }));
+
+    expect(parsed["project-1"]?.mcpServers).toEqual([{
+      id: "docs",
+      name: "Docs",
+      url: "https://example.test/mcp",
+      enabled: true,
+      headers: [{ name: "Authorization", environmentVariable: "DOCS_TOKEN" }],
+    }]);
   });
 
   it("falls back to defaults for invalid field values", () => {

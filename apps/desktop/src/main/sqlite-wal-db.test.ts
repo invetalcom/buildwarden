@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { BuildWardenDatabase } from "@buildwarden/db";
-import { APP_SETTING_KEYS, parseProjectRunDefaultsSetting } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, buildDefaultProjectRunDefaults, parseProjectRunDefaultsSetting } from "@buildwarden/shared";
 import { afterEach, describe, expect, it } from "vitest";
 
 type TestDatabase = {
@@ -99,6 +99,7 @@ describe("node:sqlite WAL persistence", () => {
     const entry = await createDatabase();
     const persistedDefaults = {
       "project-1": {
+        ...buildDefaultProjectRunDefaults(),
         mode: "code",
         workspaceType: "worktree",
         modelId: "model-a",

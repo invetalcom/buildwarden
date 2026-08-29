@@ -34,6 +34,7 @@ import {
   type ProjectFolderGitStatus,
   type ProjectForgeRequestOpenPayload,
   type ProjectLoopAvailability,
+  type ProjectMcpServerConfig,
   type ProjectSnapshot,
   type ProjectTaskInput,
   type UpdateProjectTaskInput,
@@ -276,6 +277,7 @@ export const App = () => {
   const [runVerificationCommands, setRunVerificationCommands] = useState<string[]>([]);
   const [runMaxMinutes, setRunMaxMinutes] = useState(0);
   const [runMaxTokens, setRunMaxTokens] = useState(0);
+  const [runMcpServers, setRunMcpServers] = useState<ProjectMcpServerConfig[]>([]);
   const [runDelegationEnabled, setRunDelegationEnabled] = useState(false);
   const [chatReasoningEffort, setChatReasoningEffort] = useState("auto");
   const [chatAnthropicEffort, setChatAnthropicEffort] = useState("auto");
@@ -1394,6 +1396,7 @@ export const App = () => {
     changeRunVerificationCommands,
     changeRunMaxMinutes,
     changeRunMaxTokens,
+    changeRunMcpServers,
     changeRunModel,
     changeRunWorktreeModelIds,
     changeRunModelConfigurations,
@@ -1413,6 +1416,7 @@ export const App = () => {
     setRunVerificationCommands,
     setRunMaxMinutes,
     setRunMaxTokens,
+    setRunMcpServers,
     setRunModelId,
     setRunWorktreeModelIds,
     setRunModelConfigurations,
@@ -4273,6 +4277,7 @@ export const App = () => {
               verificationCommands={runVerificationCommands}
               maxRunMinutes={runMaxMinutes}
               maxRunTokens={runMaxTokens}
+              mcpServers={runMcpServers}
               delegationEnabled={runDelegationEnabled}
               delegationAvailable={delegationAvailable}
               onReasoningEffortChange={changeRunReasoningEffort}
@@ -4282,6 +4287,7 @@ export const App = () => {
               onVerificationCommandsChange={changeRunVerificationCommands}
               onMaxRunMinutesChange={changeRunMaxMinutes}
               onMaxRunTokensChange={changeRunMaxTokens}
+              onMcpServersChange={changeRunMcpServers}
               onDelegationEnabledChange={setRunDelegationEnabled}
               onSelectRun={(runId) => void handleRunSelect(project.project.id, runId)}
               onRunPromptChange={setRunPrompt}

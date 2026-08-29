@@ -3366,6 +3366,8 @@ export interface RunExecutionRequest {
   networkProxy?: NetworkProxyRuntimeConfig;
   /** Main-process orchestration tools advertised to this coordinator turn. */
   orchestrationTools?: RunToolDefinition[];
+  /** Resolved HTTP MCP endpoints; header secrets exist only in worker memory. */
+  mcpServers?: McpServerRuntimeConfig[];
 }
 
 export interface ChatRecord {
@@ -5037,6 +5039,26 @@ export interface RunModelConfiguration {
   executionMode: string;
 }
 
+export interface ProjectMcpServerHeader {
+  name: string;
+  /** Environment variable containing the header value; the secret itself is never persisted. */
+  environmentVariable: string;
+}
+
+export interface ProjectMcpServerConfig {
+  id: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+  headers: ProjectMcpServerHeader[];
+}
+
+export interface McpServerRuntimeConfig {
+  name: string;
+  url: string;
+  headers?: Record<string, string>;
+}
+
 /** Per-project defaults applied to new agent runs, persisted across app restarts. */
 export interface ProjectRunDefaults {
   mode: RunMode;
@@ -5059,6 +5081,8 @@ export interface ProjectRunDefaults {
   maxRunMinutes: number;
   /** Per-turn combined input/output token ceiling. Zero disables the limit. */
   maxRunTokens: number;
+  /** Provider-neutral HTTP MCP servers made available to supported coding harnesses. */
+  mcpServers: ProjectMcpServerConfig[];
 }
 
 export type ProjectRunDefaultsByProjectId = Record<string, ProjectRunDefaults>;
@@ -5076,6 +5100,7 @@ export const buildDefaultProjectRunDefaults = (): ProjectRunDefaults => ({
   verificationCommands: [],
   maxRunMinutes: 0,
   maxRunTokens: 0,
+  mcpServers: [],
 });
 
 const RUN_DEFAULT_MODES: readonly RunMode[] = ["code", "plan", "ask"];
@@ -5114,6 +5139,34 @@ const parseRunModelConfigurations = (value: unknown): Record<string, RunModelCon
   return result;
 };
 
+const parseProjectMcpServers = (value: unknown): ProjectMcpServerConfig[] => {
+  if (!Array.isArray(value)) return [];
+  const ids = new Set<string>();
+  return value.flatMap((raw): ProjectMcpServerConfig[] => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+    const record = raw as Record<string, unknown>;
+    const id = typeof record.id === "string" ? record.id.trim().slice(0, 80) : "";
+    const name = typeof record.name === "string" ? record.name.trim().slice(0, 80) : "";
+    const url = typeof record.url === "string" ? record.url.trim().slice(0, 2_000) : "";
+    if (!id || ids.has(id) || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(id) || !name || !/^https?:\/\//i.test(url)) return [];
+    ids.add(id);
+    const headers = Array.isArray(record.headers)
+      ? record.headers.flatMap((rawHeader): ProjectMcpServerHeader[] => {
+          if (!rawHeader || typeof rawHeader !== "object" || Array.isArray(rawHeader)) return [];
+          const header = rawHeader as Record<string, unknown>;
+          const headerName = typeof header.name === "string" ? header.name.trim().slice(0, 100) : "";
+          const environmentVariable = typeof header.environmentVariable === "string"
+            ? header.environmentVariable.trim().slice(0, 100)
+            : "";
+          return /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(headerName) && /^[A-Za-z_][A-Za-z0-9_]*$/.test(environmentVariable)
+            ? [{ name: headerName, environmentVariable }]
+            : [];
+        }).slice(0, 20)
+      : [];
+    return [{ id, name, url, enabled: record.enabled === true, headers }];
+  }).slice(0, 20);
+};
+
 const parseProjectRunDefaultsRecord = (value: unknown): ProjectRunDefaults | null => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
@@ -5142,6 +5195,7 @@ const parseProjectRunDefaultsRecord = (value: unknown): ProjectRunDefaults | nul
       : defaults.verificationCommands,
     maxRunMinutes: Math.min(1_440, Math.max(0, Math.trunc(Number(record.maxRunMinutes) || 0))),
     maxRunTokens: Math.min(10_000_000, Math.max(0, Math.trunc(Number(record.maxRunTokens) || 0))),
+    mcpServers: parseProjectMcpServers(record.mcpServers),
   };
 };
 
