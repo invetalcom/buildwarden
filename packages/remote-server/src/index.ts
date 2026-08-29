@@ -100,7 +100,18 @@ const STATIC_CONTENT_TYPES: Record<string, string> = {
 };
 
 const COMPRESSIBLE_STATIC_EXTENSIONS = new Set([".css", ".html", ".js", ".json", ".svg", ".webmanifest"]);
-const HASHED_STATIC_ASSET_PATTERN = /^assets\/.+-[A-Za-z0-9_-]{6,}\.[^/]+$/;
+const isAssetHashCharacter = (character: string): boolean =>
+  /[A-Za-z0-9_-]/.test(character);
+
+const isHashedStaticAsset = (relativePath: string): boolean => {
+  if (!relativePath.startsWith("assets/")) return false;
+  const fileName = relativePath.slice("assets/".length);
+  if (!fileName || fileName.includes("/")) return false;
+  const extensionStart = fileName.lastIndexOf(".");
+  const hashStart = fileName.lastIndexOf("-", extensionStart);
+  if (extensionStart < 0 || hashStart < 0 || extensionStart - hashStart <= 6) return false;
+  return [...fileName.slice(hashStart + 1, extensionStart)].every(isAssetHashCharacter);
+};
 
 type RemoteOperationHandler<Method extends RemoteApiMethod> = (
   ...args: RemoteApiMethodArgs<Method>
@@ -1587,7 +1598,7 @@ export class RemoteAccessServer {
         STATIC_CONTENT_TYPES[extension] ?? "application/octet-stream",
         responseBody.byteLength,
         headOnly ? undefined : responseBody,
-        HASHED_STATIC_ASSET_PATTERN.test(relativePath) ? "public, max-age=31536000, immutable" : "no-cache",
+        isHashedStaticAsset(relativePath) ? "public, max-age=31536000, immutable" : "no-cache",
         compressedBody ? requestedEncoding ?? undefined : undefined,
       );
       return true;
@@ -1760,10 +1771,13 @@ export class RemoteAccessServer {
     }
     const parsed = parseWebSocketClientMessage(payload.value);
     if (!parsed.ok || parsed.message.type !== "authenticate") {
+      let requestId = "invalid";
+      if (parsed.ok) requestId = parsed.message.requestId;
+      else if (isRequestId(parsed.requestId)) requestId = parsed.requestId;
       this.sendWebSocketMessage(socket, {
         protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
         type: "error",
-        requestId: parsed.ok ? parsed.message.requestId : isRequestId(parsed.requestId) ? parsed.requestId : "invalid",
+        requestId,
         code: parsed.ok ? "authentication-required" : parsed.code,
         message: parsed.ok ? "Authenticate before using the event stream." : parsed.message,
       });
@@ -1789,11 +1803,10 @@ export class RemoteAccessServer {
     isBinary: boolean,
   ): { ok: true; value: unknown } | { ok: false; message: string } {
     try {
-      const buffer = Array.isArray(data)
-        ? Buffer.concat(data)
-        : Buffer.isBuffer(data)
-          ? data
-          : Buffer.from(new Uint8Array(data));
+      let buffer: Buffer;
+      if (Array.isArray(data)) buffer = Buffer.concat(data);
+      else if (Buffer.isBuffer(data)) buffer = data;
+      else buffer = Buffer.from(new Uint8Array(data));
       if (isBinary || buffer.byteLength > MAX_WEBSOCKET_MESSAGE_BYTES) {
         throw new Error("Only bounded JSON text messages are accepted.");
       }

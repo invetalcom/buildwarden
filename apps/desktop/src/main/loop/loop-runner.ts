@@ -113,10 +113,10 @@ export interface ProjectLoopRunnerDeps {
  * All progress is persisted, so {@link resumeActiveLoops} can re-enter the state machine
  * after an app restart at the exact stage a loop was in.
  */
-export class ProjectLoopRunner {
+abstract class ProjectLoopRunnerCore {
   private readonly states = new Map<string, LoopRuntimeState>();
 
-  constructor(private readonly deps: ProjectLoopRunnerDeps) {}
+  constructor(protected readonly deps: ProjectLoopRunnerDeps) {}
 
   private state(loopId: string): LoopRuntimeState {
     let state = this.states.get(loopId);
@@ -135,11 +135,11 @@ export class ProjectLoopRunner {
     return state;
   }
 
-  private emit(loop: Pick<ProjectLoopRecord, "id" | "projectId">): void {
+  protected emit(loop: Pick<ProjectLoopRecord, "id" | "projectId">): void {
     this.deps.emitLoopChanged({ loopId: loop.id, projectId: loop.projectId });
   }
 
-  private appendEvent(
+  protected appendEvent(
     loop: Pick<ProjectLoopRecord, "id" | "projectId">,
     role: "system" | "planner" | "runner" | "ui-review" | "forge" | "audit" | "user",
     label: string,
@@ -150,13 +150,13 @@ export class ProjectLoopRunner {
     this.emit(loop);
   }
 
-  private assertNotCancelled(state: LoopRuntimeState): void {
+  protected assertNotCancelled(state: LoopRuntimeState): void {
     if (state.cancelled) {
       throw new LoopCancelledError();
     }
   }
 
-  private sleep(state: LoopRuntimeState, ms: number): Promise<void> {
+  protected sleep(state: LoopRuntimeState, ms: number): Promise<void> {
     if (state.cancelled) {
       // A cancel that lands between two poll steps must not leave a dangling timer.
       return Promise.resolve();
@@ -193,7 +193,7 @@ export class ProjectLoopRunner {
     }
   }
 
-  private waitForRunCompletion(state: LoopRuntimeState, runId: string): Promise<RunRecord> {
+  protected waitForRunCompletion(state: LoopRuntimeState, runId: string): Promise<RunRecord> {
     const current = this.deps.db.getRun(runId);
     if (!ACTIVE_RUN_STATUSES.has(current.status)) {
       return Promise.resolve(current);
@@ -715,7 +715,7 @@ export class ProjectLoopRunner {
     });
   }
 
-  private cleanupWorkspaceUiDir(run: RunRecord): void {
+  protected cleanupWorkspaceUiDir(run: RunRecord): void {
     try {
       rmSync(join(run.worktreePath, ".buildwarden"), { recursive: true, force: true });
     } catch {
@@ -983,6 +983,23 @@ export class ProjectLoopRunner {
     }
   }
 
+  protected abstract ensurePullRequestCreated(
+    state: LoopRuntimeState,
+    loop: ProjectLoopRecord,
+    iteration: ProjectLoopIterationRecord,
+  ): Promise<boolean>;
+
+  protected abstract monitorUntilMerged(
+    state: LoopRuntimeState,
+    loopId: string,
+    iterationId: string,
+  ): Promise<void>;
+
+  protected abstract runAudit(state: LoopRuntimeState, loop: ProjectLoopRecord): Promise<void>;
+}
+
+export class ProjectLoopRunner extends ProjectLoopRunnerCore {
+
   // --- Commit / push / PR -------------------------------------------------
 
   private async countCommitsAhead(run: RunRecord, targetBranch: string): Promise<number> {
@@ -1002,7 +1019,7 @@ export class ProjectLoopRunner {
   }
 
   /** @returns false when the iteration produced no commits and was skipped. */
-  private async ensurePullRequestCreated(
+  protected async ensurePullRequestCreated(
     state: LoopRuntimeState,
     loop: ProjectLoopRecord,
     iteration: ProjectLoopIterationRecord,
@@ -1083,7 +1100,7 @@ export class ProjectLoopRunner {
 
   // --- Merge monitoring ----------------------------------------------------
 
-  private async monitorUntilMerged(state: LoopRuntimeState, loopId: string, iterationId: string): Promise<void> {
+  protected async monitorUntilMerged(state: LoopRuntimeState, loopId: string, iterationId: string): Promise<void> {
     const loop = this.deps.db.getProjectLoop(loopId);
     const forge = await this.deps.createForgeProvider(loop.projectId);
     let commentRounds = 0;
@@ -1480,7 +1497,7 @@ export class ProjectLoopRunner {
 
   // --- Audit ----------------------------------------------------------------
 
-  private async runAudit(state: LoopRuntimeState, loop: ProjectLoopRecord): Promise<void> {
+  protected async runAudit(state: LoopRuntimeState, loop: ProjectLoopRecord): Promise<void> {
     this.assertNotCancelled(state);
     const project = this.deps.db.getProject(loop.projectId);
     const iterations = this.deps.db.listProjectLoopIterations(loop.id);

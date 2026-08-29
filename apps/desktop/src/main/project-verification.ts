@@ -68,15 +68,14 @@ export const runProjectVerificationCommand = async (
       if (forceKillTimer) clearTimeout(forceKillTimer);
       signal?.removeEventListener("abort", cancel);
       const normalizedOutput = output.trim() || spawnError || "Command produced no output.";
+      let finalOutput = normalizedOutput;
+      if (timedOut) finalOutput = `${normalizedOutput}\nTimed out after ${timeoutMs.toLocaleString()} ms.`;
+      else if (cancelled) finalOutput = `${normalizedOutput}\nVerification cancelled.`;
       resolveResult({
         command,
         ok: !timedOut && !cancelled && spawnError === null && exitCode === 0,
         exitCode,
-        output: timedOut
-          ? `${normalizedOutput}\nTimed out after ${timeoutMs.toLocaleString()} ms.`
-          : cancelled
-            ? `${normalizedOutput}\nVerification cancelled.`
-            : normalizedOutput,
+        output: finalOutput,
         durationMs: Date.now() - startedAt,
         timedOut,
       });

@@ -1121,6 +1121,82 @@ type ChatWorkerChunkPayload = {
 
 type ChatWorkerPayload = ChatWorkerChunkPayload | { type: "done"; result: WorkerDoneResult } | { type: "error"; error: string };
 
+type RunWorkerPayload =
+  | { type: "chunk"; chunk: { type: string; value: string; title?: string; metadata?: Record<string, unknown> } }
+  | { type: "done"; result: WorkerDoneResult }
+  | { type: "shell-approval-request"; requestId: string; command: string }
+  | {
+      type: "user-input-request";
+      requestId: string;
+      title?: string;
+      content?: string;
+      questions?: RunUserInputQuestion[];
+      metadata?: Record<string, unknown>;
+    }
+  | {
+      type: "host-tool-request";
+      callId: string;
+      toolName: OrchestrationToolName;
+      arguments: Record<string, unknown>;
+    }
+  | { type: "error"; error: string };
+
+type RunTerminalOutcome = {
+  title: string;
+  content: string;
+  status: "cancelled" | "failed" | "completed";
+  errorMessage: string | null;
+};
+
+const buildRunTerminalOutcome = (input: {
+  wasCancelled: boolean;
+  budgetExhaustion: RunBudgetExhaustion | undefined;
+  failedVerificationResult: ProjectVerificationResult | undefined;
+  waitingForSubagents: boolean;
+  inputTokens: number;
+  outputTokens: number;
+}): RunTerminalOutcome => {
+  const usage = `Input tokens: ${input.inputTokens}\nOutput tokens: ${input.outputTokens}`;
+  if (input.wasCancelled) {
+    return {
+      title: "Run cancelled",
+      content: `Run cancellation finished cleanup.\n${usage}`,
+      status: "cancelled",
+      errorMessage: "Run cancelled by user.",
+    };
+  }
+  if (input.budgetExhaustion) {
+    return {
+      title: "Autonomy budget exhausted",
+      content: `${input.budgetExhaustion.reason}\n${usage}`,
+      status: "failed",
+      errorMessage: input.budgetExhaustion.reason,
+    };
+  }
+  if (input.failedVerificationResult) {
+    return {
+      title: "Verification gate failed",
+      content: `The agent turn finished, but the verification gate failed at: ${input.failedVerificationResult.command}.\n${usage}`,
+      status: "failed",
+      errorMessage: `Verification failed: ${input.failedVerificationResult.command}`,
+    };
+  }
+  if (input.waitingForSubagents) {
+    return {
+      title: "Waiting for subagents to complete",
+      content: `The coordinator turn completed and is waiting for delegated subagents.\n${usage}`,
+      status: "completed",
+      errorMessage: null,
+    };
+  }
+  return {
+    title: "Run completed",
+    content: `Run completed successfully.\n${usage}`,
+    status: "completed",
+    errorMessage: null,
+  };
+};
+
 const parseProjectOrderSetting = (raw: string | undefined): string[] => {
   if (!raw) {
     return [];
@@ -4875,8 +4951,12 @@ export class AppController
       try {
         return toProjectForgeRequestStatus(await provider.getRequestStatus({ prUrl: input.prUrl }));
       } catch {
-        const state = input.action === "close" ? "closed" as const : input.action === "reopen" ? "open" as const : current.state;
-        const draft = input.action === "mark-draft" ? true : input.action === "mark-ready" ? false : current.draft;
+        let state = current.state;
+        if (input.action === "close") state = "closed";
+        else if (input.action === "reopen") state = "open";
+        let draft = current.draft;
+        if (input.action === "mark-draft") draft = true;
+        else if (input.action === "mark-ready") draft = false;
         const optimistic = {
           ...current,
           state,
@@ -4994,7 +5074,7 @@ export class AppController
         this.runForgeActivePollCounts.set(runId, pollCount + 1);
       } else {
         this.runForgeActivePollCounts.delete(runId);
-        const jitter = 0.9 + Math.random() * 0.2;
+        const jitter = 0.9 + randomInt(0, 201) / 1000;
         delayMs = Math.round(RUN_FORGE_STABLE_REFRESH_MS * jitter);
       }
     }
@@ -5076,7 +5156,10 @@ export class AppController
           const exactBranch = requests
             .filter((request) => request.sourceBranch === branchName)
             .sort((left, right) => {
-              const score = (request: typeof left) => isOpenForgeRequestState(request.state) && request.targetBranch === project.baseBranch ? 3 : isOpenForgeRequestState(request.state) ? 2 : 1;
+              const score = (request: typeof left) => {
+                if (!isOpenForgeRequestState(request.state)) return 1;
+                return request.targetBranch === project.baseBranch ? 3 : 2;
+              };
               const scoreDelta = score(right) - score(left);
                 return scoreDelta || (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "");
             });
@@ -5157,16 +5240,21 @@ export class AppController
           stale: false,
           syncError: null,
         };
-        const details: RunForgeRequestDetailsResult | null = detailResult ? {
-          summary,
-          request: detailResult.request,
-          activity: detailResult.activity,
-          commits: detailResult.commits,
-          files: detailResult.files,
-          reviewThreads: detailResult.reviewThreads,
-          checks: status.checks,
-          warnings: detailResult.warnings,
-        } : cached?.details && !associationChanged ? { ...cached.details, summary, checks: status.checks } : null;
+        let details: RunForgeRequestDetailsResult | null = null;
+        if (detailResult) {
+          details = {
+            summary,
+            request: detailResult.request,
+            activity: detailResult.activity,
+            commits: detailResult.commits,
+            files: detailResult.files,
+            reviewThreads: detailResult.reviewThreads,
+            checks: status.checks,
+            warnings: detailResult.warnings,
+          };
+        } else if (cached?.details && !associationChanged) {
+          details = { ...cached.details, summary, checks: status.checks };
+        }
         this.db.saveRunForgeRequest(run.id, run.projectId, branchName, headSha, summary, details, {
           etag: status.etag ?? previousStatus?.etag ?? null,
           lastModified: status.lastModified ?? previousStatus?.lastModified ?? null,
@@ -7253,8 +7341,8 @@ export class AppController
       const title = String(entry.title ?? "").trim();
       const prompt = String(entry.prompt ?? "").trim();
       const roleId = String(entry.roleId ?? "").trim();
-      const intent: OrchestrationTaskRecord["intent"] | null =
-        entry.intent === "implement" ? "implement" : entry.intent === "inspect" ? "inspect" : null;
+      let intent: OrchestrationTaskRecord["intent"] | null = null;
+      if (entry.intent === "implement" || entry.intent === "inspect") intent = entry.intent;
       if (!clientTaskId || !title || !prompt || !roleId || !intent) {
         throw new Error(`Task ${index + 1} is missing clientTaskId, title, prompt, roleId, or intent.`);
       }
@@ -7344,8 +7432,9 @@ export class AppController
     if (!task) return;
     await this.withOrchestrationMutation(task.orchestrationId, async () => {
       const run = this.db.getRun(childRunId);
-      const status: OrchestrationTaskStatus =
-        run.status === "completed" ? "completed" : run.status === "cancelled" ? "cancelled" : "failed";
+      let status: OrchestrationTaskStatus = "failed";
+      if (run.status === "completed") status = "completed";
+      else if (run.status === "cancelled") status = "cancelled";
       const updated = this.db.updateOrchestrationTask(task.id, {
         status,
         summary: run.summary,
@@ -8277,7 +8366,9 @@ export class AppController
     this.db.deleteRunningOrchestrationOperations();
     await this.db.flushDurable();
 
-    for (const job of this.db.listPendingOrchestrationCleanupJobs()) {
+    const reconcileCleanupJob = async (
+      job: ReturnType<BuildWardenDatabase["listPendingOrchestrationCleanupJobs"]>[number],
+    ): Promise<void> => {
       try {
         let coordinator: RunRecord | null = null;
         let orchestration: OrchestrationRecord | null = null;
@@ -8302,10 +8393,13 @@ export class AppController
           error: error instanceof Error ? error.message : String(error),
         });
       }
+    };
+    for (const job of this.db.listPendingOrchestrationCleanupJobs()) {
+      await reconcileCleanupJob(job);
     }
 
     const active = this.db.listOrchestrationsWithStatuses(["active", "waiting", "paused", "attention"]);
-    for (const orchestration of active) {
+    const reconcileActiveOrchestration = async (orchestration: OrchestrationRecord): Promise<void> => {
       const coordinator = this.db.getRun(orchestration.coordinatorRunId);
       if (
         orchestration.status === "active" &&
@@ -8366,8 +8460,8 @@ export class AppController
         }
       }
       const tasks = this.db.listOrchestrationTasks(orchestration.id);
-      for (const task of tasks) {
-        if (!["provisioning", "queued", "running"].includes(task.status)) continue;
+      const reconcileTask = async (task: OrchestrationTaskRecord): Promise<void> => {
+        if (!["provisioning", "queued", "running"].includes(task.status)) return;
         if (!task.childRunId) {
           this.db.updateOrchestrationTask(task.id, {
             status: "pending",
@@ -8381,7 +8475,7 @@ export class AppController
             title: "Provisioning resumed",
             content: "The persisted task intent had not created a child run, so it was safely requeued.",
           });
-          continue;
+          return;
         }
         try {
           const child = this.db.getRun(task.childRunId);
@@ -8418,7 +8512,7 @@ export class AppController
               title: "Child needs attention",
               content: unsafeReason,
             });
-            continue;
+            return;
           }
 
           const canResume =
@@ -8459,6 +8553,9 @@ export class AppController
             content: error instanceof Error ? error.message : String(error),
           });
         }
+      };
+      for (const task of tasks) {
+        await reconcileTask(task);
       }
       const reconciledOrchestration = this.db.getOrchestration(orchestration.id);
       if (reconciledOrchestration.status !== "paused" && reconciledOrchestration.status !== "attention") {
@@ -8466,6 +8563,9 @@ export class AppController
         await this.maybeWakeOrchestrationCoordinator(orchestration.id);
       }
       this.emitOrchestrationChanged(orchestration.id);
+    };
+    for (const orchestration of active) {
+      await reconcileActiveOrchestration(orchestration);
     }
   }
 
@@ -9181,25 +9281,7 @@ export class AppController
     });
 
     worker.on("message", async (message: unknown) => {
-      const payload = message as
-        | { type: "chunk"; chunk: { type: string; value: string; title?: string; metadata?: Record<string, unknown> } }
-        | { type: "done"; result: WorkerDoneResult }
-        | { type: "shell-approval-request"; requestId: string; command: string }
-        | {
-            type: "user-input-request";
-            requestId: string;
-            title?: string;
-            content?: string;
-            questions?: RunUserInputQuestion[];
-            metadata?: Record<string, unknown>;
-          }
-        | {
-            type: "host-tool-request";
-            callId: string;
-            toolName: OrchestrationToolName;
-            arguments: Record<string, unknown>;
-          }
-        | { type: "error"; error: string };
+      const payload = message as RunWorkerPayload;
 
       // Worker identity is the turn generation. Ignore late messages from a
       // cancelled/replaced worker so stale turns cannot invoke host tools or
@@ -9453,7 +9535,8 @@ export class AppController
         return;
       }
 
-      if (payload.type === "done") {
+      const handleDone = async (donePayload: Extract<RunWorkerPayload, { type: "done" }>): Promise<void> => {
+        const payload = donePayload;
         clearBudgetTimer();
         const active = this.runWorkers.get(run.id);
         let wasCancelled = active?.cancelled === true;
@@ -9519,7 +9602,8 @@ export class AppController
           this.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults],
         )[run.projectId]?.verificationCommands ?? [];
         let verificationResults: ProjectVerificationResult[] = [];
-        if (!wasCancelled && !budgetExhaustion && !waitingForSubagents && run.mode === "code" && configuredVerificationCommands.length > 0) {
+        const runVerificationGate = async (): Promise<void> => {
+          if (!wasCancelled && !budgetExhaustion && !waitingForSubagents && run.mode === "code" && configuredVerificationCommands.length > 0) {
           const verificationAbortController = new AbortController();
           if (active) active.verificationAbortController = verificationAbortController;
           const verificationStartedContent = configuredVerificationCommands.join("\n");
@@ -9569,36 +9653,22 @@ export class AppController
               });
             }
           }
-        }
+          }
+        };
+        await runVerificationGate();
         const failedVerification = !wasCancelled && verificationResults.some((result) => !result.ok);
         const failedVerificationResult = verificationResults.find((result) => !result.ok);
-        const terminalEventTitle = wasCancelled
-          ? "Run cancelled"
-          : budgetExhaustion
-            ? "Autonomy budget exhausted"
-          : failedVerification
-            ? "Verification gate failed"
-          : waitingForSubagents
-            ? "Waiting for subagents to complete"
-            : "Run completed";
-        const terminalEventContent = wasCancelled
-          ? `Run cancellation finished cleanup.\nInput tokens: ${nextInputTokens}\nOutput tokens: ${nextOutputTokens}`
-          : budgetExhaustion
-            ? `${budgetExhaustion.reason}\nInput tokens: ${nextInputTokens}\nOutput tokens: ${nextOutputTokens}`
-          : failedVerification
-            ? `The agent turn finished, but the verification gate failed at: ${failedVerificationResult?.command ?? "unknown command"}.\nInput tokens: ${nextInputTokens}\nOutput tokens: ${nextOutputTokens}`
-          : waitingForSubagents
-            ? `The coordinator turn completed and is waiting for delegated subagents.\nInput tokens: ${nextInputTokens}\nOutput tokens: ${nextOutputTokens}`
-            : `Run completed successfully.\nInput tokens: ${nextInputTokens}\nOutput tokens: ${nextOutputTokens}`;
-        this.db.updateRunStatus(run.id, wasCancelled ? "cancelled" : budgetExhaustion || failedVerification ? "failed" : "completed", {
+        const terminalOutcome = buildRunTerminalOutcome({
+          wasCancelled,
+          budgetExhaustion,
+          failedVerificationResult,
+          waitingForSubagents,
+          inputTokens: nextInputTokens,
+          outputTokens: nextOutputTokens,
+        });
+        this.db.updateRunStatus(run.id, terminalOutcome.status, {
           summary: wasCancelled ? currentRun.summary : payload.result.summary,
-          errorMessage: wasCancelled
-            ? "Run cancelled by user."
-            : budgetExhaustion
-              ? budgetExhaustion.reason
-            : failedVerification
-              ? `Verification failed: ${failedVerificationResult?.command ?? "unknown command"}`
-              : null,
+          errorMessage: terminalOutcome.errorMessage,
           lastProviderResponseId: payload.result.responseId,
           inputTokens: nextInputTokens,
           outputTokens: nextOutputTokens,
@@ -9608,8 +9678,8 @@ export class AppController
         await this.appendRunEvent(
           run.id,
           "status",
-          terminalEventTitle,
-          terminalEventContent,
+          terminalOutcome.title,
+          terminalOutcome.content,
           {
             inputTokens: nextInputTokens,
             outputTokens: nextOutputTokens,
@@ -9625,8 +9695,8 @@ export class AppController
         this.emitEvent({
           runId: run.id,
           type: "status",
-          title: terminalEventTitle,
-          content: terminalEventContent,
+          title: terminalOutcome.title,
+          content: terminalOutcome.content,
           metadata: {
             inputTokens: nextInputTokens,
             outputTokens: nextOutputTokens,
@@ -9670,10 +9740,15 @@ export class AppController
             this.logControllerError("Could not persist the coordinator wake state.", error, { runId: run.id });
           });
         }
+      };
+
+      if (payload.type === "done") {
+        await handleDone(payload);
         return;
       }
 
-      if (payload.type === "error") {
+      const handleError = async (errorPayload: Extract<RunWorkerPayload, { type: "error" }>): Promise<void> => {
+        const payload = errorPayload;
         clearBudgetTimer();
         const active = this.runWorkers.get(run.id);
         const status = active?.cancelled ? "cancelled" : "failed";
@@ -9691,10 +9766,13 @@ export class AppController
           autonomyBudgetExhausted: Boolean(active?.budgetExhaustion),
           budgetKind: active?.budgetExhaustion?.kind,
         });
+        let eventTitle = "Run failed";
+        if (status === "cancelled") eventTitle = "Run cancelled";
+        else if (active?.budgetExhaustion) eventTitle = "Autonomy budget exhausted";
         this.emitEvent({
           runId: run.id,
           type: "error",
-          title: status === "cancelled" ? "Run cancelled" : active?.budgetExhaustion ? "Autonomy budget exhausted" : "Run failed",
+          title: eventTitle,
           content: errorMessage,
           createdAt: new Date().toISOString(),
         });
@@ -9770,6 +9848,10 @@ export class AppController
             });
           }
         }
+      };
+
+      if (payload.type === "error") {
+        await handleError(payload);
       }
     });
 

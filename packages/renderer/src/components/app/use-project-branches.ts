@@ -53,11 +53,10 @@ export const useProjectBranches = ({ buildwarden, selectedProject, setError }: U
   selectedProjectIdRef.current = selectedProjectId;
   const currentProjectBranchMatchesSelection = currentProjectBranchState.projectId === selectedProjectId;
   const currentProjectBranch = currentProjectBranchMatchesSelection ? currentProjectBranchState.branch : "";
-  const currentProjectBranchStatus: CurrentProjectBranchStatus = currentProjectBranchMatchesSelection
-    ? currentProjectBranchState.status
-    : selectedProject?.project.kind === "git"
-      ? "loading"
-      : "not-applicable";
+  let currentProjectBranchStatus: CurrentProjectBranchStatus = currentProjectBranchState.status;
+  if (!currentProjectBranchMatchesSelection) {
+    currentProjectBranchStatus = selectedProject?.project.kind === "git" ? "loading" : "not-applicable";
+  }
 
   const loadProjectBranches = useCallback(async () => {
     const requestId = ++branchLoadRequestRef.current;

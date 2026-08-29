@@ -36,11 +36,8 @@ export const resolveProjectRunModelSelection = ({
     modelId = stored.modelId;
   }
   const storedWorktreeModelIds = (stored?.worktreeModelIds ?? []).filter((id) => validModelIds.has(id));
-  const worktreeModelIds = storedWorktreeModelIds.length > 0
-    ? storedWorktreeModelIds
-    : modelId
-      ? [modelId]
-      : [];
+  let worktreeModelIds = storedWorktreeModelIds;
+  if (worktreeModelIds.length === 0 && modelId) worktreeModelIds = [modelId];
   const modelConfigurations = Object.fromEntries(
     Object.entries(stored?.modelConfigurations ?? {}).filter(([configuredModelId]) => validModelIds.has(configuredModelId)),
   );

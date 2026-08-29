@@ -893,11 +893,10 @@ export const parseCodexModelListPage = (value: unknown): CodexModelListPage => {
         });
       const knownFastMode = getKnownModelExecutionProfile("codex-cli", null, modelId).controls
         .find((control) => control.id === "serviceTier")?.options.some((option) => option.value === "fast") === true;
-      const serviceTiers = advertisedServiceTiers.length > 0
-        ? advertisedServiceTiers
-        : knownFastMode
-          ? [{ value: "fast", label: "Fast", description: "Use Codex fast mode (higher credit consumption)." }]
-          : [];
+      let serviceTiers = advertisedServiceTiers;
+      if (serviceTiers.length === 0 && knownFastMode) {
+        serviceTiers = [{ value: "fast", label: "Fast", description: "Use Codex fast mode (higher credit consumption)." }];
+      }
       const defaultReasoningEffort =
         asString(itemRecord?.defaultReasoningEffort)?.trim() || asString(itemRecord?.default_reasoning_effort)?.trim() || "auto";
       const executionControls = [
@@ -1122,6 +1121,184 @@ export async function listAvailableModelsWithCodexCli(options: {
   }
 }
 
+class CodexServerRequestHandler {
+  constructor(
+    private readonly requestShellApproval: ((command: string) => Promise<ShellApprovalDecision>) | undefined,
+    private readonly requestUserInput: ((request: RunUserInputRequest) => Promise<RunUserInputAnswers>) | undefined,
+    private readonly onChunk: ((chunk: HarnessRunChunk) => void) | undefined,
+    private readonly toolContext: HarnessToolContext | undefined,
+    private readonly writeResponse: (message: unknown) => void,
+  ) {}
+
+  handle(request: JsonRpcRequest): void {
+    if (request.method === "item/tool/call") {
+      this.handleToolCall(request);
+      return;
+    }
+    if (request.method === "item/commandExecution/requestApproval") {
+      this.handleCommandApproval(request);
+      return;
+    }
+    if (request.method === "item/fileRead/requestApproval" || request.method === "item/fileChange/requestApproval") {
+      this.writeResponse({ id: request.id, result: { decision: "accept" } });
+      return;
+    }
+    if (request.method === "item/tool/requestUserInput") {
+      this.handleUserInput(request);
+      return;
+    }
+    this.writeResponse({
+      id: request.id,
+      error: { code: -32601, message: `Unsupported request: ${request.method}` },
+    });
+  }
+
+  private handleToolCall(request: JsonRpcRequest): void {
+    const params = asRecord(request.params);
+    const toolName = asString(params?.tool);
+    const callId = asString(params?.callId) ?? String(request.id);
+    const argumentsRecord = asRecord(params?.arguments) ?? {};
+    const definition = this.toolContext?.tools.find((tool) => tool.name === toolName);
+    if (!definition || !this.toolContext || !toolName) {
+      this.writeResponse({
+        id: request.id,
+        result: {
+          success: false,
+          contentItems: [{ type: "inputText", text: `Unknown BuildWarden tool: ${toolName ?? "(missing)"}` }],
+        },
+      });
+      return;
+    }
+    this.onChunk?.({
+      type: "tool-call",
+      title: `Tool call: ${toolName}`,
+      value: JSON.stringify(argumentsRecord),
+      metadata: { toolName, callId, provider: "codex-cli" },
+    });
+    void this.toolContext.executeTool({
+      id: callId,
+      name: toolName,
+      arguments: argumentsRecord,
+    } as RunToolCall).then((result) => {
+      this.onChunk?.({
+        type: "tool-result",
+        title: `Tool result: ${toolName}`,
+        value: result.content,
+        metadata: { toolName, callId, ok: result.ok, provider: "codex-cli" },
+      });
+      this.writeResponse({
+        id: request.id,
+        result: {
+          success: result.ok,
+          contentItems: [{ type: "inputText", text: result.content }],
+        },
+      });
+    }).catch((error) => {
+      this.writeResponse({
+        id: request.id,
+        result: {
+          success: false,
+          contentItems: [{ type: "inputText", text: error instanceof Error ? error.message : String(error) }],
+        },
+      });
+    });
+  }
+
+  private handleCommandApproval(request: JsonRpcRequest): void {
+    const params = asRecord(request.params);
+    const command =
+      asString(params?.command) ??
+      asString(asRecord(params?.item)?.command) ??
+      asString(asRecord(asArray(asRecord(params?.item)?.commandActions)?.[0])?.command) ??
+      "Command";
+    void (async () => {
+      const decision = this.requestShellApproval ? await this.requestShellApproval(command) : "allow-once";
+      this.writeResponse({
+        id: request.id,
+        result: { decision: decision === "deny" ? "deny" : "accept" },
+      });
+    })().catch((error) => {
+      this.writeResponse({
+        id: request.id,
+        error: {
+          code: -32000,
+          message: error instanceof Error ? error.message : "Shell approval failed.",
+        },
+      });
+    });
+  }
+
+  private handleUserInput(request: JsonRpcRequest): void {
+    const params = asRecord(request.params);
+    const item = asRecord(params?.item);
+    const prompt =
+      asString(params?.prompt)?.trim() ||
+      asString(params?.question)?.trim() ||
+      asString(params?.message)?.trim() ||
+      asString(item?.prompt)?.trim() ||
+      asString(item?.question)?.trim() ||
+      asString(item?.message)?.trim() ||
+      "";
+    const questionSource = asArray(params?.questions) ? params : item ?? params ?? {};
+    const questions = normalizeUserInputQuestions(questionSource, prompt || "Codex requested user input.");
+    const hasStructuredQuestions = questions.length > 0;
+    const displayContent = prompt || (hasStructuredQuestions ? "" : stringifyValue(params));
+    if (this.requestUserInput) {
+      void this.requestAnswers(request, displayContent, questions, params);
+      return;
+    }
+    this.onChunk?.({
+      type: "user-input-requested",
+      title: "Codex question",
+      value: displayContent,
+      metadata: {
+        provider: "codex-cli",
+        requestKind: "user-input",
+        requestStatus: "opened",
+        requestId: request.id,
+        userInputQuestions: questions,
+        rawRequestMethod: request.method,
+        rawRequestParams: params ?? {},
+      },
+    });
+    this.writeResponse({
+      id: request.id,
+      error: {
+        code: -32601,
+        message: "BuildWarden does not support Codex request_user_input in this mode.",
+      },
+    });
+  }
+
+  private async requestAnswers(
+    request: JsonRpcRequest,
+    displayContent: string,
+    questions: RunUserInputRequest["questions"],
+    params: Record<string, unknown> | undefined,
+  ): Promise<void> {
+    try {
+      const answers = await this.requestUserInput?.({
+        requestId: String(request.id),
+        title: "Codex question",
+        content: displayContent,
+        questions,
+        metadata: {
+          provider: "codex-cli",
+          rawRequestMethod: request.method,
+          rawRequestParams: params ?? {},
+        },
+      });
+      if (!answers) throw new Error("No answers were returned for Codex user input.");
+      this.writeResponse({ id: request.id, result: { answers: toCodexUserInputAnswers(answers) } });
+    } catch (error) {
+      this.writeResponse({
+        id: request.id,
+        error: { code: -32000, message: error instanceof Error ? error.message : "User input failed." },
+      });
+    }
+  }
+}
+
 // Exported for focused subagent-routing tests; production code should use the
 // harness adapter instead of constructing sessions directly.
 export class CodexAppServerSession {
@@ -1141,6 +1318,7 @@ export class CodexAppServerSession {
   private readonly planMessages = new Map<string, string>();
   private readonly commandExecutions = new Map<string, CommandExecutionContext>();
   private readonly fileChangeSnapshots = new Map<string, FileChangeSnapshot>();
+  private readonly serverRequestHandler: CodexServerRequestHandler;
   // Collab subagents keyed by their child thread id. All notifications on this
   // connection that carry a thread id other than the session's own thread
   // belong to a spawned subagent thread.
@@ -1157,6 +1335,13 @@ export class CodexAppServerSession {
     private readonly toolContext?: HarnessToolContext,
     private readonly devLogger?: { log: (event: string, data: unknown) => void },
   ) {
+    this.serverRequestHandler = new CodexServerRequestHandler(
+      this.requestShellApproval,
+      this.requestUserInput,
+      this.onChunk,
+      this.toolContext,
+      (message) => this.writeServerResponse(message),
+    );
     this.output = readline.createInterface({ input: child.stdout });
     this.output.on("line", (line) => {
       this.handleStdoutLine(line);
@@ -1424,174 +1609,7 @@ export class CodexAppServerSession {
 
   private handleServerRequest(request: JsonRpcRequest): void {
     this.devLogger?.log("codex.rpc.request", request);
-    if (request.method === "item/tool/call") {
-      const params = asRecord(request.params);
-      const toolName = asString(params?.tool);
-      const callId = asString(params?.callId) ?? String(request.id);
-      const argumentsRecord = asRecord(params?.arguments) ?? {};
-      const definition = this.toolContext?.tools.find((tool) => tool.name === toolName);
-      if (!definition || !this.toolContext || !toolName) {
-        this.writeServerResponse({
-          id: request.id,
-          result: {
-            success: false,
-            contentItems: [{ type: "inputText", text: `Unknown BuildWarden tool: ${toolName ?? "(missing)"}` }],
-          },
-        });
-        return;
-      }
-      this.onChunk?.({
-        type: "tool-call",
-        title: `Tool call: ${toolName}`,
-        value: JSON.stringify(argumentsRecord),
-        metadata: { toolName, callId, provider: "codex-cli" },
-      });
-      void this.toolContext.executeTool({
-        id: callId,
-        name: toolName,
-        arguments: argumentsRecord,
-      } as RunToolCall).then((result) => {
-        this.onChunk?.({
-          type: "tool-result",
-          title: `Tool result: ${toolName}`,
-          value: result.content,
-          metadata: { toolName, callId, ok: result.ok, provider: "codex-cli" },
-        });
-        this.writeServerResponse({
-          id: request.id,
-          result: {
-            success: result.ok,
-            contentItems: [{ type: "inputText", text: result.content }],
-          },
-        });
-      }).catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        this.writeServerResponse({
-          id: request.id,
-          result: {
-            success: false,
-            contentItems: [{ type: "inputText", text: message }],
-          },
-        });
-      });
-      return;
-    }
-    if (request.method === "item/commandExecution/requestApproval") {
-      const params = asRecord(request.params);
-      const command =
-        asString(params?.command) ??
-        asString(asRecord(params?.item)?.command) ??
-        asString(asRecord(asArray(asRecord(params?.item)?.commandActions)?.[0])?.command) ??
-        "Command";
-      void (async () => {
-        const decision = this.requestShellApproval ? await this.requestShellApproval(command) : "allow-once";
-        this.writeServerResponse({
-          id: request.id,
-          result: {
-            decision: decision === "deny" ? "deny" : "accept",
-          },
-        });
-      })().catch((error) => {
-        this.writeServerResponse({
-          id: request.id,
-          error: {
-            code: -32000,
-            message: error instanceof Error ? error.message : "Shell approval failed.",
-          },
-        });
-      });
-      return;
-    }
-
-    if (request.method === "item/fileRead/requestApproval" || request.method === "item/fileChange/requestApproval") {
-      this.writeServerResponse({
-        id: request.id,
-        result: {
-          decision: "accept",
-        },
-      });
-      return;
-    }
-
-    if (request.method === "item/tool/requestUserInput") {
-      const params = asRecord(request.params);
-      const item = asRecord(params?.item);
-      const prompt =
-        asString(params?.prompt)?.trim() ||
-        asString(params?.question)?.trim() ||
-        asString(params?.message)?.trim() ||
-        asString(item?.prompt)?.trim() ||
-        asString(item?.question)?.trim() ||
-        asString(item?.message)?.trim() ||
-        "";
-      const questionSource = asArray(params?.questions) ? params : item ?? params ?? {};
-      const questions = normalizeUserInputQuestions(questionSource, prompt || "Codex requested user input.");
-      const hasStructuredQuestions = questions.length > 0;
-      const displayContent = prompt || (hasStructuredQuestions ? "" : stringifyValue(params));
-      if (this.requestUserInput) {
-        void (async () => {
-          const answers = await this.requestUserInput?.({
-            requestId: String(request.id),
-            title: "Codex question",
-            content: displayContent,
-            questions,
-            metadata: {
-              provider: "codex-cli",
-              rawRequestMethod: request.method,
-              rawRequestParams: params ?? {},
-            },
-          });
-          if (!answers) {
-            throw new Error("No answers were returned for Codex user input.");
-          }
-          this.writeServerResponse({
-            id: request.id,
-            result: {
-              answers: toCodexUserInputAnswers(answers),
-            },
-          });
-        })().catch((error) => {
-          this.writeServerResponse({
-            id: request.id,
-            error: {
-              code: -32000,
-              message: error instanceof Error ? error.message : "User input failed.",
-            },
-          });
-        });
-        return;
-      }
-      this.onChunk?.({
-        type: "user-input-requested",
-        title: "Codex question",
-        value: displayContent,
-        metadata: {
-          provider: "codex-cli",
-          requestKind: "user-input",
-          requestStatus: "opened",
-          requestId: request.id,
-          userInputQuestions: questions,
-          rawRequestMethod: request.method,
-          rawRequestParams: params ?? {},
-        },
-      });
-      this.writeServerResponse({
-        id: request.id,
-        error: {
-          code: -32601,
-          message: "BuildWarden does not support Codex request_user_input in this mode.",
-        },
-      });
-      return;
-    }
-
-    this.writeServerResponse({
-      id: request.id,
-      error: {
-        code: -32601,
-        message: `Unsupported request: ${request.method}`,
-      },
-    });
+    this.serverRequestHandler.handle(request);
   }
 
   private writeServerResponse(message: unknown): void {

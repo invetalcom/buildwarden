@@ -1,9 +1,27 @@
+const trimMatchingCharacters = (value: string, characters: ReadonlySet<string>): string => {
+  let start = 0;
+  let end = value.length;
+  while (start < end && characters.has(value[start]!)) start += 1;
+  while (end > start && characters.has(value[end - 1]!)) end -= 1;
+  return value.slice(start, end);
+};
+
+const trimTrailingCharacters = (value: string, characters: ReadonlySet<string>): string => {
+  let end = value.length;
+  while (end > 0 && characters.has(value[end - 1]!)) end -= 1;
+  return value.slice(0, end);
+};
+
+const QUOTE_CHARACTERS = new Set(["\"", "'", "`"]);
+const BRANCH_SEGMENT_EDGE_CHARACTERS = new Set([".", "-"]);
+const BRANCH_NAME_TRAILING_CHARACTERS = new Set([".", "/", "-"]);
+
 const stripSuggestionWrapper = (raw: string): string => {
   let value = raw.trim();
   if (value.startsWith("```")) {
     value = value.replace(/^```[\w-]*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
   }
-  return value
+  const candidate = value
     .split(/\r?\n/)
     .find((line) => {
       const candidate = line.trim();
@@ -11,8 +29,8 @@ const stripSuggestionWrapper = (raw: string): string => {
     })
     ?.trim()
     .replace(/^(?:branch(?:\s+name)?|name)\s*:\s*/i, "")
-    .replace(/^["'`]+|["'`]+$/g, "")
     .trim() ?? "";
+  return trimMatchingCharacters(candidate, QUOTE_CHARACTERS).trim();
 };
 
 export const normalizeSuggestedBranchName = (raw: string): string => {
@@ -26,16 +44,16 @@ export const normalizeSuggestedBranchName = (raw: string): string => {
     .replace(/\.{2,}/g, "-")
     .replace(/\/{2,}/g, "/")
     .split("/")
-    .map((segment) => segment
-      .replace(/-{2,}/g, "-")
-      .replace(/^[.-]+|[.-]+$/g, "")
-      .replace(/\.lock$/i, "-lock"))
+    .map((segment) => trimMatchingCharacters(
+      segment.replace(/-{2,}/g, "-"),
+      BRANCH_SEGMENT_EDGE_CHARACTERS,
+    ).replace(/\.lock$/i, "-lock"))
     .filter(Boolean);
 
-  return segments
+  const truncated = segments
     .join("/")
-    .slice(0, 100)
-    .replace(/[./-]+$/g, "")
+    .slice(0, 100);
+  return trimTrailingCharacters(truncated, BRANCH_NAME_TRAILING_CHARACTERS)
     .split("/")
     .map((segment) => segment.replace(/\.lock$/i, "-lock"))
     .join("/");

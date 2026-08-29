@@ -225,6 +225,8 @@ const addUsage = (left: RunTokenUsage, right: RunTokenUsage): RunTokenUsage => {
   const reasoningTokens = (left.reasoningTokens ?? 0) + (right.reasoningTokens ?? 0);
   const cachedInputTokens = (left.cachedInputTokens ?? 0) + (right.cachedInputTokens ?? 0);
   const cacheCreationInputTokens = (left.cacheCreationInputTokens ?? 0) + (right.cacheCreationInputTokens ?? 0);
+  const usedTokens = right.usedTokens ?? left.usedTokens;
+  const maxTokens = right.maxTokens ?? left.maxTokens;
   return {
     inputTokens: left.inputTokens + right.inputTokens,
     outputTokens: left.outputTokens + right.outputTokens,
@@ -232,8 +234,8 @@ const addUsage = (left: RunTokenUsage, right: RunTokenUsage): RunTokenUsage => {
     ...(cachedInputTokens > 0 ? { cachedInputTokens } : {}),
     ...(cacheCreationInputTokens > 0 ? { cacheCreationInputTokens } : {}),
     ...(totalTokens > 0 ? { totalTokens, totalProcessedTokens: totalTokens } : {}),
-    ...(right.usedTokens !== undefined ? { usedTokens: right.usedTokens } : left.usedTokens !== undefined ? { usedTokens: left.usedTokens } : {}),
-    ...(right.maxTokens !== undefined ? { maxTokens: right.maxTokens } : left.maxTokens !== undefined ? { maxTokens: left.maxTokens } : {}),
+    ...(usedTokens !== undefined ? { usedTokens } : {}),
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(right.lastUsedTokens !== undefined ? { lastUsedTokens: right.lastUsedTokens } : {}),
     ...(right.lastInputTokens !== undefined ? { lastInputTokens: right.lastInputTokens } : {}),
     ...(right.lastCachedInputTokens !== undefined ? { lastCachedInputTokens: right.lastCachedInputTokens } : {}),
@@ -739,7 +741,10 @@ export const requestOpenRouterAvailableModels = async (
   if (!apiKey) {
     throw new Error("An OpenRouter API key is required to load models.");
   }
-  const baseURL = (context.apiBaseUrl?.trim() || OPENROUTER_DEFAULT_BASE_URL).replace(/\/+$/, "");
+  const configuredBaseUrl = context.apiBaseUrl?.trim() || OPENROUTER_DEFAULT_BASE_URL;
+  let baseUrlEnd = configuredBaseUrl.length;
+  while (baseUrlEnd > 0 && configuredBaseUrl[baseUrlEnd - 1] === "/") baseUrlEnd -= 1;
+  const baseURL = configuredBaseUrl.slice(0, baseUrlEnd);
   const response = await fetchImpl(`${baseURL}/models`, {
     headers: {
       ...getDefaultHeaders(context.config),
@@ -1894,8 +1899,9 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
       }),
     );
 
-    const streamingToolNamesById = new Map<string, string>();
-    for await (const part of result.stream as AsyncIterable<Record<string, unknown>>) {
+    const processResultStream = async (): Promise<void> => {
+      const streamingToolNamesById = new Map<string, string>();
+      for await (const part of result.stream as AsyncIterable<Record<string, unknown>>) {
       collectOpenAiContainerFileReferences(part, openAiContainerFileReferences);
 
       if (part.type === "error") {
@@ -1995,10 +2001,12 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
         continue;
       }
 
-      if (part.type === "reasoning-end" || part.type === "finish") {
-        resetReasoningSegment();
+        if (part.type === "reasoning-end" || part.type === "finish") {
+          resetReasoningSegment();
+        }
       }
-    }
+    };
+    await processResultStream();
 
     if (openAiChatTools && openAiContainerFileReferences.size > 0) {
       let index = generatedFileAttachments.length + 1;

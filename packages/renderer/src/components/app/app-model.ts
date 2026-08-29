@@ -227,6 +227,19 @@ const parseModelConfig = (config: ModelRecord["configJson"] | Record<string, unk
   }
 };
 
+const cursorControlId = (id: string, category: string): ModelExecutionControl["id"] | null => {
+  if (/thought|reason|effort/i.test(`${id} ${category}`)) return "reasoningEffort";
+  if (/context/i.test(id)) return "contextMode";
+  if (/speed|fast/i.test(id)) return "speed";
+  return null;
+};
+
+const cursorControlLabel = (id: ModelExecutionControl["id"]): string => {
+  if (id === "reasoningEffort") return "Effort";
+  if (id === "contextMode") return "Context";
+  return "Speed";
+};
+
 const cursorProfileFromConfig = (config: Record<string, unknown>): ModelExecutionProfile | null => {
   const rawOptions = config.cursorAcpConfigOptions;
   if (!Array.isArray(rawOptions)) return null;
@@ -235,23 +248,21 @@ const cursorProfileFromConfig = (config: Record<string, unknown>): ModelExecutio
     const entry = candidate as Record<string, unknown>;
     if (entry.type !== "select" || typeof entry.id !== "string" || !Array.isArray(entry.options)) return [];
     const category = typeof entry.category === "string" ? entry.category : "";
-    const id = /thought|reason|effort/i.test(`${entry.id} ${category}`)
-      ? "reasoningEffort"
-      : /context/i.test(entry.id)
-        ? "contextMode"
-        : /speed|fast/i.test(entry.id)
-          ? "speed"
-          : null;
+    const id = cursorControlId(entry.id, category);
     if (!id) return [];
     const options = entry.options.flatMap((candidateOption) => {
       if (!candidateOption || typeof candidateOption !== "object" || Array.isArray(candidateOption)) return [];
       const rawOption = candidateOption as Record<string, unknown>;
-      const value = typeof rawOption.value === "string" ? rawOption.value : typeof rawOption.id === "string" ? rawOption.id : null;
+      let value: string | null = null;
+      if (typeof rawOption.value === "string") value = rawOption.value;
+      else if (typeof rawOption.id === "string") value = rawOption.id;
       if (!value) return [];
-      const label = typeof rawOption.name === "string" ? rawOption.name : typeof rawOption.label === "string" ? rawOption.label : value;
+      let label = value;
+      if (typeof rawOption.name === "string") label = rawOption.name;
+      else if (typeof rawOption.label === "string") label = rawOption.label;
       return [option(value, label, typeof rawOption.description === "string" ? rawOption.description : undefined)];
     });
-    return options.length > 0 ? [control(id, id === "reasoningEffort" ? "Effort" : id === "contextMode" ? "Context" : "Speed", options)] : [];
+    return options.length > 0 ? [control(id, cursorControlLabel(id), options)] : [];
   });
   return controls.length > 0 ? { controls } : null;
 };

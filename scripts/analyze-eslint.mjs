@@ -24,7 +24,7 @@ const eslint = new ESLint({
       languageOptions: {
         parser: tseslint.parser,
         parserOptions: {
-          project: [path.join(repositoryRoot, "apps", "desktop", "tsconfig.json")],
+          project: [path.join(repositoryRoot, "tsconfig.analysis.json")],
           tsconfigRootDir: repositoryRoot,
         },
       },
@@ -77,14 +77,14 @@ const reportedFindings = requestedRule ? findings.filter((finding) => finding.ru
 const byRule = Object.entries(Object.groupBy(reportedFindings, (finding) => finding.rule))
   .map(([rule, entries]) => ({ rule, count: entries.length }))
   .sort((left, right) => right.count - left.count || left.rule.localeCompare(right.rule));
-const complexityHotspots = reportedFindings
+const complexityFindings = reportedFindings
   .filter((finding) => finding.rule === "sonarjs/cognitive-complexity")
   .map((finding) => ({
     ...finding,
     score: Number(/from (\d+) to/.exec(finding.message)?.[1] ?? 0),
   }))
-  .sort((left, right) => right.score - left.score)
-  .slice(0, 15);
+  .sort((left, right) => right.score - left.score);
+const complexityHotspots = complexityFindings.slice(0, 15);
 
 if (process.argv.includes("--json")) {
   console.log(
@@ -95,6 +95,7 @@ if (process.argv.includes("--json")) {
       warnings: reportedFindings.filter((item) => item.severity === 1).length,
       byRule: Object.fromEntries(byRule.map(({ rule, count }) => [rule, count])),
       highestCognitiveComplexity: complexityHotspots[0]?.score ?? 0,
+      complexityFindings: complexityFindings.map(({ file, line, score }) => ({ file, line, score })),
     }),
   );
   process.exit(0);

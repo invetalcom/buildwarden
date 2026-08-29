@@ -47,7 +47,7 @@ const defaultCommandRunner: TailscaleCommandRunner = (executable, args) =>
         resolve({
           stdout: String(stdout ?? ""),
           stderr: String(stderr ?? ""),
-          exitCode: typeof errorCode === "number" ? errorCode : error ? 1 : 0,
+          exitCode: typeof errorCode === "number" ? errorCode : Number(Boolean(error)),
           notFound: errorCode === "ENOENT",
         });
       },
@@ -147,7 +147,9 @@ export class TailscaleServeService {
     const target = proxyTarget(loopbackPort);
     const serveResult = await this.runCommand(located.executable, ["serve", "status", "--json"]);
     const noConfig = /no serve config/i.test(`${serveResult.stdout} ${serveResult.stderr}`);
-    const serveStatus = serveResult.exitCode === 0 ? parseJson<TailscaleServeStatus>(serveResult.stdout) : noConfig ? {} : null;
+    let serveStatus: TailscaleServeStatus | null = null;
+    if (serveResult.exitCode === 0) serveStatus = parseJson<TailscaleServeStatus>(serveResult.stdout);
+    else if (noConfig) serveStatus = {};
     if (serveStatus == null) {
       return this.status(desired, "error", cleanMessage(serveResult.stderr || serveResult.stdout) || "Could not inspect Tailscale Serve.", {
         backendState,
@@ -235,7 +237,9 @@ export class TailscaleServeService {
     }
     const serveResult = await this.runCommand(located.executable, ["serve", "status", "--json"]);
     const noConfig = /no serve config/i.test(`${serveResult.stdout} ${serveResult.stderr}`);
-    const serveStatus = serveResult.exitCode === 0 ? parseJson<TailscaleServeStatus>(serveResult.stdout) : noConfig ? {} : null;
+    let serveStatus: TailscaleServeStatus | null = null;
+    if (serveResult.exitCode === 0) serveStatus = parseJson<TailscaleServeStatus>(serveResult.stdout);
+    else if (noConfig) serveStatus = {};
     if (serveStatus == null) {
       return this.status(desired, "error", cleanMessage(serveResult.stderr || serveResult.stdout) || "Could not inspect Tailscale Serve.", {
         dnsName: managedHost,
