@@ -285,12 +285,17 @@ describe("remote BuildWarden client", () => {
   });
 
   it("disables live events when the session cannot read state", () => {
+    const webSocketFactory = vi.fn();
     const client = createRemoteBuildWardenClient({
       fetch: vi.fn(async () => rpcResponse(snapshot)) as typeof fetch,
       scopes: ["admin"],
+      webSocketFactory,
     });
 
     expect(client.capabilities.liveEvents).toBe(false);
+    const unsubscribe = client.onRunEvent(vi.fn());
+    expect(webSocketFactory).not.toHaveBeenCalled();
+    unsubscribe();
   });
 
   it("enables scoped project workflows and host settings for control sessions", async () => {

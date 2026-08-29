@@ -276,8 +276,10 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     eventListeners.add(untypedListener);
     listeners.set(event, eventListeners);
     if (event === "browser") browserListenerRunIds.set(untypedListener, new Set(runIds ?? []));
-    if (eventSocket?.readyState === 1) sendSubscription();
-    else connectEvents();
+    if (capabilities.liveEvents) {
+      if (eventSocket?.readyState === 1) sendSubscription();
+      else connectEvents();
+    }
     return () => {
       eventListeners.delete(untypedListener);
       browserListenerRunIds.delete(untypedListener);
