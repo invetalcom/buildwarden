@@ -71,7 +71,10 @@ export const CodeMirrorFileViewer = ({ content, filePath, line, column, classNam
 
     let cancelled = false;
     let view: EditorView | null = null;
-    void loadCodeMirrorLanguageExtensionForPath(filePath).then((languageExtension) => {
+    void loadCodeMirrorLanguageExtensionForPath(filePath).then(
+      (languageExtension) => [languageExtension],
+      () => [],
+    ).then((languageExtensions) => {
       if (cancelled) {
         return;
       }
@@ -90,7 +93,7 @@ export const CodeMirrorFileViewer = ({ content, filePath, line, column, classNam
           EditorView.editable.of(false),
           EditorView.lineWrapping,
           codeMirrorTheme,
-          languageExtension,
+          ...languageExtensions,
         ],
       });
       view = new EditorView({ state, parent: host });
