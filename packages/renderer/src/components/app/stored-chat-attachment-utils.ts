@@ -332,13 +332,12 @@ export const getStoredAttachmentTextPreview = (attachment: ChatAttachmentPayload
 const markdownValue = (markdown: string, pattern: RegExp): string => markdown.match(pattern)?.[1]?.trim() ?? "";
 
 const markdownSectionValue = (markdown: string, heading: string): string => {
-  const headingStart = markdown.indexOf(heading);
-  if (headingStart < 0) return "";
-  const contentStart = markdown.indexOf("\n", headingStart + heading.length);
-  if (contentStart < 0) return "";
-  const remainder = markdown.slice(contentStart + 1);
-  const nextSectionStart = remainder.indexOf("\n## ");
-  return (nextSectionStart < 0 ? remainder : remainder.slice(0, nextSectionStart)).trim();
+  const lines = markdown.split("\n");
+  const headingLine = lines.findIndex((line) => line.trimEnd() === heading);
+  if (headingLine < 0) return "";
+  const sectionLines = lines.slice(headingLine + 1);
+  const nextHeadingLine = sectionLines.findIndex((line) => line.startsWith("## "));
+  return (nextHeadingLine < 0 ? sectionLines : sectionLines.slice(0, nextHeadingLine)).join("\n").trim();
 };
 
 export const getStoredBrowserElementDisplayInfo = (
