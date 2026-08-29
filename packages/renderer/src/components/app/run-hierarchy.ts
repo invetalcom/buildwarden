@@ -118,11 +118,9 @@ export const buildRunHierarchyRows = (
 
   const childrenByParentId = new Map<string, RunRecord[]>();
   for (const run of subagentRuns) {
-    const parentId = run.parentRunId && allRunsById.has(run.parentRunId)
-      ? run.parentRunId
-      : run.rootRunId && rootIds.has(run.rootRunId)
-        ? run.rootRunId
-        : null;
+    let parentId: string | null = null;
+    if (run.parentRunId && allRunsById.has(run.parentRunId)) parentId = run.parentRunId;
+    else if (run.rootRunId && rootIds.has(run.rootRunId)) parentId = run.rootRunId;
     if (!parentId || parentId === run.id) continue;
     const children = childrenByParentId.get(parentId) ?? [];
     children.push(run);

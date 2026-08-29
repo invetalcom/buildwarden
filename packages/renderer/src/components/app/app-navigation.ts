@@ -39,12 +39,13 @@ export const reconcileSettingsPreviousPageAfterModelDeletion = (
   const selectedRunWasDeleted = typeof state.selectedRunId === "string" && deletedRunIds.has(state.selectedRunId);
   const selectedRunId = selectedRunWasDeleted ? firstOpenRunId(openRunPanes) : state.selectedRunId;
   const focusedPaneStillOpen = openRunPanes[state.focusedRunPane] !== undefined;
-  const focusedRunPane = selectedRunWasDeleted || !focusedPaneStillOpen
-    ? (selectedRunId ? paneForOpenRunId(openRunPanes, selectedRunId) ?? "left" : "left")
-    : state.focusedRunPane;
-  const runDetail = selectedRunWasDeleted
-    ? (selectedRunId ? runDetailsById[selectedRunId] ?? null : null)
-    : state.runDetail?.run.id && deletedRunIds.has(state.runDetail.run.id) ? null : state.runDetail;
+  let focusedRunPane = state.focusedRunPane;
+  if (selectedRunWasDeleted || !focusedPaneStillOpen) {
+    focusedRunPane = selectedRunId ? paneForOpenRunId(openRunPanes, selectedRunId) ?? "left" : "left";
+  }
+  let runDetail = state.runDetail;
+  if (selectedRunWasDeleted) runDetail = selectedRunId ? runDetailsById[selectedRunId] ?? null : null;
+  else if (state.runDetail?.run.id && deletedRunIds.has(state.runDetail.run.id)) runDetail = null;
 
   return {
     ...state,

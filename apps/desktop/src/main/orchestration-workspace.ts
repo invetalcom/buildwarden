@@ -173,9 +173,12 @@ const calculateDelta = async (
     const baseline = baselineByPath.get(path);
     const child = childByPath.get(path);
     if (baseline?.hash === child?.hash) continue;
+    let kind: DeltaEntry["kind"] = "modify";
+    if (!baseline) kind = "add";
+    else if (!child) kind = "delete";
     delta.push({
       path,
-      kind: !baseline ? "add" : !child ? "delete" : "modify",
+      kind,
       baselineHash: baseline?.hash ?? null,
       adoptedHash: child?.hash ?? null,
     });

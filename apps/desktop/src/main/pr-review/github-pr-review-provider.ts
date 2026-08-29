@@ -958,17 +958,28 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
     });
 
     const rawState = recordString(request, "state")?.toUpperCase();
-    const state = rawState === "MERGED" || recordString(request, "mergedAt") ? "merged" : rawState === "CLOSED" ? "closed" : "open";
+    let state: ForgeRequestStatusResult["state"] = "open";
+    if (rawState === "MERGED" || recordString(request, "mergedAt")) state = "merged";
+    else if (rawState === "CLOSED") state = "closed";
     const draft = recordBoolean(request, "isDraft");
     const rawMergeability = recordString(request, "mergeable")?.toUpperCase();
-    const mergeability = rawMergeability === "MERGEABLE" ? "mergeable" : rawMergeability === "CONFLICTING" ? "conflicting" : rawMergeability === "UNKNOWN" ? "checking" : "unknown";
+    let mergeability: ForgeRequestStatusResult["mergeability"] = "unknown";
+    if (rawMergeability === "MERGEABLE") mergeability = "mergeable";
+    else if (rawMergeability === "CONFLICTING") mergeability = "conflicting";
+    else if (rawMergeability === "UNKNOWN") mergeability = "checking";
     const rawDecision = recordString(request, "reviewDecision")?.toUpperCase();
-    const reviewDecision = rawDecision === "APPROVED" ? "approved" : rawDecision === "CHANGES_REQUESTED" ? "changes-requested" : rawDecision === "REVIEW_REQUIRED" ? "review-required" : "none";
+    let reviewDecision: ForgeRequestStatusResult["reviewDecision"] = "none";
+    if (rawDecision === "APPROVED") reviewDecision = "approved";
+    else if (rawDecision === "CHANGES_REQUESTED") reviewDecision = "changes-requested";
+    else if (rawDecision === "REVIEW_REQUIRED") reviewDecision = "review-required";
     const supportedMergeMethods = [
       ...(repository && recordBoolean(repository, "mergeCommitAllowed") ? (["merge"] as const) : []),
       ...(repository && recordBoolean(repository, "squashMergeAllowed") ? (["squash"] as const) : []),
       ...(repository && recordBoolean(repository, "rebaseMergeAllowed") ? (["rebase"] as const) : []),
     ];
+    let supportedActions: ForgeRequestStatusResult["supportedActions"] = ["refresh", "open"];
+    if (state === "open") supportedActions = ["refresh", "open", draft ? "mark-ready" : "mark-draft", "merge", "close"];
+    else if (state === "closed") supportedActions = ["refresh", "open", "reopen"];
     return {
       state,
       draft,
@@ -977,9 +988,7 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
       headSha: recordString(request, "headRefOid"),
       checks,
       unresolvedThreadCount: threadNodes.filter((thread) => !recordBoolean(thread, "isResolved")).length,
-      supportedActions: state === "open"
-        ? ["refresh", "open", draft ? "mark-ready" : "mark-draft", "merge", "close"]
-        : state === "closed" ? ["refresh", "open", "reopen"] : ["refresh", "open"],
+      supportedActions,
       supportedMergeMethods: supportedMergeMethods.length > 0 ? [...supportedMergeMethods] : ["merge"],
     };
   }

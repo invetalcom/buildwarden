@@ -812,19 +812,19 @@ const buildCursorModelConfig = (
   }
   const maxTokens = deriveCursorMaxTokensFromConfigOptions(configOptions);
   const executionControls = configOptions.flatMap((entry) => {
-    const id = isReasoningConfigOption(entry)
-      ? "reasoningEffort"
-      : isContextConfigOption(entry)
-        ? "contextMode"
-        : isSpeedConfigOption(entry)
-          ? "speed"
-          : null;
+    let id: "reasoningEffort" | "contextMode" | "speed" | null = null;
+    if (isReasoningConfigOption(entry)) id = "reasoningEffort";
+    else if (isContextConfigOption(entry)) id = "contextMode";
+    else if (isSpeedConfigOption(entry)) id = "speed";
     if (!id || entry.type !== "select") return [];
     const options = flattenSelectOptions(entry).map((candidate) => ({ value: candidate.value, label: candidate.name }));
     if (options.length === 0) return [];
+    let label = "Speed";
+    if (id === "reasoningEffort") label = "Effort";
+    else if (id === "contextMode") label = "Context";
     return [{
       id,
-      label: id === "reasoningEffort" ? "Effort" : id === "contextMode" ? "Context" : "Speed",
+      label,
       defaultValue: "auto",
       options: [{ value: "auto", label: "Provider default" }, ...options],
     }];
@@ -1320,13 +1320,13 @@ const diffContentFromToolContent = (
     const oldText = asString(nested.oldText);
     const newText = asString(nested.newText);
     const diff = asString(nested.diff)?.trim();
+    let resolvedDiff = diff;
+    if (!resolvedDiff && path && oldText !== undefined && newText !== undefined) {
+      resolvedDiff = buildCursorFallbackDiff(path, oldText, newText);
+    }
     const result = {
       ...(path ? { path } : {}),
-      ...(diff
-        ? { diff }
-        : path && oldText !== undefined && newText !== undefined
-          ? { diff: buildCursorFallbackDiff(path, oldText, newText) }
-          : {}),
+      ...(resolvedDiff ? { diff: resolvedDiff } : {}),
     };
     if (result.path || result.diff) {
       return result;
@@ -1504,9 +1504,9 @@ export const buildCursorToolChunkForState = (tool: CursorToolState): HarnessRunC
   const kindToolName = normalizeCursorToolName(tool.kind);
   const toolName = tool.toolName ?? (kindToolName !== "tool" ? kindToolName : undefined);
   const genericTitle = !tool.title || /^mcp:\s*tool$/i.test(tool.title);
-  const title = genericTitle
-    ? toolName ?? (kindToolName === "run_shell" ? "Shell command" : "Cursor tool")
-    : tool.title!;
+  let fallbackTitle = "Cursor tool";
+  if (kindToolName === "run_shell") fallbackTitle = "Shell command";
+  const title = genericTitle ? toolName ?? fallbackTitle : tool.title!;
   const value = tool.diff ?? tool.command ?? tool.path ?? tool.query ?? tool.detail ?? title;
   const metadata = {
     provider: PROVIDER,
@@ -2024,8 +2024,9 @@ class CursorAcpRuntime {
       },
     }, timeoutMs);
     if (this.options.mcpServers?.length) {
-      const capabilities = isRecord(isRecord(initialization) ? initialization.agentCapabilities : undefined)
-        ? (initialization as Record<string, unknown>).agentCapabilities as Record<string, unknown>
+      const initializationRecord = isRecord(initialization) ? initialization : {};
+      const capabilities = isRecord(initializationRecord.agentCapabilities)
+        ? initializationRecord.agentCapabilities
         : {};
       const mcpCapabilities = isRecord(capabilities.mcpCapabilities) ? capabilities.mcpCapabilities : {};
       if (mcpCapabilities.http !== true) {

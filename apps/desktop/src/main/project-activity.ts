@@ -240,7 +240,9 @@ const parseNullDelimitedProjectActivityLog = (output: string): ProjectActivityCo
     if (!current) continue;
     const rawStatus = /^:\d{6} \d{6} [0-9a-f]+ [0-9a-f]+ ([A-Z])(?:\d+)?$/.exec(record)?.[1];
     if (rawStatus) {
-      pendingChangeType = rawStatus === "A" ? "added" : rawStatus === "D" ? "deleted" : "modified";
+      pendingChangeType = "modified";
+      if (rawStatus === "A") pendingChangeType = "added";
+      else if (rawStatus === "D") pendingChangeType = "deleted";
       continue;
     }
 
@@ -456,6 +458,12 @@ const buildHotspots = (
   })), now).slice(0, 20),
 });
 
+const ownershipRisk = (ownershipShare: number): "silo" | "concentrated" | "shared" => {
+  if (ownershipShare >= 80) return "silo";
+  if (ownershipShare >= 65) return "concentrated";
+  return "shared";
+};
+
 const buildModuleOwnership = (
   modules: Map<string, ModuleAccumulator>,
   contributors: Map<string, ContributorAccumulator>,
@@ -474,7 +482,7 @@ const buildModuleOwnership = (
         busFactor50: busFactorForHalfOfCommits(rankedOwners.map(([, commits]) => commits), module.commits),
         contributorCount: module.contributors.size,
         commits: module.commits,
-        risk: ownershipShare >= 80 ? "silo" as const : ownershipShare >= 65 ? "concentrated" as const : "shared" as const,
+        risk: ownershipRisk(ownershipShare),
       };
     })
     .sort((left, right) => right.ownershipShare - left.ownershipShare || right.commits - left.commits);
@@ -583,7 +591,9 @@ const releaseSizeTrend = (releases: ProjectActivityReleaseInput[]): NonNullable<
   const previousAverage = average(previous);
   if (previousAverage === 0) return average(recent) > 0 ? "growing" : "stable";
   const change = ((average(recent) - previousAverage) / previousAverage) * 100;
-  return change > 15 ? "growing" : change < -15 ? "shrinking" : "stable";
+  if (change > 15) return "growing";
+  if (change < -15) return "shrinking";
+  return "stable";
 };
 
 const buildReleaseCadence = (
@@ -841,10 +851,9 @@ const addQueryGroup = (
     filesChanged: 0,
     drilldown: input.groupBy === "contributor"
       ? { contributorKey: key }
-      : input.groupBy === "module"
-        ? { modulePath: key }
-        : groupDateDrilldown(input.groupBy, key),
+      : groupDateDrilldown(input.groupBy, key),
   };
+  if (input.groupBy === "module") existing.drilldown = { modulePath: key };
   existing.commitShas.add(commit.sha);
   existing.contributors.add(contributorKeyForCommit(commit));
   existing.linesChanged += files.reduce((sum, file) => sum + file.linesAdded + file.linesDeleted, 0);

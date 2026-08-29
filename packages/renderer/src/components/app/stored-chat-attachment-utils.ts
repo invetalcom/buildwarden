@@ -331,19 +331,25 @@ export const getStoredAttachmentTextPreview = (attachment: ChatAttachmentPayload
 
 const markdownValue = (markdown: string, pattern: RegExp): string => markdown.match(pattern)?.[1]?.trim() ?? "";
 
+const markdownSectionValue = (markdown: string, heading: string): string => {
+  const lines = markdown.split("\n");
+  const headingLine = lines.findIndex((line) => line.trimEnd() === heading);
+  if (headingLine < 0) return "";
+  const sectionLines = lines.slice(headingLine + 1);
+  const nextHeadingLine = sectionLines.findIndex((line) => line.startsWith("## "));
+  return (nextHeadingLine < 0 ? sectionLines : sectionLines.slice(0, nextHeadingLine)).join("\n").trim();
+};
+
 export const getStoredBrowserElementDisplayInfo = (
   contextAttachment: ChatAttachmentPayload | undefined,
   screenshotAttachment: ChatAttachmentPayload | undefined,
   fallbackNumber: number,
 ): StoredBrowserElementDisplayInfo => {
-  const source = contextAttachment?.source?.kind === "browser-element"
-    ? contextAttachment.source
-    : screenshotAttachment?.source?.kind === "browser-element"
-      ? screenshotAttachment.source
-      : undefined;
+  let source = contextAttachment?.source?.kind === "browser-element" ? contextAttachment.source : undefined;
+  if (!source && screenshotAttachment?.source?.kind === "browser-element") source = screenshotAttachment.source;
   const markdown = contextAttachment ? decodeStoredTextAttachment(contextAttachment) ?? "" : "";
   const parsedNumber = Number(markdownValue(markdown, /^# Browser element #(\d+)$/m));
-  const parsedComment = markdownValue(markdown, /(?:^|\n)## User note\s*\n+([\s\S]*?)(?=\n+## |$)/);
+  const parsedComment = markdownSectionValue(markdown, "## User note");
   const parsedTagName = markdownValue(markdown, /^- Element: `<([^>]+)>`$/m);
   const parsedAccessibleName = markdownValue(markdown, /^- Accessible name: (.*)$/m);
   const comment = source?.comment ?? (parsedComment === "(none)" ? "" : parsedComment);

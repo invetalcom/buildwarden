@@ -207,13 +207,11 @@ describe("remote BuildWarden client", () => {
   it("dispatches mobile run helpers through their scoped remote operations", async () => {
     const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const request = JSON.parse(String(init?.body)) as { method: string; requestId: string };
-      const result = request.method === "suggestCommitMessage"
-        ? "Generated commit message"
-        : request.method === "suggestRunPullRequestDraft"
-          ? { title: "Generated title", commitMessage: "Generated commit", description: "Generated description" }
-        : request.method === "suggestRunPullRequestDescription"
-          ? "Generated PR description"
-          : null;
+      let result: unknown = null;
+      if (request.method === "suggestCommitMessage") result = "Generated commit message";
+      else if (request.method === "suggestRunPullRequestDraft") {
+        result = { title: "Generated title", commitMessage: "Generated commit", description: "Generated description" };
+      } else if (request.method === "suggestRunPullRequestDescription") result = "Generated PR description";
       return rpcResponse(result, request.requestId);
     });
     const client = createRemoteBuildWardenClient({

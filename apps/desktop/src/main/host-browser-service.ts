@@ -58,11 +58,12 @@ export const normalizeRunBrowserUrl = (raw: string): string => {
   if (trimmed === DEFAULT_BROWSER_URL) {
     return trimmed;
   }
-  const withProtocol = /^[a-z][a-z\d+.-]*:\/\//i.test(trimmed)
-    ? trimmed
-    : /^(localhost|127(?:\.\d{1,3}){3})(?::\d+)?(?:[/?#].*)?$/i.test(trimmed)
+  let withProtocol = trimmed;
+  if (!/^[a-z][a-z\d+.-]*:\/\//i.test(trimmed)) {
+    withProtocol = /^(localhost|127(?:\.\d{1,3}){3})(?::\d+)?(?:[/?#].*)?$/i.test(trimmed)
       ? `http://${trimmed}`
       : `https://${trimmed}`;
+  }
   let url: URL;
   try {
     url = new URL(withProtocol);

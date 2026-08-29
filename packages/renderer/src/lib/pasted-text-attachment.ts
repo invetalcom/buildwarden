@@ -1,6 +1,7 @@
 import { DEFAULT_PASTED_TEXT_ATTACHMENT_THRESHOLD } from "@buildwarden/shared";
 
 const PASTED_TEXT_ATTACHMENT_MARKER = "__buildwardenPastedTextAttachment";
+const PASTED_TEXT_TITLE_EDGE_CHARACTERS = new Set([".", " "]);
 
 type MarkedPastedTextFile = File & {
   readonly [PASTED_TEXT_ATTACHMENT_MARKER]: true;
@@ -14,10 +15,15 @@ const normalizePastedTextTitle = (value: string): string => {
   const withoutControlCharacters = [...firstContentLine]
     .map((character) => character.charCodeAt(0) < 32 ? " " : character)
     .join("");
-  const fileSafeTitle = withoutControlCharacters
+  const sanitizedTitle = withoutControlCharacters
     .replace(/[<>:"/\\|?*]/g, " ")
-    .replace(/\s+/g, " ")
-    .replace(/^[. ]+|[. ]+$/g, "")
+    .replace(/\s+/g, " ");
+  let titleStart = 0;
+  let titleEnd = sanitizedTitle.length;
+  while (titleStart < titleEnd && PASTED_TEXT_TITLE_EDGE_CHARACTERS.has(sanitizedTitle[titleStart]!)) titleStart += 1;
+  while (titleEnd > titleStart && PASTED_TEXT_TITLE_EDGE_CHARACTERS.has(sanitizedTitle[titleEnd - 1]!)) titleEnd -= 1;
+  const fileSafeTitle = sanitizedTitle
+    .slice(titleStart, titleEnd)
     .slice(0, 64)
     .trim();
   return fileSafeTitle || "Pasted text";

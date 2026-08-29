@@ -81,11 +81,9 @@ const cronMatches = (cron: ParsedCron, date: Date, timeZone: string): boolean =>
   const parts = zonedParts(date, timeZone);
   const dayOfMonthMatches = cron.dayOfMonth.has(parts.dayOfMonth);
   const dayOfWeekMatches = cron.dayOfWeek.has(parts.dayOfWeek);
-  const dayMatches = cron.dayOfMonthWildcard
-    ? dayOfWeekMatches
-    : cron.dayOfWeekWildcard
-      ? dayOfMonthMatches
-      : dayOfMonthMatches || dayOfWeekMatches;
+  let dayMatches = dayOfMonthMatches || dayOfWeekMatches;
+  if (cron.dayOfMonthWildcard) dayMatches = dayOfWeekMatches;
+  else if (cron.dayOfWeekWildcard) dayMatches = dayOfMonthMatches;
   return cron.minute.has(parts.minute) && cron.hour.has(parts.hour) && cron.month.has(parts.month) && dayMatches;
 };
 

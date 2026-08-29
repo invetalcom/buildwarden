@@ -768,13 +768,11 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
     }
     const previousStatus = input.previousStatus ?? null;
     const diffRefs = requestPayload ? recordObject(requestPayload, "diff_refs") : null;
-    const headSha = requestPayload
-      ? recordString(requestPayload, "sha") ?? (diffRefs ? recordString(diffRefs, "head_sha") : null)
-      : previousStatus!.headSha;
+    let headSha = requestPayload ? null : previousStatus!.headSha;
+    if (requestPayload) headSha = recordString(requestPayload, "sha") ?? recordString(diffRefs ?? {}, "head_sha");
     const pipelines = await this.http.json(`/projects/${projectPath}/merge_requests/${iid}/pipelines?per_page=1`);
-    const pipeline = Array.isArray(pipelines) && isRecord(pipelines[0])
-      ? pipelines[0]
-      : requestPayload ? recordObject(requestPayload, "head_pipeline") : null;
+    let pipeline = requestPayload ? recordObject(requestPayload, "head_pipeline") : null;
+    if (Array.isArray(pipelines) && isRecord(pipelines[0])) pipeline = pipelines[0];
     let jobRows: Record<string, unknown>[] = [];
     const pipelineId = pipeline ? recordNumber(pipeline, "id") : null;
     if (pipelineId) {
@@ -805,30 +803,32 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
     }
 
     const rawState = requestPayload ? recordString(requestPayload, "state")?.toLowerCase() : null;
-    const state = requestPayload
-      ? rawState === "merged" ? "merged" : rawState === "closed" ? "closed" : "open"
-      : previousStatus!.state;
+    let state = requestPayload ? "open" : previousStatus!.state;
+    if (rawState === "merged") state = "merged";
+    else if (rawState === "closed") state = "closed";
     const detailedMergeStatus = requestPayload
       ? (recordString(requestPayload, "detailed_merge_status") ?? recordString(requestPayload, "merge_status") ?? "").toLowerCase()
       : "";
-    const mergeability = requestPayload
-      ? recordBoolean(requestPayload, "has_conflicts") || detailedMergeStatus.includes("conflict")
-        ? "conflicting"
-        : ["checking", "unchecked", "preparing", "approvals_syncing"].includes(detailedMergeStatus)
-          ? "checking"
-          : ["mergeable", "can_be_merged"].includes(detailedMergeStatus) ? "mergeable" : "unknown"
-      : previousStatus!.mergeability;
+    let mergeability = requestPayload ? "unknown" : previousStatus!.mergeability;
+    if (requestPayload) {
+      mergeability = "unknown";
+      if (recordBoolean(requestPayload, "has_conflicts") || detailedMergeStatus.includes("conflict")) mergeability = "conflicting";
+      else if (["checking", "unchecked", "preparing", "approvals_syncing"].includes(detailedMergeStatus)) mergeability = "checking";
+      else if (["mergeable", "can_be_merged"].includes(detailedMergeStatus)) mergeability = "mergeable";
+    }
     const approval = await this.getRequestApprovalStatus(input);
     const approvalsRequired = requestPayload ? recordNumber(requestPayload, "approvals_before_merge") ?? 0 : 0;
-    const unresolvedThreadCount = requestPayload
-      ? recordBoolean(requestPayload, "blocking_discussions_resolved") ? 0 : 1
-      : previousStatus!.unresolvedThreadCount;
-    const reviewDecision = approval.approved
-      ? "approved"
-      : requestPayload ? approvalsRequired > 0 ? "review-required" : "none" : previousStatus!.reviewDecision;
+    let unresolvedThreadCount = requestPayload ? 0 : previousStatus!.unresolvedThreadCount;
+    if (requestPayload) unresolvedThreadCount = recordBoolean(requestPayload, "blocking_discussions_resolved") ? 0 : 1;
+    let reviewDecision = requestPayload ? "none" : previousStatus!.reviewDecision;
+    if (requestPayload) reviewDecision = approvalsRequired > 0 ? "review-required" : "none";
+    if (approval.approved) reviewDecision = "approved";
     const draft = requestPayload
       ? recordBoolean(requestPayload, "draft") || recordBoolean(requestPayload, "work_in_progress")
       : previousStatus!.draft;
+    let supportedActions: ForgeRequestStatusResult["supportedActions"] = ["refresh", "open"];
+    if (state === "open") supportedActions = ["refresh", "open", draft ? "mark-ready" : "mark-draft", "merge", "close"];
+    else if (state === "closed") supportedActions = ["refresh", "open", "reopen"];
     return {
       state,
       draft,
@@ -837,9 +837,7 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
       headSha,
       checks,
       unresolvedThreadCount,
-      supportedActions: state === "open"
-        ? ["refresh", "open", draft ? "mark-ready" : "mark-draft", "merge", "close"]
-        : state === "closed" ? ["refresh", "open", "reopen"] : ["refresh", "open"],
+      supportedActions,
       supportedMergeMethods: ["merge", "squash"],
       etag: requestResult.headers.get("etag") ?? input.etag ?? null,
       lastModified: requestResult.headers.get("last-modified") ?? input.lastModified ?? null,
@@ -857,11 +855,9 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
         throw new Error("The merge request head changed. Refresh it before performing this action.");
       }
     }
-    const body: Record<string, unknown> = input.action === "mark-draft"
-      ? { draft: true }
-      : input.action === "mark-ready"
-        ? { draft: false }
-        : { state_event: input.action === "close" ? "close" : "reopen" };
+    let body: Record<string, unknown> = { state_event: input.action === "close" ? "close" : "reopen" };
+    if (input.action === "mark-draft") body = { draft: true };
+    else if (input.action === "mark-ready") body = { draft: false };
     await this.http.json(`/projects/${projectPath}/merge_requests/${iid}`, {
       method: "PUT",
       body: JSON.stringify(body),

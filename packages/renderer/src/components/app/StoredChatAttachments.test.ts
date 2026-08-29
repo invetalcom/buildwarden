@@ -115,6 +115,36 @@ describe("stored chat attachment preview decisions", () => {
     });
   });
 
+  it.each([
+    {
+      name: "stops an empty user note at the immediately following heading",
+      markdown: ["# Browser element #1", "", "## User note", "## Visible text", "Save"].join("\n"),
+      expectedComment: "",
+    },
+    {
+      name: "ignores heading text embedded in metadata values",
+      markdown: [
+        "# Browser element #1",
+        "",
+        "- Accessible name: label containing ## User note text",
+        "",
+        "## User note",
+        "Keep this note only.",
+        "## Visible text",
+        "Save",
+      ].join("\n"),
+      expectedComment: "Keep this note only.",
+    },
+  ])("$name", ({ markdown, expectedComment }) => {
+    const context: ChatAttachmentPayload = {
+      fileName: "browser-element-capture.md",
+      mimeType: "text/markdown",
+      dataBase64: Buffer.from(markdown, "utf8").toString("base64"),
+    };
+
+    expect(getStoredBrowserElementDisplayInfo(context, undefined, 1).comment).toBe(expectedComment);
+  });
+
   it("removes the generated attachment filename suffix from visible message content", () => {
     const names = ["browser-element-one.md", "browser-element-one.jpg"];
     expect(getStoredAttachmentMessageContent(`(no text)\nAttachments: ${names.join(", ")}`, names)).toBe("");
