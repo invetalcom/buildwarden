@@ -9762,13 +9762,13 @@ export class AppController
         this.db.updateRunStatus(run.id, status, { errorMessage });
         this.clearRunCheckpoint(run.id);
         this.updateWorktreeStatus(run, "ready");
-        await this.appendRunEvent(run.id, "error", active?.budgetExhaustion ? "Autonomy budget exhausted" : "Run failed", errorMessage, {
-          autonomyBudgetExhausted: Boolean(active?.budgetExhaustion),
-          budgetKind: active?.budgetExhaustion?.kind,
-        });
         let eventTitle = "Run failed";
         if (status === "cancelled") eventTitle = "Run cancelled";
         else if (active?.budgetExhaustion) eventTitle = "Autonomy budget exhausted";
+        await this.appendRunEvent(run.id, "error", eventTitle, errorMessage, {
+          autonomyBudgetExhausted: Boolean(active?.budgetExhaustion),
+          budgetKind: active?.budgetExhaustion?.kind,
+        });
         this.emitEvent({
           runId: run.id,
           type: "error",
