@@ -6,6 +6,7 @@ import {
   type AppMenuCommand,
   type AppMenuSection,
   type ChatInput,
+  type ChatEvent,
   type ContinueRunInput,
   type DesktopApi,
   type FollowUpChatOptions,
@@ -284,8 +285,8 @@ const api: DesktopApi = {
   listChatsWithSteps: () => invoke(IPC_CHANNELS.listChatsWithSteps),
   deleteChat: (chatId: string) => invoke(IPC_CHANNELS.deleteChat, chatId),
   cancelChat: (chatId: string) => invoke(IPC_CHANNELS.cancelChat, chatId),
-  onChatEvent: (listener: (event: RunEvent & { chatId: string }) => void) => {
-    const wrapped = (_event: Electron.IpcRendererEvent, payload: RunEvent & { chatId: string }) => listener(payload);
+  onChatEvent: (listener: (event: ChatEvent) => void) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, payload: ChatEvent) => listener(payload);
     ipcRenderer.on(IPC_CHANNELS.chatEvent, wrapped);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.chatEvent, wrapped);
   },

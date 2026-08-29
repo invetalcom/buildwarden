@@ -4,6 +4,7 @@ import {
   RUN_CHAT_CONTEXT_SOURCE,
   type ChatAttachmentPayload,
   type ChatDetail,
+  type ChatEvent,
   type KeyboardShortcutId,
   type ModelExecutionProfile,
   type ProviderExecutionOptions,
@@ -18,6 +19,7 @@ import { ChatTranscript } from "./ChatTranscript";
 import { RunComposer } from "./RunComposer";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { buildRunReasoningInput } from "./app-model";
+import { applyLiveChatEventToDetail } from "../../lib/live-state";
 
 const safeParseMetadata = (value: string) => {
   try {
@@ -61,6 +63,10 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
   const transcriptRef = useRef<HTMLDivElement>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const chatIdRef = useRef<string | null>(null);
+  const loadRequestRef = useRef(0);
+  const activeLoadRequestRef = useRef<number | null>(null);
+  const liveEventRevisionRef = useRef(0);
+  const recentLiveEventsRef = useRef<Array<{ revision: number; event: ChatEvent }>>([]);
 
   const buildwarden = useBuildWardenClient();
 
@@ -76,19 +82,53 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
   }, [modelOptions, selectedModelId]);
 
   const loadRunChat = useCallback(async () => {
-    const next = await buildwarden.getRunChat(runId);
-    setDetail(next);
+    const requestId = ++loadRequestRef.current;
+    activeLoadRequestRef.current = requestId;
+    const revisionAtStart = liveEventRevisionRef.current;
+    try {
+      let next = await buildwarden.getRunChat(runId);
+      if (loadRequestRef.current !== requestId) return;
+      const sawRunChatCreation = next === null && recentLiveEventsRef.current.some(({ revision, event }) =>
+        revision > revisionAtStart && event.chat?.runId === runId);
+      if (sawRunChatCreation) {
+        // The first response raced creation on another client. Keep the request active so any
+        // subsequent events remain buffered, then perform one authoritative follow-up read.
+        next = await buildwarden.getRunChat(runId);
+        if (loadRequestRef.current !== requestId) return;
+      }
+      const revisionAtCompletion = liveEventRevisionRef.current;
+      const merged = next
+        ? recentLiveEventsRef.current
+            .filter(({ revision, event }) => revision > revisionAtStart && event.chatId === next.chat.id)
+            .reduce((current, { event }) => applyLiveChatEventToDetail(current, event), next)
+        : null;
+      recentLiveEventsRef.current = recentLiveEventsRef.current.filter(({ revision }) => revision > revisionAtCompletion);
+      chatIdRef.current = merged?.chat.id ?? null;
+      setDetail(merged);
+    } finally {
+      if (activeLoadRequestRef.current === requestId) activeLoadRequestRef.current = null;
+    }
   }, [buildwarden, runId]);
 
   useEffect(() => {
+    loadRequestRef.current += 1;
+    recentLiveEventsRef.current = [];
+    liveEventRevisionRef.current = 0;
+    chatIdRef.current = null;
     setDetail(null);
     void loadRunChat();
   }, [loadRunChat]);
 
   useEffect(() => {
     const unsubscribe = buildwarden.onChatEvent((event) => {
-      if (event.chatId !== chatIdRef.current) return;
-      void loadRunChat();
+      const revision = ++liveEventRevisionRef.current;
+      if (activeLoadRequestRef.current !== null) recentLiveEventsRef.current.push({ revision, event });
+      const currentChatId = chatIdRef.current;
+      if (!currentChatId || event.chatId !== currentChatId) return;
+      if (event.step || event.chat) {
+        setDetail((current) => current?.chat.id === event.chatId ? applyLiveChatEventToDetail(current, event) : current);
+      }
+      if (!event.step) void loadRunChat();
     });
     return unsubscribe;
   }, [buildwarden, loadRunChat]);

@@ -19,6 +19,7 @@ import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { buildRunReasoningInput } from "./app-model";
+import { applyLiveChatEventToDetail } from "../../lib/live-state";
 
 const safeParseMetadata = (value: string) => {
   try {
@@ -173,7 +174,10 @@ export const ChatDetailPage = ({
     if (!buildwarden) return;
     const unsubscribe = buildwarden.onChatEvent((event) => {
       if (event.chatId !== chat.id) return;
-      void loadChatDetail();
+      if (event.step || event.chat) {
+        setDetail((current) => applyLiveChatEventToDetail(current, event));
+      }
+      if (!event.step) void loadChatDetail();
     });
     return unsubscribe;
   }, [buildwarden, chat.id, loadChatDetail]);

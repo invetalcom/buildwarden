@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppSnapshot } from "@buildwarden/shared";
 import type { BuildWardenClient } from "@buildwarden/renderer";
-import { EMPTY_SNAPSHOT } from "@buildwarden/renderer/logic";
+import { applyLiveChatToSnapshot, applyLiveRunToSnapshot, EMPTY_SNAPSHOT } from "@buildwarden/renderer/logic";
 import { errorMessage } from "../lib/format";
 
 const REFRESH_DEBOUNCE_MS = 250;
@@ -85,8 +85,14 @@ export const useSnapshot = (client: BuildWardenClient): SnapshotStore => {
 
   useEffect(() => {
     const unsubscribers = [
-      client.onRunEvent(scheduleRefresh),
-      client.onChatEvent(scheduleRefresh),
+      client.onRunEvent((event) => {
+        if (event.run) setSnapshot((current) => applyLiveRunToSnapshot(current, event.run!));
+        else if (!event.step) scheduleRefresh();
+      }),
+      client.onChatEvent((event) => {
+        if (event.chat) setSnapshot((current) => applyLiveChatToSnapshot(current, event.chat!));
+        else if (!event.step) scheduleRefresh();
+      }),
       client.onOrchestrationChanged(scheduleRefresh),
       client.onProjectLoopChanged(scheduleRefresh),
       client.onProjectTaskChanged(scheduleRefresh),

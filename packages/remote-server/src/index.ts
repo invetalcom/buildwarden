@@ -4,6 +4,9 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { extname, resolve, sep } from "node:path";
 import type { Duplex } from "node:stream";
+import { StringDecoder } from "node:string_decoder";
+import { promisify } from "node:util";
+import { brotliCompress, constants as zlibConstants, gzip } from "node:zlib";
 import WebSocket, { WebSocketServer, type RawData } from "ws";
 import {
   DEFAULT_REMOTE_ACCESS_PORT,
@@ -38,6 +41,7 @@ import {
   type RemoteRpcRequest,
   type RemoteRpcResponse,
   type RemoteStreamEvent,
+  type RemoteStreamEventPayloadMap,
   type RemoteStreamEventType,
   type RemoteWebSocketClientMessage,
   type RemoteWebSocketServerMessage,
@@ -71,6 +75,13 @@ const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
 const MAX_BROWSER_RUN_FILTERS = 8;
 const MAX_WEBSOCKET_BACKPRESSURE_BYTES = 1_048_576;
+const MIN_COMPRESSIBLE_WEBSOCKET_BYTES = 512;
+const MIN_COMPRESSIBLE_RESPONSE_BYTES = 1_024;
+const MAX_REMOTE_LIVE_TOOL_CONTENT_BYTES = 2_048;
+const MAX_REMOTE_LIVE_METADATA_STRING_BYTES = 8_192;
+const MAX_STATIC_COMPRESSION_CACHE_BYTES = 64 * 1_024 * 1_024;
+const gzipAsync = promisify(gzip);
+const brotliCompressAsync = promisify(brotliCompress);
 
 const STATIC_CONTENT_TYPES: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
@@ -85,7 +96,11 @@ const STATIC_CONTENT_TYPES: Record<string, string> = {
   ".webp": "image/webp",
   ".woff": "font/woff",
   ".woff2": "font/woff2",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
 };
+
+const COMPRESSIBLE_STATIC_EXTENSIONS = new Set([".css", ".html", ".js", ".json", ".svg", ".webmanifest"]);
+const HASHED_STATIC_ASSET_PATTERN = /^assets\/.+-[A-Za-z0-9_-]{6,}\.[^/]+$/;
 
 type RemoteOperationHandler<Method extends RemoteApiMethod> = (
   ...args: RemoteApiMethodArgs<Method>
@@ -586,20 +601,82 @@ const parseRemoteRpcRequest = (payload: unknown): ParsedRemoteRpcRequest => {
   };
 };
 
+type HttpContentEncoding = "br" | "gzip";
+
+const acceptedContentEncoding = (header: string | string[] | undefined): HttpContentEncoding | null => {
+  const raw = Array.isArray(header) ? header.join(",") : (header ?? "");
+  const qualities = new Map<string, number>();
+  for (const token of raw.split(",")) {
+    const [namePart, ...parameters] = token.trim().toLowerCase().split(";");
+    const name = namePart?.trim();
+    if (!name) continue;
+    let quality = 1;
+    for (const parameter of parameters) {
+      const match = /^q\s*=\s*(0(?:\.\d+)?|1(?:\.0+)?)$/.exec(parameter.trim());
+      if (match) quality = Number(match[1]);
+    }
+    qualities.set(name, Math.max(qualities.get(name) ?? 0, quality));
+  }
+  const wildcardQuality = qualities.get("*") ?? 0;
+  const brotliQuality = qualities.get("br") ?? wildcardQuality;
+  const gzipQuality = qualities.get("gzip") ?? wildcardQuality;
+  if (brotliQuality <= 0 && gzipQuality <= 0) return null;
+  return brotliQuality >= gzipQuality ? "br" : "gzip";
+};
+
+const appendVaryHeader = (response: ServerResponse, value: string): string => {
+  const existing = response.getHeader("Vary");
+  const values = (Array.isArray(existing) ? existing.join(",") : String(existing ?? ""))
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (!values.some((entry) => entry.toLowerCase() === value.toLowerCase())) values.push(value);
+  return values.join(", ");
+};
+
+const compressBody = async (body: Buffer, encoding: HttpContentEncoding): Promise<Buffer> =>
+  encoding === "br"
+    ? brotliCompressAsync(body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 5 } })
+    : gzipAsync(body, { level: 6 });
+
 const writeJson = (
   response: ServerResponse,
   statusCode: number,
   body: unknown,
   extraHeaders: Record<string, string> = {},
 ): void => {
-  response.writeHead(statusCode, {
+  const serialized = Buffer.from(JSON.stringify(body));
+  const baseHeaders: Record<string, string> = {
     "Cache-Control": "no-store",
     "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
     "Content-Type": "application/json; charset=utf-8",
     "X-Content-Type-Options": "nosniff",
     ...extraHeaders,
+  };
+  const encoding = serialized.byteLength >= MIN_COMPRESSIBLE_RESPONSE_BYTES
+    ? acceptedContentEncoding(response.req.headers["accept-encoding"])
+    : null;
+  if (!encoding) {
+    response.writeHead(statusCode, { ...baseHeaders, "Content-Length": String(serialized.byteLength) });
+    response.end(serialized);
+    return;
+  }
+
+  void compressBody(serialized, encoding).then((compressed) => {
+    if (response.destroyed) return;
+    const useCompressed = compressed.byteLength < serialized.byteLength;
+    response.writeHead(statusCode, {
+      ...baseHeaders,
+      "Content-Length": String(useCompressed ? compressed.byteLength : serialized.byteLength),
+      "Vary": appendVaryHeader(response, "Accept-Encoding"),
+      ...(useCompressed ? { "Content-Encoding": encoding } : {}),
+    });
+    response.end(useCompressed ? compressed : serialized);
+  }).catch(() => {
+    if (response.destroyed) return;
+    response.writeHead(statusCode, { ...baseHeaders, "Content-Length": String(serialized.byteLength) });
+    response.end(serialized);
   });
-  response.end(JSON.stringify(body));
 };
 
 const normalizedRequestOrigin = (originHeader: string | undefined): string | null => {
@@ -701,6 +778,7 @@ const writeStaticResponse = (
   contentLength: number,
   body: Buffer | undefined,
   cacheControl: string,
+  contentEncoding?: HttpContentEncoding,
 ): void => {
   response.writeHead(statusCode, {
     "Cache-Control": cacheControl,
@@ -718,6 +796,7 @@ const writeStaticResponse = (
     ].join("; "),
     "Content-Length": String(contentLength),
     "Content-Type": contentType,
+    ...(contentEncoding ? { "Content-Encoding": contentEncoding, "Vary": appendVaryHeader(response, "Accept-Encoding") } : {}),
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -984,6 +1063,95 @@ const validateServerMessage = (message: RemoteWebSocketServerMessage): boolean =
   return message.type === "pong" || (message.type === "error" && typeof message.message === "string");
 };
 
+/** Browser frames already contain JPEG bytes encoded as base64; recompressing them is CPU-heavy with negligible gain. */
+export const shouldCompressRemoteWebSocketMessage = (message: RemoteWebSocketServerMessage): boolean =>
+  message.type !== "event" || message.event !== "browser" ||
+  (message.payload as RemoteStreamEventPayloadMap["browser"]).type !== "frame";
+
+const REMOTE_INTERNAL_METADATA_KEYS = new Set(["providerSessionRuntime", "resumeCheckpoint"]);
+
+const truncateRemoteLiveText = (value: string, maximumBytes: number): string => {
+  const encoded = Buffer.from(value, "utf8");
+  if (encoded.byteLength <= maximumBytes) return value;
+  const suffix = "\n\n… live preview truncated; full content is available after refresh.";
+  const keepBytes = Math.max(0, maximumBytes - Buffer.byteLength(suffix));
+  const head = new StringDecoder("utf8").write(encoded.subarray(0, keepBytes));
+  return `${head}${suffix}`;
+};
+
+const projectRemoteMetadata = (metadata: Record<string, unknown> | undefined): Record<string, unknown> | undefined => {
+  if (!metadata) return undefined;
+  const projected: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    if (REMOTE_INTERNAL_METADATA_KEYS.has(key) || key === "attachments") continue;
+    projected[key] = typeof value === "string"
+      ? truncateRemoteLiveText(value, MAX_REMOTE_LIVE_METADATA_STRING_BYTES)
+      : value;
+  }
+  if (Array.isArray(metadata.attachments)) {
+    const attachmentNames = metadata.attachments.flatMap((attachment) =>
+      isPlainObject(attachment) && typeof attachment.fileName === "string" && attachment.fileName.trim()
+        ? [attachment.fileName.trim()]
+        : []);
+    if (attachmentNames.length > 0) projected.attachmentNames = attachmentNames;
+  }
+  return projected;
+};
+
+const projectRemoteStep = <Step extends { eventType: string; content: string; metadataJson: string }>(step: Step): Step => {
+  let metadata: Record<string, unknown> | undefined;
+  try {
+    const parsed = JSON.parse(step.metadataJson || "{}") as unknown;
+    metadata = isPlainObject(parsed) ? parsed : undefined;
+  } catch {
+    metadata = undefined;
+  }
+  const shouldLimitContent = step.eventType === "tool-result" || step.eventType === "tool-progress";
+  return {
+    ...step,
+    content: shouldLimitContent
+      ? truncateRemoteLiveText(step.content, MAX_REMOTE_LIVE_TOOL_CONTENT_BYTES)
+      : step.content,
+    metadataJson: JSON.stringify(projectRemoteMetadata(metadata) ?? {}),
+  };
+};
+
+/**
+ * Removes host-only and duplicated data from live remote events. Persisted records and desktop IPC
+ * remain lossless; remote clients retrieve the complete detail on terminal events and reconnect.
+ */
+export const projectRemoteStreamEvent = (event: RemoteStreamEvent): RemoteStreamEvent => {
+  if (event.event === "run") {
+    const payload = event.payload;
+    if (!payload.step) return event;
+    const { run: _run, ...withoutRun } = payload;
+    return {
+      event: "run",
+      payload: {
+        ...withoutRun,
+        content: "",
+        metadata: projectRemoteMetadata(payload.metadata),
+        step: projectRemoteStep(payload.step),
+      },
+    };
+  }
+  if (event.event === "chat") {
+    const payload = event.payload;
+    if (!payload.step) return event;
+    const { chat: _chat, ...withoutChat } = payload;
+    return {
+      event: "chat",
+      payload: {
+        ...withoutChat,
+        content: "",
+        metadata: projectRemoteMetadata(payload.metadata),
+        step: projectRemoteStep(payload.step),
+      },
+    };
+  }
+  return event;
+};
+
 const rejectUpgrade = (socket: Duplex, statusCode: number, statusText: string, message: string): void => {
   const body = JSON.stringify({ error: message });
   socket.write([
@@ -1006,6 +1174,8 @@ export class RemoteAccessServer {
   private stopPromise: Promise<void> | null = null;
   private readonly pairingAttempts = new Map<string, number[]>();
   private sequence = 0;
+  private readonly staticCompressionCache = new Map<string, Buffer>();
+  private staticCompressionCacheBytes = 0;
 
   constructor(private readonly options: RemoteAccessServerOptions) {}
 
@@ -1050,7 +1220,18 @@ export class RemoteAccessServer {
         }
       });
     });
-    const webSocketServer = new WebSocketServer({ noServer: true, clientTracking: true, maxPayload: MAX_WEBSOCKET_MESSAGE_BYTES });
+    const webSocketServer = new WebSocketServer({
+      noServer: true,
+      clientTracking: true,
+      maxPayload: MAX_WEBSOCKET_MESSAGE_BYTES,
+      perMessageDeflate: {
+        clientNoContextTakeover: true,
+        concurrencyLimit: 4,
+        serverNoContextTakeover: true,
+        threshold: MIN_COMPRESSIBLE_WEBSOCKET_BYTES,
+        zlibDeflateOptions: { level: 3 },
+      },
+    });
     webSocketServer.on("error", (error) => this.options.onServerError?.(error));
     server.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket, head, webSocketServer, startedAt));
 
@@ -1207,7 +1388,12 @@ export class RemoteAccessServer {
     }
 
     if ((request.method === "GET" || request.method === "HEAD") && !url.pathname.startsWith("/api/")) {
-      if (await this.serveStaticAsset(url.pathname, response, request.method === "HEAD")) {
+      if (await this.serveStaticAsset(
+        url.pathname,
+        response,
+        request.method === "HEAD",
+        request.headers["accept-encoding"],
+      )) {
         return;
       }
       writeJson(response, 404, { error: "Web application asset not found." });
@@ -1331,7 +1517,37 @@ export class RemoteAccessServer {
     return true;
   }
 
-  private async serveStaticAsset(pathname: string, response: ServerResponse, headOnly: boolean): Promise<boolean> {
+  private async compressedStaticBody(
+    cacheKey: string,
+    body: Buffer,
+    encoding: HttpContentEncoding,
+  ): Promise<Buffer | null> {
+    const cached = this.staticCompressionCache.get(cacheKey);
+    if (cached) {
+      this.staticCompressionCache.delete(cacheKey);
+      this.staticCompressionCache.set(cacheKey, cached);
+      return cached;
+    }
+    const compressed = await compressBody(body, encoding);
+    if (compressed.byteLength >= body.byteLength) return null;
+    this.staticCompressionCache.set(cacheKey, compressed);
+    this.staticCompressionCacheBytes += compressed.byteLength;
+    while (this.staticCompressionCacheBytes > MAX_STATIC_COMPRESSION_CACHE_BYTES) {
+      const oldestKey = this.staticCompressionCache.keys().next().value as string | undefined;
+      if (!oldestKey) break;
+      const removed = this.staticCompressionCache.get(oldestKey);
+      this.staticCompressionCache.delete(oldestKey);
+      this.staticCompressionCacheBytes -= removed?.byteLength ?? 0;
+    }
+    return compressed;
+  }
+
+  private async serveStaticAsset(
+    pathname: string,
+    response: ServerResponse,
+    headOnly: boolean,
+    acceptEncoding: string | string[] | undefined,
+  ): Promise<boolean> {
     if (!this.options.staticRoot) {
       return false;
     }
@@ -1352,15 +1568,27 @@ export class RemoteAccessServer {
       if (!fileStat.isFile()) {
         return false;
       }
-      const body = headOnly ? undefined : await readFile(candidate);
+      const sourceBody = await readFile(candidate);
       const extension = extname(candidate).toLowerCase();
+      const requestedEncoding = sourceBody.byteLength >= MIN_COMPRESSIBLE_RESPONSE_BYTES && COMPRESSIBLE_STATIC_EXTENSIONS.has(extension)
+        ? acceptedContentEncoding(acceptEncoding)
+        : null;
+      const compressedBody = requestedEncoding
+        ? await this.compressedStaticBody(
+            `${candidate}:${String(fileStat.mtimeMs)}:${String(fileStat.size)}:${requestedEncoding}`,
+            sourceBody,
+            requestedEncoding,
+          )
+        : null;
+      const responseBody = compressedBody ?? sourceBody;
       writeStaticResponse(
         response,
         200,
         STATIC_CONTENT_TYPES[extension] ?? "application/octet-stream",
-        body?.byteLength ?? fileStat.size,
-        body,
-        relativePath === "index.html" ? "no-store" : "public, max-age=31536000, immutable",
+        responseBody.byteLength,
+        headOnly ? undefined : responseBody,
+        HASHED_STATIC_ASSET_PATTERN.test(relativePath) ? "public, max-age=31536000, immutable" : "no-cache",
+        compressedBody ? requestedEncoding ?? undefined : undefined,
       );
       return true;
     } catch {
@@ -1447,12 +1675,13 @@ export class RemoteAccessServer {
         socket.close(1008, "Session is no longer authorized");
         return;
       }
+      const projectedEvent = projectRemoteStreamEvent(event);
       this.sendWebSocketMessage(socket, {
         protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
         type: "event",
         sequence: ++this.sequence,
-        event: event.event,
-        payload: event.payload,
+        event: projectedEvent.event,
+        payload: projectedEvent.payload,
       });
     });
     const authenticationTimer = connection.token ? null : setTimeout(() => {
@@ -1705,7 +1934,7 @@ export class RemoteAccessServer {
       return;
     }
     if (socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify(message));
+      socket.send(JSON.stringify(message), { compress: shouldCompressRemoteWebSocketMessage(message) });
     }
   }
 }

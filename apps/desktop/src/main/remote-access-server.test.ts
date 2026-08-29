@@ -8,6 +8,8 @@ import {
   RemoteAccessServer,
   RemoteAuthService,
   RemoteOperationRegistry,
+  projectRemoteStreamEvent,
+  shouldCompressRemoteWebSocketMessage,
   validateNoRemoteArgs,
   type RemoteAccessServerOptions,
   type RemoteHostEventSource,
@@ -24,6 +26,7 @@ import {
   type RemoteAccessPairingInput,
   type RemoteApiMethod,
   type RemoteStreamEvent,
+  type RemoteWebSocketServerMessage,
   type RunBrowserInput,
 } from "@buildwarden/shared";
 import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
@@ -38,6 +41,15 @@ const emptySnapshot = {
   chatBookmarks: [],
   settings: {},
 } as unknown as AppSnapshot;
+
+/** Fixed ceilings for deliberately repetitive fixtures, guarding the remote transport against regressions. */
+const REMOTE_TRANSFER_BUDGETS = {
+  brotliJsonRatio: 0.02,
+  gzipJsonRatio: 0.02,
+  brotliStaticRatio: 0.02,
+  projectedLiveEventBytes: 4_096,
+  projectedLiveEventRatio: 0.05,
+} as const;
 
 const startedServers: RemoteAccessServer[] = [];
 const databases: Array<{ db: BuildWardenDatabase; directory: string }> = [];
@@ -454,11 +466,12 @@ describe("remote access authentication", () => {
     trustedWebOrigins?: () => readonly string[],
     webSocketAuthenticationTimeoutMs?: number,
     browserOptions: Pick<RemoteAccessServerOptions, "onBrowserInput" | "onBrowserSubscriptionChange" | "onServerError"> = {},
+    snapshot: AppSnapshot = emptySnapshot,
   ) => {
     const db = await createDatabase();
     const auth = new RemoteAuthService({ store: db, credentialKey: new Uint8Array(32).fill(7) });
     const operations = new RemoteOperationRegistry();
-    operations.register("getSnapshot", async () => emptySnapshot, validateNoRemoteArgs);
+    operations.register("getSnapshot", async () => snapshot, validateNoRemoteArgs);
     let publishEvent: (event: RemoteStreamEvent) => void = () => undefined;
     const events: RemoteHostEventSource = {
       subscribe(listener) {
@@ -652,24 +665,39 @@ describe("remote access authentication", () => {
     temporaryDirectories.push(directory);
     await mkdir(join(directory, "assets"), { recursive: true });
     await writeFile(join(directory, "index.html"), "<!doctype html><title>BuildWarden Remote</title>", "utf8");
-    await writeFile(join(directory, "assets", "app.js"), "console.log('remote');", "utf8");
+    const assetBody = "console.log('compressible remote asset');\n".repeat(4_000);
+    await writeFile(join(directory, "assets", "app-ABC12345.js"), assetBody, "utf8");
+    await writeFile(join(directory, "manifest.webmanifest"), "{\"name\":\"BuildWarden\"}", "utf8");
     const { info } = await startServer(directory);
 
     const indexResponse = await fetch(`${info.baseUrl}/`);
     expect(indexResponse.status).toBe(200);
     expect(indexResponse.headers.get("content-security-policy")).toContain("default-src 'self'");
-    expect(indexResponse.headers.get("cache-control")).toBe("no-store");
+    expect(indexResponse.headers.get("cache-control")).toBe("no-cache");
     await expect(indexResponse.text()).resolves.toContain("BuildWarden Remote");
 
-    const assetResponse = await fetch(`${info.baseUrl}/assets/app.js`);
+    const assetResponse = await fetch(`${info.baseUrl}/assets/app-ABC12345.js`, { headers: { "Accept-Encoding": "br" } });
     expect(assetResponse.status).toBe(200);
     expect(assetResponse.headers.get("content-type")).toContain("text/javascript");
     expect(assetResponse.headers.get("cache-control")).toContain("immutable");
+    expect(assetResponse.headers.get("content-encoding")).toBe("br");
+    expect(assetResponse.headers.get("vary")).toContain("Accept-Encoding");
+    expect(Number(assetResponse.headers.get("content-length"))).toBeLessThanOrEqual(
+      Buffer.byteLength(assetBody) * REMOTE_TRANSFER_BUDGETS.brotliStaticRatio,
+    );
+    await expect(assetResponse.text()).resolves.toBe(assetBody);
 
-    const headResponse = await fetch(`${info.baseUrl}/assets/app.js`, { method: "HEAD" });
+    const headResponse = await fetch(`${info.baseUrl}/assets/app-ABC12345.js`, {
+      method: "HEAD",
+      headers: { "Accept-Encoding": "identity" },
+    });
     expect(headResponse.status).toBe(200);
-    expect(headResponse.headers.get("content-length")).toBe(String(Buffer.byteLength("console.log('remote');")));
+    expect(headResponse.headers.get("content-length")).toBe(String(Buffer.byteLength(assetBody)));
     await expect(headResponse.text()).resolves.toBe("");
+
+    const manifestResponse = await fetch(`${info.baseUrl}/manifest.webmanifest`);
+    expect(manifestResponse.headers.get("content-type")).toContain("application/manifest+json");
+    expect(manifestResponse.headers.get("cache-control")).toBe("no-cache");
 
     const sessionResponse = await fetch(`${info.baseUrl}${REMOTE_ACCESS_SESSION_PATH}`);
     expect(sessionResponse.status).toBe(401);
@@ -758,6 +786,44 @@ describe("remote access authentication", () => {
     await expect(response.json()).resolves.toMatchObject({ ok: false, error: { code: "invalid-request" } });
   });
 
+  it("compresses large JSON RPC responses with negotiated Brotli or gzip", async () => {
+    const largeSnapshot = {
+      ...emptySnapshot,
+      settings: { largeFixture: "compressible-buildwarden-data-".repeat(8_000) },
+    } satisfies AppSnapshot;
+    const { auth, info } = await startServer(undefined, undefined, undefined, undefined, {}, largeSnapshot);
+    const { cookie } = await pair(info.baseUrl, auth);
+    const fetchSnapshot = (acceptEncoding: string) => fetch(`${info.baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
+      method: "POST",
+      headers: {
+        "Accept-Encoding": acceptEncoding,
+        "Content-Type": "application/json",
+        Cookie: cookie,
+      },
+      body: rpcBody(`compression-${acceptEncoding.replace(/\W/g, "-")}`),
+    });
+
+    const identity = await fetchSnapshot("identity");
+    const gzipResponse = await fetchSnapshot("gzip");
+    const brotliResponse = await fetchSnapshot("br, gzip;q=0.8");
+    const refused = await fetchSnapshot("br;q=0, gzip;q=0");
+
+    expect(identity.headers.get("content-encoding")).toBeNull();
+    expect(gzipResponse.headers.get("content-encoding")).toBe("gzip");
+    expect(brotliResponse.headers.get("content-encoding")).toBe("br");
+    expect(refused.headers.get("content-encoding")).toBeNull();
+    expect(gzipResponse.headers.get("vary")).toContain("Accept-Encoding");
+    const identityBytes = Number(identity.headers.get("content-length"));
+    expect(Number(gzipResponse.headers.get("content-length"))).toBeLessThanOrEqual(
+      identityBytes * REMOTE_TRANSFER_BUDGETS.gzipJsonRatio,
+    );
+    expect(Number(brotliResponse.headers.get("content-length"))).toBeLessThanOrEqual(
+      identityBytes * REMOTE_TRANSFER_BUDGETS.brotliJsonRatio,
+    );
+    expect(Number(brotliResponse.headers.get("content-length"))).toBeLessThan(Number(gzipResponse.headers.get("content-length")));
+    await expect(brotliResponse.json()).resolves.toMatchObject({ ok: true, result: largeSnapshot });
+  });
+
   it("separates malformed and oversized request bodies from internal failures", async () => {
     const { auth, info } = await startServer();
     const { cookie } = await pair(info.baseUrl, auth);
@@ -830,6 +896,7 @@ describe("remote access authentication", () => {
       socket.addEventListener("open", () => resolve(), { once: true });
       socket.addEventListener("error", () => reject(new Error("WebSocket connection failed.")), { once: true });
     });
+    expect(socket.extensions).toContain("permessage-deflate");
     await expect(hello).resolves.toMatchObject({ type: "hello", protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION });
 
     const subscribed = new Promise<Record<string, unknown>>((resolve) => {
@@ -957,6 +1024,128 @@ describe("remote access authentication", () => {
       code: "forbidden",
     });
     socket.close();
+  });
+
+  it("keeps WebSocket compression optional and skips already-compressed browser frames", async () => {
+    const { auth, info } = await startServer();
+    const { cookie } = await pair(info.baseUrl, auth);
+    const socket = new WebSocket(
+      `${info.baseUrl.replace("http://", "ws://")}${REMOTE_ACCESS_WEBSOCKET_PATH}?protocolVersion=${String(REMOTE_ACCESS_PROTOCOL_VERSION)}`,
+      { headers: { Cookie: cookie }, perMessageDeflate: false },
+    );
+    await new Promise<void>((resolve, reject) => {
+      socket.addEventListener("open", () => resolve(), { once: true });
+      socket.addEventListener("error", () => reject(new Error("WebSocket connection failed.")), { once: true });
+    });
+    expect(socket.extensions).toBe("");
+    socket.close();
+
+    const frameMessage = {
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "event",
+      sequence: 1,
+      event: "browser",
+      payload: {
+        type: "frame",
+        runId: "run-1",
+        frame: { runId: "run-1", sequence: 1, width: 1280, height: 720, mimeType: "image/jpeg", dataBase64: "jpeg" },
+      },
+    } satisfies RemoteWebSocketServerMessage;
+    const runMessage = {
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "event",
+      sequence: 2,
+      event: "run",
+      payload: { runId: "run-1", type: "output", title: "Output", content: "text", createdAt: new Date().toISOString() },
+    } satisfies RemoteWebSocketServerMessage;
+    expect(shouldCompressRemoteWebSocketMessage(frameMessage)).toBe(false);
+    expect(shouldCompressRemoteWebSocketMessage(runMessage)).toBe(true);
+  });
+
+  it("projects durable live steps without leaking duplicate or host-only payloads", () => {
+    const hugeToolOutput = "tool-output-line\n".repeat(10_000);
+    const fullEvent = {
+      event: "run",
+      payload: {
+        runId: "run-1",
+        type: "tool-result",
+        title: "Shell result",
+        content: hugeToolOutput,
+        metadata: {
+          toolName: "run_shell",
+          providerSessionRuntime: { resumeCursor: "private-host-cursor" },
+          resumeCheckpoint: { messages: [hugeToolOutput] },
+        },
+        createdAt: "2026-08-28T12:00:00.000Z",
+        run: { id: "run-1", prompt: "duplicated run row" },
+        step: {
+          id: "step-1",
+          runId: "run-1",
+          eventType: "tool-result",
+          title: "Shell result",
+          content: hugeToolOutput,
+          metadataJson: JSON.stringify({
+            toolName: "run_shell",
+            command: "pnpm test",
+            attachments: [{ fileName: "trace.txt", mimeType: "text/plain", dataBase64: hugeToolOutput }],
+            providerSessionRuntime: { resumeCursor: "private-host-cursor" },
+            resumeCheckpoint: { messages: [hugeToolOutput] },
+          }),
+          createdAt: "2026-08-28T12:00:00.000Z",
+        },
+      },
+    } as unknown as RemoteStreamEvent;
+
+    const projected = projectRemoteStreamEvent(fullEvent);
+    expect(projected.event).toBe("run");
+    if (projected.event !== "run") throw new Error("Expected a run event.");
+    expect(projected.payload).not.toHaveProperty("run");
+    expect(projected.payload.content).toBe("");
+    expect(projected.payload.metadata).toEqual({ toolName: "run_shell" });
+    expect(projected.payload.step?.content).toContain("live preview truncated");
+    expect(Buffer.byteLength(projected.payload.step?.content ?? "")).toBeLessThanOrEqual(2_048);
+    expect(JSON.parse(projected.payload.step?.metadataJson ?? "{}") as unknown).toEqual({
+      toolName: "run_shell",
+      command: "pnpm test",
+      attachmentNames: ["trace.txt"],
+    });
+    const projectedBytes = Buffer.byteLength(JSON.stringify(projected));
+    const fullBytes = Buffer.byteLength(JSON.stringify(fullEvent));
+    expect(projectedBytes).toBeLessThanOrEqual(REMOTE_TRANSFER_BUDGETS.projectedLiveEventBytes);
+    expect(projectedBytes).toBeLessThanOrEqual(fullBytes * REMOTE_TRANSFER_BUDGETS.projectedLiveEventRatio);
+
+    const unicodeContent = "😀".repeat(5_000);
+    const unicodeEvent = {
+      ...fullEvent,
+      payload: {
+        ...projected.payload,
+        content: unicodeContent,
+        step: { ...projected.payload.step!, content: unicodeContent },
+      },
+    } as RemoteStreamEvent;
+    const unicodeProjected = projectRemoteStreamEvent(unicodeEvent);
+    if (unicodeProjected.event !== "run") throw new Error("Expected a run event.");
+    const unicodePreview = unicodeProjected.payload.step?.content ?? "";
+    const unicodeHead = unicodePreview.split("\n\n…", 1)[0] ?? "";
+    expect(Buffer.byteLength(unicodePreview)).toBeLessThanOrEqual(2_048);
+    expect(unicodeHead).not.toContain("�");
+    expect([...unicodeHead].every((character) => character === "😀")).toBe(true);
+  });
+
+  it("keeps authoritative run rows on non-step events", () => {
+    const terminalEvent = {
+      event: "run",
+      payload: {
+        runId: "run-1",
+        type: "status",
+        title: "Run completed",
+        content: "Run completed successfully.",
+        createdAt: "2026-08-28T12:00:00.000Z",
+        run: { id: "run-1", status: "completed" },
+      },
+    } as unknown as RemoteStreamEvent;
+
+    expect(projectRemoteStreamEvent(terminalEvent)).toBe(terminalEvent);
   });
 
   it("filters browser events by run and validates scoped browser input", async () => {

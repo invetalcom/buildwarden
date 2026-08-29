@@ -1852,6 +1852,10 @@ export interface RunEvent {
   content: string;
   metadata?: Record<string, unknown>;
   createdAt: string;
+  /** Latest durable run summary, allowing remote clients to patch list state without a full snapshot reload. */
+  run?: RunRecord;
+  /** Inserted or updated durable step for incremental remote detail synchronization. */
+  step?: RunStepRecord;
 }
 
 export interface ProjectSnapshot {
@@ -3437,6 +3441,14 @@ export interface ChatDetail {
   steps: ChatStepRecord[];
 }
 
+export type ChatEvent = Omit<RunEvent, "run" | "step"> & {
+  chatId: string;
+  /** Latest durable chat summary for incremental list synchronization. */
+  chat?: ChatRecord;
+  /** Inserted or updated durable chat step for incremental detail synchronization. */
+  step?: ChatStepRecord;
+};
+
 export interface ChatInput {
   providerAccountId: string;
   modelId: string;
@@ -3983,7 +3995,7 @@ export interface DesktopApi {
   listChatsWithSteps(): Promise<ChatDetail[]>;
   deleteChat(chatId: string): Promise<void>;
   cancelChat(chatId: string): Promise<void>;
-  onChatEvent(listener: (event: RunEvent & { chatId: string }) => void): () => void;
+  onChatEvent(listener: (event: ChatEvent) => void): () => void;
 
   /** Spawn an embedded PTY in the run worktree (see {@link IPC_CHANNELS.runTerminalData}). */
   runTerminalStart(input: RunTerminalStartInput): Promise<RunTerminalStartResult>;
@@ -4077,7 +4089,7 @@ export type RemoteStreamEventType =
 
 export interface RemoteStreamEventPayloadMap {
   run: RunEvent;
-  chat: RunEvent & { chatId: string };
+  chat: ChatEvent;
   warning: AppWarning;
   loop: ProjectLoopChangedPayload;
   task: ProjectTaskChangedPayload;

@@ -112,9 +112,11 @@ import {
   type BookmarkRecord,
   type ChatBookmarkRecord,
   type ChatDetail,
+  type ChatEvent,
   type ChatAttachmentPayload,
   type ChatInput,
   type ChatRecord,
+  type ChatStepRecord,
   RUN_CHAT_CONTEXT_SOURCE,
   type RunChatInput,
   type ContinueRunInput,
@@ -215,6 +217,7 @@ import {
   type RunDiffReviewOptions,
   type RunDiffReviewResult,
   type RunEvent,
+  type RunStepRecord,
   type AppWarning,
   type RunWorktreeDiffResult,
   type RunWorktreeDiffSummary,
@@ -2323,7 +2326,7 @@ export class AppController
     await active.worker.terminate();
   }
 
-  onChatEvent(listener: (event: RunEvent & { chatId: string }) => void): () => void {
+  onChatEvent(listener: (event: ChatEvent) => void): () => void {
     return this.events.subscribe("chat", listener);
   }
 
@@ -9100,8 +9103,18 @@ export class AppController
       },
     });
 
-    this.db.updateRunStatus(run.id, "running");
+    const runningRun = this.db.updateRunStatus(run.id, "running");
     this.updateWorktreeStatus(run, "busy");
+    // Step events intentionally omit their full run row on the remote wire. Publish the status
+    // transition separately so every client observes preparing -> running without bloating chunks.
+    this.emitEvent({
+      runId: run.id,
+      type: "status",
+      title: "Run started",
+      content: "The agent is running.",
+      createdAt: new Date().toISOString(),
+      run: runningRun,
+    });
 
     worker.on("message", async (message: unknown) => {
       const payload = message as
@@ -9327,10 +9340,11 @@ export class AppController
           resetNarrationStreams();
         }
 
+        let persistedStep: RunStepRecord | undefined;
         if (shouldReplace) {
           const existingStepId = streamingStepIds.get(streamId);
           if (existingStepId) {
-            this.db.updateRunStep(existingStepId, {
+            persistedStep = this.db.updateRunStep(existingStepId, {
               title: payload.chunk.title ?? this.defaultRunEventTitle(eventType),
               content: payload.chunk.value,
               metadataJson: JSON.stringify(payload.chunk.metadata ?? {}),
@@ -9344,6 +9358,7 @@ export class AppController
               payload.chunk.metadata,
             );
             streamingStepIds.set(streamId, step.id);
+            persistedStep = step;
             let streamingStepKind: "tool-result" | "tool-progress" | "assistant" | "reasoning" =
               payload.chunk.metadata?.assistantKind === "reasoning" ? "reasoning" : "assistant";
             if (payload.chunk.type === "tool-result" || payload.chunk.type === "tool-progress") {
@@ -9352,7 +9367,7 @@ export class AppController
             streamingStepKinds.set(streamId, streamingStepKind);
           }
         } else {
-          await this.appendRunEvent(
+          persistedStep = await this.appendRunEvent(
             run.id,
             eventType,
             payload.chunk.title ?? this.defaultRunEventTitle(eventType),
@@ -9367,6 +9382,7 @@ export class AppController
           content: payload.chunk.value,
           metadata: payload.chunk.metadata,
           createdAt: new Date().toISOString(),
+          step: persistedStep,
         });
         return;
       }
@@ -9979,11 +9995,11 @@ export class AppController
   }
 
   private emitEvent(event: RunEvent): void {
-    this.events.publish("run", event);
+    this.events.publish("run", { ...event, run: event.run ?? this.db.getRun(event.runId) });
   }
 
-  private emitChatEvent(chatId: string, event: RunEvent): void {
-    this.events.publish("chat", { ...event, chatId });
+  private emitChatEvent(chatId: string, event: Omit<ChatEvent, "chat" | "chatId">): void {
+    this.events.publish("chat", { ...event, chatId, chat: this.db.getChat(chatId) });
   }
 
   private upsertProviderSessionRuntime(
@@ -10015,7 +10031,7 @@ export class AppController
     title: string,
     content: string,
     metadata?: Record<string, unknown>,
-  ): Promise<{ id: string }> {
+  ): Promise<ChatStepRecord> {
     return this.db.appendChatEvent(chatId, eventType, title, content, metadata);
   }
 
@@ -10072,10 +10088,11 @@ export class AppController
       : null;
     const shouldReplace = replaceableChunk && payload.chunk.metadata?.replace === true && streamId;
 
+    let persistedStep: ChatStepRecord;
     if (shouldReplace) {
       const existingStepId = streamingStepIds.get(streamId);
       if (existingStepId) {
-        this.db.updateChatStep(existingStepId, {
+        persistedStep = this.db.updateChatStep(existingStepId, {
           title: payload.chunk.title ?? "Agent output",
           content: payload.chunk.value,
           metadataJson: JSON.stringify(payload.chunk.metadata ?? {}),
@@ -10083,9 +10100,10 @@ export class AppController
       } else {
         const step = await this.appendChatEvent(chat.id, eventType, payload.chunk.title ?? "Agent output", payload.chunk.value, payload.chunk.metadata);
         streamingStepIds.set(streamId, step.id);
+        persistedStep = step;
       }
     } else {
-      await this.appendChatEvent(chat.id, eventType, payload.chunk.title ?? "Agent output", payload.chunk.value, payload.chunk.metadata);
+      persistedStep = await this.appendChatEvent(chat.id, eventType, payload.chunk.title ?? "Agent output", payload.chunk.value, payload.chunk.metadata);
     }
     this.emitChatEvent(chat.id, {
       runId: chat.id,
@@ -10094,6 +10112,7 @@ export class AppController
       content: payload.chunk.value,
       metadata: payload.chunk.metadata,
       createdAt: new Date().toISOString(),
+      step: persistedStep,
     });
   }
 
@@ -10142,6 +10161,14 @@ export class AppController
     });
 
     this.db.updateChatStatus(chat.id, "running");
+    // As with runs, keep streamed steps slim while sending the authoritative status transition once.
+    this.emitChatEvent(chat.id, {
+      runId: chat.id,
+      type: "status",
+      title: "Chat started",
+      content: "The assistant is responding.",
+      createdAt: new Date().toISOString(),
+    });
 
     worker.on("message", async (message: unknown) => {
       const payload = message as ChatWorkerPayload;

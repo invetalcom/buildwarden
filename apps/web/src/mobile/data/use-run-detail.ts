@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { RunDetail, RunWorktreeDiffResult } from "@buildwarden/shared";
+import type { RunDetail, RunEvent, RunWorktreeDiffResult } from "@buildwarden/shared";
 import type { BuildWardenClient } from "@buildwarden/renderer";
+import { applyLiveRunEventToDetail } from "@buildwarden/renderer/logic";
 import { errorMessage } from "../lib/format";
 
 const RELOAD_DEBOUNCE_MS = 400;
@@ -38,12 +39,19 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
   // link the previous run's response can easily land after the new one's, so every write is gated
   // on still being the newest request.
   const loadRequestRef = useRef(0);
+  const activeLoadRequestRef = useRef<number | null>(null);
+  const liveEventRevisionRef = useRef(0);
+  const recentLiveEventsRef = useRef<Array<{ revision: number; event: RunEvent }>>([]);
   const diffRequestRef = useRef(0);
   const forgeProbeRunIdRef = useRef<string | null>(null);
 
   const load = useCallback(async (silent: boolean) => {
     const requestId = ++loadRequestRef.current;
+    activeLoadRequestRef.current = requestId;
+    const revisionAtStart = liveEventRevisionRef.current;
     if (!runId) {
+      recentLiveEventsRef.current = [];
+      activeLoadRequestRef.current = null;
       setDetail(null);
       setLoading(false);
       return;
@@ -52,12 +60,18 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
     try {
       const next = await client.getRunDetail(runId);
       if (loadRequestRef.current !== requestId) return;
-      setDetail(next);
+      const revisionAtCompletion = liveEventRevisionRef.current;
+      const merged = recentLiveEventsRef.current
+        .filter(({ revision, event }) => revision > revisionAtStart && event.runId === runId)
+        .reduce((current, { event }) => applyLiveRunEventToDetail(current, event), next);
+      recentLiveEventsRef.current = recentLiveEventsRef.current.filter(({ revision }) => revision > revisionAtCompletion);
+      setDetail(merged);
       setError(null);
     } catch (caught) {
       if (loadRequestRef.current !== requestId) return;
       setError(errorMessage(caught, "Could not load this run."));
     } finally {
+      if (activeLoadRequestRef.current === requestId) activeLoadRequestRef.current = null;
       if (loadRequestRef.current === requestId) setLoading(false);
     }
   }, [client, runId]);
@@ -103,6 +117,12 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
     if (!runId) return;
     const unsubscribe = client.onRunEvent((event) => {
       if (event.runId !== runId) return;
+      const revision = ++liveEventRevisionRef.current;
+      if (activeLoadRequestRef.current !== null) recentLiveEventsRef.current.push({ revision, event });
+      if (event.step || event.run) {
+        setDetail((current) => current ? applyLiveRunEventToDetail(current, event) : current);
+      }
+      if (event.step && event.type !== "diff-updated") return;
       if (timerRef.current !== null) return;
       timerRef.current = window.setTimeout(() => {
         timerRef.current = null;
