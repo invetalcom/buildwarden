@@ -5086,6 +5086,74 @@ export class AppController
     this.runForgeRefreshTimers.set(runId, timer);
   }
 
+  private async selectRunForgeRequest(
+    run: RunRecord,
+    project: ProjectRecord,
+    provider: ProjectPrReviewProvider,
+    branchName: string,
+    headSha: string | null,
+    cached: ReturnType<BuildWardenDatabase["getRunForgeRequestCache"]>,
+    preferredRequestUrl: string | undefined,
+    force: boolean,
+  ): Promise<{
+    selected: ProjectForgeRequestSummary | null;
+    selectedStatus: ForgeRequestStatusResult | null;
+  }> {
+    let selected: ProjectForgeRequestSummary | null = cached?.summary &&
+      cached.branchName === branchName &&
+      cached.summary.state === "open" &&
+      (!preferredRequestUrl || cached.summary.url === preferredRequestUrl)
+      ? {
+          provider: cached.summary.provider,
+          number: cached.summary.number,
+          title: cached.summary.title,
+          url: cached.summary.url,
+          state: cached.summary.state,
+          draft: cached.summary.draft,
+          author: cached.summary.author,
+          sourceBranch: cached.summary.sourceBranch,
+          targetBranch: cached.summary.targetBranch,
+          createdAt: cached.details?.request.createdAt ?? null,
+          updatedAt: cached.summary.updatedAt,
+        }
+      : null;
+    let selectedStatus: ForgeRequestStatusResult | null = null;
+    if (selected) {
+      return { selected, selectedStatus };
+    }
+
+    const requests = (await this.loadProjectForgeRequests(run.projectId, provider, { state: "all" }, force)).items;
+    const exactBranch = requests
+      .filter((request) => request.sourceBranch === branchName)
+      .sort((left, right) => {
+        const score = (request: typeof left) => {
+          if (!isOpenForgeRequestState(request.state)) return 1;
+          return request.targetBranch === project.baseBranch ? 3 : 2;
+        };
+        const scoreDelta = score(right) - score(left);
+        return scoreDelta || (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "");
+      });
+    selected = preferredRequestUrl
+      ? (requests.find((request) => request.url === preferredRequestUrl) ?? exactBranch[0] ?? null)
+      : (exactBranch[0] ?? null);
+    if (selected || !headSha) {
+      return { selected, selectedStatus };
+    }
+
+    const headProbeCandidates = requests
+      .filter((request) => isOpenForgeRequestState(request.state))
+      .slice(0, RUN_FORGE_HEAD_PROBE_LIMIT);
+    for (const candidate of headProbeCandidates) {
+      const status = await provider.getRequestStatus({ prUrl: candidate.url });
+      if (status.headSha?.toLowerCase() === headSha.toLowerCase()) {
+        selected = candidate;
+        selectedStatus = status;
+        break;
+      }
+    }
+    return { selected, selectedStatus };
+  }
+
   private async syncRunForgeRequest(
     runId: string,
     force: boolean,
@@ -5128,60 +5196,18 @@ export class AppController
 
       try {
         const provider = await this.createProjectPrReviewProvider(run.projectId);
-        // Open requests can stay on the lightweight status-refresh path. Terminal
-        // links must be re-probed so a newer request for the same branch can win.
-        let selected: ProjectForgeRequestSummary | null = cached?.summary &&
-          cached.branchName === branchName &&
-          cached.summary.state === "open" &&
-          (!preferredRequestUrl || cached.summary.url === preferredRequestUrl)
-          ? {
-              provider: cached.summary.provider,
-              number: cached.summary.number,
-              title: cached.summary.title,
-              url: cached.summary.url,
-              state: cached.summary.state,
-              draft: cached.summary.draft,
-              author: cached.summary.author,
-              sourceBranch: cached.summary.sourceBranch,
-              targetBranch: cached.summary.targetBranch,
-              createdAt: cached.details?.request.createdAt ?? null,
-              updatedAt: cached.summary.updatedAt,
-            }
-          : null;
-        let selectedStatus: ForgeRequestStatusResult | null = null;
+        const selection = await this.selectRunForgeRequest(
+          run,
+          project,
+          provider,
+          branchName,
+          probedHeadSha,
+          cached,
+          preferredRequestUrl,
+          force,
+        );
+        const { selected, selectedStatus } = selection;
         let headSha = probedHeadSha;
-
-        if (!selected) {
-          const requests = (await this.loadProjectForgeRequests(run.projectId, provider, { state: "all" }, force)).items;
-          const exactBranch = requests
-            .filter((request) => request.sourceBranch === branchName)
-            .sort((left, right) => {
-              const score = (request: typeof left) => {
-                if (!isOpenForgeRequestState(request.state)) return 1;
-                return request.targetBranch === project.baseBranch ? 3 : 2;
-              };
-              const scoreDelta = score(right) - score(left);
-                return scoreDelta || (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "");
-            });
-          const preferredRequest = preferredRequestUrl
-            ? requests.find((request) => request.url === preferredRequestUrl) ?? null
-            : null;
-          selected = preferredRequest ?? exactBranch[0] ?? null;
-
-          if (!selected && headSha) {
-            const headProbeCandidates = requests
-              .filter((request) => isOpenForgeRequestState(request.state))
-              .slice(0, RUN_FORGE_HEAD_PROBE_LIMIT);
-            for (const candidate of headProbeCandidates) {
-              const status = await provider.getRequestStatus({ prUrl: candidate.url });
-              if (status.headSha && status.headSha.toLowerCase() === headSha.toLowerCase()) {
-                selected = candidate;
-                selectedStatus = status;
-                break;
-              }
-            }
-          }
-        }
 
         if (!selected) {
           const negativeUntil = new Date(Date.now() + RUN_FORGE_STABLE_REFRESH_MS).toISOString();
@@ -9160,6 +9186,267 @@ export class AppController
     return this.events.subscribe("warning", listener);
   }
 
+  private async handleRunWorkerHostToolRequest(
+    runId: string,
+    worker: Worker,
+    payload: Extract<RunWorkerPayload, { type: "host-tool-request" }>,
+  ): Promise<void> {
+    try {
+      const result = await this.executeOrchestrationTool(
+        runId,
+        payload.callId,
+        payload.toolName,
+        payload.arguments,
+      );
+      worker.postMessage({ type: "host-tool-response", callId: payload.callId, result });
+    } catch (error) {
+      worker.postMessage({
+        type: "host-tool-response",
+        callId: payload.callId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async handleRunWorkerShellApprovalRequest(
+    run: RunRecord,
+    payload: Extract<RunWorkerPayload, { type: "shell-approval-request" }>,
+  ): Promise<void> {
+    const metadata = {
+      requestKind: "approval",
+      requestStatus: "opened",
+      approvalRequestId: payload.requestId,
+      shellApprovalRequest: true,
+      command: payload.command,
+    };
+    const step = await this.appendRunEvent(
+      run.id,
+      "approval-requested",
+      "Shell approval requested",
+      payload.command,
+      metadata,
+    );
+    this.runShellApprovalStepIds.set(this.shellApprovalStepKey(run.id, payload.requestId), step.id);
+    this.emitEvent({
+      runId: run.id,
+      type: "approval-requested",
+      title: "Shell approval requested",
+      content: payload.command,
+      metadata,
+      createdAt: new Date().toISOString(),
+    });
+    const orchestrationTask = this.db.getOrchestrationTaskByChildRunId(run.id);
+    if (!orchestrationTask) {
+      return;
+    }
+    this.db.updateOrchestrationTask(orchestrationTask.id, {
+      status: "waiting-input",
+      attentionReason: `Shell approval required: ${payload.command}`,
+    });
+    this.db.appendOrchestrationEvent({
+      orchestrationId: orchestrationTask.orchestrationId,
+      taskId: orchestrationTask.id,
+      type: "attention",
+      title: "Child needs shell approval",
+      content: payload.command,
+    });
+    await this.maybeWakeOrchestrationCoordinator(orchestrationTask.orchestrationId);
+    this.emitOrchestrationChanged(orchestrationTask.orchestrationId, orchestrationTask.id);
+  }
+
+  private async handleRunWorkerUserInputRequest(
+    run: RunRecord,
+    payload: Extract<RunWorkerPayload, { type: "user-input-request" }>,
+  ): Promise<void> {
+    const questions = Array.isArray(payload.questions) ? payload.questions : [];
+    const content =
+      payload.content?.trim() ||
+      this.formatRunUserInputQuestions(questions) ||
+      "The provider requested more input before it can continue.";
+    const title = payload.title?.trim() || "User input requested";
+    const metadata = {
+      ...(payload.metadata ?? {}),
+      requestKind: "user-input",
+      requestStatus: "opened",
+      userInputRequest: true,
+      userInputRequestId: payload.requestId,
+      requestId: payload.requestId,
+      userInputQuestions: questions,
+    };
+    const step = await this.appendRunEvent(run.id, "user-input-requested", title, content, metadata);
+    this.runUserInputStepIds.set(this.userInputStepKey(run.id, payload.requestId), step.id);
+    this.emitEvent({
+      runId: run.id,
+      type: "user-input-requested",
+      title,
+      content,
+      metadata,
+      createdAt: new Date().toISOString(),
+    });
+    const orchestrationTask = this.db.getOrchestrationTaskByChildRunId(run.id);
+    if (!orchestrationTask) {
+      return;
+    }
+    this.db.updateOrchestrationTask(orchestrationTask.id, {
+      status: "waiting-input",
+      attentionReason: title === "User input requested" ? "The child requested user input." : title,
+    });
+    this.db.appendOrchestrationEvent({
+      orchestrationId: orchestrationTask.orchestrationId,
+      taskId: orchestrationTask.id,
+      type: "attention",
+      title: "Child needs user input",
+      content,
+    });
+    await this.maybeWakeOrchestrationCoordinator(orchestrationTask.orchestrationId);
+    this.emitOrchestrationChanged(orchestrationTask.orchestrationId, orchestrationTask.id);
+  }
+
+  private applyRunWorkerUsageUpdate(
+    run: RunRecord,
+    usageTotals: Partial<RunTokenUsage> | null,
+    maxRunTokens: number,
+    exhaustBudget: (exhaustion: RunBudgetExhaustion) => void,
+  ): void {
+    if (!usageTotals) {
+      return;
+    }
+    const currentRun = this.db.getRun(run.id);
+    const nextInputTokens = Math.max(currentRun.inputTokens, Number(usageTotals.inputTokens ?? 0));
+    const nextOutputTokens = Math.max(currentRun.outputTokens, Number(usageTotals.outputTokens ?? 0));
+    this.db.incrementProjectTokenUsage(
+      run.projectId,
+      nextInputTokens - currentRun.inputTokens,
+      nextOutputTokens - currentRun.outputTokens,
+    );
+    this.db.updateRunStatus(run.id, currentRun.status, {
+      inputTokens: nextInputTokens,
+      outputTokens: nextOutputTokens,
+    });
+    const exhaustion = tokenBudgetExhaustion(maxRunTokens, usageTotals);
+    if (exhaustion) {
+      exhaustBudget(exhaustion);
+    }
+  }
+
+  private async handleRunWorkerChunk(
+    run: RunRecord,
+    provider: ProviderAccountRecord,
+    modelId: string,
+    payload: Extract<RunWorkerPayload, { type: "chunk" }>,
+    maxRunTokens: number,
+    exhaustBudget: (exhaustion: RunBudgetExhaustion) => void,
+    streamingStepIds: Map<string, string>,
+    streamingStepKinds: Map<string, "assistant" | "reasoning" | "tool-result" | "tool-progress">,
+    resetNarrationStreams: () => void,
+  ): Promise<void> {
+    const eventType = runChunkEventType(payload.chunk.type);
+    const usageTotals =
+      typeof payload.chunk.metadata?.usageTotals === "object" && payload.chunk.metadata.usageTotals
+        ? (payload.chunk.metadata.usageTotals as Partial<RunTokenUsage>)
+        : null;
+    this.applyRunWorkerUsageUpdate(run, usageTotals, maxRunTokens, exhaustBudget);
+
+    if (payload.chunk.metadata?.providerSessionRuntime) {
+      this.upsertProviderSessionRuntime(
+        "run",
+        run.id,
+        provider,
+        modelId,
+        payload.chunk.metadata.providerSessionRuntime as Omit<
+          ProviderSessionRuntimeInput,
+          "ownerId" | "ownerKind" | "providerType" | "harnessType"
+        >,
+      );
+    }
+
+    const streamId = typeof payload.chunk.metadata?.streamId === "string" ? payload.chunk.metadata.streamId : null;
+    const shouldReplace =
+      payload.chunk.metadata?.replace === true &&
+      streamId &&
+      (payload.chunk.type === "message" ||
+        payload.chunk.type === "tool-result" ||
+        payload.chunk.type === "tool-progress" ||
+        payload.chunk.type === "plan-updated" ||
+        payload.chunk.type === "plan-progress");
+    const checkpoint =
+      payload.chunk.metadata?.checkpoint === true &&
+      typeof payload.chunk.metadata.resumeCheckpoint === "object" &&
+      payload.chunk.metadata.resumeCheckpoint
+        ? {
+            ...(payload.chunk.metadata.resumeCheckpoint as RunResumeCheckpoint),
+            round: Number((payload.chunk.metadata.resumeCheckpoint as RunResumeCheckpoint).round ?? 0),
+            memo:
+              typeof (payload.chunk.metadata.resumeCheckpoint as RunResumeCheckpoint).memo === "string"
+                ? ((payload.chunk.metadata.resumeCheckpoint as RunResumeCheckpoint).memo ?? "")
+                : "",
+          }
+        : null;
+    if (checkpoint) {
+      this.setRunCheckpoint(run.id, checkpoint);
+    }
+
+    if (payload.chunk.metadata?.silent === true) {
+      this.emitEvent({
+        runId: run.id,
+        type: eventType,
+        title: payload.chunk.title ?? this.defaultRunEventTitle(eventType),
+        content: payload.chunk.value,
+        metadata: payload.chunk.metadata,
+        createdAt: new Date().toISOString(),
+      });
+      return;
+    }
+
+    if (payload.chunk.type === "tool-call" || payload.chunk.type === "tool-result") {
+      resetNarrationStreams();
+    }
+
+    let persistedStep: RunStepRecord;
+    if (shouldReplace) {
+      const existingStepId = streamingStepIds.get(streamId);
+      if (existingStepId) {
+        persistedStep = this.db.updateRunStep(existingStepId, {
+          title: payload.chunk.title ?? this.defaultRunEventTitle(eventType),
+          content: payload.chunk.value,
+          metadataJson: JSON.stringify(payload.chunk.metadata ?? {}),
+        });
+      } else {
+        persistedStep = await this.appendRunEvent(
+          run.id,
+          eventType,
+          payload.chunk.title ?? this.defaultRunEventTitle(eventType),
+          payload.chunk.value,
+          payload.chunk.metadata,
+        );
+        streamingStepIds.set(streamId, persistedStep.id);
+        let streamingStepKind: "tool-result" | "tool-progress" | "assistant" | "reasoning" =
+          payload.chunk.metadata?.assistantKind === "reasoning" ? "reasoning" : "assistant";
+        if (payload.chunk.type === "tool-result" || payload.chunk.type === "tool-progress") {
+          streamingStepKind = payload.chunk.type;
+        }
+        streamingStepKinds.set(streamId, streamingStepKind);
+      }
+    } else {
+      persistedStep = await this.appendRunEvent(
+        run.id,
+        eventType,
+        payload.chunk.title ?? this.defaultRunEventTitle(eventType),
+        payload.chunk.value,
+        payload.chunk.metadata,
+      );
+    }
+    this.emitEvent({
+      runId: run.id,
+      type: eventType,
+      title: payload.chunk.title ?? this.defaultRunEventTitle(eventType),
+      content: payload.chunk.value,
+      metadata: payload.chunk.metadata,
+      createdAt: new Date().toISOString(),
+      step: persistedStep,
+    });
+  }
+
   private startWorker(
     run: RunRecord,
     provider: ProviderAccountRecord,
@@ -9291,247 +9578,32 @@ export class AppController
       }
 
       if (payload.type === "host-tool-request") {
-        try {
-          const result = await this.executeOrchestrationTool(
-            run.id,
-            payload.callId,
-            payload.toolName,
-            payload.arguments,
-          );
-          worker.postMessage({ type: "host-tool-response", callId: payload.callId, result });
-        } catch (error) {
-          worker.postMessage({
-            type: "host-tool-response",
-            callId: payload.callId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
+        await this.handleRunWorkerHostToolRequest(run.id, worker, payload);
         return;
       }
 
       if (payload.type === "shell-approval-request") {
-        const step = await this.appendRunEvent(
-          run.id,
-          "approval-requested",
-          "Shell approval requested",
-          payload.command,
-          {
-            requestKind: "approval",
-            requestStatus: "opened",
-            approvalRequestId: payload.requestId,
-            shellApprovalRequest: true,
-            command: payload.command,
-          },
-        );
-        this.runShellApprovalStepIds.set(this.shellApprovalStepKey(run.id, payload.requestId), step.id);
-        this.emitEvent({
-          runId: run.id,
-          type: "approval-requested",
-          title: "Shell approval requested",
-          content: payload.command,
-          metadata: {
-            requestKind: "approval",
-            requestStatus: "opened",
-            approvalRequestId: payload.requestId,
-            shellApprovalRequest: true,
-            command: payload.command,
-          },
-          createdAt: new Date().toISOString(),
-        });
-        const orchestrationTask = this.db.getOrchestrationTaskByChildRunId(run.id);
-        if (orchestrationTask) {
-          this.db.updateOrchestrationTask(orchestrationTask.id, {
-            status: "waiting-input",
-            attentionReason: `Shell approval required: ${payload.command}`,
-          });
-          this.db.appendOrchestrationEvent({
-            orchestrationId: orchestrationTask.orchestrationId,
-            taskId: orchestrationTask.id,
-            type: "attention",
-            title: "Child needs shell approval",
-            content: payload.command,
-          });
-          await this.maybeWakeOrchestrationCoordinator(orchestrationTask.orchestrationId);
-          this.emitOrchestrationChanged(orchestrationTask.orchestrationId, orchestrationTask.id);
-        }
+        await this.handleRunWorkerShellApprovalRequest(run, payload);
         return;
       }
 
       if (payload.type === "user-input-request") {
-        const questions = Array.isArray(payload.questions) ? payload.questions : [];
-        const content =
-          payload.content?.trim() ||
-          this.formatRunUserInputQuestions(questions) ||
-          "The provider requested more input before it can continue.";
-        const metadata = {
-          ...(payload.metadata ?? {}),
-          requestKind: "user-input",
-          requestStatus: "opened",
-          userInputRequest: true,
-          userInputRequestId: payload.requestId,
-          requestId: payload.requestId,
-          userInputQuestions: questions,
-        };
-        const step = await this.appendRunEvent(
-          run.id,
-          "user-input-requested",
-          payload.title?.trim() || "User input requested",
-          content,
-          metadata,
-        );
-        this.runUserInputStepIds.set(this.userInputStepKey(run.id, payload.requestId), step.id);
-        this.emitEvent({
-          runId: run.id,
-          type: "user-input-requested",
-          title: payload.title?.trim() || "User input requested",
-          content,
-          metadata,
-          createdAt: new Date().toISOString(),
-        });
-        const orchestrationTask = this.db.getOrchestrationTaskByChildRunId(run.id);
-        if (orchestrationTask) {
-          this.db.updateOrchestrationTask(orchestrationTask.id, {
-            status: "waiting-input",
-            attentionReason: payload.title?.trim() || "The child requested user input.",
-          });
-          this.db.appendOrchestrationEvent({
-            orchestrationId: orchestrationTask.orchestrationId,
-            taskId: orchestrationTask.id,
-            type: "attention",
-            title: "Child needs user input",
-            content,
-          });
-          await this.maybeWakeOrchestrationCoordinator(orchestrationTask.orchestrationId);
-          this.emitOrchestrationChanged(orchestrationTask.orchestrationId, orchestrationTask.id);
-        }
+        await this.handleRunWorkerUserInputRequest(run, payload);
         return;
       }
 
       if (payload.type === "chunk") {
-        const eventType = runChunkEventType(payload.chunk.type);
-        const usageTotals =
-          typeof payload.chunk.metadata?.usageTotals === "object" && payload.chunk.metadata?.usageTotals
-            ? (payload.chunk.metadata.usageTotals as Partial<RunTokenUsage>)
-            : null;
-        if (usageTotals) {
-          const currentRun = this.db.getRun(run.id);
-          const nextInputTokens = Math.max(currentRun.inputTokens, Number(usageTotals.inputTokens ?? 0));
-          const nextOutputTokens = Math.max(currentRun.outputTokens, Number(usageTotals.outputTokens ?? 0));
-          this.db.incrementProjectTokenUsage(
-            run.projectId,
-            nextInputTokens - currentRun.inputTokens,
-            nextOutputTokens - currentRun.outputTokens,
-          );
-          this.db.updateRunStatus(run.id, currentRun.status, {
-            inputTokens: nextInputTokens,
-            outputTokens: nextOutputTokens,
-          });
-          const exhaustion = tokenBudgetExhaustion(maxRunTokens, usageTotals);
-          if (exhaustion) exhaustBudget(exhaustion);
-        }
-
-        if (payload.chunk.metadata?.providerSessionRuntime) {
-          this.upsertProviderSessionRuntime(
-            "run",
-            run.id,
-            provider,
-            model.modelId,
-            payload.chunk.metadata.providerSessionRuntime as Omit<
-              ProviderSessionRuntimeInput,
-              "ownerId" | "ownerKind" | "providerType" | "harnessType"
-            >,
-          );
-        }
-
-        const streamId =
-          typeof payload.chunk.metadata?.streamId === "string" ? payload.chunk.metadata.streamId : null;
-        const shouldReplace =
-          payload.chunk.metadata?.replace === true &&
-          streamId &&
-          (payload.chunk.type === "message" ||
-            payload.chunk.type === "tool-result" ||
-            payload.chunk.type === "tool-progress" ||
-            payload.chunk.type === "plan-updated" ||
-            payload.chunk.type === "plan-progress");
-        const silent = payload.chunk.metadata?.silent === true;
-        const checkpoint =
-          payload.chunk.metadata?.checkpoint === true &&
-          typeof payload.chunk.metadata?.resumeCheckpoint === "object" &&
-          payload.chunk.metadata?.resumeCheckpoint
-            ? {
-                ...(payload.chunk.metadata.resumeCheckpoint as RunResumeCheckpoint),
-                round: Number((payload.chunk.metadata.resumeCheckpoint as RunResumeCheckpoint).round ?? 0),
-                memo:
-                  typeof (payload.chunk.metadata.resumeCheckpoint as RunResumeCheckpoint).memo === "string"
-                    ? ((payload.chunk.metadata.resumeCheckpoint as RunResumeCheckpoint).memo ?? "")
-                    : "",
-              }
-            : null;
-
-        if (checkpoint) {
-          this.setRunCheckpoint(run.id, checkpoint);
-        }
-
-        if (silent) {
-          this.emitEvent({
-            runId: run.id,
-            type: eventType,
-            title: payload.chunk.title ?? this.defaultRunEventTitle(eventType),
-            content: payload.chunk.value,
-            metadata: payload.chunk.metadata,
-            createdAt: new Date().toISOString(),
-          });
-          return;
-        }
-
-        if (payload.chunk.type === "tool-call" || payload.chunk.type === "tool-result") {
-          resetNarrationStreams();
-        }
-
-        let persistedStep: RunStepRecord | undefined;
-        if (shouldReplace) {
-          const existingStepId = streamingStepIds.get(streamId);
-          if (existingStepId) {
-            persistedStep = this.db.updateRunStep(existingStepId, {
-              title: payload.chunk.title ?? this.defaultRunEventTitle(eventType),
-              content: payload.chunk.value,
-              metadataJson: JSON.stringify(payload.chunk.metadata ?? {}),
-            });
-          } else {
-            const step = await this.appendRunEvent(
-              run.id,
-              eventType,
-              payload.chunk.title ?? this.defaultRunEventTitle(eventType),
-              payload.chunk.value,
-              payload.chunk.metadata,
-            );
-            streamingStepIds.set(streamId, step.id);
-            persistedStep = step;
-            let streamingStepKind: "tool-result" | "tool-progress" | "assistant" | "reasoning" =
-              payload.chunk.metadata?.assistantKind === "reasoning" ? "reasoning" : "assistant";
-            if (payload.chunk.type === "tool-result" || payload.chunk.type === "tool-progress") {
-              streamingStepKind = payload.chunk.type;
-            }
-            streamingStepKinds.set(streamId, streamingStepKind);
-          }
-        } else {
-          persistedStep = await this.appendRunEvent(
-            run.id,
-            eventType,
-            payload.chunk.title ?? this.defaultRunEventTitle(eventType),
-            payload.chunk.value,
-            payload.chunk.metadata,
-          );
-        }
-        this.emitEvent({
-          runId: run.id,
-          type: eventType,
-          title: payload.chunk.title ?? this.defaultRunEventTitle(eventType),
-          content: payload.chunk.value,
-          metadata: payload.chunk.metadata,
-          createdAt: new Date().toISOString(),
-          step: persistedStep,
-        });
+        await this.handleRunWorkerChunk(
+          run,
+          provider,
+          model.modelId,
+          payload,
+          maxRunTokens,
+          exhaustBudget,
+          streamingStepIds,
+          streamingStepKinds,
+          resetNarrationStreams,
+        );
         return;
       }
 

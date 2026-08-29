@@ -1657,78 +1657,64 @@ const parseClaudeSpecialStreamEvent = (
   return null;
 };
 
-const parseClaudeContentPart = (
-  part: unknown,
+const parseClaudeToolUsePart = (
+  part: Record<string, unknown>,
   tracker: ClaudeSubagentTracker | undefined,
   parentToolUseId: string | undefined,
 ): { assistantText: string; chunks: HarnessRunChunk[] } => {
-  if (typeof part === "string") return { assistantText: part, chunks: [] };
-  if (!isRecord(part)) return { assistantText: "", chunks: [] };
-
-  const partType = String(part.type ?? "");
-  if (partType === "text" || typeof part.text === "string") {
-    const text = typeof part.text === "string" ? part.text : extractTextFromMessage(part);
-    return { assistantText: text, chunks: [] };
-  }
-  if (partType === "thinking" || partType === "reasoning" || partType === "redacted_thinking") {
-    const thinking = stringifyValue(part.thinking ?? part.text ?? part.content ?? part.summary);
+  const rawName = typeof part.name === "string" ? part.name : "tool";
+  const name = normalizeClaudeCodeToolName(rawName);
+  if (tracker && !parentToolUseId && isClaudeSubagentSpawnTool(rawName) && typeof part.id === "string") {
+    const input = isRecord(part.input) ? part.input : {};
+    const info = tracker.upsert(part.id, {
+      status: "pending",
+      name: asString(input.subagent_type),
+      description: asString(input.description),
+      prompt: asString(input.prompt),
+      ...(input.run_in_background !== undefined ? { isBackground: input.run_in_background === true } : {}),
+    });
     return {
       assistantText: "",
-      chunks: thinking
-        ? [{ type: "message", title: "Reasoning", value: thinking, metadata: { assistantKind: "reasoning" } }]
+      chunks: [buildClaudeSubagentChunk(info, { rawToolName: rawName, rawToolInput: part.input })],
+    };
+  }
+  if (isClaudeTodoWriteTool(name)) {
+    const progress = extractClaudeTodoPlanProgress(part.input);
+    return {
+      assistantText: "",
+      chunks: progress
+        ? [buildPlanProgressChunk(progress, {
+            toolName: "TodoWrite",
+            rawToolName: rawName,
+            callId: typeof part.id === "string" ? part.id : undefined,
+            rawToolInput: part.input,
+          })]
         : [],
     };
   }
-  if (partType === "tool_use") {
-    const rawName = typeof part.name === "string" ? part.name : "tool";
-    const name = normalizeClaudeCodeToolName(rawName);
-    if (tracker && !parentToolUseId && isClaudeSubagentSpawnTool(rawName) && typeof part.id === "string") {
-      const input = isRecord(part.input) ? part.input : {};
-      const info = tracker.upsert(part.id, {
-        status: "pending",
-        name: asString(input.subagent_type),
-        description: asString(input.description),
-        prompt: asString(input.prompt),
-        ...(input.run_in_background !== undefined ? { isBackground: input.run_in_background === true } : {}),
-      });
-      return {
-        assistantText: "",
-        chunks: [buildClaudeSubagentChunk(info, { rawToolName: rawName, rawToolInput: part.input })],
-      };
-    }
-    if (isClaudeTodoWriteTool(name)) {
-      const progress = extractClaudeTodoPlanProgress(part.input);
-      return {
-        assistantText: "",
-        chunks: progress
-          ? [buildPlanProgressChunk(progress, {
-              toolName: "TodoWrite",
-              rawToolName: rawName,
-              callId: typeof part.id === "string" ? part.id : undefined,
-              rawToolInput: part.input,
-            })]
-          : [],
-      };
-    }
-    const toolInput = describeClaudeToolInput(name, part.input);
-    return {
-      assistantText: "",
-      chunks: [{
-        type: "tool-call",
-        title: `Tool call: ${name}`,
-        value: toolInput.value || name,
-        metadata: {
-          toolName: name,
-          callId: typeof part.id === "string" ? part.id : undefined,
-          rawToolName: rawName,
-          provider: "claude-code",
-          ...toolInput.metadata,
-        },
-      }],
-    };
-  }
-  if (partType !== "tool_result") return { assistantText: "", chunks: [] };
+  const toolInput = describeClaudeToolInput(name, part.input);
+  return {
+    assistantText: "",
+    chunks: [{
+      type: "tool-call",
+      title: `Tool call: ${name}`,
+      value: toolInput.value || name,
+      metadata: {
+        toolName: name,
+        callId: typeof part.id === "string" ? part.id : undefined,
+        rawToolName: rawName,
+        provider: "claude-code",
+        ...toolInput.metadata,
+      },
+    }],
+  };
+};
 
+const parseClaudeToolResultPart = (
+  part: Record<string, unknown>,
+  tracker: ClaudeSubagentTracker | undefined,
+  parentToolUseId: string | undefined,
+): { assistantText: string; chunks: HarnessRunChunk[] } => {
   const toolUseId = typeof part.tool_use_id === "string" ? part.tool_use_id : undefined;
   if (tracker && !parentToolUseId && toolUseId && tracker.has(toolUseId)) {
     const resultText = extractTextFromMessage({ content: part.content ?? part.text ?? part.result });
@@ -1754,6 +1740,35 @@ const parseClaudeContentPart = (
       },
     }],
   };
+};
+
+const parseClaudeContentPart = (
+  part: unknown,
+  tracker: ClaudeSubagentTracker | undefined,
+  parentToolUseId: string | undefined,
+): { assistantText: string; chunks: HarnessRunChunk[] } => {
+  if (typeof part === "string") return { assistantText: part, chunks: [] };
+  if (!isRecord(part)) return { assistantText: "", chunks: [] };
+
+  const partType = String(part.type ?? "");
+  if (partType === "text" || typeof part.text === "string") {
+    const text = typeof part.text === "string" ? part.text : extractTextFromMessage(part);
+    return { assistantText: text, chunks: [] };
+  }
+  if (partType === "thinking" || partType === "reasoning" || partType === "redacted_thinking") {
+    const thinking = stringifyValue(part.thinking ?? part.text ?? part.content ?? part.summary);
+    return {
+      assistantText: "",
+      chunks: thinking
+        ? [{ type: "message", title: "Reasoning", value: thinking, metadata: { assistantKind: "reasoning" } }]
+        : [],
+    };
+  }
+  if (partType === "tool_use") {
+    return parseClaudeToolUsePart(part, tracker, parentToolUseId);
+  }
+  if (partType !== "tool_result") return { assistantText: "", chunks: [] };
+  return parseClaudeToolResultPart(part, tracker, parentToolUseId);
 };
 
 export const parseClaudeCodeStreamEvent = (

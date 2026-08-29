@@ -1539,6 +1539,392 @@ export class OpenRouterProviderAdapter implements ProviderAdapter {
   }
 }
 
+class AiSdkRunStreamState {
+  private readonly generatedFileAttachments: ChatAttachmentPayload[] = [];
+  private readonly generatedFileKeys = new Set<string>();
+  private readonly openAiContainerFileReferences = new Map<string, OpenAiContainerFileReference>();
+  private streamedText = "";
+  private emittedAssistantOutput = false;
+  private activeReasoningStreamId: string | null = null;
+  private activeReasoningText = "";
+  private completedReasoningTranscript = "";
+  private streamedReasoningSinceLastStep = false;
+  private generatedFileBytes = 0;
+  private droppedGeneratedFileCount = 0;
+  private failedGeneratedFileDownloadCount = 0;
+
+  constructor(
+    private readonly onChunk: (chunk: HarnessRunChunk) => void,
+    private readonly streamOutId: string,
+  ) {}
+
+  get outputText(): string {
+    return this.streamedText;
+  }
+
+  get attachments(): ChatAttachmentPayload[] {
+    return this.generatedFileAttachments;
+  }
+
+  get containerFileReferences(): Iterable<OpenAiContainerFileReference> {
+    return this.openAiContainerFileReferences.values();
+  }
+
+  collectContainerFileReferences(part: Record<string, unknown>): void {
+    collectOpenAiContainerFileReferences(part, this.openAiContainerFileReferences);
+  }
+
+  rememberGeneratedAttachment(attachment: ChatAttachmentPayload | null): void {
+    if (!attachment) {
+      return;
+    }
+    const key = generatedFileKey(attachment);
+    if (this.generatedFileKeys.has(key)) {
+      return;
+    }
+    this.generatedFileKeys.add(key);
+
+    const fileBytes = estimateBase64ByteLength(attachment.dataBase64);
+    if (
+      this.generatedFileAttachments.length >= CHAT_ATTACHMENT_LIMITS.maxFileCount ||
+      fileBytes > CHAT_ATTACHMENT_LIMITS.maxBytesPerFile ||
+      this.generatedFileBytes + fileBytes > CHAT_ATTACHMENT_LIMITS.maxTotalBytes
+    ) {
+      this.droppedGeneratedFileCount += 1;
+      return;
+    }
+
+    this.generatedFileBytes += fileBytes;
+    this.generatedFileAttachments.push(attachment);
+  }
+
+  rememberGeneratedFile(file: GeneratedFile): void {
+    this.rememberGeneratedAttachment(generatedFileToAttachment(file, this.generatedFileKeys.size + 1));
+  }
+
+  emitStepReasoning(reasoningText: string | undefined): void {
+    if (this.streamedReasoningSinceLastStep || !reasoningText?.trim()) {
+      this.streamedReasoningSinceLastStep = false;
+      return;
+    }
+
+    const novelReasoningText = this.trimCompletedReasoningPrefix(reasoningText.trim());
+    if (novelReasoningText) {
+      this.activeReasoningStreamId = crypto.randomUUID();
+      this.activeReasoningText = novelReasoningText;
+      this.emitReasoning();
+    }
+    this.streamedReasoningSinceLastStep = false;
+  }
+
+  emitStepText(text: string): void {
+    if (this.streamedText || !text.trim()) {
+      return;
+    }
+    this.emittedAssistantOutput = true;
+    this.emitOutput(text.trim());
+  }
+
+  async process(stream: AsyncIterable<Record<string, unknown>>): Promise<void> {
+    const streamingToolNamesById = new Map<string, string>();
+    for await (const part of stream) {
+      this.collectContainerFileReferences(part);
+      this.processPart(part, streamingToolNamesById);
+    }
+  }
+
+  emitFinalTextIfNeeded(isChat: boolean, finalText: string): void {
+    if (isChat || this.emittedAssistantOutput || !finalText) {
+      return;
+    }
+    this.streamedText = finalText;
+    this.emitOutput(finalText);
+  }
+
+  recordFailedGeneratedFileDownload(): void {
+    this.failedGeneratedFileDownloadCount += 1;
+  }
+
+  emitGeneratedFileResults(): void {
+    if (this.generatedFileAttachments.length > 0) {
+      const fileCount = this.generatedFileAttachments.length;
+      this.onChunk({
+        type: "message",
+        title: fileCount === 1 ? "Generated file" : "Generated files",
+        value: `Generated ${String(fileCount)} file${fileCount === 1 ? "" : "s"}.`,
+        metadata: {
+          assistantKind: "files",
+          attachments: this.generatedFileAttachments,
+          attachmentNames: this.generatedFileAttachments.map((attachment) => attachment.fileName),
+        },
+      });
+    }
+
+    this.emitGeneratedFileWarning(
+      this.failedGeneratedFileDownloadCount,
+      "Generated file download failed",
+      "could not be downloaded from OpenAI Code Interpreter.",
+    );
+    this.emitGeneratedFileWarning(
+      this.droppedGeneratedFileCount,
+      "Generated file skipped",
+      "was too large or exceeded the stored file limit.",
+      "were too large or exceeded the stored file limit.",
+    );
+  }
+
+  private processPart(part: Record<string, unknown>, streamingToolNamesById: Map<string, string>): void {
+    if (part.type === "error") {
+      const providerError = part.error;
+      throw providerError instanceof Error
+        ? providerError
+        : new Error(extractProviderErrorText(providerError) || "The provider stream failed before producing output.");
+    }
+    if (part.type === "text-delta" || part.type === "text") {
+      this.processTextPart(part);
+      return;
+    }
+    if (part.type === "reasoning" || part.type === "reasoning-delta") {
+      this.processReasoningPart(part);
+      return;
+    }
+    if (part.type === "file") {
+      const file = (part as { file?: GeneratedFile }).file;
+      if (file) {
+        this.rememberGeneratedFile(file);
+      }
+      return;
+    }
+    if (part.type === "tool-input-start" || part.type === "tool-input-delta") {
+      this.processToolInputPart(part, streamingToolNamesById);
+      return;
+    }
+    if (part.type === "reasoning-end" || part.type === "finish") {
+      this.resetReasoningSegment();
+    }
+  }
+
+  private processTextPart(part: Record<string, unknown>): void {
+    this.resetReasoningSegment();
+    const delta = this.readStreamPartText(part);
+    if (!delta) {
+      return;
+    }
+    this.streamedText += delta;
+    this.emittedAssistantOutput = true;
+    this.emitOutput(this.streamedText);
+  }
+
+  private processReasoningPart(part: Record<string, unknown>): void {
+    const reasoningChunk = this.readStreamPartText(part);
+    if (!reasoningChunk) {
+      return;
+    }
+    if (!this.activeReasoningStreamId) {
+      this.activeReasoningStreamId = crypto.randomUUID();
+      this.activeReasoningText = "";
+    }
+    this.streamedReasoningSinceLastStep = true;
+    this.activeReasoningText = part.type === "reasoning"
+      ? this.trimCompletedReasoningPrefix(reasoningChunk)
+      : this.activeReasoningText + reasoningChunk;
+    if (this.activeReasoningText) {
+      this.emitReasoning();
+    }
+  }
+
+  private processToolInputPart(part: Record<string, unknown>, streamingToolNamesById: Map<string, string>): void {
+    this.resetReasoningSegment();
+    let toolName = typeof part.id === "string" ? streamingToolNamesById.get(part.id) : undefined;
+    if (part.type === "tool-input-start") {
+      toolName = typeof part.toolName === "string" ? part.toolName : "tool";
+      if (typeof part.id === "string") {
+        streamingToolNamesById.set(part.id, toolName);
+      }
+    }
+    this.onChunk({
+      type: "status",
+      value: part.type === "tool-input-start"
+        ? `Preparing tool call: ${toolName ?? "tool"}`
+        : `Streaming arguments for tool call: ${toolName ?? "tool"}`,
+      metadata: { silent: true },
+    });
+  }
+
+  private trimCompletedReasoningPrefix(value: string): string {
+    if (!this.completedReasoningTranscript) {
+      return value;
+    }
+    return value.startsWith(this.completedReasoningTranscript)
+      ? value.slice(this.completedReasoningTranscript.length).trimStart()
+      : value;
+  }
+
+  private readStreamPartText(part: Record<string, unknown>): string {
+    if (typeof part.textDelta === "string") {
+      return part.textDelta;
+    }
+    return typeof part.text === "string" ? part.text : "";
+  }
+
+  private resetReasoningSegment(): void {
+    if (this.activeReasoningText) {
+      this.completedReasoningTranscript += this.activeReasoningText;
+    }
+    this.activeReasoningStreamId = null;
+    this.activeReasoningText = "";
+  }
+
+  private emitOutput(value: string): void {
+    this.onChunk({
+      type: "message",
+      title: "Agent output",
+      value,
+      metadata: { streamId: this.streamOutId, replace: true },
+    });
+  }
+
+  private emitReasoning(): void {
+    this.onChunk({
+      type: "message",
+      title: "Reasoning",
+      value: this.activeReasoningText,
+      metadata: {
+        assistantKind: "reasoning",
+        streamId: this.activeReasoningStreamId,
+        replace: true,
+      },
+    });
+  }
+
+  private emitGeneratedFileWarning(count: number, title: string, singularMessage: string, pluralMessage = singularMessage): void {
+    if (count === 0) {
+      return;
+    }
+    this.onChunk({
+      type: "status",
+      title,
+      value: `${String(count)} generated file${count === 1 ? " " : "s "}${count === 1 ? singularMessage : pluralMessage}`,
+    });
+  }
+}
+
+const buildAiSdkStartingMessages = (
+  input: RunExecutionRequest,
+  isChat: boolean,
+  usesOpenAiChatTools: boolean,
+): Array<Record<string, unknown>> => {
+  const checkpointMessages = Array.isArray(input.resumeCheckpoint?.messages) ? [...input.resumeCheckpoint.messages] : [];
+  if (!isChat) {
+    return checkpointMessages.length > 0 ? checkpointMessages : buildRunMessages(input);
+  }
+
+  const messages: Array<Record<string, unknown>> = [{
+    role: "system",
+    content: usesOpenAiChatTools ? CHAT_OPENAI_CODE_INTERPRETER_SYSTEM_PROMPT : CHAT_SYSTEM_PROMPT,
+  }];
+  if (Array.isArray(input.priorMessages) && input.priorMessages.length > 0) {
+    messages.push(...input.priorMessages.map((message) => hydratePriorMessageAttachments(message, input.providerType)));
+  }
+  messages.push({
+    role: "user",
+    content: buildAttachmentUserContent(input.prompt, input.attachments, input.providerType),
+  });
+  return messages;
+};
+
+const createAiSdkRunTools = (
+  input: RunExecutionRequest,
+  toolContext: HarnessToolContext,
+  isChat: boolean,
+  onChunk: (chunk: HarnessRunChunk) => void,
+  mutationState: { successfulCalls: number },
+): ToolSet => {
+  const runTools: ToolSet = Object.fromEntries(
+    toolContext.tools.map((runTool) => [
+      runTool.name,
+      tool({
+        description: runTool.description,
+        inputSchema: jsonSchema(runTool.inputSchema),
+        execute: async (args: unknown) => {
+          const parsedArgs = typeof args === "object" && args && !Array.isArray(args) ? (args as Record<string, unknown>) : {};
+          const callId = crypto.randomUUID();
+          onChunk({
+            type: "tool-call",
+            title: `Tool call: ${runTool.name}`,
+            value: describeToolCall(runTool.name, parsedArgs),
+            metadata: { toolName: runTool.name, arguments: parsedArgs, callId },
+          });
+
+          const result = await toolContext.executeTool({ id: callId, name: runTool.name, arguments: parsedArgs });
+          if (
+            result.ok &&
+            (runTool.name === "write_file" || runTool.name === "edit_file" || runTool.name === "delete_file")
+          ) {
+            mutationState.successfulCalls += 1;
+          }
+          onChunk({
+            type: "tool-result",
+            title: `Tool result: ${runTool.name}`,
+            value: result.content,
+            metadata: {
+              toolName: runTool.name,
+              callId,
+              ok: result.ok,
+              ...result.metadata,
+              ...(runTool.name === "run_shell" ? { streamId: runShellActivityStreamId(callId), replace: true } : {}),
+            },
+          });
+          const exitCode = isRecord(result.metadata) && typeof result.metadata.exitCode === "number"
+            ? result.metadata.exitCode
+            : undefined;
+          return { ok: result.ok, content: result.content, ...(exitCode !== undefined ? { exitCode } : {}) };
+        },
+      }),
+    ]),
+  );
+
+  if (isChat || input.mode === "ask") {
+    return runTools;
+  }
+  runTools.update_plan = tool({
+    description: "Update the visible implementation checklist. This only reports progress to BuildWarden; it does not read or write files.",
+    inputSchema: jsonSchema({
+      type: "object",
+      properties: {
+        explanation: { type: ["string", "null"], description: "Optional short note explaining why the plan changed." },
+        steps: {
+          type: "array",
+          minItems: 1,
+          maxItems: 24,
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string" },
+              status: { type: "string", enum: ["pending", "inProgress", "in_progress", "completed"] },
+            },
+            required: ["title", "status"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["steps"],
+      additionalProperties: false,
+    }),
+    execute: async (args: unknown) => {
+      const chunk = buildAiSdkPlanProgressChunk(args);
+      const progress = normalizeRunPlanProgressPayload(chunk?.metadata?.planProgress, "ai-sdk");
+      if (!chunk || !progress) {
+        return { ok: false, content: "Plan progress was not updated because no valid steps were provided." };
+      }
+      const completed = progress.steps.filter((step) => step.status === "completed").length;
+      onChunk(chunk);
+      return { ok: true, content: `Plan progress updated (${String(completed)}/${String(progress.steps.length)} completed).` };
+    },
+  });
+  return runTools;
+};
+
 export class AiSdkHarnessAdapter implements HarnessAdapter {
   readonly harnessType = "ai-sdk" as const;
 
@@ -1574,23 +1960,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
             code_interpreter: createConfiguredOpenAiProvider(input, devLogger.enabled ? devLogger : undefined).tools.codeInterpreter(),
           }
         : undefined;
-    const checkpointMessages = Array.isArray(input.resumeCheckpoint?.messages) ? [...input.resumeCheckpoint.messages] : [];
-    let startingMessages = isChat ? [] : buildRunMessages(input);
-    if (checkpointMessages.length > 0) startingMessages = checkpointMessages;
-
-    if (isChat) {
-      startingMessages.push({
-        role: "system",
-        content: openAiChatTools ? CHAT_OPENAI_CODE_INTERPRETER_SYSTEM_PROMPT : CHAT_SYSTEM_PROMPT,
-      });
-      if (Array.isArray(input.priorMessages) && input.priorMessages.length > 0) {
-        startingMessages.push(...input.priorMessages.map((message) => hydratePriorMessageAttachments(message, input.providerType)));
-      }
-      startingMessages.push({
-        role: "user",
-        content: buildAttachmentUserContent(input.prompt, input.attachments, input.providerType),
-      });
-    }
+    const startingMessages = buildAiSdkStartingMessages(input, isChat, Boolean(openAiChatTools));
 
     if (!isChat) {
       onChunk({
@@ -1607,179 +1977,14 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
     const persistedMessages = [...startingMessages];
     let accumulatedUsage: RunTokenUsage = { inputTokens: 0, outputTokens: 0 };
     let completedToolRounds = 0;
-    let successfulMutationToolCalls = 0;
 
-    const runTools: ToolSet = Object.fromEntries(
-      toolContext.tools.map((runTool) => [
-        runTool.name,
-        tool({
-          description: runTool.description,
-          inputSchema: jsonSchema(runTool.inputSchema),
-          execute: async (args: unknown) => {
-            const parsedArgs = typeof args === "object" && args && !Array.isArray(args) ? (args as Record<string, unknown>) : {};
-            const callId = crypto.randomUUID();
-            onChunk({
-              type: "tool-call",
-              title: `Tool call: ${runTool.name}`,
-              value: describeToolCall(runTool.name, parsedArgs),
-              metadata: {
-                toolName: runTool.name,
-                arguments: parsedArgs,
-                callId,
-              },
-            });
-
-            const result = await toolContext.executeTool({
-              id: callId,
-              name: runTool.name,
-              arguments: parsedArgs,
-            });
-            if (
-              result.ok &&
-              (runTool.name === "write_file" || runTool.name === "edit_file" || runTool.name === "delete_file")
-            ) {
-              successfulMutationToolCalls += 1;
-            }
-
-            onChunk({
-              type: "tool-result",
-              title: `Tool result: ${runTool.name}`,
-              value: result.content,
-              metadata: {
-                toolName: runTool.name,
-                callId,
-                ok: result.ok,
-                ...result.metadata,
-                ...(runTool.name === "run_shell"
-                  ? { streamId: runShellActivityStreamId(callId), replace: true }
-                  : {}),
-              },
-            });
-
-            // The model only needs the outcome; the rest of result.metadata is
-            // UI-oriented (diffs, paths, stream ids) and would be resent on
-            // every subsequent round. exitCode is the one field with no
-            // equivalent in content.
-            const exitCode =
-              isRecord(result.metadata) && typeof result.metadata.exitCode === "number"
-                ? result.metadata.exitCode
-                : undefined;
-            return {
-              ok: result.ok,
-              content: result.content,
-              ...(exitCode !== undefined ? { exitCode } : {}),
-            };
-          },
-        }),
-      ]),
-    );
-
-    if (!isChat && input.mode !== "ask") {
-      runTools.update_plan = tool({
-        description: "Update the visible implementation checklist. This only reports progress to BuildWarden; it does not read or write files.",
-        inputSchema: jsonSchema({
-          type: "object",
-          properties: {
-            explanation: {
-              type: ["string", "null"],
-              description: "Optional short note explaining why the plan changed.",
-            },
-            steps: {
-              type: "array",
-              minItems: 1,
-              maxItems: 24,
-              items: {
-                type: "object",
-                properties: {
-                  title: { type: "string" },
-                  status: { type: "string", enum: ["pending", "inProgress", "in_progress", "completed"] },
-                },
-                required: ["title", "status"],
-                additionalProperties: false,
-              },
-            },
-          },
-          required: ["steps"],
-          additionalProperties: false,
-        }),
-        execute: async (args: unknown) => {
-          const chunk = buildAiSdkPlanProgressChunk(args);
-          const progress = normalizeRunPlanProgressPayload(chunk?.metadata?.planProgress, "ai-sdk");
-          if (!chunk || !progress) {
-            return {
-              ok: false,
-              content: "Plan progress was not updated because no valid steps were provided.",
-            };
-          }
-          const completed = progress.steps.filter((step) => step.status === "completed").length;
-          onChunk(chunk);
-          return {
-            ok: true,
-            content: `Plan progress updated (${String(completed)}/${String(progress.steps.length)} completed).`,
-          };
-        },
-      });
-    }
-
+    const mutationState = { successfulCalls: 0 };
+    const runTools = createAiSdkRunTools(input, toolContext, isChat, onChunk, mutationState);
     const tools = isChat ? openAiChatTools : runTools;
 
     let latestResponseId: string | null = null;
     const streamOutId = crypto.randomUUID();
-    let streamedText = "";
-    let emittedAssistantOutput = false;
-    let activeReasoningStreamId: string | null = null;
-    let activeReasoningText = "";
-    let completedReasoningTranscript = "";
-    let streamedReasoningSinceLastStep = false;
-    const generatedFileAttachments: ChatAttachmentPayload[] = [];
-    const generatedFileKeys = new Set<string>();
-    const openAiContainerFileReferences = new Map<string, OpenAiContainerFileReference>();
-    let generatedFileBytes = 0;
-    let droppedGeneratedFileCount = 0;
-    let failedGeneratedFileDownloadCount = 0;
-
-    const rememberGeneratedAttachment = (attachment: ChatAttachmentPayload | null): void => {
-      if (!attachment) {
-        return;
-      }
-      const key = generatedFileKey(attachment);
-      if (generatedFileKeys.has(key)) {
-        return;
-      }
-      generatedFileKeys.add(key);
-
-      const fileBytes = estimateBase64ByteLength(attachment.dataBase64);
-      if (
-        generatedFileAttachments.length >= CHAT_ATTACHMENT_LIMITS.maxFileCount ||
-        fileBytes > CHAT_ATTACHMENT_LIMITS.maxBytesPerFile ||
-        generatedFileBytes + fileBytes > CHAT_ATTACHMENT_LIMITS.maxTotalBytes
-      ) {
-        droppedGeneratedFileCount += 1;
-        return;
-      }
-
-      generatedFileBytes += fileBytes;
-      generatedFileAttachments.push(attachment);
-    };
-
-    const rememberGeneratedFile = (file: GeneratedFile): void => {
-      rememberGeneratedAttachment(generatedFileToAttachment(file, generatedFileKeys.size + 1));
-    };
-
-    const trimCompletedReasoningPrefix = (value: string) => {
-      if (!completedReasoningTranscript) {
-        return value;
-      }
-      return value.startsWith(completedReasoningTranscript) ? value.slice(completedReasoningTranscript.length).trimStart() : value;
-    };
-
-    const resetReasoningSegment = () => {
-      if (activeReasoningText) {
-        completedReasoningTranscript += activeReasoningText;
-      }
-      activeReasoningStreamId = null;
-      activeReasoningText = "";
-    };
+    const streamState = new AiSdkRunStreamState(onChunk, streamOutId);
 
     const { instructions: promptInstructions, messages: promptMessages } = splitSystemMessagesIntoInstructions(
       startingMessages as Array<Record<string, unknown>>,
@@ -1820,37 +2025,8 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
         onStepEnd: async (stepResult) => {
           accumulatedUsage = addUsage(accumulatedUsage, normalizeAiSdkTokenUsage(stepResult.usage, input.modelConfig));
 
-          if (!streamedReasoningSinceLastStep && stepResult.reasoningText?.trim()) {
-            const novelReasoningText = trimCompletedReasoningPrefix(stepResult.reasoningText.trim());
-            if (novelReasoningText) {
-              activeReasoningStreamId = crypto.randomUUID();
-              activeReasoningText = novelReasoningText;
-              onChunk({
-                type: "message",
-                title: "Reasoning",
-                value: activeReasoningText,
-                metadata: {
-                  assistantKind: "reasoning",
-                  streamId: activeReasoningStreamId,
-                  replace: true,
-                },
-              });
-            }
-          }
-          streamedReasoningSinceLastStep = false;
-
-          if (!streamedText && stepResult.text.trim()) {
-            emittedAssistantOutput = true;
-            onChunk({
-              type: "message",
-              title: "Agent output",
-              value: stepResult.text.trim(),
-              metadata: {
-                streamId: streamOutId,
-                replace: true,
-              },
-            });
-          }
+          streamState.emitStepReasoning(stepResult.reasoningText);
+          streamState.emitStepText(stepResult.text);
 
           const responseMessages = ((stepResult.response as { messages?: Array<Record<string, unknown>> })?.messages ?? []).map((message) => ({
             ...message,
@@ -1880,11 +2056,11 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
           }
 
           for (const part of stepResult.content as Array<Record<string, unknown>>) {
-            collectOpenAiContainerFileReferences(part, openAiContainerFileReferences);
+            streamState.collectContainerFileReferences(part);
           }
 
           for (const file of stepResult.files) {
-            rememberGeneratedFile(file);
+            streamState.rememberGeneratedFile(file);
           }
 
           onChunk({
@@ -1898,125 +2074,17 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
         },
       }),
     );
+    await streamState.process(result.stream as AsyncIterable<Record<string, unknown>>);
 
-    const processResultStream = async (): Promise<void> => {
-      const streamingToolNamesById = new Map<string, string>();
-      for await (const part of result.stream as AsyncIterable<Record<string, unknown>>) {
-      collectOpenAiContainerFileReferences(part, openAiContainerFileReferences);
-
-      if (part.type === "error") {
-        const providerError = part.error;
-        throw providerError instanceof Error
-          ? providerError
-          : new Error(extractProviderErrorText(providerError) || "The provider stream failed before producing output.");
-      }
-
-      if (part.type === "text-delta" || part.type === "text") {
-        resetReasoningSegment();
-        let delta = typeof part.text === "string" ? part.text : "";
-        if (typeof part.textDelta === "string") delta = part.textDelta;
-        if (!delta) {
-          continue;
-        }
-        streamedText += delta;
-        emittedAssistantOutput = true;
-        onChunk({
-          type: "message",
-          title: "Agent output",
-          value: streamedText,
-          metadata: {
-            streamId: streamOutId,
-            replace: true,
-          },
-        });
-        continue;
-      }
-
-      if (part.type === "reasoning" || part.type === "reasoning-delta") {
-        let reasoningChunk = typeof part.text === "string" ? part.text : "";
-        if (typeof part.textDelta === "string") reasoningChunk = part.textDelta;
-        if (!reasoningChunk) {
-          continue;
-        }
-        if (!activeReasoningStreamId) {
-          activeReasoningStreamId = crypto.randomUUID();
-          activeReasoningText = "";
-        }
-        streamedReasoningSinceLastStep = true;
-        if (part.type === "reasoning") {
-          activeReasoningText = trimCompletedReasoningPrefix(reasoningChunk);
-        } else {
-          activeReasoningText += reasoningChunk;
-        }
-        if (!activeReasoningText) {
-          continue;
-        }
-        onChunk({
-          type: "message",
-          title: "Reasoning",
-          value: activeReasoningText,
-          metadata: {
-            assistantKind: "reasoning",
-            streamId: activeReasoningStreamId,
-            replace: true,
-          },
-        });
-        continue;
-      }
-
-      if (part.type === "file") {
-        const file = (part as { file?: GeneratedFile }).file;
-        if (file) {
-          rememberGeneratedFile(file);
-        }
-        continue;
-      }
-
-      if (part.type === "tool-input-start") {
-        resetReasoningSegment();
-        const toolName = typeof part.toolName === "string" ? part.toolName : "tool";
-        if (typeof part.id === "string") {
-          streamingToolNamesById.set(part.id, toolName);
-        }
-        onChunk({
-          type: "status",
-          value: `Preparing tool call: ${toolName}`,
-          metadata: {
-            silent: true,
-          },
-        });
-        continue;
-      }
-
-      if (part.type === "tool-input-delta") {
-        resetReasoningSegment();
-        const toolName = (typeof part.id === "string" ? streamingToolNamesById.get(part.id) : undefined) ?? "tool";
-        onChunk({
-          type: "status",
-          value: `Streaming arguments for tool call: ${toolName}`,
-          metadata: {
-            silent: true,
-          },
-        });
-        continue;
-      }
-
-        if (part.type === "reasoning-end" || part.type === "finish") {
-          resetReasoningSegment();
-        }
-      }
-    };
-    await processResultStream();
-
-    if (openAiChatTools && openAiContainerFileReferences.size > 0) {
-      let index = generatedFileAttachments.length + 1;
-      for (const reference of openAiContainerFileReferences.values()) {
+    if (openAiChatTools) {
+      let index = streamState.attachments.length + 1;
+      for (const reference of streamState.containerFileReferences) {
         try {
           const attachment = await downloadOpenAiContainerFile(input, reference, index, devLogger.enabled ? devLogger : undefined);
-          rememberGeneratedAttachment(attachment);
+          streamState.rememberGeneratedAttachment(attachment);
           index += 1;
         } catch (error) {
-          failedGeneratedFileDownloadCount += 1;
+          streamState.recordFailedGeneratedFileDownload();
           devLogger?.log("OpenAI.container_file.download.error", {
             containerId: reference.containerId,
             fileId: reference.fileId,
@@ -2025,67 +2093,28 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
         }
       }
     }
-
-    if (generatedFileAttachments.length > 0) {
-      onChunk({
-        type: "message",
-        title: generatedFileAttachments.length === 1 ? "Generated file" : "Generated files",
-        value: `Generated ${String(generatedFileAttachments.length)} file${generatedFileAttachments.length === 1 ? "" : "s"}.`,
-        metadata: {
-          assistantKind: "files",
-          attachments: generatedFileAttachments,
-          attachmentNames: generatedFileAttachments.map((attachment) => attachment.fileName),
-        },
-      });
-    }
-
-    if (failedGeneratedFileDownloadCount > 0) {
-      onChunk({
-        type: "status",
-        title: "Generated file download failed",
-        value: `${String(failedGeneratedFileDownloadCount)} generated file${failedGeneratedFileDownloadCount === 1 ? "" : "s"} could not be downloaded from OpenAI Code Interpreter.`,
-      });
-    }
-
-    if (droppedGeneratedFileCount > 0) {
-      onChunk({
-        type: "status",
-        title: "Generated file skipped",
-        value: `${String(droppedGeneratedFileCount)} generated file${droppedGeneratedFileCount === 1 ? " was" : "s were"} too large or exceeded the stored file limit.`,
-      });
-    }
+    streamState.emitGeneratedFileResults();
 
     const finalText = typeof (result as { text?: PromiseLike<string> | string }).text !== "undefined"
       ? (await (result as { text: PromiseLike<string> | string }).text).trim()
       : "";
 
-    if (!isChat && !emittedAssistantOutput && finalText) {
-      streamedText = finalText;
-      onChunk({
-        type: "message",
-        title: "Agent output",
-        value: finalText,
-        metadata: {
-          streamId: streamOutId,
-          replace: true,
-        },
-      });
-    }
+    streamState.emitFinalTextIfNeeded(isChat, finalText);
 
     const reachedCodeToolRoundLimit =
       !isChat && input.mode === "code" && completedToolRounds >= MODE_POLICIES.code.maxToolRounds;
-    if (reachedCodeToolRoundLimit && successfulMutationToolCalls === 0 && !streamedText.trim() && !finalText) {
+    if (reachedCodeToolRoundLimit && mutationState.successfulCalls === 0 && !streamState.outputText.trim() && !finalText) {
       throw new Error(
         `Code run reached the tool round limit (${String(MODE_POLICIES.code.maxToolRounds)}) before making any file edits. Try narrowing the task or using read_file with startLine/endLine to inspect large files in focused ranges.`,
       );
     }
 
-    const generatedFileNoun = generatedFileAttachments.length === 1 ? "file" : "files";
+    const generatedFileNoun = streamState.attachments.length === 1 ? "file" : "files";
     const generatedFileSummary =
-      generatedFileAttachments.length > 0
-        ? `Generated ${String(generatedFileAttachments.length)} ${generatedFileNoun}.`
+      streamState.attachments.length > 0
+        ? `Generated ${String(streamState.attachments.length)} ${generatedFileNoun}.`
         : "";
-    const summary = streamedText.trim() || finalText || generatedFileSummary || "No output returned from the provider.";
+    const summary = streamState.outputText.trim() || finalText || generatedFileSummary || "No output returned from the provider.";
 
     onChunk({
       type: "status",

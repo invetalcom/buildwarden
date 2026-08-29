@@ -110,7 +110,7 @@ const listWorkspaceFiles = (root: string, workspaceVcs: RunWorkspaceVcs) =>
 
 const buildEntries = async (root: string, paths: string[]): Promise<ManifestEntry[]> => {
   const entries: ManifestEntry[] = [];
-  for (const path of paths.sort((left, right) => left.localeCompare(right))) {
+  for (const path of paths.toSorted((left, right) => left.localeCompare(right))) {
     const bytes = await readFile(resolveWithin(root, path));
     entries.push({ path, hash: hashBytes(bytes), size: bytes.byteLength });
   }

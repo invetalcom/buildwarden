@@ -97,7 +97,7 @@ describe("Azure Legacy request payload characterization", () => {
   it("keeps chat payloads free of cross-provider execution options", async () => {
     const payload = await captureAzureLegacyRequest(true);
 
-    expect(Object.keys(payload).sort()).toEqual(["messages", "model", "stream", "stream_options", "temperature"]);
+    expect(Object.keys(payload).sort((left, right) => left.localeCompare(right))).toEqual(["messages", "model", "stream", "stream_options", "temperature"]);
     expect(payload).toMatchObject({
       model: "azure-deployment",
       stream: true,
@@ -109,7 +109,7 @@ describe("Azure Legacy request payload characterization", () => {
   it("keeps agent payloads free of cross-provider execution options", async () => {
     const payload = await captureAzureLegacyRequest(false);
 
-    expect(Object.keys(payload).sort()).toEqual([
+    expect(Object.keys(payload).sort((left, right) => left.localeCompare(right))).toEqual([
       "messages",
       "model",
       "stream",

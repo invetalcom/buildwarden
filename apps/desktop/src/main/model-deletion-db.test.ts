@@ -178,8 +178,8 @@ describe("model deletion targets", () => {
     db.updateProjectLoopIteration(iteration.id, { runId: loopRun.id });
 
     expect(db.getModelDeletionTargets(targetModel.id)).toEqual({
-      runIds: [directRun.id, labRun.id, loopRun.id].sort(),
-      chatIds: [standaloneChat.id, runChat.id].sort(),
+      runIds: [directRun.id, labRun.id, loopRun.id].sort((left, right) => left.localeCompare(right)),
+      chatIds: [standaloneChat.id, runChat.id].sort((left, right) => left.localeCompare(right)),
       projectInsightIds: [insight.id],
       projectLabThreadIds: [labThread.id],
       projectLoopIds: [loop.id],
@@ -330,7 +330,7 @@ describe("model deletion targets", () => {
     });
 
     expect(db.getModelDeletionTargets(targetModel.id)).toEqual({
-      runIds: [child.id, coordinator.id].sort(),
+      runIds: [child.id, coordinator.id].sort((left, right) => left.localeCompare(right)),
       chatIds: [],
       projectInsightIds: [],
       projectLabThreadIds: [],

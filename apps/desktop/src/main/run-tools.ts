@@ -936,6 +936,392 @@ const runSafeCommand = async (
   });
 };
 
+type RunToolExecutorContext = {
+  worktreePath: string;
+  readFilesThisRun: Set<string>;
+  requestShellApproval?: (command: string) => Promise<ShellApprovalDecision>;
+  shellAllowlistExtra?: string[];
+  hooks?: RunToolContextHooks;
+  yoloMode: boolean;
+};
+
+class RunToolExecutor {
+  constructor(private readonly context: RunToolExecutorContext) {}
+
+  private get worktreePath(): string { return this.context.worktreePath; }
+  private get readFilesThisRun(): Set<string> { return this.context.readFilesThisRun; }
+  private get requestShellApproval(): RunToolExecutorContext["requestShellApproval"] { return this.context.requestShellApproval; }
+  private get shellAllowlistExtra(): string[] | undefined { return this.context.shellAllowlistExtra; }
+  private get hooks(): RunToolContextHooks | undefined { return this.context.hooks; }
+  private get yoloMode(): boolean { return this.context.yoloMode; }
+
+  execute(call: RunToolCall): Promise<RunToolResult> {
+    switch (call.name) {
+      case "read_file": return this.executeReadFile(call);
+      case "write_file": return this.executeWriteFile(call);
+      case "edit_file": return this.executeEditFile(call);
+      case "delete_file": return this.executeDeleteFile(call);
+      case "list_files": return this.executeListFiles(call);
+      case "search_repo": return this.executeSearchRepo(call);
+      case "run_shell": return this.executeRunShell(call);
+      default: return Promise.reject(new Error(`Unsupported tool: ${call.name}`));
+    }
+  }
+
+  private async executeReadFile(call: RunToolCall): Promise<RunToolResult> {
+    const inputPath = String(call.arguments.path ?? "");
+    const startLine = normalizeLineBound(call.arguments.startLine);
+    const endLine = normalizeLineBound(call.arguments.endLine);
+    const target = resolveWorktreePath(this.worktreePath, inputPath);
+    let fileStat;
+    try {
+      fileStat = await stat(target);
+    } catch (error) {
+      if (isMissingPathError(error)) {
+        throw new Error(await buildMissingPathMessage(this.worktreePath, "file", inputPath));
+      }
+      throw error;
+    }
+    if (!fileStat.isFile()) {
+      throw new Error("Target path is not a file.");
+    }
+    if (fileStat.size > MAX_FILE_BYTES) {
+      throw new Error("File is too large to read in one tool call.");
+    }
+    this.readFilesThisRun.add(toPosix(relative(this.worktreePath, target)));
+    const preview = await readFilePreview(target, { startLine, endLine });
+    return {
+      toolCallId: call.id,
+      name: call.name,
+      ok: true,
+      content: preview.content,
+      metadata: {
+        path: toPosix(relative(this.worktreePath, target)),
+        sizeBytes: fileStat.size,
+        lineStart: preview.lineStart,
+        lineEnd: preview.lineEnd,
+        totalLines: preview.totalLines,
+        truncated: preview.truncated,
+      },
+    };
+  }
+
+  private async executeWriteFile(call: RunToolCall): Promise<RunToolResult> {
+    const target = resolveWorktreePath(this.worktreePath, String(call.arguments.path ?? ""));
+    const rel = toPosix(relative(this.worktreePath, target));
+    if (!rel || rel === "." || rel.startsWith(".git/")) {
+      throw new Error("write_file cannot target the repository root or .git internals.");
+    }
+    let previousContent: string | null = null;
+    try {
+      const fileStat = await stat(target);
+      if (fileStat.isFile() && fileStat.size <= MAX_FILE_BYTES) {
+        previousContent = await readFile(target, "utf8");
+      }
+    } catch (err) {
+      const code = err && typeof err === "object" && "code" in err ? (err as NodeJS.ErrnoException).code : undefined;
+      if (code !== "ENOENT") {
+        throw err;
+      }
+      previousContent = null;
+    }
+
+    await mkdir(dirname(target), { recursive: true });
+    const content = String(call.arguments.content ?? "");
+    if (content.length > MAX_FILE_BYTES) {
+      throw new Error("Refusing to write a file larger than the tool size limit.");
+    }
+    validateWriteFileRequest({
+      rel,
+      content,
+      previousContent,
+      wasReadEarlier: this.readFilesThisRun.has(rel),
+    });
+
+    try {
+      await writeFile(target, content, "utf8");
+      const writtenContent = await readFile(target, "utf8");
+      if (writtenContent !== content) {
+        throw new Error(`Verification failed after writing ${rel}: file contents did not match the requested content.`);
+      }
+      validateWriteFileRequest({
+        rel,
+        content: writtenContent,
+        previousContent,
+        wasReadEarlier: true,
+      });
+    } catch (error) {
+      if (previousContent === null) {
+        await rm(target, { force: true });
+      } else {
+        await writeFile(target, previousContent, "utf8");
+      }
+      throw error;
+    }
+    const unifiedDiff = buildWriteFileUnifiedDiff(rel, previousContent, content);
+    return {
+      toolCallId: call.id,
+      name: call.name,
+      ok: true,
+      content: `Wrote ${content.length} characters to ${rel}.`,
+      metadata: {
+        path: rel,
+        sizeBytes: content.length,
+        ...(unifiedDiff ? { writeFileUnifiedDiff: unifiedDiff } : {}),
+      },
+    };
+  }
+
+  private async executeEditFile(call: RunToolCall): Promise<RunToolResult> {
+    const target = resolveWorktreePath(this.worktreePath, String(call.arguments.file_path ?? ""));
+    const rel = toPosix(relative(this.worktreePath, target));
+    if (!rel || rel === "." || rel.startsWith(".git/")) {
+      throw new Error("edit_file cannot target the repository root or .git internals.");
+    }
+
+    const oldString = String(call.arguments.old_string ?? "");
+    const newString = String(call.arguments.new_string ?? "");
+    const expectedReplacements = Number(call.arguments.expected_replacements ?? 1);
+    if (!Number.isInteger(expectedReplacements) || expectedReplacements < 1) {
+      throw new Error("edit_file requires expected_replacements to be an integer >= 1.");
+    }
+    if (newString.length > MAX_FILE_BYTES) {
+      throw new Error("Refusing to write a file larger than the tool size limit.");
+    }
+
+    let previousContent: string | null = null;
+    try {
+      const fileStat = await stat(target);
+      if (!fileStat.isFile()) {
+        throw new Error("Target path is not a file.");
+      }
+      if (fileStat.size <= MAX_FILE_BYTES) {
+        previousContent = await readFile(target, "utf8");
+      } else {
+        throw new Error("File is too large to edit in one tool call.");
+      }
+    } catch (err) {
+      const code = err && typeof err === "object" && "code" in err ? (err as NodeJS.ErrnoException).code : undefined;
+      if (code !== "ENOENT") {
+        throw err;
+      }
+      previousContent = null;
+    }
+
+    await mkdir(dirname(target), { recursive: true });
+
+    let nextContent: string;
+    let actionSummary: string;
+    if (oldString === "") {
+      if (previousContent !== null) {
+        throw new Error(`Refusing to create ${rel} via edit_file because the file already exists.`);
+      }
+      nextContent = newString;
+      actionSummary = `Created ${rel} via edit_file.`;
+    } else {
+      if (previousContent === null) {
+        throw new Error(`Cannot edit missing file ${rel}. Use write_file or set old_string to empty to create it.`);
+      }
+      if (!this.readFilesThisRun.has(rel)) {
+        throw new Error(`Refusing to edit existing file ${rel} before it has been read in this run. Use read_file first.`);
+      }
+
+      const normalizedOriginal = normalizeTextForDiff(previousContent);
+      const normalizedOld = normalizeTextForDiff(oldString);
+      const normalizedNew = normalizeTextForDiff(newString);
+      const actualReplacements = countOccurrences(normalizedOriginal, normalizedOld);
+      if (actualReplacements !== expectedReplacements) {
+        throw new Error(
+          `edit_file expected ${expectedReplacements} replacement${expectedReplacements === 1 ? "" : "s"} in ${rel}, but found ${actualReplacements}.`,
+        );
+      }
+
+      const normalizedNext = normalizedOriginal.split(normalizedOld).join(normalizedNew);
+      const lineEnding = detectLineEnding(previousContent);
+      nextContent = lineEnding === "\n" ? normalizedNext : normalizedNext.replace(/\n/g, "\r\n");
+      actionSummary = `Updated ${expectedReplacements} occurrence${expectedReplacements === 1 ? "" : "s"} in ${rel}.`;
+    }
+
+    validateWriteFileRequest({
+      rel,
+      content: nextContent,
+      previousContent,
+      wasReadEarlier: previousContent === null ? true : this.readFilesThisRun.has(rel),
+    });
+
+    try {
+      await writeFile(target, nextContent, "utf8");
+      const writtenContent = await readFile(target, "utf8");
+      if (writtenContent !== nextContent) {
+        throw new Error(`Verification failed after editing ${rel}: file contents did not match the requested content.`);
+      }
+      validateWriteFileRequest({
+        rel,
+        content: writtenContent,
+        previousContent,
+        wasReadEarlier: true,
+      });
+    } catch (error) {
+      if (previousContent === null) {
+        await rm(target, { force: true });
+      } else {
+        await writeFile(target, previousContent, "utf8");
+      }
+      throw error;
+    }
+
+    const unifiedDiff = buildWriteFileUnifiedDiff(rel, previousContent, nextContent);
+    return {
+      toolCallId: call.id,
+      name: call.name,
+      ok: true,
+      content: actionSummary,
+      metadata: {
+        path: rel,
+        sizeBytes: nextContent.length,
+        ...(unifiedDiff ? { writeFileUnifiedDiff: unifiedDiff } : {}),
+      },
+    };
+  }
+
+  private async executeDeleteFile(call: RunToolCall): Promise<RunToolResult> {
+    const inputPath = String(call.arguments.path ?? "");
+    const target = resolveWorktreePath(this.worktreePath, inputPath);
+    const rel = toPosix(relative(this.worktreePath, target));
+    if (!rel || rel === "." || rel === ".." || rel.startsWith(".git/")) {
+      throw new Error("delete_file cannot remove the repository root or .git internals.");
+    }
+    try {
+      await stat(target);
+    } catch (error) {
+      if (isMissingPathError(error)) {
+        throw new Error(await buildMissingPathMessage(this.worktreePath, "file", inputPath));
+      }
+      throw error;
+    }
+    await rm(target, { recursive: true, force: true });
+    return {
+      toolCallId: call.id,
+      name: call.name,
+      ok: true,
+      content: `Deleted ${rel}.`,
+      metadata: {
+        path: rel,
+      },
+    };
+  }
+
+  private async executeListFiles(call: RunToolCall): Promise<RunToolResult> {
+    const inputPath = String(call.arguments.path ?? ".");
+    const target = resolveWorktreePath(this.worktreePath, inputPath);
+    let directoryStat;
+    try {
+      directoryStat = await stat(target);
+    } catch (error) {
+      if (isMissingPathError(error)) {
+        throw new Error(await buildMissingPathMessage(this.worktreePath, "directory", inputPath));
+      }
+      throw error;
+    }
+    if (!directoryStat.isDirectory()) {
+      throw new Error("Target path is not a directory.");
+    }
+    const entries: string[] = [];
+    const maxEntries = Number(call.arguments.maxEntries ?? MAX_LIST_ENTRIES);
+    await listFilesRecursive(this.worktreePath, target, entries, Math.min(maxEntries, MAX_LIST_ENTRIES));
+    return {
+      toolCallId: call.id,
+      name: call.name,
+      ok: true,
+      content: truncate(entries.length > 0 ? entries.join("\n") : "No files found."),
+      metadata: {
+        path: toPosix(relative(this.worktreePath, target)) || ".",
+        totalEntries: entries.length,
+      },
+    };
+  }
+
+  private async executeSearchRepo(call: RunToolCall): Promise<RunToolResult> {
+    const inputPath = String(call.arguments.path ?? ".");
+    const target = resolveWorktreePath(this.worktreePath, inputPath);
+    const query = String(call.arguments.query ?? "").trim();
+    if (!query) {
+      throw new Error("search_repo requires a non-empty query.");
+    }
+    try {
+      const targetStat = await stat(target);
+      if (!targetStat.isDirectory()) {
+        throw new Error("Target path is not a directory.");
+      }
+    } catch (error) {
+      if (isMissingPathError(error)) {
+        throw new Error(await buildMissingPathMessage(this.worktreePath, "directory", inputPath));
+      }
+      throw error;
+    }
+
+    const maxMatches = Math.min(Number(call.arguments.maxMatches ?? MAX_SEARCH_MATCHES), MAX_SEARCH_MATCHES);
+    const searchResult = await buildSearchRepoStructuredResult(target, query, maxMatches);
+
+    return {
+      toolCallId: call.id,
+      name: call.name,
+      ok: true,
+      content: searchResult.content,
+      metadata: {
+        path: toPosix(relative(this.worktreePath, target)) || ".",
+        query,
+        ...searchResult.metadata,
+      },
+    };
+  }
+
+  private async executeRunShell(call: RunToolCall): Promise<RunToolResult> {
+    const hooks = this.hooks;
+    const shellAbortController = new AbortController();
+    hooks?.onShellCommandStart?.({
+      callId: call.id,
+      command: String(call.arguments.command ?? ""),
+      cancel: (reason?: unknown) => shellAbortController.abort(reason),
+    });
+    const streamOpts =
+      hooks?.onShellStream || hooks?.abortSignal || hooks?.onShellCommandStart
+        ? {
+            onStream: hooks.onShellStream
+              ? ({ command, accumulated }: { command: string; accumulated: string }) => {
+                  hooks.onShellStream!({
+                    callId: call.id,
+                    command,
+                    output: accumulated,
+                  });
+                }
+              : undefined,
+            signal: shellAbortController.signal,
+          }
+        : undefined;
+    try {
+      hooks?.abortSignal?.throwIfAborted();
+      const result = await runSafeCommand(
+        this.worktreePath,
+        String(call.arguments.command ?? ""),
+        this.requestShellApproval,
+        this.shellAllowlistExtra,
+        { ...streamOpts, yoloMode: this.yoloMode },
+      );
+      hooks?.abortSignal?.throwIfAborted();
+      return {
+        toolCallId: call.id,
+        name: call.name,
+        ok: result.metadata.exitCode === 0,
+        content: result.content,
+        metadata: result.metadata,
+      };
+    } finally {
+      hooks?.onShellCommandEnd?.({ callId: call.id });
+    }
+  }
+}
+
 export const createRunToolContext = (
   worktreePath: string,
   mode: RunMode = "code",
@@ -956,377 +1342,28 @@ export const createRunToolContext = (
   const tools = TOOL_DEFINITIONS.filter((tool) => effectiveTools.has(tool.name));
   const readFilesThisRun = new Set<string>();
 
+  const executor = new RunToolExecutor({
+    worktreePath,
+    readFilesThisRun,
+    requestShellApproval,
+    shellAllowlistExtra,
+    hooks,
+    yoloMode,
+  });
+
   const executeTool = async (call: RunToolCall): Promise<RunToolResult> => {
     try {
       if (!effectiveTools.has(call.name)) {
         throw new Error(`Tool ${call.name} is not available in ${mode} mode.`);
       }
-
-      switch (call.name) {
-        case "read_file": {
-          const inputPath = String(call.arguments.path ?? "");
-          const startLine = normalizeLineBound(call.arguments.startLine);
-          const endLine = normalizeLineBound(call.arguments.endLine);
-          const target = resolveWorktreePath(worktreePath, inputPath);
-          let fileStat;
-          try {
-            fileStat = await stat(target);
-          } catch (error) {
-            if (isMissingPathError(error)) {
-              throw new Error(await buildMissingPathMessage(worktreePath, "file", inputPath));
-            }
-            throw error;
-          }
-          if (!fileStat.isFile()) {
-            throw new Error("Target path is not a file.");
-          }
-          if (fileStat.size > MAX_FILE_BYTES) {
-            throw new Error("File is too large to read in one tool call.");
-          }
-          readFilesThisRun.add(toPosix(relative(worktreePath, target)));
-          const preview = await readFilePreview(target, { startLine, endLine });
-          return {
-            toolCallId: call.id,
-            name: call.name,
-            ok: true,
-            content: preview.content,
-            metadata: {
-              path: toPosix(relative(worktreePath, target)),
-              sizeBytes: fileStat.size,
-              lineStart: preview.lineStart,
-              lineEnd: preview.lineEnd,
-              totalLines: preview.totalLines,
-              truncated: preview.truncated,
-            },
-          };
-        }
-
-        case "write_file": {
-          const target = resolveWorktreePath(worktreePath, String(call.arguments.path ?? ""));
-          const rel = toPosix(relative(worktreePath, target));
-          if (!rel || rel === "." || rel.startsWith(".git/")) {
-            throw new Error("write_file cannot target the repository root or .git internals.");
-          }
-          let previousContent: string | null = null;
-          try {
-            const fileStat = await stat(target);
-            if (fileStat.isFile() && fileStat.size <= MAX_FILE_BYTES) {
-              previousContent = await readFile(target, "utf8");
-            }
-          } catch (err) {
-            const code = err && typeof err === "object" && "code" in err ? (err as NodeJS.ErrnoException).code : undefined;
-            if (code !== "ENOENT") {
-              throw err;
-            }
-            previousContent = null;
-          }
-
-          await mkdir(dirname(target), { recursive: true });
-          const content = String(call.arguments.content ?? "");
-          if (content.length > MAX_FILE_BYTES) {
-            throw new Error("Refusing to write a file larger than the tool size limit.");
-          }
-          validateWriteFileRequest({
-            rel,
-            content,
-            previousContent,
-            wasReadEarlier: readFilesThisRun.has(rel),
-          });
-
-          try {
-            await writeFile(target, content, "utf8");
-            const writtenContent = await readFile(target, "utf8");
-            if (writtenContent !== content) {
-              throw new Error(`Verification failed after writing ${rel}: file contents did not match the requested content.`);
-            }
-            validateWriteFileRequest({
-              rel,
-              content: writtenContent,
-              previousContent,
-              wasReadEarlier: true,
-            });
-          } catch (error) {
-            if (previousContent === null) {
-              await rm(target, { force: true });
-            } else {
-              await writeFile(target, previousContent, "utf8");
-            }
-            throw error;
-          }
-          const unifiedDiff = buildWriteFileUnifiedDiff(rel, previousContent, content);
-          return {
-            toolCallId: call.id,
-            name: call.name,
-            ok: true,
-            content: `Wrote ${content.length} characters to ${rel}.`,
-            metadata: {
-              path: rel,
-              sizeBytes: content.length,
-              ...(unifiedDiff ? { writeFileUnifiedDiff: unifiedDiff } : {}),
-            },
-          };
-        }
-
-        case "edit_file": {
-          const target = resolveWorktreePath(worktreePath, String(call.arguments.file_path ?? ""));
-          const rel = toPosix(relative(worktreePath, target));
-          if (!rel || rel === "." || rel.startsWith(".git/")) {
-            throw new Error("edit_file cannot target the repository root or .git internals.");
-          }
-
-          const oldString = String(call.arguments.old_string ?? "");
-          const newString = String(call.arguments.new_string ?? "");
-          const expectedReplacements = Number(call.arguments.expected_replacements ?? 1);
-          if (!Number.isInteger(expectedReplacements) || expectedReplacements < 1) {
-            throw new Error("edit_file requires expected_replacements to be an integer >= 1.");
-          }
-          if (newString.length > MAX_FILE_BYTES) {
-            throw new Error("Refusing to write a file larger than the tool size limit.");
-          }
-
-          let previousContent: string | null = null;
-          try {
-            const fileStat = await stat(target);
-            if (!fileStat.isFile()) {
-              throw new Error("Target path is not a file.");
-            }
-            if (fileStat.size <= MAX_FILE_BYTES) {
-              previousContent = await readFile(target, "utf8");
-            } else {
-              throw new Error("File is too large to edit in one tool call.");
-            }
-          } catch (err) {
-            const code = err && typeof err === "object" && "code" in err ? (err as NodeJS.ErrnoException).code : undefined;
-            if (code !== "ENOENT") {
-              throw err;
-            }
-            previousContent = null;
-          }
-
-          await mkdir(dirname(target), { recursive: true });
-
-          let nextContent: string;
-          let actionSummary: string;
-          if (oldString === "") {
-            if (previousContent !== null) {
-              throw new Error(`Refusing to create ${rel} via edit_file because the file already exists.`);
-            }
-            nextContent = newString;
-            actionSummary = `Created ${rel} via edit_file.`;
-          } else {
-            if (previousContent === null) {
-              throw new Error(`Cannot edit missing file ${rel}. Use write_file or set old_string to empty to create it.`);
-            }
-            if (!readFilesThisRun.has(rel)) {
-              throw new Error(`Refusing to edit existing file ${rel} before it has been read in this run. Use read_file first.`);
-            }
-
-            const normalizedOriginal = normalizeTextForDiff(previousContent);
-            const normalizedOld = normalizeTextForDiff(oldString);
-            const normalizedNew = normalizeTextForDiff(newString);
-            const actualReplacements = countOccurrences(normalizedOriginal, normalizedOld);
-            if (actualReplacements !== expectedReplacements) {
-              throw new Error(
-                `edit_file expected ${expectedReplacements} replacement${expectedReplacements === 1 ? "" : "s"} in ${rel}, but found ${actualReplacements}.`,
-              );
-            }
-
-            const normalizedNext = normalizedOriginal.split(normalizedOld).join(normalizedNew);
-            const lineEnding = detectLineEnding(previousContent);
-            nextContent = lineEnding === "\n" ? normalizedNext : normalizedNext.replace(/\n/g, "\r\n");
-            actionSummary = `Updated ${expectedReplacements} occurrence${expectedReplacements === 1 ? "" : "s"} in ${rel}.`;
-          }
-
-          validateWriteFileRequest({
-            rel,
-            content: nextContent,
-            previousContent,
-            wasReadEarlier: previousContent === null ? true : readFilesThisRun.has(rel),
-          });
-
-          try {
-            await writeFile(target, nextContent, "utf8");
-            const writtenContent = await readFile(target, "utf8");
-            if (writtenContent !== nextContent) {
-              throw new Error(`Verification failed after editing ${rel}: file contents did not match the requested content.`);
-            }
-            validateWriteFileRequest({
-              rel,
-              content: writtenContent,
-              previousContent,
-              wasReadEarlier: true,
-            });
-          } catch (error) {
-            if (previousContent === null) {
-              await rm(target, { force: true });
-            } else {
-              await writeFile(target, previousContent, "utf8");
-            }
-            throw error;
-          }
-
-          const unifiedDiff = buildWriteFileUnifiedDiff(rel, previousContent, nextContent);
-          return {
-            toolCallId: call.id,
-            name: call.name,
-            ok: true,
-            content: actionSummary,
-            metadata: {
-              path: rel,
-              sizeBytes: nextContent.length,
-              ...(unifiedDiff ? { writeFileUnifiedDiff: unifiedDiff } : {}),
-            },
-          };
-        }
-
-        case "delete_file": {
-          const inputPath = String(call.arguments.path ?? "");
-          const target = resolveWorktreePath(worktreePath, inputPath);
-          const rel = toPosix(relative(worktreePath, target));
-          if (!rel || rel === "." || rel === ".." || rel.startsWith(".git/")) {
-            throw new Error("delete_file cannot remove the repository root or .git internals.");
-          }
-          try {
-            await stat(target);
-          } catch (error) {
-            if (isMissingPathError(error)) {
-              throw new Error(await buildMissingPathMessage(worktreePath, "file", inputPath));
-            }
-            throw error;
-          }
-          await rm(target, { recursive: true, force: true });
-          return {
-            toolCallId: call.id,
-            name: call.name,
-            ok: true,
-            content: `Deleted ${rel}.`,
-            metadata: {
-              path: rel,
-            },
-          };
-        }
-
-        case "list_files": {
-          const inputPath = String(call.arguments.path ?? ".");
-          const target = resolveWorktreePath(worktreePath, inputPath);
-          let directoryStat;
-          try {
-            directoryStat = await stat(target);
-          } catch (error) {
-            if (isMissingPathError(error)) {
-              throw new Error(await buildMissingPathMessage(worktreePath, "directory", inputPath));
-            }
-            throw error;
-          }
-          if (!directoryStat.isDirectory()) {
-            throw new Error("Target path is not a directory.");
-          }
-          const entries: string[] = [];
-          const maxEntries = Number(call.arguments.maxEntries ?? MAX_LIST_ENTRIES);
-          await listFilesRecursive(worktreePath, target, entries, Math.min(maxEntries, MAX_LIST_ENTRIES));
-          return {
-            toolCallId: call.id,
-            name: call.name,
-            ok: true,
-            content: truncate(entries.length > 0 ? entries.join("\n") : "No files found."),
-            metadata: {
-              path: toPosix(relative(worktreePath, target)) || ".",
-              totalEntries: entries.length,
-            },
-          };
-        }
-
-        case "search_repo": {
-          const inputPath = String(call.arguments.path ?? ".");
-          const target = resolveWorktreePath(worktreePath, inputPath);
-          const query = String(call.arguments.query ?? "").trim();
-          if (!query) {
-            throw new Error("search_repo requires a non-empty query.");
-          }
-          try {
-            const targetStat = await stat(target);
-            if (!targetStat.isDirectory()) {
-              throw new Error("Target path is not a directory.");
-            }
-          } catch (error) {
-            if (isMissingPathError(error)) {
-              throw new Error(await buildMissingPathMessage(worktreePath, "directory", inputPath));
-            }
-            throw error;
-          }
-
-          const maxMatches = Math.min(Number(call.arguments.maxMatches ?? MAX_SEARCH_MATCHES), MAX_SEARCH_MATCHES);
-          const searchResult = await buildSearchRepoStructuredResult(target, query, maxMatches);
-
-          return {
-            toolCallId: call.id,
-            name: call.name,
-            ok: true,
-            content: searchResult.content,
-            metadata: {
-              path: toPosix(relative(worktreePath, target)) || ".",
-              query,
-              ...searchResult.metadata,
-            },
-          };
-        }
-
-        case "run_shell": {
-          const shellAbortController = new AbortController();
-          hooks?.onShellCommandStart?.({
-            callId: call.id,
-            command: String(call.arguments.command ?? ""),
-            cancel: (reason?: unknown) => shellAbortController.abort(reason),
-          });
-          const streamOpts =
-            hooks?.onShellStream || hooks?.abortSignal || hooks?.onShellCommandStart
-              ? {
-                  onStream: hooks.onShellStream
-                    ? ({ command, accumulated }: { command: string; accumulated: string }) => {
-                        hooks.onShellStream!({
-                          callId: call.id,
-                          command,
-                          output: accumulated,
-                        });
-                      }
-                    : undefined,
-                  signal: shellAbortController.signal,
-                }
-              : undefined;
-          try {
-            hooks?.abortSignal?.throwIfAborted();
-            const result = await runSafeCommand(
-              worktreePath,
-              String(call.arguments.command ?? ""),
-              requestShellApproval,
-              shellAllowlistExtra,
-              { ...streamOpts, yoloMode },
-            );
-            hooks?.abortSignal?.throwIfAborted();
-            return {
-              toolCallId: call.id,
-              name: call.name,
-              ok: result.metadata.exitCode === 0,
-              content: result.content,
-              metadata: result.metadata,
-            };
-          } finally {
-            hooks?.onShellCommandEnd?.({ callId: call.id });
-          }
-        }
-
-        default:
-          throw new Error(`Unsupported tool: ${call.name}`);
-      }
+      return await executor.execute(call);
     } catch (error) {
       return {
         toolCallId: call.id,
         name: call.name,
         ok: false,
         content: error instanceof Error ? error.message : String(error),
-        metadata: {
-          ...call.arguments,
-        },
+        metadata: { ...call.arguments },
       };
     }
   };

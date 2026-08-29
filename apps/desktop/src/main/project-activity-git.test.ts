@@ -62,7 +62,7 @@ describe("project activity Git collection", () => {
     expect(commits.flatMap((commit) => commit.files).filter((file) => file.changeType === "added").map((file) => file.path)).toEqual(
       expect.arrayContaining(["app.ts", "README.md", "café.ts"]),
     );
-    expect(trackedFiles.sort()).toEqual(["README.md", "app.ts", "café.ts"]);
+    expect(trackedFiles.toSorted((left, right) => left.localeCompare(right))).toEqual(["app.ts", "café.ts", "README.md"]);
     expect(releaseHistory.totalReleases).toBe(2);
     expect(releaseHistory.releases.map((release) => release.name)).toEqual(["v1.0.0", "v1.1.0"]);
     expect(releaseHistory.releases[1]).toMatchObject({ commitsSincePrevious: 2, filesChanged: 3 });
