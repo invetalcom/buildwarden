@@ -108,6 +108,7 @@ type ClaudeTurnExecutionOptions = {
   requestShellApproval?: (command: string) => Promise<ShellApprovalDecision>;
   requestUserInput?: (request: RunUserInputRequest) => Promise<RunUserInputAnswers>;
   toolContext?: HarnessToolContext;
+  mcpServers?: RunExecutionRequest["mcpServers"];
   onChunk?: (chunk: HarnessRunChunk) => void;
 };
 
@@ -1859,8 +1860,21 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
   const orchestrationMcpServer = options.toolContext
     ? buildClaudeOrchestrationMcpServer(options.toolContext)
     : null;
+  const externalMcpServers = Object.fromEntries(
+    (options.mcpServers ?? []).map((server, index) => [
+      `external_${String(index + 1)}_${server.name.toLowerCase().replace(/[^a-z0-9_-]+/g, "_").slice(0, 40) || "mcp"}`,
+      {
+        type: "http" as const,
+        url: server.url,
+        ...(server.headers ? { headers: server.headers } : {}),
+      },
+    ]),
+  );
+  if (Object.keys(externalMcpServers).length > 0) {
+    sdkOptions.mcpServers = externalMcpServers;
+  }
   if (orchestrationMcpServer) {
-    sdkOptions.mcpServers = { buildwarden: orchestrationMcpServer };
+    sdkOptions.mcpServers = { ...sdkOptions.mcpServers, buildwarden: orchestrationMcpServer };
   }
   const claudeQuery = query({
     prompt: buildPrompt(options),
@@ -2022,6 +2036,7 @@ export class ClaudeCodeHarnessAdapter implements HarnessAdapter {
       requestShellApproval: input.yoloMode === true ? undefined : this.requestShellApproval,
       requestUserInput: this.requestUserInput,
       toolContext,
+      mcpServers: input.mcpServers,
       onChunk,
     });
     return {

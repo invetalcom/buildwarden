@@ -2875,13 +2875,19 @@ export class CursorAgentHarnessAdapter implements HarnessAdapter {
         pendingMcpToolNames.push(toolName);
       }
     });
+    const externalMcpServers = (input.mcpServers ?? []).map((server) => ({
+      type: "http",
+      name: server.name,
+      url: server.url,
+      headers: Object.entries(server.headers ?? {}).map(([name, value]) => ({ name, value })),
+    }));
     runtime = cursorRuntimeFromRunInput(
       input,
       onChunk,
       signal,
       this.requestShellApproval,
       this.requestUserInput,
-      orchestrationMcp ? [orchestrationMcp.config] : undefined,
+      [...externalMcpServers, ...(orchestrationMcp ? [orchestrationMcp.config] : [])],
     );
     for (const toolName of pendingMcpToolNames) {
       runtime.recordMcpToolCallName(toolName);

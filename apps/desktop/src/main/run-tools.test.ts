@@ -69,6 +69,46 @@ describe("run tool context", () => {
     await expect(readFile(join(worktreePath, "src/example.ts"), "utf8")).rejects.toThrow();
   });
 
+  it("treats invalid search regexes as literal text and respects the global match cap", async () => {
+    const worktreePath = await makeTempDir();
+    await mkdir(join(worktreePath, "src"), { recursive: true });
+    await writeFile(join(worktreePath, "src", "one.ts"), "before\nvalue[one\nafter\nvalue[one\n", "utf8");
+    await writeFile(join(worktreePath, "src", "two.ts"), "value[two\n", "utf8");
+    const tools = createRunToolContext(worktreePath);
+
+    const result = await tools.executeTool({
+      id: "search-literal",
+      name: "search_repo",
+      arguments: { query: "value[", maxMatches: 2 },
+    });
+
+    expect(result.ok).toBe(true);
+    expect((result.metadata as { totalMatches?: number }).totalMatches).toBe(2);
+    expect(result.content).toContain("src/one.ts");
+  });
+
+  it("preserves trailing context for the final capped ripgrep match", async () => {
+    const worktreePath = await makeTempDir();
+    await mkdir(join(worktreePath, "src"), { recursive: true });
+    await writeFile(
+      join(worktreePath, "src", "context.ts"),
+      "before\nneedle\nafter-one\nafter-two\nneedle-again\n",
+      "utf8",
+    );
+    const tools = createRunToolContext(worktreePath);
+
+    const result = await tools.executeTool({
+      id: "search-context-cap",
+      name: "search_repo",
+      arguments: { query: "needle", maxMatches: 1 },
+    });
+
+    expect(result.ok).toBe(true);
+    expect((result.metadata as { totalMatches?: number }).totalMatches).toBe(1);
+    expect(result.content).toContain("3|after-one");
+    expect(result.content).toContain("4|after-two");
+  });
+
   it("includes writeFileUnifiedDiff in metadata for new and updated files", async () => {
     const worktreePath = await makeTempDir();
     const tools = createRunToolContext(worktreePath);

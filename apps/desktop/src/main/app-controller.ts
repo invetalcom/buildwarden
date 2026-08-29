@@ -68,7 +68,6 @@ import {
   suggestCommitMessageWithCursorAgent,
 } from "@buildwarden/provider-cursor-agent";
 import { AzureLegacyProviderAdapter, createAzureLegacyClientFromParts, createAzureLegacyDevLogger } from "@buildwarden/provider-azure-legacy";
-import { INTEGRATED_SKILLS_BY_ID, INTEGRATED_SKILLS_CATALOG } from "@buildwarden/shared/integrated-skills-catalog";
 import {
   APP_SETTING_KEYS,
   buildNetworkProxyRuntimeConfig,
@@ -82,6 +81,7 @@ import {
   type AppLogDirectorySizeInfo,
   type ComposerCommandDescriptor,
   type ComposerCommandContext,
+  type IntegratedSkillDefinition,
   type IntegratedSkillMetadata,
   type NetworkProxyRuntimeConfig,
   type NetworkProxySettingsInput,
@@ -253,6 +253,18 @@ import type { AppControllerDesktopServices } from "./desktop-platform-services";
 import { HostEventBus } from "./host-events";
 import type { HostTerminal } from "./host-terminal-service";
 import { buildIntegratedSkillContext } from "./integrated-skill-context";
+import { runProjectVerificationCommands, type ProjectVerificationResult } from "./project-verification";
+import {
+  timeBudgetExhaustion,
+  tokenBudgetExhaustion,
+  type RunBudgetExhaustion,
+} from "./run-autonomy-budget";
+import { resolveMcpServerRuntimeConfigs } from "./mcp-server-registry";
+
+type IntegratedSkillsCatalogModule = typeof import("@buildwarden/shared/integrated-skills-catalog");
+let integratedSkillsCatalogPromise: Promise<IntegratedSkillsCatalogModule> | null = null;
+const loadIntegratedSkillsCatalog = (): Promise<IntegratedSkillsCatalogModule> =>
+  integratedSkillsCatalogPromise ??= import("@buildwarden/shared/integrated-skills-catalog");
 import {
   buildRunChatContext,
   buildRunChatFirstTurnPrompt,
@@ -1086,6 +1098,8 @@ const AZURE_LEGACY_AUTO_RECOVERY_KIND = "Azure Legacy-max-tool-rounds";
 interface ActiveWorker {
   worker: Worker;
   cancelled: boolean;
+  verificationAbortController?: AbortController;
+  budgetExhaustion?: RunBudgetExhaustion;
 }
 
 type WorkerDoneResult = {
@@ -1320,7 +1334,8 @@ export class AppController
     }
   }
 
-  private getProjectActiveIntegratedSkills(projectId: string) {
+  private async getProjectActiveIntegratedSkills(projectId: string): Promise<IntegratedSkillDefinition[]> {
+    const { INTEGRATED_SKILLS_BY_ID } = await loadIntegratedSkillsCatalog();
     const settings = this.db.getSettings();
     const disabledSkillIds = new Set(
       parseIntegratedSkillsDisabledSetting(settings[APP_SETTING_KEYS.integratedSkillsDisabled]),
@@ -1329,11 +1344,11 @@ export class AppController
     const selectedSkillIds = projectSkillsById[projectId] ?? [];
     return selectedSkillIds
       .map((skillId) => INTEGRATED_SKILLS_BY_ID[skillId])
-      .filter((skill): skill is (typeof INTEGRATED_SKILLS_CATALOG)[number] => Boolean(skill) && !disabledSkillIds.has(skill.id));
+      .filter((skill): skill is IntegratedSkillDefinition => Boolean(skill) && !disabledSkillIds.has(skill.id));
   }
 
-  private buildIntegratedSkillContext(projectId: string): string | undefined {
-    return buildIntegratedSkillContext(this.getProjectActiveIntegratedSkills(projectId));
+  private async buildIntegratedSkillContext(projectId: string): Promise<string | undefined> {
+    return buildIntegratedSkillContext(await this.getProjectActiveIntegratedSkills(projectId));
   }
 
   private getProjectLabSettings(projectId: string): ProjectLabSettings {
@@ -3195,7 +3210,7 @@ export class AppController
       {
         promptOverride: initialPromptForHarness || undefined,
         attachments: initialAttachments,
-        skillContext: this.buildIntegratedSkillContext(project.id),
+        skillContext: await this.buildIntegratedSkillContext(project.id),
         providerOptions: executionOptions,
         yoloMode: input.yoloMode === true,
       },
@@ -3328,7 +3343,7 @@ export class AppController
       {
         promptOverride: promptForHarness,
         attachments: initialAttachments,
-        skillContext: this.buildIntegratedSkillContext(project.id),
+        skillContext: await this.buildIntegratedSkillContext(project.id),
         providerOptions: executionOptions,
         yoloMode: input.yoloMode === true,
       },
@@ -3524,7 +3539,7 @@ export class AppController
       {
         promptOverride: followUpPromptForHarness,
         attachments: workerAttachments,
-        skillContext: this.buildIntegratedSkillContext(project.id),
+        skillContext: await this.buildIntegratedSkillContext(project.id),
         providerOptions: executionOptions,
         yoloMode: options?.yoloMode === true,
       },
@@ -6843,8 +6858,7 @@ export class AppController
       return;
     }
 
-    active.cancelled = true;
-    active.worker.postMessage({ type: "cancel" });
+    this.requestRunWorkerStop(active);
     this.db.updateRunStatus(runId, "cancelled", { errorMessage: "Run cancelled by user." });
     await this.appendRunEvent(runId, "status", "Run cancelled", "Cancellation requested.");
     const run = this.db.getRun(runId);
@@ -6867,6 +6881,12 @@ export class AppController
       content: "Cancellation requested.",
       createdAt: new Date().toISOString(),
     });
+  }
+
+  private requestRunWorkerStop(active: ActiveWorker): void {
+    active.cancelled = true;
+    active.verificationAbortController?.abort();
+    active.worker.postMessage({ type: "cancel" });
   }
 
   async cancelRunShell(runId: string, toolCallId: string): Promise<void> {
@@ -7113,7 +7133,7 @@ export class AppController
       await this.resolveNetworkProxyRuntimeConfig(),
       {
         promptOverride: buildPromptWithRunGoal(prompt, coordinator.goalText),
-        skillContext: this.buildIntegratedSkillContext(project.id),
+        skillContext: await this.buildIntegratedSkillContext(project.id),
         providerOptions: childExecutionOptions,
         yoloMode: inheritedFullAccess,
       },
@@ -8129,8 +8149,7 @@ export class AppController
     this.terminal.killForRunId(runId);
     const active = this.runWorkers.get(runId);
     if (active) {
-      active.cancelled = true;
-      active.worker.postMessage({ type: "cancel" });
+      this.requestRunWorkerStop(active);
       this.runWorkers.delete(runId);
       await active.worker.terminate();
     }
@@ -8535,7 +8554,7 @@ export class AppController
       await this.resolveNetworkProxyRuntimeConfig(),
       {
         promptOverride: buildPromptWithRunGoal(prompt, coordinator.goalText),
-        skillContext: this.buildIntegratedSkillContext(child.projectId),
+        skillContext: await this.buildIntegratedSkillContext(child.projectId),
         providerOptions: childExecutionOptions,
         yoloMode: inheritedFullAccess,
       },
@@ -8599,7 +8618,7 @@ export class AppController
 
     const worker = this.startWorker(run, provider, model, apiKey ?? "", await this.resolveNetworkProxyRuntimeConfig(), {
       promptOverride: this.buildInterruptedRunRecoveryPrompt(run),
-      skillContext: this.buildIntegratedSkillContext(run.projectId),
+      skillContext: await this.buildIntegratedSkillContext(run.projectId),
       providerOptions: this.getLatestRunExecutionOptions(run.id, provider),
       yoloMode: latestRunExecutionSettings(this.db.getRunSteps(run.id))?.yoloMode === true,
     });
@@ -8822,7 +8841,8 @@ export class AppController
     return this.detectedCursorInstallation ?? Promise.resolve({ binaryPath: null });
   }
 
-  listIntegratedSkills(): Promise<IntegratedSkillMetadata[]> {
+  async listIntegratedSkills(): Promise<IntegratedSkillMetadata[]> {
+    const { INTEGRATED_SKILLS_CATALOG } = await loadIntegratedSkillsCatalog();
     const seen = new Set<string>();
     const metadata = INTEGRATED_SKILLS_CATALOG.filter((skill) => {
       const dedupeKey = `${skill.source}:${skill.name}`;
@@ -8842,11 +8862,12 @@ export class AppController
       relativeDir: skill.relativeDir,
       sourceUrl: skill.sourceUrl,
     }));
-    return Promise.resolve(metadata);
+    return metadata;
   }
 
-  getIntegratedSkillContent(skillId: string): Promise<string | null> {
-    return Promise.resolve(INTEGRATED_SKILLS_BY_ID[skillId]?.content ?? null);
+  async getIntegratedSkillContent(skillId: string): Promise<string | null> {
+    const { INTEGRATED_SKILLS_BY_ID } = await loadIntegratedSkillsCatalog();
+    return INTEGRATED_SKILLS_BY_ID[skillId]?.content ?? null;
   }
 
   async pickIdeExecutable(): Promise<string | null> {
@@ -9066,6 +9087,12 @@ export class AppController
     };
     const settings = this.db.getSettings();
     const shellAllowlistExtra = parseShellAllowlistExtraSetting(settings[APP_SETTING_KEYS.shellAllowlistExtra]);
+    const runDefaults = parseProjectRunDefaultsSetting(settings[APP_SETTING_KEYS.projectRunDefaults])[run.projectId];
+    const maxRunMinutes = runDefaults?.maxRunMinutes ?? 0;
+    const maxRunTokens = runDefaults?.maxRunTokens ?? 0;
+    const mcpServers = provider.providerType === "claude-code" || provider.providerType === "cursor-agent"
+      ? resolveMcpServerRuntimeConfigs(runDefaults?.mcpServers ?? [])
+      : [];
     const devModeEnabled = settings[APP_SETTING_KEYS.enableDevMode] === "true";
     if (devModeEnabled) {
       mkdirSync(this.logDirPath, { recursive: true });
@@ -9093,6 +9120,7 @@ export class AppController
           providerOptions: options?.providerOptions,
           ...(networkProxy ? { networkProxy } : {}),
           shellAllowlistExtra,
+          ...(mcpServers.length > 0 ? { mcpServers } : {}),
           resumeCheckpoint: this.getRunCheckpoint(run.id),
           ...(devModeEnabled ? { devLogging: { logDirPath: this.logDirPath } } : {}),
           ...(options?.attachments?.length ? { attachments: options.attachments } : {}),
@@ -9102,6 +9130,42 @@ export class AppController
         },
       },
     });
+
+    const exhaustBudget = (exhaustion: RunBudgetExhaustion) => {
+      const active = this.runWorkers.get(run.id);
+      if (!active || active.worker !== worker || active.cancelled || active.budgetExhaustion) return;
+      active.budgetExhaustion = exhaustion;
+      worker.postMessage({ type: "cancel" });
+      const metadata = {
+        autonomyBudget: true,
+        budgetKind: exhaustion.kind,
+        limit: exhaustion.limit,
+        observed: exhaustion.observed,
+      };
+      void this.appendRunEvent(run.id, "status", "Autonomy budget exhausted", exhaustion.reason, metadata)
+        .then((step) => {
+          this.emitEvent({
+            runId: run.id,
+            type: "status",
+            title: "Autonomy budget exhausted",
+            content: exhaustion.reason,
+            metadata,
+            createdAt: new Date().toISOString(),
+            step,
+          });
+        })
+        .catch((error) => {
+          this.logControllerError("Could not persist the autonomy budget event.", error, { runId: run.id });
+        });
+    };
+    const budgetTimer = maxRunMinutes > 0
+      ? setTimeout(() => {
+          exhaustBudget(timeBudgetExhaustion(maxRunMinutes));
+        }, maxRunMinutes * 60_000)
+      : null;
+    const clearBudgetTimer = () => {
+      if (budgetTimer) clearTimeout(budgetTimer);
+    };
 
     const runningRun = this.db.updateRunStatus(run.id, "running");
     this.updateWorktreeStatus(run, "busy");
@@ -9280,6 +9344,8 @@ export class AppController
             inputTokens: nextInputTokens,
             outputTokens: nextOutputTokens,
           });
+          const exhaustion = tokenBudgetExhaustion(maxRunTokens, usageTotals);
+          if (exhaustion) exhaustBudget(exhaustion);
         }
 
         if (payload.chunk.metadata?.providerSessionRuntime) {
@@ -9388,11 +9454,17 @@ export class AppController
       }
 
       if (payload.type === "done") {
+        clearBudgetTimer();
         const active = this.runWorkers.get(run.id);
-        const wasCancelled = active?.cancelled === true;
+        let wasCancelled = active?.cancelled === true;
         const currentRun = this.db.getRun(run.id);
         const nextInputTokens = Math.max(currentRun.inputTokens, payload.result.usage.inputTokens);
         const nextOutputTokens = Math.max(currentRun.outputTokens, payload.result.usage.outputTokens);
+        const finalTokenExhaustion = tokenBudgetExhaustion(maxRunTokens, payload.result.usage);
+        if (active && !active.budgetExhaustion && finalTokenExhaustion) {
+          active.budgetExhaustion = finalTokenExhaustion;
+        }
+        const budgetExhaustion = active?.budgetExhaustion;
         if (payload.result.providerSessionRuntime && !wasCancelled) {
           this.upsertProviderSessionRuntime("run", run.id, provider, model.modelId, payload.result.providerSessionRuntime);
         }
@@ -9443,19 +9515,90 @@ export class AppController
           ? this.db.getOrchestrationByCoordinatorRunId(run.id)
           : null;
         const waitingForSubagents = !wasCancelled && orchestration?.status === "waiting";
+        const configuredVerificationCommands = parseProjectRunDefaultsSetting(
+          this.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults],
+        )[run.projectId]?.verificationCommands ?? [];
+        let verificationResults: ProjectVerificationResult[] = [];
+        if (!wasCancelled && !budgetExhaustion && !waitingForSubagents && run.mode === "code" && configuredVerificationCommands.length > 0) {
+          const verificationAbortController = new AbortController();
+          if (active) active.verificationAbortController = verificationAbortController;
+          const verificationStartedContent = configuredVerificationCommands.join("\n");
+          await this.appendRunEvent(
+            run.id,
+            "status",
+            "Verification started",
+            verificationStartedContent,
+            { verificationGate: true, commandCount: configuredVerificationCommands.length },
+          );
+          this.emitEvent({
+            runId: run.id,
+            type: "status",
+            title: "Verification started",
+            content: verificationStartedContent,
+            metadata: { verificationGate: true, commandCount: configuredVerificationCommands.length },
+            createdAt: new Date().toISOString(),
+          });
+          verificationResults = await runProjectVerificationCommands(
+            run.worktreePath,
+            configuredVerificationCommands,
+            undefined,
+            verificationAbortController.signal,
+          );
+          if (active) active.verificationAbortController = undefined;
+          wasCancelled = active?.cancelled === true;
+          if (!wasCancelled) {
+            for (const result of verificationResults) {
+              const title = result.ok ? "Verification passed" : "Verification failed";
+              const content = `$ ${result.command}\n${result.output}`;
+              const metadata = {
+                verificationGate: true,
+                command: result.command,
+                exitCode: result.exitCode,
+                durationMs: result.durationMs,
+                timedOut: result.timedOut,
+                ok: result.ok,
+              };
+              await this.appendRunEvent(run.id, result.ok ? "tool-result" : "error", title, content, metadata);
+              this.emitEvent({
+                runId: run.id,
+                type: result.ok ? "tool-result" : "error",
+                title,
+                content,
+                metadata,
+                createdAt: new Date().toISOString(),
+              });
+            }
+          }
+        }
+        const failedVerification = !wasCancelled && verificationResults.some((result) => !result.ok);
+        const failedVerificationResult = verificationResults.find((result) => !result.ok);
         const terminalEventTitle = wasCancelled
           ? "Run cancelled"
+          : budgetExhaustion
+            ? "Autonomy budget exhausted"
+          : failedVerification
+            ? "Verification gate failed"
           : waitingForSubagents
             ? "Waiting for subagents to complete"
             : "Run completed";
         const terminalEventContent = wasCancelled
           ? `Run cancellation finished cleanup.\nInput tokens: ${nextInputTokens}\nOutput tokens: ${nextOutputTokens}`
+          : budgetExhaustion
+            ? `${budgetExhaustion.reason}\nInput tokens: ${nextInputTokens}\nOutput tokens: ${nextOutputTokens}`
+          : failedVerification
+            ? `The agent turn finished, but the verification gate failed at: ${failedVerificationResult?.command ?? "unknown command"}.\nInput tokens: ${nextInputTokens}\nOutput tokens: ${nextOutputTokens}`
           : waitingForSubagents
             ? `The coordinator turn completed and is waiting for delegated subagents.\nInput tokens: ${nextInputTokens}\nOutput tokens: ${nextOutputTokens}`
             : `Run completed successfully.\nInput tokens: ${nextInputTokens}\nOutput tokens: ${nextOutputTokens}`;
-        this.db.updateRunStatus(run.id, wasCancelled ? "cancelled" : "completed", {
+        this.db.updateRunStatus(run.id, wasCancelled ? "cancelled" : budgetExhaustion || failedVerification ? "failed" : "completed", {
           summary: wasCancelled ? currentRun.summary : payload.result.summary,
-          errorMessage: wasCancelled ? "Run cancelled by user." : null,
+          errorMessage: wasCancelled
+            ? "Run cancelled by user."
+            : budgetExhaustion
+              ? budgetExhaustion.reason
+            : failedVerification
+              ? `Verification failed: ${failedVerificationResult?.command ?? "unknown command"}`
+              : null,
           lastProviderResponseId: payload.result.responseId,
           inputTokens: nextInputTokens,
           outputTokens: nextOutputTokens,
@@ -9473,6 +9616,10 @@ export class AppController
             usageTotals: payload.result.usage,
             cancelled: wasCancelled,
             waitingForSubagents,
+            verificationGate: configuredVerificationCommands.length > 0,
+            verificationPassed: verificationResults.length > 0 && !failedVerification,
+            autonomyBudgetExhausted: Boolean(budgetExhaustion),
+            budgetKind: budgetExhaustion?.kind,
           },
         );
         this.emitEvent({
@@ -9486,19 +9633,28 @@ export class AppController
             usageTotals: payload.result.usage,
             cancelled: wasCancelled,
             waitingForSubagents,
+            verificationGate: configuredVerificationCommands.length > 0,
+            verificationPassed: verificationResults.length > 0 && !failedVerification,
+            autonomyBudgetExhausted: Boolean(budgetExhaustion),
+            budgetKind: budgetExhaustion?.kind,
           },
           createdAt: new Date().toISOString(),
         });
         this.clearRunRequestStepIds(run.id);
         this.runWorkers.delete(run.id);
         await worker.terminate();
-        if (!wasCancelled) this.syncRunForgeRequestInBackground(run.id, true, false);
-        if (!wasCancelled && run.kind === "lab-implementation") {
+        if (!wasCancelled && !budgetExhaustion && !failedVerification) this.syncRunForgeRequestInBackground(run.id, true, false);
+        if (!wasCancelled && !budgetExhaustion && !failedVerification && run.kind === "lab-implementation") {
           try {
             await this.reviewCompletedProjectLabImplementation(this.db.getRun(run.id));
           } catch (labReviewError) {
             this.logControllerError("Project Lab implementation review failed.", labReviewError, { runId: run.id });
           }
+        } else if ((budgetExhaustion || failedVerification) && run.kind === "lab-implementation") {
+          await this.failProjectLabImplementation(
+            run,
+            budgetExhaustion?.reason ?? "The implementation did not pass its project verification gate.",
+          );
         } else if (wasCancelled && run.kind === "lab-implementation") {
           this.cancelProjectLabImplementation(run, "The implementation run was cancelled.");
         }
@@ -9518,23 +9674,28 @@ export class AppController
       }
 
       if (payload.type === "error") {
+        clearBudgetTimer();
         const active = this.runWorkers.get(run.id);
         const status = active?.cancelled ? "cancelled" : "failed";
+        const errorMessage = active?.budgetExhaustion?.reason ?? payload.error;
         const shouldAutoRecover =
-          status === "failed" && this.shouldAutoRecoverAzureLegacyToolRoundLimit(run.id, provider.providerType, payload.error);
-        this.logControllerError("Run worker reported an error payload.", payload.error, {
+          !active?.budgetExhaustion && status === "failed" && this.shouldAutoRecoverAzureLegacyToolRoundLimit(run.id, provider.providerType, payload.error);
+        this.logControllerError("Run worker reported an error payload.", errorMessage, {
           runId: run.id,
           status,
         });
-        this.db.updateRunStatus(run.id, status, { errorMessage: payload.error });
+        this.db.updateRunStatus(run.id, status, { errorMessage });
         this.clearRunCheckpoint(run.id);
         this.updateWorktreeStatus(run, "ready");
-        await this.appendRunEvent(run.id, "error", "Run failed", payload.error);
+        await this.appendRunEvent(run.id, "error", active?.budgetExhaustion ? "Autonomy budget exhausted" : "Run failed", errorMessage, {
+          autonomyBudgetExhausted: Boolean(active?.budgetExhaustion),
+          budgetKind: active?.budgetExhaustion?.kind,
+        });
         this.emitEvent({
           runId: run.id,
           type: "error",
-          title: status === "cancelled" ? "Run cancelled" : "Run failed",
-          content: payload.error,
+          title: status === "cancelled" ? "Run cancelled" : active?.budgetExhaustion ? "Autonomy budget exhausted" : "Run failed",
+          content: errorMessage,
           createdAt: new Date().toISOString(),
         });
         this.clearRunRequestStepIds(run.id);
@@ -9544,7 +9705,7 @@ export class AppController
           if (status === "cancelled") {
             this.cancelProjectLabImplementation(run, "The implementation run was cancelled.");
           } else {
-            await this.failProjectLabImplementation(run, payload.error);
+            await this.failProjectLabImplementation(run, errorMessage);
           }
         }
         if (run.kind === "loop-iteration") {
@@ -9613,6 +9774,7 @@ export class AppController
     });
 
     worker.on("error", async (error) => {
+      clearBudgetTimer();
       this.logControllerError("Run worker emitted a thread error.", error, { runId: run.id });
       this.db.updateRunStatus(run.id, "failed", { errorMessage: error.message });
       this.clearRunCheckpoint(run.id);
@@ -9931,7 +10093,7 @@ export class AppController
     );
 
     const worker = this.startWorker(run, provider, model, apiKey ?? "", await this.resolveNetworkProxyRuntimeConfig(), {
-      skillContext: this.buildIntegratedSkillContext(run.projectId),
+      skillContext: await this.buildIntegratedSkillContext(run.projectId),
       providerOptions: this.getLatestRunExecutionOptions(run.id, provider),
       yoloMode: latestRunExecutionSettings(this.db.getRunSteps(run.id))?.yoloMode === true,
     });
@@ -10329,8 +10491,7 @@ export class AppController
 
     if (active) {
       try {
-        active.cancelled = true;
-        active.worker.postMessage({ type: "cancel" });
+        this.requestRunWorkerStop(active);
         await active.worker.terminate();
       } catch (error) {
         cleanupErrors.push(`worker termination failed: ${error instanceof Error ? error.message : String(error)}`);

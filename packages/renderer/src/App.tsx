@@ -34,6 +34,7 @@ import {
   type ProjectFolderGitStatus,
   type ProjectForgeRequestOpenPayload,
   type ProjectLoopAvailability,
+  type ProjectMcpServerConfig,
   type ProjectSnapshot,
   type ProjectTaskInput,
   type UpdateProjectTaskInput,
@@ -273,6 +274,10 @@ export const App = () => {
   const [runAnthropicEffort, setRunAnthropicEffort] = useState("auto");
   const [runExecutionMode, setRunExecutionMode] = useState("auto");
   const [runYoloMode, setRunYoloMode] = useState(false);
+  const [runVerificationCommands, setRunVerificationCommands] = useState<string[]>([]);
+  const [runMaxMinutes, setRunMaxMinutes] = useState(0);
+  const [runMaxTokens, setRunMaxTokens] = useState(0);
+  const [runMcpServers, setRunMcpServers] = useState<ProjectMcpServerConfig[]>([]);
   const [runDelegationEnabled, setRunDelegationEnabled] = useState(false);
   const [chatReasoningEffort, setChatReasoningEffort] = useState("auto");
   const [chatAnthropicEffort, setChatAnthropicEffort] = useState("auto");
@@ -1388,6 +1393,10 @@ export const App = () => {
     changeRunAnthropicEffort,
     changeRunExecutionMode,
     changeRunYoloMode,
+    changeRunVerificationCommands,
+    changeRunMaxMinutes,
+    changeRunMaxTokens,
+    changeRunMcpServers,
     changeRunModel,
     changeRunWorktreeModelIds,
     changeRunModelConfigurations,
@@ -1404,6 +1413,10 @@ export const App = () => {
     setRunAnthropicEffort,
     setRunExecutionMode,
     setRunYoloMode,
+    setRunVerificationCommands,
+    setRunMaxMinutes,
+    setRunMaxTokens,
+    setRunMcpServers,
     setRunModelId,
     setRunWorktreeModelIds,
     setRunModelConfigurations,
@@ -4261,12 +4274,20 @@ export const App = () => {
               anthropicEffort={runAnthropicEffort}
               executionMode={runExecutionMode}
               yoloMode={runYoloMode}
+              verificationCommands={runVerificationCommands}
+              maxRunMinutes={runMaxMinutes}
+              maxRunTokens={runMaxTokens}
+              mcpServers={runMcpServers}
               delegationEnabled={runDelegationEnabled}
               delegationAvailable={delegationAvailable}
               onReasoningEffortChange={changeRunReasoningEffort}
               onAnthropicEffortChange={changeRunAnthropicEffort}
               onExecutionModeChange={changeRunExecutionMode}
               onYoloModeChange={changeRunYoloMode}
+              onVerificationCommandsChange={changeRunVerificationCommands}
+              onMaxRunMinutesChange={changeRunMaxMinutes}
+              onMaxRunTokensChange={changeRunMaxTokens}
+              onMcpServersChange={changeRunMcpServers}
               onDelegationEnabledChange={setRunDelegationEnabled}
               onSelectRun={(runId) => void handleRunSelect(project.project.id, runId)}
               onRunPromptChange={setRunPrompt}

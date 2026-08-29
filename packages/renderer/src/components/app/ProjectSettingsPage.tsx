@@ -5,6 +5,7 @@ import {
   type ModelExecutionProfile,
   type ProjectForgeAuthStatus,
   type ProjectSnapshot,
+  type ProjectMcpServerConfig,
   type ProviderType,
   type RunMode,
   type RunWorkspaceType,
@@ -12,11 +13,13 @@ import {
 } from "@buildwarden/shared";
 import {
   BrainCircuit,
+  Cable,
   Check,
   FolderGit2,
   GitBranch,
   KeyRound,
   PlayCircle,
+  Plus,
   ShieldOff,
   SlidersHorizontal,
   Sparkles,
@@ -53,6 +56,10 @@ interface ProjectSettingsPageProps {
   anthropicEffort: string;
   executionMode?: string;
   yoloMode: boolean;
+  verificationCommands: string[];
+  maxRunMinutes: number;
+  maxRunTokens: number;
+  mcpServers: ProjectMcpServerConfig[];
   busy: boolean;
   availableIntegratedSkills: IntegratedSkillMetadata[];
   activeIntegratedSkillIds: string[];
@@ -65,6 +72,10 @@ interface ProjectSettingsPageProps {
   onAnthropicEffortChange: (value: string) => void;
   onExecutionModeChange?: (value: string) => void;
   onYoloModeChange: (value: boolean) => void;
+  onVerificationCommandsChange: (value: string[]) => void;
+  onMaxRunMinutesChange: (value: number) => void;
+  onMaxRunTokensChange: (value: number) => void;
+  onMcpServersChange: (value: ProjectMcpServerConfig[]) => void;
   onActiveIntegratedSkillIdsChange: (skillIds: string[]) => void | Promise<void>;
   onDeleteProject: () => void | Promise<void>;
 }
@@ -214,6 +225,10 @@ export const ProjectSettingsPage = ({
   anthropicEffort,
   executionMode = "auto",
   yoloMode,
+  verificationCommands,
+  maxRunMinutes,
+  maxRunTokens,
+  mcpServers,
   busy,
   availableIntegratedSkills,
   activeIntegratedSkillIds,
@@ -226,6 +241,10 @@ export const ProjectSettingsPage = ({
   onAnthropicEffortChange,
   onExecutionModeChange,
   onYoloModeChange,
+  onVerificationCommandsChange,
+  onMaxRunMinutesChange,
+  onMaxRunTokensChange,
+  onMcpServersChange,
   onActiveIntegratedSkillIdsChange,
   onDeleteProject,
 }: ProjectSettingsPageProps) => {
@@ -262,6 +281,11 @@ export const ProjectSettingsPage = ({
   const [forgeMonitorError, setForgeMonitorError] = useState<string | null>(null);
   const [forgeMonitorMessage, setForgeMonitorMessage] = useState<string | null>(null);
   const forgeMonitorAutosaveTimerRef = useRef<number | null>(null);
+  const [verificationCommandsDraft, setVerificationCommandsDraft] = useState(() => verificationCommands.join("\n"));
+
+  useEffect(() => {
+    setVerificationCommandsDraft(verificationCommands.join("\n"));
+  }, [project.project.id, verificationCommands]);
 
   useEffect(() => {
     let cancelled = false;
@@ -425,6 +449,23 @@ export const ProjectSettingsPage = ({
       next.add(modelId);
     }
     onRunWorktreeModelIdsChange(modelOptions.map((option) => option.id).filter((id) => next.has(id)));
+  };
+
+  const updateMcpServer = (serverId: string, partial: Partial<ProjectMcpServerConfig>) => {
+    onMcpServersChange(mcpServers.map((server) => server.id === serverId ? { ...server, ...partial } : server));
+  };
+
+  const addMcpServer = () => {
+    onMcpServersChange([
+      ...mcpServers,
+      {
+        id: `mcp-${crypto.randomUUID()}`,
+        name: "New MCP server",
+        url: "https://",
+        enabled: false,
+        headers: [],
+      },
+    ]);
   };
 
   return (
@@ -712,8 +753,177 @@ export const ProjectSettingsPage = ({
                   </div>
                 </div>
               </SettingsRow>
+
+              <SettingsRow
+                title="Verification gate"
+                description="Run these commands in order after each successful Code-mode turn. A failing command marks the run failed and blocks completed-run actions."
+                align="start"
+              >
+                <div className={`${rowControlClass} space-y-2`}>
+                  <textarea
+                    value={verificationCommandsDraft}
+                    onChange={(event) => setVerificationCommandsDraft(event.target.value)}
+                    onBlur={() =>
+                      onVerificationCommandsChange(
+                        verificationCommandsDraft.split(/\r?\n/).map((command) => command.trim()).filter(Boolean).slice(0, 10),
+                      )
+                    }
+                    className="app-scrollbar min-h-24 w-full resize-y rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-3 py-2 font-mono text-xs text-[var(--ec-text)] outline-none transition focus:border-[var(--ec-accent-ring)]"
+                    placeholder={"pnpm typecheck\npnpm test"}
+                    disabled={busy}
+                    aria-label="Verification commands"
+                  />
+                  <p className="text-[11px] text-[var(--ec-faint)]">One command per line, up to 10. Commands run from the run workspace with a five-minute limit each.</p>
+                </div>
+              </SettingsRow>
+
+              <SettingsRow
+                title="Autonomy budget"
+                description="Stop an agent turn when either ceiling is reached. Use 0 to leave a ceiling unlimited."
+              >
+                <div className={`${rowControlClass} grid gap-2 sm:grid-cols-2`}>
+                  <label className="rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-2.5">
+                    <span className="text-xs font-medium text-[var(--ec-muted)]">Maximum minutes</span>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={1440}
+                      step={1}
+                      value={maxRunMinutes}
+                      onChange={(event) => onMaxRunMinutesChange(Math.min(1440, Math.max(0, Math.trunc(Number(event.target.value) || 0))))}
+                      className="mt-2 h-8 font-mono text-xs"
+                      disabled={busy}
+                    />
+                  </label>
+                  <label className="rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-2.5">
+                    <span className="text-xs font-medium text-[var(--ec-muted)]">Maximum tokens</span>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={10000000}
+                      step={1000}
+                      value={maxRunTokens}
+                      onChange={(event) => onMaxRunTokensChange(Math.min(10_000_000, Math.max(0, Math.trunc(Number(event.target.value) || 0))))}
+                      className="mt-2 h-8 font-mono text-xs"
+                      disabled={busy}
+                    />
+                  </label>
+                </div>
+              </SettingsRow>
             </>
           ) : null}
+          </SettingsSection>
+        ) : null}
+
+        {!limitedRemoteSettings ? (
+          <SettingsSection title="Agent MCP registry">
+            <SettingsRow
+              title="HTTP MCP servers"
+              description="Shared project registry translated to Claude Code and Cursor ACP. Header values come from environment variables and are never stored in the app database."
+              align="start"
+            >
+              <div className={`${rowControlClass} space-y-2`}>
+                {mcpServers.map((server) => (
+                  <div key={server.id} className="rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-3">
+                    <div className="grid gap-2 md:grid-cols-[minmax(10rem,0.7fr)_minmax(16rem,1.3fr)_auto_auto] md:items-center">
+                      <Input
+                        value={server.name}
+                        onChange={(event) => updateMcpServer(server.id, { name: event.target.value })}
+                        placeholder="Server name"
+                        className="h-8 text-xs"
+                        disabled={busy}
+                        aria-label="MCP server name"
+                      />
+                      <Input
+                        type="url"
+                        value={server.url}
+                        onChange={(event) => updateMcpServer(server.id, { url: event.target.value })}
+                        placeholder="https://example.com/mcp"
+                        className="h-8 font-mono text-xs"
+                        disabled={busy}
+                        aria-label="MCP server URL"
+                      />
+                      <Switch
+                        checked={server.enabled}
+                        onCheckedChange={(enabled) => updateMcpServer(server.id, { enabled })}
+                        disabled={busy}
+                        aria-label={`Enable ${server.name}`}
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        className="h-8 px-2 text-[var(--ec-danger)]"
+                        onClick={() => onMcpServersChange(mcpServers.filter((entry) => entry.id !== server.id))}
+                        disabled={busy}
+                        aria-label={`Remove ${server.name}`}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                    <div className="mt-2 space-y-1.5 border-t border-[var(--ec-border)] pt-2">
+                      {server.headers.map((header, headerIndex) => (
+                        <div key={`${server.id}-${String(headerIndex)}`} className="grid gap-2 md:grid-cols-[minmax(10rem,0.8fr)_minmax(12rem,1fr)_auto]">
+                          <Input
+                            value={header.name}
+                            onChange={(event) => updateMcpServer(server.id, {
+                              headers: server.headers.map((entry, index) => index === headerIndex ? { ...entry, name: event.target.value } : entry),
+                            })}
+                            placeholder="Authorization"
+                            className="h-8 font-mono text-xs"
+                            disabled={busy}
+                            aria-label="MCP header name"
+                          />
+                          <Input
+                            value={header.environmentVariable}
+                            onChange={(event) => updateMcpServer(server.id, {
+                              headers: server.headers.map((entry, index) => index === headerIndex ? { ...entry, environmentVariable: event.target.value } : entry),
+                            })}
+                            placeholder="MCP_AUTH_TOKEN"
+                            className="h-8 font-mono text-xs"
+                            disabled={busy}
+                            aria-label="MCP header environment variable"
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-8 px-2"
+                            onClick={() => updateMcpServer(server.id, { headers: server.headers.filter((_, index) => index !== headerIndex) })}
+                            disabled={busy}
+                            aria-label="Remove MCP header"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        </div>
+                      ))}
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 px-2"
+                        onClick={() => updateMcpServer(server.id, {
+                          headers: [...server.headers, { name: "Authorization", environmentVariable: "" }],
+                        })}
+                        disabled={busy || server.headers.length >= 20}
+                      >
+                        <Plus className="mr-1 size-3.5" /> Add header binding
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+                {mcpServers.length === 0 ? (
+                  <div className="flex items-center gap-2 rounded-md border border-dashed border-[var(--ec-border)] px-3 py-3 text-xs text-[var(--ec-muted)]">
+                    <Cable className="size-4 text-[var(--ec-accent)]" /> No project MCP servers configured.
+                  </div>
+                ) : null}
+                <div className="flex justify-end">
+                  <Button type="button" size="sm" variant="secondary" className="h-8 px-2.5" onClick={addMcpServer} disabled={busy || mcpServers.length >= 20}>
+                    <Plus className="mr-1 size-3.5" /> Add MCP server
+                  </Button>
+                </div>
+              </div>
+            </SettingsRow>
           </SettingsSection>
         ) : null}
 

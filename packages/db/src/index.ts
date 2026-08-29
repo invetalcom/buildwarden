@@ -191,6 +191,12 @@ const applyDerivedRunStep = (
 
 export class BuildWardenDatabase {
   private db: DatabaseSync | null = null;
+  /**
+   * Run list rows expose a few values derived from step history. Rebuilding them
+   * for every snapshot makes refresh cost proportional to all historic prompts.
+   * Keep the derived state hot and update/invalidate it at the step write boundary.
+   */
+  private readonly derivedRunStateCache = new Map<string, DerivedRunState>();
 
   constructor(private readonly filePath: string) {}
 
@@ -242,6 +248,7 @@ export class BuildWardenDatabase {
         database.close();
       } finally {
         this.db = null;
+        this.derivedRunStateCache.clear();
       }
     }
   }
@@ -1580,14 +1587,47 @@ export class BuildWardenDatabase {
     if (loops.length === 0) {
       return [];
     }
+    const loopIds = loops.map((loop) => loop.id);
+    const iterationsByLoopId = new Map<string, ProjectLoopIterationRecord[]>();
+    const pendingReviewsByLoopId = new Map<string, number>();
+    const allIterations: ProjectLoopIterationRecord[] = [];
+
+    for (const batch of chunkValues(loopIds)) {
+      const placeholders = batch.map(() => "?").join(", ");
+      const iterations = this.all<ProjectLoopIterationRecord>(
+        `${BuildWardenDatabase.PROJECT_LOOP_ITERATION_SELECT}
+         where loop_id in (${placeholders})
+         order by loop_id asc, iteration_index asc`,
+        batch,
+      );
+      allIterations.push(...iterations);
+      for (const iteration of iterations) {
+        const bucket = iterationsByLoopId.get(iteration.loopId);
+        if (bucket) bucket.push(iteration);
+        else iterationsByLoopId.set(iteration.loopId, [iteration]);
+      }
+
+      const reviewCounts = this.all<{ loopId: string; count: number }>(
+        `select loop_id as loopId, count(*) as count
+         from project_loop_ui_reviews
+         where loop_id in (${placeholders}) and status = 'pending'
+         group by loop_id`,
+        batch,
+      );
+      for (const row of reviewCounts) pendingReviewsByLoopId.set(row.loopId, Number(row.count));
+    }
+
+    const runsById = new Map(
+      this.listRunsByIds(allIterations.flatMap((iteration) => (iteration.runId ? [iteration.runId] : [])))
+        .map((run) => [run.id, run] as const),
+    );
     return loops.map((loop) => {
-      const iterations = this.listProjectLoopIterations(loop.id);
-      const runs = this.listRunsByIds(iterations.flatMap((iteration) => (iteration.runId ? [iteration.runId] : [])));
-      const pendingUiReviewCount = this.all<{ id: string }>(
-        "select id from project_loop_ui_reviews where loop_id = ? and status = 'pending'",
-        [loop.id],
-      ).length;
-      return { loop, iterations, runs, pendingUiReviewCount };
+      const iterations = iterationsByLoopId.get(loop.id) ?? [];
+      const runs = iterations.flatMap((iteration) => {
+        const run = iteration.runId ? runsById.get(iteration.runId) : null;
+        return run ? [run] : [];
+      });
+      return { loop, iterations, runs, pendingUiReviewCount: pendingReviewsByLoopId.get(loop.id) ?? 0 };
     });
   }
 
@@ -1877,6 +1917,11 @@ export class BuildWardenDatabase {
   }
 
   deleteProject(projectId: string): void {
+    const runIds = this.all<{ id: string }>("select id from runs where project_id = ?", [projectId]).map(({ id }) => id);
+    for (const runId of runIds) {
+      this.derivedRunStateCache.delete(runId);
+    }
+
     this.run("delete from project_automations where project_id = ?", [projectId]);
     this.run("delete from run_forge_links where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from forge_requests where project_id = ?", [projectId]);
@@ -2232,8 +2277,15 @@ export class BuildWardenDatabase {
     }
 
     const derivedByRunId = new Map<string, DerivedRunState>();
+    const uncachedRunIds: string[] = [];
     for (const run of runs) {
-      derivedByRunId.set(run.id, createDerivedRunState(run));
+      const cached = this.derivedRunStateCache.get(run.id);
+      if (cached) derivedByRunId.set(run.id, cached);
+      else {
+        const derived = createDerivedRunState(run);
+        derivedByRunId.set(run.id, derived);
+        uncachedRunIds.push(run.id);
+      }
     }
 
     const runIds = runs.map((run) => run.id);
@@ -2251,6 +2303,10 @@ export class BuildWardenDatabase {
         const summary = this.parseJsonValue<RunForgeRequestSummary>(row.summaryJson);
         if (summary) forgeByRunId.set(row.runId, summary);
       }
+    }
+
+    for (const batch of chunkValues(uncachedRunIds)) {
+      const placeholders = batch.map(() => "?").join(", ");
       const steps = this.all<{
         runId: string;
         eventType: string;
@@ -2279,6 +2335,10 @@ export class BuildWardenDatabase {
         }
 
         applyDerivedRunStep(derived, step, this.parseJsonObject(step.metadataJson));
+      }
+      for (const runId of batch) {
+        const derived = derivedByRunId.get(runId);
+        if (derived) this.derivedRunStateCache.set(runId, derived);
       }
     }
 
@@ -2347,6 +2407,7 @@ export class BuildWardenDatabase {
   }
 
   deleteRun(runId: string): void {
+    this.derivedRunStateCache.delete(runId);
     this.run("update project_tasks set run_id = null, updated_at = ? where run_id = ?", [nowIso(), runId]);
     this.run("delete from run_notes where run_id = ?", [runId]);
     this.run("delete from run_steps where run_id = ?", [runId]);
@@ -2848,6 +2909,7 @@ export class BuildWardenDatabase {
         runId,
       ],
     );
+    this.derivedRunStateCache.delete(runId);
     return this.getRun(runId);
   }
 
@@ -2931,6 +2993,10 @@ export class BuildWardenDatabase {
       `,
       [id, runId, eventType, title, content, metadataJson, createdAt],
     );
+    const cached = this.derivedRunStateCache.get(runId);
+    if (cached && (eventType === "log" || eventType === "user-input-requested")) {
+      applyDerivedRunStep(cached, { eventType, content, createdAt }, this.parseJsonObject(metadataJson));
+    }
     return {
       id,
       runId,
@@ -2969,6 +3035,7 @@ export class BuildWardenDatabase {
     if (!existing) {
       throw new Error(`Run step not found: ${stepId}`);
     }
+    this.derivedRunStateCache.delete(existing.runId);
 
     this.run(
       `

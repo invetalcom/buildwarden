@@ -1,12 +1,27 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Copy, FileText, GitBranch, Loader2, RefreshCw } from "lucide-react";
 import type { RunWorktreeDiffSummary, RunWorkspaceFileReference, RunWorkspaceFileResult } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
-import { CodeMirrorFileViewer } from "./CodeMirrorFileViewer";
-import { GitDiffPreview } from "./git-diff-preview";
 import { diffFileMatchesPath, parseGitDiffFiles } from "./git-diff-utils";
+
+const CodeMirrorFileViewer = lazy(async () => {
+  const module = await import("./CodeMirrorFileViewer");
+  return { default: module.CodeMirrorFileViewer };
+});
+
+const GitDiffPreview = lazy(async () => {
+  const module = await import("./git-diff-preview");
+  return { default: module.GitDiffPreview };
+});
+
+const PanelModuleFallback = ({ label }: { label: string }) => (
+  <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-xs text-zinc-500" role="status">
+    <Loader2 className="h-4 w-4 animate-spin text-cyan-400" aria-hidden />
+    {label}
+  </div>
+);
 
 type FilePanelView = "file" | "diff";
 
@@ -114,13 +129,15 @@ const FilePreviewContent = ({
           Preview truncated at {formatBytes(truncatedPreviewBytes(result.sizeBytes))} of {formatBytes(result.sizeBytes)}.
         </div>
       ) : null}
-      <CodeMirrorFileViewer
-        className="min-h-0 flex-1 overflow-hidden"
-        content={result.content}
-        filePath={result.path}
-        line={result.line}
-        column={result.column}
-      />
+      <Suspense fallback={<PanelModuleFallback label="Loading file viewer..." />}>
+        <CodeMirrorFileViewer
+          className="min-h-0 flex-1 overflow-hidden"
+          content={result.content}
+          filePath={result.path}
+          line={result.line}
+          column={result.column}
+        />
+      </Suspense>
     </>
   );
 };
@@ -158,15 +175,17 @@ const FilePanelBody = ({
     );
   }
   return (
-    <GitDiffPreview
-      diffText={diffText}
-      activeFilePath={displayPath}
-      emptyMessage="No diff is available for this file."
-      activityEmphasis
-      defaultCollapsedFileSections={false}
-      alwaysExpandedFileSections
-      fillContainer
-    />
+    <Suspense fallback={<PanelModuleFallback label="Loading diff viewer..." />}>
+      <GitDiffPreview
+        diffText={diffText}
+        activeFilePath={displayPath}
+        emptyMessage="No diff is available for this file."
+        activityEmphasis
+        defaultCollapsedFileSections={false}
+        alwaysExpandedFileSections
+        fillContainer
+      />
+    </Suspense>
   );
 };
 

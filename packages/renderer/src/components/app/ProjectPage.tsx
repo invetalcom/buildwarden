@@ -3,6 +3,7 @@ import type {
   ProjectInsightKind,
   ProjectLabMode,
   ProjectLabSettings,
+  ProjectMcpServerConfig,
   ProjectLoopAvailability,
   ModelExecutionProfile,
   ProjectSnapshot,
@@ -64,12 +65,20 @@ interface ProjectPageProps {
   anthropicEffort: string;
   executionMode: string;
   yoloMode: boolean;
+  verificationCommands: string[];
+  maxRunMinutes: number;
+  maxRunTokens: number;
+  mcpServers: ProjectMcpServerConfig[];
   delegationEnabled: boolean;
   delegationAvailable: boolean;
   onReasoningEffortChange: (value: string) => void;
   onAnthropicEffortChange: (value: string) => void;
   onExecutionModeChange: (value: string) => void;
   onYoloModeChange: (value: boolean) => void;
+  onVerificationCommandsChange: (value: string[]) => void;
+  onMaxRunMinutesChange: (value: number) => void;
+  onMaxRunTokensChange: (value: number) => void;
+  onMcpServersChange: (value: ProjectMcpServerConfig[]) => void;
   onDelegationEnabledChange: (value: boolean) => void;
   onSelectRun: (runId: string) => void;
   onRunPromptChange: (value: string) => void;
@@ -157,12 +166,20 @@ export const ProjectPage = ({
   anthropicEffort,
   executionMode,
   yoloMode,
+  verificationCommands,
+  maxRunMinutes,
+  maxRunTokens,
+  mcpServers,
   delegationEnabled,
   delegationAvailable,
   onReasoningEffortChange,
   onAnthropicEffortChange,
   onExecutionModeChange,
   onYoloModeChange,
+  onVerificationCommandsChange,
+  onMaxRunMinutesChange,
+  onMaxRunTokensChange,
+  onMcpServersChange,
   onDelegationEnabledChange,
   onSelectRun,
   onRunPromptChange,
@@ -350,6 +367,10 @@ export const ProjectPage = ({
           anthropicEffort={anthropicEffort}
           executionMode={executionMode}
           yoloMode={yoloMode}
+          verificationCommands={verificationCommands}
+          maxRunMinutes={maxRunMinutes}
+          maxRunTokens={maxRunTokens}
+          mcpServers={mcpServers}
           busy={busy}
           availableIntegratedSkills={availableIntegratedSkills}
           activeIntegratedSkillIds={activeIntegratedSkillIds}
@@ -362,6 +383,10 @@ export const ProjectPage = ({
           onAnthropicEffortChange={onAnthropicEffortChange}
           onExecutionModeChange={onExecutionModeChange}
           onYoloModeChange={onYoloModeChange}
+          onVerificationCommandsChange={onVerificationCommandsChange}
+          onMaxRunMinutesChange={onMaxRunMinutesChange}
+          onMaxRunTokensChange={onMaxRunTokensChange}
+          onMcpServersChange={onMcpServersChange}
           onActiveIntegratedSkillIdsChange={onActiveIntegratedSkillIdsChange}
           onDeleteProject={onDeleteProject}
         />
