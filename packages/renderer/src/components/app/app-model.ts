@@ -300,6 +300,67 @@ export interface RunReasoningInput {
   executionOptions?: ProviderExecutionOptions;
 }
 
+const usesAnthropicEffort = (providerType: ProviderType, providerFamily: UnifiedProviderFamily | null): boolean =>
+  providerType === "claude-code" || (providerType === "ai-sdk" && providerFamily === "anthropic");
+
+const applyReasoningExecutionOption = (
+  result: RunReasoningInput,
+  executionOptions: ProviderExecutionOptions,
+  reasoningControl: ModelExecutionControl | undefined,
+  chosenEffort: string | undefined,
+  rawEffort: string,
+  anthropic: boolean,
+): void => {
+  if (!chosenEffort) {
+    if (!reasoningControl || rawEffort !== "auto") {
+      return;
+    }
+    if (anthropic) {
+      executionOptions.anthropicEffort = "auto";
+    } else if (reasoningControl.id === "thinkingLevel") {
+      executionOptions.thinkingLevel = "auto";
+    } else {
+      executionOptions.reasoningEffort = "auto";
+    }
+    return;
+  }
+
+  if (anthropic) {
+    const mappedEffort = chosenEffort === "ultracode" ? "xhigh" : chosenEffort;
+    result.anthropicEffort = mappedEffort;
+    executionOptions.anthropicEffort = mappedEffort;
+    if (chosenEffort === "ultracode") {
+      executionOptions.workflowMode = "ultracode";
+    }
+  } else if (reasoningControl?.id === "thinkingLevel") {
+    executionOptions.thinkingLevel = chosenEffort;
+  } else {
+    result.reasoningEffort = chosenEffort;
+    executionOptions.reasoningEffort = chosenEffort;
+  }
+};
+
+const applySecondaryExecutionOption = (
+  executionOptions: ProviderExecutionOptions,
+  control: ModelExecutionControl | undefined,
+  chosenValue: string | undefined,
+  rawValue: string,
+): void => {
+  if (!control) {
+    return;
+  }
+  const value = chosenValue ?? (rawValue === "auto" ? "auto" : undefined);
+  if (!value) {
+    return;
+  }
+  switch (control.id) {
+    case "serviceTier": executionOptions.serviceTier = value; break;
+    case "speed": executionOptions.speed = value; break;
+    case "contextMode": executionOptions.contextMode = value; break;
+    case "workflowMode": executionOptions.workflowMode = value; break;
+  }
+};
+
 export const resolveRunModelConfiguration = (
   modelId: string,
   configurations: Readonly<Record<string, RunModelConfiguration>>,
@@ -324,48 +385,16 @@ export const buildRunReasoningInput = (
   if (providerType === "azure-legacy") return {};
 
   const reasoningControl = profile.controls.find((entry) => entry.id === "reasoningEffort" || entry.id === "thinkingLevel");
-  const rawEffort = providerType === "claude-code" || (providerType === "ai-sdk" && providerFamily === "anthropic")
-    ? anthropicEffort
-    : reasoningEffort;
+  const anthropic = usesAnthropicEffort(providerType, providerFamily);
+  const rawEffort = anthropic ? anthropicEffort : reasoningEffort;
   const chosenEffort = selectedControlValue(reasoningControl, rawEffort);
   const secondaryControl = profile.controls.find((entry) => entry !== reasoningControl);
   const chosenMode = selectedControlValue(secondaryControl, executionMode);
   const executionOptions: ProviderExecutionOptions = {};
   const result: RunReasoningInput = {};
 
-  if (chosenEffort) {
-    if (providerType === "claude-code" || (providerType === "ai-sdk" && providerFamily === "anthropic")) {
-      const mappedEffort = chosenEffort === "ultracode" ? "xhigh" : chosenEffort;
-      result.anthropicEffort = mappedEffort;
-      executionOptions.anthropicEffort = mappedEffort;
-      if (chosenEffort === "ultracode") executionOptions.workflowMode = "ultracode";
-    } else if (reasoningControl?.id === "thinkingLevel") {
-      executionOptions.thinkingLevel = chosenEffort;
-    } else {
-      result.reasoningEffort = chosenEffort;
-      executionOptions.reasoningEffort = chosenEffort;
-    }
-  } else if (reasoningControl && rawEffort === "auto") {
-    if (providerType === "claude-code" || (providerType === "ai-sdk" && providerFamily === "anthropic")) {
-      executionOptions.anthropicEffort = "auto";
-    } else if (reasoningControl.id === "thinkingLevel") {
-      executionOptions.thinkingLevel = "auto";
-    } else {
-      executionOptions.reasoningEffort = "auto";
-    }
-  }
-
-  if (chosenMode && secondaryControl) {
-    if (secondaryControl.id === "serviceTier") executionOptions.serviceTier = chosenMode;
-    if (secondaryControl.id === "speed") executionOptions.speed = chosenMode;
-    if (secondaryControl.id === "contextMode") executionOptions.contextMode = chosenMode;
-    if (secondaryControl.id === "workflowMode") executionOptions.workflowMode = chosenMode;
-  } else if (secondaryControl && executionMode === "auto") {
-    if (secondaryControl.id === "serviceTier") executionOptions.serviceTier = "auto";
-    if (secondaryControl.id === "speed") executionOptions.speed = "auto";
-    if (secondaryControl.id === "contextMode") executionOptions.contextMode = "auto";
-    if (secondaryControl.id === "workflowMode") executionOptions.workflowMode = "auto";
-  }
+  applyReasoningExecutionOption(result, executionOptions, reasoningControl, chosenEffort, rawEffort, anthropic);
+  applySecondaryExecutionOption(executionOptions, secondaryControl, chosenMode, executionMode);
 
   if (Object.keys(executionOptions).length > 0) result.executionOptions = executionOptions;
   return result;
@@ -385,47 +414,24 @@ export const resolveProviderComposerPrompt = (
 
 export const isRunContinuable = (run: RunRecord) => !["queued", "preparing", "running"].includes(run.status);
 
-const findRunInList = (runs: RunRecord[], runId: string) => {
-  for (const run of runs) {
-    if (run.id === runId) {
-      return run;
-    }
-  }
-  return null;
-};
+const projectRunCandidates = (project: ProjectSnapshot): RunRecord[] => [
+  ...project.runs,
+  ...project.forLaterRuns,
+  ...project.orchestratedRuns,
+  ...project.activeRuns,
+  ...project.recentRuns,
+  ...project.labThreads.flatMap((thread) => thread.implementationRun ? [thread.implementationRun] : []),
+  ...project.loops.flatMap((loopItem) => loopItem.runs),
+  ...(project.automations ?? []).flatMap((automationItem) => automationItem.runs),
+];
 
 export const findProjectRun = (projects: ProjectSnapshot[], runId: string) => {
   for (const project of projects) {
-    const run =
-      findRunInList(project.runs, runId) ??
-      findRunInList(project.forLaterRuns, runId) ??
-      findRunInList(project.orchestratedRuns, runId) ??
-      findRunInList(project.activeRuns, runId) ??
-      findRunInList(project.recentRuns, runId);
-
+    const run = projectRunCandidates(project).find((candidate) => candidate.id === runId);
     if (run) {
       return { project, run };
     }
-
-    for (const thread of project.labThreads) {
-      if (thread.implementationRun?.id === runId) {
-        return { project, run: thread.implementationRun };
-      }
-    }
-
-    for (const loopItem of project.loops) {
-      const loopRun = findRunInList(loopItem.runs, runId);
-      if (loopRun) {
-        return { project, run: loopRun };
-      }
-    }
-
-    for (const automationItem of project.automations ?? []) {
-      const automationRun = findRunInList(automationItem.runs, runId);
-      if (automationRun) return { project, run: automationRun };
-    }
   }
-
   return null;
 };
 

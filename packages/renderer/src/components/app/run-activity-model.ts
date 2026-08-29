@@ -2,30 +2,28 @@ import {
   isTerminalRunSubagentStatus,
   normalizeRunSubagentInfo,
   type OrchestrationStatus,
-  type RunEventType,
   type RunMode,
-  type RunStatus,
   type RunSubagentInfo,
   type RunTimelineDensity,
   type RunUserInputAnswers,
   type RunUserInputQuestion,
 } from "@buildwarden/shared";
-
-export type RunActivityStep = {
-  id: string;
-  eventType: RunEventType;
-  title: string;
-  content: string;
-  metadataJson: string;
-  createdAt: string;
-};
-
-export type RunActivityRun = {
-  id: string;
-  status: RunStatus;
-  mode: RunMode;
-  orchestrationStatus?: OrchestrationStatus | null;
-};
+import type {
+  ActivityEntry,
+  ActivityGroupKey,
+  RunActivityStep,
+  SingleActivityEntry,
+  SubagentActivityEntry,
+  TimelineRenderItem,
+} from "./run-activity-types";
+export type {
+  ActivityEntry,
+  RunActivityRun,
+  RunActivityStep,
+  SingleActivityEntry,
+  SubagentActivityEntry,
+  TimelineRenderItem,
+} from "./run-activity-types";
 
 const safeParseMetadata = (value: string) => {
   try {
@@ -105,65 +103,7 @@ export const resolveRunStatusStepPresentation = (
 };
 
 
-export type SingleActivityEntry =
-  | {
-      kind: "single";
-      step: RunActivityStep;
-      metadata: Record<string, unknown>;
-    }
-  | {
-      kind: "tool";
-      callStep?: RunActivityStep;
-      callMetadata?: Record<string, unknown>;
-      resultStep?: RunActivityStep;
-      resultMetadata?: Record<string, unknown>;
-    };
-
-type ActivityGroupKey = "user" | "status" | "assistant";
-
-export type ActivityEntry =
-  | SingleActivityEntry
-  | {
-      kind: "tool-batch";
-      items: Extract<SingleActivityEntry, { kind: "tool" }>[];
-    }
-  | {
-      kind: "diff-batch";
-      items: Extract<SingleActivityEntry, { kind: "single" }>[];
-    }
-  | {
-      kind: "single-group";
-      groupKey: ActivityGroupKey;
-      items: Extract<SingleActivityEntry, { kind: "single" }>[];
-    }
-  | {
-      kind: "subagent";
-      step: RunActivityStep;
-      info: RunSubagentInfo;
-      entries: ActivityEntry[];
-    };
-
 type ActivityEntryPreMerge = Exclude<ActivityEntry, { kind: "single-group" }>;
-
-export type TimelineRenderItem =
-  | {
-      kind: "entry";
-      key: string;
-      entry: ActivityEntry;
-    }
-  | {
-      kind: "plan-decision";
-      key: string;
-      planText: string;
-    }
-  | {
-      kind: "loading";
-      key: string;
-    }
-  | {
-      kind: "end";
-      key: string;
-    };
 
 
 export const getToolBatchStableId = (entry: Extract<ActivityEntry, { kind: "tool-batch" }>): string => {
@@ -309,8 +249,6 @@ const getConsecutiveMergeKey = (entry: Extract<SingleActivityEntry, { kind: "sin
   if (isAssistant) return "assistant";
   return null;
 };
-
-export type SubagentActivityEntry = Extract<ActivityEntry, { kind: "subagent" }>;
 
 const moveShellApprovalsBeforeMatchingTools = (
   entries: (SingleActivityEntry | SubagentActivityEntry)[],

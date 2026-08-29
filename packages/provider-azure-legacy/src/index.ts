@@ -16,7 +16,6 @@ import type {
 import {
   PROVIDER_CONFIG_AZURE_API_VERSION_KEY,
   buildNetworkProxyUrl,
-  runShellActivityStreamId,
   shouldBypassNetworkProxyForUrl,
 } from "@buildwarden/shared";
 import { createDevLogger } from "./dev-logger";
@@ -28,11 +27,9 @@ import {
   buildCheckpointMemo,
   capAttachmentText,
   decodeAttachmentText,
-  describeToolCall,
-  isRunToolName,
-  safeJsonParse,
   withProviderRetry,
 } from "./harness-shared";
+import { collectAzureLegacyRound, executeAzureLegacyToolCalls } from "./agent-round";
 
 const CHAT_SYSTEM_PROMPT =
   "You are a helpful AI assistant. Answer the user's questions directly and concisely. You do not have access to any tools or files.";
@@ -581,54 +578,9 @@ const runAzureLegacyAgent = async (
       ),
     );
 
-    let roundUsage: RunTokenUsage = { inputTokens: 0, outputTokens: 0 };
-    let assistantContent = "";
-    const toolCallParts = new Map<number, { id: string; name: string; arguments: string }>();
-
-    for await (const chunk of stream) {
-      if (chunk.usage) {
-        roundUsage = usageFromCompletion(chunk.usage);
-      }
-      const delta = chunk.choices[0]?.delta;
-      if (!delta) {
-        continue;
-      }
-      if (delta.content) {
-        assistantContent += delta.content;
-        onChunk({
-          type: "message",
-          title: "Agent output",
-          value: assistantContent,
-          metadata: { streamId: streamOutId, replace: true },
-        });
-      }
-      for (const toolCallDelta of delta.tool_calls ?? []) {
-        const index = toolCallDelta.index ?? 0;
-        const current = toolCallParts.get(index) ?? { id: "", name: "", arguments: "" };
-        if (toolCallDelta.id) {
-          current.id = toolCallDelta.id;
-        }
-        if (toolCallDelta.function?.name) {
-          current.name += toolCallDelta.function.name;
-        }
-        if (toolCallDelta.function?.arguments) {
-          current.arguments += toolCallDelta.function.arguments;
-        }
-        toolCallParts.set(index, current);
-      }
-    }
-
-    accumulatedUsage = addUsage(accumulatedUsage, roundUsage);
-    const toolCalls = [...toolCallParts.entries()]
-      .sort((left, right) => left[0] - right[0])
-      .map(([, toolCall]) => ({
-        id: toolCall.id || crypto.randomUUID(),
-        type: "function" as const,
-        function: {
-          name: toolCall.name,
-          arguments: toolCall.arguments || "{}",
-        },
-      }));
+    const roundResult = await collectAzureLegacyRound(stream, streamOutId, onChunk, usageFromCompletion);
+    const { assistantContent, toolCalls } = roundResult;
+    accumulatedUsage = addUsage(accumulatedUsage, roundResult.usage);
 
     if (toolCalls.length === 0) {
       const text = assistantContent.trim() || "No output returned from the provider.";
@@ -664,55 +616,14 @@ const runAzureLegacyAgent = async (
       tool_calls: toolCalls,
     });
 
-    const toolResultsForCheckpoint: string[] = [];
-
-    for (const toolCall of toolCalls) {
-      if (toolCall.type !== "function") {
-        continue;
-      }
-      const name = toolCall.function.name;
-      const parsedArgs = safeJsonParse(toolCall.function.arguments || "{}");
-
-      if (!isRunToolName(name, toolContext)) {
-        throw new Error(`The model requested an unsupported tool: ${name}`);
-      }
-
-      onChunk({
-        type: "tool-call",
-        title: `Tool call: ${name}`,
-        value: describeToolCall(name, parsedArgs),
-        metadata: { toolName: name, arguments: parsedArgs, callId: toolCall.id },
-      });
-
-      const toolResult = await toolContext.executeTool({
-        id: toolCall.id,
-        name,
-        arguments: parsedArgs,
-      });
-      updateCompletionStateFromToolResult(completionState, name, toolResult);
-
-      onChunk({
-        type: "tool-result",
-        title: `Tool result: ${name}`,
-        value: toolResult.content,
-        metadata: {
-          toolName: name,
-          callId: toolCall.id,
-          ok: toolResult.ok,
-          ...toolResult.metadata,
-          ...(name === "run_shell"
-            ? { streamId: runShellActivityStreamId(toolCall.id), replace: true }
-            : {}),
-        },
-      });
-
-      messages.push({
-        role: "tool",
-        tool_call_id: toolCall.id,
-        content: toolResult.content,
-      });
-      toolResultsForCheckpoint.push(toolResult.content);
-    }
+    const toolResultsForCheckpoint = await executeAzureLegacyToolCalls(
+      toolCalls,
+      messages,
+      toolContext,
+      completionState,
+      onChunk,
+      updateCompletionStateFromToolResult,
+    );
 
     const checkpointMemo = buildCheckpointMemo(
       toolCalls.map((toolCall) => ({

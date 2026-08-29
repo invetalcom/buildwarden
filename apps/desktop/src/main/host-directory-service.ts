@@ -41,7 +41,7 @@ export class HostDirectoryService {
       if (childDirectories.length >= MAX_DIRECTORY_ENTRIES) break;
     }
     const entries = childDirectories
-      .sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }))
+      .toSorted((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }))
       .map((entry) => ({ name: entry.name, path: resolve(path, entry.name) }));
     const root = parse(path).root;
     return {

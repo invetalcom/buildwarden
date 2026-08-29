@@ -388,7 +388,10 @@ const canonicalJson = (value: unknown): string => {
     return `[${value.map(canonicalJson).join(",")}]`;
   }
   if (isPlainObject(value)) {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+    const entries = Object.keys(value)
+      .toSorted((left, right) => left.localeCompare(right))
+      .map((key) => [JSON.stringify(key), canonicalJson(value[key])].join(":"));
+    return ["{", entries.join(","), "}"].join("");
   }
   return JSON.stringify(value) ?? "null";
 };
@@ -1135,7 +1138,8 @@ export const projectRemoteStreamEvent = (event: RemoteStreamEvent): RemoteStream
   if (event.event === "run") {
     const payload = event.payload;
     if (!payload.step) return event;
-    const { run: _run, ...withoutRun } = payload;
+    const withoutRun = { ...payload };
+    delete withoutRun.run;
     return {
       event: "run",
       payload: {
@@ -1149,7 +1153,8 @@ export const projectRemoteStreamEvent = (event: RemoteStreamEvent): RemoteStream
   if (event.event === "chat") {
     const payload = event.payload;
     if (!payload.step) return event;
-    const { chat: _chat, ...withoutChat } = payload;
+    const withoutChat = { ...payload };
+    delete withoutChat.chat;
     return {
       event: "chat",
       payload: {
@@ -1361,40 +1366,11 @@ export class RemoteAccessServer {
       applyCorsHeaders(response, requestOrigin.corsOrigin, request);
     }
     if (request.method === "OPTIONS") {
-      if (!requestOrigin.corsOrigin || !CORS_API_PATHS.has(url.pathname)) {
-        writeJson(response, 404, { error: "Not found." });
-        return;
-      }
-      const requestedMethod = firstHeaderValue(request.headers["access-control-request-method"])?.toUpperCase();
-      const requestedHeaders = (firstHeaderValue(request.headers["access-control-request-headers"]) ?? "")
-        .split(",")
-        .map((header) => header.trim().toLowerCase())
-        .filter(Boolean);
-      const allowedHeaders = new Set(["authorization", "content-type", "x-buildwarden-protocol-version"]);
-      if (!requestedMethod || !["GET", "POST", "DELETE"].includes(requestedMethod) ||
-          requestedHeaders.some((header) => !allowedHeaders.has(header))) {
-        writeJson(response, 403, { error: "CORS preflight is not allowed." });
-        return;
-      }
-      response.writeHead(204, {
-        "Cache-Control": "no-store",
-        "Content-Length": "0",
-        "X-Content-Type-Options": "nosniff",
-      });
-      response.end();
+      this.handleCorsPreflight(request, response, url, requestOrigin);
       return;
     }
     if (request.method === "GET" && (url.pathname === REMOTE_ACCESS_HEALTH_PATH || url.pathname === REMOTE_ACCESS_LEGACY_HEALTH_PATH)) {
-      const health: RemoteAccessHealth = {
-        status: "ok",
-        app: "buildwarden",
-        appVersion: this.options.appVersion,
-        protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
-        scope: "loopback",
-        authentication: "session",
-        startedAt,
-      };
-      writeJson(response, 200, health);
+      this.writeHealth(response, startedAt);
       return;
     }
 
@@ -1412,54 +1388,7 @@ export class RemoteAccessServer {
     }
 
     if (request.method === "POST" && url.pathname === REMOTE_ACCESS_PAIRING_PATH) {
-      const remoteAddress = request.socket.remoteAddress ?? "unknown";
-      if (!this.consumePairingAttempt(remoteAddress)) {
-        writeJson(response, 429, { error: "Too many pairing attempts. Try again shortly." }, { "Retry-After": "60" });
-        return;
-      }
-      if (request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
-        writeJson(response, 415, { error: "Content-Type must be application/json." });
-        return;
-      }
-      try {
-        const payload = await readJsonBody(request);
-        if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-          writeJson(response, 400, { error: "Invalid pairing request." });
-          return;
-        }
-        const input = payload as Record<string, unknown>;
-        if (typeof input.code !== "string" || (input.label != null && typeof input.label !== "string")) {
-          writeJson(response, 400, { error: "Invalid pairing request." });
-          return;
-        }
-        const authenticated = this.options.auth.exchangePairingCode(
-          input.code,
-          typeof input.label === "string" ? input.label : undefined,
-          request.socket.remoteAddress ?? null,
-          requestOrigin.clientOrigin,
-        );
-        if (!authenticated) {
-          writeJson(response, 401, { error: "Pairing code is invalid or expired." });
-          return;
-        }
-        if (requestOrigin.clientOrigin) {
-          writeJson(response, 201, { session: authenticated.session, token: authenticated.token });
-        } else {
-          const secureCookie = request.headers.origin?.startsWith("https://") ?? false;
-          writeJson(
-            response,
-            201,
-            { session: authenticated.session },
-            { "Set-Cookie": sessionCookie(authenticated.token, authenticated.session.expiresAt, secureCookie) },
-          );
-        }
-      } catch (error) {
-        if (error instanceof RequestBodyError) {
-          writeJson(response, error.statusCode, { error: error.message });
-          return;
-        }
-        throw error;
-      }
+      await this.handlePairingRequest(request, response, requestOrigin);
       return;
     }
 
@@ -1470,18 +1399,123 @@ export class RemoteAccessServer {
       writeJson(response, 401, { error: "Authentication required." });
       return;
     }
+    await this.handleAuthenticatedRequest(request, response, url, requestOrigin, session, startedAt);
+  }
 
+  private handleCorsPreflight(
+    request: IncomingMessage,
+    response: ServerResponse,
+    url: URL,
+    requestOrigin: AllowedRequestOrigin,
+  ): void {
+    if (!requestOrigin.corsOrigin || !CORS_API_PATHS.has(url.pathname)) {
+      writeJson(response, 404, { error: "Not found." });
+      return;
+    }
+    const requestedMethod = firstHeaderValue(request.headers["access-control-request-method"])?.toUpperCase();
+    const requestedHeaders = (firstHeaderValue(request.headers["access-control-request-headers"]) ?? "")
+      .split(",")
+      .map((header) => header.trim().toLowerCase())
+      .filter(Boolean);
+    const allowedHeaders = new Set(["authorization", "content-type", "x-buildwarden-protocol-version"]);
+    if (!requestedMethod || !["GET", "POST", "DELETE"].includes(requestedMethod) ||
+        requestedHeaders.some((header) => !allowedHeaders.has(header))) {
+      writeJson(response, 403, { error: "CORS preflight is not allowed." });
+      return;
+    }
+    response.writeHead(204, {
+      "Cache-Control": "no-store",
+      "Content-Length": "0",
+      "X-Content-Type-Options": "nosniff",
+    });
+    response.end();
+  }
+
+  private writeHealth(response: ServerResponse, startedAt: string): void {
+    const health: RemoteAccessHealth = {
+      status: "ok",
+      app: "buildwarden",
+      appVersion: this.options.appVersion,
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      scope: "loopback",
+      authentication: "session",
+      startedAt,
+    };
+    writeJson(response, 200, health);
+  }
+
+  private async handlePairingRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+    requestOrigin: AllowedRequestOrigin,
+  ): Promise<void> {
+    const remoteAddress = request.socket.remoteAddress ?? "unknown";
+    if (!this.consumePairingAttempt(remoteAddress)) {
+      writeJson(response, 429, { error: "Too many pairing attempts. Try again shortly." }, { "Retry-After": "60" });
+      return;
+    }
+    if (request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
+      writeJson(response, 415, { error: "Content-Type must be application/json." });
+      return;
+    }
+    try {
+      const payload = await readJsonBody(request);
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        writeJson(response, 400, { error: "Invalid pairing request." });
+        return;
+      }
+      const input = payload as Record<string, unknown>;
+      if (typeof input.code !== "string" || (input.label != null && typeof input.label !== "string")) {
+        writeJson(response, 400, { error: "Invalid pairing request." });
+        return;
+      }
+      const authenticated = this.options.auth.exchangePairingCode(
+        input.code,
+        typeof input.label === "string" ? input.label : undefined,
+        request.socket.remoteAddress ?? null,
+        requestOrigin.clientOrigin,
+      );
+      if (!authenticated) {
+        writeJson(response, 401, { error: "Pairing code is invalid or expired." });
+        return;
+      }
+      if (requestOrigin.clientOrigin) {
+        writeJson(response, 201, { session: authenticated.session, token: authenticated.token });
+        return;
+      }
+      const secureCookie = request.headers.origin?.startsWith("https://") ?? false;
+      writeJson(
+        response,
+        201,
+        { session: authenticated.session },
+        { "Set-Cookie": sessionCookie(authenticated.token, authenticated.session.expiresAt, secureCookie) },
+      );
+    } catch (error) {
+      if (error instanceof RequestBodyError) {
+        writeJson(response, error.statusCode, { error: error.message });
+        return;
+      }
+      throw error;
+    }
+  }
+
+  private async handleAuthenticatedRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+    url: URL,
+    requestOrigin: AllowedRequestOrigin,
+    session: RemoteAccessSession,
+    startedAt: string,
+  ): Promise<void> {
     if (request.method === "GET" && url.pathname === REMOTE_ACCESS_SESSION_PATH) {
       writeJson(response, 200, { session });
       return;
     }
-
     if (request.method === "DELETE" && url.pathname === REMOTE_ACCESS_SESSION_PATH) {
       this.options.auth.revokeSession(session.id, request.socket.remoteAddress ?? null);
       writeJson(response, 200, { ok: true }, requestOrigin.clientOrigin ? {} : { "Set-Cookie": expiredSessionCookie() });
       return;
     }
-
     if (request.method === "GET" && url.pathname === REMOTE_ACCESS_INFO_PATH) {
       const info = this.buildInfo(startedAt);
       const requestedVersion = requestedProtocolVersion(request, url);
@@ -1492,26 +1526,32 @@ export class RemoteAccessServer {
       writeJson(response, 200, info);
       return;
     }
-
     if (request.method === "POST" && url.pathname === REMOTE_ACCESS_RPC_PATH) {
-      if (request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
-        writeJson(response, 415, { error: "Content-Type must be application/json." });
-        return;
-      }
-      try {
-        const payload = await readJsonBody(request);
-        writeJson(response, 200, await this.options.operations.dispatch(payload, session.scopes, session.id));
-      } catch (error) {
-        if (error instanceof RequestBodyError) {
-          writeJson(response, error.statusCode, { error: error.message });
-          return;
-        }
-        throw error;
-      }
+      await this.handleRpcRequest(request, response, session);
       return;
     }
-
     writeJson(response, 404, { error: "Not found." });
+  }
+
+  private async handleRpcRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+    session: RemoteAccessSession,
+  ): Promise<void> {
+    if (request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
+      writeJson(response, 415, { error: "Content-Type must be application/json." });
+      return;
+    }
+    try {
+      const payload = await readJsonBody(request);
+      writeJson(response, 200, await this.options.operations.dispatch(payload, session.scopes, session.id));
+    } catch (error) {
+      if (error instanceof RequestBodyError) {
+        writeJson(response, error.statusCode, { error: error.message });
+        return;
+      }
+      throw error;
+    }
   }
 
   private consumePairingAttempt(remoteAddress: string): boolean {
