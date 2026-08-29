@@ -37,4 +37,18 @@ describe("project verification", () => {
     expect(result).toMatchObject({ ok: false, timedOut: true });
     expect(result?.output).toContain("Timed out");
   });
+
+  it.skipIf(process.platform === "win32")("force-stops a command that ignores SIGTERM", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "buildwarden-verification-"));
+    tempDirs.push(cwd);
+
+    const [result] = await runProjectVerificationCommands(
+      cwd,
+      ["sh -c \"trap '' TERM; while :; do sleep 1; done\""],
+      25,
+    );
+
+    expect(result).toMatchObject({ ok: false, timedOut: true });
+    expect(result?.durationMs).toBeLessThan(2_000);
+  });
 });

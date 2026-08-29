@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 
 const MAX_VERIFICATION_OUTPUT_CHARS = 24_000;
+const VERIFICATION_FORCE_KILL_GRACE_MS = 250;
 export const DEFAULT_VERIFICATION_TIMEOUT_MS = 5 * 60_000;
 
 export interface ProjectVerificationResult {
@@ -19,7 +20,7 @@ const appendOutputTail = (current: string, chunk: string): string => {
     : next.slice(next.length - MAX_VERIFICATION_OUTPUT_CHARS);
 };
 
-const terminateProcessTree = (child: ReturnType<typeof spawn>) => {
+const terminateProcessTree = (child: ReturnType<typeof spawn>, signal: NodeJS.Signals = "SIGTERM") => {
   if (child.pid && process.platform === "win32") {
     spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
       windowsHide: true,
@@ -29,13 +30,13 @@ const terminateProcessTree = (child: ReturnType<typeof spawn>) => {
   }
   if (child.pid) {
     try {
-      process.kill(-child.pid, "SIGTERM");
+      process.kill(-child.pid, signal);
       return;
     } catch {
       // Fall through when a process group was already gone.
     }
   }
-  child.kill();
+  child.kill(signal);
 };
 
 export const runProjectVerificationCommand = async (
@@ -59,10 +60,12 @@ export const runProjectVerificationCommand = async (
     let cancelled = false;
     let spawnError: string | null = null;
     let settled = false;
+    let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
     const finish = (exitCode: number | null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
       signal?.removeEventListener("abort", cancel);
       const normalizedOutput = output.trim() || spawnError || "Command produced no output.";
       resolveResult({
@@ -78,13 +81,19 @@ export const runProjectVerificationCommand = async (
         timedOut,
       });
     };
+    const requestTermination = () => {
+      terminateProcessTree(child);
+      forceKillTimer ??= setTimeout(() => {
+        terminateProcessTree(child, "SIGKILL");
+      }, VERIFICATION_FORCE_KILL_GRACE_MS);
+    };
     const timer = setTimeout(() => {
       timedOut = true;
-      terminateProcessTree(child);
+      requestTermination();
     }, timeoutMs);
     const cancel = () => {
       cancelled = true;
-      terminateProcessTree(child);
+      requestTermination();
     };
     if (signal?.aborted) cancel();
     else signal?.addEventListener("abort", cancel, { once: true });
