@@ -131,6 +131,31 @@ describe("run user-input ordering metadata", () => {
     expect(loadedSecondRun?.userInputSearchText).toContain("Resolved answer");
   });
 
+  it("invalidates derived run metadata after updating run configuration", async () => {
+    const db = await makeDb();
+    const run = createRunFixture(db);
+
+    expect(db.getRun(run.id).userInputSearchText).not.toContain("Updated goal");
+
+    const updated = db.updateRunConfiguration(run.id, { goalText: "Updated goal" });
+
+    expect(updated.goalText).toBe("Updated goal");
+    expect(updated.userInputSearchText).toContain("Updated goal");
+  });
+
+  it("evicts cached derived run metadata when deleting a project", async () => {
+    const db = await makeDb();
+    const run = createRunFixture(db);
+    const cache = (db as unknown as { derivedRunStateCache: Map<string, unknown> }).derivedRunStateCache;
+
+    db.getRun(run.id);
+    expect(cache.has(run.id)).toBe(true);
+
+    db.deleteProject(run.projectId);
+
+    expect(cache.has(run.id)).toBe(false);
+  });
+
   it("loads project lab thread details with events and implementation runs", async () => {
     const db = await makeDb();
     const run = createRunFixture(db);

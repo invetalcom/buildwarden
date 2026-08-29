@@ -1917,6 +1917,11 @@ export class BuildWardenDatabase {
   }
 
   deleteProject(projectId: string): void {
+    const runIds = this.all<{ id: string }>("select id from runs where project_id = ?", [projectId]).map(({ id }) => id);
+    for (const runId of runIds) {
+      this.derivedRunStateCache.delete(runId);
+    }
+
     this.run("delete from project_automations where project_id = ?", [projectId]);
     this.run("delete from run_forge_links where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from forge_requests where project_id = ?", [projectId]);
@@ -2885,7 +2890,6 @@ export class BuildWardenDatabase {
       delegationEnabled?: boolean;
     },
   ): RunRecord {
-    this.derivedRunStateCache.delete(runId);
     const existing = this.getRun(runId);
     const timestamp = nowIso();
 
@@ -2905,6 +2909,7 @@ export class BuildWardenDatabase {
         runId,
       ],
     );
+    this.derivedRunStateCache.delete(runId);
     return this.getRun(runId);
   }
 
