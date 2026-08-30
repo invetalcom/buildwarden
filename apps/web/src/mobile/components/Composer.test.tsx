@@ -20,7 +20,9 @@ afterEach(async () => {
 
 describe("mobile composer attachments", () => {
   it("submits an attachment-only prompt as a base64 payload", async () => {
-    const onSubmit = vi.fn(async () => undefined);
+    let resolveSubmitted!: () => void;
+    const submitted = new Promise<void>((resolve) => { resolveSubmitted = resolve; });
+    const onSubmit = vi.fn(async () => resolveSubmitted());
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
@@ -37,7 +39,7 @@ describe("mobile composer attachments", () => {
     expect(send.disabled).toBe(false);
     await act(async () => {
       send.click();
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await submitted;
     });
 
     expect(onSubmit).toHaveBeenCalledWith("", [{ fileName: "hello.txt", mimeType: "text/plain", dataBase64: "aGVsbG8=" }]);
