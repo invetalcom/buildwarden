@@ -90,17 +90,17 @@ export const ProjectGraphsTab = ({ project, onGenerateInsight }: ProjectGraphsTa
       <Card className="p-4">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <GitGraph className="h-4 w-4 text-cyan-400" />
+            <GitGraph className="h-4 w-4 text-[var(--ec-accent)]" />
             <div>
-              <h3 className="text-sm font-medium text-zinc-100">Architecture graph</h3>
-              <p className="text-xs text-zinc-500">{architectureRecord?.summary ?? "Map module structure, hotspots, and likely ownership."}</p>
+              <h3 className="text-sm font-medium text-[var(--ec-text)]">Architecture graph</h3>
+              <p className="text-xs text-[var(--ec-muted)]">{architectureRecord?.summary ?? "Map module structure, hotspots, and likely ownership."}</p>
             </div>
           </div>
           {canGenerateInsights ? <Button type="button" size="sm" variant="secondary" onClick={() => void handleRefresh("architecture-graph")} disabled={busyKind !== null}>
             {busyKind === "architecture-graph" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Refresh"}
           </Button> : null}
         </div>
-        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-[var(--ec-muted)]">
           <span>Updated {formatGeneratedAt(architectureRecord?.generatedAt)}</span>
           {architecture ? <span>{architecture.nodes.length} nodes</span> : null}
           {architecture ? <span>{architecture.edges.length} edges</span> : null}
@@ -109,10 +109,10 @@ export const ProjectGraphsTab = ({ project, onGenerateInsight }: ProjectGraphsTa
         {architecture?.hotspots?.length ? (
           <div className="mt-3 grid gap-2 lg:grid-cols-2">
             {architecture.hotspots.map((hotspot) => (
-              <div key={hotspot.path} className="rounded-xl border border-zinc-800/80 bg-zinc-950/50 px-3 py-2">
-                <p className="text-sm font-medium text-zinc-100">{hotspot.label}</p>
-                <p className="mt-1 text-xs text-zinc-500">{hotspot.path}</p>
-                <p className="mt-2 text-xs text-zinc-300">
+              <div key={hotspot.path} className="rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2">
+                <p className="text-sm font-medium text-[var(--ec-text)]">{hotspot.label}</p>
+                <p className="mt-1 text-xs text-[var(--ec-muted)]">{hotspot.path}</p>
+                <p className="mt-2 text-xs text-[var(--ec-text)]">
                   {hotspot.commitCount} recent commits
                   {hotspot.ownerLabel ? ` • ${hotspot.ownerLabel}` : ""}
                 </p>
@@ -125,17 +125,17 @@ export const ProjectGraphsTab = ({ project, onGenerateInsight }: ProjectGraphsTa
       <Card className="p-4">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <Network className="h-4 w-4 text-cyan-400" />
+            <Network className="h-4 w-4 text-[var(--ec-accent)]" />
             <div>
-              <h3 className="text-sm font-medium text-zinc-100">Dependency gravity map</h3>
-              <p className="text-xs text-zinc-500">{gravityRecord?.summary ?? "Find the files quietly carrying the most structural weight."}</p>
+              <h3 className="text-sm font-medium text-[var(--ec-text)]">Dependency gravity map</h3>
+              <p className="text-xs text-[var(--ec-muted)]">{gravityRecord?.summary ?? "Find the files quietly carrying the most structural weight."}</p>
             </div>
           </div>
           {canGenerateInsights ? <Button type="button" size="sm" variant="secondary" onClick={() => void handleRefresh("dependency-gravity")} disabled={busyKind !== null}>
             {busyKind === "dependency-gravity" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Refresh"}
           </Button> : null}
         </div>
-        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-[var(--ec-muted)]">
           <span>Updated {formatGeneratedAt(gravityRecord?.generatedAt)}</span>
           {gravity ? <span>{gravity.summaryStats.totalModules} modules</span> : null}
           {gravity ? <span>{gravity.summaryStats.totalEdges} edges</span> : null}
@@ -144,12 +144,12 @@ export const ProjectGraphsTab = ({ project, onGenerateInsight }: ProjectGraphsTa
         {gravity?.nodes?.length ? (
           <div className="mt-3 space-y-2">
             {gravity.nodes.slice(0, 6).map((node) => (
-              <div key={node.path} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-zinc-800/80 bg-zinc-950/50 px-3 py-2">
+              <div key={node.path} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2">
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-zinc-100">{node.path}</p>
-                  <p className="text-xs text-zinc-500">{node.group}</p>
+                  <p className="truncate text-sm font-medium text-[var(--ec-text)]">{node.path}</p>
+                  <p className="text-xs text-[var(--ec-muted)]">{node.group}</p>
                 </div>
-                <div className="flex items-center gap-3 text-xs text-zinc-300">
+                <div className="flex items-center gap-3 text-xs text-[var(--ec-text)]">
                   <span>Gravity {node.gravityScore}</span>
                   <span>In {node.inbound}</span>
                   <span>Out {node.outbound}</span>

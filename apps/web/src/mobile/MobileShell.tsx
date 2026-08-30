@@ -1,5 +1,6 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
-import { parseUiTheme } from "@buildwarden/shared";
+import { parseDesignScheme } from "@buildwarden/shared";
+import { applyDesignSchemeToDocument } from "@buildwarden/renderer/design-scheme";
 import type { BuildWardenClient } from "@buildwarden/renderer";
 import { FolderGit2, Plus, Settings } from "lucide-react";
 import { MobileAppProvider, useMobileApp, type MobileAppValue } from "./data/mobile-app-context";
@@ -129,12 +130,12 @@ export const MobileShell = ({
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
 
   const snapshot = snapshotStore.snapshot;
-  const theme = parseUiTheme(snapshot.settings);
+  const designScheme = useMemo(() => parseDesignScheme(snapshot.settings), [snapshot.settings]);
+  const theme = designScheme.mode;
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    document.body.dataset.theme = theme;
-  }, [theme]);
+    applyDesignSchemeToDocument(designScheme);
+  }, [designScheme]);
 
   // Adopt the host's selected project until the user picks one here.
   useEffect(() => {

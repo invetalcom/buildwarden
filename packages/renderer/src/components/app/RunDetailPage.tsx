@@ -86,8 +86,8 @@ const RunWorktreeTerminal = lazy(() =>
 );
 
 const LazyPanelFallback = ({ label }: { label: string }) => (
-  <div className="flex h-full min-h-24 items-center justify-center gap-2 text-xs text-zinc-500">
-    <Loader2 className="h-4 w-4 animate-spin text-cyan-400" aria-hidden />
+  <div className="flex h-full min-h-24 items-center justify-center gap-2 text-xs text-[var(--ec-muted)]">
+    <Loader2 className="h-4 w-4 animate-spin text-[var(--ec-accent)]" aria-hidden />
     {label}
   </div>
 );
@@ -107,7 +107,7 @@ class LazyPanelErrorBoundary extends Component<{
     if (!this.state.failed) return this.props.children;
     if (this.props.fallback !== undefined) return this.props.fallback;
     return (
-      <div role="alert" className="flex h-full min-h-24 flex-col items-center justify-center gap-2 px-4 text-center text-xs text-zinc-500">
+      <div role="alert" className="flex h-full min-h-24 flex-col items-center justify-center gap-2 px-4 text-center text-xs text-[var(--ec-muted)]">
         <span>The {this.props.label} could not be loaded.</span>
         <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5" onClick={() => window.location.reload()}>
           <RotateCcw className="h-3.5 w-3.5" aria-hidden />
@@ -1047,7 +1047,7 @@ export const RunDetailPage = ({
   const modifiedFilesSummary = showModifiedFilesSummary ? (
       <div
         className={cn(
-          "pointer-events-auto overflow-hidden rounded-md border border-zinc-800/70 bg-zinc-900/95 shadow-lg shadow-black/20 backdrop-blur",
+          "pointer-events-auto overflow-hidden rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] shadow-lg shadow-black/20 backdrop-blur",
           modifiedFilesExpanded ? "w-fit min-w-[22rem] max-w-full" : "h-8 w-[min(18rem,100%)]",
         )}
       >
@@ -1060,7 +1060,7 @@ export const RunDetailPage = ({
           <span aria-hidden />
           <button
             type="button"
-            className="flex min-w-0 items-center justify-center gap-1.5 rounded px-1.5 py-1 text-[12px] font-medium text-zinc-200 transition hover:bg-zinc-800/80 hover:text-zinc-100"
+            className="flex min-w-0 items-center justify-center gap-1.5 rounded px-1.5 py-1 text-[12px] font-medium text-[var(--ec-text)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
             onClick={() => setModifiedFilesExpanded((current) => !current)}
             aria-expanded={modifiedFilesExpanded}
             title={modifiedFilesExpanded ? "Collapse changed files" : "Expand changed files"}
@@ -1069,15 +1069,15 @@ export const RunDetailPage = ({
             <span className="truncate">
               {diffStats.totalFiles} file{diffStats.totalFiles === 1 ? "" : "s"} changed
             </span>
-            <span className="font-semibold text-teal-300/90">+{diffStats.totalAdditions}</span>
-            <span className="font-semibold text-red-300/85">-{diffStats.totalDeletions}</span>
+            <span className="font-semibold text-[var(--ec-success)]">+{diffStats.totalAdditions}</span>
+            <span className="font-semibold text-[var(--ec-danger)]">-{diffStats.totalDeletions}</span>
           </button>
           <div className="flex shrink-0 items-center gap-0.5">
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              className="h-6 w-6 shrink-0 p-0 text-zinc-500 hover:bg-zinc-800/80 hover:text-zinc-100"
+              className="h-6 w-6 shrink-0 p-0 text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
               onClick={() => {
                 if (!showDiff) {
                   onTogglePanel("diff");
@@ -1094,7 +1094,7 @@ export const RunDetailPage = ({
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="h-6 w-6 shrink-0 p-0 text-zinc-500 hover:bg-zinc-800/80 hover:text-red-200"
+                className="h-6 w-6 shrink-0 p-0 text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-danger-strong)]"
                 onClick={() => onUndoRunToLastPrompt(runDetail.run)}
                 disabled={busy}
                 title="Revert changes"
@@ -1106,24 +1106,24 @@ export const RunDetailPage = ({
           </div>
         </div>
         {modifiedFilesExpanded ? (
-          <div className="app-scrollbar max-h-52 overflow-y-auto border-t border-zinc-800/70 bg-zinc-950/35">
+          <div className="app-scrollbar max-h-52 overflow-y-auto border-t border-[var(--ec-border)] bg-[var(--ec-panel)]">
                 {diffStats.files.map((file) => (
                   <button
                     type="button"
                     key={`${file.path}-${file.additions}-${file.deletions}`}
-                    className="flex w-max min-w-full items-center justify-between gap-6 border-b border-zinc-800/50 px-2.5 py-1.5 text-left text-[11px] transition last:border-b-0 hover:bg-zinc-800/60"
+                    className="flex w-max min-w-full items-center justify-between gap-6 border-b border-[var(--ec-border)] px-2.5 py-1.5 text-left text-[11px] transition last:border-b-0 hover:bg-[var(--ec-hover)]"
                     onClick={() => openRunFileReference(file.path)}
                     title={`Open ${file.path}`}
                   >
-                    <span className="whitespace-nowrap text-zinc-200">{file.path}</span>
+                    <span className="whitespace-nowrap text-[var(--ec-text)]">{file.path}</span>
                     <span className="shrink-0 text-[10px] font-medium">
                       {file.additions === null || file.deletions === null ? (
-                        <span className="text-zinc-500">binary</span>
+                        <span className="text-[var(--ec-muted)]">binary</span>
                       ) : (
                         <>
-                          <span className="text-teal-300/90">+{file.additions}</span>
-                          <span className="mx-1 text-zinc-700">/</span>
-                          <span className="text-red-300/85">-{file.deletions}</span>
+                          <span className="text-[var(--ec-success)]">+{file.additions}</span>
+                          <span className="mx-1 text-[var(--ec-faint)]">/</span>
+                          <span className="text-[var(--ec-danger)]">-{file.deletions}</span>
                         </>
                       )}
                     </span>
@@ -1158,10 +1158,10 @@ export const RunDetailPage = ({
   }
   let recoveryBadge: ReactNode = null;
   if (recovery?.providerSessionAvailable) {
-    recoveryBadge = <Badge className="border-cyan-500/20 bg-cyan-500/10 text-[10px] text-cyan-100">provider session</Badge>;
+    recoveryBadge = <Badge className="border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[10px] text-[var(--ec-accent)]">provider session</Badge>;
   }
   if (recovery?.kind === "checkpoint" && recovery.checkpointRound) {
-    recoveryBadge = <Badge className="border-cyan-500/20 bg-cyan-500/10 text-[10px] text-cyan-100">checkpoint {recovery.checkpointRound}</Badge>;
+    recoveryBadge = <Badge className="border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[10px] text-[var(--ec-accent)]">checkpoint {recovery.checkpointRound}</Badge>;
   }
   let activityPaneStyle: CSSProperties = { flex: 1 };
   if (hasSecondaryPanels) {
@@ -1247,29 +1247,29 @@ export const RunDetailPage = ({
         >
           <button
             type="button"
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-200 transition hover:bg-zinc-800/80"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-[var(--ec-text)] transition hover:bg-[var(--ec-hover)]"
             onClick={() => {
               void navigator.clipboard.writeText(selectionMenu.text);
               setSelectionMenu(null);
             }}
           >
-            <Copy className="h-3.5 w-3.5 text-zinc-500" aria-hidden />
+            <Copy className="h-3.5 w-3.5 text-[var(--ec-muted)]" aria-hidden />
             Copy text
           </button>
           {buildwarden.capabilities.platform === "electron" ? <button
             type="button"
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-200 transition hover:bg-zinc-800/80"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-[var(--ec-text)] transition hover:bg-[var(--ec-hover)]"
             onClick={() => void addRunNote(selectionMenu.text)}
           >
-            <StickyNote className="h-3.5 w-3.5 text-cyan-300" aria-hidden />
+            <StickyNote className="h-3.5 w-3.5 text-[var(--ec-accent)]" aria-hidden />
             Add to notes
           </button> : null}
           {buildwarden.capabilities.platform === "electron" ? <button
             type="button"
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-200 transition hover:bg-zinc-800/80"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-[var(--ec-text)] transition hover:bg-[var(--ec-hover)]"
             onClick={() => void addSelectionToTask(selectionMenu.text)}
           >
-            <ListTodo className="h-3.5 w-3.5 text-emerald-300" aria-hidden />
+            <ListTodo className="h-3.5 w-3.5 text-[var(--ec-success)]" aria-hidden />
             Add to tasks
           </button> : null}
         </div>
@@ -1278,22 +1278,22 @@ export const RunDetailPage = ({
         <Card
           className={cn(
             "shrink-0 overflow-hidden border p-0",
-            recovery.available ? "border-cyan-500/25 bg-zinc-950" : "border-amber-500/25 bg-amber-500/5",
+            recovery.available ? "border-[var(--ec-accent-ring)] bg-[var(--ec-panel)]" : "border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)]",
           )}
         >
           <div className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 items-start gap-2.5">
-              <div className="relative mt-0.5 h-8 w-8 shrink-0 rounded-md border border-cyan-400/20 bg-cyan-400/10">
-                <div className="absolute inset-x-1 top-1 h-1 rounded-full bg-cyan-300/70" />
-                <div className="absolute bottom-1 left-1 right-1 h-4 rounded-sm border border-cyan-300/30 bg-zinc-950/80" />
-                <RotateCcw className="absolute bottom-1.5 left-2 h-4 w-4 text-cyan-200" aria-hidden />
+              <div className="relative mt-0.5 h-8 w-8 shrink-0 rounded-md border border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)]">
+                <div className="absolute inset-x-1 top-1 h-1 rounded-full bg-[var(--ec-accent-soft)]" />
+                <div className="absolute bottom-1 left-1 right-1 h-4 rounded-sm border border-[var(--ec-accent-ring)] bg-[var(--ec-panel)]" />
+                <RotateCcw className="absolute bottom-1.5 left-2 h-4 w-4 text-[var(--ec-accent)]" aria-hidden />
               </div>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <p className="text-xs font-semibold text-zinc-100">{recovery.title}</p>
+                  <p className="text-xs font-semibold text-[var(--ec-text)]">{recovery.title}</p>
                   {recoveryBadge}
                 </div>
-                <p className="mt-0.5 text-[11px] leading-5 text-zinc-400">{recovery.detail}</p>
+                <p className="mt-0.5 text-[11px] leading-5 text-[var(--ec-muted)]">{recovery.detail}</p>
               </div>
             </div>
             {recovery.available ? (
@@ -1304,7 +1304,7 @@ export const RunDetailPage = ({
                       type="button"
                       variant="secondary"
                       size="sm"
-                      className="h-8 border-zinc-700 bg-zinc-900/80 px-2 text-xs"
+                      className="h-8 border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 text-xs"
                       onClick={() => setRecoveryConfirmOpen(false)}
                       disabled={busy}
                     >
@@ -1313,7 +1313,7 @@ export const RunDetailPage = ({
                     <Button
                       type="button"
                       size="sm"
-                      className="h-8 bg-cyan-500 px-2 text-xs font-semibold text-zinc-950 hover:bg-cyan-400"
+                      className="h-8 bg-[var(--ec-accent)] px-2 text-xs font-semibold text-[var(--ec-accent-foreground)] hover:bg-[var(--ec-accent-strong)]"
                       onClick={() => onRecoverInterruptedRun(runDetail.run)}
                       disabled={busy}
                     >
@@ -1325,7 +1325,7 @@ export const RunDetailPage = ({
                   <Button
                     type="button"
                     size="sm"
-                    className="h-8 bg-cyan-500 px-2 text-xs font-semibold text-zinc-950 hover:bg-cyan-400"
+                    className="h-8 bg-[var(--ec-accent)] px-2 text-xs font-semibold text-[var(--ec-accent-foreground)] hover:bg-[var(--ec-accent-strong)]"
                     onClick={() => setRecoveryConfirmOpen(true)}
                     disabled={busy}
                   >
@@ -1336,7 +1336,7 @@ export const RunDetailPage = ({
             ) : null}
           </div>
           {recoveryConfirmOpen ? (
-            <div className="border-t border-cyan-500/10 bg-cyan-500/[0.04] px-3 py-2 text-[11px] leading-5 text-zinc-300">
+            <div className="border-t border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-3 py-2 text-[11px] leading-5 text-[var(--ec-text)]">
               BuildWarden will start one new turn, reconnect the saved provider thread when possible, inspect the workspace before editing, and keep the
               existing activity log intact.
             </div>
@@ -1345,14 +1345,14 @@ export const RunDetailPage = ({
       ) : null}
       {/* Worktree unavailable banner */}
       {worktreeUnavailable ? (
-        <Card className={cn("shrink-0 p-3", branchPromotedToProject ? "border-cyan-500/20 bg-cyan-500/5" : "border-amber-500/20 bg-amber-500/5")}>
+        <Card className={cn("shrink-0 p-3", branchPromotedToProject ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)]" : "border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)]")}>
           <div className="flex items-start gap-3">
             <div
               className={cn(
                 "rounded-full p-1.5",
                 branchPromotedToProject
-                  ? "border border-cyan-500/30 bg-cyan-500/10 text-cyan-300"
-                  : "border border-amber-500/30 bg-amber-500/10 text-amber-300",
+                  ? "border border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]"
+                  : "border border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] text-[var(--ec-warning)]",
               )}
             >
               <GitBranch className="h-3.5 w-3.5" />
@@ -1360,9 +1360,9 @@ export const RunDetailPage = ({
             <div className="min-w-0 flex-1">
               {branchPromotedToProject ? (
                 <>
-                  <p className="text-xs font-medium text-cyan-200">Branch moved to the project repository</p>
-                  <p className="mt-0.5 text-[11px] text-zinc-400">
-                    The branch <span className="font-mono text-cyan-200/90">{runDetail.run.branchName}</span> still exists locally and should be checked out in
+                  <p className="text-xs font-medium text-[var(--ec-accent)]">Branch moved to the project repository</p>
+                  <p className="mt-0.5 text-[11px] text-[var(--ec-muted)]">
+                    The branch <span className="font-mono text-[var(--ec-accent)]">{runDetail.run.branchName}</span> still exists locally and should be checked out in
                     the main project repository. This run's temporary BuildWarden worktree was removed on purpose, so Git diffs are no longer available here.
                     The Activity Log is still available.
                   </p>
@@ -1371,16 +1371,16 @@ export const RunDetailPage = ({
                 <>
                   {runDetail.run.workspaceVcs === "folder" ? (
                     <>
-                      <p className="text-xs font-medium text-amber-200">Folder workspace no longer available</p>
-                      <p className="mt-0.5 text-[11px] text-zinc-400">
+                      <p className="text-xs font-medium text-[var(--ec-warning)]">Folder workspace no longer available</p>
+                      <p className="mt-0.5 text-[11px] text-[var(--ec-muted)]">
                         The run workspace folder has been moved or removed. Diffs cannot be shown. Only the Activity Log is available.
                       </p>
                     </>
                   ) : (
                     <>
-                      <p className="text-xs font-medium text-amber-200">Git worktree no longer available</p>
-                      <p className="mt-0.5 text-[11px] text-zinc-400">
-                        The branch <span className="font-mono text-amber-200/90">{runDetail.run.branchName}</span> or its worktree has been removed.
+                      <p className="text-xs font-medium text-[var(--ec-warning)]">Git worktree no longer available</p>
+                      <p className="mt-0.5 text-[11px] text-[var(--ec-muted)]">
+                        The branch <span className="font-mono text-[var(--ec-warning)]">{runDetail.run.branchName}</span> or its worktree has been removed.
                         Git diffs cannot be shown. Only the Activity Log is available.
                       </p>
                     </>
@@ -1403,7 +1403,7 @@ export const RunDetailPage = ({
         {/* Left / Top pane – Activity Log */}
         {showActivity ? (
           <div
-            className="relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-zinc-800/60"
+            className="relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-[var(--ec-border)]"
             style={activityPaneStyle}
           >
             {activityContent}
@@ -1421,7 +1421,7 @@ export const RunDetailPage = ({
               secondaryPanelPosition === "right"
                 ? "w-1.5 cursor-col-resize"
                 : "h-1.5 cursor-row-resize",
-              isResizingSplit ? "bg-cyan-500/50" : "bg-zinc-800/60 hover:bg-cyan-500/30",
+              isResizingSplit ? "bg-[var(--ec-accent-soft)]" : "bg-[var(--ec-control)] hover:bg-[var(--ec-accent-soft)]",
             )}
             onMouseDown={startSplitResize}
           />
@@ -1430,10 +1430,10 @@ export const RunDetailPage = ({
         {/* Right / Bottom pane – Secondary panels with tab strip */}
         {hasSecondaryPanels ? (
           <div
-            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-zinc-800/60"
+            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--ec-border)]"
           >
             {/* Tab strip */}
-            <div className="flex h-9 shrink-0 items-stretch border-b border-zinc-800/80 bg-zinc-950/50">
+            <div className="flex h-9 shrink-0 items-stretch border-b border-[var(--ec-border)] bg-[var(--ec-panel)]">
               {/* Only render enabled panels as tabs */}
               {secondaryPanelDefs.filter((p) => p.enabled).map((panel) => {
                 const Icon = panel.Icon;
@@ -1445,8 +1445,8 @@ export const RunDetailPage = ({
                     className={cn(
                       "group relative -mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-3 text-xs transition",
                       isActive
-                        ? "border-cyan-500/70 bg-zinc-900/50 text-zinc-100"
-                        : "cursor-pointer border-transparent text-zinc-400 hover:bg-zinc-800/30 hover:text-zinc-200",
+                        ? "border-[var(--ec-accent-ring)] bg-[var(--ec-panel)] text-[var(--ec-text)]"
+                        : "cursor-pointer border-transparent text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
                     )}
                     onClick={() => setActiveSecondaryTab(panel.id)}
                     title={panel.label}
@@ -1457,7 +1457,7 @@ export const RunDetailPage = ({
                       <span
                         role="button"
                         tabIndex={0}
-                        className="ml-0.5 flex h-4 w-4 items-center justify-center rounded opacity-0 transition group-hover:opacity-100 hover:bg-zinc-700/80"
+                        className="ml-0.5 flex h-4 w-4 items-center justify-center rounded opacity-0 transition group-hover:opacity-100 hover:bg-[var(--ec-hover)]"
                         onClick={(e) => {
                           e.stopPropagation();
                           closeSecondaryPanel(panel.id);
@@ -1485,8 +1485,8 @@ export const RunDetailPage = ({
                   <button
                     type="button"
                     className={cn(
-                      "flex h-full items-center gap-1 border-b-2 border-transparent px-2 text-[11px] text-zinc-600 transition hover:bg-zinc-800/50 hover:text-zinc-300",
-                      addPanelOpen && "bg-zinc-800/50 text-zinc-300",
+                      "flex h-full items-center gap-1 border-b-2 border-transparent px-2 text-[11px] text-[var(--ec-faint)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
+                      addPanelOpen && "bg-[var(--ec-control)] text-[var(--ec-text)]",
                     )}
                     onClick={() => setAddPanelOpen((o) => !o)}
                     title="Add panel"
@@ -1505,7 +1505,7 @@ export const RunDetailPage = ({
                             <button
                               key={panel.id}
                               type="button"
-                              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-zinc-300 transition hover:bg-zinc-800/80"
+                              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--ec-text)] transition hover:bg-[var(--ec-hover)]"
                               onClick={() => {
                                 if (panel.id === "file") {
                                   return;
@@ -1515,7 +1515,7 @@ export const RunDetailPage = ({
                                 setAddPanelOpen(false);
                               }}
                             >
-                              <Icon className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+                              <Icon className="h-3.5 w-3.5 shrink-0 text-[var(--ec-muted)]" />
                               {panel.label}
                             </button>
                           );
@@ -1531,7 +1531,7 @@ export const RunDetailPage = ({
                 {!showActivity ? (
                   <button
                     type="button"
-                    className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-zinc-600 transition hover:bg-zinc-800/60 hover:text-zinc-300"
+                    className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-[var(--ec-faint)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
                     onClick={() => onTogglePanel("activity")}
                     title="Show Activity Log"
                     aria-label="Show Activity Log"
@@ -1544,7 +1544,7 @@ export const RunDetailPage = ({
                 {/* Position toggle: dock right ↔ dock bottom */}
                 <button
                   type="button"
-                  className="flex h-6 w-6 items-center justify-center rounded text-zinc-600 transition hover:bg-zinc-800/60 hover:text-zinc-300"
+                  className="flex h-6 w-6 items-center justify-center rounded text-[var(--ec-faint)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
                   onClick={toggleSecondaryPosition}
                   title={secondaryPanelPosition === "right" ? "Move panel to bottom" : "Move panel to right"}
                   aria-label={secondaryPanelPosition === "right" ? "Move panel to bottom" : "Move panel to right"}
@@ -1595,51 +1595,51 @@ export const RunDetailPage = ({
                   <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                     {!diffLoaded || diffPending ? (
                       <div
-                        className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-4 py-8 text-center text-sm text-zinc-500"
+                        className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-4 py-8 text-center text-sm text-[var(--ec-muted)]"
                         role="status"
                         aria-live="polite"
                       >
-                        <Loader2 className="h-8 w-8 animate-spin text-cyan-500/70" aria-hidden />
-                        <p className="font-medium text-zinc-400">Computing worktree diff…</p>
-                        <p className="max-w-sm text-xs text-zinc-600">
+                        <Loader2 className="h-8 w-8 animate-spin text-[var(--ec-accent)]" aria-hidden />
+                        <p className="font-medium text-[var(--ec-muted)]">Computing worktree diff…</p>
+                        <p className="max-w-sm text-xs text-[var(--ec-faint)]">
                           The activity log updates in real time. Diff loading runs separately so you can switch runs without waiting on git.
                         </p>
                       </div>
                     ) : (
                       <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto px-3 py-3">
-                        <div className="relative z-20 mb-3 rounded-lg border border-zinc-800/80 bg-zinc-950/45">
+                        <div className="relative z-20 mb-3 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)]">
                           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-stretch">
                             <button
                               type="button"
-                              className="group min-w-0 px-3 py-2.5 text-left transition hover:bg-zinc-900/55"
+                              className="group min-w-0 px-3 py-2.5 text-left transition hover:bg-[var(--ec-hover)]"
                               onClick={() => gitDiffPanelRef.current?.toggleExpandAllFiles()}
                               title={allDiffFilesExpanded ? "Collapse all files" : "Expand all files"}
                               aria-label={allDiffFilesExpanded ? "Collapse all files" : "Expand all files"}
                             >
                               <div className="flex min-w-0 items-center gap-2">
                                 {allDiffFilesExpanded ? (
-                                  <Minimize2 className="h-3.5 w-3.5 shrink-0 text-zinc-500 transition group-hover:text-zinc-300" aria-hidden />
+                                  <Minimize2 className="h-3.5 w-3.5 shrink-0 text-[var(--ec-muted)] transition group-hover:text-[var(--ec-text)]" aria-hidden />
                                 ) : (
-                                  <Maximize2 className="h-3.5 w-3.5 shrink-0 text-zinc-500 transition group-hover:text-zinc-300" aria-hidden />
+                                  <Maximize2 className="h-3.5 w-3.5 shrink-0 text-[var(--ec-muted)] transition group-hover:text-[var(--ec-text)]" aria-hidden />
                                 )}
-                                <span className="truncate text-sm font-semibold text-zinc-100">
+                                <span className="truncate text-sm font-semibold text-[var(--ec-text)]">
                                   {diffStats.totalFiles} file{diffStats.totalFiles === 1 ? "" : "s"} changed
                                 </span>
-                                <span className="text-xs font-semibold text-teal-300/90">+{diffStats.totalAdditions}</span>
-                                <span className="text-xs font-semibold text-red-300/85">-{diffStats.totalDeletions}</span>
+                                <span className="text-xs font-semibold text-[var(--ec-success)]">+{diffStats.totalAdditions}</span>
+                                <span className="text-xs font-semibold text-[var(--ec-danger)]">-{diffStats.totalDeletions}</span>
                               </div>
-                              <p className="mt-0.5 text-[10px] text-zinc-600 transition group-hover:text-zinc-500">
+                              <p className="mt-0.5 text-[10px] text-[var(--ec-faint)] transition group-hover:text-[var(--ec-muted)]">
                                 {allDiffFilesExpanded ? "Collapse file diffs" : "Expand file diffs"}
                               </p>
                             </button>
-                            {buildwarden.capabilities.platform === "electron" ? <div className="flex items-center gap-1 border-l border-zinc-800/80 px-2">
+                            {buildwarden.capabilities.platform === "electron" ? <div className="flex items-center gap-1 border-l border-[var(--ec-border)] px-2">
                               <ComposerSelect
                                 value={selectedReviewModelId}
                                 onChange={setSelectedReviewModelId}
                                 disabled={reviewBusy || modelOptions.length === 0}
                                 icon={Bot}
-                                iconClassName="text-cyan-300"
-                                buttonClassName="h-7 max-w-[11rem] rounded-md border-transparent bg-transparent px-1.5 text-[11px] hover:border-zinc-800 hover:bg-zinc-900/80"
+                                iconClassName="text-[var(--ec-accent)]"
+                                buttonClassName="h-7 max-w-[11rem] rounded-md border-transparent bg-transparent px-1.5 text-[11px] hover:border-[var(--ec-border)] hover:bg-[var(--ec-hover)]"
                                 options={modelOptions.map((option) => ({
                                   value: option.id,
                                   label: option.label,
@@ -1654,7 +1654,7 @@ export const RunDetailPage = ({
                                 type="button"
                                 size="sm"
                                 variant="secondary"
-                                className="h-7 shrink-0 border border-zinc-800 bg-zinc-900/80 px-2.5 text-[11px] text-zinc-100 hover:bg-zinc-800"
+                                className="h-7 shrink-0 border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 text-[11px] text-[var(--ec-text)] hover:bg-[var(--ec-hover)]"
                                 onClick={() => void runDiffReview()}
                                 disabled={reviewBusy || isRunActive || !runDetail.diff.trim()}
                                 title="Run reviewer simulator"
@@ -1698,19 +1698,19 @@ export const RunDetailPage = ({
               {/* Terminal panel */}
               {showTerminal && activeSecondaryTab === "terminal" ? (
                 <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-                  <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-800/80 px-3 py-2">
+                  <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[var(--ec-border)] px-3 py-2">
                     <div className="flex min-w-0 flex-1 items-center gap-2">
                       <div className="min-w-0">
-                        <p className="truncate text-[10px] text-zinc-500" title={workspacePath}>
+                        <p className="truncate text-[10px] text-[var(--ec-muted)]" title={workspacePath}>
                           {workspacePath}
                         </p>
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-3">
-                      <label className="flex shrink-0 items-center gap-2 text-[10px] text-zinc-400">
+                      <label className="flex shrink-0 items-center gap-2 text-[10px] text-[var(--ec-muted)]">
                         <input
                           type="checkbox"
-                          className="h-3.5 w-3.5 rounded border border-zinc-700 bg-zinc-950 accent-[var(--ec-accent)]"
+                          className="h-3.5 w-3.5 rounded border border-[var(--ec-border)] bg-[var(--ec-panel)] accent-[var(--ec-accent)]"
                           checked={terminalOpenLinksInApp}
                           onChange={(event) => onTerminalOpenLinksInAppChange(event.target.checked)}
                         />
@@ -1720,7 +1720,7 @@ export const RunDetailPage = ({
                         type="button"
                         variant="ghost"
                         size="sm"
-                        className="h-8 w-8 shrink-0 p-0 text-zinc-400 hover:text-zinc-100"
+                        className="h-8 w-8 shrink-0 p-0 text-[var(--ec-muted)] hover:text-[var(--ec-text)]"
                         title="Open external"
                         aria-label="Open external"
                         onClick={() => void buildwarden.openSystemTerminalAtPath(workspacePath)}
@@ -1811,25 +1811,25 @@ export const RunDetailPage = ({
       {/* Bottom: shell approval + follow-up composer */}
       <div className="shrink-0 space-y-1 pt-0.5">
         {!readOnly && pendingShellApproval ? (
-          <Card className="border-amber-500/25 bg-[linear-gradient(180deg,rgba(120,53,15,0.12),rgba(9,9,11,0.96))] p-4">
+          <Card className="border-[var(--ec-warning-ring)] bg-[linear-gradient(180deg,var(--ec-warning-soft),var(--ec-panel-strong))] p-4">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-3">
-                  <div className="rounded-full border border-amber-500/30 bg-amber-500/10 p-2 text-amber-300">
+                  <div className="rounded-full border border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] p-2 text-[var(--ec-warning)]">
                     <Terminal className="h-4 w-4" />
                   </div>
                   <div className="min-w-0">
-                    <p className="text-xs uppercase tracking-[0.25em] text-amber-300/80">Shell approval needed</p>
-                    <p className="mt-1 text-sm text-zinc-300">
+                    <p className="text-xs uppercase tracking-[0.25em] text-[var(--ec-warning)]">Shell approval needed</p>
+                    <p className="mt-1 text-sm text-[var(--ec-text)]">
                       This command is outside the default safe allowlist. It will be auto-denied in{" "}
-                      <span className="font-medium text-amber-200">{pendingShellApproval.secondsRemaining}s</span> if you do nothing.
+                      <span className="font-medium text-[var(--ec-warning)]">{pendingShellApproval.secondsRemaining}s</span> if you do nothing.
                     </p>
                   </div>
                 </div>
-                <pre className="app-scrollbar mt-4 max-h-40 overflow-auto rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4 text-sm text-zinc-200">
+                <pre className="app-scrollbar mt-4 max-h-40 overflow-auto rounded-2xl border border-[var(--ec-border)] bg-[var(--ec-panel)] p-4 text-sm text-[var(--ec-text)]">
                   {pendingShellApproval.command}
                 </pre>
-                <p className="mt-3 text-xs text-zinc-500">
+                <p className="mt-3 text-xs text-[var(--ec-muted)]">
                   Allow once for a single execution. &quot;For this run&quot; remembers the exact command until the run ends. &quot;Save to
                   settings&quot; adds a permanent exact-match pattern (see Settings &gt; Projects &amp; Workspace).
                 </p>
@@ -1860,7 +1860,7 @@ export const RunDetailPage = ({
 
         <div>
           {runDetail.run.goalText || goalEditing ? (
-            <div className="mb-1 flex min-w-0 items-center gap-1.5 rounded-xl border border-[var(--ec-border)] bg-[var(--ec-surface)] px-2 py-1 text-xs">
+            <div className="mb-1 flex min-w-0 items-center gap-1.5 rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 py-1 text-xs">
               <Target className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" />
               <span className="shrink-0 font-medium text-[var(--ec-muted)]">Goal</span>
               {goalEditing ? (

@@ -45,6 +45,7 @@ import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
 import { Select } from "../ui/select";
+import { Textarea } from "../ui/textarea";
 import { ActivityRichText } from "../ui/activity-rich-text";
 import { DiffReviewPanel, type DiffReviewPanelState } from "./diff-review-panel";
 import { ForgeRequestActionBar } from "./ForgeRequestActionBar";
@@ -151,16 +152,16 @@ const DIFF_LINE_MARKERS: Record<string, string> = {
 
 const resolveThreadButtonPresentation = (resolved: boolean, confirmResolve: boolean) => {
   if (resolved) {
-    return { className: "text-zinc-400 hover:text-cyan-100", title: "Reopen this thread", label: "Reopen thread" };
+    return { className: "text-[var(--ec-muted)] hover:text-[var(--ec-accent-strong)]", title: "Reopen this thread", label: "Reopen thread" };
   }
   if (confirmResolve) {
     return {
-      className: "border border-amber-500/40 bg-amber-500/[0.08] text-amber-100 hover:bg-amber-500/[0.12] hover:text-amber-50",
+      className: "border border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] text-[var(--ec-warning)] hover:bg-[var(--ec-warning-soft)] hover:text-[var(--ec-warning)]",
       title: "Confirm closing this thread",
       label: "Confirm close",
     };
   }
-  return { className: "text-zinc-500 hover:text-zinc-200", title: "Close this thread as resolved", label: "Close thread" };
+  return { className: "text-[var(--ec-muted)] hover:text-[var(--ec-text)]", title: "Close this thread as resolved", label: "Close thread" };
 };
 
 const requestDiffCacheKey = (url: string, commitSha?: string | null) => `${url.trim()}\0${commitSha?.trim() || "all"}`;
@@ -173,9 +174,9 @@ const requestStateTone = (state: string) => {
     return "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]";
   }
   if (state === "closed") {
-    return "border-rose-500/30 bg-rose-500/[0.08] text-rose-200";
+    return "border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] text-[var(--ec-danger)]";
   }
-  return "border-cyan-500/30 bg-cyan-500/[0.08] text-cyan-100";
+  return "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]";
 };
 
 const formatReviewBody = (review: RunDiffReviewResult): string => {
@@ -322,8 +323,8 @@ const AiReviewModelPicker = ({
 }>) => (
   <div className="px-3 py-2.5">
     <div className="mb-2 flex items-center gap-1.5">
-      <Sparkles className="h-3.5 w-3.5 text-cyan-300" aria-hidden />
-      <span className="text-[10px] font-semibold text-zinc-200">AI review</span>
+      <Sparkles className="h-3.5 w-3.5 text-[var(--ec-accent)]" aria-hidden />
+      <span className="text-[10px] font-semibold text-[var(--ec-text)]">AI review</span>
     </div>
     <div className="app-scrollbar max-h-40 space-y-0.5 overflow-y-auto" role="listbox" aria-label="AI review model">
       {options.length > 0 ? options.map((option) => {
@@ -336,25 +337,25 @@ const AiReviewModelPicker = ({
             aria-selected={selected}
             className={cn(
               "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
-              selected ? "bg-cyan-500/[0.1] text-zinc-100" : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200",
+              selected ? "bg-[var(--ec-accent-soft)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
             )}
             onClick={() => onModelChange(option.value)}
             disabled={busy}
           >
-            <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", selected ? "bg-cyan-300" : "bg-zinc-700")} />
+            <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", selected ? "bg-[var(--ec-accent)]" : "bg-[var(--ec-control)]")} />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[10px] font-medium">{option.label}</span>
-              {option.description ? <span className="block truncate text-[9px] text-zinc-500">{option.description}</span> : null}
+              {option.description ? <span className="block truncate text-[9px] text-[var(--ec-muted)]">{option.description}</span> : null}
             </span>
-            {selected ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-cyan-300" aria-hidden /> : null}
+            {selected ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" aria-hidden /> : null}
           </button>
         );
-      }) : <p className="py-2 text-[10px] text-zinc-500">No review models configured.</p>}
+      }) : <p className="py-2 text-[10px] text-[var(--ec-muted)]">No review models configured.</p>}
     </div>
     <Button
       type="button"
       size="sm"
-      className="mt-2 h-7 w-full bg-cyan-500/90 px-2 text-[10px] font-semibold text-zinc-950 hover:bg-cyan-300"
+      className="mt-2 h-7 w-full bg-[var(--ec-accent-soft)] px-2 text-[10px] font-semibold text-[var(--ec-accent-foreground)] hover:bg-[var(--ec-accent-strong)]"
       onClick={onRunReview}
       disabled={busy || !hasDiff || !modelId.trim()}
     >
@@ -383,17 +384,17 @@ const ReviewDraftActions = ({
   onCancel: () => void;
   onSubmit: () => void;
 }>) => (
-  <div className="border-t border-zinc-800/80 px-3 py-2.5">
+  <div className="border-t border-[var(--ec-border)] px-3 py-2.5">
     <div className="flex items-center justify-between gap-2">
       <div className="min-w-0">
         <div className="flex items-center gap-1.5">
-          <SquarePen className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
-          <span className="text-[10px] font-semibold text-zinc-200">Line comments</span>
+          <SquarePen className="h-3.5 w-3.5 text-[var(--ec-muted)]" aria-hidden />
+          <span className="text-[10px] font-semibold text-[var(--ec-text)]">Line comments</span>
         </div>
-        <p className="mt-0.5 text-[9px] text-zinc-500">{active ? "Comments stay private until submitted." : "Batch comments into a single review."}</p>
+        <p className="mt-0.5 text-[9px] text-[var(--ec-muted)]">{active ? "Comments stay private until submitted." : "Batch comments into a single review."}</p>
       </div>
       {!active ? (
-        <Button type="button" size="sm" variant="ghost" className="h-7 shrink-0 border border-zinc-700 px-2 text-[10px] text-zinc-200 hover:border-cyan-500/35 hover:bg-zinc-900" onClick={onStart} disabled={!activeUrl.trim()}>
+        <Button type="button" size="sm" variant="ghost" className="h-7 shrink-0 border border-[var(--ec-border)] px-2 text-[10px] text-[var(--ec-text)] hover:border-[var(--ec-accent-ring)] hover:bg-[var(--ec-hover)]" onClick={onStart} disabled={!activeUrl.trim()}>
           Start review
         </Button>
       ) : null}
@@ -401,11 +402,11 @@ const ReviewDraftActions = ({
     {active ? (
       <div className="mt-2 flex items-center gap-1.5">
         {draftMode && draftCount === 0 ? (
-          <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-[10px] text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200" onClick={onCancel}>
+          <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-[10px] text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]" onClick={onCancel}>
             Cancel
           </Button>
         ) : null}
-        <Button type="button" size="sm" className="h-7 flex-1 bg-amber-300 px-2 text-[10px] font-semibold text-zinc-950 hover:bg-amber-200" onClick={onSubmit} disabled={busy || draftCount === 0 || !activeUrl.trim()}>
+        <Button type="button" size="sm" className="h-7 flex-1 bg-[var(--ec-warning)] px-2 text-[10px] font-semibold text-[var(--ec-accent-foreground)] hover:bg-[var(--ec-warning-soft)]" onClick={onSubmit} disabled={busy || draftCount === 0 || !activeUrl.trim()}>
           {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <ArrowUpRight className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
           Submit {String(draftCount)} draft{draftCount === 1 ? "" : "s"}
         </Button>
@@ -425,12 +426,12 @@ const ManualReviewPostActions = ({
   activeUrl: string;
   onPost: (event: "comment" | "approve") => void;
 }>) => (
-  <div className="flex items-center gap-1.5 border-t border-zinc-800/80 px-3 py-2.5">
-    <Button type="button" size="sm" variant="ghost" className="h-7 flex-1 border border-zinc-800 px-2 text-[10px] text-zinc-300 hover:bg-zinc-900" onClick={() => onPost("comment")} disabled={postBusy || !hasResult || !activeUrl.trim()}>
+  <div className="flex items-center gap-1.5 border-t border-[var(--ec-border)] px-3 py-2.5">
+    <Button type="button" size="sm" variant="ghost" className="h-7 flex-1 border border-[var(--ec-border)] px-2 text-[10px] text-[var(--ec-text)] hover:bg-[var(--ec-hover)]" onClick={() => onPost("comment")} disabled={postBusy || !hasResult || !activeUrl.trim()}>
       {postBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <MessageSquarePlus className="mr-1 h-3.5 w-3.5" aria-hidden />}
       Post AI result
     </Button>
-    <Button type="button" size="sm" variant="ghost" className="h-7 flex-1 border border-emerald-500/20 px-2 text-[10px] text-emerald-200 hover:bg-emerald-500/[0.08]" onClick={() => onPost("approve")} disabled={postBusy || !activeUrl.trim()}>
+    <Button type="button" size="sm" variant="ghost" className="h-7 flex-1 border border-[var(--ec-success-ring)] px-2 text-[10px] text-[var(--ec-success)] hover:bg-[var(--ec-success-soft)]" onClick={() => onPost("approve")} disabled={postBusy || !activeUrl.trim()}>
       <CheckCircle2 className="mr-1 h-3.5 w-3.5" aria-hidden />
       Approve
     </Button>
@@ -466,20 +467,20 @@ const PrMrReviewMenu = (props: PrMrReviewMenuProps) => {
   const busy = props.reviewBusy || props.submitBusy;
   return (
     <>
-      <div ref={props.anchorRef} className="relative ml-1 border-l border-zinc-800/80 pl-2">
-        <Button type="button" size="sm" variant="ghost" className={cn("h-7 border border-zinc-700/80 bg-zinc-900/70 px-2.5 text-[10px] font-semibold text-zinc-200 shadow-sm hover:border-cyan-500/40 hover:bg-zinc-800/90 hover:text-white", props.open && "border-cyan-500/45 bg-cyan-500/[0.08] text-cyan-100")} onClick={() => props.onOpenChange(!props.open)} disabled={!props.hasDiff} title="AI review, draft comments, and submission" aria-haspopup="dialog" aria-expanded={props.open}>
-          {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-cyan-300" aria-hidden /> : <Sparkles className="mr-1.5 h-3.5 w-3.5 text-cyan-300" aria-hidden />}
+      <div ref={props.anchorRef} className="relative ml-1 border-l border-[var(--ec-border)] pl-2">
+        <Button type="button" size="sm" variant="ghost" className={cn("h-7 border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 text-[10px] font-semibold text-[var(--ec-text)] shadow-sm hover:border-[var(--ec-accent-ring)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]", props.open && "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]")} onClick={() => props.onOpenChange(!props.open)} disabled={!props.hasDiff} title="AI review, draft comments, and submission" aria-haspopup="dialog" aria-expanded={props.open}>
+          {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-[var(--ec-accent)]" aria-hidden /> : <Sparkles className="mr-1.5 h-3.5 w-3.5 text-[var(--ec-accent)]" aria-hidden />}
           Review
-          {reviewModeActive ? <span className="ml-1 rounded-full bg-amber-300/15 px-1.5 py-px font-mono text-[9px] text-amber-100">{String(props.draftCount)}</span> : null}
-          <ChevronDown className={cn("ml-1 h-3.5 w-3.5 text-zinc-500 transition-transform duration-150", props.open && "rotate-180")} aria-hidden />
+          {reviewModeActive ? <span className="ml-1 rounded-full bg-[var(--ec-warning-soft)] px-1.5 py-px font-mono text-[9px] text-[var(--ec-warning)]">{String(props.draftCount)}</span> : null}
+          <ChevronDown className={cn("ml-1 h-3.5 w-3.5 text-[var(--ec-muted)] transition-transform duration-150", props.open && "rotate-180")} aria-hidden />
         </Button>
       </div>
-      <AnchorDropdownPortal open={props.open} anchorRef={props.anchorRef} align="end" placement="bottom" widthPx={320} onClose={() => props.onOpenChange(false)} className="glass-popover overflow-hidden rounded-lg border border-zinc-700/80 bg-zinc-950/95 p-0 shadow-2xl shadow-black/45">
+      <AnchorDropdownPortal open={props.open} anchorRef={props.anchorRef} align="end" placement="bottom" widthPx={320} onClose={() => props.onOpenChange(false)} className="glass-popover overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] p-0 shadow-2xl shadow-black/45">
         <div>
-          <div className="border-b border-zinc-800/80 px-3 py-2.5">
+          <div className="border-b border-[var(--ec-border)] px-3 py-2.5">
             <div className="flex items-center justify-between gap-3">
-              <div><p className="text-[11px] font-semibold text-zinc-100">Review changes</p><p className="mt-0.5 text-[9px] leading-snug text-zinc-500">Run AI analysis or collect line comments for one submission.</p></div>
-              {reviewModeActive ? <span className="shrink-0 rounded-full bg-amber-400/10 px-2 py-1 text-[9px] font-medium text-amber-200 ring-1 ring-inset ring-amber-400/20">{String(props.draftCount)} draft{props.draftCount === 1 ? "" : "s"}</span> : null}
+              <div><p className="text-[11px] font-semibold text-[var(--ec-text)]">Review changes</p><p className="mt-0.5 text-[9px] leading-snug text-[var(--ec-muted)]">Run AI analysis or collect line comments for one submission.</p></div>
+              {reviewModeActive ? <span className="shrink-0 rounded-full bg-[var(--ec-warning-soft)] px-2 py-1 text-[9px] font-medium text-[var(--ec-warning)] ring-1 ring-inset ring-[var(--ec-warning-ring)]">{String(props.draftCount)} draft{props.draftCount === 1 ? "" : "s"}</span> : null}
             </div>
           </div>
           <AiReviewModelPicker options={props.options} modelId={props.modelId} busy={props.reviewBusy} hasDiff={props.hasDiff} hasResult={props.hasReviewResult} onModelChange={props.onModelChange} onRunReview={props.onRunReview} />
@@ -525,15 +526,15 @@ const DiffReviewState = ({
 
 const ManualDiffToolbar = ({ visible, children }: Readonly<{ visible: boolean; children: ReactNode }>) => {
   if (!visible) return null;
-  return <div className="shrink-0 border-b border-zinc-800/80 px-2 py-1.5">{children}</div>;
+  return <div className="shrink-0 border-b border-[var(--ec-border)] px-2 py-1.5">{children}</div>;
 };
 
 const ManualDiffMessages = ({ visible, message, error }: Readonly<{ visible: boolean; message: string | null; error: string | null }>) => {
   if (!visible) return null;
   return (
     <>
-      {message ? <p className="shrink-0 text-[9px] text-emerald-300">{message}</p> : null}
-      {error ? <p className="shrink-0 text-[9px] text-rose-300">{error}</p> : null}
+      {message ? <p className="shrink-0 text-[9px] text-[var(--ec-success)]">{message}</p> : null}
+      {error ? <p className="shrink-0 text-[9px] text-[var(--ec-danger)]">{error}</p> : null}
     </>
   );
 };
@@ -1881,38 +1882,38 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const renderThreadCodeLines = (lines: ReviewThreadCodeLine[]) => {
     if (lines.length === 0) {
       return (
-        <p className="px-1 py-1 text-[10px] text-zinc-600">
+        <p className="px-1 py-1 text-[10px] text-[var(--ec-faint)]">
           Code context is not available for this thread yet.
         </p>
       );
     }
     return (
-      <div className="overflow-hidden rounded-md bg-zinc-950/65 font-mono text-[10px] ring-1 ring-inset ring-zinc-800/70">
+      <div className="overflow-hidden rounded-md bg-[var(--ec-panel)] font-mono text-[10px] ring-1 ring-inset ring-[var(--ec-border)]">
         {lines.map((line) => (
           <div
             key={line.key}
             className={cn(
-              "grid grid-cols-[3.25rem_3.25rem_1rem_minmax(0,1fr)] items-start border-b border-zinc-900/70 last:border-b-0",
-              line.type === "add" && "bg-emerald-500/[0.07]",
-              line.type === "delete" && "bg-rose-500/[0.07]",
-              line.type === "hunk" && "bg-cyan-500/[0.07] text-cyan-200",
-              line.highlighted && "ring-1 ring-inset ring-cyan-300/50",
+              "grid grid-cols-[3.25rem_3.25rem_1rem_minmax(0,1fr)] items-start border-b border-[var(--ec-border)] last:border-b-0",
+              line.type === "add" && "bg-[var(--ec-success-soft)]",
+              line.type === "delete" && "bg-[var(--ec-danger-soft)]",
+              line.type === "hunk" && "bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]",
+              line.highlighted && "ring-1 ring-inset ring-[var(--ec-accent-ring)]",
             )}
           >
-            <span className="select-none px-1.5 py-0.5 text-right text-zinc-600">{line.oldLineNumber ?? ""}</span>
-            <span className="select-none border-l border-zinc-900/80 px-1.5 py-0.5 text-right text-zinc-600">{line.newLineNumber ?? ""}</span>
+            <span className="select-none px-1.5 py-0.5 text-right text-[var(--ec-faint)]">{line.oldLineNumber ?? ""}</span>
+            <span className="select-none border-l border-[var(--ec-border)] px-1.5 py-0.5 text-right text-[var(--ec-faint)]">{line.newLineNumber ?? ""}</span>
             <span
               className={cn(
-                "select-none border-l border-zinc-900/80 px-1 py-0.5 text-center",
-                line.type === "add" && "text-emerald-300",
-                line.type === "delete" && "text-rose-300",
-                line.type === "context" && "text-zinc-600",
-                line.type === "hunk" && "text-cyan-300",
+                "select-none border-l border-[var(--ec-border)] px-1 py-0.5 text-center",
+                line.type === "add" && "text-[var(--ec-success)]",
+                line.type === "delete" && "text-[var(--ec-danger)]",
+                line.type === "context" && "text-[var(--ec-faint)]",
+                line.type === "hunk" && "text-[var(--ec-accent)]",
               )}
             >
               {DIFF_LINE_MARKERS[line.type] ?? ""}
             </span>
-            <code className="min-w-0 whitespace-pre-wrap break-words border-l border-zinc-900/80 px-2 py-0.5 text-zinc-300">{line.content}</code>
+            <code className="min-w-0 whitespace-pre-wrap break-words border-l border-[var(--ec-border)] px-2 py-0.5 text-[var(--ec-text)]">{line.content}</code>
           </div>
         ))}
       </div>
@@ -1921,12 +1922,12 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
 
   const renderConversationAvatar = (name: string, avatarUrl?: string | null, accent = false) =>
     avatarUrl ? (
-      <img src={avatarUrl} alt="" className="h-7 w-7 rounded-full bg-zinc-900 object-cover ring-1 ring-zinc-800" />
+      <img src={avatarUrl} alt="" className="h-7 w-7 rounded-full bg-[var(--ec-panel)] object-cover ring-1 ring-[var(--ec-border)]" />
     ) : (
       <span
         className={cn(
           "flex h-7 w-7 items-center justify-center rounded-full text-[9px] font-semibold ring-1 ring-inset",
-          accent ? "bg-cyan-500/10 text-cyan-200 ring-cyan-500/25" : "bg-zinc-900 text-zinc-400 ring-zinc-800",
+          accent ? "bg-[var(--ec-accent-soft)] text-[var(--ec-accent)] ring-[var(--ec-accent-ring)]" : "bg-[var(--ec-panel)] text-[var(--ec-muted)] ring-[var(--ec-border)]",
         )}
       >
         {name.slice(0, 2).toUpperCase()}
@@ -1939,15 +1940,15 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     const author = first.author?.username ?? (first.provider === "gitlab" ? "GitLab" : "GitHub");
     const repeated = items.length > 1;
     return (
-      <div key={`event-group-${first.id}`} className="group flex items-center gap-3 border-b border-zinc-900/80 py-2.5 last:border-b-0">
-        <span className="ml-3 h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-700 transition-colors group-hover:bg-cyan-400" aria-hidden />
-        <p className="min-w-0 flex-1 truncate text-[10px] text-zinc-500">
-          <span className="font-medium text-zinc-300">{author}</span>{" "}
+      <div key={`event-group-${first.id}`} className="group flex items-center gap-3 border-b border-[var(--ec-border)] py-2.5 last:border-b-0">
+        <span className="ml-3 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--ec-control)] transition-colors group-hover:bg-[var(--ec-accent-strong)]" aria-hidden />
+        <p className="min-w-0 flex-1 truncate text-[10px] text-[var(--ec-muted)]">
+          <span className="font-medium text-[var(--ec-text)]">{author}</span>{" "}
           {first.title}
-          {repeated ? <span className="ml-1.5 text-zinc-600">· {String(items.length)} updates</span> : null}
-          {first.commitSha ? <span className="ml-1.5 font-mono text-zinc-600">{first.commitSha.slice(0, 8)}</span> : null}
+          {repeated ? <span className="ml-1.5 text-[var(--ec-faint)]">· {String(items.length)} updates</span> : null}
+          {first.commitSha ? <span className="ml-1.5 font-mono text-[var(--ec-faint)]">{first.commitSha.slice(0, 8)}</span> : null}
         </p>
-        <span className="shrink-0 text-[9px] text-zinc-700 transition-colors group-hover:text-zinc-500">
+        <span className="shrink-0 text-[9px] text-[var(--ec-faint)] transition-colors group-hover:text-[var(--ec-muted)]">
           {formatActivityDate(items.at(-1)?.createdAt ?? first.createdAt)}
         </span>
       </div>
@@ -1963,25 +1964,25 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     const resolveButton = resolveThreadButtonPresentation(thread.resolved === true, confirmResolve);
     const author = thread.comments[0]?.author?.username ?? item.author?.username ?? (item.provider === "gitlab" ? "GitLab" : "GitHub");
     return (
-      <article key={item.id} className="grid grid-cols-[1.75rem_minmax(0,1fr)] gap-3 border-b border-zinc-900 py-5 last:border-b-0">
+      <article key={item.id} className="grid grid-cols-[1.75rem_minmax(0,1fr)] gap-3 border-b border-[var(--ec-border)] py-5 last:border-b-0">
         <div className="pt-0.5">{renderConversationAvatar(author, thread.comments[0]?.author?.avatarUrl, true)}</div>
-        <div className={cn("min-w-0 overflow-hidden rounded-lg border border-zinc-800/80 bg-zinc-950/55", thread.resolved && "opacity-75")}>
+        <div className={cn("min-w-0 overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)]", thread.resolved && "opacity-75")}>
           <div className="flex min-w-0 items-start justify-between gap-3 px-3 py-2.5">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[11px] font-semibold text-zinc-100">{author}</span>
-                <span className="text-[9px] font-medium text-cyan-300/80">Line comment</span>
+                <span className="text-[11px] font-semibold text-[var(--ec-text)]">{author}</span>
+                <span className="text-[9px] font-medium text-[var(--ec-accent)]">Line comment</span>
                 {thread.resolved ? (
-                  <span className="text-[9px] text-zinc-600">Resolved</span>
+                  <span className="text-[9px] text-[var(--ec-faint)]">Resolved</span>
                 ) : null}
               </div>
-              <p className="mt-1 truncate font-mono text-[9px] text-zinc-600">
+              <p className="mt-1 truncate font-mono text-[9px] text-[var(--ec-faint)]">
                 {thread.path}:{String(thread.newLineNumber ?? thread.oldLineNumber ?? "")}
                 {thread.commitSha ? ` ${thread.commitSha.slice(0, 8)}` : ""}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <span className="text-[9px] text-zinc-700">{formatActivityDate(item.createdAt)}</span>
+              <span className="text-[9px] text-[var(--ec-faint)]">{formatActivityDate(item.createdAt)}</span>
               {canUseForgeApi ? (
                 <Button
                   type="button"
@@ -2006,24 +2007,24 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
               ) : null}
             </div>
           </div>
-          <div className="border-y border-zinc-800/70">{renderThreadCodeLines(codeLines)}</div>
-          <div className="divide-y divide-zinc-800/60 px-3">
+          <div className="border-y border-[var(--ec-border)]">{renderThreadCodeLines(codeLines)}</div>
+          <div className="divide-y divide-[var(--ec-border)] px-3">
             {thread.comments.map((comment) => (
               <div key={comment.id} className="py-3">
                 <div className="flex min-w-0 items-center justify-between gap-2">
-                  <span className="truncate text-[11px] font-semibold text-zinc-200">{comment.author?.username ?? "Reviewer"}</span>
-                  <span className="shrink-0 text-[9px] text-zinc-700">{formatActivityDate(comment.createdAt)}</span>
+                  <span className="truncate text-[11px] font-semibold text-[var(--ec-text)]">{comment.author?.username ?? "Reviewer"}</span>
+                  <span className="shrink-0 text-[9px] text-[var(--ec-faint)]">{formatActivityDate(comment.createdAt)}</span>
                 </div>
-                <ActivityRichText content={comment.body} compact className="mt-1.5 break-words text-zinc-300" />
+                <ActivityRichText content={comment.body} compact className="mt-1.5 break-words text-[var(--ec-text)]" />
               </div>
             ))}
           </div>
         {isReplying ? (
-          <div className="border-t border-zinc-800/70 bg-zinc-900/30 p-2.5">
-            <textarea
+          <div className="border-t border-[var(--ec-border)] bg-[var(--ec-panel)] p-2.5">
+            <Textarea
               value={replyThreadText}
               onChange={(event) => setReplyThreadText(event.target.value)}
-              className="h-20 w-full resize-none rounded-md border border-zinc-700 bg-zinc-950 px-2.5 py-2 text-[11px] text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-cyan-500/60"
+              className="h-20 min-h-0 resize-none px-2.5 text-[11px]"
               placeholder="Reply to this thread..."
               autoFocus
             />
@@ -2032,7 +2033,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                 type="button"
                 size="sm"
                 variant="ghost"
-                className="h-7 px-2 text-[10px] text-zinc-400"
+                className="h-7 px-2 text-[10px] text-[var(--ec-muted)]"
                 onClick={() => {
                   setReplyThreadId(null);
                   setReplyThreadText("");
@@ -2053,12 +2054,12 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
             </div>
           </div>
         ) : (
-          <div className="flex flex-wrap items-center justify-between gap-1.5 border-t border-zinc-800/70 px-3 py-2">
+          <div className="flex flex-wrap items-center justify-between gap-1.5 border-t border-[var(--ec-border)] px-3 py-2">
             <Button
               type="button"
               size="sm"
               variant="ghost"
-              className="h-6 px-1.5 text-[9px] text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200"
+              className="h-6 px-1.5 text-[9px] text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
               onClick={() => {
                 setReplyThreadId(thread.id);
                 setReplyThreadText("");
@@ -2071,7 +2072,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
             >
               Reply
             </Button>
-            {confirmResolve ? <span className="text-[9px] text-amber-200/80">Click Confirm close to resolve this thread.</span> : null}
+            {confirmResolve ? <span className="text-[9px] text-[var(--ec-warning)]">Click Confirm close to resolve this thread.</span> : null}
           </div>
         )}
         </div>
@@ -2084,40 +2085,40 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     const author = item.author?.username ?? (item.provider === "gitlab" ? "GitLab" : "GitHub");
     const emphasized = item.kind === "review" || item.kind === "comment";
     return (
-      <article key={item.id} className="grid grid-cols-[1.75rem_minmax(0,1fr)] gap-3 border-b border-zinc-900 py-4 last:border-b-0">
+      <article key={item.id} className="grid grid-cols-[1.75rem_minmax(0,1fr)] gap-3 border-b border-[var(--ec-border)] py-4 last:border-b-0">
         <div className="pt-0.5">{renderConversationAvatar(author, item.author?.avatarUrl, item.kind === "review")}</div>
-        <div className={cn("min-w-0", emphasized && "rounded-lg bg-zinc-900/25 px-3 py-2.5 ring-1 ring-inset ring-zinc-800/70")}>
+        <div className={cn("min-w-0", emphasized && "rounded-lg bg-[var(--ec-panel)] px-3 py-2.5 ring-1 ring-inset ring-[var(--ec-border)]")}>
           <div className="flex min-w-0 items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[11px] font-semibold text-zinc-100">{author}</span>
-                <span className={cn("text-[9px] font-medium", item.kind === "review" ? "text-cyan-300/80" : "text-zinc-600")}>
+                <span className="text-[11px] font-semibold text-[var(--ec-text)]">{author}</span>
+                <span className={cn("text-[9px] font-medium", item.kind === "review" ? "text-[var(--ec-accent)]" : "text-[var(--ec-faint)]")}>
                   {conversationKindLabel(item)}
                 </span>
               </div>
-              <p className="mt-1 text-[10px] leading-snug text-zinc-500">
+              <p className="mt-1 text-[10px] leading-snug text-[var(--ec-muted)]">
                 {item.title}
                 {item.path ? (
-                  <span className="font-mono text-zinc-600">
+                  <span className="font-mono text-[var(--ec-faint)]">
                     {" "}
                     in {item.path}
                     {item.line ? `:${String(item.line)}` : ""}
                   </span>
                 ) : null}
                 {itemCommit ? (
-                  <span className="font-mono text-zinc-600">
+                  <span className="font-mono text-[var(--ec-faint)]">
                     {" "}
                     {itemCommit.shortSha} {commitTitleForActivity(itemCommit, itemCommit.sha)}
                   </span>
                 ) : null}
                 {!itemCommit && item.commitSha ? (
-                  <span className="font-mono text-zinc-600"> {item.commitSha.slice(0, 12)}</span>
+                  <span className="font-mono text-[var(--ec-faint)]"> {item.commitSha.slice(0, 12)}</span>
                 ) : null}
               </p>
             </div>
-            <span className="shrink-0 text-[9px] text-zinc-700">{formatActivityDate(item.createdAt)}</span>
+            <span className="shrink-0 text-[9px] text-[var(--ec-faint)]">{formatActivityDate(item.createdAt)}</span>
           </div>
-          {item.body ? <ActivityRichText content={item.body} compact className="mt-2.5 break-words text-zinc-300" /> : null}
+          {item.body ? <ActivityRichText content={item.body} compact className="mt-2.5 break-words text-[var(--ec-text)]" /> : null}
         </div>
       </article>
     );
@@ -2134,57 +2135,57 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     const authorName = details?.authorUser?.username ?? overviewRequest?.author ?? "Unknown author";
 
     return (
-      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg bg-zinc-950/20 ring-1 ring-inset ring-zinc-800/60">
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg bg-[var(--ec-panel)] ring-1 ring-inset ring-[var(--ec-border)]">
         <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-5xl px-5 pb-5 pt-4 lg:px-8 lg:pt-6">
             <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-5 gap-y-3">
               <div className="flex min-w-0 items-center gap-2">
                 {renderConversationAvatar(authorName, details?.authorUser?.avatarUrl)}
                 <div className="min-w-0">
-                  <p className="truncate text-[11px] text-zinc-500">
-                    <span className="font-semibold text-zinc-100">{authorName}</span> opened this {activeKind}
+                  <p className="truncate text-[11px] text-[var(--ec-muted)]">
+                    <span className="font-semibold text-[var(--ec-text)]">{authorName}</span> opened this {activeKind}
                   </p>
-                  <p className="mt-0.5 text-[9px] text-zinc-700">{formatActivityDate(details?.createdAt ?? overviewRequest?.updatedAt ?? null)}</p>
+                  <p className="mt-0.5 text-[9px] text-[var(--ec-faint)]">{formatActivityDate(details?.createdAt ?? overviewRequest?.updatedAt ?? null)}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-3 font-mono text-[9px] text-zinc-600">
+              <div className="flex items-center gap-3 font-mono text-[9px] text-[var(--ec-faint)]">
                 <span>{details?.changedFiles != null ? `${String(details.changedFiles)} files` : `${String(loadedOrReportedFileCount)} files`}</span>
                 {details?.additions != null || details?.deletions != null ? (
                   <span>
-                    <span className="text-emerald-300">+{String(details.additions ?? 0)}</span>{" "}
-                    <span className="text-rose-300">-{String(details.deletions ?? 0)}</span>
+                    <span className="text-[var(--ec-success)]">+{String(details.additions ?? 0)}</span>{" "}
+                    <span className="text-[var(--ec-danger)]">-{String(details.deletions ?? 0)}</span>
                   </span>
                 ) : null}
                 <span>{String(conversationActivity.length)} updates</span>
-                {detailsBusy ? <Loader2 className="h-3 w-3 animate-spin text-zinc-500" aria-label="Loading details" /> : null}
+                {detailsBusy ? <Loader2 className="h-3 w-3 animate-spin text-[var(--ec-muted)]" aria-label="Loading details" /> : null}
               </div>
             </div>
-            <div className="mt-4 max-w-4xl break-words text-[13px] leading-[1.65] text-zinc-300">
-              {description ? <ActivityRichText content={description} compact /> : <p className="text-zinc-600">No description provided.</p>}
+            <div className="mt-4 max-w-4xl break-words text-[13px] leading-[1.65] text-[var(--ec-text)]">
+              {description ? <ActivityRichText content={description} compact /> : <p className="text-[var(--ec-faint)]">No description provided.</p>}
             </div>
             {labels.length > 0 ? (
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {labels.map((label) => (
-                  <span key={label} className="rounded bg-zinc-900/70 px-1.5 py-0.5 text-[9px] text-zinc-500 ring-1 ring-inset ring-zinc-800/70">
+                  <span key={label} className="rounded bg-[var(--ec-panel)] px-1.5 py-0.5 text-[9px] text-[var(--ec-muted)] ring-1 ring-inset ring-[var(--ec-border)]">
                     {label}
                   </span>
                 ))}
               </div>
             ) : null}
-            {detailsError ? <p className="mt-2 text-[10px] text-rose-300">{detailsError}</p> : null}
+            {detailsError ? <p className="mt-2 text-[10px] text-[var(--ec-danger)]">{detailsError}</p> : null}
             {visibleRequestDetails?.warnings.length ? (
               <div className="mt-2 space-y-1">
                 {visibleRequestDetails.warnings.map((warning) => (
-                  <p key={warning} className="text-[10px] text-amber-200/90">{warning}</p>
+                  <p key={warning} className="text-[10px] text-[var(--ec-warning)]">{warning}</p>
                 ))}
               </div>
             ) : null}
           </div>
 
-          <div className="border-y border-zinc-800/60 bg-zinc-950/35">
+          <div className="border-y border-[var(--ec-border)] bg-[var(--ec-panel)]">
             <div className="mx-auto flex w-full max-w-5xl items-center justify-between px-5 py-2.5 lg:px-8">
-              <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Conversation</p>
-              <span className="font-mono text-[9px] text-zinc-700">{String(conversationActivity.length)} updates</span>
+              <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-[var(--ec-muted)]">Conversation</p>
+              <span className="font-mono text-[9px] text-[var(--ec-faint)]">{String(conversationActivity.length)} updates</span>
             </div>
           </div>
           <div className="mx-auto w-full max-w-5xl px-5 pb-8 lg:px-8">
@@ -2195,7 +2196,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                 return thread ? renderReviewThreadTimelineItem(entry.item, thread) : renderConversationActivityItem(entry.item);
               })
             ) : (
-              <p className="py-8 text-center text-xs text-zinc-600">{detailsBusy ? "Loading conversation..." : "No conversation activity yet."}</p>
+              <p className="py-8 text-center text-xs text-[var(--ec-faint)]">{detailsBusy ? "Loading conversation..." : "No conversation activity yet."}</p>
             )}
           </div>
         </div>
@@ -2270,19 +2271,19 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
 
     if (fileNavigatorCollapsed) {
       return (
-        <aside className="flex min-h-0 flex-col items-center overflow-hidden rounded-md border border-zinc-800 bg-zinc-950/65 py-1.5">
+        <aside className="flex min-h-0 flex-col items-center overflow-hidden rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] py-1.5">
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            className="h-7 w-7 text-zinc-400 hover:bg-zinc-900 hover:text-cyan-100"
+            className="h-7 w-7 text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-accent-strong)]"
             onClick={() => setFileNavigatorCollapsed(false)}
             title="Show file list"
             aria-label="Show file list"
           >
             <PanelLeftOpen className="h-3.5 w-3.5" aria-hidden />
           </Button>
-          <span className="mt-1 rounded-full bg-cyan-500/15 px-1.5 py-px font-mono text-[9px] text-cyan-100" title={`${String(fileNavItems.length)} changed files`}>
+          <span className="mt-1 rounded-full bg-[var(--ec-accent-soft)] px-1.5 py-px font-mono text-[9px] text-[var(--ec-accent)]" title={`${String(fileNavItems.length)} changed files`}>
             {String(fileNavItems.length)}
           </span>
         </aside>
@@ -2290,11 +2291,11 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     }
 
     return (
-      <aside className="flex min-h-0 flex-col overflow-hidden rounded-md border border-zinc-800/70 bg-zinc-950/45">
-        <div className="border-b border-zinc-800/70 p-1.5">
+      <aside className="flex min-h-0 flex-col overflow-hidden rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)]">
+        <div className="border-b border-[var(--ec-border)] p-1.5">
           <div className="flex items-center gap-1.5">
             <div className="relative min-w-0 flex-1">
-              <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-zinc-600" aria-hidden />
+              <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[var(--ec-faint)]" aria-hidden />
               <Input
                 value={diffFileQuery}
                 onChange={(event) => {
@@ -2310,7 +2311,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
               type="button"
               variant="ghost"
               size="icon"
-              className="h-7 w-7 shrink-0 border border-zinc-800 bg-zinc-950/80 text-zinc-500 hover:bg-zinc-900 hover:text-cyan-100"
+              className="h-7 w-7 shrink-0 border border-[var(--ec-border)] bg-[var(--ec-panel)] text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-accent-strong)]"
               onClick={() => setFileNavigatorCollapsed(true)}
               title="Hide file list"
               aria-label="Hide file list"
@@ -2322,7 +2323,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
             type="button"
             className={cn(
               "mt-1.5 flex h-7 w-full items-center justify-between rounded px-2 text-left text-[11px] transition",
-              !activeDiffFilePath && !diffFileQuery.trim() ? "bg-cyan-500/[0.12] text-cyan-100" : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200",
+              !activeDiffFilePath && !diffFileQuery.trim() ? "bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
             )}
             onClick={() => {
               setActiveDiffFilePath(null);
@@ -2331,7 +2332,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
             }}
           >
             <span>All files</span>
-            <span className="font-mono text-[9px] text-zinc-500">{String(fileNavItems.length)}</span>
+            <span className="font-mono text-[9px] text-[var(--ec-muted)]">{String(fileNavItems.length)}</span>
           </button>
         </div>
         <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto">
@@ -2343,10 +2344,10 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                   key={file.key}
                   type="button"
                   className={cn(
-                    "relative flex w-full min-w-0 flex-col border-b border-zinc-800/60 px-2 py-2 text-left transition-colors last:border-b-0",
+                    "relative flex w-full min-w-0 flex-col border-b border-[var(--ec-border)] px-2 py-2 text-left transition-colors last:border-b-0",
                     selected
-                      ? "bg-cyan-500/[0.075] before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-cyan-300"
-                      : "hover:bg-zinc-900/55",
+                      ? "bg-[var(--ec-accent-soft)] before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-[var(--ec-accent)]"
+                      : "hover:bg-[var(--ec-hover)]",
                   )}
                   onClick={() => {
                     setActiveDiffFilePath(file.path);
@@ -2355,25 +2356,25 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                   }}
                 >
                   <span className="flex min-w-0 items-center justify-between gap-1.5">
-                    <span className="truncate font-mono text-[10px] text-zinc-200">{file.path}</span>
-                    <span className="shrink-0 text-[8px] uppercase tracking-wide text-zinc-600">{file.status}</span>
+                    <span className="truncate font-mono text-[10px] text-[var(--ec-text)]">{file.path}</span>
+                    <span className="shrink-0 text-[8px] uppercase tracking-wide text-[var(--ec-faint)]">{file.status}</span>
                   </span>
                   <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[9px]">
-                    {file.additions != null ? <span className="font-mono text-emerald-300">+{String(file.additions)}</span> : null}
-                    {file.deletions != null ? <span className="font-mono text-rose-300">-{String(file.deletions)}</span> : null}
+                    {file.additions != null ? <span className="font-mono text-[var(--ec-success)]">+{String(file.additions)}</span> : null}
+                    {file.deletions != null ? <span className="font-mono text-[var(--ec-danger)]">-{String(file.deletions)}</span> : null}
                     {file.commentCount > 0 ? (
-                      <span className="text-cyan-200">{String(file.commentCount)} comment</span>
+                      <span className="text-[var(--ec-accent)]">{String(file.commentCount)} comment</span>
                     ) : null}
                     {file.draftCount > 0 ? (
-                      <span className="text-amber-200">{String(file.draftCount)} draft</span>
+                      <span className="text-[var(--ec-warning)]">{String(file.draftCount)} draft</span>
                     ) : null}
-                    {!file.patchAvailable ? <span className="text-zinc-600">no patch</span> : null}
+                    {!file.patchAvailable ? <span className="text-[var(--ec-faint)]">no patch</span> : null}
                   </span>
                 </button>
               );
             })
           ) : (
-            <p className="rounded border border-dashed border-zinc-800 p-2 text-[11px] text-zinc-600">No files match the filter.</p>
+            <p className="rounded border border-dashed border-[var(--ec-border)] p-2 text-[11px] text-[var(--ec-faint)]">No files match the filter.</p>
           )}
         </div>
       </aside>
@@ -2393,7 +2394,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     return (
       <div className="flex min-w-0 flex-wrap items-center justify-end gap-x-1.5 gap-y-1">
         {selectedCommitSha ? (
-          <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-[10px] text-zinc-400" onClick={() => void loadDiff({ commitSha: null })}>
+          <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-[10px] text-[var(--ec-muted)]" onClick={() => void loadDiff({ commitSha: null })}>
             All changes
           </Button>
         ) : null}
@@ -2401,7 +2402,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
           type="button"
           variant="ghost"
           size="sm"
-          className="h-7 w-7 border border-zinc-800 bg-zinc-950/80 p-0 text-[var(--ec-accent)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-accent-strong)]"
+          className="h-7 w-7 border border-[var(--ec-border)] bg-[var(--ec-panel)] p-0 text-[var(--ec-accent)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-accent-strong)]"
           title={`${diffViewLabel}. Click to switch to ${nextDiffViewLabel} view.`}
           aria-label={`${diffViewLabel}. Switch to ${nextDiffViewLabel} view.`}
           onClick={() => setDiffViewType(nextDiffViewType)}
@@ -2409,14 +2410,14 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
           <DiffViewIcon className="h-3.5 w-3.5" aria-hidden />
         </Button>
         <label
-          className="flex h-7 items-center gap-1 rounded-md border border-zinc-800 bg-zinc-950/80 px-2 text-[10px] text-zinc-400"
+          className="flex h-7 items-center gap-1 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 text-[10px] text-[var(--ec-muted)]"
           title="Hide line changes where only whitespace differs."
         >
           <input
             type="checkbox"
             checked={hideWhitespaceChanges}
             onChange={(event) => setHideWhitespaceChanges(event.target.checked)}
-            className="h-3 w-3 accent-cyan-500"
+            className="h-3 w-3 accent-[var(--ec-accent)]"
           />
           Ignore whitespace
         </label>
@@ -2425,7 +2426,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
             type="button"
             variant="ghost"
             size="sm"
-            className="h-7 shrink-0 px-2 text-[10px] text-zinc-400"
+            className="h-7 shrink-0 px-2 text-[10px] text-[var(--ec-muted)]"
             title={allDiffFilesExpanded ? "Collapse all files" : "Expand all files"}
             onClick={() => gitDiffPanelRef.current?.toggleExpandAllFiles()}
           >
@@ -2491,7 +2492,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     });
 
     return (
-      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-zinc-800/80 bg-zinc-950/40 p-0">
+      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-[var(--ec-border)] bg-[var(--ec-panel)] p-0">
         <ManualDiffToolbar visible={showManualControls}>{renderFilesChangedToolbar()}</ManualDiffToolbar>
         <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-hidden px-2 pb-2 pt-1.5">
           <ManualDiffMessages visible={showManualControls} message={postMessage} error={postError} />
@@ -2557,10 +2558,10 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const renderChecksCard = () => {
     if (!canUseForgeApi) {
       return (
-        <Card className="flex min-h-0 flex-1 items-center justify-center border-zinc-800/80 bg-zinc-950/30 p-4">
+        <Card className="flex min-h-0 flex-1 items-center justify-center border-[var(--ec-border)] bg-[var(--ec-panel)] p-4">
           <div className="max-w-md text-center">
-            <p className="text-sm font-semibold text-zinc-100">Checks need a hosting token</p>
-            <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+            <p className="text-sm font-semibold text-[var(--ec-text)]">Checks need a hosting token</p>
+            <p className="mt-1 text-xs leading-relaxed text-[var(--ec-muted)]">
               Add a GitHub or GitLab token in Project Settings to load check runs and pipeline jobs.
             </p>
           </div>
@@ -2570,8 +2571,8 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
 
     if (requestStatusBusy && !visibleRequestStatus) {
       return (
-        <Card className="flex min-h-0 flex-1 items-center justify-center border-zinc-800/80 bg-zinc-950/30 p-4">
-          <span className="inline-flex items-center gap-2 text-xs text-zinc-500">
+        <Card className="flex min-h-0 flex-1 items-center justify-center border-[var(--ec-border)] bg-[var(--ec-panel)] p-4">
+          <span className="inline-flex items-center gap-2 text-xs text-[var(--ec-muted)]">
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
             Loading checks
           </span>
@@ -2581,10 +2582,10 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
 
     if (!visibleRequestStatus) {
       return (
-        <Card className="flex min-h-0 flex-1 items-center justify-center border-zinc-800/80 bg-zinc-950/30 p-4">
+        <Card className="flex min-h-0 flex-1 items-center justify-center border-[var(--ec-border)] bg-[var(--ec-panel)] p-4">
           <div className="max-w-md text-center">
-            <p className="text-sm font-semibold text-zinc-100">Checks are unavailable</p>
-            <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+            <p className="text-sm font-semibold text-[var(--ec-text)]">Checks are unavailable</p>
+            <p className="mt-1 text-xs leading-relaxed text-[var(--ec-muted)]">
               {requestStatusError ?? "Fetch the selected request again to retry its status and checks."}
             </p>
           </div>
@@ -2593,7 +2594,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     }
 
     return (
-      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-zinc-800/80 bg-zinc-950/40 p-0">
+      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-[var(--ec-border)] bg-[var(--ec-panel)] p-0">
         <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto">
           <ForgeChecksView
             progress={visibleRequestStatus.checks}
@@ -2611,10 +2612,10 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
 
     if (!canUseForgeApi) {
       return (
-        <Card className="flex min-h-0 flex-1 items-center justify-center border-zinc-800/80 bg-zinc-950/30 p-4">
+        <Card className="flex min-h-0 flex-1 items-center justify-center border-[var(--ec-border)] bg-[var(--ec-panel)] p-4">
           <div className="max-w-md text-center">
-            <p className="text-sm font-semibold text-zinc-100">Commits need a hosting token</p>
-            <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+            <p className="text-sm font-semibold text-[var(--ec-text)]">Commits need a hosting token</p>
+            <p className="mt-1 text-xs leading-relaxed text-[var(--ec-muted)]">
               Add a GitHub or GitLab token in Project Settings to browse commit lists, commit diffs, and remote review threads.
             </p>
           </div>
@@ -2624,8 +2625,8 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
 
     if (detailsBusy && commits.length === 0) {
       return (
-        <Card className="flex min-h-0 flex-1 items-center justify-center border-zinc-800/80 bg-zinc-950/30 p-4">
-          <span className="inline-flex items-center gap-2 text-xs text-zinc-500">
+        <Card className="flex min-h-0 flex-1 items-center justify-center border-[var(--ec-border)] bg-[var(--ec-panel)] p-4">
+          <span className="inline-flex items-center gap-2 text-xs text-[var(--ec-muted)]">
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
             Loading commits
           </span>
@@ -2634,11 +2635,11 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     }
 
     return (
-      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-zinc-800/80 bg-zinc-950/40 p-0">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800/80 px-3 py-2">
+      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-[var(--ec-border)] bg-[var(--ec-panel)] p-0">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--ec-border)] px-3 py-2">
           <div className="min-w-0">
-            <p className="text-xs font-semibold text-zinc-100">Commits</p>
-            <p className="mt-0.5 text-[10px] text-zinc-500">Select one commit to inspect only that diff.</p>
+            <p className="text-xs font-semibold text-[var(--ec-text)]">Commits</p>
+            <p className="mt-0.5 text-[10px] text-[var(--ec-muted)]">Select one commit to inspect only that diff.</p>
           </div>
           <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-[10px]" onClick={() => void loadDiff({ commitSha: null })}>
             All changes
@@ -2655,17 +2656,17 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                     className={cn(
                       "flex w-full min-w-0 items-start gap-2 rounded-md border p-2 text-left transition",
                       selected
-                        ? "border-cyan-500/50 bg-cyan-500/[0.09] shadow-[inset_2px_0_0_rgba(34,211,238,0.85)]"
-                        : "border-zinc-800 bg-zinc-900/35 hover:border-zinc-700 hover:bg-zinc-900/65",
+                        ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] shadow-[inset_2px_0_0_var(--ec-accent)]"
+                        : "border-[var(--ec-border)] bg-[var(--ec-panel)] hover:border-[var(--ec-border)] hover:bg-[var(--ec-hover)]",
                     )}
                   >
                     <button type="button" className="flex min-w-0 flex-1 items-start gap-2 text-left" onClick={() => selectCommitDiff(commit.sha)}>
-                      <span className="mt-0.5 shrink-0 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 font-mono text-[10px] text-cyan-100">
+                      <span className="mt-0.5 shrink-0 rounded border border-[var(--ec-border)] bg-[var(--ec-panel)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--ec-accent)]">
                         {commit.shortSha}
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-xs font-semibold text-zinc-100">{commit.title || commit.shortSha}</span>
-                        <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-zinc-500">
+                        <span className="block truncate text-xs font-semibold text-[var(--ec-text)]">{commit.title || commit.shortSha}</span>
+                        <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-[var(--ec-muted)]">
                           <span>{commit.authorUser?.username ?? commit.authorName ?? "Unknown author"}</span>
                           <span>{formatActivityDate(commit.committedAt ?? commit.authoredAt)}</span>
                           {commit.commentCount ? <span>{String(commit.commentCount)} comments</span> : null}
@@ -2675,7 +2676,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                     {commit.url ? (
                       <button
                         type="button"
-                        className="shrink-0 rounded p-1 text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-200"
+                        className="shrink-0 rounded p-1 text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
                         title="Open commit"
                         onClick={(event) => {
                           event.stopPropagation();
@@ -2690,7 +2691,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
               })}
             </div>
           ) : (
-            <p className="rounded-md border border-dashed border-zinc-800 p-3 text-xs text-zinc-600">
+            <p className="rounded-md border border-dashed border-[var(--ec-border)] p-3 text-xs text-[var(--ec-faint)]">
               {detailsError ? "Commit data could not be loaded for this request." : "No commits were returned for this request."}
             </p>
           )}
@@ -2705,20 +2706,20 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     }
 
     return (
-      <section className="shrink-0 overflow-hidden rounded-lg border border-zinc-800/70 bg-zinc-950/25">
+      <section className="shrink-0 overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)]">
         <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1.5">
               <span className={cn("rounded-full border px-1.5 py-px text-[8px] font-semibold uppercase", requestStateTone(visibleRequestStatus?.state ?? overviewRequest.state))}>
                 {visibleRequestStatus?.state ?? overviewRequest.state}
               </span>
-              <span className="font-mono text-[10px] text-zinc-500">
+              <span className="font-mono text-[10px] text-[var(--ec-muted)]">
                 {providerLabel(overviewRequest.provider)} #{String(overviewRequest.number)}
               </span>
-              {(visibleRequestStatus?.draft ?? overviewRequest.draft) ? <span className="text-[10px] text-amber-200">draft</span> : null}
+              {(visibleRequestStatus?.draft ?? overviewRequest.draft) ? <span className="text-[10px] text-[var(--ec-warning)]">draft</span> : null}
             </div>
-            <p className="mt-1 truncate text-sm font-semibold leading-snug text-zinc-100">{overviewRequest.title}</p>
-            <p className="mt-0.5 truncate font-mono text-[9px] text-zinc-600">
+            <p className="mt-1 truncate text-sm font-semibold leading-snug text-[var(--ec-text)]">{overviewRequest.title}</p>
+            <p className="mt-0.5 truncate font-mono text-[9px] text-[var(--ec-faint)]">
               {overviewRequest.sourceBranch || "head"} -&gt; {overviewRequest.targetBranch || "base"}
             </p>
           </div>
@@ -2727,7 +2728,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
               type="button"
               size="icon"
               variant="ghost"
-              className="h-7 w-7 text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200"
+              className="h-7 w-7 text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
               onClick={() => void buildwarden.openExternalUrl(overviewRequest.url)}
               title="Open in browser"
               aria-label="Open in browser"
@@ -2738,7 +2739,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
               type="button"
               size="sm"
               variant="ghost"
-              className="h-7 border border-emerald-500/20 bg-emerald-500/[0.05] px-2 text-[10px] text-emerald-200 hover:bg-emerald-500/[0.1]"
+              className="h-7 border border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] px-2 text-[10px] text-[var(--ec-success)] hover:bg-[var(--ec-success-soft)]"
               onClick={() => void postReview("approve")}
               disabled={postBusy || requestActionBusy || requestStatusBusy || !activeUrl.trim()}
             >
@@ -2746,7 +2747,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
               Approve
             </Button>
             {requestStatusBusy && !requestActionTarget ? (
-              <span className="grid h-7 w-7 place-items-center text-zinc-500" title="Loading request actions">
+              <span className="grid h-7 w-7 place-items-center text-[var(--ec-muted)]" title="Loading request actions">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
               </span>
             ) : null}
@@ -2756,32 +2757,32 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                 canWrite={canUseForgeApi && buildwarden.capabilities.gitMutations}
                 busy={requestActionBusy || requestStatusBusy || postBusy}
                 compact
-                className="border-l border-zinc-800/80 pl-1.5"
+                className="border-l border-[var(--ec-border)] pl-1.5"
                 onUpdate={updateProjectRequest}
                 onMerge={mergeProjectRequest}
               />
             ) : null}
           </div>
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-zinc-800/70 px-2 py-1">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-[var(--ec-border)] px-2 py-1">
           <div className="flex min-w-0 flex-wrap items-center gap-0.5">
             <button
               type="button"
               className={cn(
                 "flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium transition-colors",
-                activeDetailTab === "conversation" ? "bg-zinc-800/75 text-zinc-100" : "text-zinc-500 hover:bg-zinc-900/70 hover:text-zinc-300",
+                activeDetailTab === "conversation" ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
               )}
               onClick={showConversation}
             >
               Conversation
-              <span className="font-mono text-[9px] text-zinc-500">{String(totalActivityCount)}</span>
+              <span className="font-mono text-[9px] text-[var(--ec-muted)]">{String(totalActivityCount)}</span>
             </button>
             <button
               type="button"
               className={cn(
                 "flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium transition-colors",
-                activeDetailTab === "checks" ? "bg-zinc-800/75 text-zinc-100" : "text-zinc-500 hover:bg-zinc-900/70 hover:text-zinc-300",
-                !canUseForgeApi && "cursor-not-allowed opacity-60 hover:text-zinc-500",
+                activeDetailTab === "checks" ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
+                !canUseForgeApi && "cursor-not-allowed opacity-60 hover:text-[var(--ec-muted)]",
               )}
               onClick={() => {
                 if (canUseForgeApi) showChecks();
@@ -2792,15 +2793,15 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
               {requestStatusBusy ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
               Checks
               {(visibleRequestStatus?.checks.total ?? 0) > 0 ? (
-                <span className="font-mono text-[9px] text-zinc-500">{String(visibleRequestStatus?.checks.total ?? 0)}</span>
+                <span className="font-mono text-[9px] text-[var(--ec-muted)]">{String(visibleRequestStatus?.checks.total ?? 0)}</span>
               ) : null}
             </button>
             <button
               type="button"
               className={cn(
                 "flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium transition-colors",
-                activeDetailTab === "commits" ? "bg-zinc-800/75 text-zinc-100" : "text-zinc-500 hover:bg-zinc-900/70 hover:text-zinc-300",
-                !canUseForgeApi && "cursor-not-allowed opacity-60 hover:text-zinc-500",
+                activeDetailTab === "commits" ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
+                !canUseForgeApi && "cursor-not-allowed opacity-60 hover:text-[var(--ec-muted)]",
               )}
               onClick={() => {
                 if (canUseForgeApi) {
@@ -2812,21 +2813,21 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
             >
               Commits
               {commitCount > 0 ? (
-                <span className="font-mono text-[9px] text-zinc-500">{String(commitCount)}</span>
+                <span className="font-mono text-[9px] text-[var(--ec-muted)]">{String(commitCount)}</span>
               ) : null}
             </button>
             <button
               type="button"
               className={cn(
                 "flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium transition-colors",
-                activeDetailTab === "files" ? "bg-zinc-800/75 text-zinc-100" : "text-zinc-500 hover:bg-zinc-900/70 hover:text-zinc-300",
+                activeDetailTab === "files" ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
               )}
               onClick={showFiles}
             >
               {loadBusy ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
               Files changed
               {loadedOrReportedFileCount > 0 ? (
-                <span className="font-mono text-[9px] text-zinc-500">
+                <span className="font-mono text-[9px] text-[var(--ec-muted)]">
                   {String(loadedOrReportedFileCount)}
                 </span>
               ) : null}
@@ -2834,38 +2835,38 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
           </div>
           {activeDetailTab === "files" && diffText.trim() ? <div className="ml-auto flex min-w-0 items-center">{renderFilesChangedToolbar()}</div> : null}
         </div>
-        {postMessage ? <p className="border-t border-zinc-800/80 px-3 py-1 text-[9px] text-emerald-300">{postMessage}</p> : null}
-        {requestStatusError ? <p className="border-t border-zinc-800/80 px-3 py-1 text-[9px] text-rose-300">{requestStatusError}</p> : null}
-        {postError ? <p className="border-t border-zinc-800/80 px-3 py-1 text-[9px] text-rose-300">{postError}</p> : null}
+        {postMessage ? <p className="border-t border-[var(--ec-border)] px-3 py-1 text-[9px] text-[var(--ec-success)]">{postMessage}</p> : null}
+        {requestStatusError ? <p className="border-t border-[var(--ec-border)] px-3 py-1 text-[9px] text-[var(--ec-danger)]">{requestStatusError}</p> : null}
+        {postError ? <p className="border-t border-[var(--ec-border)] px-3 py-1 text-[9px] text-[var(--ec-danger)]">{postError}</p> : null}
       </section>
     );
   };
 
   return (
     <div className={cn("flex min-h-0 flex-1 flex-col gap-2", diffText.trim() || requestItems.length > 0 ? "overflow-hidden" : "")}>
-      <Card className="shrink-0 border-zinc-800/80 bg-zinc-950/40 p-2">
+      <Card className="shrink-0 border-[var(--ec-border)] bg-[var(--ec-panel)] p-2">
         <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <GitPullRequest className="h-3.5 w-3.5 shrink-0 text-cyan-400" aria-hidden />
-            <h2 className="text-xs font-semibold text-zinc-100">Pull / merge requests</h2>
+            <GitPullRequest className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" aria-hidden />
+            <h2 className="text-xs font-semibold text-[var(--ec-text)]">Pull / merge requests</h2>
             <button
               type="button"
-              className="shrink-0 rounded p-0.5 text-zinc-500 transition hover:bg-zinc-800/80 hover:text-zinc-300"
+              className="shrink-0 rounded p-0.5 text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
               title={prLoadHelp}
               aria-label="How PR and MR loading works"
             >
               <Info className="h-3.5 w-3.5" aria-hidden />
             </button>
             {requestProvider ? (
-              <span className="text-[9px] text-zinc-500">
-                {requestProvider === "gitlab" ? "GitLab" : "GitHub"} - <span className="font-mono text-zinc-400">{requestRepoLabel}</span>
+              <span className="text-[9px] text-[var(--ec-muted)]">
+                {requestProvider === "gitlab" ? "GitLab" : "GitHub"} - <span className="font-mono text-[var(--ec-muted)]">{requestRepoLabel}</span>
               </span>
             ) : null}
             {meta ? (
-              <span className="text-[9px] text-zinc-500">
-                {activeKind} #{meta.number} - <span className="font-mono text-zinc-400">{meta.baseRef}</span>
+              <span className="text-[9px] text-[var(--ec-muted)]">
+                {activeKind} #{meta.number} - <span className="font-mono text-[var(--ec-muted)]">{meta.baseRef}</span>
                 {activeDiffFileCount > 0 ? (
-                  <span className="text-zinc-600">
+                  <span className="text-[var(--ec-faint)]">
                     {" "}
                     - {String(activeDiffFileCount)} file{activeDiffFileCount === 1 ? "" : "s"}
                   </span>
@@ -2877,7 +2878,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
             {canUseForgeApi ? (
               <>
                 <label className="flex items-end gap-1.5">
-                  <span className="pb-1 text-[9px] font-medium uppercase tracking-wide text-zinc-500">State</span>
+                  <span className="pb-1 text-[9px] font-medium uppercase tracking-wide text-[var(--ec-muted)]">State</span>
                   <Select
                     value={requestState}
                     onValueChange={(value) => setRequestState(value as ProjectForgeRequestState)}
@@ -2900,7 +2901,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
               </>
             ) : null}
             {meta && !reviewModelId.trim() ? (
-              <span className="pb-1 text-[9px] text-amber-200/85">Select a model, then reload for inline comments</span>
+              <span className="pb-1 text-[9px] text-[var(--ec-warning)]">Select a model, then reload for inline comments</span>
             ) : null}
           </div>
         </div>
@@ -2908,7 +2909,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
         {!canUseForgeApi ? (
           <div className="mt-1.5 grid gap-1.5 xl:grid-cols-[minmax(18rem,1fr)_8rem_auto] xl:items-end">
             <label className="min-w-0 space-y-0.5">
-              <span className="text-[9px] font-medium uppercase tracking-wide text-zinc-500">PR / MR URL</span>
+              <span className="text-[9px] font-medium uppercase tracking-wide text-[var(--ec-muted)]">PR / MR URL</span>
               <Input
                 value={prUrl}
                 onChange={(event) => {
@@ -2924,7 +2925,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
               />
             </label>
             <label className="w-full space-y-0.5 sm:w-36">
-              <span className="text-[9px] font-medium uppercase tracking-wide text-zinc-500">Base</span>
+              <span className="text-[9px] font-medium uppercase tracking-wide text-[var(--ec-muted)]">Base</span>
               <Input
                 value={baseBranch}
                 onChange={(event) => setBaseBranch(event.target.value)}
@@ -2947,10 +2948,10 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
           </div>
         ) : null}
 
-        {forgeAuthStatusBusy ? <p className="mt-1 text-[9px] text-zinc-500">Checking Git hosting token status...</p> : null}
-        {forgeAuthStatusError ? <p className="mt-1 text-[9px] text-amber-200">{forgeAuthStatusError}</p> : null}
-        {canUseForgeApi && listError ? <p className="mt-1 text-[9px] text-rose-300">{listError}</p> : null}
-        {loadError ? <p className="mt-1 text-[9px] text-rose-300">{loadError}</p> : null}
+        {forgeAuthStatusBusy ? <p className="mt-1 text-[9px] text-[var(--ec-muted)]">Checking Git hosting token status...</p> : null}
+        {forgeAuthStatusError ? <p className="mt-1 text-[9px] text-[var(--ec-warning)]">{forgeAuthStatusError}</p> : null}
+        {canUseForgeApi && listError ? <p className="mt-1 text-[9px] text-[var(--ec-danger)]">{listError}</p> : null}
+        {loadError ? <p className="mt-1 text-[9px] text-[var(--ec-danger)]">{loadError}</p> : null}
       </Card>
 
       <div
@@ -2959,34 +2960,34 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
         style={requestItems.length > 0 ? requestListLayoutStyle : undefined}
       >
         {requestItems.length > 0 && requestListCollapsed ? (
-            <Card className="flex min-h-0 flex-col items-center overflow-hidden border-zinc-800/80 bg-zinc-950/40 py-1.5">
+            <Card className="flex min-h-0 flex-col items-center overflow-hidden border-[var(--ec-border)] bg-[var(--ec-panel)] py-1.5">
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7 text-zinc-400 hover:bg-zinc-900 hover:text-cyan-100"
+                className="h-7 w-7 text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-accent-strong)]"
                 onClick={() => setRequestListCollapsed(false)}
                 title="Show request list"
                 aria-label="Show request list"
               >
                 <PanelLeftOpen className="h-3.5 w-3.5" aria-hidden />
               </Button>
-              <span className="mt-1 rounded-full bg-cyan-500/15 px-1.5 py-px font-mono text-[9px] text-cyan-100" title={`${String(requestItems.length)} requests`}>
+              <span className="mt-1 rounded-full bg-[var(--ec-accent-soft)] px-1.5 py-px font-mono text-[9px] text-[var(--ec-accent)]" title={`${String(requestItems.length)} requests`}>
                 {String(requestItems.length)}
               </span>
             </Card>
         ) : null}
         {requestItems.length > 0 && !requestListCollapsed ? (
-            <Card className="relative flex min-h-0 flex-col overflow-hidden border-zinc-800/70 bg-zinc-950/25 p-0">
-              <div className="flex items-center justify-between gap-2 border-b border-zinc-800/70 px-2.5 py-2">
-                <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Requests</p>
+            <Card className="relative flex min-h-0 flex-col overflow-hidden border-[var(--ec-border)] bg-[var(--ec-panel)] p-0">
+              <div className="flex items-center justify-between gap-2 border-b border-[var(--ec-border)] px-2.5 py-2">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-muted)]">Requests</p>
                 <div className="flex shrink-0 items-center gap-1">
-                  <span className="font-mono text-[9px] text-zinc-500">{String(requestItems.length)}</span>
+                  <span className="font-mono text-[9px] text-[var(--ec-muted)]">{String(requestItems.length)}</span>
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="h-6 w-6 text-zinc-500 hover:bg-zinc-900 hover:text-cyan-100"
+                    className="h-6 w-6 text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-accent-strong)]"
                     onClick={() => setRequestListCollapsed(true)}
                     title="Hide request list"
                     aria-label="Hide request list"
@@ -3003,10 +3004,10 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                       key={`${request.provider}-${String(request.number)}`}
                       type="button"
                       className={cn(
-                        "relative flex w-full min-w-0 flex-col border-b border-zinc-800/60 px-2.5 py-2.5 text-left transition-colors last:border-b-0",
+                        "relative flex w-full min-w-0 flex-col border-b border-[var(--ec-border)] px-2.5 py-2.5 text-left transition-colors last:border-b-0",
                         selected
-                          ? "bg-cyan-500/[0.075] before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-cyan-300"
-                          : "hover:bg-zinc-900/55",
+                          ? "bg-[var(--ec-accent-soft)] before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-[var(--ec-accent)]"
+                          : "hover:bg-[var(--ec-hover)]",
                       )}
                       onClick={() => selectRequest(request)}
                     >
@@ -3014,14 +3015,14 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                         <span className={cn("rounded border px-1.5 py-px text-[8px] font-semibold uppercase", requestStateTone(request.state))}>
                           {request.state}
                         </span>
-                        <span className="font-mono text-[9px] text-zinc-500">#{String(request.number)}</span>
-                        {request.draft ? <span className="text-[9px] text-amber-200">draft</span> : null}
+                        <span className="font-mono text-[9px] text-[var(--ec-muted)]">#{String(request.number)}</span>
+                        {request.draft ? <span className="text-[9px] text-[var(--ec-warning)]">draft</span> : null}
                       </span>
-                      <span className="mt-1 line-clamp-2 text-[11px] font-medium leading-snug text-zinc-100">{request.title}</span>
-                      <span className="mt-1 truncate font-mono text-[9px] text-zinc-500">
+                      <span className="mt-1 line-clamp-2 text-[11px] font-medium leading-snug text-[var(--ec-text)]">{request.title}</span>
+                      <span className="mt-1 truncate font-mono text-[9px] text-[var(--ec-muted)]">
                         {request.sourceBranch || "head"} -&gt; {request.targetBranch || "base"}
                       </span>
-                      <span className="mt-0.5 truncate text-[9px] text-zinc-600">
+                      <span className="mt-0.5 truncate text-[9px] text-[var(--ec-faint)]">
                         {[request.author, formatShortDate(request.updatedAt)].filter(Boolean).join(" - ")}
                       </span>
                     </button>
@@ -3031,7 +3032,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
               <div
                 className={cn(
                   "absolute right-0 top-0 hidden h-full w-1.5 cursor-col-resize transition lg:block",
-                  isRequestListResizing ? "bg-cyan-400/45" : "bg-transparent hover:bg-cyan-400/25",
+                  isRequestListResizing ? "bg-[var(--ec-accent-soft)]" : "bg-transparent hover:bg-[var(--ec-accent-soft)]",
                 )}
                 onMouseDown={startRequestListResize}
                 role="separator"
@@ -3049,13 +3050,13 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
           {activeDetailTab === "checks" ? renderChecksCard() : null}
           {activeDetailTab === "commits" ? renderCommitsCard() : null}
           {activeDetailTab === "files" && !hasDiff ? (
-            <Card className="flex min-h-0 flex-1 items-center justify-center border-zinc-800/80 bg-zinc-950/30 p-4">
+            <Card className="flex min-h-0 flex-1 items-center justify-center border-[var(--ec-border)] bg-[var(--ec-panel)] p-4">
               <div className="max-w-md text-center">
-                <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full border border-cyan-500/25 bg-cyan-500/[0.07] text-cyan-200">
+                <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full border border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]">
                   <Eye className="h-4 w-4" aria-hidden />
                 </div>
-                <p className="mt-3 text-sm font-semibold text-zinc-100">Files changed are not loaded yet</p>
-                <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+                <p className="mt-3 text-sm font-semibold text-[var(--ec-text)]">Files changed are not loaded yet</p>
+                <p className="mt-1 text-xs leading-relaxed text-[var(--ec-muted)]">
                   Load the diff without running AI. Once it is visible, click any line to add a single comment or batch a review comment.
                 </p>
                 <div className="mt-3 flex flex-wrap justify-center gap-1.5">

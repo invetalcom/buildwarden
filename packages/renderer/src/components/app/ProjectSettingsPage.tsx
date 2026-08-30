@@ -39,6 +39,7 @@ import {
 } from "../ui/card";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
+import { Textarea } from "../ui/textarea";
 import type { ProjectRunStats } from "./ProjectStatisticsCard";
 import { ProjectSkillSelector } from "./project-skill-selector";
 
@@ -760,7 +761,7 @@ export const ProjectSettingsPage = ({
                 align="start"
               >
                 <div className={`${rowControlClass} space-y-2`}>
-                  <textarea
+                  <Textarea
                     value={verificationCommandsDraft}
                     onChange={(event) => setVerificationCommandsDraft(event.target.value)}
                     onBlur={() =>
@@ -768,7 +769,7 @@ export const ProjectSettingsPage = ({
                         verificationCommandsDraft.split(/\r?\n/).map((command) => command.trim()).filter(Boolean).slice(0, 10),
                       )
                     }
-                    className="app-scrollbar min-h-24 w-full resize-y rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-3 py-2 font-mono text-xs text-[var(--ec-text)] outline-none transition focus:border-[var(--ec-accent-ring)]"
+                    className="app-scrollbar min-h-24 resize-y font-mono text-xs"
                     placeholder={"pnpm typecheck\npnpm test"}
                     disabled={busy}
                     aria-label="Verification commands"

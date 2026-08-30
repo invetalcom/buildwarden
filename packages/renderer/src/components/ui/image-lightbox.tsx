@@ -42,16 +42,16 @@ export const ImageLightbox = ({ imageUrl, title, downloadFileName, focusScopeId,
       aria-label={title}
     >
       <div
-        className="max-h-full max-w-6xl overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-950 shadow-2xl"
+        className="max-h-full max-w-6xl overflow-hidden rounded-2xl border border-[var(--ec-border)] bg-[var(--ec-panel)] shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
-          <p className="truncate text-sm text-zinc-200">{title}</p>
+        <div className="flex items-center justify-between gap-3 border-b border-[var(--ec-border)] px-4 py-3">
+          <p className="truncate text-sm text-[var(--ec-text)]">{title}</p>
           <div className="flex shrink-0 items-center gap-1.5">
             <a
               href={imageUrl}
               download={downloadFileName}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
               title={`Download ${downloadFileName}`}
               aria-label={`Download ${downloadFileName}`}
             >
@@ -59,7 +59,7 @@ export const ImageLightbox = ({ imageUrl, title, downloadFileName, focusScopeId,
             </a>
             <button
               type="button"
-              className="rounded-md px-2 py-1 text-xs text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
+              className="rounded-md px-2 py-1 text-xs text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
               onClick={onClose}
             >
               Close

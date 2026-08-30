@@ -2,12 +2,14 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import {
   IDE_KIND_LABELS,
   KEYBOARD_SHORTCUT_IDS,
+  MAX_SIDEBAR_CONTRAST_STRENGTH,
+  MIN_SIDEBAR_CONTRAST_STRENGTH,
   SUPPORTED_IDE_KINDS,
   type AppLogDirectorySizeInfo,
+  type DesignScheme,
   type KeyboardShortcutId,
   type SidebarRunEntrySize,
   type SupportedIdeKind,
-  type UiTheme,
 } from "@buildwarden/shared";
 import { Keyboard, Loader2 } from "lucide-react";
 import { IdeBrandIcon } from "./ide-brand-icons";
@@ -15,6 +17,8 @@ import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
+import { Slider } from "../ui/slider";
+import { DesignSchemeEditor } from "./DesignSchemeEditor";
 
 const SHORTCUT_LABELS: Record<KeyboardShortcutId, string> = {
   goHome: "Go to starting page",
@@ -33,11 +37,6 @@ const SHORTCUT_LABELS: Record<KeyboardShortcutId, string> = {
   openSettings: "Open settings",
   closeSettings: "Close settings",
 };
-
-const APPEARANCE_OPTIONS: Array<{ value: UiTheme; label: string; hint: string }> = [
-  { value: "dark", label: "Dark", hint: "Frosted glass over a deep dark backdrop." },
-  { value: "light", label: "Light", hint: "Frosted glass over a bright airy backdrop." },
-];
 
 const SIDEBAR_RUN_ENTRY_SIZE_OPTIONS: Array<{ value: SidebarRunEntrySize; label: string; hint: string }> = [
   { value: "small", label: "Small", hint: "More runs" },
@@ -223,8 +222,8 @@ const EditorPathCard = ({
 
 export type UserSettingsTabProps = {
   busy: boolean;
-  uiTheme: UiTheme;
-  sidebarContrast: boolean;
+  designScheme: DesignScheme;
+  sidebarContrastStrength: number;
   sidebarRunEntrySize: SidebarRunEntrySize;
   sidebarGroupRunsByProject: boolean;
   recentRunDaysDraft: string;
@@ -239,8 +238,9 @@ export type UserSettingsTabProps = {
   idePathsDirty: boolean;
   idePathsSaving: boolean;
   keyboardShortcuts: Record<KeyboardShortcutId, string>;
-  onUiThemeChange: (theme: UiTheme) => void;
-  onSidebarContrastChange: (value: boolean) => void;
+  onDesignSchemeChange: (scheme: DesignScheme) => void | Promise<void>;
+  onSidebarContrastStrengthChange: (value: number) => void;
+  onSidebarContrastStrengthCommit: (value: number) => void;
   onSidebarRunEntrySizeChange: (value: SidebarRunEntrySize) => void;
   onSidebarGroupRunsByProjectChange: (value: boolean) => void;
   onRecentRunDaysDraftChange: (value: string) => void;
@@ -257,8 +257,8 @@ export type UserSettingsTabProps = {
 
 export const UserSettingsTab = ({
   busy,
-  uiTheme,
-  sidebarContrast,
+  designScheme,
+  sidebarContrastStrength,
   sidebarRunEntrySize,
   sidebarGroupRunsByProject,
   recentRunDaysDraft,
@@ -273,8 +273,9 @@ export const UserSettingsTab = ({
   idePathsDirty,
   idePathsSaving,
   keyboardShortcuts,
-  onUiThemeChange,
-  onSidebarContrastChange,
+  onDesignSchemeChange,
+  onSidebarContrastStrengthChange,
+  onSidebarContrastStrengthCommit,
   onSidebarRunEntrySizeChange,
   onSidebarGroupRunsByProjectChange,
   onRecentRunDaysDraftChange,
@@ -290,31 +291,9 @@ export const UserSettingsTab = ({
 }: UserSettingsTabProps) => (
   <div className="space-y-5">
     <SettingsSection title="Appearance">
-      <SettingsRow
-        title="Interface theme"
-        description="Choose the dark or light liquid-glass shell. Same options appear at the top of the View menu."
-        align="start"
-      >
-        <div className={`${rowControlClass} grid gap-2 sm:grid-cols-2`} role="radiogroup" aria-label="Interface appearance">
-          {APPEARANCE_OPTIONS.map((opt) => {
-            const selected = uiTheme === opt.value;
-            return (
-              <label
-                key={opt.value}
-                className={`cursor-pointer rounded-md border px-3 py-2.5 transition ${
-                  selected
-                    ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] shadow-[var(--ec-action-shadow)]"
-                    : "border-[var(--ec-border)] bg-[var(--ec-panel-soft)] hover:bg-[var(--ec-hover)]"
-                }`}
-              >
-                <input className="sr-only" type="radio" name="buildwarden-ui-theme" checked={selected} onChange={() => onUiThemeChange(opt.value)} />
-                <p className="text-sm font-medium text-[var(--ec-text)]">{opt.label}</p>
-                <p className="mt-1 text-xs leading-snug text-[var(--ec-muted)]">{opt.hint}</p>
-              </label>
-            );
-          })}
-        </div>
-      </SettingsRow>
+      <div className="p-3">
+        <DesignSchemeEditor scheme={designScheme} busy={busy} onChange={onDesignSchemeChange} />
+      </div>
     </SettingsSection>
 
     <SettingsSection title="Sidebar">
@@ -353,15 +332,22 @@ export const UserSettingsTab = ({
       </SettingsRow>
       <SettingsRow
         title="Contrast"
-        description="Give the sidebar its own surface color: slightly brighter and blue-tinted in dark mode, and slightly darker in light mode."
+        description="Blend the normal sidebar toward Primary in dark mode or Secondary in light mode. Zero keeps the standard sidebar color."
       >
-        <div className={`${rowControlClass} flex items-center justify-end gap-3`}>
-          <span className="text-xs font-medium text-[var(--ec-muted)]">{sidebarContrast ? "On" : "Off"}</span>
-          <Switch
-            checked={sidebarContrast}
-            onCheckedChange={onSidebarContrastChange}
+        <div className={`${rowControlClass} flex items-center gap-3`}>
+          <Slider
+            id="sidebar-contrast-strength"
+            min={MIN_SIDEBAR_CONTRAST_STRENGTH}
+            max={MAX_SIDEBAR_CONTRAST_STRENGTH}
+            step={1}
+            value={sidebarContrastStrength}
+            allowManualInput
+            valueSuffix="%"
+            valueInputAriaLabel="Sidebar contrast percentage"
+            onValueChange={onSidebarContrastStrengthChange}
+            onValueCommit={onSidebarContrastStrengthCommit}
             disabled={busy}
-            aria-label="Use contrasting sidebar surface"
+            aria-label="Sidebar contrast color strength"
           />
         </div>
       </SettingsRow>

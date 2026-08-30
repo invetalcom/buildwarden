@@ -23,7 +23,7 @@ const planStepStatusClass = (status: RunPlanStepStatus) => {
     return "bg-[color:var(--ec-success-soft)] text-[color:var(--ec-success)]";
   }
   if (status === "inProgress") {
-    return "bg-[color:var(--ec-info-soft)] text-[color:var(--ec-info)]";
+    return "bg-[color:var(--ec-accent-soft)] text-[color:var(--ec-accent)]";
   }
   return "bg-[color:var(--ec-control)] text-[color:var(--ec-muted)]";
 };
@@ -45,7 +45,7 @@ export function RunPlanSteps({ content }: Readonly<{ content: string }>) {
   }
 
   return (
-    <div className="mt-2 overflow-hidden rounded-md border border-[color:var(--ec-border)] bg-[color:var(--ec-panel-muted)]">
+    <div className="mt-2 overflow-hidden rounded-md border border-[color:var(--ec-border)] bg-[color:var(--ec-panel-soft)]">
       <div className="flex items-center justify-between gap-2 px-2 py-1.5">
         <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[color:var(--ec-faint)]">Plan steps</p>
         <span className="text-[10px] text-[color:var(--ec-faint)]">

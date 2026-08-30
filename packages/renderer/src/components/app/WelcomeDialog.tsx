@@ -210,7 +210,7 @@ export const WelcomeDialog = ({
   useWelcomeDialogFocusTrap(dialogRef, titleRef);
 
   return (
-    <div className="absolute inset-0 z-[70] flex items-center justify-center bg-zinc-950/70 p-4 backdrop-blur-md">
+    <div className="absolute inset-0 z-[70] flex items-center justify-center bg-[var(--ec-scrim)] p-4 backdrop-blur-md">
       <div
         ref={dialogRef}
         role="dialog"

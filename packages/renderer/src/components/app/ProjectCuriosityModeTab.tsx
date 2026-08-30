@@ -50,10 +50,10 @@ export const ProjectCuriosityModeTab = ({ project, modelOptions, defaultModelId,
     <Card className="p-4">
       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-cyan-400" />
+          <Sparkles className="h-4 w-4 text-[var(--ec-accent)]" />
           <div className="min-w-0">
-            <h3 className="text-sm font-medium text-zinc-100">Curiosity mode</h3>
-            <p className="text-xs text-zinc-500">{record?.summary ?? "Surface interesting, confusing, or high-leverage pockets worth exploring."}</p>
+            <h3 className="text-sm font-medium text-[var(--ec-text)]">Curiosity mode</h3>
+            <p className="text-xs text-[var(--ec-muted)]">{record?.summary ?? "Surface interesting, confusing, or high-leverage pockets worth exploring."}</p>
           </div>
         </div>
         {canGenerateInsights ? <div className="flex flex-wrap items-center gap-2">
@@ -69,19 +69,19 @@ export const ProjectCuriosityModeTab = ({ project, modelOptions, defaultModelId,
           </Button>
         </div> : null}
       </div>
-      <p className="mb-3 text-xs text-zinc-500">Updated {formatGeneratedAt(record?.generatedAt)}</p>
+      <p className="mb-3 text-xs text-[var(--ec-muted)]">Updated {formatGeneratedAt(record?.generatedAt)}</p>
 
       {curiosity ? (
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_20rem]">
           <div className="space-y-2">
             {curiosity.themes.map((theme) => (
-              <div key={theme.title} className="rounded-xl border border-zinc-800/80 bg-zinc-950/50 p-3">
-                <p className="text-sm font-medium text-zinc-100">{theme.title}</p>
-                <p className="mt-2 text-sm leading-relaxed text-zinc-300">{theme.whyItMatters}</p>
+              <div key={theme.title} className="rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] p-3">
+                <p className="text-sm font-medium text-[var(--ec-text)]">{theme.title}</p>
+                <p className="mt-2 text-sm leading-relaxed text-[var(--ec-text)]">{theme.whyItMatters}</p>
                 {theme.evidence.length ? (
                   <div className="mt-2 flex flex-wrap gap-2">
                     {theme.evidence.map((entry) => (
-                      <span key={entry} className="rounded-full border border-zinc-800 bg-zinc-900/80 px-2 py-1 text-[11px] text-zinc-300">
+                      <span key={entry} className="rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 py-1 text-[11px] text-[var(--ec-text)]">
                         {entry}
                       </span>
                     ))}
@@ -90,11 +90,11 @@ export const ProjectCuriosityModeTab = ({ project, modelOptions, defaultModelId,
               </div>
             ))}
           </div>
-          <div className="rounded-xl border border-zinc-800/80 bg-zinc-950/50 p-3">
-            <p className="text-sm font-medium text-zinc-100">Suggested follow-up prompts</p>
+          <div className="rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] p-3">
+            <p className="text-sm font-medium text-[var(--ec-text)]">Suggested follow-up prompts</p>
             <div className="mt-3 space-y-2">
               {curiosity.suggestedPrompts.map((prompt) => (
-                <div key={prompt} className="rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-sm text-zinc-300">
+                <div key={prompt} className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2 text-sm text-[var(--ec-text)]">
                   {prompt}
                 </div>
               ))}
@@ -102,7 +102,7 @@ export const ProjectCuriosityModeTab = ({ project, modelOptions, defaultModelId,
           </div>
         </div>
       ) : (
-        <div className="rounded-xl border border-dashed border-zinc-800/80 bg-zinc-950/40 px-4 py-10 text-center text-sm text-zinc-500">
+        <div className="rounded-xl border border-dashed border-[var(--ec-border)] bg-[var(--ec-panel)] px-4 py-10 text-center text-sm text-[var(--ec-muted)]">
           {canGenerateInsights ? "Generate curiosity mode to surface interesting and high-leverage areas for later exploration." : "No saved curiosity report is available on the host."}
         </div>
       )}

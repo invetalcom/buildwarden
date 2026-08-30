@@ -365,14 +365,14 @@ export const getLatestPlanDecisionText = (entries: ActivityEntry[], fallbackMode
 
 export const runModeBadgeClassName = (mode: RunMode) => {
   if (mode === "code") {
-    return "bg-cyan-500/10 text-cyan-300 ring-cyan-400/30";
+    return "bg-[var(--ec-accent-soft)] text-[var(--ec-accent)] ring-[var(--ec-accent-ring)]";
   }
 
   if (mode === "plan") {
-    return "bg-violet-500/10 text-violet-300 ring-violet-400/30";
+    return "bg-[var(--ec-secondary-soft)] text-[var(--ec-secondary)] ring-[var(--ec-secondary-ring)]";
   }
 
-  return "bg-zinc-500/10 text-zinc-300 ring-zinc-400/30";
+  return "bg-[var(--ec-muted-soft)] text-[var(--ec-muted)] ring-[var(--ec-border)]";
 };
 
 // A subagent can never keep working once its run has stopped: the CLI process

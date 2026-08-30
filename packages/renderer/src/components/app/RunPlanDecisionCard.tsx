@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Loader2, MessageSquareText, Play, Send } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Textarea } from "../ui/textarea";
 import { AgentPanel } from "./agent-worklog";
 
 export function RunPlanDecisionCard({
@@ -48,13 +49,13 @@ export function RunPlanDecisionCard({
           </Badge>
         </div>
       </div>
-      <textarea
+      <Textarea
         value={feedback}
         onChange={(event) => setFeedback(event.target.value)}
         placeholder="Add feedback or changes to the plan"
         rows={2}
         disabled={disabled || submitting}
-        className="mt-2 w-full resize-y rounded-md border border-[color:var(--ec-border)] bg-[color:var(--ec-input)] px-2 py-1.5 text-xs text-[color:var(--ec-text)] outline-none transition placeholder:text-[color:var(--ec-faint)] focus:border-[color:var(--ec-ring)] disabled:cursor-not-allowed disabled:opacity-70"
+        className="mt-2 min-h-16 resize-y px-2 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-70"
       />
       {error ? <p className="mt-1.5 text-[11px] text-[color:var(--ec-danger)]">{error}</p> : null}
       <div className="mt-2 flex flex-wrap justify-end gap-1.5">

@@ -307,11 +307,15 @@ export class ElectronDesktopPlatformServices implements DesktopPlatformServices 
         id: "view",
         label: "View",
         submenu: [
-          { label: "Dark", type: "radio", checked: options.theme === "dark", click: () => options.onThemeChange("dark") },
-          { label: "Light", type: "radio", checked: options.theme === "light", click: () => options.onThemeChange("light") },
+          ...options.designSchemes.map((scheme) => ({
+            label: `${scheme.name} (${scheme.mode})`,
+            type: "radio" as const,
+            checked: options.designSchemeId === scheme.id,
+            click: () => options.onDesignSchemeChange(scheme.id),
+          })),
           { type: "separator" },
           {
-            label: "Toggle appearance",
+            label: "Switch contrast mode",
             accelerator: process.platform === "darwin" ? "Cmd+Shift+L" : "Ctrl+Shift+L",
             click: () => send("toggle-dark-mode"),
           },

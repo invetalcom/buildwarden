@@ -1,5 +1,5 @@
 import { looksLikeGitDiff } from "./git-diff-utils";
-import { describeActivityDetail, type SingleActivityEntry } from "./run-activity-model";
+import { describeActivityDetail, type RunActivityRun, type SingleActivityEntry } from "./run-activity-model";
 const TOOL_BATCH_MERGE_BY_PATH = new Set(["read_file"]);
 const FILE_LINK_TOOL_NAMES = new Set(["read_file", "write_file", "edit_file", "delete_file", "list_files", "search_repo"]);
 
@@ -20,6 +20,19 @@ export type ToolBatchSummarizedRow = {
   writeFileDiff: string | null;
   createdAt: string;
 };
+
+export const canCancelToolBatchShell = (
+  item: ToolBatchSummarizedRow,
+  run: RunActivityRun,
+  readOnly: boolean,
+  onCancelRunShell: ((run: RunActivityRun, toolCallId: string) => void) | undefined,
+) =>
+  !readOnly &&
+  item.toolName === "run_shell" &&
+  item.shellStreaming === true &&
+  typeof item.toolCallId === "string" &&
+  ["queued", "preparing", "running"].includes(run.status) &&
+  Boolean(onCancelRunShell);
 
 export const summarizeToolBatchItems = (
   items: Extract<SingleActivityEntry, { kind: "tool" }>[],

@@ -13,12 +13,12 @@ interface ContextWindowBadgeProps {
 
 const contextToneClasses = (usedPercent: number) => {
   if (usedPercent >= 85) {
-    return { text: "text-[var(--ec-danger)]", ring: "stroke-rose-400" };
+    return { text: "text-[var(--ec-danger)]", ring: "stroke-[var(--ec-danger)]" };
   }
   if (usedPercent >= 65) {
-    return { text: "text-[var(--ec-warning)]", ring: "stroke-amber-300" };
+    return { text: "text-[var(--ec-warning)]", ring: "stroke-[var(--ec-warning)]" };
   }
-  return { text: "text-[var(--ec-text)]", ring: "stroke-cyan-300" };
+  return { text: "text-[var(--ec-text)]", ring: "stroke-[var(--ec-accent)]" };
 };
 
 export const ContextWindowBadge = ({

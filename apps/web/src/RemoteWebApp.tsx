@@ -46,7 +46,7 @@ const PairingGate = ({ initialError, initialCode, initialHostOrigin, onPair }: P
   };
 
   return (
-    <main className="remote-pairing-shell theme-dark flex min-h-[100svh] items-center justify-center bg-[var(--ec-bg)] px-3 py-6 text-[var(--ec-text)] sm:px-4 sm:py-8">
+    <main className="remote-pairing-shell flex min-h-[100svh] items-center justify-center bg-[var(--ec-bg)] px-3 py-6 text-[var(--ec-text)] sm:px-4 sm:py-8">
       <section className="remote-pairing-panel w-full max-w-md overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] shadow-2xl shadow-black/30">
         <div className="border-b border-[var(--ec-border)] px-5 py-4">
           <div className="flex items-center gap-3">
@@ -69,7 +69,7 @@ const PairingGate = ({ initialError, initialCode, initialHostOrigin, onPair }: P
             <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--ec-faint)]">Pairing code</span>
             <Input autoFocus={!HOSTED_MODE} autoComplete="one-time-code" value={code} onChange={(event) => setCode(event.target.value)} placeholder="BW-XXXX-XXXX-XXXX" className="h-10 font-mono text-base uppercase tracking-[0.16em]" aria-describedby={error ? "remote-pairing-error" : undefined} />
           </label>
-          {error ? <p id="remote-pairing-error" role="alert" className="rounded-md border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs leading-5 text-rose-300">{error}</p> : null}
+          {error ? <p id="remote-pairing-error" role="alert" className="rounded-md border border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] px-3 py-2 text-xs leading-5 text-[var(--ec-danger)]">{error}</p> : null}
           <Button type="submit" className="w-full justify-center" disabled={!code.trim() || (HOSTED_MODE && !hostOrigin.trim()) || pairing}>
             {pairing ? <Loader2 className="size-4 animate-spin" /> : <KeyRound className="size-4" />}{pairing ? "Pairing…" : "Pair browser"}
           </Button>
@@ -85,7 +85,7 @@ export const RemoteWebApp = () => {
   const [showHostProjectDialog, setShowHostProjectDialog] = useState(false);
 
   if (state.status === "checking") {
-    return <main className="theme-dark flex min-h-screen items-center justify-center bg-[var(--ec-bg)] text-[var(--ec-muted)]"><Loader2 className="size-5 animate-spin" aria-label="Checking remote session" /></main>;
+    return <main className="flex min-h-screen items-center justify-center bg-[var(--ec-bg)] text-[var(--ec-muted)]"><Loader2 className="size-5 animate-spin" aria-label="Checking remote session" /></main>;
   }
   if (state.status === "pairing" || !client) {
     return <PairingGate initialError={state.status === "pairing" ? state.error : undefined} initialCode={pairingHint.code} initialHostOrigin={pairingHint.hostOrigin} onPair={pair} />;

@@ -50,7 +50,7 @@ const ReasoningEntry = ({ item, timestamp }: EntryViewProps) => (
     <div className="chat-turn-stack chat-turn-stack--reasoning">
       <details className="chat-bubble chat-bubble--assistant chat-bubble--reasoning">
         <summary className="chat-reasoning-summary">
-          <span className="flex min-w-0 items-center gap-2"><BrainCircuit className="h-4 w-4 shrink-0 text-[color:var(--ec-warning)]" aria-hidden /><span className="truncate text-sm font-semibold text-[color:var(--ec-text)]">{item.title || "Reasoning"}</span></span>
+          <span className="flex min-w-0 items-center gap-2"><BrainCircuit className="h-4 w-4 shrink-0 text-[color:var(--ec-reasoning)]" aria-hidden /><span className="truncate text-sm font-semibold text-[color:var(--ec-text)]">{item.title || "Reasoning"}</span></span>
           <span className="flex shrink-0 items-center gap-2"><span className="chat-message-time">{timestamp}</span><ChevronDown className="chat-reasoning-chevron h-4 w-4 text-[color:var(--ec-faint)]" aria-hidden /></span>
         </summary>
         <ActivityMarkdownOrGitDiff content={item.content} className="chat-reasoning-body" />
@@ -67,7 +67,7 @@ const AssistantEntry = ({ item, metadata, timestamp, copied, onCopy }: EntryView
     <div className="chat-turn-stack">
       <div className="chat-bubble chat-bubble--assistant">
         <button type="button" className="chat-bubble-copy" onClick={onCopy} title={copied ? "Copied" : "Copy output"}>
-          {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+          {copied ? <Check className="h-3.5 w-3.5 text-[var(--ec-success)]" /> : <Copy className="h-3.5 w-3.5" />}
         </button>
         <div className="chat-bubble-meta"><span>Assistant</span><span>{timestamp}</span></div>
         <StoredChatAttachments attachments={extractAttachmentPayloadsFromMetadata(metadata)} fallbackNames={extractAttachmentNamesFromMetadata(metadata)} />

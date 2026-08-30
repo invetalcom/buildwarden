@@ -20,6 +20,7 @@ import type { RunDiffReviewFinding } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
 import { ActivityRichText } from "../ui/activity-rich-text";
 import { Button } from "../ui/button";
+import { Textarea } from "../ui/textarea";
 import {
   buildDiffCommentIndex,
   diffLineCommentTargetKey,
@@ -188,13 +189,13 @@ const ReviewFindingCard = ({
   <div
     id={`buildwarden-review-finding-${String(globalIndex)}`}
     className={cn(
-      "rounded-md border border-zinc-700/70 border-l-[3px] bg-zinc-950/80 px-2.5 py-1.5 text-[11px] text-zinc-300 transition-shadow",
+      "rounded-md border border-[var(--ec-border)] border-l-[3px] bg-[var(--ec-panel)] px-2.5 py-1.5 text-[11px] text-[var(--ec-text)] transition-shadow",
       FINDING_PRIORITY_BORDER[finding.priority],
-      active && "ring-2 ring-cyan-400/75 ring-offset-1 ring-offset-zinc-950",
+      active && "ring-2 ring-[var(--ec-accent-ring)] ring-offset-1 ring-offset-[var(--ec-panel)]",
     )}
   >
     <div className="flex min-w-0 items-start justify-between gap-2">
-      <p className="min-w-0 font-medium text-zinc-100">{finding.title}</p>
+      <p className="min-w-0 font-medium text-[var(--ec-text)]">{finding.title}</p>
       {onDraft ? (
         <Button
           type="button"
@@ -213,10 +214,10 @@ const ReviewFindingCard = ({
       ) : null}
     </div>
     {finding.lineReference || finding.lineNumber ? (
-      <p className="mt-0.5 font-mono text-[10px] text-zinc-500">{finding.lineReference ?? `line ${String(finding.lineNumber)}`}</p>
+      <p className="mt-0.5 font-mono text-[10px] text-[var(--ec-muted)]">{finding.lineReference ?? `line ${String(finding.lineNumber)}`}</p>
     ) : null}
-    <p className="mt-1 leading-snug text-zinc-400">{finding.detail}</p>
-    {finding.recommendation ? <p className="mt-1 text-[10px] text-cyan-200/90">Suggestion: {finding.recommendation}</p> : null}
+    <p className="mt-1 leading-snug text-[var(--ec-muted)]">{finding.detail}</p>
+    {finding.recommendation ? <p className="mt-1 text-[10px] text-[var(--ec-accent)]">Suggestion: {finding.recommendation}</p> : null}
   </div>
 );
 
@@ -237,28 +238,28 @@ const DraftCommentCard = ({
   return (
     <div
       className={cn(
-        "relative rounded-md border px-2.5 py-2 text-[11px] text-zinc-300 shadow-sm",
+        "relative rounded-md border px-2.5 py-2 text-[11px] text-[var(--ec-text)] shadow-sm",
         comment.remote
-          ? "border-zinc-800 bg-zinc-950/75"
-          : "border-zinc-700/80 bg-zinc-950/90 before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-cyan-300",
-        editing && "border-cyan-400/60 ring-1 ring-cyan-400/40",
-        highlighted && "border-cyan-300/80 ring-2 ring-cyan-300/40",
+          ? "border-[var(--ec-border)] bg-[var(--ec-panel)]"
+          : "border-[var(--ec-border)] bg-[var(--ec-panel)] before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-[var(--ec-accent)]",
+        editing && "border-[var(--ec-accent-ring)] ring-1 ring-[var(--ec-accent-ring)]",
+        highlighted && "border-[var(--ec-accent-ring)] ring-2 ring-[var(--ec-accent-ring)]",
       )}
     >
       <div className="flex min-w-0 items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className={cn("text-[10px] font-semibold", comment.remote ? "text-zinc-100" : "text-zinc-200")}>
+            <span className={cn("text-[10px] font-semibold", comment.remote ? "text-[var(--ec-text)]" : "text-[var(--ec-text)]")}>
               {comment.remote ? (comment.author ?? "Reviewer") : "Pending review"}
             </span>
             {comment.remote && comment.resolved ? (
-              <span className="rounded-full border border-emerald-500/25 bg-emerald-500/[0.08] px-1.5 py-px text-[8px] font-semibold uppercase text-emerald-200">
+              <span className="rounded-full border border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] px-1.5 py-px text-[8px] font-semibold uppercase text-[var(--ec-success)]">
                 Resolved
               </span>
             ) : null}
-            {comment.createdAt ? <span className="text-[9px] text-zinc-600">{new Date(comment.createdAt).toLocaleString()}</span> : null}
+            {comment.createdAt ? <span className="text-[9px] text-[var(--ec-faint)]">{new Date(comment.createdAt).toLocaleString()}</span> : null}
           </div>
-          <p className="mt-0.5 truncate font-mono text-[10px] text-zinc-500">
+          <p className="mt-0.5 truncate font-mono text-[10px] text-[var(--ec-muted)]">
             {comment.lineLabel ?? `${comment.newPath || comment.oldPath}:${String(comment.newLineNumber ?? comment.oldLineNumber ?? "")}`}
           </p>
         </div>
@@ -268,7 +269,7 @@ const DraftCommentCard = ({
               type="button"
               size="icon"
               variant="ghost"
-              className="h-5 w-5 text-zinc-400"
+              className="h-5 w-5 text-[var(--ec-muted)]"
               title="Edit draft"
               aria-label="Edit draft"
               onClick={(event) => {
@@ -285,7 +286,7 @@ const DraftCommentCard = ({
               type="button"
               size="icon"
               variant="ghost"
-              className="h-5 w-5 text-zinc-400"
+              className="h-5 w-5 text-[var(--ec-muted)]"
               title="Remove draft"
               aria-label="Remove draft"
               onClick={(event) => {
@@ -298,8 +299,8 @@ const DraftCommentCard = ({
           ) : null}
         </div>
       </div>
-      {comment.title ? <p className="mt-1 text-[10px] font-medium text-zinc-400">{comment.title}</p> : null}
-      <ActivityRichText content={comment.body} compact className="mt-1 break-words text-zinc-200" />
+      {comment.title ? <p className="mt-1 text-[10px] font-medium text-[var(--ec-muted)]">{comment.title}</p> : null}
+      <ActivityRichText content={comment.body} compact className="mt-1 break-words text-[var(--ec-text)]" />
     </div>
   );
 };
@@ -333,29 +334,29 @@ const InlineDraftCommentEditor = ({
 
   return (
     <div
-      className="overflow-hidden rounded-md border border-zinc-700/90 bg-zinc-950 text-[11px] shadow-xl shadow-black/25 ring-1 ring-cyan-400/10"
+      className="overflow-hidden rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] text-[11px] shadow-xl shadow-black/25 ring-1 ring-[var(--ec-accent-ring)]"
       onClick={(event) => event.stopPropagation()}
     >
-      <div className="flex min-w-0 items-center justify-between gap-2 border-b border-zinc-800/80 px-2.5 py-1.5">
-        <p className="min-w-0 truncate font-mono text-[9px] text-zinc-500">Comment on {target.lineLabel}</p>
-        <Button type="button" size="sm" variant="ghost" className="h-5 shrink-0 px-1.5 text-[9px] text-zinc-500 hover:text-zinc-200" onClick={onCancel}>
+      <div className="flex min-w-0 items-center justify-between gap-2 border-b border-[var(--ec-border)] px-2.5 py-1.5">
+        <p className="min-w-0 truncate font-mono text-[9px] text-[var(--ec-muted)]">Comment on {target.lineLabel}</p>
+        <Button type="button" size="sm" variant="ghost" className="h-5 shrink-0 px-1.5 text-[9px] text-[var(--ec-muted)] hover:text-[var(--ec-text)]" onClick={onCancel}>
           Cancel
         </Button>
       </div>
-      <textarea
+      <Textarea
         value={value}
         onChange={(event) => setValue(event.target.value)}
-        className="h-20 w-full resize-none border-0 bg-transparent px-2.5 py-2 text-[11px] leading-relaxed text-zinc-100 outline-none placeholder:text-zinc-600 focus:bg-zinc-900/20"
+        className="h-20 min-h-0 resize-none rounded-none border-0 bg-transparent px-2.5 py-2 text-[11px] leading-relaxed shadow-none focus:bg-[var(--ec-hover)] focus:ring-0"
         placeholder="Write a diff comment..."
         autoFocus
       />
-      <div className="flex flex-wrap justify-end gap-1.5 border-t border-zinc-800/80 bg-zinc-900/35 px-2 py-1.5">
+      <div className="flex flex-wrap justify-end gap-1.5 border-t border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 py-1.5">
         {onSaveSingle ? (
-          <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-[10px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200" onClick={() => onSaveSingle(value)} disabled={!value.trim() || singleSaveBusy}>
+          <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-[10px] text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]" onClick={() => onSaveSingle(value)} disabled={!value.trim() || singleSaveBusy}>
             {singleSaveBusy ? "Posting..." : singleSaveLabel}
           </Button>
         ) : null}
-        <Button type="button" size="sm" className="h-7 bg-cyan-500/90 px-2 text-[10px] font-semibold text-zinc-950 hover:bg-cyan-300" onClick={() => onSave(value)} disabled={!value.trim()}>
+        <Button type="button" size="sm" className="h-7 bg-[var(--ec-accent)] px-2 text-[10px] font-semibold text-[var(--ec-accent-foreground)] hover:bg-[var(--ec-accent-strong)]" onClick={() => onSave(value)} disabled={!value.trim()}>
           {saveLabel}
         </Button>
       </div>
@@ -626,7 +627,7 @@ const DiffFileSection = memo(function DiffFileSection({
         <button
           type="button"
           className={cn(
-            "z-10 rounded px-1 py-0.5 text-zinc-500 transition hover:bg-zinc-800/70 hover:text-zinc-300",
+            "z-10 rounded px-1 py-0.5 text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
             anyFilesExpanded ? "absolute right-2 top-1" : "absolute right-0 top-[-1.55rem]",
           )}
           onClick={() => onToggleCollapsed(fileKey)}
@@ -640,7 +641,7 @@ const DiffFileSection = memo(function DiffFileSection({
     return (
       <button
         type="button"
-        className="sticky top-0 z-10 flex w-full items-center justify-end border-b border-zinc-800 bg-zinc-900/95 px-2 py-1 text-zinc-500 backdrop-blur-sm hover:text-zinc-300"
+        className="sticky top-0 z-10 flex w-full items-center justify-end border-b border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 py-1 text-[var(--ec-muted)] backdrop-blur-sm hover:text-[var(--ec-text)]"
         onClick={() => onToggleCollapsed(fileKey)}
         aria-label={isCollapsed ? "Expand diff" : "Collapse diff"}
         title={isCollapsed ? "Expand diff" : "Collapse diff"}
@@ -658,21 +659,21 @@ const DiffFileSection = memo(function DiffFileSection({
       return <>{renderCollapseToggleHeader()}</>;
     }
     return (
-      <div className="sticky top-0 z-10 flex w-full items-center justify-between gap-2 border-b border-zinc-800 bg-zinc-900/95 px-3 py-1.5 text-left backdrop-blur-sm">
+      <div className="sticky top-0 z-10 flex w-full items-center justify-between gap-2 border-b border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-1.5 text-left backdrop-blur-sm">
         <button
           type="button"
-          className="flex min-w-0 flex-1 items-center gap-2 text-left transition hover:text-zinc-50"
+          className="flex min-w-0 flex-1 items-center gap-2 text-left transition hover:text-[var(--ec-text)]"
           onClick={() => onToggleCollapsed(fileKey)}
           title={filePathLabel}
         >
-          <p className="truncate text-xs font-medium text-zinc-100">{filePathLabel}</p>
-          <span className="shrink-0 text-[10px] uppercase tracking-[0.18em] text-zinc-500">{file.type}</span>
+          <p className="truncate text-xs font-medium text-[var(--ec-text)]">{filePathLabel}</p>
+          <span className="shrink-0 text-[10px] uppercase tracking-[0.18em] text-[var(--ec-muted)]">{file.type}</span>
         </button>
         <div className="flex shrink-0 items-center gap-1">
           {onOpenFile ? (
             <button
               type="button"
-              className="rounded px-1 py-0.5 text-zinc-500 transition hover:bg-zinc-800/70 hover:text-cyan-200"
+              className="rounded px-1 py-0.5 text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-accent-strong)]"
               onClick={() => canOpenFilePath && onOpenFile(openFilePath)}
               aria-label={`Open file ${filePathLabel}`}
               title={`Open file ${filePathLabel}`}
@@ -682,7 +683,7 @@ const DiffFileSection = memo(function DiffFileSection({
           ) : null}
           <button
             type="button"
-            className="rounded px-1 py-0.5 text-zinc-500 transition hover:bg-zinc-800/70 hover:text-zinc-300"
+            className="rounded px-1 py-0.5 text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
             onClick={() => onToggleCollapsed(fileKey)}
             aria-label={isCollapsed ? "Expand diff" : "Collapse diff"}
             title={isCollapsed ? "Expand diff" : "Collapse diff"}
@@ -695,7 +696,7 @@ const DiffFileSection = memo(function DiffFileSection({
   };
 
   return (
-    <div className={cn("border-b border-zinc-800", isLastFile && "border-b-0")}>
+    <div className={cn("border-b border-[var(--ec-border)]", isLastFile && "border-b-0")}>
       <FileHeader />
       {!isCollapsed ? (
         <>
@@ -714,7 +715,7 @@ const DiffFileSection = memo(function DiffFileSection({
                     return (
                       <button
                         type="button"
-                        className="flex h-[1.1rem] min-w-[1.1rem] items-center justify-center rounded border border-cyan-400/40 bg-zinc-950 px-1 text-[9px] font-semibold text-cyan-200 shadow-sm transition-colors hover:bg-cyan-400 hover:text-zinc-950"
+                        className="flex h-[1.1rem] min-w-[1.1rem] items-center justify-center rounded border border-[var(--ec-accent-ring)] bg-[var(--ec-panel)] px-1 text-[9px] font-semibold text-[var(--ec-accent)] shadow-sm transition-colors hover:bg-[var(--ec-accent-strong)] hover:text-[var(--ec-accent-foreground)]"
                         aria-label="Add diff comment"
                         title="Add diff comment"
                         onClick={(event) => {
@@ -735,9 +736,9 @@ const DiffFileSection = memo(function DiffFileSection({
             }
           />
           {fallbackFileNavEntries.length > 0 ? (
-            <div className="border-t border-cyan-500/10 bg-zinc-900/30 px-2 py-2">
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
-                Comments on this file <span className="font-mono font-normal text-zinc-600">{filePathLabel}</span>
+            <div className="border-t border-[var(--ec-accent-ring)] bg-[var(--ec-panel)] px-2 py-2">
+              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--ec-muted)]">
+                Comments on this file <span className="font-mono font-normal text-[var(--ec-faint)]">{filePathLabel}</span>
               </p>
               <div className="space-y-2">
                 {fallbackFileNavEntries.map(({ finding, globalIndex }) => (
@@ -1143,7 +1144,7 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     return (
       <div
         className={cn(
-          "rounded-xl border border-zinc-800 bg-zinc-950/70 p-3 text-xs text-zinc-500",
+          "rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] p-3 text-xs text-[var(--ec-muted)]",
           className,
           fillContainer && "flex min-h-[10rem] flex-1 items-center justify-center",
         )}
@@ -1157,7 +1158,7 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     return (
       <div
         className={cn(
-          "rounded-xl border border-zinc-800 bg-zinc-950/70 p-3 text-xs text-zinc-500",
+          "rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] p-3 text-xs text-[var(--ec-muted)]",
           className,
           fillContainer && "flex min-h-[10rem] flex-1 items-center justify-center",
         )}
@@ -1171,7 +1172,7 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     return (
       <pre
         className={cn(
-          "app-scrollbar overflow-auto rounded-xl border border-zinc-800 bg-zinc-950/70 p-3 text-xs text-zinc-300",
+          "app-scrollbar overflow-auto rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] p-3 text-xs text-[var(--ec-text)]",
           className,
           diffScrollHeightClass(compact, fillContainer, "max-h-64"),
         )}
@@ -1232,18 +1233,18 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     <div
       ref={scrollContainerRef}
       className={cn(
-        "app-scrollbar overflow-auto rounded-lg border bg-zinc-950/80",
+        "app-scrollbar overflow-auto rounded-lg border bg-[var(--ec-panel)]",
         className,
-        activityEmphasis ? "border-emerald-500/15 ring-1 ring-rose-500/10" : "border-zinc-800",
+        activityEmphasis ? "border-[var(--ec-success-ring)] ring-1 ring-[var(--ec-danger-ring)]" : "border-[var(--ec-border)]",
         hideFileHeaderInlineToggle && !anyFilesExpanded && "relative mt-0 h-0 overflow-visible border-transparent bg-transparent ring-0",
         scrollAreaHeightClass,
       )}
     >
       {reviewNavTotal > 0 ? (
-        <div className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 bg-zinc-950/95 px-2 py-1.5 backdrop-blur-md">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Comment navigation</p>
+        <div className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-2 border-b border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 py-1.5 backdrop-blur-md">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-muted)]">Comment navigation</p>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="tabular-nums text-[11px] text-zinc-500">
+            <span className="tabular-nums text-[11px] text-[var(--ec-muted)]">
               {safeReviewNavIndex + 1} / {reviewNavTotal}
             </span>
             <Button
@@ -1275,8 +1276,8 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
       ) : null}
       <div className={cn(viewerClass, hideFileHeaderInlineToggle && anyFilesExpanded && "relative pt-5")}>
         {generalNavEntries.length > 0 ? (
-          <div className="border-b border-zinc-800 bg-zinc-900/35 px-3 py-2">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">General</p>
+          <div className="border-b border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-muted)]">General</p>
             <div className="mt-2 space-y-2">
               {generalNavEntries.map(({ finding, globalIndex }) => (
                 <ReviewFindingCard

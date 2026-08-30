@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type {
   AppLogDirectorySizeInfo,
   AppSnapshot,
+  DesignScheme,
   IntegratedSkillMetadata,
   NetworkProxySettingsInput,
   NetworkProxySettingsSnapshot,
@@ -11,7 +12,6 @@ import type {
   RemoteAccessSession,
   SidebarRunEntrySize,
   SupportedIdeKind,
-  UiTheme,
   UnifiedProviderFamily,
 } from "@buildwarden/shared";
 import {
@@ -77,8 +77,8 @@ interface SettingsPageProps {
   pastedTextAttachmentThreshold: number;
   consecutiveToolCallCollapseThreshold: number;
   recentRunDays: number;
-  uiTheme: UiTheme;
-  sidebarContrast: boolean;
+  designScheme: DesignScheme;
+  sidebarContrastStrength: number;
   sidebarRunEntrySize: SidebarRunEntrySize;
   sidebarGroupRunsByProject: boolean;
   worktreeRootOverrideSettingValue: string;
@@ -108,8 +108,9 @@ interface SettingsPageProps {
   onPastedTextAttachmentThresholdChange: (value: number) => void | Promise<void>;
   onConsecutiveToolCallCollapseThresholdChange: (value: number) => void | Promise<void>;
   onRecentRunDaysChange: (value: number) => void | Promise<void>;
-  onUiThemeChange: (theme: UiTheme) => void;
-  onSidebarContrastChange: (value: boolean) => void;
+  onDesignSchemeChange: (scheme: DesignScheme) => void | Promise<void>;
+  onSidebarContrastStrengthChange: (value: number) => void;
+  onSidebarContrastStrengthCommit: (value: number) => void;
   onSidebarRunEntrySizeChange: (value: SidebarRunEntrySize) => void;
   onSidebarGroupRunsByProjectChange: (value: boolean) => void;
   onSaveWorktreeRootOverride: (value: string) => void | Promise<void>;
@@ -200,8 +201,8 @@ export const SettingsPage = ({
   pastedTextAttachmentThreshold,
   consecutiveToolCallCollapseThreshold,
   recentRunDays,
-  uiTheme,
-  sidebarContrast,
+  designScheme,
+  sidebarContrastStrength,
   sidebarRunEntrySize,
   sidebarGroupRunsByProject,
   worktreeRootOverrideSettingValue,
@@ -231,8 +232,9 @@ export const SettingsPage = ({
   onPastedTextAttachmentThresholdChange,
   onConsecutiveToolCallCollapseThresholdChange,
   onRecentRunDaysChange,
-  onUiThemeChange,
-  onSidebarContrastChange,
+  onDesignSchemeChange,
+  onSidebarContrastStrengthChange,
+  onSidebarContrastStrengthCommit,
   onSidebarRunEntrySizeChange,
   onSidebarGroupRunsByProjectChange,
   onSaveWorktreeRootOverride,
@@ -579,8 +581,8 @@ export const SettingsPage = ({
       {activeTab === "user" ? (
         <UserSettingsTab
           busy={busy}
-          uiTheme={uiTheme}
-          sidebarContrast={sidebarContrast}
+          designScheme={designScheme}
+          sidebarContrastStrength={sidebarContrastStrength}
           sidebarRunEntrySize={sidebarRunEntrySize}
           sidebarGroupRunsByProject={sidebarGroupRunsByProject}
           recentRunDaysDraft={recentRunDaysDraft}
@@ -595,8 +597,9 @@ export const SettingsPage = ({
           idePathsDirty={idePathsDirty}
           idePathsSaving={idePathsSaving}
           keyboardShortcuts={keyboardShortcuts}
-          onUiThemeChange={onUiThemeChange}
-          onSidebarContrastChange={onSidebarContrastChange}
+          onDesignSchemeChange={onDesignSchemeChange}
+          onSidebarContrastStrengthChange={onSidebarContrastStrengthChange}
+          onSidebarContrastStrengthCommit={onSidebarContrastStrengthCommit}
           onSidebarRunEntrySizeChange={onSidebarRunEntrySizeChange}
           onSidebarGroupRunsByProjectChange={onSidebarGroupRunsByProjectChange}
           onRecentRunDaysDraftChange={setRecentRunDaysDraft}

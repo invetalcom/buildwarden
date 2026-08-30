@@ -104,7 +104,7 @@ describe("RunActionDialogs confirmation", () => {
       confirmVariant: "danger",
     });
 
-    expect(markup).toContain("!bg-zinc-900");
+    expect(markup).toContain("!bg-[var(--ec-panel)]");
   });
 
   it("renders grouped deletion impact counts", () => {

@@ -63,9 +63,9 @@ const eventToneClass = (role: ProjectLabEventRecord["role"]) => {
     return "border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)]";
   }
   if (role === "rfc") {
-    return "border-violet-500/25 bg-violet-500/5";
+    return "border-[var(--ec-secondary-ring)] bg-[var(--ec-secondary-soft)]";
   }
-  return "border-zinc-800 bg-zinc-950/50";
+  return "border-[var(--ec-border)] bg-[var(--ec-panel)]";
 };
 
 const renderLabText = (text: string, className = ""): ReactNode => (
@@ -135,25 +135,25 @@ const ProjectLabRunCard = ({ detail, expanded, canDelete, onToggle, onDelete, on
     }
   };
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-3">
+    <div className="rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] p-3">
       <div className="flex cursor-pointer flex-wrap items-start justify-between gap-3" role="button" tabIndex={0} onClick={onToggle} onKeyDown={handleKeyDown}>
         <div className="min-w-0 flex-1 text-left">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-[11px] text-cyan-100">{modeLabel(detail.thread.mode)}</span>
-            <span className="rounded-full border border-zinc-800 bg-zinc-900/80 px-2.5 py-1 text-[11px] text-zinc-300">{detail.thread.status}</span>
-            {detail.thread.baseBranch && <span className="rounded-full border border-zinc-800 bg-zinc-900/80 px-2.5 py-1 font-mono text-[11px] text-zinc-300">{detail.thread.baseBranch}</span>}
-            <span className="ml-1 text-zinc-500">{expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</span>
+            <span className="rounded-full border border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-2.5 py-1 text-[11px] text-[var(--ec-accent)]">{modeLabel(detail.thread.mode)}</span>
+            <span className="rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 py-1 text-[11px] text-[var(--ec-text)]">{detail.thread.status}</span>
+            {detail.thread.baseBranch && <span className="rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 py-1 font-mono text-[11px] text-[var(--ec-text)]">{detail.thread.baseBranch}</span>}
+            <span className="ml-1 text-[var(--ec-muted)]">{expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</span>
           </div>
-          <h4 className="mt-2 text-sm font-medium text-zinc-100">{detail.thread.title}</h4>
-          <p className="mt-1 text-xs text-zinc-400">{renderLabText(detail.thread.summary)}</p>
+          <h4 className="mt-2 text-sm font-medium text-[var(--ec-text)]">{detail.thread.title}</h4>
+          <p className="mt-1 text-xs text-[var(--ec-muted)]">{renderLabText(detail.thread.summary)}</p>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {implementationRun && (
-            <Button type="button" size="sm" variant="ghost" className="h-8 w-8 px-0 text-zinc-500 hover:text-cyan-200" title="Open implementation run" aria-label="Open implementation run" onClick={(event) => { event.stopPropagation(); onOpenImplementationRun(implementationRun.id); }}>
+            <Button type="button" size="sm" variant="ghost" className="h-8 w-8 px-0 text-[var(--ec-muted)] hover:text-[var(--ec-accent-strong)]" title="Open implementation run" aria-label="Open implementation run" onClick={(event) => { event.stopPropagation(); onOpenImplementationRun(implementationRun.id); }}>
               <ExternalLink className="h-3.5 w-3.5" />
             </Button>
           )}
-          {canDelete ? <Button type="button" size="sm" variant="ghost" className="text-zinc-500 hover:text-rose-200" onClick={(event) => { event.stopPropagation(); onDelete(); }}><Trash2 className="mr-2 h-3.5 w-3.5" />Delete</Button> : null}
+          {canDelete ? <Button type="button" size="sm" variant="ghost" className="text-[var(--ec-muted)] hover:text-[var(--ec-danger-strong)]" onClick={(event) => { event.stopPropagation(); onDelete(); }}><Trash2 className="mr-2 h-3.5 w-3.5" />Delete</Button> : null}
         </div>
       </div>
       {expanded && (
@@ -163,8 +163,8 @@ const ProjectLabRunCard = ({ detail, expanded, canDelete, onToggle, onDelete, on
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0">
                   <span className={`rounded-full border px-2.5 py-1 text-[11px] ${implementationTone?.pill ?? ""}`}>{implementationStatus}</span>
-                  {implementationRun && <span className="ml-2 font-mono text-xs text-zinc-500">{workspaceLabel}</span>}
-                  {implementationRun?.errorMessage && <p className="mt-2 text-xs text-rose-300">{renderLabText(implementationRun.errorMessage)}</p>}
+                  {implementationRun && <span className="ml-2 font-mono text-xs text-[var(--ec-muted)]">{workspaceLabel}</span>}
+                  {implementationRun?.errorMessage && <p className="mt-2 text-xs text-[var(--ec-danger)]">{renderLabText(implementationRun.errorMessage)}</p>}
                 </div>
                 {implementationRun && <Button type="button" size="sm" variant="secondary" onClick={() => onOpenImplementationRun(implementationRun.id)}><ExternalLink className="mr-2 h-3.5 w-3.5" />Open run</Button>}
               </div>
@@ -172,16 +172,16 @@ const ProjectLabRunCard = ({ detail, expanded, canDelete, onToggle, onDelete, on
           )}
           {detail.events.map((event) => (
             <div key={event.id} className={`rounded-lg border px-3 py-2 text-sm leading-relaxed ${eventToneClass(event.role)}`}>
-              <div className="mb-1 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.18em] text-zinc-500">
+              <div className="mb-1 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.18em] text-[var(--ec-muted)]">
                 <span className="flex min-w-0 items-center gap-1.5">
-                  {event.role === "rfc" && <FileText className="h-3.5 w-3.5 text-violet-300" />}
+                  {event.role === "rfc" && <FileText className="h-3.5 w-3.5 text-[var(--ec-secondary)]" />}
                   {event.role === "review" && <ShieldCheck className="h-3.5 w-3.5 text-[var(--ec-success)]" />}
                   {event.role === "implementation" && <Rocket className="h-3.5 w-3.5 text-[var(--ec-info)]" />}
                   <span className="truncate">{event.label}</span>
                 </span>
-                <span className="shrink-0 font-normal normal-case tracking-normal text-zinc-600">{new Date(event.createdAt).toLocaleString()}</span>
+                <span className="shrink-0 font-normal normal-case tracking-normal text-[var(--ec-faint)]">{new Date(event.createdAt).toLocaleString()}</span>
               </div>
-              <div className="text-zinc-300">{renderLabText(event.content)}</div>
+              <div className="text-[var(--ec-text)]">{renderLabText(event.content)}</div>
             </div>
           ))}
         </div>
@@ -226,18 +226,18 @@ export const ProjectLabTab = ({
   return (
     <div className="space-y-4 pb-2">
       {canManageLab ? <Card className="overflow-hidden p-0">
-        <div className="border-b border-zinc-800/80 px-4 py-3">
+        <div className="border-b border-[var(--ec-border)] px-4 py-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-3">
-              <Sparkles className="h-4 w-4 text-cyan-400" />
+              <Sparkles className="h-4 w-4 text-[var(--ec-accent)]" />
               <div className="min-w-0">
-                <h3 className="text-sm font-medium text-zinc-100">Project Lab</h3>
-                <p className="mt-0.5 text-xs text-zinc-500">
+                <h3 className="text-sm font-medium text-[var(--ec-text)]">Project Lab</h3>
+                <p className="mt-0.5 text-xs text-[var(--ec-muted)]">
                   Let AI find one useful change, implement it, then have a second agent review the result.
                 </p>
               </div>
             </div>
-            <label className="flex h-8 items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950/60 px-2.5 text-xs text-zinc-300">
+            <label className="flex h-8 items-center gap-2 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 text-xs text-[var(--ec-text)]">
               <input
                 type="checkbox"
                 className="h-4 w-4 accent-[var(--ec-accent)]"
@@ -253,7 +253,7 @@ export const ProjectLabTab = ({
           <div className="px-4 py-4">
             <div className="grid gap-3 lg:grid-cols-2">
               <label className="space-y-1.5">
-                <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Mode</span>
+                <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Mode</span>
                 <Select
                   value={selectedMode}
                   onValueChange={(value) => setSelectedMode(value as ProjectLabMode)}
@@ -266,7 +266,7 @@ export const ProjectLabTab = ({
               </label>
               {!isFolderProject ? (
                 <label className="space-y-1.5">
-                  <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Base branch</span>
+                  <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Base branch</span>
                   <Select
                     value={selectedBaseBranch}
                     onValueChange={onBaseBranchChange}
@@ -275,7 +275,7 @@ export const ProjectLabTab = ({
                 </label>
               ) : null}
               <label className="space-y-1.5">
-                <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Implementation model</span>
+                <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Implementation model</span>
                 <Select
                   value={implementationModelId}
                   onValueChange={(value) => void onSettingsChange({ ...settings, implementationModelId: value || null })}
@@ -286,7 +286,7 @@ export const ProjectLabTab = ({
                 />
               </label>
               <label className="space-y-1.5">
-                <span className="text-xs uppercase tracking-[0.22em] text-zinc-500">Review model</span>
+                <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Review model</span>
                 <Select
                   value={reviewModelId}
                   onValueChange={(value) => void onSettingsChange({ ...settings, reviewModelId: value || null })}
@@ -299,7 +299,7 @@ export const ProjectLabTab = ({
             </div>
 
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-              <p className="min-w-0 flex-1 text-xs text-zinc-500">{selectedModeOption.description}</p>
+              <p className="min-w-0 flex-1 text-xs text-[var(--ec-muted)]">{selectedModeOption.description}</p>
               <Button
                 type="button"
                 className="h-10"
@@ -319,15 +319,15 @@ export const ProjectLabTab = ({
             </div>
           </div>
 
-          <div className="border-t border-zinc-800/80 bg-zinc-950/35 px-4 py-4 xl:border-l xl:border-t-0">
-            <div className="flex items-center gap-2 text-sm font-medium text-zinc-100">
-              <ShieldCheck className="h-4 w-4 text-emerald-400" />
+          <div className="border-t border-[var(--ec-border)] bg-[var(--ec-panel)] px-4 py-4 xl:border-l xl:border-t-0">
+            <div className="flex items-center gap-2 text-sm font-medium text-[var(--ec-text)]">
+              <ShieldCheck className="h-4 w-4 text-[var(--ec-success)]" />
               Limits
             </div>
-            <p className="mt-1 text-xs text-zinc-500">Keep proactive lab work bounded per project.</p>
+            <p className="mt-1 text-xs text-[var(--ec-muted)]">Keep proactive lab work bounded per project.</p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
-              <label className="rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2">
-                <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Daily cap</span>
+              <label className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2">
+                <span className="text-[10px] uppercase tracking-[0.18em] text-[var(--ec-muted)]">Daily cap</span>
                 <Input
                   className="mt-1 h-8"
                   type="number"
@@ -339,8 +339,8 @@ export const ProjectLabTab = ({
                   }
                 />
               </label>
-              <label className="rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2">
-                <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Concurrent</span>
+              <label className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2">
+                <span className="text-[10px] uppercase tracking-[0.18em] text-[var(--ec-muted)]">Concurrent</span>
                 <Input
                   className="mt-1 h-8"
                   type="number"
@@ -359,16 +359,16 @@ export const ProjectLabTab = ({
 
       <Card className="p-4">
         <div className="flex items-center gap-2">
-          <Bot className="h-4 w-4 text-cyan-400" />
-          <h3 className="text-sm font-medium text-zinc-100">Lab Runs</h3>
+          <Bot className="h-4 w-4 text-[var(--ec-accent)]" />
+          <h3 className="text-sm font-medium text-[var(--ec-text)]">Lab Runs</h3>
         </div>
-        <p className="mt-1 text-xs text-zinc-500">
+        <p className="mt-1 text-xs text-[var(--ec-muted)]">
           Each run starts one implementation or RFC agent and records the follow-up review here.
         </p>
 
         <div className="mt-4 space-y-3">
           {sortedThreads.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 px-4 py-10 text-center text-sm text-zinc-500">
+            <div className="rounded-xl border border-dashed border-[var(--ec-border)] bg-[var(--ec-panel)] px-4 py-10 text-center text-sm text-[var(--ec-muted)]">
               {canManageLab ? "No Project Lab runs yet. Enable the lab, choose implementation and review models, then start one." : "No Project Lab runs are available on the host."}
             </div>
           ) : sortedThreads.map((detail) => (

@@ -10,21 +10,21 @@ export const runForgeReadinessLabel: Record<RunForgeReadiness, string> = {
 };
 
 export const runForgeReadinessColor: Record<RunForgeReadiness, string> = {
-  ready: "text-emerald-400",
-  pending: "text-amber-400",
-  blocked: "text-red-400",
-  merged: "text-violet-400",
-  closed: "text-zinc-500",
-  unavailable: "text-zinc-500",
+  ready: "text-[var(--ec-success)]",
+  pending: "text-[var(--ec-warning)]",
+  blocked: "text-[var(--ec-danger)]",
+  merged: "text-[var(--ec-secondary)]",
+  closed: "text-[var(--ec-muted)]",
+  unavailable: "text-[var(--ec-muted)]",
 };
 
-export const runForgeReadinessHex: Record<RunForgeReadiness, string> = {
-  ready: "#34d399",
-  pending: "#fbbf24",
-  blocked: "#f87171",
-  merged: "#a78bfa",
-  closed: "#71717a",
-  unavailable: "#71717a",
+export const runForgeReadinessCssColor: Record<RunForgeReadiness, string> = {
+  ready: "var(--ec-success)",
+  pending: "var(--ec-warning)",
+  blocked: "var(--ec-danger)",
+  merged: "var(--ec-secondary)",
+  closed: "var(--ec-muted)",
+  unavailable: "var(--ec-muted)",
 };
 
 export type RunForgeAgentAction = "feedback" | "checks" | "conflicts";

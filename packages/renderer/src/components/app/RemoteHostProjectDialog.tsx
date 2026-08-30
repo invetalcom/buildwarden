@@ -190,7 +190,7 @@ export const RemoteHostProjectDialog = ({ client, open, onClose, onProjectAdded 
             )}
           </div>
 
-          {error ? <p role="alert" className="mt-2 rounded-md border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{error}</p> : null}
+          {error ? <p role="alert" className="mt-2 rounded-md border border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] px-3 py-2 text-xs text-[var(--ec-danger)]">{error}</p> : null}
 
           <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
             <label className="min-w-0 flex-1">

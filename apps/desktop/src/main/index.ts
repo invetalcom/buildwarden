@@ -15,18 +15,22 @@ import {
 } from "@buildwarden/remote-server";
 import {
   APP_SETTING_KEYS,
+  DESIGN_SCHEME_PRESETS,
   IPC_CHANNELS,
+  getDefaultDesignScheme,
   isUiTheme,
   parseSupportedIdeKind,
   parseRemoteAccessEnabledSetting,
   parseRemoteAccessWebOriginsSetting,
   normalizeRemoteAccessWebOrigin,
-  parseUiTheme,
+  parseDesignScheme,
+  parseDesignSchemeJson,
+  serializeDesignScheme,
   uiThemeToLegacyDarkMode,
-  WINDOWS_TITLEBAR_OVERLAY_BACKGROUND,
   WINDOWS_TITLEBAR_OVERLAY_HEIGHT,
   type AppMenuSection,
   type ChatInput,
+  type DesignScheme,
   type ListAvailableProviderModelsInput,
   type ModelInput,
   type NetworkProxySettingsInput,
@@ -40,7 +44,6 @@ import {
   type RunChatInput,
   type RunInput,
   type RunWorkspaceFileInput,
-  type UiTheme,
 } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
 import { getAppLogDirPath, initializeAppLogger, logError, logInfo, logWarn } from "./logger";
@@ -62,11 +65,11 @@ const PROD_DB_FILE_NAME = "buildwarden.sqlite";
 const DEV_DB_FILE_NAME = "buildwarden_dev.sqlite";
 const PROD_SECRETS_FILE_NAME = "secrets.json";
 const DEV_SECRETS_FILE_NAME = "secrets_dev.json";
-let currentUiTheme: UiTheme = "dark";
+let currentDesignScheme: DesignScheme = getDefaultDesignScheme("dark");
 
 const focusMainWindow = (): void => {
   if (!mainWindow) {
-    createMainWindow(currentUiTheme);
+    createMainWindow(currentDesignScheme);
   }
   if (!mainWindow) {
     return;
@@ -225,34 +228,23 @@ try {
   console.error("[buildwarden:error] Failed to set Electron logs path", error);
 }
 
-const getWindowThemeColors = (theme: UiTheme) => {
-  const caption = WINDOWS_TITLEBAR_OVERLAY_BACKGROUND[theme];
-  if (theme === "light") {
-    return {
-      backgroundColor: "#c4d9ec",
-      titleBarOverlay: {
-        color: caption,
-        symbolColor: "#1c2733",
-        height: WINDOWS_TITLEBAR_OVERLAY_HEIGHT,
-      },
-    };
-  }
+const getWindowThemeColors = (scheme: DesignScheme) => {
   return {
-    backgroundColor: "#0b0d0e",
+    backgroundColor: scheme.colors.background,
     titleBarOverlay: {
-      color: caption,
-      symbolColor: "#f2f5f7",
+      color: scheme.colors.surface,
+      symbolColor: scheme.colors.text,
       height: WINDOWS_TITLEBAR_OVERLAY_HEIGHT,
     },
   };
 };
 
-const applyWindowTheme = (theme: UiTheme) => {
+const applyWindowTheme = (scheme: DesignScheme) => {
   if (!mainWindow) {
     return;
   }
 
-  const colors = getWindowThemeColors(theme);
+  const colors = getWindowThemeColors(scheme);
   mainWindow.setBackgroundColor(colors.backgroundColor);
   if (USE_CUSTOM_WINDOWS_TITLEBAR) {
     mainWindow.setTitleBarOverlay(colors.titleBarOverlay);
@@ -265,22 +257,30 @@ const applyWindowTheme = (theme: UiTheme) => {
  */
 const themeCachePath = (): string => join(app.getPath("userData"), "window-theme.json");
 
-const readCachedUiTheme = (): UiTheme => {
+const readCachedDesignScheme = (): DesignScheme => {
   try {
-    const raw = JSON.parse(readFileSync(themeCachePath(), "utf8")) as { uiTheme?: unknown };
-    return isUiTheme(raw.uiTheme) ? raw.uiTheme : "dark";
+    const rawText = readFileSync(themeCachePath(), "utf8");
+    const raw = JSON.parse(rawText) as { uiTheme?: unknown; designScheme?: unknown };
+    const scheme = parseDesignSchemeJson(typeof raw.designScheme === "string" ? raw.designScheme : JSON.stringify(raw.designScheme));
+    if (scheme) return scheme;
+    return getDefaultDesignScheme(isUiTheme(raw.uiTheme) ? raw.uiTheme : "dark");
   } catch {
-    return "dark";
+    return getDefaultDesignScheme("dark");
   }
 };
 
-const writeCachedUiTheme = (theme: UiTheme): void => {
+const writeCachedDesignScheme = (scheme: DesignScheme): void => {
   try {
-    writeFileSync(themeCachePath(), JSON.stringify({ uiTheme: theme }));
+    writeFileSync(themeCachePath(), JSON.stringify({ uiTheme: scheme.mode, designScheme: scheme }));
   } catch {
     // Best-effort cache; boot falls back to dark when missing.
   }
 };
+
+const designSchemesForMenu = (activeScheme: DesignScheme): readonly DesignScheme[] =>
+  DESIGN_SCHEME_PRESETS.some((scheme) => scheme.id === activeScheme.id)
+    ? DESIGN_SCHEME_PRESETS
+    : [...DESIGN_SCHEME_PRESETS, activeScheme];
 
 const bootstrap = async (): Promise<void> => {
   const bootStartedAt = Date.now();
@@ -305,8 +305,8 @@ const bootstrap = async (): Promise<void> => {
   // Show the window and start loading the renderer immediately; the database
   // and controller initialize in parallel. The preload bridge retries briefly
   // when an IPC handler has not been registered yet.
-  currentUiTheme = readCachedUiTheme();
-  createMainWindow(currentUiTheme);
+  currentDesignScheme = readCachedDesignScheme();
+  createMainWindow(currentDesignScheme);
   const windowCreatedAt = Date.now();
 
   const db = new BuildWardenDatabase(getDefaultDatabasePath(dataDirPath, databaseFileName));
@@ -355,31 +355,37 @@ const bootstrap = async (): Promise<void> => {
     })
     .finally(() => controller.startAutomationScheduler());
 
-  const applyUiTheme = async (next: UiTheme) => {
-    await controller.setAppSetting(APP_SETTING_KEYS.uiTheme, next);
-    await controller.setAppSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next));
-    currentUiTheme = parseUiTheme(db.getSettings());
-    writeCachedUiTheme(currentUiTheme);
+  const applySelectedDesignScheme = async (schemeId: string) => {
+    if (schemeId === currentDesignScheme.id) return;
+    const nextScheme = DESIGN_SCHEME_PRESETS.find((scheme) => scheme.id === schemeId);
+    if (!nextScheme) return;
+    await controller.setAppSetting(APP_SETTING_KEYS.designScheme, serializeDesignScheme(nextScheme));
+    await controller.setAppSetting(APP_SETTING_KEYS.uiTheme, nextScheme.mode);
+    await controller.setAppSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(nextScheme.mode));
+    currentDesignScheme = parseDesignScheme(db.getSettings());
+    writeCachedDesignScheme(currentDesignScheme);
     desktopPlatform.installApplicationMenu({
       logDirPath,
-      theme: currentUiTheme,
+      designSchemeId: currentDesignScheme.id,
+      designSchemes: designSchemesForMenu(currentDesignScheme),
       onCommand: (command) => hostEvents.publish("appMenuCommand", command),
-      onThemeChange: (theme) => void applyUiTheme(theme),
+      onDesignSchemeChange: (schemeId) => void applySelectedDesignScheme(schemeId),
     });
-    applyWindowTheme(currentUiTheme);
+    applyWindowTheme(currentDesignScheme);
     hostEvents.publish("appSettingsChanged", undefined);
   };
 
   const refreshAppMenu = () => {
-    currentUiTheme = parseUiTheme(db.getSettings());
-    writeCachedUiTheme(currentUiTheme);
+    currentDesignScheme = parseDesignScheme(db.getSettings());
+    writeCachedDesignScheme(currentDesignScheme);
     desktopPlatform.installApplicationMenu({
       logDirPath,
-      theme: currentUiTheme,
+      designSchemeId: currentDesignScheme.id,
+      designSchemes: designSchemesForMenu(currentDesignScheme),
       onCommand: (command) => hostEvents.publish("appMenuCommand", command),
-      onThemeChange: (theme) => void applyUiTheme(theme),
+      onDesignSchemeChange: (schemeId) => void applySelectedDesignScheme(schemeId),
     });
-    applyWindowTheme(currentUiTheme);
+    applyWindowTheme(currentDesignScheme);
   };
   refreshAppMenu();
 
@@ -1596,9 +1602,10 @@ const bootstrap = async (): Promise<void> => {
     desktopPlatform.popupApplicationMenu(
       {
         logDirPath,
-        theme: currentUiTheme,
+        designSchemeId: currentDesignScheme.id,
+        designSchemes: designSchemesForMenu(currentDesignScheme),
         onCommand: (command) => hostEvents.publish("appMenuCommand", command),
-        onThemeChange: (theme) => void applyUiTheme(theme),
+        onDesignSchemeChange: (schemeId) => void applySelectedDesignScheme(schemeId),
       },
       section,
       x,
@@ -1672,8 +1679,8 @@ const bootstrap = async (): Promise<void> => {
   await refreshProjectForgePrMonitors(controller);
 };
 
-const createMainWindow = (theme: UiTheme): void => {
-  const colors = getWindowThemeColors(theme);
+const createMainWindow = (scheme: DesignScheme): void => {
+  const colors = getWindowThemeColors(scheme);
   const iconPath = getAppIconPath();
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -1776,7 +1783,7 @@ app.whenReady().then(async () => {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       logInfo("Recreating main window after activate.");
-      createMainWindow(currentUiTheme);
+      createMainWindow(currentDesignScheme);
     }
   });
 });

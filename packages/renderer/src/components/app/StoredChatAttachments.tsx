@@ -38,62 +38,62 @@ const ATTACHMENT_PRESENTATIONS: Record<StoredAttachmentKind, AttachmentPresentat
   archive: {
     label: "Archive",
     Icon: FileArchive,
-    accentClassName: "border-orange-400/20 bg-orange-500/10 text-orange-200",
+    accentClassName: "border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] text-[var(--ec-warning)]",
   },
   audio: {
     label: "Audio",
     Icon: FileAudio,
-    accentClassName: "border-violet-400/20 bg-violet-500/10 text-violet-200",
+    accentClassName: "border-[var(--ec-secondary-ring)] bg-[var(--ec-secondary-soft)] text-[var(--ec-secondary)]",
   },
   code: {
     label: "Code",
     Icon: FileCode,
-    accentClassName: "border-amber-400/20 bg-amber-500/10 text-amber-200",
+    accentClassName: "border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] text-[var(--ec-warning)]",
   },
   document: {
     label: "Doc",
     Icon: FileText,
-    accentClassName: "border-sky-400/20 bg-sky-500/10 text-sky-200",
+    accentClassName: "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]",
   },
   file: {
     label: "File",
     Icon: File,
-    accentClassName: "border-zinc-500/30 bg-zinc-800/65 text-zinc-200",
+    accentClassName: "border-[var(--ec-border)] bg-[var(--ec-control)] text-[var(--ec-text)]",
   },
   image: {
     label: "Image",
     Icon: FileImage,
-    accentClassName: "border-cyan-400/20 bg-cyan-500/10 text-cyan-200",
+    accentClassName: "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]",
   },
   json: {
     label: "JSON",
     Icon: FileJson,
-    accentClassName: "border-yellow-400/20 bg-yellow-500/10 text-yellow-100",
+    accentClassName: "border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] text-[var(--ec-warning)]",
   },
   pdf: {
     label: "PDF",
     Icon: FileText,
-    accentClassName: "border-red-400/20 bg-red-500/10 text-red-200",
+    accentClassName: "border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] text-[var(--ec-danger)]",
   },
   presentation: {
     label: "Slides",
     Icon: Presentation,
-    accentClassName: "border-amber-400/20 bg-amber-500/10 text-amber-100",
+    accentClassName: "border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] text-[var(--ec-warning)]",
   },
   spreadsheet: {
     label: "Sheet",
     Icon: FileSpreadsheet,
-    accentClassName: "border-emerald-400/20 bg-emerald-500/10 text-emerald-200",
+    accentClassName: "border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] text-[var(--ec-success)]",
   },
   text: {
     label: "Text",
     Icon: FileText,
-    accentClassName: "border-blue-400/20 bg-blue-500/10 text-blue-100",
+    accentClassName: "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]",
   },
   video: {
     label: "Video",
     Icon: FileVideo,
-    accentClassName: "border-rose-400/20 bg-rose-500/10 text-rose-200",
+    accentClassName: "border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] text-[var(--ec-danger)]",
   },
 };
 
@@ -104,14 +104,14 @@ const getPresentation = (fileName: string, mimeType = ""): AttachmentPresentatio
   ATTACHMENT_PRESENTATIONS[inferStoredAttachmentKind(fileName, mimeType)] ?? {
     label: "File",
     Icon: FileQuestion,
-    accentClassName: "border-zinc-500/30 bg-zinc-800/65 text-zinc-200",
+    accentClassName: "border-[var(--ec-border)] bg-[var(--ec-control)] text-[var(--ec-text)]",
   };
 
 const AttachmentFooter = ({ attachment }: { attachment: ChatAttachmentPayload }) => {
   const presentation = getPresentation(attachment.fileName, attachment.mimeType);
 
   return (
-    <div className="flex min-w-0 items-center gap-1.5 border-t border-zinc-700/45 px-2 py-1.5">
+    <div className="flex min-w-0 items-center gap-1.5 border-t border-[var(--ec-border)] px-2 py-1.5">
       <span
         className={`shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-none ${presentation.accentClassName}`}
       >
@@ -120,7 +120,7 @@ const AttachmentFooter = ({ attachment }: { attachment: ChatAttachmentPayload })
       <a
         href={toDataUrl(attachment)}
         download={attachment.fileName}
-        className="min-w-0 flex-1 truncate text-[11px] leading-4 text-zinc-300 transition hover:text-zinc-100"
+        className="min-w-0 flex-1 truncate text-[11px] leading-4 text-[var(--ec-text)] transition hover:text-[var(--ec-text)]"
         title={`Download ${attachment.fileName}`}
       >
         {attachment.fileName}
@@ -128,7 +128,7 @@ const AttachmentFooter = ({ attachment }: { attachment: ChatAttachmentPayload })
       <a
         href={toDataUrl(attachment)}
         download={attachment.fileName}
-        className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-100"
+        className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
         title={`Download ${attachment.fileName}`}
         aria-label={`Download ${attachment.fileName}`}
       >
@@ -144,7 +144,7 @@ const NameOnlyAttachmentCard = ({ compact, name }: { compact: boolean; name: str
 
   return (
     <div
-      className={`overflow-hidden rounded-lg border border-zinc-700/65 bg-zinc-950/55 shadow-sm ${
+      className={`overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] shadow-sm ${
         compact ? "w-32" : "w-36"
       }`}
       title={name}
@@ -153,11 +153,11 @@ const NameOnlyAttachmentCard = ({ compact, name }: { compact: boolean; name: str
         <div className={`rounded-lg border p-2.5 ${presentation.accentClassName}`}>
           <Icon className="h-6 w-6" aria-hidden />
         </div>
-        <span className="max-w-full truncate text-[10px] font-semibold uppercase leading-none text-zinc-500">
+        <span className="max-w-full truncate text-[10px] font-semibold uppercase leading-none text-[var(--ec-muted)]">
           {presentation.label}
         </span>
       </div>
-      <div className="truncate border-t border-zinc-700/45 px-2 py-1.5 text-[11px] leading-4 text-zinc-400">{name}</div>
+      <div className="truncate border-t border-[var(--ec-border)] px-2 py-1.5 text-[11px] leading-4 text-[var(--ec-muted)]">{name}</div>
     </div>
   );
 };
@@ -168,7 +168,7 @@ const IconAttachmentCard = ({ attachment, compact }: { attachment: ChatAttachmen
 
   return (
     <div
-      className={`overflow-hidden rounded-lg border border-zinc-700/65 bg-zinc-950/55 shadow-sm ${
+      className={`overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] shadow-sm ${
         compact ? "w-32" : "w-36"
       }`}
       title={attachment.fileName}
@@ -177,7 +177,7 @@ const IconAttachmentCard = ({ attachment, compact }: { attachment: ChatAttachmen
         <div className={`rounded-lg border p-3.5 ${presentation.accentClassName}`}>
           <Icon className="h-9 w-9" aria-hidden />
         </div>
-        <span className="max-w-full truncate text-[10px] font-semibold uppercase leading-none text-zinc-500">
+        <span className="max-w-full truncate text-[10px] font-semibold uppercase leading-none text-[var(--ec-muted)]">
           {presentation.label}
         </span>
       </div>
@@ -196,7 +196,7 @@ const ImageAttachmentCard = ({
   onOpen: () => void;
 }) => (
   <div
-    className={`group overflow-hidden rounded-lg border border-cyan-400/20 bg-zinc-950/60 shadow-sm transition hover:border-cyan-300/35 ${
+    className={`group overflow-hidden rounded-lg border border-[var(--ec-accent-ring)] bg-[var(--ec-panel)] shadow-sm transition hover:border-[var(--ec-accent-ring)] ${
       compact ? "w-32" : "w-40"
     }`}
   >
@@ -213,11 +213,11 @@ const ImageAttachmentCard = ({
 
 const AudioAttachmentCard = ({ attachment, compact }: { attachment: ChatAttachmentPayload; compact: boolean }) => (
   <div
-    className={`overflow-hidden rounded-lg border border-violet-400/20 bg-zinc-950/60 shadow-sm ${compact ? "w-52" : "w-64"}`}
+    className={`overflow-hidden rounded-lg border border-[var(--ec-secondary-ring)] bg-[var(--ec-panel)] shadow-sm ${compact ? "w-52" : "w-64"}`}
     title={attachment.fileName}
   >
-    <div className="flex min-h-16 items-center gap-2 bg-violet-500/[0.06] px-2.5 py-2">
-      <FileAudio className="h-5 w-5 shrink-0 text-violet-300" aria-hidden />
+    <div className="flex min-h-16 items-center gap-2 bg-[var(--ec-secondary-soft)] px-2.5 py-2">
+      <FileAudio className="h-5 w-5 shrink-0 text-[var(--ec-secondary)]" aria-hidden />
       <audio controls preload="metadata" src={toDataUrl(attachment)} className="h-8 min-w-0 flex-1" aria-label={attachment.fileName} />
     </div>
     <AttachmentFooter attachment={attachment} />
@@ -226,7 +226,7 @@ const AudioAttachmentCard = ({ attachment, compact }: { attachment: ChatAttachme
 
 const VideoAttachmentCard = ({ attachment, compact }: { attachment: ChatAttachmentPayload; compact: boolean }) => (
   <div
-    className={`overflow-hidden rounded-lg border border-rose-400/20 bg-zinc-950/60 shadow-sm ${compact ? "w-52" : "w-72"}`}
+    className={`overflow-hidden rounded-lg border border-[var(--ec-danger-ring)] bg-[var(--ec-panel)] shadow-sm ${compact ? "w-52" : "w-72"}`}
     title={attachment.fileName}
   >
     <video
@@ -266,7 +266,7 @@ const BrowserElementAttachmentRow = ({
       {screenshotAttachment ? (
         <button
           type="button"
-          className={`relative shrink-0 overflow-hidden rounded-md border border-sky-500/25 bg-black/50 outline-none transition hover:border-sky-400/55 focus-visible:ring-2 focus-visible:ring-sky-400 ${compact ? "h-12 w-20" : "h-14 w-24"}`}
+          className={`relative shrink-0 overflow-hidden rounded-md border border-[var(--ec-accent-ring)] bg-black/50 outline-none transition hover:border-[var(--ec-accent-ring)] focus-visible:ring-2 focus-visible:ring-[var(--ec-accent-ring)] ${compact ? "h-12 w-20" : "h-14 w-24"}`}
           title="Open browser element screenshot"
           onClick={onOpen}
         >
@@ -275,14 +275,14 @@ const BrowserElementAttachmentRow = ({
             alt=""
             className="h-full w-full object-cover transition-transform duration-150 group-hover:scale-[1.02]"
           />
-          <span className="absolute left-1 top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-sky-600 px-1 text-[9px] font-bold leading-none text-white shadow-sm">
+          <span className="absolute left-1 top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--ec-accent)] px-1 text-[9px] font-bold leading-none text-white shadow-sm">
             {info.annotationNumber}
           </span>
         </button>
       ) : (
-        <div className={`relative flex shrink-0 items-center justify-center rounded-md border border-sky-500/25 bg-sky-500/10 text-sky-500 ${compact ? "h-12 w-20" : "h-14 w-24"}`}>
+        <div className={`relative flex shrink-0 items-center justify-center rounded-md border border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)] ${compact ? "h-12 w-20" : "h-14 w-24"}`}>
           <MousePointer2 className="h-5 w-5" aria-hidden />
-          <span className="absolute left-1 top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-sky-600 px-1 text-[9px] font-bold leading-none text-white">
+          <span className="absolute left-1 top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--ec-accent)] px-1 text-[9px] font-bold leading-none text-white">
             {info.annotationNumber}
           </span>
         </div>
@@ -292,13 +292,13 @@ const BrowserElementAttachmentRow = ({
           <span className="min-w-0 truncate text-[11px] font-semibold text-[color:var(--ec-text)]" title={label}>{label}</span>
           {info.accessibleName ? <code className="shrink-0 text-[9px] text-[color:var(--ec-muted)]">&lt;{info.tagName}&gt;</code> : null}
         </div>
-        <div className="mt-1 border-l-2 border-sky-500/35 pl-2">
+        <div className="mt-1 border-l-2 border-[var(--ec-accent-ring)] pl-2">
           <span className="block text-[9px] font-semibold uppercase tracking-wide text-[color:var(--ec-muted)]">Requested change</span>
           <p className={`mt-0.5 whitespace-pre-wrap break-words text-[11px] leading-4 text-[color:var(--ec-text)] ${!expanded && noteIsLong ? "line-clamp-3" : ""}`}>
             {info.comment || <span className="italic text-[color:var(--ec-muted)]">No note added</span>}
           </p>
           {noteIsLong ? (
-            <button type="button" className="mt-0.5 text-[10px] font-medium text-sky-500 hover:text-sky-400" onClick={() => setExpanded((value) => !value)}>
+            <button type="button" className="mt-0.5 text-[10px] font-medium text-[var(--ec-accent)] hover:text-[var(--ec-accent-strong)]" onClick={() => setExpanded((value) => !value)}>
               {expanded ? "Show less" : "Show more"}
             </button>
           ) : null}
@@ -334,26 +334,26 @@ const PdfAttachmentCard = ({
 
   return (
     <div
-      className={`group overflow-hidden rounded-lg border border-red-400/20 bg-zinc-950/60 shadow-sm transition hover:border-red-300/35 ${
+      className={`group overflow-hidden rounded-lg border border-[var(--ec-danger-ring)] bg-[var(--ec-panel)] shadow-sm transition hover:border-[var(--ec-danger-ring)] ${
         compact ? "w-36" : "w-44"
       }`}
       title={attachment.fileName}
     >
-      <div className={`relative ${compact ? "h-24" : "h-28"} overflow-hidden bg-zinc-900`}>
+      <div className={`relative ${compact ? "h-24" : "h-28"} overflow-hidden bg-[var(--ec-panel)]`}>
         <object
           data={`${dataUrl}#toolbar=0&navpanes=0&scrollbar=0`}
           type="application/pdf"
           className="pointer-events-none h-full w-full bg-white"
           aria-label={`Preview ${attachment.fileName}`}
         >
-          <div className="flex h-full flex-col items-center justify-center gap-2 bg-red-500/10 text-red-200">
+          <div className="flex h-full flex-col items-center justify-center gap-2 bg-[var(--ec-danger-soft)] text-[var(--ec-danger)]">
             <FileText className="h-8 w-8" aria-hidden />
             <span className="text-[10px] font-semibold uppercase leading-none">PDF</span>
           </div>
         </object>
         <button
           type="button"
-          className="absolute inset-0 cursor-zoom-in rounded-t-lg outline-none ring-inset transition focus-visible:ring-2 focus-visible:ring-red-300"
+          className="absolute inset-0 cursor-zoom-in rounded-t-lg outline-none ring-inset transition focus-visible:ring-2 focus-visible:ring-[var(--ec-danger-ring)]"
           title={`Open ${attachment.fileName}`}
           aria-label={`Open ${attachment.fileName}`}
           onClick={onOpen}
@@ -378,17 +378,17 @@ const TextAttachmentCard = ({
 
   return (
     <div
-      className={`overflow-hidden rounded-lg border border-zinc-700/65 bg-zinc-950/60 shadow-sm ${
+      className={`overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] shadow-sm ${
         compact ? "w-44" : "w-52"
       }`}
       title={attachment.fileName}
     >
-      <div className={`${compact ? "h-24" : "h-28"} overflow-hidden bg-zinc-950/80 p-2`}>
-        <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase leading-none text-zinc-500">
+      <div className={`${compact ? "h-24" : "h-28"} overflow-hidden bg-[var(--ec-panel)] p-2`}>
+        <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase leading-none text-[var(--ec-muted)]">
           <Icon className="h-3.5 w-3.5" aria-hidden />
           <span>{presentation.label}</span>
         </div>
-        <pre className="max-h-full whitespace-pre-wrap break-words font-mono text-[10px] leading-4 text-zinc-300">
+        <pre className="max-h-full whitespace-pre-wrap break-words font-mono text-[10px] leading-4 text-[var(--ec-text)]">
           {preview}
         </pre>
       </div>
@@ -431,10 +431,10 @@ export const StoredChatAttachments = ({
     <>
       <div className={compact ? "mt-1.5 space-y-2" : "mt-2 space-y-2"}>
         {browserItems.length > 0 ? (
-          <section className="overflow-hidden rounded-lg border border-sky-500/25 bg-[color:var(--ec-panel-soft)] shadow-sm">
+          <section className="overflow-hidden rounded-lg border border-[var(--ec-accent-ring)] bg-[color:var(--ec-panel-soft)] shadow-sm">
             <div className="flex items-center justify-between border-b border-[color:var(--ec-border)] px-2 py-1.5">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-[color:var(--ec-muted)]">Referenced elements</span>
-              <span className="rounded-full bg-sky-500/[0.12] px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-sky-500">{browserItems.length}</span>
+              <span className="rounded-full bg-[var(--ec-accent-soft)] px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-[var(--ec-accent)]">{browserItems.length}</span>
             </div>
             {browserItems.map((item, index) => (
               <BrowserElementAttachmentRow
@@ -516,16 +516,16 @@ export const StoredChatAttachments = ({
               aria-label={expandedPdf.fileName}
             >
               <div
-                className="flex max-h-full w-[min(92vw,72rem)] flex-col overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-950 shadow-2xl"
+                className="flex max-h-full w-[min(92vw,72rem)] flex-col overflow-hidden rounded-2xl border border-[var(--ec-border)] bg-[var(--ec-panel)] shadow-2xl"
                 onClick={(event) => event.stopPropagation()}
               >
-                <div className="flex items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
-                  <p className="truncate text-sm text-zinc-200">{expandedPdf.fileName}</p>
+                <div className="flex items-center justify-between gap-3 border-b border-[var(--ec-border)] px-4 py-3">
+                  <p className="truncate text-sm text-[var(--ec-text)]">{expandedPdf.fileName}</p>
                   <div className="flex shrink-0 items-center gap-1.5">
                     <a
                       href={expandedPdfUrl}
                       download={expandedPdf.fileName}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
                       title={`Download ${expandedPdf.fileName}`}
                       aria-label={`Download ${expandedPdf.fileName}`}
                     >
@@ -533,27 +533,27 @@ export const StoredChatAttachments = ({
                     </a>
                     <button
                       type="button"
-                      className="rounded-md px-2 py-1 text-xs text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
+                      className="rounded-md px-2 py-1 text-xs text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
                       onClick={() => setExpandedPdf(null)}
                     >
                       Close
                     </button>
                   </div>
                 </div>
-                <div className="h-[min(82vh,58rem)] bg-zinc-900 p-3">
+                <div className="h-[min(82vh,58rem)] bg-[var(--ec-panel)] p-3">
                   <object
                     data={`${expandedPdfUrl}#toolbar=1&navpanes=0`}
                     type="application/pdf"
                     className="h-full w-full rounded-lg bg-white"
                     aria-label={`Preview ${expandedPdf.fileName}`}
                   >
-                    <div className="flex h-full flex-col items-center justify-center gap-3 rounded-lg bg-red-500/10 text-red-200">
+                    <div className="flex h-full flex-col items-center justify-center gap-3 rounded-lg bg-[var(--ec-danger-soft)] text-[var(--ec-danger)]">
                       <FileText className="h-12 w-12" aria-hidden />
                       <span className="text-xs font-semibold uppercase leading-none">PDF</span>
                       <a
                         href={expandedPdfUrl}
                         download={expandedPdf.fileName}
-                        className="rounded-md border border-red-300/20 px-3 py-1.5 text-xs text-red-100 transition hover:bg-red-300/10"
+                        className="rounded-md border border-[var(--ec-danger-ring)] px-3 py-1.5 text-xs text-[var(--ec-danger)] transition hover:bg-[var(--ec-danger-soft)]"
                       >
                         Download
                       </a>

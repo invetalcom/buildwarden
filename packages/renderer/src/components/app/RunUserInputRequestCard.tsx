@@ -5,6 +5,7 @@ import { cn } from "../../lib/cn";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Textarea } from "../ui/textarea";
 import { AgentPanel } from "./agent-worklog";
 
 type DraftAnswer = {
@@ -195,7 +196,7 @@ export function RunUserInputRequestCard({
           const answeredValues = normalizeAnswerValues(answers?.[question.id]);
           const showCustomInput = !resolved && (question.allowCustomAnswer === true || question.options.length === 0);
           return (
-            <div key={`${question.id}:${index}`} className="rounded-md border border-[color:var(--ec-border)] bg-[color:var(--ec-panel-muted)] p-2.5">
+            <div key={`${question.id}:${index}`} className="rounded-md border border-[color:var(--ec-border)] bg-[color:var(--ec-panel-soft)] p-2.5">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="rounded bg-[color:var(--ec-control)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[color:var(--ec-faint)]">
                   {question.header}
@@ -243,12 +244,13 @@ export function RunUserInputRequestCard({
                 </div>
               ) : null}
               {showCustomInput ? (
-                <textarea
+                <Textarea
                   value={draft.custom}
+                  disabled={resolved || submitting || disabled}
                   onChange={(event) => updateCustom(question.id, event.target.value)}
                   placeholder={question.options.length > 0 ? "Other answer" : "Type your answer"}
                   rows={2}
-                  className="mt-2 w-full resize-y rounded-md border border-[color:var(--ec-border)] bg-[color:var(--ec-input)] px-2 py-1.5 text-xs text-[color:var(--ec-text)] outline-none transition placeholder:text-[color:var(--ec-faint)] focus:border-[color:var(--ec-ring)]"
+                  className="mt-2 min-h-16 resize-y px-2 py-1.5 text-xs"
                 />
               ) : null}
             </div>

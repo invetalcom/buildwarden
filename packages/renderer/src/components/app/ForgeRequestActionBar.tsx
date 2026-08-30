@@ -85,7 +85,7 @@ export const ForgeRequestActionBar = ({
             placement="auto"
             widthPx={152}
             onClose={() => setMergeMenuOpen(false)}
-            className="isolate overflow-hidden rounded-lg border border-zinc-700 bg-zinc-950 p-1 opacity-100 shadow-2xl shadow-black/70 ring-1 ring-black/50"
+            className="isolate overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] p-1 opacity-100 shadow-2xl shadow-black/70 ring-1 ring-black/50"
           >
             <div role="menu" aria-label="Merge method">
               {request.supportedMergeMethods.map((method) => (
@@ -93,7 +93,7 @@ export const ForgeRequestActionBar = ({
                   key={method}
                   type="button"
                   role="menuitem"
-                  className="block w-full rounded-md px-2.5 py-2 text-left text-xs capitalize text-zinc-300 transition hover:bg-zinc-800 hover:text-zinc-100"
+                  className="block w-full rounded-md px-2.5 py-2 text-left text-xs capitalize text-[var(--ec-text)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
                   onClick={() => void merge(method)}
                 >
                   {method}
@@ -108,7 +108,7 @@ export const ForgeRequestActionBar = ({
           type="button"
           variant="outline"
           size="sm"
-          className={cn(buttonClassName, "border-rose-500/25 bg-rose-500/[0.03] text-rose-300/90 hover:bg-rose-500/10 hover:text-rose-200")}
+          className={cn(buttonClassName, "border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] text-[var(--ec-danger)] hover:bg-[var(--ec-danger-soft)] hover:text-[var(--ec-danger-strong)]")}
           disabled={busy}
           onClick={() => void update("close")}
         >

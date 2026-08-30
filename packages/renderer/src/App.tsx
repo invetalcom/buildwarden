@@ -1,7 +1,7 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type ReactNode } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type ReactNode } from "react";
 import {
   APP_SETTING_KEYS,
-  cycleUiTheme,
+  getDefaultDesignScheme,
   DEFAULT_NETWORK_PROXY_SETTINGS,
   buildDefaultProjectLabSettings,
   isDetachedHeadProjectErrorMessage,
@@ -14,9 +14,11 @@ import {
   parseRecentRunDaysSetting,
   parseRemoteAccessEnabledSetting,
   parseRunTimelineDensitySetting,
+  parseSidebarContrastStrengthSetting,
   parseSidebarGroupRunsByProjectSetting,
   parseSidebarRunEntrySizeSetting,
-  parseUiTheme,
+  parseDesignScheme,
+  serializeDesignScheme,
   SUPPORTED_IDE_KINDS,
   parseIdePathConfig,
   parseOrchestrationTeamSettings,
@@ -28,6 +30,7 @@ import {
   type ChatAttachmentPayload,
   type ChatDetail,
   type ChatRecord,
+  type DesignScheme,
   type KeyboardShortcutId,
   type ModelDeletionImpact,
   type NetworkProxySettingsSnapshot,
@@ -54,10 +57,10 @@ import {
   type RunWorkspaceType,
   type ShellApprovalDecision,
   type SupportedIdeKind,
-  type UiTheme,
   type UnifiedProviderFamily,
   uiThemeToLegacyDarkMode,
 } from "@buildwarden/shared";
+import { applyDesignSchemeToDocument } from "./lib/design-scheme";
 import {
   Globe,
   GitBranch,
@@ -222,6 +225,7 @@ export const App = () => {
     && navigator.userAgent.includes("Windows");
   const [snapshot, setSnapshot] = useState<AppSnapshot>(EMPTY_SNAPSHOT);
   const [snapshotLoaded, setSnapshotLoaded] = useState(false);
+  const [snapshotLoadedSuccessfully, setSnapshotLoadedSuccessfully] = useState(false);
   const [runDetail, setRunDetail] = useState<RunDetail | null>(null);
   const [openRunPanes, setOpenRunPanes] = useState<OpenRunPanes>({});
   const [focusedRunPane, setFocusedRunPane] = useState<RunPaneId>("left");
@@ -420,6 +424,7 @@ export const App = () => {
     const next = await buildwarden.refreshSnapshot();
     setSnapshot(next);
     setSnapshotLoaded(true);
+    setSnapshotLoadedSuccessfully(true);
     setRunProjectId((current) =>
       current && next.projects.some((entry) => entry.project.id === current)
         ? current
@@ -1481,8 +1486,11 @@ export const App = () => {
     snapshot.settings[APP_SETTING_KEYS.consecutiveToolCallCollapseThreshold],
   );
   const recentRunDays = parseRecentRunDaysSetting(snapshot.settings[APP_SETTING_KEYS.recentRunDays]);
-  const uiTheme = parseUiTheme(snapshot.settings);
-  const sidebarContrast = snapshot.settings[APP_SETTING_KEYS.sidebarContrast] === "true";
+  const designScheme = useMemo(() => parseDesignScheme(snapshot.settings), [snapshot.settings]);
+  const uiTheme = designScheme.mode;
+  const persistedSidebarContrastStrength = parseSidebarContrastStrengthSetting(snapshot.settings[APP_SETTING_KEYS.sidebarContrast]);
+  const [sidebarContrastStrength, setSidebarContrastStrength] = useState(persistedSidebarContrastStrength);
+  useEffect(() => setSidebarContrastStrength(persistedSidebarContrastStrength), [persistedSidebarContrastStrength]);
   const sidebarRunEntrySize = parseSidebarRunEntrySizeSetting(snapshot.settings[APP_SETTING_KEYS.sidebarRunEntrySize]);
   const sidebarGroupRunsByProject = parseSidebarGroupRunsByProjectSetting(snapshot.settings[APP_SETTING_KEYS.sidebarGroupRunsByProject]);
   const runTimelineDensity = parseRunTimelineDensitySetting(snapshot.settings[APP_SETTING_KEYS.runTimelineDensity]);
@@ -2757,12 +2765,13 @@ export const App = () => {
         if (!buildwarden) {
           throw new Error("The Electron desktop bridge is unavailable.");
         }
-        const next = cycleUiTheme(parseUiTheme(snapshot.settings));
-        await buildwarden.setAppSetting(APP_SETTING_KEYS.uiTheme, next);
-        await buildwarden.setAppSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next));
+        const next = getDefaultDesignScheme(designScheme.mode === "dark" ? "light" : "dark");
+        await buildwarden.setAppSetting(APP_SETTING_KEYS.designScheme, serializeDesignScheme(next));
+        await buildwarden.setAppSetting(APP_SETTING_KEYS.uiTheme, next.mode);
+        await buildwarden.setAppSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next.mode));
         await loadSnapshot();
       }),
-    [buildwarden, handleAction, loadSnapshot, snapshot.settings],
+    [buildwarden, designScheme.mode, handleAction, loadSnapshot],
   );
 
   useEffect(() => {
@@ -3574,9 +3583,9 @@ export const App = () => {
   ]);
 
   useEffect(() => {
-    document.body.dataset.theme = uiTheme;
-    document.documentElement.dataset.theme = uiTheme;
-  }, [uiTheme]);
+    if (!snapshotLoadedSuccessfully) return;
+    applyDesignSchemeToDocument(designScheme);
+  }, [designScheme, snapshotLoadedSuccessfully]);
 
   useEffect(() => {
     const clearRunPaneDropPreview = () => setRunPaneDropPreview(null);
@@ -3769,8 +3778,8 @@ export const App = () => {
           />
         ) : (
           <Card className="flex min-h-[400px] flex-1 flex-col items-center justify-center gap-4 p-8">
-            <Loader2 className="h-10 w-10 animate-spin text-cyan-400" />
-            <p className="text-sm text-zinc-500">Loading run...</p>
+            <Loader2 className="h-10 w-10 animate-spin text-[var(--ec-accent)]" />
+            <p className="text-sm text-[var(--ec-muted)]">Loading run...</p>
           </Card>
         )}
         {paneDropPreviewActive ? <RunPaneDropPreviewOverlay paneId={entry.paneId} mode="replace" /> : null}
@@ -3855,8 +3864,8 @@ export const App = () => {
               pastedTextAttachmentThreshold={pastedTextAttachmentThreshold}
               consecutiveToolCallCollapseThreshold={consecutiveToolCallCollapseThreshold}
               recentRunDays={recentRunDays}
-              uiTheme={uiTheme}
-              sidebarContrast={sidebarContrast}
+              designScheme={designScheme}
+              sidebarContrastStrength={sidebarContrastStrength}
               sidebarRunEntrySize={sidebarRunEntrySize}
               sidebarGroupRunsByProject={sidebarGroupRunsByProject}
               enableDevMode={snapshot.settings[APP_SETTING_KEYS.enableDevMode] === "true"}
@@ -3920,17 +3929,32 @@ export const App = () => {
                   await loadSnapshot();
                 })
               }
-              onUiThemeChange={(next: UiTheme) =>
+              onDesignSchemeChange={(next: DesignScheme) =>
                 void handleAction(async () => {
                   if (!buildwarden) {
                     throw new Error("The Electron desktop bridge is unavailable.");
                   }
-                  await buildwarden.setAppSetting(APP_SETTING_KEYS.uiTheme, next);
-                  await buildwarden.setAppSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next));
+                  await buildwarden.setAppSetting(APP_SETTING_KEYS.designScheme, serializeDesignScheme(next));
+                  await buildwarden.setAppSetting(APP_SETTING_KEYS.uiTheme, next.mode);
+                  await buildwarden.setAppSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next.mode));
                   await loadSnapshot();
                 })
               }
-              onSidebarContrastChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.sidebarContrast, value)}
+              onSidebarContrastStrengthChange={setSidebarContrastStrength}
+              onSidebarContrastStrengthCommit={(value) =>
+                void handleAction(async () => {
+                  if (!buildwarden) throw new Error("The Electron desktop bridge is unavailable.");
+                  const next = parseSidebarContrastStrengthSetting(value);
+                  setSidebarContrastStrength(next);
+                  try {
+                    await buildwarden.setAppSetting(APP_SETTING_KEYS.sidebarContrast, String(next));
+                  } catch (caught) {
+                    setSidebarContrastStrength(persistedSidebarContrastStrength);
+                    throw caught;
+                  }
+                  await loadSnapshot();
+                })
+              }
               onSidebarRunEntrySizeChange={(value: SidebarRunEntrySize) =>
                 void handleAction(async () => {
                   if (!buildwarden) {
@@ -4418,8 +4442,8 @@ export const App = () => {
             if (selectedRunId) {
               return renderWorkspaceView(
             <Card className="flex min-h-[400px] flex-col items-center justify-center gap-4 p-8">
-              <Loader2 className="h-10 w-10 animate-spin text-cyan-400" />
-              <p className="text-sm text-zinc-500">Loading run...</p>
+              <Loader2 className="h-10 w-10 animate-spin text-[var(--ec-accent)]" />
+              <p className="text-sm text-[var(--ec-muted)]">Loading run...</p>
             </Card>,
               );
             }
@@ -4431,7 +4455,7 @@ export const App = () => {
             return renderWorkspaceView(
                 <Card className="p-8 text-center">
                   <p className="text-lg font-medium">No project selected</p>
-                  <p className="mt-2 text-sm text-zinc-500">{readOnly ? "No projects are configured on the BuildWarden host." : "Open Settings to add your first project, provider, and model."}</p>
+                  <p className="mt-2 text-sm text-[var(--ec-muted)]">{readOnly ? "No projects are configured on the BuildWarden host." : "Open Settings to add your first project, provider, and model."}</p>
                   {!readOnly ? <Button
                     className="mt-4"
                     variant="secondary"
@@ -4447,13 +4471,15 @@ export const App = () => {
   };
 
   if (startupDataRetentionState.status !== "ready") {
+    const sidebarContrastStyle = { "--ec-sidebar-contrast-strength": `${sidebarContrastStrength}%` } as CSSProperties;
     return (
       <div
         className={cn(
           "app-shell flex h-screen min-h-0 flex-col overflow-hidden",
           uiTheme === "light" ? "theme-light" : "theme-dark",
-          sidebarContrast && "sidebar-contrast",
+          sidebarContrastStrength > 0 && "sidebar-contrast",
         )}
+        style={sidebarContrastStyle}
       >
         {showCustomWindowsTitleBar ? (
           <AppTitleBar
@@ -4476,7 +4502,10 @@ export const App = () => {
 
   if (startupAutomationState.status !== "ready") {
     return (
-      <div className={cn("app-shell flex h-screen min-h-0 flex-col overflow-hidden", uiTheme === "light" ? "theme-light" : "theme-dark", sidebarContrast && "sidebar-contrast")}>
+      <div
+        className={cn("app-shell flex h-screen min-h-0 flex-col overflow-hidden", uiTheme === "light" ? "theme-light" : "theme-dark", sidebarContrastStrength > 0 && "sidebar-contrast")}
+        style={{ "--ec-sidebar-contrast-strength": `${sidebarContrastStrength}%` } as CSSProperties}
+      >
         {showCustomWindowsTitleBar ? <AppTitleBar uiTheme={uiTheme} syncWindowsCaptionStrip onOpenMenu={(section, anchor) => void openAppMenuSection(section, anchor)} /> : null}
         <main className="flex min-h-0 flex-1 items-center justify-center bg-[var(--ec-bg)] p-6 text-[var(--ec-text)]">
           <StartupAutomationDialog
@@ -4495,8 +4524,9 @@ export const App = () => {
       className={cn(
         "app-shell flex h-screen min-h-0 flex-col overflow-hidden",
         uiTheme === "light" ? "theme-light" : "theme-dark",
-        sidebarContrast && "sidebar-contrast",
+        sidebarContrastStrength > 0 && "sidebar-contrast",
       )}
+      style={{ "--ec-sidebar-contrast-strength": `${sidebarContrastStrength}%` } as CSSProperties}
     >
       {showCustomWindowsTitleBar ? (
         <AppTitleBar

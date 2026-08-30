@@ -2,7 +2,7 @@ import type { RunForgeCheck, RunForgeCheckProgress, RunForgeReadiness } from "@b
 import { Check, ExternalLink, Loader2, X } from "lucide-react";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
-import { runForgeReadinessHex } from "./run-forge-ui";
+import { runForgeReadinessCssColor } from "./run-forge-ui";
 
 const formatDuration = (milliseconds: number | null) => {
   if (milliseconds == null) return null;
@@ -41,15 +41,15 @@ export const ForgeChecksView = ({
     && progress.failed === 0
     && progress.running === 0;
   const progressColor = allReportedChecksPassed
-    ? runForgeReadinessHex.ready
-    : runForgeReadinessHex[readiness];
+    ? runForgeReadinessCssColor.ready
+    : runForgeReadinessCssColor[readiness];
 
   return (
     <div className={cn("min-w-0", className)}>
-      <div className="flex items-center gap-3 border-b border-zinc-800/70 px-3 py-3">
+      <div className="flex items-center gap-3 border-b border-[var(--ec-border)] px-3 py-3">
         <div
           className="relative h-10 w-10 shrink-0 rounded-full"
-          style={{ background: `conic-gradient(${progressColor} ${String(ringDegrees)}deg, #27272a 0deg)` }}
+          style={{ background: `conic-gradient(${progressColor} ${String(ringDegrees)}deg, var(--ec-border) 0deg)` }}
           role="progressbar"
           aria-label={`${String(progress.completed)} of ${String(progress.total)} checks complete`}
           aria-valuemin={0}
@@ -61,25 +61,25 @@ export const ForgeChecksView = ({
           </div>
         </div>
         <div className="min-w-0">
-          <p className="text-sm font-medium text-zinc-100">{progress.completed} of {progress.total} complete</p>
-          <p className="truncate text-[11px] text-zinc-500">
+          <p className="text-sm font-medium text-[var(--ec-text)]">{progress.completed} of {progress.total} complete</p>
+          <p className="truncate text-[11px] text-[var(--ec-muted)]">
             {progress.successful} passed · {progress.failed} failed · {progress.running} running
           </p>
         </div>
       </div>
-      <div className="divide-y divide-zinc-800/70">
+      <div className="divide-y divide-[var(--ec-border)]">
         {checks.map((check) => {
           const duration = formatDuration(check.durationMs);
           return (
             <div key={check.id} className="flex min-w-0 items-center gap-2.5 px-3 py-2.5">
               {check.status === "success" || check.status === "neutral" || check.status === "skipped"
-                ? <Check className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden />
+                ? <Check className="h-3.5 w-3.5 shrink-0 text-[var(--ec-muted)]" aria-hidden />
                 : check.status === "running" || check.status === "queued"
-                  ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-zinc-500" aria-hidden />
-                  : <X className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden />}
+                  ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--ec-muted)]" aria-hidden />
+                  : <X className="h-3.5 w-3.5 shrink-0 text-[var(--ec-muted)]" aria-hidden />}
               <div className="min-w-0 flex-1">
-                <p className="truncate text-xs text-zinc-200" title={check.name}>{check.name}</p>
-                <p className="truncate text-[10px] text-zinc-600" title={check.description ?? undefined}>
+                <p className="truncate text-xs text-[var(--ec-text)]" title={check.name}>{check.name}</p>
+                <p className="truncate text-[10px] text-[var(--ec-faint)]" title={check.description ?? undefined}>
                   {checkStatusLabel(check.status)}{duration ? ` · ${duration}` : ""}{check.description ? ` · ${check.description}` : ""}
                 </p>
               </div>
@@ -99,7 +99,7 @@ export const ForgeChecksView = ({
             </div>
           );
         })}
-        {checks.length === 0 ? <p className="px-3 py-8 text-center text-xs text-zinc-600">No checks were reported.</p> : null}
+        {checks.length === 0 ? <p className="px-3 py-8 text-center text-xs text-[var(--ec-faint)]">No checks were reported.</p> : null}
       </div>
     </div>
   );

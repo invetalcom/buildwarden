@@ -25,7 +25,7 @@ const codeMirrorTheme = EditorView.theme(
       padding: "0 14px",
     },
     ".cm-gutters": {
-      backgroundColor: "var(--ec-panel-muted)",
+      backgroundColor: "var(--ec-panel-soft)",
       borderRight: "1px solid var(--ec-border)",
       color: "var(--ec-faint)",
     },
@@ -44,11 +44,10 @@ const codeMirrorTheme = EditorView.theme(
     },
     ".cm-tooltip": {
       borderColor: "var(--ec-border)",
-      backgroundColor: "var(--ec-surface)",
+      backgroundColor: "var(--ec-bg-elevated)",
       color: "var(--ec-text)",
     },
   },
-  { dark: true },
 );
 
 export interface CodeMirrorFileViewerProps {

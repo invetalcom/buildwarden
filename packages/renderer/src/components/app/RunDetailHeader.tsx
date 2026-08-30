@@ -98,7 +98,7 @@ interface RunDetailHeaderProps {
 export const RunPaneDropPreviewOverlay = ({ paneId, mode }: { paneId: string; mode: "tile" | "replace" }) => (
   <div className="pointer-events-none absolute inset-0 z-50 rounded-lg p-2">
     <div
-      className="relative h-full min-h-24 overflow-hidden rounded-lg border-2 border-[var(--ec-accent)] shadow-[inset_0_0_0_1px_var(--ec-accent-ring),0_0_28px_rgba(34,211,238,0.18)]"
+      className="relative h-full min-h-24 overflow-hidden rounded-lg border-2 border-[var(--ec-accent)] shadow-[inset_0_0_0_1px_var(--ec-accent-ring),0_0_28px_var(--ec-accent-soft)]"
       style={{ background: "color-mix(in srgb, var(--ec-accent) 16%, transparent)" }}
     >
       <div

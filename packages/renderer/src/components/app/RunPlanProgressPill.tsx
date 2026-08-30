@@ -12,7 +12,7 @@ const segmentedStepClass = (status: string) => {
   if (status === "completed") {
     return "bg-[var(--ec-success)]";
   }
-  return status === "inProgress" ? "bg-[var(--ec-info)]" : "bg-[var(--ec-border-strong)]";
+  return status === "inProgress" ? "bg-[var(--ec-accent)]" : "bg-[var(--ec-border-strong)]";
 };
 
 const stepTitleClass = (status: string) => {
@@ -32,7 +32,7 @@ const StepIcon = ({ status }: Readonly<{ status: string }>) => {
   }
   if (status === "inProgress") {
     return (
-      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--ec-info-soft)] text-[var(--ec-info)]">
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]">
         <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
       </span>
     );
@@ -72,10 +72,7 @@ export function RunPlanProgressPill({ progress }: Readonly<{ progress: DerivedRu
         type="button"
         variant="secondary"
         size="sm"
-        className={cn(
-          "h-8 max-w-[18rem] shrink-0 gap-2 border-[var(--ec-info-ring)] bg-[var(--ec-info-soft)] px-2 text-xs text-[var(--ec-info)] hover:bg-[var(--ec-hover)]",
-          open && "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]",
-        )}
+        className="h-8 max-w-[18rem] shrink-0 gap-2 border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-2 text-xs text-[var(--ec-accent)] hover:bg-[var(--ec-hover)]"
         aria-expanded={open}
         aria-haspopup="dialog"
         title={`Plan progress: ${String(summary.completed)}/${String(summary.total)} - ${summary.activeTitle}`}
@@ -133,7 +130,7 @@ export function RunPlanProgressPill({ progress }: Readonly<{ progress: DerivedRu
                 key={`${step.status}:${index}:${step.title}`}
                 className={cn(
                   "flex items-start gap-2 rounded-md px-2 py-1.5",
-                  step.status === "inProgress" && "bg-[var(--ec-info-soft)]",
+                  step.status === "inProgress" && "bg-[var(--ec-accent-soft)]",
                   step.status === "completed" && "bg-[var(--ec-success-soft)]",
                 )}
               >
