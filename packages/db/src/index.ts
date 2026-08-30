@@ -12,6 +12,7 @@ import type {
   ChatBookmarkRecord,
   ChatBookmarkSummary,
   ChatDetail,
+  ChatHistoryPage,
   ChatRecord,
   ChatStepRecord,
   ChatSummary,
@@ -67,6 +68,7 @@ import type {
   RemoteAccessSessionRecord,
   RemoteCommandIdempotencyRecord,
   RunDetail,
+  RunHistoryPage,
   RunListVisibility,
   RunInput,
   RunNoteRecord,
@@ -79,10 +81,34 @@ import type {
   RunForgeRequestSummary,
   RunStatus,
   RunStepRecord,
+  UserAnchoredHistoryPageInfo,
+  UserAnchoredHistoryPageRequest,
   WorktreeRecord,
 } from "@buildwarden/shared";
 
 const ORCHESTRATION_DETAIL_HISTORY_LIMIT = 200;
+export const INITIAL_USER_HISTORY_TURN_LIMIT = 10;
+export const EARLIER_USER_HISTORY_TURN_LIMIT = 20;
+
+type HistoryStep = RunStepRecord | ChatStepRecord;
+type HistoryCursor = { createdAt: string; id: string; sequence: number };
+type HistoryTable = "run_steps" | "chat_steps";
+
+const encodeHistoryCursor = (cursor: HistoryCursor): string =>
+  Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+
+const decodeHistoryCursor = (value: string): HistoryCursor => {
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Partial<HistoryCursor>;
+    if (typeof parsed.createdAt === "string" && parsed.createdAt && typeof parsed.id === "string" && parsed.id &&
+      typeof parsed.sequence === "number" && Number.isSafeInteger(parsed.sequence) && parsed.sequence > 0) {
+      return { createdAt: parsed.createdAt, id: parsed.id, sequence: parsed.sequence };
+    }
+  } catch {
+    // Normalize malformed transport input to the same public validation error.
+  }
+  throw new Error("Invalid history cursor.");
+};
 const ORCHESTRATION_SELECT = `select id, project_id as projectId, coordinator_run_id as coordinatorRunId, status,
   team_snapshot_json as teamSnapshotJson, wake_mode as wakeMode, wake_task_ids_json as wakeTaskIdsJson,
   last_event_sequence as lastEventSequence, last_delivered_sequence as lastDeliveredSequence,
@@ -190,6 +216,145 @@ const applyDerivedRunStep = (
 };
 
 export class BuildWardenDatabase {
+  private historyPrefixRevision(
+    table: HistoryTable,
+    ownerColumn: "run_id" | "chat_id",
+    ownerId: string,
+    cursor: HistoryCursor,
+  ): string {
+    const predicate = `rowid < ?`;
+    const params: SQLInputValue[] = [ownerId, cursor.sequence];
+    const count = this.first<{ count: number }>(
+      `select count(*) as count from ${table} where ${ownerColumn} = ? and ${predicate}`,
+      params,
+    )?.count ?? 0;
+    const newest = this.first<HistoryCursor>(
+      `select created_at as createdAt, id, rowid as sequence from ${table} where ${ownerColumn} = ? and ${predicate} order by rowid desc limit 1`,
+      params,
+    );
+    return `${String(count)}:${newest ? encodeHistoryCursor(newest) : "empty"}`;
+  }
+
+  private getHistorySteps<TStep extends HistoryStep>(
+    table: HistoryTable,
+    ownerColumn: "run_id" | "chat_id",
+    ownerAlias: "runId" | "chatId",
+    ownerId: string,
+    lowerBound?: HistoryCursor,
+    upperBound?: HistoryCursor,
+  ): TStep[] {
+    const clauses = [`${ownerColumn} = ?`];
+    const params: SQLInputValue[] = [ownerId];
+    if (lowerBound) {
+      clauses.push(`rowid >= ?`);
+      params.push(lowerBound.sequence);
+    }
+    if (upperBound) {
+      clauses.push(`rowid < ?`);
+      params.push(upperBound.sequence);
+    }
+    return this.all<TStep>(
+      `select id, ${ownerColumn} as ${ownerAlias}, event_type as eventType, title, content, metadata_json as metadataJson, created_at as createdAt
+       from ${table} where ${clauses.join(" and ")} order by rowid asc`,
+      params,
+    );
+  }
+
+  private getHistoryUserAnchors(
+    table: HistoryTable,
+    ownerColumn: "run_id" | "chat_id",
+    ownerId: string,
+    limit: number,
+    before?: HistoryCursor,
+  ): HistoryCursor[] {
+    const beforeClause = before ? `and rowid < ?` : "";
+    const params: SQLInputValue[] = before
+      ? [ownerId, before.sequence, limit]
+      : [ownerId, limit];
+    return this.all<HistoryCursor>(
+      `select created_at as createdAt, id, rowid as sequence from ${table}
+       where ${ownerColumn} = ? ${beforeClause}
+         and event_type = 'log'
+         and json_valid(metadata_json)
+         and json_extract(metadata_json, '$.source') = 'user'
+       order by rowid desc limit ?`,
+      params,
+    );
+  }
+
+  private getInitialHistoryPage<TStep extends HistoryStep>(
+    table: HistoryTable,
+    ownerColumn: "run_id" | "chat_id",
+    ownerAlias: "runId" | "chatId",
+    ownerId: string,
+  ): { steps: TStep[]; page: UserAnchoredHistoryPageInfo } {
+    const anchors = this.getHistoryUserAnchors(
+      table,
+      ownerColumn,
+      ownerId,
+      INITIAL_USER_HISTORY_TURN_LIMIT + 1,
+    );
+    const hasMore = anchors.length > INITIAL_USER_HISTORY_TURN_LIMIT;
+    if (!hasMore) {
+      return {
+        steps: this.getHistorySteps<TStep>(table, ownerColumn, ownerAlias, ownerId),
+        page: { beforeCursor: null, hasMore: false, snapshotRevision: "complete" },
+      };
+    }
+    const boundary = anchors[INITIAL_USER_HISTORY_TURN_LIMIT - 1]!;
+    return {
+      steps: this.getHistorySteps<TStep>(table, ownerColumn, ownerAlias, ownerId, boundary),
+      page: {
+        beforeCursor: encodeHistoryCursor(boundary),
+        hasMore: true,
+        snapshotRevision: this.historyPrefixRevision(table, ownerColumn, ownerId, boundary),
+      },
+    };
+  }
+
+  private getEarlierHistoryPage<TStep extends HistoryStep>(
+    table: HistoryTable,
+    ownerColumn: "run_id" | "chat_id",
+    ownerAlias: "runId" | "chatId",
+    ownerId: string,
+    request: UserAnchoredHistoryPageRequest,
+  ): { steps: TStep[]; page: UserAnchoredHistoryPageInfo; stale: boolean } {
+    const upperBound = decodeHistoryCursor(request.beforeCursor);
+    const currentRevision = this.historyPrefixRevision(table, ownerColumn, ownerId, upperBound);
+    if (currentRevision !== request.snapshotRevision) {
+      return {
+        steps: [],
+        page: {
+          beforeCursor: request.beforeCursor,
+          hasMore: true,
+          snapshotRevision: currentRevision,
+        },
+        stale: true,
+      };
+    }
+
+    const anchors = this.getHistoryUserAnchors(
+      table,
+      ownerColumn,
+      ownerId,
+      EARLIER_USER_HISTORY_TURN_LIMIT + 1,
+      upperBound,
+    );
+    const hasMore = anchors.length > EARLIER_USER_HISTORY_TURN_LIMIT;
+    const boundary = hasMore ? anchors[EARLIER_USER_HISTORY_TURN_LIMIT - 1]! : undefined;
+    return {
+      steps: this.getHistorySteps<TStep>(table, ownerColumn, ownerAlias, ownerId, boundary, upperBound),
+      page: boundary
+        ? {
+            beforeCursor: encodeHistoryCursor(boundary),
+            hasMore: true,
+            snapshotRevision: this.historyPrefixRevision(table, ownerColumn, ownerId, boundary),
+          }
+        : { beforeCursor: null, hasMore: false, snapshotRevision: "complete" },
+      stale: false,
+    };
+  }
+
   private db: DatabaseSync | null = null;
   /**
    * Run list rows expose a few values derived from step history. Rebuilding them
@@ -1692,7 +1857,7 @@ export class BuildWardenDatabase {
         created_at as createdAt
       from chat_steps
       where chat_id = ?
-      order by created_at asc
+      order by created_at asc, rowid asc
       `,
       [chatId],
     );
@@ -1702,6 +1867,19 @@ export class BuildWardenDatabase {
     const chat = this.getChat(chatId);
     const steps = this.getChatSteps(chatId);
     return { chat, steps };
+  }
+
+  getInitialChatHistory(chatId: string): ChatHistoryPage {
+    this.getChat(chatId);
+    return {
+      ...this.getInitialHistoryPage<ChatStepRecord>("chat_steps", "chat_id", "chatId", chatId),
+      stale: false,
+    };
+  }
+
+  getEarlierChatHistory(chatId: string, request: UserAnchoredHistoryPageRequest): ChatHistoryPage {
+    this.getChat(chatId);
+    return this.getEarlierHistoryPage<ChatStepRecord>("chat_steps", "chat_id", "chatId", chatId, request);
   }
 
   updateChatStatus(
@@ -3081,10 +3259,45 @@ export class BuildWardenDatabase {
         created_at as createdAt
       from run_steps
       where run_id = ?
-      order by created_at asc
+      order by created_at asc, rowid asc
       `,
       [runId],
     );
+  }
+
+  getRunRecoveryEventTimestamps(runId: string): { latestInterruptedAt: string; latestRecoveryAt: string } {
+    const latestInterruptedAt =
+      this.first<{ createdAt: string }>(
+        `select created_at as createdAt from run_steps
+         where run_id = ? and json_valid(metadata_json) and json_extract(metadata_json, '$.sessionInterrupted') = 1
+         order by rowid desc limit 1`,
+        [runId],
+      )?.createdAt ?? "";
+    const latestRecoveryAt = this.first<{ createdAt: string }>(
+      `select created_at as createdAt from run_steps
+       where run_id = ? and json_valid(metadata_json)
+         and (json_extract(metadata_json, '$.recoveredInterruptedSession') = 1
+           or json_extract(metadata_json, '$.resumedFromCheckpoint') = 1)
+       order by rowid desc limit 1`,
+      [runId],
+    )?.createdAt ?? "";
+    return {
+      latestInterruptedAt,
+      latestRecoveryAt,
+    };
+  }
+
+  getInitialRunHistory(runId: string): RunHistoryPage {
+    this.getRun(runId);
+    return {
+      ...this.getInitialHistoryPage<RunStepRecord>("run_steps", "run_id", "runId", runId),
+      stale: false,
+    };
+  }
+
+  getEarlierRunHistory(runId: string, request: UserAnchoredHistoryPageRequest): RunHistoryPage {
+    this.getRun(runId);
+    return this.getEarlierHistoryPage<RunStepRecord>("run_steps", "run_id", "runId", runId, request);
   }
 
   upsertWorktree(worktree: Omit<WorktreeRecord, "createdAt" | "updatedAt">): WorktreeRecord {

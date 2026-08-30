@@ -85,6 +85,7 @@ export {
   applyLiveChatToSnapshot,
   applyLiveRunEventToDetail,
   applyLiveRunToSnapshot,
+  mergeOrderedRecords,
 } from "./lib/live-state";
 export {
   buildRunForgeAgentPrompt,

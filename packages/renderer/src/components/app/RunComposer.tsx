@@ -17,6 +17,7 @@ import {
   type ModelExecutionProfile,
   type RunModelConfiguration,
   type RunMode,
+  type RunTokenUsage,
   type RunWorkspaceType,
   type UnifiedProviderFamily,
   type ProviderType,
@@ -908,6 +909,7 @@ interface RunComposerProps {
   contextHistoryText?: string;
   contextAttachmentFiles?: File[];
   showContextBadge?: boolean;
+  tokenUsage?: Partial<RunTokenUsage> | null;
   reasoningEffort?: string;
   anthropicEffort?: string;
   onReasoningEffortChange?: (value: string) => void;
@@ -965,6 +967,7 @@ export const RunComposer = ({
   contextHistoryText,
   contextAttachmentFiles,
   showContextBadge = true,
+  tokenUsage,
   reasoningEffort = "",
   anthropicEffort = "",
   onReasoningEffortChange,
@@ -1423,6 +1426,7 @@ export const RunComposer = ({
                   historyText={contextHistoryText}
                   attachmentFiles={contextAttachmentFiles}
                   isRun={!isChat}
+                  tokenUsage={tokenUsage}
                 />
               ) : null}
               {isRunActive ? (

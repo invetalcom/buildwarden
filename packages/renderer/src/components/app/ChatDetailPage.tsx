@@ -19,7 +19,7 @@ import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { buildRunReasoningInput } from "./app-model";
-import { applyLiveChatEventToDetail } from "../../lib/live-state";
+import { applyLiveChatEventToDetail, mergeOrderedRecords } from "../../lib/live-state";
 
 const safeParseMetadata = (value: string) => {
   try {
@@ -118,8 +118,10 @@ export const ChatDetailPage = ({
   const [selectedReasoningEffort, setSelectedReasoningEffort] = useState("auto");
   const [selectedAnthropicEffort, setSelectedAnthropicEffort] = useState("auto");
   const [selectedExecutionMode, setSelectedExecutionMode] = useState("auto");
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
   const activityContainerRef = useRef<HTMLDivElement>(null);
   const activityEndRef = useRef<HTMLDivElement>(null);
+  const suppressNextAutoScrollRef = useRef(false);
 
   const buildwarden = useBuildWardenClient();
   const readOnly = !buildwarden.capabilities.chatMutations;
@@ -156,12 +158,52 @@ export const ChatDetailPage = ({
   const loadChatDetail = useCallback(async () => {
     if (!buildwarden) return;
     const d = await buildwarden.getChatDetail(chat.id);
-    setDetail(d);
+    setDetail((current) => {
+      const currentHistoryPage = current.historyPage;
+      const historyWasExpanded = current.chat.id === d.chat.id && Boolean(currentHistoryPage &&
+        (currentHistoryPage.beforeCursor !== d.historyPage?.beforeCursor || currentHistoryPage.hasMore === false));
+      return historyWasExpanded
+        ? { ...d, steps: mergeOrderedRecords(current.steps, d.steps), historyPage: current.historyPage }
+        : d;
+    });
   }, [buildwarden, chat.id]);
 
   useEffect(() => {
-    setDetail(chatDetail);
+    setDetail((current) => {
+      const currentHistoryPage = current.historyPage;
+      const historyWasExpanded = current.chat.id === chatDetail.chat.id && Boolean(currentHistoryPage &&
+        (currentHistoryPage.beforeCursor !== chatDetail.historyPage?.beforeCursor || currentHistoryPage.hasMore === false));
+      return historyWasExpanded
+        ? { ...chatDetail, steps: mergeOrderedRecords(current.steps, chatDetail.steps), historyPage: current.historyPage }
+        : chatDetail;
+    });
   }, [chatDetail]);
+
+  const loadEarlierHistory = useCallback(async () => {
+    const page = detail.historyPage;
+    if (!page?.hasMore || !page.beforeCursor || loadingEarlier) return;
+    const container = activityContainerRef.current;
+    const previousHeight = container?.scrollHeight ?? 0;
+    const previousTop = container?.scrollTop ?? 0;
+    const request = { beforeCursor: page.beforeCursor, snapshotRevision: page.snapshotRevision };
+    suppressNextAutoScrollRef.current = true;
+    setLoadingEarlier(true);
+    try {
+      const result = await buildwarden.getEarlierChatHistory(chat.id, request);
+      if (result.stale) {
+        await loadChatDetail();
+        return;
+      }
+      setDetail((current) => current.historyPage?.beforeCursor === request.beforeCursor
+        ? { ...current, steps: mergeOrderedRecords(result.steps, current.steps), historyPage: result.page }
+        : current);
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      const currentContainer = activityContainerRef.current;
+      if (currentContainer) currentContainer.scrollTop = previousTop + (currentContainer.scrollHeight - previousHeight);
+    } finally {
+      setLoadingEarlier(false);
+    }
+  }, [buildwarden, chat.id, detail.historyPage, loadChatDetail, loadingEarlier]);
 
   useEffect(() => {
     if (modelOptions.some((option) => option.id === selectedModelId)) {
@@ -211,13 +253,18 @@ export const ChatDetailPage = ({
   const contextHistoryText = useMemo(() => buildVisibleConversationHistory(steps), [steps]);
 
   useEffect(() => {
+    if (loadingEarlier) return;
+    if (suppressNextAutoScrollRef.current) {
+      suppressNextAutoScrollRef.current = false;
+      return;
+    }
     const container = activityContainerRef.current;
     const end = activityEndRef.current;
     if (!container || !end) {
       return;
     }
     end.scrollIntoView({ block: "end" });
-  }, [activityScrollKey, isChatActive, hasMainAssistantOutputAfterLatestUser]);
+  }, [activityScrollKey, isChatActive, hasMainAssistantOutputAfterLatestUser, loadingEarlier]);
 
   useEffect(() => {
     setSelectedReasoningEffort(latestUserMessageOptions.reasoningEffort);
@@ -265,16 +312,25 @@ export const ChatDetailPage = ({
         onRemoveBookmark={onRemoveBookmark}
       />
 
-      <div className="relative min-h-0 flex-1">
-        <ChatTranscript
-          ref={activityContainerRef}
-          endRef={activityEndRef}
-          className="app-scrollbar h-full min-h-0 overflow-auto py-1 pr-10"
-          items={activityEntries.map(({ step }) => step)}
-          emptyMessage="No messages yet."
-          showLoading={showPreResponseLoading}
-        />
-        <ScrollBoundaryControls key={chat.id} scrollElementRef={activityContainerRef} />
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        {detail.historyPage?.hasMore && detail.historyPage.beforeCursor ? (
+          <div className="flex shrink-0 justify-center border-b border-[var(--ec-border)] py-1">
+            <Button variant="ghost" size="sm" className="h-7 text-[11px]" onClick={() => void loadEarlierHistory()} disabled={loadingEarlier}>
+              {loadingEarlier ? "Loading earlier turns..." : "Load earlier turns"}
+            </Button>
+          </div>
+        ) : null}
+        <div className="relative min-h-0 flex-1">
+          <ChatTranscript
+            ref={activityContainerRef}
+            endRef={activityEndRef}
+            className="app-scrollbar h-full min-h-0 overflow-auto py-1 pr-10"
+            items={activityEntries.map(({ step }) => step)}
+            emptyMessage="No messages yet."
+            showLoading={showPreResponseLoading}
+          />
+          <ScrollBoundaryControls key={chat.id} scrollElementRef={activityContainerRef} />
+        </div>
       </div>
       {!readOnly ? <RunComposer
         variant="chat"

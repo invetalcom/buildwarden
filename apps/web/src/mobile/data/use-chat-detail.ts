@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatDetail, ChatEvent } from "@buildwarden/shared";
 import type { BuildWardenClient } from "@buildwarden/renderer";
-import { applyLiveChatEventToDetail } from "@buildwarden/renderer/logic";
+import { applyLiveChatEventToDetail, mergeOrderedRecords } from "@buildwarden/renderer/logic";
 import { errorMessage } from "../lib/format";
 
 const RELOAD_DEBOUNCE_MS = 300;
@@ -11,11 +11,16 @@ export interface ChatDetailStore {
   loading: boolean;
   error: string | null;
   reload: () => Promise<void>;
+  historyLoading: boolean;
+  loadEarlierHistory: () => Promise<void>;
 }
 
 export const useChatDetail = (client: BuildWardenClient, chatId: string | null): ChatDetailStore => {
   const [detail, setDetail] = useState<ChatDetail | null>(null);
+  const detailRef = useRef<ChatDetail | null>(null);
+  detailRef.current = detail;
   const [loading, setLoading] = useState(Boolean(chatId));
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
   const activeLoadRequestRef = useRef<number | null>(null);
@@ -45,7 +50,14 @@ export const useChatDetail = (client: BuildWardenClient, chatId: string | null):
         .filter(({ revision, event }) => revision > revisionAtStart && event.chatId === chatId)
         .reduce((current, { event }) => applyLiveChatEventToDetail(current, event), next);
       recentLiveEventsRef.current = recentLiveEventsRef.current.filter(({ revision }) => revision > revisionAtCompletion);
-      setDetail(merged);
+      setDetail((current) => {
+        const currentPage = current?.historyPage;
+        const historyWasExpanded = silent && current?.chat.id === merged.chat.id && Boolean(currentPage &&
+          (currentPage.beforeCursor !== merged.historyPage?.beforeCursor || currentPage.hasMore === false));
+        return historyWasExpanded
+          ? { ...merged, steps: mergeOrderedRecords(current!.steps, merged.steps), historyPage: currentPage }
+          : merged;
+      });
       setError(null);
     } catch (caught) {
       if (requestRef.current !== requestId) return;
@@ -59,6 +71,26 @@ export const useChatDetail = (client: BuildWardenClient, chatId: string | null):
   useEffect(() => {
     void load(false);
   }, [load]);
+
+  const loadEarlierHistory = useCallback(async () => {
+    if (!chatId || historyLoading) return;
+    const page = detailRef.current?.historyPage;
+    if (!page?.hasMore || !page.beforeCursor) return;
+    const request = { beforeCursor: page.beforeCursor, snapshotRevision: page.snapshotRevision };
+    setHistoryLoading(true);
+    try {
+      const result = await client.getEarlierChatHistory(chatId, request);
+      if (result.stale) {
+        await load(false);
+        return;
+      }
+      setDetail((current) => current?.historyPage?.beforeCursor === request.beforeCursor
+        ? { ...current, steps: mergeOrderedRecords(result.steps, current.steps), historyPage: result.page }
+        : current);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [chatId, client, historyLoading, load]);
 
   useEffect(() => {
     if (!chatId) return;
@@ -85,5 +117,5 @@ export const useChatDetail = (client: BuildWardenClient, chatId: string | null):
     };
   }, [chatId, client, load]);
 
-  return { detail, loading, error, reload: () => load(false) };
+  return { detail, loading, error, reload: () => load(false), historyLoading, loadEarlierHistory };
 };

@@ -43,6 +43,7 @@ import {
   type RendererLogPayload,
   type RunChatInput,
   type RunInput,
+  type UserAnchoredHistoryPageRequest,
   type RunWorkspaceFileInput,
 } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
@@ -415,6 +416,12 @@ const bootstrap = async (): Promise<void> => {
 
   const validateSingleRemoteStringArg = (args: unknown[]): args is [string] =>
     args.length === 1 && typeof args[0] === "string";
+  const validateHistoryPageArgs = (args: unknown[]): args is [string, UserAnchoredHistoryPageRequest] => {
+    const request = args[1];
+    return args.length === 2 && typeof args[0] === "string" && request != null && typeof request === "object" &&
+      !Array.isArray(request) && typeof (request as Record<string, unknown>).beforeCursor === "string" &&
+      typeof (request as Record<string, unknown>).snapshotRevision === "string";
+  };
   const validateRunWorkspaceFileRemoteArgs = (args: unknown[]): args is [RunWorkspaceFileInput] => {
     const input = args[0];
     return args.length === 1 && input != null && typeof input === "object" && !Array.isArray(input) &&
@@ -426,6 +433,11 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("getProjectBranches", (projectId) => controller.getProjectBranches(projectId), validateSingleRemoteStringArg);
   remoteOperations.register("getProjectCurrentBranch", (projectId) => controller.getProjectCurrentBranch(projectId), validateSingleRemoteStringArg);
   remoteOperations.register("getRunDetail", (runId) => controller.getRunDetail(runId), validateSingleRemoteStringArg);
+  remoteOperations.register(
+    "getEarlierRunHistory",
+    (runId, request) => controller.getEarlierRunHistory(runId, request),
+    validateHistoryPageArgs,
+  );
   remoteOperations.register(
     "getOrchestrationDetail",
     (coordinatorRunId) => controller.getOrchestrationDetail(coordinatorRunId),
@@ -461,6 +473,11 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("getProjectLoopUiReviewImage", (reviewId) => controller.getProjectLoopUiReviewImage(reviewId), validateSingleRemoteStringArg);
   remoteOperations.register("getRunChat", (runId) => controller.getRunChat(runId), validateSingleRemoteStringArg);
   remoteOperations.register("getChatDetail", (chatId) => controller.getChatDetail(chatId), validateSingleRemoteStringArg);
+  remoteOperations.register(
+    "getEarlierChatHistory",
+    (chatId, request) => controller.getEarlierChatHistory(chatId, request),
+    validateHistoryPageArgs,
+  );
   remoteOperations.register("listChatsWithSteps", () => controller.listChatsWithSteps(), validateNoRemoteArgs);
   remoteOperations.register("getBookmarksWithSteps", () => controller.getBookmarksWithSteps(), validateNoRemoteArgs);
   remoteOperations.register("getChatBookmarksWithSteps", () => controller.getChatBookmarksWithSteps(), validateNoRemoteArgs);
@@ -1499,6 +1516,8 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.getModelDeletionImpact, (_, modelId: string) => controller.getModelDeletionImpact(modelId));
   ipcMain.handle(IPC_CHANNELS.deleteModel, (_, modelId: string) => controller.deleteModel(modelId));
   ipcMain.handle(IPC_CHANNELS.getRunDetail, (_, runId: string) => controller.getRunDetail(runId));
+  ipcMain.handle(IPC_CHANNELS.getEarlierRunHistory, (_, runId: string, request: UserAnchoredHistoryPageRequest) =>
+    controller.getEarlierRunHistory(runId, request));
   ipcMain.handle(IPC_CHANNELS.getOrchestrationDetail, (_, coordinatorRunId: string) =>
     controller.getOrchestrationDetail(coordinatorRunId));
   ipcMain.handle(IPC_CHANNELS.getOrchestrationTaskDetail, (_, taskId: string) =>
@@ -1591,6 +1610,8 @@ const bootstrap = async (): Promise<void> => {
   );
   ipcMain.handle(IPC_CHANNELS.getRunChat, (_, runId: string) => controller.getRunChat(runId));
   ipcMain.handle(IPC_CHANNELS.getChatDetail, (_, chatId: string) => controller.getChatDetail(chatId));
+  ipcMain.handle(IPC_CHANNELS.getEarlierChatHistory, (_, chatId: string, request: UserAnchoredHistoryPageRequest) =>
+    controller.getEarlierChatHistory(chatId, request));
   ipcMain.handle(IPC_CHANNELS.followUpChat, (_, chatId: string, prompt: string, options) =>
     controller.followUpChat(chatId, prompt, options),
   );

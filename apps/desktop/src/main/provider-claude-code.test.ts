@@ -4,6 +4,8 @@ import {
   buildClaudeCodeArgs,
   buildClaudeCanUseTool,
   buildClaudeOrchestrationMcpServer,
+  buildClaudePrompt,
+  buildClaudeResumeDialogHandler,
   ClaudeCodeProviderAdapter,
   ClaudeSubagentTracker,
   getClaudeCodeAvailableModelsForVersion,
@@ -156,6 +158,54 @@ describe("ClaudeCodeProviderAdapter", () => {
     ]);
   });
 
+  it("passes the native compact command through without the BuildWarden prompt envelope", () => {
+    expect(buildClaudePrompt({
+      runId: "run-1",
+      cwd: "C:\\repo",
+      prompt: "/compact",
+      modelId: "sonnet",
+      inputMode: "code",
+      signal: new AbortController().signal,
+    })).toBe("/compact");
+  });
+
+  it("maps Claude's resume safeguard dialog onto BuildWarden user input", async () => {
+    const requests: unknown[] = [];
+    const handler = buildClaudeResumeDialogHandler({
+      signal: new AbortController().signal,
+      requestUserInput: async (request) => {
+        requests.push(request);
+        return { claudeResumeAction: "Compact and continue" };
+      },
+    });
+
+    await expect(handler(
+      { dialogKind: "resume_return", payload: { sessionAgeMinutes: 92, estimatedTokens: 146_000 } },
+      { signal: new AbortController().signal, requestId: "resume-dialog-1" },
+    )).resolves.toEqual({ behavior: "completed", result: { action: "compact" } });
+    expect(requests).toEqual([expect.objectContaining({
+      requestId: "resume-dialog-1",
+      title: "Resume Claude session",
+      content: expect.stringContaining("146,000 tokens"),
+      questions: [expect.objectContaining({
+        id: "claudeResumeAction",
+        options: expect.arrayContaining([
+          expect.objectContaining({ label: "Compact and continue" }),
+          expect.objectContaining({ label: "Keep full history" }),
+          expect.objectContaining({ label: "Don't ask again" }),
+        ]),
+      })],
+    })]);
+  });
+
+  it("chooses safe compaction for resumed chats without an interactive dialog bridge", async () => {
+    const handler = buildClaudeResumeDialogHandler({ signal: new AbortController().signal });
+    await expect(handler(
+      { dialogKind: "resume_return", payload: { estimatedTokens: 180_000 } },
+      { signal: new AbortController().signal, requestId: "chat-resume" },
+    )).resolves.toEqual({ behavior: "completed", result: { action: "compact" } });
+  });
+
   it("passes Claude Code bypass permissions flags when YOLO mode is enabled", () => {
     expect(
       buildClaudeCodeArgs({
@@ -292,7 +342,7 @@ describe("ClaudeCodeProviderAdapter", () => {
     ];
 
     await expect(
-      canUseTool("Bash", { command: "npm test" }, { signal: new AbortController().signal, suggestions, toolUseID: "tool-1" }),
+      canUseTool("Bash", { command: "npm test" }, { signal: new AbortController().signal, suggestions, toolUseID: "tool-1", requestId: "request-1" }),
     ).resolves.toEqual({
       behavior: "allow",
       updatedInput: { command: "npm test" },
@@ -319,7 +369,7 @@ describe("ClaudeCodeProviderAdapter", () => {
     ];
 
     await expect(
-      canUseTool("Write", { file_path: "src/App.tsx" }, { signal: new AbortController().signal, suggestions, toolUseID: "tool-1" }),
+      canUseTool("Write", { file_path: "src/App.tsx" }, { signal: new AbortController().signal, suggestions, toolUseID: "tool-1", requestId: "request-1" }),
     ).resolves.toEqual({
       behavior: "allow",
       updatedInput: { file_path: "src/App.tsx" },
@@ -340,7 +390,7 @@ describe("ClaudeCodeProviderAdapter", () => {
     });
 
     await expect(
-      canUseTool("AskUserQuestion", { question: "Which API should I use?" }, { signal: new AbortController().signal, toolUseID: "tool-1" }),
+      canUseTool("AskUserQuestion", { question: "Which API should I use?" }, { signal: new AbortController().signal, toolUseID: "tool-1", requestId: "request-1" }),
     ).resolves.toMatchObject({ behavior: "deny" });
     expect(chunks).toEqual([
       {
@@ -386,7 +436,7 @@ describe("ClaudeCodeProviderAdapter", () => {
     };
 
     await expect(
-      canUseTool("AskUserQuestion", input, { signal: new AbortController().signal, toolUseID: "tool-ask-1" }),
+      canUseTool("AskUserQuestion", input, { signal: new AbortController().signal, toolUseID: "tool-ask-1", requestId: "request-ask-1" }),
     ).resolves.toEqual({
       behavior: "allow",
       updatedInput: {
@@ -428,7 +478,7 @@ describe("ClaudeCodeProviderAdapter", () => {
     });
 
     await expect(
-      canUseTool("ExitPlanMode", { plan: "1. Inspect files\n2. Patch component" }, { signal: new AbortController().signal, toolUseID: "tool-1" }),
+      canUseTool("ExitPlanMode", { plan: "1. Inspect files\n2. Patch component" }, { signal: new AbortController().signal, toolUseID: "tool-1", requestId: "request-1" }),
     ).resolves.toMatchObject({ behavior: "deny", interrupt: true });
     expect(chunks).toEqual([
       {
@@ -467,7 +517,7 @@ describe("ClaudeCodeProviderAdapter", () => {
             { content: "Run validation", status: "pending" },
           ],
         },
-        { signal: new AbortController().signal, toolUseID: "todo-1" },
+        { signal: new AbortController().signal, toolUseID: "todo-1", requestId: "request-todo-1" },
       ),
     ).resolves.toMatchObject({ behavior: "allow" });
     expect(chunks).toEqual([
@@ -1142,7 +1192,7 @@ describe("Claude Code subagents", () => {
       canUseTool(
         "Agent",
         { description: "explore", prompt: "look around", subagent_type: "Explore" },
-        { signal: new AbortController().signal, suggestions: [], toolUseID: "toolu_agent_2" },
+        { signal: new AbortController().signal, suggestions: [], toolUseID: "toolu_agent_2", requestId: "request-agent-2" },
       ),
     ).resolves.toMatchObject({ behavior: "allow" });
   });

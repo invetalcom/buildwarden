@@ -9,6 +9,7 @@ import {
   tool,
   type CanUseTool,
   type ModelInfo,
+  type OnUserDialog,
   type Options as ClaudeAgentOptions,
   type PermissionResult,
   type PermissionUpdate,
@@ -37,6 +38,8 @@ import type {
 } from "@buildwarden/shared";
 import {
   MODEL_CONFIG_EXECUTION_PROFILE_KEY,
+  DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW,
+  PROVIDER_CONFIG_CLAUDE_AUTO_COMPACT_WINDOW_KEY,
   PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY,
   PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY,
   buildNetworkProxyUrl,
@@ -86,6 +89,7 @@ const CLAUDE_CODE_MODEL_CATALOG: readonly ClaudeCodeModelCatalogEntry[] = [
 type ClaudeCodeResolvedConfig = {
   binaryPath: string;
   launchArgs: string[];
+  autoCompactWindow: number;
 };
 
 type ClaudeSdkExtraArgs = NonNullable<ClaudeAgentOptions["extraArgs"]>;
@@ -265,9 +269,11 @@ const getDefaultClaudeBinaryPath = (): string => {
 const resolveClaudeCodeConfig = (config: Record<string, unknown> | undefined): ClaudeCodeResolvedConfig => {
   const binaryPath = asString(config?.[PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY])?.trim() || getDefaultClaudeBinaryPath();
   const rawLaunchArgs = asString(config?.[PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY])?.trim() || "";
+  const configuredAutoCompactWindow = asOptionalFiniteNumber(config?.[PROVIDER_CONFIG_CLAUDE_AUTO_COMPACT_WINDOW_KEY]);
   return {
     binaryPath,
     launchArgs: splitLaunchArgs(rawLaunchArgs),
+    autoCompactWindow: Math.max(20_000, Math.round(configuredAutoCompactWindow ?? DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW)),
   };
 };
 
@@ -330,8 +336,12 @@ const resolveClaudeCodeEffort = (providerOptions: ProviderExecutionOptions | und
   return effort && effort !== "auto" && supportedEfforts.has(effort) ? effort : undefined;
 };
 
-const resolveClaudeCodeSettings = (providerOptions: ProviderExecutionOptions | undefined): Record<string, boolean> | undefined => {
-  const settings: Record<string, boolean> = {};
+const resolveClaudeCodeSettings = (
+  providerOptions: ProviderExecutionOptions | undefined,
+  autoCompactWindow?: number,
+): Record<string, boolean | number> | undefined => {
+  const settings: Record<string, boolean | number> = {};
+  if (autoCompactWindow !== undefined) settings.autoCompactWindow = autoCompactWindow;
   if (providerOptions?.workflowMode === "ultracode") settings.ultracode = true;
   if (providerOptions?.speed === "fast") {
     settings.fastMode = true;
@@ -731,7 +741,12 @@ const modeInstruction = (mode: RunExecutionRequest["mode"]): string => {
   return "You are in ask mode. Do not modify files. Inspect only what you need and answer directly.";
 };
 
-const buildPrompt = (options: ClaudeTurnExecutionOptions): string => {
+export const buildClaudePrompt = (options: ClaudeTurnExecutionOptions): string => {
+  // Native session commands must reach Claude Code verbatim. Wrapping `/compact`
+  // in BuildWarden's task envelope turns it into ordinary model text instead.
+  if (options.prompt.trim() === "/compact" && !options.attachments?.length) {
+    return "/compact";
+  }
   const parts = [
     "You are BuildWarden, a desktop coding agent running inside a local repository.",
     "The workspace root is already the current working directory.",
@@ -1032,7 +1047,10 @@ const calculateClaudeUsageDelta = (usage: RunTokenUsage, previous: RunTokenUsage
         (previous.totalTokens ?? previous.inputTokens + previous.outputTokens),
     ),
   };
-  for (const [key, value] of Object.entries(optionalDeltas) as Array<[keyof RunTokenUsage, number]>) {
+  for (const [key, value] of Object.entries(optionalDeltas) as Array<[
+    "reasoningTokens" | "cachedInputTokens" | "cacheCreationInputTokens" | "totalTokens",
+    number,
+  ]>) {
     if (value > 0) delta[key] = value;
   }
   return delta.inputTokens <= 0 && delta.outputTokens <= 0 && optionalDeltas.totalTokens <= 0 ? null : delta;
@@ -1837,12 +1855,74 @@ export const parseClaudeCodeStreamEvent = (
   };
 };
 
+const CLAUDE_RESUME_DIALOG_KIND = "resume_return";
+const CLAUDE_RESUME_ACTION_QUESTION_ID = "claudeResumeAction";
+
+export const buildClaudeResumeDialogHandler = (
+  options: Pick<ClaudeTurnExecutionOptions, "requestUserInput" | "signal">,
+): OnUserDialog => async (request, callbackOptions) => {
+  if (request.dialogKind !== CLAUDE_RESUME_DIALOG_KIND) {
+    return { behavior: "cancelled" };
+  }
+  if (callbackOptions.signal.aborted || options.signal.aborted) {
+    return { behavior: "cancelled" };
+  }
+  // Standalone chats do not yet have an interactive user-input bridge. Prefer
+  // the safe compact path instead of silently resuming an oversized session.
+  if (!options.requestUserInput) {
+    return { behavior: "completed", result: { action: "compact" } };
+  }
+
+  const sessionAgeMinutes = asOptionalFiniteNumber(request.payload.sessionAgeMinutes ?? request.payload.session_age_minutes);
+  const estimatedTokens = asOptionalFiniteNumber(request.payload.estimatedTokens ?? request.payload.estimated_tokens);
+  const detail = [
+    sessionAgeMinutes !== undefined ? `${String(Math.round(sessionAgeMinutes))} minutes old` : null,
+    estimatedTokens !== undefined ? `about ${new Intl.NumberFormat("en-US").format(Math.round(estimatedTokens))} tokens` : null,
+  ].filter((value): value is string => Boolean(value)).join(" and ");
+  const answers = await options.requestUserInput({
+    requestId: callbackOptions.requestId,
+    title: "Resume Claude session",
+    content: detail
+      ? `This Claude session is ${detail}. Compacting first lowers the risk of a failed or degraded resume.`
+      : "This Claude session is large or old enough that compacting before resume is safer.",
+    questions: [{
+      id: CLAUDE_RESUME_ACTION_QUESTION_ID,
+      header: "Resume",
+      question: "How should BuildWarden resume this Claude session?",
+      options: [
+        { label: "Compact and continue", description: "Summarize older context before resuming." },
+        { label: "Keep full history", description: "Resume without compacting this time." },
+        { label: "Don't ask again", description: "Keep full history and disable this resume prompt for Claude." },
+      ],
+      multiSelect: false,
+      allowCustomAnswer: false,
+    }],
+    metadata: {
+      provider: "claude-code",
+      dialogKind: CLAUDE_RESUME_DIALOG_KIND,
+      payload: request.payload,
+    },
+  });
+  if (callbackOptions.signal.aborted || options.signal.aborted) {
+    return { behavior: "cancelled" };
+  }
+  const selected = answers[CLAUDE_RESUME_ACTION_QUESTION_ID];
+  const label = Array.isArray(selected) ? selected[0] : selected;
+  const action = label === "Compact and continue" ? "compact" : label === "Don't ask again" ? "never" : "continue";
+  return { behavior: "completed", result: { action } };
+};
+
 async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<ClaudeTurnExecutionResult> {
-  const { binaryPath, launchArgs } = resolveClaudeCodeConfig(options.config);
+  const { binaryPath, launchArgs, autoCompactWindow } = resolveClaudeCodeConfig(options.config);
   let assistantText = "";
   let latestAssistantText = "";
   let sessionId: string | null = null;
-  let usage: RunTokenUsage = { inputTokens: 0, outputTokens: 0 };
+  let usage: RunTokenUsage = {
+    inputTokens: 0,
+    outputTokens: 0,
+    compactsAutomatically: true,
+    autoCompactThreshold: autoCompactWindow,
+  };
   const previousDeltaUsageByKey = new Map<string, RunTokenUsage>();
   const subagentTracker = new ClaudeSubagentTracker();
 
@@ -1854,12 +1934,13 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
   }, TURN_TIMEOUT_MS);
   const abort = () => abortController.abort();
   options.signal.addEventListener("abort", abort, { once: true });
+  if (options.signal.aborted) abortController.abort();
 
   let permissionMode: ClaudeAgentOptions["permissionMode"] = "plan";
   if (options.inputMode === "code") permissionMode = "acceptEdits";
   if (options.yoloMode === true) permissionMode = "bypassPermissions";
   const effort = resolveClaudeCodeEffort(options.providerOptions);
-  const settings = resolveClaudeCodeSettings(options.providerOptions);
+  const settings = resolveClaudeCodeSettings(options.providerOptions, autoCompactWindow);
   const sdkOptions: ClaudeAgentOptions = {
     cwd: options.cwd,
     pathToClaudeCodeExecutable: binaryPath,
@@ -1869,6 +1950,12 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
     permissionMode,
     ...(permissionMode === "bypassPermissions" ? { allowDangerouslySkipPermissions: true } : {}),
     ...(options.previousSessionId ? { resume: options.previousSessionId } : {}),
+    ...(options.previousSessionId
+      ? {
+          onUserDialog: buildClaudeResumeDialogHandler(options),
+          supportedDialogKinds: [CLAUDE_RESUME_DIALOG_KIND],
+        }
+      : {}),
     abortController,
     canUseTool: buildClaudeCanUseTool(options),
     env: buildClaudeProcessEnv(options.networkProxy),
@@ -1894,7 +1981,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
     sdkOptions.mcpServers = { ...sdkOptions.mcpServers, buildwarden: orchestrationMcpServer };
   }
   const claudeQuery = query({
-    prompt: buildPrompt(options),
+    prompt: buildClaudePrompt(options),
     options: sdkOptions,
   });
 
@@ -1928,7 +2015,11 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
       }
       const usageUpdate = mergeClaudeUsageUpdate(usage, previousDeltaUsageByKey, parsed);
       if (usageUpdate.changed) {
-        usage = usageUpdate.usage;
+        usage = {
+          ...usageUpdate.usage,
+          compactsAutomatically: true,
+          autoCompactThreshold: autoCompactWindow,
+        };
         options.onChunk?.({
           type: "status",
           title: "Claude usage",
@@ -1995,11 +2086,15 @@ export class ClaudeCodeProviderAdapter implements ProviderAdapter {
   validateConfiguration(input: ProviderAccountInput): void {
     const binaryPath = asString(input.config?.[PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY]);
     const launchArgs = asString(input.config?.[PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY]);
+    const autoCompactWindow = input.config?.[PROVIDER_CONFIG_CLAUDE_AUTO_COMPACT_WINDOW_KEY];
     if (binaryPath !== undefined && !binaryPath.trim()) {
       throw new Error("Claude binary path cannot be blank when provided.");
     }
     if (launchArgs !== undefined && launchArgs.includes("\n")) {
       throw new Error("Claude launch arguments must be a single line.");
+    }
+    if (autoCompactWindow !== undefined && (!Number.isFinite(Number(autoCompactWindow)) || Number(autoCompactWindow) < 20_000)) {
+      throw new Error("Claude auto-compact window must be at least 20,000 tokens.");
     }
   }
 }

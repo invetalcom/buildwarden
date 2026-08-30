@@ -195,7 +195,13 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
       {action.error ? <InlineError message={action.error} /> : null}
       {store.error ? <InlineError message={store.error} onRetry={() => void store.reload()} /> : null}
 
-      {activeSegment === "activity" ? <ActivityTimeline detail={detail} /> : null}
+      {activeSegment === "activity" ? (
+        <ActivityTimeline
+          detail={detail}
+          historyLoading={store.historyLoading}
+          onLoadEarlierHistory={store.loadEarlierHistory}
+        />
+      ) : null}
 
       {activeSegment === "diff" ? (
         store.diffLoading && !store.diff ? (

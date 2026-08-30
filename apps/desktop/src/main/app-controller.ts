@@ -112,6 +112,7 @@ import {
   type BookmarkRecord,
   type ChatBookmarkRecord,
   type ChatDetail,
+  type ChatHistoryPage,
   type ChatEvent,
   type ChatAttachmentPayload,
   type ChatInput,
@@ -119,7 +120,9 @@ import {
   type ChatStepRecord,
   RUN_CHAT_CONTEXT_SOURCE,
   type RunChatInput,
+  type RunHistoryPage,
   type ContinueRunInput,
+  type UserAnchoredHistoryPageRequest,
   type CreateProjectBranchInput,
   type DeleteProjectBranchInput,
   type DesktopApi,
@@ -572,18 +575,6 @@ export const buildPriorRunMessagesFromSteps = (
     messages.pop();
   }
   return messages;
-};
-
-const findInterruptionTimestamps = (steps: RunDetail["steps"]): { latestInterruptedAt: string; latestRecoveryAt: string } => {
-  let latestInterruptedAt = "";
-  let latestRecoveryAt = "";
-  for (const step of steps) {
-    const metadata = parseMetadataRecord(step.metadataJson);
-    if (metadata.sessionInterrupted === true && step.createdAt > latestInterruptedAt) latestInterruptedAt = step.createdAt;
-    const recovered = metadata.recoveredInterruptedSession === true || metadata.resumedFromCheckpoint === true;
-    if (recovered && step.createdAt > latestRecoveryAt) latestRecoveryAt = step.createdAt;
-  }
-  return { latestInterruptedAt, latestRecoveryAt };
 };
 
 const measureDirectoryEntry = (currentDir: string, entry: Dirent, pendingDirs: string[]): { bytes: number; files: number; unreadable: number } => {
@@ -2125,7 +2116,12 @@ export class AppController
   }
 
   async getChatDetail(chatId: string): Promise<ChatDetail> {
-    return this.db.getChatDetail(chatId);
+    const history = this.db.getInitialChatHistory(chatId);
+    return { chat: this.db.getChat(chatId), steps: history.steps, historyPage: history.page };
+  }
+
+  async getEarlierChatHistory(chatId: string, request: UserAnchoredHistoryPageRequest): Promise<ChatHistoryPage> {
+    return this.db.getEarlierChatHistory(chatId, request);
   }
 
   async getRunChat(runId: string): Promise<ChatDetail | null> {
@@ -6798,16 +6794,21 @@ export class AppController
     const workspacePath = this.getEffectiveRunWorkspacePath(run, project);
     const checkpoint = this.getRunCheckpoint(runId);
     const promptRestorePoint = this.getRunPromptRestorePoint(runId);
-    const detail = this.db.getRunDetail(runId, "");
+    const history = this.db.getInitialRunHistory(runId);
     const providerRuntime = this.db.getProviderSessionRuntime(runId, "run");
-    const { latestInterruptedAt, latestRecoveryAt } = findInterruptionTimestamps(detail.steps);
+    const { latestInterruptedAt, latestRecoveryAt } = this.db.getRunRecoveryEventTimestamps(runId);
     const sessionInterrupted = Boolean(latestInterruptedAt) && latestInterruptedAt > latestRecoveryAt;
     const providerSessionAvailable = Boolean(providerRuntime?.resumeCursor);
     const canRecoverInterruptedSession =
       providerRecoverySupported && sessionInterrupted && !this.runWorkers.has(runId) && (Boolean(checkpoint) || providerSessionAvailable);
     const recoveryKind = resolveRecoveryKind(true, Boolean(checkpoint), providerSessionAvailable);
     return {
-      ...detail,
+      run,
+      steps: history.steps,
+      historyPage: history.page,
+      notes: this.db.listRunNotes(runId),
+      diff: "",
+      orchestration: this.db.getOrchestrationDetailByCoordinatorRunId(runId),
       workspacePath,
       branchPromotedToProject,
       diffLoaded: false,
@@ -6832,6 +6833,10 @@ export class AppController
         ? { createdAt: promptRestorePoint.createdAt, commandType: promptRestorePoint.commandType }
         : null,
     };
+  }
+
+  async getEarlierRunHistory(runId: string, request: UserAnchoredHistoryPageRequest): Promise<RunHistoryPage> {
+    return this.db.getEarlierRunHistory(runId, request);
   }
 
   async addRunNote(runId: string, input: { content: string }): Promise<RunNoteRecord> {

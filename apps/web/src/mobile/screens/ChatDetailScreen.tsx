@@ -71,19 +71,36 @@ const ChatBubble = ({ step }: { step: ChatStepRecord }) => {
 
 export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
   const { client, snapshot, snapshotStore, router } = useMobileApp();
-  const { detail, loading, error, reload } = useChatDetail(client, chatId);
+  const { detail, loading, error, reload, historyLoading, loadEarlierHistory } = useChatDetail(client, chatId);
   const action = useAction();
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const suppressNextAutoScrollRef = useRef(false);
 
   const steps = useMemo(() => (detail ? visibleSteps(detail.steps) : []), [detail]);
   const bookmarked = snapshot.chatBookmarks.some((bookmark) => bookmark.originalChatId === chatId);
   const active = detail ? ["queued", "preparing", "running"].includes(detail.chat.status) : false;
 
   useEffect(() => {
+    if (historyLoading) return;
+    if (suppressNextAutoScrollRef.current) {
+      suppressNextAutoScrollRef.current = false;
+      return;
+    }
     bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [steps.length]);
+  }, [historyLoading, steps.length]);
+
+  const loadEarlier = async () => {
+    const element = transcriptRef.current;
+    const previousHeight = element?.scrollHeight ?? 0;
+    const previousTop = element?.scrollTop ?? 0;
+    suppressNextAutoScrollRef.current = true;
+    await loadEarlierHistory();
+    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    if (element) element.scrollTop = previousTop + (element.scrollHeight - previousHeight);
+  };
 
   const send = async (prompt: string) => {
     await action.run(() => client.followUpChat(chatId, prompt), "The follow-up did not send.");
@@ -112,7 +129,17 @@ export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
       {loading && !detail ? (
         <CenteredSpinner label="Loading chat" />
       ) : (
-        <div className="m-scroll m-screen-enter flex-1 py-2">
+        <div ref={transcriptRef} className="m-scroll m-screen-enter flex-1 py-2">
+          {detail?.historyPage?.hasMore ? (
+            <button
+              type="button"
+              className="m-tap mx-4 mb-2 block rounded-md border border-[var(--ec-border)] text-xs font-medium text-[var(--ec-muted)] disabled:opacity-60"
+              onClick={() => void loadEarlier()}
+              disabled={historyLoading}
+            >
+              {historyLoading ? "Loading earlier turns…" : "Load earlier turns"}
+            </button>
+          ) : null}
           {steps.map((step) => (
             <ChatBubble key={step.id} step={step} />
           ))}

@@ -1585,6 +1585,10 @@ export interface RunTokenUsage {
   lastCachedInputTokens?: number;
   lastOutputTokens?: number;
   lastReasoningTokens?: number;
+  /** True when the active provider session will compact before exhausting the context window. */
+  compactsAutomatically?: boolean;
+  /** Provider-configured context occupancy that triggers automatic compaction. */
+  autoCompactThreshold?: number;
 }
 
 export interface RunStepRecord {
@@ -1633,6 +1637,8 @@ export const PROVIDER_CONFIG_CODEX_BINARY_PATH_KEY = "codexBinaryPath";
 export const PROVIDER_CONFIG_CODEX_HOME_PATH_KEY = "codexHomePath";
 export const PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY = "claudeBinaryPath";
 export const PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY = "claudeLaunchArgs";
+export const PROVIDER_CONFIG_CLAUDE_AUTO_COMPACT_WINDOW_KEY = "claudeAutoCompactWindow";
+export const DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW = 100_000;
 export const PROVIDER_CONFIG_CURSOR_BINARY_PATH_KEY = "cursorBinaryPath";
 export const PROVIDER_CONFIG_CURSOR_API_ENDPOINT_KEY = "cursorApiEndpoint";
 
@@ -1876,6 +1882,8 @@ export interface ProjectSnapshot {
 export interface RunDetail {
   run: RunRecord;
   steps: RunStepRecord[];
+  /** User-turn anchored window backing the activity timeline. Older pages can be prepended without trimming turn output. */
+  historyPage?: UserAnchoredHistoryPageInfo;
   notes: RunNoteRecord[];
   diff: string;
   /** Effective workspace path for this run detail. May point at the project repo if the worktree was promoted and removed. */
@@ -3441,6 +3449,33 @@ export const buildPriorChatCompletionMessagesFromSteps = (steps: ChatStepRecord[
 export interface ChatDetail {
   chat: ChatRecord;
   steps: ChatStepRecord[];
+  /** User-turn anchored window backing the transcript. */
+  historyPage?: UserAnchoredHistoryPageInfo;
+}
+
+export interface UserAnchoredHistoryPageInfo {
+  /** Opaque keyset cursor for the oldest user turn in this window. */
+  beforeCursor: string | null;
+  hasMore: boolean;
+  /** Revision of the prefix preceding `beforeCursor`, used to reject stale page requests after history rewrites. */
+  snapshotRevision: string;
+}
+
+export interface UserAnchoredHistoryPageRequest {
+  beforeCursor: string;
+  snapshotRevision: string;
+}
+
+export interface RunHistoryPage {
+  steps: RunStepRecord[];
+  page: UserAnchoredHistoryPageInfo;
+  stale: boolean;
+}
+
+export interface ChatHistoryPage {
+  steps: ChatStepRecord[];
+  page: UserAnchoredHistoryPageInfo;
+  stale: boolean;
 }
 
 export type ChatEvent = Omit<RunEvent, "run" | "step"> & {
@@ -3923,6 +3958,7 @@ export interface DesktopApi {
   getModelDeletionImpact(modelId: string): Promise<ModelDeletionImpact>;
   deleteModel(modelId: string): Promise<void>;
   getRunDetail(runId: string): Promise<RunDetail>;
+  getEarlierRunHistory(runId: string, request: UserAnchoredHistoryPageRequest): Promise<RunHistoryPage>;
   addRunNote(runId: string, input: RunNoteInput): Promise<RunNoteRecord>;
   updateRunNote(noteId: string, input: UpdateRunNoteInput): Promise<RunNoteRecord>;
   deleteRunNote(noteId: string): Promise<void>;
@@ -3992,6 +4028,7 @@ export interface DesktopApi {
   /** Returns the run-scoped chat for a run, or null when none was started yet. */
   getRunChat(runId: string): Promise<ChatDetail | null>;
   getChatDetail(chatId: string): Promise<ChatDetail>;
+  getEarlierChatHistory(chatId: string, request: UserAnchoredHistoryPageRequest): Promise<ChatHistoryPage>;
   followUpChat(chatId: string, prompt: string, options?: FollowUpChatOptions): Promise<ChatRecord>;
   listChats(): Promise<ChatRecord[]>;
   listChatsWithSteps(): Promise<ChatDetail[]>;
@@ -4233,6 +4270,7 @@ export type RemoteOperationMap = {
   queryProjectActivity: DesktopApi["queryProjectActivity"];
   checkProjectFolderGitStatus: DesktopApi["checkProjectFolderGitStatus"];
   getRunDetail: DesktopApi["getRunDetail"];
+  getEarlierRunHistory: DesktopApi["getEarlierRunHistory"];
   getRunWorktreeDiff: DesktopApi["getRunWorktreeDiff"];
   getRunWorktreeDiffSummary: DesktopApi["getRunWorktreeDiffSummary"];
   getRunWorkspaceFile: DesktopApi["getRunWorkspaceFile"];
@@ -4248,6 +4286,7 @@ export type RemoteOperationMap = {
   getProjectAutomation: DesktopApi["getProjectAutomation"];
   getRunChat: DesktopApi["getRunChat"];
   getChatDetail: DesktopApi["getChatDetail"];
+  getEarlierChatHistory: DesktopApi["getEarlierChatHistory"];
   listChatsWithSteps: DesktopApi["listChatsWithSteps"];
   getBookmarksWithSteps: DesktopApi["getBookmarksWithSteps"];
   getChatBookmarksWithSteps: DesktopApi["getChatBookmarksWithSteps"];
@@ -4600,6 +4639,7 @@ export const IPC_CHANNELS = {
   deleteRun: "buildwarden:delete-run",
   deleteModel: "buildwarden:delete-model",
   getRunDetail: "buildwarden:get-run-detail",
+  getEarlierRunHistory: "buildwarden:get-earlier-run-history",
   addRunNote: "buildwarden:add-run-note",
   updateRunNote: "buildwarden:update-run-note",
   deleteRunNote: "buildwarden:delete-run-note",
@@ -4678,6 +4718,7 @@ export const IPC_CHANNELS = {
   createRunChat: "buildwarden:create-run-chat",
   getRunChat: "buildwarden:get-run-chat",
   getChatDetail: "buildwarden:get-chat-detail",
+  getEarlierChatHistory: "buildwarden:get-earlier-chat-history",
   followUpChat: "buildwarden:follow-up-chat",
   listChats: "buildwarden:list-chats",
   listChatsWithSteps: "buildwarden:list-chats-with-steps",

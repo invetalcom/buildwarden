@@ -16,6 +16,7 @@ import {
   type RunRecord,
   type RunForgeRequestSummary,
   type RunTimelineDensity,
+  type RunTokenUsage,
   type RunUserInputAnswers,
   type RunWorktreeDiffSummary,
   type RunWorkspaceFileReference,
@@ -227,6 +228,7 @@ export interface RunDetailPageProps {
   keyboardShortcuts: Record<KeyboardShortcutId, string>;
   pendingShellApproval: { command: string; secondsRemaining: number } | null;
   timelineDensity: RunTimelineDensity;
+  tokenUsage?: Partial<RunTokenUsage> | null;
   /** Request to scroll to and expand a subagent card in the activity timeline. */
   subagentFocus?: { subagentId: string; nonce: number } | null;
   /** Workspace panel visibility. */
@@ -240,6 +242,7 @@ export interface RunDetailPageProps {
   showPullRequest?: boolean;
   /** Requests the complete unified patch when a visible consumer needs it. */
   onRequestDiff: (runId: string) => void;
+  onLoadEarlierHistory?: (runId: string) => void | Promise<void>;
   /** Called when a panel should be toggled on or off from within the layout. */
   onTogglePanel: (panelId: TilePanelId) => void;
   /** Whether the secondary panel column is docked to the right or bottom. */
@@ -287,6 +290,7 @@ export const RunDetailPage = ({
   keyboardShortcuts,
   pendingShellApproval,
   timelineDensity,
+  tokenUsage,
   subagentFocus = null,
   showActivity,
   showAgents,
@@ -297,6 +301,7 @@ export const RunDetailPage = ({
   showChat,
   showPullRequest = false,
   onRequestDiff,
+  onLoadEarlierHistory,
   onTogglePanel,
   secondaryPanelPosition,
   onSecondaryPanelPositionChange,
@@ -1187,6 +1192,8 @@ export const RunDetailPage = ({
       endRef={activityEndRef}
       virtualized
       showBoundaryControls
+      hasEarlierSteps={runDetail.historyPage?.hasMore === true && Boolean(onLoadEarlierHistory)}
+      onLoadEarlierSteps={onLoadEarlierHistory ? () => onLoadEarlierHistory(runDetail.run.id) : undefined}
       endClassName={cn("shrink-0", showModifiedFilesSummary ? "h-2" : "h-px")}
       showLoading={isRunActive}
       readOnly={readOnly}
@@ -1994,6 +2001,7 @@ export const RunDetailPage = ({
             onCancel={() => onCancelRun(runDetail.run)}
             onSubmit={() => void handleFollowUpSubmit()}
             contextHistoryText={contextHistoryText}
+            tokenUsage={tokenUsage}
             contextAttachmentFiles={followUpFiles}
             reasoningEffort={selectedReasoningEffort}
             anthropicEffort={selectedAnthropicEffort}
