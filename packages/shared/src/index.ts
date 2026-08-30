@@ -4709,7 +4709,7 @@ export const APP_SETTING_KEYS = {
   uiTheme: "uiTheme",
   /** JSON encoded {@link DesignScheme}; supersedes the two-value `uiTheme` setting while keeping it in sync for compatibility. */
   designScheme: "designScheme",
-  /** `"true"` gives the app sidebar a distinct theme-aware surface color. */
+  /** Theme-aware sidebar color strength serialized as an integer from `"0"` to `"100"`; `"0"` disables it and legacy `"true"` is migrated. */
   sidebarContrast: "sidebarContrast",
   /** `"small"` | `"medium"` | `"large"`. Controls the height of Recent Runs entries in the sidebar. */
   sidebarRunEntrySize: "sidebarRunEntrySize",
