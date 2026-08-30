@@ -119,6 +119,12 @@ body[data-theme="dark"] {
   --ec-secondary: #9b8cff;
   --ec-secondary-soft: rgba(155, 140, 255, 0.16);
   --ec-secondary-ring: rgba(155, 140, 255, 0.38);
+  --ec-user-input: #4f8edc;
+  --ec-user-input-soft: rgba(79, 142, 220, 0.17);
+  --ec-user-input-ring: rgba(79, 142, 220, 0.44);
+  --ec-reasoning: #d7a94f;
+  --ec-reasoning-soft: rgba(215, 169, 79, 0.15);
+  --ec-reasoning-ring: rgba(215, 169, 79, 0.36);
   --ec-openrouter-brand: #c8ff00;
   --ec-ring: rgba(96, 168, 255, 0.5);
   --ec-success: #3ad58a;
@@ -183,6 +189,12 @@ body[data-theme="light"] {
   --ec-secondary: #7556d8;
   --ec-secondary-soft: rgba(117, 86, 216, 0.12);
   --ec-secondary-ring: rgba(117, 86, 216, 0.3);
+  --ec-user-input: #3b7bbf;
+  --ec-user-input-soft: rgba(59, 123, 191, 0.13);
+  --ec-user-input-ring: rgba(59, 123, 191, 0.36);
+  --ec-reasoning: #8659b8;
+  --ec-reasoning-soft: rgba(134, 89, 184, 0.14);
+  --ec-reasoning-ring: rgba(134, 89, 184, 0.38);
   --ec-openrouter-brand: #7624f4;
   --ec-ring: rgba(10, 111, 222, 0.45);
   --ec-success: #0f7a43;
@@ -1010,7 +1022,7 @@ body[data-theme="light"] input[type="checkbox"] {
 }
 
 .agent-log-row--prompt {
-  --agent-dot: var(--ec-accent);
+  --agent-dot: var(--ec-user-input);
 }
 
 .agent-log-row--answer {
@@ -1024,7 +1036,7 @@ body[data-theme="light"] input[type="checkbox"] {
 }
 
 .agent-log-row--reasoning {
-  --agent-dot: var(--ec-warning);
+  --agent-dot: var(--ec-reasoning);
 }
 
 .agent-log-row--request,
@@ -1038,7 +1050,7 @@ body[data-theme="light"] input[type="checkbox"] {
 }
 
 body[data-theme="light"] .agent-log-row--prompt {
-  --agent-dot: var(--ec-accent);
+  --agent-dot: var(--ec-user-input);
 }
 
 body[data-theme="light"] .agent-log-row--answer {
@@ -1046,7 +1058,7 @@ body[data-theme="light"] .agent-log-row--answer {
 }
 
 body[data-theme="light"] .agent-log-row--reasoning {
-  --agent-dot: var(--ec-warning);
+  --agent-dot: var(--ec-reasoning);
 }
 
 body[data-theme="light"] .agent-log-row--tools {
@@ -1108,7 +1120,7 @@ body[data-theme="light"] .agent-log-dot {
 }
 
 body[data-theme="light"] .agent-log-row--prompt .agent-log-label {
-  color: var(--ec-accent);
+  color: var(--ec-user-input);
 }
 
 body[data-theme="light"] .agent-log-row--answer .agent-log-label {
@@ -1116,7 +1128,7 @@ body[data-theme="light"] .agent-log-row--answer .agent-log-label {
 }
 
 body[data-theme="light"] .agent-log-row--reasoning .agent-log-label {
-  color: var(--ec-warning);
+  color: var(--ec-reasoning);
 }
 
 body[data-theme="light"] .agent-log-row--tools .agent-log-label {
@@ -1165,7 +1177,7 @@ body[data-theme="light"] .agent-log-row--note .agent-log-label {
 }
 
 .agent-panel--prompt {
-  --agent-panel-accent: var(--ec-accent);
+  --agent-panel-accent: var(--ec-user-input);
 }
 
 .agent-panel--answer {
@@ -1282,7 +1294,7 @@ body[data-theme="light"] .agent-response-text tbody tr:nth-child(even) td {
 }
 
 .agent-panel--reasoning {
-  --agent-panel-accent: var(--ec-faint);
+  --agent-panel-accent: var(--ec-reasoning);
 }
 
 .agent-panel--tools,
@@ -1352,9 +1364,9 @@ body[data-theme="light"] .agent-response-text tbody tr:nth-child(even) td {
 }
 
 .agent-chip--prompt {
-  border-color: var(--ec-accent-ring);
-  background: var(--ec-accent-soft);
-  color: var(--ec-accent);
+  border-color: var(--ec-user-input-ring);
+  background: var(--ec-user-input-soft);
+  color: var(--ec-user-input);
 }
 
 .agent-chip--answer {
@@ -1754,9 +1766,9 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
   }
 
   .chat-avatar--user {
-    border-color: color-mix(in srgb, var(--ec-accent-ring) 74%, var(--ec-border));
-    background: color-mix(in srgb, var(--ec-accent-soft) 72%, var(--ec-panel));
-    color: var(--ec-accent);
+    border-color: color-mix(in srgb, var(--ec-user-input-ring) 74%, var(--ec-border));
+    background: color-mix(in srgb, var(--ec-user-input-soft) 72%, var(--ec-panel));
+    color: var(--ec-user-input);
   }
 
   .chat-bubble {
@@ -1785,9 +1797,9 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
 
   .chat-bubble--user {
     border-bottom-right-radius: 0.3rem;
-    border-color: color-mix(in srgb, var(--ec-accent-ring) 72%, var(--ec-border));
+    border-color: color-mix(in srgb, var(--ec-user-input-ring) 72%, var(--ec-border));
     background:
-      linear-gradient(180deg, color-mix(in srgb, var(--ec-accent-soft) 32%, transparent), transparent 14rem),
+      linear-gradient(180deg, color-mix(in srgb, var(--ec-user-input-soft) 32%, transparent), transparent 14rem),
       var(--ec-panel);
   }
 
@@ -1813,22 +1825,22 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
   }
 
   .chat-bubble--reasoning {
-    border-color: color-mix(in srgb, var(--ec-warning-ring) 58%, var(--ec-border));
+    border-color: color-mix(in srgb, var(--ec-reasoning-ring) 58%, var(--ec-border));
     background:
-      linear-gradient(180deg, color-mix(in srgb, var(--ec-warning-soft) 22%, transparent), transparent 12rem),
+      linear-gradient(180deg, color-mix(in srgb, var(--ec-reasoning-soft) 22%, transparent), transparent 12rem),
       var(--ec-panel);
     padding: 0;
   }
 
   .app-shell.theme-light .chat-bubble--reasoning {
-    border-color: color-mix(in srgb, var(--ec-warning-ring) 86%, var(--ec-border));
+    border-color: color-mix(in srgb, var(--ec-reasoning-ring) 86%, var(--ec-border));
     background:
-      linear-gradient(180deg, color-mix(in srgb, var(--ec-warning-soft) 52%, transparent), transparent 14rem),
+      linear-gradient(180deg, color-mix(in srgb, var(--ec-reasoning-soft) 52%, transparent), transparent 14rem),
       var(--ec-panel);
   }
 
   .app-shell.theme-light .chat-bubble--reasoning .chat-reasoning-summary {
-    color: var(--ec-warning);
+    color: var(--ec-reasoning);
   }
 
   .chat-bubble-meta {
@@ -1971,7 +1983,7 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
   }
 
   .chat-reasoning-body {
-    border-top: 1px solid var(--ec-border);
+    border-top: 1px solid color-mix(in srgb, var(--ec-reasoning-ring) 55%, var(--ec-border));
     padding: 0.75rem 0.9rem 0.85rem;
     color: var(--ec-muted);
   }

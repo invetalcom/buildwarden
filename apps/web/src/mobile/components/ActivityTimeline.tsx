@@ -90,7 +90,7 @@ const SingleRow = ({
   if (isUser) {
     return (
       <div className="flex justify-end px-3 py-1.5">
-        <div className="max-w-[86%] rounded-2xl rounded-br-md bg-[var(--ec-accent-soft)] px-3 py-2">
+        <div className="max-w-[86%] rounded-2xl rounded-br-md border border-[var(--ec-user-input-ring)] bg-[var(--ec-user-input-soft)] px-3 py-2">
           <RichText className="text-[var(--ec-text)]">{step.content || step.title}</RichText>
         </div>
       </div>
@@ -122,9 +122,11 @@ const SingleRow = ({
   if (isReasoning) {
     return (
       <div className="px-4 py-1">
-        <Collapsible summary={<span className="text-[11px] font-medium uppercase tracking-[0.1em] text-[var(--ec-faint)]">Reasoning</span>}>
+        <div className="rounded-md border border-[var(--ec-reasoning-ring)] bg-[var(--ec-reasoning-soft)] px-2 py-1">
+          <Collapsible summary={<span className="text-[11px] font-medium uppercase tracking-[0.1em] text-[var(--ec-reasoning)]">Reasoning</span>}>
           <RichText className="text-[var(--ec-muted)]">{step.content}</RichText>
-        </Collapsible>
+          </Collapsible>
+        </div>
       </div>
     );
   }

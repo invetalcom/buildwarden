@@ -26,9 +26,11 @@ const COLOR_LABELS: Record<keyof DesignSchemeColors, { label: string; hint: stri
   textMuted: { label: "Muted text", hint: "Descriptions and secondary labels" },
   primary: { label: "Primary", hint: "Actions, focus, and selection" },
   secondary: { label: "Secondary", hint: "Information and supporting accents" },
+  userInput: { label: "User input", hint: "User messages in chats and agent runs" },
+  reasoning: { label: "Reasoning", hint: "Agent reasoning in chats and runs" },
   border: { label: "Border", hint: "Dividers and control outlines" },
   success: { label: "Success", hint: "Completed and positive states" },
-  warning: { label: "Warning", hint: "Attention and reasoning states" },
+  warning: { label: "Warning", hint: "Attention and caution states" },
   danger: { label: "Danger", hint: "Failures and destructive actions" },
 };
 

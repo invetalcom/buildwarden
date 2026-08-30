@@ -65,6 +65,12 @@ body[data-theme="dark"] {
   --ec-secondary: #9b8cff;
   --ec-secondary-soft: rgba(155, 140, 255, 0.16);
   --ec-secondary-ring: rgba(155, 140, 255, 0.38);
+  --ec-user-input: #4f8edc;
+  --ec-user-input-soft: rgba(79, 142, 220, 0.17);
+  --ec-user-input-ring: rgba(79, 142, 220, 0.44);
+  --ec-reasoning: #d7a94f;
+  --ec-reasoning-soft: rgba(215, 169, 79, 0.15);
+  --ec-reasoning-ring: rgba(215, 169, 79, 0.36);
   --ec-openrouter-brand: #c8ff00;
   --ec-ring: rgba(96, 168, 255, 0.5);
   --ec-success: #3ad58a;
@@ -132,6 +138,12 @@ body[data-theme="light"] {
   --ec-secondary: #7556d8;
   --ec-secondary-soft: rgba(117, 86, 216, 0.12);
   --ec-secondary-ring: rgba(117, 86, 216, 0.3);
+  --ec-user-input: #3b7bbf;
+  --ec-user-input-soft: rgba(59, 123, 191, 0.13);
+  --ec-user-input-ring: rgba(59, 123, 191, 0.36);
+  --ec-reasoning: #8659b8;
+  --ec-reasoning-soft: rgba(134, 89, 184, 0.14);
+  --ec-reasoning-ring: rgba(134, 89, 184, 0.38);
   --ec-openrouter-brand: #7624f4;
   --ec-ring: rgba(10, 111, 222, 0.45);
   --ec-success: #0f7a43;

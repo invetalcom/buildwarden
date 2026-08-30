@@ -5236,6 +5236,8 @@ export const DESIGN_SCHEME_COLOR_KEYS = [
   "textMuted",
   "primary",
   "secondary",
+  "userInput",
+  "reasoning",
   "border",
   "success",
   "warning",
@@ -5275,7 +5277,8 @@ export const DESIGN_SCHEME_PRESETS: readonly DesignScheme[] = Object.freeze([
     mode: "dark",
     colors: {
       background: "#090c11", surface: "#171d26", surfaceElevated: "#222b38", text: "#f4f7fb", textMuted: "#9aa8b8",
-      primary: "#55a8ff", secondary: "#9b8cff", border: "#3a4656", success: "#42d392", warning: "#f5c451", danger: "#ff6b7a",
+      primary: "#55a8ff", secondary: "#9b8cff", userInput: "#4f8edc", reasoning: "#d7a94f",
+      border: "#3a4656", success: "#42d392", warning: "#f5c451", danger: "#ff6b7a",
     },
   }),
   freezeDesignScheme({
@@ -5286,7 +5289,8 @@ export const DESIGN_SCHEME_PRESETS: readonly DesignScheme[] = Object.freeze([
     mode: "dark",
     colors: {
       background: "#16090d", surface: "#291117", surfaceElevated: "#3b1921", text: "#fff5f5", textMuted: "#c8a3a9",
-      primary: "#55d878", secondary: "#ff5268", border: "#62303a", success: "#55d878", warning: "#ffc857", danger: "#ff5268",
+      primary: "#55d878", secondary: "#ff5268", userInput: "#4f9fe8", reasoning: "#d98ce8",
+      border: "#62303a", success: "#55d878", warning: "#ffc857", danger: "#ff5268",
     },
   }),
   freezeDesignScheme({
@@ -5297,7 +5301,8 @@ export const DESIGN_SCHEME_PRESETS: readonly DesignScheme[] = Object.freeze([
     mode: "dark",
     colors: {
       background: "#100b18", surface: "#21172d", surfaceElevated: "#302040", text: "#fbf7ff", textMuted: "#b3a1c2",
-      primary: "#b47cff", secondary: "#ff8c42", border: "#503d62", success: "#4bd6a0", warning: "#ffbf69", danger: "#ff6577",
+      primary: "#b47cff", secondary: "#ff8c42", userInput: "#4aa3df", reasoning: "#e8a45c",
+      border: "#503d62", success: "#4bd6a0", warning: "#ffbf69", danger: "#ff6577",
     },
   }),
   freezeDesignScheme({
@@ -5308,7 +5313,8 @@ export const DESIGN_SCHEME_PRESETS: readonly DesignScheme[] = Object.freeze([
     mode: "dark",
     colors: {
       background: "#061216", surface: "#10272c", surfaceElevated: "#173940", text: "#effffd", textMuted: "#94b8b8",
-      primary: "#48d7c2", secondary: "#4ea5ff", border: "#2d555b", success: "#56dc92", warning: "#f1c75b", danger: "#ff7185",
+      primary: "#48d7c2", secondary: "#4ea5ff", userInput: "#3d8bd5", reasoning: "#b68be3",
+      border: "#2d555b", success: "#56dc92", warning: "#f1c75b", danger: "#ff7185",
     },
   }),
   freezeDesignScheme({
@@ -5319,7 +5325,8 @@ export const DESIGN_SCHEME_PRESETS: readonly DesignScheme[] = Object.freeze([
     mode: "light",
     colors: {
       background: "#dceaf5", surface: "#f7fbff", surfaceElevated: "#ffffff", text: "#142332", textMuted: "#53687c",
-      primary: "#086fd6", secondary: "#7556d8", border: "#a8bdcf", success: "#147a49", warning: "#9a650c", danger: "#bd3044",
+      primary: "#086fd6", secondary: "#7556d8", userInput: "#3b7bbf", reasoning: "#8659b8",
+      border: "#a8bdcf", success: "#147a49", warning: "#9a650c", danger: "#bd3044",
     },
   }),
   freezeDesignScheme({
@@ -5330,7 +5337,8 @@ export const DESIGN_SCHEME_PRESETS: readonly DesignScheme[] = Object.freeze([
     mode: "light",
     colors: {
       background: "#f3e5dc", surface: "#fffaf6", surfaceElevated: "#ffffff", text: "#33231f", textMuted: "#735e57",
-      primary: "#d94f5c", secondary: "#087f78", border: "#d2b8ae", success: "#237b54", warning: "#a26308", danger: "#c33146",
+      primary: "#d94f5c", secondary: "#087f78", userInput: "#b24f76", reasoning: "#7353a6",
+      border: "#d2b8ae", success: "#237b54", warning: "#a26308", danger: "#c33146",
     },
   }),
 ]);
@@ -5354,8 +5362,11 @@ const normalizeDesignScheme = (value: unknown): DesignScheme | null => {
   const candidate = value as Partial<DesignScheme>;
   if (candidate.version !== 1 || !isUiTheme(candidate.mode) || !candidate.colors || typeof candidate.colors !== "object") return null;
   const colors = {} as DesignSchemeColors;
+  const candidateColors = candidate.colors as Partial<DesignSchemeColors>;
   for (const key of DESIGN_SCHEME_COLOR_KEYS) {
-    const color = (candidate.colors as Partial<DesignSchemeColors>)[key];
+    const color = candidateColors[key]
+      ?? (key === "userInput" ? candidateColors.primary : undefined)
+      ?? (key === "reasoning" ? candidateColors.warning : undefined);
     if (!isDesignSchemeHexColor(color)) return null;
     colors[key] = color.trim().toLowerCase();
   }

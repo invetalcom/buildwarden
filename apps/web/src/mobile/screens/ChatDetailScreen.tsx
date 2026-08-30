@@ -28,6 +28,7 @@ const ChatBubble = ({ step }: { step: ChatStepRecord }) => {
   const metadata = parseMetadata(step.metadataJson);
   const isUser = metadata.source === "user";
   const isError = step.eventType === "error";
+  const isReasoning = step.eventType === "output" && metadata.assistantKind === "reasoning";
 
   if (isError) {
     return (
@@ -41,10 +42,19 @@ const ChatBubble = ({ step }: { step: ChatStepRecord }) => {
   if (isUser) {
     return (
       <div className="flex justify-end px-3 py-1.5">
-        <div className="max-w-[86%] rounded-2xl rounded-br-md bg-[var(--ec-accent-soft)] px-3 py-2">
+        <div className="max-w-[86%] rounded-2xl rounded-br-md border border-[var(--ec-user-input-ring)] bg-[var(--ec-user-input-soft)] px-3 py-2">
           <RichText>{step.content || step.title}</RichText>
         </div>
       </div>
+    );
+  }
+
+  if (isReasoning) {
+    return (
+      <details className="mx-3 my-1.5 rounded-md border border-[var(--ec-reasoning-ring)] bg-[var(--ec-reasoning-soft)] px-3 py-2">
+        <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ec-reasoning)]">Reasoning</summary>
+        <RichText className="mt-2 text-[var(--ec-muted)]">{step.content}</RichText>
+      </details>
     );
   }
 

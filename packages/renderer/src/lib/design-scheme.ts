@@ -68,6 +68,12 @@ export const designSchemeCssVariables = (scheme: DesignScheme): Record<string, s
     "--ec-secondary": colors.secondary,
     "--ec-secondary-soft": rgba(colors.secondary, light ? 0.12 : 0.16),
     "--ec-secondary-ring": rgba(colors.secondary, light ? 0.3 : 0.38),
+    "--ec-user-input": colors.userInput,
+    "--ec-user-input-soft": rgba(colors.userInput, light ? 0.13 : 0.17),
+    "--ec-user-input-ring": rgba(colors.userInput, light ? 0.36 : 0.44),
+    "--ec-reasoning": colors.reasoning,
+    "--ec-reasoning-soft": rgba(colors.reasoning, light ? 0.14 : 0.15),
+    "--ec-reasoning-ring": rgba(colors.reasoning, light ? 0.38 : 0.36),
     "--ec-openrouter-brand": colors.secondary,
     "--ec-ring": rgba(colors.primary, light ? 0.46 : 0.54),
     "--ec-success": colors.success,
@@ -131,4 +137,3 @@ export const readCachedBrowserDesignScheme = (): DesignScheme => {
     return getDefaultDesignScheme();
   }
 };
-

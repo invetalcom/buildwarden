@@ -10,6 +10,7 @@ import {
   importDesignScheme,
   parseDesignScheme,
   serializeDesignScheme,
+  type DesignScheme,
 } from "@buildwarden/shared";
 import { applyDesignSchemeToDocument, designSchemeCssVariables } from "./design-scheme";
 
@@ -43,11 +44,24 @@ describe("design schemes", () => {
     const variables = designSchemeCssVariables(scheme);
     expect(variables["--ec-accent"]).toBe(scheme.colors.primary);
     expect(variables["--ec-secondary"]).toBe(scheme.colors.secondary);
+    expect(variables["--ec-user-input"]).toBe(scheme.colors.userInput);
+    expect(variables["--ec-reasoning"]).toBe(scheme.colors.reasoning);
     expect(variables["--ec-terminal-bg"]).toBe(scheme.colors.background);
 
     applyDesignSchemeToDocument(scheme, false);
     expect(document.documentElement.dataset.designScheme).toBe(scheme.id);
     expect(document.documentElement.dataset.theme).toBe(scheme.mode);
     expect(document.documentElement.style.getPropertyValue("--ec-danger")).toBe(scheme.colors.danger);
+  });
+
+  it("migrates older saved schemes to independent user-input and reasoning colors", () => {
+    const legacy = structuredClone(DESIGN_SCHEME_PRESETS[0]!) as DesignScheme;
+    const legacyColors = legacy.colors as Partial<DesignScheme["colors"]>;
+    delete legacyColors.userInput;
+    delete legacyColors.reasoning;
+    const parsed = parseDesignScheme({ [APP_SETTING_KEYS.designScheme]: JSON.stringify(legacy) });
+
+    expect(parsed.colors.userInput).toBe(legacy.colors.primary);
+    expect(parsed.colors.reasoning).toBe(legacy.colors.warning);
   });
 });
