@@ -7,6 +7,7 @@ import { cn } from "../../lib/cn";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
 import { runWorktreeTerminalSessionId } from "./run-worktree-terminal-session";
+import { observeTerminalThemeChanges, readTerminalTheme } from "./run-worktree-terminal-theme";
 
 const MIN_START_PX = 48;
 const MIN_COLS = 20;
@@ -106,16 +107,11 @@ export const RunWorktreeTerminal = ({
     let startPromise: Promise<void> | null = null;
     setError(null);
 
-    const themeToken = (name: string, fallback: string): string => getComputedStyle(el).getPropertyValue(name).trim() || fallback;
     const term = new Terminal({
       cursorBlink: true,
       fontSize: 12,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace",
-      theme: {
-        background: themeToken("--ec-terminal-bg", "#0d1013"),
-        foreground: themeToken("--ec-terminal-fg", "#e7ebee"),
-        cursor: themeToken("--ec-terminal-cursor", "#9fb1bf"),
-      },
+      theme: readTerminalTheme(el),
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -131,16 +127,7 @@ export const RunWorktreeTerminal = ({
     termRef.current = term;
     fitRef.current = fit;
 
-    const syncTerminalTheme = () => {
-      term.options.theme = {
-        background: themeToken("--ec-terminal-bg", "#0d1013"),
-        foreground: themeToken("--ec-terminal-fg", "#e7ebee"),
-        cursor: themeToken("--ec-terminal-cursor", "#9fb1bf"),
-      };
-    };
-    const themeObserver = new MutationObserver(syncTerminalTheme);
-    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["style", "data-theme", "data-design-scheme"] });
-    themeObserver.observe(document.body, { attributes: true, attributeFilter: ["style", "data-theme", "data-design-scheme"] });
+    const themeObserver = observeTerminalThemeChanges(el, term);
 
     configureTerminalClipboard(term);
 
