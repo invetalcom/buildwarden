@@ -2,6 +2,7 @@ import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { estimateContextWindow, formatCompactTokens } from "../../lib/context-window-estimate";
 import { requestExactContextWindowTokenCounts } from "../../lib/context-window-tokenizer-client";
 import type { ContextWindowTextTokenCounts } from "../../lib/context-window-estimate";
+import type { RunTokenUsage } from "@buildwarden/shared";
 
 interface ContextWindowBadgeProps {
   modelIds: string[];
@@ -9,6 +10,7 @@ interface ContextWindowBadgeProps {
   historyText?: string;
   attachmentFiles?: File[];
   isRun?: boolean;
+  tokenUsage?: Partial<RunTokenUsage> | null;
 }
 
 const contextToneClasses = (usedPercent: number) => {
@@ -27,6 +29,7 @@ export const ContextWindowBadge = ({
   historyText,
   attachmentFiles,
   isRun = false,
+  tokenUsage,
 }: ContextWindowBadgeProps) => {
   const [open, setOpen] = useState(false);
   const [exactTextTokenCounts, setExactTextTokenCounts] = useState<ContextWindowTextTokenCounts | null>(null);
@@ -56,18 +59,31 @@ export const ContextWindowBadge = ({
     };
   }, [deferredHistoryText, deferredPrompt, open]);
 
-  const estimate = useMemo(
-    () =>
-      estimateContextWindow({
+  const reportedUsed = tokenUsage?.usedTokens ?? tokenUsage?.lastUsedTokens;
+  const reportedMax = tokenUsage?.maxTokens;
+  const hasReportedUsage = typeof reportedUsed === "number" && reportedUsed >= 0 &&
+    typeof reportedMax === "number" && reportedMax > 0;
+  const estimate = useMemo(() => {
+    if (hasReportedUsage) {
+      const usedTokens = Math.min(reportedUsed, reportedMax);
+      const usedPercent = Math.min(100, Math.round((usedTokens / reportedMax) * 100));
+      return {
+        usedTokens,
+        maxTokens: reportedMax,
+        remainingTokens: Math.max(0, reportedMax - usedTokens),
+        usedPercent,
+        remainingPercent: 100 - usedPercent,
+      };
+    }
+    return estimateContextWindow({
         modelIds,
         prompt: deferredPrompt,
         historyText: deferredHistoryText,
         attachmentFiles,
         isRun,
         textTokenCounts: exactTextTokenCounts,
-      }),
-    [attachmentFiles, deferredHistoryText, deferredPrompt, exactTextTokenCounts, isRun, modelIds],
-  );
+      });
+  }, [attachmentFiles, deferredHistoryText, deferredPrompt, exactTextTokenCounts, hasReportedUsage, isRun, modelIds, reportedMax, reportedUsed]);
 
   if (!estimate) {
     return null;
@@ -117,8 +133,12 @@ export const ContextWindowBadge = ({
             {formatCompactTokens(estimate.usedTokens)} / {formatCompactTokens(estimate.maxTokens)} tokens
           </p>
           <p className="mt-3 text-xs leading-5 text-[var(--ec-muted)]">
-            Estimate based on draft, attachments, and visible history.
-            {isRun ? " Workspace context and tool state can increase actual usage." : ""}
+            {hasReportedUsage
+              ? "Reported by the active provider session."
+              : "Estimate based on draft, attachments, and visible history."}
+            {tokenUsage?.compactsAutomatically && tokenUsage.autoCompactThreshold
+              ? ` Claude will compact automatically near ${formatCompactTokens(tokenUsage.autoCompactThreshold)} tokens.`
+              : isRun ? " Workspace context and tool state can increase actual usage." : ""}
           </p>
         </div>
       ) : null}

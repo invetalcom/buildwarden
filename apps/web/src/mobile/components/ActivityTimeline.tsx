@@ -266,10 +266,19 @@ const EntryView = ({ entry, finalResponseStepId }: { entry: ActivityEntry; final
   }
 };
 
-export const ActivityTimeline = ({ detail }: { detail: RunDetail }) => {
+export const ActivityTimeline = ({
+  detail,
+  historyLoading = false,
+  onLoadEarlierHistory,
+}: {
+  detail: RunDetail;
+  historyLoading?: boolean;
+  onLoadEarlierHistory?: () => void | Promise<void>;
+}) => {
   const [limit, setLimit] = useState(PAGE_SIZE);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const stickToBottom = useRef(true);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   const runActive = ["queued", "preparing", "running"].includes(detail.run.status);
 
   const steps = useMemo(() => dedupeFinalSummarySteps(detail.steps), [detail.steps]);
@@ -310,6 +319,18 @@ export const ActivityTimeline = ({ detail }: { detail: RunDetail }) => {
     stickToBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 120;
   };
 
+  const loadEarlierHistory = async () => {
+    if (!onLoadEarlierHistory || historyLoading) return;
+    const element = scrollRef.current;
+    const previousHeight = element?.scrollHeight ?? 0;
+    const previousTop = element?.scrollTop ?? 0;
+    stickToBottom.current = false;
+    await onLoadEarlierHistory();
+    setLimit((current) => current + 150);
+    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    if (element) element.scrollTop = previousTop + (element.scrollHeight - previousHeight);
+  };
+
   // An active run is never "empty": it gets the working row below, exactly as the desktop timeline
   // suppresses its empty message whenever the loading row is up.
   if (entries.length === 0 && !runActive) {
@@ -321,7 +342,7 @@ export const ActivityTimeline = ({ detail }: { detail: RunDetail }) => {
   }
 
   return (
-    <div className="m-scroll flex flex-col py-2" onScroll={onScroll}>
+    <div ref={scrollRef} className="m-scroll flex flex-col py-2" onScroll={onScroll}>
       {hidden > 0 ? (
         <button
           type="button"
@@ -329,6 +350,16 @@ export const ActivityTimeline = ({ detail }: { detail: RunDetail }) => {
           className="m-tap mx-4 mb-2 rounded-md border border-[var(--ec-border)] text-xs font-medium text-[var(--ec-muted)]"
         >
           Load {Math.min(hidden, PAGE_SIZE)} earlier {hidden === 1 ? "entry" : "entries"}
+        </button>
+      ) : null}
+      {hidden === 0 && detail.historyPage?.hasMore && onLoadEarlierHistory ? (
+        <button
+          type="button"
+          onClick={() => void loadEarlierHistory()}
+          disabled={historyLoading}
+          className="m-tap mx-4 mb-2 rounded-md border border-[var(--ec-border)] text-xs font-medium text-[var(--ec-muted)] disabled:opacity-60"
+        >
+          {historyLoading ? "Loading earlier turns…" : "Load earlier turns"}
         </button>
       ) : null}
       {visible.map((entry, index) => (

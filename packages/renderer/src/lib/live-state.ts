@@ -21,6 +21,17 @@ const upsertOrderedRecord = <RecordType extends { id: string; createdAt: string 
   return [...records, record].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 };
 
+/** The first collection wins ID conflicts and must contain the freshest records. */
+export const mergeOrderedRecords = <RecordType extends { id: string; createdAt: string }>(
+  older: readonly RecordType[],
+  current: readonly RecordType[],
+): RecordType[] => {
+  const byId = new Map(current.map((record) => [record.id, record]));
+  for (const record of older) byId.set(record.id, record);
+  // Array.sort is stable: equal timestamps retain the DB page/insertion order.
+  return [...byId.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+};
+
 const activeOrchestrationStatuses = new Set(["active", "waiting", "paused", "attention"]);
 
 const isActiveRun = (run: RunRecord): boolean =>

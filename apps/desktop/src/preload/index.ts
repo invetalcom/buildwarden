@@ -186,6 +186,7 @@ const api: DesktopApi = {
   getModelDeletionImpact: (modelId: string) => invoke(IPC_CHANNELS.getModelDeletionImpact, modelId),
   deleteModel: (modelId: string) => invoke(IPC_CHANNELS.deleteModel, modelId),
   getRunDetail: (runId: string) => invoke(IPC_CHANNELS.getRunDetail, runId),
+  getEarlierRunHistory: (runId, request) => invoke(IPC_CHANNELS.getEarlierRunHistory, runId, request),
   getOrchestrationDetail: (coordinatorRunId: string) =>
     invoke(IPC_CHANNELS.getOrchestrationDetail, coordinatorRunId),
   getOrchestrationTaskDetail: (taskId: string) =>
@@ -279,6 +280,7 @@ const api: DesktopApi = {
   createRunChat: (runId: string, input: RunChatInput) => invoke(IPC_CHANNELS.createRunChat, runId, input),
   getRunChat: (runId: string) => invoke(IPC_CHANNELS.getRunChat, runId),
   getChatDetail: (chatId: string) => invoke(IPC_CHANNELS.getChatDetail, chatId),
+  getEarlierChatHistory: (chatId, request) => invoke(IPC_CHANNELS.getEarlierChatHistory, chatId, request),
   followUpChat: (chatId: string, prompt: string, options?: FollowUpChatOptions) =>
     invoke(IPC_CHANNELS.followUpChat, chatId, prompt, options),
   listChats: () => invoke(IPC_CHANNELS.listChats),

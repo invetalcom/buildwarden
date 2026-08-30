@@ -28,7 +28,11 @@ import {
   type RunActivityStep,
   type TimelineRenderItem,
 } from "./run-activity-model";
-import { scrollVirtualTimelineToBoundary } from "./run-activity-scroll";
+import {
+  captureVirtualPrependAnchor,
+  restoreVirtualPrependAnchor,
+  scrollVirtualTimelineToBoundary,
+} from "./run-activity-scroll";
 import { ScrollBoundaryControls } from "./ScrollBoundaryControls";
 import { useRunToolCallCollapseThreshold } from "../../lib/run-tool-call-collapse-settings";
 
@@ -526,6 +530,8 @@ type RunActivityTimelineProps = Readonly<{
   endRef?: Ref<HTMLDivElement>;
   virtualized?: boolean;
   showBoundaryControls?: boolean;
+  hasEarlierSteps?: boolean;
+  onLoadEarlierSteps?: () => void | Promise<void>;
   initialScrollPosition?: "start" | "end";
   subagentFocus?: { subagentId: string; nonce: number } | null;
   onCopyStepContent?: (text: string, stepId: string) => void | Promise<void>;
@@ -556,6 +562,8 @@ export function RunActivityTimeline({
   endRef,
   virtualized = false,
   showBoundaryControls = false,
+  hasEarlierSteps = false,
+  onLoadEarlierSteps,
   initialScrollPosition = "end",
   subagentFocus = null,
   onCopyStepContent,
@@ -571,6 +579,7 @@ export function RunActivityTimeline({
   const [internalExpandedReasoningStepIds, setInternalExpandedReasoningStepIds] = useState<Record<string, boolean>>({});
   // Keep expansion above virtual rows so overscan unmounts do not reset a user's choice.
   const [expandedToolBatchIds, setExpandedToolBatchIds] = useState<Record<string, boolean>>({});
+  const [loadingEarlierSteps, setLoadingEarlierSteps] = useState(false);
   const toolCallCollapseThreshold = useRunToolCallCollapseThreshold();
   const isRunActive = ["queued", "preparing", "running"].includes(run.status);
   const activityEntries = useMemo(() => buildActivityEntries(steps, { runActive: isRunActive }), [isRunActive, steps]);
@@ -725,12 +734,60 @@ export function RunActivityTimeline({
     ],
   );
 
+  const latestTimelineItemsRef = useRef(timelineItems);
+  latestTimelineItemsRef.current = timelineItems;
+  const handleLoadEarlierSteps = useCallback(async () => {
+    if (!onLoadEarlierSteps || loadingEarlierSteps) return;
+    const container = scrollElementRef.current;
+    const fallback = container ? { scrollHeight: container.scrollHeight, scrollTop: container.scrollTop } : null;
+    const anchor = virtualized && container
+      ? captureVirtualPrependAnchor(
+          timelineItems.map((item) => item.key),
+          rowVirtualizer.getVirtualItems(),
+          container.scrollTop,
+        )
+      : null;
+    setLoadingEarlierSteps(true);
+    try {
+      await onLoadEarlierSteps();
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      const currentContainer = scrollElementRef.current;
+      if (!currentContainer) return;
+      if (anchor && restoreVirtualPrependAnchor(
+        rowVirtualizer,
+        latestTimelineItemsRef.current.map((item) => item.key),
+        anchor,
+        (offset) => { currentContainer.scrollTop += offset; },
+      )) {
+        return;
+      }
+      if (fallback) {
+        currentContainer.scrollTop = fallback.scrollTop + (currentContainer.scrollHeight - fallback.scrollHeight);
+      }
+    } finally {
+      setLoadingEarlierSteps(false);
+    }
+  }, [loadingEarlierSteps, onLoadEarlierSteps, rowVirtualizer, scrollElementRef, timelineItems, virtualized]);
+
   const worklogClassName = cn(className, `agent-worklog-density--${density}`, virtualized ? "agent-worklog--virtualized" : null);
   const isEmpty = activityEntries.length === 0 && !showLoading;
 
   if (virtualized) {
     return (
       <>
+        {hasEarlierSteps && onLoadEarlierSteps ? (
+          <div className="flex shrink-0 justify-center border-b border-[var(--ec-border)] py-1">
+            <button
+              type="button"
+              className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium text-[var(--ec-muted)] hover:bg-[var(--ec-control-hover)] hover:text-[var(--ec-text)] disabled:opacity-60"
+              onClick={() => void handleLoadEarlierSteps()}
+              disabled={loadingEarlierSteps}
+            >
+              {loadingEarlierSteps ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
+              {loadingEarlierSteps ? "Loading earlier turns..." : "Load earlier turns"}
+            </button>
+          </div>
+        ) : null}
         {showBoundaryControls ? (
           <ScrollBoundaryControls
             scrollElementRef={scrollElementRef}

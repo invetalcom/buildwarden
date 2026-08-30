@@ -147,6 +147,7 @@ import {
   applyLiveChatToSnapshot,
   applyLiveRunEventToDetail,
   applyLiveRunToSnapshot,
+  mergeOrderedRecords,
 } from "./lib/live-state";
 import { useWelcomeFlow } from "./components/app/use-welcome-flow";
 import { buildProviderAccountConfig } from "./lib/provider-account-config";
@@ -827,6 +828,27 @@ export const App = () => {
     [loadRunDetailForRun],
   );
 
+  const loadEarlierRunHistory = useCallback(async (runId: string) => {
+    if (!buildwarden) return;
+    const detail = runDetailsByIdRef.current[runId];
+    const page = detail?.historyPage;
+    if (!page?.hasMore || !page.beforeCursor) return;
+    const request = { beforeCursor: page.beforeCursor, snapshotRevision: page.snapshotRevision };
+    const result = await buildwarden.getEarlierRunHistory(runId, request);
+    const current = runDetailsByIdRef.current[runId];
+    if (!current || current.historyPage?.beforeCursor !== request.beforeCursor ||
+      current.historyPage.snapshotRevision !== request.snapshotRevision) return;
+    if (result.stale) {
+      await loadRunDetailForRun(runId);
+      return;
+    }
+    mergeRunDetailForRun(runId, (previous) => ({
+      ...previous,
+      steps: mergeOrderedRecords(result.steps, previous.steps),
+      historyPage: result.page,
+    }));
+  }, [buildwarden, loadRunDetailForRun, mergeRunDetailForRun]);
+
   const loadDiffSummaryForOpenRun = useCallback(
     async (eventRunId: string) => {
       const shouldLoadDiff =
@@ -945,6 +967,9 @@ export const App = () => {
       }
 
       const previous = runDetailsByIdRef.current[eventRunId];
+      const previousHistoryPage = previous?.historyPage;
+      const historyWasExpanded = Boolean(previousHistoryPage &&
+        (previousHistoryPage.beforeCursor !== fast.historyPage?.beforeCursor || previousHistoryPage.hasMore === false));
       const summaryRefreshIsCurrent = summaryGeneration !== undefined
         && diffSummaryLoadGenerationRef.current[eventRunId] === summaryGeneration;
       if (options?.refreshDiff) {
@@ -952,6 +977,8 @@ export const App = () => {
       }
       replaceRunDetailForRun(eventRunId, {
         ...fast,
+        steps: historyWasExpanded && previous ? mergeOrderedRecords(fast.steps, previous.steps) : fast.steps,
+        historyPage: historyWasExpanded && previous ? previous.historyPage : fast.historyPage,
         diff: options?.refreshDiff ? "" : (previous?.diff ?? ""),
         diffLoaded: options?.refreshDiff ? false : (previous?.diffLoaded ?? false),
         worktreeUnavailable: previous?.worktreeUnavailable ?? false,
@@ -3711,6 +3738,7 @@ export const App = () => {
             keyboardShortcuts={keyboardShortcuts}
             pendingShellApproval={null}
             timelineDensity={runTimelineDensity}
+            tokenUsage={paneTokenUsage}
             subagentFocus={subagentFocusRequest?.runId === paneDetail.run.id ? subagentFocusRequest : null}
             showActivity={paneVisiblePanels.activity}
             showAgents={paneVisiblePanels.agents}
@@ -3721,6 +3749,7 @@ export const App = () => {
             showChat={paneVisiblePanels.chat}
             showPullRequest={paneVisiblePanels["pull-request"]}
             onRequestDiff={loadDiffForOpenRun}
+            onLoadEarlierHistory={loadEarlierRunHistory}
             onTogglePanel={(panelId) => toggleRunWorkspacePanelForRun(
               paneDetail.run.id,
               panelId,
@@ -4199,6 +4228,7 @@ export const App = () => {
               keyboardShortcuts={keyboardShortcuts}
               pendingShellApproval={null}
               timelineDensity={runTimelineDensity}
+              tokenUsage={selectedRunTokenUsage}
               subagentFocus={subagentFocusRequest?.runId === detail.run.id ? subagentFocusRequest : null}
               showActivity={runWorkspacePanelVisibility.activity}
               showAgents={runWorkspacePanelVisibility.agents}
@@ -4209,6 +4239,7 @@ export const App = () => {
               showChat={runWorkspacePanelVisibility.chat}
               showPullRequest={runWorkspacePanelVisibility["pull-request"]}
               onRequestDiff={loadDiffForOpenRun}
+              onLoadEarlierHistory={loadEarlierRunHistory}
               onTogglePanel={toggleSelectedRunWorkspacePanel}
               secondaryPanelPosition={runWorkspaceSecondaryPosition}
               onSecondaryPanelPositionChange={(position) => {

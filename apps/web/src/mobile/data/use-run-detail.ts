@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RunDetail, RunEvent, RunWorktreeDiffResult } from "@buildwarden/shared";
 import type { BuildWardenClient } from "@buildwarden/renderer";
-import { applyLiveRunEventToDetail } from "@buildwarden/renderer/logic";
+import { applyLiveRunEventToDetail, mergeOrderedRecords } from "@buildwarden/renderer/logic";
 import { errorMessage } from "../lib/format";
 
 const RELOAD_DEBOUNCE_MS = 400;
@@ -11,6 +11,8 @@ export interface RunDetailStore {
   loading: boolean;
   error: string | null;
   reload: () => Promise<void>;
+  historyLoading: boolean;
+  loadEarlierHistory: () => Promise<void>;
   /** Worktree diff text; empty until {@link loadDiff} has been called at least once. */
   diff: string;
   diffLoading: boolean;
@@ -27,8 +29,11 @@ export interface RunDetailStore {
  */
 export const useRunDetail = (client: BuildWardenClient, runId: string | null): RunDetailStore => {
   const [detail, setDetail] = useState<RunDetail | null>(null);
+  const detailRef = useRef<RunDetail | null>(null);
+  detailRef.current = detail;
   const [loading, setLoading] = useState(Boolean(runId));
   const [error, setError] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [diff, setDiff] = useState("");
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
@@ -65,7 +70,14 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
         .filter(({ revision, event }) => revision > revisionAtStart && event.runId === runId)
         .reduce((current, { event }) => applyLiveRunEventToDetail(current, event), next);
       recentLiveEventsRef.current = recentLiveEventsRef.current.filter(({ revision }) => revision > revisionAtCompletion);
-      setDetail(merged);
+      setDetail((current) => {
+        const currentPage = current?.historyPage;
+        const historyWasExpanded = silent && current?.run.id === merged.run.id && Boolean(currentPage &&
+          (currentPage.beforeCursor !== merged.historyPage?.beforeCursor || currentPage.hasMore === false));
+        return historyWasExpanded
+          ? { ...merged, steps: mergeOrderedRecords(merged.steps, current!.steps), historyPage: currentPage }
+          : merged;
+      });
       setError(null);
     } catch (caught) {
       if (loadRequestRef.current !== requestId) return;
@@ -77,6 +89,26 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
   }, [client, runId]);
 
   const reload = useCallback(() => load(false), [load]);
+
+  const loadEarlierHistory = useCallback(async () => {
+    if (!runId || historyLoading) return;
+    const page = detailRef.current?.historyPage;
+    if (!page?.hasMore || !page.beforeCursor) return;
+    const request = { beforeCursor: page.beforeCursor, snapshotRevision: page.snapshotRevision };
+    setHistoryLoading(true);
+    try {
+      const result = await client.getEarlierRunHistory(runId, request);
+      if (result.stale) {
+        await load(false);
+        return;
+      }
+      setDetail((current) => current?.historyPage?.beforeCursor === request?.beforeCursor
+        ? { ...current, steps: mergeOrderedRecords(result.steps, current.steps), historyPage: result.page }
+        : current);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [client, historyLoading, load, runId]);
 
   useEffect(() => {
     let active = true;
@@ -157,5 +189,17 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [client, load, runId]);
 
-  return { detail, loading, error, reload, diff, diffLoading, diffError, diffUnavailable, loadDiff };
+  return {
+    detail,
+    loading,
+    error,
+    reload,
+    historyLoading,
+    loadEarlierHistory,
+    diff,
+    diffLoading,
+    diffError,
+    diffUnavailable,
+    loadDiff,
+  };
 };

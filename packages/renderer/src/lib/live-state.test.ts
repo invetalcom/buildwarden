@@ -5,6 +5,7 @@ import {
   applyLiveChatToSnapshot,
   applyLiveRunEventToDetail,
   applyLiveRunToSnapshot,
+  mergeOrderedRecords,
 } from "./live-state";
 
 const run = {
@@ -41,6 +42,13 @@ const snapshot = {
 } as unknown as AppSnapshot;
 
 describe("live remote state", () => {
+  it("keeps the first record when merged pages contain the same id", () => {
+    const fresh = { id: "step-1", createdAt: run.createdAt, content: "fresh" };
+    const cached = { ...fresh, content: "cached" };
+
+    expect(mergeOrderedRecords([fresh], [cached])).toEqual([fresh]);
+  });
+
   it("patches every derived run list from one authoritative row", () => {
     const next = applyLiveRunToSnapshot(snapshot, run).projects[0]!;
     expect(next.runs[0]).toBe(run);
