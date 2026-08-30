@@ -225,6 +225,7 @@ export const App = () => {
     && navigator.userAgent.includes("Windows");
   const [snapshot, setSnapshot] = useState<AppSnapshot>(EMPTY_SNAPSHOT);
   const [snapshotLoaded, setSnapshotLoaded] = useState(false);
+  const [snapshotLoadedSuccessfully, setSnapshotLoadedSuccessfully] = useState(false);
   const [runDetail, setRunDetail] = useState<RunDetail | null>(null);
   const [openRunPanes, setOpenRunPanes] = useState<OpenRunPanes>({});
   const [focusedRunPane, setFocusedRunPane] = useState<RunPaneId>("left");
@@ -423,6 +424,7 @@ export const App = () => {
     const next = await buildwarden.refreshSnapshot();
     setSnapshot(next);
     setSnapshotLoaded(true);
+    setSnapshotLoadedSuccessfully(true);
     setRunProjectId((current) =>
       current && next.projects.some((entry) => entry.project.id === current)
         ? current
@@ -3581,8 +3583,9 @@ export const App = () => {
   ]);
 
   useEffect(() => {
+    if (!snapshotLoadedSuccessfully) return;
     applyDesignSchemeToDocument(designScheme);
-  }, [designScheme]);
+  }, [designScheme, snapshotLoadedSuccessfully]);
 
   useEffect(() => {
     const clearRunPaneDropPreview = () => setRunPaneDropPreview(null);
