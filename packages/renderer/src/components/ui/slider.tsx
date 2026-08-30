@@ -34,6 +34,8 @@ const normalizeValue = (value: number, min: number, max: number, step: number): 
   return Number(Math.min(upper, Math.max(lower, snapped)).toFixed(decimalPlaces(safeStep)));
 };
 
+const RANGE_VALUE_KEYS = new Set(["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp", "End", "Home", "PageDown", "PageUp"]);
+
 export const Slider = forwardRef<HTMLInputElement, SliderProps>(({
   className,
   rangeClassName,
@@ -88,7 +90,9 @@ export const Slider = forwardRef<HTMLInputElement, SliderProps>(({
         aria-valuetext={`${value}${valueSuffix}`}
         onChange={(event) => onValueChange(normalized(Number(event.currentTarget.value)))}
         onPointerUp={(event) => commit(Number(event.currentTarget.value))}
-        onKeyUp={(event) => commit(Number(event.currentTarget.value))}
+        onKeyUp={(event) => {
+          if (RANGE_VALUE_KEYS.has(event.key)) commit(Number(event.currentTarget.value));
+        }}
         className={cn("h-2 min-w-0 flex-1 cursor-pointer accent-[var(--ec-accent)] disabled:cursor-not-allowed disabled:opacity-50", rangeClassName)}
         {...props}
       />
