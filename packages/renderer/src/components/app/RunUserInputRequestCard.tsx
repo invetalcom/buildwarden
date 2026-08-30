@@ -246,6 +246,7 @@ export function RunUserInputRequestCard({
               {showCustomInput ? (
                 <Textarea
                   value={draft.custom}
+                  disabled={resolved || submitting || disabled}
                   onChange={(event) => updateCustom(question.id, event.target.value)}
                   placeholder={question.options.length > 0 ? "Other answer" : "Type your answer"}
                   rows={2}
