@@ -59,10 +59,12 @@ export const ContextWindowBadge = ({
     };
   }, [deferredHistoryText, deferredPrompt, open]);
 
+  const reportedUsed = tokenUsage?.usedTokens ?? tokenUsage?.lastUsedTokens;
+  const reportedMax = tokenUsage?.maxTokens;
+  const hasReportedUsage = typeof reportedUsed === "number" && reportedUsed >= 0 &&
+    typeof reportedMax === "number" && reportedMax > 0;
   const estimate = useMemo(() => {
-    const reportedUsed = tokenUsage?.usedTokens ?? tokenUsage?.lastUsedTokens;
-    const reportedMax = tokenUsage?.maxTokens;
-    if (typeof reportedUsed === "number" && reportedUsed >= 0 && typeof reportedMax === "number" && reportedMax > 0) {
+    if (hasReportedUsage) {
       const usedTokens = Math.min(reportedUsed, reportedMax);
       const usedPercent = Math.min(100, Math.round((usedTokens / reportedMax) * 100));
       return {
@@ -81,7 +83,7 @@ export const ContextWindowBadge = ({
         isRun,
         textTokenCounts: exactTextTokenCounts,
       });
-  }, [attachmentFiles, deferredHistoryText, deferredPrompt, exactTextTokenCounts, isRun, modelIds, tokenUsage]);
+  }, [attachmentFiles, deferredHistoryText, deferredPrompt, exactTextTokenCounts, hasReportedUsage, isRun, modelIds, reportedMax, reportedUsed]);
 
   if (!estimate) {
     return null;
@@ -131,7 +133,7 @@ export const ContextWindowBadge = ({
             {formatCompactTokens(estimate.usedTokens)} / {formatCompactTokens(estimate.maxTokens)} tokens
           </p>
           <p className="mt-3 text-xs leading-5 text-[var(--ec-muted)]">
-            {tokenUsage?.usedTokens !== undefined || tokenUsage?.lastUsedTokens !== undefined
+            {hasReportedUsage
               ? "Reported by the active provider session."
               : "Estimate based on draft, attachments, and visible history."}
             {tokenUsage?.compactsAutomatically && tokenUsage.autoCompactThreshold
