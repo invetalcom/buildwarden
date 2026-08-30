@@ -287,6 +287,11 @@ const writeCachedDesignScheme = (scheme: DesignScheme): void => {
   }
 };
 
+const designSchemesForMenu = (activeScheme: DesignScheme): readonly DesignScheme[] =>
+  DESIGN_SCHEME_PRESETS.some((scheme) => scheme.id === activeScheme.id)
+    ? DESIGN_SCHEME_PRESETS
+    : [...DESIGN_SCHEME_PRESETS, activeScheme];
+
 const bootstrap = async (): Promise<void> => {
   const bootStartedAt = Date.now();
   const userDataPath = app.getPath("userData");
@@ -361,7 +366,9 @@ const bootstrap = async (): Promise<void> => {
     .finally(() => controller.startAutomationScheduler());
 
   const applySelectedDesignScheme = async (schemeId: string) => {
-    const nextScheme = DESIGN_SCHEME_PRESETS.find((scheme) => scheme.id === schemeId) ?? getDefaultDesignScheme("dark");
+    if (schemeId === currentDesignScheme.id) return;
+    const nextScheme = DESIGN_SCHEME_PRESETS.find((scheme) => scheme.id === schemeId);
+    if (!nextScheme) return;
     await controller.setAppSetting(APP_SETTING_KEYS.designScheme, serializeDesignScheme(nextScheme));
     await controller.setAppSetting(APP_SETTING_KEYS.uiTheme, nextScheme.mode);
     await controller.setAppSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(nextScheme.mode));
@@ -370,7 +377,7 @@ const bootstrap = async (): Promise<void> => {
     desktopPlatform.installApplicationMenu({
       logDirPath,
       designSchemeId: currentDesignScheme.id,
-      designSchemes: DESIGN_SCHEME_PRESETS,
+      designSchemes: designSchemesForMenu(currentDesignScheme),
       onCommand: (command) => hostEvents.publish("appMenuCommand", command),
       onDesignSchemeChange: (schemeId) => void applySelectedDesignScheme(schemeId),
     });
@@ -384,7 +391,7 @@ const bootstrap = async (): Promise<void> => {
     desktopPlatform.installApplicationMenu({
       logDirPath,
       designSchemeId: currentDesignScheme.id,
-      designSchemes: DESIGN_SCHEME_PRESETS,
+      designSchemes: designSchemesForMenu(currentDesignScheme),
       onCommand: (command) => hostEvents.publish("appMenuCommand", command),
       onDesignSchemeChange: (schemeId) => void applySelectedDesignScheme(schemeId),
     });
@@ -1606,7 +1613,7 @@ const bootstrap = async (): Promise<void> => {
       {
         logDirPath,
         designSchemeId: currentDesignScheme.id,
-        designSchemes: DESIGN_SCHEME_PRESETS,
+        designSchemes: designSchemesForMenu(currentDesignScheme),
         onCommand: (command) => hostEvents.publish("appMenuCommand", command),
         onDesignSchemeChange: (schemeId) => void applySelectedDesignScheme(schemeId),
       },
