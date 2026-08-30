@@ -38,3 +38,14 @@ export const mergeMobileTaskAttachments = (
   stored: readonly ChatAttachmentPayload[],
   incoming: readonly ChatAttachmentPayload[],
 ): ChatAttachmentPayload[] => dedupeChatAttachmentPayloads(stored, incoming);
+
+/** Live remote events carry attachment names only; a detail refresh hydrates the persisted bytes. */
+export const hasUnhydratedAttachmentMetadata = (metadataJson: string): boolean => {
+  try {
+    const metadata = JSON.parse(metadataJson || "{}") as Record<string, unknown>;
+    return Array.isArray(metadata.attachmentNames) && metadata.attachmentNames.length > 0 &&
+      (!Array.isArray(metadata.attachments) || metadata.attachments.length === 0);
+  } catch {
+    return false;
+  }
+};

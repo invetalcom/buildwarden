@@ -3,6 +3,7 @@ import type { ChatDetail, ChatEvent } from "@buildwarden/shared";
 import type { BuildWardenClient } from "@buildwarden/renderer";
 import { applyLiveChatEventToDetail, mergeOrderedRecords } from "@buildwarden/renderer/logic";
 import { errorMessage } from "../lib/format";
+import { hasUnhydratedAttachmentMetadata } from "../lib/task-attachments";
 
 const RELOAD_DEBOUNCE_MS = 300;
 
@@ -103,7 +104,7 @@ export const useChatDetail = (client: BuildWardenClient, chatId: string | null):
       if (event.step || event.chat) {
         setDetail((current) => current ? applyLiveChatEventToDetail(current, event) : current);
       }
-      if (event.step) return;
+      if (event.step && !hasUnhydratedAttachmentMetadata(event.step.metadataJson)) return;
       if (timerRef.current !== null) return;
       timerRef.current = window.setTimeout(() => {
         timerRef.current = null;

@@ -15,6 +15,7 @@ import {
   type RemoteHostEventSource,
 } from "@buildwarden/remote-server";
 import {
+  CHAT_ATTACHMENT_LIMITS,
   REMOTE_ACCESS_HEALTH_PATH,
   REMOTE_ACCESS_INFO_PATH,
   REMOTE_ACCESS_PAIRING_PATH,
@@ -838,10 +839,23 @@ describe("remote access authentication", () => {
     expect(malformed.status).toBe(400);
     await expect(malformed.json()).resolves.toEqual({ error: "Invalid JSON request body." });
 
+    const attachmentSized = await fetch(`${info.baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({
+        protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+        requestId: "attachment-sized-body",
+        method: "getSnapshot",
+        args: ["x".repeat(1_048_576)],
+      }),
+    });
+    expect(attachmentSized.status).toBe(200);
+    await expect(attachmentSized.json()).resolves.toMatchObject({ ok: false, error: { code: "invalid-request" } });
+
     const oversized = await fetch(`${info.baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Cookie: cookie },
-      body: "x".repeat(1_048_577),
+      body: "x".repeat(Math.ceil(CHAT_ATTACHMENT_LIMITS.maxTotalBytes / 3) * 4 + 1_048_577),
     });
     expect(oversized.status).toBe(413);
     await expect(oversized.json()).resolves.toEqual({ error: "Request body is too large." });

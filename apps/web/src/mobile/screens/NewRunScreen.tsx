@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { APP_SETTING_KEYS, type ModelExecutionControl, type ProjectKind, type ProjectTaskRecord, type RunMode, type RunModelConfiguration, type RunWorkspaceType } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, CHAT_ATTACHMENT_LIMITS, type ModelExecutionControl, type ProjectKind, type ProjectTaskRecord, type RunMode, type RunModelConfiguration, type RunWorkspaceType } from "@buildwarden/shared";
 import { buildRunReasoningInput, resolveRunModelConfiguration } from "@buildwarden/renderer/logic";
 import { Bot, ChevronDown, Plus, Sparkles, X } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
@@ -9,7 +9,8 @@ import { createNewRunsIndependently } from "../lib/new-run-creation";
 import { reconcileNewRunModelIds, resolveNewRunDefaults } from "../lib/new-run-defaults";
 import { AppBar } from "../components/AppBar";
 import { Button, EmptyState, InlineError, Textarea, Toggle } from "../components/primitives";
-import { MobileStoredAttachments } from "../components/TaskAttachments";
+import { MobileAttachmentPicker, MobileStoredAttachments } from "../components/TaskAttachments";
+import { readMobileAttachmentFiles } from "../lib/task-attachments";
 import { cn } from "../lib/cn";
 
 const MODES: { value: RunMode; label: string; hint: string }[] = [
@@ -116,6 +117,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
   const [taskDetail, setTaskDetail] = useState<ProjectTaskRecord | null>(null);
   const [taskLoadError, setTaskLoadError] = useState<string | null>(null);
   const [prompt, setPrompt] = useState(taskSummary?.prompt ?? "");
+  const [files, setFiles] = useState<File[]>([]);
   const editedPromptTaskIdRef = useRef<string | null>(null);
   const [modelIds, setModelIds] = useState(defaults.modelIds);
   const [modelConfigurations, setModelConfigurations] = useState<Record<string, RunModelConfiguration>>(defaults.modelConfigurations);
@@ -134,6 +136,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
     setTaskDetail(null);
     setTaskLoadError(null);
     setPrompt("");
+    setFiles([]);
   }, [taskId]);
 
   useEffect(() => {
@@ -144,6 +147,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
     void client.getProjectTask(taskId).then((detail) => {
       if (cancelled) return;
       setTaskDetail(detail);
+      setFiles((current) => current.slice(0, Math.max(0, CHAT_ATTACHMENT_LIMITS.maxFileCount - detail.attachments.length)));
       setTaskLoadError(null);
       if (editedPromptTaskIdRef.current !== taskId) {
         setPrompt(detail.prompt);
@@ -287,7 +291,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
     .filter((value): value is string => Boolean(value));
 
   const start = async () => {
-    if (!project || !prompt.trim()) return;
+    if (!project || (!prompt.trim() && files.length === 0)) return;
     const selectedModels = (workspaceType === "local" ? modelIds.slice(0, 1) : modelIds)
       .flatMap((id) => {
         const entry = models.find((option) => option.modelId === id);
@@ -295,40 +299,44 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
       });
     if (selectedModels.length === 0) return;
     const result = await action.run(
-      () => createNewRunsIndependently(
-        selectedModels,
-        async (selectedModel) => {
-          const configuration = resolveRunModelConfiguration(
-            selectedModel.modelId,
-            modelConfigurations,
-            reasoningEffort,
-            anthropicEffort,
-            executionMode,
-            isAnthropicModel(selectedModel),
-          );
-          return client.createRun({
-            projectId: project.project.id,
-            providerAccountId: selectedModel.providerAccountId,
-            modelId: selectedModel.modelId,
-            harnessType: selectedModel.harnessType,
-            mode,
-            workspaceType,
-            yoloMode,
-            delegationEnabled: delegation,
-            baseBranch: project.project.baseBranch,
-            prompt: prompt.trim(),
-            ...(taskId ? { projectTaskId: taskId } : {}),
-            ...buildRunReasoningInput(
-              selectedModel.providerType,
-              selectedModel.providerFamily,
-              configuration.effort,
-              configuration.effort,
-              selectedModel.executionProfile,
-              configuration.executionMode,
-            ),
-          });
-        },
-      ),
+      async () => {
+        const attachments = await readMobileAttachmentFiles(files);
+        return createNewRunsIndependently(
+          selectedModels,
+          async (selectedModel) => {
+            const configuration = resolveRunModelConfiguration(
+              selectedModel.modelId,
+              modelConfigurations,
+              reasoningEffort,
+              anthropicEffort,
+              executionMode,
+              isAnthropicModel(selectedModel),
+            );
+            return client.createRun({
+              projectId: project.project.id,
+              providerAccountId: selectedModel.providerAccountId,
+              modelId: selectedModel.modelId,
+              harnessType: selectedModel.harnessType,
+              mode,
+              workspaceType,
+              yoloMode,
+              delegationEnabled: delegation,
+              baseBranch: project.project.baseBranch,
+              prompt: prompt.trim(),
+              ...(attachments.length ? { attachments } : {}),
+              ...(taskId ? { projectTaskId: taskId } : {}),
+              ...buildRunReasoningInput(
+                selectedModel.providerType,
+                selectedModel.providerFamily,
+                configuration.effort,
+                configuration.effort,
+                selectedModel.executionProfile,
+                configuration.executionMode,
+              ),
+            });
+          },
+        );
+      },
       "The run did not start.",
     );
     if (!result) return;
@@ -380,6 +388,14 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
             placeholder="What should the agent do?"
             className="text-[15px] leading-6"
           />
+          <div className="mt-3">
+            <MobileAttachmentPicker
+              files={files}
+              onFilesChange={setFiles}
+              disabled={action.busy}
+              maximumFiles={Math.max(0, CHAT_ATTACHMENT_LIMITS.maxFileCount - (taskDetail?.attachments.length ?? 0))}
+            />
+          </div>
         </div>
 
         <div className="flex flex-col gap-2 px-4 py-3">
@@ -586,7 +602,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
       </div>
 
       <div className="m-safe-bottom shrink-0 border-t border-[var(--ec-border)] bg-[var(--ec-sidebar)] px-4 py-3">
-        <Button block className="h-12" busy={action.busy} disabled={!prompt.trim() || modelIds.length === 0} onClick={() => void start()}>
+        <Button block className="h-12" busy={action.busy} disabled={(!prompt.trim() && files.length === 0) || modelIds.length === 0} onClick={() => void start()}>
           <Sparkles className="size-4" />
           Start run
         </Button>
