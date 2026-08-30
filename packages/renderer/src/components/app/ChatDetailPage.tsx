@@ -163,7 +163,7 @@ export const ChatDetailPage = ({
       const historyWasExpanded = current.chat.id === d.chat.id && Boolean(currentHistoryPage &&
         (currentHistoryPage.beforeCursor !== d.historyPage?.beforeCursor || currentHistoryPage.hasMore === false));
       return historyWasExpanded
-        ? { ...d, steps: mergeOrderedRecords(current.steps, d.steps), historyPage: current.historyPage }
+        ? { ...d, steps: mergeOrderedRecords(d.steps, current.steps), historyPage: current.historyPage }
         : d;
     });
   }, [buildwarden, chat.id]);
@@ -174,7 +174,7 @@ export const ChatDetailPage = ({
       const historyWasExpanded = current.chat.id === chatDetail.chat.id && Boolean(currentHistoryPage &&
         (currentHistoryPage.beforeCursor !== chatDetail.historyPage?.beforeCursor || currentHistoryPage.hasMore === false));
       return historyWasExpanded
-        ? { ...chatDetail, steps: mergeOrderedRecords(current.steps, chatDetail.steps), historyPage: current.historyPage }
+        ? { ...chatDetail, steps: mergeOrderedRecords(chatDetail.steps, current.steps), historyPage: current.historyPage }
         : chatDetail;
     });
   }, [chatDetail]);

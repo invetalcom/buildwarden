@@ -75,7 +75,7 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
         const historyWasExpanded = silent && current?.run.id === merged.run.id && Boolean(currentPage &&
           (currentPage.beforeCursor !== merged.historyPage?.beforeCursor || currentPage.hasMore === false));
         return historyWasExpanded
-          ? { ...merged, steps: mergeOrderedRecords(current!.steps, merged.steps), historyPage: currentPage }
+          ? { ...merged, steps: mergeOrderedRecords(merged.steps, current!.steps), historyPage: currentPage }
           : merged;
       });
       setError(null);

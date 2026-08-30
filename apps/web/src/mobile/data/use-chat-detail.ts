@@ -55,7 +55,7 @@ export const useChatDetail = (client: BuildWardenClient, chatId: string | null):
         const historyWasExpanded = silent && current?.chat.id === merged.chat.id && Boolean(currentPage &&
           (currentPage.beforeCursor !== merged.historyPage?.beforeCursor || currentPage.hasMore === false));
         return historyWasExpanded
-          ? { ...merged, steps: mergeOrderedRecords(current!.steps, merged.steps), historyPage: currentPage }
+          ? { ...merged, steps: mergeOrderedRecords(merged.steps, current!.steps), historyPage: currentPage }
           : merged;
       });
       setError(null);

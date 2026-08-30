@@ -977,7 +977,7 @@ export const App = () => {
       }
       replaceRunDetailForRun(eventRunId, {
         ...fast,
-        steps: historyWasExpanded && previous ? mergeOrderedRecords(previous.steps, fast.steps) : fast.steps,
+        steps: historyWasExpanded && previous ? mergeOrderedRecords(fast.steps, previous.steps) : fast.steps,
         historyPage: historyWasExpanded && previous ? previous.historyPage : fast.historyPage,
         diff: options?.refreshDiff ? "" : (previous?.diff ?? ""),
         diffLoaded: options?.refreshDiff ? false : (previous?.diffLoaded ?? false),
