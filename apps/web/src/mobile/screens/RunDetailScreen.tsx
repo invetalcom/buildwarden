@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ChatDetail } from "@buildwarden/shared";
+import { RUN_CHAT_CONTEXT_SOURCE, type ChatAttachmentPayload, type ChatDetail } from "@buildwarden/shared";
 import { deriveLatestRunPlanProgress, findProjectRun, isRunContinuable } from "@buildwarden/renderer/logic";
 import {
   Bookmark,
@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
 import { useAction } from "../data/use-action";
+import { useChatDetail } from "../data/use-chat-detail";
 import { useRunDetail } from "../data/use-run-detail";
 import { modelLabel } from "../data/selectors";
 import { compactNumber, errorMessage, runTitle } from "../lib/format";
@@ -23,8 +24,9 @@ import type { RunSegment } from "../nav/mobile-router";
 import { ActivityTimeline } from "../components/ActivityTimeline";
 import { AppBar } from "../components/AppBar";
 import { Composer } from "../components/Composer";
+import { MobileChatStep } from "../components/ChatTranscriptStep";
+import { parseStepMetadata } from "../lib/chat-steps";
 import { DiffViewer } from "../components/DiffViewer";
-import { RichText } from "../components/RichText";
 import { ActionSheet, ConfirmSheet } from "../components/Sheet";
 import { RunStatusPill } from "../components/StatusPill";
 import { CenteredSpinner, EmptyState, IconButton, InlineError, SegmentedTabs, type SegmentOption } from "../components/primitives";
@@ -75,6 +77,7 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
 
   // A segment can disappear (agents/chat depend on capabilities); fall back rather than blank out.
   const activeSegment = segments.some((option) => option.value === segment) ? segment : "activity";
+  const runChatStore = useChatDetail(client, activeSegment === "chat" ? runChat?.chat.id ?? null : null);
 
   useEffect(() => {
     if (activeSegment === "diff" || activeSegment === "files") void store.loadDiff();
@@ -88,7 +91,10 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
     void client
       .getRunChat(runId)
       .then((next) => {
-        if (!cancelled) setRunChat(next);
+        if (!cancelled) {
+          setRunChat(next);
+          setChatError(null);
+        }
       })
       .catch((caught: unknown) => {
         if (!cancelled) setChatError(errorMessage(caught, "Could not load the run chat."));
@@ -103,17 +109,28 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
     await snapshotStore.refresh();
   };
 
-  const followUp = async (prompt: string) => {
-    await action.run(() => client.followUpRun(runId, prompt), "The follow-up did not send.");
+  const visibleRunChat = runChatStore.detail ?? runChat;
+
+  const followUp = async (prompt: string, attachments: ChatAttachmentPayload[]) => {
+    await action.run(
+      () => client.followUpRun(runId, prompt, attachments.length ? { attachments } : undefined),
+      "The follow-up did not send.",
+    );
     await refreshAll();
   };
 
-  const sendRunChat = async (prompt: string) => {
+  const sendRunChat = async (prompt: string, attachments: ChatAttachmentPayload[]) => {
     const model = detail?.run.modelId;
     if (!model) return;
     const sent = runChat
-      ? await action.ok(() => client.followUpChat(runChat.chat.id, prompt), "The message did not send.")
-      : await action.ok(() => client.createRunChat(runId, { modelId: model, prompt }), "Could not start the run chat.");
+      ? await action.ok(
+          () => client.followUpChat(runChat.chat.id, prompt, attachments.length ? { attachments } : undefined),
+          "The message did not send.",
+        )
+      : await action.ok(
+          () => client.createRunChat(runId, { modelId: model, prompt, ...(attachments.length ? { attachments } : {}) }),
+          "Could not start the run chat.",
+        );
     if (!sent) return;
     // Reloading the transcript is a read, but it runs from a send handler: without this it would
     // reject out of the handler as an unhandled rejection instead of reaching the user.
@@ -230,12 +247,11 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
       {activeSegment === "chat" ? (
         <div className="m-scroll flex-1 py-2">
           {chatError ? <InlineError message={chatError} /> : null}
-          {runChat ? (
-            runChat.steps.map((step) => (
-              <div key={step.id} className="px-4 py-1.5">
-                <RichText>{step.content || step.title}</RichText>
-              </div>
-            ))
+          {runChatStore.error ? <InlineError message={runChatStore.error} onRetry={() => void runChatStore.reload()} /> : null}
+          {visibleRunChat ? (
+            visibleRunChat.steps
+              .filter((step) => parseStepMetadata(step.metadataJson).source !== RUN_CHAT_CONTEXT_SOURCE)
+              .map((step) => <MobileChatStep key={step.id} step={step} />)
           ) : (
             <EmptyState title="No run chat yet" message="Ask a question about this run's output and diff." />
           )}
