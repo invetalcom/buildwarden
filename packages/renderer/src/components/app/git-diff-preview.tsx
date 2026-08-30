@@ -191,7 +191,7 @@ const ReviewFindingCard = ({
     className={cn(
       "rounded-md border border-[var(--ec-border)] border-l-[3px] bg-[var(--ec-panel)] px-2.5 py-1.5 text-[11px] text-[var(--ec-text)] transition-shadow",
       FINDING_PRIORITY_BORDER[finding.priority],
-      active && "ring-2 ring-[var(--ec-accent-ring)] ring-offset-1 ring-offset-zinc-950",
+      active && "ring-2 ring-[var(--ec-accent-ring)] ring-offset-1 ring-offset-[var(--ec-panel)]",
     )}
   >
     <div className="flex min-w-0 items-start justify-between gap-2">
