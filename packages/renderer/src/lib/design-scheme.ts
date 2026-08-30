@@ -42,11 +42,14 @@ export const designSchemeCssVariables = (scheme: DesignScheme): Record<string, s
   const accentForeground = relativeLuminance(colors.primary) > 0.42 ? "#071018" : "#ffffff";
   const surfaceHighlight = light ? "#ffffff" : colors.text;
   const shadow = light ? rgba(colors.text, 0.24) : rgba("#000000", 0.58);
+  const sidebar = rgba(colors.background, light ? 0.78 : 0.62);
   return {
     "--ec-bg": rgba(colors.background, light ? 0.78 : 0.68),
     "--ec-bg-elevated": rgba(colors.surfaceElevated, 0.98),
     "--ec-titlebar": colors.surface,
-    "--ec-sidebar": rgba(colors.background, light ? 0.78 : 0.62),
+    "--ec-sidebar-base": sidebar,
+    "--ec-sidebar": sidebar,
+    "--ec-sidebar-contrast-strength": "0%",
     "--ec-panel": rgba(colors.surface, light ? 0.82 : 0.72),
     "--ec-panel-strong": rgba(colors.surfaceElevated, light ? 0.92 : 0.82),
     "--ec-panel-soft": rgba(colors.surface, light ? 0.62 : 0.56),

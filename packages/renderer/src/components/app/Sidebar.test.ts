@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseSidebarGroupRunsByProjectSetting,
+  parseSidebarContrastStrengthSetting,
   parseSidebarRunEntrySizeSetting,
   type ProjectRecord,
 } from "@buildwarden/shared";
@@ -65,5 +66,14 @@ describe("Sidebar run layout settings", () => {
     expect(parseSidebarRunEntrySizeSetting("small")).toBe("small");
     expect(parseSidebarRunEntrySizeSetting("large")).toBe("large");
     expect(parseSidebarGroupRunsByProjectSetting(" FALSE ")).toBe(false);
+  });
+
+  it("parses and clamps sidebar contrast strength while migrating the legacy toggle", () => {
+    expect(parseSidebarContrastStrengthSetting(undefined)).toBe(0);
+    expect(parseSidebarContrastStrengthSetting("false")).toBe(0);
+    expect(parseSidebarContrastStrengthSetting("true")).toBe(18);
+    expect(parseSidebarContrastStrengthSetting("42")).toBe(42);
+    expect(parseSidebarContrastStrengthSetting(-5)).toBe(0);
+    expect(parseSidebarContrastStrengthSetting(140)).toBe(100);
   });
 });

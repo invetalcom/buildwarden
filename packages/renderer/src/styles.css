@@ -97,7 +97,9 @@ body[data-theme="dark"] {
   --ec-bg: rgba(15, 17, 19, 0.42);
   --ec-bg-elevated: rgba(32, 36, 41, 0.96);
   --ec-titlebar: #101417;
-  --ec-sidebar: rgba(9, 11, 12, 0.3);
+  --ec-sidebar-base: rgba(9, 11, 12, 0.3);
+  --ec-sidebar: var(--ec-sidebar-base);
+  --ec-sidebar-contrast-strength: 0%;
   --ec-panel: rgba(30, 34, 39, 0.6);
   --ec-panel-strong: rgba(46, 52, 58, 0.66);
   --ec-panel-soft: rgba(20, 23, 26, 0.5);
@@ -167,7 +169,9 @@ body[data-theme="light"] {
   --ec-bg: rgba(240, 246, 251, 0.46);
   --ec-bg-elevated: rgba(255, 255, 255, 0.96);
   --ec-titlebar: #e7eef6;
-  --ec-sidebar: rgba(255, 255, 255, 0.3);
+  --ec-sidebar-base: rgba(255, 255, 255, 0.3);
+  --ec-sidebar: var(--ec-sidebar-base);
+  --ec-sidebar-contrast-strength: 0%;
   --ec-panel: rgba(255, 255, 255, 0.62);
   --ec-panel-strong: rgba(255, 255, 255, 0.84);
   --ec-panel-soft: rgba(255, 255, 255, 0.42);
@@ -266,11 +270,11 @@ body[data-theme="light"] {
 }
 
 .app-shell.theme-dark.sidebar-contrast {
-  --ec-sidebar: color-mix(in srgb, var(--ec-panel-strong) 86%, var(--ec-accent));
+  --ec-sidebar: color-mix(in srgb, var(--ec-sidebar-base), var(--ec-accent) var(--ec-sidebar-contrast-strength));
 }
 
 .app-shell.theme-light.sidebar-contrast {
-  --ec-sidebar: color-mix(in srgb, var(--ec-panel) 82%, var(--ec-secondary));
+  --ec-sidebar: color-mix(in srgb, var(--ec-sidebar-base), var(--ec-secondary) var(--ec-sidebar-contrast-strength));
 }
 
 /* ---------------------------------------------------------------------------

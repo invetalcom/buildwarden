@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type ReactNode } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type ReactNode } from "react";
 import {
   APP_SETTING_KEYS,
   getDefaultDesignScheme,
@@ -14,6 +14,7 @@ import {
   parseRecentRunDaysSetting,
   parseRemoteAccessEnabledSetting,
   parseRunTimelineDensitySetting,
+  parseSidebarContrastStrengthSetting,
   parseSidebarGroupRunsByProjectSetting,
   parseSidebarRunEntrySizeSetting,
   parseDesignScheme,
@@ -1485,7 +1486,9 @@ export const App = () => {
   const recentRunDays = parseRecentRunDaysSetting(snapshot.settings[APP_SETTING_KEYS.recentRunDays]);
   const designScheme = useMemo(() => parseDesignScheme(snapshot.settings), [snapshot.settings]);
   const uiTheme = designScheme.mode;
-  const sidebarContrast = snapshot.settings[APP_SETTING_KEYS.sidebarContrast] === "true";
+  const persistedSidebarContrastStrength = parseSidebarContrastStrengthSetting(snapshot.settings[APP_SETTING_KEYS.sidebarContrast]);
+  const [sidebarContrastStrength, setSidebarContrastStrength] = useState(persistedSidebarContrastStrength);
+  useEffect(() => setSidebarContrastStrength(persistedSidebarContrastStrength), [persistedSidebarContrastStrength]);
   const sidebarRunEntrySize = parseSidebarRunEntrySizeSetting(snapshot.settings[APP_SETTING_KEYS.sidebarRunEntrySize]);
   const sidebarGroupRunsByProject = parseSidebarGroupRunsByProjectSetting(snapshot.settings[APP_SETTING_KEYS.sidebarGroupRunsByProject]);
   const runTimelineDensity = parseRunTimelineDensitySetting(snapshot.settings[APP_SETTING_KEYS.runTimelineDensity]);
@@ -3859,7 +3862,7 @@ export const App = () => {
               consecutiveToolCallCollapseThreshold={consecutiveToolCallCollapseThreshold}
               recentRunDays={recentRunDays}
               designScheme={designScheme}
-              sidebarContrast={sidebarContrast}
+              sidebarContrastStrength={sidebarContrastStrength}
               sidebarRunEntrySize={sidebarRunEntrySize}
               sidebarGroupRunsByProject={sidebarGroupRunsByProject}
               enableDevMode={snapshot.settings[APP_SETTING_KEYS.enableDevMode] === "true"}
@@ -3934,7 +3937,16 @@ export const App = () => {
                   await loadSnapshot();
                 })
               }
-              onSidebarContrastChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.sidebarContrast, value)}
+              onSidebarContrastStrengthChange={setSidebarContrastStrength}
+              onSidebarContrastStrengthCommit={(value) =>
+                void handleAction(async () => {
+                  if (!buildwarden) throw new Error("The Electron desktop bridge is unavailable.");
+                  const next = parseSidebarContrastStrengthSetting(value);
+                  setSidebarContrastStrength(next);
+                  await buildwarden.setAppSetting(APP_SETTING_KEYS.sidebarContrast, String(next));
+                  await loadSnapshot();
+                })
+              }
               onSidebarRunEntrySizeChange={(value: SidebarRunEntrySize) =>
                 void handleAction(async () => {
                   if (!buildwarden) {
@@ -4451,13 +4463,15 @@ export const App = () => {
   };
 
   if (startupDataRetentionState.status !== "ready") {
+    const sidebarContrastStyle = { "--ec-sidebar-contrast-strength": `${sidebarContrastStrength}%` } as CSSProperties;
     return (
       <div
         className={cn(
           "app-shell flex h-screen min-h-0 flex-col overflow-hidden",
           uiTheme === "light" ? "theme-light" : "theme-dark",
-          sidebarContrast && "sidebar-contrast",
+          sidebarContrastStrength > 0 && "sidebar-contrast",
         )}
+        style={sidebarContrastStyle}
       >
         {showCustomWindowsTitleBar ? (
           <AppTitleBar
@@ -4480,7 +4494,10 @@ export const App = () => {
 
   if (startupAutomationState.status !== "ready") {
     return (
-      <div className={cn("app-shell flex h-screen min-h-0 flex-col overflow-hidden", uiTheme === "light" ? "theme-light" : "theme-dark", sidebarContrast && "sidebar-contrast")}>
+      <div
+        className={cn("app-shell flex h-screen min-h-0 flex-col overflow-hidden", uiTheme === "light" ? "theme-light" : "theme-dark", sidebarContrastStrength > 0 && "sidebar-contrast")}
+        style={{ "--ec-sidebar-contrast-strength": `${sidebarContrastStrength}%` } as CSSProperties}
+      >
         {showCustomWindowsTitleBar ? <AppTitleBar uiTheme={uiTheme} syncWindowsCaptionStrip onOpenMenu={(section, anchor) => void openAppMenuSection(section, anchor)} /> : null}
         <main className="flex min-h-0 flex-1 items-center justify-center bg-[var(--ec-bg)] p-6 text-[var(--ec-text)]">
           <StartupAutomationDialog
@@ -4499,8 +4516,9 @@ export const App = () => {
       className={cn(
         "app-shell flex h-screen min-h-0 flex-col overflow-hidden",
         uiTheme === "light" ? "theme-light" : "theme-dark",
-        sidebarContrast && "sidebar-contrast",
+        sidebarContrastStrength > 0 && "sidebar-contrast",
       )}
+      style={{ "--ec-sidebar-contrast-strength": `${sidebarContrastStrength}%` } as CSSProperties}
     >
       {showCustomWindowsTitleBar ? (
         <AppTitleBar

@@ -78,7 +78,7 @@ interface SettingsPageProps {
   consecutiveToolCallCollapseThreshold: number;
   recentRunDays: number;
   designScheme: DesignScheme;
-  sidebarContrast: boolean;
+  sidebarContrastStrength: number;
   sidebarRunEntrySize: SidebarRunEntrySize;
   sidebarGroupRunsByProject: boolean;
   worktreeRootOverrideSettingValue: string;
@@ -109,7 +109,8 @@ interface SettingsPageProps {
   onConsecutiveToolCallCollapseThresholdChange: (value: number) => void | Promise<void>;
   onRecentRunDaysChange: (value: number) => void | Promise<void>;
   onDesignSchemeChange: (scheme: DesignScheme) => void | Promise<void>;
-  onSidebarContrastChange: (value: boolean) => void;
+  onSidebarContrastStrengthChange: (value: number) => void;
+  onSidebarContrastStrengthCommit: (value: number) => void;
   onSidebarRunEntrySizeChange: (value: SidebarRunEntrySize) => void;
   onSidebarGroupRunsByProjectChange: (value: boolean) => void;
   onSaveWorktreeRootOverride: (value: string) => void | Promise<void>;
@@ -201,7 +202,7 @@ export const SettingsPage = ({
   consecutiveToolCallCollapseThreshold,
   recentRunDays,
   designScheme,
-  sidebarContrast,
+  sidebarContrastStrength,
   sidebarRunEntrySize,
   sidebarGroupRunsByProject,
   worktreeRootOverrideSettingValue,
@@ -232,7 +233,8 @@ export const SettingsPage = ({
   onConsecutiveToolCallCollapseThresholdChange,
   onRecentRunDaysChange,
   onDesignSchemeChange,
-  onSidebarContrastChange,
+  onSidebarContrastStrengthChange,
+  onSidebarContrastStrengthCommit,
   onSidebarRunEntrySizeChange,
   onSidebarGroupRunsByProjectChange,
   onSaveWorktreeRootOverride,
@@ -580,7 +582,7 @@ export const SettingsPage = ({
         <UserSettingsTab
           busy={busy}
           designScheme={designScheme}
-          sidebarContrast={sidebarContrast}
+          sidebarContrastStrength={sidebarContrastStrength}
           sidebarRunEntrySize={sidebarRunEntrySize}
           sidebarGroupRunsByProject={sidebarGroupRunsByProject}
           recentRunDaysDraft={recentRunDaysDraft}
@@ -596,7 +598,8 @@ export const SettingsPage = ({
           idePathsSaving={idePathsSaving}
           keyboardShortcuts={keyboardShortcuts}
           onDesignSchemeChange={onDesignSchemeChange}
-          onSidebarContrastChange={onSidebarContrastChange}
+          onSidebarContrastStrengthChange={onSidebarContrastStrengthChange}
+          onSidebarContrastStrengthCommit={onSidebarContrastStrengthCommit}
           onSidebarRunEntrySizeChange={onSidebarRunEntrySizeChange}
           onSidebarGroupRunsByProjectChange={onSidebarGroupRunsByProjectChange}
           onRecentRunDaysDraftChange={setRecentRunDaysDraft}

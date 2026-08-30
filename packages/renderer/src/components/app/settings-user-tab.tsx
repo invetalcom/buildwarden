@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import {
   IDE_KIND_LABELS,
   KEYBOARD_SHORTCUT_IDS,
+  MAX_SIDEBAR_CONTRAST_STRENGTH,
+  MIN_SIDEBAR_CONTRAST_STRENGTH,
   SUPPORTED_IDE_KINDS,
   type AppLogDirectorySizeInfo,
   type DesignScheme,
@@ -15,6 +17,7 @@ import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
+import { Slider } from "../ui/slider";
 import { DesignSchemeEditor } from "./DesignSchemeEditor";
 
 const SHORTCUT_LABELS: Record<KeyboardShortcutId, string> = {
@@ -220,7 +223,7 @@ const EditorPathCard = ({
 export type UserSettingsTabProps = {
   busy: boolean;
   designScheme: DesignScheme;
-  sidebarContrast: boolean;
+  sidebarContrastStrength: number;
   sidebarRunEntrySize: SidebarRunEntrySize;
   sidebarGroupRunsByProject: boolean;
   recentRunDaysDraft: string;
@@ -236,7 +239,8 @@ export type UserSettingsTabProps = {
   idePathsSaving: boolean;
   keyboardShortcuts: Record<KeyboardShortcutId, string>;
   onDesignSchemeChange: (scheme: DesignScheme) => void | Promise<void>;
-  onSidebarContrastChange: (value: boolean) => void;
+  onSidebarContrastStrengthChange: (value: number) => void;
+  onSidebarContrastStrengthCommit: (value: number) => void;
   onSidebarRunEntrySizeChange: (value: SidebarRunEntrySize) => void;
   onSidebarGroupRunsByProjectChange: (value: boolean) => void;
   onRecentRunDaysDraftChange: (value: string) => void;
@@ -254,7 +258,7 @@ export type UserSettingsTabProps = {
 export const UserSettingsTab = ({
   busy,
   designScheme,
-  sidebarContrast,
+  sidebarContrastStrength,
   sidebarRunEntrySize,
   sidebarGroupRunsByProject,
   recentRunDaysDraft,
@@ -270,7 +274,8 @@ export const UserSettingsTab = ({
   idePathsSaving,
   keyboardShortcuts,
   onDesignSchemeChange,
-  onSidebarContrastChange,
+  onSidebarContrastStrengthChange,
+  onSidebarContrastStrengthCommit,
   onSidebarRunEntrySizeChange,
   onSidebarGroupRunsByProjectChange,
   onRecentRunDaysDraftChange,
@@ -327,15 +332,22 @@ export const UserSettingsTab = ({
       </SettingsRow>
       <SettingsRow
         title="Contrast"
-        description="Give the sidebar its own surface color: slightly brighter and blue-tinted in dark mode, and slightly darker in light mode."
+        description="Blend the normal sidebar toward Primary in dark mode or Secondary in light mode. Zero keeps the standard sidebar color."
       >
-        <div className={`${rowControlClass} flex items-center justify-end gap-3`}>
-          <span className="text-xs font-medium text-[var(--ec-muted)]">{sidebarContrast ? "On" : "Off"}</span>
-          <Switch
-            checked={sidebarContrast}
-            onCheckedChange={onSidebarContrastChange}
+        <div className={`${rowControlClass} flex items-center gap-3`}>
+          <Slider
+            id="sidebar-contrast-strength"
+            min={MIN_SIDEBAR_CONTRAST_STRENGTH}
+            max={MAX_SIDEBAR_CONTRAST_STRENGTH}
+            step={1}
+            value={sidebarContrastStrength}
+            allowManualInput
+            valueSuffix="%"
+            valueInputAriaLabel="Sidebar contrast percentage"
+            onValueChange={onSidebarContrastStrengthChange}
+            onValueCommit={onSidebarContrastStrengthCommit}
             disabled={busy}
-            aria-label="Use contrasting sidebar surface"
+            aria-label="Sidebar contrast color strength"
           />
         </div>
       </SettingsRow>

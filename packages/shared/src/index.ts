@@ -4866,6 +4866,23 @@ export const parseSidebarRunEntrySizeSetting = (raw: string | undefined): Sideba
   return normalized === "small" || normalized === "large" ? normalized : "medium";
 };
 
+export const MIN_SIDEBAR_CONTRAST_STRENGTH = 0;
+export const MAX_SIDEBAR_CONTRAST_STRENGTH = 100;
+export const DEFAULT_SIDEBAR_CONTRAST_STRENGTH = 0;
+/** Preserve the approximate tint of the previous boolean `true` setting. */
+export const LEGACY_SIDEBAR_CONTRAST_STRENGTH = 18;
+
+export const parseSidebarContrastStrengthSetting = (raw: string | number | undefined | null): number => {
+  if (typeof raw === "string") {
+    const normalized = raw.trim().toLowerCase();
+    if (normalized === "true") return LEGACY_SIDEBAR_CONTRAST_STRENGTH;
+    if (normalized === "false" || normalized === "") return DEFAULT_SIDEBAR_CONTRAST_STRENGTH;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return DEFAULT_SIDEBAR_CONTRAST_STRENGTH;
+  return Math.min(MAX_SIDEBAR_CONTRAST_STRENGTH, Math.max(MIN_SIDEBAR_CONTRAST_STRENGTH, Math.round(parsed)));
+};
+
 export const parseSidebarGroupRunsByProjectSetting = (raw: string | undefined): boolean => raw?.trim().toLowerCase() !== "false";
 
 export const parseRecentRunDaysSetting = (raw: string | number | undefined | null): number => {
