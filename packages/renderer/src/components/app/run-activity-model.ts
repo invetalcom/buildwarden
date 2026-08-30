@@ -440,7 +440,14 @@ const updatePendingToolEntry = (
   const existing = entryIndex === undefined ? null : entries[entryIndex];
   if (entryIndex === undefined || existing?.kind !== "tool") return false;
 
-  entries[entryIndex] = { ...existing, resultStep: step, resultMetadata: metadata };
+  // Tool progress and diff events can carry metadata that the final result does
+  // not repeat (notably the unified diff for a deleted file). Preserve that
+  // metadata as the matching call advances to its final result.
+  entries[entryIndex] = {
+    ...existing,
+    resultStep: step,
+    resultMetadata: { ...existing.resultMetadata, ...metadata },
+  };
   if (step.eventType === "tool-result") pendingToolEntries.delete(callId);
   return true;
 };
@@ -472,6 +479,15 @@ const appendToolEntry = (
     if (callId) pendingToolEntries.set(callId, entries.length);
     entries.push({ kind: "tool", callStep: step, callMetadata: metadata });
     return true;
+  }
+
+  // Codex file-change items emit a diff event immediately before the matching
+  // tool result. Treat that diff as part of the original call instead of as a
+  // second, always-expanded timeline row. Standalone diff events still fall
+  // through to the normal diff-batch renderer.
+  if (step.eventType === "diff-updated" && callId?.endsWith(":diff")) {
+    const toolCallId = callId.slice(0, -":diff".length);
+    if (updatePendingToolEntry(entries, pendingToolEntries, step, metadata, toolCallId)) return true;
   }
 
   const isToolUpdate = step.eventType === "tool-result" || step.eventType === "tool-progress";

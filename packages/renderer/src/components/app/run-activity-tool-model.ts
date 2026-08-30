@@ -40,7 +40,9 @@ export const summarizeToolBatchItems = (
   items.reduce<ToolBatchSummarizedRow[]>((rows, item) => {
     const callMetadata = item.callMetadata ?? {};
     const resultMetadata = item.resultMetadata ?? {};
-    const toolName = String(callMetadata.toolName ?? resultMetadata.toolName ?? "tool");
+    // A file-change call can begin as write_file and resolve as delete_file
+    // after Codex compares the before/after snapshots. Prefer the result name.
+    const toolName = String(resultMetadata.toolName ?? callMetadata.toolName ?? "tool");
     const detail = describeActivityDetail(resultMetadata) ?? describeActivityDetail(callMetadata);
     const failed = resultMetadata.ok === false;
     const shellStreaming = resultMetadata.shellStreaming === true;
@@ -48,7 +50,9 @@ export const summarizeToolBatchItems = (
     const command = firstMetadataString(resultMetadata.command, callMetadata.command);
     const preview = summarizeToolPreview(toolName, failed, item);
     const writeFileDiff =
-      !failed && toolName === "write_file" && typeof resultMetadata.writeFileUnifiedDiff === "string"
+      !failed &&
+      (toolName === "write_file" || toolName === "delete_file") &&
+      typeof resultMetadata.writeFileUnifiedDiff === "string"
         ? resultMetadata.writeFileUnifiedDiff
         : null;
     const createdAt = (item.resultStep ?? item.callStep)?.createdAt ?? new Date().toISOString();

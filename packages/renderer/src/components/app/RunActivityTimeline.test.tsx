@@ -161,6 +161,38 @@ describe("run activity timeline shaping", () => {
     expect(entries[0]?.kind === "tool-batch" ? entries[0].items : []).toHaveLength(2);
   });
 
+  it("folds Codex file diffs into their matching collapsed tool batch", () => {
+    const steps = ["a.ts", "b.ts", "c.ts"].flatMap((path, index) => {
+      const callId = `file-change:${String(index)}`;
+      const toolName = index === 1 ? "delete_file" : "write_file";
+      return [
+        step(`call-${String(index)}`, "tool-call", { callId, toolName: "write_file", path }),
+        step(
+          `diff-${String(index)}`,
+          "diff-updated",
+          { callId: `${callId}:diff`, toolName, path, writeFileUnifiedDiff: `diff --git a/${path} b/${path}` },
+        ),
+        step(`result-${String(index)}`, "tool-result", { callId, toolName, path, ok: true }),
+      ];
+    });
+
+    const entries = buildActivityEntries(steps);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.kind).toBe("tool-batch");
+    expect(entries[0]?.kind === "tool-batch" ? entries[0].items : []).toHaveLength(3);
+
+    const markup = renderToStaticMarkup(
+      <RunToolCallCollapseThresholdProvider threshold={2}>
+        <RunActivityTimeline steps={steps} run={{ id: "file-change-run", status: "completed", mode: "code" }} />
+      </RunToolCallCollapseThresholdProvider>,
+    );
+    expect(markup).toContain('aria-label="Expand 3 consecutive tool calls"');
+    expect(markup).toContain("write_file ×2");
+    expect(markup).toContain("delete_file ×1");
+    expect(markup).not.toContain("Diffs (3)");
+    expect(markup).not.toContain("a.ts");
+  });
+
   it("collapses only tool-call streaks that exceed the configured threshold", () => {
     const steps = ["a.ts", "b.ts", "c.ts"].flatMap((path, index) => [
       step(`call-${String(index)}`, "tool-call", { callId: String(index), toolName: "read_file", path }),
