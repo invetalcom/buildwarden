@@ -9,7 +9,7 @@ import {
   describeToolTarget,
   type RunActivityStep,
 } from "./run-activity-model";
-import { isOpenableToolPath } from "./run-activity-tool-model";
+import { isOpenableToolPath, summarizeToolBatchItems } from "./run-activity-tool-model";
 
 const step = (
   id: string,
@@ -191,6 +191,39 @@ describe("run activity timeline shaping", () => {
     expect(markup).toContain("delete_file ×1");
     expect(markup).not.toContain("Diffs (3)");
     expect(markup).not.toContain("a.ts");
+  });
+
+  it("keeps consecutive same-path delete diffs in separate tool rows", () => {
+    const firstDiff = "diff --git a/a.ts b/a.ts\n-deleted first version";
+    const secondDiff = "diff --git a/a.ts b/a.ts\n-deleted second version";
+    const items = [firstDiff, secondDiff].map((writeFileUnifiedDiff, index) => ({
+      kind: "tool" as const,
+      callStep: step(`delete-call-${String(index)}`, "tool-call", {
+        callId: `delete-${String(index)}`,
+        toolName: "write_file",
+        path: "a.ts",
+      }),
+      callMetadata: { callId: `delete-${String(index)}`, toolName: "write_file", path: "a.ts" },
+      resultStep: step(`delete-result-${String(index)}`, "tool-result", {
+        callId: `delete-${String(index)}`,
+        toolName: "delete_file",
+        path: "a.ts",
+        ok: true,
+        writeFileUnifiedDiff,
+      }),
+      resultMetadata: {
+        callId: `delete-${String(index)}`,
+        toolName: "delete_file",
+        path: "a.ts",
+        ok: true,
+        writeFileUnifiedDiff,
+      },
+    }));
+
+    const rows = summarizeToolBatchItems(items);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.toolName)).toEqual(["delete_file", "delete_file"]);
+    expect(rows.map((row) => row.writeFileDiff)).toEqual([firstDiff, secondDiff]);
   });
 
   it("collapses only tool-call streaks that exceed the configured threshold", () => {

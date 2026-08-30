@@ -60,6 +60,7 @@ export const summarizeToolBatchItems = (
     const pathKey = detail?.trim() ?? "";
     const canMergeSamePath =
       toolName !== "write_file" &&
+      toolName !== "delete_file" &&
       toolName !== "run_shell" &&
       previousRow &&
       previousRow.toolName === toolName &&
