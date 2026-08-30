@@ -9,7 +9,7 @@ import {
   describeToolTarget,
   type RunActivityStep,
 } from "./run-activity-model";
-import { isOpenableToolPath } from "./run-activity-tool-model";
+import { isOpenableToolPath, summarizeToolBatchItems } from "./run-activity-tool-model";
 
 const step = (
   id: string,
@@ -159,6 +159,71 @@ describe("run activity timeline shaping", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]?.kind).toBe("tool-batch");
     expect(entries[0]?.kind === "tool-batch" ? entries[0].items : []).toHaveLength(2);
+  });
+
+  it("folds Codex file diffs into their matching collapsed tool batch", () => {
+    const steps = ["a.ts", "b.ts", "c.ts"].flatMap((path, index) => {
+      const callId = `file-change:${String(index)}`;
+      const toolName = index === 1 ? "delete_file" : "write_file";
+      return [
+        step(`call-${String(index)}`, "tool-call", { callId, toolName: "write_file", path }),
+        step(
+          `diff-${String(index)}`,
+          "diff-updated",
+          { callId: `${callId}:diff`, toolName, path, writeFileUnifiedDiff: `diff --git a/${path} b/${path}` },
+        ),
+        step(`result-${String(index)}`, "tool-result", { callId, toolName, path, ok: true }),
+      ];
+    });
+
+    const entries = buildActivityEntries(steps);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.kind).toBe("tool-batch");
+    expect(entries[0]?.kind === "tool-batch" ? entries[0].items : []).toHaveLength(3);
+
+    const markup = renderToStaticMarkup(
+      <RunToolCallCollapseThresholdProvider threshold={2}>
+        <RunActivityTimeline steps={steps} run={{ id: "file-change-run", status: "completed", mode: "code" }} />
+      </RunToolCallCollapseThresholdProvider>,
+    );
+    expect(markup).toContain('aria-label="Expand 3 consecutive tool calls"');
+    expect(markup).toContain("write_file ×2");
+    expect(markup).toContain("delete_file ×1");
+    expect(markup).not.toContain("Diffs (3)");
+    expect(markup).not.toContain("a.ts");
+  });
+
+  it("keeps consecutive same-path delete diffs in separate tool rows", () => {
+    const firstDiff = "diff --git a/a.ts b/a.ts\n-deleted first version";
+    const secondDiff = "diff --git a/a.ts b/a.ts\n-deleted second version";
+    const items = [firstDiff, secondDiff].map((writeFileUnifiedDiff, index) => ({
+      kind: "tool" as const,
+      callStep: step(`delete-call-${String(index)}`, "tool-call", {
+        callId: `delete-${String(index)}`,
+        toolName: "write_file",
+        path: "a.ts",
+      }),
+      callMetadata: { callId: `delete-${String(index)}`, toolName: "write_file", path: "a.ts" },
+      resultStep: step(`delete-result-${String(index)}`, "tool-result", {
+        callId: `delete-${String(index)}`,
+        toolName: "delete_file",
+        path: "a.ts",
+        ok: true,
+        writeFileUnifiedDiff,
+      }),
+      resultMetadata: {
+        callId: `delete-${String(index)}`,
+        toolName: "delete_file",
+        path: "a.ts",
+        ok: true,
+        writeFileUnifiedDiff,
+      },
+    }));
+
+    const rows = summarizeToolBatchItems(items);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.toolName)).toEqual(["delete_file", "delete_file"]);
+    expect(rows.map((row) => row.writeFileDiff)).toEqual([firstDiff, secondDiff]);
   });
 
   it("collapses only tool-call streaks that exceed the configured threshold", () => {
