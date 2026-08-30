@@ -87,6 +87,8 @@ export const useChatDetail = (client: BuildWardenClient, chatId: string | null):
       setDetail((current) => current?.historyPage?.beforeCursor === request.beforeCursor
         ? { ...current, steps: mergeOrderedRecords(result.steps, current.steps), historyPage: result.page }
         : current);
+    } catch (caught) {
+      setError(errorMessage(caught, "Could not load earlier turns."));
     } finally {
       setHistoryLoading(false);
     }
