@@ -77,7 +77,8 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
 
   // A segment can disappear (agents/chat depend on capabilities); fall back rather than blank out.
   const activeSegment = segments.some((option) => option.value === segment) ? segment : "activity";
-  const runChatStore = useChatDetail(client, activeSegment === "chat" ? runChat?.chat.id ?? null : null);
+  const matchingRunChat = runChat?.chat.runId === runId ? runChat : null;
+  const runChatStore = useChatDetail(client, activeSegment === "chat" ? matchingRunChat?.chat.id ?? null : null);
 
   useEffect(() => {
     if (activeSegment === "diff" || activeSegment === "files") void store.loadDiff();
@@ -109,7 +110,8 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
     await snapshotStore.refresh();
   };
 
-  const visibleRunChat = runChatStore.detail ?? runChat;
+  const matchingLiveRunChat = runChatStore.detail?.chat.runId === runId ? runChatStore.detail : null;
+  const visibleRunChat = matchingLiveRunChat ?? matchingRunChat;
 
   const followUp = async (prompt: string, attachments: ChatAttachmentPayload[]) => {
     await action.run(
@@ -122,9 +124,9 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
   const sendRunChat = async (prompt: string, attachments: ChatAttachmentPayload[]) => {
     const model = detail?.run.modelId;
     if (!model) return;
-    const sent = runChat
+    const sent = matchingRunChat
       ? await action.ok(
-          () => client.followUpChat(runChat.chat.id, prompt, attachments.length ? { attachments } : undefined),
+          () => client.followUpChat(matchingRunChat.chat.id, prompt, attachments.length ? { attachments } : undefined),
           "The message did not send.",
         )
       : await action.ok(
