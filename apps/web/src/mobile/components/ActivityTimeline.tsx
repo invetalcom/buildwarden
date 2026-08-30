@@ -1,9 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { RunDetail, RunStepRecord } from "@buildwarden/shared";
+import {
+  extractAttachmentNamesFromMetadata,
+  extractAttachmentPayloadsFromMetadata,
+  type RunDetail,
+  type RunStepRecord,
+} from "@buildwarden/shared";
 import {
   buildActivityEntries,
   describeActivityDetail,
   describeToolTarget,
+  getStoredAttachmentMessageContent,
   type ActivityEntry,
   type RunActivityStep,
   type SingleActivityEntry,
@@ -25,6 +31,7 @@ import { toolWriteFileDiff } from "../lib/tool-write-file-diff";
 import { RichText } from "./RichText";
 import { InlineDiff } from "./DiffViewer";
 import { Badge } from "./primitives";
+import { MobileStoredAttachments } from "./TaskAttachments";
 
 /**
  * Mobile run timeline.
@@ -86,12 +93,16 @@ const SingleRow = ({
   const isReasoning = metadata.assistantKind === "reasoning";
   const isStatus = step.eventType === "status";
   const detail = describeActivityDetail(metadata);
+  const attachments = extractAttachmentPayloadsFromMetadata(metadata);
+  const attachmentNames = extractAttachmentNamesFromMetadata(metadata);
+  const content = isUser ? getStoredAttachmentMessageContent(step.content || step.title, attachmentNames) : step.content;
 
   if (isUser) {
     return (
       <div className="flex justify-end px-3 py-1.5">
         <div className="max-w-[86%] rounded-2xl rounded-br-md border border-[var(--ec-user-input-ring)] bg-[var(--ec-user-input-soft)] px-3 py-2">
-          <RichText className="text-[var(--ec-text)]">{step.content || step.title}</RichText>
+          {content ? <RichText className="text-[var(--ec-text)]">{content}</RichText> : null}
+          <MobileStoredAttachments attachments={attachments} fallbackNames={attachmentNames} />
         </div>
       </div>
     );
@@ -114,7 +125,8 @@ const SingleRow = ({
           <AlertTriangle className="size-3.5" />
           {step.title}
         </div>
-        {step.content ? <RichText className="mt-1 text-[var(--ec-danger)]">{step.content}</RichText> : null}
+        {content ? <RichText className="mt-1 text-[var(--ec-danger)]">{content}</RichText> : null}
+        <MobileStoredAttachments attachments={attachments} fallbackNames={attachmentNames} />
       </div>
     );
   }
@@ -124,7 +136,7 @@ const SingleRow = ({
       <div className="px-4 py-1">
         <div className="rounded-md border border-[var(--ec-reasoning-ring)] bg-[var(--ec-reasoning-soft)] px-2 py-1">
           <Collapsible summary={<span className="text-[11px] font-medium uppercase tracking-[0.1em] text-[var(--ec-reasoning)]">Reasoning</span>}>
-          <RichText className="text-[var(--ec-muted)]">{step.content}</RichText>
+          <RichText className="text-[var(--ec-muted)]">{content}</RichText>
           </Collapsible>
         </div>
       </div>
@@ -137,7 +149,8 @@ const SingleRow = ({
     return (
       <div className="mx-3 my-2 rounded-lg border border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] px-3 py-2.5">
         <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--ec-success)]">Final response</p>
-        <RichText className="mt-1">{step.content}</RichText>
+        <MobileStoredAttachments attachments={attachments} fallbackNames={attachmentNames} />
+        {content ? <RichText className="mt-1">{content}</RichText> : null}
       </div>
     );
   }
@@ -150,7 +163,8 @@ const SingleRow = ({
           {detail ? <span className="m-mono ml-1.5 text-[var(--ec-muted)]">{detail}</span> : null}
         </p>
       ) : null}
-      <RichText>{step.content}</RichText>
+      <MobileStoredAttachments attachments={attachments} fallbackNames={attachmentNames} />
+      {content ? <RichText>{content}</RichText> : null}
     </div>
   );
 };

@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { brotliCompress, constants as zlibConstants, gzip } from "node:zlib";
 import WebSocket, { WebSocketServer, type RawData } from "ws";
 import {
+  CHAT_ATTACHMENT_LIMITS,
   DEFAULT_REMOTE_ACCESS_PORT,
   REMOTE_ACCESS_HEALTH_PATH,
   REMOTE_ACCESS_INFO_PATH,
@@ -49,6 +50,9 @@ import {
 } from "@buildwarden/shared";
 
 const MAX_REQUEST_BODY_BYTES = 1_048_576;
+// Attachment payloads are base64 inside JSON. Keep ordinary endpoints at 1 MB while allowing an
+// authenticated RPC request to carry the shared 20 MB attachment budget plus encoding overhead.
+const MAX_RPC_REQUEST_BODY_BYTES = Math.ceil(CHAT_ATTACHMENT_LIMITS.maxTotalBytes / 3) * 4 + MAX_REQUEST_BODY_BYTES;
 const MAX_WEBSOCKET_MESSAGE_BYTES = 65_536;
 const DEFAULT_PAIRING_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
@@ -847,9 +851,9 @@ class RequestBodyError extends Error {
   }
 }
 
-const readJsonBody = async (request: IncomingMessage): Promise<unknown> => {
+const readJsonBody = async (request: IncomingMessage, maximumBytes = MAX_REQUEST_BODY_BYTES): Promise<unknown> => {
   const contentLength = Number(request.headers["content-length"] ?? 0);
-  if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BODY_BYTES) {
+  if (Number.isFinite(contentLength) && contentLength > maximumBytes) {
     throw new RequestBodyError("Request body is too large.", 413);
   }
 
@@ -858,7 +862,7 @@ const readJsonBody = async (request: IncomingMessage): Promise<unknown> => {
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
     totalBytes += buffer.length;
-    if (totalBytes > MAX_REQUEST_BODY_BYTES) {
+    if (totalBytes > maximumBytes) {
       throw new RequestBodyError("Request body is too large.", 413);
     }
     chunks.push(buffer);
@@ -1543,7 +1547,7 @@ export class RemoteAccessServer {
       return;
     }
     try {
-      const payload = await readJsonBody(request);
+      const payload = await readJsonBody(request, MAX_RPC_REQUEST_BODY_BYTES);
       writeJson(response, 200, await this.options.operations.dispatch(payload, session.scopes, session.id));
     } catch (error) {
       if (error instanceof RequestBodyError) {

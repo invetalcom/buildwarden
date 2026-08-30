@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { RUN_CHAT_CONTEXT_SOURCE, type ChatStepRecord } from "@buildwarden/shared";
+import { RUN_CHAT_CONTEXT_SOURCE, type ChatAttachmentPayload, type ChatStepRecord } from "@buildwarden/shared";
 import { Bookmark, BookmarkCheck, MoreHorizontal, Trash2 } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
 import { useAction } from "../data/use-action";
@@ -7,67 +7,15 @@ import { useChatDetail } from "../data/use-chat-detail";
 import { firstLine } from "../lib/format";
 import { AppBar } from "../components/AppBar";
 import { Composer } from "../components/Composer";
-import { RichText } from "../components/RichText";
+import { MobileChatStep } from "../components/ChatTranscriptStep";
+import { parseStepMetadata } from "../lib/chat-steps";
 import { ActionSheet, ConfirmSheet } from "../components/Sheet";
 import { ChatStatusPill } from "../components/StatusPill";
 import { CenteredSpinner, IconButton, InlineError } from "../components/primitives";
 
-const parseMetadata = (value: string): Record<string, unknown> => {
-  try {
-    return JSON.parse(value || "{}") as Record<string, unknown>;
-  } catch {
-    return {};
-  }
-};
-
 /** Drops the hidden run-context seed step the desktop transcript also hides. */
 const visibleSteps = (steps: readonly ChatStepRecord[]) =>
-  steps.filter((step) => parseMetadata(step.metadataJson).source !== RUN_CHAT_CONTEXT_SOURCE);
-
-const ChatBubble = ({ step }: { step: ChatStepRecord }) => {
-  const metadata = parseMetadata(step.metadataJson);
-  const isUser = metadata.source === "user";
-  const isError = step.eventType === "error";
-  const isReasoning = step.eventType === "output" && metadata.assistantKind === "reasoning";
-
-  if (isError) {
-    return (
-      <div className="mx-3 my-1.5 rounded-md border border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] px-3 py-2 text-[var(--ec-danger)]">
-        <p className="text-xs font-semibold">{step.title}</p>
-        {step.content ? <RichText className="mt-1">{step.content}</RichText> : null}
-      </div>
-    );
-  }
-
-  if (isUser) {
-    return (
-      <div className="flex justify-end px-3 py-1.5">
-        <div className="max-w-[86%] rounded-2xl rounded-br-md border border-[var(--ec-user-input-ring)] bg-[var(--ec-user-input-soft)] px-3 py-2">
-          <RichText>{step.content || step.title}</RichText>
-        </div>
-      </div>
-    );
-  }
-
-  if (isReasoning) {
-    return (
-      <details className="mx-3 my-1.5 rounded-md border border-[var(--ec-reasoning-ring)] bg-[var(--ec-reasoning-soft)] px-3 py-2">
-        <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ec-reasoning)]">Reasoning</summary>
-        <RichText className="mt-2 text-[var(--ec-muted)]">{step.content}</RichText>
-      </details>
-    );
-  }
-
-  if (step.eventType === "status") {
-    return <p className="px-4 py-1 text-[11px] text-[var(--ec-faint)]">{step.title}</p>;
-  }
-
-  return (
-    <div className="px-4 py-1.5">
-      <RichText>{step.content}</RichText>
-    </div>
-  );
-};
+  steps.filter((step) => parseStepMetadata(step.metadataJson).source !== RUN_CHAT_CONTEXT_SOURCE);
 
 export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
   const { client, snapshot, snapshotStore, router } = useMobileApp();
@@ -102,8 +50,11 @@ export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
     if (element) element.scrollTop = previousTop + (element.scrollHeight - previousHeight);
   };
 
-  const send = async (prompt: string) => {
-    await action.run(() => client.followUpChat(chatId, prompt), "The follow-up did not send.");
+  const send = async (prompt: string, attachments: ChatAttachmentPayload[]) => {
+    await action.run(
+      () => client.followUpChat(chatId, prompt, attachments.length ? { attachments } : undefined),
+      "The follow-up did not send.",
+    );
     await reload();
   };
 
@@ -141,7 +92,7 @@ export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
             </button>
           ) : null}
           {steps.map((step) => (
-            <ChatBubble key={step.id} step={step} />
+            <MobileChatStep key={step.id} step={step} />
           ))}
           <div ref={bottomRef} className="h-2" />
         </div>

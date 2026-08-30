@@ -5,26 +5,38 @@ import { defaultRunModel } from "../data/selectors";
 import { useAction } from "../data/use-action";
 import { firstLine, relativeTime } from "../lib/format";
 import { AppBar } from "../components/AppBar";
+import { MobileAttachmentPicker } from "../components/TaskAttachments";
 import { Sheet } from "../components/Sheet";
 import { ChatStatusPill } from "../components/StatusPill";
 import { Button, CenteredSpinner, EmptyState, IconButton, InlineError, ListRow, Textarea } from "../components/primitives";
+import { readMobileAttachmentFiles } from "../lib/task-attachments";
 
 export const ChatsScreen = () => {
   const { snapshot, snapshotStore, router, client } = useMobileApp();
   const [composeOpen, setComposeOpen] = useState(false);
   const [prompt, setPrompt] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
   const action = useAction();
   const model = defaultRunModel(snapshot);
   const canCreate = client.capabilities.chatMutations && Boolean(model);
 
   const createChat = async () => {
-    if (!model || !prompt.trim()) return;
+    if (!model || (!prompt.trim() && files.length === 0)) return;
     const chat = await action.run(
-      () => client.createChat({ providerAccountId: model.providerAccountId, modelId: model.modelId, prompt: prompt.trim() }),
+      async () => {
+        const attachments = await readMobileAttachmentFiles(files);
+        return client.createChat({
+          providerAccountId: model.providerAccountId,
+          modelId: model.modelId,
+          prompt: prompt.trim(),
+          ...(attachments.length ? { attachments } : {}),
+        });
+      },
       "Could not start the chat.",
     );
     if (chat) {
       setPrompt("");
+      setFiles([]);
       setComposeOpen(false);
       await snapshotStore.refresh();
       router.push({ name: "chat", chatId: chat.id });
@@ -82,7 +94,7 @@ export const ChatsScreen = () => {
         title="New chat"
         dismissable={!action.busy}
         footer={
-          <Button block busy={action.busy} disabled={!prompt.trim()} onClick={() => void createChat()}>
+          <Button block busy={action.busy} disabled={!prompt.trim() && files.length === 0} onClick={() => void createChat()}>
             Start chat
           </Button>
         }
@@ -96,6 +108,9 @@ export const ChatsScreen = () => {
             onChange={(event) => setPrompt(event.target.value)}
             placeholder="Ask about the codebase…"
           />
+          <div className="mt-3">
+            <MobileAttachmentPicker files={files} onFilesChange={setFiles} disabled={action.busy} />
+          </div>
           <p className="mt-2 text-xs text-[var(--ec-muted)]">Model: {model?.label ?? "none configured"}</p>
         </div>
       </Sheet>
