@@ -21,6 +21,7 @@ const upsertOrderedRecord = <RecordType extends { id: string; createdAt: string 
   return [...records, record].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 };
 
+/** The first collection wins ID conflicts and must contain the freshest records. */
 export const mergeOrderedRecords = <RecordType extends { id: string; createdAt: string }>(
   older: readonly RecordType[],
   current: readonly RecordType[],
