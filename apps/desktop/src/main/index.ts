@@ -229,16 +229,6 @@ try {
 }
 
 const getWindowThemeColors = (scheme: DesignScheme) => {
-  if (scheme.mode === "light") {
-    return {
-      backgroundColor: scheme.colors.background,
-      titleBarOverlay: {
-        color: scheme.colors.surface,
-        symbolColor: scheme.colors.text,
-        height: WINDOWS_TITLEBAR_OVERLAY_HEIGHT,
-      },
-    };
-  }
   return {
     backgroundColor: scheme.colors.background,
     titleBarOverlay: {
