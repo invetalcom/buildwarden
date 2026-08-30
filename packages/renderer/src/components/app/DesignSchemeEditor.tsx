@@ -104,13 +104,28 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange }: Props) => {
   };
 
   const download = () => {
-    const blob = new Blob([exportDesignScheme(scheme)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${scheme.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "buildwarden-design"}.buildwarden-theme.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    let url: string | null = null;
+    let anchor: HTMLAnchorElement | null = null;
+    let revokeScheduled = false;
+    try {
+      const blob = new Blob([exportDesignScheme(scheme)], { type: "application/json" });
+      url = URL.createObjectURL(blob);
+      anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${scheme.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "buildwarden-design"}.buildwarden-theme.json`;
+      anchor.hidden = true;
+      document.body.append(anchor);
+      anchor.click();
+      const exportedUrl = url;
+      window.setTimeout(() => URL.revokeObjectURL(exportedUrl), 0);
+      revokeScheduled = true;
+      setError("");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not export the design scheme.");
+    } finally {
+      anchor?.remove();
+      if (url && !revokeScheduled) URL.revokeObjectURL(url);
+    }
   };
 
   return (
