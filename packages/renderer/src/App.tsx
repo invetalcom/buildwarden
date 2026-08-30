@@ -3946,7 +3946,12 @@ export const App = () => {
                   if (!buildwarden) throw new Error("The Electron desktop bridge is unavailable.");
                   const next = parseSidebarContrastStrengthSetting(value);
                   setSidebarContrastStrength(next);
-                  await buildwarden.setAppSetting(APP_SETTING_KEYS.sidebarContrast, String(next));
+                  try {
+                    await buildwarden.setAppSetting(APP_SETTING_KEYS.sidebarContrast, String(next));
+                  } catch (caught) {
+                    setSidebarContrastStrength(persistedSidebarContrastStrength);
+                    throw caught;
+                  }
                   await loadSnapshot();
                 })
               }
