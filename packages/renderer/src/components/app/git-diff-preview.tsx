@@ -356,7 +356,7 @@ const InlineDraftCommentEditor = ({
             {singleSaveBusy ? "Posting..." : singleSaveLabel}
           </Button>
         ) : null}
-        <Button type="button" size="sm" className="h-7 bg-[var(--ec-accent-soft)] px-2 text-[10px] font-semibold text-[var(--ec-accent-foreground)] hover:bg-[var(--ec-accent-strong)]" onClick={() => onSave(value)} disabled={!value.trim()}>
+        <Button type="button" size="sm" className="h-7 bg-[var(--ec-accent)] px-2 text-[10px] font-semibold text-[var(--ec-accent-foreground)] hover:bg-[var(--ec-accent-strong)]" onClick={() => onSave(value)} disabled={!value.trim()}>
           {saveLabel}
         </Button>
       </div>
