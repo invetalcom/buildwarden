@@ -468,7 +468,7 @@ const PrMrReviewMenu = (props: PrMrReviewMenuProps) => {
   return (
     <>
       <div ref={props.anchorRef} className="relative ml-1 border-l border-[var(--ec-border)] pl-2">
-        <Button type="button" size="sm" variant="ghost" className={cn("h-7 border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 text-[10px] font-semibold text-[var(--ec-text)] shadow-sm hover:border-[var(--ec-accent-ring)] hover:bg-[var(--ec-hover)] hover:text-white", props.open && "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]")} onClick={() => props.onOpenChange(!props.open)} disabled={!props.hasDiff} title="AI review, draft comments, and submission" aria-haspopup="dialog" aria-expanded={props.open}>
+        <Button type="button" size="sm" variant="ghost" className={cn("h-7 border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 text-[10px] font-semibold text-[var(--ec-text)] shadow-sm hover:border-[var(--ec-accent-ring)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]", props.open && "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]")} onClick={() => props.onOpenChange(!props.open)} disabled={!props.hasDiff} title="AI review, draft comments, and submission" aria-haspopup="dialog" aria-expanded={props.open}>
           {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-[var(--ec-accent)]" aria-hidden /> : <Sparkles className="mr-1.5 h-3.5 w-3.5 text-[var(--ec-accent)]" aria-hidden />}
           Review
           {reviewModeActive ? <span className="ml-1 rounded-full bg-[var(--ec-warning-soft)] px-1.5 py-px font-mono text-[9px] text-[var(--ec-warning)]">{String(props.draftCount)}</span> : null}
