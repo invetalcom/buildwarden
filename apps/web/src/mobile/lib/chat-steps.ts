@@ -1,6 +1,9 @@
 export const parseStepMetadata = (value: string): Record<string, unknown> => {
   try {
-    return JSON.parse(value || "{}") as Record<string, unknown>;
+    const parsed = JSON.parse(value || "{}") as unknown;
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
   } catch {
     return {};
   }
