@@ -456,7 +456,6 @@ input,
 textarea,
 select,
 button {
-  color: inherit;
   accent-color: var(--ec-accent);
 }
 
@@ -1044,9 +1043,12 @@ body[data-theme="light"] input[type="checkbox"] {
 }
 
 .agent-log-row--request,
-.agent-log-row--plan,
 .agent-log-row--diff {
   --agent-dot: var(--ec-info);
+}
+
+.agent-log-row--plan {
+  --agent-dot: var(--ec-accent);
 }
 
 .agent-log-row--error {
@@ -1075,9 +1077,12 @@ body[data-theme="light"] .agent-log-row--note {
 }
 
 body[data-theme="light"] .agent-log-row--request,
-body[data-theme="light"] .agent-log-row--plan,
 body[data-theme="light"] .agent-log-row--diff {
   --agent-dot: var(--ec-info);
+}
+
+body[data-theme="light"] .agent-log-row--plan {
+  --agent-dot: var(--ec-accent);
 }
 
 body[data-theme="light"] .agent-log-row--error {
@@ -1309,9 +1314,12 @@ body[data-theme="light"] .agent-response-text tbody tr:nth-child(even) td {
 }
 
 .agent-panel--request,
-.agent-panel--plan,
 .agent-panel--diff {
   --agent-panel-accent: var(--ec-info);
+}
+
+.agent-panel--plan {
+  --agent-panel-accent: var(--ec-accent);
 }
 
 .agent-panel--error {

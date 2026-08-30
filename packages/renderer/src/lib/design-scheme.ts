@@ -35,11 +35,25 @@ const relativeLuminance = (hex: string): number => {
   return 0.2126 * linear(rgb.r) + 0.7152 * linear(rgb.g) + 0.0722 * linear(rgb.b);
 };
 
+const contrastRatio = (left: string, right: string): number => {
+  const lighter = Math.max(relativeLuminance(left), relativeLuminance(right));
+  const darker = Math.min(relativeLuminance(left), relativeLuminance(right));
+  return (lighter + 0.05) / (darker + 0.05);
+};
+
+const readableForeground = (background: string): string => {
+  const darkForeground = "#071018";
+  const lightForeground = "#ffffff";
+  return contrastRatio(background, darkForeground) >= contrastRatio(background, lightForeground)
+    ? darkForeground
+    : lightForeground;
+};
+
 /** Resolve every renderer color from the scheme's small, user-editable semantic palette. */
 export const designSchemeCssVariables = (scheme: DesignScheme): Record<string, string> => {
   const { colors, mode } = scheme;
   const light = mode === "light";
-  const accentForeground = relativeLuminance(colors.primary) > 0.42 ? "#071018" : "#ffffff";
+  const accentForeground = readableForeground(colors.primary);
   const surfaceHighlight = light ? "#ffffff" : colors.text;
   const shadow = light ? rgba(colors.text, 0.24) : rgba("#000000", 0.58);
   const sidebar = rgba(colors.background, light ? 0.78 : 0.62);

@@ -338,6 +338,9 @@ describe("renderer component states", () => {
     );
     expect(planMarkup).toContain("Plan steps");
     expect(planMarkup).toContain("in progress");
+    expect(planMarkup).toContain("--ec-accent-soft");
+    expect(planMarkup).toContain("--ec-accent");
+    expect(planMarkup).not.toContain("--ec-info");
     expect(
       renderToStaticMarkup(
         <RunPlanProgressPill

@@ -23,7 +23,7 @@ const planStepStatusClass = (status: RunPlanStepStatus) => {
     return "bg-[color:var(--ec-success-soft)] text-[color:var(--ec-success)]";
   }
   if (status === "inProgress") {
-    return "bg-[color:var(--ec-info-soft)] text-[color:var(--ec-info)]";
+    return "bg-[color:var(--ec-accent-soft)] text-[color:var(--ec-accent)]";
   }
   return "bg-[color:var(--ec-control)] text-[color:var(--ec-muted)]";
 };

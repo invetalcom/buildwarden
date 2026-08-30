@@ -54,6 +54,21 @@ describe("design schemes", () => {
     expect(document.documentElement.style.getPropertyValue("--ec-danger")).toBe(scheme.colors.danger);
   });
 
+  it("automatically chooses readable text for primary action colors", () => {
+    const foregrounds = DESIGN_SCHEME_PRESETS.map((scheme) =>
+      designSchemeCssVariables(scheme)["--ec-accent-foreground"],
+    );
+
+    expect(foregrounds).toEqual([
+      "#071018",
+      "#071018",
+      "#071018",
+      "#071018",
+      "#ffffff",
+      "#071018",
+    ]);
+  });
+
   it("migrates older saved schemes to independent user-input and reasoning colors", () => {
     const legacy = structuredClone(DESIGN_SCHEME_PRESETS[0]!) as DesignScheme;
     const legacyColors = legacy.colors as Partial<DesignScheme["colors"]>;

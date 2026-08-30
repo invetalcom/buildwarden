@@ -380,7 +380,7 @@ const PlanProgressActivityEntry = ({ entry, context }: SingleEntryProps) => {
       <AgentPanel tone="plan" className="px-2.5 py-2">
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
-            <ListTodo className="h-3.5 w-3.5 shrink-0 text-[var(--ec-info)]" />
+            <ListTodo className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" />
             <p className="truncate text-[11px] font-medium text-[color:var(--ec-text)]">{entry.step.title}</p>
           </div>
           {total !== null ? (
