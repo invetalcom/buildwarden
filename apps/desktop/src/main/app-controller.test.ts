@@ -1881,6 +1881,53 @@ describe("AppController settings and lightweight workflows", () => {
     }));
   });
 
+  it("satisfies an attention wake after every selected task completes successfully", () => {
+    const orchestration = {
+      status: "waiting",
+      wakeMode: "attention",
+      wakeTaskIds: ["task-1", "task-2"],
+    } as OrchestrationRecord;
+    const tasks = [
+      { id: "task-1", status: "completed" },
+      { id: "task-2", status: "completed" },
+      { id: "unrelated-task", status: "running" },
+    ] as OrchestrationTaskRecord[];
+    const harness = createHarness();
+    tempDirs.push(harness.logDir);
+
+    const satisfied = (harness.controller as unknown as {
+      orchestrationWakeSatisfied: (
+        currentOrchestration: OrchestrationRecord,
+        currentTasks: OrchestrationTaskRecord[],
+      ) => boolean;
+    }).orchestrationWakeSatisfied(orchestration, tasks);
+
+    expect(satisfied).toBe(true);
+  });
+
+  it("keeps an attention wake waiting while a selected task is still active", () => {
+    const orchestration = {
+      status: "waiting",
+      wakeMode: "attention",
+      wakeTaskIds: ["task-1", "task-2"],
+    } as OrchestrationRecord;
+    const tasks = [
+      { id: "task-1", status: "completed" },
+      { id: "task-2", status: "running" },
+    ] as OrchestrationTaskRecord[];
+    const harness = createHarness();
+    tempDirs.push(harness.logDir);
+
+    const satisfied = (harness.controller as unknown as {
+      orchestrationWakeSatisfied: (
+        currentOrchestration: OrchestrationRecord,
+        currentTasks: OrchestrationTaskRecord[],
+      ) => boolean;
+    }).orchestrationWakeSatisfied(orchestration, tasks);
+
+    expect(satisfied).toBe(false);
+  });
+
   it("notifies host services after a run is deleted", async () => {
     const run = {
       id: "run-1",
