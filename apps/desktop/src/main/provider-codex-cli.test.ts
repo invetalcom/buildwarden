@@ -451,6 +451,21 @@ describe("Codex app-server dynamic BuildWarden tools", () => {
       toolContext,
     );
 
+    const dynamicToolItem = {
+      type: "dynamicToolCall",
+      id: "call-1",
+      tool: "buildwarden_tasks_list",
+      arguments: {},
+      status: "inProgress",
+    };
+    stdout.write(`${JSON.stringify({
+      method: "item/started",
+      params: {
+        threadId: "parent-thread",
+        turnId: "turn-1",
+        item: dynamicToolItem,
+      },
+    })}\n`);
     stdout.write(`${JSON.stringify({
       id: 17,
       method: "item/tool/call",
@@ -463,6 +478,14 @@ describe("Codex app-server dynamic BuildWarden tools", () => {
       },
     })}\n`);
     await new Promise((resolve) => setTimeout(resolve, 20));
+    stdout.write(`${JSON.stringify({
+      method: "item/completed",
+      params: {
+        threadId: "parent-thread",
+        turnId: "turn-1",
+        item: { ...dynamicToolItem, status: "completed", success: true },
+      },
+    })}\n`);
 
     expect(executeTool).toHaveBeenCalledWith({
       id: "call-1",
@@ -472,6 +495,7 @@ describe("Codex app-server dynamic BuildWarden tools", () => {
     expect(responses.join("")).toContain('"success":true');
     expect(responses.join("")).toContain('"type":"inputText"');
     expect(chunks.map((chunk) => chunk.type)).toEqual(expect.arrayContaining(["tool-call", "tool-result"]));
+    expect(chunks).not.toContainEqual(expect.objectContaining({ title: "Codex update", value: "Dynamic Tool Call" }));
   });
 
   it("drops a late host-tool response after the app-server session stops", async () => {

@@ -1914,6 +1914,12 @@ export class CodexAppServerSession {
       case "fileChange":
         this.handleFileChangeItem(method, item, itemId);
         return;
+      case "dynamicToolCall":
+        // The matching item/tool/call server request already emits the named
+        // tool-call and tool-result chunks. Rendering these lifecycle items as
+        // generic statuses only adds an uninformative duplicate at start and
+        // completion.
+        return;
       default:
         this.emitGenericItemUpdate(params, item, itemId, itemType);
     }
