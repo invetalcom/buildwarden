@@ -99,6 +99,7 @@ body[data-theme="dark"] {
   --ec-backdrop: #090c11;
   --ec-backdrop-primary: rgba(85, 168, 255, 0.34);
   --ec-backdrop-secondary: rgba(155, 140, 255, 0.3);
+  --ec-scrim: rgba(9, 12, 17, 0.68);
   --app-scrollbar-track: transparent;
   --app-scrollbar-thumb-start: rgba(255, 255, 255, 0.22);
   --app-scrollbar-thumb-end: rgba(255, 255, 255, 0.16);
@@ -174,6 +175,7 @@ body[data-theme="light"] {
   --ec-backdrop: #dceaf5;
   --ec-backdrop-primary: rgba(8, 111, 214, 0.3);
   --ec-backdrop-secondary: rgba(117, 86, 216, 0.25);
+  --ec-scrim: rgba(220, 234, 245, 0.45);
   --app-scrollbar-track: transparent;
   --app-scrollbar-thumb-start: rgba(22, 48, 70, 0.28);
   --app-scrollbar-thumb-end: rgba(22, 48, 70, 0.24);

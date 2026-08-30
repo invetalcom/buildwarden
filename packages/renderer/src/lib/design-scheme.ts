@@ -117,6 +117,7 @@ export const designSchemeCssVariables = (scheme: DesignScheme): Record<string, s
     "--ec-backdrop": colors.background,
     "--ec-backdrop-primary": rgba(colors.primary, light ? 0.3 : 0.34),
     "--ec-backdrop-secondary": rgba(colors.secondary, light ? 0.25 : 0.3),
+    "--ec-scrim": rgba(colors.background, light ? 0.45 : 0.68),
     "--app-scrollbar-track": rgba(colors.text, light ? 0.06 : 0.04),
     "--app-scrollbar-thumb-start": rgba(colors.textMuted, light ? 0.42 : 0.32),
     "--app-scrollbar-thumb-end": rgba(colors.textMuted, light ? 0.34 : 0.24),

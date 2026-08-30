@@ -47,6 +47,7 @@ describe("design schemes", () => {
     expect(variables["--ec-user-input"]).toBe(scheme.colors.userInput);
     expect(variables["--ec-reasoning"]).toBe(scheme.colors.reasoning);
     expect(variables["--ec-terminal-bg"]).toBe(scheme.colors.background);
+    expect(variables["--ec-scrim"]).toMatch(/^rgba\(/);
 
     applyDesignSchemeToDocument(scheme, false);
     expect(document.documentElement.dataset.designScheme).toBe(scheme.id);
