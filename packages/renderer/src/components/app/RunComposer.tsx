@@ -22,7 +22,7 @@ import {
   type UnifiedProviderFamily,
   type ProviderType,
 } from "@buildwarden/shared";
-import { ArrowUp, Bot, BrainCircuit, Check, ChevronDown, ChevronRight, Gauge, GitBranch, Plus, ShieldOff, SlidersHorizontal, WandSparkles, Workflow, X } from "lucide-react";
+import { Bot, BrainCircuit, Check, ChevronDown, ChevronRight, Gauge, GitBranch, Play, Plus, ShieldOff, SlidersHorizontal, WandSparkles, Workflow, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { ContextWindowBadge } from "./ContextWindowBadge";
@@ -953,7 +953,7 @@ export const RunComposer = ({
   onCancel,
   onSubmit,
   submitLabel = "Send",
-  submitIcon = <ArrowUp className="h-5 w-5" />,
+  submitIcon = <Play data-icon="inline-end" />,
   placeholder = "Ask BuildWarden to continue this run, refine the diff, fix a bug, or explain a change.",
   dropdownSide = "top",
   submitDisabled,

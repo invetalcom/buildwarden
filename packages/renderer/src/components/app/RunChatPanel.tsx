@@ -11,7 +11,7 @@ import {
   type ProviderType,
   type UnifiedProviderFamily,
 } from "@buildwarden/shared";
-import { ArrowUp, MessagesSquare } from "lucide-react";
+import { MessagesSquare } from "lucide-react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
 import { buildVisibleConversationHistory } from "../../lib/context-window-estimate";
 import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
@@ -304,7 +304,6 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
           onCancel={handleCancel}
           onSubmit={() => void handleSubmit()}
           submitLabel="Send"
-          submitIcon={<ArrowUp className="ml-1 h-3.5 w-3.5" />}
           placeholder="Ask about the output or changes…"
           submitShortcut={keyboardShortcuts.submitComposer}
           onAddAttachmentFiles={(incoming) => setFiles((prev) => appendChatAttachmentFiles(prev, incoming))}

@@ -7,7 +7,7 @@ import {
   type ModelExecutionProfile,
   type ProviderExecutionOptions,
 } from "@buildwarden/shared";
-import { ArrowUp, Bookmark, BookmarkCheck } from "lucide-react";
+import { Bookmark, BookmarkCheck } from "lucide-react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
 import { buildVisibleConversationHistory } from "../../lib/context-window-estimate";
 import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
@@ -361,7 +361,6 @@ export const ChatDetailPage = ({
         onCancel={onCancel}
         onSubmit={() => void handleSubmit()}
         submitLabel="Send"
-        submitIcon={<ArrowUp className="ml-1 h-3.5 w-3.5" />}
         placeholder="Send a follow-up... (optional if you attach files)"
         submitShortcut={keyboardShortcuts.submitComposer}
         onAddAttachmentFiles={(incoming) => setFollowUpFiles((prev) => appendChatAttachmentFiles(prev, incoming))}

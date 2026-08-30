@@ -1,5 +1,5 @@
 import { appendChatAttachmentFiles, type ChatAttachmentPayload, type ModelExecutionProfile, type ProjectKind, type ProviderType, type RunMode, type RunModelConfiguration, type RunRecord, type RunWorkspaceType, type SupportedIdeKind, type UnifiedProviderFamily } from "@buildwarden/shared";
-import { Archive, Clock3, FolderOpen, Play, PlayCircle, Search, X } from "lucide-react";
+import { Archive, Clock3, FolderOpen, PlayCircle, Search, X } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
@@ -450,7 +450,6 @@ export const ProjectOverviewTab = ({
               busy={busy}
               onSubmit={() => void handleStartRun()}
               submitLabel="Start run"
-              submitIcon={<Play data-icon="inline-end" />}
               placeholder={`Describe what the agent should do in ${projectName}. Attach files when context matters.`}
               autoFocus
               dropdownSide="bottom"
