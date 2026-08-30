@@ -3,6 +3,7 @@ import type { RunDetail, RunEvent, RunWorktreeDiffResult } from "@buildwarden/sh
 import type { BuildWardenClient } from "@buildwarden/renderer";
 import { applyLiveRunEventToDetail, mergeOrderedRecords } from "@buildwarden/renderer/logic";
 import { errorMessage } from "../lib/format";
+import { hasUnhydratedAttachmentMetadata } from "../lib/task-attachments";
 
 const RELOAD_DEBOUNCE_MS = 400;
 
@@ -154,7 +155,7 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
       if (event.step || event.run) {
         setDetail((current) => current ? applyLiveRunEventToDetail(current, event) : current);
       }
-      if (event.step && event.type !== "diff-updated") return;
+      if (event.step && event.type !== "diff-updated" && !hasUnhydratedAttachmentMetadata(event.step.metadataJson)) return;
       if (timerRef.current !== null) return;
       timerRef.current = window.setTimeout(() => {
         timerRef.current = null;

@@ -67,6 +67,8 @@ export {
 export { PROVIDER_TYPE_LABELS } from "./components/app/provider-model-labels";
 export type { ProjectPageTab } from "./components/app/project-page-tabs";
 export {
+  getStoredAttachmentDownloadMimeType,
+  getStoredAttachmentMessageContent,
   getStoredAttachmentRenderMode,
   getStoredAttachmentTextPreview,
   groupStoredAttachments,

@@ -7545,8 +7545,9 @@ export class AppController
     if (orchestration.wakeMode === "any-terminal") {
       return relevant.some((task) => ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status));
     }
-    return relevant.some((task) =>
+    const needsAttention = relevant.some((task) =>
       task.status === "waiting-input" || task.status === "blocked" || task.status === "interrupted" || task.status === "failed");
+    return needsAttention || relevant.every((task) => ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status));
   }
 
   private buildOrchestrationResumePrompt(orchestration: OrchestrationRecord): string {

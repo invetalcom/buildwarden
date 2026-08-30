@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, Square } from "lucide-react";
+import { appendChatAttachmentFiles, CHAT_ATTACHMENT_LIMITS, type ChatAttachmentPayload } from "@buildwarden/shared";
+import { ArrowUp, Paperclip, Square, X } from "lucide-react";
 import { cn } from "../lib/cn";
+import { readMobileAttachmentFiles } from "../lib/task-attachments";
 import { Textarea } from "./primitives";
 
 /**
@@ -24,13 +26,17 @@ export const Composer = ({
   busy?: boolean;
   disabled?: boolean;
   disabledReason?: string;
-  onSubmit: (value: string) => void | Promise<void>;
+  onSubmit: (value: string, attachments: ChatAttachmentPayload[]) => void | Promise<void>;
   /** Shown instead of send while the run/chat is active. */
   onCancel?: () => void;
   accessory?: React.ReactNode;
 }) => {
   const [value, setValue] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [readingFiles, setReadingFiles] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const element = textareaRef.current;
@@ -41,10 +47,22 @@ export const Composer = ({
 
   const submit = async () => {
     const trimmed = value.trim();
-    if (!trimmed || busy || disabled) return;
-    setValue("");
-    await onSubmit(trimmed);
+    if ((!trimmed && files.length === 0) || busy || disabled || readingFiles) return;
+    setReadingFiles(true);
+    setAttachmentError(null);
+    try {
+      const attachments = await readMobileAttachmentFiles(files);
+      await onSubmit(trimmed, attachments);
+      setValue("");
+      setFiles([]);
+    } catch (caught) {
+      setAttachmentError(caught instanceof Error ? caught.message : "Could not read the selected files.");
+    } finally {
+      setReadingFiles(false);
+    }
   };
+
+  const hasInput = Boolean(value.trim() || files.length);
 
   if (disabled) {
     return (
@@ -59,8 +77,45 @@ export const Composer = ({
       className="m-safe-bottom shrink-0 border-t border-[var(--ec-border)] bg-[var(--ec-sidebar)]"
       style={{ paddingLeft: "var(--m-safe-left)", paddingRight: "var(--m-safe-right)" }}
     >
-      {accessory ? <div className="m-scroll-x flex gap-1.5 px-3 pt-2">{accessory}</div> : null}
+      {attachmentError ? <p className="px-3 pt-2 text-xs text-[var(--ec-danger)]">{attachmentError}</p> : null}
+      {files.length > 0 || accessory ? (
+        <div className="m-scroll-x flex gap-1.5 px-3 pt-2">
+          {files.map((file, index) => (
+            <span key={`${file.name}-${String(index)}`} className="inline-flex min-w-0 shrink-0 items-center gap-1 rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel)] py-1 pl-2.5 pr-1 text-xs">
+              <span className="max-w-40 truncate">{file.name}</span>
+              <button type="button" className="flex size-7 items-center justify-center rounded-full text-[var(--ec-muted)]" aria-label={`Remove ${file.name}`} onClick={() => setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))}>
+                <X className="size-3.5" />
+              </button>
+            </span>
+          ))}
+          {accessory}
+        </div>
+      ) : null}
       <div className="flex items-end gap-2 px-3 py-2">
+        {!onCancel ? (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="sr-only"
+              onChange={(event) => {
+                setFiles((current) => appendChatAttachmentFiles(current, Array.from(event.target.files ?? [])));
+                setAttachmentError(null);
+                event.target.value = "";
+              }}
+            />
+            <button
+              type="button"
+              aria-label="Attach files"
+              disabled={busy || readingFiles || files.length >= CHAT_ATTACHMENT_LIMITS.maxFileCount}
+              onClick={() => fileInputRef.current?.click()}
+              className="flex size-11 shrink-0 items-center justify-center rounded-full text-[var(--ec-muted)] disabled:opacity-40"
+            >
+              <Paperclip className="size-5" />
+            </button>
+          </>
+        ) : null}
         <Textarea
           ref={textareaRef}
           rows={1}
@@ -85,11 +140,11 @@ export const Composer = ({
           <button
             type="button"
             aria-label="Send"
-            disabled={!value.trim() || busy}
+            disabled={!hasInput || busy || readingFiles}
             onClick={() => void submit()}
             className={cn(
               "flex size-11 shrink-0 items-center justify-center rounded-full transition",
-              value.trim() && !busy
+              hasInput && !busy && !readingFiles
                 ? "bg-[var(--ec-accent)] text-[var(--ec-accent-foreground)]"
                 : "bg-[var(--ec-control)] text-[var(--ec-faint)]",
             )}
