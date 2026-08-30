@@ -582,6 +582,7 @@ pre {
   --diffs-light-bg: var(--ec-terminal-bg);
   --diffs-dark: var(--ec-terminal-fg);
   --diffs-light: var(--ec-terminal-fg);
+
   display: block;
   min-width: 100%;
 }
