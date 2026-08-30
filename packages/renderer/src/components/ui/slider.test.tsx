@@ -63,7 +63,8 @@ describe("Slider", () => {
 
   it("commits keyboard changes only for range value keys", async () => {
     const onCommit = vi.fn();
-    await mount(<Slider value={25} onValueChange={() => undefined} onValueCommit={onCommit} aria-label="Strength" />);
+    const onKeyUp = vi.fn();
+    await mount(<Slider value={25} onValueChange={() => undefined} onValueCommit={onCommit} onKeyUp={onKeyUp} aria-label="Strength" />);
     const range = container!.querySelector<HTMLInputElement>('input[type="range"]')!;
 
     await act(async () => range.dispatchEvent(new KeyboardEvent("keyup", { key: "Tab", bubbles: true })));
@@ -71,6 +72,7 @@ describe("Slider", () => {
 
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(range, "26");
     await act(async () => range.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowRight", bubbles: true })));
+    expect(onKeyUp).toHaveBeenCalledTimes(2);
     expect(onCommit).toHaveBeenCalledWith(26);
   });
 });
