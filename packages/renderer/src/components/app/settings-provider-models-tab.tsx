@@ -94,7 +94,7 @@ const ModelQuickPickChooser = ({
     return (
       <div
         className={cn(
-          "mt-2 flex h-11 items-center gap-2 border border-[var(--ec-border)] bg-black/30 px-3 text-sm text-[var(--ec-muted)]",
+          "mt-2 flex h-11 items-center gap-2 border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 text-sm text-[var(--ec-muted)]",
           welcome ? "rounded-lg" : "rounded-xl",
         )}
       >
@@ -435,7 +435,7 @@ export const ProviderModelsSettingsTab = ({
             isWelcomePresentation ? "rounded-lg border-[var(--ec-border)]" : "border-[var(--ec-accent-ring)]",
           )}
         >
-          <div className={cn("border-b border-white/6", isWelcomePresentation ? "px-4 py-2.5" : "px-5 py-3")}>
+          <div className={cn("border-b border-[var(--ec-border)]", isWelcomePresentation ? "px-4 py-2.5" : "px-5 py-3")}>
             <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--ec-accent)]">New connection</p>
             <h3 className={cn("mt-1 font-semibold text-[var(--ec-text)]", isWelcomePresentation ? "text-base" : "text-lg")}>
               {isWelcomePresentation ? "Give BuildWarden a way to reach an AI" : "Set up a provider account"}
@@ -464,7 +464,7 @@ export const ProviderModelsSettingsTab = ({
                       isWelcomePresentation ? "min-h-[3.75rem] rounded-lg px-3 py-2.5" : "min-h-[4.5rem] rounded-2xl px-4 py-3",
                       active
                         ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)]"
-                        : "border-white/8 bg-[var(--ec-panel)] hover:border-white/15",
+                        : "border-[var(--ec-border)] bg-[var(--ec-panel)] hover:border-[var(--ec-border-strong)]",
                     )}
                   >
                     <span className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--ec-text)]">
@@ -729,7 +729,7 @@ export const ProviderModelsSettingsTab = ({
             isWelcomePresentation ? "rounded-lg border-[var(--ec-border)]" : "border-[var(--ec-secondary-ring)]",
           )}
         >
-          <div className={cn("border-b border-white/6", isWelcomePresentation ? "px-4 py-2.5" : "px-5 py-3")}>
+          <div className={cn("border-b border-[var(--ec-border)]", isWelcomePresentation ? "px-4 py-2.5" : "px-5 py-3")}>
             <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--ec-secondary)]">New model</p>
             <h3 className={cn("mt-1 font-semibold text-[var(--ec-text)]", isWelcomePresentation ? "text-base" : "text-lg")}>
               {isWelcomePresentation ? "Pick the model BuildWarden should use first" : "Register a model for a connection"}

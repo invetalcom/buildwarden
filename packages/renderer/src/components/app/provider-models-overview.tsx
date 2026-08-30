@@ -46,13 +46,13 @@ const SavedConnections = ({
   accounts: AppSnapshot["providerAccounts"];
   onDelete: (providerAccountId: string) => void;
 }) => (
-  <Card className="app-surface-inset-soft border-white/8 p-4">
+  <Card className="app-surface-inset-soft border-[var(--ec-border)] p-4">
     <div className="flex items-center justify-between gap-2">
       <div>
         <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--ec-accent)]">Saved connections</p>
         <p className="mt-0.5 text-sm text-[var(--ec-muted)]">Provider accounts on this device</p>
       </div>
-      <span className="rounded-full border border-white/8 bg-white/[0.04] px-2.5 py-0.5 text-xs text-[var(--ec-muted)]">
+      <span className="rounded-full border border-[var(--ec-border)] bg-[var(--ec-control)] px-2.5 py-0.5 text-xs text-[var(--ec-muted)]">
         {accounts.length}
       </span>
     </div>
@@ -92,13 +92,13 @@ const SavedModels = ({
   models: AppSnapshot["models"];
   onDelete: (modelId: string) => void;
 }) => (
-  <Card className="app-surface-inset-soft border-white/8 p-4">
+  <Card className="app-surface-inset-soft border-[var(--ec-border)] p-4">
     <div className="flex items-center justify-between gap-2">
       <div>
         <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--ec-secondary)]">Model registry</p>
         <p className="mt-0.5 text-sm text-[var(--ec-muted)]">Registered for runs and chat</p>
       </div>
-      <span className="rounded-full border border-white/8 bg-white/[0.04] px-2.5 py-0.5 text-xs text-[var(--ec-muted)]">
+      <span className="rounded-full border border-[var(--ec-border)] bg-[var(--ec-control)] px-2.5 py-0.5 text-xs text-[var(--ec-muted)]">
         {models.length}
       </span>
     </div>
@@ -197,7 +197,7 @@ const PanelButton = ({
       className={cn(
         "flex w-full items-center justify-between gap-3 border text-left transition",
         welcome ? "rounded-lg px-3 py-2.5 disabled:cursor-not-allowed disabled:opacity-55" : "rounded-2xl px-4 py-3.5",
-        open ? activeClass : "border-white/8 bg-white/[0.02] text-[var(--ec-text)] hover:border-white/12 hover:bg-white/[0.04]",
+        open ? activeClass : "border-[var(--ec-border)] bg-[var(--ec-panel-soft)] text-[var(--ec-text)] hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-hover)]",
       )}
     >
       <div className="space-y-0.5">
