@@ -621,6 +621,8 @@ describe("renderer component states", () => {
     expect(runMarkup).toContain('data-model-readout-meta="true"');
     expect(runMarkup).toContain("lucide-brain-circuit");
     expect(runMarkup).toContain("lucide-gauge");
+    expect(runMarkup).toContain("lucide-play");
+    expect(runMarkup).not.toContain("lucide-arrow-up");
     const multiModelReadout = runMarkup.match(/<button[^>]*data-model-readout="multi"[^>]*>[\s\S]*?<\/button>/)?.[0];
     expect(multiModelReadout).toBeDefined();
     expect(multiModelReadout).not.toContain("truncate");
@@ -640,6 +642,8 @@ describe("renderer component states", () => {
     expect(staleModelTrigger).not.toContain("disabled");
     const chatMarkup = renderToStaticMarkup(<RunComposer {...commonProps} variant="chat" submitLabel="Send chat" />);
     expect(chatMarkup).toContain("Send chat");
+    expect(chatMarkup).toContain("lucide-play");
+    expect(chatMarkup).not.toContain("lucide-arrow-up");
     expect(chatMarkup).toContain('aria-label="Configure GPT-5, Default effort, Default speed"');
     expect(chatMarkup).not.toContain('aria-label="Add model"');
     expect(chatMarkup).toContain('data-model-readout="single"');

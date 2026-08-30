@@ -9,7 +9,7 @@ import {
   type ProviderType,
   type UnifiedProviderFamily,
 } from "@buildwarden/shared";
-import { MessageSquare, Plus, Search, Trash2 } from "lucide-react";
+import { MessageSquare, Search, Trash2 } from "lucide-react";
 import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
 import { RunComposer } from "./RunComposer";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
@@ -182,7 +182,6 @@ export const ChatPage = ({
         busy={loading}
         onSubmit={() => void handleNewChat()}
         submitLabel="New chat"
-        submitIcon={<Plus className="ml-2 h-4 w-4" />}
         placeholder="Start a new chat… (optional if you attach files)"
         autoFocus
         dropdownSide="bottom"
