@@ -1163,6 +1163,7 @@ export const App = () => {
             ...usageTotals,
           },
         }));
+        scheduleSnapshotRefresh();
       }
 
       if (event.metadata?.shellApprovalRequest === true && approvalRequestId && approvalCommand) {
@@ -1202,6 +1203,9 @@ export const App = () => {
     });
 
     const unsubscribeChat = buildwarden.onChatEvent((event) => {
+      if (readRunTokenUsage(event.metadata?.usageTotals)) {
+        scheduleSnapshotRefresh();
+      }
       if (event.chat) {
         setSnapshot((current) => applyLiveChatToSnapshot(current, event.chat!));
         setSelectedChat((current) => current?.id === event.chatId ? event.chat! : current);

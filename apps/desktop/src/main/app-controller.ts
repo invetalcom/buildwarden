@@ -263,6 +263,7 @@ import {
   type RunBudgetExhaustion,
 } from "./run-autonomy-budget";
 import { resolveMcpServerRuntimeConfigs } from "./mcp-server-registry";
+import { advanceReportedTokenUsage } from "./token-usage-accounting";
 
 type IntegratedSkillsCatalogModule = typeof import("@buildwarden/shared/integrated-skills-catalog");
 let integratedSkillsCatalogPromise: Promise<IntegratedSkillsCatalogModule> | null = null;
@@ -1091,6 +1092,10 @@ interface ActiveWorker {
   cancelled: boolean;
   verificationAbortController?: AbortController;
   budgetExhaustion?: RunBudgetExhaustion;
+}
+
+interface UsageReportTracker {
+  reportedUsage: { inputTokens: number; outputTokens: number };
 }
 
 type WorkerDoneResult = {
@@ -5732,7 +5737,7 @@ export class AppController
     if (!projectId || (usage.inputTokens === 0 && usage.outputTokens === 0)) {
       return;
     }
-    this.db.incrementProjectTokenUsage(projectId, usage.inputTokens, usage.outputTokens);
+    this.db.recordProjectTokenUsage(projectId, "model-call", crypto.randomUUID(), usage.inputTokens, usage.outputTokens);
   }
 
   private readDependencyGraphSnapshot(repoPath: string): DependencyGraphSnapshot {
@@ -9308,31 +9313,59 @@ export class AppController
     this.emitOrchestrationChanged(orchestrationTask.orchestrationId, orchestrationTask.id);
   }
 
+  private initialUsageReportTracker(
+    ownerId: string,
+    ownerKind: "run" | "chat",
+    provider: ProviderAccountRecord,
+    steps: ReadonlyArray<{ metadataJson: string }>,
+  ): UsageReportTracker {
+    if (provider.providerType !== "codex-cli" || !this.db.getProviderSessionRuntime(ownerId, ownerKind)) {
+      return { reportedUsage: { inputTokens: 0, outputTokens: 0 } };
+    }
+    for (const step of [...steps].reverse()) {
+      try {
+        const metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
+        const usage = metadata.usageTotals;
+        if (!usage || typeof usage !== "object" || Array.isArray(usage)) continue;
+        const record = usage as Record<string, unknown>;
+        const inputTokens = Number(record.inputTokens ?? 0);
+        const outputTokens = Number(record.outputTokens ?? 0);
+        return {
+          reportedUsage: {
+            inputTokens: Number.isFinite(inputTokens) ? Math.max(0, inputTokens) : 0,
+            outputTokens: Number.isFinite(outputTokens) ? Math.max(0, outputTokens) : 0,
+          },
+        };
+      } catch {
+        // Continue to the previous durable event when legacy metadata is malformed.
+      }
+    }
+    return { reportedUsage: { inputTokens: 0, outputTokens: 0 } };
+  }
+
   private applyRunWorkerUsageUpdate(
     run: RunRecord,
     usageTotals: Partial<RunTokenUsage> | null,
     maxRunTokens: number,
     exhaustBudget: (exhaustion: RunBudgetExhaustion) => void,
-  ): void {
+    tracker: UsageReportTracker,
+  ): RunRecord {
     if (!usageTotals) {
-      return;
+      return this.db.getRun(run.id);
     }
     const currentRun = this.db.getRun(run.id);
-    const nextInputTokens = Math.max(currentRun.inputTokens, Number(usageTotals.inputTokens ?? 0));
-    const nextOutputTokens = Math.max(currentRun.outputTokens, Number(usageTotals.outputTokens ?? 0));
-    this.db.incrementProjectTokenUsage(
-      run.projectId,
-      nextInputTokens - currentRun.inputTokens,
-      nextOutputTokens - currentRun.outputTokens,
+    const advance = advanceReportedTokenUsage(
+      { inputTokens: currentRun.inputTokens, outputTokens: currentRun.outputTokens },
+      tracker.reportedUsage,
+      usageTotals,
     );
-    this.db.updateRunStatus(run.id, currentRun.status, {
-      inputTokens: nextInputTokens,
-      outputTokens: nextOutputTokens,
-    });
+    tracker.reportedUsage = advance.nextReportedUsage;
+    const updatedRun = this.db.recordRunTokenUsage(run.id, advance.inputTokensDelta, advance.outputTokensDelta);
     const exhaustion = tokenBudgetExhaustion(maxRunTokens, usageTotals);
     if (exhaustion) {
       exhaustBudget(exhaustion);
     }
+    return updatedRun;
   }
 
   private async handleRunWorkerChunk(
@@ -9345,13 +9378,14 @@ export class AppController
     streamingStepIds: Map<string, string>,
     streamingStepKinds: Map<string, "assistant" | "reasoning" | "tool-result" | "tool-progress">,
     resetNarrationStreams: () => void,
+    usageTracker: UsageReportTracker,
   ): Promise<void> {
     const eventType = runChunkEventType(payload.chunk.type);
     const usageTotals =
       typeof payload.chunk.metadata?.usageTotals === "object" && payload.chunk.metadata.usageTotals
         ? (payload.chunk.metadata.usageTotals as Partial<RunTokenUsage>)
         : null;
-    this.applyRunWorkerUsageUpdate(run, usageTotals, maxRunTokens, exhaustBudget);
+    this.applyRunWorkerUsageUpdate(run, usageTotals, maxRunTokens, exhaustBudget, usageTracker);
 
     if (payload.chunk.metadata?.providerSessionRuntime) {
       this.upsertProviderSessionRuntime(
@@ -9470,6 +9504,7 @@ export class AppController
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "worker.js");
     const streamingStepIds = new Map<string, string>();
     const streamingStepKinds = new Map<string, "assistant" | "reasoning" | "tool-result" | "tool-progress">();
+    const usageTracker = this.initialUsageReportTracker(run.id, "run", provider, this.db.getRunSteps(run.id));
     const resetNarrationStreams = () => {
       for (const [streamId, kind] of streamingStepKinds.entries()) {
         if (kind === "assistant" || kind === "reasoning") {
@@ -9609,6 +9644,7 @@ export class AppController
           streamingStepIds,
           streamingStepKinds,
           resetNarrationStreams,
+          usageTracker,
         );
         return;
       }
@@ -9618,9 +9654,15 @@ export class AppController
         clearBudgetTimer();
         const active = this.runWorkers.get(run.id);
         let wasCancelled = active?.cancelled === true;
-        const currentRun = this.db.getRun(run.id);
-        const nextInputTokens = Math.max(currentRun.inputTokens, payload.result.usage.inputTokens);
-        const nextOutputTokens = Math.max(currentRun.outputTokens, payload.result.usage.outputTokens);
+        const currentRun = this.applyRunWorkerUsageUpdate(
+          run,
+          payload.result.usage,
+          maxRunTokens,
+          exhaustBudget,
+          usageTracker,
+        );
+        const nextInputTokens = currentRun.inputTokens;
+        const nextOutputTokens = currentRun.outputTokens;
         const finalTokenExhaustion = tokenBudgetExhaustion(maxRunTokens, payload.result.usage);
         if (active && !active.budgetExhaustion && finalTokenExhaustion) {
           active.budgetExhaustion = finalTokenExhaustion;
@@ -9667,11 +9709,6 @@ export class AppController
           });
         }
 
-        this.db.incrementProjectTokenUsage(
-          run.projectId,
-          nextInputTokens - currentRun.inputTokens,
-          nextOutputTokens - currentRun.outputTokens,
-        );
         const orchestration = run.delegationEnabled
           ? this.db.getOrchestrationByCoordinatorRunId(run.id)
           : null;
@@ -10387,8 +10424,14 @@ export class AppController
     model: ModelRecord,
     payload: ChatWorkerChunkPayload,
     streamingStepIds: Map<string, string>,
+    usageTracker: UsageReportTracker,
   ): Promise<void> {
     const eventType = runChunkEventType(payload.chunk.type);
+    const usageTotals =
+      typeof payload.chunk.metadata?.usageTotals === "object" && payload.chunk.metadata.usageTotals
+        ? (payload.chunk.metadata.usageTotals as Partial<RunTokenUsage>)
+        : null;
+    this.applyChatWorkerUsageUpdate(chat, usageTotals, usageTracker);
     if (payload.chunk.metadata?.providerSessionRuntime) {
       this.upsertProviderSessionRuntime(
         "chat",
@@ -10438,6 +10481,28 @@ export class AppController
     });
   }
 
+  private applyChatWorkerUsageUpdate(
+    chat: ChatRecord,
+    usageTotals: Partial<RunTokenUsage> | null,
+    tracker: UsageReportTracker,
+  ): ChatRecord {
+    if (!usageTotals) return this.db.getChat(chat.id);
+    const currentChat = this.db.getChat(chat.id);
+    const advance = advanceReportedTokenUsage(
+      { inputTokens: currentChat.inputTokens, outputTokens: currentChat.outputTokens },
+      tracker.reportedUsage,
+      usageTotals,
+    );
+    tracker.reportedUsage = advance.nextReportedUsage;
+    const projectId = currentChat.runId ? this.db.getRun(currentChat.runId).projectId : null;
+    return this.db.recordChatTokenUsage(
+      currentChat.id,
+      projectId,
+      advance.inputTokensDelta,
+      advance.outputTokensDelta,
+    );
+  }
+
   private startChatWorker(
     chat: ChatRecord,
     provider: ProviderAccountRecord,
@@ -10450,6 +10515,7 @@ export class AppController
   ): Worker {
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "chat-worker.js");
     const streamingStepIds = new Map<string, string>();
+    const usageTracker = this.initialUsageReportTracker(chat.id, "chat", provider, this.db.getChatSteps(chat.id));
     const settings = this.db.getSettings();
     const devModeEnabled = settings[APP_SETTING_KEYS.enableDevMode] === "true";
     if (devModeEnabled) {
@@ -10496,14 +10562,14 @@ export class AppController
       const payload = message as ChatWorkerPayload;
 
       if (payload.type === "chunk") {
-        await this.handleChatWorkerChunk(chat, provider, model, payload, streamingStepIds);
+        await this.handleChatWorkerChunk(chat, provider, model, payload, streamingStepIds, usageTracker);
         return;
       }
 
       if (payload.type === "done") {
-        const currentChat = this.db.getChat(chat.id);
-        const nextInputTokens = Math.max(currentChat.inputTokens, payload.result.usage.inputTokens);
-        const nextOutputTokens = Math.max(currentChat.outputTokens, payload.result.usage.outputTokens);
+        const currentChat = this.applyChatWorkerUsageUpdate(chat, payload.result.usage, usageTracker);
+        const nextInputTokens = currentChat.inputTokens;
+        const nextOutputTokens = currentChat.outputTokens;
         if (payload.result.providerSessionRuntime) {
           this.upsertProviderSessionRuntime("chat", chat.id, provider, model.modelId, payload.result.providerSessionRuntime);
         }
