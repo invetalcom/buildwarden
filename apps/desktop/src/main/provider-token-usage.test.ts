@@ -1,8 +1,15 @@
-import { describe, expect, it } from "vitest";
-import type { RunTokenUsage } from "@buildwarden/shared";
-import { normalizeAiSdkTokenUsage } from "../../../../packages/provider-ai-sdk/src";
-import { normalizeCodexTokenUsage } from "../../../../packages/provider-codex-cli/src";
-import { mergeClaudeUsageUpdate, parseClaudeCodeStreamEvent } from "../../../../packages/provider-claude-code/src";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { BuildWardenDatabase } from "@buildwarden/db";
+import type { HarnessType, ProviderType, RunTokenUsage } from "@buildwarden/shared";
+import { afterEach, describe, expect, it } from "vitest";
+import { normalizeAiSdkTokenUsage } from "@buildwarden/provider-ai-sdk";
+import { normalizeAzureLegacyTokenUsage } from "@buildwarden/provider-azure-legacy";
+import { normalizeCodexTokenUsage } from "@buildwarden/provider-codex-cli";
+import { mergeClaudeUsageUpdate, parseClaudeCodeStreamEvent } from "@buildwarden/provider-claude-code";
+import { normalizeCursorTokenUsage } from "@buildwarden/provider-cursor-agent";
+import { advanceReportedTokenUsage } from "./token-usage-accounting";
 
 type UsageFacts = {
   uncachedInputTokens: number;
@@ -17,6 +24,8 @@ type ProviderUsageFormats = {
   codexCli: unknown;
   claudeCodeResult: unknown;
   aiSdk: unknown;
+  cursorAgent: unknown;
+  azureLegacy: unknown;
 };
 
 type ComparableRunTokenUsage = {
@@ -96,6 +105,23 @@ const PROVIDER_USAGE_SCENARIO = {
       },
       totalTokens: 4_080,
     },
+    cursorAgent: {
+      usage: {
+        inputTokens: 3_900,
+        outputTokens: 180,
+        thoughtTokens: 42,
+        cachedReadTokens: 2_400,
+        cachedWriteTokens: 300,
+        totalTokens: 4_080,
+      },
+    },
+    azureLegacy: {
+      prompt_tokens: 3_900,
+      completion_tokens: 180,
+      total_tokens: 4_080,
+      prompt_tokens_details: { cached_tokens: 2_400 },
+      completion_tokens_details: { reasoning_tokens: 42 },
+    },
   },
 } as const satisfies { facts: UsageFacts; formats: ProviderUsageFormats };
 
@@ -144,6 +170,78 @@ const normalizeClaudeResultUsage = (event: unknown): RunTokenUsage => {
   }
   return mergeClaudeUsageUpdate({ inputTokens: 0, outputTokens: 0 }, new Map(), parsed).usage;
 };
+
+const requireCursorUsage = (payload: unknown): RunTokenUsage => {
+  const normalized = normalizeCursorTokenUsage(payload);
+  if (!normalized) throw new Error("Expected Cursor payload to include usage.");
+  return normalized;
+};
+
+type ProviderAccountingCase = {
+  providerName: string;
+  providerType: ProviderType;
+  harnessType: HarnessType;
+  normalize: () => RunTokenUsage;
+};
+
+const providerAccountingCases = (): ProviderAccountingCase[] => {
+  const { formats } = PROVIDER_USAGE_SCENARIO;
+  return [
+    {
+      providerName: "Codex CLI",
+      providerType: "codex-cli",
+      harnessType: "codex-app-server",
+      normalize: () => normalizeCodexTokenUsage(formats.codexCli),
+    },
+    {
+      providerName: "Claude Code",
+      providerType: "claude-code",
+      harnessType: "claude-code",
+      normalize: () => normalizeClaudeResultUsage(formats.claudeCodeResult),
+    },
+    {
+      providerName: "Cursor Agent",
+      providerType: "cursor-agent",
+      harnessType: "cursor-acp",
+      normalize: () => requireCursorUsage(formats.cursorAgent),
+    },
+    {
+      providerName: "AI SDK",
+      providerType: "ai-sdk",
+      harnessType: "ai-sdk",
+      normalize: () => normalizeAiSdkTokenUsage(formats.aiSdk),
+    },
+    {
+      providerName: "OpenRouter",
+      providerType: "openrouter",
+      harnessType: "ai-sdk",
+      normalize: () => normalizeAiSdkTokenUsage(formats.aiSdk),
+    },
+    {
+      providerName: "Azure Legacy",
+      providerType: "azure-legacy",
+      harnessType: "azure-legacy",
+      normalize: () => normalizeAzureLegacyTokenUsage(formats.azureLegacy),
+    },
+  ];
+};
+
+const accountingDbs: BuildWardenDatabase[] = [];
+const accountingTempDirs: string[] = [];
+
+const makeAccountingDb = async (): Promise<BuildWardenDatabase> => {
+  const dir = mkdtempSync(join(tmpdir(), "buildwarden-provider-accounting-"));
+  accountingTempDirs.push(dir);
+  const db = new BuildWardenDatabase(join(dir, "buildwarden.sqlite"));
+  await db.init();
+  accountingDbs.push(db);
+  return db;
+};
+
+afterEach(async () => {
+  for (const db of accountingDbs.splice(0)) await db.close();
+  for (const dir of accountingTempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 describe("provider token usage normalization", () => {
   it("documents provider-native usage formats before comparing normalized usage", () => {
@@ -246,4 +344,60 @@ describe("provider token usage normalization", () => {
       totalProcessedTokens: 12_500,
     });
   });
+});
+
+describe("provider token usage accounting contracts", () => {
+  it.each(providerAccountingCases())(
+    "$providerName native usage reaches durable run, project, and daily totals",
+    async ({ providerName, providerType, harnessType, normalize }) => {
+      const db = await makeAccountingDb();
+      const project = db.addProject({
+        repoPath: `C:\\provider-accounting\\${providerType}`,
+        baseBranch: "main",
+        resolvedName: `${providerName} accounting`,
+      });
+      const provider = db.addProviderAccount({
+        providerType,
+        label: providerName,
+        apiBaseUrl: null,
+        apiKeyRef: "",
+        configJson: "{}",
+      });
+      const model = db.addModel({
+        providerAccountId: provider.id,
+        modelId: `${providerType}-model`,
+        displayName: `${providerName} model`,
+        config: {},
+        capabilities: {},
+        enabled: true,
+      });
+      const run = db.createRun({
+        projectId: project.id,
+        providerAccountId: provider.id,
+        modelId: model.id,
+        harnessType,
+        mode: "code",
+        workspaceType: "worktree",
+        prompt: `Test ${providerName} accounting`,
+        branchName: "main",
+        worktreePath: `C:\\provider-accounting\\${providerType}\\worktree`,
+      });
+
+      const normalized = normalize();
+      const advance = advanceReportedTokenUsage(
+        { inputTokens: 0, outputTokens: 0 },
+        { inputTokens: 0, outputTokens: 0 },
+        normalized,
+      );
+      db.recordRunTokenUsage(run.id, advance.inputTokensDelta, advance.outputTokensDelta);
+
+      expect(normalized, providerName).toMatchObject({ inputTokens: 3_900, outputTokens: 180 });
+      expect(db.getRun(run.id), providerName).toMatchObject({ inputTokens: 3_900, outputTokens: 180 });
+      expect(db.getProject(project.id), providerName).toMatchObject({
+        cumulativeInputTokens: 3_900,
+        cumulativeOutputTokens: 180,
+      });
+      expect(db.getSnapshot().tokenUsage?.today, providerName).toEqual({ inputTokens: 3_900, outputTokens: 180 });
+    },
+  );
 });

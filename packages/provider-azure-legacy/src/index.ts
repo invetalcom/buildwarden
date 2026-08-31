@@ -177,7 +177,7 @@ const buildAzureLegacyUserContent = (
   return parts;
 };
 
-const usageFromCompletion = (usage: OpenAI.CompletionUsage | undefined): RunTokenUsage => {
+export const normalizeAzureLegacyTokenUsage = (usage: OpenAI.CompletionUsage | undefined): RunTokenUsage => {
   const raw = usage as
     | (OpenAI.CompletionUsage & {
         prompt_tokens_details?: { cached_tokens?: number };
@@ -497,7 +497,7 @@ const runAzureLegacyChat = async (
 
   for await (const chunk of stream) {
     if (chunk.usage) {
-      usage = usageFromCompletion(chunk.usage);
+      usage = normalizeAzureLegacyTokenUsage(chunk.usage);
     }
     const delta = chunk.choices[0]?.delta?.content;
     if (delta) {
@@ -578,7 +578,7 @@ const runAzureLegacyAgent = async (
       ),
     );
 
-    const roundResult = await collectAzureLegacyRound(stream, streamOutId, onChunk, usageFromCompletion);
+    const roundResult = await collectAzureLegacyRound(stream, streamOutId, onChunk, normalizeAzureLegacyTokenUsage);
     const { assistantContent, toolCalls } = roundResult;
     accumulatedUsage = addUsage(accumulatedUsage, roundResult.usage);
 
