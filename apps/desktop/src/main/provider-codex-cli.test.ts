@@ -451,6 +451,21 @@ describe("Codex app-server dynamic BuildWarden tools", () => {
       toolContext,
     );
 
+    const dynamicToolItem = {
+      type: "dynamicToolCall",
+      id: "call-1",
+      tool: "buildwarden_tasks_list",
+      arguments: {},
+      status: "inProgress",
+    };
+    stdout.write(`${JSON.stringify({
+      method: "item/started",
+      params: {
+        threadId: "parent-thread",
+        turnId: "turn-1",
+        item: dynamicToolItem,
+      },
+    })}\n`);
     stdout.write(`${JSON.stringify({
       id: 17,
       method: "item/tool/call",
@@ -463,6 +478,14 @@ describe("Codex app-server dynamic BuildWarden tools", () => {
       },
     })}\n`);
     await new Promise((resolve) => setTimeout(resolve, 20));
+    stdout.write(`${JSON.stringify({
+      method: "item/completed",
+      params: {
+        threadId: "parent-thread",
+        turnId: "turn-1",
+        item: { ...dynamicToolItem, status: "completed", success: true },
+      },
+    })}\n`);
 
     expect(executeTool).toHaveBeenCalledWith({
       id: "call-1",
@@ -472,6 +495,72 @@ describe("Codex app-server dynamic BuildWarden tools", () => {
     expect(responses.join("")).toContain('"success":true');
     expect(responses.join("")).toContain('"type":"inputText"');
     expect(chunks.map((chunk) => chunk.type)).toEqual(expect.arrayContaining(["tool-call", "tool-result"]));
+    expect(chunks).not.toContainEqual(expect.objectContaining({ title: "Codex update", value: "Dynamic Tool Call" }));
+  });
+
+  it("emits a failed tool result when in-app dynamic tool execution rejects", async () => {
+    const stdout = new PassThrough();
+    const stdin = new PassThrough();
+    const responses: string[] = [];
+    stdin.on("data", (chunk) => responses.push(String(chunk)));
+    const child = Object.assign(new EventEmitter(), {
+      stdout,
+      stderr: new PassThrough(),
+      stdin,
+      killed: true,
+      kill: () => true,
+    }) as unknown as ChildProcessWithoutNullStreams;
+    const chunks: HarnessRunChunk[] = [];
+    const executeTool = vi.fn(async () => {
+      throw new Error("Task delegation failed.");
+    });
+    new CodexAppServerSession(
+      child,
+      "parent-thread",
+      "C:\\repo",
+      undefined,
+      undefined,
+      (chunk) => chunks.push(chunk),
+      {
+        tools: [{
+          name: "buildwarden_tasks_delegate",
+          description: "Delegate durable tasks.",
+          inputSchema: { type: "object", properties: {}, additionalProperties: false },
+        }],
+        executeTool,
+      },
+    );
+
+    stdout.write(`${JSON.stringify({
+      id: 18,
+      method: "item/tool/call",
+      params: {
+        callId: "call-failed",
+        tool: "buildwarden_tasks_delegate",
+        arguments: {},
+      },
+    })}\n`);
+    await vi.waitFor(() => expect(chunks).toHaveLength(2));
+
+    expect(chunks).toEqual([
+      expect.objectContaining({
+        type: "tool-call",
+        metadata: expect.objectContaining({ callId: "call-failed", toolName: "buildwarden_tasks_delegate" }),
+      }),
+      {
+        type: "tool-result",
+        title: "Tool result: buildwarden_tasks_delegate",
+        value: "Task delegation failed.",
+        metadata: {
+          toolName: "buildwarden_tasks_delegate",
+          callId: "call-failed",
+          ok: false,
+          provider: "codex-cli",
+        },
+      },
+    ]);
+    expect(responses.join("")).toContain('"success":false');
+    expect(responses.join("")).toContain("Task delegation failed.");
   });
 
   it("drops a late host-tool response after the app-server session stops", async () => {
