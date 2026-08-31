@@ -13,6 +13,7 @@ import type {
   ProjectRecord,
   ProjectTaskRecord,
   ProviderAccountRecord,
+  ProviderSessionRuntimeRecord,
   RunInput,
   RunRecord,
 } from "@buildwarden/shared";
@@ -33,6 +34,7 @@ import {
 import type { AppControllerDesktopServices } from "./desktop-platform-services";
 import { HostEventBus } from "./host-events";
 import type { ProjectPrReviewProvider } from "./pr-review/pr-review-types";
+import { advanceReportedTokenUsage } from "./token-usage-accounting";
 
 const project = {
   id: "project-1",
@@ -203,6 +205,41 @@ const createMutableProjectHarness = () => {
   });
   return { ...harness, getCurrentProject: () => currentProject };
 };
+
+describe("provider usage report baselines", () => {
+  it("does not reduce the first Codex usage report by a stale runtime from another provider", () => {
+    const staleRuntime = {
+      ownerId: "run-1",
+      ownerKind: "run",
+      providerType: "claude-code",
+    } as ProviderSessionRuntimeRecord;
+    const harness = createHarness({
+      getProviderSessionRuntime: vi.fn(() => staleRuntime),
+    });
+    tempDirs.push(harness.logDir);
+    const codexProvider = { ...provider, providerType: "codex-cli" } satisfies ProviderAccountRecord;
+    const controller = harness.controller as unknown as {
+      initialUsageReportTracker: (
+        ownerId: string,
+        ownerKind: "run" | "chat",
+        account: ProviderAccountRecord,
+        steps: ReadonlyArray<{ metadataJson: string }>,
+      ) => { reportedUsage: { inputTokens: number; outputTokens: number } };
+    };
+
+    const tracker = controller.initialUsageReportTracker("run-1", "run", codexProvider, [{
+      metadataJson: JSON.stringify({ usageTotals: { inputTokens: 100, outputTokens: 20 } }),
+    }]);
+    const advance = advanceReportedTokenUsage(
+      { inputTokens: 100, outputTokens: 20 },
+      tracker.reportedUsage,
+      { inputTokens: 40, outputTokens: 8 },
+    );
+
+    expect(tracker.reportedUsage).toEqual({ inputTokens: 0, outputTokens: 0 });
+    expect(advance).toMatchObject({ inputTokensDelta: 40, outputTokensDelta: 8 });
+  });
+});
 
 describe("AppController settings and lightweight workflows", () => {
   it("publishes an automation-started notification after its run is created", async () => {

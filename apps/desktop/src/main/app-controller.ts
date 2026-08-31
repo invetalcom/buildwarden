@@ -9319,7 +9319,8 @@ export class AppController
     provider: ProviderAccountRecord,
     steps: ReadonlyArray<{ metadataJson: string }>,
   ): UsageReportTracker {
-    if (provider.providerType !== "codex-cli" || !this.db.getProviderSessionRuntime(ownerId, ownerKind)) {
+    const runtime = this.db.getProviderSessionRuntime(ownerId, ownerKind);
+    if (provider.providerType !== "codex-cli" || runtime?.providerType !== provider.providerType) {
       return { reportedUsage: { inputTokens: 0, outputTokens: 0 } };
     }
     for (const step of [...steps].reverse()) {
