@@ -1194,11 +1194,18 @@ class CodexServerRequestHandler {
         },
       });
     }).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      this.onChunk?.({
+        type: "tool-result",
+        title: `Tool result: ${toolName}`,
+        value: message,
+        metadata: { toolName, callId, ok: false, provider: "codex-cli" },
+      });
       this.writeResponse({
         id: request.id,
         result: {
           success: false,
-          contentItems: [{ type: "inputText", text: error instanceof Error ? error.message : String(error) }],
+          contentItems: [{ type: "inputText", text: message }],
         },
       });
     });
