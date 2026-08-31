@@ -141,14 +141,14 @@ describe("OrchestrationAgentsPanel", () => {
         waveId: "wave-1",
         clientTaskId: "client-1",
         title: "Implement durable scheduler",
-        prompt: "Implement scheduling.",
+        prompt: "**Implement** scheduling.",
         roleId: "implementer",
         modelId: "model-1",
         intent: "implement",
         status: "completed",
         childRunId: "child-1",
         retryOfTaskId: null,
-        summary: "Scheduler implemented and tested.",
+        summary: "## Summary\n\n- Scheduler implemented and tested.",
         errorMessage: null,
         attentionReason: null,
         adoptionStatus: "proposed",
@@ -178,6 +178,13 @@ describe("OrchestrationAgentsPanel", () => {
     );
 
     expect(markup).toContain("Implement durable scheduler");
+    expect(markup).toContain('aria-label="Select agent"');
+    expect(markup).toContain("1 agent");
+    expect(markup).toContain("<strong");
+    expect(markup).toContain("<li");
+    expect(markup).toContain(">Result</h4>");
+    expect(markup).toContain(">Messages</h4>");
+    expect(markup).toContain(">Activity</h4>");
     expect(markup).toContain("Claude Sonnet");
     expect(markup).toContain("1,600 tokens");
     expect(markup).toContain("Scheduler implemented and tested.");

@@ -7,12 +7,17 @@ import {
   type KeyboardEvent,
 } from "react";
 import { cn } from "../../lib/cn";
+import { Badge, type BadgeProps } from "./badge";
 import { AnchorDropdownPortal, type AnchorDropdownAlign, type AnchorDropdownPlacement } from "./dropdown-portal";
 
 type SelectOption = {
   value: string;
   label: string;
   description?: string;
+  status?: {
+    label: string;
+    tone?: BadgeProps["tone"];
+  };
   disabled?: boolean;
 };
 
@@ -71,7 +76,7 @@ export const Select = ({
   const isDisabled = disabled || options.length === 0;
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
   const visibleOptions = searchable && normalizedSearchQuery
-    ? options.filter((option) => `${option.label} ${option.description ?? ""}`.toLowerCase().includes(normalizedSearchQuery))
+    ? options.filter((option) => `${option.label} ${option.description ?? ""} ${option.status?.label ?? ""}`.toLowerCase().includes(normalizedSearchQuery))
     : options;
 
   const openMenu = () => {
@@ -207,7 +212,14 @@ export const Select = ({
                       <span className="mt-0.5 block truncate text-xs text-[var(--ec-muted)]">{option.description}</span>
                     ) : null}
                   </span>
-                  {optionSelected ? <Check className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ec-accent)]" /> : null}
+                  <span className="flex shrink-0 items-center gap-1.5">
+                    {option.status ? (
+                      <Badge dot tone={option.status.tone ?? "neutral"} className="h-5 px-1.5 py-0 text-[10px]">
+                        {option.status.label}
+                      </Badge>
+                    ) : null}
+                    {optionSelected ? <Check className="h-4 w-4 shrink-0 text-[var(--ec-accent)]" /> : null}
+                  </span>
                 </button>
               );
             })

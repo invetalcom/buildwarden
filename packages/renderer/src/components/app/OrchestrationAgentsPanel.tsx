@@ -6,6 +6,7 @@ import {
 } from "@buildwarden/shared";
 import {
   AlertTriangle,
+  Activity,
   CheckCircle2,
   ExternalLink,
   GitCompareArrows,
@@ -21,11 +22,13 @@ import {
   UsersRound,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { ActivityRichText } from "../ui/activity-rich-text";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Select } from "../ui/select";
 
 interface OrchestrationAgentsPanelProps {
   coordinatorRunId: string;
@@ -66,6 +69,18 @@ const safeMetadata = (value: string): Record<string, unknown> => {
     return {};
   }
 };
+
+const AgentDetailSection = ({ title, countLabel, icon, children }: { title: string; countLabel?: string; icon: ReactNode; children: ReactNode }) => (
+  <section className="!mt-7 pb-1">
+    <div className="mb-3 flex items-center gap-2">
+      <span className="shrink-0 text-[var(--ec-accent)]" aria-hidden>{icon}</span>
+      <h4 className="shrink-0 text-sm font-semibold text-[var(--ec-text)]">{title}</h4>
+      {countLabel ? <span className="shrink-0 text-[10px] tabular-nums text-[var(--ec-faint)]">{countLabel}</span> : null}
+      <span className="h-px min-w-4 flex-1 bg-[var(--ec-border-strong)]" aria-hidden />
+    </div>
+    <div>{children}</div>
+  </section>
+);
 
 const nativeSubagentsFromRun = (run: RunDetail | null) => {
   if (!run) return [];
@@ -256,6 +271,24 @@ export const OrchestrationAgentsPanel = ({
   };
 
   const nativeSubagents = useMemo(() => nativeSubagentsFromRun(selectedRunDetail), [selectedRunDetail]);
+  const taskOptions = useMemo(() => detail?.tasks.map((task) => {
+    const role = detail.orchestration.teamSnapshot.roles.find((entry) => entry.id === task.roleId);
+    return {
+      value: task.id,
+      label: task.title,
+      status: {
+        label: task.status,
+        tone: taskTone(task.status),
+      },
+      description: [
+        role?.name ?? task.roleId,
+        modelLabels.get(task.modelId) ?? task.modelId,
+        task.intent,
+        formatElapsed(task),
+        task.adoptionStatus !== "none" ? `changes: ${task.adoptionStatus}` : null,
+      ].filter(Boolean).join(" · "),
+    };
+  }) ?? [], [detail, modelLabels]);
   const events = detail?.events.filter((event) => !selectedTask || event.taskId === selectedTask.id).slice(-30).reverse() ?? [];
   const messages = detail?.messages.filter((entry) => !selectedTask || entry.taskId === selectedTask.id) ?? [];
   const canOperate = buildwarden.capabilities.orchestrationOperate;
@@ -316,37 +349,33 @@ export const OrchestrationAgentsPanel = ({
         {error ? <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-[var(--ec-danger)]"><AlertTriangle className="size-3.5" />{error}</p> : null}
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(12rem,0.42fr)_minmax(0,0.58fr)]">
-        <div className="app-scrollbar min-h-0 overflow-y-auto border-r border-[var(--ec-border)]">
-          {detail.tasks.map((task) => {
-            const role = detail.orchestration.teamSnapshot.roles.find((entry) => entry.id === task.roleId);
-            const selected = task.id === selectedTaskId;
-            return (
-              <button
-                key={task.id}
-                type="button"
-                className={`w-full border-b border-[var(--ec-border)] px-3 py-2 text-left transition ${selected ? "bg-[var(--ec-accent-soft)]" : "hover:bg-[var(--ec-hover)]"}`}
-                onClick={() => setSelectedTaskId(task.id)}
-              >
-                <div className="flex items-center gap-2">
-                  <span className={`size-2 shrink-0 rounded-full ${task.status === "running" ? "running-pulse bg-[var(--ec-accent)]" : task.status === "completed" ? "bg-[var(--ec-success)]" : ["failed", "blocked", "interrupted", "waiting-input"].includes(task.status) ? "bg-[var(--ec-danger)]" : "bg-[var(--ec-muted)]"}`} />
-                  <span className="min-w-0 flex-1 truncate text-xs font-medium text-[var(--ec-text)]">{task.title}</span>
-                  <span className="text-[10px] tabular-nums text-[var(--ec-faint)]">{formatElapsed(task)}</span>
-                </div>
-                <div className="mt-1 flex min-w-0 items-center gap-1.5 pl-4 text-[10px] text-[var(--ec-muted)]">
-                  <span className="truncate">{role?.name ?? task.roleId}</span>
-                  <span>·</span>
-                  <span className="truncate">{modelLabels.get(task.modelId) ?? task.modelId}</span>
-                  <span>·</span>
-                  <span>{task.intent}</span>
-                </div>
-                {task.adoptionStatus !== "none" ? <p className="mt-1 pl-4 text-[10px] text-[var(--ec-accent)]">changes: {task.adoptionStatus}</p> : null}
-              </button>
-            );
-          })}
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex shrink-0 items-center gap-2 border-b border-[var(--ec-border)] px-3 py-2">
+          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Agent</span>
+          <Select
+            value={selectedTaskId ?? ""}
+            options={taskOptions}
+            onValueChange={setSelectedTaskId}
+            placeholder="No delegated agents"
+            ariaLabel="Select agent"
+            className="min-w-0 flex-1"
+            triggerClassName="h-8 rounded-md px-2.5 text-xs"
+            optionClassName="py-1.5 text-xs"
+            maxMenuHeightPx={320}
+            searchable={detail.tasks.length > 6}
+            searchPlaceholder="Search agents…"
+            searchAriaLabel="Search agents"
+          />
+          {selectedTask ? (
+            <Badge dot tone={taskTone(selectedTask.status)}>{selectedTask.status}</Badge>
+          ) : null}
+          <Badge tone="neutral" className="h-7 shrink-0 gap-1.5 px-2 text-[11px] tabular-nums">
+            <UsersRound className="size-3" />
+            {detail.tasks.length} {detail.tasks.length === 1 ? "agent" : "agents"}
+          </Badge>
         </div>
 
-        <div className="app-scrollbar min-h-0 overflow-y-auto">
+        <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto">
           {selectedTask ? (
             <div className="space-y-3 p-3">
               <section>
@@ -357,9 +386,8 @@ export const OrchestrationAgentsPanel = ({
                       {modelLabels.get(selectedTask.modelId) ?? selectedTask.modelId} · {formatCount.format(selectedTask.inputTokens + selectedTask.outputTokens)} tokens
                     </p>
                   </div>
-                  <Badge dot tone={taskTone(selectedTask.status)}>{selectedTask.status}</Badge>
                 </div>
-                <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-[var(--ec-muted)]">{selectedTask.prompt}</p>
+                <ActivityRichText content={selectedTask.prompt} compact className="mt-2 break-words" />
                 {selectedTask.attentionReason || selectedTask.errorMessage ? (
                   <p className="mt-2 rounded-md border border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] px-2 py-1.5 text-xs text-[var(--ec-danger)]">
                     {selectedTask.attentionReason ?? selectedTask.errorMessage}
@@ -432,28 +460,33 @@ export const OrchestrationAgentsPanel = ({
                           <span className="font-medium text-[var(--ec-text)]">{subagent.name}</span>
                           <span className="text-[var(--ec-muted)]">{subagent.status}</span>
                         </div>
-                        {subagent.summary ? <p className="mt-0.5 line-clamp-2 text-[10px] text-[var(--ec-muted)]">{subagent.summary}</p> : null}
+                        {subagent.summary ? <ActivityRichText content={subagent.summary} compact className="mt-0.5 line-clamp-2 break-words" /> : null}
                       </div>
                     ))}
                   </div>
                 </section>
               ) : null}
 
-              {selectedTask.summary ? (
-                <section>
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--ec-faint)]">Result</p>
-                  <p className="whitespace-pre-wrap text-xs leading-relaxed text-[var(--ec-text)]">{selectedTask.summary}</p>
-                </section>
-              ) : null}
+              <AgentDetailSection title="Result" icon={<CheckCircle2 className="size-3.5" />}>
+                {selectedTask.summary ? (
+                  <ActivityRichText content={selectedTask.summary} compact className="break-words" />
+                ) : (
+                  <p className="text-[11px] text-[var(--ec-faint)]">No result has been reported yet.</p>
+                )}
+              </AgentDetailSection>
 
-              <section>
-                <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--ec-faint)]">Messages</p>
-                {messages.map((entry) => (
-                  <div key={entry.id} className="mb-1 rounded-md bg-[var(--ec-panel-soft)] px-2 py-1.5 text-[11px] text-[var(--ec-muted)]">
-                    <span className="mr-1 font-medium text-[var(--ec-text)]">{entry.source}</span>{entry.content}
+              <AgentDetailSection
+                title="Messages"
+                countLabel={`${messages.length} ${messages.length === 1 ? "message" : "messages"}`}
+                icon={<MessageSquare className="size-3.5" />}
+              >
+                {messages.length > 0 ? <div className="mb-2 space-y-1.5">{messages.map((entry) => (
+                  <div key={entry.id} className="rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-2 py-1.5">
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--ec-muted)]">{entry.source}</p>
+                    <ActivityRichText content={entry.content} compact className="break-words" />
                   </div>
-                ))}
-                <div className="mt-1 flex gap-1">
+                ))}</div> : <p className="mb-2 text-[11px] text-[var(--ec-faint)]">No messages for this agent.</p>}
+                <div className="flex gap-1">
                   <Input value={message} disabled={!canOperate || busyAction != null} className="h-8 text-xs" placeholder="Deliver at the next child turn boundary" onChange={(event) => setMessage(event.target.value)} />
                   <Button
                     type="button"
@@ -469,22 +502,25 @@ export const OrchestrationAgentsPanel = ({
                     <Send className="size-3.5" />
                   </Button>
                 </div>
-              </section>
+              </AgentDetailSection>
 
-              <section>
-                <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--ec-faint)]">Activity</p>
-                <div className="space-y-1">
+              <AgentDetailSection
+                title="Activity"
+                countLabel={`${events.length} ${events.length === 1 ? "event" : "events"}`}
+                icon={<Activity className="size-3.5" />}
+              >
+                <div className="space-y-2">
                   {events.length === 0 ? <p className="text-[11px] text-[var(--ec-faint)]">No task events yet.</p> : events.map((event) => (
-                    <div key={event.id} className="flex gap-2 text-[11px]">
-                      <span className="mt-1 size-1.5 shrink-0 rounded-full bg-[var(--ec-muted)]" />
-                      <span className="min-w-0">
+                    <div key={event.id} className="border-b border-[var(--ec-border)] pb-2 last:border-0 last:pb-0">
+                      <div className="flex items-center gap-2 text-[11px]">
+                        <span className="size-1.5 shrink-0 rounded-full bg-[var(--ec-muted)]" />
                         <span className="font-medium text-[var(--ec-text)]">{event.title}</span>
-                        {event.content ? <span className="ml-1 text-[var(--ec-muted)]">{event.content}</span> : null}
-                      </span>
+                      </div>
+                      {event.content ? <ActivityRichText content={event.content} compact className="mt-1 break-words pl-3.5" /> : null}
                     </div>
                   ))}
                 </div>
-              </section>
+              </AgentDetailSection>
 
             </div>
           ) : (
