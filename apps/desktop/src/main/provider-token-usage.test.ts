@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import type { HarnessType, ProviderType, RunTokenUsage } from "@buildwarden/shared";
 import { afterEach, describe, expect, it } from "vitest";
-import { normalizeAiSdkTokenUsage } from "../../../../packages/provider-ai-sdk/src";
-import { normalizeAzureLegacyTokenUsage } from "../../../../packages/provider-azure-legacy/src";
-import { normalizeCodexTokenUsage } from "../../../../packages/provider-codex-cli/src";
-import { mergeClaudeUsageUpdate, parseClaudeCodeStreamEvent } from "../../../../packages/provider-claude-code/src";
-import { normalizeCursorTokenUsage } from "../../../../packages/provider-cursor-agent/src";
+import { normalizeAiSdkTokenUsage } from "@buildwarden/provider-ai-sdk";
+import { normalizeAzureLegacyTokenUsage } from "@buildwarden/provider-azure-legacy";
+import { normalizeCodexTokenUsage } from "@buildwarden/provider-codex-cli";
+import { mergeClaudeUsageUpdate, parseClaudeCodeStreamEvent } from "@buildwarden/provider-claude-code";
+import { normalizeCursorTokenUsage } from "@buildwarden/provider-cursor-agent";
 import { advanceReportedTokenUsage } from "./token-usage-accounting";
 
 type UsageFacts = {
