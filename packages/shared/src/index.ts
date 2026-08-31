@@ -2889,6 +2889,16 @@ export interface AppSnapshot {
   bookmarks: BookmarkSummary[];
   chatBookmarks: ChatBookmarkSummary[];
   chats: ChatSummary[];
+  /** Durable usage outside project counters plus usage recorded during the current local day. */
+  tokenUsage?: {
+    standaloneChats: TokenUsageTotals;
+    today: TokenUsageTotals;
+  };
+}
+
+export interface TokenUsageTotals {
+  inputTokens: number;
+  outputTokens: number;
 }
 
 export interface RunProjectLabInput {

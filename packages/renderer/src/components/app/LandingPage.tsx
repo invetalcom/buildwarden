@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import type { AppSnapshot } from "@buildwarden/shared";
+import type { AppSnapshot, TokenUsageTotals } from "@buildwarden/shared";
 import { Activity, Bot, FolderGit2, PlayCircle, Settings2, Sparkles, WalletCards } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -68,7 +68,10 @@ const LandingMetrics = ({ metrics }: { metrics: LandingMetric[] }) => (
   </div>
 );
 
-const buildTodayActivity = (runs: AppSnapshot["projects"][number]["runs"]) => {
+const buildTodayActivity = (
+  runs: AppSnapshot["projects"][number]["runs"],
+  usageToday: TokenUsageTotals | undefined,
+) => {
   const today = new Date().toDateString();
   const todaysRuns = runs.filter((run) => new Date(run.createdAt).toDateString() === today);
   return {
@@ -77,7 +80,9 @@ const buildTodayActivity = (runs: AppSnapshot["projects"][number]["runs"]) => {
       resolveRunDisplayStatus(run.status, run.orchestrationStatus) === "completed").length,
     activeRuns: todaysRuns.filter((run) =>
       isRunDisplayStatusActive(resolveRunDisplayStatus(run.status, run.orchestrationStatus))).length,
-    tokensUsed: todaysRuns.reduce((sum, run) => sum + run.inputTokens + run.outputTokens, 0),
+    tokensUsed: usageToday
+      ? usageToday.inputTokens + usageToday.outputTokens
+      : todaysRuns.reduce((sum, run) => sum + run.inputTokens + run.outputTokens, 0),
   };
 };
 
@@ -102,8 +107,10 @@ export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRu
   );
 
   const totals = useMemo(() => {
-    const inputTokens = snapshot.projects.reduce((sum, entry) => sum + entry.project.cumulativeInputTokens, 0);
-    const outputTokens = snapshot.projects.reduce((sum, entry) => sum + entry.project.cumulativeOutputTokens, 0);
+    const inputTokens = snapshot.projects.reduce((sum, entry) => sum + entry.project.cumulativeInputTokens, 0) +
+      (snapshot.tokenUsage?.standaloneChats.inputTokens ?? 0);
+    const outputTokens = snapshot.projects.reduce((sum, entry) => sum + entry.project.cumulativeOutputTokens, 0) +
+      (snapshot.tokenUsage?.standaloneChats.outputTokens ?? 0);
 
     return {
       projects: snapshot.projects.length,
@@ -118,7 +125,14 @@ export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRu
       outputTokens,
       totalTokens: inputTokens + outputTokens,
     };
-  }, [allRuns, snapshot.models.length, snapshot.projects, snapshot.providerAccounts.length]);
+  }, [
+    allRuns,
+    snapshot.models.length,
+    snapshot.projects,
+    snapshot.providerAccounts.length,
+    snapshot.tokenUsage?.standaloneChats.inputTokens,
+    snapshot.tokenUsage?.standaloneChats.outputTokens,
+  ]);
 
   const recentProjects = useMemo(
     () => snapshot.projects.slice().sort((left, right) => right.project.updatedAt.localeCompare(left.project.updatedAt)).slice(0, 4),
@@ -156,7 +170,10 @@ export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRu
   }, []);
 
   const latestRun = recentActivityRuns[0] ?? null;
-  const todayActivity = useMemo(() => buildTodayActivity(allRuns), [allRuns]);
+  const todayActivity = useMemo(
+    () => buildTodayActivity(allRuns, snapshot.tokenUsage?.today),
+    [allRuns, snapshot.tokenUsage?.today],
+  );
 
   const metrics: LandingMetric[] = [
     {

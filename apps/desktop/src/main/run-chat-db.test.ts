@@ -61,6 +61,43 @@ afterEach(async () => {
 });
 
 describe("run-scoped chats", () => {
+  it("records every reported run delta in the run, project, and daily ledger", async () => {
+    const db = await makeDb();
+    const { project, run } = addRunFixture(db);
+
+    db.recordRunTokenUsage(run.id, 100, 20);
+    db.recordRunTokenUsage(run.id, 50, 10);
+
+    expect(db.getRun(run.id)).toMatchObject({ inputTokens: 150, outputTokens: 30 });
+    expect(db.getProject(project.id)).toMatchObject({ cumulativeInputTokens: 150, cumulativeOutputTokens: 30 });
+    expect(db.getTokenUsageSince("2000-01-01T00:00:00.000Z")).toEqual({ inputTokens: 150, outputTokens: 30 });
+  });
+
+  it("attributes run-chat usage to the run project and the daily usage ledger", async () => {
+    const db = await makeDb();
+    const { project, provider, model, run } = addRunFixture(db);
+    const runChat = db.createChat(provider.id, model.id, "Question about the run", run.id);
+
+    db.recordChatTokenUsage(runChat.id, project.id, 120, 30);
+
+    expect(db.getChat(runChat.id)).toMatchObject({ inputTokens: 120, outputTokens: 30 });
+    expect(db.getProject(project.id)).toMatchObject({ cumulativeInputTokens: 120, cumulativeOutputTokens: 30 });
+    expect(db.getTokenUsageSince("2000-01-01T00:00:00.000Z")).toEqual({ inputTokens: 120, outputTokens: 30 });
+  });
+
+  it("keeps standalone chat usage in durable global and daily totals", async () => {
+    const db = await makeDb();
+    const { provider, model } = addRunFixture(db);
+    const standalone = db.createChat(provider.id, model.id, "Standalone question");
+
+    db.recordChatTokenUsage(standalone.id, null, 75, 25);
+
+    expect(db.getStandaloneChatTokenUsage()).toEqual({ inputTokens: 75, outputTokens: 25 });
+    expect(db.getTokenUsageSince("2000-01-01T00:00:00.000Z")).toEqual({ inputTokens: 75, outputTokens: 25 });
+    db.deleteChat(standalone.id);
+    expect(db.getStandaloneChatTokenUsage()).toEqual({ inputTokens: 75, outputTokens: 25 });
+  });
+
   it("keeps run chats out of the standalone chat list", async () => {
     const db = await makeDb();
     const { provider, model, run } = addRunFixture(db);

@@ -502,6 +502,8 @@ export class BuildWardenDatabase {
       } satisfies ProjectSnapshot;
     });
 
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
     return {
       projects,
       providerAccounts: this.listProviderAccounts(),
@@ -513,6 +515,10 @@ export class BuildWardenDatabase {
       bookmarks: this.listBookmarks(),
       chatBookmarks: this.listChatBookmarks(),
       chats: this.listChats(),
+      tokenUsage: {
+        standaloneChats: this.getStandaloneChatTokenUsage(),
+        today: this.getTokenUsageSince(todayStart.toISOString()),
+      },
     };
   }
 
@@ -2092,6 +2098,97 @@ export class BuildWardenDatabase {
       [inputTokensDelta, outputTokensDelta, timestamp, projectId],
     );
     return this.getProject(projectId);
+  }
+
+  recordProjectTokenUsage(
+    projectId: string,
+    ownerKind: string,
+    ownerId: string,
+    inputTokensDelta: number,
+    outputTokensDelta: number,
+  ): ProjectRecord {
+    if (inputTokensDelta === 0 && outputTokensDelta === 0) return this.getProject(projectId);
+    return this.transaction(() => {
+      const project = this.incrementProjectTokenUsage(projectId, inputTokensDelta, outputTokensDelta);
+      this.insertTokenUsageEvent(projectId, ownerKind, ownerId, inputTokensDelta, outputTokensDelta);
+      return project;
+    });
+  }
+
+  recordChatTokenUsage(
+    chatId: string,
+    projectId: string | null,
+    inputTokensDelta: number,
+    outputTokensDelta: number,
+  ): ChatRecord {
+    if (inputTokensDelta === 0 && outputTokensDelta === 0) return this.getChat(chatId);
+    return this.transaction(() => {
+      this.run(
+        `update chats
+         set input_tokens = input_tokens + ?, output_tokens = output_tokens + ?, updated_at = ?
+         where id = ?`,
+        [inputTokensDelta, outputTokensDelta, nowIso(), chatId],
+      );
+      if (projectId) {
+        this.incrementProjectTokenUsage(projectId, inputTokensDelta, outputTokensDelta);
+      } else {
+        this.run(
+          `update app_token_usage
+           set input_tokens = input_tokens + ?, output_tokens = output_tokens + ?
+           where scope = 'standalone-chats'`,
+          [inputTokensDelta, outputTokensDelta],
+        );
+      }
+      this.insertTokenUsageEvent(projectId, "chat", chatId, inputTokensDelta, outputTokensDelta);
+      return this.getChat(chatId);
+    });
+  }
+
+  recordRunTokenUsage(runId: string, inputTokensDelta: number, outputTokensDelta: number): RunRecord {
+    const existing = this.getRun(runId);
+    if (inputTokensDelta === 0 && outputTokensDelta === 0) return existing;
+    return this.transaction(() => {
+      this.run(
+        `update runs
+         set input_tokens = input_tokens + ?, output_tokens = output_tokens + ?, updated_at = ?
+         where id = ?`,
+        [inputTokensDelta, outputTokensDelta, nowIso(), runId],
+      );
+      this.incrementProjectTokenUsage(existing.projectId, inputTokensDelta, outputTokensDelta);
+      this.insertTokenUsageEvent(existing.projectId, "run", runId, inputTokensDelta, outputTokensDelta);
+      return this.getRun(runId);
+    });
+  }
+
+  getStandaloneChatTokenUsage(): { inputTokens: number; outputTokens: number } {
+    return this.first<{ inputTokens: number; outputTokens: number }>(
+      `select input_tokens as inputTokens, output_tokens as outputTokens
+       from app_token_usage where scope = 'standalone-chats'`,
+    ) ?? { inputTokens: 0, outputTokens: 0 };
+  }
+
+  getTokenUsageSince(since: string): { inputTokens: number; outputTokens: number } {
+    return this.first<{ inputTokens: number; outputTokens: number }>(
+      `select coalesce(sum(input_tokens), 0) as inputTokens,
+              coalesce(sum(output_tokens), 0) as outputTokens
+       from token_usage_events where created_at >= ?`,
+      [since],
+    ) ?? { inputTokens: 0, outputTokens: 0 };
+  }
+
+  private insertTokenUsageEvent(
+    projectId: string | null,
+    ownerKind: string,
+    ownerId: string,
+    inputTokens: number,
+    outputTokens: number,
+  ): void {
+    this.run(
+      `insert into token_usage_events
+       (id, project_id, owner_kind, owner_id, input_tokens, output_tokens, created_at)
+       values (?, ?, ?, ?, ?, ?, ?)`,
+      [createId(), projectId, ownerKind, ownerId, inputTokens, outputTokens, nowIso()],
+    );
   }
 
   deleteProject(projectId: string): void {
@@ -4943,6 +5040,22 @@ export class BuildWardenDatabase {
         updated_at text not null
       );
 
+      create table if not exists app_token_usage (
+        scope text primary key,
+        input_tokens integer not null default 0,
+        output_tokens integer not null default 0
+      );
+
+      create table if not exists token_usage_events (
+        id text primary key,
+        project_id text,
+        owner_kind text not null,
+        owner_id text not null,
+        input_tokens integer not null,
+        output_tokens integer not null,
+        created_at text not null
+      );
+
       create index if not exists idx_orchestrations_project on orchestrations(project_id, updated_at desc);
       create index if not exists idx_orchestrations_status on orchestrations(status);
       create unique index if not exists idx_orchestration_waves_number on orchestration_waves(orchestration_id, wave_index);
@@ -4954,6 +5067,8 @@ export class BuildWardenDatabase {
       create index if not exists idx_orchestration_cleanup_status on orchestration_cleanup_jobs(status, updated_at);
       create index if not exists idx_forge_requests_project on forge_requests(project_id, updated_at desc);
       create index if not exists idx_run_forge_links_request on run_forge_links(forge_request_id);
+      create index if not exists idx_token_usage_events_created on token_usage_events(created_at);
+      create index if not exists idx_token_usage_events_project on token_usage_events(project_id, created_at);
     `);
 
   }
@@ -4964,6 +5079,30 @@ export class BuildWardenDatabase {
     this.ensureColumn("project_loops", "pr_review_policy", "text not null default 'none'");
     this.ensureColumn("project_loop_iterations", "ai_review_posted", "integer not null default 0");
     this.ensureColumn("chats", "run_id", "text");
+    this.run(
+      `insert or ignore into app_token_usage (scope, input_tokens, output_tokens)
+       select 'standalone-chats', coalesce(sum(input_tokens), 0), coalesce(sum(output_tokens), 0)
+       from chats where run_id is null`,
+    );
+    if (!this.first<{ scope: string }>("select scope from app_token_usage where scope = 'run-chat-project-backfill-v1'")) {
+      this.run(
+        `update projects
+         set cumulative_input_tokens = cumulative_input_tokens + coalesce((
+               select sum(chat.input_tokens)
+               from chats chat join runs run on run.id = chat.run_id
+               where run.project_id = projects.id
+             ), 0),
+             cumulative_output_tokens = cumulative_output_tokens + coalesce((
+               select sum(chat.output_tokens)
+               from chats chat join runs run on run.id = chat.run_id
+               where run.project_id = projects.id
+             ), 0)`,
+      );
+      this.run(
+        `insert into app_token_usage (scope, input_tokens, output_tokens)
+         values ('run-chat-project-backfill-v1', 0, 0)`,
+      );
+    }
     this.ensureColumn("runs", "project_task_id", "text");
     this.ensureColumn("runs", "automation_id", "text");
     this.ensureColumn("project_automations", "execution_options_json", "text not null default '{}'");
