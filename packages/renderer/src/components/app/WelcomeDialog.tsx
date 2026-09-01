@@ -29,7 +29,7 @@ export type WelcomeDialogProps = {
   onNext: () => void;
   onSkipCheck: (checkId: WelcomeCheckId) => void;
   onFinish: () => void;
-  dataBackupProps: Pick<DataBackupControlsProps, "disabled" | "onExport" | "onSelectImport" | "onImport">;
+  dataBackupProps?: Pick<DataBackupControlsProps, "disabled" | "onExport" | "onSelectImport" | "onImport">;
 };
 
 const checkIconById: Record<WelcomeCheckId, ComponentType<{ className?: string }>> = {
@@ -172,7 +172,7 @@ const WelcomeDialogFooter = ({ stepKey, stepIndex, steps, currentCheck, dataBack
       {steps.map((step) => <span key={step} className={cn("h-1.5 w-5 rounded-full", step === stepKey ? "bg-[var(--ec-accent)]" : "bg-[var(--ec-border-strong)]")} />)}
     </div>
     <div className="ml-auto flex items-center gap-2">
-      {stepKey === "intro" ? (
+      {stepKey === "intro" && dataBackupProps ? (
         <DataBackupControls
           {...dataBackupProps}
           presentation="welcome"

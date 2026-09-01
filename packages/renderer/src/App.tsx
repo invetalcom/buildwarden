@@ -4674,12 +4674,12 @@ export const App = () => {
           onNext={handleWelcomeNext}
           onSkipCheck={handleWelcomeSkipCheck}
           onFinish={handleWelcomeFinish}
-          dataBackupProps={{
+          dataBackupProps={buildwarden.capabilities.platform === "electron" ? {
             disabled: busy,
             onExport: (password) => buildwarden.exportDataBackup({ password }),
             onSelectImport: () => buildwarden.selectDataBackupForImport(),
             onImport: (input) => buildwarden.importDataBackup(input),
-          }}
+          } : undefined}
           providerModelsProps={{
             busy,
             providerLabel,
