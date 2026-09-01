@@ -8,6 +8,7 @@ import {
   type ProviderModelsSettingsTabProps,
 } from "./settings-provider-models-tab";
 import { ProjectSetupFields, type ProjectSetupFieldsProps } from "./settings-git-workspace-tab";
+import { DataBackupControls, type DataBackupControlsProps } from "./DataBackupControls";
 import { WELCOME_CHECK_DEFINITIONS, type WelcomeCheckId } from "./welcome-checks";
 import { cn } from "../../lib/cn";
 import welcomeInformationImage from "../../assets/welcome_information.png";
@@ -28,6 +29,7 @@ export type WelcomeDialogProps = {
   onNext: () => void;
   onSkipCheck: (checkId: WelcomeCheckId) => void;
   onFinish: () => void;
+  dataBackupProps: Pick<DataBackupControlsProps, "disabled" | "onExport" | "onSelectImport" | "onImport">;
 };
 
 const checkIconById: Record<WelcomeCheckId, ComponentType<{ className?: string }>> = {
@@ -162,14 +164,21 @@ const buildWelcomeCopy = (stepKey: WelcomeStepKey, completedChecks: Array<{ navL
   return { introTitle, introDescription, headerTitle: check?.title, headerSubtitle: check?.description };
 };
 
-const WelcomeDialogFooter = ({ stepKey, stepIndex, steps, currentCheck, onBack, onNext, onSkipCheck, onFinish }: Pick<WelcomeDialogProps,
-  "stepKey" | "stepIndex" | "steps" | "onBack" | "onNext" | "onSkipCheck" | "onFinish"
+const WelcomeDialogFooter = ({ stepKey, stepIndex, steps, currentCheck, dataBackupProps, onBack, onNext, onSkipCheck, onFinish }: Pick<WelcomeDialogProps,
+  "stepKey" | "stepIndex" | "steps" | "dataBackupProps" | "onBack" | "onNext" | "onSkipCheck" | "onFinish"
 > & { currentCheck: (typeof WELCOME_CHECK_DEFINITIONS)[number] | null }) => (
   <footer className="flex items-center justify-between gap-3 border-t border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-4 py-3">
     <div className="flex items-center gap-1 md:hidden">
       {steps.map((step) => <span key={step} className={cn("h-1.5 w-5 rounded-full", step === stepKey ? "bg-[var(--ec-accent)]" : "bg-[var(--ec-border-strong)]")} />)}
     </div>
     <div className="ml-auto flex items-center gap-2">
+      {stepKey === "intro" ? (
+        <DataBackupControls
+          {...dataBackupProps}
+          presentation="welcome"
+          onImportComplete={onFinish}
+        />
+      ) : null}
       {stepIndex > 0 && <Button type="button" variant="secondary" onClick={onBack}>Back</Button>}
       {stepKey === "intro" && <Button type="button" onClick={onNext}>Get started</Button>}
       {stepKey === "about" && <Button type="button" onClick={onNext}>Continue</Button>}
@@ -193,6 +202,7 @@ export const WelcomeDialog = ({
   onNext,
   onSkipCheck,
   onFinish,
+  dataBackupProps,
 }: WelcomeDialogProps) => {
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
@@ -373,6 +383,7 @@ export const WelcomeDialog = ({
             stepIndex={stepIndex}
             steps={steps}
             currentCheck={currentCheck}
+            dataBackupProps={dataBackupProps}
             onBack={onBack}
             onNext={onNext}
             onSkipCheck={onSkipCheck}

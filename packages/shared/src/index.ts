@@ -3632,6 +3632,29 @@ export interface AppPathsInfo {
   logDirectorySize: AppLogDirectorySizeInfo;
 }
 
+export interface DataBackupExportInput {
+  password: string;
+}
+
+export interface DataBackupExportResult {
+  canceled: boolean;
+  filePath?: string;
+  createdAt?: string;
+}
+
+export interface DataBackupImportSelection {
+  filePath: string;
+  createdAt: string;
+  appVersion: string;
+}
+
+export interface DataBackupImportInput {
+  filePath: string;
+  password: string;
+  /** Marks first-run setup complete in the restored database when importing from the welcome dialog. */
+  skipWelcome?: boolean;
+}
+
 export interface AppWarning {
   title: string;
   message: string;
@@ -4031,6 +4054,9 @@ export interface DesktopApi {
   removeChatBookmarkById(bookmarkId: string): Promise<void>;
   isChatBookmarked(chatId: string): Promise<boolean>;
   getChatBookmarksWithSteps(): Promise<ChatBookmarkRecord[]>;
+  exportDataBackup(input: DataBackupExportInput): Promise<DataBackupExportResult>;
+  selectDataBackupForImport(): Promise<DataBackupImportSelection | null>;
+  importDataBackup(input: DataBackupImportInput): Promise<void>;
   resetDatabase(): Promise<void>;
   createChat(input: ChatInput): Promise<ChatRecord>;
   /** Creates the run-scoped chat for a run, seeding it with run output + diff context. */
@@ -4723,6 +4749,9 @@ export const IPC_CHANNELS = {
   removeChatBookmarkById: "buildwarden:remove-chat-bookmark-by-id",
   isChatBookmarked: "buildwarden:is-chat-bookmarked",
   getChatBookmarksWithSteps: "buildwarden:get-chat-bookmarks-with-steps",
+  exportDataBackup: "buildwarden:export-data-backup",
+  selectDataBackupForImport: "buildwarden:select-data-backup-for-import",
+  importDataBackup: "buildwarden:import-data-backup",
   resetDatabase: "buildwarden:reset-database",
   createChat: "buildwarden:create-chat",
   createRunChat: "buildwarden:create-run-chat",
