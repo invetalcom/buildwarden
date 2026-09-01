@@ -3,6 +3,7 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { createTwoFilesPatch, FILE_HEADERS_ONLY } from "diff";
 import {
+  CODE_INTELLIGENCE_DISPATCH_TOOL_NAME,
   CODE_INTELLIGENCE_TOOL_NAMES,
   isCodeIntelligenceToolName,
   isTextLikeFileName,
@@ -16,7 +17,7 @@ import {
   type ShellApprovalDecision,
 } from "@buildwarden/shared";
 import { compileShellAllowlistRegExes } from "./shell-allowlist";
-import { executeCodeIntelligenceTool, SymbolIntelligenceIndex } from "./symbol-intelligence";
+import { executeCodeIntelligenceOperation, SymbolIntelligenceIndex } from "./symbol-intelligence";
 
 const MAX_FILE_BYTES = 120_000;
 const MAX_OUTPUT_CHARS = 16_000;
@@ -139,100 +140,37 @@ const TOOL_DEFINITIONS: RunToolDefinition[] = [
       additionalProperties: false,
     },
   },
-  {
-    name: "codebase_map",
-    description: "Return a compact map of supported source files, their languages, dependency counts, and declared symbols. Results are structural or clearly marked candidates.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        path: { type: ["string", "null"], description: "Optional workspace-relative directory or file scope." },
-        maxFiles: { type: ["number", "null"], description: "Optional number of source files to return (maximum 120)." },
-      },
-      required: ["path", "maxFiles"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "search_symbols",
-    description: "Search declared classes, interfaces, types, functions, methods, variables, modules, and namespaces by name across supported source languages.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "Case-insensitive symbol-name substring." },
-        kind: { type: ["string", "null"], description: "Optional exact kind filter, such as class, function, or method." },
-        path: { type: ["string", "null"], description: "Optional workspace-relative scope." },
-        maxResults: { type: ["number", "null"], description: "Optional result cap (maximum 120)." },
-      },
-      required: ["query", "kind", "path", "maxResults"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "file_outline",
-    description: "Return declared symbols and line ranges for one supported source file.",
-    inputSchema: {
-      type: "object",
-      properties: { path: { type: "string", description: "Workspace-relative source file path." } },
-      required: ["path"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "read_symbol",
-    description: "Read the source range of an exact declared symbol, optionally restricted to a file or directory. Returns up to five definitions when ambiguous.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        name: { type: "string", description: "Exact symbol name." },
-        path: { type: ["string", "null"], description: "Optional workspace-relative file or directory scope." },
-      },
-      required: ["name", "path"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "resolve_symbol",
-    description: "Resolve exact symbol definitions and rank candidates near an optional calling file. Reports whether resolution is unique, ambiguous, or unresolved.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        name: { type: "string", description: "Exact symbol name." },
-        path: { type: ["string", "null"], description: "Optional workspace-relative search scope." },
-        fromPath: { type: ["string", "null"], description: "Optional calling file used to rank nearby definitions." },
-        maxResults: { type: ["number", "null"], description: "Optional result cap (maximum 120)." },
-      },
-      required: ["name", "path", "fromPath", "maxResults"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "find_references",
-    description: "Find lexical reference candidates for an exact symbol name, excluding recognized definition lines. Results are explicitly marked candidate precision.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        name: { type: "string", description: "Exact symbol name." },
-        path: { type: ["string", "null"], description: "Optional workspace-relative scope." },
-        maxResults: { type: ["number", "null"], description: "Optional result cap (maximum 120)." },
-      },
-      required: ["name", "path", "maxResults"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "dependency_edges",
-    description: "Return source-file import, include, require, and use edges across supported languages.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        path: { type: ["string", "null"], description: "Optional workspace-relative source scope." },
-        maxResults: { type: ["number", "null"], description: "Optional result cap (maximum 120)." },
-      },
-      required: ["path", "maxResults"],
-      additionalProperties: false,
-    },
-  },
 ];
+
+export const buildCodeIntelligenceToolDefinition = (
+  enabledOperations: readonly CodeIntelligenceToolName[],
+): RunToolDefinition => ({
+  name: CODE_INTELLIGENCE_DISPATCH_TOOL_NAME,
+  description: [
+    "Inspect source code by symbols and dependencies instead of scanning whole files.",
+    "Prefer this for locating declarations, reading one symbol, finding references, understanding a file, or mapping dependencies.",
+    "Use read_file for configuration, prose, generated files, or exact edits after locating the relevant code.",
+  ].join(" "),
+  inputSchema: {
+    type: "object",
+    properties: {
+      operation: {
+        type: "string",
+        enum: enabledOperations,
+        description: "Action to perform: map, search/resolve/read a symbol, outline a file, find references, or inspect dependencies.",
+      },
+      name: { type: ["string", "null"], description: "Exact symbol name for read_symbol, resolve_symbol, or find_references." },
+      query: { type: ["string", "null"], description: "Symbol-name substring for search_symbols." },
+      path: { type: ["string", "null"], description: "Optional workspace-relative file or directory scope." },
+      kind: { type: ["string", "null"], description: "Optional symbol-kind filter for search_symbols." },
+      fromPath: { type: ["string", "null"], description: "Optional calling file used to rank resolve_symbol results." },
+      maxResults: { type: ["number", "null"], description: "Optional result limit, up to 120." },
+      maxFiles: { type: ["number", "null"], description: "Optional source-file limit for codebase_map, up to 120." },
+    },
+    required: ["operation"],
+    additionalProperties: false,
+  },
+});
 
 const BASE_TOOL_NAMES: readonly RunToolName[] = [
   "read_file", "write_file", "edit_file", "delete_file", "list_files", "search_repo", "run_shell",
@@ -1055,6 +993,7 @@ type RunToolExecutorContext = {
   hooks?: RunToolContextHooks;
   yoloMode: boolean;
   symbolIndex: SymbolIntelligenceIndex;
+  enabledCodeIntelligenceOperations: ReadonlySet<CodeIntelligenceToolName>;
 };
 
 class RunToolExecutor {
@@ -1067,10 +1006,18 @@ class RunToolExecutor {
   private get hooks(): RunToolContextHooks | undefined { return this.context.hooks; }
   private get yoloMode(): boolean { return this.context.yoloMode; }
   private get symbolIndex(): SymbolIntelligenceIndex { return this.context.symbolIndex; }
+  private get enabledCodeIntelligenceOperations(): ReadonlySet<CodeIntelligenceToolName> { return this.context.enabledCodeIntelligenceOperations; }
 
   execute(call: RunToolCall): Promise<RunToolResult> {
-    if (isCodeIntelligenceToolName(call.name)) {
-      return executeCodeIntelligenceTool(this.symbolIndex, { ...call, name: call.name });
+    if (call.name === CODE_INTELLIGENCE_DISPATCH_TOOL_NAME) {
+      const operation = String(call.arguments.operation ?? "");
+      if (!isCodeIntelligenceToolName(operation) || !this.enabledCodeIntelligenceOperations.has(operation)) {
+        return Promise.reject(new Error(`Code-intelligence operation ${operation || "(missing)"} is not enabled for this provider.`));
+      }
+      return executeCodeIntelligenceOperation(this.symbolIndex, operation, {
+        ...call,
+        name: CODE_INTELLIGENCE_DISPATCH_TOOL_NAME,
+      });
     }
     switch (call.name) {
       case "read_file": return this.executeReadFile(call);
@@ -1452,6 +1399,9 @@ export const createRunToolContext = (
 ): HarnessToolContext => {
   const allowedTools = TOOL_ALLOWLIST_BY_MODE[mode];
   const yoloMode = options?.yoloMode === true;
+  const enabledCodeIntelligenceOperations = new Set(
+    (options?.codeIntelligenceTools ?? []).filter((toolName) => CODE_INTELLIGENCE_TOOL_NAMES.includes(toolName)),
+  );
   let effectiveTools = allowedTools;
   if (yoloMode) {
     effectiveTools = new Set(BASE_TOOL_NAMES);
@@ -1459,10 +1409,13 @@ export const createRunToolContext = (
     effectiveTools = new Set(mode === "code" ? toolNamesOverride : toolNamesOverride.filter((toolName) => allowedTools.has(toolName)));
   }
   effectiveTools = new Set(effectiveTools);
-  for (const toolName of options?.codeIntelligenceTools ?? []) {
-    if (CODE_INTELLIGENCE_TOOL_NAMES.includes(toolName)) effectiveTools.add(toolName);
-  }
-  const tools = TOOL_DEFINITIONS.filter((tool) => effectiveTools.has(tool.name));
+  if (enabledCodeIntelligenceOperations.size > 0) effectiveTools.add(CODE_INTELLIGENCE_DISPATCH_TOOL_NAME);
+  const tools = [
+    ...TOOL_DEFINITIONS.filter((tool) => effectiveTools.has(tool.name)),
+    ...(enabledCodeIntelligenceOperations.size > 0
+      ? [buildCodeIntelligenceToolDefinition([...enabledCodeIntelligenceOperations])]
+      : []),
+  ];
   const readFilesThisRun = new Set<string>();
 
   const executor = new RunToolExecutor({
@@ -1473,6 +1426,7 @@ export const createRunToolContext = (
     hooks,
     yoloMode,
     symbolIndex: new SymbolIntelligenceIndex(worktreePath),
+    enabledCodeIntelligenceOperations,
   });
 
   const executeTool = async (call: RunToolCall): Promise<RunToolResult> => {

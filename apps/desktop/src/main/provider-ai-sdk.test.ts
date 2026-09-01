@@ -11,6 +11,7 @@ import {
   buildAiSdkExecutionProfile,
   buildAiSdkPlanProgressChunk,
   buildAiSdkProviderOptions,
+  buildCodeIntelligenceRoutingInstruction,
   buildOpenRouterProviderOptions,
   extractProviderErrorText,
   buildInstructionsForFamily,
@@ -425,6 +426,17 @@ describe("splitSystemMessagesIntoInstructions", () => {
   it("keeps plain string instructions for non-anthropic families", () => {
     expect(buildInstructionsForFamily("openai", "You are BuildWarden.")).toBe("You are BuildWarden.");
     expect(buildInstructionsForFamily("openai-compatible", "You are BuildWarden.")).toBe("You are BuildWarden.");
+  });
+
+  it("only adds code-intelligence routing when operations are enabled", () => {
+    expect(buildCodeIntelligenceRoutingInstruction([])).toBeNull();
+    expect(buildCodeIntelligenceRoutingInstruction(undefined)).toBeNull();
+    expect(buildCodeIntelligenceRoutingInstruction(["read_symbol", "find_references"])).toContain(
+      "read_symbol, find_references",
+    );
+    expect(buildCodeIntelligenceRoutingInstruction(["read_symbol"])).toContain(
+      "Prefer code_intelligence over broad search_repo or read_file calls",
+    );
   });
 
   it("split output passes AI SDK 7 validation and reaches the model as a system prompt", async () => {

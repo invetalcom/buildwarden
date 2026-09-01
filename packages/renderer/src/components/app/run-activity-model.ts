@@ -192,6 +192,16 @@ export const describeActivityDetail = (metadata: Record<string, unknown> | undef
   if (metadata?.source === "user") {
     return describeUserCommand(metadata);
   }
+  const argumentsRecord = metadata?.arguments && typeof metadata.arguments === "object" && !Array.isArray(metadata.arguments)
+    ? metadata.arguments as Record<string, unknown>
+    : undefined;
+  if (metadata?.toolName === "code_intelligence") {
+    const operation = metadata.operation ?? argumentsRecord?.operation;
+    const target = metadata.name ?? metadata.query ?? metadata.path ?? argumentsRecord?.name ?? argumentsRecord?.query ?? argumentsRecord?.path;
+    if (typeof operation === "string" && operation.trim()) {
+      return typeof target === "string" && target.trim() ? `${operation} · ${target}` : operation;
+    }
+  }
   return (metadata?.path ?? metadata?.command ?? metadata?.query ?? metadata?.toolName) as string | null;
 };
 

@@ -1,6 +1,7 @@
 import { parentPort, workerData } from "node:worker_threads";
 import { randomUUID } from "node:crypto";
 import {
+  CODE_INTELLIGENCE_DISPATCH_TOOL_NAME,
   type HarnessRunChunk,
   type HarnessToolContext,
   type OrchestrationToolName,
@@ -210,6 +211,26 @@ const run = async () => {
         return response;
       },
     };
+    const codeIntelligenceDefinition = toolContext.tools.find(
+      (tool) => tool.name === CODE_INTELLIGENCE_DISPATCH_TOOL_NAME,
+    );
+    if (codeIntelligenceDefinition) {
+      const estimatedSchemaTokensPerRequest = Math.ceil(JSON.stringify(codeIntelligenceDefinition).length / 4);
+      postChunk({
+        type: "status",
+        title: "Code intelligence available",
+        value: [
+          `Enabled operations: ${(request.codeIntelligenceTools ?? []).join(", ")}.`,
+          `Estimated dispatcher schema cost: ~${String(estimatedSchemaTokensPerRequest)} tokens per model request.`,
+          "Calls will appear separately as code_intelligence tool activity.",
+        ].join(" "),
+        metadata: {
+          codeIntelligenceAvailable: true,
+          enabledOperations: request.codeIntelligenceTools ?? [],
+          estimatedSchemaTokensPerRequest,
+        },
+      });
+    }
     const result = await harness.run(
       {
         ...request,

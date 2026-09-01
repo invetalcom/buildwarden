@@ -33,7 +33,8 @@ describe("CodeIntelligenceSettingsSection", () => {
     await render();
 
     expect(container?.textContent).toContain("help coding agents navigate your project");
-    expect(container?.textContent).toContain("leaving everything off keeps its current behavior");
+    expect(container?.textContent).toContain("combines your choices into one compact agent tool");
+    expect(container?.textContent).toContain("Leaving everything off preserves the provider's current tool set and behavior");
     expect(container?.textContent).toContain("Finds the most likely definition when the same name appears in several places");
     expect(container?.querySelectorAll('[role="switch"]')).toHaveLength(CODE_INTELLIGENCE_TOOL_NAMES.length);
     for (const toggle of container?.querySelectorAll('[role="switch"]') ?? []) {

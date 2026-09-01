@@ -31,6 +31,7 @@ import type {
 import {
   AI_SDK_RECOMMENDED_MODEL_IDS,
   CHAT_ATTACHMENT_LIMITS,
+  CODE_INTELLIGENCE_DISPATCH_TOOL_NAME,
   MODEL_CONFIG_ANTHROPIC_EFFORT_KEY,
   MODEL_CONFIG_CONTEXT_WINDOW_TOKENS_KEY,
   MODEL_CONFIG_EXECUTION_PROFILE_KEY,
@@ -73,6 +74,17 @@ const SYSTEM_PROMPT = [
   "On Windows, commands run in PowerShell. Prefer Windows-safe command forms.",
   "Narrate progress briefly and end with a concise summary.",
 ].join("\n");
+
+export const buildCodeIntelligenceRoutingInstruction = (
+  operations: RunExecutionRequest["codeIntelligenceTools"],
+): string | null => {
+  if (!operations?.length) return null;
+  return [
+    `${CODE_INTELLIGENCE_DISPATCH_TOOL_NAME} is available with these operations: ${operations.join(", ")}.`,
+    `Prefer ${CODE_INTELLIGENCE_DISPATCH_TOOL_NAME} over broad search_repo or read_file calls when locating or understanding source symbols, references, or dependencies.`,
+    "Use read_file after locating exact code for editing, and for configuration, prose, or unsupported files.",
+  ].join(" ");
+};
 
 const MODE_INSTRUCTIONS = {
   code: "You are in code mode. Implement the requested changes directly when appropriate.",
@@ -208,8 +220,9 @@ const generatedFileToAttachment = (file: GeneratedFile, index: number): ChatAtta
 };
 
 const describeToolCall = (name: string, args: Record<string, unknown>) => {
-  const interestingValue = args.path ?? args.command ?? args.query ?? JSON.stringify(args);
-  return `${name}: ${String(interestingValue)}`;
+  const operation = name === CODE_INTELLIGENCE_DISPATCH_TOOL_NAME ? String(args.operation ?? "inspect") : null;
+  const interestingValue = args.name ?? args.query ?? args.path ?? args.command ?? JSON.stringify(args);
+  return `${name}${operation ? `.${operation}` : ""}: ${String(interestingValue)}`;
 };
 
 const finiteNumber = (value: unknown): number => {
@@ -1989,8 +2002,10 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
     const { instructions: promptInstructions, messages: promptMessages } = splitSystemMessagesIntoInstructions(
       startingMessages as Array<Record<string, unknown>>,
     );
-    const requestInstructions = promptInstructions
-      ? buildInstructionsForFamily(providerFamily, promptInstructions)
+    const routingInstruction = buildCodeIntelligenceRoutingInstruction(input.codeIntelligenceTools);
+    const combinedInstructions = [promptInstructions, routingInstruction].filter(Boolean).join("\n\n");
+    const requestInstructions = combinedInstructions
+      ? buildInstructionsForFamily(providerFamily, combinedInstructions)
       : undefined;
     let maxSteps: number = MODE_POLICIES[input.mode].maxToolRounds;
     if (isChat) maxSteps = openAiChatTools ? 6 : 1;

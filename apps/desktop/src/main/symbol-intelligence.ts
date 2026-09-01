@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { extname, isAbsolute, relative, resolve } from "node:path";
-import type { CodeIntelligenceToolName, RunToolCall, RunToolResult } from "@buildwarden/shared";
+import { CODE_INTELLIGENCE_DISPATCH_TOOL_NAME, type CodeIntelligenceToolName, type RunToolCall, type RunToolResult } from "@buildwarden/shared";
 
 const MAX_INDEX_FILES = 2_500;
 const MAX_INDEX_FILE_BYTES = 300_000;
@@ -401,13 +401,14 @@ const executeDependencyEdges = async (index: CodeIndex, args: Record<string, unk
   return { content: edges.length ? edges.map((edge) => `${edge.from}:${String(edge.line)} -${edge.kind}-> ${edge.to}`).join("\n") : "No dependency edges recognized.", metadata: { path: pathFilter, resultCount: edges.length, precision: "structural" } };
 };
 
-export const executeCodeIntelligenceTool = async (
+export const executeCodeIntelligenceOperation = async (
   symbolIndex: SymbolIntelligenceIndex,
-  call: RunToolCall & { name: CodeIntelligenceToolName },
+  operation: CodeIntelligenceToolName,
+  call: RunToolCall & { name: typeof CODE_INTELLIGENCE_DISPATCH_TOOL_NAME },
 ): Promise<RunToolResult> => {
   const index = await symbolIndex.get();
   const result = await (async () => {
-    switch (call.name) {
+    switch (operation) {
       case "codebase_map": return executeCodebaseMap(index, call.arguments);
       case "search_symbols": return executeSearchSymbols(index, call.arguments);
       case "file_outline": return executeFileOutline(index, call.arguments);
@@ -417,5 +418,11 @@ export const executeCodeIntelligenceTool = async (
       case "dependency_edges": return executeDependencyEdges(index, call.arguments);
     }
   })();
-  return { toolCallId: call.id, name: call.name, ok: true, content: truncate(result.content), metadata: result.metadata };
+  return {
+    toolCallId: call.id,
+    name: CODE_INTELLIGENCE_DISPATCH_TOOL_NAME,
+    ok: true,
+    content: truncate(result.content),
+    metadata: { operation, ...result.metadata },
+  };
 };

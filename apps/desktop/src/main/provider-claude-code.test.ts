@@ -978,7 +978,7 @@ describe("Claude in-process orchestration MCP", () => {
 
     const withCodeIntelligence: HarnessToolContext = {
       tools: [{
-        name: "codebase_map",
+        name: "code_intelligence",
         description: "Map code symbols.",
         inputSchema: { type: "object", properties: {}, additionalProperties: false },
       }],

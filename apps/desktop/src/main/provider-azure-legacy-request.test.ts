@@ -146,10 +146,10 @@ describe("Azure Legacy request payload characterization", () => {
     const toolNames = (payload.tools as Array<{ function: { name: string } }>).map((tool) => tool.function.name);
 
     expect(toolNames).toEqual(["read_file", "write_file", "edit_file", "delete_file", "list_files", "search_repo", "run_shell"]);
-    expect(toolNames).not.toContain("codebase_map");
+    expect(toolNames).not.toContain("code_intelligence");
   });
 
-  it("advertises only the symbol operations explicitly enabled for Azure Legacy", async () => {
+  it("advertises one dispatcher containing only the symbol operations explicitly enabled for Azure Legacy", async () => {
     const toolContext = createRunToolContext(
       process.cwd(),
       "code",
@@ -164,7 +164,12 @@ describe("Azure Legacy request payload characterization", () => {
 
     expect(toolNames).toEqual([
       "read_file", "write_file", "edit_file", "delete_file", "list_files", "search_repo", "run_shell",
-      "codebase_map", "read_symbol",
+      "code_intelligence",
     ]);
+    const codeIntelligenceTool = (payload.tools as Array<{ function: { name: string; parameters: Record<string, unknown> } }>)
+      .find((tool) => tool.function.name === "code_intelligence");
+    expect(codeIntelligenceTool?.function.parameters).toMatchObject({
+      properties: { operation: { enum: ["codebase_map", "read_symbol"] } },
+    });
   });
 });

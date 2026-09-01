@@ -62,7 +62,9 @@ export const CodeIntelligenceSettingsSection = ({
         <p className="mt-1 max-w-4xl text-sm leading-5 text-[var(--ec-muted)]">
           These optional tools help coding agents navigate your project by classes, functions, and imports instead of
           searching through files one at a time. This can make them faster and reduce how much code they need to read.
-          Choose a provider below and enable only the tools you want; leaving everything off keeps its current behavior.
+          Choose a provider below and enable only the operations you want. BuildWarden combines your choices into one
+          compact agent tool, which keeps the extra instructions smaller than advertising each operation separately.
+          Leaving everything off preserves the provider&apos;s current tool set and behavior.
         </p>
       </div>
       <div className="space-y-3 px-5 py-4">

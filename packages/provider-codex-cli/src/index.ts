@@ -33,7 +33,7 @@ import {
   formatModelExecutionOptionLabel,
   formatRunPlanProgressContent,
   getKnownModelExecutionProfile,
-  isCodeIntelligenceToolName,
+  CODE_INTELLIGENCE_DISPATCH_TOOL_NAME,
   isTerminalRunSubagentStatus,
   mergeRunSubagentInfo,
   normalizeRunPlanProgressPayload,
@@ -2398,7 +2398,9 @@ export class CodexCliHarnessAdapter implements HarnessAdapter {
       requestShellApproval: input.yoloMode === true ? undefined : this.requestShellApproval,
       requestUserInput: this.requestUserInput,
       toolContext: {
-        tools: toolContext.tools.filter((tool) => tool.name.startsWith("buildwarden_") || isCodeIntelligenceToolName(tool.name)),
+        tools: toolContext.tools.filter(
+          (tool) => tool.name.startsWith("buildwarden_") || tool.name === CODE_INTELLIGENCE_DISPATCH_TOOL_NAME,
+        ),
         executeTool: toolContext.executeTool,
       },
       onChunk,

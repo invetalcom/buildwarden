@@ -64,10 +64,17 @@ describe("run tool context", () => {
       { codeIntelligenceTools: ["codebase_map", "read_symbol"] },
     );
 
-    expect(tools.tools.map((tool) => tool.name)).toEqual([...BASE_TOOL_NAMES, "codebase_map", "read_symbol"]);
-    const disabledResult = await tools.executeTool({ id: "disabled-symbol-tool", name: "find_references", arguments: { name: "Example" } });
+    expect(tools.tools.map((tool) => tool.name)).toEqual([...BASE_TOOL_NAMES, "code_intelligence"]);
+    expect(tools.tools.at(-1)?.inputSchema).toMatchObject({
+      properties: { operation: { enum: ["codebase_map", "read_symbol"] } },
+    });
+    const disabledResult = await tools.executeTool({
+      id: "disabled-symbol-tool",
+      name: "code_intelligence",
+      arguments: { operation: "find_references", name: "Example" },
+    });
     expect(disabledResult.ok).toBe(false);
-    expect(disabledResult.content).toContain("not available");
+    expect(disabledResult.content).toContain("not enabled");
   });
 
   it("indexes TypeScript, JavaScript, Python, Java, and Perl without platform binaries", async () => {
@@ -88,7 +95,7 @@ describe("run tool context", () => {
       { codeIntelligenceTools: ["codebase_map", "search_symbols", "file_outline", "read_symbol", "resolve_symbol", "find_references", "dependency_edges"] },
     );
 
-    const map = await tools.executeTool({ id: "map", name: "codebase_map", arguments: { path: "src", maxFiles: 20 } });
+    const map = await tools.executeTool({ id: "map", name: "code_intelligence", arguments: { operation: "codebase_map", path: "src", maxFiles: 20 } });
     expect(map.ok).toBe(true);
     expect(map.content).toContain("src/warden.ts [typescript]");
     expect(map.content).toContain("class Warden");
@@ -96,25 +103,25 @@ describe("run tool context", () => {
     expect(map.content).toContain("src/Runner.java [java]");
     expect(map.content).toContain("src/Worker.pm [perl]");
 
-    const symbols = await tools.executeTool({ id: "symbols", name: "search_symbols", arguments: { query: "execute", path: "src", kind: null, maxResults: 20 } });
+    const symbols = await tools.executeTool({ id: "symbols", name: "code_intelligence", arguments: { operation: "search_symbols", query: "execute", path: "src", kind: null, maxResults: 20 } });
     expect(symbols.content).toContain("agent.py");
     expect(symbols.content).toContain("Runner.java");
 
-    const outline = await tools.executeTool({ id: "outline", name: "file_outline", arguments: { path: "src/warden.ts" } });
+    const outline = await tools.executeTool({ id: "outline", name: "code_intelligence", arguments: { operation: "file_outline", path: "src/warden.ts" } });
     expect(outline.content).toContain("class Warden");
     expect(outline.content).toContain("function createWarden");
 
-    const readSymbol = await tools.executeTool({ id: "read-symbol", name: "read_symbol", arguments: { name: "Warden", path: "src/warden.ts" } });
+    const readSymbol = await tools.executeTool({ id: "read-symbol", name: "code_intelligence", arguments: { operation: "read_symbol", name: "Warden", path: "src/warden.ts" } });
     expect(readSymbol.content).toContain("export class Warden");
 
-    const resolved = await tools.executeTool({ id: "resolve", name: "resolve_symbol", arguments: { name: "helper", path: "src", fromPath: "src/warden.ts", maxResults: 10 } });
+    const resolved = await tools.executeTool({ id: "resolve", name: "code_intelligence", arguments: { operation: "resolve_symbol", name: "helper", path: "src", fromPath: "src/warden.ts", maxResults: 10 } });
     expect(resolved.metadata).toMatchObject({ resolution: "unique" });
 
-    const references = await tools.executeTool({ id: "references", name: "find_references", arguments: { name: "Warden", path: "src", maxResults: 20 } });
+    const references = await tools.executeTool({ id: "references", name: "code_intelligence", arguments: { operation: "find_references", name: "Warden", path: "src", maxResults: 20 } });
     expect(references.content).toContain("new Warden()");
     expect(references.metadata).toMatchObject({ precision: "candidate" });
 
-    const dependencies = await tools.executeTool({ id: "deps", name: "dependency_edges", arguments: { path: "src", maxResults: 20 } });
+    const dependencies = await tools.executeTool({ id: "deps", name: "code_intelligence", arguments: { operation: "dependency_edges", path: "src", maxResults: 20 } });
     expect(dependencies.content).toContain("src/warden.ts:1 -import-> ./helper");
     expect(dependencies.content).toContain("src/Worker.pm:2 -use-> strict");
   });

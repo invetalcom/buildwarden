@@ -47,7 +47,7 @@ import {
   formatModelExecutionOptionLabel,
   formatRunPlanProgressContent,
   getKnownModelExecutionProfile,
-  isCodeIntelligenceToolName,
+  CODE_INTELLIGENCE_DISPATCH_TOOL_NAME,
   isTerminalRunSubagentStatus,
   mergeRunSubagentInfo,
   normalizeRunPlanProgressPayload,
@@ -158,7 +158,7 @@ const jsonSchemaToZodShape = (schema: Record<string, unknown>): Record<string, z
 
 export const buildClaudeOrchestrationMcpServer = (toolContext: HarnessToolContext) => {
   const orchestrationTools = toolContext.tools.filter(
-    (definition) => definition.name.startsWith("buildwarden_") || isCodeIntelligenceToolName(definition.name),
+    (definition) => definition.name.startsWith("buildwarden_") || definition.name === CODE_INTELLIGENCE_DISPATCH_TOOL_NAME,
   );
   if (orchestrationTools.length === 0) return null;
   return createSdkMcpServer({

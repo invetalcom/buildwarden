@@ -287,6 +287,9 @@ export const CODE_INTELLIGENCE_TOOL_NAMES = [
   "dependency_edges",
 ] as const;
 
+/** Single compact model-facing dispatcher for all enabled code-intelligence operations. */
+export const CODE_INTELLIGENCE_DISPATCH_TOOL_NAME = "code_intelligence" as const;
+
 export type CodeIntelligenceToolName = (typeof CODE_INTELLIGENCE_TOOL_NAMES)[number];
 
 export type RunToolName =
@@ -297,7 +300,7 @@ export type RunToolName =
   | "list_files"
   | "search_repo"
   | "run_shell"
-  | CodeIntelligenceToolName;
+  | typeof CODE_INTELLIGENCE_DISPATCH_TOOL_NAME;
 
 export const isCodeIntelligenceToolName = (value: string): value is CodeIntelligenceToolName =>
   (CODE_INTELLIGENCE_TOOL_NAMES as readonly string[]).includes(value);
