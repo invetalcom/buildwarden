@@ -4043,7 +4043,9 @@ export const App = () => {
                   confirmLabel: "Clear database and restart",
                   confirmVariant: "danger",
                 });
-                if (confirmed) await buildwarden.resetDatabase();
+                if (confirmed) {
+                  await handleAction(() => buildwarden.resetDatabase());
+                }
               }}
               onSaveNetworkProxySettings={async (input) => {
                 if (!buildwarden) {
