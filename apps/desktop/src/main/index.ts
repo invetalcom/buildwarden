@@ -321,6 +321,10 @@ const bootstrap = async (): Promise<void> => {
     if (restored) logInfo("Applied a pending BuildWarden data restore.");
   } catch (error) {
     logError("Failed to apply a pending BuildWarden data restore; the previous data was retained where possible.", { error });
+    dialog.showErrorBox(
+      "BuildWarden could not restore the backup",
+      `${error instanceof Error ? error.message : String(error)}\n\nThe previous data was retained where possible.`,
+    );
   }
 
   // Show the window and start loading the renderer immediately; the database
