@@ -140,4 +140,19 @@ describe("DataBackupService", () => {
     expect(await readFile(join(dataDirectory, rollbackName!, "loop-ui-reviews", "old.png"), "utf8")).toBe("old-image");
     expect(existsSync(markerPath)).toBe(false);
   });
+
+  it("removes staged data when the pending restore marker cannot be written", async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), "buildwarden-marker-test-"));
+    temporaryDirectories.push(dataDirectory);
+    const stagingDirectory = join(dataDirectory, "restore-staging-test");
+    await mkdir(stagingDirectory, { recursive: true });
+    await writeFile(join(stagingDirectory, "database.sqlite"), "staged-database");
+
+    await expect(writePendingDataRestore(
+      join(dataDirectory, "missing-parent", "pending-restore.json"),
+      stagingDirectory,
+    )).rejects.toThrow();
+
+    expect(existsSync(stagingDirectory)).toBe(false);
+  });
 });

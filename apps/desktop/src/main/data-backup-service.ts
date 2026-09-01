@@ -450,7 +450,12 @@ export class DataBackupService {
 
 export const writePendingDataRestore = async (markerPath: string, stagingDirectory: string): Promise<void> => {
   const marker: PendingDataRestore = { version: 1, stagingDirectory, createdAt: new Date().toISOString() };
-  await writeFile(markerPath, JSON.stringify(marker), { encoding: "utf8", mode: 0o600 });
+  try {
+    await writeFile(markerPath, JSON.stringify(marker), { encoding: "utf8", mode: 0o600 });
+  } catch (error) {
+    await rm(stagingDirectory, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
 };
 
 const moveIfExists = async (source: string, destination: string): Promise<boolean> => {
