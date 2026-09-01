@@ -41,6 +41,14 @@ describe("computeMainViewFlags", () => {
     expect(computeMainViewFlags(baseInput({ bookmarksSelected: true })).isProjectWorkspaceView).toBe(false);
   });
 
+  it("uses a fixed flex layout while settings owns the content scroll", () => {
+    const flags = computeMainViewFlags(baseInput({ settingsOpen: true }));
+
+    expect(flags.isSettingsView).toBe(true);
+    expect(flags.sectionLayoutClassName).toContain("min-h-0");
+    expect(flags.sectionLayoutClassName).toContain("flex-1 flex-col");
+  });
+
   it("uses the fixed detail layout only while a bookmark is open", () => {
     const listFlags = computeMainViewFlags(baseInput({ bookmarksSelected: true }));
     const detailFlags = computeMainViewFlags(baseInput({ bookmarksSelected: true, hasBookmarkDetail: true }));

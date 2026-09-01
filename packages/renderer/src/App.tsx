@@ -1744,6 +1744,7 @@ export const App = () => {
 
   const {
     onLandingOrEmptySelection,
+    isSettingsView,
     isAgentRunDetailView,
     isChatDetailView,
     isBookmarkDetailView,
@@ -4636,7 +4637,7 @@ export const App = () => {
         <main
           className={cn(
             "min-h-0 min-w-0 flex-1 p-2 sm:p-3",
-            isAgentRunDetailView || isChatDetailView || isBookmarkDetailView || isProjectWorkspaceView
+            isSettingsView || isAgentRunDetailView || isChatDetailView || isBookmarkDetailView || isProjectWorkspaceView
               ? "flex min-h-0 flex-col overflow-hidden"
               : "overflow-y-auto",
           )}

@@ -318,7 +318,7 @@ export const UserSettingsTab = ({
             return (
               <label
                 key={option.value}
-                className={`cursor-pointer rounded-md border px-3 py-2.5 transition ${
+                className={`relative cursor-pointer rounded-md border px-3 py-2.5 transition ${
                   selected
                     ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] shadow-[var(--ec-action-shadow)]"
                     : "border-[var(--ec-border)] bg-[var(--ec-panel-soft)] hover:bg-[var(--ec-hover)]"
