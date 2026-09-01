@@ -73,6 +73,7 @@ import {
   buildNetworkProxyRuntimeConfig,
   buildDefaultProjectLabSettings,
   filterComposerCommandDescriptors,
+  enabledCodeIntelligenceTools,
   getModelPresetsForProvider,
   isDetachedHeadProjectErrorMessage,
   listComposerCommandsForProvider,
@@ -92,6 +93,7 @@ import {
   getDefaultProviderCapabilities,
   IDE_KIND_LABELS,
   parseNetworkProxySettings,
+  parseCodeIntelligenceSettings,
   parseIdePathConfig,
   parseIntegratedSkillsDisabledSetting,
   MAX_DATA_RETENTION_CLEANUP_DAYS,
@@ -9519,6 +9521,10 @@ export class AppController
     };
     const settings = this.db.getSettings();
     const shellAllowlistExtra = parseShellAllowlistExtraSetting(settings[APP_SETTING_KEYS.shellAllowlistExtra]);
+    const codeIntelligenceTools = enabledCodeIntelligenceTools(
+      parseCodeIntelligenceSettings(settings[APP_SETTING_KEYS.codeIntelligenceTools]),
+      provider.providerType,
+    );
     const runDefaults = parseProjectRunDefaultsSetting(settings[APP_SETTING_KEYS.projectRunDefaults])[run.projectId];
     const maxRunMinutes = runDefaults?.maxRunMinutes ?? 0;
     const maxRunTokens = runDefaults?.maxRunTokens ?? 0;
@@ -9552,6 +9558,7 @@ export class AppController
           providerOptions: options?.providerOptions,
           ...(networkProxy ? { networkProxy } : {}),
           shellAllowlistExtra,
+          ...(codeIntelligenceTools.length > 0 ? { codeIntelligenceTools } : {}),
           ...(mcpServers.length > 0 ? { mcpServers } : {}),
           resumeCheckpoint: this.getRunCheckpoint(run.id),
           ...(devModeEnabled ? { devLogging: { logDirPath: this.logDirPath } } : {}),

@@ -9,6 +9,7 @@ import {
   DEFAULT_ADD_MODEL_DRAFT,
   DEFAULT_SHELL_ALLOWLIST_PATTERN_SOURCES,
   parseConsecutiveToolCallCollapseThresholdSetting,
+  parseCodeIntelligenceSettings,
   parseDataRetentionCleanupDaysSetting,
   parsePastedTextAttachmentThresholdSetting,
   parseRecentRunDaysSetting,
@@ -19,6 +20,7 @@ import {
   parseSidebarRunEntrySizeSetting,
   parseDesignScheme,
   serializeDesignScheme,
+  serializeCodeIntelligenceSettings,
   SUPPORTED_IDE_KINDS,
   parseIdePathConfig,
   parseOrchestrationTeamSettings,
@@ -3910,6 +3912,7 @@ export const App = () => {
               providerAccounts={snapshot.providerAccounts}
               models={snapshot.models}
               orchestrationTeamSetting={snapshot.settings[APP_SETTING_KEYS.orchestrationTeam] ?? ""}
+              codeIntelligenceSettings={parseCodeIntelligenceSettings(snapshot.settings[APP_SETTING_KEYS.codeIntelligenceTools])}
               availableModelsByProviderId={availableModelsByProviderId}
               onBack={handleSettingsBack}
               onChooseDirectory={() => void chooseDirectory()}
@@ -4113,6 +4116,18 @@ export const App = () => {
                     throw new Error("The BuildWarden bridge is unavailable.");
                   }
                   await buildwarden.setAppSetting(APP_SETTING_KEYS.orchestrationTeam, serialized);
+                  await loadSnapshot();
+                })
+              }
+              onCodeIntelligenceSettingsChange={(settings) =>
+                void handleAction(async () => {
+                  if (!buildwarden) {
+                    throw new Error("The BuildWarden bridge is unavailable.");
+                  }
+                  await buildwarden.setAppSetting(
+                    APP_SETTING_KEYS.codeIntelligenceTools,
+                    serializeCodeIntelligenceSettings(settings),
+                  );
                   await loadSnapshot();
                 })
               }

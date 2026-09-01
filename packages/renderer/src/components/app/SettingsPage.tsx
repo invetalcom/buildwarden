@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type {
   AppLogDirectorySizeInfo,
   AppSnapshot,
+  CodeIntelligenceSettings,
   DesignScheme,
   IntegratedSkillMetadata,
   NetworkProxySettingsInput,
@@ -90,6 +91,7 @@ interface SettingsPageProps {
   providerAccounts: AppSnapshot["providerAccounts"];
   models: AppSnapshot["models"];
   orchestrationTeamSetting: string;
+  codeIntelligenceSettings: CodeIntelligenceSettings;
   availableModelsByProviderId: Record<string, AvailableProviderModelsState>;
   onBack: () => void;
   onChooseDirectory: () => void;
@@ -153,6 +155,7 @@ interface SettingsPageProps {
   globallyDisabledIntegratedSkillIds: string[];
   onGloballyDisabledIntegratedSkillIdsChange: (skillIds: string[]) => void | Promise<void>;
   onSaveOrchestrationTeam: (serialized: string) => void | Promise<void>;
+  onCodeIntelligenceSettingsChange: (settings: CodeIntelligenceSettings) => void | Promise<void>;
 }
 
 const TAB_CONFIG: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }> = [
@@ -214,6 +217,7 @@ export const SettingsPage = ({
   providerAccounts,
   models,
   orchestrationTeamSetting,
+  codeIntelligenceSettings,
   availableModelsByProviderId,
   onBack,
   onChooseDirectory,
@@ -277,6 +281,7 @@ export const SettingsPage = ({
   globallyDisabledIntegratedSkillIds,
   onGloballyDisabledIntegratedSkillIdsChange,
   onSaveOrchestrationTeam,
+  onCodeIntelligenceSettingsChange,
 }: SettingsPageProps) => {
   const buildwarden = useBuildWardenClient();
   const nativeActions = buildwarden.capabilities.platform === "electron";
@@ -507,6 +512,8 @@ export const SettingsPage = ({
           onModelDisplayNameChange={onModelDisplayNameChange}
           onModelBaseUrlChange={onModelBaseUrlChange}
           onSetOpenAiPresetUserChoseCustom={setOpenAiPresetUserChoseCustom}
+          codeIntelligenceSettings={codeIntelligenceSettings}
+          onCodeIntelligenceSettingsChange={onCodeIntelligenceSettingsChange}
         />
       ) : null}
 

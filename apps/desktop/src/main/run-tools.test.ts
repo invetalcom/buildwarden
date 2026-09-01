@@ -8,6 +8,8 @@ import { buildInitialRepoContext } from "./initial-repo-context";
 import { createRunToolContext } from "./run-tools";
 import { compileShellAllowlistRegExes } from "./shell-allowlist";
 
+const BASE_TOOL_NAMES = ["read_file", "write_file", "edit_file", "delete_file", "list_files", "search_repo", "run_shell"];
+
 const tempDirs: string[] = [];
 const execFileAsync = promisify(execFile);
 
@@ -22,6 +24,101 @@ afterEach(async () => {
 });
 
 describe("run tool context", () => {
+  it("preserves the existing tool catalog when code intelligence is disabled", async () => {
+    const worktreePath = await makeTempDir();
+
+    const defaultTools = createRunToolContext(worktreePath);
+    const explicitlyDisabledTools = createRunToolContext(
+      worktreePath,
+      "code",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { codeIntelligenceTools: [] },
+    );
+    const fullAccessTools = createRunToolContext(
+      worktreePath,
+      "code",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { yoloMode: true, codeIntelligenceTools: [] },
+    );
+
+    expect(defaultTools.tools.map((tool) => tool.name)).toEqual(BASE_TOOL_NAMES);
+    expect(explicitlyDisabledTools.tools.map((tool) => tool.name)).toEqual(BASE_TOOL_NAMES);
+    expect(fullAccessTools.tools.map((tool) => tool.name)).toEqual(BASE_TOOL_NAMES);
+  });
+
+  it("only advertises explicitly enabled code-intelligence operations", async () => {
+    const worktreePath = await makeTempDir();
+    const tools = createRunToolContext(
+      worktreePath,
+      "code",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { codeIntelligenceTools: ["codebase_map", "read_symbol"] },
+    );
+
+    expect(tools.tools.map((tool) => tool.name)).toEqual([...BASE_TOOL_NAMES, "codebase_map", "read_symbol"]);
+    const disabledResult = await tools.executeTool({ id: "disabled-symbol-tool", name: "find_references", arguments: { name: "Example" } });
+    expect(disabledResult.ok).toBe(false);
+    expect(disabledResult.content).toContain("not available");
+  });
+
+  it("indexes TypeScript, JavaScript, Python, Java, and Perl without platform binaries", async () => {
+    const worktreePath = await makeTempDir();
+    await mkdir(join(worktreePath, "src"), { recursive: true });
+    await writeFile(join(worktreePath, "src", "warden.ts"), 'import { helper } from "./helper";\nexport class Warden {\n  guard() { return helper(); }\n}\nexport function createWarden() { return new Warden(); }\n', "utf8");
+    await writeFile(join(worktreePath, "src", "helper.js"), 'export const helper = () => "ok";\n', "utf8");
+    await writeFile(join(worktreePath, "src", "agent.py"), 'from tools import run\nclass Agent:\n    def execute(self):\n        return run()\n', "utf8");
+    await writeFile(join(worktreePath, "src", "Runner.java"), 'package demo;\nimport java.util.List;\npublic class Runner {\n  public void execute() {}\n}\n', "utf8");
+    await writeFile(join(worktreePath, "src", "Worker.pm"), 'package Worker;\nuse strict;\nsub perform { return 1; }\n1;\n', "utf8");
+    const tools = createRunToolContext(
+      worktreePath,
+      "code",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { codeIntelligenceTools: ["codebase_map", "search_symbols", "file_outline", "read_symbol", "resolve_symbol", "find_references", "dependency_edges"] },
+    );
+
+    const map = await tools.executeTool({ id: "map", name: "codebase_map", arguments: { path: "src", maxFiles: 20 } });
+    expect(map.ok).toBe(true);
+    expect(map.content).toContain("src/warden.ts [typescript]");
+    expect(map.content).toContain("class Warden");
+    expect(map.content).toContain("src/agent.py [python]");
+    expect(map.content).toContain("src/Runner.java [java]");
+    expect(map.content).toContain("src/Worker.pm [perl]");
+
+    const symbols = await tools.executeTool({ id: "symbols", name: "search_symbols", arguments: { query: "execute", path: "src", kind: null, maxResults: 20 } });
+    expect(symbols.content).toContain("agent.py");
+    expect(symbols.content).toContain("Runner.java");
+
+    const outline = await tools.executeTool({ id: "outline", name: "file_outline", arguments: { path: "src/warden.ts" } });
+    expect(outline.content).toContain("class Warden");
+    expect(outline.content).toContain("function createWarden");
+
+    const readSymbol = await tools.executeTool({ id: "read-symbol", name: "read_symbol", arguments: { name: "Warden", path: "src/warden.ts" } });
+    expect(readSymbol.content).toContain("export class Warden");
+
+    const resolved = await tools.executeTool({ id: "resolve", name: "resolve_symbol", arguments: { name: "helper", path: "src", fromPath: "src/warden.ts", maxResults: 10 } });
+    expect(resolved.metadata).toMatchObject({ resolution: "unique" });
+
+    const references = await tools.executeTool({ id: "references", name: "find_references", arguments: { name: "Warden", path: "src", maxResults: 20 } });
+    expect(references.content).toContain("new Warden()");
+    expect(references.metadata).toMatchObject({ precision: "candidate" });
+
+    const dependencies = await tools.executeTool({ id: "deps", name: "dependency_edges", arguments: { path: "src", maxResults: 20 } });
+    expect(dependencies.content).toContain("src/warden.ts:1 -import-> ./helper");
+    expect(dependencies.content).toContain("src/Worker.pm:2 -use-> strict");
+  });
+
   it("can write, read, list, search, and delete files inside the worktree", async () => {
     const worktreePath = await makeTempDir();
     const tools = createRunToolContext(worktreePath);

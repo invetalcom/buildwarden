@@ -1,4 +1,4 @@
-import type { AppSnapshot, ProviderType, UnifiedModelPresetGroup, UnifiedProviderFamily } from "@buildwarden/shared";
+import type { AppSnapshot, CodeIntelligenceSettings, ProviderType, UnifiedModelPresetGroup, UnifiedProviderFamily } from "@buildwarden/shared";
 import { useEffect, useMemo, useState } from "react";
 import { KeyRound, Loader2, Plus, Terminal } from "lucide-react";
 import {
@@ -24,6 +24,7 @@ import {
 } from "../../lib/available-provider-models";
 import { PROVIDER_TYPE_LABELS } from "./provider-model-labels";
 import { ProviderModelPanelButtons, ProviderModelsOverview } from "./provider-models-overview";
+import { CodeIntelligenceSettingsSection } from "./settings-code-intelligence-section";
 
 const DEFAULT_LABEL_BY_TYPE: Record<ProviderType, string> = {
   "ai-sdk": "AI SDK",
@@ -237,6 +238,8 @@ export type ProviderModelsSettingsTabProps = {
   defaultOpenPanel?: ProviderModelsOpenPanel;
   onOpenPanelChange?: (panel: ProviderModelsOpenPanel) => void;
   presentation?: ProviderModelsPresentation;
+  codeIntelligenceSettings?: CodeIntelligenceSettings;
+  onCodeIntelligenceSettingsChange?: (settings: CodeIntelligenceSettings) => void | Promise<void>;
 };
 
 export const ProviderModelsSettingsTab = ({
@@ -294,6 +297,8 @@ export const ProviderModelsSettingsTab = ({
   defaultOpenPanel = null,
   onOpenPanelChange,
   presentation = "settings",
+  codeIntelligenceSettings = {},
+  onCodeIntelligenceSettingsChange,
 }: ProviderModelsSettingsTabProps) => {
   const [internalOpenPanel, setInternalOpenPanel] = useState<ProviderModelsOpenPanel>(defaultOpenPanel);
   const [connectionKind, setConnectionKind] = useState<ReturnType<typeof connectionKindForProviderType> | null>(null);
@@ -827,6 +832,12 @@ export const ProviderModelsSettingsTab = ({
             </div>
           </div>
         </Card>
+      ) : null}
+      {!isWelcomePresentation && onCodeIntelligenceSettingsChange ? (
+        <CodeIntelligenceSettingsSection
+          settings={codeIntelligenceSettings}
+          onChange={onCodeIntelligenceSettingsChange}
+        />
       ) : null}
     </div>
   );

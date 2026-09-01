@@ -2,8 +2,21 @@ import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { createTwoFilesPatch, FILE_HEADERS_ONLY } from "diff";
-import { isTextLikeFileName, type HarnessToolContext, type RunMode, type RunToolCall, type RunToolDefinition, type RunToolName, type RunToolResult, type ShellApprovalDecision } from "@buildwarden/shared";
+import {
+  CODE_INTELLIGENCE_TOOL_NAMES,
+  isCodeIntelligenceToolName,
+  isTextLikeFileName,
+  type CodeIntelligenceToolName,
+  type HarnessToolContext,
+  type RunMode,
+  type RunToolCall,
+  type RunToolDefinition,
+  type RunToolName,
+  type RunToolResult,
+  type ShellApprovalDecision,
+} from "@buildwarden/shared";
 import { compileShellAllowlistRegExes } from "./shell-allowlist";
+import { executeCodeIntelligenceTool, SymbolIntelligenceIndex } from "./symbol-intelligence";
 
 const MAX_FILE_BYTES = 120_000;
 const MAX_OUTPUT_CHARS = 16_000;
@@ -126,6 +139,103 @@ const TOOL_DEFINITIONS: RunToolDefinition[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: "codebase_map",
+    description: "Return a compact map of supported source files, their languages, dependency counts, and declared symbols. Results are structural or clearly marked candidates.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: ["string", "null"], description: "Optional workspace-relative directory or file scope." },
+        maxFiles: { type: ["number", "null"], description: "Optional number of source files to return (maximum 120)." },
+      },
+      required: ["path", "maxFiles"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "search_symbols",
+    description: "Search declared classes, interfaces, types, functions, methods, variables, modules, and namespaces by name across supported source languages.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Case-insensitive symbol-name substring." },
+        kind: { type: ["string", "null"], description: "Optional exact kind filter, such as class, function, or method." },
+        path: { type: ["string", "null"], description: "Optional workspace-relative scope." },
+        maxResults: { type: ["number", "null"], description: "Optional result cap (maximum 120)." },
+      },
+      required: ["query", "kind", "path", "maxResults"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "file_outline",
+    description: "Return declared symbols and line ranges for one supported source file.",
+    inputSchema: {
+      type: "object",
+      properties: { path: { type: "string", description: "Workspace-relative source file path." } },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "read_symbol",
+    description: "Read the source range of an exact declared symbol, optionally restricted to a file or directory. Returns up to five definitions when ambiguous.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Exact symbol name." },
+        path: { type: ["string", "null"], description: "Optional workspace-relative file or directory scope." },
+      },
+      required: ["name", "path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "resolve_symbol",
+    description: "Resolve exact symbol definitions and rank candidates near an optional calling file. Reports whether resolution is unique, ambiguous, or unresolved.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Exact symbol name." },
+        path: { type: ["string", "null"], description: "Optional workspace-relative search scope." },
+        fromPath: { type: ["string", "null"], description: "Optional calling file used to rank nearby definitions." },
+        maxResults: { type: ["number", "null"], description: "Optional result cap (maximum 120)." },
+      },
+      required: ["name", "path", "fromPath", "maxResults"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "find_references",
+    description: "Find lexical reference candidates for an exact symbol name, excluding recognized definition lines. Results are explicitly marked candidate precision.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Exact symbol name." },
+        path: { type: ["string", "null"], description: "Optional workspace-relative scope." },
+        maxResults: { type: ["number", "null"], description: "Optional result cap (maximum 120)." },
+      },
+      required: ["name", "path", "maxResults"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "dependency_edges",
+    description: "Return source-file import, include, require, and use edges across supported languages.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: ["string", "null"], description: "Optional workspace-relative source scope." },
+        maxResults: { type: ["number", "null"], description: "Optional result cap (maximum 120)." },
+      },
+      required: ["path", "maxResults"],
+      additionalProperties: false,
+    },
+  },
+];
+
+const BASE_TOOL_NAMES: readonly RunToolName[] = [
+  "read_file", "write_file", "edit_file", "delete_file", "list_files", "search_repo", "run_shell",
 ];
 
 const TOOL_ALLOWLIST_BY_MODE: Record<RunMode, Set<RunToolDefinition["name"]>> = {
@@ -758,6 +868,7 @@ const SHELL_ABORT_REASON_CANCELLED_BY_USER = "cancelled-by-user";
 
 type RunToolContextOptions = {
   yoloMode?: boolean;
+  codeIntelligenceTools?: readonly CodeIntelligenceToolName[];
 };
 
 const runSafeCommand = async (
@@ -943,6 +1054,7 @@ type RunToolExecutorContext = {
   shellAllowlistExtra?: string[];
   hooks?: RunToolContextHooks;
   yoloMode: boolean;
+  symbolIndex: SymbolIntelligenceIndex;
 };
 
 class RunToolExecutor {
@@ -954,8 +1066,12 @@ class RunToolExecutor {
   private get shellAllowlistExtra(): string[] | undefined { return this.context.shellAllowlistExtra; }
   private get hooks(): RunToolContextHooks | undefined { return this.context.hooks; }
   private get yoloMode(): boolean { return this.context.yoloMode; }
+  private get symbolIndex(): SymbolIntelligenceIndex { return this.context.symbolIndex; }
 
   execute(call: RunToolCall): Promise<RunToolResult> {
+    if (isCodeIntelligenceToolName(call.name)) {
+      return executeCodeIntelligenceTool(this.symbolIndex, { ...call, name: call.name });
+    }
     switch (call.name) {
       case "read_file": return this.executeReadFile(call);
       case "write_file": return this.executeWriteFile(call);
@@ -1058,6 +1174,7 @@ class RunToolExecutor {
       }
       throw error;
     }
+    this.symbolIndex.invalidate();
     const unifiedDiff = buildWriteFileUnifiedDiff(rel, previousContent, content);
     return {
       toolCallId: call.id,
@@ -1169,6 +1286,7 @@ class RunToolExecutor {
       }
       throw error;
     }
+    this.symbolIndex.invalidate();
 
     const unifiedDiff = buildWriteFileUnifiedDiff(rel, previousContent, nextContent);
     return {
@@ -1200,6 +1318,7 @@ class RunToolExecutor {
       throw error;
     }
     await rm(target, { recursive: true, force: true });
+    this.symbolIndex.invalidate();
     return {
       toolCallId: call.id,
       name: call.name,
@@ -1335,9 +1454,13 @@ export const createRunToolContext = (
   const yoloMode = options?.yoloMode === true;
   let effectiveTools = allowedTools;
   if (yoloMode) {
-    effectiveTools = new Set(TOOL_DEFINITIONS.map((tool) => tool.name));
+    effectiveTools = new Set(BASE_TOOL_NAMES);
   } else if (toolNamesOverride && toolNamesOverride.length > 0) {
     effectiveTools = new Set(mode === "code" ? toolNamesOverride : toolNamesOverride.filter((toolName) => allowedTools.has(toolName)));
+  }
+  effectiveTools = new Set(effectiveTools);
+  for (const toolName of options?.codeIntelligenceTools ?? []) {
+    if (CODE_INTELLIGENCE_TOOL_NAMES.includes(toolName)) effectiveTools.add(toolName);
   }
   const tools = TOOL_DEFINITIONS.filter((tool) => effectiveTools.has(tool.name));
   const readFilesThisRun = new Set<string>();
@@ -1349,6 +1472,7 @@ export const createRunToolContext = (
     shellAllowlistExtra,
     hooks,
     yoloMode,
+    symbolIndex: new SymbolIntelligenceIndex(worktreePath),
   });
 
   const executeTool = async (call: RunToolCall): Promise<RunToolResult> => {

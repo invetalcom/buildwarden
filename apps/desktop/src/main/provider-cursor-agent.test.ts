@@ -1013,6 +1013,11 @@ describe("Cursor private per-turn orchestration MCP", () => {
           description: "Must remain private to the normal run harness.",
           inputSchema: { type: "object", properties: {}, additionalProperties: false },
         },
+        {
+          name: "codebase_map",
+          description: "Map code symbols.",
+          inputSchema: { type: "object", properties: {}, additionalProperties: false },
+        },
       ],
       executeTool,
     };
@@ -1035,7 +1040,7 @@ describe("Cursor private per-turn orchestration MCP", () => {
       headers,
       body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
     }).then((response) => response.json()) as { result: { tools: Array<{ name: string }> } };
-    expect(listed.result.tools.map((tool) => tool.name)).toEqual(["buildwarden_tasks_list"]);
+    expect(listed.result.tools.map((tool) => tool.name)).toEqual(["buildwarden_tasks_list", "codebase_map"]);
 
     const called = await fetch(config.url, {
       method: "POST",

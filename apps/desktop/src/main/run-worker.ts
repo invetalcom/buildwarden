@@ -187,7 +187,10 @@ const run = async () => {
         abortSignal: controller.signal,
       },
       azureLegacyToolOverride,
-      { yoloMode: request.yoloMode === true },
+      {
+        yoloMode: request.yoloMode === true,
+        codeIntelligenceTools: request.codeIntelligenceTools,
+      },
     );
     const orchestrationTools = request.orchestrationTools ?? [];
     const orchestrationToolNames = new Set(orchestrationTools.map((tool) => tool.name));

@@ -976,6 +976,20 @@ describe("Claude in-process orchestration MCP", () => {
     };
     expect(buildClaudeOrchestrationMcpServer(withoutOrchestration)).toBeNull();
 
+    const withCodeIntelligence: HarnessToolContext = {
+      tools: [{
+        name: "codebase_map",
+        description: "Map code symbols.",
+        inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      }],
+      executeTool,
+    };
+    expect(buildClaudeOrchestrationMcpServer(withCodeIntelligence)).toMatchObject({
+      type: "sdk",
+      name: "buildwarden",
+      instance: expect.any(Object),
+    });
+
     const withOrchestration: HarnessToolContext = {
       tools: [{
         name: "buildwarden_tasks_delegate",

@@ -11,6 +11,7 @@ import {
   buildRunSubagentChunk,
   formatRunPlanProgressContent,
   getModelPresetsForProvider,
+  isCodeIntelligenceToolName,
   isTerminalRunSubagentStatus,
   mergeRunSubagentInfo,
   MODEL_CONFIG_EXECUTION_PROFILE_KEY,
@@ -192,7 +193,9 @@ export const startCursorOrchestrationMcp = async (
   toolContext: HarnessToolContext,
   onToolCall?: (toolName: string) => void,
 ): Promise<{ config: Record<string, unknown>; close: () => Promise<void> } | null> => {
-  const tools = toolContext.tools.filter((tool) => tool.name.startsWith("buildwarden_"));
+  const tools = toolContext.tools.filter(
+    (tool) => tool.name.startsWith("buildwarden_") || isCodeIntelligenceToolName(tool.name),
+  );
   if (tools.length === 0) return null;
   const bearerToken = randomBytes(32).toString("base64url");
   const server = createServer((request, response) => {

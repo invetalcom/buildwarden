@@ -20,6 +20,15 @@ export type IntegratedSkillMetadata = Omit<IntegratedSkillDefinitionType, "conte
 
 export type ProviderType = "ai-sdk" | "openrouter" | "azure-legacy" | "codex-cli" | "claude-code" | "cursor-agent";
 
+export const PROVIDER_TYPES: readonly ProviderType[] = [
+  "ai-sdk",
+  "openrouter",
+  "azure-legacy",
+  "codex-cli",
+  "claude-code",
+  "cursor-agent",
+];
+
 export type HarnessType = "ai-sdk" | "azure-legacy" | "codex-app-server" | "claude-code" | "cursor-acp";
 
 export type RunMode = "code" | "plan" | "ask";
@@ -268,7 +277,73 @@ export type RunEventType =
   | "request"
   | "plan";
 
-export type RunToolName = "read_file" | "write_file" | "edit_file" | "delete_file" | "list_files" | "search_repo" | "run_shell";
+export const CODE_INTELLIGENCE_TOOL_NAMES = [
+  "codebase_map",
+  "search_symbols",
+  "file_outline",
+  "read_symbol",
+  "resolve_symbol",
+  "find_references",
+  "dependency_edges",
+] as const;
+
+export type CodeIntelligenceToolName = (typeof CODE_INTELLIGENCE_TOOL_NAMES)[number];
+
+export type RunToolName =
+  | "read_file"
+  | "write_file"
+  | "edit_file"
+  | "delete_file"
+  | "list_files"
+  | "search_repo"
+  | "run_shell"
+  | CodeIntelligenceToolName;
+
+export const isCodeIntelligenceToolName = (value: string): value is CodeIntelligenceToolName =>
+  (CODE_INTELLIGENCE_TOOL_NAMES as readonly string[]).includes(value);
+
+export type CodeIntelligenceSettings = Partial<
+  Record<ProviderType, Partial<Record<CodeIntelligenceToolName, boolean>>>
+>;
+
+/** Parse opt-in symbol-tool settings. Missing, false, and malformed values always remain disabled. */
+export const parseCodeIntelligenceSettings = (raw: string | undefined | null): CodeIntelligenceSettings => {
+  if (!raw?.trim()) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const result: CodeIntelligenceSettings = {};
+    for (const providerType of PROVIDER_TYPES) {
+      const providerValue = (parsed as Record<string, unknown>)[providerType];
+      if (!providerValue || typeof providerValue !== "object" || Array.isArray(providerValue)) continue;
+      const enabled: Partial<Record<CodeIntelligenceToolName, boolean>> = {};
+      for (const toolName of CODE_INTELLIGENCE_TOOL_NAMES) {
+        if ((providerValue as Record<string, unknown>)[toolName] === true) enabled[toolName] = true;
+      }
+      if (Object.keys(enabled).length > 0) result[providerType] = enabled;
+    }
+    return result;
+  } catch {
+    return {};
+  }
+};
+
+export const enabledCodeIntelligenceTools = (
+  settings: CodeIntelligenceSettings,
+  providerType: ProviderType,
+): CodeIntelligenceToolName[] =>
+  CODE_INTELLIGENCE_TOOL_NAMES.filter((toolName) => settings[providerType]?.[toolName] === true);
+
+export const serializeCodeIntelligenceSettings = (settings: CodeIntelligenceSettings): string => {
+  const normalized: CodeIntelligenceSettings = {};
+  for (const providerType of PROVIDER_TYPES) {
+    const enabled = enabledCodeIntelligenceTools(settings, providerType);
+    if (enabled.length > 0) {
+      normalized[providerType] = Object.fromEntries(enabled.map((toolName) => [toolName, true]));
+    }
+  }
+  return JSON.stringify(normalized);
+};
 
 export const ORCHESTRATION_TOOL_NAMES = [
   "buildwarden_orchestration_get",
@@ -3367,6 +3442,8 @@ export interface RunExecutionRequest {
   priorMessages?: Array<Record<string, unknown>>;
   /** Extra `run_shell` regex patterns (from settings), merged with built-in allowlist. */
   shellAllowlistExtra?: string[];
+  /** Explicitly enabled, read-only code-intelligence operations for this provider run. */
+  codeIntelligenceTools?: CodeIntelligenceToolName[];
   /**
    * Chat history for {@link ProviderType} `azure-legacy` (OpenAI Chat Completions `messages`).
    * Built from persisted chat steps; must not include the active user turn (see {@link buildPriorChatCompletionMessagesFromSteps}).
@@ -4816,6 +4893,8 @@ export const APP_SETTING_KEYS = {
   keyboardShortcuts: "keyboardShortcuts",
   /** JSON string array of extra regex sources for `run_shell` (merged with built-ins). */
   shellAllowlistExtra: "shellAllowlistExtra",
+  /** JSON encoded provider-specific opt-ins for BuildWarden code-intelligence tools. */
+  codeIntelligenceTools: "codeIntelligenceTools",
   /** JSON object: optional `vscode`, `cursor`, `intellij` executable paths. */
   idePaths: "idePaths",
   /** JSON object keyed by run id for persisted run-detail tile visibility/order/size. */

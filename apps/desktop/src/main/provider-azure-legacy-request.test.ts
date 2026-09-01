@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import type { HarnessToolContext, RunExecutionRequest } from "@buildwarden/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import { runAzureLegacyHarness } from "../../../../packages/provider-azure-legacy/src";
+import { createRunToolContext } from "./run-tools";
 
 const openServers = new Set<ReturnType<typeof createServer>>();
 
@@ -15,7 +16,10 @@ const readJsonBody = async (request: IncomingMessage): Promise<Record<string, un
   return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
 };
 
-const captureAzureLegacyRequest = async (isChat: boolean): Promise<Record<string, unknown>> => {
+const captureAzureLegacyRequest = async (
+  isChat: boolean,
+  suppliedToolContext?: HarnessToolContext,
+): Promise<Record<string, unknown>> => {
   let resolvePayload: (payload: Record<string, unknown>) => void;
   const payloadPromise = new Promise<Record<string, unknown>>((resolve) => {
     resolvePayload = resolve;
@@ -67,7 +71,7 @@ const captureAzureLegacyRequest = async (isChat: boolean): Promise<Record<string
       thinkingLevel: "high",
     },
   } as unknown as RunExecutionRequest;
-  const toolContext: HarnessToolContext = {
+  const toolContext: HarnessToolContext = suppliedToolContext ?? {
     tools: [],
     executeTool: async () => {
       throw new Error("Azure characterization request unexpectedly executed a tool.");
@@ -126,5 +130,41 @@ describe("Azure Legacy request payload characterization", () => {
       tool_choice: "auto",
       tools: [],
     });
+  });
+
+  it("keeps Azure Legacy on its existing tool catalog when code intelligence is disabled", async () => {
+    const toolContext = createRunToolContext(
+      process.cwd(),
+      "code",
+      undefined,
+      undefined,
+      undefined,
+      ["read_file", "write_file", "edit_file", "delete_file", "list_files", "search_repo", "run_shell"],
+      { codeIntelligenceTools: [] },
+    );
+    const payload = await captureAzureLegacyRequest(false, toolContext);
+    const toolNames = (payload.tools as Array<{ function: { name: string } }>).map((tool) => tool.function.name);
+
+    expect(toolNames).toEqual(["read_file", "write_file", "edit_file", "delete_file", "list_files", "search_repo", "run_shell"]);
+    expect(toolNames).not.toContain("codebase_map");
+  });
+
+  it("advertises only the symbol operations explicitly enabled for Azure Legacy", async () => {
+    const toolContext = createRunToolContext(
+      process.cwd(),
+      "code",
+      undefined,
+      undefined,
+      undefined,
+      ["read_file", "write_file", "edit_file", "delete_file", "list_files", "search_repo", "run_shell"],
+      { codeIntelligenceTools: ["codebase_map", "read_symbol"] },
+    );
+    const payload = await captureAzureLegacyRequest(false, toolContext);
+    const toolNames = (payload.tools as Array<{ function: { name: string } }>).map((tool) => tool.function.name);
+
+    expect(toolNames).toEqual([
+      "read_file", "write_file", "edit_file", "delete_file", "list_files", "search_repo", "run_shell",
+      "codebase_map", "read_symbol",
+    ]);
   });
 });
