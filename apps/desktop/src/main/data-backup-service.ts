@@ -64,6 +64,16 @@ type PendingDataRestore = {
   createdAt: string;
 };
 
+type PendingDataRestoreMarkerOperations = {
+  write(path: string, content: string): Promise<void>;
+  move(source: string, destination: string): Promise<void>;
+};
+
+const defaultPendingDataRestoreMarkerOperations: PendingDataRestoreMarkerOperations = {
+  write: (path, content) => writeFile(path, content, { encoding: "utf8", mode: 0o600 }),
+  move: rename,
+};
+
 export interface DataBackupServiceOptions {
   database: BuildWardenDatabase;
   secretStore: {
@@ -448,11 +458,18 @@ export class DataBackupService {
   }
 }
 
-export const writePendingDataRestore = async (markerPath: string, stagingDirectory: string): Promise<void> => {
+export const writePendingDataRestore = async (
+  markerPath: string,
+  stagingDirectory: string,
+  operations: PendingDataRestoreMarkerOperations = defaultPendingDataRestoreMarkerOperations,
+): Promise<void> => {
   const marker: PendingDataRestore = { version: 1, stagingDirectory, createdAt: new Date().toISOString() };
+  const temporaryMarkerPath = `${markerPath}.tmp-${randomBytes(6).toString("hex")}`;
   try {
-    await writeFile(markerPath, JSON.stringify(marker), { encoding: "utf8", mode: 0o600 });
+    await operations.write(temporaryMarkerPath, JSON.stringify(marker));
+    await operations.move(temporaryMarkerPath, markerPath);
   } catch (error) {
+    await rm(temporaryMarkerPath, { force: true }).catch(() => {});
     await rm(stagingDirectory, { recursive: true, force: true }).catch(() => {});
     throw error;
   }
@@ -476,7 +493,14 @@ export const applyPendingDataRestore = async (input: {
   secretsFileName: string;
 }): Promise<boolean> => {
   if (!existsSync(input.markerPath)) return false;
-  const marker = JSON.parse(await readFile(input.markerPath, "utf8")) as Partial<PendingDataRestore>;
+  let marker: Partial<PendingDataRestore>;
+  const serializedMarker = await readFile(input.markerPath, "utf8");
+  try {
+    marker = JSON.parse(serializedMarker) as Partial<PendingDataRestore>;
+  } catch (error) {
+    await rm(input.markerPath, { force: true });
+    throw new Error("The pending data restore marker is invalid.", { cause: error });
+  }
   if (marker.version !== 1 || typeof marker.stagingDirectory !== "string") {
     await rm(input.markerPath, { force: true });
     throw new Error("The pending data restore marker is invalid.");

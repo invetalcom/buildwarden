@@ -155,4 +155,33 @@ describe("DataBackupService", () => {
 
     expect(existsSync(stagingDirectory)).toBe(false);
   });
+
+  it("does not publish a partial pending restore marker when its atomic write fails", async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), "buildwarden-atomic-marker-test-"));
+    temporaryDirectories.push(dataDirectory);
+    const stagingDirectory = join(dataDirectory, "restore-staging-test");
+    const markerPath = join(dataDirectory, "pending-restore.json");
+    await mkdir(stagingDirectory, { recursive: true });
+    await writeFile(join(stagingDirectory, "database.sqlite"), "staged-database");
+
+    await expect(writePendingDataRestore(markerPath, stagingDirectory, {
+      write: async (temporaryMarkerPath) => {
+        await writeFile(temporaryMarkerPath, '{"version":1');
+        throw new Error("Injected partial marker write failure");
+      },
+      move: async () => {
+        throw new Error("The partial marker must not be published");
+      },
+    })).rejects.toThrow(/partial marker write failure/i);
+
+    expect(existsSync(markerPath)).toBe(false);
+    expect(existsSync(stagingDirectory)).toBe(false);
+    expect((await readdir(dataDirectory)).some((name) => name.startsWith("pending-restore.json.tmp-"))).toBe(false);
+    await expect(applyPendingDataRestore({
+      markerPath,
+      dataDirectory,
+      databaseFileName: "active.sqlite",
+      secretsFileName: "active-secrets.json",
+    })).resolves.toBe(false);
+  });
 });
