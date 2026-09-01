@@ -493,14 +493,19 @@ export const applyPendingDataRestore = async (input: {
   secretsFileName: string;
 }): Promise<boolean> => {
   if (!existsSync(input.markerPath)) return false;
-  let marker: Partial<PendingDataRestore>;
+  let parsedMarker: unknown;
   const serializedMarker = await readFile(input.markerPath, "utf8");
   try {
-    marker = JSON.parse(serializedMarker) as Partial<PendingDataRestore>;
+    parsedMarker = JSON.parse(serializedMarker) as unknown;
   } catch (error) {
     await rm(input.markerPath, { force: true });
     throw new Error("The pending data restore marker is invalid.", { cause: error });
   }
+  if (parsedMarker === null || typeof parsedMarker !== "object" || Array.isArray(parsedMarker)) {
+    await rm(input.markerPath, { force: true });
+    throw new Error("The pending data restore marker is invalid.");
+  }
+  const marker = parsedMarker as Partial<PendingDataRestore>;
   if (marker.version !== 1 || typeof marker.stagingDirectory !== "string") {
     await rm(input.markerPath, { force: true });
     throw new Error("The pending data restore marker is invalid.");

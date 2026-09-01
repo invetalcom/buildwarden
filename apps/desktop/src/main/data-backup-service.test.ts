@@ -184,4 +184,20 @@ describe("DataBackupService", () => {
       secretsFileName: "active-secrets.json",
     })).resolves.toBe(false);
   });
+
+  it("removes a pending restore marker whose JSON is not an object", async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), "buildwarden-invalid-marker-test-"));
+    temporaryDirectories.push(dataDirectory);
+    const markerPath = join(dataDirectory, "pending-restore.json");
+    await writeFile(markerPath, "null");
+
+    await expect(applyPendingDataRestore({
+      markerPath,
+      dataDirectory,
+      databaseFileName: "active.sqlite",
+      secretsFileName: "active-secrets.json",
+    })).rejects.toThrow("The pending data restore marker is invalid.");
+
+    expect(existsSync(markerPath)).toBe(false);
+  });
 });
