@@ -606,6 +606,9 @@ export const SettingsPage = ({
           onEnableDevModeChange={onEnableDevModeChange}
           onKeyboardShortcutChange={onKeyboardShortcutChange}
           onOpenAppLogDirectory={onOpenAppLogDirectory}
+          onExportDataBackup={(password) => buildwarden.exportDataBackup({ password })}
+          onSelectDataBackupForImport={() => buildwarden.selectDataBackupForImport()}
+          onImportDataBackup={(input) => buildwarden.importDataBackup(input)}
           onResetDatabase={onResetDatabase}
           onIdeDraftChange={setIdeDraft}
           onSaveIdePaths={async () => {

@@ -1243,6 +1243,9 @@ export class AppController
       | "showAppMenu"
       | "openSystemTerminalAtPath"
       | "openExternalUrl"
+      | "exportDataBackup"
+      | "selectDataBackupForImport"
+      | "importDataBackup"
     >
 {
   private readonly gitService = new GitService();

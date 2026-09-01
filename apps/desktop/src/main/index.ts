@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import { getDefaultDatabasePath, BuildWardenDatabase } from "@buildwarden/db";
 import { disposeWorktreeDiffWorker } from "./run-worktree-diff-worker";
 import {
@@ -30,6 +30,8 @@ import {
   WINDOWS_TITLEBAR_OVERLAY_HEIGHT,
   type AppMenuSection,
   type ChatInput,
+  type DataBackupExportInput,
+  type DataBackupImportInput,
   type DesignScheme,
   type ListAvailableProviderModelsInput,
   type ModelInput,
@@ -57,6 +59,11 @@ import { HostTerminalService } from "./host-terminal-service";
 import { TailscaleServeService } from "./tailscale-serve-service";
 import { HostDirectoryService } from "./host-directory-service";
 import { HostBrowserService } from "./host-browser-service";
+import {
+  applyPendingDataRestore,
+  DataBackupService,
+  writePendingDataRestore,
+} from "./data-backup-service";
 
 const mainDir = dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
@@ -291,6 +298,7 @@ const bootstrap = async (): Promise<void> => {
   const dataDirPath = join(userDataPath, "data");
   const databaseFileName = isDevelopmentDataMode ? DEV_DB_FILE_NAME : PROD_DB_FILE_NAME;
   const secretsFileName = isDevelopmentDataMode ? DEV_SECRETS_FILE_NAME : PROD_SECRETS_FILE_NAME;
+  const pendingRestoreMarkerPath = join(userDataPath, "pending-data-restore.json");
   initializeAppLogger(logDirPath);
   logInfo("Bootstrapping BuildWarden main process.", {
     userDataPath,
@@ -302,6 +310,22 @@ const bootstrap = async (): Promise<void> => {
     version: app.getVersion(),
     processUptimeMs: Math.round(process.uptime() * 1000),
   });
+
+  try {
+    const restored = await applyPendingDataRestore({
+      markerPath: pendingRestoreMarkerPath,
+      dataDirectory: dataDirPath,
+      databaseFileName,
+      secretsFileName,
+    });
+    if (restored) logInfo("Applied a pending BuildWarden data restore.");
+  } catch (error) {
+    logError("Failed to apply a pending BuildWarden data restore; the previous data was retained where possible.", { error });
+    dialog.showErrorBox(
+      "BuildWarden could not restore the backup",
+      `${error instanceof Error ? error.message : String(error)}\n\nThe previous data was retained where possible.`,
+    );
+  }
 
   // Show the window and start loading the renderer immediately; the database
   // and controller initialize in parallel. The preload bridge retries briefly
@@ -315,6 +339,12 @@ const bootstrap = async (): Promise<void> => {
   const dbReadyAt = Date.now();
 
   const secretStore = new ElectronSecretStore(join(dataDirPath, secretsFileName));
+  const dataBackupService = new DataBackupService({
+    database: db,
+    secretStore,
+    dataDirectory: dataDirPath,
+    appVersion: app.getVersion(),
+  });
   const hostDirectory = new HostDirectoryService();
   const controllerRef: { current: AppController | null } = { current: null };
   const hostBrowser = new HostBrowserService({
@@ -1599,6 +1629,50 @@ const bootstrap = async (): Promise<void> => {
   );
   ipcMain.handle(IPC_CHANNELS.isChatBookmarked, (_, chatId: string) => controller.isChatBookmarked(chatId));
   ipcMain.handle(IPC_CHANNELS.getChatBookmarksWithSteps, () => controller.getChatBookmarksWithSteps());
+  ipcMain.handle(IPC_CHANNELS.exportDataBackup, async (_, input: DataBackupExportInput) => {
+    const password = typeof input?.password === "string" ? input.password : "";
+    const date = new Date().toISOString().slice(0, 10);
+    const options = {
+      title: "Export BuildWarden data",
+      defaultPath: `buildwarden-backup-${date}.bwarden`,
+      filters: [
+        { name: "BuildWarden backup", extensions: ["bwarden"] },
+        { name: "All files", extensions: ["*"] },
+      ],
+      properties: ["createDirectory", "showOverwriteConfirmation"] as Array<"createDirectory" | "showOverwriteConfirmation">,
+    };
+    const result = mainWindow
+      ? await dialog.showSaveDialog(mainWindow, options)
+      : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return { canceled: true };
+    return dataBackupService.exportTo(result.filePath, password);
+  });
+  ipcMain.handle(IPC_CHANNELS.selectDataBackupForImport, async () => {
+    const options = {
+      title: "Import BuildWarden data",
+      properties: ["openFile"] as Array<"openFile">,
+      filters: [
+        { name: "BuildWarden backup", extensions: ["bwarden"] },
+        { name: "All files", extensions: ["*"] },
+      ],
+    };
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+    const filePath = result.canceled ? undefined : result.filePaths[0];
+    return filePath ? dataBackupService.inspect(filePath) : null;
+  });
+  ipcMain.handle(IPC_CHANNELS.importDataBackup, async (_, input: DataBackupImportInput) => {
+    const filePath = typeof input?.filePath === "string" ? input.filePath : "";
+    const password = typeof input?.password === "string" ? input.password : "";
+    if (!filePath) throw new Error("Select a BuildWarden backup to import.");
+    const staged = await dataBackupService.stageImport(filePath, password, {
+      skipWelcome: input?.skipWelcome === true,
+    });
+    await writePendingDataRestore(pendingRestoreMarkerPath, staged.stagingDirectory);
+    app.relaunch();
+    app.quit();
+  });
   ipcMain.handle(IPC_CHANNELS.resetDatabase, async () => {
     await controller.resetDatabase();
     app.relaunch();

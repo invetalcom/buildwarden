@@ -6,6 +6,9 @@ import {
   MIN_SIDEBAR_CONTRAST_STRENGTH,
   SUPPORTED_IDE_KINDS,
   type AppLogDirectorySizeInfo,
+  type DataBackupExportResult,
+  type DataBackupImportInput,
+  type DataBackupImportSelection,
   type DesignScheme,
   type KeyboardShortcutId,
   type SidebarRunEntrySize,
@@ -19,6 +22,7 @@ import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { Slider } from "../ui/slider";
 import { DesignSchemeEditor } from "./DesignSchemeEditor";
+import { DataBackupControls } from "./DataBackupControls";
 
 const SHORTCUT_LABELS: Record<KeyboardShortcutId, string> = {
   goHome: "Go to starting page",
@@ -247,6 +251,9 @@ export type UserSettingsTabProps = {
   onEnableDevModeChange: (value: boolean) => void;
   onKeyboardShortcutChange: (id: KeyboardShortcutId, value: string) => void;
   onOpenAppLogDirectory: () => void | Promise<void>;
+  onExportDataBackup: (password: string) => Promise<DataBackupExportResult>;
+  onSelectDataBackupForImport: () => Promise<DataBackupImportSelection | null>;
+  onImportDataBackup: (input: DataBackupImportInput) => Promise<void>;
   onResetDatabase: () => void | Promise<void>;
   onIdeDraftChange: (next: Partial<Record<SupportedIdeKind, string>>) => void;
   onSaveIdePaths: () => void | Promise<void>;
@@ -282,6 +289,9 @@ export const UserSettingsTab = ({
   onEnableDevModeChange,
   onKeyboardShortcutChange,
   onOpenAppLogDirectory,
+  onExportDataBackup,
+  onSelectDataBackupForImport,
+  onImportDataBackup,
   onResetDatabase,
   onIdeDraftChange,
   onSaveIdePaths,
@@ -516,6 +526,18 @@ export const UserSettingsTab = ({
 
     {nativeActions ? <SettingsSection title="Data">
       <SettingsRow
+        title="Backup and restore"
+        description="Export all BuildWarden-managed data, including chats, agent runs, settings, attachments, API keys, and Git hosting tokens, to a password-encrypted backup. Source repositories and worktrees remain in their existing locations. Import replaces the current data and restarts the app."
+        align="start"
+      >
+        <DataBackupControls
+          disabled={busy}
+          onExport={onExportDataBackup}
+          onSelectImport={onSelectDataBackupForImport}
+          onImport={onImportDataBackup}
+        />
+      </SettingsRow>
+      <SettingsRow
         title="Clear database"
         description="Permanently delete all projects, runs, bookmarks, providers, models, and settings. The app will restart with a fresh database. This cannot be undone."
       >
@@ -524,14 +546,7 @@ export const UserSettingsTab = ({
             variant="danger"
             size="sm"
             disabled={busy}
-            onClick={() => {
-              const confirmed = window.confirm(
-                "Clear the entire database? All projects, runs, bookmarks, providers, models, and settings will be permanently deleted. The app will restart. This cannot be undone.",
-              );
-              if (confirmed) {
-                void onResetDatabase();
-              }
-            }}
+            onClick={() => void onResetDatabase()}
           >
             Clear database and restart
           </Button>

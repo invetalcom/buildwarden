@@ -4033,8 +4033,19 @@ export const App = () => {
               builtInShellAllowlistPatterns={DEFAULT_SHELL_ALLOWLIST_PATTERN_SOURCES}
               shellAllowlistExtraText={shellAllowlistExtraText}
               onShellAllowlistExtraSave={(text: string) => void updateShellAllowlistExtra(text)}
-              onResetDatabase={() => {
-                void buildwarden?.resetDatabase();
+              onResetDatabase={async () => {
+                if (!buildwarden) {
+                  throw new Error("The Electron desktop bridge is unavailable.");
+                }
+                const confirmed = await requestConfirmation({
+                  title: "Clear the entire database?",
+                  message: "All projects, runs, bookmarks, providers, models, and settings will be permanently deleted. The app will restart. This cannot be undone.",
+                  confirmLabel: "Clear database and restart",
+                  confirmVariant: "danger",
+                });
+                if (confirmed) {
+                  await handleAction(() => buildwarden.resetDatabase());
+                }
               }}
               onSaveNetworkProxySettings={async (input) => {
                 if (!buildwarden) {
@@ -4663,6 +4674,12 @@ export const App = () => {
           onNext={handleWelcomeNext}
           onSkipCheck={handleWelcomeSkipCheck}
           onFinish={handleWelcomeFinish}
+          dataBackupProps={buildwarden.capabilities.platform === "electron" ? {
+            disabled: busy,
+            onExport: (password) => buildwarden.exportDataBackup({ password }),
+            onSelectImport: () => buildwarden.selectDataBackupForImport(),
+            onImport: (input) => buildwarden.importDataBackup(input),
+          } : undefined}
           providerModelsProps={{
             busy,
             providerLabel,

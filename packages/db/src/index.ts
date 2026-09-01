@@ -144,6 +144,7 @@ type StoredProjectAutomationRecord = Omit<ProjectAutomationRecord, "attachments"
 };
 
 const DEFAULT_DB_NAME = "buildwarden.sqlite";
+export const BUILDWARDEN_DATABASE_SCHEMA_VERSION = 1;
 const SQLITE_VARIABLE_BATCH_SIZE = 900;
 
 const nowIso = () => new Date().toISOString();
@@ -386,6 +387,7 @@ export class BuildWardenDatabase {
       this.transaction(() => {
         this.createInitialSchema();
         this.applySchemaMigrations();
+        this.exec(`pragma user_version = ${String(BUILDWARDEN_DATABASE_SCHEMA_VERSION)}`);
       });
     } catch (error) {
       try {
@@ -436,6 +438,44 @@ export class BuildWardenDatabase {
 
   async flushDurable(): Promise<void> {
     if (this.db) this.checkpoint("full");
+  }
+
+  /** Creates a consistent, standalone SQLite snapshot without copying WAL sidecars. */
+  createPortableSnapshot(targetPath: string): void {
+    if (existsSync(targetPath)) unlinkSync(targetPath);
+    mkdirSync(dirname(targetPath), { recursive: true });
+    const escapedTargetPath = targetPath.replaceAll("'", "''");
+    this.exec(`vacuum into '${escapedTargetPath}'`);
+  }
+
+  /** Rewrites paths for artifacts that are owned by BuildWarden's data directory. */
+  rebaseManagedArtifactPaths(previousDataDirectory: string, nextDataDirectory: string): void {
+    const previous = previousDataDirectory.replace(/[\\/]+$/, "");
+    const next = nextDataDirectory.replace(/[\\/]+$/, "");
+    if (!previous || !next || previous === next) return;
+
+    const rebaseColumn = (table: string, column: string): void => {
+      const rows = this.all<{ id: string; artifactPath: string | null }>(
+        `select id, ${column} as artifactPath from ${table} where ${column} is not null`,
+      );
+      for (const row of rows) {
+        if (!row.artifactPath) continue;
+        const startsWithinPrevious = row.artifactPath === previous ||
+          (row.artifactPath.startsWith(previous) && /[\\/]/.test(row.artifactPath[previous.length] ?? ""));
+        if (!startsWithinPrevious) continue;
+        const suffixSegments = row.artifactPath
+          .slice(previous.length)
+          .split(/[\\/]+/)
+          .filter(Boolean);
+        this.run(`update ${table} set ${column} = ? where id = ?`, [join(next, ...suffixSegments), row.id]);
+      }
+    };
+
+    this.transaction(() => {
+      rebaseColumn("project_loop_ui_reviews", "image_path");
+      rebaseColumn("orchestration_waves", "baseline_path");
+      rebaseColumn("orchestration_adoptions", "backup_path");
+    });
   }
 
   /** Checkpoints and truncates the WAL synchronously during process shutdown. */
