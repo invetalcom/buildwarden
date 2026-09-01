@@ -185,7 +185,7 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange }: Props) => {
         </div>
         {error ? <p role="alert" className="mt-2 rounded-md border border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] px-2.5 py-2 text-xs text-[var(--ec-danger)]">{error}</p> : null}
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex gap-2">
+          <div className="relative flex gap-2">
             <input ref={importRef} type="file" accept=".json,.buildwarden-theme.json,application/json" className="sr-only" aria-label="Import design scheme" onChange={(event) => void importFile(event.target.files?.[0])} />
             <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => void resetToPreset()} title={`Restore the original ${resetPreset.name} colors`}><RotateCcw className="size-3.5" />Reset defaults</Button>
             <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => importRef.current?.click()}><Upload className="size-3.5" />Import</Button>

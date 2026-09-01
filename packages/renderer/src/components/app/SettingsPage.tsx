@@ -417,7 +417,7 @@ export const SettingsPage = ({
   }, [normalizedRecentRunDaysDraft, onRecentRunDaysChange, recentRunDays, recentRunDaysInvalid]);
 
   return (
-    <div className="flex min-h-[calc(100vh-5.25rem)] overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)]">
+    <div className="flex h-full min-h-0 overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)]">
       <aside className="w-64 shrink-0 border-r border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-3">
         <Button variant="ghost" size="sm" onClick={onBack} className="mb-4 h-8 px-2 text-xs">
           <ArrowLeft data-icon="inline-start" />
@@ -445,7 +445,7 @@ export const SettingsPage = ({
         </div>
       </aside>
 
-      <div className="app-scrollbar min-w-0 flex-1 overflow-y-auto px-6 py-5">
+      <div className="app-scrollbar min-h-0 min-w-0 flex-1 overflow-y-auto px-6 py-5">
         <header className="mb-5 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-4">
           <h1 className="text-2xl font-semibold tracking-tight text-[var(--ec-text)]">{TAB_CONFIG.find((tab) => tab.id === activeTab)?.label ?? "Settings"}</h1>
           <p className="mt-1 text-sm text-[var(--ec-muted)]">
