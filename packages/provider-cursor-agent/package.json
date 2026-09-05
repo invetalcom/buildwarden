@@ -10,6 +10,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@buildwarden/agent-runtime": "workspace:*",
     "@buildwarden/shared": "workspace:*"
   }
 }

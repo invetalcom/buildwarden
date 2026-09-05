@@ -1,12 +1,15 @@
 import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 const packageSource = (packageName: string, fileName = "index.ts") =>
   fileURLToPath(new URL(`../../packages/${packageName}/src/${fileName}`, import.meta.url));
+const requireFromClaudeProvider = createRequire(new URL("../../packages/provider-claude-code/package.json", import.meta.url));
 
 export default defineConfig({
   resolve: {
     alias: {
+      "@anthropic-ai/claude-agent-sdk": requireFromClaudeProvider.resolve("@anthropic-ai/claude-agent-sdk"),
       "@buildwarden/agent-runtime": packageSource("agent-runtime"),
       "@buildwarden/db": packageSource("db"),
       "@buildwarden/git-service": packageSource("git-service"),

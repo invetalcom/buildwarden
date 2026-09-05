@@ -12,6 +12,7 @@ import type {
   RunResumeCheckpoint,
   RunTokenUsage,
   AzureLegacyResumeCheckpointMessage,
+  UtilityTextGenerationOptions,
 } from "@buildwarden/shared";
 import {
   PROVIDER_CONFIG_AZURE_API_VERSION_KEY,
@@ -196,6 +197,54 @@ export const normalizeAzureLegacyTokenUsage = (usage: OpenAI.CompletionUsage | u
     ...(cachedInputTokens > 0 ? { cachedInputTokens } : {}),
     ...(totalTokens > 0 ? { totalTokens } : {}),
   };
+};
+
+/** Standalone model request; deliberately compatible with older deployment endpoints. */
+export const generateUtilityTextWithAzureLegacy = async (input: UtilityTextGenerationOptions & {
+  apiBaseUrl: string | null | undefined;
+  apiKey: string;
+  config?: Record<string, unknown>;
+  networkProxy?: NetworkProxyRuntimeConfig;
+  modelId: string;
+  systemPrompt: string;
+  prompt: string;
+  signal?: AbortSignal;
+  devLogging?: { logDirPath: string; runId?: string };
+}): Promise<{ text: string; usage: RunTokenUsage }> => {
+  input.signal?.throwIfAborted();
+  const logger = createDevLogger({
+    logDirPath: input.devLogging?.logDirPath,
+    runId: input.devLogging?.runId ?? "utility-text",
+    providerType: "azure-legacy",
+    modelId: input.modelId,
+    sessionType: "run",
+  });
+  const client = createAzureLegacyClientFromParts(
+    input.apiBaseUrl, input.apiKey, input.config,
+    logger.enabled ? logger.createLoggedFetch() : undefined,
+    input.networkProxy,
+  );
+  const reasoningModel = /^(?:o\d|gpt-5)(?:$|[.\-_])/i.test(input.modelId.trim());
+  const maxTokens = input.maxTokens ?? 1_300;
+  const completion = await client.chat.completions.create({
+    model: input.modelId,
+    messages: [
+      { role: "system", content: input.systemPrompt },
+      { role: "user", content: input.prompt },
+    ],
+    max_completion_tokens: reasoningModel ? Math.max(maxTokens, 24_000) : maxTokens,
+    ...(!reasoningModel && input.temperature !== undefined ? { temperature: input.temperature } : {}),
+    // Do not force response_format: legacy API versions and compatible proxies vary.
+    // The caller validates structured results against the job's expected shape.
+  }, { signal: input.signal, timeout: input.timeoutMs ?? 180_000, maxRetries: 0 });
+  const choice = completion.choices[0];
+  if (choice?.finish_reason === "length") throw new Error("Azure Legacy text generation exceeded its completion token budget.");
+  if (choice?.finish_reason === "content_filter" || choice?.message.refusal) {
+    throw new Error("Azure Legacy did not return the requested text.");
+  }
+  const text = choice?.message.content?.trim();
+  if (!text) throw new Error("Azure Legacy text generation returned an empty answer.");
+  return { text, usage: normalizeAzureLegacyTokenUsage(completion.usage) };
 };
 
 export const createCompletionState = (): AzureLegacyCompletionState => ({

@@ -20,6 +20,14 @@ export type IntegratedSkillMetadata = Omit<IntegratedSkillDefinitionType, "conte
 
 export type ProviderType = "ai-sdk" | "openrouter" | "azure-legacy" | "codex-cli" | "claude-code" | "cursor-agent";
 
+/** Transient options for standalone generation; never stored as run/session state. */
+export interface UtilityTextGenerationOptions {
+  outputSchema?: Record<string, unknown>;
+  maxTokens?: number;
+  temperature?: number;
+  timeoutMs?: number;
+}
+
 export type HarnessType = "ai-sdk" | "azure-legacy" | "codex-app-server" | "claude-code" | "cursor-acp";
 
 export type RunMode = "code" | "plan" | "ask";
