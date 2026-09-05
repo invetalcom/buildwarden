@@ -96,9 +96,14 @@ describe("CLI utility generation", () => {
   });
 
   it("does not launch an already cancelled request", async () => {
+    const fixture = makeFakeCli();
+    const signal = AbortSignal.abort();
+    expect(signal.reason).toMatchObject({ name: "AbortError" });
     await expect(runTextGenerationProcess({
-      command: "nonexistent-command", args: [], cwd: process.cwd(), prompt: "test", signal: AbortSignal.abort(),
-    })).rejects.toThrow();
+      ...resolveTextGenerationProcessLaunch(fixture.binary, []),
+      cwd: fixture.cwd, prompt: "test", signal,
+    })).rejects.toBe(signal.reason);
+    expect(existsSync(join(fixture.cwd, "capture.json"))).toBe(false);
   });
 
   it("cancels a running request and closes its child process", async () => {
