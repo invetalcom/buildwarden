@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { generateUtilityTextWithClaudeCode } from "@buildwarden/provider-claude-code";
 
 const sdk = vi.hoisted(() => ({ query: vi.fn(), close: vi.fn() }));
-vi.mock("../../../../packages/provider-claude-code/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs", () => ({
+vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: sdk.query, createSdkMcpServer: vi.fn(), tool: vi.fn(),
 }));
 afterEach(() => vi.resetAllMocks());
