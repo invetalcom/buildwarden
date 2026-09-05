@@ -30,11 +30,14 @@ export const validateUtilityText = (text: string, purpose: UtilityTextPurpose): 
   if (
     typeof draft.title !== "string" || !draft.title.trim() ||
     typeof draft.description !== "string" || !draft.description.trim() ||
-    !(typeof draft.commitMessage === "string" || draft.commitMessage == null) ||
-    Object.keys(draft).some((key) => !["title", "description", "commitMessage"].includes(key))
+    !(typeof draft.commitMessage === "string" || draft.commitMessage == null)
   ) throw new Error("The model returned an invalid pull request draft.");
   // Older providers may omit this optional content; preserve the existing title fallback.
-  return JSON.stringify({ ...draft, commitMessage: draft.commitMessage ?? null });
+  return JSON.stringify({
+    title: draft.title,
+    description: draft.description,
+    commitMessage: draft.commitMessage ?? null,
+  });
 };
 
 export interface UtilityTextInput {

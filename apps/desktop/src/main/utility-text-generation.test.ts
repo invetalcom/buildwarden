@@ -47,7 +47,9 @@ describe("standalone text generation", () => {
     const draft = { title: "Fix login", description: "## Summary\nFix login", commitMessage: null };
     expect(validateUtilityText(`\x60\x60\x60json\n${JSON.stringify(draft)}\n\x60\x60\x60`, "pull-request-draft")).toBe(JSON.stringify(draft));
     expect(validateUtilityText(JSON.stringify({ title: draft.title, description: draft.description }), "pull-request-draft")).toBe(JSON.stringify(draft));
-    for (const invalid of [[], {}, { ...draft, title: " " }, { ...draft, commitMessage: 4 }, { ...draft, unwanted: true }]) {
+    expect(validateUtilityText(JSON.stringify({ ...draft, summary: "Extra summary", labels: ["bug"] }), "pull-request-draft"))
+      .toBe(JSON.stringify(draft));
+    for (const invalid of [[], {}, { ...draft, title: " " }, { ...draft, description: 4 }, { ...draft, commitMessage: 4 }]) {
       expect(() => validateUtilityText(JSON.stringify(invalid), "pull-request-draft")).toThrow();
     }
     expect(() => validateUtilityText("not JSON", "pull-request-draft")).toThrow();
