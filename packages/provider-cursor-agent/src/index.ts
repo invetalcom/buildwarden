@@ -2997,7 +2997,12 @@ export async function generateUtilityTextWithCursorAgent(
     signal: input.signal,
     timeoutMs: input.timeoutMs,
   });
-  const parsed: unknown = JSON.parse(stdout);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error("Cursor text generation returned output that is not valid JSON.");
+  }
   const result = isRecord(parsed) ? parsed : undefined;
   createCursorDevLogger({
     logDirPath: input.devLogging?.logDirPath,

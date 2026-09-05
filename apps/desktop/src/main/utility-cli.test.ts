@@ -33,6 +33,9 @@ const makeFakeCli = () => {
       fs.writeFileSync('capture.json', JSON.stringify(capture));
       if (prompt === 'hang') { setInterval(() => {}, 1000); return; }
       if (prompt === 'fail') { process.stderr.write('provider rejected the request'); process.exit(3); }
+      if (prompt === 'empty-output') return;
+      if (prompt === 'invalid-json') { console.log('Please log in before continuing.'); return; }
+      if (prompt === 'noise') console.log('An update is available.');
       if (args.includes('exec')) {
         console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Fix login' } }));
         console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 70, output_tokens: 3, cached_input_tokens: 10 } }));
@@ -86,6 +89,24 @@ describe("CLI utility generation", () => {
       outputSchema: { type: "object" },
     })).rejects.toThrow("provider rejected");
     expect(existsSync(fixture.capture().schemaPath)).toBe(false);
+  });
+
+  it("ignores Codex stdout notices when completed JSON events follow", async () => {
+    const fixture = makeFakeCli();
+    const result = await generateUtilityTextWithCodexCli({
+      cwd: fixture.cwd, prompt: "noise", modelId: "test-model", config: { codexBinaryPath: fixture.binary },
+    });
+    expect(result).toMatchObject({ text: "Fix login", usage: { inputTokens: 70, outputTokens: 3 } });
+  });
+
+  it.each(["empty-output", "invalid-json"])("reports provider-specific errors for %s", async (prompt) => {
+    const fixture = makeFakeCli();
+    await expect(generateUtilityTextWithCodexCli({
+      cwd: fixture.cwd, prompt, modelId: "test-model", config: { codexBinaryPath: fixture.binary },
+    })).rejects.toThrow("Codex text generation returned no completed answer.");
+    await expect(generateUtilityTextWithCursorAgent({
+      cwd: fixture.cwd, prompt, modelId: "test-model", config: { cursorBinaryPath: fixture.binary },
+    })).rejects.toThrow("Cursor text generation returned output that is not valid JSON.");
   });
 
   it("terminates a hung child at its deadline", async () => {

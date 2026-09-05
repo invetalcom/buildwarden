@@ -2544,7 +2544,14 @@ export async function generateUtilityTextWithCodexCli(
     let completed = false;
     let usage: RunTokenUsage = { inputTokens: 0, outputTokens: 0 };
     for (const line of stdout.split(/\r?\n/).filter((line) => line.trim())) {
-      const event = asRecord(JSON.parse(line));
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        logger.log("codex.exec.stdout", { line });
+        continue;
+      }
+      const event = asRecord(parsed);
       logger.log("codex.exec.event", event);
       const item = asRecord(event?.item);
       if (event?.type === "item.completed" && item?.type === "agent_message") text = asString(item.text) ?? "";
