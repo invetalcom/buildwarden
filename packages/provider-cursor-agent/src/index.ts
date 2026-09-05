@@ -1,4 +1,5 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { runTextGenerationProcess } from "@buildwarden/agent-runtime";
 import { appendFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
@@ -37,6 +38,7 @@ import {
   type RunUserInputQuestion,
   type RunUserInputRequest,
   type ShellApprovalDecision,
+  type UtilityTextGenerationOptions,
 } from "@buildwarden/shared";
 
 const PROVIDER = "cursor-agent" as const;
@@ -2977,6 +2979,39 @@ export async function generateAskTextResultWithCursorAgent(input: GenerateAskTex
 
 export async function generateAskTextWithCursorAgent(input: GenerateAskTextWithCursorAgentInput): Promise<string> {
   return (await generateAskTextResultWithCursorAgent(input)).text;
+}
+
+export async function generateUtilityTextWithCursorAgent(
+  input: GenerateAskTextWithCursorAgentInput & UtilityTextGenerationOptions,
+): Promise<{ text: string; usage: RunTokenUsage }> {
+  const apiEndpoint = getCursorAgentApiEndpoint(input.config);
+  const launch = resolveCursorAgentProcessLaunch(getCursorAgentBinaryPath(input.config), [
+    ...(apiEndpoint ? ["-e", apiEndpoint] : []),
+    "--print", "--mode", "ask", "--trust", "--output-format", "json",
+    "--model", input.modelId || CURSOR_DEFAULT_MODEL,
+  ]);
+  const stdout = await runTextGenerationProcess({
+    ...launch,
+    cwd: input.cwd,
+    prompt: input.prompt,
+    signal: input.signal,
+    timeoutMs: input.timeoutMs,
+  });
+  const parsed: unknown = JSON.parse(stdout);
+  const result = isRecord(parsed) ? parsed : undefined;
+  createCursorDevLogger({
+    logDirPath: input.devLogging?.logDirPath,
+    runId: input.devLogging?.runId ?? "utility-text",
+    modelId: input.modelId,
+    sessionType: "chat",
+  }).log("cursor.print.result", result);
+  if (result?.type !== "result" || result.is_error === true || result.subtype !== "success") {
+    throw new Error(asString(result?.result) ?? "Cursor text generation did not complete successfully.");
+  }
+  const text = asString(result.result)?.trim();
+  if (!text) throw new Error("Cursor text generation returned an empty answer.");
+  // Some CLI versions omit usage in print mode. Never estimate or re-run a paid request.
+  return { text, usage: normalizeCursorTokenUsage(result) ?? { inputTokens: 0, outputTokens: 0 } };
 }
 
 export async function suggestCommitMessageWithCursorAgent(input: {

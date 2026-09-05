@@ -1,6 +1,8 @@
 import { Buffer } from "node:buffer";
 import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, rmdir, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { resolveTextGenerationProcessLaunch, runTextGenerationProcess } from "@buildwarden/agent-runtime";
 import { isAbsolute, relative, resolve } from "node:path";
 import readline from "node:readline";
 import type {
@@ -21,6 +23,7 @@ import type {
   RunUserInputRequest,
   ShellApprovalDecision,
   RunTokenUsage,
+  UtilityTextGenerationOptions,
 } from "@buildwarden/shared";
 import {
   getCodexCliRecommendedModelIds,
@@ -2496,4 +2499,65 @@ export async function generateAskTextResultWithCodexCli(input: GenerateAskTextWi
 
 export async function generateAskTextWithCodexCli(input: GenerateAskTextWithCodexCliInput): Promise<string> {
   return (await generateAskTextResultWithCodexCli(input)).text;
+}
+
+export async function generateUtilityTextWithCodexCli(
+  input: GenerateAskTextWithCodexCliInput & UtilityTextGenerationOptions,
+): Promise<{ text: string; usage: RunTokenUsage }> {
+  input.signal?.throwIfAborted();
+  const { binaryPath, homePath } = resolveCodexCliConfig(input.config);
+  const effort = resolveCodexReasoningEffort(input.providerOptions, input.modelConfig);
+  const tier = resolveCodexServiceTier(input.providerOptions);
+  // TOML literal strings also survive Windows .cmd shims without embedded quotes.
+  const configValue = (key: string, value: string): string => {
+    if (!/^[a-z0-9_-]+$/i.test(value)) throw new Error(`Invalid Codex ${key} value.`);
+    return `${key}='${value}'`;
+  };
+  const schemaDir = input.outputSchema ? await mkdtemp(resolve(tmpdir(), "buildwarden-codex-schema-")) : undefined;
+  const schemaPath = schemaDir ? resolve(schemaDir, "schema.json") : undefined;
+  const logger = createDevLogger({
+    logDirPath: input.devLogging?.logDirPath,
+    runId: input.devLogging?.runId ?? "utility-text",
+    providerType: "codex-cli",
+    modelId: input.modelId,
+    sessionType: "chat",
+  });
+  try {
+    if (schemaPath) await writeFile(schemaPath, JSON.stringify(input.outputSchema), "utf8");
+    const args = [
+      "-a", "never", "exec", "--ephemeral", "--json", "--skip-git-repo-check",
+      "--sandbox", "read-only", "--model", input.modelId || CODEX_DEFAULT_MODEL,
+      ...(effort ? ["-c", configValue("model_reasoning_effort", effort)] : []),
+      ...(tier ? ["-c", configValue("service_tier", tier)] : []),
+      ...(schemaPath ? ["--output-schema", schemaPath] : []),
+      "-",
+    ];
+    const stdout = await runTextGenerationProcess({
+      ...resolveTextGenerationProcessLaunch(binaryPath, args),
+      cwd: input.cwd,
+      env: buildCodexProcessEnv(input.cwd, homePath, input.networkProxy),
+      prompt: input.prompt,
+      signal: input.signal,
+      timeoutMs: input.timeoutMs,
+    });
+    let text = "";
+    let completed = false;
+    let usage: RunTokenUsage = { inputTokens: 0, outputTokens: 0 };
+    for (const line of stdout.split(/\r?\n/).filter((line) => line.trim())) {
+      const event = asRecord(JSON.parse(line));
+      logger.log("codex.exec.event", event);
+      const item = asRecord(event?.item);
+      if (event?.type === "item.completed" && item?.type === "agent_message") text = asString(item.text) ?? "";
+      if (event?.type === "turn.failed") throw new Error(asString(asRecord(event.error)?.message) ?? "Codex text generation failed.");
+      if (event?.type === "turn.completed") {
+        completed = true;
+        usage = normalizeCodexTokenUsage(event.usage);
+      }
+    }
+    if (!completed || !text.trim()) throw new Error("Codex text generation returned no completed answer.");
+    return { text: text.trim(), usage };
+  } finally {
+    if (schemaPath) await rm(schemaPath, { force: true });
+    if (schemaDir) await rmdir(schemaDir);
+  }
 }

@@ -16,6 +16,7 @@ import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
 import { readRunWorkspaceFileForPreview } from "./run-workspace-file";
 import { normalizeJsonResponse } from "./json-response";
 import { normalizeSuggestedBranchName } from "./branch-name-suggestion";
+import { generateUtilityText, validateUtilityText, type UtilityTextPurpose } from "./utility-text-generation";
 import {
   createFolderSnapshot,
   deleteFolderSnapshot,
@@ -50,22 +51,19 @@ import {
   AiSdkProviderAdapter,
   OpenRouterProviderAdapter,
   generateAskTextResultWithAiSdk,
-  suggestCommitMessageWithAiSdk,
 } from "@buildwarden/provider-ai-sdk";
 import {
   ClaudeCodeProviderAdapter,
   assertClaudeCodeAvailable,
   generateAskTextResultWithClaudeCode,
   listClaudeCodeSlashCommands,
-  suggestCommitMessageWithClaudeCode,
 } from "@buildwarden/provider-claude-code";
-import { CodexCliProviderAdapter, assertCodexCliAvailable, generateAskTextResultWithCodexCli, suggestCommitMessageWithCodexCli } from "@buildwarden/provider-codex-cli";
+import { CodexCliProviderAdapter, assertCodexCliAvailable, generateAskTextResultWithCodexCli } from "@buildwarden/provider-codex-cli";
 import {
   CursorAgentProviderAdapter,
   assertCursorAgentAvailable,
   generateAskTextResultWithCursorAgent,
   getCursorAgentBinaryPathCandidates,
-  suggestCommitMessageWithCursorAgent,
 } from "@buildwarden/provider-cursor-agent";
 import { AzureLegacyProviderAdapter, createAzureLegacyClientFromParts, createAzureLegacyDevLogger } from "@buildwarden/provider-azure-legacy";
 import {
@@ -3754,16 +3752,7 @@ export class AppController
         "\n\n[Diff truncated for commit message generation - review before committing.]";
     }
 
-    const model = this.db.getModel(run.modelId);
-    const provider = this.db.getProviderAccount(model.providerAccountId);
-    const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
-
-    if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
-      throw new Error("The provider API key could not be resolved from secure storage.");
-    }
-
-    const providerConfig = JSON.parse(provider.configJson || "{}") as Record<string, unknown>;
-    const networkProxy = await this.resolveNetworkProxyRuntimeConfig();
+    const context = await this.resolveModelInvocationContext(run.modelId);
     const commitMessagePrompt = [
       "Task the agent was given:",
       run.prompt,
@@ -3777,108 +3766,20 @@ export class AppController
       "Output only the commit message text - no quotes, markdown fences, or commentary.",
     ].join("\n");
 
-    if (provider.providerType === "codex-cli") {
-      const text = normalizeSuggestedCommitMessage(
-        await suggestCommitMessageWithCodexCli({
-          cwd: run.worktreePath,
-          modelId: model.modelId,
-          config: providerConfig,
-          modelConfig: JSON.parse(model.configJson || "{}") as Record<string, unknown>,
-          diffPrompt: commitMessagePrompt,
-          networkProxy,
-        }),
-      );
-      if (!text) {
-        throw new Error("Codex CLI returned an empty commit message.");
-      }
-      return text;
-    }
-
-    if (provider.providerType === "claude-code") {
-      const text = normalizeSuggestedCommitMessage(
-        await suggestCommitMessageWithClaudeCode({
-          cwd: run.worktreePath,
-          modelId: model.modelId,
-          config: providerConfig,
-          diffPrompt: commitMessagePrompt,
-          networkProxy,
-        }),
-      );
-      if (!text) {
-        throw new Error("Claude Code returned an empty commit message.");
-      }
-      return text;
-    }
-
-    if (provider.providerType === "cursor-agent") {
-      const text = normalizeSuggestedCommitMessage(
-        await suggestCommitMessageWithCursorAgent({
-          cwd: run.worktreePath,
-          modelId: model.modelId,
-          config: providerConfig,
-          modelConfig: JSON.parse(model.configJson || "{}") as Record<string, unknown>,
-          diffPrompt: commitMessagePrompt,
-        }),
-      );
-      if (!text) {
-        throw new Error("Cursor Agent returned an empty commit message.");
-      }
-      return text;
-    }
-
-    const baseURL = (model.baseUrlOverride ?? provider.apiBaseUrl)?.trim();
-
     try {
-      if (provider.providerType === "azure-legacy") {
-        if (!baseURL) {
-          throw new Error("Azure Legacy requires a deployment base URL on the provider or model.");
-        }
-        const client = createAzureLegacyClientFromParts(baseURL, apiKey ?? "", providerConfig, undefined, networkProxy);
-        const completion = await client.chat.completions.create({
-          model: model.modelId,
-          messages: [
-            {
-              role: "system",
-              content:
-                "You write clear, conventional git commit messages from diffs. Output only the commit message, nothing else.",
-            },
-            { role: "user", content: commitMessagePrompt },
-          ],
-          max_completion_tokens: 500,
-          temperature: 0.3,
-        });
-        const raw = extractChatCompletionText(completion.choices[0]?.message?.content);
-        const text = normalizeSuggestedCommitMessage(raw ?? "");
-        if (!text) {
-          throw new Error("The model returned an empty commit message.");
-        }
-        return text;
-      }
-
-      const raw = await suggestCommitMessageWithAiSdk({
-        providerType: provider.providerType === "openrouter" ? "openrouter" : "ai-sdk",
-        modelId: model.modelId,
-        apiKey: apiKey ?? "",
-        apiBaseUrl: baseURL,
-        config: providerConfig,
-        modelConfig: JSON.parse(model.configJson || "{}") as Record<string, unknown>,
+      const text = normalizeSuggestedCommitMessage(await this.askModelForUtilityText(run.worktreePath, context, {
+        purpose: "commit-message",
         prompt: commitMessagePrompt,
-        networkProxy,
-      });
-      const text = normalizeSuggestedCommitMessage(raw ?? "");
-      if (!text) {
-        throw new Error("The model returned an empty commit message.");
-      }
+        systemPrompt: "You write concise git commit messages from diffs. Output only the commit message.",
+        maxTokens: 500,
+        temperature: 0.3,
+        usageProjectId: run.projectId,
+      }));
+      if (!text) throw new Error("The model returned an empty commit message.");
       return text;
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      throw new Error(
-        [
-          "Could not generate a commit message via the configured provider.",
-          "Write the message manually or switch to a supported model.",
-          `Detail: ${msg}`,
-        ].join(" "),
-      );
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Could not generate a commit message via the configured provider. Detail: ${message}`);
     }
   }
 
@@ -5618,6 +5519,39 @@ export class AppController
     };
   }
 
+  private async askModelForUtilityText(
+    cwd: string,
+    context: ModelInvocationContext,
+    input: {
+      purpose: UtilityTextPurpose;
+      prompt: string;
+      systemPrompt: string;
+      maxTokens: number;
+      temperature: number;
+      usageProjectId: string;
+    },
+  ): Promise<string> {
+    const { model, provider, apiKey, providerConfig, modelConfig, networkProxy } = context;
+    const devLogging = this.db.getSettings()[APP_SETTING_KEYS.enableDevMode] === "true"
+      ? { logDirPath: this.logDirPath, runId: input.purpose }
+      : undefined;
+    const result = await generateUtilityText({
+      ...input,
+      cwd,
+      providerType: provider.providerType,
+      modelId: model.modelId,
+      apiKey,
+      apiBaseUrl: model.baseUrlOverride ?? provider.apiBaseUrl,
+      config: providerConfig,
+      modelConfig,
+      networkProxy,
+      devLogging,
+    });
+    // Account for a completed model call even when its output fails validation.
+    this.recordStandaloneModelUsage(input.usageProjectId, result.usage);
+    return validateUtilityText(result.text, input.purpose);
+  }
+
   private async askModelForText(
     cwd: string,
     context: ModelInvocationContext,
@@ -6540,7 +6474,8 @@ export class AppController
     ].join("\n");
 
     try {
-      const text = await this.askModelForText(run.worktreePath, context, {
+      const text = await this.askModelForUtilityText(run.worktreePath, context, {
+        purpose: "pull-request-draft",
         prompt,
         systemPrompt: "You write strong engineering pull request drafts. Output only the requested JSON object.",
         maxTokens: 1_300,
@@ -6692,7 +6627,8 @@ export class AppController
       "Use a short conventional prefix such as feat/, fix/, refactor/, docs/, test/, or chore/ when appropriate.",
       "Output only the branch name, with no quotes, markdown, or commentary.",
     ].join("\n");
-    const raw = await this.askModelForText(run.worktreePath, context, {
+    const raw = await this.askModelForUtilityText(run.worktreePath, context, {
+      purpose: "branch-name",
       prompt,
       systemPrompt: "You generate concise, valid Git branch names. Output only the branch name.",
       maxTokens: 80,
