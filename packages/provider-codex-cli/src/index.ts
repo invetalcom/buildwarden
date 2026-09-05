@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, rmdir, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolveTextGenerationProcessLaunch, runTextGenerationProcess } from "@buildwarden/agent-runtime";
 import { isAbsolute, relative, resolve } from "node:path";
@@ -2513,8 +2513,6 @@ export async function generateUtilityTextWithCodexCli(
     if (!/^[a-z0-9_-]+$/i.test(value)) throw new Error(`Invalid Codex ${key} value.`);
     return `${key}='${value}'`;
   };
-  const schemaDir = input.outputSchema ? await mkdtemp(resolve(tmpdir(), "buildwarden-codex-schema-")) : undefined;
-  const schemaPath = schemaDir ? resolve(schemaDir, "schema.json") : undefined;
   const logger = createDevLogger({
     logDirPath: input.devLogging?.logDirPath,
     runId: input.devLogging?.runId ?? "utility-text",
@@ -2522,6 +2520,9 @@ export async function generateUtilityTextWithCodexCli(
     modelId: input.modelId,
     sessionType: "chat",
   });
+  const schemaRoot = resolve(tmpdir());
+  const schemaDir = input.outputSchema ? await mkdtemp(resolve(schemaRoot, "buildwarden-codex-schema-")) : undefined;
+  const schemaPath = schemaDir ? resolve(schemaDir, "schema.json") : undefined;
   try {
     if (schemaPath) await writeFile(schemaPath, JSON.stringify(input.outputSchema), "utf8");
     const args = [
@@ -2564,7 +2565,12 @@ export async function generateUtilityTextWithCodexCli(
     if (!completed || !text.trim()) throw new Error("Codex text generation returned no completed answer.");
     return { text: text.trim(), usage };
   } finally {
-    if (schemaPath) await rm(schemaPath, { force: true });
-    if (schemaDir) await rmdir(schemaDir);
+    if (schemaDir) {
+      const ownedPath = relative(schemaRoot, resolve(schemaDir));
+      if (!isAbsolute(ownedPath) && /^buildwarden-codex-schema-[^/\\]+$/.test(ownedPath)) {
+        // Retry transient Windows locks without replacing the generation result or error.
+        await rm(schemaDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }).catch(() => undefined);
+      }
+    }
   }
 }

@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolveTextGenerationProcessLaunch, runTextGenerationProcess } from "@buildwarden/agent-runtime";
 import { generateUtilityTextWithCodexCli } from "@buildwarden/provider-codex-cli";
@@ -28,6 +28,7 @@ const makeFakeCli = () => {
       const args = process.argv.slice(2);
       const schemaIndex = args.indexOf('--output-schema');
       const schemaPath = schemaIndex >= 0 ? args[schemaIndex + 1] : null;
+      if (schemaPath) fs.writeFileSync(require('node:path').join(require('node:path').dirname(schemaPath), 'extra.tmp'), 'temporary CLI output');
       const capture = { prompt, args, schemaPath, home: process.env.CODEX_HOME,
         schema: schemaPath ? JSON.parse(fs.readFileSync(schemaPath, 'utf8')) : null };
       fs.writeFileSync('capture.json', JSON.stringify(capture));
@@ -70,6 +71,7 @@ describe("CLI utility generation", () => {
     expect(captured.args).not.toContain("app-server");
     expect(captured.schema.type).toBe("object");
     expect(existsSync(captured.schemaPath)).toBe(false);
+    expect(existsSync(dirname(captured.schemaPath))).toBe(false);
   });
 
   it("runs Cursor print in ask mode without enabling writes or resuming a session", async () => {
