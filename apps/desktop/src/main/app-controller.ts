@@ -86,7 +86,7 @@ import {
   type NetworkProxyRuntimeConfig,
   type NetworkProxySettingsInput,
   type NetworkProxySettingsSnapshot,
-  PROVIDER_CONFIG_AI_SDK_PROVIDER_FAMILY_KEY,
+  getAiSdkProviderFamilyFromConfigJson,
   buildPriorChatCompletionMessagesFromSteps,
   commandToExactShellPatternSource,
   getDefaultProviderCapabilities,
@@ -106,7 +106,6 @@ import {
   dedupeChatAttachmentPayloads,
   extractAttachmentPayloadsFromMetadata,
   validateChatAttachmentPayloads,
-  type UnifiedProviderFamily,
   type StoredAttachmentMetadata,
   type AppSnapshot,
   type BookmarkRecord,
@@ -771,25 +770,6 @@ const parseReviewLineNumber = (value: unknown, fallbackReference: unknown): numb
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 };
 
-const getAiSdkProviderFamilyFromConfig = (configJson: string): UnifiedProviderFamily => {
-  try {
-    const config = JSON.parse(configJson || "{}") as Record<string, unknown>;
-    const raw = config[PROVIDER_CONFIG_AI_SDK_PROVIDER_FAMILY_KEY];
-    if (
-      raw === "openai" ||
-      raw === "anthropic" ||
-      raw === "google" ||
-      raw === "xai" ||
-      raw === "openai-compatible"
-    ) {
-      return raw;
-    }
-  } catch {
-    /* ignore */
-  }
-  return "openai";
-};
-
 const parseProviderConfigJson = (configJson: string): Record<string, unknown> => {
   try {
     const parsed = JSON.parse(configJson || "{}") as unknown;
@@ -823,7 +803,7 @@ const dedupeAvailableProviderModels = (models: readonly ProviderAvailableModel[]
 
 const getCuratedAvailableModelsForProvider = (provider: ProviderAccountRecord): ProviderAvailableModel[] => {
   const providerFamily =
-    provider.providerType === "ai-sdk" ? getAiSdkProviderFamilyFromConfig(provider.configJson) : undefined;
+    provider.providerType === "ai-sdk" ? getAiSdkProviderFamilyFromConfigJson(provider.configJson) : undefined;
   return getModelPresetsForProvider(provider.providerType, providerFamily).map((preset) => ({
     modelId: preset.modelId,
     displayName: preset.displayName,
@@ -835,7 +815,7 @@ const providerAllowsMissingApiKey = (provider: ProviderAccountRecord): boolean =
   provider.providerType === "codex-cli" ||
   provider.providerType === "claude-code" ||
   provider.providerType === "cursor-agent" ||
-  (provider.providerType === "ai-sdk" && getAiSdkProviderFamilyFromConfig(provider.configJson) === "openai-compatible");
+  (provider.providerType === "ai-sdk" && getAiSdkProviderFamilyFromConfigJson(provider.configJson) === "openai-compatible");
 
 type ExecutionOptionsInput = {
   reasoningEffort?: string;

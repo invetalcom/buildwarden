@@ -18,7 +18,6 @@ const internalPackages = [
   "@buildwarden/shared",
   "@buildwarden/db",
   "@buildwarden/git-service",
-  "@buildwarden/agent-runtime",
   "@buildwarden/provider-ai-sdk",
   "@buildwarden/provider-claude-code",
   "@buildwarden/provider-codex-cli",
@@ -37,6 +36,18 @@ export default defineConfig({
         exclude: internalPackages,
       },
       rollupOptions: {
+        onwarn(warning, warn) {
+          // Claude Agent SDK 0.3.251 contains unused Node imports that Rollup already removes.
+          if (
+            warning.code === "UNUSED_EXTERNAL_IMPORT" &&
+            (warning.exporter === "fs" || warning.exporter === "path") &&
+            warning.ids?.length === 1 &&
+            warning.ids[0].replace(/\\/g, "/").endsWith("/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs")
+          ) {
+            return;
+          }
+          warn(warning);
+        },
         external: ["node-pty"],
         input: {
           index: resolve(__dirname, "src/main/index.ts"),
@@ -51,7 +62,6 @@ export default defineConfig({
         "@buildwarden/shared": resolve(__dirname, "../../packages/shared/src"),
         "@buildwarden/db": resolve(__dirname, "../../packages/db/src"),
         "@buildwarden/git-service": resolve(__dirname, "../../packages/git-service/src"),
-        "@buildwarden/agent-runtime": resolve(__dirname, "../../packages/agent-runtime/src"),
         "@buildwarden/provider-ai-sdk": resolve(__dirname, "../../packages/provider-ai-sdk/src"),
         "@buildwarden/provider-claude-code": resolve(__dirname, "../../packages/provider-claude-code/src"),
         "@buildwarden/provider-codex-cli": resolve(__dirname, "../../packages/provider-codex-cli/src"),

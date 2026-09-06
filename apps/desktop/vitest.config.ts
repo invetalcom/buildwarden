@@ -7,7 +7,6 @@ const packageSource = (packageName: string, fileName = "index.ts") =>
 export default defineConfig({
   resolve: {
     alias: {
-      "@buildwarden/agent-runtime": packageSource("agent-runtime"),
       "@buildwarden/db": packageSource("db"),
       "@buildwarden/git-service": packageSource("git-service"),
       "@buildwarden/provider-ai-sdk": packageSource("provider-ai-sdk"),

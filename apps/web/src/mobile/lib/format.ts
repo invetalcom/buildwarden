@@ -41,8 +41,5 @@ export const firstLine = (value: string, fallback = "Untitled"): string => {
   return line.length > 140 ? `${line.slice(0, 139)}…` : line;
 };
 
-/** Trailing path segment — full repo paths never fit on a phone. */
-export const basename = (path: string): string => path.split(/[\\/]/).filter(Boolean).pop() ?? path;
-
 export const errorMessage = (caught: unknown, fallback = "Something went wrong."): string =>
   caught instanceof Error && caught.message ? caught.message : fallback;

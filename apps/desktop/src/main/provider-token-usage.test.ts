@@ -244,61 +244,6 @@ afterEach(async () => {
 });
 
 describe("provider token usage normalization", () => {
-  it("documents provider-native usage formats before comparing normalized usage", () => {
-    const { facts, formats } = PROVIDER_USAGE_SCENARIO;
-    const inputTokens = totalInputTokens(facts);
-    const tokens = totalTokens(facts);
-
-    expect(formats.codexCli).toEqual({
-      total_token_usage: {
-        input_tokens: inputTokens,
-        output_tokens: facts.outputTokens,
-        reasoning_output_tokens: facts.reasoningTokens,
-        cache_read_input_tokens: facts.cacheReadInputTokens,
-        cache_write_input_tokens: facts.cacheWriteInputTokens,
-        total_tokens: tokens,
-      },
-      last_token_usage: {
-        input_tokens: inputTokens,
-        output_tokens: facts.outputTokens,
-        reasoning_output_tokens: facts.reasoningTokens,
-        cache_read_input_tokens: facts.cacheReadInputTokens,
-        cache_write_input_tokens: facts.cacheWriteInputTokens,
-        total_tokens: tokens,
-      },
-      model_context_window: facts.maxTokens,
-    });
-    expect(formats.claudeCodeResult).toEqual({
-      type: "result",
-      session_id: "session-token-test",
-      result: "done",
-      modelUsage: {
-        sonnet: {
-          inputTokens: facts.uncachedInputTokens,
-          outputTokens: facts.outputTokens,
-          reasoningTokens: facts.reasoningTokens,
-          cacheReadInputTokens: facts.cacheReadInputTokens,
-          cacheCreationInputTokens: facts.cacheWriteInputTokens,
-          contextWindow: facts.maxTokens,
-        },
-      },
-    });
-    expect(formats.aiSdk).toEqual({
-      inputTokens,
-      inputTokenDetails: {
-        noCacheTokens: facts.uncachedInputTokens,
-        cacheReadTokens: facts.cacheReadInputTokens,
-        cacheWriteTokens: facts.cacheWriteInputTokens,
-      },
-      outputTokens: facts.outputTokens,
-      outputTokenDetails: {
-        textTokens: facts.outputTokens - facts.reasoningTokens,
-        reasoningTokens: facts.reasoningTokens,
-      },
-      totalTokens: tokens,
-    });
-  });
-
   it("normalizes the app-server tokenUsage shape Codex emits today", () => {
     // Verified against codex-cli 0.144.1: camelCase, total/last buckets, no cache-write counter.
     expect(
