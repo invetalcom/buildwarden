@@ -199,6 +199,8 @@ pnpm install
 pnpm dev
 ```
 
+`pnpm dev` runs Electron's `install-electron` command before starting electron-vite. Electron 44 downloads its binary on demand, while electron-vite 5 expects it to be installed already. This step installs the binary if missing and reuses it on later launches.
+
 The packaged build always includes the browser application. When testing Remote Access with the development app, build the static web assets before starting Electron and rebuild them after renderer changes:
 
 ```bash
@@ -212,8 +214,13 @@ Useful validation commands:
 pnpm typecheck
 pnpm lint
 pnpm test
+pnpm audit --audit-level moderate
 pnpm --filter @buildwarden/desktop build
 ```
+
+Dependency maintenance uses the pnpm version pinned in `package.json` and the GitHub workflows. Refresh both direct dependencies and the lockfile, then run the validation commands above. Security overrides are kept in `pnpm-workspace.yaml`; the audit includes development dependencies and has no advisory exclusions.
+
+The September 2026 refresh keeps Vite 7 and `@vitejs/plugin-react` 5 because `electron-vite` 5 does not yet support Vite 8. TypeScript stays on 6.0 because `typescript-eslint` 8 requires TypeScript below 6.1. Node types follow the Node 24 runtime rather than the newest Node major. ESLint and the Hooks plugin are updated while retaining the existing lint rules; adopting the new React Compiler checks and ESLint 10's additional recommended rules is separate work.
 
 Packaging shortcuts:
 

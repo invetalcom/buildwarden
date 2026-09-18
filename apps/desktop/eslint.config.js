@@ -22,7 +22,12 @@ export default tseslint.config(
       "react-refresh": reactRefresh,
     },
     rules: {
-      ...reactHooks.configs.recommended.rules,
+      // Preserve the existing Hooks checks; React Compiler adoption is separate.
+      "react-hooks/rules-of-hooks": "error",
+      "react-hooks/exhaustive-deps": "warn",
+      // ESLint 10 added these to recommended; retain the previous lint policy.
+      "no-useless-assignment": "off",
+      "preserve-caught-error": "off",
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
     },
   },

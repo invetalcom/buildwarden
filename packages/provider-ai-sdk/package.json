@@ -11,14 +11,14 @@
   },
   "dependencies": {
     "@buildwarden/shared": "workspace:*",
-    "ai": "^7.0.20",
-    "@ai-sdk/anthropic": "^4.0.11",
-    "@ai-sdk/google": "^4.0.12",
-    "@ai-sdk/openai": "^4.0.11",
-    "@ai-sdk/openai-compatible": "^3.0.7",
-    "@ai-sdk/xai": "^4.0.10",
+    "ai": "^7.0.106",
+    "@ai-sdk/anthropic": "^4.0.57",
+    "@ai-sdk/google": "^4.0.75",
+    "@ai-sdk/openai": "^4.0.70",
+    "@ai-sdk/openai-compatible": "^3.0.52",
+    "@ai-sdk/xai": "^5.0.3",
     "@openrouter/ai-sdk-provider": "^3.0.0",
-    "p-retry": "^6.2.1",
-    "undici": "^7.29.0"
+    "p-retry": "^8.0.1",
+    "undici": "^8.10.2"
   }
 }
