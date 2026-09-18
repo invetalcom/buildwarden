@@ -35,6 +35,7 @@ import type {
   ShellApprovalDecision,
   RunPlanProgressPayload,
   RunTokenUsage,
+  UtilityTextGenerationOptions,
 } from "@buildwarden/shared";
 import {
   MODEL_CONFIG_EXECUTION_PROFILE_KEY,
@@ -2233,4 +2234,65 @@ export async function generateAskTextResultWithClaudeCode(input: GenerateAskText
 
 export async function generateAskTextWithClaudeCode(input: GenerateAskTextWithClaudeCodeInput): Promise<string> {
   return (await generateAskTextResultWithClaudeCode(input)).text;
+}
+
+export async function generateUtilityTextWithClaudeCode(
+  input: GenerateAskTextWithClaudeCodeInput & UtilityTextGenerationOptions,
+): Promise<{ text: string; usage: RunTokenUsage }> {
+  input.signal?.throwIfAborted();
+  const { binaryPath, launchArgs } = resolveClaudeCodeConfig(input.config);
+  const launchOptions = launchArgsToSdkOptions(launchArgs);
+  // Interactive session flags must not turn a utility request into a resumed run.
+  const utilityOwnedArgs = new Set([
+    "resume", "continue", "session-id", "fork-session", "resume-session-at",
+    "permission-mode", "dangerously-skip-permissions", "tools", "allowedTools", "allowed-tools",
+    "mcp-config", "strict-mcp-config", "output-format", "json-schema", "max-turns",
+  ]);
+  const extraArgs = Object.fromEntries(Object.entries(launchOptions.extraArgs ?? {}).filter(([key]) => !utilityOwnedArgs.has(key)));
+  const abortController = new AbortController();
+  const abort = () => abortController.abort();
+  const timeout = setTimeout(abort, input.timeoutMs ?? 180_000);
+  input.signal?.addEventListener("abort", abort, { once: true });
+  const effort = resolveClaudeCodeEffort(input.providerOptions);
+  let claudeQuery: ReturnType<typeof query> | undefined;
+  try {
+    claudeQuery = query({
+      prompt: input.prompt,
+      options: {
+        ...launchOptions,
+        extraArgs,
+        pathToClaudeCodeExecutable: binaryPath,
+        cwd: input.cwd,
+        model: normalizeClaudeCodeModelId(input.modelId || CLAUDE_DEFAULT_MODEL),
+        env: buildClaudeProcessEnv(input.networkProxy),
+        ...(effort ? { effort: effort as ClaudeAgentOptions["effort"] } : {}),
+        abortController,
+        persistSession: false,
+        tools: [],
+        mcpServers: {},
+        strictMcpConfig: true,
+        permissionMode: "dontAsk",
+        canUseTool: async () => ({ behavior: "deny", message: "Text generation uses only the supplied context." }),
+        maxTurns: 3,
+        ...(input.outputSchema ? { outputFormat: { type: "json_schema", schema: input.outputSchema } } : {}),
+      },
+    });
+    for await (const event of claudeQuery) {
+      abortController.signal.throwIfAborted();
+      if (event.type !== "result") continue;
+      if (event.subtype !== "success" || event.is_error) {
+        throw new Error("errors" in event ? event.errors.join("\n") : "Claude text generation failed.");
+      }
+      const text = input.outputSchema && event.structured_output !== undefined
+        ? JSON.stringify(event.structured_output)
+        : event.result;
+      if (!text.trim()) throw new Error("Claude text generation returned an empty answer.");
+      return { text: text.trim(), usage: parseClaudeCodeStreamEvent(event).usage ?? { inputTokens: 0, outputTokens: 0 } };
+    }
+    throw new Error("Claude text generation returned no completed answer.");
+  } finally {
+    clearTimeout(timeout);
+    input.signal?.removeEventListener("abort", abort);
+    claudeQuery?.close();
+  }
 }

@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+export { resolveTextGenerationProcessLaunch, runTextGenerationProcess } from "./text-generation-process";
 import type {
   HarnessAdapter,
   HarnessToolContext,

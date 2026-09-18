@@ -35,6 +35,7 @@ import type { AppControllerDesktopServices } from "./desktop-platform-services";
 import { HostEventBus } from "./host-events";
 import type { ProjectPrReviewProvider } from "./pr-review/pr-review-types";
 import { advanceReportedTokenUsage } from "./token-usage-accounting";
+import * as utilityTextGeneration from "./utility-text-generation";
 
 const project = {
   id: "project-1",
@@ -205,6 +206,27 @@ const createMutableProjectHarness = () => {
   });
   return { ...harness, getCurrentProject: () => currentProject };
 };
+
+describe("utility generation usage accounting", () => {
+  it("records the completed call even when a PR draft fails local validation", async () => {
+    const recordProjectTokenUsage = vi.fn();
+    const harness = createHarness({ recordProjectTokenUsage });
+    tempDirs.push(harness.logDir);
+    vi.spyOn(utilityTextGeneration, "generateUtilityText").mockResolvedValue({
+      text: '{"title":"Incomplete draft"}', usage: { inputTokens: 100, outputTokens: 20 },
+    });
+    const controller = harness.controller as unknown as {
+      askModelForUtilityText: (cwd: string, context: unknown, input: unknown) => Promise<string>;
+    };
+    await expect(controller.askModelForUtilityText(project.repoPath, {
+      model, provider, apiKey: "test-key", providerConfig: {}, modelConfig: {}, networkProxy: undefined,
+    }, {
+      purpose: "pull-request-draft", prompt: "Diff", systemPrompt: "Generate a PR draft", maxTokens: 1300,
+      temperature: 0.2, usageProjectId: project.id,
+    })).rejects.toThrow("invalid pull request draft");
+    expect(recordProjectTokenUsage).toHaveBeenCalledWith(project.id, "model-call", expect.any(String), 100, 20);
+  });
+});
 
 describe("provider usage report baselines", () => {
   it("does not reduce the first Codex usage report by a stale runtime from another provider", () => {
@@ -601,7 +623,7 @@ describe("AppController settings and lightweight workflows", () => {
       status: "completed",
     } as RunRecord;
     const harness = createHarness({ getRun: vi.fn(() => run) });
-    const askModelForText = vi.fn<(
+    const askModelForUtilityText = vi.fn<(
       cwd: string,
       context: unknown,
       input: { prompt: string },
@@ -613,7 +635,7 @@ describe("AppController settings and lightweight workflows", () => {
     const controllerInternals = harness.controller as unknown as {
       gitService: { getPullRequestContext: () => Promise<unknown> };
       resolveModelInvocationContext: () => Promise<unknown>;
-      askModelForText: typeof askModelForText;
+      askModelForUtilityText: typeof askModelForUtilityText;
     };
     controllerInternals.gitService = {
       getPullRequestContext: vi.fn(async () => ({
@@ -625,7 +647,7 @@ describe("AppController settings and lightweight workflows", () => {
       })),
     };
     controllerInternals.resolveModelInvocationContext = vi.fn(async () => ({}));
-    controllerInternals.askModelForText = askModelForText;
+    controllerInternals.askModelForUtilityText = askModelForUtilityText;
 
     await expect(harness.controller.suggestRunPullRequestDraft(run.id, "main")).resolves.toEqual({
       title: "Generated committed change",
@@ -633,9 +655,9 @@ describe("AppController settings and lightweight workflows", () => {
       description: "## Summary\n\nCommitted change",
     });
 
-    const prompt = askModelForText.mock.calls[0]?.[2].prompt ?? "";
-    expect(askModelForText.mock.calls[0]?.[0]).toBe(project.repoPath);
-    expect(askModelForText.mock.calls[0]?.[1]).toEqual({});
+    const prompt = askModelForUtilityText.mock.calls[0]?.[2].prompt ?? "";
+    expect(askModelForUtilityText.mock.calls[0]?.[0]).toBe(project.repoPath);
+    expect(askModelForUtilityText.mock.calls[0]?.[1]).toEqual({});
     expect(prompt).toContain("Committed PR diff against the target branch merge base:");
     expect(prompt).toContain("+committed change");
     expect(prompt).not.toContain("(empty diff)");
@@ -654,7 +676,7 @@ describe("AppController settings and lightweight workflows", () => {
       status: "completed",
     } as RunRecord;
     const harness = createHarness({ getRun: vi.fn(() => run) });
-    const askModelForText = vi.fn<(
+    const askModelForUtilityText = vi.fn<(
       cwd: string,
       context: unknown,
       input: { prompt: string },
@@ -666,7 +688,7 @@ describe("AppController settings and lightweight workflows", () => {
     const controllerInternals = harness.controller as unknown as {
       gitService: { getPullRequestContext: () => Promise<unknown> };
       resolveModelInvocationContext: () => Promise<unknown>;
-      askModelForText: typeof askModelForText;
+      askModelForUtilityText: typeof askModelForUtilityText;
     };
     controllerInternals.gitService = {
       getPullRequestContext: vi.fn(async () => ({
@@ -678,14 +700,14 @@ describe("AppController settings and lightweight workflows", () => {
       })),
     };
     controllerInternals.resolveModelInvocationContext = vi.fn(async () => ({}));
-    controllerInternals.askModelForText = askModelForText;
+    controllerInternals.askModelForUtilityText = askModelForUtilityText;
 
     await expect(harness.controller.suggestRunPullRequestDraft(run.id, "main")).resolves.toEqual({
       title: "Generated open change",
       commitMessage: "Generated open change",
       description: "## Summary\n\nOpen change",
     });
-    expect(askModelForText.mock.calls[0]?.[2].prompt).toContain(
+    expect(askModelForUtilityText.mock.calls[0]?.[2].prompt).toContain(
       "Prospective PR diff, including open changes that BuildWarden will commit before publishing:",
     );
   });

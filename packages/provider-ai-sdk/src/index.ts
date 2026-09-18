@@ -27,6 +27,7 @@ import type {
   RunExecutionRequest,
   RunTokenUsage,
   UnifiedProviderFamily,
+  UtilityTextGenerationOptions,
 } from "@buildwarden/shared";
 import {
   AI_SDK_RECOMMENDED_MODEL_IDS,
@@ -1422,6 +1423,7 @@ type GenerateAskTextWithAiSdkInput = {
   systemPrompt: string;
   prompt: string;
   signal?: AbortSignal;
+  utility?: boolean;
   devLogging?: {
     logDirPath: string;
     runId?: string;
@@ -1469,6 +1471,9 @@ export const generateAskTextResultWithAiSdk = async (input: GenerateAskTextWithA
     ...(providerOptions ? { providerOptions: providerOptions as never } : {}),
     abortSignal: input.signal,
   });
+  if (input.utility && result.finishReason === "length") {
+    throw new Error("Text generation exceeded its completion token budget.");
+  }
   return {
     text: result.text.trim(),
     usage: normalizeAiSdkTokenUsage(result.usage, input.modelConfig),
@@ -1477,6 +1482,19 @@ export const generateAskTextResultWithAiSdk = async (input: GenerateAskTextWithA
 
 export const generateAskTextWithAiSdk = async (input: GenerateAskTextWithAiSdkInput): Promise<string> =>
   (await generateAskTextResultWithAiSdk(input)).text;
+
+export const generateUtilityTextWithAiSdk = async (
+  input: GenerateAskTextWithAiSdkInput & UtilityTextGenerationOptions,
+): Promise<{ text: string; usage: RunTokenUsage }> => {
+  const timeout = AbortSignal.timeout(input.timeoutMs ?? 180_000);
+  const result = await generateAskTextResultWithAiSdk({
+    ...input,
+    utility: true,
+    signal: input.signal ? AbortSignal.any([input.signal, timeout]) : timeout,
+  });
+  if (!result.text) throw new Error("Text generation returned an empty answer.");
+  return result;
+};
 
 export const suggestCommitMessageWithAiSdk = async (input: {
   providerType?: "ai-sdk" | "openrouter";

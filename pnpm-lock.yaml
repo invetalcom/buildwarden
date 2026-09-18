@@ -321,12 +321,18 @@ importers:
 
   packages/provider-codex-cli:
     dependencies:
+      '@buildwarden/agent-runtime':
+        specifier: workspace:*
+        version: link:../agent-runtime
       '@buildwarden/shared':
         specifier: workspace:*
         version: link:../shared
 
   packages/provider-cursor-agent:
     dependencies:
+      '@buildwarden/agent-runtime':
+        specifier: workspace:*
+        version: link:../agent-runtime
       '@buildwarden/shared':
         specifier: workspace:*
         version: link:../shared
