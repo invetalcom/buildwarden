@@ -27,6 +27,7 @@ This repository is an Electron desktop app for coding-agent workflows. Optimize 
 - `packages/shared`: shared types, DTOs, provider metadata, IPC contract shapes, settings keys, run/chat types
 - `packages/db`: persisted app state, snapshots, bookmarks, chats, settings, run history, checkpoint persistence
 - `packages/git-service`: Git repo validation, worktree lifecycle, branch/worktree helpers
+- `packages/agent-runtime`: shared process execution helpers for CLI text generation
 - `packages/provider-ai-sdk`: unified AI SDK provider adapter and OpenAI-compatible provider helpers
 - `packages/provider-azure-legacy`: Azure Legacy Provider client and harness helpers
 - `packages/provider-codex-cli`: Codex CLI provider adapter and related commit-message helpers

@@ -1,5 +1,5 @@
 {
-  "name": "@buildwarden/provider-cursor-agent",
+  "name": "@buildwarden/agent-runtime",
   "version": "0.6.6",
   "private": true,
   "type": "module",
@@ -8,9 +8,5 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
-  },
-  "dependencies": {
-    "@buildwarden/agent-runtime": "workspace:*",
-    "@buildwarden/shared": "workspace:*"
   }
 }

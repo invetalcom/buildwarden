@@ -145,6 +145,8 @@ flowchart LR
   - Projects, provider accounts, models, runs, run steps, run notes, worktrees, bookmarks, chats, chat steps, chat bookmarks, project tasks, project insights, Project Lab threads/events, provider session runtime, settings, snapshots, checkpoint metadata, remote pairing grants, device sessions, idempotency records, and security audits.
 - `packages/git-service`
   - Repository validation, worktree lifecycle, branch management, diff computation, GitHub/GitLab remote parsing, PR/MR diff fetching, branch publishing, and pull/merge request creation helpers.
+- `packages/agent-runtime`
+  - Shared process execution helpers for CLI text generation, including cancellation and timeouts.
 - `packages/provider-ai-sdk`
   - Unified AI SDK provider and harness for OpenAI, Anthropic, Google, xAI, and OpenAI-compatible endpoints.
 - `packages/provider-azure-legacy`

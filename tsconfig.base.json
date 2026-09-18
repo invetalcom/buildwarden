@@ -24,6 +24,8 @@
       "@buildwarden/db/*": ["packages/db/src/*"],
       "@buildwarden/git-service": ["packages/git-service/src/index.ts"],
       "@buildwarden/git-service/*": ["packages/git-service/src/*"],
+      "@buildwarden/agent-runtime": ["packages/agent-runtime/src/index.ts"],
+      "@buildwarden/agent-runtime/*": ["packages/agent-runtime/src/*"],
       "@buildwarden/provider-ai-sdk": ["packages/provider-ai-sdk/src/index.ts"],
       "@buildwarden/provider-ai-sdk/*": ["packages/provider-ai-sdk/src/*"],
       "@buildwarden/provider-codex-cli": ["packages/provider-codex-cli/src/index.ts"],
