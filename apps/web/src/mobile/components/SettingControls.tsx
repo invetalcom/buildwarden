@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Check, Plus, X } from "lucide-react";
 import { cn } from "../lib/cn";
-import { Button, Input, ListRow } from "./primitives";
+import { Button, Input } from "./primitives";
 
 /**
  * Form rows for the mobile settings screens.
@@ -160,11 +160,6 @@ export const TextRow = ({
     </div>
   );
 };
-
-/** Read-only informational row, for host-side values a phone cannot change. */
-export const InfoRow = ({ title, value }: { title: string; value: ReactNode }) => (
-  <ListRow title={title} trailing={<span className="max-w-[55vw] truncate text-right">{value}</span>} className="border-b border-[var(--ec-border)] last:border-b-0" />
-);
 
 export const CheckRow = ({
   title,

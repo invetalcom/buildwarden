@@ -146,7 +146,7 @@ flowchart LR
 - `packages/git-service`
   - Repository validation, worktree lifecycle, branch management, diff computation, GitHub/GitLab remote parsing, PR/MR diff fetching, branch publishing, and pull/merge request creation helpers.
 - `packages/agent-runtime`
-  - Runtime execution primitives, run registry, event normalization, status persistence, and streaming adapter glue.
+  - Shared process execution helpers for CLI text generation, including cancellation and timeouts.
 - `packages/provider-ai-sdk`
   - Unified AI SDK provider and harness for OpenAI, Anthropic, Google, xAI, and OpenAI-compatible endpoints.
 - `packages/provider-azure-legacy`
@@ -233,7 +233,7 @@ pnpm build:all
 - Secrets are stored through Electron `safeStorage` when available and must not be written to SQLite as plaintext.
 - The embedded terminal uses `node-pty`; if it is unavailable, terminal support is disabled with a user-facing setup hint.
 - `electron-builder` is configured with `npmRebuild: false`; native module setup should be handled during dependency installation, not during packaging.
-- `pnpm lint` runs the desktop ESLint task and the desktop Vitest suite through the root script.
+- `pnpm lint` runs ESLint for the desktop, shared renderer, and web app; `pnpm test` runs their Vitest suites.
 - Some run/chat state survives app restarts through DB rows, checkpoints, and provider session runtime records.
 - Shared renderer components use `BuildWardenClient`; its Electron adapter wraps `window.buildwarden`, while its browser adapter uses authenticated RPC. Privileged filesystem, Git, shell, and secret-store logic remains in the Electron main process.
 

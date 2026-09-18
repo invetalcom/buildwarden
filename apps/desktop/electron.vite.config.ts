@@ -37,6 +37,18 @@ export default defineConfig({
         exclude: internalPackages,
       },
       rollupOptions: {
+        onwarn(warning, warn) {
+          // Claude Agent SDK 0.3.251 contains unused Node imports that Rollup already removes.
+          if (
+            warning.code === "UNUSED_EXTERNAL_IMPORT" &&
+            (warning.exporter === "fs" || warning.exporter === "path") &&
+            warning.ids?.length === 1 &&
+            warning.ids[0].replace(/\\/g, "/").endsWith("/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs")
+          ) {
+            return;
+          }
+          warn(warning);
+        },
         external: ["node-pty"],
         input: {
           index: resolve(__dirname, "src/main/index.ts"),

@@ -130,17 +130,6 @@ export const Badge = ({ tone = "neutral", children, className }: { tone?: Tone; 
   </span>
 );
 
-export const Card = ({ children, className }: { children: ReactNode; className?: string }) => (
-  <div
-    className={cn(
-      "rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] shadow-[var(--ec-panel-shadow)]",
-      className,
-    )}
-  >
-    {children}
-  </div>
-);
-
 export const SectionLabel = ({ children, action }: { children: ReactNode; action?: ReactNode }) => (
   <div className="flex items-center justify-between gap-2 pl-4 pr-1 pt-3 pb-1">
     <h2 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">{children}</h2>

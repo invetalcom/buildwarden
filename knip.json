@@ -22,7 +22,6 @@
     }
   },
   "ignoreDependencies": [
-    "@buildwarden/agent-runtime",
     "eslint-plugin-sonarjs",
     "openai",
     "simple-git",
