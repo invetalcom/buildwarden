@@ -38,6 +38,18 @@ export default defineConfig({
       },
       rollupOptions: {
         onwarn(warning, warn) {
+          // Zod 4.6.5 mentions @__PURE__ in two explanatory comments. Rollup
+          // mistakes those mentions for annotations and safely removes the comments.
+          const warningId = warning.id?.replace(/\\/g, "/");
+          if (
+            warning.code === "INVALID_ANNOTATION" &&
+            ((warningId?.endsWith("/node_modules/zod/v4/core/util.js") &&
+              warning.message.includes("// Wrapped in a `@__PURE__` IIFE:")) ||
+              (warningId?.endsWith("/node_modules/zod/v4/core/regexes.js") &&
+                warning.message.includes("/** Anchors a pattern source.")))
+          ) {
+            return;
+          }
           // Claude Agent SDK 0.3.251 contains unused Node imports that Rollup already removes.
           if (
             warning.code === "UNUSED_EXTERNAL_IMPORT" &&

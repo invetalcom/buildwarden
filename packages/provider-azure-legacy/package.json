@@ -11,8 +11,8 @@
   },
   "dependencies": {
     "@buildwarden/shared": "workspace:*",
-    "openai": "^5.12.2",
-    "p-retry": "^6.2.1",
-    "undici": "^7.29.0"
+    "openai": "^7.18.0",
+    "p-retry": "^8.0.1",
+    "undici": "^8.10.2"
   }
 }

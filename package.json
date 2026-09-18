@@ -2,7 +2,7 @@
   "name": "buildwarden",
   "version": "0.6.6",
   "private": true,
-  "packageManager": "pnpm@10.32.1",
+  "packageManager": "pnpm@10.34.5",
   "description": "Desktop GUI for coding agents",
   "scripts": {
     "analyze": "pnpm analyze:eslint && pnpm analyze:deps && pnpm analyze:duplicates && pnpm analyze:unused",
@@ -29,8 +29,8 @@
     "typecheck": "pnpm --filter @buildwarden/desktop typecheck && pnpm --filter @buildwarden/renderer typecheck && pnpm --filter @buildwarden/web typecheck"
   },
   "devDependencies": {
-    "dependency-cruiser": "17.3.10",
-    "jscpd": "5.0.12",
-    "knip": "6.26.0"
+    "dependency-cruiser": "18.3.1",
+    "jscpd": "5.3.0",
+    "knip": "6.37.0"
   }
 }
