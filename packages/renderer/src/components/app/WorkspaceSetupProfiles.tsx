@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { APP_SETTING_KEYS, parseWorkspaceSetupSettings, type ProjectWorkspaceSetup, type WorkspaceSetupProfile } from "@buildwarden/shared";
-import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import type { BuildWardenClient } from "../../lib/buildwarden-client-core";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 
-export const WorkspaceSetupProfiles = ({ projectId }: { projectId: string }) => {
-  const client = useBuildWardenClient();
+export const WorkspaceSetupProfiles = ({ projectId, client }: { projectId: string; client: BuildWardenClient }) => {
+  const canEdit = client.capabilities.projectSettingsMutations;
   const [value, setValue] = useState<ProjectWorkspaceSetup>({ activeProfileId: "", profiles: [] });
   const [selected, setSelected] = useState("");
   const [loaded, setLoaded] = useState(false);
@@ -16,16 +16,18 @@ export const WorkspaceSetupProfiles = ({ projectId }: { projectId: string }) => 
   useEffect(() => {
     let alive = true;
     setLoaded(false);
+    if (!canEdit) return;
     void client.getSnapshot().then((snapshot) => {
       if (!alive) return;
       const config = parseWorkspaceSetupSettings(snapshot.settings[APP_SETTING_KEYS.workspaceSetupProfiles])[projectId] ?? { activeProfileId: "", profiles: [] };
       setValue(config); setSelected(config.activeProfileId || config.profiles[0]?.id || ""); setLoaded(true);
     }).catch((error: unknown) => { if (alive) setMessage(String(error)); });
     return () => { alive = false; };
-  }, [client, projectId]);
+  }, [client, projectId, canEdit]);
   const profile = value.profiles.find((p) => p.id === selected);
   const update = (patch: Partial<WorkspaceSetupProfile>) => setValue((current) => ({ ...current, profiles: current.profiles.map((p) => p.id === selected ? { ...p, ...patch } : p) }));
   const save = async () => {
+    if (!canEdit) return;
     setBusy(true); setMessage("");
     try {
       const snapshot = await client.getSnapshot();
@@ -37,6 +39,10 @@ export const WorkspaceSetupProfiles = ({ projectId }: { projectId: string }) => 
   };
   const lines = (text: string) => text.split(/\r?\n/);
   const profileOptions = value.profiles.map((p) => ({ value: p.id, label: p.name }));
+  if (!canEdit) return <section className="space-y-2 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] p-3" aria-label="Workspace setup profiles">
+    <h3 className="text-sm font-medium">Workspace setup profiles</h3>
+    <p className="text-xs text-[var(--ec-muted)]">Pair this browser with the admin scope to view and edit the host's workspace setup profiles.</p>
+  </section>;
   return <section className="space-y-2 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] p-3" aria-label="Workspace setup profiles">
     <div className="flex flex-wrap items-center gap-2"><h3 className="mr-auto text-sm font-medium">Workspace setup profiles</h3>
       <Select className="w-48 max-w-full" triggerClassName="h-8 px-2 text-xs" optionClassName="px-2 text-xs" ariaLabel="Edit setup profile" value={selected} onValueChange={setSelected} disabled={!loaded || busy} options={[{ value: "", label: "Select profile" }, ...profileOptions]} />

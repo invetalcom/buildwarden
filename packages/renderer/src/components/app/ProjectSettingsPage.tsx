@@ -817,7 +817,7 @@ export const ProjectSettingsPage = ({
           </SettingsSection>
         ) : null}
 
-        {!limitedRemoteSettings && <WorkspaceSetupProfiles key={project.project.id} projectId={project.project.id} />}
+        <WorkspaceSetupProfiles key={project.project.id} projectId={project.project.id} client={buildwarden} />
         {!limitedRemoteSettings ? (
           <SettingsSection title="Agent MCP registry">
             <SettingsRow
