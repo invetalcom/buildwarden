@@ -96,6 +96,7 @@
 body[data-theme="dark"] {
   --ec-bg: rgba(15, 17, 19, 0.42);
   --ec-bg-elevated: rgba(32, 36, 41, 0.96);
+  --ec-dialog-bg: #202429;
   --ec-titlebar: #101417;
   --ec-sidebar-base: rgba(9, 11, 12, 0.3);
   --ec-sidebar: var(--ec-sidebar-base);
@@ -169,6 +170,7 @@ body[data-theme="dark"] {
 body[data-theme="light"] {
   --ec-bg: rgba(240, 246, 251, 0.46);
   --ec-bg-elevated: rgba(255, 255, 255, 0.96);
+  --ec-dialog-bg: #ffffff;
   --ec-titlebar: #e7eef6;
   --ec-sidebar-base: rgba(255, 255, 255, 0.3);
   --ec-sidebar: var(--ec-sidebar-base);

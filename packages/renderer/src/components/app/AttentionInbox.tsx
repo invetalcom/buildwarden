@@ -52,6 +52,21 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false }: {
     catch (e) { setError(String(e)); }
     finally { setPendingId(null); }
   };
+  const unreadNotices = items.filter((item) => item.dismissible);
+  const markAllRead = async () => {
+    if (!client.capabilities.runMutations || pendingId !== null) return;
+    setPendingId("all"); setError("");
+    let failure = "";
+    try {
+      // Only acknowledge the notices present at the click; new arrivals remain unread.
+      for (const item of unreadNotices) await client.acknowledgeAttentionItem(item.id);
+    } catch (e) { failure = `Could not mark every notice as read. ${String(e)}`; }
+    finally {
+      await refresh();
+      if (failure) setError(failure);
+      setPendingId(null);
+    }
+  };
   const filtered = filterAttentionItems(items, kind, projectId, query);
   const projects = [...new Map(items.map((item) => [item.projectId, item.projectName])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
   const selectClass = "h-8 min-w-0 rounded border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 text-xs text-[var(--ec-text)]";
@@ -59,8 +74,12 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false }: {
     <button type="button" onClick={() => setOpen(true)} title="Attention inbox" aria-label={`Attention inbox${items.length ? `, ${items.length} items` : ""}`} className="flex min-h-9 items-center gap-2 rounded-md px-2.5 text-xs text-[var(--ec-text)] hover:bg-[var(--ec-hover)]">
       <Inbox className="size-4 shrink-0" />{!compact && <span>Attention inbox</span>}{items.length > 0 && <span className="rounded bg-[var(--ec-warning-soft)] px-1.5 text-[var(--ec-warning)]">{items.length}</span>}
     </button>
-    {open && createPortal(<dialog ref={dialog} onCancel={() => setOpen(false)} onClose={() => setOpen(false)} aria-labelledby={titleId} className="fixed inset-0 m-auto max-h-[85dvh] w-[min(48rem,95vw)] overflow-hidden rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] p-0 text-[var(--ec-text)] shadow-xl backdrop:bg-black/50">
-      <div className="flex items-center gap-2 border-b border-[var(--ec-border)] px-3 py-2"><h2 id={titleId} className="mr-auto text-sm font-semibold">Attention inbox · {items.length}</h2><Button size="xs" variant="secondary" onClick={() => void refresh()} aria-label="Refresh inbox"><RefreshCw className="size-4" /></Button><Button size="xs" variant="secondary" onClick={() => setOpen(false)} aria-label="Close inbox"><X className="size-4" /></Button></div>
+    {open && createPortal(<dialog ref={dialog} onCancel={() => setOpen(false)} onClose={() => setOpen(false)} aria-labelledby={titleId} className="fixed inset-0 m-auto max-h-[85dvh] w-[min(48rem,95vw)] overflow-hidden rounded-xl border border-[var(--ec-border)] bg-[var(--ec-dialog-bg)] p-0 text-[var(--ec-text)] shadow-xl backdrop:bg-black/50">
+      <div className="flex flex-wrap items-center gap-2 border-b border-[var(--ec-border)] px-3 py-2">
+        <h2 id={titleId} className="mr-auto text-sm font-semibold">Attention inbox · {items.length}</h2>
+        {client.capabilities.runMutations && <Button size="xs" variant="secondary" disabled={loading || pendingId !== null || unreadNotices.length === 0} title="Clear all result notices across projects, including those hidden by filters. Unresolved requests remain." onClick={() => void markAllRead()}>{pendingId === "all" ? "Marking as read…" : "Mark all as read"}</Button>}
+        <Button size="xs" variant="secondary" onClick={() => void refresh()} aria-label="Refresh inbox"><RefreshCw className="size-4" /></Button><Button size="xs" variant="secondary" onClick={() => setOpen(false)} aria-label="Close inbox"><X className="size-4" /></Button>
+      </div>
       <div className="grid grid-cols-2 gap-2 border-b border-[var(--ec-border)] p-3 sm:grid-cols-3">
         <Input aria-label="Search attention inbox" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} className="h-8 text-xs" />
         <select aria-label="Attention type" className={selectClass} value={kind} onChange={(e) => { setKind(e.target.value); setLimit(50); }}><option value="">All types</option>{Object.entries(ATTENTION_KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
@@ -78,7 +97,7 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false }: {
         </div>)}
         {filtered.length > limit && <Button className="m-2" size="sm" variant="secondary" onClick={() => setLimit(limit + 50)}>Show more</Button>}
       </div>
-      <p className="border-t border-[var(--ec-border)] px-3 py-2 text-[11px] text-[var(--ec-muted)]">Open a run to answer questions or approve commands. Mark reviewed clears a notice for all connected clients; it does not change the run.</p>
+      <p className="border-t border-[var(--ec-border)] px-3 py-2 text-[11px] text-[var(--ec-muted)]">Mark all as read clears result notices across all projects and filters for every connected client. Open a run to resolve approvals, questions, or blocked work; these stay in the inbox.</p>
     </dialog>, document.body)}
   </>;
 };

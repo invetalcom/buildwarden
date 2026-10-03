@@ -15,9 +15,13 @@ const items: AttentionItem[] = [
   { id: "a", kind: "approval", projectId: "p", projectName: "Project", runId: "r", title: "Fix tests", detail: "pnpm test", createdAt: "2026-10-03T00:00:00Z", dismissible: false },
   { id: "b", kind: "review", projectId: "q", projectName: "Other", runId: "s", title: "Build UI", detail: "Completed", createdAt: "2026-10-03T00:00:00Z", dismissible: true },
 ];
-const render = async (readOnly = false) => {
-  const acknowledge = vi.fn(async () => undefined);
-  const getItems = vi.fn(async () => items);
+const render = async (readOnly = false, initialItems = items, failId?: string) => {
+  let remaining = [...initialItems];
+  const acknowledge = vi.fn(async (id: string) => {
+    if (id === failId) throw new Error("Connection lost");
+    remaining = remaining.filter((item) => item.id !== id);
+  });
+  const getItems = vi.fn(async () => remaining);
   const client = createElectronBuildWardenClient({ getAttentionInbox: getItems, acknowledgeAttentionItem: acknowledge,
     onRunEvent: () => () => {}, onOrchestrationChanged: () => () => {}, onRunForgeRequestChanged: () => () => {},
   } as unknown as DesktopApi);
@@ -43,5 +47,31 @@ describe("attention inbox", () => {
   });
   it("keeps read-only access read-only", async () => {
     await render(true); expect([...document.querySelectorAll("dialog button")].some((button) => button.textContent === "Mark reviewed")).toBe(false);
+    expect([...document.querySelectorAll("dialog button")].some((button) => button.textContent === "Mark all as read")).toBe(false);
+  });
+  it("marks all result notices as read while keeping unresolved requests", async () => {
+    const extra: AttentionItem[] = [
+      { ...items[0], id: "question", kind: "input" },
+      { ...items[0], id: "blocked", kind: "blocked" },
+      ...Array.from({ length: 55 }, (_, index) => ({ ...items[1], id: `result-${index}` })),
+    ];
+    const { acknowledge } = await render(false, [...items, ...extra]);
+    const button = [...document.querySelectorAll<HTMLButtonElement>("dialog button")].find((entry) => entry.textContent === "Mark all as read")!;
+    await act(async () => button.click());
+    expect(acknowledge).toHaveBeenCalledTimes(56);
+    expect(acknowledge.mock.calls.flat()).not.toContain("a");
+    expect(acknowledge.mock.calls.flat()).not.toContain("question");
+    expect(acknowledge.mock.calls.flat()).not.toContain("blocked");
+    expect(document.querySelector("dialog h2")?.textContent).toContain("3");
+    expect(button.disabled).toBe(true);
+  });
+  it("refreshes successful acknowledgements and reports a partial failure", async () => {
+    const { acknowledge } = await render(false, [items[1], { ...items[1], id: "failed" }], "failed");
+    const button = [...document.querySelectorAll<HTMLButtonElement>("dialog button")].find((entry) => entry.textContent === "Mark all as read")!;
+    await act(async () => button.click());
+    expect(acknowledge).toHaveBeenCalledTimes(2);
+    expect(document.querySelector("dialog h2")?.textContent).toContain("1");
+    expect(document.querySelector("[role=alert]")?.textContent).toContain("Connection lost");
+    expect(button.disabled).toBe(false);
   });
 });
