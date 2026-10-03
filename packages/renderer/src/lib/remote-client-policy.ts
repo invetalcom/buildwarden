@@ -46,6 +46,7 @@ export const webCapabilities = (scopes: readonly RemoteAccessScope[]): Readonly<
 };
 
 export const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
+  "getAttentionInbox",
   "getSnapshot", "refreshSnapshot", "getNetworkProxySettings", "getProjectBranches", "getProjectCurrentBranch",
   "queryProjectActivity", "checkProjectFolderGitStatus", "getRunDetail", "getOrchestrationDetail",
   "getOrchestrationTaskDetail", "getOrchestrationAdoptionPreview", "getRunDeletionImpact", "getModelDeletionImpact",
@@ -65,6 +66,7 @@ export const REMOTE_BROWSER_METHODS = new Set<RemoteApiMethod>([
 ]);
 
 export const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
+  "acknowledgeAttentionItem",
   "createRun", "continueRun", "followUpRun", "respondToShellApproval", "respondToRunUserInput", "cancelRunShell",
   "cancelRun", "resumeRunFromCheckpoint", "recoverInterruptedRun", "undoRunToLastPrompt", "deleteRun",
   "pauseOrchestration", "resumeOrchestration", "cancelOrchestration", "finishOrchestration", "sendOrchestrationTaskMessage",
@@ -88,7 +90,7 @@ export const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
 
 export const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAccessScope[]>([
   ...[
-    "createRun", "continueRun", "followUpRun", "cancelRunShell", "cancelRun", "resumeRunFromCheckpoint",
+    "acknowledgeAttentionItem", "createRun", "continueRun", "followUpRun", "cancelRunShell", "cancelRun", "resumeRunFromCheckpoint",
     "recoverInterruptedRun", "undoRunToLastPrompt", "deleteRun", "setRunListVisibility", "addBookmark", "removeBookmark",
     "removeBookmarkById", "addRunNote", "updateRunNote", "deleteRunNote", "pauseOrchestration", "resumeOrchestration",
     "cancelOrchestration", "finishOrchestration", "sendOrchestrationTaskMessage", "retryOrchestrationTask",

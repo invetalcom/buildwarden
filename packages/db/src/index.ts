@@ -4,6 +4,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { REMOTE_ACCESS_SCOPES } from "@buildwarden/shared";
 import type {
   AppSettingRecord,
+  AttentionItem,
   AppSnapshot,
   BookmarkRecord,
   BookmarkStepRecord,
@@ -2254,6 +2255,7 @@ export class BuildWardenDatabase {
       `,
       [projectId],
     );
+    this.run("delete from attention_acknowledgements where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from worktrees where project_id = ?", [projectId]);
     this.run(
       `
@@ -2724,6 +2726,7 @@ export class BuildWardenDatabase {
   deleteRun(runId: string): void {
     this.derivedRunStateCache.delete(runId);
     this.run("update project_tasks set run_id = null, updated_at = ? where run_id = ?", [nowIso(), runId]);
+    this.run("delete from attention_acknowledgements where run_id = ?", [runId]);
     this.run("delete from run_notes where run_id = ?", [runId]);
     this.run("delete from run_steps where run_id = ?", [runId]);
     this.run("delete from worktrees where run_id = ?", [runId]);
@@ -3283,6 +3286,46 @@ export class BuildWardenDatabase {
       this.run("delete from worktrees where run_id = ?", [runId]);
     }
     return this.getRun(runId);
+  }
+
+  listAttentionInbox(): AttentionItem[] {
+    return this.all<Omit<AttentionItem, "dismissible"> & { dismissible: number }>(`
+      with candidates as (
+        select 'request:' || s.id as id,
+          case when s.event_type = 'approval-requested' then 'approval' else 'input' end as kind,
+          r.project_id as projectId, p.name as projectName, r.id as runId,
+          substr(r.prompt, 1, 180) as title, substr(s.content, 1, 600) as detail,
+          s.created_at as createdAt, 0 as dismissible
+        from run_steps s join runs r on r.id = s.run_id join projects p on p.id = r.project_id
+        where r.status in ('queued', 'preparing', 'running')
+          and s.event_type in ('approval-requested', 'user-input-requested')
+          and json_valid(s.metadata_json) and json_extract(s.metadata_json, '$.requestStatus') = 'opened'
+        union all
+        select 'run:' || r.id || ':' || r.status || ':' || coalesce(r.finished_at, r.updated_at),
+          case when r.status = 'failed' then 'failed' else 'review' end,
+          r.project_id, p.name, r.id, substr(r.prompt, 1, 180),
+          substr(coalesce(r.error_message, r.summary, 'Open the run to review its result.'), 1, 600),
+          coalesce(r.finished_at, r.updated_at), 1
+        from runs r join projects p on p.id = r.project_id
+        where r.status in ('failed', 'completed') and r.list_visibility != 'for-later'
+        union all
+        select 'orchestration:' || o.id || ':' || o.updated_at, 'blocked', r.project_id, p.name,
+          r.id, substr(r.prompt, 1, 180), 'Orchestration needs attention. Open the run to resolve blocked tasks.', o.updated_at, 0
+        from orchestrations o join runs r on r.id = o.coordinator_run_id join projects p on p.id = r.project_id
+        where o.status = 'attention' and r.status != 'failed'
+      )
+      select c.* from candidates c left join attention_acknowledgements a on a.item_id = c.id
+      where a.item_id is null or c.dismissible = 0
+      order by case c.kind when 'approval' then 0 when 'input' then 1 when 'failed' then 2 when 'blocked' then 3 else 4 end,
+        c.createdAt desc, c.id
+    `).map((item) => ({ ...item, dismissible: Boolean(item.dismissible) }));
+  }
+
+  acknowledgeAttentionItem(itemId: string): void {
+    const item = this.listAttentionInbox().find((candidate) => candidate.id === itemId);
+    if (!item) return; // Repeated acknowledgements are idempotent.
+    if (!item.dismissible) throw new Error("Resolve live requests in the run before clearing them.");
+    this.run("insert or ignore into attention_acknowledgements (item_id, run_id, acknowledged_at) values (?, ?, ?)", [item.id, item.runId, nowIso()]);
   }
 
   updateRunListVisibility(runId: string, visibility: RunListVisibility): RunRecord {
@@ -4576,6 +4619,13 @@ export class BuildWardenDatabase {
         created_at text not null,
         foreign key(run_id) references runs(id)
       );
+
+      create table if not exists attention_acknowledgements (
+        item_id text primary key,
+        run_id text not null,
+        acknowledged_at text not null
+      );
+      create index if not exists idx_attention_acknowledgements_run on attention_acknowledgements(run_id);
 
       create table if not exists run_notes (
         id text primary key,

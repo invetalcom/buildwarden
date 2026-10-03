@@ -1,3 +1,4 @@
+import { AttentionInbox } from "@buildwarden/renderer";
 import { useMemo } from "react";
 import { Plus, RefreshCw, Search, ShieldAlert } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
@@ -33,6 +34,7 @@ export const HomeScreen = () => {
         onTitlePress={openProjectDrawer}
         actions={
           <>
+            <AttentionInbox client={client} compact onOpenRun={(_projectId, runId) => openRun(runId)} />
             <IconButton label="Search" onClick={() => router.push({ name: "search" })}>
               <Search className="size-5" />
             </IconButton>

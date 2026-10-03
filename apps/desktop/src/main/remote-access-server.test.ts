@@ -94,6 +94,8 @@ const rpcBody = (requestId = "snapshot") => JSON.stringify({
 describe("remote operation registry", () => {
   it("limits the typed transport contract to explicitly supported operations", () => {
     expectTypeOf<RemoteApiMethod>().toEqualTypeOf<
+      | "getAttentionInbox"
+      | "acknowledgeAttentionItem"
       | "getSnapshot"
       | "refreshSnapshot"
       | "getNetworkProxySettings"

@@ -1,3 +1,4 @@
+import { AttentionInbox } from "./AttentionInbox";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
 import type { AppSnapshot, RunRecord, SidebarRunEntrySize } from "@buildwarden/shared";
@@ -616,6 +617,7 @@ const SidebarComponent = ({
           })}
         </div>
         <div className="flex flex-col items-center gap-1 border-t border-[var(--ec-border)] py-2">
+          <AttentionInbox client={buildwarden} compact={collapsed} onOpenRun={onSelectRun} />
           {workspaceLinks.map((link) => {
             const Icon = link.icon;
             return (
@@ -859,6 +861,7 @@ const SidebarComponent = ({
 
       <div className="shrink-0 border-t border-[var(--ec-border)] px-2 py-1.5">
         <div className="flex min-w-0 flex-nowrap items-center gap-1">
+          <AttentionInbox client={buildwarden} compact={collapsed} onOpenRun={onSelectRun} />
           {workspaceLinks.map((link) => {
             const Icon = link.icon;
             return (

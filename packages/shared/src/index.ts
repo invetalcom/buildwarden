@@ -3863,6 +3863,8 @@ export interface RunBrowserInputEnvelope {
 }
 
 export interface DesktopApi {
+  getAttentionInbox(): Promise<AttentionItem[]>;
+  acknowledgeAttentionItem(itemId: string): Promise<void>;
   getSnapshot(): Promise<AppSnapshot>;
   getRemoteAccessStatus(): Promise<RemoteAccessStatus>;
   listHostDirectories(input?: HostDirectoryBrowseInput): Promise<HostDirectoryListing>;
@@ -4306,6 +4308,8 @@ export interface RemoteAccessPairingExchangeResponse {
 
 /** Explicit transport contract. Desktop methods are not remotely callable unless listed here. */
 export type RemoteOperationMap = {
+  getAttentionInbox: DesktopApi["getAttentionInbox"];
+  acknowledgeAttentionItem: DesktopApi["acknowledgeAttentionItem"];
   getSnapshot: DesktopApi["getSnapshot"];
   refreshSnapshot: DesktopApi["refreshSnapshot"];
   getNetworkProxySettings: DesktopApi["getNetworkProxySettings"];
@@ -4594,6 +4598,8 @@ export type RemoteWebSocketServerMessage =
     };
 
 export const IPC_CHANNELS = {
+  getAttentionInbox: "buildwarden:get-attention-inbox",
+  acknowledgeAttentionItem: "buildwarden:acknowledge-attention-item",
   activateRun: "buildwarden:activate-run",
   addModel: "buildwarden:add-model",
   listAvailableProviderModels: "buildwarden:list-available-provider-models",
@@ -5905,3 +5911,6 @@ export const DEFAULT_KEYBOARD_SHORTCUTS: Record<KeyboardShortcutId, string> = {
   openSettings: "ctrl+,",
   closeSettings: "escape",
 };
+
+export * from "./attention-inbox";
+import type { AttentionItem } from "./attention-inbox";

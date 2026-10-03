@@ -1,3 +1,4 @@
+export { AttentionInbox } from "./components/app/AttentionInbox";
 export { App } from "./App";
 export { RemoteHostProjectDialog } from "./components/app/RemoteHostProjectDialog";
 export { DesignSchemeEditor } from "./components/app/DesignSchemeEditor";

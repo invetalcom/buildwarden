@@ -61,6 +61,8 @@ const invoke = async (channel: string, ...args: unknown[]): Promise<any> => {
 };
 
 const api: DesktopApi = {
+  getAttentionInbox: () => invoke(IPC_CHANNELS.getAttentionInbox),
+  acknowledgeAttentionItem: (itemId) => invoke(IPC_CHANNELS.acknowledgeAttentionItem, itemId),
   activateRun: (runId: string) => invoke(IPC_CHANNELS.activateRun, runId),
   addModel: (input: ModelInput) => invoke(IPC_CHANNELS.addModel, input),
   listAvailableProviderModels: (input: ListAvailableProviderModelsInput) =>
