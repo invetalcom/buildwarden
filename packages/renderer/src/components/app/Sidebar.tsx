@@ -1,4 +1,5 @@
 import { AttentionInbox } from "./AttentionInbox";
+import { SidebarUtilityButton } from "./SidebarUtilityButton";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
 import type { AppSnapshot, RunRecord, SidebarRunEntrySize } from "@buildwarden/shared";
@@ -617,26 +618,10 @@ const SidebarComponent = ({
           })}
         </div>
         <div className="flex flex-col items-center gap-1 border-t border-[var(--ec-border)] py-2">
-          <AttentionInbox client={buildwarden} compact={collapsed} onOpenRun={onSelectRun} />
-          {workspaceLinks.map((link) => {
-            const Icon = link.icon;
-            return (
-              <button
-                key={link.label}
-                className={cn(
-                  "flex size-8 items-center justify-center rounded-md transition",
-                  link.selected
-                    ? "bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]"
-                    : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
-                )}
-                onClick={link.onClick}
-                title={link.label}
-                type="button"
-              >
-                <Icon className="size-4" />
-              </button>
-            );
-          })}
+          <AttentionInbox client={buildwarden} compact={collapsed} triggerVariant="sidebar" onOpenRun={onSelectRun} />
+          {workspaceLinks.map((link) => (
+            <SidebarUtilityButton key={link.label} {...link} collapsed={collapsed} />
+          ))}
         </div>
       </aside>
     );
@@ -861,32 +846,10 @@ const SidebarComponent = ({
 
       <div className="shrink-0 border-t border-[var(--ec-border)] px-2 py-1.5">
         <div className="flex min-w-0 flex-nowrap items-center gap-1">
-          <AttentionInbox client={buildwarden} compact={collapsed} onOpenRun={onSelectRun} />
-          {workspaceLinks.map((link) => {
-            const Icon = link.icon;
-            return (
-              <button
-                key={link.label}
-                type="button"
-                aria-label={link.label}
-                className={cn(
-                  "group relative flex h-8 min-w-0 flex-1 items-center justify-center rounded-md transition",
-                  link.selected ? "bg-[var(--ec-accent-soft)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
-                )}
-                onClick={link.onClick}
-              >
-                <Icon className={cn("size-3.5 text-[var(--ec-faint)]", link.selected && "text-[var(--ec-accent)]")} />
-                {link.count ? (
-                  <span className="absolute right-0.5 top-0.5 min-w-[0.8rem] rounded-full bg-[var(--ec-accent-soft)] px-1 text-center font-mono text-[8px] font-semibold leading-[0.8rem] text-[var(--ec-accent)]">
-                    {link.count}
-                  </span>
-                ) : null}
-                <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md border border-[var(--ec-border)] bg-[var(--ec-bg-elevated)] px-2 py-1 text-[11px] font-medium text-[var(--ec-text)] shadow-[var(--ec-popover-shadow)] group-hover:block group-focus-visible:block">
-                  {link.label}
-                </span>
-              </button>
-            );
-          })}
+          <AttentionInbox client={buildwarden} compact={collapsed} triggerVariant="sidebar" onOpenRun={onSelectRun} />
+          {workspaceLinks.map((link) => (
+            <SidebarUtilityButton key={link.label} {...link} collapsed={collapsed} />
+          ))}
         </div>
       </div>
 

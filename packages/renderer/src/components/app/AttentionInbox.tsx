@@ -6,11 +6,13 @@ import type { BuildWardenClient } from "../../lib/buildwarden-client-core";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select } from "../ui/select";
+import { SidebarUtilityButton } from "./SidebarUtilityButton";
 
-export const AttentionInbox = ({ client, onOpenRun, compact = false }: {
+export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVariant = "default" }: {
   client: BuildWardenClient;
   onOpenRun: (projectId: string, runId: string) => void;
   compact?: boolean;
+  triggerVariant?: "default" | "sidebar";
 }) => {
   const [items, setItems] = useState<AttentionItem[]>([]);
   const [open, setOpen] = useState(false);
@@ -71,9 +73,9 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false }: {
   const filtered = filterAttentionItems(items, kind, projectId, query);
   const projects = [...new Map(items.map((item) => [item.projectId, item.projectName])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
   return <>
-    <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(true)} title="Attention inbox" aria-label={`Attention inbox${items.length ? `, ${items.length} items` : ""}`} className="min-h-9 justify-start px-2.5 text-xs text-[var(--ec-text)]">
+    {triggerVariant === "sidebar" ? <SidebarUtilityButton label="Attention inbox" icon={Inbox} count={items.length ? `${items.length}` : ""} collapsed={compact} selected={open} onClick={() => setOpen(true)} /> : <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(true)} title="Attention inbox" aria-label={`Attention inbox${items.length ? `, ${items.length} items` : ""}`} className="min-h-9 justify-start px-2.5 text-xs text-[var(--ec-text)]">
       <Inbox className="size-4 shrink-0" />{!compact && <span>Attention inbox</span>}{items.length > 0 && <span className="rounded bg-[var(--ec-warning-soft)] px-1.5 text-[var(--ec-warning)]">{items.length}</span>}
-    </Button>
+    </Button>}
     {open && createPortal(<dialog ref={dialog} onCancel={() => setOpen(false)} onClose={() => setOpen(false)} aria-labelledby={titleId} className="fixed inset-0 m-auto max-h-[85dvh] w-[min(48rem,95vw)] overflow-hidden rounded-xl border border-[var(--ec-border)] bg-[var(--ec-dialog-bg)] p-0 text-[var(--ec-text)] shadow-xl backdrop:bg-black/50">
       <div className="flex flex-wrap items-center gap-2 border-b border-[var(--ec-border)] px-3 py-2">
         <h2 id={titleId} className="mr-auto text-sm font-semibold">Attention inbox · {items.length}</h2>
