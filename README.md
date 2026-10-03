@@ -29,6 +29,10 @@ It supports multiple AI providers and models, parallel agent runs, and everyday 
 - Review PRs and MRs without leaving the app: diffs, activity, review comments, replies, approvals, and thread resolution.
 - Manage project branches and reusable task prompts.
 
+**Attention inbox**
+
+Open **Attention inbox** from the desktop sidebar or mobile home screen to see approvals, questions, failures, blocked orchestrations, and completed runs across projects. Filter by project or type, or search the notices. Open an item to act in its run. Live requests disappear when resolved and cannot be dismissed. **Mark reviewed** persistently clears a result notice for all connected clients without changing its run; a later completion or failure creates a new notice. Read-only connections can browse but cannot acknowledge. Parked results stay out of the inbox; active requests remain visible.
+
 **Chats, insights, and organization**
 
 - Run standalone chats with full history, follow-ups, and file attachments — including files the model generates, where the provider supports it.
@@ -247,7 +251,3 @@ pnpm build:all
 ## Contributing
 
 Keep changes small, typed, and aligned across the Electron boundary. When changing shared app behavior, update shared contracts, DB snapshot/persistence shape, main IPC/controller logic, preload exposure, and renderer consumers together. For UI work, preserve BuildWarden's dense developer-tool layout and avoid spending vertical space without a clear workflow benefit.
-
-### Attention inbox
-
-Open **Attention inbox** from the desktop sidebar or mobile home screen to see approvals, questions, failures, blocked orchestrations, and completed runs across projects. Filter by project or type, or search the notices. Open an item to act in its run. Live requests disappear when resolved and cannot be dismissed. **Mark reviewed** persistently clears a result notice for all connected clients without changing its run; a later completion or failure creates a new notice. Read-only connections can browse but cannot acknowledge. Parked results stay out of the inbox; active requests remain visible.

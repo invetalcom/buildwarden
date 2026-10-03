@@ -4,7 +4,6 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { REMOTE_ACCESS_SCOPES } from "@buildwarden/shared";
 import type {
   AppSettingRecord,
-  AttentionItem,
   AppSnapshot,
   BookmarkRecord,
   BookmarkStepRecord,
@@ -12,6 +11,7 @@ import type {
   ChatAttachmentPayload,
   ChatBookmarkRecord,
   ChatBookmarkSummary,
+  AttentionItem,
   ChatDetail,
   ChatHistoryPage,
   ChatRecord,
