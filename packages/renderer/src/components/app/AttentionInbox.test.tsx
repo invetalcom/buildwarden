@@ -49,6 +49,22 @@ describe("attention inbox", () => {
     await render(true); expect([...document.querySelectorAll("dialog button")].some((button) => button.textContent === "Mark reviewed")).toBe(false);
     expect([...document.querySelectorAll("dialog button")].some((button) => button.textContent === "Mark all as read")).toBe(false);
   });
+  it("uses shared dropdowns inside the modal and filters their selections", async () => {
+    await render();
+    const dialog = document.querySelector("dialog")!;
+    expect(dialog.querySelector("select")).toBeNull();
+    const project = dialog.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="Attention project"]')!;
+    await act(async () => project.click());
+    const projectMenu = document.querySelector('[role="listbox"]')!;
+    expect(projectMenu.closest("dialog")).toBe(dialog);
+    await act(async () => [...projectMenu.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((option) => option.textContent === "Other")!.click());
+    expect(dialog.textContent).toContain("Build UI");
+    expect(dialog.textContent).not.toContain("Fix tests");
+    const type = dialog.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="Attention type"]')!;
+    await act(async () => type.click());
+    await act(async () => [...dialog.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((option) => option.textContent === "Approval needed")!.click());
+    expect(dialog.textContent).toContain("No matching items.");
+  });
   it("marks all result notices as read while keeping unresolved requests", async () => {
     const extra: AttentionItem[] = [
       { ...items[0], id: "question", kind: "input" },

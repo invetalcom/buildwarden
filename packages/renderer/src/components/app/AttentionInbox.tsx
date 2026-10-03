@@ -5,6 +5,7 @@ import { ATTENTION_KIND_LABELS, filterAttentionItems, type AttentionItem, type A
 import type { BuildWardenClient } from "../../lib/buildwarden-client-core";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Select } from "../ui/select";
 
 export const AttentionInbox = ({ client, onOpenRun, compact = false }: {
   client: BuildWardenClient;
@@ -69,11 +70,10 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false }: {
   };
   const filtered = filterAttentionItems(items, kind, projectId, query);
   const projects = [...new Map(items.map((item) => [item.projectId, item.projectName])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  const selectClass = "h-8 min-w-0 rounded border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 text-xs text-[var(--ec-text)]";
   return <>
-    <button type="button" onClick={() => setOpen(true)} title="Attention inbox" aria-label={`Attention inbox${items.length ? `, ${items.length} items` : ""}`} className="flex min-h-9 items-center gap-2 rounded-md px-2.5 text-xs text-[var(--ec-text)] hover:bg-[var(--ec-hover)]">
+    <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(true)} title="Attention inbox" aria-label={`Attention inbox${items.length ? `, ${items.length} items` : ""}`} className="min-h-9 justify-start px-2.5 text-xs text-[var(--ec-text)]">
       <Inbox className="size-4 shrink-0" />{!compact && <span>Attention inbox</span>}{items.length > 0 && <span className="rounded bg-[var(--ec-warning-soft)] px-1.5 text-[var(--ec-warning)]">{items.length}</span>}
-    </button>
+    </Button>
     {open && createPortal(<dialog ref={dialog} onCancel={() => setOpen(false)} onClose={() => setOpen(false)} aria-labelledby={titleId} className="fixed inset-0 m-auto max-h-[85dvh] w-[min(48rem,95vw)] overflow-hidden rounded-xl border border-[var(--ec-border)] bg-[var(--ec-dialog-bg)] p-0 text-[var(--ec-text)] shadow-xl backdrop:bg-black/50">
       <div className="flex flex-wrap items-center gap-2 border-b border-[var(--ec-border)] px-3 py-2">
         <h2 id={titleId} className="mr-auto text-sm font-semibold">Attention inbox · {items.length}</h2>
@@ -82,17 +82,17 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false }: {
       </div>
       <div className="grid grid-cols-2 gap-2 border-b border-[var(--ec-border)] p-3 sm:grid-cols-3">
         <Input aria-label="Search attention inbox" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} className="h-8 text-xs" />
-        <select aria-label="Attention type" className={selectClass} value={kind} onChange={(e) => { setKind(e.target.value); setLimit(50); }}><option value="">All types</option>{Object.entries(ATTENTION_KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
-        <select aria-label="Attention project" className={selectClass} value={projectId} onChange={(e) => { setProjectId(e.target.value); setLimit(50); }}><option value="">All projects</option>{projects.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>
+        <Select ariaLabel="Attention type" triggerClassName="h-8 px-2 text-xs" optionClassName="px-2 text-xs" maxMenuHeightPx={260} value={kind} onValueChange={(value) => { setKind(value); setLimit(50); }} options={[{ value: "", label: "All types" }, ...Object.entries(ATTENTION_KIND_LABELS).map(([value, label]) => ({ value, label }))]} />
+        <Select ariaLabel="Attention project" triggerClassName="h-8 px-2 text-xs" optionClassName="px-2 text-xs" maxMenuHeightPx={260} value={projectId} onValueChange={(value) => { setProjectId(value); setLimit(50); }} options={[{ value: "", label: "All projects" }, ...projects.map(([value, label]) => ({ value, label }))]} />
       </div>
       <div className="app-scrollbar max-h-[60dvh] overflow-y-auto p-2">
         {error && <p role="alert" className="p-2 text-xs text-[var(--ec-danger)]">{error}</p>}
         {loading ? <p className="p-3 text-sm">Loading attention items…</p> : !filtered.length && <p className="p-3 text-sm text-[var(--ec-muted)]">{items.length ? "No matching items." : "Nothing needs your attention."}</p>}
         {filtered.slice(0, limit).map((item) => <div key={item.id} className="flex items-start gap-2 border-b border-[var(--ec-border)] p-2">
-          <button className="min-w-0 flex-1 text-left" onClick={() => { setOpen(false); onOpenRun(item.projectId, item.runId); }}>
-            <div className="flex flex-wrap gap-x-2 text-[11px] text-[var(--ec-muted)]"><span className={item.kind === "review" ? "text-[var(--ec-success)]" : "text-[var(--ec-warning)]"}>{ATTENTION_KIND_LABELS[item.kind as AttentionKind]}</span><span>{item.projectName}</span><time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString()}</time></div>
-            <p className="truncate text-sm font-medium">{item.title}</p><p className="line-clamp-2 whitespace-pre-wrap break-words text-xs text-[var(--ec-muted)]">{item.detail}</p>
-          </button>
+          <Button type="button" variant="ghost" className="h-auto min-w-0 flex-1 flex-col items-stretch justify-start gap-0 px-1 py-0 text-left font-normal text-[var(--ec-text)]" onClick={() => { setOpen(false); onOpenRun(item.projectId, item.runId); }}>
+            <span className="flex flex-wrap gap-x-2 text-[11px] text-[var(--ec-muted)]"><span className={item.kind === "review" ? "text-[var(--ec-success)]" : "text-[var(--ec-warning)]"}>{ATTENTION_KIND_LABELS[item.kind as AttentionKind]}</span><span>{item.projectName}</span><time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString()}</time></span>
+            <span className="truncate text-sm font-medium">{item.title}</span><span className="line-clamp-2 whitespace-pre-wrap break-words text-xs text-[var(--ec-muted)]">{item.detail}</span>
+          </Button>
           {item.dismissible && client.capabilities.runMutations && <Button size="xs" variant="secondary" disabled={pendingId !== null} onClick={() => void dismiss(item)}>Mark reviewed</Button>}
         </div>)}
         {filtered.length > limit && <Button className="m-2" size="sm" variant="secondary" onClick={() => setLimit(limit + 50)}>Show more</Button>}
