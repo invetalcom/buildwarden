@@ -9526,11 +9526,11 @@ export class AppController
       yoloMode?: boolean;
     },
   ): Worker {
-    if (this.manualVerifications.has(run.id)) throw new Error("Wait for verification to finish or cancel it first.");
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "worker.js");
     const streamingStepIds = new Map<string, string>();
     const streamingStepKinds = new Map<string, "assistant" | "reasoning" | "tool-result" | "tool-progress">();
     const usageTracker = this.initialUsageReportTracker(run.id, "run", provider, this.db.getRunSteps(run.id));
+    if (this.manualVerifications.has(run.id)) throw new Error("Wait for verification to finish or cancel it first.");
     const resetNarrationStreams = () => {
       for (const [streamId, kind] of streamingStepKinds.entries()) {
         if (kind === "assistant" || kind === "reasoning") {
