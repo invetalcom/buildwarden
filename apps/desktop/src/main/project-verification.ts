@@ -45,6 +45,7 @@ export const runProjectVerificationCommand = async (
   timeoutMs = DEFAULT_VERIFICATION_TIMEOUT_MS,
   signal?: AbortSignal,
 ): Promise<ProjectVerificationResult> => {
+  if (signal?.aborted) return { command, ok: false, exitCode: null, output: "Verification cancelled.", durationMs: 0, timedOut: false };
   const startedAt = Date.now();
   return await new Promise((resolveResult) => {
     const child = spawn(command, {

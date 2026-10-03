@@ -897,6 +897,7 @@ export const App = () => {
           mergeRunDetailForRun(eventRunId, (previous) => ({
             ...previous,
             diff: result.diff,
+            diffRevision: result.diffRevision ?? null,
             diffLoaded: true,
             diffPending: false,
             worktreeUnavailable: result.worktreeUnavailable,
@@ -980,6 +981,7 @@ export const App = () => {
         steps: historyWasExpanded && previous ? mergeOrderedRecords(fast.steps, previous.steps) : fast.steps,
         historyPage: historyWasExpanded && previous ? previous.historyPage : fast.historyPage,
         diff: options?.refreshDiff ? "" : (previous?.diff ?? ""),
+        diffRevision: options?.refreshDiff ? undefined : previous?.diffRevision,
         diffLoaded: options?.refreshDiff ? false : (previous?.diffLoaded ?? false),
         worktreeUnavailable: previous?.worktreeUnavailable ?? false,
         diffPending: options?.refreshDiff ? Boolean(diffLoadPromisesRef.current[eventRunId]) : false,

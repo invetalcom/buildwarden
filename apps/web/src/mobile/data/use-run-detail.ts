@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { RunDetail, RunEvent, RunWorktreeDiffResult } from "@buildwarden/shared";
+import type { RunDetail, RunEvent, RunWorktreeDiffResult, WorkspaceRevision } from "@buildwarden/shared";
 import type { BuildWardenClient } from "@buildwarden/renderer";
 import { applyLiveRunEventToDetail, mergeOrderedRecords } from "@buildwarden/renderer/logic";
 import { errorMessage } from "../lib/format";
@@ -16,6 +16,7 @@ export interface RunDetailStore {
   loadEarlierHistory: () => Promise<void>;
   /** Worktree diff text; empty until {@link loadDiff} has been called at least once. */
   diff: string;
+  diffRevision?: WorkspaceRevision | null;
   diffLoading: boolean;
   diffError: string | null;
   diffUnavailable: boolean;
@@ -35,6 +36,7 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
   const [loading, setLoading] = useState(Boolean(runId));
   const [error, setError] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [diffRevision, setDiffRevision] = useState<WorkspaceRevision | null | undefined>(undefined);
   const [diff, setDiff] = useState("");
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
@@ -115,6 +117,7 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
     let active = true;
     diffRequested.current = false;
     setDiff("");
+    setDiffRevision(undefined);
     setDiffError(null);
     setDiffUnavailable(false);
     void load(false);
@@ -137,6 +140,7 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
       const result: RunWorktreeDiffResult = await client.getRunWorktreeDiff(runId);
       if (diffRequestRef.current !== requestId) return;
       setDiff(result.diff ?? "");
+      setDiffRevision(result.diffRevision ?? null);
       setDiffUnavailable(result.worktreeUnavailable === true);
     } catch (caught) {
       if (diffRequestRef.current !== requestId) return;
@@ -198,6 +202,7 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
     historyLoading,
     loadEarlierHistory,
     diff,
+    diffRevision,
     diffLoading,
     diffError,
     diffUnavailable,

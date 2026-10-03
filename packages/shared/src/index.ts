@@ -1,5 +1,7 @@
 export * from "./provider-metadata";
 export * from "./model-execution-profiles";
+export * from "./revision-verification";
+import type { RunVerificationState, WorkspaceRevision } from "./revision-verification";
 /**
  * The full skills catalog (~3.7 MB of literals) is deliberately NOT re-exported
  * here: a runtime re-export would pull it into the preload and renderer startup
@@ -1906,6 +1908,8 @@ export interface RunDetail {
   diffSummary?: RunWorktreeDiffSummary;
   /** True while lightweight changed-file statistics are loading. */
   diffSummaryPending?: boolean;
+  /** Revision of the loaded diff; null means it could not be bound to stable contents. */
+  diffRevision?: WorkspaceRevision | null;
   /**
    * True only while a requested complete patch is actively loading (see `DesktopApi.getRunWorktreeDiff`).
    */
@@ -2258,6 +2262,7 @@ export interface ModelDeletionImpact {
 
 /** Result of computing the worktree patch for a run (potentially slow; use after `getRunDetail`). */
 export interface RunWorktreeDiffResult {
+  diffRevision?: WorkspaceRevision | null;
   diff: string;
   worktreeUnavailable: boolean;
   diffUnavailableReason?: string | null;
@@ -2800,6 +2805,8 @@ export interface RunDiffReviewFinding {
 }
 
 export interface RunDiffReviewResult {
+  reviewedRevision?: WorkspaceRevision;
+  verificationStatus?: RunVerificationState["status"];
   headline: string;
   summary: string;
   scoreLabel: string;
@@ -3998,6 +4005,9 @@ export interface DesktopApi {
   deleteRun(runId: string): Promise<void>;
   getModelDeletionImpact(modelId: string): Promise<ModelDeletionImpact>;
   deleteModel(modelId: string): Promise<void>;
+  getRunVerification(runId: string): Promise<RunVerificationState>;
+  verifyRunRevision(runId: string): Promise<RunVerificationState>;
+  cancelRunVerification(runId: string): Promise<void>;
   getRunDetail(runId: string): Promise<RunDetail>;
   getEarlierRunHistory(runId: string, request: UserAnchoredHistoryPageRequest): Promise<RunHistoryPage>;
   addRunNote(runId: string, input: RunNoteInput): Promise<RunNoteRecord>;
@@ -4313,6 +4323,9 @@ export type RemoteOperationMap = {
   getProjectCurrentBranch: DesktopApi["getProjectCurrentBranch"];
   queryProjectActivity: DesktopApi["queryProjectActivity"];
   checkProjectFolderGitStatus: DesktopApi["checkProjectFolderGitStatus"];
+  getRunVerification: DesktopApi["getRunVerification"];
+  verifyRunRevision: DesktopApi["verifyRunRevision"];
+  cancelRunVerification: DesktopApi["cancelRunVerification"];
   getRunDetail: DesktopApi["getRunDetail"];
   getEarlierRunHistory: DesktopApi["getEarlierRunHistory"];
   getRunWorktreeDiff: DesktopApi["getRunWorktreeDiff"];
@@ -4682,6 +4695,9 @@ export const IPC_CHANNELS = {
   deleteProviderAccount: "buildwarden:delete-provider-account",
   deleteRun: "buildwarden:delete-run",
   deleteModel: "buildwarden:delete-model",
+  getRunVerification: "buildwarden:get-run-verification",
+  verifyRunRevision: "buildwarden:verify-run-revision",
+  cancelRunVerification: "buildwarden:cancel-run-verification",
   getRunDetail: "buildwarden:get-run-detail",
   getEarlierRunHistory: "buildwarden:get-earlier-run-history",
   addRunNote: "buildwarden:add-run-note",
@@ -4839,6 +4855,7 @@ export const APP_SETTING_KEYS = {
   /** JSON object keyed by project id containing Project Lab automation settings. */
   projectLabSettings: "projectLabSettings",
   /** JSON object keyed by project id with persisted run defaults (mode, workspace, models, efforts, full access). */
+  revisionVerificationPolicy: "revisionVerificationPolicy",
   projectRunDefaults: "projectRunDefaults",
   /** Internal one-time migration marker for consolidating the former run-base setting into each project. */
   projectBaseBranchMigrationVersion: "projectBaseBranchMigrationVersion",

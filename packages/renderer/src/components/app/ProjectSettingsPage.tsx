@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
+import { RevisionVerificationPolicy } from "./RevisionVerificationPolicy";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -775,6 +776,7 @@ export const ProjectSettingsPage = ({
                     aria-label="Verification commands"
                   />
                   <p className="text-[11px] text-[var(--ec-faint)]">One command per line, up to 10. Commands run from the run workspace with a five-minute limit each.</p>
+                  <RevisionVerificationPolicy client={buildwarden} projectId={project.project.id} />
                 </div>
               </SettingsRow>
 

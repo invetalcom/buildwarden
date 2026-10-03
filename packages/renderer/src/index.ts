@@ -19,3 +19,5 @@ export {
   RemoteSessionExpiredError,
   type RemoteBuildWardenClientOptions,
 } from "./lib/remote-buildwarden-client";
+
+export { RunVerificationPanel } from "./components/app/RunVerificationPanel";

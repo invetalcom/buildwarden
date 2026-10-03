@@ -1,3 +1,4 @@
+import { RunVerificationPanel } from "@buildwarden/renderer";
 import { useEffect, useMemo, useState } from "react";
 import { RUN_CHAT_CONTEXT_SOURCE, type ChatAttachmentPayload, type ChatDetail } from "@buildwarden/shared";
 import { deriveLatestRunPlanProgress, findProjectRun, isRunContinuable } from "@buildwarden/renderer/logic";
@@ -242,6 +243,7 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
 
       {activeSegment === "notes" ? <RunNotesPanel detail={detail} onChanged={store.reload} /> : null}
 
+      {activeSegment === "diff" && <RunVerificationPanel key={runId} client={client} run={detail.run} displayedRevision={store.diffRevision} />}
       {activeSegment === "pull-request" && detail.run.forgeRequest ? (
         <RunForgePanel key={detail.run.id} run={detail.run} initialSummary={detail.run.forgeRequest} onChanged={refreshAll} />
       ) : null}

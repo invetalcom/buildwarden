@@ -1,3 +1,4 @@
+import type { RunVerificationRecord } from "@buildwarden/shared";
 import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -2262,6 +2263,7 @@ export class BuildWardenDatabase {
       `,
       [projectId],
     );
+    this.run("delete from run_verifications where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from chats where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from runs where project_id = ?", [projectId]);
     this.run("delete from project_lab_events where thread_id in (select id from project_lab_threads where project_id = ?)", [projectId]);
@@ -2726,11 +2728,22 @@ export class BuildWardenDatabase {
     this.run("update project_tasks set run_id = null, updated_at = ? where run_id = ?", [nowIso(), runId]);
     this.run("delete from run_notes where run_id = ?", [runId]);
     this.run("delete from run_steps where run_id = ?", [runId]);
+    this.run("delete from run_verifications where run_id = ?", [runId]);
     this.run("delete from worktrees where run_id = ?", [runId]);
     this.run("delete from chat_steps where chat_id in (select id from chats where run_id = ?)", [runId]);
     this.run("delete from chats where run_id = ?", [runId]);
     this.run("delete from run_forge_links where run_id = ?", [runId]);
     this.run("delete from runs where id = ?", [runId]);
+  }
+
+  getRunVerification(runId: string): RunVerificationRecord | null {
+    const row = this.first<{ evidence: string }>("select evidence from run_verifications where run_id = ?", [runId]);
+    return row ? JSON.parse(row.evidence) as RunVerificationRecord : null;
+  }
+
+  saveRunVerification(record: RunVerificationRecord): void {
+    this.getRun(record.runId);
+    this.run("insert into run_verifications (run_id, evidence) values (?, ?) on conflict(run_id) do update set evidence = excluded.evidence", [record.runId, JSON.stringify(record)]);
   }
 
   getRunForgeRequestCache(runId: string): RunForgeRequestCacheRecord | null {
@@ -4606,6 +4619,11 @@ export class BuildWardenDatabase {
         updated_at text not null,
         unique(project_id, provider, request_number),
         foreign key(project_id) references projects(id)
+      );
+
+      create table if not exists run_verifications (
+        run_id text primary key,
+        evidence text not null
       );
 
       create table if not exists run_forge_links (

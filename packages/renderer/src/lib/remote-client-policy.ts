@@ -47,7 +47,7 @@ export const webCapabilities = (scopes: readonly RemoteAccessScope[]): Readonly<
 
 export const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
   "getSnapshot", "refreshSnapshot", "getNetworkProxySettings", "getProjectBranches", "getProjectCurrentBranch",
-  "queryProjectActivity", "checkProjectFolderGitStatus", "getRunDetail", "getOrchestrationDetail",
+  "getRunVerification", "queryProjectActivity", "checkProjectFolderGitStatus", "getRunDetail", "getOrchestrationDetail",
   "getOrchestrationTaskDetail", "getOrchestrationAdoptionPreview", "getRunDeletionImpact", "getModelDeletionImpact",
   "getRunWorktreeDiff", "getRunWorktreeDiffSummary", "getRunWorkspaceFile", "getProjectLoopUiReviewImage",
   "getProjectLoopDetail", "getProjectLoopAvailability", "getProjectTask", "getProjectAutomation", "getRunChat",
@@ -65,7 +65,7 @@ export const REMOTE_BROWSER_METHODS = new Set<RemoteApiMethod>([
 ]);
 
 export const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
-  "createRun", "continueRun", "followUpRun", "respondToShellApproval", "respondToRunUserInput", "cancelRunShell",
+  "verifyRunRevision", "cancelRunVerification", "createRun", "continueRun", "followUpRun", "respondToShellApproval", "respondToRunUserInput", "cancelRunShell",
   "cancelRun", "resumeRunFromCheckpoint", "recoverInterruptedRun", "undoRunToLastPrompt", "deleteRun",
   "pauseOrchestration", "resumeOrchestration", "cancelOrchestration", "finishOrchestration", "sendOrchestrationTaskMessage",
   "retryOrchestrationTask", "decideOrchestrationAdoption", "refreshOrchestrationTeam", "setRunListVisibility",
@@ -88,7 +88,7 @@ export const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
 
 export const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAccessScope[]>([
   ...[
-    "createRun", "continueRun", "followUpRun", "cancelRunShell", "cancelRun", "resumeRunFromCheckpoint",
+    "verifyRunRevision", "cancelRunVerification", "createRun", "continueRun", "followUpRun", "cancelRunShell", "cancelRun", "resumeRunFromCheckpoint",
     "recoverInterruptedRun", "undoRunToLastPrompt", "deleteRun", "setRunListVisibility", "addBookmark", "removeBookmark",
     "removeBookmarkById", "addRunNote", "updateRunNote", "deleteRunNote", "pauseOrchestration", "resumeOrchestration",
     "cancelOrchestration", "finishOrchestration", "sendOrchestrationTaskMessage", "retryOrchestrationTask",
