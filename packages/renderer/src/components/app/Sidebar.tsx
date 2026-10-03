@@ -448,7 +448,6 @@ const SidebarComponent = ({
     { label: "All Runs", icon: Clock3, selected: allRunsSelected, onClick: onSelectAllRuns, count: totalActiveRuns > 0 ? `${totalActiveRuns}` : "" },
     { label: "Chats", icon: MessageSquare, selected: chatsSelected, onClick: onSelectChats, count: chatsCount ? `${chatsCount}` : "" },
     { label: "Bookmarks", icon: Bookmark, selected: bookmarksSelected, onClick: onSelectBookmarks, count: bookmarksCount ? `${bookmarksCount}` : "" },
-    ...(buildwarden.capabilities.settings ? [{ label: "Settings", icon: Settings, selected: settingsSelected, onClick: onOpenSettings, count: "" }] : []),
   ];
   const visibleProjectTools = projectTools.filter((tool) => {
     if (isWeb) {
@@ -618,10 +617,13 @@ const SidebarComponent = ({
           })}
         </div>
         <div className="flex flex-col items-center gap-1 border-t border-[var(--ec-border)] py-2">
-          <AttentionInbox client={buildwarden} compact={collapsed} triggerVariant="sidebar" onOpenRun={onSelectRun} />
           {workspaceLinks.map((link) => (
             <SidebarUtilityButton key={link.label} {...link} collapsed={collapsed} />
           ))}
+          <AttentionInbox client={buildwarden} compact={collapsed} triggerVariant="sidebar" onOpenRun={onSelectRun} />
+          {buildwarden.capabilities.settings && (
+            <SidebarUtilityButton label="Settings" icon={Settings} selected={settingsSelected} onClick={onOpenSettings} collapsed={collapsed} />
+          )}
         </div>
       </aside>
     );
@@ -846,10 +848,13 @@ const SidebarComponent = ({
 
       <div className="shrink-0 border-t border-[var(--ec-border)] px-2 py-1.5">
         <div className="flex min-w-0 flex-nowrap items-center gap-1">
-          <AttentionInbox client={buildwarden} compact={collapsed} triggerVariant="sidebar" onOpenRun={onSelectRun} />
           {workspaceLinks.map((link) => (
             <SidebarUtilityButton key={link.label} {...link} collapsed={collapsed} />
           ))}
+          <AttentionInbox client={buildwarden} compact={collapsed} triggerVariant="sidebar" onOpenRun={onSelectRun} />
+          {buildwarden.capabilities.settings && (
+            <SidebarUtilityButton label="Settings" icon={Settings} selected={settingsSelected} onClick={onOpenSettings} collapsed={collapsed} />
+          )}
         </div>
       </div>
 
