@@ -1,3 +1,4 @@
+import { parseWorkspaceSetupSettings } from "@buildwarden/shared";
 import { spawn } from "node:child_process";
 import { createHash, randomInt } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, statSync, type Dirent } from "node:fs";
@@ -3189,6 +3190,7 @@ export class AppController
           crypto.randomUUID(),
           input.baseBranch?.trim() || project.baseBranch,
           configuredWorktreeRoot,
+          this.getWorkspaceSetupProfile(project.id)?.dependencies !== "isolated",
         );
         branchName = gitWorkspace.branchName;
         worktreePath = gitWorkspace.worktreePath;
@@ -3446,6 +3448,7 @@ export class AppController
       crypto.randomUUID(),
       sourceRun.branchName,
       configuredWorkspaceRoot,
+      this.getWorkspaceSetupProfile(project.id)?.dependencies !== "isolated",
     );
     if (includeWorkspaceChanges) {
       await this.gitService.cloneWorkspaceChanges(sourceRun.worktreePath, workspace.worktreePath);
@@ -6731,6 +6734,7 @@ export class AppController
       steps: history.steps,
       historyPage: history.page,
       notes: this.db.listRunNotes(runId),
+      workspaceSetup: this.db.getRunWorkspaceSetup(runId),
       diff: "",
       orchestration: this.db.getOrchestrationDetailByCoordinatorRunId(runId),
       workspacePath,
@@ -9300,6 +9304,11 @@ export class AppController
     resetNarrationStreams: () => void,
     usageTracker: UsageReportTracker,
   ): Promise<void> {
+    const setupStatus = payload.chunk.metadata?.setupStatus;
+    if (payload.chunk.metadata?.workspaceSetup === true && (setupStatus === "running" || setupStatus === "completed" || setupStatus === "failed")) {
+      const setup = this.db.getRunWorkspaceSetup(run.id);
+      if (setup) this.db.saveRunWorkspaceSetup(run.id, { ...setup, status: setupStatus });
+    }
     const eventType = runChunkEventType(payload.chunk.type);
     const usageTotals =
       typeof payload.chunk.metadata?.usageTotals === "object" && payload.chunk.metadata.usageTotals
@@ -9407,6 +9416,11 @@ export class AppController
     });
   }
 
+  private getWorkspaceSetupProfile(projectId: string) {
+    const setup = parseWorkspaceSetupSettings(this.db.getSettings()[APP_SETTING_KEYS.workspaceSetupProfiles])[projectId];
+    return setup?.profiles.find((profile) => profile.id === setup.activeProfileId);
+  }
+
   private startWorker(
     run: RunRecord,
     provider: ProviderAccountRecord,
@@ -9421,6 +9435,7 @@ export class AppController
       yoloMode?: boolean;
     },
   ): Worker {
+    const workspaceSetup = this.db.getRunWorkspaceSetup(run.id);
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "worker.js");
     const streamingStepIds = new Map<string, string>();
     const streamingStepKinds = new Map<string, "assistant" | "reasoning" | "tool-result" | "tool-progress">();
@@ -9449,6 +9464,9 @@ export class AppController
     const worker = new Worker(workerPath, {
       workerData: {
         request: {
+          ...(workspaceSetup && workspaceSetup.status !== "completed" ? { workspaceSetup: {
+            profile: workspaceSetup.profile, sourcePath: this.db.getProject(run.projectId).repoPath,
+          } } : {}),
           runId: run.id,
           worktreePath: run.worktreePath,
           workspaceVcs: run.workspaceVcs,

@@ -1,9 +1,10 @@
 import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { REMOTE_ACCESS_SCOPES } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, parseWorkspaceSetupSettings, REMOTE_ACCESS_SCOPES } from "@buildwarden/shared";
 import type {
   AppSettingRecord,
+  RunWorkspaceSetup,
   AppSnapshot,
   BookmarkRecord,
   BookmarkStepRecord,
@@ -2263,6 +2264,7 @@ export class BuildWardenDatabase {
       [projectId],
     );
     this.run("delete from chats where run_id in (select id from runs where project_id = ?)", [projectId]);
+    this.run("delete from run_workspace_setup where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from runs where project_id = ?", [projectId]);
     this.run("delete from project_lab_events where thread_id in (select id from project_lab_threads where project_id = ?)", [projectId]);
     this.run("delete from project_lab_threads where project_id = ?", [projectId]);
@@ -2583,6 +2585,11 @@ export class BuildWardenDatabase {
         null,
       ],
     );
+    if (input.workspaceType !== "local") {
+      const setup = parseWorkspaceSetupSettings(this.getSettings()[APP_SETTING_KEYS.workspaceSetupProfiles])[input.projectId];
+      const profile = setup?.profiles.find((entry) => entry.id === setup.activeProfileId);
+      if (profile) this.saveRunWorkspaceSetup(id, { profile, status: "pending" });
+    }
     return this.getRun(id);
   }
 
@@ -2721,6 +2728,15 @@ export class BuildWardenDatabase {
     return this.withDerivedRunState(run);
   }
 
+  getRunWorkspaceSetup(runId: string): RunWorkspaceSetup | null {
+    const row = this.first<{ profile: string; status: RunWorkspaceSetup["status"] }>("select profile_json as profile, status from run_workspace_setup where run_id = ?", [runId]);
+    return row ? { profile: JSON.parse(row.profile) as RunWorkspaceSetup["profile"], status: row.status } : null;
+  }
+
+  saveRunWorkspaceSetup(runId: string, setup: RunWorkspaceSetup): void {
+    this.run("insert into run_workspace_setup (run_id, profile_json, status) values (?, ?, ?) on conflict(run_id) do update set status = excluded.status", [runId, JSON.stringify(setup.profile), setup.status]);
+  }
+
   deleteRun(runId: string): void {
     this.derivedRunStateCache.delete(runId);
     this.run("update project_tasks set run_id = null, updated_at = ? where run_id = ?", [nowIso(), runId]);
@@ -2730,6 +2746,7 @@ export class BuildWardenDatabase {
     this.run("delete from chat_steps where chat_id in (select id from chats where run_id = ?)", [runId]);
     this.run("delete from chats where run_id = ?", [runId]);
     this.run("delete from run_forge_links where run_id = ?", [runId]);
+    this.run("delete from run_workspace_setup where run_id = ?", [runId]);
     this.run("delete from runs where id = ?", [runId]);
   }
 
@@ -4564,6 +4581,12 @@ export class BuildWardenDatabase {
         foreign key(project_id) references projects(id),
         foreign key(provider_account_id) references provider_accounts(id),
         foreign key(model_id) references models(id)
+      );
+
+      create table if not exists run_workspace_setup (
+        run_id text primary key references runs(id) on delete cascade,
+        profile_json text not null,
+        status text not null
       );
 
       create table if not exists run_steps (

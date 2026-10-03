@@ -1,3 +1,5 @@
+export * from "./workspace-setup";
+import type { RunWorkspaceSetup, WorkspaceSetupProfile } from "./workspace-setup";
 export * from "./provider-metadata";
 export * from "./model-execution-profiles";
 /**
@@ -1888,6 +1890,7 @@ export interface ProjectSnapshot {
 }
 
 export interface RunDetail {
+  workspaceSetup?: RunWorkspaceSetup | null;
   run: RunRecord;
   steps: RunStepRecord[];
   /** User-turn anchored window backing the activity timeline. Older pages can be prepended without trimming turn output. */
@@ -3351,6 +3354,7 @@ export interface ProviderSessionRuntimeInput {
 }
 
 export interface RunExecutionRequest {
+  workspaceSetup?: { profile: WorkspaceSetupProfile; sourcePath: string };
   runId: string;
   worktreePath: string;
   workspaceVcs?: RunWorkspaceVcs;
@@ -4790,6 +4794,7 @@ export const IPC_CHANNELS = {
 } as const;
 
 export const APP_SETTING_KEYS = {
+  workspaceSetupProfiles: "workspaceSetupProfiles",
   darkMode: "darkMode",
   /**
    * `"dark"` | `"light"`. When unset, {@link parseUiTheme} falls back to legacy {@link APP_SETTING_KEYS.darkMode}.
