@@ -1,3 +1,4 @@
+import { runWorkspaceSetup } from "./workspace-setup";
 import { parentPort, workerData } from "node:worker_threads";
 import { randomUUID } from "node:crypto";
 import {
@@ -152,6 +153,11 @@ const run = async () => {
       mode: request.mode,
       worktreePath: request.worktreePath,
     });
+    if (request.workspaceSetup) {
+      await runWorkspaceSetup({ ...request.workspaceSetup, workspacePath: request.worktreePath,
+        git: request.workspaceVcs !== "folder", signal: controller.signal, onChunk: postChunk });
+    }
+    controller.signal.throwIfAborted();
     const harness = createHarnessAdapter(request.providerType, { requestShellApproval, requestUserInput });
     const azureLegacyToolOverride: readonly RunToolName[] | undefined =
       request.providerType === "azure-legacy"

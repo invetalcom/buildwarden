@@ -1,9 +1,10 @@
 import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { APP_SETTING_KEYS, ATTENTION_KIND_LABELS, parseAttentionInboxSettings, REMOTE_ACCESS_SCOPES, type AttentionKind } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, ATTENTION_KIND_LABELS, parseAttentionInboxSettings, parseWorkspaceSetupSettings, REMOTE_ACCESS_SCOPES, type AttentionKind } from "@buildwarden/shared";
 import type {
   AppSettingRecord,
+  RunWorkspaceSetup,
   AppSnapshot,
   BookmarkRecord,
   BookmarkStepRecord,
@@ -2265,6 +2266,7 @@ export class BuildWardenDatabase {
       [projectId],
     );
     this.run("delete from chats where run_id in (select id from runs where project_id = ?)", [projectId]);
+    this.run("delete from run_workspace_setup where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from runs where project_id = ?", [projectId]);
     this.run("delete from project_lab_events where thread_id in (select id from project_lab_threads where project_id = ?)", [projectId]);
     this.run("delete from project_lab_threads where project_id = ?", [projectId]);
@@ -2539,53 +2541,63 @@ export class BuildWardenDatabase {
       parentRunId?: string | null;
       rootRunId?: string | null;
       lineageTitle?: string | null;
+      workspaceSetupProfile?: RunWorkspaceSetup["profile"] | null;
     },
   ): RunRecord {
     const id = createId();
     const createdAt = nowIso();
-    this.run(
-      `
-      insert into runs (
-        id, project_id, provider_account_id, model_id, harness_type, run_mode, workspace_type, prompt, status,
-        workspace_vcs, goal_text, branch_name, worktree_path, summary, error_message, last_provider_response_id, input_tokens, output_tokens, list_visibility, run_kind, lab_thread_id,
-        parent_run_id, root_run_id, lineage_title, project_task_id, automation_id, delegation_enabled, created_at, updated_at, started_at, finished_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      [
-        id,
-        input.projectId,
-        input.providerAccountId,
-        input.modelId,
-        input.harnessType,
-        input.mode,
-        input.workspaceType,
-        input.prompt,
-        "queued",
-        input.workspaceVcs ?? "git",
-        input.goalText ?? null,
-        input.branchName,
-        input.worktreePath,
-        null,
-        null,
-        null,
-        0,
-        0,
-        "default",
-        input.kind ?? "standard",
-        input.labThreadId ?? null,
-        input.parentRunId ?? null,
-        input.rootRunId ?? null,
-        input.lineageTitle ?? null,
-        input.projectTaskId ?? null,
-        input.automationId ?? null,
-        Number(input.delegationEnabled === true),
-        createdAt,
-        createdAt,
-        null,
-        null,
-      ],
-    );
-    return this.getRun(id);
+    return this.transaction(() => {
+      this.run(
+        `
+        insert into runs (
+          id, project_id, provider_account_id, model_id, harness_type, run_mode, workspace_type, prompt, status,
+          workspace_vcs, goal_text, branch_name, worktree_path, summary, error_message, last_provider_response_id, input_tokens, output_tokens, list_visibility, run_kind, lab_thread_id,
+          parent_run_id, root_run_id, lineage_title, project_task_id, automation_id, delegation_enabled, created_at, updated_at, started_at, finished_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        [
+          id,
+          input.projectId,
+          input.providerAccountId,
+          input.modelId,
+          input.harnessType,
+          input.mode,
+          input.workspaceType,
+          input.prompt,
+          "queued",
+          input.workspaceVcs ?? "git",
+          input.goalText ?? null,
+          input.branchName,
+          input.worktreePath,
+          null,
+          null,
+          null,
+          0,
+          0,
+          "default",
+          input.kind ?? "standard",
+          input.labThreadId ?? null,
+          input.parentRunId ?? null,
+          input.rootRunId ?? null,
+          input.lineageTitle ?? null,
+          input.projectTaskId ?? null,
+          input.automationId ?? null,
+          Number(input.delegationEnabled === true),
+          createdAt,
+          createdAt,
+          null,
+          null,
+        ],
+      );
+      if (input.workspaceType !== "local") {
+        const setup = parseWorkspaceSetupSettings(this.getSettings()[APP_SETTING_KEYS.workspaceSetupProfiles])[input.projectId];
+        const profile = input.workspaceSetupProfile === undefined
+          ? setup?.profiles.find((entry) => entry.id === setup.activeProfileId)
+          : input.workspaceSetupProfile;
+        if (profile) this.saveRunWorkspaceSetup(id, { profile, status: "pending" });
+      }
+      return this.getRun(id);
+    });
   }
 
   private withDerivedRunStates(runs: RunRecord[]): RunRecord[] {
@@ -2723,6 +2735,23 @@ export class BuildWardenDatabase {
     return this.withDerivedRunState(run);
   }
 
+  getRunWorkspaceSetup(runId: string, throwOnInvalidProfile = false): RunWorkspaceSetup | null {
+    const row = this.first<{ profile: string; status: RunWorkspaceSetup["status"] }>("select profile_json as profile, status from run_workspace_setup where run_id = ?", [runId]);
+    if (!row) return null;
+    try {
+      return { profile: JSON.parse(row.profile) as RunWorkspaceSetup["profile"], status: row.status };
+    } catch {
+      // Detail views remain readable, but execution must not silently skip required setup.
+      if (throwOnInvalidProfile) throw new Error("The run's workspace setup profile is corrupted. Start a new run with a valid profile.");
+      return null;
+    }
+  }
+
+  saveRunWorkspaceSetup(runId: string, setup: RunWorkspaceSetup): void {
+    // A run's profile is immutable; subsequent calls update only its progress status.
+    this.run("insert into run_workspace_setup (run_id, profile_json, status) values (?, ?, ?) on conflict(run_id) do update set status = excluded.status", [runId, JSON.stringify(setup.profile), setup.status]);
+  }
+
   deleteRun(runId: string): void {
     this.derivedRunStateCache.delete(runId);
     this.run("update project_tasks set run_id = null, updated_at = ? where run_id = ?", [nowIso(), runId]);
@@ -2733,6 +2762,7 @@ export class BuildWardenDatabase {
     this.run("delete from chat_steps where chat_id in (select id from chats where run_id = ?)", [runId]);
     this.run("delete from chats where run_id = ?", [runId]);
     this.run("delete from run_forge_links where run_id = ?", [runId]);
+    this.run("delete from run_workspace_setup where run_id = ?", [runId]);
     this.run("delete from runs where id = ?", [runId]);
   }
 
@@ -4640,6 +4670,12 @@ export class BuildWardenDatabase {
         foreign key(project_id) references projects(id),
         foreign key(provider_account_id) references provider_accounts(id),
         foreign key(model_id) references models(id)
+      );
+
+      create table if not exists run_workspace_setup (
+        run_id text primary key references runs(id) on delete cascade,
+        profile_json text not null,
+        status text not null
       );
 
       create table if not exists run_steps (

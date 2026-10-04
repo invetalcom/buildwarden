@@ -1,3 +1,4 @@
+import { parseWorkspaceSetupSettings } from "@buildwarden/shared";
 import { spawn } from "node:child_process";
 import { createHash, randomInt } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, statSync, type Dirent } from "node:fs";
@@ -3156,6 +3157,7 @@ export class AppController
 
     const workspaceType = input.workspaceType ?? (project.kind === "folder" ? "copy" : "worktree");
     const workspaceVcs: RunWorkspaceVcs = project.kind === "folder" ? "folder" : "git";
+    const workspaceSetupProfile = this.getWorkspaceSetupProfile(project.id) ?? null;
     const configuredWorktreeRoot = this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
     let branchName: string;
     let worktreePath: string;
@@ -3197,6 +3199,7 @@ export class AppController
           crypto.randomUUID(),
           input.baseBranch?.trim() || project.baseBranch,
           configuredWorktreeRoot,
+          workspaceSetupProfile?.dependencies !== "isolated",
         );
         branchName = gitWorkspace.branchName;
         worktreePath = gitWorkspace.worktreePath;
@@ -3205,6 +3208,7 @@ export class AppController
 
     let run = this.db.createRun({
       ...runInsertInput,
+      workspaceSetupProfile,
       prompt: displayPrompt,
       goalText,
       workspaceType,
@@ -3313,12 +3317,14 @@ export class AppController
       throw new Error("Enter a continuation prompt.");
     }
 
+    const workspaceSetupProfile = this.getWorkspaceSetupProfile(project.id) ?? null;
     const configuredWorktreeRoot = this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
     const { workspaceType, workspaceVcs, branchName, worktreePath } = await this.prepareContinuationWorkspace(
       sourceRun,
       project,
       input.includeWorkspaceChanges !== false,
       configuredWorktreeRoot,
+      workspaceSetupProfile?.dependencies !== "isolated",
     );
 
     const goalText = input.goalText === undefined ? sourceRun.goalText : normalizeRunGoalText(input.goalText);
@@ -3339,6 +3345,7 @@ export class AppController
       parentRunId: sourceRun.id,
       rootRunId: sourceRun.rootRunId ?? sourceRun.id,
       lineageTitle: sourceRun.prompt || sourceRun.branchName,
+      workspaceSetupProfile,
       projectTaskId: sourceRun.projectTaskId,
       delegationEnabled: input.delegationEnabled ?? Boolean(sourceRun.delegationEnabled),
     });
@@ -3424,6 +3431,7 @@ export class AppController
     project: ProjectRecord,
     includeWorkspaceChanges: boolean,
     configuredWorkspaceRoot: string | undefined,
+    shareDependencies: boolean,
   ): Promise<Pick<RunRecord, "workspaceType" | "workspaceVcs" | "branchName" | "worktreePath">> {
     if (sourceRun.workspaceVcs === "folder") {
       if (sourceRun.workspaceType === "local" && !includeWorkspaceChanges) {
@@ -3454,6 +3462,7 @@ export class AppController
       crypto.randomUUID(),
       sourceRun.branchName,
       configuredWorkspaceRoot,
+      shareDependencies,
     );
     if (includeWorkspaceChanges) {
       await this.gitService.cloneWorkspaceChanges(sourceRun.worktreePath, workspace.worktreePath);
@@ -6739,6 +6748,7 @@ export class AppController
       steps: history.steps,
       historyPage: history.page,
       notes: this.db.listRunNotes(runId),
+      workspaceSetup: this.db.getRunWorkspaceSetup(runId),
       diff: "",
       orchestration: this.db.getOrchestrationDetailByCoordinatorRunId(runId),
       workspacePath,
@@ -7101,12 +7111,14 @@ export class AppController
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
       throw new Error(`Credentials are unavailable for ${provider.label}.`);
     }
+    const workspaceSetupProfile = this.getWorkspaceSetupProfile(project.id) ?? null;
     const configuredWorktreeRoot = this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
     const workspace = await this.prepareContinuationWorkspace(
       coordinator,
       project,
       true,
       configuredWorktreeRoot,
+      workspaceSetupProfile?.dependencies !== "isolated",
     );
     let child = this.db.createRun({
       projectId: coordinator.projectId,
@@ -7124,6 +7136,7 @@ export class AppController
       parentRunId: coordinator.id,
       rootRunId: coordinator.id,
       lineageTitle: task.title,
+      workspaceSetupProfile,
       delegationEnabled: false,
     });
     this.db.updateOrchestrationTask(task.id, {
@@ -9308,6 +9321,11 @@ export class AppController
     resetNarrationStreams: () => void,
     usageTracker: UsageReportTracker,
   ): Promise<void> {
+    const setupStatus = payload.chunk.metadata?.setupStatus;
+    if (payload.chunk.metadata?.workspaceSetup === true && (setupStatus === "running" || setupStatus === "completed" || setupStatus === "failed")) {
+      const setup = this.db.getRunWorkspaceSetup(run.id);
+      if (setup) this.db.saveRunWorkspaceSetup(run.id, { ...setup, status: setupStatus });
+    }
     const eventType = runChunkEventType(payload.chunk.type);
     const usageTotals =
       typeof payload.chunk.metadata?.usageTotals === "object" && payload.chunk.metadata.usageTotals
@@ -9415,6 +9433,11 @@ export class AppController
     });
   }
 
+  private getWorkspaceSetupProfile(projectId: string) {
+    const setup = parseWorkspaceSetupSettings(this.db.getSettings()[APP_SETTING_KEYS.workspaceSetupProfiles])[projectId];
+    return setup?.profiles.find((profile) => profile.id === setup.activeProfileId);
+  }
+
   private startWorker(
     run: RunRecord,
     provider: ProviderAccountRecord,
@@ -9429,6 +9452,7 @@ export class AppController
       yoloMode?: boolean;
     },
   ): Worker {
+    const workspaceSetup = this.db.getRunWorkspaceSetup(run.id, true);
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "worker.js");
     const streamingStepIds = new Map<string, string>();
     const streamingStepKinds = new Map<string, "assistant" | "reasoning" | "tool-result" | "tool-progress">();
@@ -9457,6 +9481,9 @@ export class AppController
     const worker = new Worker(workerPath, {
       workerData: {
         request: {
+          ...(workspaceSetup && workspaceSetup.status !== "completed" ? { workspaceSetup: {
+            profile: workspaceSetup.profile, sourcePath: this.db.getProject(run.projectId).repoPath,
+          } } : {}),
           runId: run.id,
           worktreePath: run.worktreePath,
           workspaceVcs: run.workspaceVcs,

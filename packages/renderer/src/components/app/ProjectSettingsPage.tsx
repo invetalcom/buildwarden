@@ -1,3 +1,4 @@
+import { WorkspaceSetupProfiles } from "./WorkspaceSetupProfiles";
 import {
   MAX_PROJECT_FORGE_PR_MONITOR_INTERVAL_MINUTES,
   parseProjectForgePrMonitorIntervalMinutes,
@@ -816,6 +817,7 @@ export const ProjectSettingsPage = ({
           </SettingsSection>
         ) : null}
 
+        <WorkspaceSetupProfiles key={project.project.id} projectId={project.project.id} client={buildwarden} />
         {!limitedRemoteSettings ? (
           <SettingsSection title="Agent MCP registry">
             <SettingsRow
