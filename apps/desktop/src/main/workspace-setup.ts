@@ -9,7 +9,9 @@ const contained = (root: string, target: string) => {
   return rel !== "" && rel !== ".." && !rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute(rel);
 };
 
-/** Explicit file allowlist; never copy through a symlink or overwrite workspace files. */
+/** Named files only; source links are rejected and existing destinations are preserved.
+ * Path checks assume trusted local writers (setup runs before the agent), not hostile concurrent directory swaps.
+ */
 export const copyWorkspaceEnvironmentFile = async (sourceRoot: string, targetRoot: string, file: string): Promise<void> => {
   if (isAbsolute(file) || file.split(/[\\/]/).some((part) => part === ".." || part === ".git" || part === "node_modules")) {
     throw new Error("Environment files must be workspace-relative files outside .git and node_modules.");

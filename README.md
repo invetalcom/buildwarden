@@ -254,4 +254,6 @@ Project Settings includes named setup profiles and a default for new isolated wo
 
 Saving a profile authorizes its setup commands. They execute in order before the agent, with cancellation and a five-minute timeout per command. Use idempotent commands: retrying a failed or interrupted setup runs the profile again. Progress and exit failures appear in the run activity; command output is not persisted because it can contain credentials. Keep credentials in environment files, not command text. Every run snapshots its profile, so later edits affect new runs only.
 
+Environment copies assume trusted local filesystem writers while setup runs. Path checks reject traversal and escaping links, but are not atomic with the copy: another process replacing directories during setup can invalidate them. These checks are not a filesystem sandbox; do not modify source or destination directories concurrently with setup.
+
 The run's setup bar offers Retry setup and run after a failure. Once setup completes, Start preview launches the configured command in a fresh embedded run terminal; if that terminal is already in use, run the command there. Open preview opens the configured HTTP(S) URL in the run browser. Preview processes use the existing terminal lifecycle and stop when that terminal or run is removed.
