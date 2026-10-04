@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import { APP_SETTING_KEYS, parseWorkspaceSetupSettings, type HarnessRunChunk, type WorkspaceSetupProfile } from "@buildwarden/shared";
 import { copyWorkspaceEnvironmentFile, runWorkspaceSetup } from "./workspace-setup";
@@ -92,6 +92,11 @@ describe("workspace setup", () => {
       expect(db.getRunWorkspaceSetup(db.createRun({ ...input, workspaceType: "worktree", workspaceSetupProfile: captured }).id)?.profile).toEqual(captured);
       expect(db.getRunWorkspaceSetup(db.createRun({ ...input, workspaceType: "worktree", workspaceSetupProfile: null }).id)).toBeNull();
       expect(db.getRunWorkspaceSetup(db.createRun({ ...input, workspaceType: "local" }).id)).toBeNull();
+      const beforeFailure = db.listRunsForProject(project.id).map((entry) => entry.id);
+      const save = vi.spyOn(db, "saveRunWorkspaceSetup").mockImplementationOnce(() => { throw new Error("snapshot write failed"); });
+      expect(() => db.createRun({ ...input, workspaceType: "worktree" })).toThrow("snapshot write failed");
+      expect(db.listRunsForProject(project.id).map((entry) => entry.id)).toEqual(beforeFailure);
+      save.mockRestore();
       db.setSetting(APP_SETTING_KEYS.workspaceSetupProfiles, "{}");
       db.saveRunWorkspaceSetup(run.id, { profile, status: "completed" });
     } finally { await db.close(); }

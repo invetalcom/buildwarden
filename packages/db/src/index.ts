@@ -2544,56 +2544,58 @@ export class BuildWardenDatabase {
   ): RunRecord {
     const id = createId();
     const createdAt = nowIso();
-    this.run(
-      `
-      insert into runs (
-        id, project_id, provider_account_id, model_id, harness_type, run_mode, workspace_type, prompt, status,
-        workspace_vcs, goal_text, branch_name, worktree_path, summary, error_message, last_provider_response_id, input_tokens, output_tokens, list_visibility, run_kind, lab_thread_id,
-        parent_run_id, root_run_id, lineage_title, project_task_id, automation_id, delegation_enabled, created_at, updated_at, started_at, finished_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      [
-        id,
-        input.projectId,
-        input.providerAccountId,
-        input.modelId,
-        input.harnessType,
-        input.mode,
-        input.workspaceType,
-        input.prompt,
-        "queued",
-        input.workspaceVcs ?? "git",
-        input.goalText ?? null,
-        input.branchName,
-        input.worktreePath,
-        null,
-        null,
-        null,
-        0,
-        0,
-        "default",
-        input.kind ?? "standard",
-        input.labThreadId ?? null,
-        input.parentRunId ?? null,
-        input.rootRunId ?? null,
-        input.lineageTitle ?? null,
-        input.projectTaskId ?? null,
-        input.automationId ?? null,
-        Number(input.delegationEnabled === true),
-        createdAt,
-        createdAt,
-        null,
-        null,
-      ],
-    );
-    if (input.workspaceType !== "local") {
-      const setup = parseWorkspaceSetupSettings(this.getSettings()[APP_SETTING_KEYS.workspaceSetupProfiles])[input.projectId];
-      const profile = input.workspaceSetupProfile === undefined
-        ? setup?.profiles.find((entry) => entry.id === setup.activeProfileId)
-        : input.workspaceSetupProfile;
-      if (profile) this.saveRunWorkspaceSetup(id, { profile, status: "pending" });
-    }
-    return this.getRun(id);
+    return this.transaction(() => {
+      this.run(
+        `
+        insert into runs (
+          id, project_id, provider_account_id, model_id, harness_type, run_mode, workspace_type, prompt, status,
+          workspace_vcs, goal_text, branch_name, worktree_path, summary, error_message, last_provider_response_id, input_tokens, output_tokens, list_visibility, run_kind, lab_thread_id,
+          parent_run_id, root_run_id, lineage_title, project_task_id, automation_id, delegation_enabled, created_at, updated_at, started_at, finished_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        [
+          id,
+          input.projectId,
+          input.providerAccountId,
+          input.modelId,
+          input.harnessType,
+          input.mode,
+          input.workspaceType,
+          input.prompt,
+          "queued",
+          input.workspaceVcs ?? "git",
+          input.goalText ?? null,
+          input.branchName,
+          input.worktreePath,
+          null,
+          null,
+          null,
+          0,
+          0,
+          "default",
+          input.kind ?? "standard",
+          input.labThreadId ?? null,
+          input.parentRunId ?? null,
+          input.rootRunId ?? null,
+          input.lineageTitle ?? null,
+          input.projectTaskId ?? null,
+          input.automationId ?? null,
+          Number(input.delegationEnabled === true),
+          createdAt,
+          createdAt,
+          null,
+          null,
+        ],
+      );
+      if (input.workspaceType !== "local") {
+        const setup = parseWorkspaceSetupSettings(this.getSettings()[APP_SETTING_KEYS.workspaceSetupProfiles])[input.projectId];
+        const profile = input.workspaceSetupProfile === undefined
+          ? setup?.profiles.find((entry) => entry.id === setup.activeProfileId)
+          : input.workspaceSetupProfile;
+        if (profile) this.saveRunWorkspaceSetup(id, { profile, status: "pending" });
+      }
+      return this.getRun(id);
+    });
   }
 
   private withDerivedRunStates(runs: RunRecord[]): RunRecord[] {
