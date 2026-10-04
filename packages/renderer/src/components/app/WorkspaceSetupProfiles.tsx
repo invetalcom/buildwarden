@@ -32,7 +32,11 @@ export const WorkspaceSetupProfiles = ({ projectId, client }: { projectId: strin
     try {
       const snapshot = await client.getSnapshot();
       const all = parseWorkspaceSetupSettings(snapshot.settings[APP_SETTING_KEYS.workspaceSetupProfiles]);
-      await client.setAppSetting(APP_SETTING_KEYS.workspaceSetupProfiles, JSON.stringify({ ...all, [projectId]: value }));
+      const normalized = parseWorkspaceSetupSettings(JSON.stringify({ ...all, [projectId]: value }));
+      await client.setAppSetting(APP_SETTING_KEYS.workspaceSetupProfiles, JSON.stringify(normalized));
+      const saved = normalized[projectId];
+      setValue(saved);
+      setSelected(saved.profiles.some((entry) => entry.id === selected) ? selected : saved.activeProfileId || saved.profiles[0]?.id || "");
       setMessage("Saved. Applies to new isolated workspaces.");
     } catch (error) { setMessage(String(error)); }
     finally { setBusy(false); }
