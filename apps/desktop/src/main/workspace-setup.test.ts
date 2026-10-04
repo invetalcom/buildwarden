@@ -77,6 +77,13 @@ describe("workspace setup", () => {
     expect(settings.p.activeProfileId).toBe("");
     expect(settings.p.profiles[0]).toEqual(profile);
   });
+  it("deduplicates normalized IDs and normalizes the active profile reference", () => {
+    const prefix = "x".repeat(80);
+    const settings = parseWorkspaceSetupSettings(JSON.stringify({ p: { activeProfileId: `${prefix}first`, profiles: [
+      { ...profile, id: `${prefix}first` }, { ...profile, id: `${prefix}second` }, { ...profile, id: "" },
+    ] } }));
+    expect(settings.p).toEqual({ activeProfileId: prefix, profiles: [{ ...profile, id: prefix }] });
+  });
   it("snapshots profiles for new isolated runs and preserves them across settings edits and restart", async () => {
     const { root } = await fixture(); const dbPath = join(root, "state.sqlite");
     const db = new BuildWardenDatabase(dbPath); await db.init();

@@ -35,8 +35,9 @@ export const parseWorkspaceSetupSettings = (raw: string | undefined): Record<str
       for (const candidate of item.profiles.slice(0, 10)) {
         if (!candidate || typeof candidate !== "object") continue;
         const p = candidate as Record<string, unknown>;
-        if (typeof p.id !== "string" || !p.id || profiles.some((entry) => entry.id === p.id)) continue;
-        profiles.push({ id: p.id.slice(0, 80), name: typeof p.name === "string" ? p.name.slice(0, 80) : "Setup",
+        const profileId = typeof p.id === "string" ? p.id.slice(0, 80) : "";
+        if (!profileId || profiles.some((entry) => entry.id === profileId)) continue;
+        profiles.push({ id: profileId, name: typeof p.name === "string" ? p.name.slice(0, 80) : "Setup",
           dependencies: p.dependencies === "shared" ? "shared" : "isolated",
           submodules: p.submodules === "recursive" || p.submodules === "top-level" ? p.submodules : "none",
           environmentFiles: strings(p.environmentFiles), commands: strings(p.commands),
@@ -44,7 +45,8 @@ export const parseWorkspaceSetupSettings = (raw: string | undefined): Record<str
           previewUrl: typeof p.previewUrl === "string" && /^https?:\/\//i.test(p.previewUrl) ? p.previewUrl.slice(0, 2000) : "",
         });
       }
-      result[projectId] = { activeProfileId: typeof item.activeProfileId === "string" && profiles.some((p) => p.id === item.activeProfileId) ? item.activeProfileId : "", profiles };
+      const activeProfileId = typeof item.activeProfileId === "string" ? item.activeProfileId.slice(0, 80) : "";
+      result[projectId] = { activeProfileId: profiles.some((p) => p.id === activeProfileId) ? activeProfileId : "", profiles };
     }
     return result;
   } catch { return {}; }
