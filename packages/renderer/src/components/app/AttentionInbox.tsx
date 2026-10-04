@@ -51,9 +51,15 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
   }, [open, refresh]);
   const dismiss = async (item: AttentionItem) => {
     setPendingId(item.id);
-    try { await client.acknowledgeAttentionItem(item.id); await refresh(); }
-    catch (e) { setError(String(e)); }
+    try { await client.acknowledgeAttentionItem(item.id); await refresh(); return true; }
+    catch (e) { setError(`Could not mark this notice as read. ${String(e)}`); return false; }
     finally { setPendingId(null); }
+  };
+  const openItem = async (item: AttentionItem) => {
+    if (pendingId !== null) return;
+    if (item.dismissible && client.capabilities.runMutations && !await dismiss(item)) return;
+    setOpen(false);
+    onOpenRun(item.projectId, item.runId);
   };
   const unreadNotices = items.filter((item) => item.dismissible);
   const markAllRead = async () => {
@@ -91,7 +97,7 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
         {error && <p role="alert" className="p-2 text-xs text-[var(--ec-danger)]">{error}</p>}
         {loading ? <p className="p-3 text-sm">Loading attention items…</p> : !filtered.length && <p className="p-3 text-sm text-[var(--ec-muted)]">{items.length ? "No matching items." : "Nothing needs your attention."}</p>}
         {filtered.slice(0, limit).map((item) => <div key={item.id} className="flex items-start gap-2 border-b border-[var(--ec-border)] p-2">
-          <Button type="button" variant="ghost" className="h-auto min-w-0 flex-1 flex-col items-stretch justify-start gap-0 px-1 py-0 text-left font-normal text-[var(--ec-text)]" onClick={() => { setOpen(false); onOpenRun(item.projectId, item.runId); }}>
+          <Button type="button" variant="ghost" disabled={pendingId !== null} className="h-auto min-w-0 flex-1 flex-col items-stretch justify-start gap-0 px-1 py-0 text-left font-normal text-[var(--ec-text)]" onClick={() => void openItem(item)}>
             <span className="flex flex-wrap gap-x-2 text-[11px] text-[var(--ec-muted)]"><span className={item.kind === "review" ? "text-[var(--ec-success)]" : "text-[var(--ec-warning)]"}>{ATTENTION_KIND_LABELS[item.kind as AttentionKind]}</span><span>{item.projectName}</span><time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString()}</time></span>
             <span className="truncate text-sm font-medium">{item.title}</span><span className="line-clamp-2 whitespace-pre-wrap break-words text-xs text-[var(--ec-muted)]">{item.detail}</span>
           </Button>
@@ -99,7 +105,7 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
         </div>)}
         {filtered.length > limit && <Button className="m-2" size="sm" variant="secondary" onClick={() => setLimit(limit + 50)}>Show more</Button>}
       </div>
-      <p className="border-t border-[var(--ec-border)] px-3 py-2 text-[11px] text-[var(--ec-muted)]">Mark all as read clears result notices across all projects and filters for every connected client. Open a run to resolve approvals, questions, or blocked work; these stay in the inbox.</p>
+      <p className="border-t border-[var(--ec-border)] px-3 py-2 text-[11px] text-[var(--ec-muted)]">Opening a result marks it as read when you have write access. Mark all as read clears result notices across all projects and filters for every connected client. Approvals, questions, and blocked work stay until resolved.</p>
     </dialog>, document.body)}
   </>;
 };

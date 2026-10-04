@@ -43,11 +43,35 @@ describe("attention inbox", () => {
     await act(async () => reviewed[0].click()); expect(acknowledge).toHaveBeenCalledWith("b");
     const open = [...dialog.querySelectorAll("button")].find((button) => button.textContent?.includes("Fix tests"));
     await act(async () => open?.click()); expect(onOpenRun).toHaveBeenCalledWith("p", "r");
+    expect(acknowledge).toHaveBeenCalledTimes(1);
     expect(document.querySelector("dialog")).toBeNull();
   });
+  it.each(["review", "failed"] as const)("marks a %s notice as read when opening it", async (kind) => {
+    const { acknowledge, onOpenRun } = await render(false, [{ ...items[1], kind }]);
+    const entry = [...document.querySelectorAll<HTMLButtonElement>("dialog button")].find((button) => button.textContent?.includes("Build UI"))!;
+    await act(async () => entry.click());
+    expect(acknowledge).toHaveBeenCalledWith("b");
+    expect(onOpenRun).toHaveBeenCalledWith("q", "s");
+    expect(document.querySelector("dialog")).toBeNull();
+    await act(async () => container.querySelector("button")?.click());
+    expect(document.querySelector("dialog")?.textContent).toContain("Nothing needs your attention.");
+  });
+  it("keeps the notice available for retry when marking it as read fails", async () => {
+    const { acknowledge, onOpenRun } = await render(false, [items[1]], "b");
+    const entry = [...document.querySelectorAll<HTMLButtonElement>("dialog button")].find((button) => button.textContent?.includes("Build UI"))!;
+    await act(async () => entry.click());
+    expect(acknowledge).toHaveBeenCalledWith("b");
+    expect(onOpenRun).not.toHaveBeenCalled();
+    expect(document.querySelector("[role=alert]")?.textContent).toContain("Could not mark this notice as read.");
+    expect(entry.disabled).toBe(false);
+  });
   it("keeps read-only access read-only", async () => {
-    await render(true); expect([...document.querySelectorAll("dialog button")].some((button) => button.textContent === "Mark reviewed")).toBe(false);
+    const { acknowledge, onOpenRun } = await render(true); expect([...document.querySelectorAll("dialog button")].some((button) => button.textContent === "Mark reviewed")).toBe(false);
     expect([...document.querySelectorAll("dialog button")].some((button) => button.textContent === "Mark all as read")).toBe(false);
+    const entry = [...document.querySelectorAll<HTMLButtonElement>("dialog button")].find((button) => button.textContent?.includes("Build UI"))!;
+    await act(async () => entry.click());
+    expect(onOpenRun).toHaveBeenCalledWith("q", "s");
+    expect(acknowledge).not.toHaveBeenCalled();
   });
   it("uses shared dropdowns inside the modal and filters their selections", async () => {
     await render();
