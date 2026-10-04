@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { REMOTE_ACCESS_SCOPES } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, ATTENTION_KIND_LABELS, parseAttentionInboxSettings, REMOTE_ACCESS_SCOPES, type AttentionKind } from "@buildwarden/shared";
 import type {
   AppSettingRecord,
   AppSnapshot,
@@ -3289,6 +3289,9 @@ export class BuildWardenDatabase {
   }
 
   listAttentionInbox(): AttentionItem[] {
+    const settings = parseAttentionInboxSettings(this.getSettings()[APP_SETTING_KEYS.attentionInbox]);
+    const enabledKinds = (Object.keys(settings.kinds) as AttentionKind[]).filter((kind) => settings.enabled && settings.kinds[kind]);
+    if (!enabledKinds.length) return [];
     return this.all<Omit<AttentionItem, "dismissible"> & { dismissible: number }>(`
       with candidates as (
         select 'request:' || s.id as id,
@@ -3315,10 +3318,15 @@ export class BuildWardenDatabase {
         where o.status = 'attention' and r.status != 'failed'
       )
       select c.* from candidates c left join attention_acknowledgements a on a.item_id = c.id
-      where a.item_id is null or c.dismissible = 0
+      where (a.item_id is null or c.dismissible = 0)
+        and c.kind in (${enabledKinds.map(() => "?").join(",")})
+        and not exists (
+          select 1 from attention_suppression_windows w where w.kind = c.kind
+            and c.createdAt >= w.started_at and (w.ended_at is null or c.createdAt < w.ended_at)
+        )
       order by case c.kind when 'approval' then 0 when 'input' then 1 when 'failed' then 2 when 'blocked' then 3 else 4 end,
         c.createdAt desc, c.id
-    `).map((item) => ({ ...item, dismissible: Boolean(item.dismissible) }));
+    `, enabledKinds).map((item) => ({ ...item, dismissible: Boolean(item.dismissible) }));
   }
 
   acknowledgeAttentionItem(itemId: string): void {
@@ -3547,6 +3555,30 @@ export class BuildWardenDatabase {
 
   setSetting(key: string, value: string): void {
     const timestamp = nowIso();
+    if (key === APP_SETTING_KEYS.attentionInbox) {
+      const previous = parseAttentionInboxSettings(this.getSettings()[key]);
+      const next = parseAttentionInboxSettings(value);
+      // Keep publication history separate from run history, including across restarts.
+      this.exec("savepoint attention_preferences");
+      try {
+        for (const kind of Object.keys(ATTENTION_KIND_LABELS) as AttentionKind[]) {
+          const wasEnabled = previous.enabled && previous.kinds[kind];
+          const enabled = next.enabled && next.kinds[kind];
+          if (wasEnabled && !enabled) {
+            this.run("insert into attention_suppression_windows (kind, started_at) values (?, ?)", [kind, timestamp]);
+          } else if (!wasEnabled && enabled) {
+            this.run("update attention_suppression_windows set ended_at = ? where kind = ? and ended_at is null", [timestamp, kind]);
+          }
+        }
+        this.run("insert into app_settings (key, value, updated_at) values (?, ?, ?) on conflict(key) do update set value = excluded.value, updated_at = excluded.updated_at", [key, JSON.stringify(next), timestamp]);
+        this.exec("release attention_preferences");
+      } catch (error) {
+        this.exec("rollback to attention_preferences");
+        this.exec("release attention_preferences");
+        throw error;
+      }
+      return;
+    }
     this.run(
       `
       insert into app_settings (key, value, updated_at)
@@ -3558,6 +3590,7 @@ export class BuildWardenDatabase {
   }
 
   deleteSetting(key: string): void {
+    if (key === APP_SETTING_KEYS.attentionInbox) this.setSetting(key, "{}");
     this.run("delete from app_settings where key = ?", [key]);
   }
 
@@ -4626,6 +4659,14 @@ export class BuildWardenDatabase {
         acknowledged_at text not null
       );
       create index if not exists idx_attention_acknowledgements_run on attention_acknowledgements(run_id);
+
+      create table if not exists attention_suppression_windows (
+        id integer primary key,
+        kind text not null,
+        started_at text not null,
+        ended_at text
+      );
+      create index if not exists idx_attention_suppression_kind on attention_suppression_windows(kind, started_at);
 
       create table if not exists run_notes (
         id text primary key,

@@ -1,3 +1,4 @@
+import { parseAttentionInboxSettings } from "@buildwarden/shared";
 import { AttentionInbox } from "./AttentionInbox";
 import { SidebarUtilityButton } from "./SidebarUtilityButton";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent } from "react";
@@ -68,6 +69,7 @@ interface SidebarProps {
   bookmarksSelected: boolean;
   chatsSelected: boolean;
   settingsSelected: boolean;
+  attentionInboxSetting?: string;
   selectedProjectId: string | null;
   currentProjectBranch: string;
   currentProjectBranchStatus: CurrentProjectBranchStatus;
@@ -217,6 +219,7 @@ const SidebarComponent = ({
   bookmarksSelected,
   chatsSelected,
   settingsSelected,
+  attentionInboxSetting,
   selectedProjectId,
   currentProjectBranch,
   currentProjectBranchStatus,
@@ -620,7 +623,7 @@ const SidebarComponent = ({
           {workspaceLinks.map((link) => (
             <SidebarUtilityButton key={link.label} {...link} collapsed={collapsed} />
           ))}
-          <AttentionInbox client={buildwarden} compact={collapsed} triggerVariant="sidebar" onOpenRun={onSelectRun} />
+          {parseAttentionInboxSettings(attentionInboxSetting).enabled && <AttentionInbox key={attentionInboxSetting} client={buildwarden} compact={collapsed} triggerVariant="sidebar" onOpenRun={onSelectRun} />}
           {buildwarden.capabilities.settings && (
             <SidebarUtilityButton label="Settings" icon={Settings} selected={settingsSelected} onClick={onOpenSettings} collapsed={collapsed} />
           )}
@@ -851,7 +854,7 @@ const SidebarComponent = ({
           {workspaceLinks.map((link) => (
             <SidebarUtilityButton key={link.label} {...link} collapsed={collapsed} />
           ))}
-          <AttentionInbox client={buildwarden} compact={collapsed} triggerVariant="sidebar" onOpenRun={onSelectRun} />
+          {parseAttentionInboxSettings(attentionInboxSetting).enabled && <AttentionInbox key={attentionInboxSetting} client={buildwarden} compact={collapsed} triggerVariant="sidebar" onOpenRun={onSelectRun} />}
           {buildwarden.capabilities.settings && (
             <SidebarUtilityButton label="Settings" icon={Settings} selected={settingsSelected} onClick={onOpenSettings} collapsed={collapsed} />
           )}

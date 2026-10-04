@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
-import type { RunInput } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, ATTENTION_KIND_LABELS, parseAttentionInboxSettings, type AttentionKind, type RunInput } from "@buildwarden/shared";
 
 const fixtures: Array<{ db: BuildWardenDatabase; dir: string }> = [];
 const fixture = async () => {
@@ -18,6 +18,73 @@ const fixture = async () => {
 afterEach(async () => { vi.useRealTimers(); for (const { db, dir } of fixtures.splice(0)) { await db.close(); await rm(dir, { recursive: true, force: true }); } });
 
 describe("attention inbox", () => {
+  it.each(Object.keys(ATTENTION_KIND_LABELS) as AttentionKind[])("suppresses %s publication while disabled, including after a restart", async (kind) => {
+    const { db, project, run } = await fixture();
+    const createEvent = () => {
+      const item = run();
+      if (kind === "review" || kind === "failed") {
+        db.updateRunStatus(item.id, kind === "review" ? "completed" : "failed");
+      } else {
+        db.updateRunStatus(item.id, "running");
+        if (kind === "blocked") {
+          const orchestration = db.createOrchestration({ projectId: project.id, coordinatorRunId: item.id,
+            teamSnapshot: { version: 1, maxConcurrentTasks: 1, maxTasksPerOrchestration: 1, models: [], roles: [] } });
+          db.updateOrchestration(orchestration.id, { status: "attention" });
+        } else {
+          db.appendRunStep(item.id, kind === "approval" ? "approval-requested" : "user-input-requested", "Request", "Details", JSON.stringify({ requestStatus: "opened" }));
+        }
+      }
+      return item.id;
+    };
+    vi.setSystemTime(new Date("2026-10-04T00:00:00Z"));
+    const earlier = createEvent();
+    vi.setSystemTime(new Date("2026-10-04T00:01:00Z"));
+    const preferences = parseAttentionInboxSettings();
+    preferences.kinds[kind] = false;
+    db.setSetting(APP_SETTING_KEYS.attentionInbox, JSON.stringify(preferences));
+    vi.setSystemTime(new Date("2026-10-04T00:02:00Z"));
+    const suppressed = createEvent();
+    expect(db.listAttentionInbox()).toEqual([]);
+    // Run history remains intact even when inbox publication is disabled.
+    expect(db.getRun(suppressed)).toBeDefined();
+    const reopened = new BuildWardenDatabase(db.getFilePath()); await reopened.init();
+    try {
+      expect(reopened.listAttentionInbox()).toEqual([]);
+      vi.setSystemTime(new Date("2026-10-04T00:03:00Z"));
+      preferences.kinds[kind] = true;
+      reopened.setSetting(APP_SETTING_KEYS.attentionInbox, JSON.stringify(preferences));
+      expect(reopened.listAttentionInbox().map((item) => item.runId)).toEqual([earlier]);
+    } finally { await reopened.close(); }
+    vi.setSystemTime(new Date("2026-10-04T00:04:00Z"));
+    const latest = createEvent();
+    expect(db.listAttentionInbox().map((item) => item.runId)).toEqual([latest, earlier]);
+  });
+  it("combines the master switch with individual choices and supports resetting preferences", async () => {
+    const { db, run } = await fixture();
+    vi.setSystemTime(new Date("2026-10-04T00:00:00Z"));
+    const preferences = parseAttentionInboxSettings();
+    preferences.kinds.failed = false;
+    db.setSetting(APP_SETTING_KEYS.attentionInbox, JSON.stringify(preferences));
+    preferences.enabled = false;
+    db.setSetting(APP_SETTING_KEYS.attentionInbox, JSON.stringify(preferences));
+    vi.setSystemTime(new Date("2026-10-04T00:01:00Z"));
+    db.updateRunStatus(run().id, "completed");
+    db.updateRunStatus(run().id, "failed");
+    expect(db.listAttentionInbox()).toEqual([]);
+    vi.setSystemTime(new Date("2026-10-04T00:02:00Z"));
+    preferences.enabled = true;
+    db.setSetting(APP_SETTING_KEYS.attentionInbox, JSON.stringify(preferences));
+    vi.setSystemTime(new Date("2026-10-04T00:03:00Z"));
+    const result = run(); db.updateRunStatus(result.id, "completed");
+    db.updateRunStatus(run().id, "failed");
+    expect(db.listAttentionInbox().map((item) => item.runId)).toEqual([result.id]);
+    vi.setSystemTime(new Date("2026-10-04T00:04:00Z"));
+    db.deleteSetting(APP_SETTING_KEYS.attentionInbox);
+    expect(db.listAttentionInbox().map((item) => item.runId)).toEqual([result.id]);
+    vi.setSystemTime(new Date("2026-10-04T00:05:00Z"));
+    const failure = run(); db.updateRunStatus(failure.id, "failed");
+    expect(db.listAttentionInbox().map((item) => item.runId)).toEqual([failure.id, result.id]);
+  });
   it("prioritizes live requests across projects, including hidden child runs", async () => {
     const { db, run } = await fixture();
     const completed = run(); db.updateRunStatus(completed.id, "completed", { summary: "Done" });

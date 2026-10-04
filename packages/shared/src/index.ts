@@ -4809,6 +4809,7 @@ export const APP_SETTING_KEYS = {
   sidebarRunEntrySize: "sidebarRunEntrySize",
   /** `"false"` renders Recent Runs as a flat, project-labelled list. Defaults to grouped. */
   sidebarGroupRunsByProject: "sidebarGroupRunsByProject",
+  attentionInbox: "attentionInbox",
   /** Persisted app sidebar width in CSS pixels. */
   sidebarWidth: "sidebarWidth",
   /** Number of days shown in the sidebar Recent Runs section. */
