@@ -1,6 +1,7 @@
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import { APP_SETTING_KEYS, parseWorkspaceSetupSettings, type HarnessRunChunk, type WorkspaceSetupProfile } from "@buildwarden/shared";
@@ -98,11 +99,16 @@ describe("workspace setup", () => {
       expect(db.listRunsForProject(project.id).map((entry) => entry.id)).toEqual(beforeFailure);
       save.mockRestore();
       db.setSetting(APP_SETTING_KEYS.workspaceSetupProfiles, "{}");
-      db.saveRunWorkspaceSetup(run.id, { profile, status: "completed" });
+      db.saveRunWorkspaceSetup(run.id, { profile: { ...profile, name: "Should not replace snapshot" }, status: "completed" });
     } finally { await db.close(); }
     const reopened = new BuildWardenDatabase(dbPath); await reopened.init();
     try {
       expect(reopened.getRunWorkspaceSetup(runId!)).toEqual({ profile, status: "completed" });
+      const connection = new DatabaseSync(dbPath);
+      try { connection.prepare("update run_workspace_setup set profile_json = ? where run_id = ?").run("broken", runId!); }
+      finally { connection.close(); }
+      expect(reopened.getRunWorkspaceSetup(runId!)).toBeNull();
+      expect(() => reopened.getRunWorkspaceSetup(runId!, true)).toThrow("corrupted");
       reopened.deleteRun(runId!); expect(reopened.getRunWorkspaceSetup(runId!)).toBeNull();
     } finally { await reopened.close(); }
   });

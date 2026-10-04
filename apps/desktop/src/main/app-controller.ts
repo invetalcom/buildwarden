@@ -9444,7 +9444,7 @@ export class AppController
       yoloMode?: boolean;
     },
   ): Worker {
-    const workspaceSetup = this.db.getRunWorkspaceSetup(run.id);
+    const workspaceSetup = this.db.getRunWorkspaceSetup(run.id, true);
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "worker.js");
     const streamingStepIds = new Map<string, string>();
     const streamingStepKinds = new Map<string, "assistant" | "reasoning" | "tool-result" | "tool-progress">();

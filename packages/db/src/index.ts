@@ -2733,12 +2733,20 @@ export class BuildWardenDatabase {
     return this.withDerivedRunState(run);
   }
 
-  getRunWorkspaceSetup(runId: string): RunWorkspaceSetup | null {
+  getRunWorkspaceSetup(runId: string, throwOnInvalidProfile = false): RunWorkspaceSetup | null {
     const row = this.first<{ profile: string; status: RunWorkspaceSetup["status"] }>("select profile_json as profile, status from run_workspace_setup where run_id = ?", [runId]);
-    return row ? { profile: JSON.parse(row.profile) as RunWorkspaceSetup["profile"], status: row.status } : null;
+    if (!row) return null;
+    try {
+      return { profile: JSON.parse(row.profile) as RunWorkspaceSetup["profile"], status: row.status };
+    } catch {
+      // Detail views remain readable, but execution must not silently skip required setup.
+      if (throwOnInvalidProfile) throw new Error("The run's workspace setup profile is corrupted. Start a new run with a valid profile.");
+      return null;
+    }
   }
 
   saveRunWorkspaceSetup(runId: string, setup: RunWorkspaceSetup): void {
+    // A run's profile is immutable; subsequent calls update only its progress status.
     this.run("insert into run_workspace_setup (run_id, profile_json, status) values (?, ?, ?) on conflict(run_id) do update set status = excluded.status", [runId, JSON.stringify(setup.profile), setup.status]);
   }
 
