@@ -9,6 +9,7 @@ import {
   type RunWorkspaceType,
 } from "@buildwarden/shared";
 import { Trash2 } from "lucide-react";
+import { WorkspaceSetupProfiles } from "@buildwarden/renderer";
 import { useMobileApp } from "../../data/mobile-app-context";
 import { runModelOptions } from "../../data/selectors";
 import { useAction } from "../../data/use-action";
@@ -237,6 +238,10 @@ export const ProjectSettingsPanel = ({ project }: { project: ProjectSnapshot }) 
           ))
         )}
       </SettingGroup>
+
+      <div className="mx-4 my-3">
+        <WorkspaceSetupProfiles key={projectId} projectId={projectId} client={client} />
+      </div>
 
       <SettingGroup title="Project skills" hint="Extra guidance loaded into every run in this project.">
         {skills === null ? (

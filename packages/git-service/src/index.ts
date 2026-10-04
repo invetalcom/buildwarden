@@ -718,6 +718,7 @@ export class GitService {
     runId: string,
     baseBranch: string,
     configuredWorktreeRoot?: string | null,
+    shareDependencies = true,
   ): Promise<{ branchName: string; worktreePath: string }> {
     const git = simpleGit(repoPath);
     await ensureGitLongPathSupport(git);
@@ -731,7 +732,7 @@ export class GitService {
       await runGitRaw(git, ["worktree", "add", "-b", branchName, worktreePath, baseBranch]);
     }
 
-    await ensureWorktreeDependencyLinks(repoPath, worktreePath);
+    if (shareDependencies) await ensureWorktreeDependencyLinks(repoPath, worktreePath);
 
     return {
       branchName,
@@ -745,6 +746,7 @@ export class GitService {
     runId: string,
     sourceBranch: string,
     configuredWorktreeRoot?: string | null,
+    shareDependencies = true,
   ): Promise<{ branchName: string; worktreePath: string }> {
     const git = simpleGit(repoPath);
     await ensureGitLongPathSupport(git);
@@ -758,7 +760,7 @@ export class GitService {
       await runGitRaw(git, ["worktree", "add", "-b", branchName, worktreePath, sourceBranch]);
     }
 
-    await ensureWorktreeDependencyLinks(repoPath, worktreePath);
+    if (shareDependencies) await ensureWorktreeDependencyLinks(repoPath, worktreePath);
 
     return {
       branchName,

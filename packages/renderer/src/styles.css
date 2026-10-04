@@ -565,7 +565,8 @@ pre {
 /* Dropdowns are clipped to a rounded popover. Keep their scrollbar inside the
    straight section of that shape so Chromium does not crop either end. */
 .app-dropdown-scrollbar {
-  scrollbar-gutter: stable;
+  /* Do not reserve an empty right gutter in menus that do not need scrolling. */
+  scrollbar-gutter: auto;
 }
 
 .app-dropdown-scrollbar::-webkit-scrollbar-track {

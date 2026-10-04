@@ -190,7 +190,7 @@ export const Select = ({
                   aria-selected={optionSelected}
                   disabled={option.disabled}
                   className={cn(
-                    "flex w-full min-w-0 items-start justify-between gap-3 rounded-md px-3 py-2 text-left text-sm transition",
+                    "flex w-full min-w-0 items-center justify-between gap-3 rounded-[0.65rem] px-3 py-2 text-left text-sm transition",
                     optionSelected
                       ? "bg-[var(--ec-accent-soft)] text-[var(--ec-text)]"
                       : "text-[var(--ec-text)] hover:bg-[var(--ec-hover)]",

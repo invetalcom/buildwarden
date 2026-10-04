@@ -1,3 +1,4 @@
+import { RunWorkspaceSetupCard } from "./RunWorkspaceSetupCard";
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import {
@@ -1243,6 +1244,7 @@ export const RunDetailPage = ({
 
   return (
     <div className={cn("flex min-h-0 flex-col gap-1.5", className)}>
+      <RunWorkspaceSetupCard key={runDetail.run.id} detail={runDetail} onOpenUrl={onOpenBrowserUrl} />
       {selectionMenu ? (
         <div
           className="fixed z-[80] min-w-[13rem] glass-popover overflow-hidden py-1"
