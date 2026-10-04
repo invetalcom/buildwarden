@@ -3342,8 +3342,8 @@ export class BuildWardenDatabase {
         from runs r join projects p on p.id = r.project_id
         where r.status in ('failed', 'completed') and r.list_visibility != 'for-later'
         union all
-        select 'orchestration:' || o.id || ':' || o.updated_at, 'blocked', r.project_id, p.name,
-          r.id, substr(r.prompt, 1, 180), 'Orchestration needs attention. Open the run to resolve blocked tasks.', o.updated_at, 0
+        select 'orchestration:' || o.id || ':' || o.attention_started_at, 'blocked', r.project_id, p.name,
+          r.id, substr(r.prompt, 1, 180), 'Orchestration needs attention. Open the run to resolve blocked tasks.', o.attention_started_at, 0
         from orchestrations o join runs r on r.id = o.coordinator_run_id join projects p on p.id = r.project_id
         where o.status = 'attention' and r.status != 'failed'
       )
@@ -4036,9 +4036,15 @@ export class BuildWardenDatabase {
     const existing = this.getOrchestration(id);
     const timestamp = nowIso();
     this.run(
-      `update orchestrations set status = ?, team_snapshot_json = ?, wake_mode = ?, wake_task_ids_json = ?,
+      `update orchestrations set attention_started_at = case
+         when ? != 'attention' then null
+         when status = 'attention' then attention_started_at
+         else ? end,
+       status = ?, team_snapshot_json = ?, wake_mode = ?, wake_task_ids_json = ?,
        last_delivered_sequence = ?, error_message = ?, updated_at = ?, finished_at = ? where id = ?`,
       [
+        fields.status ?? existing.status,
+        timestamp,
         fields.status ?? existing.status,
         JSON.stringify(fields.teamSnapshot ?? existing.teamSnapshot),
         fields.wakeMode !== undefined ? fields.wakeMode : existing.wakeMode,
@@ -5295,6 +5301,10 @@ export class BuildWardenDatabase {
        where workspace_type = 'local'`,
     );
     this.ensureColumn("runs", "delegation_enabled", "integer not null default 0");
+    // Inbox metadata stays fixed for the entire attention episode, including event-only updates.
+    this.ensureColumn("orchestrations", "attention_started_at", "text");
+    // Older databases only have updated_at; preserve their current notice identity on upgrade.
+    this.run("update orchestrations set attention_started_at = updated_at where status = 'attention' and attention_started_at is null");
     this.ensureColumn("project_tasks", "status", "text not null default 'open'");
     this.ensureColumn("project_tasks", "run_id", "text");
     this.ensureColumn("project_tasks", "pull_request_url", "text");

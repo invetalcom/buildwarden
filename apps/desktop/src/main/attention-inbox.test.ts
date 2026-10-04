@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import { APP_SETTING_KEYS, ATTENTION_KIND_LABELS, parseAttentionInboxSettings, type AttentionKind, type RunInput } from "@buildwarden/shared";
@@ -18,6 +19,55 @@ const fixture = async () => {
 afterEach(async () => { vi.useRealTimers(); for (const { db, dir } of fixtures.splice(0)) { await db.close(); await rm(dir, { recursive: true, force: true }); } });
 
 describe("attention inbox", () => {
+  it("keeps a suppressed blocked episode hidden through updates and restarts until attention clears", async () => {
+    const { db, project, run } = await fixture();
+    const coordinator = run();
+    const orchestration = db.createOrchestration({ projectId: project.id, coordinatorRunId: coordinator.id,
+      teamSnapshot: { version: 1, maxConcurrentTasks: 1, maxTasksPerOrchestration: 1, models: [], roles: [] } });
+    const preferences = parseAttentionInboxSettings();
+    vi.setSystemTime(new Date("2026-10-04T00:00:00Z"));
+    preferences.kinds.blocked = false;
+    db.setSetting(APP_SETTING_KEYS.attentionInbox, JSON.stringify(preferences));
+    vi.setSystemTime(new Date("2026-10-04T00:01:00Z"));
+    db.updateOrchestration(orchestration.id, { status: "attention" });
+    vi.setSystemTime(new Date("2026-10-04T00:02:00Z"));
+    preferences.kinds.blocked = true;
+    db.setSetting(APP_SETTING_KEYS.attentionInbox, JSON.stringify(preferences));
+    vi.setSystemTime(new Date("2026-10-04T00:03:00Z"));
+    db.updateOrchestration(orchestration.id, { status: "attention", errorMessage: "Still blocked" });
+    db.appendOrchestrationEvent({ orchestrationId: orchestration.id, type: "status", title: "Update", content: "Still blocked" });
+    expect(db.listAttentionInbox()).toEqual([]);
+    const reopened = new BuildWardenDatabase(db.getFilePath()); await reopened.init();
+    try {
+      expect(reopened.listAttentionInbox()).toEqual([]);
+      reopened.updateOrchestration(orchestration.id, { status: "active" });
+      vi.setSystemTime(new Date("2026-10-04T00:04:00Z"));
+      reopened.updateOrchestration(orchestration.id, { status: "attention" });
+      const notice = reopened.listAttentionInbox()[0];
+      expect(notice).toMatchObject({ kind: "blocked", createdAt: "2026-10-04T00:04:00.000Z" });
+      vi.setSystemTime(new Date("2026-10-04T00:05:00Z"));
+      reopened.updateOrchestration(orchestration.id, { lastDeliveredSequence: 1 });
+      reopened.appendOrchestrationEvent({ orchestrationId: orchestration.id, type: "status", title: "Update", content: "Still blocked" });
+      expect(reopened.listAttentionInbox()).toEqual([notice]);
+    } finally { await reopened.close(); }
+  });
+  it("backfills a stable blocked notice timestamp when upgrading an older database", async () => {
+    const { db, project, run } = await fixture();
+    const orchestration = db.createOrchestration({ projectId: project.id, coordinatorRunId: run().id,
+      teamSnapshot: { version: 1, maxConcurrentTasks: 1, maxTasksPerOrchestration: 1, models: [], roles: [] } });
+    vi.setSystemTime(new Date("2026-10-04T00:00:00Z"));
+    db.updateOrchestration(orchestration.id, { status: "attention" });
+    const legacy = new DatabaseSync(db.getFilePath());
+    try { legacy.exec("alter table orchestrations drop column attention_started_at"); } finally { legacy.close(); }
+    const reopened = new BuildWardenDatabase(db.getFilePath()); await reopened.init();
+    try {
+      vi.setSystemTime(new Date("2026-10-04T00:01:00Z"));
+      reopened.updateOrchestration(orchestration.id, { errorMessage: "Still blocked" });
+      expect(reopened.listAttentionInbox()[0]).toMatchObject({
+        id: `orchestration:${orchestration.id}:2026-10-04T00:00:00.000Z`, createdAt: "2026-10-04T00:00:00.000Z",
+      });
+    } finally { await reopened.close(); }
+  });
   it.each(Object.keys(ATTENTION_KIND_LABELS) as AttentionKind[])("suppresses %s publication while disabled, including after a restart", async (kind) => {
     const { db, project, run } = await fixture();
     const createEvent = () => {
