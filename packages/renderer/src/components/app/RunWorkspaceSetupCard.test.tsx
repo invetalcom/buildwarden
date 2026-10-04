@@ -17,6 +17,9 @@ describe("workspace setup controls", () => {
     const updated = applyLiveRunEventToDetail(detail, { runId: "run", type: "status", title: "Setup complete", content: "Node", createdAt: "2026-10-03T00:00:00Z", metadata: { workspaceSetup: true, setupStatus: "completed" } });
     expect(updated.workspaceSetup?.status).toBe("completed");
     expect(renderWithBuildWardenClient(<RunWorkspaceSetupCard detail={updated} />)).toContain("Start preview");
+    const readOnly = renderWithBuildWardenClient(<RunWorkspaceSetupCard detail={updated} onOpenUrl={() => undefined} />, undefined, { runMutations: false, embeddedTerminal: true });
+    expect(readOnly).not.toContain("Start preview");
+    expect(readOnly).toContain("Open preview");
     expect(renderWithBuildWardenClient(<RunWorkspaceSetupCard detail={detail} />)).not.toContain("Start preview");
   });
 });
