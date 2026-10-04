@@ -74,6 +74,9 @@ describe("workspace setup", () => {
       const input = { projectId: project.id, providerAccountId: provider.id, modelId: model.id, harnessType: "codex-app-server" as const, mode: "code" as const, prompt: "Test", branchName: "test", worktreePath: root };
       const run = db.createRun({ ...input, workspaceType: "worktree" }); runId = run.id;
       expect(db.getRunWorkspaceSetup(run.id)?.profile).toEqual(profile);
+      const captured = { ...profile, name: "Captured before worktree creation" };
+      expect(db.getRunWorkspaceSetup(db.createRun({ ...input, workspaceType: "worktree", workspaceSetupProfile: captured }).id)?.profile).toEqual(captured);
+      expect(db.getRunWorkspaceSetup(db.createRun({ ...input, workspaceType: "worktree", workspaceSetupProfile: null }).id)).toBeNull();
       expect(db.getRunWorkspaceSetup(db.createRun({ ...input, workspaceType: "local" }).id)).toBeNull();
       db.setSetting(APP_SETTING_KEYS.workspaceSetupProfiles, "{}");
       db.saveRunWorkspaceSetup(run.id, { profile, status: "completed" });

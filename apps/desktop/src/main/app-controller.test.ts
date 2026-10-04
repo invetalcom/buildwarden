@@ -16,6 +16,7 @@ import type {
   ProviderSessionRuntimeRecord,
   RunInput,
   RunRecord,
+  WorkspaceSetupProfile,
 } from "@buildwarden/shared";
 import type { SecretStore } from "@buildwarden/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -194,6 +195,31 @@ const deferred = <T>() => {
   });
   return { promise, resolve };
 };
+
+describe("workspace setup profile capture", () => {
+  it.each(["new", "continuation"])("keeps the %s run snapshot consistent when settings change during worktree creation", async (flow) => {
+    const profile: WorkspaceSetupProfile = { id: "setup", name: "Setup", dependencies: "isolated", submodules: "none", commands: [], environmentFiles: [], previewCommand: "", previewUrl: "" };
+    const root = mkdtempSync(join(tmpdir(), "bw-profile-race-"));
+    tempDirs.push(root);
+    const sourceRun = { id: "source", projectId: project.id, status: "completed", workspaceType: "worktree", workspaceVcs: "git", worktreePath: root, branchName: "source", prompt: "Task" } as RunRecord;
+    const createRun = vi.fn(() => { throw new Error("stop after insert input"); });
+    const harness = createHarness({ createRun, getRun: vi.fn(() => sourceRun), getRunSteps: vi.fn(() => []) });
+    tempDirs.push(harness.logDir);
+    harness.secrets.readSecret.mockResolvedValue("test-key");
+    harness.calls.setSetting(APP_SETTING_KEYS.workspaceSetupProfiles, JSON.stringify({ [project.id]: { activeProfileId: profile.id, profiles: [profile] } }));
+    const createWorkspace = vi.fn(async () => {
+      await Promise.resolve();
+      harness.calls.setSetting(APP_SETTING_KEYS.workspaceSetupProfiles, "{}");
+      return { branchName: "new", worktreePath: root };
+    });
+    const internals = harness.controller as unknown as { gitService: Pick<GitService, "createWorktreeForRun" | "createWorktreeForContinuation"> };
+    internals.gitService = { createWorktreeForRun: createWorkspace, createWorktreeForContinuation: createWorkspace };
+    const input = { projectId: project.id, providerAccountId: provider.id, modelId: model.id, harnessType: "ai-sdk" as const, mode: "code" as const, workspaceType: "worktree" as const, prompt: "Task" };
+    await expect(flow === "new" ? harness.controller.createRun(input) : harness.controller.continueRun({ ...input, sourceRunId: sourceRun.id, includeWorkspaceChanges: false })).rejects.toThrow("stop after insert input");
+    expect(createWorkspace).toHaveBeenCalledWith(project.repoPath, project.name, expect.any(String), flow === "new" ? project.baseBranch : sourceRun.branchName, undefined, false);
+    expect(createRun).toHaveBeenCalledWith(expect.objectContaining({ workspaceSetupProfile: profile }));
+  });
+});
 
 const createMutableProjectHarness = () => {
   let currentProject = { ...project };

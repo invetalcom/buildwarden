@@ -2539,6 +2539,7 @@ export class BuildWardenDatabase {
       parentRunId?: string | null;
       rootRunId?: string | null;
       lineageTitle?: string | null;
+      workspaceSetupProfile?: RunWorkspaceSetup["profile"] | null;
     },
   ): RunRecord {
     const id = createId();
@@ -2587,7 +2588,9 @@ export class BuildWardenDatabase {
     );
     if (input.workspaceType !== "local") {
       const setup = parseWorkspaceSetupSettings(this.getSettings()[APP_SETTING_KEYS.workspaceSetupProfiles])[input.projectId];
-      const profile = setup?.profiles.find((entry) => entry.id === setup.activeProfileId);
+      const profile = input.workspaceSetupProfile === undefined
+        ? setup?.profiles.find((entry) => entry.id === setup.activeProfileId)
+        : input.workspaceSetupProfile;
       if (profile) this.saveRunWorkspaceSetup(id, { profile, status: "pending" });
     }
     return this.getRun(id);

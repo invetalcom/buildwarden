@@ -3149,6 +3149,7 @@ export class AppController
 
     const workspaceType = input.workspaceType ?? (project.kind === "folder" ? "copy" : "worktree");
     const workspaceVcs: RunWorkspaceVcs = project.kind === "folder" ? "folder" : "git";
+    const workspaceSetupProfile = this.getWorkspaceSetupProfile(project.id) ?? null;
     const configuredWorktreeRoot = this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
     let branchName: string;
     let worktreePath: string;
@@ -3190,7 +3191,7 @@ export class AppController
           crypto.randomUUID(),
           input.baseBranch?.trim() || project.baseBranch,
           configuredWorktreeRoot,
-          this.getWorkspaceSetupProfile(project.id)?.dependencies !== "isolated",
+          workspaceSetupProfile?.dependencies !== "isolated",
         );
         branchName = gitWorkspace.branchName;
         worktreePath = gitWorkspace.worktreePath;
@@ -3199,6 +3200,7 @@ export class AppController
 
     let run = this.db.createRun({
       ...runInsertInput,
+      workspaceSetupProfile,
       prompt: displayPrompt,
       goalText,
       workspaceType,
@@ -3307,12 +3309,14 @@ export class AppController
       throw new Error("Enter a continuation prompt.");
     }
 
+    const workspaceSetupProfile = this.getWorkspaceSetupProfile(project.id) ?? null;
     const configuredWorktreeRoot = this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
     const { workspaceType, workspaceVcs, branchName, worktreePath } = await this.prepareContinuationWorkspace(
       sourceRun,
       project,
       input.includeWorkspaceChanges !== false,
       configuredWorktreeRoot,
+      workspaceSetupProfile?.dependencies !== "isolated",
     );
 
     const goalText = input.goalText === undefined ? sourceRun.goalText : normalizeRunGoalText(input.goalText);
@@ -3333,6 +3337,7 @@ export class AppController
       parentRunId: sourceRun.id,
       rootRunId: sourceRun.rootRunId ?? sourceRun.id,
       lineageTitle: sourceRun.prompt || sourceRun.branchName,
+      workspaceSetupProfile,
       projectTaskId: sourceRun.projectTaskId,
       delegationEnabled: input.delegationEnabled ?? Boolean(sourceRun.delegationEnabled),
     });
@@ -3418,6 +3423,7 @@ export class AppController
     project: ProjectRecord,
     includeWorkspaceChanges: boolean,
     configuredWorkspaceRoot: string | undefined,
+    shareDependencies: boolean,
   ): Promise<Pick<RunRecord, "workspaceType" | "workspaceVcs" | "branchName" | "worktreePath">> {
     if (sourceRun.workspaceVcs === "folder") {
       if (sourceRun.workspaceType === "local" && !includeWorkspaceChanges) {
@@ -3448,7 +3454,7 @@ export class AppController
       crypto.randomUUID(),
       sourceRun.branchName,
       configuredWorkspaceRoot,
-      this.getWorkspaceSetupProfile(project.id)?.dependencies !== "isolated",
+      shareDependencies,
     );
     if (includeWorkspaceChanges) {
       await this.gitService.cloneWorkspaceChanges(sourceRun.worktreePath, workspace.worktreePath);
@@ -7097,12 +7103,14 @@ export class AppController
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
       throw new Error(`Credentials are unavailable for ${provider.label}.`);
     }
+    const workspaceSetupProfile = this.getWorkspaceSetupProfile(project.id) ?? null;
     const configuredWorktreeRoot = this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
     const workspace = await this.prepareContinuationWorkspace(
       coordinator,
       project,
       true,
       configuredWorktreeRoot,
+      workspaceSetupProfile?.dependencies !== "isolated",
     );
     let child = this.db.createRun({
       projectId: coordinator.projectId,
@@ -7120,6 +7128,7 @@ export class AppController
       parentRunId: coordinator.id,
       rootRunId: coordinator.id,
       lineageTitle: task.title,
+      workspaceSetupProfile,
       delegationEnabled: false,
     });
     this.db.updateOrchestrationTask(task.id, {
