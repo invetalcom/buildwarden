@@ -169,4 +169,40 @@ describe("attention inbox", () => {
     db.updateRunListVisibility(item.id, "default"); expect(db.listAttentionInbox()).toHaveLength(1);
     db.deleteRun(item.id); expect(db.listAttentionInbox()).toEqual([]);
   });
+  it("acknowledges a backlog with one candidate query, leaving new arrivals unread", async () => {
+    const { db, run } = await fixture();
+    for (let index = 0; index < 200; index++) db.updateRunStatus(run().id, "completed");
+    const ids = db.listAttentionInbox().map((item) => item.id);
+    const arrival = run(); db.updateRunStatus(arrival.id, "failed");
+    const list = vi.spyOn(db, "listAttentionInbox");
+    db.acknowledgeAttentionItems([...ids, ids[0], "stale-id"]);
+    expect(list).toHaveBeenCalledTimes(1);
+    db.acknowledgeAttentionItems(ids); // Retrying the same batch is harmless.
+    expect(db.listAttentionInbox().map((item) => item.runId)).toEqual([arrival.id]);
+    const reopened = new BuildWardenDatabase(db.getFilePath()); await reopened.init();
+    try { expect(reopened.listAttentionInbox().map((item) => item.runId)).toEqual([arrival.id]); }
+    finally { await reopened.close(); }
+  });
+  it("rejects an entire batch containing a live request", async () => {
+    const { db, run } = await fixture();
+    db.updateRunStatus(run().id, "completed");
+    const active = run(); db.updateRunStatus(active.id, "running");
+    db.appendRunStep(active.id, "approval-requested", "Approval", "Details", JSON.stringify({ requestStatus: "opened" }));
+    const items = db.listAttentionInbox();
+    expect(() => db.acknowledgeAttentionItems(items.map((item) => item.id).reverse())).toThrow("Resolve live requests");
+    expect(db.listAttentionInbox()).toEqual(items);
+  });
+  it("rolls back earlier acknowledgements if a later database write fails", async () => {
+    const { db, run } = await fixture();
+    db.updateRunStatus(run().id, "completed");
+    db.updateRunStatus(run().id, "completed");
+    const items = db.listAttentionInbox();
+    const connection = new DatabaseSync(db.getFilePath());
+    try {
+      connection.exec(`create trigger reject_ack before insert on attention_acknowledgements
+        when new.run_id = '${items[1].runId}' begin select raise(abort, 'Test write failure'); end`);
+      expect(() => db.acknowledgeAttentionItems(items.map((item) => item.id))).toThrow("Test write failure");
+      expect(db.listAttentionInbox()).toEqual(items);
+    } finally { connection.close(); }
+  });
 });

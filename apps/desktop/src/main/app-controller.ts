@@ -2412,6 +2412,10 @@ export class AppController
     this.db.acknowledgeAttentionItem(itemId);
   }
 
+  async acknowledgeAttentionItems(itemIds: string[]): Promise<void> {
+    this.db.acknowledgeAttentionItems(itemIds);
+  }
+
   async getSnapshot(): Promise<AppSnapshot> {
     const settings = this.db.getSettings();
     return this.applyProjectOrder(this.db.getSnapshot(

@@ -68,7 +68,7 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
     let failure = "";
     try {
       // Only acknowledge the notices present at the click; new arrivals remain unread.
-      for (const item of unreadNotices) await client.acknowledgeAttentionItem(item.id);
+      await client.acknowledgeAttentionItems(unreadNotices.map((item) => item.id));
     } catch (e) { failure = `Could not mark every notice as read. ${String(e)}`; }
     finally {
       await refresh();

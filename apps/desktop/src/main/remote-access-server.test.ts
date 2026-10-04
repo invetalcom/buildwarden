@@ -96,6 +96,7 @@ describe("remote operation registry", () => {
     expectTypeOf<RemoteApiMethod>().toEqualTypeOf<
       | "getAttentionInbox"
       | "acknowledgeAttentionItem"
+      | "acknowledgeAttentionItems"
       | "getSnapshot"
       | "refreshSnapshot"
       | "getNetworkProxySettings"

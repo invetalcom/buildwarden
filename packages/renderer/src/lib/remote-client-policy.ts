@@ -67,6 +67,7 @@ export const REMOTE_BROWSER_METHODS = new Set<RemoteApiMethod>([
 
 export const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
   "acknowledgeAttentionItem",
+  "acknowledgeAttentionItems",
   "createRun", "continueRun", "followUpRun", "respondToShellApproval", "respondToRunUserInput", "cancelRunShell",
   "cancelRun", "resumeRunFromCheckpoint", "recoverInterruptedRun", "undoRunToLastPrompt", "deleteRun",
   "pauseOrchestration", "resumeOrchestration", "cancelOrchestration", "finishOrchestration", "sendOrchestrationTaskMessage",
@@ -90,7 +91,7 @@ export const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
 
 export const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAccessScope[]>([
   ...[
-    "acknowledgeAttentionItem", "createRun", "continueRun", "followUpRun", "cancelRunShell", "cancelRun", "resumeRunFromCheckpoint",
+    "acknowledgeAttentionItem", "acknowledgeAttentionItems", "createRun", "continueRun", "followUpRun", "cancelRunShell", "cancelRun", "resumeRunFromCheckpoint",
     "recoverInterruptedRun", "undoRunToLastPrompt", "deleteRun", "setRunListVisibility", "addBookmark", "removeBookmark",
     "removeBookmarkById", "addRunNote", "updateRunNote", "deleteRunNote", "pauseOrchestration", "resumeOrchestration",
     "cancelOrchestration", "finishOrchestration", "sendOrchestrationTaskMessage", "retryOrchestrationTask",

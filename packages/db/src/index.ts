@@ -3360,10 +3360,21 @@ export class BuildWardenDatabase {
   }
 
   acknowledgeAttentionItem(itemId: string): void {
-    const item = this.listAttentionInbox().find((candidate) => candidate.id === itemId);
-    if (!item) return; // Repeated acknowledgements are idempotent.
-    if (!item.dismissible) throw new Error("Resolve live requests in the run before clearing them.");
-    this.run("insert or ignore into attention_acknowledgements (item_id, run_id, acknowledged_at) values (?, ?, ?)", [item.id, item.runId, nowIso()]);
+    this.acknowledgeAttentionItems([itemId]);
+  }
+
+  acknowledgeAttentionItems(itemIds: string[]): void {
+    if (!itemIds.length) return;
+    const requested = new Set(itemIds);
+    this.transaction(() => {
+      const items = this.listAttentionInbox().filter((candidate) => requested.has(candidate.id));
+      if (items.some((item) => !item.dismissible)) throw new Error("Resolve live requests in the run before clearing them.");
+      const timestamp = nowIso();
+      for (const item of items) {
+        // Missing or already acknowledged IDs are ignored; new arrivals are never included.
+        this.run("insert or ignore into attention_acknowledgements (item_id, run_id, acknowledged_at) values (?, ?, ?)", [item.id, item.runId, timestamp]);
+      }
+    });
   }
 
   updateRunListVisibility(runId: string, visibility: RunListVisibility): RunRecord {

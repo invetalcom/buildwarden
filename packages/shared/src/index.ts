@@ -3869,6 +3869,7 @@ export interface RunBrowserInputEnvelope {
 export interface DesktopApi {
   getAttentionInbox(): Promise<AttentionItem[]>;
   acknowledgeAttentionItem(itemId: string): Promise<void>;
+  acknowledgeAttentionItems(itemIds: string[]): Promise<void>;
   getSnapshot(): Promise<AppSnapshot>;
   getRemoteAccessStatus(): Promise<RemoteAccessStatus>;
   listHostDirectories(input?: HostDirectoryBrowseInput): Promise<HostDirectoryListing>;
@@ -4314,6 +4315,7 @@ export interface RemoteAccessPairingExchangeResponse {
 export type RemoteOperationMap = {
   getAttentionInbox: DesktopApi["getAttentionInbox"];
   acknowledgeAttentionItem: DesktopApi["acknowledgeAttentionItem"];
+  acknowledgeAttentionItems: DesktopApi["acknowledgeAttentionItems"];
   getSnapshot: DesktopApi["getSnapshot"];
   refreshSnapshot: DesktopApi["refreshSnapshot"];
   getNetworkProxySettings: DesktopApi["getNetworkProxySettings"];
@@ -4604,6 +4606,7 @@ export type RemoteWebSocketServerMessage =
 export const IPC_CHANNELS = {
   getAttentionInbox: "buildwarden:get-attention-inbox",
   acknowledgeAttentionItem: "buildwarden:acknowledge-attention-item",
+  acknowledgeAttentionItems: "buildwarden:acknowledge-attention-items",
   activateRun: "buildwarden:activate-run",
   addModel: "buildwarden:add-model",
   listAvailableProviderModels: "buildwarden:list-available-provider-models",

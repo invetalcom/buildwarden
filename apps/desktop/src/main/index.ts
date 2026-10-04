@@ -1121,6 +1121,7 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("deleteModel", (modelId) => controller.deleteModel(modelId), validateSingleRemoteStringArg, "admin", true);
   remoteOperations.register("getAttentionInbox", () => controller.getAttentionInbox(), validateNoRemoteArgs);
   remoteOperations.register("acknowledgeAttentionItem", (itemId) => controller.acknowledgeAttentionItem(itemId), validateSingleRemoteStringArg, "run:operate", true);
+  remoteOperations.register("acknowledgeAttentionItems", (itemIds) => controller.acknowledgeAttentionItems(itemIds), validateStringArrayArg, "run:operate", true);
   remoteOperations.register("setAppSetting", async (key, value) => {
     await controller.setAppSetting(key, value);
     refreshAppMenu();
@@ -1300,6 +1301,7 @@ const bootstrap = async (): Promise<void> => {
   };
   ipcMain.handle(IPC_CHANNELS.getAttentionInbox, () => controller.getAttentionInbox());
   ipcMain.handle(IPC_CHANNELS.acknowledgeAttentionItem, (_, itemId: string) => controller.acknowledgeAttentionItem(itemId));
+  ipcMain.handle(IPC_CHANNELS.acknowledgeAttentionItems, (_, itemIds: string[]) => controller.acknowledgeAttentionItems(itemIds));
   ipcMain.handle(IPC_CHANNELS.getSnapshot, () => remoteOperations.invoke("getSnapshot", []));
   ipcMain.handle(IPC_CHANNELS.getRemoteAccessStatus, async () => {
     const info = remoteAccessServer?.getInfo() ?? null;
