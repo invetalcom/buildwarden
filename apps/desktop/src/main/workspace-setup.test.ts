@@ -36,6 +36,20 @@ describe("workspace setup", () => {
     await symlink(outside, join(target, "config"), process.platform === "win32" ? "junction" : "dir");
     await expect(copyWorkspaceEnvironmentFile(source, target, "config/env")).rejects.toThrow("escapes");
   });
+  it("rejects source directory links into excluded metadata", async () => {
+    const { source, target } = await fixture();
+    await mkdir(join(source, ".git"));
+    await writeFile(join(source, ".git", "config"), "private metadata");
+    await symlink(join(source, ".git"), join(source, "config"), process.platform === "win32" ? "junction" : "dir");
+    await expect(copyWorkspaceEnvironmentFile(source, target, "config/config")).rejects.toThrow("symlinks");
+    await expect(readFile(join(target, "config", "config"))).rejects.toThrow();
+  });
+  it.skipIf(process.platform === "win32")("rejects source file symlinks within the repository", async () => {
+    const { source, target } = await fixture();
+    await writeFile(join(source, "private"), "secret");
+    await symlink(join(source, "private"), join(source, ".env"));
+    await expect(copyWorkspaceEnvironmentFile(source, target, ".env")).rejects.toThrow("symlinks");
+  });
   it("runs commands in order, stops on failure and never records command output", async () => {
     const { source, target } = await fixture();
     const chunks: HarnessRunChunk[] = [];

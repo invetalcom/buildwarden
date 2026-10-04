@@ -16,6 +16,11 @@ export const copyWorkspaceEnvironmentFile = async (sourceRoot: string, targetRoo
   }
   const sourceBase = await realpath(sourceRoot);
   const targetBase = await realpath(targetRoot);
+  const namedSource = resolve(sourceBase, file);
+  if (!contained(sourceBase, namedSource)) throw new Error("Environment file escapes the workspace.");
+  for (let component = namedSource; component !== sourceBase; component = dirname(component)) {
+    if ((await lstat(component)).isSymbolicLink()) throw new Error("Environment source must not contain symlinks.");
+  }
   const source = await realpath(resolve(sourceBase, file));
   const target = resolve(targetBase, file);
   if (!contained(sourceBase, source) || !contained(targetBase, target) || !(await lstat(source)).isFile()) throw new Error("Environment file escapes the workspace or is not a file.");
