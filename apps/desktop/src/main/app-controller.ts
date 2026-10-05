@@ -4694,7 +4694,7 @@ export class AppController
       const currentRevision = await captureWorkspaceRevision(run.worktreePath, run.workspaceVcs);
       if (currentRevision.fingerprint !== reviewedRevision.fingerprint || currentRevision.head !== reviewedRevision.head) throw new Error("Workspace changed during review. Review the current revision again.");
       const verification = await this.getRunVerification(runId);
-      if (verification.currentRevision?.fingerprint !== reviewedRevision.fingerprint) throw new Error("Workspace changed while verifying the review result. Review again.");
+      if (verification.status !== "unconfigured" && verification.currentRevision?.fingerprint !== reviewedRevision.fingerprint) throw new Error("Workspace changed while verifying the review result. Review again.");
       const result = { ...this.parseRunDiffReviewResult(raw), reviewedRevision, verificationStatus: verification.status };
       await this.appendRunEvent(runId, "status", "Diff review completed", result.headline, { reviewedRevision, verificationStatus: verification.status });
       return result;

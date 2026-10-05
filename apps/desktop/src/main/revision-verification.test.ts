@@ -87,6 +87,33 @@ const startFixture = async (kind: typeof startKinds[number]) => {
 };
 
 describe("revision verification", () => {
+  it.each([false, true])("reviews unchanged workspaces with verification configured=%s", async (configured) => {
+    const { controller, db, project, run, cwd } = await controllerFixture();
+    if (configured) db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify({ [project.id]: { verificationCommands: ["test"] } }));
+    await writeFile(join(cwd, "source.txt"), "changed\n");
+    vi.spyOn(diffWorker, "runWorktreeDiffInWorker").mockResolvedValue({ ok: true, diff: "patch" });
+    vi.spyOn(controller as unknown as { askModelForText: () => Promise<string> }, "askModelForText")
+      .mockResolvedValue(JSON.stringify({ headline: "Reviewed", findings: [] }));
+
+    await expect(controller.analyzeRunDiff(run.id)).resolves.toMatchObject({
+      headline: "Reviewed", verificationStatus: configured ? "not-run" : "unconfigured",
+      reviewedRevision: { fingerprint: expect.any(String) },
+    });
+  });
+
+  it("still rejects workspace changes during a review without verification commands", async () => {
+    const { controller, run, cwd } = await controllerFixture();
+    await writeFile(join(cwd, "source.txt"), "changed\n");
+    vi.spyOn(diffWorker, "runWorktreeDiffInWorker").mockResolvedValue({ ok: true, diff: "patch" });
+    vi.spyOn(controller as unknown as { askModelForText: () => Promise<string> }, "askModelForText")
+      .mockImplementation(async () => {
+        await writeFile(join(cwd, "source.txt"), "changed again\n");
+        return JSON.stringify({ headline: "Reviewed", findings: [] });
+      });
+
+    await expect(controller.analyzeRunDiff(run.id)).rejects.toThrow("Workspace changed during review");
+  });
+
   it("avoids workspace fingerprinting for diff display and polling when verification is unconfigured", async () => {
     const { controller, run } = await controllerFixture();
     const capture = vi.spyOn(workspaceRevision, "captureWorkspaceRevision");
