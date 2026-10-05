@@ -50,6 +50,7 @@ import {
   type RunWorkspaceFileInput,
 } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
+import { registerAttentionInboxIpc } from "./attention-inbox-ipc";
 import { getAppLogDirPath, initializeAppLogger, logError, logInfo, logWarn } from "./logger";
 import { ElectronSecretStore } from "./secret-store";
 import { registerRunTerminalIpc } from "./run-terminal-ipc";
@@ -1304,8 +1305,7 @@ const bootstrap = async (): Promise<void> => {
     return remoteAccessSync;
   };
   ipcMain.handle(IPC_CHANNELS.getAttentionInbox, () => controller.getAttentionInbox());
-  ipcMain.handle(IPC_CHANNELS.acknowledgeAttentionItem, (_, itemId: string) => controller.acknowledgeAttentionItem(itemId));
-  ipcMain.handle(IPC_CHANNELS.acknowledgeAttentionItems, (_, itemIds: string[]) => controller.acknowledgeAttentionItems(itemIds));
+  registerAttentionInboxIpc(ipcMain, controller);
   ipcMain.handle(IPC_CHANNELS.getSnapshot, () => remoteOperations.invoke("getSnapshot", []));
   ipcMain.handle(IPC_CHANNELS.getRemoteAccessStatus, async () => {
     const info = remoteAccessServer?.getInfo() ?? null;
