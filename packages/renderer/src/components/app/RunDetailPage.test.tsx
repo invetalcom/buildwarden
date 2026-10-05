@@ -259,4 +259,37 @@ describe("RunDetailPage workflows", () => {
     const markup = renderToStaticMarkup(<RunDetailPage {...baseProps(unavailable)} showActivity={false} showBrowser showChat />);
     expect(markup).toContain("Git worktree no longer available");
   });
+
+  it("shows summary file rows while the full patch is loading", () => {
+    const pending = detail({ diff: "", diffLoaded: false, diffPending: true, diffSummary: {
+      files: [{ path: "src/loading.ts", previousPath: null, additions: 2, deletions: 1 }],
+      totalFiles: 1, totalAdditions: 2, totalDeletions: 1,
+    } });
+    const markup = renderToStaticMarkup(<RunDetailPage {...baseProps(pending)} showDiff />);
+    expect(markup).toContain("src/loading.ts");
+    expect(markup).toContain("Loading file diffs");
+  });
+
+  it("keeps the previous patch visible during a refresh", () => {
+    const pending = detail({ diffLoaded: false, diffPending: true });
+    const markup = renderToStaticMarkup(<RunDetailPage {...baseProps(pending)} showDiff />);
+    expect(markup).toContain("src/App.tsx");
+    expect(markup).toContain("Refreshing changes");
+  });
+
+  it("offers retry and disables review while displaying a failed refresh's stale patch", () => {
+    const failed = detail({ diffLoadError: "Disconnected", diffRevision: null });
+    const markup = renderToStaticMarkup(<RunDetailPage {...baseProps(failed)} showDiff />);
+    expect(markup).toContain("src/App.tsx");
+    expect(markup).toContain("Showing outdated changes. Refresh failed.");
+    expect(markup).toContain(">Retry</button>");
+    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*title="Run reviewer simulator"/);
+  });
+
+  it("allows reviewing a freshly loaded patch without verification fingerprinting", () => {
+    const loaded = detail({ diffRevision: null, diffLoadError: null });
+    const markup = renderToStaticMarkup(<RunDetailPage {...baseProps(loaded)} showDiff />);
+    expect(markup).not.toMatch(/<button[^>]*disabled=""[^>]*title="Run reviewer simulator"/);
+    expect(markup).not.toContain("Showing outdated changes");
+  });
 });

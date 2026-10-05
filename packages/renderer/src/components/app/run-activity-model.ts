@@ -502,10 +502,10 @@ const createActivityEntries = (
 ): (SingleActivityEntry | SubagentActivityEntry)[] => {
   const entries: (SingleActivityEntry | SubagentActivityEntry)[] = [];
   const pendingToolEntries = new Map<string, number>();
-  const latestPlanProgressStepId = partition.mainSteps.findLast((step) => step.eventType === "plan-progress")?.id;
 
   for (const step of partition.mainSteps) {
-    if (step.eventType === "plan-progress" && step.id !== latestPlanProgressStepId) continue;
+    // Progress is displayed in the run header; keep it out of the chat timeline.
+    if (step.eventType === "plan-progress") continue;
     if (appendSubagentEntry(entries, partition, step)) continue;
 
     const metadata = safeParseMetadata(step.metadataJson);

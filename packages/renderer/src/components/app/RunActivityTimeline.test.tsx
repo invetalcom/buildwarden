@@ -352,17 +352,18 @@ describe("run activity timeline shaping", () => {
     expect(entries[0]?.kind === "diff-batch" ? entries[0].items : []).toHaveLength(2);
   });
 
-  it("shows only the latest plan progress row", () => {
+  it("omits all plan progress rows while preserving the conversation and proposed plans", () => {
     const entries = buildActivityEntries([
       step("progress-1", "plan-progress", { planProgress: { steps: [{ title: "First", status: "inProgress" }] } }, "1. [-] First"),
       step("answer", "output", { source: "assistant" }, "Working on it"),
       step("progress-2", "plan-progress", { planProgress: { steps: [{ title: "First", status: "completed" }] } }, "1. [x] First"),
+      step("plan", "plan-updated", {}, "1. Next task\n2. Validate"),
     ]);
 
     const progressEntries = entries.filter((entry) => entry.kind === "single" && entry.step.eventType === "plan-progress");
 
-    expect(progressEntries).toHaveLength(1);
-    expect(progressEntries[0]?.kind === "single" ? progressEntries[0].step.id : null).toBe("progress-2");
+    expect(progressEntries).toHaveLength(0);
+    expect(entries.map((entry) => entry.kind === "single" ? entry.step.id : entry.kind)).toEqual(["answer", "plan"]);
   });
 });
 
