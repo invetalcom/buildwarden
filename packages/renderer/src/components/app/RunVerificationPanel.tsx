@@ -33,6 +33,8 @@ export const RunVerificationPanel = ({ client, run, reviewedRevision, displayedR
   const active = ["queued", "preparing", "running"].includes(run.status);
   const diffChanged = displayedRevision && state?.currentRevision && (displayedRevision.fingerprint !== state.currentRevision.fingerprint || displayedRevision.head !== state.currentRevision.head);
   const reviewChanged = reviewedRevision && state?.currentRevision && (reviewedRevision.fingerprint !== state.currentRevision.fingerprint || reviewedRevision.head !== state.currentRevision.head);
+  // Wait for configuration before showing the panel, so disabled gates never flash a status.
+  if ((!state && !error) || (state && state.commands.length === 0)) return null;
   return <div className="rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2 text-xs">
     <div className="flex flex-wrap items-center gap-2">
       <span className="font-semibold">Verification</span>
@@ -47,7 +49,6 @@ export const RunVerificationPanel = ({ client, run, reviewedRevision, displayedR
     </div>
     {error && <p role="alert" className="mt-1 text-[var(--ec-danger)]">{error}</p>}
     {state?.reason && <p className="mt-1 text-[var(--ec-muted)]">{state.reason}</p>}
-    {state?.status === "unconfigured" && <p className="mt-1 text-[var(--ec-muted)]">Add verification commands in project settings.</p>}
     {displayedRevision === null && <p className="mt-1 text-[var(--ec-warning)]">The displayed diff has no stable revision. Refresh it before reviewing.</p>}
     {diffChanged && <p className="mt-1 text-[var(--ec-warning)]">The displayed diff is stale. Refresh the diff to review the current verification revision.</p>}
     {reviewedRevision && <p className={reviewChanged ? "mt-1 text-[var(--ec-warning)]" : "mt-1 text-[var(--ec-muted)]"}>{reviewChanged ? "Review is stale: workspace contents changed." : "Reviewed contents"} · {reviewedRevision.fingerprint.slice(0, 20)}</p>}

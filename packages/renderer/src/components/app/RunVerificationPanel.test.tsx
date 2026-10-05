@@ -17,14 +17,18 @@ const state: RunVerificationState = {
     results: [{ command: "pnpm test", ok: true, exitCode: 0, output: "Tests passed", durationMs: 42, timedOut: false }],
     startedAt: "2026-10-03T00:00:00Z", finishedAt: "2026-10-03T00:01:00Z", error: null },
 };
-const render = async (readOnly = false, active = false) => {
-  const verify = vi.fn(async () => state);
-  const client = createElectronBuildWardenClient({ getRunVerification: async () => state, verifyRunRevision: verify, onRunEvent: () => () => {} } as unknown as DesktopApi);
+const render = async (readOnly = false, active = false, response = state) => {
+  const verify = vi.fn(async () => response);
+  const client = createElectronBuildWardenClient({ getRunVerification: async () => response, verifyRunRevision: verify, onRunEvent: () => () => {} } as unknown as DesktopApi);
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
   await act(async () => root?.render(<RunVerificationPanel client={{ ...client, capabilities: { ...client.capabilities, runMutations: !readOnly } }} run={{ id: "r", status: active ? "running" : "completed" } as RunRecord} reviewedRevision={revision} />));
   return verify;
 };
 describe("run verification panel", () => {
+  it.each(["unconfigured", "unavailable"] as const)("hides the panel without commands even with previous evidence and status %s", async (status) => {
+    await render(false, false, { ...state, commands: [], status });
+    expect(container.childElementCount).toBe(0);
+  });
   it("shows stale evidence, its output, and the stale review instead of a current pass", async () => {
     const verify = await render();
     expect(container.textContent).toContain("Review is stale");

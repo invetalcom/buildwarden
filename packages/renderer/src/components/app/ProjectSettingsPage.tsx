@@ -758,7 +758,7 @@ export const ProjectSettingsPage = ({
 
               <SettingsRow
                 title="Verification gate"
-                description="Run these commands in order after each successful Code-mode turn. A failing command marks the run failed and blocks completed-run actions."
+                description="BuildWarden runs these commands as local shell processes in the run workspace after each successful Code-mode turn. A failing command marks the run failed and blocks completed-run actions. Leave empty to disable verification."
                 align="start"
               >
                 <div className={`${rowControlClass} space-y-2`}>
