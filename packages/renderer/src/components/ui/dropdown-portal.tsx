@@ -89,6 +89,8 @@ export const AnchorDropdownPortal = ({
   }
 
   const focusScopeId = anchorRef.current?.closest<HTMLElement>("[data-focus-scope-id]")?.dataset.focusScopeId;
+  // Native modal dialogs make body-level portals inert and paint above every z-index.
+  const portalContainer = anchorRef.current?.closest("dialog[open]") ?? document.body;
 
   return createPortal(
     <div
@@ -99,6 +101,6 @@ export const AnchorDropdownPortal = ({
     >
       {children}
     </div>,
-    document.body,
+    portalContainer,
   );
 };

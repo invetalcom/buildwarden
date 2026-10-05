@@ -1118,6 +1118,14 @@ describe("renderer component states", () => {
     expect(remoteSidebarMarkup).toContain("For Later");
     expect(remoteSidebarMarkup).not.toContain("PR Review");
     expect(remoteSidebarMarkup).not.toContain("Loops");
+    for (const collapsed of [false, true]) {
+      const disabledInbox = renderToStaticMarkup(
+        <Sidebar {...sidebarProps} collapsed={collapsed} attentionInboxSetting={JSON.stringify({ enabled: false })} />,
+        {} as DesktopApi,
+        remoteRunCapabilities,
+      );
+      expect(disabledInbox).not.toContain("Attention inbox");
+    }
 
     const sidebarSubagent = runRecord({
       id: "sidebar-subagent",

@@ -17,6 +17,7 @@ import {
   APP_SETTING_KEYS,
   DESIGN_SCHEME_PRESETS,
   IPC_CHANNELS,
+  isAttentionAcknowledgementBatch,
   getDefaultDesignScheme,
   isUiTheme,
   parseSupportedIdeKind,
@@ -49,6 +50,7 @@ import {
   type RunWorkspaceFileInput,
 } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
+import { registerAttentionInboxIpc } from "./attention-inbox-ipc";
 import { getAppLogDirPath, initializeAppLogger, logError, logInfo, logWarn } from "./logger";
 import { ElectronSecretStore } from "./secret-store";
 import { registerRunTerminalIpc } from "./run-terminal-ipc";
@@ -1119,6 +1121,12 @@ const bootstrap = async (): Promise<void> => {
   }, validateSingleRemoteStringArg, "admin", true);
   remoteOperations.register("deleteProviderAccount", (providerAccountId) => controller.deleteProviderAccount(providerAccountId), validateSingleRemoteStringArg, "admin", true);
   remoteOperations.register("deleteModel", (modelId) => controller.deleteModel(modelId), validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register("getAttentionInbox", () => controller.getAttentionInbox(), validateNoRemoteArgs);
+  remoteOperations.register("acknowledgeAttentionItem", (itemId) => controller.acknowledgeAttentionItem(itemId), validateSingleRemoteStringArg, "run:operate", true);
+  const validateAttentionIdsArg = defineRemoteArgsValidator<"acknowledgeAttentionItems">(
+    (args) => args.length === 1 && isAttentionAcknowledgementBatch(args[0]),
+  );
+  remoteOperations.register("acknowledgeAttentionItems", (itemIds) => controller.acknowledgeAttentionItems(itemIds), validateAttentionIdsArg, "run:operate", true);
   remoteOperations.register("setAppSetting", async (key, value) => {
     await controller.setAppSetting(key, value);
     refreshAppMenu();
@@ -1296,6 +1304,8 @@ const bootstrap = async (): Promise<void> => {
     });
     return remoteAccessSync;
   };
+  ipcMain.handle(IPC_CHANNELS.getAttentionInbox, () => controller.getAttentionInbox());
+  registerAttentionInboxIpc(ipcMain, controller);
   ipcMain.handle(IPC_CHANNELS.getSnapshot, () => remoteOperations.invoke("getSnapshot", []));
   ipcMain.handle(IPC_CHANNELS.getRemoteAccessStatus, async () => {
     const info = remoteAccessServer?.getInfo() ?? null;

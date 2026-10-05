@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   IDE_KIND_LABELS,
+  ATTENTION_KIND_LABELS,
+  type AttentionKind,
   KEYBOARD_SHORTCUT_IDS,
   MAX_SIDEBAR_CONTRAST_STRENGTH,
   MIN_SIDEBAR_CONTRAST_STRENGTH,
   SUPPORTED_IDE_KINDS,
+  type AttentionInboxSettings,
   type AppLogDirectorySizeInfo,
   type DataBackupExportResult,
   type DataBackupImportInput,
@@ -230,6 +233,8 @@ export type UserSettingsTabProps = {
   sidebarContrastStrength: number;
   sidebarRunEntrySize: SidebarRunEntrySize;
   sidebarGroupRunsByProject: boolean;
+  attentionInboxSettings: AttentionInboxSettings;
+  onAttentionInboxSettingsChange: (value: AttentionInboxSettings) => void;
   recentRunDaysDraft: string;
   recentRunDaysInvalid: boolean;
   recentRunDaysMin: number;
@@ -268,6 +273,8 @@ export const UserSettingsTab = ({
   sidebarContrastStrength,
   sidebarRunEntrySize,
   sidebarGroupRunsByProject,
+  attentionInboxSettings,
+  onAttentionInboxSettingsChange,
   recentRunDaysDraft,
   recentRunDaysInvalid,
   recentRunDaysMin,
@@ -402,6 +409,24 @@ export const UserSettingsTab = ({
               Enter a whole number between {recentRunDaysMin} and {recentRunDaysMax}.
             </p>
           ) : null}
+        </div>
+      </SettingsRow>
+    </SettingsSection>
+
+    <SettingsSection title="Attention inbox">
+      <SettingsRow title="Enable attention inbox" description="Show the inbox in navigation and publish the event types selected below. Events that occur while disabled will not appear later.">
+        <div className="flex justify-end">
+          <Switch aria-label="Enable attention inbox" checked={attentionInboxSettings.enabled} disabled={busy} onCheckedChange={(enabled) => onAttentionInboxSettingsChange({ ...attentionInboxSettings, enabled })} />
+        </div>
+      </SettingsRow>
+      <SettingsRow title="Event types" description="Choose which events appear in the inbox. Approval and question prompts remain available in their runs." align="start">
+        <div className="grid gap-x-5 gap-y-3 sm:grid-cols-2">
+          {(Object.entries(ATTENTION_KIND_LABELS) as [AttentionKind, string][]).map(([kind, label]) => (
+            <label key={kind} className="flex items-center justify-between gap-3 text-xs text-[var(--ec-text)]">
+              {label}
+              <Switch aria-label={label} checked={attentionInboxSettings.kinds[kind]} disabled={busy || !attentionInboxSettings.enabled} onCheckedChange={(enabled) => onAttentionInboxSettingsChange({ ...attentionInboxSettings, kinds: { ...attentionInboxSettings.kinds, [kind]: enabled } })} />
+            </label>
+          ))}
         </div>
       </SettingsRow>
     </SettingsSection>

@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { APP_SETTING_KEYS, parseWorkspaceSetupSettings, REMOTE_ACCESS_SCOPES } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, ATTENTION_KIND_LABELS, parseAttentionInboxSettings, parseWorkspaceSetupSettings, REMOTE_ACCESS_SCOPES, type AttentionKind } from "@buildwarden/shared";
 import type {
   AppSettingRecord,
   RunWorkspaceSetup,
@@ -12,6 +12,7 @@ import type {
   ChatAttachmentPayload,
   ChatBookmarkRecord,
   ChatBookmarkSummary,
+  AttentionItem,
   ChatDetail,
   ChatHistoryPage,
   ChatRecord,
@@ -2255,6 +2256,7 @@ export class BuildWardenDatabase {
       `,
       [projectId],
     );
+    this.run("delete from attention_acknowledgements where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from worktrees where project_id = ?", [projectId]);
     this.run(
       `
@@ -2753,6 +2755,7 @@ export class BuildWardenDatabase {
   deleteRun(runId: string): void {
     this.derivedRunStateCache.delete(runId);
     this.run("update project_tasks set run_id = null, updated_at = ? where run_id = ?", [nowIso(), runId]);
+    this.run("delete from attention_acknowledgements where run_id = ?", [runId]);
     this.run("delete from run_notes where run_id = ?", [runId]);
     this.run("delete from run_steps where run_id = ?", [runId]);
     this.run("delete from worktrees where run_id = ?", [runId]);
@@ -3315,6 +3318,65 @@ export class BuildWardenDatabase {
     return this.getRun(runId);
   }
 
+  listAttentionInbox(): AttentionItem[] {
+    const settings = parseAttentionInboxSettings(this.getSettings()[APP_SETTING_KEYS.attentionInbox]);
+    const enabledKinds = (Object.keys(settings.kinds) as AttentionKind[]).filter((kind) => settings.enabled && settings.kinds[kind]);
+    if (!enabledKinds.length) return [];
+    return this.all<Omit<AttentionItem, "dismissible"> & { dismissible: number }>(`
+      with candidates as (
+        select 'request:' || s.id as id,
+          case when s.event_type = 'approval-requested' then 'approval' else 'input' end as kind,
+          r.project_id as projectId, p.name as projectName, r.id as runId,
+          substr(r.prompt, 1, 180) as title, substr(s.content, 1, 600) as detail,
+          s.created_at as createdAt, 0 as dismissible
+        from run_steps s join runs r on r.id = s.run_id join projects p on p.id = r.project_id
+        where r.status in ('queued', 'preparing', 'running')
+          and s.event_type in ('approval-requested', 'user-input-requested')
+          and json_valid(s.metadata_json) and json_extract(s.metadata_json, '$.requestStatus') = 'opened'
+        union all
+        select 'run:' || r.id || ':' || r.status || ':' || coalesce(r.finished_at, r.updated_at),
+          case when r.status = 'failed' then 'failed' else 'review' end,
+          r.project_id, p.name, r.id, substr(r.prompt, 1, 180),
+          substr(coalesce(r.error_message, r.summary, 'Open the run to review its result.'), 1, 600),
+          coalesce(r.finished_at, r.updated_at), 1
+        from runs r join projects p on p.id = r.project_id
+        where r.status in ('failed', 'completed') and r.list_visibility != 'for-later'
+        union all
+        select 'orchestration:' || o.id || ':' || o.attention_started_at, 'blocked', r.project_id, p.name,
+          r.id, substr(r.prompt, 1, 180), 'Orchestration needs attention. Open the run to resolve blocked tasks.', o.attention_started_at, 0
+        from orchestrations o join runs r on r.id = o.coordinator_run_id join projects p on p.id = r.project_id
+        where o.status = 'attention' and r.status != 'failed'
+      )
+      select c.* from candidates c left join attention_acknowledgements a on a.item_id = c.id
+      where (a.item_id is null or c.dismissible = 0)
+        and c.kind in (${enabledKinds.map(() => "?").join(",")})
+        and not exists (
+          select 1 from attention_suppression_windows w where w.kind = c.kind
+            and c.createdAt >= w.started_at and (w.ended_at is null or c.createdAt < w.ended_at)
+        )
+      order by case c.kind when 'approval' then 0 when 'input' then 1 when 'failed' then 2 when 'blocked' then 3 else 4 end,
+        c.createdAt desc, c.id
+    `, enabledKinds).map((item) => ({ ...item, dismissible: Boolean(item.dismissible) }));
+  }
+
+  acknowledgeAttentionItem(itemId: string): void {
+    this.acknowledgeAttentionItems([itemId]);
+  }
+
+  acknowledgeAttentionItems(itemIds: string[]): void {
+    if (!itemIds.length) return;
+    const requested = new Set(itemIds);
+    this.transaction(() => {
+      const items = this.listAttentionInbox().filter((candidate) => requested.has(candidate.id));
+      if (items.some((item) => !item.dismissible)) throw new Error("Resolve live requests in the run before clearing them.");
+      const timestamp = nowIso();
+      for (const item of items) {
+        // Missing or already acknowledged IDs are ignored; new arrivals are never included.
+        this.run("insert or ignore into attention_acknowledgements (item_id, run_id, acknowledged_at) values (?, ?, ?)", [item.id, item.runId, timestamp]);
+      }
+    });
+  }
+
   updateRunListVisibility(runId: string, visibility: RunListVisibility): RunRecord {
     const timestamp = nowIso();
     this.run(
@@ -3534,6 +3596,30 @@ export class BuildWardenDatabase {
 
   setSetting(key: string, value: string): void {
     const timestamp = nowIso();
+    if (key === APP_SETTING_KEYS.attentionInbox) {
+      const previous = parseAttentionInboxSettings(this.getSettings()[key]);
+      const next = parseAttentionInboxSettings(value);
+      // Keep publication history separate from run history, including across restarts.
+      this.exec("savepoint attention_preferences");
+      try {
+        for (const kind of Object.keys(ATTENTION_KIND_LABELS) as AttentionKind[]) {
+          const wasEnabled = previous.enabled && previous.kinds[kind];
+          const enabled = next.enabled && next.kinds[kind];
+          if (wasEnabled && !enabled) {
+            this.run("insert into attention_suppression_windows (kind, started_at) values (?, ?)", [kind, timestamp]);
+          } else if (!wasEnabled && enabled) {
+            this.run("update attention_suppression_windows set ended_at = ? where kind = ? and ended_at is null", [timestamp, kind]);
+          }
+        }
+        this.run("insert into app_settings (key, value, updated_at) values (?, ?, ?) on conflict(key) do update set value = excluded.value, updated_at = excluded.updated_at", [key, JSON.stringify(next), timestamp]);
+        this.exec("release attention_preferences");
+      } catch (error) {
+        this.exec("rollback to attention_preferences");
+        this.exec("release attention_preferences");
+        throw error;
+      }
+      return;
+    }
     this.run(
       `
       insert into app_settings (key, value, updated_at)
@@ -3545,6 +3631,7 @@ export class BuildWardenDatabase {
   }
 
   deleteSetting(key: string): void {
+    if (key === APP_SETTING_KEYS.attentionInbox) this.setSetting(key, "{}");
     this.run("delete from app_settings where key = ?", [key]);
   }
 
@@ -3960,9 +4047,15 @@ export class BuildWardenDatabase {
     const existing = this.getOrchestration(id);
     const timestamp = nowIso();
     this.run(
-      `update orchestrations set status = ?, team_snapshot_json = ?, wake_mode = ?, wake_task_ids_json = ?,
+      `update orchestrations set attention_started_at = case
+         when ? != 'attention' then null
+         when status = 'attention' then attention_started_at
+         else ? end,
+       status = ?, team_snapshot_json = ?, wake_mode = ?, wake_task_ids_json = ?,
        last_delivered_sequence = ?, error_message = ?, updated_at = ?, finished_at = ? where id = ?`,
       [
+        fields.status ?? existing.status,
+        timestamp,
         fields.status ?? existing.status,
         JSON.stringify(fields.teamSnapshot ?? existing.teamSnapshot),
         fields.wakeMode !== undefined ? fields.wakeMode : existing.wakeMode,
@@ -4613,6 +4706,21 @@ export class BuildWardenDatabase {
         foreign key(run_id) references runs(id)
       );
 
+      create table if not exists attention_acknowledgements (
+        item_id text primary key,
+        run_id text not null,
+        acknowledged_at text not null
+      );
+      create index if not exists idx_attention_acknowledgements_run on attention_acknowledgements(run_id);
+
+      create table if not exists attention_suppression_windows (
+        id integer primary key,
+        kind text not null,
+        started_at text not null,
+        ended_at text
+      );
+      create index if not exists idx_attention_suppression_kind on attention_suppression_windows(kind, started_at);
+
       create table if not exists run_notes (
         id text primary key,
         run_id text not null,
@@ -5204,6 +5312,10 @@ export class BuildWardenDatabase {
        where workspace_type = 'local'`,
     );
     this.ensureColumn("runs", "delegation_enabled", "integer not null default 0");
+    // Inbox metadata stays fixed for the entire attention episode, including event-only updates.
+    this.ensureColumn("orchestrations", "attention_started_at", "text");
+    // Older databases only have updated_at; preserve their current notice identity on upgrade.
+    this.run("update orchestrations set attention_started_at = updated_at where status = 'attention' and attention_started_at is null");
     this.ensureColumn("project_tasks", "status", "text not null default 'open'");
     this.ensureColumn("project_tasks", "run_id", "text");
     this.ensureColumn("project_tasks", "pull_request_url", "text");

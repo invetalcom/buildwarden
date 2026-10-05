@@ -60,6 +60,7 @@ export const designSchemeCssVariables = (scheme: DesignScheme): Record<string, s
   return {
     "--ec-bg": rgba(colors.background, light ? 0.78 : 0.68),
     "--ec-bg-elevated": rgba(colors.surfaceElevated, 0.98),
+    "--ec-dialog-bg": colors.surfaceElevated,
     "--ec-titlebar": colors.surface,
     "--ec-sidebar-base": sidebar,
     "--ec-sidebar": sidebar,
