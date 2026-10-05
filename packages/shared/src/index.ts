@@ -4838,6 +4838,7 @@ export const APP_SETTING_KEYS = {
   sidebarRunEntrySize: "sidebarRunEntrySize",
   /** `"false"` renders Recent Runs as a flat, project-labelled list. Defaults to grouped. */
   sidebarGroupRunsByProject: "sidebarGroupRunsByProject",
+  sidebarHideActiveRuns: "sidebarHideActiveRuns",
   attentionInbox: "attentionInbox",
   /** Persisted app sidebar width in CSS pixels. */
   sidebarWidth: "sidebarWidth",
@@ -5009,6 +5010,8 @@ export const parseSidebarContrastStrengthSetting = (raw: string | number | undef
 };
 
 export const parseSidebarGroupRunsByProjectSetting = (raw: string | undefined): boolean => raw?.trim().toLowerCase() !== "false";
+
+export const parseSidebarHideActiveRunsSetting = (raw: string | undefined): boolean => raw?.trim().toLowerCase() === "true";
 
 export const parseRecentRunDaysSetting = (raw: string | number | undefined | null): number => {
   const parsed = Number(raw);

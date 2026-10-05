@@ -17,6 +17,7 @@ import {
   parseSidebarContrastStrengthSetting,
   parseAttentionInboxSettings,
   parseSidebarGroupRunsByProjectSetting,
+  parseSidebarHideActiveRunsSetting,
   parseSidebarRunEntrySizeSetting,
   parseDesignScheme,
   serializeDesignScheme,
@@ -1516,6 +1517,7 @@ export const App = () => {
   const [sidebarContrastStrength, setSidebarContrastStrength] = useState(persistedSidebarContrastStrength);
   useEffect(() => setSidebarContrastStrength(persistedSidebarContrastStrength), [persistedSidebarContrastStrength]);
   const sidebarRunEntrySize = parseSidebarRunEntrySizeSetting(snapshot.settings[APP_SETTING_KEYS.sidebarRunEntrySize]);
+  const sidebarHideActiveRuns = parseSidebarHideActiveRunsSetting(snapshot.settings[APP_SETTING_KEYS.sidebarHideActiveRuns]);
   const sidebarGroupRunsByProject = parseSidebarGroupRunsByProjectSetting(snapshot.settings[APP_SETTING_KEYS.sidebarGroupRunsByProject]);
   const runTimelineDensity = parseRunTimelineDensitySetting(snapshot.settings[APP_SETTING_KEYS.runTimelineDensity]);
   const updateRunTimelineDensity = useCallback(
@@ -3895,6 +3897,7 @@ export const App = () => {
               sidebarContrastStrength={sidebarContrastStrength}
               sidebarRunEntrySize={sidebarRunEntrySize}
               sidebarGroupRunsByProject={sidebarGroupRunsByProject}
+              sidebarHideActiveRuns={sidebarHideActiveRuns}
               enableDevMode={snapshot.settings[APP_SETTING_KEYS.enableDevMode] === "true"}
               appLogDirPath={appLogDirPath}
               appLogDirectorySize={appLogDirectorySize}
@@ -3997,6 +4000,7 @@ export const App = () => {
                 await loadSnapshot();
               })}
               onSidebarGroupRunsByProjectChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.sidebarGroupRunsByProject, value)}
+              onSidebarHideActiveRunsChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.sidebarHideActiveRuns, value)}
               worktreeRootOverrideSettingValue={snapshot.settings[APP_SETTING_KEYS.worktreeRootOverride] ?? ""}
               onSaveWorktreeRootOverride={(value) =>
                 void handleAction(async () => {
@@ -4607,6 +4611,7 @@ export const App = () => {
         recentRunDays={recentRunDays}
         runEntrySize={sidebarRunEntrySize}
         groupRunsByProject={sidebarGroupRunsByProject}
+        hideActiveRuns={sidebarHideActiveRuns}
         attentionInboxSetting={snapshot.settings[APP_SETTING_KEYS.attentionInbox]}
         bookmarksCount={snapshot.bookmarks.length + snapshot.chatBookmarks.length}
         chatsCount={snapshot.chats.length}

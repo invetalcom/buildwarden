@@ -80,6 +80,7 @@ interface SidebarProps {
   recentRunDays: number;
   runEntrySize: SidebarRunEntrySize;
   groupRunsByProject: boolean;
+  hideActiveRuns?: boolean;
   bookmarksCount: number;
   chatsCount: number;
   bookmarkedRunIds: Set<string>;
@@ -230,6 +231,7 @@ const SidebarComponent = ({
   recentRunDays,
   runEntrySize,
   groupRunsByProject,
+  hideActiveRuns = false,
   bookmarksCount,
   chatsCount,
   bookmarkedRunIds,
@@ -292,9 +294,21 @@ const SidebarComponent = ({
     [providerAccounts],
   );
 
+  // Filter only sidebar collections, retaining attention/paused states and the
+  // original snapshot used by project navigation and the other run lists.
+  const recentRunProjects = useMemo(() => {
+    if (!hideActiveRuns) return projects;
+    const visible = (run: SidebarRun) => !ACTIVE_RUN_STATUSES.has(resolveRunDisplayStatus(run.status, run.orchestrationStatus));
+    return projects.map((entry) => ({
+      ...entry,
+      runs: entry.runs.filter(visible),
+      orchestratedRuns: entry.orchestratedRuns.filter(visible),
+    }));
+  }, [hideActiveRuns, projects]);
+
   const recentRunsByProject = useMemo(() => {
     const now = Date.now();
-    return projects
+    return recentRunProjects
       .map((entry) => {
         const recentActivityById = new Map<string, SidebarRun>();
         for (const run of [...entry.runs, ...entry.orchestratedRuns]) {
@@ -319,7 +333,7 @@ const SidebarComponent = ({
       })
       .filter((entry) => entry.runs.length > 0)
       .sort((a, b) => b.newestActivityAt - a.newestActivityAt);
-  }, [projects, recentRunWindowMs]);
+  }, [recentRunProjects, recentRunWindowMs]);
 
   const recentRuns = useMemo(
     () =>
@@ -333,13 +347,13 @@ const SidebarComponent = ({
     const projectById = new Map(projects.map((entry) => [entry.project.id, entry]));
     return buildRunHierarchyRows(
       recentRuns.map(({ run }) => run),
-      projects.flatMap((entry) => entry.orchestratedRuns),
+      recentRunProjects.flatMap((entry) => entry.orchestratedRuns),
       { expandedRunIds, compareRuns: compareRecentRuns },
     ).flatMap((row) => {
       const project = projectById.get(row.run.projectId);
       return project ? [{ project, row }] : [];
     });
-  }, [expandedRunIds, projects, recentRuns]);
+  }, [expandedRunIds, projects, recentRunProjects, recentRuns]);
 
   useEffect(() => {
     const firstProjectId = recentRunsByProject[0]?.project.project.id;
@@ -800,7 +814,7 @@ const SidebarComponent = ({
           Recent Runs ({recentRunWindowLabel})
         </div>
         {recentRunsByProject.length === 0 ? (
-          <div className="px-3 py-2 text-xs text-[var(--ec-muted)]">No runs in the last {recentRunWindowLabel}.</div>
+          <div className="px-3 py-2 text-xs text-[var(--ec-muted)]">{hideActiveRuns ? "No inactive runs" : "No runs"} in the last {recentRunWindowLabel}.</div>
         ) : groupRunsByProject ? (
           <div className={cn("px-2", runEntryStyles.groupGap)}>
             {recentRunsByProject.map(({ project, runs }) => {

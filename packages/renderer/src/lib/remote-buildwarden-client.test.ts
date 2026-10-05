@@ -146,12 +146,16 @@ describe("remote BuildWarden client", () => {
     await client.selectProject("project-1");
     await client.activateRun("run-1");
     await client.setAppSetting(APP_SETTING_KEYS.darkMode, "true");
+    await client.setAppSetting(APP_SETTING_KEYS.sidebarHideActiveRuns, "true");
     const loaded = await client.refreshSnapshot();
 
     expect(loaded.selectedProjectId).toBe("project-1");
     expect(loaded.selectedRunId).toBe("run-1");
     expect(loaded.settings[APP_SETTING_KEYS.darkMode]).toBe("true");
+    expect(loaded.settings[APP_SETTING_KEYS.sidebarHideActiveRuns]).toBe("true");
     expect(fetcher).toHaveBeenCalledOnce();
+    const reopened = createRemoteBuildWardenClient({ fetch: fetcher as typeof fetch });
+    expect((await reopened.refreshSnapshot()).settings[APP_SETTING_KEYS.sidebarHideActiveRuns]).toBe("true");
   });
 
   it("omits trailing undefined optional arguments from RPC requests", async () => {

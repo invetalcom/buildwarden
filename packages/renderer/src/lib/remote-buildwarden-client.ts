@@ -33,6 +33,7 @@ const REMOTE_LOCAL_SETTING_KEYS = new Set<string>([
   APP_SETTING_KEYS.sidebarContrast,
   APP_SETTING_KEYS.sidebarRunEntrySize,
   APP_SETTING_KEYS.sidebarGroupRunsByProject,
+  APP_SETTING_KEYS.sidebarHideActiveRuns,
   APP_SETTING_KEYS.sidebarWidth,
   APP_SETTING_KEYS.recentRunDays,
   APP_SETTING_KEYS.runTimelineDensity,
