@@ -115,7 +115,10 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
 
   useEffect(() => {
     let active = true;
+    const diffRequests = diffRequestRef;
+    ++diffRequests.current;
     diffRequested.current = false;
+    setDiffLoading(false);
     setDiff("");
     setDiffRevision(undefined);
     setDiffError(null);
@@ -127,7 +130,7 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
         .then(() => active ? load(true) : undefined)
         .catch(() => undefined);
     }
-    return () => { active = false; };
+    return () => { active = false; ++diffRequests.current; };
   }, [client, load, runId]);
 
   const loadDiff = useCallback(async () => {
