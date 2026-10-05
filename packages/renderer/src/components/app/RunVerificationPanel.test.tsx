@@ -17,16 +17,16 @@ const state: RunVerificationState = {
     results: [{ command: "pnpm test", ok: true, exitCode: 0, output: "Tests passed", durationMs: 42, timedOut: false }],
     startedAt: "2026-10-03T00:00:00Z", finishedAt: "2026-10-03T00:01:00Z", error: null },
 };
-const render = async (readOnly = false, active = false, response = state) => {
+const render = async (readOnly = false, status: RunRecord["status"] = "completed", response = state) => {
   const verify = vi.fn(async () => response);
   const client = createElectronBuildWardenClient({ getRunVerification: async () => response, verifyRunRevision: verify, onRunEvent: () => () => {} } as unknown as DesktopApi);
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  await act(async () => root?.render(<RunVerificationPanel client={{ ...client, capabilities: { ...client.capabilities, runMutations: !readOnly } }} run={{ id: "r", status: active ? "running" : "completed" } as RunRecord} reviewedRevision={revision} />));
+  await act(async () => root?.render(<RunVerificationPanel client={{ ...client, capabilities: { ...client.capabilities, runMutations: !readOnly } }} run={{ id: "r", status } as RunRecord} reviewedRevision={revision} />));
   return verify;
 };
 describe("run verification panel", () => {
   it.each(["unconfigured", "unavailable"] as const)("hides the panel without commands even with previous evidence and status %s", async (status) => {
-    await render(false, false, { ...state, commands: [], status });
+    await render(false, "completed", { ...state, commands: [], status });
     expect(container.childElementCount).toBe(0);
   });
   it("shows stale evidence, its output, and the stale review instead of a current pass", async () => {
@@ -40,8 +40,8 @@ describe("run verification panel", () => {
   it("prevents running commands from read-only connections", async () => {
     await render(true); expect(container.textContent).not.toContain("Run verification");
   });
-  it("does not run verification concurrently with the agent", async () => {
-    await render(false, true);
-    expect([...container.querySelectorAll("button")].find((entry) => entry.textContent === "Run verification")?.disabled).toBe(true);
+  it.each(["queued", "preparing", "running"] as const)("hides verification while the agent run is %s", async (status) => {
+    await render(false, status);
+    expect(container.childElementCount).toBe(0);
   });
 });

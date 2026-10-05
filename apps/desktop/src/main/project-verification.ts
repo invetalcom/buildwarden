@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 const MAX_VERIFICATION_OUTPUT_CHARS = 24_000;
 const VERIFICATION_FORCE_KILL_GRACE_MS = 250;
 const VERIFICATION_SHUTDOWN_TIMEOUT_MS = 2_000;
-export const DEFAULT_VERIFICATION_TIMEOUT_MS = 5 * 60_000;
+export const DEFAULT_VERIFICATION_TIMEOUT_MS = 3 * 60_000;
 
 export interface ProjectVerificationResult {
   command: string;

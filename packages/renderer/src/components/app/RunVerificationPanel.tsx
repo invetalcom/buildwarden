@@ -9,6 +9,7 @@ export const RunVerificationPanel = ({ client, run, reviewedRevision, displayedR
   const [state, setState] = useState<RunVerificationState | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const active = ["queued", "preparing", "running"].includes(run.status);
   const sequence = useRef(0);
   const refresh = useCallback(async () => {
     const id = ++sequence.current;
@@ -16,13 +17,15 @@ export const RunVerificationPanel = ({ client, run, reviewedRevision, displayedR
     catch (e) { if (id === sequence.current) { setState(null); setError(String(e)); } }
   }, [client, run.id]);
   useEffect(() => {
-    setState(null); void refresh();
+    setState(null);
+    if (active) { ++sequence.current; return; }
+    void refresh();
     const timer = setInterval(() => { if (!document.hidden) void refresh(); }, 15_000);
     const focus = () => { if (!document.hidden) void refresh(); };
     window.addEventListener("focus", focus);
     const unsubscribe = client.onRunEvent((event) => { if (event.runId === run.id && event.type === "status") void refresh(); });
     return () => { clearInterval(timer); window.removeEventListener("focus", focus); unsubscribe(); };
-  }, [client, run.id, run.status, refresh]);
+  }, [client, run.id, run.status, active, refresh]);
   const verify = async () => {
     setBusy(true); setError("");
     try { await client.verifyRunRevision(run.id); await refresh(); }
@@ -30,11 +33,10 @@ export const RunVerificationPanel = ({ client, run, reviewedRevision, displayedR
     finally { setBusy(false); }
   };
   const running = busy || state?.status === "running";
-  const active = ["queued", "preparing", "running"].includes(run.status);
   const diffChanged = displayedRevision && state?.currentRevision && (displayedRevision.fingerprint !== state.currentRevision.fingerprint || displayedRevision.head !== state.currentRevision.head);
   const reviewChanged = reviewedRevision && state?.currentRevision && (reviewedRevision.fingerprint !== state.currentRevision.fingerprint || reviewedRevision.head !== state.currentRevision.head);
   // Wait for configuration before showing the panel, so disabled gates never flash a status.
-  if ((!state && !error) || (state && state.commands.length === 0)) return null;
+  if (active || (!state && !error) || (state && state.commands.length === 0)) return null;
   return <div className="rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2 text-xs">
     <div className="flex flex-wrap items-center gap-2">
       <span className="font-semibold">Verification</span>

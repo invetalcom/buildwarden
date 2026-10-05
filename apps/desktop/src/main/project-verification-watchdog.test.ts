@@ -28,12 +28,12 @@ afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks();
 
 describe("verification completion watchdog", () => {
   it("bounds a watch-mode command even when termination never produces close", async () => {
-    const pending = runProjectVerificationCommands("workspace", ["tests --watch", "must-not-run"], 100);
+    const pending = runProjectVerificationCommands("workspace", ["tests --watch", "must-not-run"]);
     child.stdout.write("TOTAL: 1 FAILED, 2 SUCCESS\n");
-    await vi.advanceTimersByTimeAsync(2_100);
+    await vi.advanceTimersByTimeAsync(182_000);
     const results = await pending;
     expect(results).toHaveLength(1);
-    expect(results[0]).toMatchObject({ ok: false, timedOut: true, exitCode: null, durationMs: 2_100 });
+    expect(results[0]).toMatchObject({ ok: false, timedOut: true, exitCode: null, durationMs: 182_000 });
     expect(results[0].output).toContain("disable watch/interactive mode");
     expect(results[0].output).toContain("shutdown could not be confirmed");
     expect(child.stdout.destroyed).toBe(true);
