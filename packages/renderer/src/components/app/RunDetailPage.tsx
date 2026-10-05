@@ -26,7 +26,6 @@ import {
   type ShellApprovalDecision,
 } from "@buildwarden/shared";
 import {
-  Bot,
   Check,
   Copy,
   ExternalLink,
@@ -36,10 +35,8 @@ import {
   Globe,
   ListTodo,
   Loader2,
-  Maximize2,
   MessageSquareText,
   MessagesSquare,
-  Minimize2,
   PanelBottom,
   PanelRight,
   Pencil,
@@ -56,17 +53,13 @@ import {
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
 import { buildVisibleConversationHistory } from "../../lib/context-window-estimate";
 import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
-import { ComposerSelect, RunComposer } from "./RunComposer";
+import { RunComposer } from "./RunComposer";
 import { RunChatPanel } from "./RunChatPanel";
 import { RunEmbeddedBrowser } from "./RunEmbeddedBrowser";
 import { BrowserElementAttachmentPreview } from "./BrowserElementAttachmentPreview";
 import { RunActivityTimeline } from "./RunActivityTimeline";
 import { RunNotesPanel } from "./RunNoteCard";
-import { DiffReviewPanel, type DiffReviewPanelState } from "./diff-review-panel";
-import {
-  GitDiffPreview,
-  type GitDiffPreviewHandle,
-} from "./git-diff-preview";
+import { type DiffReviewPanelState } from "./diff-review-panel";
 import { summarizeDiffStats } from "./git-diff-utils";
 import { cn } from "../../lib/cn";
 import {
@@ -75,7 +68,7 @@ import {
   validateBrowserElementCaptureAddition,
 } from "../../lib/browser-element-attachments";
 import { RunVerificationPanel } from "./RunVerificationPanel";
-import { RunDiffLoadError } from "./RunDiffLoadError";
+import { RunDiffPanel } from "./RunDiffPanel";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -396,7 +389,6 @@ export const RunDetailPage = ({
   const canReviewDiff = !isRunActive && diffLoaded && !diffPending && !runDetail.diffLoadError && Boolean(runDetail.diff.trim());
   const orderedSteps = useMemo(() => dedupeFinalSummarySteps(runDetail.steps), [runDetail.steps]);
   const contextHistoryText = useMemo(() => buildVisibleConversationHistory(runDetail.steps), [runDetail.steps]);
-  const gitDiffPanelRef = useRef<GitDiffPreviewHandle>(null);
 
   useEffect(() => {
     setForgeSummary(runDetail.run.forgeRequest ?? null);
@@ -404,7 +396,6 @@ export const RunDetailPage = ({
       if (payload.runId === runDetail.run.id) setForgeSummary(payload.forgeRequest);
     });
   }, [buildwarden, runDetail.run.forgeRequest, runDetail.run.id]);
-  const [allDiffFilesExpanded, setAllDiffFilesExpanded] = useState(false);
   const [modifiedFilesExpanded, setModifiedFilesExpanded] = useState(false);
   const diffStats = useMemo<RunWorktreeDiffSummary>(() => {
     if (runDetail.diffSummary) return runDetail.diffSummary;
@@ -473,7 +464,6 @@ export const RunDetailPage = ({
       }));
     }
   };
-  const reviewBusy = reviewPanel.busy;
   const branchPromotedToProject = runDetail.branchPromotedToProject === true;
   const recovery = runDetail.interruptedRecovery;
   const latestUserCommandOptions = useMemo(() => getLatestUserCommandOptions(runDetail.steps), [runDetail.steps]);
@@ -1615,103 +1605,31 @@ export const RunDetailPage = ({
 
               {/* Git Diff panel */}
               {showDiff && activeSecondaryTab === "diff" ? (
-                <div className="flex h-full min-h-0 flex-col overflow-hidden">
-                  <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                      <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto px-3 py-3">
-                        <div className="relative z-20 mb-3 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)]">
-                          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-stretch">
-                            <button
-                              type="button"
-                              className="group min-w-0 px-3 py-2.5 text-left transition hover:bg-[var(--ec-hover)]"
-                              onClick={() => gitDiffPanelRef.current?.toggleExpandAllFiles()}
-                              title={allDiffFilesExpanded ? "Collapse all files" : "Expand all files"}
-                              aria-label={allDiffFilesExpanded ? "Collapse all files" : "Expand all files"}
-                            >
-                              <div className="flex min-w-0 items-center gap-2">
-                                {allDiffFilesExpanded ? (
-                                  <Minimize2 className="h-3.5 w-3.5 shrink-0 text-[var(--ec-muted)] transition group-hover:text-[var(--ec-text)]" aria-hidden />
-                                ) : (
-                                  <Maximize2 className="h-3.5 w-3.5 shrink-0 text-[var(--ec-muted)] transition group-hover:text-[var(--ec-text)]" aria-hidden />
-                                )}
-                                <span className="truncate text-sm font-semibold text-[var(--ec-text)]">
-                                  {diffStats.totalFiles} file{diffStats.totalFiles === 1 ? "" : "s"} changed
-                                </span>
-                                <span className="text-xs font-semibold text-[var(--ec-success)]">+{diffStats.totalAdditions}</span>
-                                <span className="text-xs font-semibold text-[var(--ec-danger)]">-{diffStats.totalDeletions}</span>
-                              </div>
-                              <p className="mt-0.5 text-[10px] text-[var(--ec-faint)] transition group-hover:text-[var(--ec-muted)]">
-                                {runDetail.diffLoadError && !diffPending ? "Changes could not be refreshed"
-                                  : !diffLoaded || diffPending
-                                  ? (runDetail.diff ? "Refreshing changes…" : "Loading file diffs…")
-                                  : allDiffFilesExpanded ? "Collapse file diffs" : "Expand file diffs"}
-                              </p>
-                            </button>
-                            {buildwarden.capabilities.platform === "electron" ? <div className="flex items-center gap-1 border-l border-[var(--ec-border)] px-2">
-                              <ComposerSelect
-                                value={selectedReviewModelId}
-                                onChange={setSelectedReviewModelId}
-                                disabled={reviewBusy || modelOptions.length === 0}
-                                icon={Bot}
-                                iconClassName="text-[var(--ec-accent)]"
-                                buttonClassName="h-7 max-w-[11rem] rounded-md border-transparent bg-transparent px-1.5 text-[11px] hover:border-[var(--ec-border)] hover:bg-[var(--ec-hover)]"
-                                options={modelOptions.map((option) => ({
-                                  value: option.id,
-                                  label: option.label,
-                                  contextModelId: option.modelId,
-                                  providerType: option.providerType,
-                                  providerFamily: option.providerFamily,
-                                }))}
-                                menuWidthPx={352}
-                                menuSide="bottom"
-                              />
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="secondary"
-                                className="h-7 shrink-0 border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 text-[11px] text-[var(--ec-text)] hover:bg-[var(--ec-hover)]"
-                                onClick={() => void runDiffReview()}
-                                disabled={reviewBusy || !canReviewDiff}
-                                title="Run reviewer simulator"
-                              >
-                                {reviewBusy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
-                                {reviewPanel.result ? "Review again" : "Review"}
-                              </Button>
-                            </div> : null}
-                          </div>
-                        </div>
-                        <RunDiffLoadError error={runDetail.diffLoadError} hasPatch={Boolean(runDetail.diff.trim())} pending={diffPending}
-                          onRetry={() => onRequestDiff(runDetail.run.id)} />
-                        {reviewPanel.busy || reviewPanel.error || reviewPanel.result ? (
-                          <div className="mb-3">
-                            <DiffReviewPanel
-                              state={reviewPanel}
-                              onRun={() => void runDiffReview()}
-                              disabled={!canReviewDiff}
-                              defaultExpanded
-                              compact
-                              hideRunButton
-                            />
-                          </div>
-                        ) : null}
-                        <GitDiffPreview
-                          key={runDetail.run.id}
-                          ref={gitDiffPanelRef}
-                          diffText={runDetail.diff}
-                          pendingFiles={runDetail.diffSummary?.files}
-                          loading={!diffLoaded || diffPending}
-                          className="max-h-none overflow-visible"
-                          emptyMessage={
-                            runDetail.diffLoadError ? "Changes unavailable. Retry to load the diff."
-                              : "No diff generated yet. This can happen if the run completed without repository changes or git has not refreshed yet."
-                          }
-                          activityEmphasis
-                          defaultCollapsedFileSections
-                          onAllFilesExpandedChange={setAllDiffFilesExpanded}
-                          onOpenFile={openRunFileReference}
-                        />
-                      </div>
-                  </div>
-                </div>
+                <RunDiffPanel
+                  key={runDetail.run.id}
+                  runId={runDetail.run.id}
+                  diffText={runDetail.diff}
+                  diffStats={diffStats}
+                  diffLoaded={diffLoaded}
+                  diffPending={diffPending}
+                  diffLoadError={runDetail.diffLoadError}
+                  onRequestDiff={onRequestDiff}
+                  onOpenFile={openRunFileReference}
+                  review={buildwarden.capabilities.platform === "electron" ? {
+                    state: reviewPanel,
+                    canRun: canReviewDiff,
+                    modelId: selectedReviewModelId,
+                    modelOptions: modelOptions.map((option) => ({
+                      value: option.id,
+                      label: option.label,
+                      contextModelId: option.modelId,
+                      providerType: option.providerType,
+                      providerFamily: option.providerFamily,
+                    })),
+                    onModelChange: setSelectedReviewModelId,
+                    onRun: () => void runDiffReview(),
+                  } : null}
+                />
               ) : null}
 
               {/* Terminal panel */}

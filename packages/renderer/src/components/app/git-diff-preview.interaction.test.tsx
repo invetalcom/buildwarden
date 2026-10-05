@@ -47,6 +47,31 @@ describe("GitDiffPreview loading and expansion", () => {
     expect(container.textContent).not.toContain("Loading file diff");
   });
 
+  it("keeps summary rows in order and mounted when the patch replaces them", async () => {
+    // The summary is sorted; the patch lists tracked changes before untracked files.
+    const pendingFiles = ["Cargo.toml", "README.md", "src/a.ts"].map((path) => ({
+      path,
+      previousPath: path === "Cargo.toml" ? "/dev/null" : null,
+      additions: 1,
+      deletions: 1,
+    }));
+    const added = "diff --git a/Cargo.toml b/Cargo.toml\nnew file mode 100644\n--- /dev/null\n+++ b/Cargo.toml\n@@ -0,0 +1 @@\n+[package]\n";
+    const rows = () => [...container.querySelectorAll<HTMLButtonElement>("button[aria-expanded]")];
+    await act(async () => root.render(<GitDiffPreview diffText="" pendingFiles={pendingFiles} loading emptyMessage="Empty" />));
+    const pendingRows = rows();
+    expect(container.querySelector('[aria-label="Added"]')).not.toBeNull();
+
+    // A click that lands while the patch arrives must still hit the row the pointer was on.
+    await act(async () => root.render(
+      <GitDiffPreview diffText={patch("README.md") + patch("src/a.ts") + added} pendingFiles={pendingFiles} emptyMessage="Empty" />,
+    ));
+    expect(rows().map((row) => row.title)).toEqual(["Cargo.toml", "README.md", "src/a.ts"]);
+    expect(rows()).toEqual(pendingRows);
+    expect(pendingRows.every((row) => row.isConnected)).toBe(true);
+    await act(async () => pendingRows[1]!.click());
+    expect(expandedPaths()).toEqual(["README.md"]);
+  });
+
   it("keeps the button and expanded file mounted during refresh and unrelated rerenders", async () => {
     const render = (loading = false, className = "") => root.render(
       <GitDiffPreview diffText={patch("src/a.ts")} loading={loading} className={className} emptyMessage="Empty" />,

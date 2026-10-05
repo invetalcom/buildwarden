@@ -38,7 +38,8 @@ describe("worktree diff summary", () => {
 
     const summary = await computeWorktreeDiffSummary(repoPath);
     expect(summary.files.find((file) => file.path === "app.ts")).toMatchObject({ additions: 2, deletions: 0 });
-    expect(summary.files.find((file) => file.path === "new.txt")).toMatchObject({ additions: 1, deletions: 0 });
+    // The renderer reads the `/dev/null` source as "added" while the full patch is loading.
+    expect(summary.files.find((file) => file.path === "new.txt")).toMatchObject({ previousPath: "/dev/null", additions: 1, deletions: 0 });
     expect(summary.files.find((file) => file.path === "image.bin")).toMatchObject({ additions: null, deletions: null });
     expect(summary.totalFiles).toBe(3);
 
