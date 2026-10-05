@@ -4138,6 +4138,7 @@ export const App = () => {
       onSelectRun={(projectId, runId) => void handleRunSelect(projectId, runId)}
       onOpenChats={handleChatsSelect}
       onOpenSettings={openSettingsPage}
+      onOpenAllRuns={() => void handleAllRunsSelect()}
     />
   );
 

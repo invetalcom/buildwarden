@@ -57,6 +57,6 @@ describe("LandingPage token usage", () => {
     );
 
     expect(markup).toContain("125");
-    expect(markup).toContain("55 tokens");
+    expect(markup).toContain("55 tokens today");
   });
 });

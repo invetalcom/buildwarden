@@ -1,25 +1,39 @@
-import { useCallback, useMemo, useState } from "react";
-import type { AppSnapshot, TokenUsageTotals } from "@buildwarden/shared";
-import { Activity, Bot, FolderGit2, PlayCircle, Settings2, Sparkles, WalletCards } from "lucide-react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
+import type { AppSnapshot } from "@buildwarden/shared";
+import {
+  Activity,
+  Bot,
+  CheckCircle2,
+  Clock3,
+  FolderGit2,
+  LayoutDashboard,
+  MessagesSquare,
+  PlayCircle,
+  Settings2,
+  WalletCards,
+} from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "../ui/card";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { cn } from "../../lib/cn";
+import { LandingActivityPanel } from "./LandingActivityPanel";
 import {
-  isRunDisplayStatusActive,
-  resolveRunDisplayStatus,
-  runDisplayStatusTone,
-} from "./run-display-status";
+  buildLandingTotals,
+  buildTodayActivity,
+  countRunOutcomes,
+  formatCompactNumber,
+  formatFullNumber,
+  RUN_OUTCOME_SERIES,
+  successRate,
+  type RunOutcomeCounts,
+} from "./landing-page-model";
+import { ProviderBrandIcon } from "./provider-brand-icons";
+import { RUN_DISPLAY_STATUS_LABELS, resolveRunDisplayStatus, runDisplayStatusTone } from "./run-display-status";
 import { buildRunHierarchyRows, findRunHierarchyScopeRoots, runHierarchyLabel } from "./run-hierarchy";
 import { RunHierarchyIndent, RunHierarchyToggle } from "./RunHierarchy";
+import { formatRunDuration, formatRunRelativeTime } from "./run-summary-format";
 
 interface LandingPageProps {
   snapshot: AppSnapshot;
@@ -28,137 +42,114 @@ interface LandingPageProps {
   onSelectRun: (projectId: string, runId: string) => void;
   onOpenChats: () => void;
   onOpenSettings: () => void;
+  onOpenAllRuns?: () => void;
 }
 
-const formatTokens = (value: number) => value.toLocaleString();
+/** Root rows shown in the recent-run list; the list scrolls inside its card, so this only bounds render cost. */
+const RECENT_RUN_LIMIT = 60;
 
-const formatRunDate = (value: string) =>
-  new Date(value).toLocaleString([], {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-
-type LandingMetric = {
-  label: string;
-  value: string | number;
-  detail: string;
-  icon: typeof FolderGit2;
-};
-
-const LandingMetrics = ({ metrics }: { metrics: LandingMetric[] }) => (
-  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-    {metrics.map((metric) => {
-      const Icon = metric.icon;
-      return (
-        <Card key={metric.label}>
-          <CardHeader className="p-4">
-            <div className="flex items-center justify-between gap-2">
-              <CardDescription className="font-semibold uppercase tracking-[0.22em]">{metric.label}</CardDescription>
-              <Icon className="size-4 text-[var(--ec-accent)]" />
-            </div>
-            <CardTitle className="text-2xl">{metric.value}</CardTitle>
-            <CardDescription>{metric.detail}</CardDescription>
-          </CardHeader>
-        </Card>
-      );
-    })}
-  </div>
+const SectionLabel = ({ children }: { children: ReactNode }) => (
+  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--ec-faint)]">{children}</p>
 );
 
-const buildTodayActivity = (
-  runs: AppSnapshot["projects"][number]["runs"],
-  usageToday: TokenUsageTotals | undefined,
-) => {
-  const today = new Date().toDateString();
-  const todaysRuns = runs.filter((run) => new Date(run.createdAt).toDateString() === today);
-  return {
-    runsStarted: todaysRuns.length,
-    completedRuns: todaysRuns.filter((run) =>
-      resolveRunDisplayStatus(run.status, run.orchestrationStatus) === "completed").length,
-    activeRuns: todaysRuns.filter((run) =>
-      isRunDisplayStatusActive(resolveRunDisplayStatus(run.status, run.orchestrationStatus))).length,
-    tokensUsed: usageToday
-      ? usageToday.inputTokens + usageToday.outputTokens
-      : todaysRuns.reduce((sum, run) => sum + run.inputTokens + run.outputTokens, 0),
-  };
+type LandingStat = {
+  label: string;
+  value: string;
+  valueTitle?: string;
+  detail: string;
+  icon: typeof FolderGit2;
+  highlight?: boolean;
 };
 
-export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRun, onOpenChats, onOpenSettings }: LandingPageProps) => {
+const LandingStatTile = ({ stat }: { stat: LandingStat }) => {
+  const Icon = stat.icon;
+  return (
+    <Card className="min-w-0 px-3 py-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <SectionLabel>{stat.label}</SectionLabel>
+        <Icon className={cn("size-3.5 shrink-0", stat.highlight ? "text-[var(--ec-accent)]" : "text-[var(--ec-muted)]")} aria-hidden />
+      </div>
+      <p className="mt-1 truncate text-xl font-semibold tabular-nums leading-7 text-[var(--ec-text)]" title={stat.valueTitle}>
+        {stat.value}
+      </p>
+      <p className="truncate text-xs text-[var(--ec-muted)]" title={stat.detail}>{stat.detail}</p>
+    </Card>
+  );
+};
+
+/** Thin stacked share bar of run outcomes, using the same status tokens as the activity chart. */
+const RunOutcomeBar = ({ counts, className }: { counts: RunOutcomeCounts; className?: string }) => {
+  const total = counts.completed + counts.failed + counts.active + counts.other;
+  if (total === 0) return <span className={cn("block h-1 rounded-full bg-[var(--ec-muted-soft)]", className)} aria-hidden />;
+  return (
+    <span className={cn("flex h-1 gap-px overflow-hidden rounded-full", className)} aria-hidden>
+      {RUN_OUTCOME_SERIES.filter((series) => counts[series.key] > 0).map((series) => (
+        <span key={series.key} className="block h-full" style={{ flex: `${String(counts[series.key])} 1 0`, background: series.color }} />
+      ))}
+    </span>
+  );
+};
+
+const TodayChip = ({ value, label, tone }: { value: string | number; label: string; tone?: string }) => (
+  <span className="inline-flex items-baseline gap-1 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-2 py-0.5 text-xs">
+    <span className="font-semibold tabular-nums" style={tone ? { color: tone } : undefined}>{value}</span>
+    <span className="text-[var(--ec-muted)]">{label}</span>
+  </span>
+);
+
+export const LandingPage = ({
+  snapshot,
+  sessionJoke,
+  onSelectProject,
+  onSelectRun,
+  onOpenChats,
+  onOpenSettings,
+  onOpenAllRuns,
+}: LandingPageProps) => {
   const buildwarden = useBuildWardenClient();
   const readOnly = !buildwarden.capabilities.mutations;
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
   const allRuns = useMemo(
-    () =>
-      snapshot.projects.flatMap((entry) =>
-        entry.runs.map((run) => ({
-          ...run,
-          projectId: entry.project.id,
-          projectName: entry.project.name,
-        })),
-      ),
+    () => snapshot.projects.flatMap((entry) => entry.runs),
     [snapshot.projects],
   );
   const allSubagentRuns = useMemo(
     () => snapshot.projects.flatMap((entry) => entry.orchestratedRuns),
     [snapshot.projects],
   );
+  const providerTypeByAccountId = useMemo(
+    () => new Map(snapshot.providerAccounts.map((account) => [account.id, account.providerType])),
+    [snapshot.providerAccounts],
+  );
+  const projectNames = useMemo(
+    () => new Map(snapshot.projects.map((entry) => [entry.project.id, entry.project.name])),
+    [snapshot.projects],
+  );
 
-  const totals = useMemo(() => {
-    const inputTokens = snapshot.projects.reduce((sum, entry) => sum + entry.project.cumulativeInputTokens, 0) +
-      (snapshot.tokenUsage?.standaloneChats.inputTokens ?? 0);
-    const outputTokens = snapshot.projects.reduce((sum, entry) => sum + entry.project.cumulativeOutputTokens, 0) +
-      (snapshot.tokenUsage?.standaloneChats.outputTokens ?? 0);
+  const totals = useMemo(() => buildLandingTotals(snapshot, allRuns), [allRuns, snapshot]);
+  const todayActivity = useMemo(
+    () => buildTodayActivity(allRuns, snapshot.tokenUsage?.today),
+    [allRuns, snapshot.tokenUsage?.today],
+  );
 
-    return {
-      projects: snapshot.projects.length,
-      runs: allRuns.length,
-      activeRuns: allRuns.filter((run) =>
-        isRunDisplayStatusActive(resolveRunDisplayStatus(run.status, run.orchestrationStatus))).length,
-      completedRuns: allRuns.filter((run) =>
-        resolveRunDisplayStatus(run.status, run.orchestrationStatus) === "completed").length,
-      providerAccounts: snapshot.providerAccounts.length,
-      models: snapshot.models.length,
-      inputTokens,
-      outputTokens,
-      totalTokens: inputTokens + outputTokens,
-    };
-  }, [
-    allRuns,
-    snapshot.models.length,
-    snapshot.projects,
-    snapshot.providerAccounts.length,
-    snapshot.tokenUsage?.standaloneChats.inputTokens,
-    snapshot.tokenUsage?.standaloneChats.outputTokens,
-  ]);
-
-  const recentProjects = useMemo(
-    () => snapshot.projects.slice().sort((left, right) => right.project.updatedAt.localeCompare(left.project.updatedAt)).slice(0, 4),
+  const projects = useMemo(
+    () => snapshot.projects
+      .slice()
+      .sort((left, right) => right.project.updatedAt.localeCompare(left.project.updatedAt))
+      .map((entry) => ({ entry, outcomes: countRunOutcomes(entry.runs) })),
     [snapshot.projects],
   );
 
   const recentActivityRuns = useMemo(
     () => [...allRuns, ...allSubagentRuns]
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-      .slice(0, 5),
+      .slice(0, RECENT_RUN_LIMIT),
     [allRuns, allSubagentRuns],
   );
   const recentRunRows = useMemo(() => {
-    const projectNames = new Map(snapshot.projects.map((entry) => [entry.project.id, entry.project.name]));
     const knownPrimaryRuns = snapshot.projects.flatMap((entry) => [...entry.runs, ...entry.forLaterRuns]);
-    const hierarchyRoots = findRunHierarchyScopeRoots(
-      recentActivityRuns,
-      allRuns,
-      allSubagentRuns,
-      knownPrimaryRuns,
-    );
-    return buildRunHierarchyRows(
-      hierarchyRoots,
-      allSubagentRuns,
-      { expandedRunIds },
-    ).map((row) => ({ ...row, projectName: projectNames.get(row.run.projectId) ?? "Unknown project" }));
+    const hierarchyRoots = findRunHierarchyScopeRoots(recentActivityRuns, allRuns, allSubagentRuns, knownPrimaryRuns);
+    return buildRunHierarchyRows(hierarchyRoots, allSubagentRuns, { expandedRunIds });
   }, [allRuns, allSubagentRuns, expandedRunIds, recentActivityRuns, snapshot.projects]);
   const toggleRunHierarchy = useCallback((runId: string) => {
     setExpandedRunIds((current) => {
@@ -170,181 +161,163 @@ export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRu
   }, []);
 
   const latestRun = recentActivityRuns[0] ?? null;
-  const todayActivity = useMemo(
-    () => buildTodayActivity(allRuns, snapshot.tokenUsage?.today),
-    [allRuns, snapshot.tokenUsage?.today],
-  );
+  const rate = successRate(totals.outcomes);
+  const activeRuns = totals.outcomes.active;
+  const activeProjectCount = snapshot.projects.filter((entry) => entry.activeRuns.length > 0).length;
 
-  const metrics: LandingMetric[] = [
+  const stats: LandingStat[] = [
     {
       label: "Projects",
-      value: totals.projects,
-      detail: `${totals.providerAccounts} providers, ${totals.models} models`,
+      value: formatFullNumber(totals.projects),
+      detail: `${String(totals.providerAccounts)} providers · ${String(totals.models)} models`,
       icon: FolderGit2,
     },
     {
       label: "Runs",
-      value: totals.runs,
-      detail: `${totals.activeRuns} active, ${totals.completedRuns} completed`,
+      value: formatFullNumber(totals.runs),
+      detail: `${String(totals.outcomes.completed)} done · ${String(totals.outcomes.failed)} failed`,
       icon: PlayCircle,
     },
     {
+      label: "Success rate",
+      value: rate === null ? "–" : `${String(Math.round(rate * 100))}%`,
+      detail: rate === null ? "No finished runs yet" : "of finished runs",
+      icon: CheckCircle2,
+    },
+    {
+      label: "Active now",
+      value: activeRuns > 0 ? formatFullNumber(activeRuns) : "Idle",
+      detail: activeRuns > 0
+        ? `across ${String(activeProjectCount)} ${activeProjectCount === 1 ? "project" : "projects"}`
+        : "No runs in progress",
+      icon: Activity,
+      highlight: activeRuns > 0,
+    },
+    {
       label: "Tokens",
-      value: formatTokens(totals.totalTokens),
-      detail: `${formatTokens(totals.inputTokens)} in, ${formatTokens(totals.outputTokens)} out`,
+      value: formatCompactNumber(totals.totalTokens),
+      valueTitle: `${formatFullNumber(totals.totalTokens)} tokens`,
+      detail: `${formatCompactNumber(totals.inputTokens)} in · ${formatCompactNumber(totals.outputTokens)} out`,
       icon: WalletCards,
     },
     {
-      label: "Workspace",
-      value: totals.activeRuns > 0 ? "Busy" : "Idle",
-      detail: totals.activeRuns > 0 ? `${totals.activeRuns} runs in progress` : "No runs currently active",
-      icon: Sparkles,
+      label: "Chats",
+      value: formatFullNumber(totals.chats),
+      detail: "standalone conversations",
+      icon: MessagesSquare,
     },
   ];
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-col gap-3">
-      <section className="grid gap-3">
-        <Card className="overflow-hidden">
-          <CardHeader className="p-5">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.32em] text-[var(--ec-accent)]">Boot Message</p>
-            <CardTitle className="text-lg leading-7">{sessionJoke}</CardTitle>
+    <div className="flex w-full flex-col gap-3 lg:h-full lg:min-h-[47rem] xl:min-h-[41rem]" data-landing-page>
+      <Card className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2.5">
+        <div className="flex min-w-0 flex-[1_1_18rem] items-center gap-2.5">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-[var(--ec-accent-soft)] text-[var(--ec-accent)] ring-1 ring-inset ring-[var(--ec-accent-ring)]">
+            <LayoutDashboard className="size-4" aria-hidden />
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-[var(--ec-text)]">Overview</h2>
+            <p className="truncate text-xs text-[var(--ec-muted)]" title={sessionJoke}>{sessionJoke}</p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5" aria-label="Today's activity">
+          <SectionLabel>Today</SectionLabel>
+          <TodayChip value={todayActivity.runsStarted} label="started" />
+          <TodayChip value={todayActivity.completedRuns} label="done" tone={todayActivity.completedRuns > 0 ? "var(--ec-success)" : undefined} />
+          <TodayChip value={todayActivity.failedRuns} label="failed" tone={todayActivity.failedRuns > 0 ? "var(--ec-danger)" : undefined} />
+          <TodayChip value={todayActivity.activeRuns} label="active" tone={todayActivity.activeRuns > 0 ? "var(--ec-accent)" : undefined} />
+          <span title={`${formatFullNumber(todayActivity.tokensUsed)} tokens today`}>
+            <TodayChip value={formatCompactNumber(todayActivity.tokensUsed)} label="tokens" />
+          </span>
+        </div>
+        <div className="ml-auto flex flex-wrap items-center gap-1.5">
+          {latestRun ? (
+            <Button size="sm" onClick={() => onSelectRun(latestRun.projectId, latestRun.id)}>
+              <PlayCircle className="size-4" aria-hidden />
+              Open latest run
+            </Button>
+          ) : null}
+          <Button size="sm" variant="secondary" onClick={onOpenChats}>
+            <Bot className="size-4" aria-hidden />
+            Chats
+          </Button>
+          {!readOnly ? (
+            <Button size="icon" variant="secondary" onClick={onOpenSettings} aria-label="Settings" title="Settings">
+              <Settings2 className="size-4" aria-hidden />
+            </Button>
+          ) : null}
+        </div>
+      </Card>
+
+      <div className="grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+        {stats.map((stat) => <LandingStatTile key={stat.label} stat={stat} />)}
+      </div>
+
+      <div className="grid gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]">
+        <Card className="flex min-h-0 flex-col">
+          <CardHeader className="shrink-0 flex-row items-start gap-2 px-4 pt-3 pb-2">
+            <Clock3 className="mt-0.5 size-4 shrink-0 text-[var(--ec-muted)]" aria-hidden />
+            <div className="min-w-0">
+              <CardTitle>Recent runs</CardTitle>
+              <CardDescription>Latest agent activity across all projects.</CardDescription>
+            </div>
+            {onOpenAllRuns ? (
+              <CardAction>
+                <Button size="xs" variant="ghost" onClick={onOpenAllRuns}>View all</Button>
+              </CardAction>
+            ) : null}
           </CardHeader>
-          <CardContent className="flex flex-col gap-4 px-5 pb-5">
-            <div className="rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--ec-faint)]">Today's Activity</p>
-                  <p className="mt-1 text-sm text-[var(--ec-text)]">
-                    {todayActivity.runsStarted} runs started, {todayActivity.completedRuns} completed, {todayActivity.activeRuns} active
-                  </p>
-                </div>
-                <p className="font-mono text-sm font-semibold text-[var(--ec-accent)]">{formatTokens(todayActivity.tokensUsed)} tokens</p>
-              </div>
-            </div>
-
-            <div className="grid gap-2 sm:grid-cols-3">
-              {latestRun ? (
-                <Button variant="secondary" className="justify-center" onClick={() => onSelectRun(latestRun.projectId, latestRun.id)}>
-                  <PlayCircle data-icon="inline-start" />
-                  Open latest run
-                </Button>
-              ) : null}
-              <Button variant="secondary" className="justify-center" onClick={onOpenChats}>
-                <Bot data-icon="inline-start" />
-                Open chat
-              </Button>
-              {!readOnly ? (
-                <Button variant="secondary" className="justify-center" onClick={onOpenSettings}>
-                  <Settings2 data-icon="inline-start" />
-                  Settings
-                </Button>
-              ) : null}
-            </div>
-          </CardContent>
-        </Card>
-
-        <LandingMetrics metrics={metrics} />
-      </section>
-
-      <section className="grid gap-3 xl:grid-cols-2">
-        <Card>
-          <CardHeader className="flex-row items-center gap-3">
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--ec-faint)]">Recent Projects</p>
-              <CardTitle className="mt-1 text-lg">Repositories</CardTitle>
-            </div>
-            <CardAction>
-              <Activity className="size-4 text-[var(--ec-muted)]" />
-            </CardAction>
-          </CardHeader>
-          <CardContent>
-            {recentProjects.length > 0 ? (
-              <div className="overflow-hidden rounded-md border border-[var(--ec-border)]">
-                {recentProjects.map((entry) => {
-                  const totalProjectTokens = entry.project.cumulativeInputTokens + entry.project.cumulativeOutputTokens;
-
-                  return (
-                    <button
-                      key={entry.project.id}
-                      type="button"
-                      className="flex w-full items-center justify-between gap-3 border-b border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-4 py-3 text-left transition last:border-b-0 hover:bg-[var(--ec-hover)]"
-                      onClick={() => onSelectProject(entry.project.id)}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold text-[var(--ec-text)]">{entry.project.name}</p>
-                        <p className="mt-1 truncate font-mono text-xs text-[var(--ec-muted)]">{entry.project.repoPath}</p>
-                      </div>
-                      <div className="shrink-0 text-right">
-                        <Badge dot tone={entry.activeRuns[0]?.status ?? "neutral"}>
-                          {entry.activeRuns.length > 0 ? `${entry.activeRuns.length} active` : `${entry.runs.length} runs`}
-                        </Badge>
-                        <p className="mt-1 font-mono text-xs text-[var(--ec-muted)]">{formatTokens(totalProjectTokens)} tokens</p>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              <Empty>
-                <EmptyHeader>
-                  <FolderGit2 className="size-8 text-[var(--ec-muted)]" />
-                  <EmptyTitle>No repositories yet</EmptyTitle>
-                  <EmptyDescription>{readOnly ? "No projects are configured on the BuildWarden host." : "Add your first project in Settings to start tracking work here."}</EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex-row items-center gap-3">
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--ec-faint)]">Recent Runs</p>
-              <CardTitle className="mt-1 text-lg">Agent activity</CardTitle>
-            </div>
-            <CardAction>
-              <Bot className="size-4 text-[var(--ec-muted)]" />
-            </CardAction>
-          </CardHeader>
-          <CardContent>
+          <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-b-lg p-0">
             {recentRunRows.length > 0 ? (
-              <div className="overflow-hidden rounded-md border border-[var(--ec-border)]">
-                {recentRunRows.map(({ run, projectName, depth, descendantCount, expanded }) => {
+              <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto max-lg:max-h-[28rem]">
+                {recentRunRows.map(({ run, depth, descendantCount, expanded }) => {
                   const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
+                  const label = runHierarchyLabel(run);
                   return (
                     <RunHierarchyIndent
                       key={run.id}
                       depth={depth}
                       indentPx={18}
-                      className="border-b border-[var(--ec-border)] bg-[var(--ec-panel-soft)] last:border-b-0"
+                      className={cn("border-t border-[var(--ec-border)]", depth > 0 && "bg-[var(--ec-panel-soft)]")}
                     >
-                      <div data-run-hierarchy-run={run.id} className="flex w-full items-center gap-3 px-4 py-3 transition hover:bg-[var(--ec-hover)]">
+                      <div data-run-hierarchy-run={run.id} className="flex items-center gap-3 px-4 py-2 transition hover:bg-[var(--ec-hover)]">
                         <button
                           type="button"
-                          className="min-w-0 flex-1 text-left"
+                          className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
                           onClick={() => onSelectRun(run.projectId, run.id)}
                         >
-                          <span className="flex min-w-0 items-center gap-1.5">
-                            <span className="truncate text-sm font-semibold text-[var(--ec-text)]">{runHierarchyLabel(run)}</span>
-                            {depth > 0 ? <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.12em] text-[var(--ec-accent)]">Subagent</span> : null}
-                          </span>
-                          <span className="mt-1 block truncate font-mono text-xs text-[var(--ec-muted)]">
-                            {projectName} - {formatRunDate(run.createdAt)}
+                          <ProviderBrandIcon
+                            harnessType={run.harnessType}
+                            providerType={providerTypeByAccountId.get(run.providerAccountId)}
+                            className="size-4 shrink-0"
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              <span className="truncate text-sm font-semibold text-[var(--ec-text)]" title={label}>{label}</span>
+                              {depth > 0 ? <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.12em] text-[var(--ec-accent)]">Subagent</span> : null}
+                            </span>
+                            <span className="mt-0.5 block truncate font-mono text-xs text-[var(--ec-muted)]" title={new Date(run.createdAt).toLocaleString()}>
+                              {projectNames.get(run.projectId) ?? "Unknown project"} · {formatRunRelativeTime(run.createdAt)} · {formatRunDuration(run)}
+                            </span>
                           </span>
                         </button>
-                        {descendantCount > 0 ? (
-                          <RunHierarchyToggle
-                            runId={run.id}
-                            runLabel={runHierarchyLabel(run)}
-                            descendantCount={descendantCount}
-                            expanded={expanded}
-                            onToggle={toggleRunHierarchy}
-                          />
-                        ) : null}
-                        <div className="shrink-0 text-right">
-                          <Badge dot tone={runDisplayStatusTone(displayStatus)}>{displayStatus}</Badge>
-                          <p className="mt-1 font-mono text-xs text-[var(--ec-muted)]">{formatTokens(run.inputTokens + run.outputTokens)} tokens</p>
+                        <div className="flex shrink-0 items-center gap-2">
+                          {descendantCount > 0 ? (
+                            <RunHierarchyToggle
+                              runId={run.id}
+                              runLabel={label}
+                              descendantCount={descendantCount}
+                              expanded={expanded}
+                              onToggle={toggleRunHierarchy}
+                            />
+                          ) : null}
+                          <Badge dot tone={runDisplayStatusTone(displayStatus)}>{RUN_DISPLAY_STATUS_LABELS[displayStatus]}</Badge>
+                          <span
+                            className="hidden w-14 text-right font-mono text-xs tabular-nums text-[var(--ec-muted)] sm:inline"
+                            title={`${formatFullNumber(run.inputTokens + run.outputTokens)} tokens`}
+                          >
+                            {formatCompactNumber(run.inputTokens + run.outputTokens)}
+                          </span>
                         </div>
                       </div>
                     </RunHierarchyIndent>
@@ -352,7 +325,7 @@ export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRu
                 })}
               </div>
             ) : (
-              <Empty>
+              <Empty className="flex-1">
                 <EmptyHeader>
                   <PlayCircle className="size-8 text-[var(--ec-muted)]" />
                   <EmptyTitle>No runs yet</EmptyTitle>
@@ -362,7 +335,62 @@ export const LandingPage = ({ snapshot, sessionJoke, onSelectProject, onSelectRu
             )}
           </CardContent>
         </Card>
-      </section>
+
+        <div className="flex min-h-0 flex-col gap-3">
+          {/* Projects size to their content (up to half the column) and give way first, so Activity keeps a readable chart. */}
+          <Card className="flex min-h-0 flex-col lg:max-h-[50%] lg:min-h-[9rem]">
+            <CardHeader className="shrink-0 flex-row items-start gap-2 px-4 pt-3 pb-2">
+              <FolderGit2 className="mt-0.5 size-4 shrink-0 text-[var(--ec-muted)]" aria-hidden />
+              <div className="min-w-0">
+                <CardTitle>Projects</CardTitle>
+                <CardDescription>Most recently updated first.</CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-b-lg p-0">
+              {projects.length > 0 ? (
+                <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto max-lg:max-h-[22rem]">
+                  {projects.map(({ entry, outcomes }) => {
+                    const projectTokens = entry.project.cumulativeInputTokens + entry.project.cumulativeOutputTokens;
+                    const activeCount = entry.activeRuns.length;
+                    return (
+                      <button
+                        key={entry.project.id}
+                        type="button"
+                        className="flex w-full items-center gap-3 border-t border-[var(--ec-border)] px-4 py-2 text-left transition hover:bg-[var(--ec-hover)]"
+                        onClick={() => onSelectProject(entry.project.id)}
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-semibold text-[var(--ec-text)]">{entry.project.name}</span>
+                          <span className="mt-0.5 block truncate font-mono text-xs text-[var(--ec-muted)]" title={entry.project.repoPath}>{entry.project.repoPath}</span>
+                          <RunOutcomeBar counts={outcomes} className="mt-1.5" />
+                        </span>
+                        <span className="flex shrink-0 flex-col items-end gap-1">
+                          <Badge dot tone={activeCount > 0 ? "running" : "neutral"}>
+                            {activeCount > 0 ? `${String(activeCount)} active` : `${String(entry.runs.length)} runs`}
+                          </Badge>
+                          <span className="font-mono text-xs tabular-nums text-[var(--ec-muted)]" title={`${formatFullNumber(projectTokens)} tokens`}>
+                            {formatCompactNumber(projectTokens)} tokens
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <Empty className="flex-1">
+                  <EmptyHeader>
+                    <FolderGit2 className="size-8 text-[var(--ec-muted)]" />
+                    <EmptyTitle>No projects yet</EmptyTitle>
+                    <EmptyDescription>{readOnly ? "No projects are configured on the BuildWarden host." : "Add your first project from the sidebar to start tracking work here."}</EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              )}
+            </CardContent>
+          </Card>
+
+          <LandingActivityPanel runs={allRuns} providerAccounts={snapshot.providerAccounts} className="lg:min-h-[20rem] lg:flex-1" />
+        </div>
+      </div>
     </div>
   );
 };
