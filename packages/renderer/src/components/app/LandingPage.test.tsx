@@ -51,8 +51,6 @@ describe("LandingPage token usage", () => {
         sessionJoke="Ready"
         onSelectProject={vi.fn()}
         onSelectRun={vi.fn()}
-        onOpenChats={vi.fn()}
-        onOpenSettings={vi.fn()}
       />,
     );
 

@@ -2,14 +2,12 @@ import { useCallback, useMemo, useState, type ReactNode } from "react";
 import type { AppSnapshot } from "@buildwarden/shared";
 import {
   Activity,
-  Bot,
   CheckCircle2,
   Clock3,
   FolderGit2,
-  LayoutDashboard,
   MessagesSquare,
   PlayCircle,
-  Settings2,
+  Terminal,
   WalletCards,
 } from "lucide-react";
 import { Badge } from "../ui/badge";
@@ -40,8 +38,6 @@ interface LandingPageProps {
   sessionJoke: string;
   onSelectProject: (projectId: string) => void;
   onSelectRun: (projectId: string, runId: string) => void;
-  onOpenChats: () => void;
-  onOpenSettings: () => void;
   onOpenAllRuns?: () => void;
 }
 
@@ -102,8 +98,6 @@ export const LandingPage = ({
   sessionJoke,
   onSelectProject,
   onSelectRun,
-  onOpenChats,
-  onOpenSettings,
   onOpenAllRuns,
 }: LandingPageProps) => {
   const buildwarden = useBuildWardenClient();
@@ -160,7 +154,6 @@ export const LandingPage = ({
     });
   }, []);
 
-  const latestRun = recentActivityRuns[0] ?? null;
   const rate = successRate(totals.outcomes);
   const activeRuns = totals.outcomes.active;
   const activeProjectCount = snapshot.projects.filter((entry) => entry.activeRuns.length > 0).length;
@@ -210,17 +203,17 @@ export const LandingPage = ({
 
   return (
     <div className="flex w-full flex-col gap-3 lg:h-full lg:min-h-[47rem] xl:min-h-[41rem]" data-landing-page>
-      <Card className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2.5">
-        <div className="flex min-w-0 flex-[1_1_18rem] items-center gap-2.5">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-[var(--ec-accent-soft)] text-[var(--ec-accent)] ring-1 ring-inset ring-[var(--ec-accent-ring)]">
-            <LayoutDashboard className="size-4" aria-hidden />
+      <Card className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3">
+        <div className="flex min-w-0 flex-[1_1_24rem] items-start gap-3">
+          <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md bg-[var(--ec-accent-soft)] text-[var(--ec-accent)] ring-1 ring-inset ring-[var(--ec-accent-ring)]">
+            <Terminal className="size-4" aria-hidden />
           </span>
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-[var(--ec-text)]">Overview</h2>
-            <p className="truncate text-xs text-[var(--ec-muted)]" title={sessionJoke}>{sessionJoke}</p>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--ec-accent)]">Boot message</p>
+            <p className="mt-0.5 text-sm font-medium leading-6 text-[var(--ec-text)]">{sessionJoke}</p>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-1.5" aria-label="Today's activity">
+        <div className="ml-auto flex flex-wrap items-center gap-1.5" aria-label="Today's activity">
           <SectionLabel>Today</SectionLabel>
           <TodayChip value={todayActivity.runsStarted} label="started" />
           <TodayChip value={todayActivity.completedRuns} label="done" tone={todayActivity.completedRuns > 0 ? "var(--ec-success)" : undefined} />
@@ -229,23 +222,6 @@ export const LandingPage = ({
           <span title={`${formatFullNumber(todayActivity.tokensUsed)} tokens today`}>
             <TodayChip value={formatCompactNumber(todayActivity.tokensUsed)} label="tokens" />
           </span>
-        </div>
-        <div className="ml-auto flex flex-wrap items-center gap-1.5">
-          {latestRun ? (
-            <Button size="sm" onClick={() => onSelectRun(latestRun.projectId, latestRun.id)}>
-              <PlayCircle className="size-4" aria-hidden />
-              Open latest run
-            </Button>
-          ) : null}
-          <Button size="sm" variant="secondary" onClick={onOpenChats}>
-            <Bot className="size-4" aria-hidden />
-            Chats
-          </Button>
-          {!readOnly ? (
-            <Button size="icon" variant="secondary" onClick={onOpenSettings} aria-label="Settings" title="Settings">
-              <Settings2 className="size-4" aria-hidden />
-            </Button>
-          ) : null}
         </div>
       </Card>
 
