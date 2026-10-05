@@ -52,6 +52,62 @@ describe("run plan progress markdown parsing", () => {
 });
 
 describe("deriveLatestRunPlanProgress", () => {
+  it("completes a stale final active step for a successful run without changing stored events", () => {
+    const progressEvent = step("progress", "plan-progress", "", {
+      provider: "ai-sdk",
+      planProgress: {
+        steps: [
+          { title: "Implement", status: "completed" },
+          { title: "Validate", status: "inProgress" },
+        ],
+      },
+    });
+    const originalMetadata = progressEvent.metadataJson;
+
+    expect(deriveLatestRunPlanProgress([progressEvent], "code", "completed")?.steps).toEqual([
+      { title: "Implement", status: "completed" },
+      { title: "Validate", status: "completed" },
+    ]);
+    expect(progressEvent.metadataJson).toBe(originalMetadata);
+    // Resuming the run restores the provider's progress until it sends an update.
+    expect(deriveLatestRunPlanProgress([progressEvent], "code", "running")?.steps.at(-1)?.status).toBe("inProgress");
+  });
+
+  it.each(["queued", "preparing", "running", "failed", "cancelled"] as const)(
+    "preserves the active final step for a %s run",
+    (status) => {
+      const progress = deriveLatestRunPlanProgress([
+        step("progress", "plan-progress", "1. [x] Implement\n2. [-] Validate"),
+      ], "code", status);
+      expect(progress?.steps.at(-1)?.status).toBe("inProgress");
+    },
+  );
+
+  it.each([
+    ["pending", "inProgress"],
+    ["inProgress", "inProgress"],
+    ["completed", "pending"],
+  ])("preserves unfinished checklists (%s, %s) after run completion", (firstStatus, lastStatus) => {
+    const progress = deriveLatestRunPlanProgress([
+      step("progress", "plan-progress", "", {
+        planProgress: {
+          steps: [
+            { title: "Implement", status: firstStatus },
+            { title: "Validate", status: lastStatus },
+          ],
+        },
+      }),
+    ], "code", "completed");
+    expect(progress?.steps.map((planStep) => planStep.status)).toEqual([firstStatus, lastStatus]);
+  });
+
+  it("keeps a completed planning run's proposed checklist pending", () => {
+    const progress = deriveLatestRunPlanProgress([
+      step("plan", "plan-updated", "1. Implement\n2. Validate"),
+    ], "plan", "completed");
+    expect(progress?.steps.map((planStep) => planStep.status)).toEqual(["pending", "pending"]);
+  });
+
   it("prefers the latest structured plan-progress event", () => {
     const progress = deriveLatestRunPlanProgress(
       [

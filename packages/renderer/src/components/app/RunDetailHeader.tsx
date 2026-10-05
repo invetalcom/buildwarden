@@ -173,8 +173,8 @@ export const RunDetailHeader = ({
     ? "Checking workspace changes."
     : "Workspace changes are unavailable.";
   const planProgress = useMemo(
-    () => deriveLatestRunPlanProgress(runDetail?.steps ?? [], run.mode),
-    [run.mode, runDetail?.steps],
+    () => deriveLatestRunPlanProgress(runDetail?.steps ?? [], run.mode, run.status),
+    [run.mode, run.status, runDetail?.steps],
   );
   const isRunActive = ["queued", "preparing", "running"].includes(run.status);
   const subagents = useMemo(

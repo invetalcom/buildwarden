@@ -1233,9 +1233,8 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     <div
       ref={scrollContainerRef}
       className={cn(
-        "app-scrollbar overflow-auto rounded-lg border bg-[var(--ec-panel)]",
+        "app-scrollbar overflow-auto rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)]",
         className,
-        activityEmphasis ? "border-[var(--ec-success-ring)] ring-1 ring-[var(--ec-danger-ring)]" : "border-[var(--ec-border)]",
         hideFileHeaderInlineToggle && !anyFilesExpanded && "relative mt-0 h-0 overflow-visible border-transparent bg-transparent ring-0",
         scrollAreaHeightClass,
       )}
