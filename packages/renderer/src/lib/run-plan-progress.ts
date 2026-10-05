@@ -102,8 +102,9 @@ export const deriveLatestRunPlanProgress = (
       const progress = readStructuredProgress(step, metadata);
       if (progress) {
         // Providers may finish successfully without sending a final checklist update.
-        // Reconcile only the last active step when all preceding work is complete.
+        // Reconcile only code runs; planning can report proposed implementation work.
         if (
+          fallbackMode === "code" &&
           runStatus === "completed" &&
           progress.steps.at(-1)?.status === "inProgress" &&
           progress.steps.slice(0, -1).every((planStep) => planStep.status === "completed")

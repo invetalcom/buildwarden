@@ -108,6 +108,23 @@ describe("deriveLatestRunPlanProgress", () => {
     expect(progress?.steps.map((planStep) => planStep.status)).toEqual(["pending", "pending"]);
   });
 
+  it.each(["plan", "ask"] as const)("preserves structured progress when a %s run completes", (mode) => {
+    const progressEvent = step("progress", "plan-progress", "", {
+      planProgress: { steps: [
+        { title: "Inspect", status: "completed" },
+        { title: "Implement", status: "inProgress" },
+      ] },
+    });
+    const originalMetadata = progressEvent.metadataJson;
+    for (const status of ["completed", "running", "completed"] as const) {
+      expect(deriveLatestRunPlanProgress([progressEvent], mode, status)?.steps).toEqual([
+        { title: "Inspect", status: "completed" },
+        { title: "Implement", status: "inProgress" },
+      ]);
+    }
+    expect(progressEvent.metadataJson).toBe(originalMetadata);
+  });
+
   it("prefers the latest structured plan-progress event", () => {
     const progress = deriveLatestRunPlanProgress(
       [
