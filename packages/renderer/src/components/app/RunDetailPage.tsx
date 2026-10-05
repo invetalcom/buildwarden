@@ -75,6 +75,7 @@ import {
   validateBrowserElementCaptureAddition,
 } from "../../lib/browser-element-attachments";
 import { RunVerificationPanel } from "./RunVerificationPanel";
+import { RunDiffLoadError } from "./RunDiffLoadError";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -392,6 +393,7 @@ export const RunDetailPage = ({
   const worktreeUnavailable = runDetail.worktreeUnavailable === true;
   const diffLoaded = runDetail.diffLoaded === true;
   const diffPending = runDetail.diffPending === true;
+  const canReviewDiff = !isRunActive && diffLoaded && !diffPending && !runDetail.diffLoadError && Boolean(runDetail.diff.trim());
   const orderedSteps = useMemo(() => dedupeFinalSummarySteps(runDetail.steps), [runDetail.steps]);
   const contextHistoryText = useMemo(() => buildVisibleConversationHistory(runDetail.steps), [runDetail.steps]);
   const gitDiffPanelRef = useRef<GitDiffPreviewHandle>(null);
@@ -448,6 +450,7 @@ export const RunDetailPage = ({
   }, [modelOptions, selectedReviewModelId]);
 
   const runDiffReview = async () => {
+    if (!canReviewDiff) return;
     setReviewPanel((current) => ({
       ...current,
       busy: true,
@@ -1591,6 +1594,7 @@ export const RunDetailPage = ({
                       diffText={runDetail.diff}
                       diffPending={diffPending}
                       diffLoaded={diffLoaded}
+                      diffLoadError={runDetail.diffLoadError}
                       diffSummary={runDetail.diffSummary}
                       onRequestDiff={onRequestDiff}
                     />
@@ -1636,7 +1640,8 @@ export const RunDetailPage = ({
                                 <span className="text-xs font-semibold text-[var(--ec-danger)]">-{diffStats.totalDeletions}</span>
                               </div>
                               <p className="mt-0.5 text-[10px] text-[var(--ec-faint)] transition group-hover:text-[var(--ec-muted)]">
-                                {!diffLoaded || diffPending
+                                {runDetail.diffLoadError && !diffPending ? "Changes could not be refreshed"
+                                  : !diffLoaded || diffPending
                                   ? (runDetail.diff ? "Refreshing changes…" : "Loading file diffs…")
                                   : allDiffFilesExpanded ? "Collapse file diffs" : "Expand file diffs"}
                               </p>
@@ -1665,7 +1670,7 @@ export const RunDetailPage = ({
                                 variant="secondary"
                                 className="h-7 shrink-0 border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 text-[11px] text-[var(--ec-text)] hover:bg-[var(--ec-hover)]"
                                 onClick={() => void runDiffReview()}
-                                disabled={reviewBusy || isRunActive || !diffLoaded || diffPending || !runDetail.diff.trim()}
+                                disabled={reviewBusy || !canReviewDiff}
                                 title="Run reviewer simulator"
                               >
                                 {reviewBusy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
@@ -1674,12 +1679,14 @@ export const RunDetailPage = ({
                             </div> : null}
                           </div>
                         </div>
+                        <RunDiffLoadError error={runDetail.diffLoadError} hasPatch={Boolean(runDetail.diff.trim())} pending={diffPending}
+                          onRetry={() => onRequestDiff(runDetail.run.id)} />
                         {reviewPanel.busy || reviewPanel.error || reviewPanel.result ? (
                           <div className="mb-3">
                             <DiffReviewPanel
                               state={reviewPanel}
                               onRun={() => void runDiffReview()}
-                              disabled={isRunActive || !diffLoaded || diffPending || !runDetail.diff.trim()}
+                              disabled={!canReviewDiff}
                               defaultExpanded
                               compact
                               hideRunButton
@@ -1694,7 +1701,8 @@ export const RunDetailPage = ({
                           loading={!diffLoaded || diffPending}
                           className="max-h-none overflow-visible"
                           emptyMessage={
-                            "No diff generated yet. This can happen if the run completed without repository changes or git has not refreshed yet."
+                            runDetail.diffLoadError ? "Changes unavailable. Retry to load the diff."
+                              : "No diff generated yet. This can happen if the run completed without repository changes or git has not refreshed yet."
                           }
                           activityEmphasis
                           defaultCollapsedFileSections

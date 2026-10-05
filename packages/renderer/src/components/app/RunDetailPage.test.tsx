@@ -276,4 +276,20 @@ describe("RunDetailPage workflows", () => {
     expect(markup).toContain("src/App.tsx");
     expect(markup).toContain("Refreshing changes");
   });
+
+  it("offers retry and disables review while displaying a failed refresh's stale patch", () => {
+    const failed = detail({ diffLoadError: "Disconnected", diffRevision: null });
+    const markup = renderToStaticMarkup(<RunDetailPage {...baseProps(failed)} showDiff />);
+    expect(markup).toContain("src/App.tsx");
+    expect(markup).toContain("Showing outdated changes. Refresh failed.");
+    expect(markup).toContain(">Retry</button>");
+    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*title="Run reviewer simulator"/);
+  });
+
+  it("allows reviewing a freshly loaded patch without verification fingerprinting", () => {
+    const loaded = detail({ diffRevision: null, diffLoadError: null });
+    const markup = renderToStaticMarkup(<RunDetailPage {...baseProps(loaded)} showDiff />);
+    expect(markup).not.toMatch(/<button[^>]*disabled=""[^>]*title="Run reviewer simulator"/);
+    expect(markup).not.toContain("Showing outdated changes");
+  });
 });

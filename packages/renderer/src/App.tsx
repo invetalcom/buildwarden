@@ -62,6 +62,7 @@ import {
   uiThemeToLegacyDarkMode,
 } from "@buildwarden/shared";
 import { applyDesignSchemeToDocument } from "./lib/design-scheme";
+import { loadRunDiff } from "./lib/run-diff-loading";
 import {
   Globe,
   GitBranch,
@@ -891,25 +892,10 @@ export const App = () => {
       const existing = diffLoadPromisesRef.current[eventRunId];
       if (existing) return existing;
       const generation = diffLoadGenerationRef.current[eventRunId] ?? 0;
-      mergeRunDetailForRun(eventRunId, (previous) => ({ ...previous, diffPending: true }));
-      const request = buildwarden
-        .getRunWorktreeDiff(eventRunId)
-        .then((result) => {
-          if ((diffLoadGenerationRef.current[eventRunId] ?? 0) !== generation) return;
-          mergeRunDetailForRun(eventRunId, (previous) => ({
-            ...previous,
-            diff: result.diff,
-            diffRevision: result.diffRevision ?? null,
-            diffLoaded: true,
-            diffPending: false,
-            worktreeUnavailable: result.worktreeUnavailable,
-          }));
-        })
-        .catch(() => {
-          if ((diffLoadGenerationRef.current[eventRunId] ?? 0) !== generation) return;
-          // A failed refresh must not present a retained patch as current.
-          mergeRunDetailForRun(eventRunId, (previous) => ({ ...previous, diff: "", diffRevision: null, diffLoaded: true, diffPending: false }));
-        })
+      const request = loadRunDiff(buildwarden, eventRunId, (patch) => {
+        if ((diffLoadGenerationRef.current[eventRunId] ?? 0) !== generation) return;
+        mergeRunDetailForRun(eventRunId, (previous) => ({ ...previous, ...patch }));
+      })
         .finally(() => {
           delete diffLoadPromisesRef.current[eventRunId];
           if ((diffLoadGenerationRef.current[eventRunId] ?? 0) !== generation) {
@@ -987,8 +973,9 @@ export const App = () => {
         diff: previous?.diff ?? "",
         diffRevision: options?.refreshDiff ? null : previous?.diffRevision,
         diffLoaded: options?.refreshDiff ? false : (previous?.diffLoaded ?? false),
+        diffLoadError: previous?.diffLoadError,
         worktreeUnavailable: previous?.worktreeUnavailable ?? false,
-        diffPending: options?.refreshDiff ? Boolean(diffLoadPromisesRef.current[eventRunId]) : false,
+        diffPending: options?.refreshDiff ? Boolean(diffLoadPromisesRef.current[eventRunId]) : (previous?.diffPending ?? false),
         diffSummary: previous?.diffSummary,
         diffSummaryPending: options?.refreshDiff && summaryRefreshIsCurrent
           ? true
