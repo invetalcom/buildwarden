@@ -1,6 +1,8 @@
+export { AttentionInbox } from "./components/app/AttentionInbox";
 export { App } from "./App";
 export { RemoteHostProjectDialog } from "./components/app/RemoteHostProjectDialog";
 export { DesignSchemeEditor } from "./components/app/DesignSchemeEditor";
+export { WorkspaceSetupProfiles } from "./components/app/WorkspaceSetupProfiles";
 export { Button } from "./components/ui/button";
 export { Input } from "./components/ui/input";
 export { ColorInput } from "./components/ui/color-input";

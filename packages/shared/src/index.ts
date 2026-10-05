@@ -1,3 +1,5 @@
+export * from "./workspace-setup";
+import type { RunWorkspaceSetup, WorkspaceSetupProfile } from "./workspace-setup";
 export * from "./provider-metadata";
 export * from "./model-execution-profiles";
 export * from "./revision-verification";
@@ -1890,6 +1892,7 @@ export interface ProjectSnapshot {
 }
 
 export interface RunDetail {
+  workspaceSetup?: RunWorkspaceSetup | null;
   run: RunRecord;
   steps: RunStepRecord[];
   /** User-turn anchored window backing the activity timeline. Older pages can be prepended without trimming turn output. */
@@ -3358,6 +3361,7 @@ export interface ProviderSessionRuntimeInput {
 }
 
 export interface RunExecutionRequest {
+  workspaceSetup?: { profile: WorkspaceSetupProfile; sourcePath: string };
   runId: string;
   worktreePath: string;
   workspaceVcs?: RunWorkspaceVcs;
@@ -3870,6 +3874,9 @@ export interface RunBrowserInputEnvelope {
 }
 
 export interface DesktopApi {
+  getAttentionInbox(): Promise<AttentionItem[]>;
+  acknowledgeAttentionItem(itemId: string): Promise<void>;
+  acknowledgeAttentionItems(itemIds: string[]): Promise<void>;
   getSnapshot(): Promise<AppSnapshot>;
   getRemoteAccessStatus(): Promise<RemoteAccessStatus>;
   listHostDirectories(input?: HostDirectoryBrowseInput): Promise<HostDirectoryListing>;
@@ -4316,6 +4323,9 @@ export interface RemoteAccessPairingExchangeResponse {
 
 /** Explicit transport contract. Desktop methods are not remotely callable unless listed here. */
 export type RemoteOperationMap = {
+  getAttentionInbox: DesktopApi["getAttentionInbox"];
+  acknowledgeAttentionItem: DesktopApi["acknowledgeAttentionItem"];
+  acknowledgeAttentionItems: DesktopApi["acknowledgeAttentionItems"];
   getSnapshot: DesktopApi["getSnapshot"];
   refreshSnapshot: DesktopApi["refreshSnapshot"];
   getNetworkProxySettings: DesktopApi["getNetworkProxySettings"];
@@ -4607,6 +4617,9 @@ export type RemoteWebSocketServerMessage =
     };
 
 export const IPC_CHANNELS = {
+  getAttentionInbox: "buildwarden:get-attention-inbox",
+  acknowledgeAttentionItem: "buildwarden:acknowledge-attention-item",
+  acknowledgeAttentionItems: "buildwarden:acknowledge-attention-items",
   activateRun: "buildwarden:activate-run",
   addModel: "buildwarden:add-model",
   listAvailableProviderModels: "buildwarden:list-available-provider-models",
@@ -4806,6 +4819,7 @@ export const IPC_CHANNELS = {
 } as const;
 
 export const APP_SETTING_KEYS = {
+  workspaceSetupProfiles: "workspaceSetupProfiles",
   darkMode: "darkMode",
   /**
    * `"dark"` | `"light"`. When unset, {@link parseUiTheme} falls back to legacy {@link APP_SETTING_KEYS.darkMode}.
@@ -4819,6 +4833,7 @@ export const APP_SETTING_KEYS = {
   sidebarRunEntrySize: "sidebarRunEntrySize",
   /** `"false"` renders Recent Runs as a flat, project-labelled list. Defaults to grouped. */
   sidebarGroupRunsByProject: "sidebarGroupRunsByProject",
+  attentionInbox: "attentionInbox",
   /** Persisted app sidebar width in CSS pixels. */
   sidebarWidth: "sidebarWidth",
   /** Number of days shown in the sidebar Recent Runs section. */
@@ -5922,3 +5937,6 @@ export const DEFAULT_KEYBOARD_SHORTCUTS: Record<KeyboardShortcutId, string> = {
   openSettings: "ctrl+,",
   closeSettings: "escape",
 };
+
+export * from "./attention-inbox";
+import type { AttentionItem } from "./attention-inbox";

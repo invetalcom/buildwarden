@@ -32,7 +32,7 @@ describe("App startup failure", () => {
       get: (target, property) => {
         if (property in target) return Reflect.get(target, property);
         if (typeof property === "string" && property.startsWith("on")) return () => () => undefined;
-        if (property === "listIntegratedSkills") return async () => [];
+        if (property === "listIntegratedSkills" || property === "getAttentionInbox") return async () => [];
         if (property === "getDetectedCodexInstallation") return async () => ({ binaryPath: null });
         if (property === "getDetectedClaudeInstallation") return async () => ({ binaryPath: null });
         if (property === "getDetectedCursorInstallation") return async () => ({ binaryPath: null, message: null });

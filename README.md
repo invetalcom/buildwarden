@@ -39,6 +39,12 @@ Git fingerprints include tracked, staged, unstaged, and non-ignored untracked fi
 - Review PRs and MRs without leaving the app: diffs, activity, review comments, replies, approvals, and thread resolution.
 - Manage project branches and reusable task prompts.
 
+**Attention inbox**
+
+Under **Settings → User Settings → Attention inbox** (below Sidebar), enable or disable the inbox and select which event types to publish. All types are enabled by default. Disabling hides the navigation icon and stops inbox publication. Events that occur while a type is disabled are not published later; older unread notices are preserved. These preferences apply to the host and its connected browser clients. Run history and approval/question prompts remain available in the run.
+
+Open **Attention inbox** from the desktop sidebar or mobile home screen to see approvals, questions, failures, blocked orchestrations, and completed runs across projects. Filter by project or type, or search the notices. Open an item to act in its run; opening a completed or failed result also marks it as read when the connection has write access. Live requests disappear when resolved and cannot be dismissed. **Mark reviewed** persistently clears a result notice for all connected clients without changing its run; a later completion or failure creates a new notice. Read-only connections can browse but cannot acknowledge. Parked results stay out of the inbox; active requests remain visible.
+
 **Chats, insights, and organization**
 
 - Run standalone chats with full history, follow-ups, and file attachments — including files the model generates, where the provider supports it.
@@ -257,3 +263,13 @@ pnpm build:all
 ## Contributing
 
 Keep changes small, typed, and aligned across the Electron boundary. When changing shared app behavior, update shared contracts, DB snapshot/persistence shape, main IPC/controller logic, preload exposure, and renderer consumers together. For UI work, preserve BuildWarden's dense developer-tool layout and avoid spending vertical space without a clear workflow benefit.
+
+## Workspace setup profiles
+
+Project Settings includes named setup profiles and a default for new isolated worktrees or folder copies. No profile preserves the previous behavior; local repository runs never execute setup profiles. Choose isolated dependencies and an install command, or explicitly share the original root node_modules. Git profiles can initialize top-level or recursive submodules. List environment files by relative path; only named files are copied, existing files are preserved, and paths outside either workspace are rejected.
+
+Saving a profile authorizes its setup commands. They execute in order before the agent, with cancellation and a five-minute timeout per command. Use idempotent commands: retrying a failed or interrupted setup runs the profile again. Progress and exit failures appear in the run activity; command output is not persisted because it can contain credentials. Keep credentials in environment files, not command text. Every run snapshots its profile, so later edits affect new runs only.
+
+Environment copies assume trusted local filesystem writers while setup runs. Path checks reject traversal and escaping links, but are not atomic with the copy: another process replacing directories during setup can invalidate them. These checks are not a filesystem sandbox; do not modify source or destination directories concurrently with setup.
+
+The run's setup bar offers Retry setup and run after a failure. Once setup completes, Start preview launches the configured command in a fresh embedded run terminal; if that terminal is already in use, run the command there. Open preview opens the configured HTTP(S) URL in the run browser. Preview processes use the existing terminal lifecycle and stop when that terminal or run is removed.

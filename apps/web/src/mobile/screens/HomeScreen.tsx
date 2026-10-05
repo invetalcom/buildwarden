@@ -1,3 +1,5 @@
+import { APP_SETTING_KEYS, parseAttentionInboxSettings } from "@buildwarden/shared";
+import { AttentionInbox } from "@buildwarden/renderer";
 import { useMemo } from "react";
 import { Plus, RefreshCw, Search, ShieldAlert } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
@@ -33,6 +35,7 @@ export const HomeScreen = () => {
         onTitlePress={openProjectDrawer}
         actions={
           <>
+            {parseAttentionInboxSettings(snapshot.settings[APP_SETTING_KEYS.attentionInbox]).enabled && <AttentionInbox key={snapshot.settings[APP_SETTING_KEYS.attentionInbox]} client={client} compact onOpenRun={(_projectId, runId) => openRun(runId)} />}
             <IconButton label="Search" onClick={() => router.push({ name: "search" })}>
               <Search className="size-5" />
             </IconButton>

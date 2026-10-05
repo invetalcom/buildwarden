@@ -50,6 +50,22 @@ describe("remote BuildWarden client", () => {
     expect(listRemoteMutationMethodsMissingScopePolicy()).toEqual([]);
   });
 
+  it("requires run operation access and sends batch acknowledgements as one command", async () => {
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as { requestId: string };
+      return rpcResponse(undefined, request.requestId);
+    });
+    const readOnly = createRemoteBuildWardenClient({ fetch: fetcher as typeof fetch });
+    await expect(readOnly.acknowledgeAttentionItems(["a", "b"])).rejects.toThrow("read-only remote client");
+    expect(fetcher).not.toHaveBeenCalled();
+    const writable = createRemoteBuildWardenClient({ fetch: fetcher as typeof fetch, scopes: ["state:read", "run:operate"] });
+    await writable.acknowledgeAttentionItems(["a", "b"]);
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toMatchObject({
+      method: "acknowledgeAttentionItems", args: [["a", "b"]], idempotencyKey: "request-id",
+    });
+  });
+
   it("dispatches allowlisted reads through the versioned RPC envelope", async () => {
     const fetcher = vi.fn(async () => rpcResponse(snapshot));
     const client = createRemoteBuildWardenClient({ fetch: fetcher as typeof fetch });

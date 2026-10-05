@@ -81,8 +81,10 @@ export const applyLiveChatToSnapshot = (snapshot: AppSnapshot, chat: ChatRecord)
 };
 
 export const applyLiveRunEventToDetail = (detail: RunDetail, event: RunEvent): RunDetail => ({
+  ...(detail.workspaceSetup ? { workspaceSetup: detail.workspaceSetup } : {}),
   ...detail,
   run: event.run ?? detail.run,
+  ...(detail.workspaceSetup && event.metadata?.workspaceSetup === true && ["running", "completed", "failed"].includes(String(event.metadata.setupStatus)) ? { workspaceSetup: { ...detail.workspaceSetup, status: event.metadata.setupStatus as "running" | "completed" | "failed" } } : {}),
   steps: event.step ? upsertOrderedRecord(detail.steps, event.step) : detail.steps,
 });
 

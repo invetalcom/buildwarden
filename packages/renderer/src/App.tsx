@@ -15,6 +15,7 @@ import {
   parseRemoteAccessEnabledSetting,
   parseRunTimelineDensitySetting,
   parseSidebarContrastStrengthSetting,
+  parseAttentionInboxSettings,
   parseSidebarGroupRunsByProjectSetting,
   parseSidebarRunEntrySizeSetting,
   parseDesignScheme,
@@ -4000,6 +4001,11 @@ export const App = () => {
                   await loadSnapshot();
                 })
               }
+              attentionInboxSettings={parseAttentionInboxSettings(snapshot.settings[APP_SETTING_KEYS.attentionInbox])}
+              onAttentionInboxSettingsChange={(value) => void handleAction(async () => {
+                await buildwarden.setAppSetting(APP_SETTING_KEYS.attentionInbox, JSON.stringify(value));
+                await loadSnapshot();
+              })}
               onSidebarGroupRunsByProjectChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.sidebarGroupRunsByProject, value)}
               worktreeRootOverrideSettingValue={snapshot.settings[APP_SETTING_KEYS.worktreeRootOverride] ?? ""}
               onSaveWorktreeRootOverride={(value) =>
@@ -4611,6 +4617,7 @@ export const App = () => {
         recentRunDays={recentRunDays}
         runEntrySize={sidebarRunEntrySize}
         groupRunsByProject={sidebarGroupRunsByProject}
+        attentionInboxSetting={snapshot.settings[APP_SETTING_KEYS.attentionInbox]}
         bookmarksCount={snapshot.bookmarks.length + snapshot.chatBookmarks.length}
         chatsCount={snapshot.chats.length}
         bookmarkedRunIds={sidebarBookmarkedRunIds}

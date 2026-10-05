@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type {
+  AttentionInboxSettings,
   AppLogDirectorySizeInfo,
   AppSnapshot,
   DesignScheme,
@@ -81,6 +82,8 @@ interface SettingsPageProps {
   sidebarContrastStrength: number;
   sidebarRunEntrySize: SidebarRunEntrySize;
   sidebarGroupRunsByProject: boolean;
+  attentionInboxSettings: AttentionInboxSettings;
+  onAttentionInboxSettingsChange: (value: AttentionInboxSettings) => void;
   worktreeRootOverrideSettingValue: string;
   enableDevMode: boolean;
   appLogDirPath: string;
@@ -205,6 +208,8 @@ export const SettingsPage = ({
   sidebarContrastStrength,
   sidebarRunEntrySize,
   sidebarGroupRunsByProject,
+  attentionInboxSettings,
+  onAttentionInboxSettingsChange,
   worktreeRootOverrideSettingValue,
   enableDevMode,
   appLogDirPath,
@@ -585,6 +590,8 @@ export const SettingsPage = ({
           sidebarContrastStrength={sidebarContrastStrength}
           sidebarRunEntrySize={sidebarRunEntrySize}
           sidebarGroupRunsByProject={sidebarGroupRunsByProject}
+          attentionInboxSettings={attentionInboxSettings}
+          onAttentionInboxSettingsChange={onAttentionInboxSettingsChange}
           recentRunDaysDraft={recentRunDaysDraft}
           recentRunDaysInvalid={recentRunDaysInvalid}
           recentRunDaysMin={MIN_RECENT_RUN_DAYS}
