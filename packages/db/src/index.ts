@@ -2771,7 +2771,7 @@ export class BuildWardenDatabase {
 
   getRunVerification(runId: string): RunVerificationRecord | null {
     const row = this.first<{ evidence: string }>("select evidence from run_verifications where run_id = ?", [runId]);
-    return row ? JSON.parse(row.evidence) as RunVerificationRecord : null;
+    return row ? this.parseJsonValue<RunVerificationRecord>(row.evidence) : null;
   }
 
   saveRunVerification(record: RunVerificationRecord): void {

@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import { APP_SETTING_KEYS, verificationMatches, type RunVerificationRecord } from "@buildwarden/shared";
@@ -111,6 +112,11 @@ describe("revision verification", () => {
     const controller = new AppController(db, { readSecret: async () => null, saveSecret: async () => undefined, deleteSecret: async () => undefined }, dir,
       { pickProjectDirectory: async () => null, pickIdeExecutable: async () => null, openPathInFileManager: async () => ({ ok: true }), openExternalUrl: async () => ({ ok: true }), launchIdeWithFolder: async () => undefined },
       { killForRunId: () => {} }, new HostEventBus());
+    const rawDb = new DatabaseSync(db.getFilePath());
+    try {
+      rawDb.prepare("insert into run_verifications (run_id, evidence) values (?, ?)").run(run.id, "{broken json");
+    } finally { rawDb.close(); }
+    expect(db.getRunVerification(run.id)).toBeNull();
     expect((await controller.getRunVerification(run.id)).status).toBe("not-run");
     await expect(controller.publishRunBranch(run.id, "unverified-publish")).rejects.toThrow("must pass verification");
     expect(db.getRun(run.id).branchName).toBe("main");
