@@ -1,3 +1,12 @@
+import type { RunRecord } from "./index";
+
+// This persisted failure marker is also used by runs created before revision verification.
+export const RUN_VERIFICATION_FAILURE_PREFIX = "Verification failed: ";
+
+/** The agent finished producing changes; publish policy is enforced separately. */
+export const canReviewRunChanges = (run: Pick<RunRecord, "status" | "errorMessage">): boolean =>
+  run.status === "completed" || (run.status === "failed" && run.errorMessage?.startsWith(RUN_VERIFICATION_FAILURE_PREFIX) === true);
+
 export interface WorkspaceRevision {
   /** Git tree ID or folder content digest. A commit of the same tree preserves validity. */
   fingerprint: string;

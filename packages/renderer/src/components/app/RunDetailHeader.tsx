@@ -1,6 +1,7 @@
 import { useMemo, type Dispatch, type RefObject, type SetStateAction } from "react";
 import {
   RUN_TIMELINE_DENSITIES,
+  canReviewRunChanges,
   type RunDetail,
   type RunRecord,
   type RunTimelineDensity,
@@ -162,7 +163,7 @@ export const RunDetailHeader = ({
   const hasCommit = runDetail?.steps.some((step) => Boolean(safeParseMetadata(step.metadataJson).commitHash)) ?? false;
   const changeState = resolveRunWorkspaceChangeState(runDetail);
   const hasOpenChanges = changeState === "dirty";
-  const canManageChanges = buildwarden.capabilities.gitMutations && isGitRun && run.status === "completed" && runDetail?.worktreeUnavailable !== true;
+  const canManageChanges = buildwarden.capabilities.gitMutations && isGitRun && canReviewRunChanges(run) && runDetail?.worktreeUnavailable !== true;
   const { canCommit, canPublishRequest, canPublishBranch, canCreateLocalBranch } = deriveRunChangeActionAvailability({
     changeState,
     hasCommit,

@@ -696,8 +696,13 @@ describe("renderer component states", () => {
     expect(intersectModelExecutionControls([])).toBeUndefined();
   });
 
-  it("renders completed run header controls", () => {
-    const run = runRecord();
+  it.each([
+    { status: "completed", errorMessage: null, changesVisible: true },
+    { status: "failed", errorMessage: "Verification failed: npm test", changesVisible: true },
+    { status: "failed", errorMessage: "Provider authentication failed", changesVisible: false },
+    { status: "running", errorMessage: null, changesVisible: false },
+  ] as const)("renders change controls for $status / $errorMessage appropriately", ({ status, errorMessage, changesVisible }) => {
+    const run = runRecord({ status, errorMessage });
     const runDetail: RunDetail = { run, steps: [], notes: [], diff: "diff --git a/a.ts b/a.ts" };
     const markup = renderToStaticMarkup(
       <RunDetailHeader
@@ -731,7 +736,7 @@ describe("renderer component states", () => {
       />,
     );
     expect(markup).toContain("feat/coverage");
-    expect(markup).toContain("Changes");
+    expect(markup.includes("Changes")).toBe(changesVisible);
     expect(markup).toContain('title="Run token usage"');
   });
 

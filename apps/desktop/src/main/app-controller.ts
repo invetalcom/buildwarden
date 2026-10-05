@@ -14,7 +14,7 @@ import {
 } from "./project-graph-utils";
 import { captureWorkspaceRevision } from "./workspace-revision";
 import { verifyWorkspaceRevision } from "./revision-verification";
-import { parseRevisionVerificationPolicy, verificationMatches, type RunVerificationState, type RunVerificationRecord } from "@buildwarden/shared";
+import { canReviewRunChanges, RUN_VERIFICATION_FAILURE_PREFIX, parseRevisionVerificationPolicy, verificationMatches, type RunVerificationState, type RunVerificationRecord } from "@buildwarden/shared";
 import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
 import { readRunWorkspaceFileForPreview } from "./run-workspace-file";
 import { normalizeJsonResponse } from "./json-response";
@@ -1155,7 +1155,7 @@ const buildRunTerminalOutcome = (input: {
       title: "Verification gate failed",
       content: `The agent turn finished, but the verification gate failed at: ${input.failedVerificationResult.command}.\n${usage}`,
       status: "failed",
-      errorMessage: `Verification failed: ${input.failedVerificationResult.command}`,
+      errorMessage: `${RUN_VERIFICATION_FAILURE_PREFIX}${input.failedVerificationResult.command}`,
     };
   }
   if (input.waitingForSubagents) {
@@ -3677,8 +3677,8 @@ export class AppController
     const run = this.db.getRun(runId);
     this.requireGitRun(run, "Committing");
 
-    if (run.status !== "completed") {
-      throw new Error("Only completed runs can be committed.");
+    if (!canReviewRunChanges(run)) {
+      throw new Error("The agent must finish its turn before its changes can be committed.");
     }
 
     if (run.workspaceType === "worktree") {
@@ -3716,8 +3716,8 @@ export class AppController
     const run = this.db.getRun(runId);
     this.requireGitRun(run, "Commit message suggestions");
 
-    if (run.status !== "completed") {
-      throw new Error("Only completed runs can use AI commit suggestions.");
+    if (!canReviewRunChanges(run)) {
+      throw new Error("The agent must finish its turn before requesting AI commit suggestions.");
     }
 
     if (run.workspaceType === "worktree") {
@@ -4612,8 +4612,8 @@ export class AppController
   async analyzeRunDiff(runId: string, options?: RunDiffReviewOptions): Promise<RunDiffReviewResult> {
     const run = this.db.getRun(runId);
 
-    if (run.status !== "completed") {
-      throw new Error("Only completed runs can use AI diff reviews.");
+    if (!canReviewRunChanges(run)) {
+      throw new Error("The agent must finish its turn before requesting an AI diff review.");
     }
 
     if (run.workspaceVcs === "git" && run.workspaceType === "worktree") {
