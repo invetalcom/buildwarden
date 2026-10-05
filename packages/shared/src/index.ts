@@ -1905,8 +1905,10 @@ export interface RunDetail {
   branchPromotedToProject?: boolean;
   /** True when the run's worktree no longer exists; diff will be empty and the UI should hide the diff panel. */
   worktreeUnavailable?: boolean;
-  /** True after the complete unified patch has been fetched at least once. */
+  /** True after the latest patch request finishes, including failures (see diffLoadError). */
   diffLoaded?: boolean;
+  /** Transient client loading error; retained patch content is stale until a retry succeeds. Not persisted. */
+  diffLoadError?: string | null;
   /** Lightweight changed-file statistics, available without loading the complete unified patch. */
   diffSummary?: RunWorktreeDiffSummary;
   /** True while lightweight changed-file statistics are loading. */
@@ -4836,6 +4838,7 @@ export const APP_SETTING_KEYS = {
   sidebarRunEntrySize: "sidebarRunEntrySize",
   /** `"false"` renders Recent Runs as a flat, project-labelled list. Defaults to grouped. */
   sidebarGroupRunsByProject: "sidebarGroupRunsByProject",
+  sidebarHideActiveRuns: "sidebarHideActiveRuns",
   attentionInbox: "attentionInbox",
   /** Persisted app sidebar width in CSS pixels. */
   sidebarWidth: "sidebarWidth",
@@ -5007,6 +5010,8 @@ export const parseSidebarContrastStrengthSetting = (raw: string | number | undef
 };
 
 export const parseSidebarGroupRunsByProjectSetting = (raw: string | undefined): boolean => raw?.trim().toLowerCase() !== "false";
+
+export const parseSidebarHideActiveRunsSetting = (raw: string | undefined): boolean => raw?.trim().toLowerCase() === "true";
 
 export const parseRecentRunDaysSetting = (raw: string | number | undefined | null): number => {
   const parsed = Number(raw);

@@ -15,8 +15,8 @@ import {
 import { type DiffLineAnnotation, type FileDiffMetadata, type Hunk, type ThemeTypes } from "@pierre/diffs";
 import { FileDiff } from "@pierre/diffs/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, FileText, MessageSquarePlus, Pencil, Trash2 } from "lucide-react";
-import type { RunDiffReviewFinding } from "@buildwarden/shared";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, FileText, Loader2, MessageSquarePlus, Pencil, Trash2 } from "lucide-react";
+import type { RunDiffReviewFinding, RunWorktreeDiffFileStat } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
 import { ActivityRichText } from "../ui/activity-rich-text";
 import { Button } from "../ui/button";
@@ -42,8 +42,7 @@ export type { DiffLineCommentTarget, DiffPreviewManualComment } from "./git-diff
 
 const formatDiffPath = (file: Pick<FileDiffMetadata, "name">) => file.name || "Unknown file";
 
-const diffFileKey = (file: Pick<FileDiffMetadata, "name" | "prevName">, index: number) =>
-  `${file.prevName ?? "old"}-${file.name || "new"}-${index}`;
+const diffFileKey = (path: string, occurrence = 0) => JSON.stringify([path, occurrence]);
 
 const countDiffChanges = (hunks: Hunk[], changeType: "insert" | "delete"): number =>
   hunks.reduce((count, hunk) => count + (changeType === "insert" ? hunk.additionLines : hunk.deletionLines), 0);
@@ -72,6 +71,8 @@ const FINDING_PRIORITY_BORDER: Record<RunDiffReviewFinding["priority"], string> 
 };
 
 type ReviewNavEntry = { finding: RunDiffReviewFinding; fileKey: string | null; globalIndex: number };
+const EMPTY_REVIEW_ENTRIES: ReviewNavEntry[] = [];
+const EMPTY_PENDING_FILES: RunWorktreeDiffFileStat[] = [];
 
 const reviewFindingDraftKey = (finding: RunDiffReviewFinding, globalIndex: number) =>
   [globalIndex, finding.filePath ?? "", finding.lineNumber ?? "", finding.title, finding.detail.slice(0, 80)].join("\0");
@@ -471,6 +472,9 @@ const DiffFileSection = memo(function DiffFileSection({
   onDraftReviewFinding,
 }: DiffFileSectionProps) {
   const { lineAnnotations, fallbackFileNavEntries } = useMemo(() => {
+    if (isCollapsed || (fileNavEntries.length === 0 && manualCommentIndex.exact.size === 0 && !activeCommentTarget)) {
+      return { lineAnnotations: [], fallbackFileNavEntries: [] };
+    }
     const groups = new Map<string, { side: "deletions" | "additions"; lineNumber: number; nodes: ReactNode[] }>();
     const fallbackEntries: ReviewNavEntry[] = [];
     const addAnnotation = (info: DiffLineInfo, node: ReactNode) => {
@@ -506,7 +510,7 @@ const DiffFileSection = memo(function DiffFileSection({
       );
     }
 
-    for (const info of listDiffLineInfos(file)) {
+    for (const info of manualCommentIndex.exact.size > 0 || activeCommentTarget ? listDiffLineInfos(file) : []) {
       const target = buildDiffLineCommentTarget(file, info);
       if (!target) {
         continue;
@@ -566,6 +570,7 @@ const DiffFileSection = memo(function DiffFileSection({
     }));
     return { lineAnnotations: annotations, fallbackFileNavEntries: fallbackEntries };
   }, [
+    isCollapsed,
     activeCommentTarget,
     draftedReviewFindingKeys,
     draftCommentSaveLabel,
@@ -651,7 +656,7 @@ const DiffFileSection = memo(function DiffFileSection({
     );
   };
 
-  const FileHeader = () => {
+  const renderFileHeader = () => {
     if (alwaysExpandedFileSections) {
       return <></>;
     }
@@ -665,6 +670,7 @@ const DiffFileSection = memo(function DiffFileSection({
           className="flex min-w-0 flex-1 items-center gap-2 text-left transition hover:text-[var(--ec-text)]"
           onClick={() => onToggleCollapsed(fileKey)}
           title={filePathLabel}
+          aria-expanded={!isCollapsed}
         >
           <p className="truncate text-xs font-medium text-[var(--ec-text)]">{filePathLabel}</p>
           <span className="shrink-0 text-[10px] uppercase tracking-[0.18em] text-[var(--ec-muted)]">{file.type}</span>
@@ -686,6 +692,7 @@ const DiffFileSection = memo(function DiffFileSection({
             className="rounded px-1 py-0.5 text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
             onClick={() => onToggleCollapsed(fileKey)}
             aria-label={isCollapsed ? "Expand diff" : "Collapse diff"}
+            aria-expanded={!isCollapsed}
             title={isCollapsed ? "Expand diff" : "Collapse diff"}
           >
             {isCollapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
@@ -697,7 +704,7 @@ const DiffFileSection = memo(function DiffFileSection({
 
   return (
     <div className={cn("border-b border-[var(--ec-border)]", isLastFile && "border-b-0")}>
-      <FileHeader />
+      {renderFileHeader()}
       {!isCollapsed ? (
         <>
           <FileDiff<DiffAnnotationMetadata>
@@ -760,6 +767,9 @@ export type GitDiffPreviewHandle = {
 
 type GitDiffPreviewProps = {
   diffText: string;
+  /** Show actionable file rows before the full patch arrives. */
+  pendingFiles?: RunWorktreeDiffFileStat[];
+  loading?: boolean;
   emptyMessage: string;
   className?: string;
   compact?: boolean;
@@ -811,6 +821,8 @@ type GitDiffPreviewProps = {
 export const GitDiffPreview = forwardRef(function GitDiffPreview(
   {
     diffText,
+    pendingFiles = EMPTY_PENDING_FILES,
+    loading = false,
     emptyMessage,
     className,
     compact = false,
@@ -873,17 +885,28 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
       .filter((file): file is FileDiffMetadata => file !== null);
   }, [hideWhitespaceChanges, parsedFiles]);
 
+  const fileKeys = useMemo(() => {
+    const occurrences = new Map<string, number>();
+    return new Map(whitespaceFilteredFiles.map((file) => {
+      const path = formatDiffPath(file);
+      const occurrence = occurrences.get(path) ?? 0;
+      occurrences.set(path, occurrence + 1);
+      return [file, diffFileKey(path, occurrence)];
+    }));
+  }, [whitespaceFilteredFiles]);
+  const getFileKey = useCallback((file: FileDiffMetadata) => fileKeys.get(file)!, [fileKeys]);
+
   const fileSummaries = useMemo<DiffPreviewFileSummary[]>(
     () =>
-      whitespaceFilteredFiles.map((file, index) => ({
-        key: diffFileKey(file, index),
+      whitespaceFilteredFiles.map((file) => ({
+        key: getFileKey(file),
         path: formatDiffPath(file),
         oldPath: file.prevName && file.prevName !== file.name ? file.prevName : null,
         type: file.type,
         additions: countDiffChanges(file.hunks, "insert"),
         deletions: countDiffChanges(file.hunks, "delete"),
       })),
-    [whitespaceFilteredFiles],
+    [getFileKey, whitespaceFilteredFiles],
   );
 
   useEffect(() => {
@@ -904,12 +927,24 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     });
   }, [activeFilePath, filePathQuery, whitespaceFilteredFiles]);
 
+  const pendingFileEntries = useMemo(() => {
+    const occurrences = new Map<string, number>();
+    return pendingFiles.map((file) => {
+      const occurrence = occurrences.get(file.path) ?? 0;
+      occurrences.set(file.path, occurrence + 1);
+      return { file, key: diffFileKey(file.path, occurrence) };
+    });
+  }, [pendingFiles]);
+  const visibleFileKeys = useMemo(() => !trimmedDiff && loading
+    ? pendingFileEntries.map(({ key }) => key)
+    : files.map(getFileKey), [files, getFileKey, loading, pendingFileEntries, trimmedDiff]);
+
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
-  const fileIndexByKey = useMemo(() => new Map(files.map((file, index) => [diffFileKey(file, index), index])), [files]);
+  const fileIndexByKey = useMemo(() => new Map(files.map((file, index) => [getFileKey(file), index])), [files, getFileKey]);
   const estimatedFileSectionSizes = useMemo(
     () =>
-      files.map((file, index) => {
-        const fileKey = diffFileKey(file, index);
+      files.map((file) => {
+        const fileKey = getFileKey(file);
         const isCollapsed = alwaysExpandedFileSections ? false : (collapsedFiles[fileKey] ?? defaultCollapsedFileSections);
         if (isCollapsed) {
           return hideFileHeader ? 28 : 34;
@@ -924,6 +959,7 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
       collapsedFiles,
       defaultCollapsedFileSections,
       files,
+      getFileKey,
       hideFileHeader,
       manualCommentTargets,
       reviewFindings,
@@ -935,31 +971,23 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     estimateSize: (index) => estimatedFileSectionSizes[index] ?? 96,
     getItemKey: (index) => {
       const file = files[index];
-      return file ? diffFileKey(file, index) : index;
+      return file ? getFileKey(file) : index;
     },
     measureElement: (element) => (element instanceof HTMLElement ? element.getBoundingClientRect().height : 1),
     useAnimationFrameWithResizeObserver: true,
     overscan: 4,
   });
 
-  useEffect(() => {
-    setCollapsedFiles({});
-  }, [activeFilePath, filePathQuery, trimmedDiff]);
-
   const toggleExpandAllFiles = useCallback(() => {
     setCollapsedFiles((current) => {
-      if (files.length === 0) {
+      if (visibleFileKeys.length === 0) {
         return current;
       }
-      if (alwaysExpandedFileSections) {
-        return Object.fromEntries(files.map((file, index) => [diffFileKey(file, index), false]));
-      }
-      const keys = files.map((file, index) => diffFileKey(file, index));
-      const allExpanded = keys.every((key) => !(current[key] ?? defaultCollapsedFileSections));
-      const targetCollapsed = allExpanded;
-      return Object.fromEntries(keys.map((key) => [key, targetCollapsed]));
+      const allExpanded = visibleFileKeys.every((key) => !(current[key] ?? defaultCollapsedFileSections));
+      const targetCollapsed = !alwaysExpandedFileSections && allExpanded;
+      return { ...current, ...Object.fromEntries(visibleFileKeys.map((key) => [key, targetCollapsed])) };
     });
-  }, [alwaysExpandedFileSections, files, defaultCollapsedFileSections]);
+  }, [alwaysExpandedFileSections, visibleFileKeys, defaultCollapsedFileSections]);
 
   const toggleFileCollapsed = useCallback(
     (fileKey: string) => {
@@ -977,23 +1005,23 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
   );
 
   const allFilesExpanded = useMemo(() => {
-    if (files.length === 0) {
+    if (visibleFileKeys.length === 0) {
       return false;
     }
     if (alwaysExpandedFileSections) {
       return true;
     }
-    return files.every((file, index) => !(collapsedFiles[diffFileKey(file, index)] ?? defaultCollapsedFileSections));
-  }, [alwaysExpandedFileSections, collapsedFiles, defaultCollapsedFileSections, files]);
+    return visibleFileKeys.every((key) => !(collapsedFiles[key] ?? defaultCollapsedFileSections));
+  }, [alwaysExpandedFileSections, collapsedFiles, defaultCollapsedFileSections, visibleFileKeys]);
   const anyFilesExpanded = useMemo(() => {
-    if (files.length === 0) {
+    if (visibleFileKeys.length === 0) {
       return false;
     }
     if (alwaysExpandedFileSections) {
       return true;
     }
-    return files.some((file, index) => !(collapsedFiles[diffFileKey(file, index)] ?? defaultCollapsedFileSections));
-  }, [alwaysExpandedFileSections, collapsedFiles, defaultCollapsedFileSections, files]);
+    return visibleFileKeys.some((key) => !(collapsedFiles[key] ?? defaultCollapsedFileSections));
+  }, [alwaysExpandedFileSections, collapsedFiles, defaultCollapsedFileSections, visibleFileKeys]);
 
   useEffect(() => {
     onAllFilesExpandedChange?.(allFilesExpanded);
@@ -1015,7 +1043,7 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     }
     for (let fileIdx = 0; fileIdx < files.length; fileIdx++) {
       const file = files[fileIdx];
-      const fk = diffFileKey(file, fileIdx);
+      const fk = getFileKey(file);
       const scoped = reviewFindingBuckets.list.filter(
         (f) => f.filePath?.trim() && diffFileMatchesPath(file, f.filePath),
       );
@@ -1025,7 +1053,7 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
       }
     }
     return entries;
-  }, [reviewFindingBuckets, files]);
+  }, [reviewFindingBuckets, files, getFileKey]);
 
   const [activeReviewNavIndex, setActiveReviewNavIndex] = useState(0);
 
@@ -1140,6 +1168,29 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
 
   const scrollAreaHeightClass = diffScrollHeightClass(compact, fillContainer, "max-h-72");
 
+  if (!trimmedDiff && loading) {
+    return (
+      <div className={cn("overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)]", className)}>
+        {pendingFileEntries.map(({ file, key }) => {
+          const expanded = alwaysExpandedFileSections || !(collapsedFiles[key] ?? defaultCollapsedFileSections);
+          return <div key={key} className="border-b border-[var(--ec-border)] last:border-b-0">
+            <button type="button" className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--ec-text)]"
+              title={file.path} aria-expanded={expanded} onClick={() => toggleFileCollapsed(key)}>
+              <span className="min-w-0 flex-1 truncate font-medium">{file.path}</span>
+              {expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+            </button>
+            {expanded ? <p role="status" className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--ec-muted)]">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />Loading file diff…
+            </p> : null}
+          </div>;
+        })}
+        {pendingFiles.length === 0 ? <p role="status" className="flex items-center gap-2 p-3 text-xs text-[var(--ec-muted)]">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />Loading changed files…
+        </p> : null}
+      </div>
+    );
+  }
+
   if (!trimmedDiff) {
     return (
       <div
@@ -1184,7 +1235,7 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
 
   const viewerClass = activityEmphasis ? "diff-viewer diff-viewer--activity" : "diff-viewer";
   const renderFileSection = (file: FileDiffMetadata, index: number) => {
-    const fileKey = diffFileKey(file, index);
+    const fileKey = getFileKey(file);
     const isCollapsed = alwaysExpandedFileSections ? false : (collapsedFiles[fileKey] ?? defaultCollapsedFileSections);
     const filePathLabel = formatDiffPath(file);
     return (
@@ -1203,7 +1254,7 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
         wordDiff={wordDiff}
         themeType={themeType}
         activityEmphasis={activityEmphasis}
-        fileNavEntries={reviewEntriesByFileKey.get(fileKey) ?? []}
+        fileNavEntries={reviewEntriesByFileKey.get(fileKey) ?? EMPTY_REVIEW_ENTRIES}
         manualCommentIndex={manualCommentIndex}
         manualCommentCountByTarget={manualCommentCountByTarget}
         activeCommentTarget={activeCommentTarget}
@@ -1233,9 +1284,8 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     <div
       ref={scrollContainerRef}
       className={cn(
-        "app-scrollbar overflow-auto rounded-lg border bg-[var(--ec-panel)]",
+        "app-scrollbar overflow-auto rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)]",
         className,
-        activityEmphasis ? "border-[var(--ec-success-ring)] ring-1 ring-[var(--ec-danger-ring)]" : "border-[var(--ec-border)]",
         hideFileHeaderInlineToggle && !anyFilesExpanded && "relative mt-0 h-0 overflow-visible border-transparent bg-transparent ring-0",
         scrollAreaHeightClass,
       )}

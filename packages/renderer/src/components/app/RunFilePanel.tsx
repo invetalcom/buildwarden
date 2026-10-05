@@ -4,6 +4,7 @@ import type { RunWorktreeDiffSummary, RunWorkspaceFileReference, RunWorkspaceFil
 import { cn } from "../../lib/cn";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
+import { RunDiffLoadError } from "./RunDiffLoadError";
 import { diffFileMatchesPath, parseGitDiffFiles } from "./git-diff-utils";
 
 const CodeMirrorFileViewer = lazy(async () => {
@@ -195,6 +196,7 @@ export interface RunFilePanelProps {
   diffText: string;
   diffPending: boolean;
   diffLoaded: boolean;
+  diffLoadError?: string | null;
   diffSummary?: RunWorktreeDiffSummary;
   onRequestDiff: (runId: string) => void;
 }
@@ -205,6 +207,7 @@ export const RunFilePanel = ({
   diffText,
   diffPending,
   diffLoaded,
+  diffLoadError,
   diffSummary,
   onRequestDiff,
 }: RunFilePanelProps) => {
@@ -357,6 +360,8 @@ export const RunFilePanel = ({
         ) : null}
       </div>
 
+      {view === "diff" ? <RunDiffLoadError error={diffLoadError} hasPatch={Boolean(diffText.trim())} pending={diffPending}
+        onRetry={() => onRequestDiff(runId)} /> : null}
       <div className="min-h-0 flex-1 overflow-hidden p-2">
         <FilePanelBody
           view={view}

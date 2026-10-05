@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseSidebarGroupRunsByProjectSetting,
+  parseSidebarHideActiveRunsSetting,
   parseSidebarContrastStrengthSetting,
   parseSidebarRunEntrySizeSetting,
   type ProjectRecord,
@@ -56,6 +57,13 @@ describe("Sidebar recent run ordering", () => {
 });
 
 describe("Sidebar run layout settings", () => {
+  it("only hides active runs when explicitly enabled", () => {
+    expect(parseSidebarHideActiveRunsSetting(undefined)).toBe(false);
+    expect(parseSidebarHideActiveRunsSetting("unexpected")).toBe(false);
+    expect(parseSidebarHideActiveRunsSetting("false")).toBe(false);
+    expect(parseSidebarHideActiveRunsSetting(" TRUE ")).toBe(true);
+  });
+
   it("defaults to medium entries and grouped projects", () => {
     expect(parseSidebarRunEntrySizeSetting(undefined)).toBe("medium");
     expect(parseSidebarRunEntrySizeSetting("unexpected")).toBe("medium");
