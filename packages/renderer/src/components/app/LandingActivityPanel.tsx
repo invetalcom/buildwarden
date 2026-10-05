@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { ProviderAccountRecord, RunRecord } from "@buildwarden/shared";
 import { BarChart3 } from "lucide-react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { cn } from "../../lib/cn";
 import {
   buildDailyRunActivity,
@@ -13,7 +13,9 @@ import {
 } from "./landing-page-model";
 import { ProviderBrandIcon } from "./provider-brand-icons";
 
-const ACTIVITY_DAYS = 14;
+const ACTIVITY_RANGES = [7, 14, 30] as const;
+type ActivityRange = (typeof ACTIVITY_RANGES)[number];
+const DEFAULT_ACTIVITY_RANGE: ActivityRange = 14;
 const MAX_PROVIDER_ROWS = 5;
 
 const formatDay = (date: Date) => date.toLocaleDateString([], { weekday: "short", day: "2-digit", month: "2-digit" });
@@ -25,6 +27,7 @@ const describeDay = (day: DailyRunActivity) => {
 };
 
 const RunActivityChart = ({ days }: { days: DailyRunActivity[] }) => {
+  const range = days.length;
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const maxTotal = Math.max(1, ...days.map((day) => day.total));
   const hovered = days.find((day) => day.key === hoveredKey) ?? null;
@@ -38,7 +41,7 @@ const RunActivityChart = ({ days }: { days: DailyRunActivity[] }) => {
           {hovered ? (
             <><span className="font-semibold">{formatDay(hovered.date)}</span> <span className="text-[var(--ec-muted)]">{describeDay(hovered)}</span></>
           ) : (
-            <><span className="font-semibold">{windowTotal} runs</span> <span className="text-[var(--ec-muted)]">in {ACTIVITY_DAYS} days · {formatCompactNumber(windowTokens)} tokens</span></>
+            <><span className="font-semibold">{windowTotal} {windowTotal === 1 ? "run" : "runs"}</span> <span className="text-[var(--ec-muted)]">in {range} days · {formatCompactNumber(windowTokens)} tokens</span></>
           )}
         </p>
         <ul className="flex flex-wrap items-center gap-x-2.5 gap-y-1" aria-label="Legend">
@@ -51,13 +54,14 @@ const RunActivityChart = ({ days }: { days: DailyRunActivity[] }) => {
         </ul>
       </div>
       <div
-        className="relative flex min-h-20 flex-1 items-stretch gap-1 border-b border-[var(--ec-border)]"
+        // Tighter gaps keep 30 bars readable in a narrow card.
+        className={cn("relative flex min-h-20 flex-1 items-stretch border-b border-[var(--ec-border)]", range > 14 ? "gap-0.5" : "gap-1")}
         role="list"
-        aria-label={`Runs started per day, last ${String(ACTIVITY_DAYS)} days`}
+        aria-label={`Runs started per day, last ${String(range)} days`}
         onMouseLeave={() => setHoveredKey(null)}
       >
         {windowTotal === 0 ? (
-          <p className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-[var(--ec-faint)]">No runs in the last {ACTIVITY_DAYS} days</p>
+          <p className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-[var(--ec-faint)]">No runs in the last {range} days</p>
         ) : null}
         {days.map((day) => (
           <div
@@ -104,8 +108,13 @@ export const LandingActivityPanel = ({
   providerAccounts: ReadonlyArray<ProviderAccountRecord>;
   className?: string;
 }) => {
-  const days = useMemo(() => buildDailyRunActivity(runs, ACTIVITY_DAYS), [runs]);
-  const providers = useMemo(() => buildProviderUsage(runs, providerAccounts), [providerAccounts, runs]);
+  const [range, setRange] = useState<ActivityRange>(DEFAULT_ACTIVITY_RANGE);
+  const days = useMemo(() => buildDailyRunActivity(runs, range), [range, runs]);
+  // Provider usage follows the selected range so the whole panel describes the same window.
+  const providers = useMemo(() => {
+    const windowStart = days[0]?.date.getTime() ?? 0;
+    return buildProviderUsage(runs.filter((run) => new Date(run.createdAt).getTime() >= windowStart), providerAccounts);
+  }, [days, providerAccounts, runs]);
   const maxProviderRuns = Math.max(1, ...providers.map((provider) => provider.runs));
 
   return (
@@ -116,6 +125,25 @@ export const LandingActivityPanel = ({
           <CardTitle>Activity</CardTitle>
           <CardDescription>Runs per day and provider usage.</CardDescription>
         </div>
+        <CardAction>
+          <div className="flex h-7 items-center rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-0.5" role="group" aria-label="Activity range">
+            {ACTIVITY_RANGES.map((option) => (
+              <button
+                key={option}
+                type="button"
+                aria-pressed={range === option}
+                title={`Last ${String(option)} days`}
+                className={cn(
+                  "h-6 rounded px-2 text-[11px] font-medium tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ec-ring)]",
+                  range === option ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:text-[var(--ec-text)]",
+                )}
+                onClick={() => setRange(option)}
+              >
+                {option}d
+              </button>
+            ))}
+          </div>
+        </CardAction>
       </CardHeader>
       <CardContent className="app-scrollbar flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-3">
         <RunActivityChart days={days} />
