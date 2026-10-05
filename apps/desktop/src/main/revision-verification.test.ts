@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
-import { APP_SETTING_KEYS, verificationMatches, type RunVerificationRecord } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, verificationMatches, type RunVerificationRecord, type RunRecord } from "@buildwarden/shared";
 import { captureWorkspaceRevision } from "./workspace-revision";
 import { verifyWorkspaceRevision } from "./revision-verification";
 import { AppController } from "./app-controller";
@@ -38,7 +38,7 @@ const controllerFixture = async () => {
   const model = db.addModel({ providerAccountId: provider.id, modelId: "test", displayName: "Test", config: {}, capabilities: {}, enabled: true });
   const run = db.createRun({ projectId: project.id, providerAccountId: provider.id, modelId: model.id, harnessType: "codex-app-server", mode: "code", workspaceType: "local", prompt: "Implement", branchName: "main", worktreePath: cwd });
   db.updateRunStatus(run.id, "completed");
-  const secrets = { readSecret: vi.fn(async (_key: string): Promise<string | null> => null), saveSecret: async () => undefined, deleteSecret: async () => undefined };
+  const secrets = { readSecret: vi.fn(async (): Promise<string | null> => null), saveSecret: async () => undefined, deleteSecret: async () => undefined };
   const controller = new AppController(db, secrets, dir,
     { pickProjectDirectory: async () => null, pickIdeExecutable: async () => null, openPathInFileManager: async () => ({ ok: true }), openExternalUrl: async () => ({ ok: true }), launchIdeWithFolder: async () => undefined },
     { killForRunId: () => {} }, new HostEventBus());
@@ -50,7 +50,96 @@ const check = async (cwd: string, commands = ['node -e "process.stdout.write(\'o
   return { record, saved };
 };
 
+const deferred = <T>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+};
+const startKinds = ["follow-up", "session recovery", "checkpoint resume", "checkpoint recovery"] as const;
+const startFixture = async (kind: typeof startKinds[number]) => {
+  const setup = await controllerFixture();
+  const { controller, db, run, project, cwd } = setup;
+  const internals = controller as unknown as {
+    startWorker: () => object;
+    runWorkers: Map<string, unknown>;
+    capturePromptRestorePoint: () => Promise<void>;
+    buildIntegratedSkillContext: () => Promise<undefined>;
+    executeRevisionCheck: (run: RunRecord, commands: string[], signal: AbortSignal) => Promise<RunVerificationRecord>;
+  };
+  const startWorker = vi.spyOn(internals, "startWorker").mockReturnValue({});
+  vi.spyOn(internals, "capturePromptRestorePoint").mockResolvedValue(undefined);
+  vi.spyOn(internals, "buildIntegratedSkillContext").mockResolvedValue(undefined);
+  const check = vi.spyOn(internals, "executeRevisionCheck").mockResolvedValue({
+    runId: run.id, commands: ["test"], results: [], status: "passed", revision: null,
+    startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), error: null,
+  });
+  db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify({ [project.id]: { verificationCommands: ["test"] } }));
+  if (kind.startsWith("checkpoint")) db.setSetting(`runCheckpoint:${run.id}`, JSON.stringify({ round: 1, memo: "Resume here" }));
+  if (kind === "session recovery") db.upsertProviderSessionRuntime({
+    ownerId: run.id, ownerKind: "run", providerType: "codex-cli", harnessType: "codex-app-server",
+    status: "stopped", cwd, runtimeMode: "code", resumeCursor: { sessionId: "session" },
+  });
+  const start = () => kind === "follow-up" ? controller.followUpRun(run.id, "Continue")
+    : kind === "checkpoint resume" ? controller.resumeRunFromCheckpoint(run.id)
+      : controller.recoverInterruptedRun(run.id);
+  return { ...setup, internals, startWorker, check, start };
+};
+
 describe("revision verification", () => {
+  it.each(startKinds)("holds the %s start lock through credential reads and worker registration", async (kind) => {
+    const { controller, db, run, secrets, internals, startWorker, check, start } = await startFixture(kind);
+    const credentials = deferred<string | null>();
+    secrets.readSecret.mockImplementationOnce(() => credentials.promise);
+    const starting = start();
+    await vi.waitFor(() => expect(secrets.readSecret).toHaveBeenCalled());
+    const verifying = controller.verifyRunRevision(run.id);
+    const rejected = expect(verifying).rejects.toThrow("Wait for the agent to finish");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(check).not.toHaveBeenCalled();
+    expect(startWorker).not.toHaveBeenCalled();
+    credentials.resolve(null);
+    await starting;
+    await rejected;
+    expect(startWorker).toHaveBeenCalledTimes(1);
+    expect(internals.runWorkers.has(run.id)).toBe(true);
+    expect(db.getRun(run.id).status).toBe("preparing");
+    expect(check).not.toHaveBeenCalled();
+  });
+
+  it.each(startKinds)("rejects %s before mutating start state while verification is active", async (kind) => {
+    const { controller, db, run, check, startWorker, start } = await startFixture(kind);
+    const verified = deferred<RunVerificationRecord>();
+    check.mockImplementationOnce(() => verified.promise);
+    const verifying = controller.verifyRunRevision(run.id);
+    await vi.waitFor(() => expect(check).toHaveBeenCalled());
+    const steps = db.getRunSteps(run.id);
+    await expect(start()).rejects.toThrow("Wait for verification to finish");
+    expect(db.getRun(run.id).status).toBe("completed");
+    expect(db.getRunSteps(run.id)).toEqual(steps);
+    expect(startWorker).not.toHaveBeenCalled();
+    verified.resolve({ runId: run.id, commands: ["test"], results: [], status: "passed", revision: null,
+      startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), error: null });
+    await verifying;
+    await start();
+    expect(startWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels verification queued behind a start without disrupting worker registration", async () => {
+    const { controller, run, secrets, startWorker, check, start } = await startFixture("follow-up");
+    const credentials = deferred<string | null>();
+    secrets.readSecret.mockImplementationOnce(() => credentials.promise);
+    const starting = start();
+    await vi.waitFor(() => expect(secrets.readSecret).toHaveBeenCalled());
+    const verifying = controller.verifyRunRevision(run.id);
+    const rejected = expect(verifying).rejects.toThrow("Verification cancelled");
+    await expect(controller.verifyRunRevision(run.id)).rejects.toThrow("already running");
+    const cancelling = controller.cancelRunVerification(run.id);
+    credentials.resolve(null);
+    await Promise.all([starting, rejected, cancelling]);
+    expect(startWorker).toHaveBeenCalledTimes(1);
+    expect(check).not.toHaveBeenCalled();
+  });
+
   it("preserves other projects when clients update policies concurrently", async () => {
     const { db, controller, project, cwd } = await controllerFixture();
     const second = db.addProject({ repoPath: join(cwd, "second"), baseBranch: "main", resolvedName: "Second" });
