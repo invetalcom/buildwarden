@@ -6692,6 +6692,11 @@ export class AppController
     this.db.deleteSetting(SELECTED_RUN_KEY);
   }
 
+  async setProjectRevisionVerificationPolicy(projectId: string, enabled: boolean): Promise<void> {
+    if (typeof enabled !== "boolean") throw new Error("Verification policy must be a boolean.");
+    this.db.setProjectRevisionVerificationPolicy(projectId, enabled);
+  }
+
   async setAppSetting(key: string, value: string): Promise<void> {
     if (key === APP_SETTING_KEYS.worktreeRootOverride) {
       const trimmed = value.trim();

@@ -356,6 +356,7 @@ const api: DesktopApi = {
     invoke(IPC_CHANNELS.respondToRunUserInput, runId, requestId, answers),
   refreshSnapshot: () => invoke(IPC_CHANNELS.refreshSnapshot),
   setAppSetting: (key: string, value: string) => invoke(IPC_CHANNELS.setAppSetting, key, value),
+  setProjectRevisionVerificationPolicy: (projectId: string, enabled: boolean) => invoke(IPC_CHANNELS.setProjectRevisionVerificationPolicy, projectId, enabled),
   saveNetworkProxySettings: (input: NetworkProxySettingsInput) => invoke(IPC_CHANNELS.saveNetworkProxySettings, input),
   onRunEvent: (listener: (event: RunEvent) => void) => {
     const wrapped = (_event: Electron.IpcRendererEvent, payload: RunEvent) => listener(payload);

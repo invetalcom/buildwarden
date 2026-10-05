@@ -2,7 +2,7 @@ import type { RunVerificationRecord } from "@buildwarden/shared";
 import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { APP_SETTING_KEYS, ATTENTION_KIND_LABELS, parseAttentionInboxSettings, parseWorkspaceSetupSettings, REMOTE_ACCESS_SCOPES, type AttentionKind } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, ATTENTION_KIND_LABELS, parseAttentionInboxSettings, parseWorkspaceSetupSettings, parseRevisionVerificationPolicy, REMOTE_ACCESS_SCOPES, type AttentionKind } from "@buildwarden/shared";
 import type {
   AppSettingRecord,
   RunWorkspaceSetup,
@@ -3605,6 +3605,14 @@ export class BuildWardenDatabase {
       `,
       [worktree.id],
     )!;
+  }
+
+  setProjectRevisionVerificationPolicy(projectId: string, enabled: boolean): void {
+    this.transaction(() => {
+      this.getProject(projectId);
+      const policies = parseRevisionVerificationPolicy(this.getSettings()[APP_SETTING_KEYS.revisionVerificationPolicy]);
+      this.setSetting(APP_SETTING_KEYS.revisionVerificationPolicy, JSON.stringify({ ...policies, [projectId]: enabled }));
+    });
   }
 
   setSetting(key: string, value: string): void {

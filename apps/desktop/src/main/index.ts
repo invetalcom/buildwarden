@@ -1130,6 +1130,8 @@ const bootstrap = async (): Promise<void> => {
     (args) => args.length === 1 && isAttentionAcknowledgementBatch(args[0]),
   );
   remoteOperations.register("acknowledgeAttentionItems", (itemIds) => controller.acknowledgeAttentionItems(itemIds), validateAttentionIdsArg, "run:operate", true);
+  remoteOperations.register("setProjectRevisionVerificationPolicy", (projectId, enabled) => controller.setProjectRevisionVerificationPolicy(projectId, enabled),
+    defineRemoteArgsValidator<"setProjectRevisionVerificationPolicy">((args) => args.length === 2 && typeof args[0] === "string" && typeof args[1] === "boolean"), "admin", true);
   remoteOperations.register("setAppSetting", async (key, value) => {
     await controller.setAppSetting(key, value);
     refreshAppMenu();
@@ -1538,6 +1540,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.respondToRunUserInput, (_, runId: string, requestId: string, answers) =>
     controller.respondToRunUserInput(runId, requestId, answers),
   );
+  ipcMain.handle(IPC_CHANNELS.setProjectRevisionVerificationPolicy, (_, projectId: string, enabled: boolean) => controller.setProjectRevisionVerificationPolicy(projectId, enabled));
   ipcMain.handle(IPC_CHANNELS.setAppSetting, async (_, key: string, value: string) => {
     await controller.setAppSetting(key, value);
     refreshAppMenu();

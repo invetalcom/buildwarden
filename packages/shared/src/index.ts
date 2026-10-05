@@ -4006,6 +4006,7 @@ export interface DesktopApi {
   activateRun(runId: string): Promise<void>;
   releaseRun(runId: string): Promise<void>;
   setAppSetting(key: string, value: string): Promise<void>;
+  setProjectRevisionVerificationPolicy(projectId: string, enabled: boolean): Promise<void>;
   saveNetworkProxySettings(input: NetworkProxySettingsInput): Promise<NetworkProxySettingsSnapshot>;
   deleteProject(projectId: string): Promise<void>;
   deleteProviderAccount(providerAccountId: string): Promise<void>;
@@ -4462,6 +4463,7 @@ export type RemoteOperationMap = {
   deleteProviderAccount: DesktopApi["deleteProviderAccount"];
   deleteModel: DesktopApi["deleteModel"];
   setAppSetting: DesktopApi["setAppSetting"];
+  setProjectRevisionVerificationPolicy: DesktopApi["setProjectRevisionVerificationPolicy"];
   saveNetworkProxySettings: DesktopApi["saveNetworkProxySettings"];
   saveProjectForgeAuthToken: DesktopApi["saveProjectForgeAuthToken"];
   deleteProjectForgeAuthToken: DesktopApi["deleteProjectForgeAuthToken"];
@@ -4775,6 +4777,7 @@ export const IPC_CHANNELS = {
   refreshSnapshot: "buildwarden:refresh-snapshot",
   runEvent: "buildwarden:run-event",
   setAppSetting: "buildwarden:set-app-setting",
+  setProjectRevisionVerificationPolicy: "buildwarden:set-project-revision-verification-policy",
   saveNetworkProxySettings: "buildwarden:save-network-proxy-settings",
   addBookmark: "buildwarden:add-bookmark",
   removeBookmark: "buildwarden:remove-bookmark",

@@ -16,9 +16,7 @@ export const RevisionVerificationPolicy = ({ client, projectId }: { client: Buil
   const save = async (value: boolean) => {
     setBusy(true); setError("");
     try {
-      const snapshot = await client.getSnapshot();
-      const policies = parseRevisionVerificationPolicy(snapshot.settings[APP_SETTING_KEYS.revisionVerificationPolicy]);
-      await client.setAppSetting(APP_SETTING_KEYS.revisionVerificationPolicy, JSON.stringify({ ...policies, [projectId]: value }));
+      await client.setProjectRevisionVerificationPolicy(projectId, value);
       setEnabled(value);
     } catch (e) { setError(String(e)); } finally { setBusy(false); }
   };

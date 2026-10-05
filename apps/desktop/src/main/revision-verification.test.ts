@@ -30,6 +30,20 @@ const fixture = async () => {
   await git("add", "."); await git("commit", "-m", "Initial");
   return { dir, cwd, git };
 };
+const controllerFixture = async () => {
+  const { dir, cwd, git } = await fixture();
+  const db = new BuildWardenDatabase(join(dir, "state.sqlite")); databases.push(db); await db.init();
+  const project = db.addProject({ repoPath: cwd, baseBranch: "main", resolvedName: "Project" });
+  const provider = db.addProviderAccount({ providerType: "codex-cli", label: "Codex", apiBaseUrl: null, apiKeyRef: "key", configJson: "{}" });
+  const model = db.addModel({ providerAccountId: provider.id, modelId: "test", displayName: "Test", config: {}, capabilities: {}, enabled: true });
+  const run = db.createRun({ projectId: project.id, providerAccountId: provider.id, modelId: model.id, harnessType: "codex-app-server", mode: "code", workspaceType: "local", prompt: "Implement", branchName: "main", worktreePath: cwd });
+  db.updateRunStatus(run.id, "completed");
+  const secrets = { readSecret: vi.fn(async (_key: string): Promise<string | null> => null), saveSecret: async () => undefined, deleteSecret: async () => undefined };
+  const controller = new AppController(db, secrets, dir,
+    { pickProjectDirectory: async () => null, pickIdeExecutable: async () => null, openPathInFileManager: async () => ({ ok: true }), openExternalUrl: async () => ({ ok: true }), launchIdeWithFolder: async () => undefined },
+    { killForRunId: () => {} }, new HostEventBus());
+  return { db, controller, project, run, secrets, cwd, git };
+};
 const check = async (cwd: string, commands = ['node -e "process.stdout.write(\'ok\')"'], signal?: AbortSignal) => {
   const saved: RunVerificationRecord[] = [];
   const record = await verifyWorkspaceRevision({ runId: "run", cwd, vcs: "git", commands, signal, save: (value) => saved.push(structuredClone(value)) });
@@ -37,6 +51,19 @@ const check = async (cwd: string, commands = ['node -e "process.stdout.write(\'o
 };
 
 describe("revision verification", () => {
+  it("preserves other projects when clients update policies concurrently", async () => {
+    const { db, controller, project, cwd } = await controllerFixture();
+    const second = db.addProject({ repoPath: join(cwd, "second"), baseBranch: "main", resolvedName: "Second" });
+    await Promise.all([
+      controller.setProjectRevisionVerificationPolicy(project.id, true),
+      controller.setProjectRevisionVerificationPolicy(second.id, true),
+    ]);
+    expect(JSON.parse(db.getSettings()[APP_SETTING_KEYS.revisionVerificationPolicy])).toEqual({ [project.id]: true, [second.id]: true });
+    await controller.setProjectRevisionVerificationPolicy(project.id, false);
+    expect(JSON.parse(db.getSettings()[APP_SETTING_KEYS.revisionVerificationPolicy])).toEqual({ [project.id]: false, [second.id]: true });
+    await expect(controller.setProjectRevisionVerificationPolicy("missing-project", true)).rejects.toThrow();
+    expect(JSON.parse(db.getSettings()[APP_SETTING_KEYS.revisionVerificationPolicy])).toEqual({ [project.id]: false, [second.id]: true });
+  });
   it("includes staged, unstaged, binary and untracked changes without changing the real index", async () => {
     const { cwd, git } = await fixture(); const original = await captureWorkspaceRevision(cwd, "git");
     await writeFile(join(cwd, "source.txt"), "staged\n"); await git("add", ".");

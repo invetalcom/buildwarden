@@ -257,6 +257,7 @@ describe("remote operation registry", () => {
       | "deleteProviderAccount"
       | "deleteModel"
       | "setAppSetting"
+      | "setProjectRevisionVerificationPolicy"
       | "saveNetworkProxySettings"
       | "saveProjectForgeAuthToken"
       | "deleteProjectForgeAuthToken"
