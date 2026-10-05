@@ -27,8 +27,10 @@ describe("UserSettingsTab", () => {
     root = createRoot(container);
 
     const onAttentionChange = vi.fn();
+    const onHideActiveRunsChange = vi.fn();
     const TestSettings = () => {
       const [attention, setAttention] = useState(parseAttentionInboxSettings);
+      const [hideActiveRuns, setHideActiveRuns] = useState(false);
       return (
       <UserSettingsTab
         busy={false}
@@ -36,6 +38,7 @@ describe("UserSettingsTab", () => {
         sidebarContrastStrength={0}
         sidebarRunEntrySize="medium"
         sidebarGroupRunsByProject={false}
+        sidebarHideActiveRuns={hideActiveRuns}
         attentionInboxSettings={attention}
         onAttentionInboxSettingsChange={(next) => { onAttentionChange(next); setAttention(next); }}
         recentRunDaysDraft="10"
@@ -55,6 +58,7 @@ describe("UserSettingsTab", () => {
         onSidebarContrastStrengthCommit={vi.fn()}
         onSidebarRunEntrySizeChange={vi.fn()}
         onSidebarGroupRunsByProjectChange={vi.fn()}
+        onSidebarHideActiveRunsChange={(next) => { onHideActiveRunsChange(next); setHideActiveRuns(next); }}
         onRecentRunDaysDraftChange={vi.fn()}
         onEnableDevModeChange={vi.fn()}
         onKeyboardShortcutChange={vi.fn()}
@@ -78,6 +82,15 @@ describe("UserSettingsTab", () => {
     expect(hiddenInputs.every((input) => input.parentElement?.classList.contains("relative"))).toBe(true);
     const sections = [...container.querySelectorAll("h3")].map((heading) => heading.textContent);
     expect(sections.indexOf("Attention inbox")).toBe(sections.indexOf("Sidebar") + 1);
+    const hideActiveRuns = container.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Hide active runs from sidebar"]')!;
+    expect(hideActiveRuns.getAttribute("aria-checked")).toBe("false");
+    expect(container.textContent!.indexOf("Hide active runs")).toBeGreaterThan(container.textContent!.indexOf("Grouping"));
+    expect(container.textContent!.indexOf("Hide active runs")).toBeLessThan(container.textContent!.indexOf("Recent runs window"));
+    await act(async () => hideActiveRuns.click());
+    expect(onHideActiveRunsChange).toHaveBeenLastCalledWith(true);
+    expect(hideActiveRuns.getAttribute("aria-checked")).toBe("true");
+    await act(async () => hideActiveRuns.click());
+    expect(onHideActiveRunsChange).toHaveBeenLastCalledWith(false);
     const question = container.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Question"]')!;
     await act(async () => question.click());
     expect(onAttentionChange.mock.lastCall?.[0].kinds.input).toBe(false);

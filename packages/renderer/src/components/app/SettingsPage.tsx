@@ -82,6 +82,7 @@ interface SettingsPageProps {
   sidebarContrastStrength: number;
   sidebarRunEntrySize: SidebarRunEntrySize;
   sidebarGroupRunsByProject: boolean;
+  sidebarHideActiveRuns: boolean;
   attentionInboxSettings: AttentionInboxSettings;
   onAttentionInboxSettingsChange: (value: AttentionInboxSettings) => void;
   worktreeRootOverrideSettingValue: string;
@@ -116,6 +117,7 @@ interface SettingsPageProps {
   onSidebarContrastStrengthCommit: (value: number) => void;
   onSidebarRunEntrySizeChange: (value: SidebarRunEntrySize) => void;
   onSidebarGroupRunsByProjectChange: (value: boolean) => void;
+  onSidebarHideActiveRunsChange: (value: boolean) => void;
   onSaveWorktreeRootOverride: (value: string) => void | Promise<void>;
   onEnableDevModeChange: (value: boolean) => void;
   onProjectNameChange: (value: string) => void;
@@ -208,6 +210,7 @@ export const SettingsPage = ({
   sidebarContrastStrength,
   sidebarRunEntrySize,
   sidebarGroupRunsByProject,
+  sidebarHideActiveRuns,
   attentionInboxSettings,
   onAttentionInboxSettingsChange,
   worktreeRootOverrideSettingValue,
@@ -242,6 +245,7 @@ export const SettingsPage = ({
   onSidebarContrastStrengthCommit,
   onSidebarRunEntrySizeChange,
   onSidebarGroupRunsByProjectChange,
+  onSidebarHideActiveRunsChange,
   onSaveWorktreeRootOverride,
   onEnableDevModeChange,
   onProjectNameChange,
@@ -590,6 +594,7 @@ export const SettingsPage = ({
           sidebarContrastStrength={sidebarContrastStrength}
           sidebarRunEntrySize={sidebarRunEntrySize}
           sidebarGroupRunsByProject={sidebarGroupRunsByProject}
+          sidebarHideActiveRuns={sidebarHideActiveRuns}
           attentionInboxSettings={attentionInboxSettings}
           onAttentionInboxSettingsChange={onAttentionInboxSettingsChange}
           recentRunDaysDraft={recentRunDaysDraft}
@@ -609,6 +614,7 @@ export const SettingsPage = ({
           onSidebarContrastStrengthCommit={onSidebarContrastStrengthCommit}
           onSidebarRunEntrySizeChange={onSidebarRunEntrySizeChange}
           onSidebarGroupRunsByProjectChange={onSidebarGroupRunsByProjectChange}
+          onSidebarHideActiveRunsChange={onSidebarHideActiveRunsChange}
           onRecentRunDaysDraftChange={setRecentRunDaysDraft}
           onEnableDevModeChange={onEnableDevModeChange}
           onKeyboardShortcutChange={onKeyboardShortcutChange}

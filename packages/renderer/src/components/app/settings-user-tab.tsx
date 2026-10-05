@@ -233,6 +233,7 @@ export type UserSettingsTabProps = {
   sidebarContrastStrength: number;
   sidebarRunEntrySize: SidebarRunEntrySize;
   sidebarGroupRunsByProject: boolean;
+  sidebarHideActiveRuns: boolean;
   attentionInboxSettings: AttentionInboxSettings;
   onAttentionInboxSettingsChange: (value: AttentionInboxSettings) => void;
   recentRunDaysDraft: string;
@@ -252,6 +253,7 @@ export type UserSettingsTabProps = {
   onSidebarContrastStrengthCommit: (value: number) => void;
   onSidebarRunEntrySizeChange: (value: SidebarRunEntrySize) => void;
   onSidebarGroupRunsByProjectChange: (value: boolean) => void;
+  onSidebarHideActiveRunsChange: (value: boolean) => void;
   onRecentRunDaysDraftChange: (value: string) => void;
   onEnableDevModeChange: (value: boolean) => void;
   onKeyboardShortcutChange: (id: KeyboardShortcutId, value: string) => void;
@@ -273,6 +275,7 @@ export const UserSettingsTab = ({
   sidebarContrastStrength,
   sidebarRunEntrySize,
   sidebarGroupRunsByProject,
+  sidebarHideActiveRuns,
   attentionInboxSettings,
   onAttentionInboxSettingsChange,
   recentRunDaysDraft,
@@ -292,6 +295,7 @@ export const UserSettingsTab = ({
   onSidebarContrastStrengthCommit,
   onSidebarRunEntrySizeChange,
   onSidebarGroupRunsByProjectChange,
+  onSidebarHideActiveRunsChange,
   onRecentRunDaysDraftChange,
   onEnableDevModeChange,
   onKeyboardShortcutChange,
@@ -379,6 +383,19 @@ export const UserSettingsTab = ({
             onCheckedChange={onSidebarGroupRunsByProjectChange}
             disabled={busy}
             aria-label="Group sidebar runs by project"
+          />
+        </div>
+      </SettingsRow>
+      <SettingsRow
+        title="Hide active runs"
+        description="Hide queued, preparing, and running runs from the sidebar. They remain visible in project run lists and All Runs. Off by default."
+      >
+        <div className={`${rowControlClass} flex items-center justify-end gap-3`}>
+          <Switch
+            checked={sidebarHideActiveRuns}
+            onCheckedChange={onSidebarHideActiveRunsChange}
+            disabled={busy}
+            aria-label="Hide active runs from sidebar"
           />
         </div>
       </SettingsRow>
