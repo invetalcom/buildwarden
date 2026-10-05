@@ -112,6 +112,10 @@ describe("revision verification", () => {
       { pickProjectDirectory: async () => null, pickIdeExecutable: async () => null, openPathInFileManager: async () => ({ ok: true }), openExternalUrl: async () => ({ ok: true }), launchIdeWithFolder: async () => undefined },
       { killForRunId: () => {} }, new HostEventBus());
     expect((await controller.getRunVerification(run.id)).status).toBe("not-run");
+    await expect(controller.publishRunBranch(run.id, "unverified-publish")).rejects.toThrow("must pass verification");
+    expect(db.getRun(run.id).branchName).toBe("main");
+    expect((await exec("git", ["branch", "--show-current"], { cwd })).stdout.trim()).toBe("main");
+    expect((await exec("git", ["branch", "--list", "unverified-publish"], { cwd })).stdout.trim()).toBe("");
     expect((await controller.verifyRunRevision(run.id)).status).toBe("passed");
     const diff = vi.spyOn(diffWorker, "runWorktreeDiffInWorker").mockResolvedValue({ ok: true, diff: "patch" });
     expect((await controller.getRunWorktreeDiff(run.id)).diffRevision?.fingerprint).toBe(db.getRunVerification(run.id)?.revision?.fingerprint);

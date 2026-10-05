@@ -6539,12 +6539,12 @@ export class AppController
       throw new Error("Commit or discard open changes before publishing the branch.");
     }
 
+    await this.requireVerifiedRevision(runId);
     if (trimmedBranchName !== run.branchName) {
       await this.gitService.createPublishBranchFromHead(run.worktreePath, trimmedBranchName);
       run = this.db.updateRunBranchName(run.id, trimmedBranchName);
     }
 
-    await this.requireVerifiedRevision(runId);
     const result = await this.gitService.publishBranch(run.worktreePath, trimmedBranchName);
     if (createdCustomBranch) {
       await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedBranchName);
