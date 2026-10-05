@@ -5,7 +5,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AttentionItem, DesktopApi } from "@buildwarden/shared";
 import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-core";
 import { AttentionInbox } from "./AttentionInbox";
-import { filterAttentionItems } from "@buildwarden/shared";
+import { ATTENTION_ACKNOWLEDGEMENT_BATCH_LIMIT, filterAttentionItems } from "@buildwarden/shared";
 
 let root: Root | undefined;
 let container: HTMLDivElement;
@@ -117,5 +117,18 @@ describe("attention inbox", () => {
     expect(document.querySelector("dialog h2")?.textContent).toContain("2");
     expect(document.querySelector("[role=alert]")?.textContent).toContain("Connection lost");
     expect(button.disabled).toBe(false);
+  });
+  it.each([false, true])("splits a large backlog into bounded batches (later failure: %s)", async (failLater) => {
+    const results = Array.from({ length: ATTENTION_ACKNOWLEDGEMENT_BATCH_LIMIT + 1 }, (_, index) => ({ ...items[1], id: `result-${index}` }));
+    const last = results.at(-1)!;
+    const { acknowledgeMany } = await render(false, [...items.slice(0, 1), ...results], failLater ? last.id : undefined);
+    const button = [...document.querySelectorAll<HTMLButtonElement>("dialog button")].find((entry) => entry.textContent === "Mark all as read")!;
+    await act(async () => button.click());
+    expect(acknowledgeMany).toHaveBeenCalledTimes(2);
+    expect(acknowledgeMany).toHaveBeenNthCalledWith(1, results.slice(0, ATTENTION_ACKNOWLEDGEMENT_BATCH_LIMIT).map((item) => item.id));
+    expect(acknowledgeMany).toHaveBeenNthCalledWith(2, [last.id]);
+    expect(document.querySelector("dialog h2")?.textContent).toContain(failLater ? "2" : "1");
+    if (failLater) expect(document.querySelector("[role=alert]")?.textContent).toContain("Connection lost");
+    expect(button.disabled).toBe(!failLater);
   });
 });

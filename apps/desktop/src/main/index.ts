@@ -17,6 +17,7 @@ import {
   APP_SETTING_KEYS,
   DESIGN_SCHEME_PRESETS,
   IPC_CHANNELS,
+  isAttentionAcknowledgementBatch,
   getDefaultDesignScheme,
   isUiTheme,
   parseSupportedIdeKind,
@@ -1121,7 +1122,10 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("deleteModel", (modelId) => controller.deleteModel(modelId), validateSingleRemoteStringArg, "admin", true);
   remoteOperations.register("getAttentionInbox", () => controller.getAttentionInbox(), validateNoRemoteArgs);
   remoteOperations.register("acknowledgeAttentionItem", (itemId) => controller.acknowledgeAttentionItem(itemId), validateSingleRemoteStringArg, "run:operate", true);
-  remoteOperations.register("acknowledgeAttentionItems", (itemIds) => controller.acknowledgeAttentionItems(itemIds), validateStringArrayArg, "run:operate", true);
+  const validateAttentionIdsArg = defineRemoteArgsValidator<"acknowledgeAttentionItems">(
+    (args) => args.length === 1 && isAttentionAcknowledgementBatch(args[0]),
+  );
+  remoteOperations.register("acknowledgeAttentionItems", (itemIds) => controller.acknowledgeAttentionItems(itemIds), validateAttentionIdsArg, "run:operate", true);
   remoteOperations.register("setAppSetting", async (key, value) => {
     await controller.setAppSetting(key, value);
     refreshAppMenu();

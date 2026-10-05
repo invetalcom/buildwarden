@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Inbox, RefreshCw, X } from "lucide-react";
-import { ATTENTION_KIND_LABELS, filterAttentionItems, type AttentionItem, type AttentionKind } from "@buildwarden/shared";
+import { ATTENTION_ACKNOWLEDGEMENT_BATCH_LIMIT, ATTENTION_KIND_LABELS, filterAttentionItems, type AttentionItem, type AttentionKind } from "@buildwarden/shared";
 import type { BuildWardenClient } from "../../lib/buildwarden-client-core";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -68,7 +68,10 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
     let failure = "";
     try {
       // Only acknowledge the notices present at the click; new arrivals remain unread.
-      await client.acknowledgeAttentionItems(unreadNotices.map((item) => item.id));
+      const ids = unreadNotices.map((item) => item.id);
+      for (let offset = 0; offset < ids.length; offset += ATTENTION_ACKNOWLEDGEMENT_BATCH_LIMIT) {
+        await client.acknowledgeAttentionItems(ids.slice(offset, offset + ATTENTION_ACKNOWLEDGEMENT_BATCH_LIMIT));
+      }
     } catch (e) { failure = `Could not mark every notice as read. ${String(e)}`; }
     finally {
       await refresh();

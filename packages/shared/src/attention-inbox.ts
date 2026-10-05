@@ -1,5 +1,11 @@
 export type AttentionKind = "approval" | "input" | "failed" | "blocked" | "review";
 
+export const ATTENTION_ACKNOWLEDGEMENT_BATCH_LIMIT = 1_000;
+
+export const isAttentionAcknowledgementBatch = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.length <= ATTENTION_ACKNOWLEDGEMENT_BATCH_LIMIT &&
+  value.every((item) => typeof item === "string");
+
 export interface AttentionInboxSettings {
   enabled: boolean;
   kinds: Record<AttentionKind, boolean>;

@@ -16,6 +16,8 @@ import {
 } from "@buildwarden/remote-server";
 import {
   CHAT_ATTACHMENT_LIMITS,
+  ATTENTION_ACKNOWLEDGEMENT_BATCH_LIMIT,
+  isAttentionAcknowledgementBatch,
   REMOTE_ACCESS_HEALTH_PATH,
   REMOTE_ACCESS_INFO_PATH,
   REMOTE_ACCESS_PAIRING_PATH,
@@ -92,6 +94,28 @@ const rpcBody = (requestId = "snapshot") => JSON.stringify({
 });
 
 describe("remote operation registry", () => {
+  it("rejects oversized or malformed acknowledgement batches before idempotency work", async () => {
+    const db = await createDatabase();
+    const registry = new RemoteOperationRegistry(undefined, db);
+    const acknowledge = vi.fn(async () => undefined);
+    const persist = vi.spyOn(db, "createRemoteCommandIdempotency");
+    registry.register("acknowledgeAttentionItems", acknowledge,
+      (args): args is [string[]] => args.length === 1 && isAttentionAcknowledgementBatch(args[0]), "run:operate", true);
+    const request = { protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION, requestId: "attention", idempotencyKey: "attention",
+      method: "acknowledgeAttentionItems", args: [] as unknown[] };
+    for (const value of [null, "item", [42], Array(ATTENTION_ACKNOWLEDGEMENT_BATCH_LIMIT + 1).fill("item")]) {
+      await expect(registry.dispatch({ ...request, args: [value] }, ["run:operate"], "session"))
+        .resolves.toMatchObject({ ok: false, error: { code: "invalid-request" } });
+    }
+    expect(persist).not.toHaveBeenCalled();
+    expect(acknowledge).not.toHaveBeenCalled();
+    const ids = Array.from({ length: ATTENTION_ACKNOWLEDGEMENT_BATCH_LIMIT }, (_, index) => `item-${index}`);
+    await expect(registry.dispatch({ ...request, args: [ids] }, ["state:read"], "session"))
+      .resolves.toMatchObject({ ok: false, error: { code: "forbidden" } });
+    await expect(registry.dispatch({ ...request, args: [ids] }, ["run:operate"], "session"))
+      .resolves.toMatchObject({ ok: true });
+    expect(acknowledge).toHaveBeenCalledExactlyOnceWith(ids);
+  });
   it("limits the typed transport contract to explicitly supported operations", () => {
     expectTypeOf<RemoteApiMethod>().toEqualTypeOf<
       | "getAttentionInbox"
