@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { ChevronRight, TriangleAlert } from "lucide-react";
 import type { RunRecord, RunVerificationState, WorkspaceRevision } from "@buildwarden/shared";
 import type { BuildWardenClient } from "../../lib/buildwarden-client-core";
 import { Button } from "../ui/button";
@@ -9,6 +10,8 @@ export const RunVerificationPanel = ({ client, run, reviewedRevision, displayedR
   const [state, setState] = useState<RunVerificationState | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const contentId = useId();
   const active = ["queued", "preparing", "running"].includes(run.status);
   const sequence = useRef(0);
   const refresh = useCallback(async () => {
@@ -37,30 +40,38 @@ export const RunVerificationPanel = ({ client, run, reviewedRevision, displayedR
   const reviewChanged = reviewedRevision && state?.currentRevision && (reviewedRevision.fingerprint !== state.currentRevision.fingerprint || reviewedRevision.head !== state.currentRevision.head);
   // Wait for configuration before showing the panel, so disabled gates never flash a status.
   if (active || (!state && !error) || (state && state.commands.length === 0)) return null;
-  return <div className="rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2 text-xs">
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="font-semibold">Verification</span>
-      <span className={state?.status === "passed" && !running ? "text-[var(--ec-success)]" : "text-[var(--ec-warning)]"}>{running ? "running" : state?.status ?? "checking"}</span>
-      {state?.requiredBeforePublish && <span className="text-[var(--ec-muted)]">Required before commit or publish</span>}
-      <div className="ml-auto flex gap-2">
+  const evidenceSummary = state?.record ? `Evidence · ${state.record.finishedAt ? new Date(state.record.finishedAt).toLocaleString() : "in progress"} · ${state.record.revision?.fingerprint.slice(0, 20) ?? "revision unavailable"}` : "";
+  return <div className="rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] text-xs">
+    <div className="flex flex-wrap items-center gap-x-2 pr-2 sm:flex-nowrap">
+      <Button variant="ghost" size="sm" className="h-9 min-w-0 flex-1 basis-56 justify-start px-3 text-xs text-[var(--ec-text)] sm:basis-auto" aria-label="Verification details" aria-expanded={expanded} aria-controls={contentId} onClick={() => setExpanded((value) => !value)}>
+        <ChevronRight aria-hidden="true" className={`size-3 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`} />
+        <span className="shrink-0 font-semibold">Verification</span>
+        <span className={`shrink-0 ${state?.status === "passed" && !running ? "text-[var(--ec-success)]" : "text-[var(--ec-warning)]"}`}>{running ? "running" : state?.status ?? "checking"}</span>
+        {error ? <span role="alert" className="truncate text-[var(--ec-danger)]" title={error}>{error}</span>
+          : <span className="truncate font-normal text-[var(--ec-muted)]" title={evidenceSummary}>{evidenceSummary}</span>}
+        {(diffChanged || reviewChanged || displayedRevision === null) && <span className="shrink-0 text-[var(--ec-warning)]" title="Review needs refresh"><TriangleAlert aria-label="Review needs refresh" className="size-3" /></span>}
+      </Button>
+      <div className="ml-auto flex shrink-0 gap-2 py-1">
         <Button size="xs" variant="secondary" onClick={() => void refresh()}>Refresh</Button>
         {client.capabilities.runMutations && (running
           ? <Button size="xs" variant="secondary" onClick={() => void client.cancelRunVerification(run.id).then(refresh).catch((e) => setError(String(e)))}>Cancel check</Button>
           : <Button size="xs" variant="secondary" disabled={active || !state?.commands.length} onClick={() => void verify()}>Run verification</Button>)}
       </div>
     </div>
-    {error && <p role="alert" className="mt-1 text-[var(--ec-danger)]">{error}</p>}
+    <div id={contentId} hidden={!expanded} className="border-t border-[var(--ec-border)] px-3 py-2">
+    {state?.requiredBeforePublish && <p className="text-[var(--ec-muted)]">Required before commit or publish</p>}
+    {error && <p className="mt-1 text-[var(--ec-danger)]">{error}</p>}
     {state?.reason && <p className="mt-1 text-[var(--ec-muted)]">{state.reason}</p>}
     {displayedRevision === null && <p className="mt-1 text-[var(--ec-warning)]">The displayed diff has no stable revision. Refresh it before reviewing.</p>}
     {diffChanged && <p className="mt-1 text-[var(--ec-warning)]">The displayed diff is stale. Refresh the diff to review the current verification revision.</p>}
     {reviewedRevision && <p className={reviewChanged ? "mt-1 text-[var(--ec-warning)]" : "mt-1 text-[var(--ec-muted)]"}>{reviewChanged ? "Review is stale: workspace contents changed." : "Reviewed contents"} · {reviewedRevision.fingerprint.slice(0, 20)}</p>}
-    {state?.record && <details className="mt-1 text-[var(--ec-muted)]">
-      <summary className="cursor-pointer">Evidence · {state.record.finishedAt ? new Date(state.record.finishedAt).toLocaleString() : "in progress"} · {state.record.revision?.fingerprint.slice(0, 20) ?? "revision unavailable"}</summary>
+    {state?.record && <div className="mt-1 text-[var(--ec-muted)]">
       <p className="mt-1 break-all">Verified revision: {state.record.revision?.fingerprint ?? "unavailable"}{state.record.revision?.head ? ` · HEAD ${state.record.revision.head}` : ""}</p>
       {state.record.results.map((result, index) => <details key={index} className="mt-1">
         <summary className="cursor-pointer font-mono">{result.ok ? "Passed" : "Failed"} · {result.command} · {result.durationMs} ms · exit {result.exitCode ?? "—"}{result.timedOut ? " · timed out" : ""}</summary>
         <pre className="app-scrollbar max-h-48 overflow-auto whitespace-pre-wrap break-words p-2">{result.output}</pre>
       </details>)}
-    </details>}
+    </div>}
+    </div>
   </div>;
 };

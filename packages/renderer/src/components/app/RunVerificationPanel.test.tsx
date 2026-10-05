@@ -31,11 +31,22 @@ describe("run verification panel", () => {
   });
   it("shows stale evidence, its output, and the stale review instead of a current pass", async () => {
     const verify = await render();
+    const toggle = container.querySelector<HTMLButtonElement>('[aria-label="Verification details"]')!;
+    const content = document.getElementById(toggle.getAttribute("aria-controls")!)!;
+    expect(toggle.textContent).toContain("Evidence ·");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(content.hidden).toBe(true);
+    await act(async () => toggle.click());
+    expect(content.hidden).toBe(false);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(container.textContent).toContain("Review is stale");
     expect(container.textContent).toContain("Tests passed");
     expect(container.textContent).toContain("Required before commit or publish");
     const button = [...container.querySelectorAll("button")].find((entry) => entry.textContent === "Run verification")!;
     await act(async () => button.click()); expect(verify).toHaveBeenCalledWith("r");
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    await act(async () => toggle.click());
+    expect(content.hidden).toBe(true);
   });
   it("prevents running commands from read-only connections", async () => {
     await render(true); expect(container.textContent).not.toContain("Run verification");
