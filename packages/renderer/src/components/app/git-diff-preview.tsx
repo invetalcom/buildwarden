@@ -15,7 +15,7 @@ import {
 import { type DiffLineAnnotation, type FileDiffMetadata, type Hunk, type ThemeTypes } from "@pierre/diffs";
 import { FileDiff } from "@pierre/diffs/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, FileText, Loader2, MessageSquarePlus, Pencil, Trash2 } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, MessageSquarePlus, Pencil, Trash2 } from "lucide-react";
 import type { RunDiffReviewFinding, RunWorktreeDiffFileStat } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
 import { ActivityRichText } from "../ui/activity-rich-text";
@@ -29,6 +29,7 @@ import {
   type DiffLineCommentTarget,
   type DiffPreviewManualComment,
 } from "./git-diff-preview-comment-index";
+import { DiffFileHeaderRow } from "./git-diff-file-meta";
 import { filterWhitespaceOnlyChanges } from "./git-diff-whitespace";
 import {
   diffFileMatchesPath,
@@ -624,6 +625,10 @@ const DiffFileSection = memo(function DiffFileSection({
     [onAddDiffComment, targetFromPierreLine, themeType, viewType, wordDiff],
   );
 
+  const lineCounts = useMemo(
+    () => ({ additions: countDiffChanges(file.hunks, "insert"), deletions: countDiffChanges(file.hunks, "delete") }),
+    [file.hunks],
+  );
   const openFilePath = normalizeDiffPathSegment(filePathLabel);
   const canOpenFilePath = Boolean(openFilePath && openFilePath !== "Unknown file");
   const renderCollapseToggleHeader = (): ReactNode => {
@@ -664,41 +669,17 @@ const DiffFileSection = memo(function DiffFileSection({
       return <>{renderCollapseToggleHeader()}</>;
     }
     return (
-      <div className="sticky top-0 z-10 flex w-full items-center justify-between gap-2 border-b border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-1.5 text-left backdrop-blur-sm">
-        <button
-          type="button"
-          className="flex min-w-0 flex-1 items-center gap-2 text-left transition hover:text-[var(--ec-text)]"
-          onClick={() => onToggleCollapsed(fileKey)}
-          title={filePathLabel}
-          aria-expanded={!isCollapsed}
-        >
-          <p className="truncate text-xs font-medium text-[var(--ec-text)]">{filePathLabel}</p>
-          <span className="shrink-0 text-[10px] uppercase tracking-[0.18em] text-[var(--ec-muted)]">{file.type}</span>
-        </button>
-        <div className="flex shrink-0 items-center gap-1">
-          {onOpenFile ? (
-            <button
-              type="button"
-              className="rounded px-1 py-0.5 text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-accent-strong)]"
-              onClick={() => canOpenFilePath && onOpenFile(openFilePath)}
-              aria-label={`Open file ${filePathLabel}`}
-              title={`Open file ${filePathLabel}`}
-            >
-              <FileText className="h-3.5 w-3.5 shrink-0" />
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="rounded px-1 py-0.5 text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
-            onClick={() => onToggleCollapsed(fileKey)}
-            aria-label={isCollapsed ? "Expand diff" : "Collapse diff"}
-            aria-expanded={!isCollapsed}
-            title={isCollapsed ? "Expand diff" : "Collapse diff"}
-          >
-            {isCollapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
-          </button>
-        </div>
-      </div>
+      <DiffFileHeaderRow
+        path={filePathLabel}
+        previousPath={file.prevName}
+        type={file.type}
+        additions={lineCounts.additions}
+        deletions={lineCounts.deletions}
+        expanded={!isCollapsed}
+        sticky
+        onToggle={() => onToggleCollapsed(fileKey)}
+        onOpenFile={onOpenFile && canOpenFilePath ? () => onOpenFile(openFilePath) : undefined}
+      />
     );
   };
 
@@ -1174,11 +1155,15 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
         {pendingFileEntries.map(({ file, key }) => {
           const expanded = alwaysExpandedFileSections || !(collapsedFiles[key] ?? defaultCollapsedFileSections);
           return <div key={key} className="border-b border-[var(--ec-border)] last:border-b-0">
-            <button type="button" className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--ec-text)]"
-              title={file.path} aria-expanded={expanded} onClick={() => toggleFileCollapsed(key)}>
-              <span className="min-w-0 flex-1 truncate font-medium">{file.path}</span>
-              {expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
-            </button>
+            <DiffFileHeaderRow
+              path={file.path}
+              previousPath={file.previousPath}
+              type={file.previousPath && file.previousPath !== file.path ? "rename-changed" : null}
+              additions={file.additions}
+              deletions={file.deletions}
+              expanded={expanded}
+              onToggle={() => toggleFileCollapsed(key)}
+            />
             {expanded ? <p role="status" className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--ec-muted)]">
               <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />Loading file diff…
             </p> : null}
