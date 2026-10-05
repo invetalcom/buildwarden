@@ -139,6 +139,11 @@ describe("revision verification", () => {
     db.setSetting(APP_SETTING_KEYS.revisionVerificationPolicy, JSON.stringify({ [project.id]: true }));
     await controller.verifyRunRevision(run.id);
     await controller.commitRun(run.id, "Commit after verification passes");
+    db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify({ [project.id]: { verificationCommands: [] } }));
+    await writeFile(join(cwd, "source.txt"), "verification disabled");
+    await controller.commitRun(run.id, "Commit with no verification commands");
+    expect((await exec("git", ["log", "-1", "--format=%s"], { cwd })).stdout.trim()).toBe("Commit with no verification commands");
+    db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify({ [project.id]: { verificationCommands: ['node -e "process.exit(0)"'] } }));
     db.saveRunVerification({ ...db.getRunVerification(run.id)!, status: "running", finishedAt: null });
     expect((await controller.getRunVerification(run.id)).status).toBe("cancelled");
     db.deleteRun(run.id); expect(db.getRunVerification(run.id)).toBeNull();

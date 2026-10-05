@@ -6816,7 +6816,10 @@ export class AppController
 
   private async requireVerifiedRevision(runId: string): Promise<void> {
     const run = this.db.getRun(runId);
-    if (!parseRevisionVerificationPolicy(this.db.getSettings()[APP_SETTING_KEYS.revisionVerificationPolicy])[run.projectId]) return;
+    const settings = this.db.getSettings();
+    if (!parseRevisionVerificationPolicy(settings[APP_SETTING_KEYS.revisionVerificationPolicy])[run.projectId]) return;
+    const commands = parseProjectRunDefaultsSetting(settings[APP_SETTING_KEYS.projectRunDefaults])[run.projectId]?.verificationCommands ?? [];
+    if (!commands.length) return;
     if (run.workspaceVcs === "git" && await this.gitService.getCurrentBranch(this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId))) !== run.branchName) throw new Error("Check out the run branch before verifying and publishing it.");
     const state = await this.getRunVerification(runId);
     if (state.status !== "passed") throw new Error(`Current revision must pass verification before publishing (${state.status}). Run verification from the run detail screen.`);
