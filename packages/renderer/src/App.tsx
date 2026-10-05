@@ -814,7 +814,7 @@ export const App = () => {
       } catch {
         if (diffSummaryLoadGenerationRef.current[runId] !== summaryGeneration) return;
         if (runDetailLoadTokenRef.current[runId] !== loadToken) return;
-        mergeRunDetailForRun(runId, (previous) => ({ ...previous, diffSummaryPending: false }));
+        mergeRunDetailForRun(runId, (previous) => ({ ...previous, diffSummary: undefined, diffSummaryPending: false }));
       }
     },
     [buildwarden, clearDiffRefreshTimer, mergeRunDetailForRun, replaceRunDetailForRun],
@@ -867,7 +867,7 @@ export const App = () => {
         result = await buildwarden.getRunWorktreeDiffSummary(eventRunId);
       } catch {
         if (diffSummaryLoadGenerationRef.current[eventRunId] !== generation) return;
-        mergeRunDetailForRun(eventRunId, (previous) => ({ ...previous, diffSummaryPending: false }));
+        mergeRunDetailForRun(eventRunId, (previous) => ({ ...previous, diffSummary: undefined, diffSummaryPending: false }));
         return;
       }
       if (diffSummaryLoadGenerationRef.current[eventRunId] !== generation) return;
