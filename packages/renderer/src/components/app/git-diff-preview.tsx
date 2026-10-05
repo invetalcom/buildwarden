@@ -927,9 +927,17 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     });
   }, [activeFilePath, filePathQuery, whitespaceFilteredFiles]);
 
+  const pendingFileEntries = useMemo(() => {
+    const occurrences = new Map<string, number>();
+    return pendingFiles.map((file) => {
+      const occurrence = occurrences.get(file.path) ?? 0;
+      occurrences.set(file.path, occurrence + 1);
+      return { file, key: diffFileKey(file.path, occurrence) };
+    });
+  }, [pendingFiles]);
   const visibleFileKeys = useMemo(() => !trimmedDiff && loading
-    ? pendingFiles.map((file) => diffFileKey(file.path))
-    : files.map(getFileKey), [files, getFileKey, loading, pendingFiles, trimmedDiff]);
+    ? pendingFileEntries.map(({ key }) => key)
+    : files.map(getFileKey), [files, getFileKey, loading, pendingFileEntries, trimmedDiff]);
 
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const fileIndexByKey = useMemo(() => new Map(files.map((file, index) => [getFileKey(file), index])), [files, getFileKey]);
@@ -1163,8 +1171,7 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
   if (!trimmedDiff && loading) {
     return (
       <div className={cn("overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)]", className)}>
-        {pendingFiles.map((file) => {
-          const key = diffFileKey(file.path);
+        {pendingFileEntries.map(({ file, key }) => {
           const expanded = alwaysExpandedFileSections || !(collapsedFiles[key] ?? defaultCollapsedFileSections);
           return <div key={key} className="border-b border-[var(--ec-border)] last:border-b-0">
             <button type="button" className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--ec-text)]"

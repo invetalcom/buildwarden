@@ -94,4 +94,27 @@ describe("GitDiffPreview loading and expansion", () => {
     await act(async () => root.render(<GitDiffPreview key="run-2" ref={ref} diffText={diff} emptyMessage="Empty" />));
     expect(expandedPaths()).toEqual([]);
   });
+
+  it("keeps duplicate pending paths independent through expand-all and patch arrival", async () => {
+    const ref = createRef<GitDiffPreviewHandle>();
+    const onExpanded = vi.fn();
+    const pendingFiles = [0, 1].map(() => ({ path: "src/a.ts", previousPath: null, additions: 1, deletions: 1 }));
+    await act(async () => root.render(<GitDiffPreview ref={ref} diffText="" pendingFiles={pendingFiles} loading
+      onAllFilesExpandedChange={onExpanded} emptyMessage="Empty" />));
+    const buttons = container.querySelectorAll<HTMLButtonElement>('button[title="src/a.ts"]');
+    await act(async () => buttons[1]!.click());
+    expect(buttons[0]!.getAttribute("aria-expanded")).toBe("false");
+    expect(buttons[1]!.getAttribute("aria-expanded")).toBe("true");
+    expect(onExpanded).toHaveBeenLastCalledWith(false);
+
+    await act(async () => ref.current?.toggleExpandAllFiles());
+    expect([...buttons].map((button) => button.getAttribute("aria-expanded"))).toEqual(["true", "true"]);
+    await act(async () => ref.current?.toggleExpandAllFiles());
+    expect([...buttons].map((button) => button.getAttribute("aria-expanded"))).toEqual(["false", "false"]);
+    await act(async () => buttons[1]!.click());
+    await act(async () => root.render(<GitDiffPreview ref={ref} diffText={patch("src/a.ts") + patch("src/a.ts", "staged")} emptyMessage="Empty" />));
+    const loadedButtons = container.querySelectorAll<HTMLButtonElement>('button[title="src/a.ts"]');
+    expect([...loadedButtons].map((button) => button.getAttribute("aria-expanded"))).toEqual(["false", "true"]);
+    expect(expandedPaths()).toEqual(["src/a.ts"]);
+  });
 });
