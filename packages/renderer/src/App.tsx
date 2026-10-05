@@ -4136,8 +4136,7 @@ export const App = () => {
       sessionJoke={landingPageJoke}
       onSelectProject={(projectId) => void handleProjectSelect(projectId)}
       onSelectRun={(projectId, runId) => void handleRunSelect(projectId, runId)}
-      onOpenChats={handleChatsSelect}
-      onOpenSettings={openSettingsPage}
+      onOpenAllRuns={() => void handleAllRunsSelect()}
     />
   );
 

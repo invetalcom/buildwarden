@@ -87,12 +87,16 @@ export const computeMainViewFlags = (input: MainViewFlagInput) => {
   const isBookmarkDetailView = !input.settingsOpen && input.bookmarksSelected && input.hasBookmarkDetail;
   const isProjectWorkspaceView =
     noOverlaySelected && !input.chatsSelected && !input.landingSelected && !input.selectedRunId && input.hasSelectedProject;
+  const isLandingView = noOverlaySelected && !input.chatsSelected && onLandingOrEmptySelection;
 
   let sectionLayoutClassName = "space-y-4";
   if (isSettingsView || isAgentRunDetailView || isChatDetailView || isBookmarkDetailView) {
     sectionLayoutClassName = "flex min-h-0 min-w-0 flex-1 flex-col gap-2";
   } else if (isProjectWorkspaceView) {
     sectionLayoutClassName = "flex min-h-0 min-w-0 flex-1 flex-col gap-4";
+  } else if (isLandingView) {
+    // Full height lets the dashboard stretch its panels on tall screens; main still scrolls when content overflows.
+    sectionLayoutClassName = "h-full min-w-0";
   }
 
   return {
@@ -102,6 +106,7 @@ export const computeMainViewFlags = (input: MainViewFlagInput) => {
     isChatDetailView,
     isBookmarkDetailView,
     isProjectWorkspaceView,
+    isLandingView,
     sectionLayoutClassName,
   };
 };

@@ -28,6 +28,14 @@ describe("computeMainViewFlags", () => {
     expect(computeMainViewFlags(baseInput({ hasSelectedProject: false })).onLandingOrEmptySelection).toBe(true);
   });
 
+  it("gives only the landing dashboard its full-height section", () => {
+    const flags = computeMainViewFlags(baseInput({ landingSelected: true }));
+    expect(flags.isLandingView).toBe(true);
+    expect(flags.sectionLayoutClassName).toContain("h-full");
+    expect(computeMainViewFlags(baseInput({ landingSelected: true, allRunsSelected: true })).isLandingView).toBe(false);
+    expect(computeMainViewFlags(baseInput({ hasSelectedProject: false, chatsSelected: true })).isLandingView).toBe(false);
+  });
+
   it("keeps an open run pane in the run-detail layout while detail data is loading", () => {
     const flags = computeMainViewFlags(baseInput({ selectedRunId: "run-1", openRunPaneCount: 1 }));
     expect(flags.isAgentRunDetailView).toBe(true);
