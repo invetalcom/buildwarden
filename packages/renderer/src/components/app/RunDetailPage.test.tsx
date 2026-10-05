@@ -259,4 +259,21 @@ describe("RunDetailPage workflows", () => {
     const markup = renderToStaticMarkup(<RunDetailPage {...baseProps(unavailable)} showActivity={false} showBrowser showChat />);
     expect(markup).toContain("Git worktree no longer available");
   });
+
+  it("shows summary file rows while the full patch is loading", () => {
+    const pending = detail({ diff: "", diffLoaded: false, diffPending: true, diffSummary: {
+      files: [{ path: "src/loading.ts", previousPath: null, additions: 2, deletions: 1 }],
+      totalFiles: 1, totalAdditions: 2, totalDeletions: 1,
+    } });
+    const markup = renderToStaticMarkup(<RunDetailPage {...baseProps(pending)} showDiff />);
+    expect(markup).toContain("src/loading.ts");
+    expect(markup).toContain("Loading file diffs");
+  });
+
+  it("keeps the previous patch visible during a refresh", () => {
+    const pending = detail({ diffLoaded: false, diffPending: true });
+    const markup = renderToStaticMarkup(<RunDetailPage {...baseProps(pending)} showDiff />);
+    expect(markup).toContain("src/App.tsx");
+    expect(markup).toContain("Refreshing changes");
+  });
 });

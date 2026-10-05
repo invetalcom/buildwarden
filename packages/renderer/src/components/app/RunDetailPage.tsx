@@ -370,7 +370,16 @@ export const RunDetailPage = ({
   const splitResizeStartRef = useRef<{ x: number; y: number; pct: number } | null>(null);
 
   // Which secondary panel tab is currently in view
-  const [activeSecondaryTab, setActiveSecondaryTab] = useState<SecondaryPanelId | null>(null);
+  const [activeSecondaryTab, setActiveSecondaryTab] = useState<SecondaryPanelId | null>(() => pickVisibleSecondaryTab(null, {
+    agents: agentsPanelVisible,
+    file: false,
+    diff: showDiff,
+    terminal: showTerminal,
+    browser: showBrowser,
+    notes: showNotes,
+    chat: showChat,
+    "pull-request": showPullRequest && Boolean(forgeSummary),
+  }));
   const [filePanelTarget, setFilePanelTarget] = useState<RunWorkspaceFileReference | null>(null);
   // "Add panel" popover in the tab strip
   const [addPanelOpen, setAddPanelOpen] = useState(false);
@@ -1604,19 +1613,6 @@ export const RunDetailPage = ({
               {showDiff && activeSecondaryTab === "diff" ? (
                 <div className="flex h-full min-h-0 flex-col overflow-hidden">
                   <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                    {!diffLoaded || diffPending ? (
-                      <div
-                        className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-4 py-8 text-center text-sm text-[var(--ec-muted)]"
-                        role="status"
-                        aria-live="polite"
-                      >
-                        <Loader2 className="h-8 w-8 animate-spin text-[var(--ec-accent)]" aria-hidden />
-                        <p className="font-medium text-[var(--ec-muted)]">Computing worktree diff…</p>
-                        <p className="max-w-sm text-xs text-[var(--ec-faint)]">
-                          The activity log updates in real time. Diff loading runs separately so you can switch runs without waiting on git.
-                        </p>
-                      </div>
-                    ) : (
                       <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto px-3 py-3">
                         <div className="relative z-20 mb-3 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)]">
                           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-stretch">
@@ -1640,7 +1636,9 @@ export const RunDetailPage = ({
                                 <span className="text-xs font-semibold text-[var(--ec-danger)]">-{diffStats.totalDeletions}</span>
                               </div>
                               <p className="mt-0.5 text-[10px] text-[var(--ec-faint)] transition group-hover:text-[var(--ec-muted)]">
-                                {allDiffFilesExpanded ? "Collapse file diffs" : "Expand file diffs"}
+                                {!diffLoaded || diffPending
+                                  ? (runDetail.diff ? "Refreshing changes…" : "Loading file diffs…")
+                                  : allDiffFilesExpanded ? "Collapse file diffs" : "Expand file diffs"}
                               </p>
                             </button>
                             {buildwarden.capabilities.platform === "electron" ? <div className="flex items-center gap-1 border-l border-[var(--ec-border)] px-2">
@@ -1667,7 +1665,7 @@ export const RunDetailPage = ({
                                 variant="secondary"
                                 className="h-7 shrink-0 border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 text-[11px] text-[var(--ec-text)] hover:bg-[var(--ec-hover)]"
                                 onClick={() => void runDiffReview()}
-                                disabled={reviewBusy || isRunActive || !runDetail.diff.trim()}
+                                disabled={reviewBusy || isRunActive || !diffLoaded || diffPending || !runDetail.diff.trim()}
                                 title="Run reviewer simulator"
                               >
                                 {reviewBusy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
@@ -1681,7 +1679,7 @@ export const RunDetailPage = ({
                             <DiffReviewPanel
                               state={reviewPanel}
                               onRun={() => void runDiffReview()}
-                              disabled={isRunActive || !runDetail.diff.trim()}
+                              disabled={isRunActive || !diffLoaded || diffPending || !runDetail.diff.trim()}
                               defaultExpanded
                               compact
                               hideRunButton
@@ -1689,8 +1687,11 @@ export const RunDetailPage = ({
                           </div>
                         ) : null}
                         <GitDiffPreview
+                          key={runDetail.run.id}
                           ref={gitDiffPanelRef}
                           diffText={runDetail.diff}
+                          pendingFiles={runDetail.diffSummary?.files}
+                          loading={!diffLoaded || diffPending}
                           className="max-h-none overflow-visible"
                           emptyMessage={
                             "No diff generated yet. This can happen if the run completed without repository changes or git has not refreshed yet."
@@ -1701,7 +1702,6 @@ export const RunDetailPage = ({
                           onOpenFile={openRunFileReference}
                         />
                       </div>
-                    )}
                   </div>
                 </div>
               ) : null}

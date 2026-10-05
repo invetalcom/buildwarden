@@ -6780,6 +6780,7 @@ export class AppController
       requiredBeforePublish: parseRevisionVerificationPolicy(settings[APP_SETTING_KEYS.revisionVerificationPolicy])[run.projectId] === true,
       status: commands.length ? record?.status ?? "not-run" : "unconfigured", reason: record?.error ?? null,
     };
+    if (!commands.length) return state;
     if (this.pendingManualVerifications.has(runId) || (record?.status === "running" && this.runWorkers.has(runId))) {
       state.status = "running"; return state;
     }
@@ -6950,8 +6951,10 @@ export class AppController
 
   async getRunWorktreeDiff(runId: string): Promise<RunWorktreeDiffResult> {
     const run = this.db.getRun(runId);
+    const commands = parseProjectRunDefaultsSetting(this.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults])[run.projectId]?.verificationCommands ?? [];
+    // Only bind the displayed patch to a verification revision when verification is configured.
+    if (!commands.length || ["queued", "preparing", "running"].includes(run.status)) return this.readRunWorktreeDiff(runId);
     const path = this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId));
-    if (["queued", "preparing", "running"].includes(run.status)) return this.readRunWorktreeDiff(runId);
     const before = await captureWorkspaceRevision(path, run.workspaceVcs).catch(() => null);
     const result = await this.readRunWorktreeDiff(runId);
     if (!before || result.worktreeUnavailable) return { ...result, diffRevision: null };

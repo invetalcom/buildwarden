@@ -790,10 +790,11 @@ export const App = () => {
       const previous = runDetailsByIdRef.current[runId];
       replaceRunDetailForRun(runId, {
         ...fast,
-        diff: "",
+        diff: previous?.diff ?? "",
+        diffRevision: previous?.diff ? null : undefined,
         diffLoaded: false,
         diffPending: false,
-        diffSummary: summaryLoadIsCurrent ? undefined : previous?.diffSummary,
+        diffSummary: previous?.diffSummary,
         diffSummaryPending: summaryLoadIsCurrent ? true : (previous?.diffSummaryPending ?? false),
         worktreeUnavailable: summaryLoadIsCurrent ? false : (previous?.worktreeUnavailable ?? false),
       });
@@ -906,7 +907,8 @@ export const App = () => {
         })
         .catch(() => {
           if ((diffLoadGenerationRef.current[eventRunId] ?? 0) !== generation) return;
-          mergeRunDetailForRun(eventRunId, (previous) => ({ ...previous, diffLoaded: true, diffPending: false }));
+          // A failed refresh must not present a retained patch as current.
+          mergeRunDetailForRun(eventRunId, (previous) => ({ ...previous, diff: "", diffRevision: null, diffLoaded: true, diffPending: false }));
         })
         .finally(() => {
           delete diffLoadPromisesRef.current[eventRunId];
@@ -981,12 +983,13 @@ export const App = () => {
         ...fast,
         steps: historyWasExpanded && previous ? mergeOrderedRecords(fast.steps, previous.steps) : fast.steps,
         historyPage: historyWasExpanded && previous ? previous.historyPage : fast.historyPage,
-        diff: options?.refreshDiff ? "" : (previous?.diff ?? ""),
-        diffRevision: options?.refreshDiff ? undefined : previous?.diffRevision,
+        // Retain the visible patch while its replacement loads, including expansion state.
+        diff: previous?.diff ?? "",
+        diffRevision: options?.refreshDiff ? null : previous?.diffRevision,
         diffLoaded: options?.refreshDiff ? false : (previous?.diffLoaded ?? false),
         worktreeUnavailable: previous?.worktreeUnavailable ?? false,
         diffPending: options?.refreshDiff ? Boolean(diffLoadPromisesRef.current[eventRunId]) : false,
-        diffSummary: options?.refreshDiff && summaryRefreshIsCurrent ? undefined : previous?.diffSummary,
+        diffSummary: previous?.diffSummary,
         diffSummaryPending: options?.refreshDiff && summaryRefreshIsCurrent
           ? true
           : (previous?.diffSummaryPending ?? false),

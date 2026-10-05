@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import { APP_SETTING_KEYS, verificationMatches, type RunVerificationRecord, type RunRecord } from "@buildwarden/shared";
 import { captureWorkspaceRevision } from "./workspace-revision";
+import * as workspaceRevision from "./workspace-revision";
 import { verifyWorkspaceRevision } from "./revision-verification";
 import { AppController } from "./app-controller";
 import { HostEventBus } from "./host-events";
@@ -86,6 +87,15 @@ const startFixture = async (kind: typeof startKinds[number]) => {
 };
 
 describe("revision verification", () => {
+  it("avoids workspace fingerprinting for diff display and polling when verification is unconfigured", async () => {
+    const { controller, run } = await controllerFixture();
+    const capture = vi.spyOn(workspaceRevision, "captureWorkspaceRevision");
+    vi.spyOn(diffWorker, "runWorktreeDiffInWorker").mockResolvedValue({ ok: true, diff: "patch" });
+    expect(await controller.getRunWorktreeDiff(run.id)).toEqual({ diff: "patch", worktreeUnavailable: false });
+    expect(await controller.getRunVerification(run.id)).toMatchObject({ status: "unconfigured", currentRevision: null });
+    expect(capture).not.toHaveBeenCalled();
+  });
+
   it.each(startKinds)("holds the %s start lock through credential reads and worker registration", async (kind) => {
     const { controller, db, run, secrets, internals, startWorker, check, start } = await startFixture(kind);
     const credentials = deferred<string | null>();
