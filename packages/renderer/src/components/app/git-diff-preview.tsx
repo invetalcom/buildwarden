@@ -46,6 +46,23 @@ const formatDiffPath = (file: Pick<FileDiffMetadata, "name">) => file.name || "U
 
 const diffFileKey = (path: string, occurrence = 0) => JSON.stringify([path, occurrence]);
 
+/**
+ * Orders parsed files like the summary rows shown while the patch loads (the patch lists unstaged, staged, then
+ * untracked files; the summary is sorted), so rows do not jump under the pointer when the patch replaces them.
+ * Files the summary does not list keep their patch order after the listed ones.
+ */
+const orderFilesBySummary = (files: FileDiffMetadata[], summary: readonly RunWorktreeDiffFileStat[]): FileDiffMetadata[] => {
+  if (summary.length === 0) return files;
+  const rankByPath = new Map<string, number>();
+  summary.forEach((file, index) => {
+    if (!rankByPath.has(file.path)) rankByPath.set(file.path, index);
+  });
+  return files
+    .map((file, index) => ({ file, index, rank: rankByPath.get(formatDiffPath(file)) ?? summary.length }))
+    .sort((left, right) => left.rank - right.rank || left.index - right.index)
+    .map(({ file }) => file);
+};
+
 const countDiffChanges = (hunks: Hunk[], changeType: "insert" | "delete"): number =>
   hunks.reduce((count, hunk) => count + (changeType === "insert" ? hunk.additionLines : hunk.deletionLines), 0);
 
@@ -373,7 +390,9 @@ type DiffAnnotationMetadata = {
 };
 
 type DiffFileSectionProps = {
-  file: FileDiffMetadata;
+  /** Null while the full patch is still loading; the row then renders from `pendingFile`. */
+  file: FileDiffMetadata | null;
+  pendingFile?: RunWorktreeDiffFileStat | null;
   fileKey: string;
   filePathLabel: string;
   isLastFile: boolean;
@@ -437,16 +456,25 @@ const listDiffLineInfos = (file: FileDiffMetadata): DiffLineInfo[] => {
   return infos;
 };
 
-const DiffFileSection = memo(function DiffFileSection({
+type DiffFileBodyProps = Omit<
+  DiffFileSectionProps,
+  | "file"
+  | "pendingFile"
+  | "isLastFile"
+  | "isCollapsed"
+  | "anyFilesExpanded"
+  | "alwaysExpandedFileSections"
+  | "hideFileHeader"
+  | "hideFileHeaderInlineToggle"
+  | "onToggleCollapsed"
+  | "onOpenFile"
+> & { file: FileDiffMetadata };
+
+/** Rendered patch of one expanded file, with inline review findings and draft comments. */
+const DiffFileBody = memo(function DiffFileBody({
   file,
   fileKey,
   filePathLabel,
-  isLastFile,
-  isCollapsed,
-  anyFilesExpanded,
-  alwaysExpandedFileSections,
-  hideFileHeader,
-  hideFileHeaderInlineToggle,
   viewType,
   wordDiff,
   themeType,
@@ -463,8 +491,6 @@ const DiffFileSection = memo(function DiffFileSection({
   highlightedCommentId,
   safeReviewNavIndex,
   draftedReviewFindingKeys,
-  onToggleCollapsed,
-  onOpenFile,
   onAddDiffComment,
   onSaveDraftComment,
   onSaveSingleComment,
@@ -472,9 +498,9 @@ const DiffFileSection = memo(function DiffFileSection({
   onEditDraftComment,
   onRemoveDraftComment,
   onDraftReviewFinding,
-}: DiffFileSectionProps) {
+}: DiffFileBodyProps) {
   const { lineAnnotations, fallbackFileNavEntries } = useMemo(() => {
-    if (isCollapsed || (fileNavEntries.length === 0 && manualCommentIndex.exact.size === 0 && !activeCommentTarget)) {
+    if (fileNavEntries.length === 0 && manualCommentIndex.exact.size === 0 && !activeCommentTarget) {
       return { lineAnnotations: [], fallbackFileNavEntries: [] };
     }
     const groups = new Map<string, { side: "deletions" | "additions"; lineNumber: number; nodes: ReactNode[] }>();
@@ -572,7 +598,6 @@ const DiffFileSection = memo(function DiffFileSection({
     }));
     return { lineAnnotations: annotations, fallbackFileNavEntries: fallbackEntries };
   }, [
-    isCollapsed,
     activeCommentTarget,
     draftedReviewFindingKeys,
     draftCommentSaveLabel,
@@ -626,10 +651,85 @@ const DiffFileSection = memo(function DiffFileSection({
     [onAddDiffComment, targetFromPierreLine, themeType, viewType, wordDiff],
   );
 
-  const lineCounts = useMemo(
-    () => ({ additions: countDiffChanges(file.hunks, "insert"), deletions: countDiffChanges(file.hunks, "delete") }),
-    [file.hunks],
+  return (
+    <>
+      <FileDiff<DiffAnnotationMetadata>
+        fileDiff={file}
+        options={diffOptions}
+        lineAnnotations={lineAnnotations}
+        className={cn("buildwarden-pierre-diff", activityEmphasis && "buildwarden-pierre-diff--activity")}
+        renderAnnotation={(annotation) => annotation.metadata.content}
+        renderGutterUtility={
+          onAddDiffComment
+            ? (getHoveredLine) => {
+                const hovered = getHoveredLine();
+                const target = hovered ? targetFromPierreLine(hovered.side, hovered.lineNumber) : null;
+                const count = target ? (manualCommentCountByTarget.get(diffLineCommentTargetKey(target)) ?? 0) : 0;
+                return (
+                  <button
+                    type="button"
+                    className="flex h-[1.1rem] min-w-[1.1rem] items-center justify-center rounded border border-[var(--ec-accent-ring)] bg-[var(--ec-panel)] px-1 text-[9px] font-semibold text-[var(--ec-accent)] shadow-sm transition-colors hover:bg-[var(--ec-accent-strong)] hover:text-[var(--ec-accent-foreground)]"
+                    aria-label="Add diff comment"
+                    title="Add diff comment"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      const current = getHoveredLine();
+                      const currentTarget = current ? targetFromPierreLine(current.side, current.lineNumber) : null;
+                      if (currentTarget) {
+                        onAddDiffComment(currentTarget);
+                      }
+                    }}
+                  >
+                    {count > 0 ? String(count) : "+"}
+                  </button>
+                );
+              }
+            : undefined
+        }
+      />
+      {fallbackFileNavEntries.length > 0 ? (
+        <div className="border-t border-[var(--ec-accent-ring)] bg-[var(--ec-panel)] px-2 py-2">
+          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--ec-muted)]">
+            Comments on this file <span className="font-mono font-normal text-[var(--ec-faint)]">{filePathLabel}</span>
+          </p>
+          <div className="space-y-2">
+            {fallbackFileNavEntries.map(({ finding, globalIndex }) => (
+              <ReviewFindingCard key={`${fileKey}-review-${String(globalIndex)}`} finding={finding} globalIndex={globalIndex} active={safeReviewNavIndex === globalIndex} />
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </>
   );
+});
+
+/**
+ * One changed file: header plus its body. `file` is null while only the summary row is known; the same element then
+ * receives the parsed patch in place, so expansion clicks are never lost to a remount when the patch arrives.
+ */
+const DiffFileSection = memo(function DiffFileSection(props: DiffFileSectionProps) {
+  const {
+    file,
+    pendingFile,
+    fileKey,
+    filePathLabel,
+    isLastFile,
+    isCollapsed,
+    anyFilesExpanded,
+    alwaysExpandedFileSections,
+    hideFileHeader,
+    hideFileHeaderInlineToggle,
+    onToggleCollapsed,
+    onOpenFile,
+  } = props;
+  const lineCounts = useMemo(
+    () => file
+      ? { additions: countDiffChanges(file.hunks, "insert"), deletions: countDiffChanges(file.hunks, "delete") }
+      : { additions: pendingFile?.additions ?? null, deletions: pendingFile?.deletions ?? null },
+    [file, pendingFile],
+  );
+  const pendingType = pendingFile ? summaryFileChangeType(pendingFile) : null;
   const openFilePath = normalizeDiffPathSegment(filePathLabel);
   const canOpenFilePath = Boolean(openFilePath && openFilePath !== "Unknown file");
   const renderCollapseToggleHeader = (): ReactNode => {
@@ -672,8 +772,8 @@ const DiffFileSection = memo(function DiffFileSection({
     return (
       <DiffFileHeaderRow
         path={filePathLabel}
-        previousPath={file.prevName}
-        type={file.type}
+        previousPath={file ? file.prevName : pendingType === "rename-changed" ? pendingFile?.previousPath : null}
+        type={file ? file.type : pendingType}
         additions={lineCounts.additions}
         deletions={lineCounts.deletions}
         expanded={!isCollapsed}
@@ -684,60 +784,22 @@ const DiffFileSection = memo(function DiffFileSection({
     );
   };
 
+  const renderBody = (): ReactNode => {
+    if (isCollapsed) return null;
+    if (!file) {
+      return (
+        <p role="status" className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--ec-muted)]">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />Loading file diff…
+        </p>
+      );
+    }
+    return <DiffFileBody {...props} file={file} />;
+  };
+
   return (
     <div className={cn("border-b border-[var(--ec-border)]", isLastFile && "border-b-0")}>
       {renderFileHeader()}
-      {!isCollapsed ? (
-        <>
-          <FileDiff<DiffAnnotationMetadata>
-            fileDiff={file}
-            options={diffOptions}
-            lineAnnotations={lineAnnotations}
-            className={cn("buildwarden-pierre-diff", activityEmphasis && "buildwarden-pierre-diff--activity")}
-            renderAnnotation={(annotation) => annotation.metadata.content}
-            renderGutterUtility={
-              onAddDiffComment
-                ? (getHoveredLine) => {
-                    const hovered = getHoveredLine();
-                    const target = hovered ? targetFromPierreLine(hovered.side, hovered.lineNumber) : null;
-                    const count = target ? (manualCommentCountByTarget.get(diffLineCommentTargetKey(target)) ?? 0) : 0;
-                    return (
-                      <button
-                        type="button"
-                        className="flex h-[1.1rem] min-w-[1.1rem] items-center justify-center rounded border border-[var(--ec-accent-ring)] bg-[var(--ec-panel)] px-1 text-[9px] font-semibold text-[var(--ec-accent)] shadow-sm transition-colors hover:bg-[var(--ec-accent-strong)] hover:text-[var(--ec-accent-foreground)]"
-                        aria-label="Add diff comment"
-                        title="Add diff comment"
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          const current = getHoveredLine();
-                          const currentTarget = current ? targetFromPierreLine(current.side, current.lineNumber) : null;
-                          if (currentTarget) {
-                            onAddDiffComment(currentTarget);
-                          }
-                        }}
-                      >
-                        {count > 0 ? String(count) : "+"}
-                      </button>
-                    );
-                  }
-                : undefined
-            }
-          />
-          {fallbackFileNavEntries.length > 0 ? (
-            <div className="border-t border-[var(--ec-accent-ring)] bg-[var(--ec-panel)] px-2 py-2">
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--ec-muted)]">
-                Comments on this file <span className="font-mono font-normal text-[var(--ec-faint)]">{filePathLabel}</span>
-              </p>
-              <div className="space-y-2">
-                {fallbackFileNavEntries.map(({ finding, globalIndex }) => (
-                  <ReviewFindingCard key={`${fileKey}-review-${String(globalIndex)}`} finding={finding} globalIndex={globalIndex} active={safeReviewNavIndex === globalIndex} />
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </>
-      ) : null}
+      {renderBody()}
     </div>
   );
 });
@@ -898,16 +960,14 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
   const files = useMemo(() => {
     const active = activeFilePath?.trim();
     const query = filePathQuery.trim();
-    if (!active && !query) {
-      return whitespaceFilteredFiles;
-    }
-    return whitespaceFilteredFiles.filter((file) => {
+    const filtered = !active && !query ? whitespaceFilteredFiles : whitespaceFilteredFiles.filter((file) => {
       if (active) {
         return diffFileMatchesPath(file, active);
       }
       return diffFileMatchesQuery(file, query);
     });
-  }, [activeFilePath, filePathQuery, whitespaceFilteredFiles]);
+    return orderFilesBySummary(filtered, pendingFiles);
+  }, [activeFilePath, filePathQuery, pendingFiles, whitespaceFilteredFiles]);
 
   const pendingFileEntries = useMemo(() => {
     const occurrences = new Map<string, number>();
@@ -1150,34 +1210,11 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
 
   const scrollAreaHeightClass = diffScrollHeightClass(compact, fillContainer, "max-h-72");
 
-  if (!trimmedDiff && loading) {
-    return (
-      <div className={cn("overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)]", className)}>
-        {pendingFileEntries.map(({ file, key }) => {
-          const expanded = alwaysExpandedFileSections || !(collapsedFiles[key] ?? defaultCollapsedFileSections);
-          return <div key={key} className="border-b border-[var(--ec-border)] last:border-b-0">
-            <DiffFileHeaderRow
-              path={file.path}
-              previousPath={summaryFileChangeType(file) === "rename-changed" ? file.previousPath : null}
-              type={summaryFileChangeType(file)}
-              additions={file.additions}
-              deletions={file.deletions}
-              expanded={expanded}
-              onToggle={() => toggleFileCollapsed(key)}
-            />
-            {expanded ? <p role="status" className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--ec-muted)]">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />Loading file diff…
-            </p> : null}
-          </div>;
-        })}
-        {pendingFiles.length === 0 ? <p role="status" className="flex items-center gap-2 p-3 text-xs text-[var(--ec-muted)]">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />Loading changed files…
-        </p> : null}
-      </div>
-    );
-  }
+  // Summary rows shown before the patch arrives share the parsed rows' element tree and keys, so a row keeps its DOM
+  // node (and any click in flight) when its patch lands.
+  const showPendingRows = !trimmedDiff && loading;
 
-  if (!trimmedDiff) {
+  if (!trimmedDiff && !showPendingRows) {
     return (
       <div
         className={cn(
@@ -1205,7 +1242,7 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
     );
   }
 
-  if (files.length === 0) {
+  if (files.length === 0 && !showPendingRows) {
     return (
       <pre
         className={cn(
@@ -1220,17 +1257,20 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
   }
 
   const viewerClass = activityEmphasis ? "diff-viewer diff-viewer--activity" : "diff-viewer";
-  const renderFileSection = (file: FileDiffMetadata, index: number) => {
-    const fileKey = getFileKey(file);
+  const rows: { key: string; path: string; file: FileDiffMetadata | null; pendingFile: RunWorktreeDiffFileStat | null }[] = showPendingRows
+    ? pendingFileEntries.map(({ file, key }) => ({ key, path: file.path, file: null, pendingFile: file }))
+    : files.map((file) => ({ key: getFileKey(file), path: formatDiffPath(file), file, pendingFile: null }));
+  const renderFileSection = (row: (typeof rows)[number], index: number) => {
+    const fileKey = row.key;
     const isCollapsed = alwaysExpandedFileSections ? false : (collapsedFiles[fileKey] ?? defaultCollapsedFileSections);
-    const filePathLabel = formatDiffPath(file);
     return (
       <DiffFileSection
         key={fileKey}
-        file={file}
+        file={row.file}
+        pendingFile={row.pendingFile}
         fileKey={fileKey}
-        filePathLabel={filePathLabel}
-        isLastFile={index === files.length - 1}
+        filePathLabel={row.path}
+        isLastFile={index === rows.length - 1}
         isCollapsed={isCollapsed}
         anyFilesExpanded={anyFilesExpanded}
         alwaysExpandedFileSections={alwaysExpandedFileSections}
@@ -1326,11 +1366,11 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
             </div>
           </div>
         ) : null}
-        {virtualizeFileSections ? (
+        {virtualizeFileSections && !showPendingRows ? (
           <div className="relative" style={{ height: `${String(fileVirtualizer.getTotalSize())}px` }}>
             {virtualFileItems.map((virtualFile) => {
-              const file = files[virtualFile.index];
-              if (!file) {
+              const row = rows[virtualFile.index];
+              if (!row) {
                 return null;
               }
               const virtualStyle: CSSProperties = {
@@ -1351,14 +1391,19 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
                   data-index={virtualFile.index}
                   style={virtualStyle}
                 >
-                  {renderFileSection(file, virtualFile.index)}
+                  {renderFileSection(row, virtualFile.index)}
                 </div>
               );
             })}
           </div>
         ) : (
-          files.map((file, index) => renderFileSection(file, index))
+          rows.map((row, index) => renderFileSection(row, index))
         )}
+        {showPendingRows && rows.length === 0 ? (
+          <p role="status" className="flex items-center gap-2 p-3 text-xs text-[var(--ec-muted)]">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />Loading changed files…
+          </p>
+        ) : null}
       </div>
     </div>
   );
