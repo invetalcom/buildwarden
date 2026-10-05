@@ -4629,6 +4629,7 @@ export class BuildWardenDatabase {
       steps: this.getRunSteps(runId),
       notes: this.listRunNotes(runId),
       diff,
+      diffLoadError: null,
       orchestration: this.getOrchestrationDetailByCoordinatorRunId(runId),
     };
   }

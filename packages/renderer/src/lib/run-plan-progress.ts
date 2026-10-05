@@ -5,6 +5,7 @@ import {
   type RunMode,
   type RunPlanProgressPayload,
   type RunPlanProgressSource,
+  type RunStatus,
 } from "@buildwarden/shared";
 
 export type RunPlanProgressStepLike = {
@@ -89,6 +90,7 @@ const readFallbackProgress = (
 export const deriveLatestRunPlanProgress = (
   steps: readonly RunPlanProgressStepLike[],
   fallbackMode: RunMode,
+  runStatus?: RunStatus,
 ): DerivedRunPlanProgress | null => {
   for (let index = steps.length - 1; index >= 0; index -= 1) {
     const step = steps[index];
@@ -99,6 +101,19 @@ export const deriveLatestRunPlanProgress = (
     if (step.eventType === "plan-progress") {
       const progress = readStructuredProgress(step, metadata);
       if (progress) {
+        // Providers may finish successfully without sending a final checklist update.
+        // Reconcile only code runs; planning can report proposed implementation work.
+        if (
+          fallbackMode === "code" &&
+          runStatus === "completed" &&
+          progress.steps.at(-1)?.status === "inProgress" &&
+          progress.steps.slice(0, -1).every((planStep) => planStep.status === "completed")
+        ) {
+          return {
+            ...progress,
+            steps: progress.steps.map((planStep) => ({ ...planStep, status: "completed" })),
+          };
+        }
         return progress;
       }
       continue;

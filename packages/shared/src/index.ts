@@ -1905,8 +1905,10 @@ export interface RunDetail {
   branchPromotedToProject?: boolean;
   /** True when the run's worktree no longer exists; diff will be empty and the UI should hide the diff panel. */
   worktreeUnavailable?: boolean;
-  /** True after the complete unified patch has been fetched at least once. */
+  /** True after the latest patch request finishes, including failures (see diffLoadError). */
   diffLoaded?: boolean;
+  /** Transient client loading error; retained patch content is stale until a retry succeeds. Not persisted. */
+  diffLoadError?: string | null;
   /** Lightweight changed-file statistics, available without loading the complete unified patch. */
   diffSummary?: RunWorktreeDiffSummary;
   /** True while lightweight changed-file statistics are loading. */

@@ -62,6 +62,7 @@ import {
   uiThemeToLegacyDarkMode,
 } from "@buildwarden/shared";
 import { applyDesignSchemeToDocument } from "./lib/design-scheme";
+import { loadRunDiff } from "./lib/run-diff-loading";
 import {
   Globe,
   GitBranch,
@@ -790,10 +791,11 @@ export const App = () => {
       const previous = runDetailsByIdRef.current[runId];
       replaceRunDetailForRun(runId, {
         ...fast,
-        diff: "",
+        diff: previous?.diff ?? "",
+        diffRevision: previous?.diff ? null : undefined,
         diffLoaded: false,
         diffPending: false,
-        diffSummary: summaryLoadIsCurrent ? undefined : previous?.diffSummary,
+        diffSummary: previous?.diffSummary,
         diffSummaryPending: summaryLoadIsCurrent ? true : (previous?.diffSummaryPending ?? false),
         worktreeUnavailable: summaryLoadIsCurrent ? false : (previous?.worktreeUnavailable ?? false),
       });
@@ -812,7 +814,7 @@ export const App = () => {
       } catch {
         if (diffSummaryLoadGenerationRef.current[runId] !== summaryGeneration) return;
         if (runDetailLoadTokenRef.current[runId] !== loadToken) return;
-        mergeRunDetailForRun(runId, (previous) => ({ ...previous, diffSummaryPending: false }));
+        mergeRunDetailForRun(runId, (previous) => ({ ...previous, diffSummary: undefined, diffSummaryPending: false }));
       }
     },
     [buildwarden, clearDiffRefreshTimer, mergeRunDetailForRun, replaceRunDetailForRun],
@@ -865,7 +867,7 @@ export const App = () => {
         result = await buildwarden.getRunWorktreeDiffSummary(eventRunId);
       } catch {
         if (diffSummaryLoadGenerationRef.current[eventRunId] !== generation) return;
-        mergeRunDetailForRun(eventRunId, (previous) => ({ ...previous, diffSummaryPending: false }));
+        mergeRunDetailForRun(eventRunId, (previous) => ({ ...previous, diffSummary: undefined, diffSummaryPending: false }));
         return;
       }
       if (diffSummaryLoadGenerationRef.current[eventRunId] !== generation) return;
@@ -890,24 +892,10 @@ export const App = () => {
       const existing = diffLoadPromisesRef.current[eventRunId];
       if (existing) return existing;
       const generation = diffLoadGenerationRef.current[eventRunId] ?? 0;
-      mergeRunDetailForRun(eventRunId, (previous) => ({ ...previous, diffPending: true }));
-      const request = buildwarden
-        .getRunWorktreeDiff(eventRunId)
-        .then((result) => {
-          if ((diffLoadGenerationRef.current[eventRunId] ?? 0) !== generation) return;
-          mergeRunDetailForRun(eventRunId, (previous) => ({
-            ...previous,
-            diff: result.diff,
-            diffRevision: result.diffRevision ?? null,
-            diffLoaded: true,
-            diffPending: false,
-            worktreeUnavailable: result.worktreeUnavailable,
-          }));
-        })
-        .catch(() => {
-          if ((diffLoadGenerationRef.current[eventRunId] ?? 0) !== generation) return;
-          mergeRunDetailForRun(eventRunId, (previous) => ({ ...previous, diffLoaded: true, diffPending: false }));
-        })
+      const request = loadRunDiff(buildwarden, eventRunId, (patch) => {
+        if ((diffLoadGenerationRef.current[eventRunId] ?? 0) !== generation) return;
+        mergeRunDetailForRun(eventRunId, (previous) => ({ ...previous, ...patch }));
+      })
         .finally(() => {
           delete diffLoadPromisesRef.current[eventRunId];
           if ((diffLoadGenerationRef.current[eventRunId] ?? 0) !== generation) {
@@ -981,12 +969,14 @@ export const App = () => {
         ...fast,
         steps: historyWasExpanded && previous ? mergeOrderedRecords(fast.steps, previous.steps) : fast.steps,
         historyPage: historyWasExpanded && previous ? previous.historyPage : fast.historyPage,
-        diff: options?.refreshDiff ? "" : (previous?.diff ?? ""),
-        diffRevision: options?.refreshDiff ? undefined : previous?.diffRevision,
+        // Retain the visible patch while its replacement loads, including expansion state.
+        diff: previous?.diff ?? "",
+        diffRevision: options?.refreshDiff ? null : previous?.diffRevision,
         diffLoaded: options?.refreshDiff ? false : (previous?.diffLoaded ?? false),
+        diffLoadError: previous?.diffLoadError,
         worktreeUnavailable: previous?.worktreeUnavailable ?? false,
-        diffPending: options?.refreshDiff ? Boolean(diffLoadPromisesRef.current[eventRunId]) : false,
-        diffSummary: options?.refreshDiff && summaryRefreshIsCurrent ? undefined : previous?.diffSummary,
+        diffPending: options?.refreshDiff ? Boolean(diffLoadPromisesRef.current[eventRunId]) : (previous?.diffPending ?? false),
+        diffSummary: previous?.diffSummary,
         diffSummaryPending: options?.refreshDiff && summaryRefreshIsCurrent
           ? true
           : (previous?.diffSummaryPending ?? false),
