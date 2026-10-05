@@ -18,10 +18,14 @@ export const verifyWorkspaceRevision = async (input: {
     if (input.signal?.aborted) { record.status = "cancelled"; }
     else {
       record.results = await runProjectVerificationCommands(input.cwd, input.commands, undefined, input.signal);
-      const after = await captureWorkspaceRevision(input.cwd, input.vcs);
-      record.status = input.signal?.aborted ? "cancelled"
-        : before.fingerprint !== after.fingerprint ? "stale"
-        : record.results.length === input.commands.length && record.results.every((result) => result.ok) ? "passed" : "failed";
+      // Failed/cancelled commands cannot produce passing evidence. Finish promptly instead
+      // of starting another filesystem scan after a timeout or cancellation.
+      if (input.signal?.aborted) record.status = "cancelled";
+      else if (record.results.length !== input.commands.length || record.results.some((result) => !result.ok)) record.status = "failed";
+      else {
+        const after = await captureWorkspaceRevision(input.cwd, input.vcs);
+        record.status = input.signal?.aborted ? "cancelled" : before.fingerprint !== after.fingerprint ? "stale" : "passed";
+      }
       if (record.status === "stale") record.error = "Workspace contents changed during verification. Run verification again.";
     }
   } catch (error) {

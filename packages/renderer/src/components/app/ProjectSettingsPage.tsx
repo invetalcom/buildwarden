@@ -775,7 +775,7 @@ export const ProjectSettingsPage = ({
                     disabled={busy}
                     aria-label="Verification commands"
                   />
-                  <p className="text-[11px] text-[var(--ec-faint)]">One command per line, up to 10. Commands run from the run workspace with a five-minute limit each.</p>
+                  <p className="text-[11px] text-[var(--ec-faint)]">One command per line, up to 10. Each must run once and exit, with a five-minute limit. Disable watch mode and interactive prompts. For Angular/Karma: <code>pnpm exec ng test --watch=false --browsers=ChromeHeadless</code>.</p>
                   <RevisionVerificationPolicy client={buildwarden} projectId={project.project.id} />
                 </div>
               </SettingsRow>
