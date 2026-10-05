@@ -23,6 +23,16 @@ It supports multiple AI providers and models, parallel agent runs, and everyday 
 - Keep going with follow-ups, undo a run back to the last prompt, jump back to a saved checkpoint, or pick up a provider session that got interrupted.
 - Review what changed through activity, diff, terminal, in-app browser, and notes panels.
 
+**Revision-aware verification**
+
+BuildWarden executes verification commands as local shell processes with `CI=true` and closed stdin. Configure commands to run once and exit: for Angular/Karma, use `pnpm exec ng test --watch=false --browsers=ChromeHeadless` (or `karma start --single-run` when invoking Karma directly). Headless mode alone does not disable watching. Each command has a three-minute deadline; timeout/cancellation requests terminate its process tree and allow at most two more seconds for shutdown before returning a non-passing result. A shell that exits while descendants hold its output open also fails after a bounded wait. If cleanup cannot be confirmed, the output warns that a detached or unresponsive child may need manual cleanup. Printed test summaries are not used to infer success; commands must exit successfully.
+
+Project verification commands now save their command results, timestamps, HEAD, and workspace content fingerprint. Run details (and the mobile diff screen) show current, failed, stale, interrupted, or unavailable evidence, with rerun/cancel controls. Editing files or changing commands invalidates old evidence; committing the same contents preserves it. Successful commands that modify source files need a second run. AI diff reviews identify their reviewed revision and are rejected if it changes while the review is generated.
+
+Enable **Require current revision to pass before commit or publish** in project settings to enforce the check for run commits, branch publication, and PR/MR creation. This is opt-in; verification commands must be configured. A run that failed solely during verification retains its Changes menu and can be committed or published when this requirement is off. Its failed status and verification evidence remain visible; provider failures and interrupted agent runs do not gain these actions. The gate rechecks contents at the action, independently of the displayed badge. Manual verification updates evidence without changing the agent's original run outcome.
+
+Git fingerprints include tracked, staged, unstaged, and non-ignored untracked files using a temporary index; the real staging area is preserved. Dependencies and ignored generated files are outside the revision. Dirty submodules and sparse/assume-unchanged checkouts fail closed; clean those up before verifying. Folder projects use the same directory exclusions as folder snapshots. Command output is stored locally with the existing bounded output limit. Checks refresh on focus, run status events, every 15 seconds, or manually; publish guards always recalculate.
+
 **Getting work shipped**
 
 - Commit a run's changes, publish or create branches, and open a GitHub pull request or GitLab merge request.

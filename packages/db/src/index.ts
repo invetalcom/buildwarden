@@ -1,7 +1,8 @@
+import type { RunVerificationRecord } from "@buildwarden/shared";
 import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { APP_SETTING_KEYS, ATTENTION_KIND_LABELS, parseAttentionInboxSettings, parseWorkspaceSetupSettings, REMOTE_ACCESS_SCOPES, type AttentionKind } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, ATTENTION_KIND_LABELS, parseAttentionInboxSettings, parseWorkspaceSetupSettings, parseRevisionVerificationPolicy, REMOTE_ACCESS_SCOPES, type AttentionKind } from "@buildwarden/shared";
 import type {
   AppSettingRecord,
   RunWorkspaceSetup,
@@ -2265,6 +2266,7 @@ export class BuildWardenDatabase {
       `,
       [projectId],
     );
+    this.run("delete from run_verifications where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from chats where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from run_workspace_setup where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from runs where project_id = ?", [projectId]);
@@ -2758,12 +2760,23 @@ export class BuildWardenDatabase {
     this.run("delete from attention_acknowledgements where run_id = ?", [runId]);
     this.run("delete from run_notes where run_id = ?", [runId]);
     this.run("delete from run_steps where run_id = ?", [runId]);
+    this.run("delete from run_verifications where run_id = ?", [runId]);
     this.run("delete from worktrees where run_id = ?", [runId]);
     this.run("delete from chat_steps where chat_id in (select id from chats where run_id = ?)", [runId]);
     this.run("delete from chats where run_id = ?", [runId]);
     this.run("delete from run_forge_links where run_id = ?", [runId]);
     this.run("delete from run_workspace_setup where run_id = ?", [runId]);
     this.run("delete from runs where id = ?", [runId]);
+  }
+
+  getRunVerification(runId: string): RunVerificationRecord | null {
+    const row = this.first<{ evidence: string }>("select evidence from run_verifications where run_id = ?", [runId]);
+    return row ? this.parseJsonValue<RunVerificationRecord>(row.evidence) : null;
+  }
+
+  saveRunVerification(record: RunVerificationRecord): void {
+    this.getRun(record.runId);
+    this.run("insert into run_verifications (run_id, evidence) values (?, ?) on conflict(run_id) do update set evidence = excluded.evidence", [record.runId, JSON.stringify(record)]);
   }
 
   getRunForgeRequestCache(runId: string): RunForgeRequestCacheRecord | null {
@@ -3592,6 +3605,14 @@ export class BuildWardenDatabase {
       `,
       [worktree.id],
     )!;
+  }
+
+  setProjectRevisionVerificationPolicy(projectId: string, enabled: boolean): void {
+    this.transaction(() => {
+      this.getProject(projectId);
+      const policies = parseRevisionVerificationPolicy(this.getSettings()[APP_SETTING_KEYS.revisionVerificationPolicy]);
+      this.setSetting(APP_SETTING_KEYS.revisionVerificationPolicy, JSON.stringify({ ...policies, [projectId]: enabled }));
+    });
   }
 
   setSetting(key: string, value: string): void {
@@ -4750,6 +4771,11 @@ export class BuildWardenDatabase {
         updated_at text not null,
         unique(project_id, provider, request_number),
         foreign key(project_id) references projects(id)
+      );
+
+      create table if not exists run_verifications (
+        run_id text primary key,
+        evidence text not null
       );
 
       create table if not exists run_forge_links (

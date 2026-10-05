@@ -48,7 +48,7 @@ export const webCapabilities = (scopes: readonly RemoteAccessScope[]): Readonly<
 export const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
   "getAttentionInbox",
   "getSnapshot", "refreshSnapshot", "getNetworkProxySettings", "getProjectBranches", "getProjectCurrentBranch",
-  "queryProjectActivity", "checkProjectFolderGitStatus", "getRunDetail", "getOrchestrationDetail",
+  "getRunVerification", "queryProjectActivity", "checkProjectFolderGitStatus", "getRunDetail", "getOrchestrationDetail",
   "getOrchestrationTaskDetail", "getOrchestrationAdoptionPreview", "getRunDeletionImpact", "getModelDeletionImpact",
   "getRunWorktreeDiff", "getRunWorktreeDiffSummary", "getRunWorkspaceFile", "getProjectLoopUiReviewImage",
   "getProjectLoopDetail", "getProjectLoopAvailability", "getProjectTask", "getProjectAutomation", "getRunChat",
@@ -85,7 +85,8 @@ export const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
   "checkoutProjectBranch", "fetchProjectBranches", "createProjectBranch", "renameProjectBranch", "deleteProjectBranch",
   "pullProjectBranch", "pushProjectBranch", "convertProjectToGit", "updateProjectBaseBranch", "addProject",
   "reorderProjects", "addProviderAccount", "addModel", "deleteProject", "deleteProviderAccount", "deleteModel",
-  "setAppSetting", "saveNetworkProxySettings", "saveProjectForgeAuthToken", "deleteProjectForgeAuthToken",
+  "setAppSetting", "setProjectRevisionVerificationPolicy", "saveNetworkProxySettings", "saveProjectForgeAuthToken", "deleteProjectForgeAuthToken",
+  "verifyRunRevision", "cancelRunVerification",
   "saveProjectForgePrMonitorSettings", "runTerminalStart", "runTerminalWrite", "runTerminalResize", "runTerminalKill",
 ]);
 
@@ -111,7 +112,7 @@ export const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAc
   ].map((method) => [method as RemoteApiMethod, ["git:write"] as const] as const),
   ...[
     "addProject", "reorderProjects", "addProviderAccount", "addModel", "deleteProject", "deleteProviderAccount",
-    "deleteModel", "setAppSetting", "saveNetworkProxySettings", "saveProjectForgeAuthToken",
+    "deleteModel", "setAppSetting", "setProjectRevisionVerificationPolicy", "saveNetworkProxySettings", "saveProjectForgeAuthToken",
     "deleteProjectForgeAuthToken", "saveProjectForgePrMonitorSettings", "createProjectTask", "updateProjectTask",
     "deleteProjectTask", "generateProjectTaskRunPrompt", "createProjectAutomation", "updateProjectAutomation",
     "deleteProjectAutomation", "runProjectAutomationNow", "generateProjectInsight", "runProjectLab",
@@ -120,6 +121,8 @@ export const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAc
   ].map((method) => [method as RemoteApiMethod, ["admin"] as const] as const),
   ...["runTerminalStart", "runTerminalWrite", "runTerminalResize", "runTerminalKill"]
     .map((method) => [method as RemoteApiMethod, ["terminal:operate"] as const] as const),
+  ["verifyRunRevision", ["run:operate"]],
+  ["cancelRunVerification", ["run:operate"]],
   ["decideOrchestrationAdoption", ["run:operate", "git:write"]],
   ["refreshOrchestrationTeam", ["run:operate", "admin"]],
 ]);

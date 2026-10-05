@@ -464,6 +464,9 @@ const bootstrap = async (): Promise<void> => {
     Array.isArray(value) && value.every((item) => typeof item === "string");
   remoteOperations.register("getProjectBranches", (projectId) => controller.getProjectBranches(projectId), validateSingleRemoteStringArg);
   remoteOperations.register("getProjectCurrentBranch", (projectId) => controller.getProjectCurrentBranch(projectId), validateSingleRemoteStringArg);
+  remoteOperations.register("getRunVerification", (runId) => controller.getRunVerification(runId), validateSingleRemoteStringArg);
+  remoteOperations.register("verifyRunRevision", (runId) => controller.verifyRunRevision(runId), validateSingleRemoteStringArg, "run:operate", true);
+  remoteOperations.register("cancelRunVerification", (runId) => controller.cancelRunVerification(runId), validateSingleRemoteStringArg, "run:operate", true);
   remoteOperations.register("getRunDetail", (runId) => controller.getRunDetail(runId), validateSingleRemoteStringArg);
   remoteOperations.register(
     "getEarlierRunHistory",
@@ -1127,6 +1130,8 @@ const bootstrap = async (): Promise<void> => {
     (args) => args.length === 1 && isAttentionAcknowledgementBatch(args[0]),
   );
   remoteOperations.register("acknowledgeAttentionItems", (itemIds) => controller.acknowledgeAttentionItems(itemIds), validateAttentionIdsArg, "run:operate", true);
+  remoteOperations.register("setProjectRevisionVerificationPolicy", (projectId, enabled) => controller.setProjectRevisionVerificationPolicy(projectId, enabled),
+    defineRemoteArgsValidator<"setProjectRevisionVerificationPolicy">((args) => args.length === 2 && typeof args[0] === "string" && typeof args[1] === "boolean"), "admin", true);
   remoteOperations.register("setAppSetting", async (key, value) => {
     await controller.setAppSetting(key, value);
     refreshAppMenu();
@@ -1535,6 +1540,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.respondToRunUserInput, (_, runId: string, requestId: string, answers) =>
     controller.respondToRunUserInput(runId, requestId, answers),
   );
+  ipcMain.handle(IPC_CHANNELS.setProjectRevisionVerificationPolicy, (_, projectId: string, enabled: boolean) => controller.setProjectRevisionVerificationPolicy(projectId, enabled));
   ipcMain.handle(IPC_CHANNELS.setAppSetting, async (_, key: string, value: string) => {
     await controller.setAppSetting(key, value);
     refreshAppMenu();
@@ -1555,6 +1561,9 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.deleteRun, (_, runId: string) => controller.deleteRun(runId));
   ipcMain.handle(IPC_CHANNELS.getModelDeletionImpact, (_, modelId: string) => controller.getModelDeletionImpact(modelId));
   ipcMain.handle(IPC_CHANNELS.deleteModel, (_, modelId: string) => controller.deleteModel(modelId));
+  ipcMain.handle(IPC_CHANNELS.getRunVerification, (_, runId: string) => controller.getRunVerification(runId));
+  ipcMain.handle(IPC_CHANNELS.verifyRunRevision, (_, runId: string) => controller.verifyRunRevision(runId));
+  ipcMain.handle(IPC_CHANNELS.cancelRunVerification, (_, runId: string) => controller.cancelRunVerification(runId));
   ipcMain.handle(IPC_CHANNELS.getRunDetail, (_, runId: string) => controller.getRunDetail(runId));
   ipcMain.handle(IPC_CHANNELS.getEarlierRunHistory, (_, runId: string, request: UserAnchoredHistoryPageRequest) =>
     controller.getEarlierRunHistory(runId, request));
@@ -1730,6 +1739,7 @@ const bootstrap = async (): Promise<void> => {
       await remoteAccessSync.catch((error) => {
         logWarn("Remote access synchronization did not finish cleanly during shutdown.", { error });
       });
+      await controller.stopRevisionVerifications();
       await disposeWorktreeDiffWorker();
       if (remoteAccessServer) {
         try {

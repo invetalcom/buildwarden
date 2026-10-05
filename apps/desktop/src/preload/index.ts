@@ -190,6 +190,9 @@ const api: DesktopApi = {
   deleteRun: (runId: string) => invoke(IPC_CHANNELS.deleteRun, runId),
   getModelDeletionImpact: (modelId: string) => invoke(IPC_CHANNELS.getModelDeletionImpact, modelId),
   deleteModel: (modelId: string) => invoke(IPC_CHANNELS.deleteModel, modelId),
+  getRunVerification: (runId: string) => invoke(IPC_CHANNELS.getRunVerification, runId),
+  verifyRunRevision: (runId: string) => invoke(IPC_CHANNELS.verifyRunRevision, runId),
+  cancelRunVerification: (runId: string) => invoke(IPC_CHANNELS.cancelRunVerification, runId),
   getRunDetail: (runId: string) => invoke(IPC_CHANNELS.getRunDetail, runId),
   getEarlierRunHistory: (runId, request) => invoke(IPC_CHANNELS.getEarlierRunHistory, runId, request),
   getOrchestrationDetail: (coordinatorRunId: string) =>
@@ -353,6 +356,7 @@ const api: DesktopApi = {
     invoke(IPC_CHANNELS.respondToRunUserInput, runId, requestId, answers),
   refreshSnapshot: () => invoke(IPC_CHANNELS.refreshSnapshot),
   setAppSetting: (key: string, value: string) => invoke(IPC_CHANNELS.setAppSetting, key, value),
+  setProjectRevisionVerificationPolicy: (projectId: string, enabled: boolean) => invoke(IPC_CHANNELS.setProjectRevisionVerificationPolicy, projectId, enabled),
   saveNetworkProxySettings: (input: NetworkProxySettingsInput) => invoke(IPC_CHANNELS.saveNetworkProxySettings, input),
   onRunEvent: (listener: (event: RunEvent) => void) => {
     const wrapped = (_event: Electron.IpcRendererEvent, payload: RunEvent) => listener(payload);

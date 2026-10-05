@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
+import { RevisionVerificationPolicy } from "./RevisionVerificationPolicy";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -758,7 +759,7 @@ export const ProjectSettingsPage = ({
 
               <SettingsRow
                 title="Verification gate"
-                description="Run these commands in order after each successful Code-mode turn. A failing command marks the run failed and blocks completed-run actions."
+                description="BuildWarden runs these commands as local shell processes in the run workspace after each successful Code-mode turn. A failing command marks the run failed. Enable the requirement below to block commits and publishing until verification passes. Leave empty to disable verification."
                 align="start"
               >
                 <div className={`${rowControlClass} space-y-2`}>
@@ -775,7 +776,8 @@ export const ProjectSettingsPage = ({
                     disabled={busy}
                     aria-label="Verification commands"
                   />
-                  <p className="text-[11px] text-[var(--ec-faint)]">One command per line, up to 10. Commands run from the run workspace with a five-minute limit each.</p>
+                  <p className="text-[11px] text-[var(--ec-faint)]">One command per line, up to 10. Each must run once and exit, with a three-minute limit. Disable watch mode and interactive prompts. For Angular/Karma: <code>pnpm exec ng test --watch=false --browsers=ChromeHeadless</code>.</p>
+                  <RevisionVerificationPolicy client={buildwarden} projectId={project.project.id} />
                 </div>
               </SettingsRow>
 

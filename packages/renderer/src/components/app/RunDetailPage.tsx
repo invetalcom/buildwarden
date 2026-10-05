@@ -74,6 +74,7 @@ import {
   browserElementReservedFileSlots,
   validateBrowserElementCaptureAddition,
 } from "../../lib/browser-element-attachments";
+import { RunVerificationPanel } from "./RunVerificationPanel";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -1283,6 +1284,7 @@ export const RunDetailPage = ({
           </button> : null}
         </div>
       ) : null}
+      <RunVerificationPanel key={runDetail.run.id} client={buildwarden} run={runDetail.run} reviewedRevision={reviewPanel.result?.reviewedRevision} displayedRevision={runDetail.diffRevision} />
       {!readOnly && recovery ? (
         <Card
           className={cn(

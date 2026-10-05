@@ -38,6 +38,19 @@ describe("project verification", () => {
     expect(result?.output).toContain("Timed out");
   });
 
+  it("stops a real watch-mode runner that reports failure but stays alive", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "buildwarden-verification-"));
+    tempDirs.push(cwd);
+    const results = await runProjectVerificationCommands(cwd, [
+      'node -e "console.log(\'TOTAL: 1 FAILED, 2 SUCCESS\'); setInterval(() => {}, 1000)"',
+      'node -e "console.log(\'should-not-run\')"',
+    ], 1_000);
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ ok: false, timedOut: true });
+    expect(results[0].output).toContain("TOTAL: 1 FAILED, 2 SUCCESS");
+    expect(results[0].durationMs).toBeLessThan(4_000);
+  });
+
   it.skipIf(process.platform === "win32")("force-stops a command that ignores SIGTERM", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "buildwarden-verification-"));
     tempDirs.push(cwd);

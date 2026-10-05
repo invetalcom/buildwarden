@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 
-import type { RunDetail, RunEvent, RunRecord, RunStepRecord } from "@buildwarden/shared";
+import type { RunDetail, RunEvent, RunRecord, RunStepRecord, RunWorktreeDiffResult } from "@buildwarden/shared";
 import type { BuildWardenClient } from "@buildwarden/renderer";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -59,6 +59,42 @@ const RunDetailHarness = ({ client }: { client: BuildWardenClient }) => {
 };
 
 describe("useRunDetail", () => {
+  it.each(["resolve", "reject"])("ignores an old run's diff %s after navigation without loading the new diff", async (outcome) => {
+    let reject!: (error: Error) => void;
+    const pending = deferred<RunWorktreeDiffResult>();
+    const response = Promise.race([pending.promise, new Promise<never>((_, fail) => { reject = fail; })]);
+    const client = {
+      getRunDetail: vi.fn(async (id: string) => ({ ...detail([]), run: { ...run, id } })),
+      getRunWorktreeDiff: vi.fn(() => response),
+      refreshRunForgeRequest: vi.fn(() => new Promise<void>(() => undefined)),
+      onRunEvent: vi.fn(() => vi.fn()),
+      onRunForgeRequestChanged: vi.fn(() => vi.fn()),
+    } as unknown as BuildWardenClient;
+    let loadDiff!: () => Promise<void>;
+    const Harness = ({ id }: { id: string }) => {
+      const state = useRunDetail(client, id);
+      loadDiff = state.loadDiff;
+      return <output>{JSON.stringify({ diff: state.diff, revision: state.diffRevision, loading: state.diffLoading, error: state.diffError, unavailable: state.diffUnavailable })}</output>;
+    };
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(<Harness id="run-1" />));
+    let request!: Promise<void>;
+    await act(async () => { request = loadDiff(); });
+    expect(container.textContent).toContain('"loading":true');
+    await act(async () => root?.render(<Harness id="run-2" />));
+    const emptyState = JSON.stringify({ diff: "", loading: false, error: null, unavailable: false });
+    expect(container.textContent).toBe(emptyState);
+    await act(async () => {
+      if (outcome === "resolve") pending.resolve({ diff: "old patch", diffRevision: { fingerprint: "git:old", head: "old" }, worktreeUnavailable: true });
+      else reject(new Error("old request failed"));
+      await request;
+    });
+    expect(container.textContent).toBe(emptyState);
+    expect(client.getRunWorktreeDiff).toHaveBeenCalledTimes(1);
+  });
+
   it("replays a durable step that arrives while an older detail request is in flight", async () => {
     const pendingDetail = deferred<RunDetail>();
     let publishRunEvent: ((event: RunEvent) => void) | undefined;

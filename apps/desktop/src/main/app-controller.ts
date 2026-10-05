@@ -13,6 +13,9 @@ import {
   normalizeProjectInsightRepoPath,
   shouldIgnoreProjectInsightPath,
 } from "./project-graph-utils";
+import { captureWorkspaceRevision } from "./workspace-revision";
+import { verifyWorkspaceRevision } from "./revision-verification";
+import { canReviewRunChanges, RUN_VERIFICATION_FAILURE_PREFIX, parseRevisionVerificationPolicy, verificationMatches, type RunVerificationState, type RunVerificationRecord } from "@buildwarden/shared";
 import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
 import { readRunWorkspaceFileForPreview } from "./run-workspace-file";
 import { normalizeJsonResponse } from "./json-response";
@@ -254,7 +257,7 @@ import type { AppControllerDesktopServices } from "./desktop-platform-services";
 import { HostEventBus } from "./host-events";
 import type { HostTerminal } from "./host-terminal-service";
 import { buildIntegratedSkillContext } from "./integrated-skill-context";
-import { runProjectVerificationCommands, type ProjectVerificationResult } from "./project-verification";
+import type { ProjectVerificationResult } from "./project-verification";
 import {
   timeBudgetExhaustion,
   tokenBudgetExhaustion,
@@ -1153,7 +1156,7 @@ const buildRunTerminalOutcome = (input: {
       title: "Verification gate failed",
       content: `The agent turn finished, but the verification gate failed at: ${input.failedVerificationResult.command}.\n${usage}`,
       status: "failed",
-      errorMessage: `Verification failed: ${input.failedVerificationResult.command}`,
+      errorMessage: `${RUN_VERIFICATION_FAILURE_PREFIX}${input.failedVerificationResult.command}`,
     };
   }
   if (input.waitingForSubagents) {
@@ -1236,6 +1239,9 @@ export class AppController
     "claude-code": new ClaudeCodeProviderAdapter(),
     "cursor-agent": new CursorAgentProviderAdapter(),
   };
+  private readonly revisionChecks = new Map<string, Promise<RunVerificationRecord>>();
+  private readonly manualVerifications = new Map<string, { abort: AbortController; completion: Promise<void> }>();
+  private readonly pendingManualVerifications = new Map<string, { abort: AbortController; completion: Promise<void> }>();
   private readonly runWorkers = new Map<string, ActiveWorker>();
   private readonly runShellApprovalStepIds = new Map<string, string>();
   private readonly runUserInputStepIds = new Map<string, string>();
@@ -1316,6 +1322,15 @@ export class AppController
       if (this.projectBranchMutations.get(projectId) === current) {
         this.projectBranchMutations.delete(projectId);
       }
+    });
+  }
+
+  private serializeRunStart<T>(runId: string, start: () => Promise<T>): Promise<T> {
+    if (this.manualVerifications.has(runId)) throw new Error("Wait for verification to finish or cancel it first.");
+    return this.serializeProjectBranchMutation(this.db.getRun(runId).projectId, async () => {
+      if (this.manualVerifications.has(runId)) throw new Error("Wait for verification to finish or cancel it first.");
+      if (this.runWorkers.has(runId)) throw new Error("This run is already active.");
+      return start();
     });
   }
 
@@ -3475,6 +3490,7 @@ export class AppController
   }
 
   async followUpRun(runId: string, prompt: string, options?: RunFollowUpOptions): Promise<RunRecord> {
+    if (this.manualVerifications.has(runId)) throw new Error("Wait for verification to finish or cancel it first.");
     const orchestration = this.db.getOrchestrationByCoordinatorRunId(runId);
     const hasUserTurn = Boolean(prompt.trim() || options?.attachments?.length);
     if (!orchestration || !hasUserTurn || !["waiting", "attention"].includes(orchestration.status)) {
@@ -3521,6 +3537,15 @@ export class AppController
   }
 
   private async followUpRunInternal(
+    runId: string,
+    prompt: string,
+    options?: RunFollowUpOptions,
+    extraLogMetadata?: Record<string, unknown>,
+  ): Promise<RunRecord> {
+    return this.serializeRunStart(runId, () => this.followUpRunUnlocked(runId, prompt, options, extraLogMetadata));
+  }
+
+  private async followUpRunUnlocked(
     runId: string,
     prompt: string,
     options?: RunFollowUpOptions,
@@ -3692,8 +3717,8 @@ export class AppController
     const run = this.db.getRun(runId);
     this.requireGitRun(run, "Committing");
 
-    if (run.status !== "completed") {
-      throw new Error("Only completed runs can be committed.");
+    if (!canReviewRunChanges(run)) {
+      throw new Error("The agent must finish its turn before its changes can be committed.");
     }
 
     if (run.workspaceType === "worktree") {
@@ -3704,6 +3729,7 @@ export class AppController
       throw new Error("There are no changes to commit for this run.");
     }
 
+    await this.requireVerifiedRevision(runId);
     const commitMessage = message.trim() || this.buildRunCommitMessage(run.prompt);
     const result = await this.gitService.commitAllChanges(run.worktreePath, commitMessage);
 
@@ -3730,8 +3756,8 @@ export class AppController
     const run = this.db.getRun(runId);
     this.requireGitRun(run, "Commit message suggestions");
 
-    if (run.status !== "completed") {
-      throw new Error("Only completed runs can use AI commit suggestions.");
+    if (!canReviewRunChanges(run)) {
+      throw new Error("The agent must finish its turn before requesting AI commit suggestions.");
     }
 
     if (run.workspaceType === "worktree") {
@@ -4626,8 +4652,8 @@ export class AppController
   async analyzeRunDiff(runId: string, options?: RunDiffReviewOptions): Promise<RunDiffReviewResult> {
     const run = this.db.getRun(runId);
 
-    if (run.status !== "completed") {
-      throw new Error("Only completed runs can use AI diff reviews.");
+    if (!canReviewRunChanges(run)) {
+      throw new Error("The agent must finish its turn before requesting an AI diff review.");
     }
 
     if (run.workspaceVcs === "git" && run.workspaceType === "worktree") {
@@ -4638,6 +4664,7 @@ export class AppController
       throw new Error("There are no changes to review for this run.");
     }
 
+    const reviewedRevision = await captureWorkspaceRevision(run.worktreePath, run.workspaceVcs);
     const diffOutcome = await this.getRunWorktreeDiff(run.id);
     if (diffOutcome.worktreeUnavailable) {
       throw new Error(diffOutcome.diffUnavailableReason || "Could not read the workspace diff.");
@@ -4664,7 +4691,13 @@ export class AppController
         usageProjectId: run.projectId,
       });
 
-      return this.parseRunDiffReviewResult(raw);
+      const currentRevision = await captureWorkspaceRevision(run.worktreePath, run.workspaceVcs);
+      if (currentRevision.fingerprint !== reviewedRevision.fingerprint || currentRevision.head !== reviewedRevision.head) throw new Error("Workspace changed during review. Review the current revision again.");
+      const verification = await this.getRunVerification(runId);
+      if (verification.currentRevision?.fingerprint !== reviewedRevision.fingerprint) throw new Error("Workspace changed while verifying the review result. Review again.");
+      const result = { ...this.parseRunDiffReviewResult(raw), reviewedRevision, verificationStatus: verification.status };
+      await this.appendRunEvent(runId, "status", "Diff review completed", result.headline, { reviewedRevision, verificationStatus: verification.status });
+      return result;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       throw new Error(
@@ -6322,6 +6355,7 @@ export class AppController
       await this.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
     }
 
+    await this.requireVerifiedRevision(runId);
     const prospectiveContext = await this.gitService.getPullRequestContext(run.worktreePath, trimmedTargetBranch);
     if (!prospectiveContext.diff.trim()) {
       throw new Error(`The source branch has no changes against "${trimmedTargetBranch}".`);
@@ -6342,6 +6376,7 @@ export class AppController
       throw new Error(`The source branch has no changes against "${trimmedTargetBranch}".`);
     }
 
+    await this.requireVerifiedRevision(runId);
     const result = await this.gitService.createPullRequest(
       run.worktreePath,
       trimmedSourceBranch,
@@ -6523,6 +6558,7 @@ export class AppController
       throw new Error("Commit or discard open changes before publishing the branch.");
     }
 
+    await this.requireVerifiedRevision(runId);
     if (trimmedBranchName !== run.branchName) {
       await this.gitService.createPublishBranchFromHead(run.worktreePath, trimmedBranchName);
       run = this.db.updateRunBranchName(run.id, trimmedBranchName);
@@ -6675,6 +6711,11 @@ export class AppController
     this.db.deleteSetting(SELECTED_RUN_KEY);
   }
 
+  async setProjectRevisionVerificationPolicy(projectId: string, enabled: boolean): Promise<void> {
+    if (typeof enabled !== "boolean") throw new Error("Verification policy must be a boolean.");
+    this.db.setProjectRevisionVerificationPolicy(projectId, enabled);
+  }
+
   async setAppSetting(key: string, value: string): Promise<void> {
     if (key === APP_SETTING_KEYS.worktreeRootOverride) {
       const trimmed = value.trim();
@@ -6727,6 +6768,90 @@ export class AppController
       this.db.deleteSetting(SELECTED_PROJECT_KEY);
     }
     this.db.deleteSetting(SELECTED_RUN_KEY);
+  }
+
+  async getRunVerification(runId: string): Promise<RunVerificationState> {
+    const run = this.db.getRun(runId);
+    const settings = this.db.getSettings();
+    const commands = parseProjectRunDefaultsSetting(settings[APP_SETTING_KEYS.projectRunDefaults])[run.projectId]?.verificationCommands ?? [];
+    const record = this.db.getRunVerification(runId);
+    const state: RunVerificationState = {
+      record, commands, currentRevision: null,
+      requiredBeforePublish: parseRevisionVerificationPolicy(settings[APP_SETTING_KEYS.revisionVerificationPolicy])[run.projectId] === true,
+      status: commands.length ? record?.status ?? "not-run" : "unconfigured", reason: record?.error ?? null,
+    };
+    if (this.pendingManualVerifications.has(runId) || (record?.status === "running" && this.runWorkers.has(runId))) {
+      state.status = "running"; return state;
+    }
+    if (record?.status === "running") { state.status = "cancelled"; state.reason = "Verification was interrupted. Run it again."; }
+    try {
+      state.currentRevision = await captureWorkspaceRevision(this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId)), run.workspaceVcs);
+      if (record && state.status !== "unconfigured" && state.status !== "cancelled" && !verificationMatches(record, state.currentRevision, commands)) {
+        state.status = "stale"; state.reason = "Workspace contents or verification commands changed since this check.";
+      }
+    } catch (error) { state.status = "unavailable"; state.reason = error instanceof Error ? error.message : String(error); }
+    return state;
+  }
+
+  async verifyRunRevision(runId: string): Promise<RunVerificationState> {
+    const run = this.db.getRun(runId);
+    if (this.pendingManualVerifications.has(runId)) throw new Error("Verification is already running.");
+    if (["queued", "preparing", "running"].includes(run.status)) throw new Error("Wait for the agent to finish before verifying.");
+    const abort = new AbortController();
+    const completion = this.serializeProjectBranchMutation(run.projectId, async () => {
+      if (abort.signal.aborted) throw new Error("Verification cancelled.");
+      this.manualVerifications.set(runId, { abort, completion });
+      try {
+        const current = this.db.getRun(runId);
+        if (["queued", "preparing", "running"].includes(current.status)) throw new Error("Wait for the agent to finish before verifying.");
+        if (this.db.listRunsForProject(run.projectId).some((other) => other.id !== runId && resolve(other.worktreePath) === resolve(current.worktreePath) && ["queued", "preparing", "running"].includes(other.status))) throw new Error("Another agent is using this workspace. Wait for it to finish.");
+        const commands = parseProjectRunDefaultsSetting(this.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults])[run.projectId]?.verificationCommands ?? [];
+        if (!commands.length) throw new Error("Configure verification commands in project settings first.");
+        const workspace = this.getEffectiveRunWorkspacePath(current, this.db.getProject(current.projectId));
+        if (current.workspaceVcs === "git" && await this.gitService.getCurrentBranch(workspace) !== current.branchName) throw new Error("Check out the run branch before verifying it.");
+        const record = await this.executeRevisionCheck(current, commands, abort.signal);
+        const title = `Revision verification: ${record.status}`;
+        await this.appendRunEvent(runId, "status", title, record.error ?? commands.join("\n"), { revisionVerification: true, fingerprint: record.revision?.fingerprint, verificationStatus: record.status });
+        this.emitEvent({ runId, type: "status", title, content: record.error ?? "Verification evidence saved.", createdAt: new Date().toISOString() });
+      } finally { this.manualVerifications.delete(runId); }
+    });
+    // Track queued requests separately so cancellation also works while a run start owns the lock.
+    this.pendingManualVerifications.set(runId, { abort, completion });
+    try { await completion; } finally { this.pendingManualVerifications.delete(runId); }
+    return this.getRunVerification(runId);
+  }
+
+  async cancelRunVerification(runId: string): Promise<void> {
+    this.db.getRun(runId);
+    const manual = this.pendingManualVerifications.get(runId);
+    manual?.abort.abort();
+    this.runWorkers.get(runId)?.verificationAbortController?.abort();
+    if (manual) await manual.completion.catch(() => undefined);
+    await this.revisionChecks.get(runId)?.catch(() => undefined);
+  }
+
+  async stopRevisionVerifications(): Promise<void> {
+    for (const entry of this.pendingManualVerifications.values()) entry.abort.abort();
+    for (const worker of this.runWorkers.values()) worker.verificationAbortController?.abort();
+    await Promise.allSettled([...this.pendingManualVerifications.values()].map((entry) => entry.completion));
+    await Promise.allSettled([...this.revisionChecks.values()]);
+  }
+
+  private async executeRevisionCheck(run: RunRecord, commands: string[], signal: AbortSignal): Promise<RunVerificationRecord> {
+    const pending = verifyWorkspaceRevision({ runId: run.id, cwd: this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId)), vcs: run.workspaceVcs, commands, signal, save: (record) => this.db.saveRunVerification(record) });
+    this.revisionChecks.set(run.id, pending);
+    try { return await pending; } finally { this.revisionChecks.delete(run.id); }
+  }
+
+  private async requireVerifiedRevision(runId: string): Promise<void> {
+    const run = this.db.getRun(runId);
+    const settings = this.db.getSettings();
+    if (!parseRevisionVerificationPolicy(settings[APP_SETTING_KEYS.revisionVerificationPolicy])[run.projectId]) return;
+    const commands = parseProjectRunDefaultsSetting(settings[APP_SETTING_KEYS.projectRunDefaults])[run.projectId]?.verificationCommands ?? [];
+    if (!commands.length) return;
+    if (run.workspaceVcs === "git" && await this.gitService.getCurrentBranch(this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId))) !== run.branchName) throw new Error("Check out the run branch before verifying and publishing it.");
+    const state = await this.getRunVerification(runId);
+    if (state.status !== "passed") throw new Error(`Current revision must pass verification before publishing (${state.status}). Run verification from the run detail screen.`);
   }
 
   async getRunDetail(runId: string): Promise<RunDetail> {
@@ -6824,6 +6949,17 @@ export class AppController
   }
 
   async getRunWorktreeDiff(runId: string): Promise<RunWorktreeDiffResult> {
+    const run = this.db.getRun(runId);
+    const path = this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId));
+    if (["queued", "preparing", "running"].includes(run.status)) return this.readRunWorktreeDiff(runId);
+    const before = await captureWorkspaceRevision(path, run.workspaceVcs).catch(() => null);
+    const result = await this.readRunWorktreeDiff(runId);
+    if (!before || result.worktreeUnavailable) return { ...result, diffRevision: null };
+    const after = await captureWorkspaceRevision(path, run.workspaceVcs).catch(() => null);
+    return { ...result, diffRevision: before.fingerprint === after?.fingerprint && before.head === after.head ? before : null };
+  }
+
+  private async readRunWorktreeDiff(runId: string): Promise<RunWorktreeDiffResult> {
     const run = this.db.getRun(runId);
     const project = this.db.getProject(run.projectId);
     if (run.workspaceVcs === "folder") {
@@ -8216,6 +8352,7 @@ export class AppController
   }
 
   private async stopRunOwnedProcesses(runId: string): Promise<void> {
+    await this.cancelRunVerification(runId);
     this.terminal.killForRunId(runId);
     const active = this.runWorkers.get(runId);
     if (active) {
@@ -8663,6 +8800,10 @@ export class AppController
   }
 
   async recoverInterruptedRun(runId: string): Promise<void> {
+    return this.serializeRunStart(runId, () => this.recoverInterruptedRunUnlocked(runId));
+  }
+
+  private async recoverInterruptedRunUnlocked(runId: string): Promise<void> {
     const run = this.db.getRun(runId);
     if (this.runWorkers.has(runId)) {
       throw new Error("This run is already active.");
@@ -8674,7 +8815,7 @@ export class AppController
       throw new Error("Interrupted-session recovery is only available for Codex CLI, Claude Code, and Cursor Agent runs.");
     }
 
-    if (await this.resumeInterruptedRunFromCheckpoint(run, "manual")) {
+    if (await this.resumeInterruptedRunFromCheckpointUnlocked(run, "manual")) {
       return;
     }
 
@@ -9461,6 +9602,7 @@ export class AppController
     const streamingStepIds = new Map<string, string>();
     const streamingStepKinds = new Map<string, "assistant" | "reasoning" | "tool-result" | "tool-progress">();
     const usageTracker = this.initialUsageReportTracker(run.id, "run", provider, this.db.getRunSteps(run.id));
+    if (this.manualVerifications.has(run.id)) throw new Error("Wait for verification to finish or cancel it first.");
     const resetNarrationStreams = () => {
       for (const [streamId, kind] of streamingStepKinds.entries()) {
         if (kind === "assistant" || kind === "reasoning") {
@@ -9696,12 +9838,11 @@ export class AppController
             metadata: { verificationGate: true, commandCount: configuredVerificationCommands.length },
             createdAt: new Date().toISOString(),
           });
-          verificationResults = await runProjectVerificationCommands(
-            run.worktreePath,
-            configuredVerificationCommands,
-            undefined,
-            verificationAbortController.signal,
-          );
+          const evidence = await this.executeRevisionCheck(run, configuredVerificationCommands, verificationAbortController.signal);
+          verificationResults = [...evidence.results];
+          if (evidence.status !== "passed" && !verificationResults.some((result) => !result.ok)) {
+            verificationResults.push({ command: "Revision verification", ok: false, exitCode: null, durationMs: 0, timedOut: false, output: evidence.error ?? evidence.status });
+          }
           if (active) active.verificationAbortController = undefined;
           wasCancelled = active?.cancelled === true;
           if (!wasCancelled) {
@@ -10227,6 +10368,10 @@ export class AppController
   }
 
   private async resumeInterruptedRunFromCheckpoint(run: RunRecord, origin: "startup" | "manual" = "startup"): Promise<boolean> {
+    return this.serializeRunStart(run.id, () => this.resumeInterruptedRunFromCheckpointUnlocked(this.db.getRun(run.id), origin));
+  }
+
+  private async resumeInterruptedRunFromCheckpointUnlocked(run: RunRecord, origin: "startup" | "manual" = "startup"): Promise<boolean> {
     const checkpoint = this.getRunCheckpoint(run.id);
     if (!checkpoint) {
       return false;
