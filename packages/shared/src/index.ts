@@ -2275,6 +2275,7 @@ export interface RunWorktreeDiffResult {
 
 export interface RunWorktreeDiffFileStat {
   path: string;
+  /** Source path of a rename; `/dev/null` for untracked (added) files. */
   previousPath?: string | null;
   /** Null for binary or otherwise non-text changes. */
   additions: number | null;

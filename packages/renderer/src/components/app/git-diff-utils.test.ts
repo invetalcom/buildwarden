@@ -5,6 +5,7 @@ import {
   diffFileMatchesQuery,
   parseGitDiffFiles,
   summarizeDiffStats,
+  summaryFileChangeType,
 } from "./git-diff-utils";
 
 const PATCH = `diff --git a/src/old.ts b/src/new.ts
@@ -61,6 +62,13 @@ describe("git diff utilities", () => {
         { path: "src/gone.ts", additions: 0, deletions: 1 },
       ],
     });
+  });
+
+  it("classifies summary rows without reading the null device as a rename source", () => {
+    expect(summaryFileChangeType({ path: "Cargo.toml", previousPath: "/dev/null" })).toBe("new");
+    expect(summaryFileChangeType({ path: "src/new.ts", previousPath: "src/old.ts" })).toBe("rename-changed");
+    expect(summaryFileChangeType({ path: "src/app.ts", previousPath: null })).toBeNull();
+    expect(summaryFileChangeType({ path: "src/app.ts" })).toBeNull();
   });
 
   it("returns an empty summary for non-diff content", () => {
