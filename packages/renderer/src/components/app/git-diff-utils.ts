@@ -1,4 +1,18 @@
-import { parsePatchFiles, type FileDiffMetadata } from "@pierre/diffs";
+import { parsePatchFiles, type ChangeTypes, type FileDiffMetadata } from "@pierre/diffs";
+import type { RunWorktreeDiffFileStat } from "@buildwarden/shared";
+
+/** Untracked files are summarized as `git diff --no-index /dev/null <path>`, which reports them as renamed from here. */
+const NULL_DEVICE_PATH = "/dev/null";
+
+/**
+ * Change kind for a summary row shown before the full patch arrives. Numstat cannot tell
+ * modifications from tracked additions or deletions, so those stay unknown (null).
+ */
+export const summaryFileChangeType = (file: Pick<RunWorktreeDiffFileStat, "path" | "previousPath">): ChangeTypes | null => {
+  if (file.previousPath === NULL_DEVICE_PATH) return "new";
+  if (file.previousPath && file.previousPath !== file.path) return "rename-changed";
+  return null;
+};
 
 export const normalizeDiffPathSegment = (value: string) =>
   value.replace(/\\/g, "/").replace(/^a\//, "").replace(/^b\//, "").trim();

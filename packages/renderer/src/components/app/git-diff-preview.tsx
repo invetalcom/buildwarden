@@ -37,6 +37,7 @@ import {
   looksLikeGitDiff,
   normalizeDiffPathSegment,
   parseGitDiffFiles,
+  summaryFileChangeType,
 } from "./git-diff-utils";
 
 export type { DiffLineCommentTarget, DiffPreviewManualComment } from "./git-diff-preview-comment-index";
@@ -1157,8 +1158,8 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
           return <div key={key} className="border-b border-[var(--ec-border)] last:border-b-0">
             <DiffFileHeaderRow
               path={file.path}
-              previousPath={file.previousPath}
-              type={file.previousPath && file.previousPath !== file.path ? "rename-changed" : null}
+              previousPath={summaryFileChangeType(file) === "rename-changed" ? file.previousPath : null}
+              type={summaryFileChangeType(file)}
               additions={file.additions}
               deletions={file.deletions}
               expanded={expanded}
