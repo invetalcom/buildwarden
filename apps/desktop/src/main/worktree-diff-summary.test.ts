@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile, appendFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { computeWorktreeDiff, computeWorktreeDiffSummary } from "@buildwarden/git-service";
-import simpleGit from "simple-git";
+import { simpleGit } from "simple-git";
 import { afterEach, describe, expect, it } from "vitest";
 
 const tempDirectories: string[] = [];
