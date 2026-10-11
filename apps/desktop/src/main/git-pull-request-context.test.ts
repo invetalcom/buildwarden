@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import simpleGit from "simple-git";
+import { simpleGit } from "simple-git";
 import { GitService } from "@buildwarden/git-service";
 
 const temporaryRepositories: string[] = [];

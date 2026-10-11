@@ -3,7 +3,7 @@ import { access, copyFile, readdir, rm, stat, symlink, unlink, writeFile } from 
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import simpleGit, { type SimpleGit } from "simple-git";
+import { simpleGit, type SimpleGit } from "simple-git";
 import { promisify } from "node:util";
 import {
   GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE,
