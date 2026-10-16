@@ -302,6 +302,15 @@ const ORCHESTRATION_TERMINAL_TASK_STATUSES = new Set<OrchestrationTaskStatus>([
   "interrupted",
   "blocked",
 ]);
+/** buildwarden_tasks_read output goes straight into the coordinator's context; keep it bounded. */
+const ORCHESTRATION_TASK_READ_DEFAULT_STEPS = 8;
+const ORCHESTRATION_TASK_READ_MAX_STEPS = 50;
+const ORCHESTRATION_TASK_READ_MAX_EVENTS = 20;
+const ORCHESTRATION_TASK_READ_MAX_STEP_CHARS = 2_000;
+const ORCHESTRATION_TASK_READ_MAX_FILES = 100;
+const ORCHESTRATION_TASK_READ_MAX_DIFF_CHARS = 60_000;
+const truncateForCoordinator = (value: string, maxChars: number): string =>
+  value.length <= maxChars ? value : `${value.slice(0, maxChars)}\n... truncated (${String(value.length)} chars total) ...`;
 const ORCHESTRATION_CANCELLABLE_STATUSES = new Set([
   "active",
   "waiting",
@@ -7638,6 +7647,39 @@ export class AppController
     return needsAttention || relevant.every((task) => ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status));
   }
 
+  private async buildOrchestrationChildRunSummary(childRunId: string, args: Record<string, unknown>) {
+    const run = this.db.getRun(childRunId);
+    const requestedSteps = Number(args.recentSteps ?? ORCHESTRATION_TASK_READ_DEFAULT_STEPS);
+    const stepLimit = Number.isInteger(requestedSteps)
+      ? Math.min(Math.max(requestedSteps, 0), ORCHESTRATION_TASK_READ_MAX_STEPS)
+      : ORCHESTRATION_TASK_READ_DEFAULT_STEPS;
+    const recentSteps = this.db.listRecentRunStepPreviews(childRunId, stepLimit, ORCHESTRATION_TASK_READ_MAX_STEP_CHARS)
+      .map((step) => step.contentChars > step.content.length
+        ? { ...step, content: `${step.content}\n... truncated (${String(step.contentChars)} chars total) ...` }
+        : step);
+    const { summary, worktreeUnavailable } = await this.getRunWorktreeDiffSummary(childRunId);
+    const diff = args.includeDiff === true && !worktreeUnavailable
+      ? truncateForCoordinator((await this.getRunWorktreeDiff(childRunId)).diff, ORCHESTRATION_TASK_READ_MAX_DIFF_CHARS)
+      : undefined;
+    return {
+      id: run.id,
+      status: run.status,
+      mode: run.mode,
+      workspaceType: run.workspaceType,
+      branchName: run.branchName,
+      errorMessage: run.errorMessage,
+      inputTokens: run.inputTokens,
+      outputTokens: run.outputTokens,
+      changedFiles: {
+        ...summary,
+        files: summary.files.slice(0, ORCHESTRATION_TASK_READ_MAX_FILES),
+        worktreeUnavailable,
+      },
+      recentSteps,
+      ...(diff !== undefined ? { diff } : {}),
+    };
+  }
+
   private buildOrchestrationResumePrompt(orchestration: OrchestrationRecord): string {
     const tasks = this.db.listOrchestrationTasks(orchestration.id);
     const events = this.db.listOrchestrationEvents(orchestration.id)
@@ -7780,12 +7822,14 @@ export class AppController
       const task = this.db.getOrchestrationTask(taskId);
       const orchestration = this.db.getOrchestration(task.orchestrationId);
       if (orchestration.coordinatorRunId !== coordinatorRunId) throw new Error("Task does not belong to this coordinator.");
-      const childDetail = task.childRunId ? this.db.getRunDetail(task.childRunId, (await this.getRunWorktreeDiff(task.childRunId)).diff) : null;
       response = {
         task,
-        activity: this.db.listOrchestrationEvents(orchestration.id).filter((event) => event.taskId === task.id),
+        activity: this.db.listOrchestrationEvents(orchestration.id)
+          .filter((event) => event.taskId === task.id)
+          .slice(-ORCHESTRATION_TASK_READ_MAX_EVENTS)
+          .map((event) => ({ ...event, content: truncateForCoordinator(event.content, ORCHESTRATION_TASK_READ_MAX_STEP_CHARS) })),
         messages: this.db.listOrchestrationTaskMessages(orchestration.id).filter((message) => message.taskId === task.id),
-        childRun: childDetail,
+        childRun: task.childRunId ? await this.buildOrchestrationChildRunSummary(task.childRunId, args) : null,
       };
     } else {
       const orchestration = this.getOrCreateOrchestration(coordinator);

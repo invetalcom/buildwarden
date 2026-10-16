@@ -1613,6 +1613,16 @@ export interface RunStepRecord {
   createdAt: string;
 }
 
+/** Truncated run step for compact consumers such as orchestration coordinators. */
+export interface RunStepPreview {
+  eventType: RunEventType;
+  title: string;
+  content: string;
+  /** Length of the stored content before truncation. */
+  contentChars: number;
+  createdAt: string;
+}
+
 export interface WorktreeRecord {
   id: string;
   projectId: string;
