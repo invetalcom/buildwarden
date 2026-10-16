@@ -3331,6 +3331,13 @@ export interface RunResumeCheckpoint {
   memo?: string;
 }
 
+/** Git patch captured before a prompt so "Undo to last prompt" can restore the workspace. */
+export interface RunPromptRestorePoint {
+  createdAt: string;
+  commandType: "initial" | "follow-up";
+  patch: string;
+}
+
 export type ProviderSessionRuntimeOwnerKind = "run" | "chat";
 export type ProviderSessionRuntimeStatus = "starting" | "running" | "ready" | "stopped" | "error";
 

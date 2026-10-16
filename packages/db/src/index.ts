@@ -6,6 +6,7 @@ import { APP_SETTING_KEYS, ATTENTION_KIND_LABELS, parseAttentionInboxSettings, p
 import type {
   AppSettingRecord,
   RunWorkspaceSetup,
+  RunPromptRestorePoint,
   AppSnapshot,
   BookmarkRecord,
   BookmarkStepRecord,
@@ -149,6 +150,7 @@ type StoredProjectAutomationRecord = Omit<ProjectAutomationRecord, "attachments"
 const DEFAULT_DB_NAME = "buildwarden.sqlite";
 export const BUILDWARDEN_DATABASE_SCHEMA_VERSION = 1;
 const SQLITE_VARIABLE_BATCH_SIZE = 900;
+const LEGACY_RUN_PROMPT_RESTORE_POINT_SETTING_PREFIX = "runPromptRestorePoint:";
 
 const nowIso = () => new Date().toISOString();
 const createId = () => crypto.randomUUID();
@@ -2267,6 +2269,7 @@ export class BuildWardenDatabase {
       [projectId],
     );
     this.run("delete from run_verifications where run_id in (select id from runs where project_id = ?)", [projectId]);
+    this.run("delete from run_restore_points where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from chats where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from run_workspace_setup where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from runs where project_id = ?", [projectId]);
@@ -2761,6 +2764,7 @@ export class BuildWardenDatabase {
     this.run("delete from run_notes where run_id = ?", [runId]);
     this.run("delete from run_steps where run_id = ?", [runId]);
     this.run("delete from run_verifications where run_id = ?", [runId]);
+    this.run("delete from run_restore_points where run_id = ?", [runId]);
     this.run("delete from worktrees where run_id = ?", [runId]);
     this.run("delete from chat_steps where chat_id in (select id from chats where run_id = ?)", [runId]);
     this.run("delete from chats where run_id = ?", [runId]);
@@ -3649,6 +3653,25 @@ export class BuildWardenDatabase {
       `,
       [key, value, timestamp],
     );
+  }
+
+  getRunPromptRestorePoint(runId: string): RunPromptRestorePoint | null {
+    return this.first<RunPromptRestorePoint>(
+      "select created_at as createdAt, command_type as commandType, patch from run_restore_points where run_id = ?",
+      [runId],
+    );
+  }
+
+  setRunPromptRestorePoint(runId: string, restorePoint: RunPromptRestorePoint): void {
+    this.run(
+      `insert into run_restore_points (run_id, command_type, patch, created_at) values (?, ?, ?, ?)
+       on conflict(run_id) do update set command_type = excluded.command_type, patch = excluded.patch, created_at = excluded.created_at`,
+      [runId, restorePoint.commandType, restorePoint.patch, restorePoint.createdAt],
+    );
+  }
+
+  deleteRunPromptRestorePoint(runId: string): void {
+    this.run("delete from run_restore_points where run_id = ?", [runId]);
   }
 
   deleteSetting(key: string): void {
@@ -4811,6 +4834,13 @@ export class BuildWardenDatabase {
         updated_at text not null
       );
 
+      create table if not exists run_restore_points (
+        run_id text primary key,
+        command_type text not null,
+        patch text not null,
+        created_at text not null
+      );
+
       create table if not exists bookmarks (
         id text primary key,
         original_run_id text not null,
@@ -5349,6 +5379,36 @@ export class BuildWardenDatabase {
     this.ensureColumn("project_tasks", "attachments_json", "text not null default '[]'");
     this.ensureColumn("remote_pairing_grants", "client_origin", "text");
     this.ensureColumn("remote_access_sessions", "client_origin", "text");
+    this.migrateRunPromptRestorePointsFromSettings();
+  }
+
+  /**
+   * Restore points used to live in app_settings, which made every settings read
+   * (including each app snapshot) carry full git patches.
+   */
+  private migrateRunPromptRestorePointsFromSettings(): void {
+    const legacyRows = this.all<{ key: string; value: string }>(
+      "select key, value from app_settings where key like ?",
+      [`${LEGACY_RUN_PROMPT_RESTORE_POINT_SETTING_PREFIX}%`],
+    );
+    for (const row of legacyRows) {
+      const runId = row.key.slice(LEGACY_RUN_PROMPT_RESTORE_POINT_SETTING_PREFIX.length);
+      const restorePoint = this.parseRunPromptRestorePoint(row.value);
+      if (runId && restorePoint && this.first<{ id: string }>("select id from runs where id = ?", [runId])) {
+        this.setRunPromptRestorePoint(runId, restorePoint);
+      }
+      this.run("delete from app_settings where key = ?", [row.key]);
+    }
+  }
+
+  private parseRunPromptRestorePoint(value: string): RunPromptRestorePoint | null {
+    const parsed = this.parseJsonObject(value);
+    if (!parsed || typeof parsed.patch !== "string" || typeof parsed.createdAt !== "string") return null;
+    return {
+      createdAt: parsed.createdAt,
+      commandType: parsed.commandType === "initial" ? "initial" : "follow-up",
+      patch: parsed.patch,
+    };
   }
 
   private ensureColumn(tableName: string, columnName: string, definition: string): void {
