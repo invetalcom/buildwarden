@@ -2,6 +2,7 @@ import type { AppSnapshot, RunRecord } from "@buildwarden/shared";
 import { Clock3, FolderGit2, PlayCircle, Search, UsersRound, X } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { parseSearchTerms, runMatchesSearch } from "../../lib/run-search";
+import { useRunUserInputSearch } from "../../lib/use-run-user-input-search";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
@@ -188,18 +189,19 @@ export const AllRunsPage = ({ projects, providerAccounts = [], onSelectRun, onDe
     isRunDisplayStatusActive(resolveRunDisplayStatus(run.status, run.orchestrationStatus))).length;
   const searchTerms = useMemo(() => parseSearchTerms(searchQuery), [searchQuery]);
   const hasSearch = searchTerms.length > 0;
+  const userInputMatches = useRunUserInputSearch(searchTerms);
   const visibleRows = useMemo(
     () => buildRunHierarchyRows(hierarchyRoots, subagentRuns, {
       expandedRunIds,
-      matches: hasSearch ? (run) => runMatchesSearch(run, searchTerms) : undefined,
+      matches: hasSearch ? (run) => runMatchesSearch(run, searchTerms, userInputMatches) : undefined,
     }).flatMap((row) => {
       const project = projectById.get(row.run.projectId);
       return project ? [{ ...row, project }] : [];
     }),
-    [expandedRunIds, hasSearch, hierarchyRoots, projectById, searchTerms, subagentRuns],
+    [expandedRunIds, hasSearch, hierarchyRoots, projectById, searchTerms, subagentRuns, userInputMatches],
   );
   const matchingRunCount = hasSearch
-    ? sourceRuns.filter((run) => runMatchesSearch(run, searchTerms)).length
+    ? sourceRuns.filter((run) => runMatchesSearch(run, searchTerms, userInputMatches)).length
     : sourceRuns.length;
   const visibleRunIds = useMemo(() => visibleRows.map((row) => row.run.id), [visibleRows]);
   const allVisibleSelected = visibleRunIds.length > 0 && visibleRunIds.every((runId) => selectedRunIds.has(runId));

@@ -187,6 +187,10 @@ import { RunToolCallCollapseThresholdProvider } from "./lib/run-tool-call-collap
  */
 const RUN_FORGE_VIEW_REFRESH_TTL_MS = 60_000;
 
+const SNAPSHOT_REFRESH_DELAY_MS = 300;
+/** Token usage arrives with nearly every streamed step; aggregate totals can lag a few seconds. */
+const USAGE_SNAPSHOT_REFRESH_DELAY_MS = 5_000;
+
 const isLocalProviderType = (type: ProviderType): boolean =>
   type === "codex-cli" || type === "claude-code" || type === "cursor-agent";
 
@@ -542,19 +546,26 @@ export const App = () => {
 
   /**
    * Streaming runs emit bursts of events; refreshing the full snapshot for each
-   * one wastes IPC and re-renders. Coalesce to at most one refresh per 300ms.
+   * one wastes IPC and re-renders. Coalesce to at most one refresh per delay
+   * (300ms by default); a shorter request moves a pending refresh earlier.
    */
   const snapshotRefreshTimerRef = useRef<number | null>(null);
-  const scheduleSnapshotRefresh = useCallback(() => {
+  const snapshotRefreshDueAtRef = useRef(0);
+  const scheduleSnapshotRefresh = useCallback((delayMs = SNAPSHOT_REFRESH_DELAY_MS) => {
+    const dueAt = Date.now() + delayMs;
     if (snapshotRefreshTimerRef.current !== null) {
-      return;
+      if (snapshotRefreshDueAtRef.current <= dueAt) {
+        return;
+      }
+      window.clearTimeout(snapshotRefreshTimerRef.current);
     }
+    snapshotRefreshDueAtRef.current = dueAt;
     snapshotRefreshTimerRef.current = window.setTimeout(() => {
       snapshotRefreshTimerRef.current = null;
       loadSnapshot().catch((caught: unknown) => {
         setError(caught instanceof Error ? caught.message : "Unexpected error");
       });
-    }, 300);
+    }, delayMs);
   }, [loadSnapshot]);
 
   useEffect(
@@ -1197,7 +1208,8 @@ export const App = () => {
             ...usageTotals,
           },
         }));
-        scheduleSnapshotRefresh();
+        // Live run usage is tracked above; only aggregate totals need the snapshot.
+        scheduleSnapshotRefresh(USAGE_SNAPSHOT_REFRESH_DELAY_MS);
       }
 
       if (event.metadata?.shellApprovalRequest === true && approvalRequestId && approvalCommand) {
@@ -1238,7 +1250,7 @@ export const App = () => {
 
     const unsubscribeChat = buildwarden.onChatEvent((event) => {
       if (readRunTokenUsage(event.metadata?.usageTotals)) {
-        scheduleSnapshotRefresh();
+        scheduleSnapshotRefresh(USAGE_SNAPSHOT_REFRESH_DELAY_MS);
       }
       if (event.chat) {
         setSnapshot((current) => applyLiveChatToSnapshot(current, event.chat!));

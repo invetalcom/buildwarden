@@ -799,8 +799,6 @@ export interface RunRecord {
   workspaceVcs: RunWorkspaceVcs;
   prompt: string;
   goalText: string | null;
-  /** Derived at read time from initial/follow-up user prompts, run goal text, and submitted user-input answers. */
-  userInputSearchText?: string;
   /** Derived at read time from the latest initial/follow-up prompt or submitted user-input answer. */
   lastUserInputAt?: string;
   status: RunStatus;
@@ -874,9 +872,11 @@ export interface ProjectTaskRecord {
   updatedAt: string;
 }
 
-/** Task list metadata. Full attachment payloads are loaded with {@link DesktopApi.getProjectTask}. */
+/** Task list metadata. Full prompts and attachment payloads are loaded with {@link DesktopApi.getProjectTask}. */
 export interface ProjectTaskSummary extends Omit<ProjectTaskRecord, "attachments"> {
   attachmentCount: number;
+  /** True when `prompt` is a preview of a longer prompt. */
+  promptTruncated?: boolean;
 }
 
 export interface ProjectTaskInput {
@@ -4038,6 +4038,8 @@ export interface DesktopApi {
   cancelRunVerification(runId: string): Promise<void>;
   getRunDetail(runId: string): Promise<RunDetail>;
   getEarlierRunHistory(runId: string, request: UserAnchoredHistoryPageRequest): Promise<RunHistoryPage>;
+  /** Run ids whose prompt, goal, follow-up prompts, or submitted answers contain every whitespace-separated term. */
+  searchRunUserInput(query: string): Promise<string[]>;
   addRunNote(runId: string, input: RunNoteInput): Promise<RunNoteRecord>;
   updateRunNote(noteId: string, input: UpdateRunNoteInput): Promise<RunNoteRecord>;
   deleteRunNote(noteId: string): Promise<void>;
@@ -4359,6 +4361,7 @@ export type RemoteOperationMap = {
   cancelRunVerification: DesktopApi["cancelRunVerification"];
   getRunDetail: DesktopApi["getRunDetail"];
   getEarlierRunHistory: DesktopApi["getEarlierRunHistory"];
+  searchRunUserInput: DesktopApi["searchRunUserInput"];
   getRunWorktreeDiff: DesktopApi["getRunWorktreeDiff"];
   getRunWorktreeDiffSummary: DesktopApi["getRunWorktreeDiffSummary"];
   getRunWorkspaceFile: DesktopApi["getRunWorkspaceFile"];
@@ -4735,6 +4738,7 @@ export const IPC_CHANNELS = {
   cancelRunVerification: "buildwarden:cancel-run-verification",
   getRunDetail: "buildwarden:get-run-detail",
   getEarlierRunHistory: "buildwarden:get-earlier-run-history",
+  searchRunUserInput: "buildwarden:search-run-user-input",
   addRunNote: "buildwarden:add-run-note",
   updateRunNote: "buildwarden:update-run-note",
   deleteRunNote: "buildwarden:delete-run-note",

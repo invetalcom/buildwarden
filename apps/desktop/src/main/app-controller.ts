@@ -7029,6 +7029,10 @@ export class AppController
     return this.db.getEarlierRunHistory(runId, request);
   }
 
+  async searchRunUserInput(query: string): Promise<string[]> {
+    return this.db.searchRunUserInput(query);
+  }
+
   async addRunNote(runId: string, input: { content: string }): Promise<RunNoteRecord> {
     return this.db.addRunNote(runId, input.content);
   }
