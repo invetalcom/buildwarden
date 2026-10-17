@@ -541,9 +541,12 @@ export const ProjectTasksTab = ({
     if (task) void moveTask(task, status);
   };
 
-  const openLaunchDialog = (task: Pick<ProjectTaskSummary, "id" | "prompt">) => {
+  const openLaunchDialog = async (task: Pick<ProjectTaskSummary, "id" | "prompt" | "promptTruncated">) => {
+    // Board summaries only carry a prompt preview; launch with the full prompt.
+    const prompt = task.promptTruncated ? (await loadTaskDetail(task.id))?.prompt : task.prompt;
+    if (prompt === undefined) return;
     setLaunchTaskId(task.id);
-    setLaunchPromptDraft(task.prompt);
+    setLaunchPromptDraft(prompt);
   };
 
   const handleGeneratePrompt = async () => {
@@ -611,7 +614,7 @@ export const ProjectTasksTab = ({
         onView={(taskId) => void openTaskDetail(taskId)}
         onEdit={(task) => void openEditingTask(task)}
         onDelete={onDeleteTask}
-        onLaunch={openLaunchDialog}
+        onLaunch={(task) => void openLaunchDialog(task)}
         onOpenRun={onOpenRun}
         onDraggedTaskChange={setDraggedTaskId}
         onDragOverStatusChange={setDragOverStatus}
@@ -626,7 +629,7 @@ export const ProjectTasksTab = ({
         canStartRuns={canStartRuns}
         onClose={() => setViewingTaskId(null)}
         onEdit={startEditingTask}
-        onLaunch={(task) => { setViewingTaskId(null); openLaunchDialog(task); }}
+        onLaunch={(task) => { setViewingTaskId(null); void openLaunchDialog(task); }}
         onOpenRun={(runId) => { setViewingTaskId(null); onOpenRun(runId); }}
       />
 

@@ -125,22 +125,24 @@ describe("run user-input ordering metadata", () => {
 
     expect(loadedFirstRun?.lastUserInputAt).toBe(followUpPrompt.createdAt);
     expect(loadedFirstRun?.pendingUserInputRequest).toBe(true);
-    expect(loadedFirstRun?.userInputSearchText).toContain("Follow-up prompt");
+    expect(db.searchRunUserInput("follow-up PROMPT")).toContain(firstRun.id);
     expect(loadedSecondRun?.lastUserInputAt).toBe(submittedInput.createdAt);
     expect(loadedSecondRun?.pendingUserInputRequest).toBe(false);
-    expect(loadedSecondRun?.userInputSearchText).toContain("Resolved answer");
+    expect(db.searchRunUserInput("resolved answer")).toEqual([secondRun.id]);
+    expect(db.searchRunUserInput("resolved follow-up")).toEqual([]);
+    expect(loadedFirstRun).not.toHaveProperty("userInputSearchText");
   });
 
   it("invalidates derived run metadata after updating run configuration", async () => {
     const db = await makeDb();
     const run = createRunFixture(db);
 
-    expect(db.getRun(run.id).userInputSearchText).not.toContain("Updated goal");
+    expect(db.searchRunUserInput("updated goal")).not.toContain(run.id);
 
     const updated = db.updateRunConfiguration(run.id, { goalText: "Updated goal" });
 
     expect(updated.goalText).toBe("Updated goal");
-    expect(updated.userInputSearchText).toContain("Updated goal");
+    expect(db.searchRunUserInput("updated goal")).toContain(run.id);
   });
 
   it("evicts cached derived run metadata when deleting a project", async () => {

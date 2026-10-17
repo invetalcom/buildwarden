@@ -21,3 +21,7 @@ export const useBuildWardenClient = (): BuildWardenClient => {
   }
   return client;
 };
+
+/** For components that also render without a client provider (for example in isolated tests). */
+// eslint-disable-next-line react-refresh/only-export-components
+export const useOptionalBuildWardenClient = (): BuildWardenClient | null => useContext(BuildWardenClientContext);
