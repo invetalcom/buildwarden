@@ -1404,6 +1404,14 @@ export const App = () => {
   const selectedProjectId = selectedProject?.project.id ?? "";
   const selectedProjectIdRef = useRef(selectedProjectId);
   selectedProjectIdRef.current = selectedProjectId;
+  // Bumped when the window regains focus so Git-derived project state (branches,
+  // folder-to-Git detection) picks up changes made outside the app.
+  const [windowFocusToken, setWindowFocusToken] = useState(0);
+  useEffect(() => {
+    const handleWindowFocus = () => setWindowFocusToken((current) => current + 1);
+    window.addEventListener("focus", handleWindowFocus);
+    return () => window.removeEventListener("focus", handleWindowFocus);
+  }, []);
   const {
     availableRunBranches,
     currentProjectBranch,
@@ -1415,7 +1423,7 @@ export const App = () => {
     setDetachedCheckoutBranch,
     setRunBaseBranch,
     submitCheckoutDetachedProjectBranch,
-  } = useProjectBranches({ buildwarden, selectedProject, setError });
+  } = useProjectBranches({ buildwarden, selectedProject, setError, refreshToken: windowFocusToken });
   const {
     changeRunMode,
     changeRunWorkspaceType,
@@ -1464,21 +1472,20 @@ export const App = () => {
     }
   }, [runWorkspaceType, selectedProject?.project.kind]);
 
-  useEffect(() => {
-    if (!selectedProject) {
-      return;
-    }
-    const hasActiveLabThread = selectedProject.labThreads.some(
+  // Keyed on a boolean so snapshot refreshes don't tear down and recreate the poll.
+  const selectedProjectHasActiveLabThread =
+    selectedProject?.labThreads.some(
       (detail) => detail.thread.status === "queued" || detail.thread.status === "running" || detail.thread.status === "reviewing",
-    );
-    if (!hasActiveLabThread) {
+    ) ?? false;
+  useEffect(() => {
+    if (!selectedProjectHasActiveLabThread) {
       return;
     }
     const intervalId = window.setInterval(() => {
       void loadSnapshot();
     }, 2000);
     return () => window.clearInterval(intervalId);
-  }, [loadSnapshot, selectedProject]);
+  }, [loadSnapshot, selectedProjectHasActiveLabThread]);
 
   const projectRunStats = useMemo(() => {
     const runs = [...(selectedProject?.runs ?? []), ...(selectedProject?.forLaterRuns ?? [])];
@@ -1841,12 +1848,13 @@ export const App = () => {
     resolve?.(confirmed);
   }, []);
 
+  const selectedProjectKind = selectedProject?.project.kind ?? null;
   useEffect(() => {
-    if (!buildwarden || !buildwarden.capabilities.gitMutations || !selectedProject || selectedProject.project.kind !== "folder") {
+    if (!buildwarden || !buildwarden.capabilities.gitMutations || !selectedProjectId || selectedProjectKind !== "folder") {
       return;
     }
     let cancelled = false;
-    const projectId = selectedProject.project.id;
+    const projectId = selectedProjectId;
     if (dismissedGitConversionProjectIdsRef.current.has(projectId) || gitConversionCheckInFlightRef.current.has(projectId)) {
       return;
     }
@@ -1895,7 +1903,7 @@ export const App = () => {
     return () => {
       cancelled = true;
     };
-  }, [buildwarden, loadProjectBranches, loadSnapshot, requestConfirmation, selectedProject]);
+  }, [buildwarden, loadProjectBranches, loadSnapshot, requestConfirmation, selectedProjectId, selectedProjectKind, windowFocusToken]);
 
   useEffect(() => {
     const normalizedTab = normalizeProjectFeatureTab(selectedProject?.project.kind, projectPageTab);
@@ -2495,6 +2503,21 @@ export const App = () => {
     await buildwarden.releaseRun(selectedRunId);
   }, [buildwarden, selectedRunId]);
 
+  /**
+   * Navigation switches the view immediately; releasing the previous run's
+   * worktree, persisting the selection, and refreshing the snapshot run in the
+   * background. Effects are chained so rapid clicks persist in click order.
+   */
+  const navigationEffectsRef = useRef<Promise<void>>(Promise.resolve());
+  const runNavigationEffects = useCallback((effects: () => Promise<void>) => {
+    setError(null);
+    const next = navigationEffectsRef.current.then(effects).catch((caught: unknown) => {
+      setError(caught instanceof Error ? caught.message : "Unexpected error");
+    });
+    navigationEffectsRef.current = next;
+    return next;
+  }, []);
+
   const clearRunSelectionState = useCallback((nextSelectedRunId: string | null | undefined = null) => {
     setSelectedRunId(nextSelectedRunId);
     selectedRunIdRef.current = nextSelectedRunId;
@@ -2586,46 +2609,48 @@ export const App = () => {
   );
 
   const handleProjectSelect = useCallback(async (projectId: string) => {
-    await handleAction(async () => {
-      if (!buildwarden) {
-        throw new Error("The Electron desktop bridge is unavailable.");
-      }
+    if (!buildwarden) {
+      setError("The Electron desktop bridge is unavailable.");
+      return;
+    }
 
+    setLandingSelected(false);
+    setAllRunsSelected(false);
+    setBookmarksSelected(false);
+    setChatsSelected(false);
+    setSettingsOpen(false);
+    setProjectPageTab("overview");
+    setRunProjectId(projectId);
+    clearRunSelectionState(null);
+    await runNavigationEffects(async () => {
       await leaveSelectedRun();
       await buildwarden.selectProject(projectId);
       await loadSnapshot();
-      setLandingSelected(false);
-      setAllRunsSelected(false);
-      setBookmarksSelected(false);
-      setChatsSelected(false);
-      setSettingsOpen(false);
-      setProjectPageTab("overview");
-      setRunProjectId(projectId);
-      clearRunSelectionState(null);
     });
-  }, [buildwarden, clearRunSelectionState, handleAction, leaveSelectedRun, loadSnapshot]);
+  }, [buildwarden, clearRunSelectionState, leaveSelectedRun, loadSnapshot, runNavigationEffects]);
 
   const handleProjectFeatureSelect = useCallback(async (projectId: string, tab: ProjectPageTab) => {
-    await handleAction(async () => {
-      if (!buildwarden) {
-        throw new Error("The Electron desktop bridge is unavailable.");
-      }
+    if (!buildwarden) {
+      setError("The Electron desktop bridge is unavailable.");
+      return;
+    }
 
-      const targetProject = snapshot.projects.find((entry) => entry.project.id === projectId);
-      const nextTab = normalizeProjectFeatureTab(targetProject?.project.kind, tab);
+    const targetProject = snapshot.projects.find((entry) => entry.project.id === projectId);
+    const nextTab = normalizeProjectFeatureTab(targetProject?.project.kind, tab);
+    setLandingSelected(false);
+    setAllRunsSelected(false);
+    setBookmarksSelected(false);
+    setChatsSelected(false);
+    setSettingsOpen(false);
+    setProjectPageTab(nextTab);
+    setRunProjectId(projectId);
+    clearRunSelectionState(null);
+    await runNavigationEffects(async () => {
       await leaveSelectedRun();
       await buildwarden.selectProject(projectId);
       await loadSnapshot();
-      setLandingSelected(false);
-      setAllRunsSelected(false);
-      setBookmarksSelected(false);
-      setChatsSelected(false);
-      setSettingsOpen(false);
-      setProjectPageTab(nextTab);
-      setRunProjectId(projectId);
-      clearRunSelectionState(null);
     });
-  }, [buildwarden, clearRunSelectionState, handleAction, leaveSelectedRun, loadSnapshot, snapshot.projects]);
+  }, [buildwarden, clearRunSelectionState, leaveSelectedRun, loadSnapshot, runNavigationEffects, snapshot.projects]);
 
   const dismissProjectForgeRequestToast = useCallback((id: string) => {
     setProjectForgeRequestToasts((current) => current.filter((toast) => toast.id !== id));
@@ -2647,37 +2672,39 @@ export const App = () => {
   );
 
   const handleLandingSelect = useCallback(async () => {
-    await handleAction(async () => {
-      if (buildwarden) {
-        await leaveSelectedRun();
-        await loadSnapshot();
-      }
-      setLandingSelected(true);
-      setAllRunsSelected(false);
-      setBookmarksSelected(false);
-      setChatsSelected(false);
-      setSettingsOpen(false);
-      clearRunSelectionState(null);
+    setLandingSelected(true);
+    setAllRunsSelected(false);
+    setBookmarksSelected(false);
+    setChatsSelected(false);
+    setSettingsOpen(false);
+    clearRunSelectionState(null);
+    if (!buildwarden) {
+      return;
+    }
+    await runNavigationEffects(async () => {
+      await leaveSelectedRun();
+      await loadSnapshot();
     });
-  }, [buildwarden, clearRunSelectionState, handleAction, leaveSelectedRun, loadSnapshot]);
+  }, [buildwarden, clearRunSelectionState, leaveSelectedRun, loadSnapshot, runNavigationEffects]);
 
   const handleAllRunsSelect = useCallback(async () => {
-    await handleAction(async () => {
-      if (buildwarden) {
-        await leaveSelectedRun();
-        await loadSnapshot();
-      }
-      setLandingSelected(false);
-      setAllRunsSelected(true);
-      setBookmarksSelected(false);
-      setChatsSelected(false);
-      setSettingsOpen(false);
-      setSelectedBookmark(null);
-      setSelectedChat(null);
-      setChatDetail(null);
-      clearRunSelectionState(null);
+    setLandingSelected(false);
+    setAllRunsSelected(true);
+    setBookmarksSelected(false);
+    setChatsSelected(false);
+    setSettingsOpen(false);
+    setSelectedBookmark(null);
+    setSelectedChat(null);
+    setChatDetail(null);
+    clearRunSelectionState(null);
+    if (!buildwarden) {
+      return;
+    }
+    await runNavigationEffects(async () => {
+      await leaveSelectedRun();
+      await loadSnapshot();
     });
-  }, [buildwarden, clearRunSelectionState, handleAction, leaveSelectedRun, loadSnapshot]);
+  }, [buildwarden, clearRunSelectionState, leaveSelectedRun, loadSnapshot, runNavigationEffects]);
 
   const handleBookmarksSelect = useCallback(() => {
     void leaveSelectedRun();
