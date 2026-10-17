@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@buildwarden/agent-runtime": "workspace:*",
-    "@buildwarden/shared": "workspace:*"
+    "@buildwarden/shared": "workspace:*",
+    "diff": "^9.0.0"
   }
 }

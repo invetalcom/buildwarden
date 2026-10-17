@@ -300,6 +300,40 @@ describe("CursorAgentProviderAdapter", () => {
     });
   });
 
+  it("builds compact hunks for Cursor edits and keeps full file text out of the raw payload", () => {
+    const original = Array.from({ length: 5000 }, (_, index) => `line ${String(index + 1)}`);
+    const edited = original.map((line, index) => (index === 2499 ? "changed line" : line));
+    const state = parseCursorToolState({
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "edit-large",
+        title: "Edit File",
+        kind: "edit",
+        status: "completed",
+        content: [{ type: "diff", path: "src\\big.ts", oldText: original.join("\r\n"), newText: edited.join("\r\n") }],
+      },
+    });
+
+    expect(state?.diff).toBe([
+      "--- a/src/big.ts",
+      "+++ b/src/big.ts",
+      "@@ -2497,7 +2497,7 @@",
+      " line 2497",
+      " line 2498",
+      " line 2499",
+      "-line 2500",
+      "+changed line",
+      " line 2501",
+      " line 2502",
+      " line 2503",
+    ].join("\n"));
+    const raw = JSON.stringify(state?.raw);
+    expect(raw).not.toContain("line 4999");
+    expect(state?.raw).toMatchObject({
+      update: { content: [{ type: "diff", path: "src\\big.ts", oldTextChars: original.join("\r\n").length }] },
+    });
+  });
+
   it("preserves ACP arguments when stored Cursor arguments are empty", () => {
     const state = parseCursorToolState({
       update: {

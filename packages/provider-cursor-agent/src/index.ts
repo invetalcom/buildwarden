@@ -8,6 +8,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { DatabaseSync } from "node:sqlite";
+import { structuredPatch } from "diff";
 import {
   buildRunSubagentChunk,
   formatRunPlanProgressContent,
@@ -1293,18 +1294,54 @@ const textContentFromToolContent = (content: unknown): string | undefined => {
   return chunks.length > 0 ? chunks.join("\n") : undefined;
 };
 
+/** Bounds diff work and stored size for very large or completely rewritten files. */
+const CURSOR_DIFF_TIMEOUT_MS = 500;
+const MAX_CURSOR_DIFF_CHARS = 100_000;
+
 const buildCursorFallbackDiff = (path: string, oldText: string, newText: string): string => {
-  const normalizeLines = (value: string) => value.replaceAll("\r\n", "\n").split("\n");
-  const oldLines = normalizeLines(oldText);
-  const newLines = normalizeLines(newText);
+  const normalizeText = (value: string) => value.replaceAll("\r\n", "\n");
+  const normalizedOld = normalizeText(oldText);
+  const normalizedNew = normalizeText(newText);
   const normalizedPath = path.replaceAll("\\", "/");
-  return [
-    `--- a/${normalizedPath}`,
-    `+++ b/${normalizedPath}`,
-    `@@ -1,${String(oldLines.length)} +1,${String(newLines.length)} @@`,
-    ...oldLines.map((line) => `-${line}`),
-    ...newLines.map((line) => `+${line}`),
-  ].join("\n");
+  const lines = [`--- a/${normalizedPath}`, `+++ b/${normalizedPath}`];
+  const patch = structuredPatch(normalizedPath, normalizedPath, normalizedOld, normalizedNew, undefined, undefined, {
+    context: 3,
+    timeout: CURSOR_DIFF_TIMEOUT_MS,
+  });
+  if (patch) {
+    for (const hunk of patch.hunks) {
+      lines.push(`@@ -${String(hunk.oldStart)},${String(hunk.oldLines)} +${String(hunk.newStart)},${String(hunk.newLines)} @@`);
+      lines.push(...hunk.lines.filter((line) => !line.startsWith("\\")));
+    }
+  } else {
+    const oldLines = normalizedOld.split("\n");
+    const newLines = normalizedNew.split("\n");
+    lines.push(
+      `@@ -1,${String(oldLines.length)} +1,${String(newLines.length)} @@`,
+      ...oldLines.map((line) => `-${line}`),
+      ...newLines.map((line) => `+${line}`),
+    );
+  }
+  const diff = lines.join("\n");
+  return diff.length > MAX_CURSOR_DIFF_CHARS ? `${diff.slice(0, MAX_CURSOR_DIFF_CHARS)}\n# ... diff truncated for display` : diff;
+};
+
+/**
+ * ACP diff entries carry the complete old and new file text. The tool chunk already
+ * stores a unified diff, so keep only their sizes in the persisted raw payload.
+ */
+const compactCursorDiffPayloads = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(compactCursorDiffPayloads);
+  if (!isRecord(value)) return value;
+  const compacted: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (value.type === "diff" && (key === "oldText" || key === "newText") && typeof entry === "string") {
+      compacted[`${key}Chars`] = entry.length;
+    } else {
+      compacted[key] = compactCursorDiffPayloads(entry);
+    }
+  }
+  return compacted;
 };
 
 const diffContentFromToolContent = (
@@ -1373,7 +1410,7 @@ export const parseCursorToolState = (params: unknown): CursorToolState | null =>
     ...(detail ? { detail } : {}),
     ...(toolName ? { toolName } : {}),
     ...(rawOutput ? { rawOutput } : {}),
-    raw: sanitizeMetadataValue(params),
+    raw: sanitizeMetadataValue(compactCursorDiffPayloads(params)),
   };
 };
 
