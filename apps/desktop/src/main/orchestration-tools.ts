@@ -92,8 +92,24 @@ export const ORCHESTRATION_TOOL_DEFINITIONS: RunToolDefinition[] = [
   },
   {
     name: "buildwarden_tasks_read",
-    description: "Read one durable task, including result, recent activity, token usage, and changed-file summary.",
-    inputSchema: objectSchema({ taskId: { type: "string", minLength: 1 } }, ["taskId"]),
+    description:
+      "Read one durable task, including result, recent activity, token usage, and changed-file summary. Step content is truncated; request the unified diff only when the file summary is not enough.",
+    inputSchema: objectSchema(
+      {
+        taskId: { type: "string", minLength: 1 },
+        recentSteps: {
+          type: "integer",
+          minimum: 0,
+          maximum: 50,
+          description: "Number of latest child run steps to include (default 8).",
+        },
+        includeDiff: {
+          type: "boolean",
+          description: "Include the child workspace's unified diff, truncated for large changes (default false).",
+        },
+      },
+      ["taskId"],
+    ),
   },
   {
     name: "buildwarden_tasks_send_message",

@@ -85,6 +85,7 @@ import type {
   RunForgeRequestSummary,
   RunStatus,
   RunStepRecord,
+  RunStepPreview,
   UserAnchoredHistoryPageInfo,
   UserAnchoredHistoryPageRequest,
   WorktreeRecord,
@@ -3435,6 +3436,7 @@ export class BuildWardenDatabase {
   updateRunStep(
     stepId: string,
     fields: {
+      eventType?: string;
       title?: string;
       content?: string;
       metadataJson?: string;
@@ -3464,10 +3466,11 @@ export class BuildWardenDatabase {
     this.run(
       `
       update run_steps
-      set title = ?, content = ?, metadata_json = ?
+      set event_type = ?, title = ?, content = ?, metadata_json = ?
       where id = ?
       `,
       [
+        fields.eventType ?? existing.eventType,
         fields.title ?? existing.title,
         fields.content ?? existing.content,
         fields.metadataJson ?? existing.metadataJson,
@@ -3509,6 +3512,26 @@ export class BuildWardenDatabase {
       `,
       [runId],
     );
+  }
+
+  /** Latest steps in chronological order, truncated in SQL so large tool output is never loaded. Skips superseded progress rows. */
+  listRecentRunStepPreviews(runId: string, limit: number, maxContentChars: number): RunStepPreview[] {
+    if (limit <= 0) return [];
+    return this.all<RunStepPreview>(
+      `
+      select
+        event_type as eventType,
+        title,
+        substr(content, 1, ?) as content,
+        length(content) as contentChars,
+        created_at as createdAt
+      from run_steps
+      where run_id = ? and event_type not in ('tool-progress', 'diff-updated')
+      order by created_at desc, rowid desc
+      limit ?
+      `,
+      [maxContentChars, runId, limit],
+    ).reverse();
   }
 
   getRunRecoveryEventTimestamps(runId: string): { latestInterruptedAt: string; latestRecoveryAt: string } {
