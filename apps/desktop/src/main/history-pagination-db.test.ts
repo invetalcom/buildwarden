@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { BuildWardenDatabase } from "@buildwarden/db";
+import { BuildWardenDatabase, INITIAL_HISTORY_WINDOW_LIMITS } from "@buildwarden/db";
 
 const tempDirs: string[] = [];
 const dbs: BuildWardenDatabase[] = [];
@@ -107,5 +107,43 @@ describe("user-anchored history pagination", () => {
     });
     expect(stale.stale).toBe(true);
     expect(stale.steps).toEqual([]);
+  });
+
+  it("caps a single long turn by size and pages the rest without gaps", async () => {
+    const db = await makeDb();
+    const { run } = makeFixture(db);
+    db.appendRunStep(run.id, "log", "user-0", "prompt-0", JSON.stringify({ source: "user" }));
+    const largeResult = "x".repeat(400_000);
+    for (let index = 0; index < 10; index += 1) {
+      db.appendRunStep(run.id, "tool-result", `tool-${String(index)}`, largeResult);
+    }
+
+    const initial = db.getInitialRunHistory(run.id);
+    const initialChars = initial.steps.reduce((total, step) => total + step.content.length, 0);
+    expect(initialChars).toBeLessThanOrEqual(INITIAL_HISTORY_WINDOW_LIMITS.maxChars);
+    expect(initial.steps.at(-1)?.title).toBe("tool-9");
+    expect(initial.page.hasMore).toBe(true);
+
+    const titles = initial.steps.map((step) => step.title);
+    let page = initial.page;
+    while (page.hasMore && page.beforeCursor) {
+      const earlier = db.getEarlierRunHistory(run.id, { beforeCursor: page.beforeCursor, snapshotRevision: page.snapshotRevision });
+      expect(earlier.stale).toBe(false);
+      expect(earlier.steps.length).toBeGreaterThan(0);
+      titles.unshift(...earlier.steps.map((step) => step.title));
+      page = earlier.page;
+    }
+    expect(titles).toEqual(["user-0", ...Array.from({ length: 10 }, (_, index) => `tool-${String(index)}`)]);
+  });
+
+  it("always includes the newest step even when it exceeds the size budget", async () => {
+    const db = await makeDb();
+    const { run } = makeFixture(db);
+    db.appendRunStep(run.id, "log", "user-0", "prompt-0", JSON.stringify({ source: "user" }));
+    db.appendRunStep(run.id, "tool-result", "huge", "x".repeat(INITIAL_HISTORY_WINDOW_LIMITS.maxChars + 1));
+
+    const initial = db.getInitialRunHistory(run.id);
+    expect(initial.steps.map((step) => step.title)).toEqual(["huge"]);
+    expect(initial.page.hasMore).toBe(true);
   });
 });
