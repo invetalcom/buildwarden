@@ -1853,8 +1853,10 @@ export const App = () => {
     if (!buildwarden || !buildwarden.capabilities.gitMutations || !selectedProjectId || selectedProjectKind !== "folder") {
       return;
     }
-    let cancelled = false;
     const projectId = selectedProjectId;
+    // Not an effect-cleanup flag: window focus reruns this effect while the
+    // confirmation may still be open, and the user's answer must still apply.
+    const projectDeselected = () => selectedProjectIdRef.current !== projectId;
     if (dismissedGitConversionProjectIdsRef.current.has(projectId) || gitConversionCheckInFlightRef.current.has(projectId)) {
       return;
     }
@@ -1863,7 +1865,7 @@ export const App = () => {
     void (async () => {
       try {
         const candidate = await buildwarden.checkProjectGitConversion(projectId);
-        if (cancelled) {
+        if (projectDeselected()) {
           return;
         }
         if (!candidate) {
@@ -1876,7 +1878,7 @@ export const App = () => {
           confirmLabel: "Convert to Git project",
           cancelLabel: "Not now",
         });
-        if (cancelled) {
+        if (projectDeselected()) {
           return;
         }
         if (!confirmed) {
@@ -1884,14 +1886,14 @@ export const App = () => {
           return;
         }
         await buildwarden.convertProjectToGit(projectId);
-        if (cancelled) {
+        if (projectDeselected()) {
           return;
         }
         setRunWorkspaceType("worktree");
         await loadSnapshot();
         void loadProjectBranches();
       } catch (caught) {
-        if (cancelled) {
+        if (projectDeselected()) {
           return;
         }
         reportRendererError("renderer.project.git-conversion", caught, { projectId });
@@ -1900,9 +1902,6 @@ export const App = () => {
         gitConversionCheckInFlightRef.current.delete(projectId);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
   }, [buildwarden, loadProjectBranches, loadSnapshot, requestConfirmation, selectedProjectId, selectedProjectKind, windowFocusToken]);
 
   useEffect(() => {
