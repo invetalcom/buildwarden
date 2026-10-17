@@ -87,6 +87,7 @@ const ChatDetailPage = lazy(() => import("./components/app/ChatDetailPage").then
 const ChatPage = lazy(() => import("./components/app/ChatPage").then((m) => ({ default: m.ChatPage })));
 import { CommandPalette, type CommandPaletteItem } from "./components/app/CommandPalette";
 import { LandingPage } from "./components/app/LandingPage";
+import { RecentRunDetailCache } from "./components/app/recent-run-details";
 import { pickRandomLandingJoke } from "./components/app/landing-page-jokes";
 const ProjectPage = lazy(() => import("./components/app/ProjectPage").then((m) => ({ default: m.ProjectPage })));
 import { type ProjectPageTab } from "./components/app/project-page-tabs";
@@ -177,6 +178,13 @@ import { reportRendererError, reportRendererLog } from "./lib/report-renderer-er
 import { useBuildWardenClient } from "./lib/buildwarden-client";
 import { PastedTextAttachmentThresholdProvider } from "./lib/pasted-text-attachment-settings";
 import { RunToolCallCollapseThresholdProvider } from "./lib/run-tool-call-collapse-settings";
+
+/**
+ * A forced forge sync costs Git probes plus provider requests. The main process
+ * already polls linked requests, so opening or focusing a run re-syncs at most
+ * once per window.
+ */
+const RUN_FORGE_VIEW_REFRESH_TTL_MS = 60_000;
 
 const isLocalProviderType = (type: ProviderType): boolean =>
   type === "codex-cli" || type === "claude-code" || type === "cursor-agent";
@@ -297,9 +305,25 @@ export const App = () => {
   openRunPanesRef.current = openRunPanes;
   const runDetailsByIdRef = useRef<Record<string, RunDetail>>({});
   runDetailsByIdRef.current = runDetailsById;
+  const recentRunDetailsRef = useRef(new RecentRunDetailCache());
+  useEffect(() => {
+    for (const [runId, detail] of Object.entries(runDetailsById)) {
+      recentRunDetailsRef.current.set(runId, detail);
+    }
+  }, [runDetailsById]);
   const diffRefreshTimersRef = useRef<Partial<Record<string, ReturnType<typeof setTimeout>>>>({});
   const runDetailLoadTokenRef = useRef<Record<string, number>>({});
   const diffLoadPromisesRef = useRef<Partial<Record<string, Promise<void>>>>({});
+  const getCachedRunDetail = useCallback((runId: string): RunDetail | null => {
+    const live = runDetailsByIdRef.current[runId];
+    if (live) return live;
+    const recent = recentRunDetailsRef.current.get(runId);
+    // Updates for closed runs are dropped, so a cached loading flag would never
+    // clear if the reopen load fails. Keep diffPending only for a load in flight.
+    return recent
+      ? { ...recent, diffPending: Boolean(diffLoadPromisesRef.current[runId]), diffSummaryPending: false }
+      : null;
+  }, []);
   const diffLoadGenerationRef = useRef<Record<string, number>>({});
   const diffSummaryLoadGenerationRef = useRef<Record<string, number>>({});
   const [landingSelected, setLandingSelected] = useState(true);
@@ -1054,6 +1078,7 @@ export const App = () => {
         delete runDetailRefreshTimersRef.current[runId];
       }
       removeShellApprovalsByRunId(runId);
+      recentRunDetailsRef.current.delete(runId);
     }
     setRunDetailsById(omitDeleted);
     setRunLiveUsageById(omitDeleted);
@@ -1233,7 +1258,14 @@ export const App = () => {
     });
     const unsubscribeForgeChanged = buildwarden.onRunForgeRequestChanged((payload) => {
       scheduleSnapshotRefresh();
-      void refreshRunDetailForActiveRunEvent(payload.runId, { immediate: true });
+      // Every sync republishes the summary. Patch it in place and reload the full
+      // run detail (entire step history) only when the linked request changes.
+      const previous = runDetailsByIdRef.current[payload.runId]?.run.forgeRequest ?? null;
+      const next = payload.forgeRequest;
+      mergeRunDetailForRun(payload.runId, (detail) => ({ ...detail, run: { ...detail.run, forgeRequest: next } }));
+      if (previous?.url !== next?.url || previous?.state !== next?.state) {
+        void refreshRunDetailForActiveRunEvent(payload.runId, { immediate: true });
+      }
     });
 
     return () => {
@@ -1296,31 +1328,31 @@ export const App = () => {
     return () => window.clearInterval(intervalId);
   }, [buildwarden.capabilities.liveEvents, loadSnapshot, refreshOpenRunDetailForEvent]);
 
-  useEffect(() => {
-    if (typeof selectedRunId !== "string") return;
-    void buildwarden.refreshRunForgeRequest(selectedRunId)
-      .then(() => refreshOpenRunDetailForEvent(selectedRunId))
-      .catch(() => undefined);
-  }, [buildwarden, refreshOpenRunDetailForEvent, selectedRunId]);
+  // Forge changes arrive through onRunForgeRequestChanged, which patches the
+  // open run detail, so these refreshes don't reload the run themselves.
+  const runForgeViewRefreshedAtRef = useRef<Record<string, number>>({});
+  const refreshRunForgeRequestForView = useCallback((runId: string) => {
+    const now = Date.now();
+    if (now - (runForgeViewRefreshedAtRef.current[runId] ?? 0) < RUN_FORGE_VIEW_REFRESH_TTL_MS) return;
+    runForgeViewRefreshedAtRef.current[runId] = now;
+    void buildwarden.refreshRunForgeRequest(runId).catch(() => undefined);
+  }, [buildwarden]);
 
   useEffect(() => {
-    let lastRefreshAt = 0;
+    if (typeof selectedRunId !== "string") return;
+    refreshRunForgeRequestForView(selectedRunId);
+  }, [refreshRunForgeRequestForView, selectedRunId]);
+
+  useEffect(() => {
     const refreshVisibleForgeRequests = () => {
-      const now = Date.now();
-      if (now - lastRefreshAt < 30_000) return;
-      lastRefreshAt = now;
       const runIds = new Set<string>();
       if (typeof selectedRunIdRef.current === "string") runIds.add(selectedRunIdRef.current);
       for (const entry of getOpenRunPaneEntries(openRunPanesRef.current)) runIds.add(entry.runId);
-      for (const runId of runIds) {
-        void buildwarden.refreshRunForgeRequest(runId)
-          .then(() => refreshOpenRunDetailForEvent(runId))
-          .catch(() => undefined);
-      }
+      for (const runId of runIds) refreshRunForgeRequestForView(runId);
     };
     window.addEventListener("focus", refreshVisibleForgeRequests);
     return () => window.removeEventListener("focus", refreshVisibleForgeRequests);
-  }, [buildwarden, refreshOpenRunDetailForEvent]);
+  }, [refreshRunForgeRequestForView]);
 
   useEffect(() => {
     if (!settingsOpen) {
@@ -3045,7 +3077,9 @@ export const App = () => {
     setRunProjectId(projectId);
     setOpenRunPanes({ left: runId });
     setFocusedRunPane("left");
-    const cachedDetail = runDetailsByIdRef.current[runId] ?? null;
+    // Seed from the recent-run cache so reopening a run renders immediately
+    // while loadRunDetail fetches the current state.
+    const cachedDetail = getCachedRunDetail(runId);
     setRunDetailsById(cachedDetail ? { [runId]: cachedDetail } : {});
     setSelectedRunId(runId);
     selectedRunIdRef.current = runId;
@@ -3056,13 +3090,14 @@ export const App = () => {
         await leaveSelectedRun();
       }
       await buildwarden.activateRun(runId);
-      await loadSnapshot();
+      // Coalesces with the snapshot refresh triggered by the run's forge sync.
+      scheduleSnapshotRefresh();
     };
 
     Promise.all([enqueueNavigationEffects(runActivateAndSnapshot), loadRunDetail(runId)]).catch((caught) => {
       setError(caught instanceof Error ? caught.message : "Unexpected error");
     });
-  }, [buildwarden, enqueueNavigationEffects, leaveSelectedRun, loadRunDetail, loadSnapshot, selectedRunId]);
+  }, [buildwarden, enqueueNavigationEffects, getCachedRunDetail, leaveSelectedRun, loadRunDetail, scheduleSnapshotRefresh, selectedRunId]);
 
   const reviewChildRun = useCallback((projectId: string, childRunId: string) => {
     updateRunWorkspaceLayout(childRunId, (current) => ({
