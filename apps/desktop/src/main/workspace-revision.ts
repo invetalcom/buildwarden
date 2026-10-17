@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { copyFile, lstat, mkdtemp, readdir, readlink, rm } from "node:fs/promises";
+import { copyFile, lstat, mkdtemp, readdir, readlink, rm, stat, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -43,7 +43,16 @@ export const captureWorkspaceRevision = async (cwd: string, vcs: "git" | "folder
       throw new Error("Verification requires a full checkout without skip-worktree or assume-unchanged files.");
     }
     const indexPath = (await original("rev-parse", "--git-path", "index")).trim();
-    try { await copyFile(resolve(cwd, indexPath), join(temporary, "index")); }
+    try {
+      const sourceIndex = resolve(cwd, indexPath);
+      const privateIndex = join(temporary, "index");
+      await copyFile(sourceIndex, privateIndex);
+      // Git re-hashes "racily clean" entries (file mtime >= index mtime) because a
+      // same-size rewrite within the index's timestamp granularity looks unchanged
+      // by stat. A fresh copy mtime would hide those entries, so keep the original.
+      const { atime, mtime } = await stat(sourceIndex);
+      await utimes(privateIndex, atime, mtime);
+    }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       await git("read-tree", head);
