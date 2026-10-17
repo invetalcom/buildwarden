@@ -1299,6 +1299,7 @@ export class GitService {
     if (!trimmedBranchName) {
       throw new Error("Enter a source branch name.");
     }
+    await this.validateBranchName(worktreePath, trimmedBranchName);
 
     if (await this.hasLocalBranch(worktreePath, trimmedBranchName)) {
       throw new Error(`A local branch named "${trimmedBranchName}" already exists.`);

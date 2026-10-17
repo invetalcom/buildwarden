@@ -111,6 +111,7 @@ describe("GitService run worktree lifecycle", () => {
       await service.publishBranch(repoPath, "team/feature");
       await git.deleteLocalBranch("team/feature", true);
       await expect(service.assertPublishBranchAvailable(repoPath, "feature")).resolves.toBe("feature");
+      await expect(service.assertPublishBranchAvailable(repoPath, "bad name")).rejects.toThrow("is not a valid Git branch name");
     } finally {
       for (const key of ambientKeys) {
         if (previous[key] === undefined) delete process.env[key];
