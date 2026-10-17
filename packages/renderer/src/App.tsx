@@ -179,9 +179,6 @@ import { useBuildWardenClient } from "./lib/buildwarden-client";
 import { PastedTextAttachmentThresholdProvider } from "./lib/pasted-text-attachment-settings";
 import { RunToolCallCollapseThresholdProvider } from "./lib/run-tool-call-collapse-settings";
 
-/** Shared fallback so panes without a saved layout pass stable tile props to the memoized run page. */
-const DEFAULT_RUN_PANE_LAYOUT = cloneDefaultRunWorkspaceLayoutPreference();
-
 const isLocalProviderType = (type: ProviderType): boolean =>
   type === "codex-cli" || type === "claude-code" || type === "cursor-agent";
 
@@ -194,6 +191,9 @@ const computeProjectFolderGitWarning = (status: ProjectFolderGitStatus | null): 
   }
   return null;
 };
+
+/** Shared fallback so panes without a saved layout pass stable tile props to the memoized run page. */
+const DEFAULT_RUN_PANE_LAYOUT = cloneDefaultRunWorkspaceLayoutPreference();
 
 interface RunPanelToggleDefinition {
   key: RunWorkspacePanelId;
