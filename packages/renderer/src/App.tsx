@@ -2552,8 +2552,9 @@ export const App = () => {
       await enqueueNavigationEffects(async () => {
         await buildwarden.activateRun(runId);
         await loadSnapshot();
-        await loadRunDetailForRun(runId);
       });
+      // Outside the queue: the diff summary can be slow and must not hold back later navigation.
+      await loadRunDetailForRun(runId);
     },
     [buildwarden, enqueueNavigationEffects, loadRunDetailForRun, loadSnapshot, snapshot.projects],
   );
