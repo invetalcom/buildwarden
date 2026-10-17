@@ -57,6 +57,23 @@ describe("GitService run worktree lifecycle", () => {
     expect(await readFile(join(repoPath, "node_modules", "shared.txt"), "utf8")).toBe("keep\n");
   });
 
+  it("never commits the shared dependency link of a run worktree", async () => {
+    const { root, repoPath } = await createRepository();
+    await mkdir(join(repoPath, "node_modules"));
+    await writeFile(join(repoPath, "node_modules", "shared.txt"), "keep\n", "utf8");
+    const service = new GitService();
+    const workspace = await service.createWorktreeForRun(repoPath, "Project", "run-1", "main", join(root, "worktrees"));
+    const worktreeGit = simpleGit(workspace.worktreePath);
+
+    await expect(service.commitAllChanges(workspace.worktreePath, "Only the link")).rejects.toThrow("no changes to commit");
+
+    await writeFile(join(workspace.worktreePath, "tracked.txt"), "changed\n", "utf8");
+    await service.commitAllChanges(workspace.worktreePath, "Change tracked file");
+
+    const committedPaths = (await worktreeGit.raw(["show", "--name-only", "--format=", "HEAD"])).trim().split(/\r?\n/);
+    expect(committedPaths).toEqual(["tracked.txt"]);
+  });
+
   it("runs remote operations with a non-interactive environment despite guarded ambient variables", async () => {
     const { root, repoPath, git } = await createRepository();
     const remotePath = join(root, "remote.git");

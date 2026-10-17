@@ -1237,6 +1237,16 @@ export class GitService {
     }
 
     await git.add(["-A"]);
+    // Shared dependency links point into the project repository and must never be committed. A
+    // `node_modules/` ignore rule only matches directories, so Git would otherwise stage the link itself.
+    const dependencyLinks = await listWorktreeDependencyLinks(worktreePath);
+    if (dependencyLinks.length > 0) {
+      await runGitRaw(git, ["reset", "-q", "--", ...dependencyLinks]);
+      if (!(await runGitRaw(git, ["diff", "--cached", "--name-only"])).trim()) {
+        throw new Error("There are no changes to commit in this run worktree.");
+      }
+    }
+
     const result = await git.commit(message);
 
     return {
