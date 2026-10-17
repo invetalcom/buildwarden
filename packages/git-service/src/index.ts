@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync } from "node:fs";
-import { access, copyFile, readdir, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { access, copyFile, lstat, readdir, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { simpleGit, type SimpleGit } from "simple-git";
 import { promisify } from "node:util";
 import {
@@ -209,10 +209,10 @@ const removeEmptyDirectoryIfPossible = async (dirPath: string): Promise<boolean>
   return true;
 };
 
-const ensureWorktreeDependencyLinks = async (repoPath: string, worktreePath: string): Promise<void> => {
-  const sharedDirNames = ["node_modules"];
+const SHARED_DEPENDENCY_DIR_NAMES = ["node_modules"] as const;
 
-  for (const dirName of sharedDirNames) {
+const ensureWorktreeDependencyLinks = async (repoPath: string, worktreePath: string): Promise<void> => {
+  for (const dirName of SHARED_DEPENDENCY_DIR_NAMES) {
     const sourcePath = join(repoPath, dirName);
     const targetPath = join(worktreePath, dirName);
 
@@ -223,6 +223,49 @@ const ensureWorktreeDependencyLinks = async (repoPath: string, worktreePath: str
     await symlink(sourcePath, targetPath, process.platform === "win32" ? "junction" : "dir");
   }
 };
+
+/** Shared dependency directories that are symlinks/junctions into the project repository. */
+const listWorktreeDependencyLinks = async (worktreePath: string): Promise<string[]> => {
+  const links: string[] = [];
+  for (const dirName of SHARED_DEPENDENCY_DIR_NAMES) {
+    try {
+      if ((await lstat(join(worktreePath, dirName))).isSymbolicLink()) {
+        links.push(dirName);
+      }
+    } catch {
+      // Missing entries are not links.
+    }
+  }
+  return links;
+};
+
+/** Unlinks shared dependency links so worktree removal never reaches into the project repository. */
+const removeWorktreeDependencyLinks = async (worktreePath: string): Promise<void> => {
+  for (const dirName of await listWorktreeDependencyLinks(worktreePath)) {
+    await unlink(join(worktreePath, dirName));
+  }
+};
+
+const toComparablePath = (value: string): string => {
+  let resolved = resolve(value);
+  try {
+    resolved = realpathSync.native(resolved);
+  } catch {
+    try {
+      resolved = join(realpathSync.native(dirname(resolved)), basename(resolved));
+    } catch {
+      // Keep the lexical path when neither the path nor its parent exists.
+    }
+  }
+  const normalized = resolved.replace(/\\/g, "/").replace(/\/+$/, "");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+};
+
+/**
+ * Git reports worktree paths with forward slashes (`C:/repo` on Windows) while Node paths use the
+ * platform separator, so worktree paths must never be compared as raw strings.
+ */
+export const isSameWorktreePath = (left: string, right: string): boolean => toComparablePath(left) === toComparablePath(right);
 
 type PublishMode = "created" | "browser-draft";
 type PublishRequestKind = "pull-request" | "merge-request";
@@ -823,7 +866,7 @@ export class GitService {
 
   async isWorktreeRegistered(repoPath: string, worktreePath: string): Promise<boolean> {
     const registeredWorktrees = await this.listWorktrees(repoPath);
-    return registeredWorktrees.some((entry) => entry.worktreePath === worktreePath);
+    return registeredWorktrees.some((entry) => isSameWorktreePath(entry.worktreePath, worktreePath));
   }
 
   async hasLocalBranch(repoPath: string, branchName: string): Promise<boolean> {
@@ -937,8 +980,13 @@ export class GitService {
     const git = simpleGit(repoPath);
     await ensureGitLongPathSupport(git);
     const cleanupErrors: string[] = [];
-    const registeredWorktrees = await this.listWorktrees(repoPath);
-    const isRegisteredWorktree = registeredWorktrees.some((entry) => entry.worktreePath === worktreePath);
+    const isRegisteredWorktree = await this.isWorktreeRegistered(repoPath, worktreePath);
+
+    try {
+      await removeWorktreeDependencyLinks(worktreePath);
+    } catch (error) {
+      cleanupErrors.push(`dependency link removal failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
 
     if (isRegisteredWorktree) {
       try {
@@ -973,8 +1021,7 @@ export class GitService {
       }
     }
 
-    const remainingWorktrees = await this.listWorktrees(repoPath);
-    if (remainingWorktrees.some((entry) => entry.worktreePath === worktreePath)) {
+    if (await this.isWorktreeRegistered(repoPath, worktreePath)) {
       cleanupErrors.push("worktree is still registered in git after cleanup");
     }
 
