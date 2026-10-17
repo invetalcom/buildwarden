@@ -106,6 +106,11 @@ describe("GitService run worktree lifecycle", () => {
       await service.fetchProjectBranches(repoPath);
       await expect(service.createPublishBranchFromHead(repoPath, "remote-only")).rejects.toThrow("already exists on origin");
       await expect(service.createPublishBranchFromHead(repoPath, "main-copy")).resolves.toBeUndefined();
+
+      await git.branch(["team/feature"]);
+      await service.publishBranch(repoPath, "team/feature");
+      await git.deleteLocalBranch("team/feature", true);
+      await expect(service.assertPublishBranchAvailable(repoPath, "feature")).resolves.toBe("feature");
     } finally {
       for (const key of ambientKeys) {
         if (previous[key] === undefined) delete process.env[key];

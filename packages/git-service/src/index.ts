@@ -1304,7 +1304,10 @@ export class GitService {
       throw new Error(`A local branch named "${trimmedBranchName}" already exists.`);
     }
 
-    const remoteHeads = (await runNetworkGit(worktreePath, ["ls-remote", "--heads", "origin", trimmedBranchName])).trim();
+    // A bare pattern also matches slash-delimited tails, so `feature` would hit `refs/heads/team/feature`.
+    const remoteHeads = (
+      await runNetworkGit(worktreePath, ["ls-remote", "--heads", "origin", `refs/heads/${trimmedBranchName}`])
+    ).trim();
     if (remoteHeads) {
       throw new Error(`A remote branch named "${trimmedBranchName}" already exists on origin.`);
     }
