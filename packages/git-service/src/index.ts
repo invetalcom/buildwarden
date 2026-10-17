@@ -237,7 +237,9 @@ const ensureGitLongPathSupport = async (git: SimpleGit, gitPath: string): Promis
     return;
   }
 
-  const cacheKey = resolve(gitPath).toLowerCase();
+  // Case-preserving: directories can be case-sensitive on Windows, and a
+  // duplicate write for a differently cased spelling is harmless.
+  const cacheKey = resolve(gitPath);
   if (longPathSupportConfiguredPaths.has(cacheKey)) {
     return;
   }
