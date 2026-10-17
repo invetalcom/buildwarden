@@ -5404,9 +5404,10 @@ export class BuildWardenDatabase {
   private parseRunPromptRestorePoint(value: string): RunPromptRestorePoint | null {
     const parsed = this.parseJsonObject(value);
     if (!parsed || typeof parsed.patch !== "string" || typeof parsed.createdAt !== "string") return null;
+    if (parsed.commandType !== "initial" && parsed.commandType !== "follow-up") return null;
     return {
       createdAt: parsed.createdAt,
-      commandType: parsed.commandType === "initial" ? "initial" : "follow-up",
+      commandType: parsed.commandType,
       patch: parsed.patch,
     };
   }

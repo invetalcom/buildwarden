@@ -82,15 +82,18 @@ describe("run prompt restore points", () => {
     const filePath = makeDbPath();
     const first = await openDb(filePath);
     const { run } = addRunFixture(first);
+    const { run: untypedRun } = addRunFixture(first, "C:\\other-repo");
     first.setSetting(`runPromptRestorePoint:${run.id}`, JSON.stringify(restorePoint));
     first.setSetting("runPromptRestorePoint:deleted-run", JSON.stringify(restorePoint));
     first.setSetting("runPromptRestorePoint:broken", "{not json");
+    first.setSetting(`runPromptRestorePoint:${untypedRun.id}`, JSON.stringify({ ...restorePoint, commandType: "unknown" }));
     await first.close();
 
     const reopened = await openDb(filePath);
 
     expect(reopened.getRunPromptRestorePoint(run.id)).toEqual(restorePoint);
     expect(reopened.getRunPromptRestorePoint("deleted-run")).toBeNull();
+    expect(reopened.getRunPromptRestorePoint(untypedRun.id)).toBeNull();
     expect(Object.keys(reopened.getSettings()).filter((key) => key.startsWith("runPromptRestorePoint:"))).toEqual([]);
   });
 
