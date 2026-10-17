@@ -216,6 +216,7 @@ import {
   type RendererLogPayload,
   type RenameProjectBranchInput,
   type RunResumeCheckpoint,
+  type RunPromptRestorePoint,
   type RunDetail,
   type RunDiffReviewFinding,
   type RunDiffReviewOptions,
@@ -1067,7 +1068,6 @@ const assertForgeMergeAllowed = (
 };
 const ACTIVE_RUN_STATUSES = new Set<RunRecord["status"]>(["queued", "preparing", "running"]);
 const runCheckpointSettingKey = (runId: string) => `runCheckpoint:${runId}`;
-const runPromptRestorePointSettingKey = (runId: string) => `runPromptRestorePoint:${runId}`;
 const projectForgeTokenSecretKey = (projectId: string) => `${PROJECT_FORGE_TOKEN_SECRET_PREFIX}${projectId}`;
 
 /** Shown when the app restarts while a run or chat was still marked active in the DB. */
@@ -10362,42 +10362,16 @@ export class AppController
     this.db.deleteSetting(runCheckpointSettingKey(runId));
   }
 
-  private getRunPromptRestorePoint(runId: string):
-    | {
-        createdAt: string;
-        commandType: "initial" | "follow-up";
-        patch: string;
-      }
-    | undefined {
-    const raw = this.db.getSettings()[runPromptRestorePointSettingKey(runId)];
-    if (!raw) {
-      return undefined;
-    }
-    try {
-      return JSON.parse(raw) as {
-        createdAt: string;
-        commandType: "initial" | "follow-up";
-        patch: string;
-      };
-    } catch {
-      this.db.deleteSetting(runPromptRestorePointSettingKey(runId));
-      return undefined;
-    }
+  private getRunPromptRestorePoint(runId: string): RunPromptRestorePoint | undefined {
+    return this.db.getRunPromptRestorePoint(runId) ?? undefined;
   }
 
-  private setRunPromptRestorePoint(
-    runId: string,
-    restorePoint: {
-      createdAt: string;
-      commandType: "initial" | "follow-up";
-      patch: string;
-    },
-  ): void {
-    this.db.setSetting(runPromptRestorePointSettingKey(runId), JSON.stringify(restorePoint));
+  private setRunPromptRestorePoint(runId: string, restorePoint: RunPromptRestorePoint): void {
+    this.db.setRunPromptRestorePoint(runId, restorePoint);
   }
 
   private clearRunPromptRestorePoint(runId: string): void {
-    this.db.deleteSetting(runPromptRestorePointSettingKey(runId));
+    this.db.deleteRunPromptRestorePoint(runId);
   }
 
   private async capturePromptRestorePoint(runId: string, commandType: "initial" | "follow-up"): Promise<void> {
