@@ -1356,6 +1356,24 @@ export class AppController
     }
   }
 
+  /**
+   * Promotion checks a branch out in the project repository, which active local runs use as their workspace.
+   * Callers check before any commit or push; run starts share the project lock, so none can start in between.
+   */
+  private requireIdleProjectCheckout(run: RunRecord, action: string): void {
+    const busyLocalRun = this.db
+      .listRunsForProject(run.projectId)
+      .some(
+        (other) =>
+          other.id !== run.id &&
+          other.workspaceType === "local" &&
+          (ACTIVE_RUN_STATUSES.has(other.status) || this.runWorkers.has(other.id) || this.manualVerifications.has(other.id)),
+      );
+    if (busyLocalRun) {
+      throw new Error(`Wait for the agent using the project checkout to finish before ${action}.`);
+    }
+  }
+
   private markLinkedRunTaskInReview(run: RunRecord, pullRequestUrl?: string): ProjectTaskRecord | null {
     if (!run.projectTaskId) {
       return null;
@@ -6376,6 +6394,9 @@ export class AppController
     const trimmedSourceBranch = sourceBranchName?.trim() || run.branchName;
     const createdCustomSourceBranch = trimmedSourceBranch !== run.branchName;
     const trimmedDescription = description?.trim() || this.buildRunPullRequestBody(project.name, run.prompt, trimmedTargetBranch);
+    if (createdCustomSourceBranch) {
+      this.requireIdleProjectCheckout(run, "creating a pull or merge request from a new branch");
+    }
 
     if (!trimmedTitle) {
       throw new Error("Enter a merge request or pull request title.");
@@ -6613,6 +6634,9 @@ export class AppController
     if (!trimmedBranchName) {
       throw new Error("Enter a branch name.");
     }
+    if (createdCustomBranch) {
+      this.requireIdleProjectCheckout(run, "publishing a new branch");
+    }
 
     if (await this.gitService.hasChanges(run.worktreePath)) {
       throw new Error("Commit or discard open changes before publishing the branch.");
@@ -6693,6 +6717,7 @@ export class AppController
     if (!createsNewBranch && run.workspaceType !== "worktree") {
       throw new Error("The new local branch must differ from the current worktree branch.");
     }
+    this.requireIdleProjectCheckout(run, "moving changes to a local branch");
 
     const hasOpenChanges = await this.gitService.hasChanges(run.worktreePath);
 
