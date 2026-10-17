@@ -639,6 +639,138 @@ describe("AppController settings and lightweight workflows", () => {
     );
   });
 
+  it("commits before creating a custom PR branch and restores the run branch when the push fails", async () => {
+    let run = {
+      id: "run-1",
+      projectId: project.id,
+      workspaceVcs: "git",
+      workspaceType: "worktree",
+      worktreePath: "C:/worktrees/run-1",
+      branchName: "project-run-1",
+      prompt: "Publish under a custom branch",
+      status: "completed",
+      projectTaskId: null,
+    } as RunRecord;
+    const updateRunBranchName = vi.fn((_runId: string, branchName: string) => {
+      run = { ...run, branchName };
+      return run;
+    });
+    const harness = createHarness({
+      getRun: vi.fn(() => run),
+      appendRunStep: vi.fn(async () => undefined),
+      updateRunBranchName,
+    });
+    const gitService = {
+      checkoutWorktreeBranch: vi.fn(async () => undefined),
+      getPullRequestContext: vi.fn(async () => ({
+        targetRef: "refs/heads/main",
+        mergeBase: "base",
+        commits: [],
+        hasOpenChanges: false,
+        diff: "diff",
+      })),
+      assertPublishBranchAvailable: vi.fn(async (_path: string, branchName: string) => branchName),
+      hasChanges: vi.fn(async () => true),
+      commitAllChanges: vi.fn(async () => ({ commitHash: "abc123def456" })),
+      getCurrentBranch: vi.fn(async (path: string) => (path === run.worktreePath ? "project-run-1" : "main")),
+      createPublishBranchFromHead: vi.fn(async () => undefined),
+      createPullRequest: vi.fn(async () => {
+        throw new Error("push rejected");
+      }),
+      hasRemoteBranch: vi.fn(async () => false),
+      deleteProjectBranch: vi.fn(async () => undefined),
+    };
+    const controllerInternals = harness.controller as unknown as {
+      gitService: typeof gitService;
+      syncRunForgeRequestInBackground: () => void;
+    };
+    controllerInternals.gitService = gitService;
+    controllerInternals.syncRunForgeRequestInBackground = vi.fn();
+
+    await expect(harness.controller.createRunPullRequest(run.id, "main", "Title", "feature/custom")).rejects.toThrow("push rejected");
+
+    expect(gitService.commitAllChanges.mock.invocationCallOrder[0]).toBeLessThan(
+      gitService.createPublishBranchFromHead.mock.invocationCallOrder[0]!,
+    );
+    expect(gitService.checkoutWorktreeBranch).toHaveBeenLastCalledWith(run.worktreePath, "project-run-1");
+    expect(updateRunBranchName.mock.calls.map(([, branchName]) => branchName)).toEqual(["feature/custom", "project-run-1"]);
+    expect(gitService.deleteProjectBranch).toHaveBeenCalledWith(run.worktreePath, "feature/custom");
+    expect(run.branchName).toBe("project-run-1");
+  });
+
+  it("refuses branch publishing and promotion while the agent is still running", async () => {
+    const run = {
+      id: "run-1",
+      projectId: project.id,
+      workspaceVcs: "git",
+      workspaceType: "worktree",
+      worktreePath: "C:/worktrees/run-1",
+      branchName: "project-run-1",
+      prompt: "Still working",
+      status: "running",
+      projectTaskId: null,
+    } as RunRecord;
+    const harness = createHarness({ getRun: vi.fn(() => run) });
+    const gitService = {
+      hasChanges: vi.fn(async () => false),
+      createPublishBranchFromHead: vi.fn(async () => undefined),
+      publishBranch: vi.fn(async () => ({ branchName: run.branchName, remoteName: "origin" })),
+      removeWorktree: vi.fn(async () => undefined),
+    };
+    (harness.controller as unknown as { gitService: typeof gitService }).gitService = gitService;
+
+    await expect(harness.controller.publishRunBranch(run.id, "feature/published")).rejects.toThrow("Wait for the agent to finish");
+    await expect(harness.controller.createRunLocalBranch(run.id, "feature/local")).rejects.toThrow("Wait for the agent to finish");
+    await expect(harness.controller.createRunPullRequest(run.id, "main", "Title", "feature/pr")).rejects.toThrow(
+      "Wait for the agent to finish",
+    );
+
+    expect(gitService.createPublishBranchFromHead).not.toHaveBeenCalled();
+    expect(gitService.publishBranch).not.toHaveBeenCalled();
+    expect(gitService.removeWorktree).not.toHaveBeenCalled();
+  });
+
+  it("refuses to promote a branch into the project checkout while a local run is using it", async () => {
+    const run = {
+      id: "run-1",
+      projectId: project.id,
+      workspaceVcs: "git",
+      workspaceType: "worktree",
+      worktreePath: "C:/worktrees/run-1",
+      branchName: "project-run-1",
+      prompt: "Done",
+      status: "completed",
+      projectTaskId: null,
+    } as RunRecord;
+    const localRun = {
+      id: "run-local",
+      projectId: project.id,
+      workspaceVcs: "git",
+      workspaceType: "local",
+      worktreePath: project.repoPath,
+      branchName: "main",
+      status: "running",
+    } as RunRecord;
+    const harness = createHarness({ getRun: vi.fn(() => run), listRunsForProject: vi.fn(() => [run, localRun]) });
+    const gitService = {
+      hasChanges: vi.fn(async () => false),
+      createPublishBranchFromHead: vi.fn(async () => undefined),
+      publishBranch: vi.fn(async () => ({ branchName: run.branchName, remoteName: "origin" })),
+      checkoutProjectBranch: vi.fn(async () => undefined),
+    };
+    (harness.controller as unknown as { gitService: typeof gitService }).gitService = gitService;
+
+    const message = "Wait for the agent using the project checkout to finish";
+    await expect(harness.controller.publishRunBranch(run.id, "feature/published")).rejects.toThrow(message);
+    await expect(harness.controller.createRunLocalBranch(run.id, "feature/local")).rejects.toThrow(message);
+    await expect(harness.controller.createRunPullRequest(run.id, "main", "Title", "feature/pr")).rejects.toThrow(message);
+
+    expect(gitService.hasChanges).not.toHaveBeenCalled();
+    expect(gitService.createPublishBranchFromHead).not.toHaveBeenCalled();
+    expect(gitService.publishBranch).not.toHaveBeenCalled();
+    expect(gitService.checkoutProjectBranch).not.toHaveBeenCalled();
+  });
+
   it("generates a complete PR draft from the target-relative committed diff", async () => {
     const run = {
       id: "run-1",

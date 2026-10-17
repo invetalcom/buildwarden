@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync } from "node:fs";
-import { access, copyFile, readdir, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { access, copyFile, lstat, readdir, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
-import { simpleGit, type SimpleGit } from "simple-git";
+import { basename, dirname, join, resolve } from "node:path";
+import { GitPluginError, simpleGit, type SimpleGit } from "simple-git";
 import { promisify } from "node:util";
 import {
   GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE,
@@ -32,6 +32,56 @@ const withLongPathSupport = (args: string[]): string[] =>
   process.platform === "win32" ? ["-c", `${LONG_PATHS_CONFIG_KEY}=${LONG_PATHS_CONFIG_VALUE}`, ...args] : args;
 
 const runGitRaw = (git: SimpleGit, args: string[]): Promise<string> => git.raw(withLongPathSupport(args));
+
+/**
+ * Remote operations run inside the per-project branch lock, so a stalled network or credential prompt
+ * must not block the project forever. The timeout counts inactivity, not total duration.
+ */
+const NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS = 5 * 60_000;
+const NETWORK_COMMAND_TIMEOUT_MINUTES = NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS / 60_000;
+// simple-git strips these ambient variables and rejects them when passed explicitly; mirror its guard
+// so the explicit environment below only adds GIT_TERMINAL_PROMPT.
+const SIMPLE_GIT_GUARDED_ENV_KEYS = new Set(["editor", "pager", "prefix", "ssh_askpass", "visual"]);
+
+const createNetworkGit = (repoPath: string): SimpleGit => {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    const normalizedKey = key.toLowerCase().trim();
+    if (value !== undefined && !normalizedKey.startsWith("git_") && !SIMPLE_GIT_GUARDED_ENV_KEYS.has(normalizedKey)) {
+      env[key] = value;
+    }
+  }
+  return simpleGit({
+    baseDir: repoPath,
+    timeout: { block: NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS },
+    allowEnvironment: ["GIT_TERMINAL_PROMPT"],
+  }).env({ ...env, GIT_TERMINAL_PROMPT: "0" });
+};
+
+const runNetworkGit = async (repoPath: string, args: string[]): Promise<string> => {
+  try {
+    return await runGitRaw(createNetworkGit(repoPath), args);
+  } catch (error) {
+    if (error instanceof GitPluginError && error.plugin === "timeout") {
+      throw new Error(
+        `git ${args[0] ?? ""} made no progress for ${String(NETWORK_COMMAND_TIMEOUT_MINUTES)} minutes and was stopped. Check the network connection and Git credentials, then try again.`,
+      );
+    }
+    throw error;
+  }
+};
+
+/** Runs a forge CLI (`gh`, `glab`) without interactive prompts and with a bounded runtime. */
+const execForgeCli = (command: string, args: string[], cwd: string) =>
+  execFileAsync(command, args, {
+    cwd,
+    maxBuffer: 1024 * 1024,
+    timeout: NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GH_PROMPT_DISABLED: "1" },
+  });
+
+const isTimedOutCommandError = (error: unknown): boolean =>
+  typeof error === "object" && error !== null && "killed" in error && (error as { killed?: boolean }).killed === true;
 
 const detectProjectBaseBranch = async (git: SimpleGit, currentBranch: string): Promise<string> => {
   try {
@@ -209,10 +259,10 @@ const removeEmptyDirectoryIfPossible = async (dirPath: string): Promise<boolean>
   return true;
 };
 
-const ensureWorktreeDependencyLinks = async (repoPath: string, worktreePath: string): Promise<void> => {
-  const sharedDirNames = ["node_modules"];
+const SHARED_DEPENDENCY_DIR_NAMES = ["node_modules"] as const;
 
-  for (const dirName of sharedDirNames) {
+const ensureWorktreeDependencyLinks = async (repoPath: string, worktreePath: string): Promise<void> => {
+  for (const dirName of SHARED_DEPENDENCY_DIR_NAMES) {
     const sourcePath = join(repoPath, dirName);
     const targetPath = join(worktreePath, dirName);
 
@@ -223,6 +273,49 @@ const ensureWorktreeDependencyLinks = async (repoPath: string, worktreePath: str
     await symlink(sourcePath, targetPath, process.platform === "win32" ? "junction" : "dir");
   }
 };
+
+/** Shared dependency directories that are symlinks/junctions into the project repository. */
+const listWorktreeDependencyLinks = async (worktreePath: string): Promise<string[]> => {
+  const links: string[] = [];
+  for (const dirName of SHARED_DEPENDENCY_DIR_NAMES) {
+    try {
+      if ((await lstat(join(worktreePath, dirName))).isSymbolicLink()) {
+        links.push(dirName);
+      }
+    } catch {
+      // Missing entries are not links.
+    }
+  }
+  return links;
+};
+
+/** Unlinks shared dependency links so worktree removal never reaches into the project repository. */
+const removeWorktreeDependencyLinks = async (worktreePath: string): Promise<void> => {
+  for (const dirName of await listWorktreeDependencyLinks(worktreePath)) {
+    await unlink(join(worktreePath, dirName));
+  }
+};
+
+const toComparablePath = (value: string): string => {
+  let resolved = resolve(value);
+  try {
+    resolved = realpathSync.native(resolved);
+  } catch {
+    try {
+      resolved = join(realpathSync.native(dirname(resolved)), basename(resolved));
+    } catch {
+      // Keep the lexical path when neither the path nor its parent exists.
+    }
+  }
+  const normalized = resolved.replace(/\\/g, "/").replace(/\/+$/, "");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+};
+
+/**
+ * Git reports worktree paths with forward slashes (`C:/repo` on Windows) while Node paths use the
+ * platform separator, so worktree paths must never be compared as raw strings.
+ */
+export const isSameWorktreePath = (left: string, right: string): boolean => toComparablePath(left) === toComparablePath(right);
 
 type PublishMode = "created" | "browser-draft";
 type PublishRequestKind = "pull-request" | "merge-request";
@@ -720,24 +813,7 @@ export class GitService {
     configuredWorktreeRoot?: string | null,
     shareDependencies = true,
   ): Promise<{ branchName: string; worktreePath: string }> {
-    const git = simpleGit(repoPath);
-    await ensureGitLongPathSupport(git);
-    const worktreeRoot = this.getWorktreeRoot(repoPath, configuredWorktreeRoot);
-    mkdirSync(worktreeRoot, { recursive: true });
-
-    const branchName = `${sanitizeSegment(projectName)}-${sanitizeSegment(runId)}`;
-    const worktreePath = join(worktreeRoot, branchName);
-
-    if (!existsSync(worktreePath)) {
-      await runGitRaw(git, ["worktree", "add", "-b", branchName, worktreePath, baseBranch]);
-    }
-
-    if (shareDependencies) await ensureWorktreeDependencyLinks(repoPath, worktreePath);
-
-    return {
-      branchName,
-      worktreePath,
-    };
+    return this.addRunWorktree(repoPath, projectName, runId, baseBranch, configuredWorktreeRoot, shareDependencies);
   }
 
   async createWorktreeForContinuation(
@@ -748,6 +824,17 @@ export class GitService {
     configuredWorktreeRoot?: string | null,
     shareDependencies = true,
   ): Promise<{ branchName: string; worktreePath: string }> {
+    return this.addRunWorktree(repoPath, projectName, runId, sourceBranch, configuredWorktreeRoot, shareDependencies);
+  }
+
+  private async addRunWorktree(
+    repoPath: string,
+    projectName: string,
+    runId: string,
+    startPoint: string,
+    configuredWorktreeRoot: string | null | undefined,
+    shareDependencies: boolean,
+  ): Promise<{ branchName: string; worktreePath: string }> {
     const git = simpleGit(repoPath);
     await ensureGitLongPathSupport(git);
     const worktreeRoot = this.getWorktreeRoot(repoPath, configuredWorktreeRoot);
@@ -756,16 +843,22 @@ export class GitService {
     const branchName = `${sanitizeSegment(projectName)}-${sanitizeSegment(runId)}`;
     const worktreePath = join(worktreeRoot, branchName);
 
-    if (!existsSync(worktreePath)) {
-      await runGitRaw(git, ["worktree", "add", "-b", branchName, worktreePath, sourceBranch]);
+    if (existsSync(worktreePath)) {
+      if (shareDependencies) await ensureWorktreeDependencyLinks(repoPath, worktreePath);
+      return { branchName, worktreePath };
     }
 
-    if (shareDependencies) await ensureWorktreeDependencyLinks(repoPath, worktreePath);
+    const branchExisted = await this.hasLocalBranch(repoPath, branchName);
+    try {
+      await runGitRaw(git, ["worktree", "add", "-b", branchName, worktreePath, startPoint]);
+      if (shareDependencies) await ensureWorktreeDependencyLinks(repoPath, worktreePath);
+    } catch (error) {
+      // A failed checkout can leave a registered worktree and a new branch behind; nothing owns them yet.
+      await this.removeWorktree(repoPath, worktreePath, branchExisted ? undefined : branchName).catch(() => {});
+      throw error;
+    }
 
-    return {
-      branchName,
-      worktreePath,
-    };
+    return { branchName, worktreePath };
   }
 
   async listWorktrees(repoPath: string): Promise<WorktreeInfo[]> {
@@ -823,7 +916,7 @@ export class GitService {
 
   async isWorktreeRegistered(repoPath: string, worktreePath: string): Promise<boolean> {
     const registeredWorktrees = await this.listWorktrees(repoPath);
-    return registeredWorktrees.some((entry) => entry.worktreePath === worktreePath);
+    return registeredWorktrees.some((entry) => isSameWorktreePath(entry.worktreePath, worktreePath));
   }
 
   async hasLocalBranch(repoPath: string, branchName: string): Promise<boolean> {
@@ -843,9 +936,8 @@ export class GitService {
   }
 
   async fetchProjectBranches(repoPath: string): Promise<void> {
-    const git = simpleGit(repoPath);
-    await ensureGitLongPathSupport(git);
-    await runGitRaw(git, ["fetch", "--all", "--prune"]);
+    await ensureGitLongPathSupport(simpleGit(repoPath));
+    await runNetworkGit(repoPath, ["fetch", "--all", "--prune"]);
   }
 
   async createProjectBranch(repoPath: string, branchName: string, startPoint: string, checkout = true): Promise<void> {
@@ -906,9 +998,8 @@ export class GitService {
   }
 
   async pullProjectBranch(repoPath: string): Promise<void> {
-    const git = simpleGit(repoPath);
-    await ensureGitLongPathSupport(git);
-    await runGitRaw(git, ["pull", "--ff-only"]);
+    await ensureGitLongPathSupport(simpleGit(repoPath));
+    await runNetworkGit(repoPath, ["pull", "--ff-only"]);
   }
 
   async pushProjectBranch(repoPath: string, branchName: string, setUpstream = true): Promise<void> {
@@ -921,7 +1012,7 @@ export class GitService {
     if (!(await this.hasLocalBranch(repoPath, trimmedBranchName))) {
       throw new Error(`Local branch "${trimmedBranchName}" was not found.`);
     }
-    await runGitRaw(git, setUpstream ? ["push", "-u", "origin", trimmedBranchName] : ["push", "origin", trimmedBranchName]);
+    await runNetworkGit(repoPath, setUpstream ? ["push", "-u", "origin", trimmedBranchName] : ["push", "origin", trimmedBranchName]);
   }
 
   private async validateBranchName(repoPath: string, branchName: string): Promise<void> {
@@ -937,8 +1028,13 @@ export class GitService {
     const git = simpleGit(repoPath);
     await ensureGitLongPathSupport(git);
     const cleanupErrors: string[] = [];
-    const registeredWorktrees = await this.listWorktrees(repoPath);
-    const isRegisteredWorktree = registeredWorktrees.some((entry) => entry.worktreePath === worktreePath);
+    const isRegisteredWorktree = await this.isWorktreeRegistered(repoPath, worktreePath);
+
+    try {
+      await removeWorktreeDependencyLinks(worktreePath);
+    } catch (error) {
+      cleanupErrors.push(`dependency link removal failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
 
     if (isRegisteredWorktree) {
       try {
@@ -973,8 +1069,7 @@ export class GitService {
       }
     }
 
-    const remainingWorktrees = await this.listWorktrees(repoPath);
-    if (remainingWorktrees.some((entry) => entry.worktreePath === worktreePath)) {
+    if (await this.isWorktreeRegistered(repoPath, worktreePath)) {
       cleanupErrors.push("worktree is still registered in git after cleanup");
     }
 
@@ -1142,6 +1237,16 @@ export class GitService {
     }
 
     await git.add(["-A"]);
+    // Shared dependency links point into the project repository and must never be committed. A
+    // `node_modules/` ignore rule only matches directories, so Git would otherwise stage the link itself.
+    const dependencyLinks = await listWorktreeDependencyLinks(worktreePath);
+    if (dependencyLinks.length > 0) {
+      await runGitRaw(git, ["reset", "-q", "--", ...dependencyLinks]);
+      if (!(await runGitRaw(git, ["diff", "--cached", "--name-only"])).trim()) {
+        throw new Error("There are no changes to commit in this run worktree.");
+      }
+    }
+
     const result = await git.commit(message);
 
     return {
@@ -1150,8 +1255,7 @@ export class GitService {
   }
 
   async publishBranch(worktreePath: string, branchName: string): Promise<{ branchName: string; remoteName: string }> {
-    const git = simpleGit(worktreePath);
-    await git.push("origin", branchName, { "-u": null });
+    await runNetworkGit(worktreePath, ["push", "-u", "origin", branchName]);
 
     return {
       branchName,
@@ -1189,24 +1293,33 @@ export class GitService {
     return (await git.raw(["log", "-1", "--format=%s", branchName])).trim();
   }
 
-  async createPublishBranchFromHead(worktreePath: string, branchName: string): Promise<void> {
+  /** Throws unless a new publish branch with this name can be created locally and on origin. */
+  async assertPublishBranchAvailable(worktreePath: string, branchName: string): Promise<string> {
     const trimmedBranchName = branchName.trim();
     if (!trimmedBranchName) {
       throw new Error("Enter a source branch name.");
     }
+    await this.validateBranchName(worktreePath, trimmedBranchName);
 
-    const git = simpleGit(worktreePath);
-    await ensureGitLongPathSupport(git);
-    const localBranches = await git.branchLocal();
-    if (localBranches.all.includes(trimmedBranchName)) {
+    if (await this.hasLocalBranch(worktreePath, trimmedBranchName)) {
       throw new Error(`A local branch named "${trimmedBranchName}" already exists.`);
     }
 
-    const remoteHeads = (await git.raw(["ls-remote", "--heads", "origin", trimmedBranchName])).trim();
+    // A bare pattern also matches slash-delimited tails, so `feature` would hit `refs/heads/team/feature`.
+    const remoteHeads = (
+      await runNetworkGit(worktreePath, ["ls-remote", "--heads", "origin", `refs/heads/${trimmedBranchName}`])
+    ).trim();
     if (remoteHeads) {
       throw new Error(`A remote branch named "${trimmedBranchName}" already exists on origin.`);
     }
 
+    return trimmedBranchName;
+  }
+
+  async createPublishBranchFromHead(worktreePath: string, branchName: string): Promise<void> {
+    const trimmedBranchName = await this.assertPublishBranchAvailable(worktreePath, branchName);
+    const git = simpleGit(worktreePath);
+    await ensureGitLongPathSupport(git);
     await runGitRaw(git, ["checkout", "-b", trimmedBranchName, "HEAD"]);
   }
 
@@ -1217,19 +1330,15 @@ export class GitService {
     title: string,
     body: string,
   ): Promise<{ url: string; mode: PublishMode; requestKind: PublishRequestKind }> {
-    const git = simpleGit(worktreePath);
     const remote = await this.getParsedOriginRemote(worktreePath);
-    await git.push("origin", branchName, { "-u": null });
+    await runNetworkGit(worktreePath, ["push", "-u", "origin", branchName]);
 
     if (remote?.provider === "gitlab") {
       try {
-        const { stdout } = await execFileAsync(
+        const { stdout } = await execForgeCli(
           "glab",
           ["mr", "create", "--source-branch", branchName, "--target-branch", targetBranch, "--title", title, "--description", body],
-          {
-            cwd: worktreePath,
-            maxBuffer: 1024 * 1024,
-          },
+          worktreePath,
         );
 
         return {
@@ -1256,13 +1365,10 @@ export class GitService {
     }
 
     try {
-      const { stdout } = await execFileAsync(
+      const { stdout } = await execForgeCli(
         "gh",
         ["pr", "create", "--base", targetBranch, "--head", branchName, "--title", title, "--body", body],
-        {
-          cwd: worktreePath,
-          maxBuffer: 1024 * 1024,
-        },
+        worktreePath,
       );
 
       return {
@@ -1280,6 +1386,11 @@ export class GitService {
             requestKind: "pull-request",
           };
         }
+      }
+      if (isTimedOutCommandError(error)) {
+        throw new Error(
+          `GitHub CLI did not finish within ${String(NETWORK_COMMAND_TIMEOUT_MINUTES)} minutes. The branch was pushed; check \`gh auth status\` and create the pull request again.`,
+        );
       }
 
       let message = error instanceof Error ? error.message : String(error);
