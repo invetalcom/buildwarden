@@ -311,13 +311,19 @@ export const App = () => {
       recentRunDetailsRef.current.set(runId, detail);
     }
   }, [runDetailsById]);
-  const getCachedRunDetail = useCallback(
-    (runId: string): RunDetail | null => runDetailsByIdRef.current[runId] ?? recentRunDetailsRef.current.get(runId) ?? null,
-    [],
-  );
   const diffRefreshTimersRef = useRef<Partial<Record<string, ReturnType<typeof setTimeout>>>>({});
   const runDetailLoadTokenRef = useRef<Record<string, number>>({});
   const diffLoadPromisesRef = useRef<Partial<Record<string, Promise<void>>>>({});
+  const getCachedRunDetail = useCallback((runId: string): RunDetail | null => {
+    const live = runDetailsByIdRef.current[runId];
+    if (live) return live;
+    const recent = recentRunDetailsRef.current.get(runId);
+    // Updates for closed runs are dropped, so a cached loading flag would never
+    // clear if the reopen load fails. Keep diffPending only for a load in flight.
+    return recent
+      ? { ...recent, diffPending: Boolean(diffLoadPromisesRef.current[runId]), diffSummaryPending: false }
+      : null;
+  }, []);
   const diffLoadGenerationRef = useRef<Record<string, number>>({});
   const diffSummaryLoadGenerationRef = useRef<Record<string, number>>({});
   const [landingSelected, setLandingSelected] = useState(true);
