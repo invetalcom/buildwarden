@@ -56,4 +56,33 @@ describe("GitService run worktree lifecycle", () => {
     expect(await service.hasLocalBranch(repoPath, workspace.branchName)).toBe(false);
     expect(await readFile(join(repoPath, "node_modules", "shared.txt"), "utf8")).toBe("keep\n");
   });
+
+  it("runs remote operations with a non-interactive environment despite guarded ambient variables", async () => {
+    const { root, repoPath, git } = await createRepository();
+    const remotePath = join(root, "remote.git");
+    await simpleGit(root).raw(["init", "--bare", remotePath]);
+    await git.addRemote("origin", remotePath);
+    const service = new GitService();
+    const ambientKeys = ["GIT_EDITOR", "EDITOR", "GIT_TERMINAL_PROMPT"] as const;
+    const previous = Object.fromEntries(ambientKeys.map((key) => [key, process.env[key]]));
+    process.env.GIT_EDITOR = "unused-editor";
+    process.env.EDITOR = "unused-editor";
+    process.env.GIT_TERMINAL_PROMPT = "1";
+    try {
+      await git.branch(["remote-only"]);
+      await service.publishBranch(repoPath, "remote-only");
+      await git.deleteLocalBranch("remote-only", true);
+      await service.publishBranch(repoPath, "main");
+      await service.fetchProjectBranches(repoPath);
+      await expect(service.createPublishBranchFromHead(repoPath, "remote-only")).rejects.toThrow("already exists on origin");
+      await expect(service.createPublishBranchFromHead(repoPath, "main-copy")).resolves.toBeUndefined();
+    } finally {
+      for (const key of ambientKeys) {
+        if (previous[key] === undefined) delete process.env[key];
+        else process.env[key] = previous[key];
+      }
+    }
+
+    expect(await service.hasRemoteBranch(repoPath, "main")).toBe(true);
+  });
 });

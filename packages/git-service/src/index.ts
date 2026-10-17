@@ -3,7 +3,7 @@ import { access, copyFile, lstat, readdir, rm, stat, symlink, unlink, writeFile 
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { simpleGit, type SimpleGit } from "simple-git";
+import { GitPluginError, simpleGit, type SimpleGit } from "simple-git";
 import { promisify } from "node:util";
 import {
   GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE,
@@ -32,6 +32,56 @@ const withLongPathSupport = (args: string[]): string[] =>
   process.platform === "win32" ? ["-c", `${LONG_PATHS_CONFIG_KEY}=${LONG_PATHS_CONFIG_VALUE}`, ...args] : args;
 
 const runGitRaw = (git: SimpleGit, args: string[]): Promise<string> => git.raw(withLongPathSupport(args));
+
+/**
+ * Remote operations run inside the per-project branch lock, so a stalled network or credential prompt
+ * must not block the project forever. The timeout counts inactivity, not total duration.
+ */
+const NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS = 5 * 60_000;
+const NETWORK_COMMAND_TIMEOUT_MINUTES = NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS / 60_000;
+// simple-git strips these ambient variables and rejects them when passed explicitly; mirror its guard
+// so the explicit environment below only adds GIT_TERMINAL_PROMPT.
+const SIMPLE_GIT_GUARDED_ENV_KEYS = new Set(["editor", "pager", "prefix", "ssh_askpass", "visual"]);
+
+const createNetworkGit = (repoPath: string): SimpleGit => {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    const normalizedKey = key.toLowerCase().trim();
+    if (value !== undefined && !normalizedKey.startsWith("git_") && !SIMPLE_GIT_GUARDED_ENV_KEYS.has(normalizedKey)) {
+      env[key] = value;
+    }
+  }
+  return simpleGit({
+    baseDir: repoPath,
+    timeout: { block: NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS },
+    allowEnvironment: ["GIT_TERMINAL_PROMPT"],
+  }).env({ ...env, GIT_TERMINAL_PROMPT: "0" });
+};
+
+const runNetworkGit = async (repoPath: string, args: string[]): Promise<string> => {
+  try {
+    return await runGitRaw(createNetworkGit(repoPath), args);
+  } catch (error) {
+    if (error instanceof GitPluginError && error.plugin === "timeout") {
+      throw new Error(
+        `git ${args[0] ?? ""} made no progress for ${String(NETWORK_COMMAND_TIMEOUT_MINUTES)} minutes and was stopped. Check the network connection and Git credentials, then try again.`,
+      );
+    }
+    throw error;
+  }
+};
+
+/** Runs a forge CLI (`gh`, `glab`) without interactive prompts and with a bounded runtime. */
+const execForgeCli = (command: string, args: string[], cwd: string) =>
+  execFileAsync(command, args, {
+    cwd,
+    maxBuffer: 1024 * 1024,
+    timeout: NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GH_PROMPT_DISABLED: "1" },
+  });
+
+const isTimedOutCommandError = (error: unknown): boolean =>
+  typeof error === "object" && error !== null && "killed" in error && (error as { killed?: boolean }).killed === true;
 
 const detectProjectBaseBranch = async (git: SimpleGit, currentBranch: string): Promise<string> => {
   try {
@@ -886,9 +936,8 @@ export class GitService {
   }
 
   async fetchProjectBranches(repoPath: string): Promise<void> {
-    const git = simpleGit(repoPath);
-    await ensureGitLongPathSupport(git);
-    await runGitRaw(git, ["fetch", "--all", "--prune"]);
+    await ensureGitLongPathSupport(simpleGit(repoPath));
+    await runNetworkGit(repoPath, ["fetch", "--all", "--prune"]);
   }
 
   async createProjectBranch(repoPath: string, branchName: string, startPoint: string, checkout = true): Promise<void> {
@@ -949,9 +998,8 @@ export class GitService {
   }
 
   async pullProjectBranch(repoPath: string): Promise<void> {
-    const git = simpleGit(repoPath);
-    await ensureGitLongPathSupport(git);
-    await runGitRaw(git, ["pull", "--ff-only"]);
+    await ensureGitLongPathSupport(simpleGit(repoPath));
+    await runNetworkGit(repoPath, ["pull", "--ff-only"]);
   }
 
   async pushProjectBranch(repoPath: string, branchName: string, setUpstream = true): Promise<void> {
@@ -964,7 +1012,7 @@ export class GitService {
     if (!(await this.hasLocalBranch(repoPath, trimmedBranchName))) {
       throw new Error(`Local branch "${trimmedBranchName}" was not found.`);
     }
-    await runGitRaw(git, setUpstream ? ["push", "-u", "origin", trimmedBranchName] : ["push", "origin", trimmedBranchName]);
+    await runNetworkGit(repoPath, setUpstream ? ["push", "-u", "origin", trimmedBranchName] : ["push", "origin", trimmedBranchName]);
   }
 
   private async validateBranchName(repoPath: string, branchName: string): Promise<void> {
@@ -1197,8 +1245,7 @@ export class GitService {
   }
 
   async publishBranch(worktreePath: string, branchName: string): Promise<{ branchName: string; remoteName: string }> {
-    const git = simpleGit(worktreePath);
-    await git.push("origin", branchName, { "-u": null });
+    await runNetworkGit(worktreePath, ["push", "-u", "origin", branchName]);
 
     return {
       branchName,
@@ -1249,7 +1296,7 @@ export class GitService {
       throw new Error(`A local branch named "${trimmedBranchName}" already exists.`);
     }
 
-    const remoteHeads = (await git.raw(["ls-remote", "--heads", "origin", trimmedBranchName])).trim();
+    const remoteHeads = (await runNetworkGit(worktreePath, ["ls-remote", "--heads", "origin", trimmedBranchName])).trim();
     if (remoteHeads) {
       throw new Error(`A remote branch named "${trimmedBranchName}" already exists on origin.`);
     }
@@ -1264,19 +1311,15 @@ export class GitService {
     title: string,
     body: string,
   ): Promise<{ url: string; mode: PublishMode; requestKind: PublishRequestKind }> {
-    const git = simpleGit(worktreePath);
     const remote = await this.getParsedOriginRemote(worktreePath);
-    await git.push("origin", branchName, { "-u": null });
+    await runNetworkGit(worktreePath, ["push", "-u", "origin", branchName]);
 
     if (remote?.provider === "gitlab") {
       try {
-        const { stdout } = await execFileAsync(
+        const { stdout } = await execForgeCli(
           "glab",
           ["mr", "create", "--source-branch", branchName, "--target-branch", targetBranch, "--title", title, "--description", body],
-          {
-            cwd: worktreePath,
-            maxBuffer: 1024 * 1024,
-          },
+          worktreePath,
         );
 
         return {
@@ -1303,13 +1346,10 @@ export class GitService {
     }
 
     try {
-      const { stdout } = await execFileAsync(
+      const { stdout } = await execForgeCli(
         "gh",
         ["pr", "create", "--base", targetBranch, "--head", branchName, "--title", title, "--body", body],
-        {
-          cwd: worktreePath,
-          maxBuffer: 1024 * 1024,
-        },
+        worktreePath,
       );
 
       return {
@@ -1327,6 +1367,11 @@ export class GitService {
             requestKind: "pull-request",
           };
         }
+      }
+      if (isTimedOutCommandError(error)) {
+        throw new Error(
+          `GitHub CLI did not finish within ${String(NETWORK_COMMAND_TIMEOUT_MINUTES)} minutes. The branch was pushed; check \`gh auth status\` and create the pull request again.`,
+        );
       }
 
       let message = error instanceof Error ? error.message : String(error);
