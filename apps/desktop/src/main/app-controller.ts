@@ -9584,7 +9584,9 @@ export class AppController
     if (shouldReplace) {
       const existingStepId = streamingStepIds.get(streamId);
       if (existingStepId) {
+        // Persist the latest type so a progress step finishing as "tool-result" stops reading as live progress.
         persistedStep = this.db.updateRunStep(existingStepId, {
+          eventType,
           title: payload.chunk.title ?? this.defaultRunEventTitle(eventType),
           content: payload.chunk.value,
           metadataJson: JSON.stringify(payload.chunk.metadata ?? {}),

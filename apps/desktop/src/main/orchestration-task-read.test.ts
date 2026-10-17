@@ -93,4 +93,16 @@ describe("buildwarden_tasks_read", () => {
     expect((withHistory.response.childRun.diff as string).length).toBeLessThan(61_000);
     expect(withHistory.response.childRun.diff).toContain("truncated");
   });
+
+  it("includes progress steps that were replaced by their final tool result", async () => {
+    const { db, child, readTask } = await fixture();
+    const progress = db.appendRunStep(child.id, "tool-progress", "Subagent: reviewer", "running");
+    db.appendRunStep(child.id, "tool-progress", "Shell progress", "still running");
+    db.updateRunStep(progress.id, { eventType: "tool-result", title: "Subagent: reviewer", content: "completed" });
+
+    const { response } = await readTask();
+
+    expect(response.childRun.recentSteps.map((step) => step.title)).toEqual(["Subagent: reviewer"]);
+    expect(response.childRun.recentSteps[0]?.content).toBe("completed");
+  });
 });

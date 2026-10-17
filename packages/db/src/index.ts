@@ -3436,6 +3436,7 @@ export class BuildWardenDatabase {
   updateRunStep(
     stepId: string,
     fields: {
+      eventType?: string;
       title?: string;
       content?: string;
       metadataJson?: string;
@@ -3465,10 +3466,11 @@ export class BuildWardenDatabase {
     this.run(
       `
       update run_steps
-      set title = ?, content = ?, metadata_json = ?
+      set event_type = ?, title = ?, content = ?, metadata_json = ?
       where id = ?
       `,
       [
+        fields.eventType ?? existing.eventType,
         fields.title ?? existing.title,
         fields.content ?? existing.content,
         fields.metadataJson ?? existing.metadataJson,
