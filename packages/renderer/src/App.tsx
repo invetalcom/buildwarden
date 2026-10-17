@@ -2506,16 +2506,22 @@ export const App = () => {
    * Navigation switches the view immediately; releasing the previous run's
    * worktree, persisting the selection, and refreshing the snapshot run in the
    * background. Effects are chained so rapid clicks persist in click order.
+   * Run activation goes through the same chain so a queued release or project
+   * selection cannot clear a run selected after it.
    */
   const navigationEffectsRef = useRef<Promise<void>>(Promise.resolve());
+  /** Serializes `effects` after pending navigation effects; the result keeps its own rejection. */
+  const enqueueNavigationEffects = useCallback((effects: () => Promise<void>) => {
+    const result = navigationEffectsRef.current.then(effects);
+    navigationEffectsRef.current = result.catch(() => undefined);
+    return result;
+  }, []);
   const runNavigationEffects = useCallback((effects: () => Promise<void>) => {
     setError(null);
-    const next = navigationEffectsRef.current.then(effects).catch((caught: unknown) => {
+    return enqueueNavigationEffects(effects).catch((caught: unknown) => {
       setError(caught instanceof Error ? caught.message : "Unexpected error");
     });
-    navigationEffectsRef.current = next;
-    return next;
-  }, []);
+  }, [enqueueNavigationEffects]);
 
   const clearRunSelectionState = useCallback((nextSelectedRunId: string | null | undefined = null) => {
     setSelectedRunId(nextSelectedRunId);
@@ -2543,11 +2549,13 @@ export const App = () => {
         return;
       }
 
-      await buildwarden.activateRun(runId);
-      await loadSnapshot();
-      await loadRunDetailForRun(runId);
+      await enqueueNavigationEffects(async () => {
+        await buildwarden.activateRun(runId);
+        await loadSnapshot();
+        await loadRunDetailForRun(runId);
+      });
     },
-    [buildwarden, loadRunDetailForRun, loadSnapshot, snapshot.projects],
+    [buildwarden, enqueueNavigationEffects, loadRunDetailForRun, loadSnapshot, snapshot.projects],
   );
 
   const focusRunPane = useCallback(
@@ -3044,10 +3052,10 @@ export const App = () => {
       await loadSnapshot();
     };
 
-    Promise.all([runActivateAndSnapshot(), loadRunDetail(runId)]).catch((caught) => {
+    Promise.all([enqueueNavigationEffects(runActivateAndSnapshot), loadRunDetail(runId)]).catch((caught) => {
       setError(caught instanceof Error ? caught.message : "Unexpected error");
     });
-  }, [buildwarden, leaveSelectedRun, loadRunDetail, loadSnapshot, selectedRunId]);
+  }, [buildwarden, enqueueNavigationEffects, leaveSelectedRun, loadRunDetail, loadSnapshot, selectedRunId]);
 
   const reviewChildRun = useCallback((projectId: string, childRunId: string) => {
     updateRunWorkspaceLayout(childRunId, (current) => ({
