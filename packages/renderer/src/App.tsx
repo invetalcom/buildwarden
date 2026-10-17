@@ -2522,6 +2522,12 @@ export const App = () => {
       setError(caught instanceof Error ? caught.message : "Unexpected error");
     });
   }, [enqueueNavigationEffects]);
+  /** Releases the selected run in navigation order without clearing the current error. */
+  const queueLeaveSelectedRun = useCallback(() => {
+    void enqueueNavigationEffects(leaveSelectedRun).catch((caught: unknown) => {
+      setError(caught instanceof Error ? caught.message : "Unexpected error");
+    });
+  }, [enqueueNavigationEffects, leaveSelectedRun]);
 
   const clearRunSelectionState = useCallback((nextSelectedRunId: string | null | undefined = null) => {
     setSelectedRunId(nextSelectedRunId);
@@ -2600,7 +2606,7 @@ export const App = () => {
       if (!remainingRunId) {
         clearRunSelectionState(null);
         if (buildwarden && wasFocused) {
-          void buildwarden.releaseRun(closingRunId).catch((caught) => {
+          void enqueueNavigationEffects(() => buildwarden.releaseRun(closingRunId)).catch((caught) => {
             setError(caught instanceof Error ? caught.message : "Unexpected error");
           });
         }
@@ -2613,7 +2619,7 @@ export const App = () => {
         });
       }
     },
-    [buildwarden, clearRunSelectionState, setFocusedRunSelection],
+    [buildwarden, clearRunSelectionState, enqueueNavigationEffects, setFocusedRunSelection],
   );
 
   const handleProjectSelect = useCallback(async (projectId: string) => {
@@ -2715,7 +2721,7 @@ export const App = () => {
   }, [buildwarden, clearRunSelectionState, leaveSelectedRun, loadSnapshot, runNavigationEffects]);
 
   const handleBookmarksSelect = useCallback(() => {
-    void leaveSelectedRun();
+    queueLeaveSelectedRun();
     setBookmarksSelected(true);
     setAllRunsSelected(false);
     setChatsSelected(false);
@@ -2725,10 +2731,10 @@ export const App = () => {
     setLandingSelected(false);
     setSettingsOpen(false);
     clearRunSelectionState(null);
-  }, [clearRunSelectionState, leaveSelectedRun]);
+  }, [clearRunSelectionState, queueLeaveSelectedRun]);
 
   const handleChatsSelect = useCallback(() => {
-    void leaveSelectedRun();
+    queueLeaveSelectedRun();
     setChatsSelected(true);
     setAllRunsSelected(false);
     setBookmarksSelected(false);
@@ -2738,7 +2744,7 @@ export const App = () => {
     setLandingSelected(false);
     setSettingsOpen(false);
     clearRunSelectionState(null);
-  }, [clearRunSelectionState, leaveSelectedRun]);
+  }, [clearRunSelectionState, queueLeaveSelectedRun]);
 
   const openSettingsPage = useCallback(() => {
     if (!buildwarden.capabilities.settings) return;
@@ -2757,7 +2763,7 @@ export const App = () => {
       focusedRunPane,
       runDetailsById,
     });
-    void leaveSelectedRun();
+    queueLeaveSelectedRun();
     setSettingsOpen(true);
     setLandingSelected(false);
     setAllRunsSelected(false);
@@ -2776,9 +2782,9 @@ export const App = () => {
     clearRunSelectionState,
     focusedRunPane,
     landingSelected,
-    leaveSelectedRun,
     openRunPanes,
     projectPageTab,
+    queueLeaveSelectedRun,
     runDetail,
     runDetailsById,
     selectedBookmark,
