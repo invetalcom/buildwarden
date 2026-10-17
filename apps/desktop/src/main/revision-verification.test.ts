@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
@@ -228,6 +228,24 @@ describe("revision verification", () => {
     const { cwd } = await fixture();
     const { record } = await check(cwd, ['node -e "require(\'fs\').writeFileSync(\'source.txt\', \'formatted\')"']);
     expect(record.status).toBe("stale"); expect(record.results[0].ok).toBe(true);
+  }, 20_000);
+  it("detects a same-size rewrite that the real index still treats as racily clean", async () => {
+    const { cwd, git } = await fixture();
+    // Pin the tracked file and the index to the same whole second: git must
+    // re-hash the entry, because size and mtime alone cannot prove it unchanged.
+    const racyTime = new Date(1_700_000_000_000);
+    const source = join(cwd, "source.txt");
+    await utimes(source, racyTime, racyTime);
+    await git("update-index", "--refresh");
+    const indexPath = join(cwd, ".git", "index");
+    await utimes(indexPath, racyTime, racyTime);
+    const before = await captureWorkspaceRevision(cwd, "git");
+
+    await writeFile(source, "formatted");
+    await utimes(source, racyTime, racyTime);
+    await utimes(indexPath, racyTime, racyTime);
+
+    expect((await captureWorkspaceRevision(cwd, "git")).fingerprint).not.toBe(before.fingerprint);
   }, 20_000);
   it("records failures, stops subsequent commands, and honors cancellation before spawning", async () => {
     const { cwd } = await fixture();
