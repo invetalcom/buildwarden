@@ -178,10 +178,6 @@ import { useBuildWardenClient } from "./lib/buildwarden-client";
 import { PastedTextAttachmentThresholdProvider } from "./lib/pasted-text-attachment-settings";
 import { RunToolCallCollapseThresholdProvider } from "./lib/run-tool-call-collapse-settings";
 
-const SNAPSHOT_REFRESH_DELAY_MS = 300;
-/** Token usage arrives with nearly every streamed step; aggregate totals can lag a few seconds. */
-const USAGE_SNAPSHOT_REFRESH_DELAY_MS = 5_000;
-
 const isLocalProviderType = (type: ProviderType): boolean =>
   type === "codex-cli" || type === "claude-code" || type === "cursor-agent";
 
@@ -213,6 +209,10 @@ const RUN_PANEL_TOGGLE_DEFINITIONS: readonly RunPanelToggleDefinition[] = [
   { key: "chat", label: "Chat", icon: MessagesSquare, hiddenSubtitle: "Ask about this run", requiresWorktree: false },
   { key: "pull-request", label: "Pull Request", icon: GitPullRequest, hiddenSubtitle: "Show review status", requiresWorktree: false },
 ];
+
+const SNAPSHOT_REFRESH_DELAY_MS = 300;
+/** Token usage arrives with nearly every streamed step; aggregate totals can lag a few seconds. */
+const USAGE_SNAPSHOT_REFRESH_DELAY_MS = 5_000;
 
 const addProjectForgeRequestToast = (
   current: ProjectForgeRequestToast[],
