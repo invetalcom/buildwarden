@@ -94,6 +94,15 @@ import type {
 const ORCHESTRATION_DETAIL_HISTORY_LIMIT = 200;
 export const INITIAL_USER_HISTORY_TURN_LIMIT = 10;
 export const EARLIER_USER_HISTORY_TURN_LIMIT = 20;
+/**
+ * Turn anchors alone don't bound a page: most runs have one user turn, so a
+ * long agent turn (large tool results) would ship its whole history at once.
+ * Pages are additionally capped by step count and stored text size; the newest
+ * step is always included.
+ */
+type HistoryWindowLimits = { maxSteps: number; maxChars: number };
+export const INITIAL_HISTORY_WINDOW_LIMITS: HistoryWindowLimits = { maxSteps: 300, maxChars: 1_500_000 };
+export const EARLIER_HISTORY_WINDOW_LIMITS: HistoryWindowLimits = { maxSteps: 500, maxChars: 3_000_000 };
 
 type HistoryStep = RunStepRecord | ChatStepRecord;
 type HistoryCursor = { createdAt: string; id: string; sequence: number };
@@ -289,6 +298,48 @@ export class BuildWardenDatabase {
     );
   }
 
+  /**
+   * Returns the inclusive lower bound of the newest steps in
+   * [lowerBound, upperBound) that fit `limits`, or `lowerBound` when the whole
+   * window fits. Only sizes are read, not step content.
+   */
+  private limitHistoryWindow(
+    table: HistoryTable,
+    ownerColumn: "run_id" | "chat_id",
+    ownerId: string,
+    limits: HistoryWindowLimits,
+    lowerBound?: HistoryCursor,
+    upperBound?: HistoryCursor,
+  ): HistoryCursor | undefined {
+    const clauses = [`${ownerColumn} = ?`];
+    const params: SQLInputValue[] = [ownerId];
+    if (lowerBound) {
+      clauses.push(`rowid >= ?`);
+      params.push(lowerBound.sequence);
+    }
+    if (upperBound) {
+      clauses.push(`rowid < ?`);
+      params.push(upperBound.sequence);
+    }
+    params.push(limits.maxSteps + 1);
+    const rows = this.all<HistoryCursor & { size: number }>(
+      `select created_at as createdAt, id, rowid as sequence,
+         coalesce(length(title), 0) + coalesce(length(content), 0) + coalesce(length(metadata_json), 0) as size
+       from ${table} where ${clauses.join(" and ")} order by rowid desc limit ?`,
+      params,
+    );
+    let totalChars = 0;
+    let oldestIncluded: HistoryCursor | undefined;
+    for (const [index, row] of rows.entries()) {
+      if (index > 0 && (index >= limits.maxSteps || totalChars + row.size > limits.maxChars)) {
+        return oldestIncluded;
+      }
+      totalChars += row.size;
+      oldestIncluded = { createdAt: row.createdAt, id: row.id, sequence: row.sequence };
+    }
+    return lowerBound;
+  }
+
   private getInitialHistoryPage<TStep extends HistoryStep>(
     table: HistoryTable,
     ownerColumn: "run_id" | "chat_id",
@@ -301,14 +352,16 @@ export class BuildWardenDatabase {
       ownerId,
       INITIAL_USER_HISTORY_TURN_LIMIT + 1,
     );
-    const hasMore = anchors.length > INITIAL_USER_HISTORY_TURN_LIMIT;
-    if (!hasMore) {
+    const turnBoundary = anchors.length > INITIAL_USER_HISTORY_TURN_LIMIT
+      ? anchors[INITIAL_USER_HISTORY_TURN_LIMIT - 1]!
+      : undefined;
+    const boundary = this.limitHistoryWindow(table, ownerColumn, ownerId, INITIAL_HISTORY_WINDOW_LIMITS, turnBoundary);
+    if (!boundary) {
       return {
         steps: this.getHistorySteps<TStep>(table, ownerColumn, ownerAlias, ownerId),
         page: { beforeCursor: null, hasMore: false, snapshotRevision: "complete" },
       };
     }
-    const boundary = anchors[INITIAL_USER_HISTORY_TURN_LIMIT - 1]!;
     return {
       steps: this.getHistorySteps<TStep>(table, ownerColumn, ownerAlias, ownerId, boundary),
       page: {
@@ -347,8 +400,17 @@ export class BuildWardenDatabase {
       EARLIER_USER_HISTORY_TURN_LIMIT + 1,
       upperBound,
     );
-    const hasMore = anchors.length > EARLIER_USER_HISTORY_TURN_LIMIT;
-    const boundary = hasMore ? anchors[EARLIER_USER_HISTORY_TURN_LIMIT - 1]! : undefined;
+    const turnBoundary = anchors.length > EARLIER_USER_HISTORY_TURN_LIMIT
+      ? anchors[EARLIER_USER_HISTORY_TURN_LIMIT - 1]!
+      : undefined;
+    const boundary = this.limitHistoryWindow(
+      table,
+      ownerColumn,
+      ownerId,
+      EARLIER_HISTORY_WINDOW_LIMITS,
+      turnBoundary,
+      upperBound,
+    );
     return {
       steps: this.getHistorySteps<TStep>(table, ownerColumn, ownerAlias, ownerId, boundary, upperBound),
       page: boundary

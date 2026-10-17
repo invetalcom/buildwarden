@@ -156,7 +156,7 @@ import { useWelcomeFlow } from "./components/app/use-welcome-flow";
 import { buildProviderAccountConfig } from "./lib/provider-account-config";
 import { RunActionDialogs } from "./components/app/RunActionDialogs";
 import { RunDetailHeader, RunPaneDropPreviewOverlay, type RunPanelToggleItem } from "./components/app/RunDetailHeader";
-const RunDetailPage = lazy(() => import("./components/app/RunDetailPage").then((m) => ({ default: m.RunDetailPage })));
+const RunDetailPage = lazy(() => import("./components/app/MemoizedRunDetailPage").then((m) => ({ default: m.MemoizedRunDetailPage })));
 const SettingsPage = lazy(() => import("./components/app/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 import { Sidebar } from "./components/app/Sidebar";
 import { DEFAULT_SIDEBAR_WIDTH, clampSidebarWidth, parseSidebarWidthSetting } from "./components/app/sidebar-width";
@@ -173,6 +173,7 @@ import { useAvailableProviderModels } from "./lib/use-available-provider-models"
 import { useProjectRunDefaults } from "./lib/use-project-run-defaults";
 import { useRendererErrorReporting } from "./lib/use-renderer-error-reporting";
 import { useStableCallback } from "./lib/use-stable-callback";
+import { useJsonStableValue } from "./lib/use-stable-function-props";
 import { reportRendererError, reportRendererLog } from "./lib/report-renderer-error";
 import { useBuildWardenClient } from "./lib/buildwarden-client";
 import { PastedTextAttachmentThresholdProvider } from "./lib/pasted-text-attachment-settings";
@@ -190,6 +191,9 @@ const computeProjectFolderGitWarning = (status: ProjectFolderGitStatus | null): 
   }
   return null;
 };
+
+/** Shared fallback so panes without a saved layout pass stable tile props to the memoized run page. */
+const DEFAULT_RUN_PANE_LAYOUT = cloneDefaultRunWorkspaceLayoutPreference();
 
 interface RunPanelToggleDefinition {
   key: RunWorkspacePanelId;
@@ -1557,7 +1561,7 @@ export const App = () => {
     () => new Map(snapshot.providerAccounts.map((provider) => [provider.id, provider])),
     [snapshot.providerAccounts],
   );
-  const configuredModelOptions = useMemo(
+  const derivedConfiguredModelOptions = useMemo(
     () =>
       snapshot.models
         .filter((model) => model.enabled !== 0)
@@ -1578,6 +1582,8 @@ export const App = () => {
         }),
     [providerAccountById, snapshot.models],
   );
+  // Snapshot refreshes rebuild the model list; keep its identity while unchanged so memoized pages skip renders.
+  const configuredModelOptions = useJsonStableValue(derivedConfiguredModelOptions);
   const configuredRunModelOptions = configuredModelOptions;
   const configuredChatModelOptions = configuredModelOptions;
 
@@ -3232,9 +3238,10 @@ export const App = () => {
     [buildwarden],
   );
 
+  const keyboardShortcutsSetting = snapshot.settings[APP_SETTING_KEYS.keyboardShortcuts];
   const keyboardShortcuts = useMemo(
-    () => parseKeyboardShortcuts(snapshot.settings[APP_SETTING_KEYS.keyboardShortcuts]),
-    [snapshot.settings],
+    () => parseKeyboardShortcuts(keyboardShortcutsSetting),
+    [keyboardShortcutsSetting],
   );
 
   const shellAllowlistExtraText = useMemo(
@@ -3640,7 +3647,7 @@ export const App = () => {
     const paneRun = paneDetail?.run ?? findProjectRun(snapshot.projects, entry.runId)?.run ?? null;
     const isFocused = selectedRunId === entry.runId && focusedRunPane === entry.paneId;
     const paneDropPreviewActive = runPaneDropPreview === entry.paneId;
-    const paneLayout = runWorkspaceLayoutsByRunId[entry.runId] ?? cloneDefaultRunWorkspaceLayoutPreference();
+    const paneLayout = runWorkspaceLayoutsByRunId[entry.runId] ?? DEFAULT_RUN_PANE_LAYOUT;
     const paneHasOrchestrationSurface = Boolean(
       paneRun &&
       paneRun.kind !== "orchestration-task" &&

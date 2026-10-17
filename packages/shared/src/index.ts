@@ -1905,7 +1905,10 @@ export interface RunDetail {
   workspaceSetup?: RunWorkspaceSetup | null;
   run: RunRecord;
   steps: RunStepRecord[];
-  /** User-turn anchored window backing the activity timeline. Older pages can be prepended without trimming turn output. */
+  /**
+   * Window backing the activity timeline: the latest user turns, capped by step count and size, so a page may
+   * start mid-turn. Older pages can be prepended without trimming turn output.
+   */
   historyPage?: UserAnchoredHistoryPageInfo;
   notes: RunNoteRecord[];
   diff: string;
@@ -3498,12 +3501,12 @@ export const buildPriorChatCompletionMessagesFromSteps = (steps: ChatStepRecord[
 export interface ChatDetail {
   chat: ChatRecord;
   steps: ChatStepRecord[];
-  /** User-turn anchored window backing the transcript. */
+  /** Window backing the transcript: the latest user turns, capped by step count and size. */
   historyPage?: UserAnchoredHistoryPageInfo;
 }
 
 export interface UserAnchoredHistoryPageInfo {
-  /** Opaque keyset cursor for the oldest user turn in this window. */
+  /** Opaque keyset cursor for the oldest step in this window (usually a user turn). */
   beforeCursor: string | null;
   hasMore: boolean;
   /** Revision of the prefix preceding `beforeCursor`, used to reject stale page requests after history rewrites. */
