@@ -813,24 +813,7 @@ export class GitService {
     configuredWorktreeRoot?: string | null,
     shareDependencies = true,
   ): Promise<{ branchName: string; worktreePath: string }> {
-    const git = simpleGit(repoPath);
-    await ensureGitLongPathSupport(git);
-    const worktreeRoot = this.getWorktreeRoot(repoPath, configuredWorktreeRoot);
-    mkdirSync(worktreeRoot, { recursive: true });
-
-    const branchName = `${sanitizeSegment(projectName)}-${sanitizeSegment(runId)}`;
-    const worktreePath = join(worktreeRoot, branchName);
-
-    if (!existsSync(worktreePath)) {
-      await runGitRaw(git, ["worktree", "add", "-b", branchName, worktreePath, baseBranch]);
-    }
-
-    if (shareDependencies) await ensureWorktreeDependencyLinks(repoPath, worktreePath);
-
-    return {
-      branchName,
-      worktreePath,
-    };
+    return this.addRunWorktree(repoPath, projectName, runId, baseBranch, configuredWorktreeRoot, shareDependencies);
   }
 
   async createWorktreeForContinuation(
@@ -841,6 +824,17 @@ export class GitService {
     configuredWorktreeRoot?: string | null,
     shareDependencies = true,
   ): Promise<{ branchName: string; worktreePath: string }> {
+    return this.addRunWorktree(repoPath, projectName, runId, sourceBranch, configuredWorktreeRoot, shareDependencies);
+  }
+
+  private async addRunWorktree(
+    repoPath: string,
+    projectName: string,
+    runId: string,
+    startPoint: string,
+    configuredWorktreeRoot: string | null | undefined,
+    shareDependencies: boolean,
+  ): Promise<{ branchName: string; worktreePath: string }> {
     const git = simpleGit(repoPath);
     await ensureGitLongPathSupport(git);
     const worktreeRoot = this.getWorktreeRoot(repoPath, configuredWorktreeRoot);
@@ -849,16 +843,22 @@ export class GitService {
     const branchName = `${sanitizeSegment(projectName)}-${sanitizeSegment(runId)}`;
     const worktreePath = join(worktreeRoot, branchName);
 
-    if (!existsSync(worktreePath)) {
-      await runGitRaw(git, ["worktree", "add", "-b", branchName, worktreePath, sourceBranch]);
+    if (existsSync(worktreePath)) {
+      if (shareDependencies) await ensureWorktreeDependencyLinks(repoPath, worktreePath);
+      return { branchName, worktreePath };
     }
 
-    if (shareDependencies) await ensureWorktreeDependencyLinks(repoPath, worktreePath);
+    const branchExisted = await this.hasLocalBranch(repoPath, branchName);
+    try {
+      await runGitRaw(git, ["worktree", "add", "-b", branchName, worktreePath, startPoint]);
+      if (shareDependencies) await ensureWorktreeDependencyLinks(repoPath, worktreePath);
+    } catch (error) {
+      // A failed checkout can leave a registered worktree and a new branch behind; nothing owns them yet.
+      await this.removeWorktree(repoPath, worktreePath, branchExisted ? undefined : branchName).catch(() => {});
+      throw error;
+    }
 
-    return {
-      branchName,
-      worktreePath,
-    };
+    return { branchName, worktreePath };
   }
 
   async listWorktrees(repoPath: string): Promise<WorktreeInfo[]> {
@@ -1293,16 +1293,14 @@ export class GitService {
     return (await git.raw(["log", "-1", "--format=%s", branchName])).trim();
   }
 
-  async createPublishBranchFromHead(worktreePath: string, branchName: string): Promise<void> {
+  /** Throws unless a new publish branch with this name can be created locally and on origin. */
+  async assertPublishBranchAvailable(worktreePath: string, branchName: string): Promise<string> {
     const trimmedBranchName = branchName.trim();
     if (!trimmedBranchName) {
       throw new Error("Enter a source branch name.");
     }
 
-    const git = simpleGit(worktreePath);
-    await ensureGitLongPathSupport(git);
-    const localBranches = await git.branchLocal();
-    if (localBranches.all.includes(trimmedBranchName)) {
+    if (await this.hasLocalBranch(worktreePath, trimmedBranchName)) {
       throw new Error(`A local branch named "${trimmedBranchName}" already exists.`);
     }
 
@@ -1311,6 +1309,13 @@ export class GitService {
       throw new Error(`A remote branch named "${trimmedBranchName}" already exists on origin.`);
     }
 
+    return trimmedBranchName;
+  }
+
+  async createPublishBranchFromHead(worktreePath: string, branchName: string): Promise<void> {
+    const trimmedBranchName = await this.assertPublishBranchAvailable(worktreePath, branchName);
+    const git = simpleGit(worktreePath);
+    await ensureGitLongPathSupport(git);
     await runGitRaw(git, ["checkout", "-b", trimmedBranchName, "HEAD"]);
   }
 

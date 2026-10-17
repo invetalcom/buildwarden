@@ -57,6 +57,19 @@ describe("GitService run worktree lifecycle", () => {
     expect(await readFile(join(repoPath, "node_modules", "shared.txt"), "utf8")).toBe("keep\n");
   });
 
+  it("removes the worktree and branch again when worktree creation fails", async () => {
+    const { root, repoPath } = await createRepository();
+    const hookPath = join(repoPath, ".git", "hooks", "post-checkout");
+    await writeFile(hookPath, "#!/bin/sh\nexit 1\n", { encoding: "utf8", mode: 0o755 });
+    const service = new GitService();
+
+    await expect(service.createWorktreeForRun(repoPath, "Project", "run-1", "main", join(root, "worktrees"))).rejects.toThrow();
+
+    expect(await service.listWorktrees(repoPath)).toHaveLength(1);
+    expect(await service.hasLocalBranch(repoPath, "project-run-1")).toBe(false);
+    expect(existsSync(join(root, "worktrees", ".buildwarden-worktrees", "repo", "project-run-1"))).toBe(false);
+  });
+
   it("never commits the shared dependency link of a run worktree", async () => {
     const { root, repoPath } = await createRepository();
     await mkdir(join(repoPath, "node_modules"));

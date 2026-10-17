@@ -3232,16 +3232,22 @@ export class AppController
       }
     }
 
-    let run = this.db.createRun({
-      ...runInsertInput,
-      workspaceSetupProfile,
-      prompt: displayPrompt,
-      goalText,
-      workspaceType,
-      workspaceVcs,
-      branchName,
-      worktreePath,
-    });
+    let run: RunRecord;
+    try {
+      run = this.db.createRun({
+        ...runInsertInput,
+        workspaceSetupProfile,
+        prompt: displayPrompt,
+        goalText,
+        workspaceType,
+        workspaceVcs,
+        branchName,
+        worktreePath,
+      });
+    } catch (error) {
+      await this.discardPreparedRunWorkspace(project.repoPath, { workspaceType, branchName, worktreePath });
+      throw error;
+    }
 
     if (run.projectTaskId) {
       this.db.linkProjectTaskToRun(run.projectTaskId, run.id);
@@ -3356,25 +3362,31 @@ export class AppController
     const goalText = input.goalText === undefined ? sourceRun.goalText : normalizeRunGoalText(input.goalText);
     const promptForHarness = buildPromptWithRunGoal(userText, goalText);
 
-    let run = this.db.createRun({
-      projectId: project.id,
-      providerAccountId: provider.id,
-      modelId: model.id,
-      harnessType: input.harnessType,
-      mode: input.mode,
-      workspaceType,
-      workspaceVcs,
-      prompt: userText,
-      goalText,
-      branchName,
-      worktreePath,
-      parentRunId: sourceRun.id,
-      rootRunId: sourceRun.rootRunId ?? sourceRun.id,
-      lineageTitle: sourceRun.prompt || sourceRun.branchName,
-      workspaceSetupProfile,
-      projectTaskId: sourceRun.projectTaskId,
-      delegationEnabled: input.delegationEnabled ?? Boolean(sourceRun.delegationEnabled),
-    });
+    let run: RunRecord;
+    try {
+      run = this.db.createRun({
+        projectId: project.id,
+        providerAccountId: provider.id,
+        modelId: model.id,
+        harnessType: input.harnessType,
+        mode: input.mode,
+        workspaceType,
+        workspaceVcs,
+        prompt: userText,
+        goalText,
+        branchName,
+        worktreePath,
+        parentRunId: sourceRun.id,
+        rootRunId: sourceRun.rootRunId ?? sourceRun.id,
+        lineageTitle: sourceRun.prompt || sourceRun.branchName,
+        workspaceSetupProfile,
+        projectTaskId: sourceRun.projectTaskId,
+        delegationEnabled: input.delegationEnabled ?? Boolean(sourceRun.delegationEnabled),
+      });
+    } catch (error) {
+      await this.discardPreparedRunWorkspace(project.repoPath, { workspaceType, branchName, worktreePath });
+      throw error;
+    }
 
     if (run.projectTaskId) {
       this.db.linkProjectTaskToRun(run.projectTaskId, run.id);
@@ -3491,7 +3503,12 @@ export class AppController
       shareDependencies,
     );
     if (includeWorkspaceChanges) {
-      await this.gitService.cloneWorkspaceChanges(sourceRun.worktreePath, workspace.worktreePath);
+      try {
+        await this.gitService.cloneWorkspaceChanges(sourceRun.worktreePath, workspace.worktreePath);
+      } catch (error) {
+        await this.discardPreparedRunWorkspace(project.repoPath, { workspaceType: "worktree", ...workspace });
+        throw error;
+      }
     }
     return { workspaceType: "worktree", workspaceVcs: "git", ...workspace };
   }
@@ -6370,28 +6387,47 @@ export class AppController
     }
 
     if (createdCustomSourceBranch) {
-      await this.gitService.createPublishBranchFromHead(run.worktreePath, trimmedSourceBranch);
-      run = this.db.updateRunBranchName(run.id, trimmedSourceBranch);
+      await this.gitService.assertPublishBranchAvailable(run.worktreePath, trimmedSourceBranch);
     }
 
+    // Commit on the run branch before branching off, so rolling back a failed custom branch keeps the commit.
     if (await this.gitService.hasChanges(run.worktreePath)) {
       await this.commitRunUnlocked(run.id, commitMessage?.trim() || trimmedTitle);
       run = this.db.getRun(run.id);
     }
 
-    const publishContext = await this.gitService.getPullRequestContext(run.worktreePath, trimmedTargetBranch);
-    if (!publishContext.diff.trim()) {
-      throw new Error(`The source branch has no changes against "${trimmedTargetBranch}".`);
+    const originalRunBranch = run.branchName;
+    const previousCheckout = createdCustomSourceBranch ? await this.gitService.getCurrentBranch(run.worktreePath).catch(() => null) : null;
+    if (createdCustomSourceBranch) {
+      await this.gitService.createPublishBranchFromHead(run.worktreePath, trimmedSourceBranch);
+      run = this.db.updateRunBranchName(run.id, trimmedSourceBranch);
     }
 
-    await this.requireVerifiedRevision(runId);
-    const result = await this.gitService.createPullRequest(
-      run.worktreePath,
-      trimmedSourceBranch,
-      trimmedTargetBranch,
-      trimmedTitle,
-      trimmedDescription,
-    );
+    let result: Awaited<ReturnType<GitService["createPullRequest"]>>;
+    try {
+      const publishContext = await this.gitService.getPullRequestContext(run.worktreePath, trimmedTargetBranch);
+      if (!publishContext.diff.trim()) {
+        throw new Error(`The source branch has no changes against "${trimmedTargetBranch}".`);
+      }
+
+      await this.requireVerifiedRevision(runId);
+      result = await this.gitService.createPullRequest(
+        run.worktreePath,
+        trimmedSourceBranch,
+        trimmedTargetBranch,
+        trimmedTitle,
+        trimmedDescription,
+      );
+    } catch (error) {
+      if (createdCustomSourceBranch) {
+        await this.rollbackCreatedRunBranch(run, project.repoPath, {
+          previousCheckout,
+          originalRunBranch,
+          created: trimmedSourceBranch,
+        });
+      }
+      throw error;
+    }
     const url = result.url;
     const requestLabel = result.requestKind === "merge-request" ? "Merge request" : "Pull request";
     const eventTitle = result.mode === "created" ? `${requestLabel} created` : `${requestLabel} draft opened`;
@@ -6574,14 +6610,28 @@ export class AppController
     }
 
     await this.requireVerifiedRevision(runId);
-    if (trimmedBranchName !== run.branchName) {
+    const originalRunBranch = run.branchName;
+    const previousCheckout = createdCustomBranch ? await this.gitService.getCurrentBranch(run.worktreePath).catch(() => null) : null;
+    if (createdCustomBranch) {
       await this.gitService.createPublishBranchFromHead(run.worktreePath, trimmedBranchName);
       run = this.db.updateRunBranchName(run.id, trimmedBranchName);
     }
 
-    const result = await this.gitService.publishBranch(run.worktreePath, trimmedBranchName);
-    if (createdCustomBranch) {
-      await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedBranchName);
+    let result: Awaited<ReturnType<GitService["publishBranch"]>>;
+    try {
+      result = await this.gitService.publishBranch(run.worktreePath, trimmedBranchName);
+      if (createdCustomBranch) {
+        await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedBranchName);
+      }
+    } catch (error) {
+      if (createdCustomBranch) {
+        await this.rollbackCreatedRunBranch(run, project.repoPath, {
+          previousCheckout,
+          originalRunBranch,
+          created: trimmedBranchName,
+        });
+      }
+      throw error;
     }
 
     const content = createdCustomBranch
@@ -6637,14 +6687,26 @@ export class AppController
 
     const hasOpenChanges = await this.gitService.hasChanges(run.worktreePath);
 
+    const previousCheckout = createsNewBranch ? await this.gitService.getCurrentBranch(run.worktreePath).catch(() => null) : null;
     if (createsNewBranch) {
       await this.gitService.createPublishBranchFromHead(run.worktreePath, trimmedBranchName);
       run = this.db.updateRunBranchName(run.id, trimmedBranchName);
     }
-    await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedBranchName, {
-      transferOpenChanges: hasOpenChanges,
-      deleteReleasedBranchName: createsNewBranch ? originalRunBranchName : undefined,
-    });
+    try {
+      await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedBranchName, {
+        transferOpenChanges: hasOpenChanges,
+        deleteReleasedBranchName: createsNewBranch ? originalRunBranchName : undefined,
+      });
+    } catch (error) {
+      if (createsNewBranch) {
+        await this.rollbackCreatedRunBranch(run, project.repoPath, {
+          previousCheckout,
+          originalRunBranch: originalRunBranchName,
+          created: trimmedBranchName,
+        });
+      }
+      throw error;
+    }
 
     const content = hasOpenChanges
       ? `Created local branch ${trimmedBranchName}, moved the open changes to it in the project repository, and removed the run worktree.`
@@ -7285,25 +7347,31 @@ export class AppController
       configuredWorktreeRoot,
       workspaceSetupProfile?.dependencies !== "isolated",
     );
-    let child = this.db.createRun({
-      projectId: coordinator.projectId,
-      providerAccountId: provider.id,
-      modelId: model.id,
-      harnessType: getHarnessTypeForProvider(provider.providerType),
-      mode: task.intent === "inspect" ? "ask" : "code",
-      workspaceType: workspace.workspaceType,
-      workspaceVcs: workspace.workspaceVcs,
-      prompt: task.prompt,
-      goalText: coordinator.goalText,
-      branchName: workspace.branchName,
-      worktreePath: workspace.worktreePath,
-      kind: "orchestration-task",
-      parentRunId: coordinator.id,
-      rootRunId: coordinator.id,
-      lineageTitle: task.title,
-      workspaceSetupProfile,
-      delegationEnabled: false,
-    });
+    let child: RunRecord;
+    try {
+      child = this.db.createRun({
+        projectId: coordinator.projectId,
+        providerAccountId: provider.id,
+        modelId: model.id,
+        harnessType: getHarnessTypeForProvider(provider.providerType),
+        mode: task.intent === "inspect" ? "ask" : "code",
+        workspaceType: workspace.workspaceType,
+        workspaceVcs: workspace.workspaceVcs,
+        prompt: task.prompt,
+        goalText: coordinator.goalText,
+        branchName: workspace.branchName,
+        worktreePath: workspace.worktreePath,
+        kind: "orchestration-task",
+        parentRunId: coordinator.id,
+        rootRunId: coordinator.id,
+        lineageTitle: task.title,
+        workspaceSetupProfile,
+        delegationEnabled: false,
+      });
+    } catch (error) {
+      await this.discardPreparedRunWorkspace(project.repoPath, workspace);
+      throw error;
+    }
     this.db.updateOrchestrationTask(task.id, {
       childRunId: child.id,
       status: "queued",
@@ -10775,6 +10843,54 @@ export class AppController
         }
         await delay(retryDelay);
       }
+    }
+  }
+
+  /** Removes a workspace prepared for a run that could not be created, so no unowned worktree remains. */
+  private async discardPreparedRunWorkspace(
+    repoPath: string,
+    workspace: Pick<RunRecord, "workspaceType" | "branchName" | "worktreePath">,
+  ): Promise<void> {
+    try {
+      if (workspace.workspaceType === "worktree") {
+        await this.gitService.removeWorktree(repoPath, workspace.worktreePath, workspace.branchName);
+      } else if (workspace.workspaceType === "copy") {
+        await removeFolderWorkspaceCopy(workspace.worktreePath);
+      }
+    } catch (error) {
+      this.logControllerWarn("Could not remove a prepared run workspace after run creation failed.", {
+        worktreePath: workspace.worktreePath,
+        branchName: workspace.branchName,
+        error,
+      });
+    }
+  }
+
+  /**
+   * Restores the previous checkout and run branch when a publish flow failed after creating a new
+   * branch from the run HEAD, unless that branch already reached the remote or the project checkout.
+   */
+  private async rollbackCreatedRunBranch(
+    run: RunRecord,
+    repoPath: string,
+    branches: { previousCheckout: string | null; originalRunBranch: string; created: string },
+  ): Promise<void> {
+    try {
+      if (!branches.previousCheckout || (await this.gitService.hasRemoteBranch(run.worktreePath, branches.created))) {
+        return;
+      }
+      if (run.workspaceType === "worktree" && (await this.gitService.getCurrentBranch(repoPath).catch(() => "")) === branches.created) {
+        return;
+      }
+      await this.gitService.checkoutWorktreeBranch(run.worktreePath, branches.previousCheckout);
+      this.db.updateRunBranchName(run.id, branches.originalRunBranch);
+      await this.gitService.deleteProjectBranch(run.worktreePath, branches.created);
+    } catch (error) {
+      this.logControllerWarn("Could not restore the original run branch after a failed publish.", {
+        runId: run.id,
+        ...branches,
+        error,
+      });
     }
   }
 
