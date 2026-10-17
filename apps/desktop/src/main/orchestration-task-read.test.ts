@@ -105,4 +105,14 @@ describe("buildwarden_tasks_read", () => {
     expect(response.childRun.recentSteps.map((step) => step.title)).toEqual(["Subagent: reviewer"]);
     expect(response.childRun.recentSteps[0]?.content).toBe("completed");
   });
+
+  it("marks truncated previews that contain characters outside the BMP", async () => {
+    const { db, child, readTask } = await fixture();
+    db.appendRunStep(child.id, "output", "Emoji output", `${"😀".repeat(1_500)}${"x".repeat(1_000)}`);
+
+    const { response } = await readTask();
+
+    expect(response.childRun.recentSteps[0]?.contentChars).toBe(2_500);
+    expect(response.childRun.recentSteps[0]?.content).toContain("truncated (2500 chars total)");
+  });
 });

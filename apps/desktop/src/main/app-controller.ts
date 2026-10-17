@@ -7654,7 +7654,8 @@ export class AppController
       ? Math.min(Math.max(requestedSteps, 0), ORCHESTRATION_TASK_READ_MAX_STEPS)
       : ORCHESTRATION_TASK_READ_DEFAULT_STEPS;
     const recentSteps = this.db.listRecentRunStepPreviews(childRunId, stepLimit, ORCHESTRATION_TASK_READ_MAX_STEP_CHARS)
-      .map((step) => step.contentChars > step.content.length
+      // SQLite length()/substr() count code points, not UTF-16 units.
+      .map((step) => step.contentChars > Array.from(step.content).length
         ? { ...step, content: `${step.content}\n... truncated (${String(step.contentChars)} chars total) ...` }
         : step);
     const { summary, worktreeUnavailable } = await this.getRunWorktreeDiffSummary(childRunId);
