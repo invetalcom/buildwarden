@@ -1340,6 +1340,13 @@ export class AppController
     }
   }
 
+  /** Branch moves and worktree removal must never happen underneath a live agent or verification. */
+  private requireIdleRunWorkspace(run: RunRecord, action: string): void {
+    if (ACTIVE_RUN_STATUSES.has(run.status) || this.runWorkers.has(run.id) || this.manualVerifications.has(run.id)) {
+      throw new Error(`Wait for the agent to finish before ${action}.`);
+    }
+  }
+
   private markLinkedRunTaskInReview(run: RunRecord, pullRequestUrl?: string): ProjectTaskRecord | null {
     if (!run.projectTaskId) {
       return null;
@@ -6337,6 +6344,7 @@ export class AppController
     this.requireGitRun(run, "Pull and merge request creation");
     const project = this.db.getProject(run.projectId);
     this.requireGitProject(project, "Pull and merge request creation");
+    this.requireIdleRunWorkspace(run, "creating a pull or merge request");
     const trimmedTitle = title.trim();
     const trimmedTargetBranch = targetBranch.trim();
     const trimmedSourceBranch = sourceBranchName?.trim() || run.branchName;
@@ -6543,10 +6551,17 @@ export class AppController
   }
 
   async publishRunBranch(runId: string, branchName?: string): Promise<string> {
+    const initialRun = this.db.getRun(runId);
+    this.requireGitRun(initialRun, "Publishing");
+    return this.serializeProjectBranchMutation(initialRun.projectId, () => this.publishRunBranchUnlocked(runId, branchName));
+  }
+
+  private async publishRunBranchUnlocked(runId: string, branchName?: string): Promise<string> {
     let run = this.db.getRun(runId);
     this.requireGitRun(run, "Publishing");
     const project = this.db.getProject(run.projectId);
     this.requireGitProject(project, "Publishing");
+    this.requireIdleRunWorkspace(run, "publishing its branch");
     const trimmedBranchName = branchName?.trim() || run.branchName;
     const createdCustomBranch = trimmedBranchName !== run.branchName;
 
@@ -6597,10 +6612,17 @@ export class AppController
   }
 
   async createRunLocalBranch(runId: string, branchName: string): Promise<string> {
+    const initialRun = this.db.getRun(runId);
+    this.requireGitRun(initialRun, "Local branch creation");
+    return this.serializeProjectBranchMutation(initialRun.projectId, () => this.createRunLocalBranchUnlocked(runId, branchName));
+  }
+
+  private async createRunLocalBranchUnlocked(runId: string, branchName: string): Promise<string> {
     let run = this.db.getRun(runId);
     this.requireGitRun(run, "Local branch creation");
     const project = this.db.getProject(run.projectId);
     this.requireGitProject(project, "Local branch creation");
+    this.requireIdleRunWorkspace(run, "moving its changes to a local branch");
     const originalRunBranchName = run.branchName;
     const trimmedBranchName = branchName.trim();
 

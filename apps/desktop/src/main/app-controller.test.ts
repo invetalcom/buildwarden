@@ -639,6 +639,38 @@ describe("AppController settings and lightweight workflows", () => {
     );
   });
 
+  it("refuses branch publishing and promotion while the agent is still running", async () => {
+    const run = {
+      id: "run-1",
+      projectId: project.id,
+      workspaceVcs: "git",
+      workspaceType: "worktree",
+      worktreePath: "C:/worktrees/run-1",
+      branchName: "project-run-1",
+      prompt: "Still working",
+      status: "running",
+      projectTaskId: null,
+    } as RunRecord;
+    const harness = createHarness({ getRun: vi.fn(() => run) });
+    const gitService = {
+      hasChanges: vi.fn(async () => false),
+      createPublishBranchFromHead: vi.fn(async () => undefined),
+      publishBranch: vi.fn(async () => ({ branchName: run.branchName, remoteName: "origin" })),
+      removeWorktree: vi.fn(async () => undefined),
+    };
+    (harness.controller as unknown as { gitService: typeof gitService }).gitService = gitService;
+
+    await expect(harness.controller.publishRunBranch(run.id, "feature/published")).rejects.toThrow("Wait for the agent to finish");
+    await expect(harness.controller.createRunLocalBranch(run.id, "feature/local")).rejects.toThrow("Wait for the agent to finish");
+    await expect(harness.controller.createRunPullRequest(run.id, "main", "Title", "feature/pr")).rejects.toThrow(
+      "Wait for the agent to finish",
+    );
+
+    expect(gitService.createPublishBranchFromHead).not.toHaveBeenCalled();
+    expect(gitService.publishBranch).not.toHaveBeenCalled();
+    expect(gitService.removeWorktree).not.toHaveBeenCalled();
+  });
+
   it("generates a complete PR draft from the target-relative committed diff", async () => {
     const run = {
       id: "run-1",
