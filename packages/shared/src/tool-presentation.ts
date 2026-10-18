@@ -3,7 +3,9 @@ const record = (value: unknown): value is Record<string, unknown> => Boolean(val
 
 const omitBinaryContent = (_key: string, value: unknown): unknown => {
   if (!record(value)) return value;
-  if (value.type === "image" || value.type === "audio") {
+  const mimeType = value.mimeType ?? value.media_type;
+  const mediaMimeType = typeof mimeType === "string" && /^(image|audio)\//i.test(mimeType.trim());
+  if (value.type === "image" || value.type === "audio" || mediaMimeType) {
     return {
       ...value,
       ...(typeof value.data === "string" ? { data: "[data omitted]" } : {}),

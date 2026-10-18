@@ -3,8 +3,29 @@ import { presentToolResult, toolPresentation } from "@buildwarden/shared";
 
 describe("MCP presentation", () => {
   it("preserves ordinary data fields in structured results", () => {
-    const structuredContent = { data: { status: "ready", data: "ordinary text" }, blob: "business field" };
+    const structuredContent = {
+      data: { status: "ready", data: "ordinary text" }, blob: "business field",
+      json: { mimeType: "application/json", data: { status: "ready" } },
+      text: { mimeType: "text/plain", data: "ordinary text" },
+    };
     expect(JSON.parse(presentToolResult({ content: [], structuredContent }).text)).toEqual(structuredContent);
+  });
+
+  it.each(["image/png", "image/jpeg", "image/webp", "audio/wav", "audio/mpeg", "audio/ogg"])("omits type-less %s payloads without changing structured data", (mimeType) => {
+    const binary = "aGVsbG8=";
+    const structuredContent = {
+      data: { status: "ready" },
+      media: { mimeType, data: binary, label: "Preview" },
+      nested: [{ source: { media_type: mimeType, data: binary } }],
+    };
+    const result = presentToolResult({ structuredContent });
+    expect(result.text).not.toContain(binary);
+    expect(JSON.parse(result.text)).toEqual({
+      data: { status: "ready" },
+      media: { mimeType, data: "[data omitted]", label: "Preview" },
+      nested: [{ source: { media_type: mimeType, data: "[data omitted]" } }],
+    });
+    expect(result.images).toEqual([]);
   });
 
   it("omits binary resource, audio and nested image payloads by content shape", () => {
