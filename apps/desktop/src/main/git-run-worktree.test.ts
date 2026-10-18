@@ -123,6 +123,20 @@ describe("GitService run worktree lifecycle", () => {
   });
 });
 
+describe("GitService ref arguments", () => {
+  it("never reads a branch name as a file path or an option", async () => {
+    const { repoPath } = await createRepository();
+    const service = new GitService();
+    await writeFile(join(repoPath, "tracked.txt"), "local edit\n", "utf8");
+
+    await expect(service.checkoutProjectBranch(repoPath, "tracked.txt")).rejects.toThrow("was not found");
+    await expect(service.checkoutProjectBranch(repoPath, "--orphan")).rejects.toThrow('cannot start with "-"');
+    await expect(service.checkoutWorktreeBranch(repoPath, "tracked.txt")).rejects.toThrow();
+
+    expect(await readFile(join(repoPath, "tracked.txt"), "utf8")).toBe("local edit\n");
+  });
+});
+
 describe("GitService branch merge checks", () => {
   it("reports unmerged branches like git branch -d", async () => {
     const { repoPath, git } = await createRepository();

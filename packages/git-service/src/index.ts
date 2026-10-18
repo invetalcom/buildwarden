@@ -96,6 +96,21 @@ const runGitProbe = async (cwd: string, args: string[]): Promise<boolean> => {
   }
 };
 
+/**
+ * Git reads a leading `-` as an option, so ref names from the UI or the agent must never start with one.
+ * Callers also end ref arguments with `--`, so a name that matches a file is never read as a path.
+ */
+const assertRefArgument = (refName: string, label = "Branch"): string => {
+  const trimmed = refName.trim();
+  if (!trimmed) {
+    throw new Error(`${label} name is required.`);
+  }
+  if (trimmed.startsWith("-")) {
+    throw new Error(`${label} names cannot start with "-".`);
+  }
+  return trimmed;
+};
+
 const isTimedOutCommandError = (error: unknown): boolean =>
   typeof error === "object" && error !== null && "killed" in error && (error as { killed?: boolean }).killed === true;
 
@@ -656,8 +671,7 @@ export class GitService {
   }
 
   async getBranchCommitSha(repoPath: string, branchName: string): Promise<string> {
-    const trimmedBranchName = branchName.trim();
-    if (!trimmedBranchName) throw new Error("A branch name is required to resolve its commit.");
+    const trimmedBranchName = assertRefArgument(branchName);
     return (await simpleGit(repoPath).revparse(["--verify", `refs/heads/${trimmedBranchName}^{commit}`])).trim();
   }
 
@@ -675,22 +689,23 @@ export class GitService {
   async checkoutProjectBranch(repoPath: string, branchName: string): Promise<void> {
     const git = simpleGit(repoPath);
     await ensureGitLongPathSupport(git, repoPath);
-    const trimmedBranchName = branchName.trim();
-    if (!trimmedBranchName) {
+    if (!branchName.trim()) {
       throw new Error("Select a branch.");
     }
+    const trimmedBranchName = assertRefArgument(branchName);
 
     if (await this.hasLocalBranch(repoPath, trimmedBranchName)) {
-      await git.checkout(trimmedBranchName);
+      await runGitRaw(git, ["checkout", trimmedBranchName, "--"]);
       return;
     }
 
     if (await this.hasRemoteBranch(repoPath, trimmedBranchName)) {
-      await runGitRaw(git, ["checkout", "--track", "-b", trimmedBranchName, `origin/${trimmedBranchName}`]);
+      await runGitRaw(git, ["checkout", "--track", "-b", trimmedBranchName, `origin/${trimmedBranchName}`, "--"]);
       return;
     }
 
-    await git.checkout(trimmedBranchName);
+    // A bare `git checkout <name>` would restore a file with that name and discard its local edits.
+    throw new Error(`Branch "${trimmedBranchName}" was not found locally or on origin.`);
   }
 
   async getProjectBranchOverview(repoPath: string, baseBranch: string): Promise<ProjectGitBranchOverview> {
@@ -864,6 +879,7 @@ export class GitService {
   ): Promise<{ branchName: string; worktreePath: string }> {
     const git = simpleGit(repoPath);
     await ensureGitLongPathSupport(git, repoPath);
+    const startRef = assertRefArgument(startPoint, "Start point");
     const worktreeRoot = this.getWorktreeRoot(repoPath, configuredWorktreeRoot);
     mkdirSync(worktreeRoot, { recursive: true });
 
@@ -877,7 +893,7 @@ export class GitService {
 
     const branchExisted = await this.hasLocalBranch(repoPath, branchName);
     try {
-      await runGitRaw(git, ["worktree", "add", "-b", branchName, worktreePath, startPoint]);
+      await runGitRaw(git, ["worktree", "add", "-b", branchName, "--", worktreePath, startRef]);
       if (shareDependencies) await ensureWorktreeDependencyLinks(repoPath, worktreePath);
     } catch (error) {
       // A failed checkout can leave a registered worktree and a new branch behind; nothing owns them yet.
@@ -928,13 +944,14 @@ export class GitService {
   async checkoutWorktreeBranch(worktreePath: string, branchName: string): Promise<void> {
     const git = simpleGit(worktreePath);
     await ensureGitLongPathSupport(git, worktreePath);
+    const trimmedBranchName = assertRefArgument(branchName);
     const currentBranch = (await git.branch(["--show-current"])).current;
 
-    if (currentBranch === branchName) {
+    if (currentBranch === trimmedBranchName) {
       return;
     }
 
-    await runGitRaw(git, ["checkout", branchName]);
+    await runGitRaw(git, ["checkout", trimmedBranchName, "--"]);
   }
 
   async hasWorktreeGitMetadata(worktreePath: string): Promise<boolean> {
@@ -953,13 +970,7 @@ export class GitService {
   }
 
   async hasRemoteBranch(repoPath: string, branchName: string): Promise<boolean> {
-    const git = simpleGit(repoPath);
-    try {
-      await runGitRaw(git, ["show-ref", "--verify", "--quiet", `refs/remotes/origin/${branchName}`]);
-      return true;
-    } catch {
-      return false;
-    }
+    return runGitProbe(repoPath, ["show-ref", "--verify", "--quiet", `refs/remotes/origin/${branchName}`]);
   }
 
   /** Mirrors `git branch -d`: a branch is merged when its upstream, or HEAD without one, contains it. */
@@ -987,12 +998,13 @@ export class GitService {
     if (!trimmedStartPoint) {
       throw new Error("Select a source branch.");
     }
+    assertRefArgument(trimmedStartPoint, "Source branch");
     await this.validateBranchName(repoPath, trimmedBranchName);
     if (await this.hasLocalBranch(repoPath, trimmedBranchName)) {
       throw new Error(`A local branch named "${trimmedBranchName}" already exists.`);
     }
     if (checkout) {
-      await runGitRaw(git, ["checkout", "-b", trimmedBranchName, trimmedStartPoint]);
+      await runGitRaw(git, ["checkout", "-b", trimmedBranchName, trimmedStartPoint, "--"]);
     } else {
       await runGitRaw(git, ["branch", trimmedBranchName, trimmedStartPoint]);
     }
@@ -1006,6 +1018,7 @@ export class GitService {
     if (!trimmedOldName || !trimmedNewName) {
       throw new Error("Enter both the current and new branch names.");
     }
+    assertRefArgument(trimmedOldName);
     if (!(await this.hasLocalBranch(repoPath, trimmedOldName))) {
       throw new Error(`Local branch "${trimmedOldName}" was not found.`);
     }
@@ -1019,10 +1032,10 @@ export class GitService {
   async deleteProjectBranch(repoPath: string, branchName: string, force = false): Promise<void> {
     const git = simpleGit(repoPath);
     await ensureGitLongPathSupport(git, repoPath);
-    const trimmedBranchName = branchName.trim();
-    if (!trimmedBranchName) {
+    if (!branchName.trim()) {
       throw new Error("Select a branch.");
     }
+    const trimmedBranchName = assertRefArgument(branchName);
     const currentBranch = await this.getCurrentBranch(repoPath).catch(() => "");
     if (trimmedBranchName === currentBranch) {
       throw new Error("You cannot delete the currently checked out branch.");
@@ -1041,10 +1054,10 @@ export class GitService {
   async pushProjectBranch(repoPath: string, branchName: string, setUpstream = true): Promise<void> {
     const git = simpleGit(repoPath);
     await ensureGitLongPathSupport(git, repoPath);
-    const trimmedBranchName = branchName.trim();
-    if (!trimmedBranchName) {
+    if (!branchName.trim()) {
       throw new Error("Select a branch.");
     }
+    const trimmedBranchName = assertRefArgument(branchName);
     if (!(await this.hasLocalBranch(repoPath, trimmedBranchName))) {
       throw new Error(`Local branch "${trimmedBranchName}" was not found.`);
     }
@@ -1052,6 +1065,7 @@ export class GitService {
   }
 
   private async validateBranchName(repoPath: string, branchName: string): Promise<void> {
+    assertRefArgument(branchName);
     const git = simpleGit(repoPath);
     try {
       await runGitRaw(git, ["check-ref-format", "--branch", branchName]);
@@ -1312,7 +1326,7 @@ export class GitService {
   }
 
   async publishBranch(worktreePath: string, branchName: string): Promise<{ branchName: string; remoteName: string }> {
-    await runNetworkGit(worktreePath, ["push", "-u", "origin", branchName]);
+    await runNetworkGit(worktreePath, ["push", "-u", "origin", assertRefArgument(branchName)]);
 
     return {
       branchName,
@@ -1347,7 +1361,7 @@ export class GitService {
 
   async getLatestCommitMessage(worktreePath: string, branchName: string): Promise<string> {
     const git = simpleGit(worktreePath);
-    return (await git.raw(["log", "-1", "--format=%s", branchName])).trim();
+    return (await git.raw(["log", "-1", "--format=%s", assertRefArgument(branchName), "--"])).trim();
   }
 
   /** Throws unless a new publish branch with this name can be created locally and on origin. */
@@ -1387,6 +1401,8 @@ export class GitService {
     title: string,
     body: string,
   ): Promise<{ url: string; mode: PublishMode; requestKind: PublishRequestKind }> {
+    assertRefArgument(branchName);
+    assertRefArgument(targetBranch, "Target branch");
     const remote = await this.getParsedOriginRemote(worktreePath);
     await runNetworkGit(worktreePath, ["push", "-u", "origin", branchName]);
 
