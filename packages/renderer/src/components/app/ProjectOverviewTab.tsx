@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { parseSearchTerms, runMatchesSearch } from "../../lib/run-search";
+import { useRunUserInputSearch } from "../../lib/use-run-user-input-search";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -314,6 +315,8 @@ export const ProjectOverviewTab = ({
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
   const runSearchTerms = useMemo(() => parseSearchTerms(runSearchQuery), [runSearchQuery]);
   const hasRunSearch = runSearchTerms.length > 0;
+  const searchableRuns = useMemo(() => [...runs, ...orchestratedRuns], [orchestratedRuns, runs]);
+  const userInputMatches = useRunUserInputSearch(runSearchTerms, searchableRuns);
   const hierarchyRoots = useMemo(
     () => appendUnreachableSubagentRoots(runs, orchestratedRuns, knownPrimaryRuns),
     [knownPrimaryRuns, orchestratedRuns, runs],
@@ -321,15 +324,15 @@ export const ProjectOverviewTab = ({
   const treeRows = useMemo(
     () => buildRunHierarchyRows(hierarchyRoots, orchestratedRuns, {
       expandedRunIds,
-      matches: hasRunSearch ? (run) => runMatchesSearch(run, runSearchTerms) : undefined,
+      matches: hasRunSearch ? (run) => runMatchesSearch(run, runSearchTerms, userInputMatches) : undefined,
     }),
-    [expandedRunIds, hasRunSearch, hierarchyRoots, orchestratedRuns, runSearchTerms],
+    [expandedRunIds, hasRunSearch, hierarchyRoots, orchestratedRuns, runSearchTerms, userInputMatches],
   );
   const matchingRunCount = useMemo(
     () => hasRunSearch
-      ? [...runs, ...orchestratedRuns].filter((run) => runMatchesSearch(run, runSearchTerms)).length
+      ? searchableRuns.filter((run) => runMatchesSearch(run, runSearchTerms, userInputMatches)).length
       : runs.length + orchestratedRuns.length,
-    [hasRunSearch, orchestratedRuns, runSearchTerms, runs],
+    [hasRunSearch, orchestratedRuns, runSearchTerms, runs, searchableRuns, userInputMatches],
   );
   const toggleRunHierarchy = useCallback((runId: string) => {
     setExpandedRunIds((current) => {
