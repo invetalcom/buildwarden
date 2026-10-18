@@ -6,6 +6,7 @@ import { createHarnessAdapter } from "./harness-adapters";
 import { logError, logInfo } from "./logger";
 import { createResponseImageEmbedder } from "./response-images";
 import { createResponseChunkStream } from "./response-chunk-stream";
+import { prepareChatWorkspaceSession } from "./chat-session-migration";
 
 interface ChatWorkerInput {
   request: RunExecutionRequest;
@@ -72,7 +73,7 @@ const run = async () => {
     const harness = createHarnessAdapter(request.providerType, { requestUserInput });
     const result = await harness.run(
       {
-        ...request,
+        ...prepareChatWorkspaceSession(request),
         isChat: true,
       },
       chatToolContext,
