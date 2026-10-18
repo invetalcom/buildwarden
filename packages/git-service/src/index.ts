@@ -228,12 +228,23 @@ export const readProjectReleaseHistory = async (repoPath: string, limit = 12): P
   return { totalReleases: tags.length, releases };
 };
 
-const ensureGitLongPathSupport = async (git: SimpleGit): Promise<void> => {
+// Paths whose repository config already has core.longpaths set this session.
+// Run checkout/release calls this on every run switch; one write per path is enough.
+const longPathSupportConfiguredPaths = new Set<string>();
+
+const ensureGitLongPathSupport = async (git: SimpleGit, gitPath: string): Promise<void> => {
   if (process.platform !== "win32") {
     return;
   }
 
+  // Case-preserving: directories can be case-sensitive on Windows, and a
+  // duplicate write for a differently cased spelling is harmless.
+  const cacheKey = resolve(gitPath);
+  if (longPathSupportConfiguredPaths.has(cacheKey)) {
+    return;
+  }
   await git.raw(["config", "--local", LONG_PATHS_CONFIG_KEY, LONG_PATHS_CONFIG_VALUE]);
+  longPathSupportConfiguredPaths.add(cacheKey);
 };
 
 const pathExists = async (p: string): Promise<boolean> => {
@@ -647,7 +658,7 @@ export class GitService {
 
   async checkoutProjectBranch(repoPath: string, branchName: string): Promise<void> {
     const git = simpleGit(repoPath);
-    await ensureGitLongPathSupport(git);
+    await ensureGitLongPathSupport(git, repoPath);
     const trimmedBranchName = branchName.trim();
     if (!trimmedBranchName) {
       throw new Error("Select a branch.");
@@ -668,7 +679,7 @@ export class GitService {
 
   async getProjectBranchOverview(repoPath: string, baseBranch: string): Promise<ProjectGitBranchOverview> {
     const git = simpleGit(repoPath);
-    await ensureGitLongPathSupport(git);
+    await ensureGitLongPathSupport(git, repoPath);
 
     let currentBranch = "";
     try {
@@ -836,7 +847,7 @@ export class GitService {
     shareDependencies: boolean,
   ): Promise<{ branchName: string; worktreePath: string }> {
     const git = simpleGit(repoPath);
-    await ensureGitLongPathSupport(git);
+    await ensureGitLongPathSupport(git, repoPath);
     const worktreeRoot = this.getWorktreeRoot(repoPath, configuredWorktreeRoot);
     mkdirSync(worktreeRoot, { recursive: true });
 
@@ -888,7 +899,7 @@ export class GitService {
 
   async releaseWorktreeBranch(worktreePath: string, branchName: string): Promise<void> {
     const git = simpleGit(worktreePath);
-    await ensureGitLongPathSupport(git);
+    await ensureGitLongPathSupport(git, worktreePath);
     const currentBranch = (await git.branch(["--show-current"])).current;
 
     if (!currentBranch || currentBranch !== branchName) {
@@ -900,7 +911,7 @@ export class GitService {
 
   async checkoutWorktreeBranch(worktreePath: string, branchName: string): Promise<void> {
     const git = simpleGit(worktreePath);
-    await ensureGitLongPathSupport(git);
+    await ensureGitLongPathSupport(git, worktreePath);
     const currentBranch = (await git.branch(["--show-current"])).current;
 
     if (currentBranch === branchName) {
@@ -936,13 +947,13 @@ export class GitService {
   }
 
   async fetchProjectBranches(repoPath: string): Promise<void> {
-    await ensureGitLongPathSupport(simpleGit(repoPath));
+    await ensureGitLongPathSupport(simpleGit(repoPath), repoPath);
     await runNetworkGit(repoPath, ["fetch", "--all", "--prune"]);
   }
 
   async createProjectBranch(repoPath: string, branchName: string, startPoint: string, checkout = true): Promise<void> {
     const git = simpleGit(repoPath);
-    await ensureGitLongPathSupport(git);
+    await ensureGitLongPathSupport(git, repoPath);
     const trimmedBranchName = branchName.trim();
     const trimmedStartPoint = startPoint.trim();
     if (!trimmedBranchName) {
@@ -964,7 +975,7 @@ export class GitService {
 
   async renameProjectBranch(repoPath: string, oldName: string, newName: string): Promise<void> {
     const git = simpleGit(repoPath);
-    await ensureGitLongPathSupport(git);
+    await ensureGitLongPathSupport(git, repoPath);
     const trimmedOldName = oldName.trim();
     const trimmedNewName = newName.trim();
     if (!trimmedOldName || !trimmedNewName) {
@@ -982,7 +993,7 @@ export class GitService {
 
   async deleteProjectBranch(repoPath: string, branchName: string, force = false): Promise<void> {
     const git = simpleGit(repoPath);
-    await ensureGitLongPathSupport(git);
+    await ensureGitLongPathSupport(git, repoPath);
     const trimmedBranchName = branchName.trim();
     if (!trimmedBranchName) {
       throw new Error("Select a branch.");
@@ -998,13 +1009,13 @@ export class GitService {
   }
 
   async pullProjectBranch(repoPath: string): Promise<void> {
-    await ensureGitLongPathSupport(simpleGit(repoPath));
+    await ensureGitLongPathSupport(simpleGit(repoPath), repoPath);
     await runNetworkGit(repoPath, ["pull", "--ff-only"]);
   }
 
   async pushProjectBranch(repoPath: string, branchName: string, setUpstream = true): Promise<void> {
     const git = simpleGit(repoPath);
-    await ensureGitLongPathSupport(git);
+    await ensureGitLongPathSupport(git, repoPath);
     const trimmedBranchName = branchName.trim();
     if (!trimmedBranchName) {
       throw new Error("Select a branch.");
@@ -1026,7 +1037,7 @@ export class GitService {
 
   async removeWorktree(repoPath: string, worktreePath: string, branchName?: string): Promise<void> {
     const git = simpleGit(repoPath);
-    await ensureGitLongPathSupport(git);
+    await ensureGitLongPathSupport(git, repoPath);
     const cleanupErrors: string[] = [];
     const isRegisteredWorktree = await this.isWorktreeRegistered(repoPath, worktreePath);
 
@@ -1209,7 +1220,7 @@ export class GitService {
 
   async restorePromptRestorePatch(worktreePath: string, targetPatch: string): Promise<void> {
     const git = simpleGit(worktreePath);
-    await ensureGitLongPathSupport(git);
+    await ensureGitLongPathSupport(git, worktreePath);
     const safetyPatch = await computeWorktreeRestorePatch(worktreePath);
 
     await runGitRaw(git, ["reset", "--hard", "HEAD"]);
@@ -1229,7 +1240,7 @@ export class GitService {
 
   async commitAllChanges(worktreePath: string, message: string): Promise<{ commitHash: string }> {
     const git = simpleGit(worktreePath);
-    await ensureGitLongPathSupport(git);
+    await ensureGitLongPathSupport(git, worktreePath);
     const status = await git.status();
 
     if (status.isClean()) {
@@ -1319,7 +1330,7 @@ export class GitService {
   async createPublishBranchFromHead(worktreePath: string, branchName: string): Promise<void> {
     const trimmedBranchName = await this.assertPublishBranchAvailable(worktreePath, branchName);
     const git = simpleGit(worktreePath);
-    await ensureGitLongPathSupport(git);
+    await ensureGitLongPathSupport(git, worktreePath);
     await runGitRaw(git, ["checkout", "-b", trimmedBranchName, "HEAD"]);
   }
 

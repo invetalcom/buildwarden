@@ -49,6 +49,7 @@ import {
   type ProviderType,
   type RunDetail,
   type RunDeletionImpact,
+  type RunForgeRequestSummary,
   type RunMode,
   type RunModelConfiguration,
   type RunRecord,
@@ -87,6 +88,7 @@ const ChatDetailPage = lazy(() => import("./components/app/ChatDetailPage").then
 const ChatPage = lazy(() => import("./components/app/ChatPage").then((m) => ({ default: m.ChatPage })));
 import { CommandPalette, type CommandPaletteItem } from "./components/app/CommandPalette";
 import { LandingPage } from "./components/app/LandingPage";
+import { RecentRunDetailCache } from "./components/app/recent-run-details";
 import { pickRandomLandingJoke } from "./components/app/landing-page-jokes";
 const ProjectPage = lazy(() => import("./components/app/ProjectPage").then((m) => ({ default: m.ProjectPage })));
 import { type ProjectPageTab } from "./components/app/project-page-tabs";
@@ -178,6 +180,13 @@ import { useBuildWardenClient } from "./lib/buildwarden-client";
 import { PastedTextAttachmentThresholdProvider } from "./lib/pasted-text-attachment-settings";
 import { RunToolCallCollapseThresholdProvider } from "./lib/run-tool-call-collapse-settings";
 
+/**
+ * A forced forge sync costs Git probes plus provider requests. The main process
+ * already polls linked requests, so opening or focusing a run re-syncs at most
+ * once per window.
+ */
+const RUN_FORGE_VIEW_REFRESH_TTL_MS = 60_000;
+
 const isLocalProviderType = (type: ProviderType): boolean =>
   type === "codex-cli" || type === "claude-code" || type === "cursor-agent";
 
@@ -209,6 +218,10 @@ const RUN_PANEL_TOGGLE_DEFINITIONS: readonly RunPanelToggleDefinition[] = [
   { key: "chat", label: "Chat", icon: MessagesSquare, hiddenSubtitle: "Ask about this run", requiresWorktree: false },
   { key: "pull-request", label: "Pull Request", icon: GitPullRequest, hiddenSubtitle: "Show review status", requiresWorktree: false },
 ];
+
+const SNAPSHOT_REFRESH_DELAY_MS = 300;
+/** Token usage arrives with nearly every streamed step; aggregate totals can lag a few seconds. */
+const USAGE_SNAPSHOT_REFRESH_DELAY_MS = 5_000;
 
 const addProjectForgeRequestToast = (
   current: ProjectForgeRequestToast[],
@@ -297,9 +310,25 @@ export const App = () => {
   openRunPanesRef.current = openRunPanes;
   const runDetailsByIdRef = useRef<Record<string, RunDetail>>({});
   runDetailsByIdRef.current = runDetailsById;
+  const recentRunDetailsRef = useRef(new RecentRunDetailCache());
+  useEffect(() => {
+    for (const [runId, detail] of Object.entries(runDetailsById)) {
+      recentRunDetailsRef.current.set(runId, detail);
+    }
+  }, [runDetailsById]);
   const diffRefreshTimersRef = useRef<Partial<Record<string, ReturnType<typeof setTimeout>>>>({});
   const runDetailLoadTokenRef = useRef<Record<string, number>>({});
   const diffLoadPromisesRef = useRef<Partial<Record<string, Promise<void>>>>({});
+  const getCachedRunDetail = useCallback((runId: string): RunDetail | null => {
+    const live = runDetailsByIdRef.current[runId];
+    if (live) return live;
+    const recent = recentRunDetailsRef.current.get(runId);
+    // Updates for closed runs are dropped, so a cached loading flag would never
+    // clear if the reopen load fails. Keep diffPending only for a load in flight.
+    return recent
+      ? { ...recent, diffPending: Boolean(diffLoadPromisesRef.current[runId]), diffSummaryPending: false }
+      : null;
+  }, []);
   const diffLoadGenerationRef = useRef<Record<string, number>>({});
   const diffSummaryLoadGenerationRef = useRef<Record<string, number>>({});
   const [landingSelected, setLandingSelected] = useState(true);
@@ -517,17 +546,26 @@ export const App = () => {
 
   /**
    * Streaming runs emit bursts of events; refreshing the full snapshot for each
-   * one wastes IPC and re-renders. Coalesce to at most one refresh per 300ms.
+   * one wastes IPC and re-renders. Coalesce to at most one refresh per delay
+   * (300ms by default); a shorter request moves a pending refresh earlier.
    */
   const snapshotRefreshTimerRef = useRef<number | null>(null);
-  const scheduleSnapshotRefresh = useCallback(() => {
+  const snapshotRefreshDueAtRef = useRef(0);
+  const scheduleSnapshotRefresh = useCallback((delayMs = SNAPSHOT_REFRESH_DELAY_MS) => {
+    const dueAt = Date.now() + delayMs;
     if (snapshotRefreshTimerRef.current !== null) {
-      return;
+      if (snapshotRefreshDueAtRef.current <= dueAt) {
+        return;
+      }
+      window.clearTimeout(snapshotRefreshTimerRef.current);
     }
+    snapshotRefreshDueAtRef.current = dueAt;
     snapshotRefreshTimerRef.current = window.setTimeout(() => {
       snapshotRefreshTimerRef.current = null;
-      void loadSnapshot();
-    }, 300);
+      loadSnapshot().catch((caught: unknown) => {
+        setError(caught instanceof Error ? caught.message : "Unexpected error");
+      });
+    }, delayMs);
   }, [loadSnapshot]);
 
   useEffect(
@@ -756,6 +794,16 @@ export const App = () => {
     setRunDetail((current) => (current?.run.id === runId ? merger(current) : current));
   }, []);
 
+  // Forge events patch the open detail without reloading it, so a detail load
+  // in flight across an event may carry the older summary. Count events per run
+  // and keep the latest summary for loads that started before it.
+  const forgeRequestEventsRef = useRef<Record<string, { count: number; forgeRequest: RunForgeRequestSummary | null }>>({});
+  const keepForgeRequestEventsSince = useCallback((runId: string, countAtStart: number, detail: RunDetail): RunDetail => {
+    const latest = forgeRequestEventsRef.current[runId];
+    if (!latest || latest.count === countAtStart) return detail;
+    return { ...detail, run: { ...detail.run, forgeRequest: latest.forgeRequest } };
+  }, []);
+
   const loadRunDetailForRun = useCallback(
     async (runId: string) => {
       if (!buildwarden) {
@@ -769,9 +817,10 @@ export const App = () => {
       diffSummaryLoadGenerationRef.current[runId] = summaryGeneration;
       mergeRunDetailForRun(runId, (previous) => ({ ...previous, diffSummaryPending: true }));
 
+      const forgeEventCount = forgeRequestEventsRef.current[runId]?.count ?? 0;
       let fast: RunDetail;
       try {
-        fast = await buildwarden.getRunDetail(runId);
+        fast = keepForgeRequestEventsSince(runId, forgeEventCount, await buildwarden.getRunDetail(runId));
       } catch (caught) {
         if (
           diffSummaryLoadGenerationRef.current[runId] === summaryGeneration
@@ -818,7 +867,7 @@ export const App = () => {
         mergeRunDetailForRun(runId, (previous) => ({ ...previous, diffSummary: undefined, diffSummaryPending: false }));
       }
     },
-    [buildwarden, clearDiffRefreshTimer, mergeRunDetailForRun, replaceRunDetailForRun],
+    [buildwarden, clearDiffRefreshTimer, keepForgeRequestEventsSince, mergeRunDetailForRun, replaceRunDetailForRun],
   );
 
   const loadRunDetail = useCallback(
@@ -925,9 +974,10 @@ export const App = () => {
         mergeRunDetailForRun(eventRunId, (previous) => ({ ...previous, diffSummaryPending: true }));
       }
 
+      const forgeEventCount = forgeRequestEventsRef.current[eventRunId]?.count ?? 0;
       let fast: RunDetail;
       try {
-        fast = await buildwarden.getRunDetail(eventRunId);
+        fast = keepForgeRequestEventsSince(eventRunId, forgeEventCount, await buildwarden.getRunDetail(eventRunId));
       } catch (caught) {
         if (
           summaryGeneration !== undefined
@@ -991,7 +1041,7 @@ export const App = () => {
         }, 500);
       }
     },
-    [buildwarden, clearDiffRefreshTimer, loadDiffSummaryForOpenRun, mergeRunDetailForRun, replaceRunDetailForRun],
+    [buildwarden, clearDiffRefreshTimer, keepForgeRequestEventsSince, loadDiffSummaryForOpenRun, mergeRunDetailForRun, replaceRunDetailForRun],
   );
 
   /**
@@ -1054,6 +1104,7 @@ export const App = () => {
         delete runDetailRefreshTimersRef.current[runId];
       }
       removeShellApprovalsByRunId(runId);
+      recentRunDetailsRef.current.delete(runId);
     }
     setRunDetailsById(omitDeleted);
     setRunLiveUsageById(omitDeleted);
@@ -1157,7 +1208,8 @@ export const App = () => {
             ...usageTotals,
           },
         }));
-        scheduleSnapshotRefresh();
+        // Live run usage is tracked above; only aggregate totals need the snapshot.
+        scheduleSnapshotRefresh(USAGE_SNAPSHOT_REFRESH_DELAY_MS);
       }
 
       if (event.metadata?.shellApprovalRequest === true && approvalRequestId && approvalCommand) {
@@ -1198,7 +1250,7 @@ export const App = () => {
 
     const unsubscribeChat = buildwarden.onChatEvent((event) => {
       if (readRunTokenUsage(event.metadata?.usageTotals)) {
-        scheduleSnapshotRefresh();
+        scheduleSnapshotRefresh(USAGE_SNAPSHOT_REFRESH_DELAY_MS);
       }
       if (event.chat) {
         setSnapshot((current) => applyLiveChatToSnapshot(current, event.chat!));
@@ -1233,7 +1285,16 @@ export const App = () => {
     });
     const unsubscribeForgeChanged = buildwarden.onRunForgeRequestChanged((payload) => {
       scheduleSnapshotRefresh();
-      void refreshRunDetailForActiveRunEvent(payload.runId, { immediate: true });
+      // Every sync republishes the summary. Patch it in place and reload the full
+      // run detail (entire step history) only when the linked request changes.
+      const previous = runDetailsByIdRef.current[payload.runId]?.run.forgeRequest ?? null;
+      const next = payload.forgeRequest;
+      const eventCount = (forgeRequestEventsRef.current[payload.runId]?.count ?? 0) + 1;
+      forgeRequestEventsRef.current[payload.runId] = { count: eventCount, forgeRequest: next };
+      mergeRunDetailForRun(payload.runId, (detail) => ({ ...detail, run: { ...detail.run, forgeRequest: next } }));
+      if (previous?.url !== next?.url || previous?.state !== next?.state) {
+        void refreshRunDetailForActiveRunEvent(payload.runId, { immediate: true });
+      }
     });
 
     return () => {
@@ -1296,31 +1357,31 @@ export const App = () => {
     return () => window.clearInterval(intervalId);
   }, [buildwarden.capabilities.liveEvents, loadSnapshot, refreshOpenRunDetailForEvent]);
 
-  useEffect(() => {
-    if (typeof selectedRunId !== "string") return;
-    void buildwarden.refreshRunForgeRequest(selectedRunId)
-      .then(() => refreshOpenRunDetailForEvent(selectedRunId))
-      .catch(() => undefined);
-  }, [buildwarden, refreshOpenRunDetailForEvent, selectedRunId]);
+  // Forge changes arrive through onRunForgeRequestChanged, which patches the
+  // open run detail, so these refreshes don't reload the run themselves.
+  const runForgeViewRefreshedAtRef = useRef<Record<string, number>>({});
+  const refreshRunForgeRequestForView = useCallback((runId: string) => {
+    const now = Date.now();
+    if (now - (runForgeViewRefreshedAtRef.current[runId] ?? 0) < RUN_FORGE_VIEW_REFRESH_TTL_MS) return;
+    runForgeViewRefreshedAtRef.current[runId] = now;
+    void buildwarden.refreshRunForgeRequest(runId).catch(() => undefined);
+  }, [buildwarden]);
 
   useEffect(() => {
-    let lastRefreshAt = 0;
+    if (typeof selectedRunId !== "string") return;
+    refreshRunForgeRequestForView(selectedRunId);
+  }, [refreshRunForgeRequestForView, selectedRunId]);
+
+  useEffect(() => {
     const refreshVisibleForgeRequests = () => {
-      const now = Date.now();
-      if (now - lastRefreshAt < 30_000) return;
-      lastRefreshAt = now;
       const runIds = new Set<string>();
       if (typeof selectedRunIdRef.current === "string") runIds.add(selectedRunIdRef.current);
       for (const entry of getOpenRunPaneEntries(openRunPanesRef.current)) runIds.add(entry.runId);
-      for (const runId of runIds) {
-        void buildwarden.refreshRunForgeRequest(runId)
-          .then(() => refreshOpenRunDetailForEvent(runId))
-          .catch(() => undefined);
-      }
+      for (const runId of runIds) refreshRunForgeRequestForView(runId);
     };
     window.addEventListener("focus", refreshVisibleForgeRequests);
     return () => window.removeEventListener("focus", refreshVisibleForgeRequests);
-  }, [buildwarden, refreshOpenRunDetailForEvent]);
+  }, [refreshRunForgeRequestForView]);
 
   useEffect(() => {
     if (!settingsOpen) {
@@ -1404,6 +1465,14 @@ export const App = () => {
   const selectedProjectId = selectedProject?.project.id ?? "";
   const selectedProjectIdRef = useRef(selectedProjectId);
   selectedProjectIdRef.current = selectedProjectId;
+  // Bumped when the window regains focus so Git-derived project state (branches,
+  // folder-to-Git detection) picks up changes made outside the app.
+  const [windowFocusToken, setWindowFocusToken] = useState(0);
+  useEffect(() => {
+    const handleWindowFocus = () => setWindowFocusToken((current) => current + 1);
+    window.addEventListener("focus", handleWindowFocus);
+    return () => window.removeEventListener("focus", handleWindowFocus);
+  }, []);
   const {
     availableRunBranches,
     currentProjectBranch,
@@ -1415,7 +1484,7 @@ export const App = () => {
     setDetachedCheckoutBranch,
     setRunBaseBranch,
     submitCheckoutDetachedProjectBranch,
-  } = useProjectBranches({ buildwarden, selectedProject, setError });
+  } = useProjectBranches({ buildwarden, selectedProject, setError, refreshToken: windowFocusToken });
   const {
     changeRunMode,
     changeRunWorkspaceType,
@@ -1464,21 +1533,20 @@ export const App = () => {
     }
   }, [runWorkspaceType, selectedProject?.project.kind]);
 
-  useEffect(() => {
-    if (!selectedProject) {
-      return;
-    }
-    const hasActiveLabThread = selectedProject.labThreads.some(
+  // Keyed on a boolean so snapshot refreshes don't tear down and recreate the poll.
+  const selectedProjectHasActiveLabThread =
+    selectedProject?.labThreads.some(
       (detail) => detail.thread.status === "queued" || detail.thread.status === "running" || detail.thread.status === "reviewing",
-    );
-    if (!hasActiveLabThread) {
+    ) ?? false;
+  useEffect(() => {
+    if (!selectedProjectHasActiveLabThread) {
       return;
     }
     const intervalId = window.setInterval(() => {
       void loadSnapshot();
     }, 2000);
     return () => window.clearInterval(intervalId);
-  }, [loadSnapshot, selectedProject]);
+  }, [loadSnapshot, selectedProjectHasActiveLabThread]);
 
   const projectRunStats = useMemo(() => {
     const runs = [...(selectedProject?.runs ?? []), ...(selectedProject?.forLaterRuns ?? [])];
@@ -1841,12 +1909,15 @@ export const App = () => {
     resolve?.(confirmed);
   }, []);
 
+  const selectedProjectKind = selectedProject?.project.kind ?? null;
   useEffect(() => {
-    if (!buildwarden || !buildwarden.capabilities.gitMutations || !selectedProject || selectedProject.project.kind !== "folder") {
+    if (!buildwarden || !buildwarden.capabilities.gitMutations || !selectedProjectId || selectedProjectKind !== "folder") {
       return;
     }
-    let cancelled = false;
-    const projectId = selectedProject.project.id;
+    const projectId = selectedProjectId;
+    // Not an effect-cleanup flag: window focus reruns this effect while the
+    // confirmation may still be open, and the user's answer must still apply.
+    const projectDeselected = () => selectedProjectIdRef.current !== projectId;
     if (dismissedGitConversionProjectIdsRef.current.has(projectId) || gitConversionCheckInFlightRef.current.has(projectId)) {
       return;
     }
@@ -1855,7 +1926,7 @@ export const App = () => {
     void (async () => {
       try {
         const candidate = await buildwarden.checkProjectGitConversion(projectId);
-        if (cancelled) {
+        if (projectDeselected()) {
           return;
         }
         if (!candidate) {
@@ -1868,7 +1939,7 @@ export const App = () => {
           confirmLabel: "Convert to Git project",
           cancelLabel: "Not now",
         });
-        if (cancelled) {
+        if (projectDeselected()) {
           return;
         }
         if (!confirmed) {
@@ -1876,14 +1947,14 @@ export const App = () => {
           return;
         }
         await buildwarden.convertProjectToGit(projectId);
-        if (cancelled) {
+        if (projectDeselected()) {
           return;
         }
         setRunWorkspaceType("worktree");
         await loadSnapshot();
         void loadProjectBranches();
       } catch (caught) {
-        if (cancelled) {
+        if (projectDeselected()) {
           return;
         }
         reportRendererError("renderer.project.git-conversion", caught, { projectId });
@@ -1892,10 +1963,7 @@ export const App = () => {
         gitConversionCheckInFlightRef.current.delete(projectId);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [buildwarden, loadProjectBranches, loadSnapshot, requestConfirmation, selectedProject]);
+  }, [buildwarden, loadProjectBranches, loadSnapshot, requestConfirmation, selectedProjectId, selectedProjectKind, windowFocusToken]);
 
   useEffect(() => {
     const normalizedTab = normalizeProjectFeatureTab(selectedProject?.project.kind, projectPageTab);
@@ -2495,6 +2563,33 @@ export const App = () => {
     await buildwarden.releaseRun(selectedRunId);
   }, [buildwarden, selectedRunId]);
 
+  /**
+   * Navigation switches the view immediately; releasing the previous run's
+   * worktree, persisting the selection, and refreshing the snapshot run in the
+   * background. Effects are chained so rapid clicks persist in click order.
+   * Run activation goes through the same chain so a queued release or project
+   * selection cannot clear a run selected after it.
+   */
+  const navigationEffectsRef = useRef<Promise<void>>(Promise.resolve());
+  /** Serializes `effects` after pending navigation effects; the result keeps its own rejection. */
+  const enqueueNavigationEffects = useCallback((effects: () => Promise<void>) => {
+    const result = navigationEffectsRef.current.then(effects);
+    navigationEffectsRef.current = result.catch(() => undefined);
+    return result;
+  }, []);
+  const runNavigationEffects = useCallback((effects: () => Promise<void>) => {
+    setError(null);
+    return enqueueNavigationEffects(effects).catch((caught: unknown) => {
+      setError(caught instanceof Error ? caught.message : "Unexpected error");
+    });
+  }, [enqueueNavigationEffects]);
+  /** Releases the selected run in navigation order without clearing the current error. */
+  const queueLeaveSelectedRun = useCallback(() => {
+    void enqueueNavigationEffects(leaveSelectedRun).catch((caught: unknown) => {
+      setError(caught instanceof Error ? caught.message : "Unexpected error");
+    });
+  }, [enqueueNavigationEffects, leaveSelectedRun]);
+
   const clearRunSelectionState = useCallback((nextSelectedRunId: string | null | undefined = null) => {
     setSelectedRunId(nextSelectedRunId);
     selectedRunIdRef.current = nextSelectedRunId;
@@ -2515,17 +2610,25 @@ export const App = () => {
       if (nextProjectId) {
         setRunProjectId(nextProjectId);
       }
-      setRunDetail(runDetailsByIdRef.current[runId] ?? null);
+      // Panes render from runDetailsById, so seed it too when reopening a closed pane's run.
+      const cachedDetail = getCachedRunDetail(runId);
+      if (cachedDetail) {
+        setRunDetailsById((current) => (current[runId] ? current : { ...current, [runId]: cachedDetail }));
+      }
+      setRunDetail(cachedDetail);
 
       if (!buildwarden) {
         return;
       }
 
-      await buildwarden.activateRun(runId);
-      await loadSnapshot();
+      await enqueueNavigationEffects(async () => {
+        await buildwarden.activateRun(runId);
+        await loadSnapshot();
+      });
+      // Outside the queue: the diff summary can be slow and must not hold back later navigation.
       await loadRunDetailForRun(runId);
     },
-    [buildwarden, loadRunDetailForRun, loadSnapshot, snapshot.projects],
+    [buildwarden, enqueueNavigationEffects, getCachedRunDetail, loadRunDetailForRun, loadSnapshot, snapshot.projects],
   );
 
   const focusRunPane = useCallback(
@@ -2569,7 +2672,7 @@ export const App = () => {
       if (!remainingRunId) {
         clearRunSelectionState(null);
         if (buildwarden && wasFocused) {
-          void buildwarden.releaseRun(closingRunId).catch((caught) => {
+          void enqueueNavigationEffects(() => buildwarden.releaseRun(closingRunId)).catch((caught) => {
             setError(caught instanceof Error ? caught.message : "Unexpected error");
           });
         }
@@ -2582,50 +2685,52 @@ export const App = () => {
         });
       }
     },
-    [buildwarden, clearRunSelectionState, setFocusedRunSelection],
+    [buildwarden, clearRunSelectionState, enqueueNavigationEffects, setFocusedRunSelection],
   );
 
   const handleProjectSelect = useCallback(async (projectId: string) => {
-    await handleAction(async () => {
-      if (!buildwarden) {
-        throw new Error("The Electron desktop bridge is unavailable.");
-      }
+    if (!buildwarden) {
+      setError("The Electron desktop bridge is unavailable.");
+      return;
+    }
 
+    setLandingSelected(false);
+    setAllRunsSelected(false);
+    setBookmarksSelected(false);
+    setChatsSelected(false);
+    setSettingsOpen(false);
+    setProjectPageTab("overview");
+    setRunProjectId(projectId);
+    clearRunSelectionState(null);
+    await runNavigationEffects(async () => {
       await leaveSelectedRun();
       await buildwarden.selectProject(projectId);
       await loadSnapshot();
-      setLandingSelected(false);
-      setAllRunsSelected(false);
-      setBookmarksSelected(false);
-      setChatsSelected(false);
-      setSettingsOpen(false);
-      setProjectPageTab("overview");
-      setRunProjectId(projectId);
-      clearRunSelectionState(null);
     });
-  }, [buildwarden, clearRunSelectionState, handleAction, leaveSelectedRun, loadSnapshot]);
+  }, [buildwarden, clearRunSelectionState, leaveSelectedRun, loadSnapshot, runNavigationEffects]);
 
   const handleProjectFeatureSelect = useCallback(async (projectId: string, tab: ProjectPageTab) => {
-    await handleAction(async () => {
-      if (!buildwarden) {
-        throw new Error("The Electron desktop bridge is unavailable.");
-      }
+    if (!buildwarden) {
+      setError("The Electron desktop bridge is unavailable.");
+      return;
+    }
 
-      const targetProject = snapshot.projects.find((entry) => entry.project.id === projectId);
-      const nextTab = normalizeProjectFeatureTab(targetProject?.project.kind, tab);
+    const targetProject = snapshot.projects.find((entry) => entry.project.id === projectId);
+    const nextTab = normalizeProjectFeatureTab(targetProject?.project.kind, tab);
+    setLandingSelected(false);
+    setAllRunsSelected(false);
+    setBookmarksSelected(false);
+    setChatsSelected(false);
+    setSettingsOpen(false);
+    setProjectPageTab(nextTab);
+    setRunProjectId(projectId);
+    clearRunSelectionState(null);
+    await runNavigationEffects(async () => {
       await leaveSelectedRun();
       await buildwarden.selectProject(projectId);
       await loadSnapshot();
-      setLandingSelected(false);
-      setAllRunsSelected(false);
-      setBookmarksSelected(false);
-      setChatsSelected(false);
-      setSettingsOpen(false);
-      setProjectPageTab(nextTab);
-      setRunProjectId(projectId);
-      clearRunSelectionState(null);
     });
-  }, [buildwarden, clearRunSelectionState, handleAction, leaveSelectedRun, loadSnapshot, snapshot.projects]);
+  }, [buildwarden, clearRunSelectionState, leaveSelectedRun, loadSnapshot, runNavigationEffects, snapshot.projects]);
 
   const dismissProjectForgeRequestToast = useCallback((id: string) => {
     setProjectForgeRequestToasts((current) => current.filter((toast) => toast.id !== id));
@@ -2647,40 +2752,42 @@ export const App = () => {
   );
 
   const handleLandingSelect = useCallback(async () => {
-    await handleAction(async () => {
-      if (buildwarden) {
-        await leaveSelectedRun();
-        await loadSnapshot();
-      }
-      setLandingSelected(true);
-      setAllRunsSelected(false);
-      setBookmarksSelected(false);
-      setChatsSelected(false);
-      setSettingsOpen(false);
-      clearRunSelectionState(null);
+    setLandingSelected(true);
+    setAllRunsSelected(false);
+    setBookmarksSelected(false);
+    setChatsSelected(false);
+    setSettingsOpen(false);
+    clearRunSelectionState(null);
+    if (!buildwarden) {
+      return;
+    }
+    await runNavigationEffects(async () => {
+      await leaveSelectedRun();
+      await loadSnapshot();
     });
-  }, [buildwarden, clearRunSelectionState, handleAction, leaveSelectedRun, loadSnapshot]);
+  }, [buildwarden, clearRunSelectionState, leaveSelectedRun, loadSnapshot, runNavigationEffects]);
 
   const handleAllRunsSelect = useCallback(async () => {
-    await handleAction(async () => {
-      if (buildwarden) {
-        await leaveSelectedRun();
-        await loadSnapshot();
-      }
-      setLandingSelected(false);
-      setAllRunsSelected(true);
-      setBookmarksSelected(false);
-      setChatsSelected(false);
-      setSettingsOpen(false);
-      setSelectedBookmark(null);
-      setSelectedChat(null);
-      setChatDetail(null);
-      clearRunSelectionState(null);
+    setLandingSelected(false);
+    setAllRunsSelected(true);
+    setBookmarksSelected(false);
+    setChatsSelected(false);
+    setSettingsOpen(false);
+    setSelectedBookmark(null);
+    setSelectedChat(null);
+    setChatDetail(null);
+    clearRunSelectionState(null);
+    if (!buildwarden) {
+      return;
+    }
+    await runNavigationEffects(async () => {
+      await leaveSelectedRun();
+      await loadSnapshot();
     });
-  }, [buildwarden, clearRunSelectionState, handleAction, leaveSelectedRun, loadSnapshot]);
+  }, [buildwarden, clearRunSelectionState, leaveSelectedRun, loadSnapshot, runNavigationEffects]);
 
   const handleBookmarksSelect = useCallback(() => {
-    void leaveSelectedRun();
+    queueLeaveSelectedRun();
     setBookmarksSelected(true);
     setAllRunsSelected(false);
     setChatsSelected(false);
@@ -2690,10 +2797,10 @@ export const App = () => {
     setLandingSelected(false);
     setSettingsOpen(false);
     clearRunSelectionState(null);
-  }, [clearRunSelectionState, leaveSelectedRun]);
+  }, [clearRunSelectionState, queueLeaveSelectedRun]);
 
   const handleChatsSelect = useCallback(() => {
-    void leaveSelectedRun();
+    queueLeaveSelectedRun();
     setChatsSelected(true);
     setAllRunsSelected(false);
     setBookmarksSelected(false);
@@ -2703,7 +2810,7 @@ export const App = () => {
     setLandingSelected(false);
     setSettingsOpen(false);
     clearRunSelectionState(null);
-  }, [clearRunSelectionState, leaveSelectedRun]);
+  }, [clearRunSelectionState, queueLeaveSelectedRun]);
 
   const openSettingsPage = useCallback(() => {
     if (!buildwarden.capabilities.settings) return;
@@ -2722,7 +2829,7 @@ export const App = () => {
       focusedRunPane,
       runDetailsById,
     });
-    void leaveSelectedRun();
+    queueLeaveSelectedRun();
     setSettingsOpen(true);
     setLandingSelected(false);
     setAllRunsSelected(false);
@@ -2741,9 +2848,9 @@ export const App = () => {
     clearRunSelectionState,
     focusedRunPane,
     landingSelected,
-    leaveSelectedRun,
     openRunPanes,
     projectPageTab,
+    queueLeaveSelectedRun,
     runDetail,
     runDetailsById,
     selectedBookmark,
@@ -3004,7 +3111,9 @@ export const App = () => {
     setRunProjectId(projectId);
     setOpenRunPanes({ left: runId });
     setFocusedRunPane("left");
-    const cachedDetail = runDetailsByIdRef.current[runId] ?? null;
+    // Seed from the recent-run cache so reopening a run renders immediately
+    // while loadRunDetail fetches the current state.
+    const cachedDetail = getCachedRunDetail(runId);
     setRunDetailsById(cachedDetail ? { [runId]: cachedDetail } : {});
     setSelectedRunId(runId);
     selectedRunIdRef.current = runId;
@@ -3015,13 +3124,14 @@ export const App = () => {
         await leaveSelectedRun();
       }
       await buildwarden.activateRun(runId);
-      await loadSnapshot();
+      // Coalesces with the snapshot refresh triggered by the run's forge sync.
+      scheduleSnapshotRefresh();
     };
 
-    Promise.all([runActivateAndSnapshot(), loadRunDetail(runId)]).catch((caught) => {
+    Promise.all([enqueueNavigationEffects(runActivateAndSnapshot), loadRunDetail(runId)]).catch((caught) => {
       setError(caught instanceof Error ? caught.message : "Unexpected error");
     });
-  }, [buildwarden, leaveSelectedRun, loadRunDetail, loadSnapshot, selectedRunId]);
+  }, [buildwarden, enqueueNavigationEffects, getCachedRunDetail, leaveSelectedRun, loadRunDetail, scheduleSnapshotRefresh, selectedRunId]);
 
   const reviewChildRun = useCallback((projectId: string, childRunId: string) => {
     updateRunWorkspaceLayout(childRunId, (current) => ({
