@@ -113,6 +113,27 @@ describe("run tool workspace containment", () => {
     expect(await readFile(join(worktreePath, ".git"), "utf8")).toBe("gitdir: elsewhere\n");
   });
 
+  it("protects .git from links inside the workspace that point at it", async () => {
+    const worktreePath = await makeTempDir();
+    await mkdir(join(worktreePath, ".git"));
+    await writeFile(join(worktreePath, ".git", "config"), "[core]\n", "utf8");
+    await symlink(join(worktreePath, ".git"), join(worktreePath, "alias"), "junction");
+    const tools = createRunToolContext(worktreePath);
+
+    const writeResult = await tools.executeTool({ id: "write-alias-link", name: "write_file", arguments: { path: "alias/config", content: "x\n" } });
+    const newFileResult = await tools.executeTool({ id: "write-alias-new", name: "write_file", arguments: { path: "alias/hooks/pre-commit", content: "x\n" } });
+    const editResult = await tools.executeTool({
+      id: "edit-alias-link",
+      name: "edit_file",
+      arguments: { file_path: "alias/config", old_string: "[core]", new_string: "[core]\n\thooksPath = /tmp" },
+    });
+    const deleteResult = await tools.executeTool({ id: "delete-alias-link", name: "delete_file", arguments: { path: "alias/config" } });
+
+    expect([writeResult.ok, newFileResult.ok, editResult.ok, deleteResult.ok]).toEqual([false, false, false, false]);
+    expect(await readFile(join(worktreePath, ".git", "config"), "utf8")).toBe("[core]\n");
+    expect(existsSync(join(worktreePath, ".git", "hooks", "pre-commit"))).toBe(false);
+  });
+
   it("protects the .git entry behind its 8.3 short name", async () => {
     const worktreePath = await makeTempDir();
     await mkdir(join(worktreePath, ".git"));
