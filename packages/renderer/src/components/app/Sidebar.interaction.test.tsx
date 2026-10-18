@@ -253,11 +253,20 @@ describe("Sidebar run sections", () => {
     expect(runRow("old-run")).not.toBeNull();
     expect(runRow("recent-run")).toBeNull();
     expect(container!.querySelector('[data-sidebar-run-section="uncategorized"]')).toBeNull();
+    const filterButton = container!.querySelector<HTMLButtonElement>('[aria-label="Filter sidebar runs by status"]')!;
+    // The collapsed filter names the active view so a filtered list is never mistaken for missing runs.
+    expect(filterButton.textContent).toBe("Failed");
+    expect(container!.querySelector("[data-sidebar-run-view]")).toBeNull();
+
+    await act(async () => filterButton.click());
+    expect(filterButton.getAttribute("aria-expanded")).toBe("true");
+    expect(container!.querySelector('[data-sidebar-run-view="failed"]')?.getAttribute("aria-checked")).toBe("true");
     expect(container!.querySelector('[data-sidebar-run-view="failed"]')?.textContent).toBe("Failed1");
     expect(container!.querySelector('[data-sidebar-run-view="all"]')?.textContent).toBe("All2");
 
     await act(async () => container!.querySelector<HTMLButtonElement>('[data-sidebar-run-view="done"]')?.click());
     expect(props.onSidebarSettingChange).toHaveBeenCalledWith(APP_SETTING_KEYS.sidebarRunView, "done");
+    expect(container!.querySelector("[data-sidebar-run-view]")).toBeNull();
   });
 
   it("creates, renames, and deletes sections through the sections setting", async () => {

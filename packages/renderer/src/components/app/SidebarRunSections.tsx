@@ -7,7 +7,7 @@ import {
   type SidebarRunSectionsConfig,
   type SidebarRunView,
 } from "@buildwarden/shared";
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Inbox, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, Inbox, Layers, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type DragEvent as ReactDragEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "../../lib/cn";
@@ -111,13 +111,13 @@ export const SidebarRunSections = ({
   onConfigChange,
   onMoveRun,
 }: SidebarRunSectionsProps) => {
-  const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
+  const [headerMenu, setHeaderMenu] = useState<"scope" | "view" | null>(null);
   const [sectionMenu, setSectionMenu] = useState<SectionMenuState | null>(null);
   const [renamingSectionId, setRenamingSectionId] = useState<string | null>(null);
   const [creatingSection, setCreatingSection] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [dropTargetKey, setDropTargetKey] = useState<string | null>(null);
-  const scopeMenuRef = useRef<HTMLDivElement>(null);
+  const headerMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!canMoveRuns) return;
@@ -139,13 +139,13 @@ export const SidebarRunSections = ({
   }, [canMoveRuns]);
 
   useEffect(() => {
-    if (!scopeMenuOpen) return;
+    if (!headerMenu) return;
     const handlePointerDown = (event: MouseEvent) => {
-      if (scopeMenuRef.current && !scopeMenuRef.current.contains(event.target as Node)) setScopeMenuOpen(false);
+      if (headerMenuRef.current && !headerMenuRef.current.contains(event.target as Node)) setHeaderMenu(null);
     };
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [scopeMenuOpen]);
+  }, [headerMenu]);
 
   const scopeProject = projects.find((project) => project.id === projectScopeId) ?? null;
   const sections = config.sections;
@@ -201,20 +201,35 @@ export const SidebarRunSections = ({
 
   return (
     <>
-      <div ref={scopeMenuRef} className="relative flex h-6 min-w-0 items-center gap-1 px-3">
+      <div ref={headerMenuRef} className="relative mb-1 flex h-6 min-w-0 items-center gap-1 px-3">
         <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--ec-faint)]">Runs</span>
         <button
           type="button"
           className="flex min-w-0 items-center gap-0.5 rounded px-1 text-[11px] text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
-          onClick={() => setScopeMenuOpen((current) => !current)}
-          aria-expanded={scopeMenuOpen}
+          onClick={() => setHeaderMenu((current) => (current === "scope" ? null : "scope"))}
+          aria-expanded={headerMenu === "scope"}
           aria-label="Filter sidebar runs by project"
           title="Show runs from one project or all projects"
         >
           <span className="truncate">{scopeProject?.name ?? "all projects"}</span>
-          <ChevronDown className={cn("size-3 shrink-0 transition", scopeMenuOpen && "rotate-180")} />
+          <ChevronDown className={cn("size-3 shrink-0 transition", headerMenu === "scope" && "rotate-180")} />
         </button>
         <span className="min-w-0 flex-1" />
+        <button
+          type="button"
+          className={cn(
+            "flex h-5 min-w-5 shrink-0 items-center justify-center gap-1 rounded px-0.5 text-[11px] transition hover:bg-[var(--ec-hover)]",
+            view === "all" ? "text-[var(--ec-muted)] hover:text-[var(--ec-text)]" : "bg-[var(--ec-accent-soft)] px-1 font-semibold text-[var(--ec-accent)]",
+          )}
+          onClick={() => setHeaderMenu((current) => (current === "view" ? null : "view"))}
+          aria-expanded={headerMenu === "view"}
+          aria-haspopup="menu"
+          aria-label="Filter sidebar runs by status"
+          title={view === "all" ? "Filter by status" : `Showing ${SIDEBAR_RUN_VIEW_LABELS[view]} runs`}
+        >
+          <Layers className="size-3.5 shrink-0" />
+          {view === "all" ? null : <span>{SIDEBAR_RUN_VIEW_LABELS[view]}</span>}
+        </button>
         {canEditSections ? (
           <button
             type="button"
@@ -227,7 +242,7 @@ export const SidebarRunSections = ({
             <Plus className="size-3.5" />
           </button>
         ) : null}
-        {scopeMenuOpen ? (
+        {headerMenu === "scope" ? (
           <div className="absolute left-2 right-2 top-full z-50 glass-popover max-h-72 overflow-y-auto py-1">
             {[{ id: null as string | null, name: "All projects" }, ...projects].map((project) => (
               <button
@@ -235,7 +250,7 @@ export const SidebarRunSections = ({
                 type="button"
                 className="flex w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left text-xs text-[var(--ec-text)] transition hover:bg-[var(--ec-hover)]"
                 onClick={() => {
-                  setScopeMenuOpen(false);
+                  setHeaderMenu(null);
                   onProjectScopeChange(project.id);
                 }}
               >
@@ -245,33 +260,31 @@ export const SidebarRunSections = ({
             ))}
           </div>
         ) : null}
-      </div>
-
-      <div className="mx-2 mb-1.5 flex rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] p-0.5" role="tablist" aria-label="Sidebar run status view">
-        {SIDEBAR_RUN_VIEWS.map((option) => {
-          const selected = option === view;
-          return (
-            <button
-              key={option}
-              type="button"
-              role="tab"
-              aria-selected={selected}
-              data-sidebar-run-view={option}
-              className={cn(
-                "flex h-6 min-w-0 flex-1 items-center justify-center gap-1 rounded px-1 text-[11px] transition",
-                selected
-                  ? "bg-[var(--ec-accent-soft)] font-semibold text-[var(--ec-text)] ring-1 ring-[var(--ec-accent-ring)]"
-                  : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
-              )}
-              onClick={() => onViewChange(option)}
-            >
-              <span className="truncate">{SIDEBAR_RUN_VIEW_LABELS[option]}</span>
-              <span className={cn("font-mono text-[9px] tabular-nums", selected ? "text-[var(--ec-accent)]" : "text-[var(--ec-faint)]")}>
-                {viewCounts[option] > 99 ? "99+" : viewCounts[option]}
-              </span>
-            </button>
-          );
-        })}
+        {headerMenu === "view" ? (
+          <div className="absolute right-2 top-full z-50 w-40 glass-popover py-1" role="menu" aria-label="Sidebar run status view">
+            {SIDEBAR_RUN_VIEWS.map((option) => {
+              const selected = option === view;
+              return (
+                <button
+                  key={option}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={selected}
+                  data-sidebar-run-view={option}
+                  className="flex w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left text-xs text-[var(--ec-text)] transition hover:bg-[var(--ec-hover)]"
+                  onClick={() => {
+                    setHeaderMenu(null);
+                    onViewChange(option);
+                  }}
+                >
+                  <Check className={cn("size-3 shrink-0 text-[var(--ec-accent)]", !selected && "invisible")} />
+                  <span className={cn("min-w-0 flex-1 truncate", selected && "font-semibold")}>{SIDEBAR_RUN_VIEW_LABELS[option]}</span>
+                  <span className="font-mono text-[10px] tabular-nums text-[var(--ec-faint)]">{viewCounts[option] > 99 ? "99+" : viewCounts[option]}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
       </div>
 
       {!hasAnyRuns && sections.length === 0 && !creatingSection ? (
