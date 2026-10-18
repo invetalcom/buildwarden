@@ -2008,7 +2008,7 @@ describe("AppController settings and lightweight workflows", () => {
       projectId: project.id,
       workspaceType: "worktree",
       workspaceVcs: "git",
-      worktreePath: "C:\\managed\\run-1",
+      worktreePath: "C:\\managed\\buildwarden-run-1",
       branchName: "buildwarden-run-1",
     } as RunRecord;
     const removeWorktree = vi.fn()
@@ -2026,6 +2026,36 @@ describe("AppController settings and lightweight workflows", () => {
 
     expect(removeWorktree).toHaveBeenCalledTimes(2);
     expect(removeWorktree).toHaveBeenLastCalledWith(project.repoPath, run.worktreePath, run.branchName);
+  });
+
+  it("keeps a user-named run branch and honors preserveBranch during run deletion", async () => {
+    const run = {
+      id: "run-1",
+      projectId: project.id,
+      workspaceType: "worktree",
+      workspaceVcs: "git",
+      worktreePath: "C:\\managed\\buildwarden-run-1",
+      branchName: "feature/published",
+    } as RunRecord;
+    const removeWorktree = vi.fn().mockResolvedValue(undefined);
+    const harness = createHarness();
+    tempDirs.push(harness.logDir);
+    const controller = harness.controller as unknown as {
+      gitService: { removeWorktree: typeof removeWorktree };
+      deleteRunResources: (
+        repoPath: string,
+        run: RunRecord,
+        context: "run" | "project",
+        options?: { preserveBranch?: boolean },
+      ) => Promise<void>;
+    };
+    controller.gitService.removeWorktree = removeWorktree;
+
+    await controller.deleteRunResources(project.repoPath, run, "run");
+    await controller.deleteRunResources(project.repoPath, { ...run, branchName: "buildwarden-run-1" }, "run", { preserveBranch: true });
+
+    expect(removeWorktree).toHaveBeenNthCalledWith(1, project.repoPath, run.worktreePath, undefined);
+    expect(removeWorktree).toHaveBeenNthCalledWith(2, project.repoPath, run.worktreePath, undefined);
   });
 
   it("does not expose Git command details when a worktree summary fails", async () => {
@@ -2276,7 +2306,7 @@ describe("AppController settings and lightweight workflows", () => {
     try {
       await expect(harness.controller.deleteRun(run.id)).resolves.toBeUndefined();
       expect(cleanup).toHaveBeenCalledTimes(2);
-      expect(resources).toHaveBeenCalledWith(project.repoPath, run, "run");
+      expect(resources).toHaveBeenCalledWith(project.repoPath, run, "run", {});
       expect(harness.db.deleteProviderSessionRuntime).toHaveBeenCalledWith("chat-1", "chat");
       expect(harness.db.deleteProviderSessionRuntime).toHaveBeenCalledWith("chat-2", "chat");
       expect(harness.db.deleteRun).toHaveBeenCalledWith(run.id);

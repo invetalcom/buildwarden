@@ -80,6 +80,22 @@ const execForgeCli = (command: string, args: string[], cwd: string) =>
     env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GH_PROMPT_DISABLED: "1" },
   });
 
+/**
+ * simple-git resolves when Git exits non-zero without writing to stderr, which is exactly how `--quiet`
+ * probes report "no". Probes therefore run Git directly and read the exit code.
+ */
+const runGitProbe = async (cwd: string, args: string[]): Promise<boolean> => {
+  try {
+    await execFileAsync("git", withLongPathSupport(args), { cwd, timeout: 60_000 });
+    return true;
+  } catch (error) {
+    if (typeof error === "object" && error !== null && typeof (error as { code?: unknown }).code === "number") {
+      return false;
+    }
+    throw error;
+  }
+};
+
 const isTimedOutCommandError = (error: unknown): boolean =>
   typeof error === "object" && error !== null && "killed" in error && (error as { killed?: boolean }).killed === true;
 
@@ -944,6 +960,15 @@ export class GitService {
     } catch {
       return false;
     }
+  }
+
+  /** Mirrors `git branch -d`: a branch is merged when its upstream, or HEAD without one, contains it. */
+  async isBranchMerged(repoPath: string, branchName: string): Promise<boolean> {
+    const trimmedBranchName = branchName.trim();
+    const upstream = (
+      await runGitRaw(simpleGit(repoPath), ["for-each-ref", "--format=%(upstream)", `refs/heads/${trimmedBranchName}`])
+    ).trim();
+    return runGitProbe(repoPath, ["merge-base", "--is-ancestor", `refs/heads/${trimmedBranchName}`, upstream || "HEAD"]);
   }
 
   async fetchProjectBranches(repoPath: string): Promise<void> {

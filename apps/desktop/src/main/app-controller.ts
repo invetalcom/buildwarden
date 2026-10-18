@@ -2749,13 +2749,19 @@ export class AppController
       if (branchName === currentBranch) {
         throw new Error("You cannot delete the currently checked out branch.");
       }
+      const hasLocalBranch = await this.gitService.hasLocalBranch(project.repoPath, branchName);
+      // Decide before deleting linked runs: their history must survive a refused deletion.
+      if (hasLocalBranch && input.force !== true && !(await this.gitService.isBranchMerged(project.repoPath, branchName))) {
+        throw new Error(`The branch "${branchName}" is not fully merged. Force delete it to discard its unmerged commits.`);
+      }
 
       const linkedRuns = this.listRunsLinkedToProjectBranch(projectId, branchName);
       for (const run of linkedRuns) {
-        await this.deleteRun(run.id);
+        // Run cleanup would force-delete the branch; the deletion below honors the user's choice instead.
+        await this.deleteRun(run.id, { preserveBranch: true });
       }
 
-      if (await this.gitService.hasLocalBranch(project.repoPath, branchName)) {
+      if (hasLocalBranch && (await this.gitService.hasLocalBranch(project.repoPath, branchName))) {
         await this.gitService.deleteProjectBranch(project.repoPath, branchName, input.force === true);
       }
       return this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
@@ -8501,7 +8507,7 @@ export class AppController
     }
   }
 
-  async deleteRun(runId: string): Promise<void> {
+  async deleteRun(runId: string, options: { preserveBranch?: boolean } = {}): Promise<void> {
     const run = this.db.getRun(runId);
     const ownedTask = this.db.getOrchestrationTaskByChildRunId(runId);
     if (ownedTask) {
@@ -8539,7 +8545,7 @@ export class AppController
       this.db.deleteProviderSessionRuntime(runChat.id, "chat");
       await this.removeChatWorkspaceBestEffort(runChat.id);
     }
-    await this.deleteRunResources(project.repoPath, run, "run");
+    await this.deleteRunResources(project.repoPath, run, "run", options);
     this.db.deleteRun(runId);
     this.notifyRunDeleted(runId);
     this.db.deleteSetting(SELECTED_RUN_KEY);
@@ -11009,10 +11015,21 @@ export class AppController
       });
   }
 
-  private async removeRunWorktreeForDeletion(repoPath: string, run: RunRecord): Promise<void> {
+  /**
+   * Run cleanup force-deletes only the branch BuildWarden generated for the worktree (named like its
+   * folder). A branch the user named, for example when publishing, may hold unpushed work and is kept.
+   */
+  private getOwnedRunBranchForDeletion(run: RunRecord, options: { preserveBranch?: boolean }): string | undefined {
+    if (options.preserveBranch === true || run.branchName !== basename(run.worktreePath)) {
+      return undefined;
+    }
+    return run.branchName;
+  }
+
+  private async removeRunWorktreeForDeletion(repoPath: string, run: RunRecord, branchName: string | undefined): Promise<void> {
     for (let attempt = 0; ; attempt += 1) {
       try {
-        await this.gitService.removeWorktree(repoPath, run.worktreePath, run.branchName);
+        await this.gitService.removeWorktree(repoPath, run.worktreePath, branchName);
         return;
       } catch (error) {
         const retryDelay = WORKTREE_CLEANUP_RETRY_DELAYS_MS[attempt];
@@ -11109,7 +11126,12 @@ export class AppController
     this.db.updateRunWorkspace(run.id, "local", repoPath);
   }
 
-  private async deleteRunResources(repoPath: string, run: RunRecord, context: "run" | "project"): Promise<void> {
+  private async deleteRunResources(
+    repoPath: string,
+    run: RunRecord,
+    context: "run" | "project",
+    options: { preserveBranch?: boolean } = {},
+  ): Promise<void> {
     const active = this.runWorkers.get(run.id);
     const cleanupErrors: string[] = [];
 
@@ -11125,13 +11147,14 @@ export class AppController
     }
 
     if (run.workspaceType === "worktree") {
+      const ownedBranch = this.getOwnedRunBranchForDeletion(run, options);
       try {
-        await this.removeRunWorktreeForDeletion(repoPath, run);
+        await this.removeRunWorktreeForDeletion(repoPath, run, ownedBranch);
       } catch (error) {
         const [worktreeRegistered, gitMetadataPresent, branchPresent] = await Promise.all([
           this.gitService.isWorktreeRegistered(repoPath, run.worktreePath).catch(() => true),
           this.gitService.hasWorktreeGitMetadata(run.worktreePath).catch(() => true),
-          this.gitService.hasLocalBranch(repoPath, run.branchName).catch(() => true),
+          ownedBranch ? this.gitService.hasLocalBranch(repoPath, ownedBranch).catch(() => true) : Promise.resolve(false),
         ]);
         if (!worktreeRegistered && !gitMetadataPresent && !branchPresent) {
           const message = [

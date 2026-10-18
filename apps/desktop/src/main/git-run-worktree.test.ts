@@ -123,6 +123,22 @@ describe("GitService run worktree lifecycle", () => {
   });
 });
 
+describe("GitService branch merge checks", () => {
+  it("reports unmerged branches like git branch -d", async () => {
+    const { repoPath, git } = await createRepository();
+    const service = new GitService();
+    await git.branch(["merged"]);
+    await git.checkout(["-b", "unmerged"]);
+    await writeFile(join(repoPath, "tracked.txt"), "unmerged\n", "utf8");
+    await git.add(["tracked.txt"]);
+    await git.commit("Unmerged commit");
+    await git.checkout(["main"]);
+
+    expect(await service.isBranchMerged(repoPath, "merged")).toBe(true);
+    expect(await service.isBranchMerged(repoPath, "unmerged")).toBe(false);
+  });
+});
+
 describe("GitService prompt restore points", () => {
   it("saves the discarded changes before restoring the captured state", async () => {
     const { root, repoPath } = await createRepository();
