@@ -2260,6 +2260,34 @@ describe("AppController settings and lightweight workflows", () => {
     expect(harness.calls.setSetting).toHaveBeenCalledWith("selectedProjectId", project.id);
   });
 
+  it.each(["EBUSY", "EPERM"])("finishes run resource and state cleanup when a chat workspace fails with %s", async (code) => {
+    const run = { id: "run-1", projectId: project.id } as RunRecord;
+    const cleanup = vi.spyOn(chatWorkspace, "removeChatWorkspace").mockRejectedValue(Object.assign(new Error("Workspace locked"), { code }));
+    const harness = createHarness({
+      getRun: vi.fn(() => run),
+      getChatsForRun: vi.fn(() => [{ id: "chat-1" }, { id: "chat-2" }]),
+      deleteProviderSessionRuntime: vi.fn(),
+      deleteRun: vi.fn(),
+    });
+    tempDirs.push(harness.logDir);
+    const resources = vi.spyOn(harness.controller as unknown as {
+      deleteRunResources: (repoPath: string, run: RunRecord, context: string) => Promise<void>;
+    }, "deleteRunResources").mockResolvedValue();
+    try {
+      await expect(harness.controller.deleteRun(run.id)).resolves.toBeUndefined();
+      expect(cleanup).toHaveBeenCalledTimes(2);
+      expect(resources).toHaveBeenCalledWith(project.repoPath, run, "run");
+      expect(harness.db.deleteProviderSessionRuntime).toHaveBeenCalledWith("chat-1", "chat");
+      expect(harness.db.deleteProviderSessionRuntime).toHaveBeenCalledWith("chat-2", "chat");
+      expect(harness.db.deleteRun).toHaveBeenCalledWith(run.id);
+      expect(harness.lifecycle.onRunDeleted).toHaveBeenCalledWith(run.id);
+      expect(harness.calls.deleteSetting).toHaveBeenCalledWith("selectedRunId");
+    } finally {
+      cleanup.mockRestore();
+      resources.mockRestore();
+    }
+  });
+
   it("migrates the former run base into the single project base branch", async () => {
     const harness = createHarness();
     tempDirs.push(harness.logDir);

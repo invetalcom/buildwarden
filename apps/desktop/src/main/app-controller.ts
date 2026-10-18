@@ -2429,15 +2429,19 @@ export class AppController
       await active.worker.terminate();
     }
     const isRunChat = Boolean(this.db.getChat(chatId).runId);
-    try {
-      await removeChatWorkspace(this.db.getFilePath(), chatId);
-    } catch (error) {
-      this.logControllerWarn("Could not remove the chat workspace; continuing chat deletion.", { chatId, error });
-    }
+    await this.removeChatWorkspaceBestEffort(chatId);
     this.db.deleteProviderSessionRuntime(chatId, "chat");
     this.db.deleteChat(chatId);
     if (!isRunChat) {
       this.db.deleteSetting(SELECTED_CHAT_KEY);
+    }
+  }
+
+  private async removeChatWorkspaceBestEffort(chatId: string): Promise<void> {
+    try {
+      await removeChatWorkspace(this.db.getFilePath(), chatId);
+    } catch (error) {
+      this.logControllerWarn("Could not remove the chat workspace; continuing deletion.", { chatId, error });
     }
   }
 
@@ -8533,7 +8537,7 @@ export class AppController
         await activeChat.worker.terminate();
       }
       this.db.deleteProviderSessionRuntime(runChat.id, "chat");
-      await removeChatWorkspace(this.db.getFilePath(), runChat.id);
+      await this.removeChatWorkspaceBestEffort(runChat.id);
     }
     await this.deleteRunResources(project.repoPath, run, "run");
     this.db.deleteRun(runId);
@@ -8602,7 +8606,7 @@ export class AppController
         this.db.deleteProviderSessionRuntime(id, "run");
         for (const runChat of this.db.getChatsForRun(id)) {
           this.db.deleteProviderSessionRuntime(runChat.id, "chat");
-          await removeChatWorkspace(this.db.getFilePath(), runChat.id);
+          await this.removeChatWorkspaceBestEffort(runChat.id);
         }
         await this.deleteRunResources(project.repoPath, ownedRun, "run");
         if (
