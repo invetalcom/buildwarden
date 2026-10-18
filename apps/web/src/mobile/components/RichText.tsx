@@ -1,3 +1,5 @@
+import { ResponseImage, responseMediaLayout, responseUrlTransform } from "@buildwarden/renderer/response-content";
+import "@buildwarden/renderer/response-content.css";
 import type { AnchorHTMLAttributes } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeRaw from "rehype-raw";
@@ -105,20 +107,7 @@ const components: Components = {
   th: ({ children }) => <th className="whitespace-nowrap px-2 py-1.5 font-medium">{children}</th>,
   td: ({ children }) => <td className="px-2 py-1.5 align-top text-[var(--ec-muted)]">{children}</td>,
 
-  img: ({ src, alt, title }) => {
-    // Sanitisation strips a disallowed protocol and leaves no src; render nothing rather than a
-    // broken-image placeholder.
-    if (typeof src !== "string" || !src) return null;
-    return (
-      <img
-        src={src}
-        alt={alt ?? ""}
-        title={title}
-        loading="lazy"
-        className="my-2 max-h-72 max-w-full rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] object-contain"
-      />
-    );
-  },
+  img: ({ src, alt, title }) => <ResponseImage src={typeof src === "string" ? src : undefined} alt={alt} title={title} />,
   input: ({ type, checked }) =>
     type === "checkbox" ? (
       <input type="checkbox" checked={Boolean(checked)} readOnly disabled className="mr-1.5 align-[-0.12em] accent-[var(--ec-accent)]" />
@@ -136,10 +125,11 @@ export const RichText = ({ children, className }: { children: string; className?
 
   return (
     // min-w-0 lets the scrollable code/table boxes shrink inside a flex parent (e.g. chat bubbles).
-    <div className={cn("m-wrap-anywhere min-w-0 text-[13.5px]", className)}>
+    <div className={cn("response-markdown m-wrap-anywhere min-w-0 text-[13.5px]", className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, markdownSanitizeSchema]]}
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, markdownSanitizeSchema], responseMediaLayout]}
+        urlTransform={responseUrlTransform}
         components={components}
       >
         {children}

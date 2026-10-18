@@ -295,7 +295,7 @@ export const ORCHESTRATION_TOOL_NAMES = [
 ] as const;
 
 export type OrchestrationToolName = (typeof ORCHESTRATION_TOOL_NAMES)[number];
-export type HarnessToolName = RunToolName | OrchestrationToolName;
+export type HarnessToolName = RunToolName | OrchestrationToolName | "buildwarden_ask_user";
 
 const TEXT_LIKE_FILE_EXTENSIONS = new Set([
   "c",
@@ -1865,12 +1865,69 @@ export interface RunUserInputQuestion {
 export type RunUserInputAnswerValue = string | string[];
 export type RunUserInputAnswers = Record<string, RunUserInputAnswerValue>;
 
+export const RESPONSE_PRESENTATION_INSTRUCTIONS = [
+  "BuildWarden renders Markdown headings, tables, images, and structured user-input questions.",
+  "When an image-and-text card is useful, write a section heading, then a Markdown image on its own paragraph, then a level-3 heading for the card title, then one short subtitle paragraph. The UI places the image on the left and title/subtitle on the right.",
+  "Only include images you actually have. Use HTTPS image URLs or Markdown references to PNG, JPEG, GIF, or WebP files within the current workspace. Put paths containing spaces in angle brackets. Local images are preserved with the response (up to 5 MiB each).",
+  "For clickable choices, use buildwarden_ask_user or request_user_input when available. Do not emit HTML forms or pretend a text list is an interactive control.",
+].join("\n");
+
+export function validateUserInputAnswers(questions: RunUserInputQuestion[], answers: RunUserInputAnswers): void {
+  if (!answers || typeof answers !== "object" || Array.isArray(answers) || Object.keys(answers).some((id) => !questions.some((question) => question.id === id))) {
+    throw new Error("Invalid question answers.");
+  }
+  for (const question of questions) {
+    const answer = answers[question.id];
+    const values = Array.isArray(answer) ? answer : [answer];
+    if (!values.length || (!question.multiSelect && values.length !== 1) || values.length > 100 ||
+      values.some((value) => typeof value !== "string" || !value.trim() || value.length > 20_000)) {
+      throw new Error(`Please answer ${question.header || question.id}.`);
+    }
+    if (question.options.length && !question.allowCustomAnswer &&
+      values.some((value) => !question.options.some((option) => option.label === value))) throw new Error("Select one of the available options.");
+  }
+}
+
 export interface RunUserInputRequest {
   requestId?: string;
   title?: string;
   content?: string;
   questions: RunUserInputQuestion[];
   metadata?: Record<string, unknown>;
+}
+
+export const USER_INPUT_TOOL_SCHEMA = {
+  type: "object", additionalProperties: false, required: ["questions"] as string[], properties: {
+    questions: { type: "array", minItems: 1, maxItems: 3, items: {
+      type: "object", additionalProperties: false, required: ["id", "header", "question", "options", "multiSelect", "allowCustomAnswer"] as string[],
+      properties: {
+        id: { type: "string" }, header: { type: "string" }, question: { type: "string" },
+        options: { type: "array", items: { type: "object", additionalProperties: false, required: ["label", "description"] as string[],
+          properties: { label: { type: "string" }, description: { type: "string" } } } },
+        multiSelect: { type: "boolean" }, allowCustomAnswer: { type: "boolean" },
+      },
+    } },
+  },
+} as const;
+
+export function parseUserInputQuestions(value: unknown): RunUserInputQuestion[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 3) throw new Error("Expected one to three questions.");
+  const ids = new Set<string>();
+  return value.map((question: unknown) => {
+    if (!question || typeof question !== "object") throw new Error("Invalid question.");
+    const q = question as Record<string, unknown>;
+    if (typeof q.id !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/.test(q.id) ||
+      ["__proto__", "constructor", "prototype"].includes(q.id) || ids.has(q.id) ||
+      typeof q.header !== "string" || typeof q.question !== "string" || !q.question.trim() ||
+      !Array.isArray(q.options) || q.options.length > 20) throw new Error("Invalid question fields.");
+    ids.add(q.id);
+    const options = q.options.map((option: unknown) => {
+      if (!option || typeof option !== "object" || !("label" in option) || typeof option.label !== "string" || !option.label.trim()) throw new Error("Invalid question option.");
+      return { label: option.label, ...("description" in option && typeof option.description === "string" ? { description: option.description } : {}) };
+    });
+    if (new Set(options.map((option) => option.label)).size !== options.length) throw new Error("Question options must be unique.");
+    return { id: q.id, header: q.header, question: q.question, options, multiSelect: q.multiSelect === true, allowCustomAnswer: q.allowCustomAnswer !== false };
+  });
 }
 
 export interface RunEvent {
@@ -3474,10 +3531,13 @@ const priorChatMessageFromStep = (step: ChatStepRecord): ChatCompletionHistoryMe
   if (step.eventType === "log" && (metadata.source === "user" || metadata.source === RUN_CHAT_CONTEXT_SOURCE)) {
     return { role: "user", content: step.content };
   }
+  if (step.eventType === "user-input-requested" && metadata.requestStatus === "resolved") {
+    return { role: "user", content: `Answers to the assistant's questions: ${JSON.stringify({ questions: metadata.userInputQuestions, answers: metadata.userInputAnswers })}` };
+  }
   if (step.eventType !== "output" || metadata.assistantKind === "reasoning" || step.title === "Reasoning") {
     return null;
   }
-  return { role: "assistant", content: step.content };
+  return { role: "assistant", content: typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content };
 };
 
 export const buildPriorChatCompletionMessagesFromSteps = (steps: ChatStepRecord[]): ChatCompletionHistoryMessage[] => {
@@ -4058,6 +4118,7 @@ export interface DesktopApi {
     options?: ShellApprovalRespondOptions,
   ): Promise<void>;
   respondToRunUserInput(runId: string, requestId: string, answers: RunUserInputAnswers): Promise<void>;
+  respondToChatUserInput(chatId: string, requestId: string, answers: RunUserInputAnswers): Promise<void>;
   cancelRunShell(runId: string, toolCallId: string): Promise<void>;
   cancelRun(runId: string): Promise<void>;
   refreshSnapshot(): Promise<AppSnapshot>;
@@ -4425,6 +4486,7 @@ export type RemoteOperationMap = {
   deleteRunNote: DesktopApi["deleteRunNote"];
   respondToShellApproval: DesktopApi["respondToShellApproval"];
   respondToRunUserInput: DesktopApi["respondToRunUserInput"];
+  respondToChatUserInput: DesktopApi["respondToChatUserInput"];
   createChat: DesktopApi["createChat"];
   createRunChat: DesktopApi["createRunChat"];
   followUpChat: DesktopApi["followUpChat"];
@@ -4794,6 +4856,7 @@ export const IPC_CHANNELS = {
   releaseRun: "buildwarden:release-run",
   respondToShellApproval: "buildwarden:respond-to-shell-approval",
   respondToRunUserInput: "buildwarden:respond-to-run-user-input",
+  respondToChatUserInput: "buildwarden:respond-to-chat-user-input",
   refreshSnapshot: "buildwarden:refresh-snapshot",
   runEvent: "buildwarden:run-event",
   setAppSetting: "buildwarden:set-app-setting",

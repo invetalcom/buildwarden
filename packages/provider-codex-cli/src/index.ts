@@ -1,3 +1,4 @@
+import { RESPONSE_PRESENTATION_INSTRUCTIONS } from "@buildwarden/shared";
 import { Buffer } from "node:buffer";
 import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -723,6 +724,7 @@ const buildCollaborationMode = (
         developer_instructions: [
           mode === "plan" ? PLAN_COLLABORATION_INSTRUCTIONS : DEFAULT_COLLABORATION_INSTRUCTIONS,
           BUILDWARDEN_DEVELOPER_INSTRUCTIONS,
+          RESPONSE_PRESENTATION_INSTRUCTIONS,
         ].join("\n\n"),
       },
   };
@@ -1446,6 +1448,7 @@ export class CodexAppServerSession {
       approvalPolicy: yoloMode ? CODEX_YOLO_APPROVAL_POLICY : CODEX_APPROVAL_POLICY,
       sandbox: yoloMode ? CODEX_YOLO_SANDBOX_MODE : CODEX_SANDBOX_MODE,
       experimentalRawEvents: false,
+      developerInstructions: RESPONSE_PRESENTATION_INSTRUCTIONS,
       dynamicTools: this.toolContext?.tools.map((tool) => ({
         type: "function",
         name: tool.name,
@@ -1464,6 +1467,7 @@ export class CodexAppServerSession {
     try {
       const resumed = await this.sendRequest("thread/resume", {
         threadId,
+        developerInstructions: RESPONSE_PRESENTATION_INSTRUCTIONS,
         model: modelId,
         cwd,
         approvalPolicy: yoloMode ? CODEX_YOLO_APPROVAL_POLICY : CODEX_APPROVAL_POLICY,
@@ -2380,7 +2384,9 @@ export class CodexCliHarnessAdapter implements HarnessAdapter {
     const result = await executeCodexTurn({
       runId: input.runId,
       cwd: input.worktreePath,
-      prompt: input.prompt,
+      prompt: orchestrationToolsEnabled && !priorRuntimeHadOrchestrationTools && priorThreadId
+        ? [...(input.priorChatMessages ?? []).map((message) => `${message.role}: ${message.content}`), input.prompt].join("\n\n")
+        : input.prompt,
       modelId: input.modelId,
       // Dynamic tools are declared at thread/start and persist with that
       // thread. If delegation was enabled on a legacy thread, begin a fresh

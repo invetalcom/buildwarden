@@ -199,6 +199,7 @@ describe("remote operation registry", () => {
       | "deleteRunNote"
       | "respondToShellApproval"
       | "respondToRunUserInput"
+      | "respondToChatUserInput"
       | "createChat"
       | "createRunChat"
       | "followUpChat"

@@ -92,7 +92,7 @@ export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
             </button>
           ) : null}
           {steps.map((step) => (
-            <MobileChatStep key={step.id} step={step} />
+            <MobileChatStep key={step.id} step={step} active={active} />
           ))}
           <div ref={bottomRef} className="h-2" />
         </div>

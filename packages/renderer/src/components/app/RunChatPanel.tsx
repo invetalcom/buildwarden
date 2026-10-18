@@ -266,6 +266,8 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
         </div>
       ) : (
         <ChatTranscript
+          chatId={detail?.chat.id}
+          active={Boolean(detail && ["queued", "preparing", "running"].includes(detail.chat.status))}
           ref={transcriptRef}
           endRef={transcriptEndRef}
           className="app-scrollbar min-h-0 flex-1 overflow-auto px-3 py-2"

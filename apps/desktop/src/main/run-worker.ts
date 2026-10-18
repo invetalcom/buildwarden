@@ -15,6 +15,7 @@ import {
   runShellActivityStreamId,
 } from "@buildwarden/shared";
 import { createHarnessAdapter } from "./harness-adapters";
+import { createResponseImageEmbedder } from "./response-images";
 import { buildInitialRepoContext } from "./initial-repo-context";
 import { logError, logInfo } from "./logger";
 import { PendingHostToolRequests } from "./pending-host-tool-requests";
@@ -33,6 +34,7 @@ if (!port) {
 
 const { request } = workerData as WorkerInput;
 const controller = new AbortController();
+const embedImages = createResponseImageEmbedder(request.worktreePath);
 const pendingShellApprovals = new Map<string, (decision: ShellApprovalDecision) => void>();
 const pendingUserInputs = new Map<string, { resolve: (answers: RunUserInputAnswers) => void; reject: (error: Error) => void }>();
 const approvedShellCommands = new Set<string>();
@@ -100,9 +102,10 @@ port.on(
 );
 
 const postChunk = (chunk: HarnessRunChunk) => {
+  const value = chunk.type === "message" ? embedImages(chunk.value) : chunk.value;
   port.postMessage({
     type: "chunk",
-    chunk,
+    chunk: value === chunk.value ? chunk : { ...chunk, value, metadata: { ...chunk.metadata, responseSourceText: chunk.value } },
   });
 };
 

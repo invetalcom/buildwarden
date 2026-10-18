@@ -1,3 +1,4 @@
+import { validateUserInputAnswers } from "@buildwarden/shared";
 import type { RunVerificationRecord } from "@buildwarden/shared";
 import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -2029,6 +2030,31 @@ export class BuildWardenDatabase {
   deleteChat(chatId: string): void {
     this.run("delete from chat_steps where chat_id = ?", [chatId]);
     this.run("delete from chats where id = ?", [chatId]);
+  }
+
+  resolveChatUserInput(chatId: string, requestId: string, answers: import("@buildwarden/shared").RunUserInputAnswers): ChatStepRecord {
+    const step = this.getChatSteps(chatId).find((candidate) => {
+      if (candidate.eventType !== "user-input-requested") return false;
+      const metadata = JSON.parse(candidate.metadataJson || "{}") as Record<string, unknown>;
+      return metadata.userInputRequestId === requestId && metadata.requestStatus === "opened";
+    });
+    if (!step) throw new Error("This question is no longer waiting for an answer.");
+    const metadata = JSON.parse(step.metadataJson) as { userInputQuestions: import("@buildwarden/shared").RunUserInputQuestion[] };
+    validateUserInputAnswers(metadata.userInputQuestions, answers);
+    return this.updateChatStep(step.id, {
+      title: "User input submitted",
+      metadataJson: JSON.stringify({ ...JSON.parse(step.metadataJson), requestStatus: "resolved", userInputAnswers: answers }),
+    });
+  }
+
+  closeChatUserInputRequests(chatId: string): void {
+    for (const step of this.getChatSteps(chatId)) {
+      if (step.eventType !== "user-input-requested") continue;
+      const metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
+      if (metadata.requestStatus === "opened") this.updateChatStep(step.id, {
+        metadataJson: JSON.stringify({ ...metadata, requestStatus: "cancelled" }),
+      });
+    }
   }
 
   addProject(input: ProjectInput & { baseBranch: string; resolvedName: string; kind?: ProjectRecord["kind"] }): ProjectRecord {

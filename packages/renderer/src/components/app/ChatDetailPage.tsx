@@ -322,6 +322,9 @@ export const ChatDetailPage = ({
         ) : null}
         <div className="relative min-h-0 flex-1">
           <ChatTranscript
+            chatId={chat.id}
+            active={["queued", "preparing", "running"].includes(chat.status)}
+            readOnly={readOnly}
             ref={activityContainerRef}
             endRef={activityEndRef}
             className="app-scrollbar h-full min-h-0 overflow-auto py-1 pr-10"

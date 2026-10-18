@@ -255,7 +255,7 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
           {visibleRunChat ? (
             visibleRunChat.steps
               .filter((step) => parseStepMetadata(step.metadataJson).source !== RUN_CHAT_CONTEXT_SOURCE)
-              .map((step) => <MobileChatStep key={step.id} step={step} />)
+              .map((step) => <MobileChatStep key={step.id} step={step} active={["queued", "preparing", "running"].includes(visibleRunChat.chat.status)} />)
           ) : (
             <EmptyState title="No run chat yet" message="Ask a question about this run's output and diff." />
           )}

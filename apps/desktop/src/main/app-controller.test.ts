@@ -113,6 +113,7 @@ const createHarness = (overrides: DbOverrides = {}) => {
     updateProjectBaseBranch: vi.fn((_projectId: string, baseBranch: string) => ({ ...project, baseBranch })),
   };
   const defaults: DbOverrides = {
+    getFilePath: vi.fn(() => join(logDir, "state.sqlite")),
     getSettings: vi.fn(() => ({ ...settings })),
     getSnapshot: vi.fn(() => ({ projects: [], providerAccounts: [], models: [], runs: [], chats: [], bookmarks: [], chatBookmarks: [], settings: {} })),
     getProject: vi.fn(() => project),

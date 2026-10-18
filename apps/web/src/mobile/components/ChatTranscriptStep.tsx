@@ -7,8 +7,9 @@ import { getStoredAttachmentMessageContent } from "@buildwarden/renderer/logic";
 import { parseStepMetadata } from "../lib/chat-steps";
 import { RichText } from "./RichText";
 import { MobileStoredAttachments } from "./TaskAttachments";
+import { ChatUserInput } from "./ChatUserInput";
 
-export const MobileChatStep = ({ step }: { step: ChatStepRecord }) => {
+export const MobileChatStep = ({ step, active = false }: { step: ChatStepRecord; active?: boolean }) => {
   const metadata = parseStepMetadata(step.metadataJson);
   const isUser = metadata.source === "user";
   const isError = step.eventType === "error";
@@ -18,6 +19,10 @@ export const MobileChatStep = ({ step }: { step: ChatStepRecord }) => {
   const content = isUser
     ? getStoredAttachmentMessageContent(step.content || step.title, attachmentNames)
     : step.content;
+
+  if (step.eventType === "user-input-requested" && Array.isArray(metadata.userInputQuestions)) {
+    return <ChatUserInput step={step} active={active} />;
+  }
 
   if (isError) {
     return (

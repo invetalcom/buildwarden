@@ -963,6 +963,7 @@ const bootstrap = async (): Promise<void> => {
     true,
   );
   remoteOperations.register("createChat", (input) => controller.createChat(input), validateChatInput, "chat:operate", true);
+  remoteOperations.register("respondToChatUserInput", (chatId, requestId, answers) => controller.respondToChatUserInput(chatId, requestId, answers), validateUserInput, "chat:operate", true);
   remoteOperations.register("createRunChat", (runId, input) => controller.createRunChat(runId, input), validateRunChatInput, "chat:operate", true);
   remoteOperations.register("followUpChat", (chatId, prompt, options) => controller.followUpChat(chatId, prompt, options), validateFollowUpChat, "chat:operate", true);
   remoteOperations.register("cancelChat", (chatId) => controller.cancelChat(chatId), validateSingleRemoteStringArg, "chat:operate", true);
@@ -1539,6 +1540,9 @@ const bootstrap = async (): Promise<void> => {
   );
   ipcMain.handle(IPC_CHANNELS.respondToRunUserInput, (_, runId: string, requestId: string, answers) =>
     controller.respondToRunUserInput(runId, requestId, answers),
+  );
+  ipcMain.handle(IPC_CHANNELS.respondToChatUserInput, (_, chatId: string, requestId: string, answers) =>
+    controller.respondToChatUserInput(chatId, requestId, answers),
   );
   ipcMain.handle(IPC_CHANNELS.setProjectRevisionVerificationPolicy, (_, projectId: string, enabled: boolean) => controller.setProjectRevisionVerificationPolicy(projectId, enabled));
   ipcMain.handle(IPC_CHANNELS.setAppSetting, async (_, key: string, value: string) => {

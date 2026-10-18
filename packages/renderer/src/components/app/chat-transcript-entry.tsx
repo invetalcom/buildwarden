@@ -9,6 +9,9 @@ import { ActivityMarkdownOrGitDiff } from "./activity-message-body";
 import { StoredChatAttachments } from "./StoredChatAttachments";
 import { getStoredAttachmentMessageContent } from "./stored-chat-attachment-utils";
 import type { ChatTranscriptItem } from "./ChatTranscript";
+import { RunUserInputRequestCard } from "./RunUserInputRequestCard";
+import { readUserInputAnswers, readUserInputQuestions } from "../../logic";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 
 type EntryKind = "user" | "assistant" | "reasoning" | "subagent" | "request" | "plan" | "diff" | "status" | "error" | "note";
 
@@ -125,14 +128,26 @@ const PanelEntry = ({ item, metadata, timestamp, kind }: EntryViewProps & { kind
   );
 };
 
-export const ChatTranscriptEntryView = ({ item, metadata, showLoading, copied, onCopy }: {
+export const ChatTranscriptEntryView = ({ item, metadata, showLoading, copied, onCopy, chatId, canAnswer = false }: {
   item: ChatTranscriptItem;
   metadata: Record<string, unknown>;
   showLoading: boolean;
   copied: boolean;
   onCopy: () => void;
+  chatId?: string;
+  canAnswer?: boolean;
 }) => {
+  const client = useBuildWardenClient();
   const timestamp = new Date(item.createdAt).toLocaleTimeString();
+  const questions = readUserInputQuestions(metadata);
+  const requestId = metadata.userInputRequestId;
+  if (item.eventType === "user-input-requested" && questions.length && typeof requestId === "string") {
+    return <RunUserInputRequestCard key={requestId} runId={chatId ?? ""} requestId={requestId}
+      title={item.title} content={item.content} timestamp={timestamp} questions={questions}
+      answers={readUserInputAnswers(metadata)} resolved={metadata.requestStatus === "resolved"}
+      disabled={!canAnswer || !chatId || metadata.requestStatus !== "opened" || !client.capabilities.chatMutations}
+      onSubmitAnswers={(answers) => client.respondToChatUserInput(chatId!, requestId, answers)} />;
+  }
   const props = { item, metadata, timestamp };
   const kind = entryKind(item, metadata);
   switch (kind) {

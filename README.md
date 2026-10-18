@@ -52,6 +52,26 @@ Open **Attention inbox** from the desktop sidebar or mobile home screen to see a
 - Browse AI-generated project insights and Project Lab implementation/RFC threads.
 - Turn integrated skills on globally or per project.
 
+**Rich responses**
+
+Responses support Markdown tables, inline images with an enlarged viewer, and compact image-and-text cards on desktop and mobile. For a card, use a standalone image followed by a level-three heading and one short subtitle paragraph; a preceding section heading stays full width:
+
+```markdown
+## Product passport infrastructure
+
+![Dashboard](https://example.com/dashboard.png)
+
+### A compliance platform for physical products
+
+Target: manufacturers and industrial suppliers
+```
+
+The image sits beside the title and subtitle in wide panels, and above them in narrow panels. An image followed by a bold title in the same paragraph also creates a card. Other Markdown keeps its normal layout.
+
+Local PNG, JPEG, GIF, and WebP images referenced with inline Markdown image syntax are embedded in saved responses before they reach the renderer (5 MiB per image, 15 MiB per worker turn). Paths must remain inside the run workspace or the chat's app-owned workspace; file URLs and workspace-relative `sandbox:/` references follow the same checks. Put paths containing spaces in angle brackets. Unavailable images show a text placeholder. External images load directly from their HTTP/HTTPS URLs; HTTPS is recommended for remote clients. Raw HTML forms and executable content are not supported.
+
+Codex chats expose `buildwarden_ask_user` for clickable questions, including outside plan mode. Native provider question requests and AI SDK's `request_user_input` use the same answer card. Answers are saved with the question; inactive or read-only conversations cannot submit them. Availability still depends on the provider supporting tool calls. No image-and-text layout or form is inferred from proprietary GUI markup.
+
 **Security and access**
 
 - Provider keys, PR/MR tokens, and proxy passwords are held in Electron's secure storage, not in plain config files.

@@ -1,8 +1,11 @@
+import { markdownSanitizeSchema, responseMediaLayout, responseUrlTransform } from "./response-markdown";
+import { ResponseImage } from "./response-image";
+import "./response-content.css";
 import type { MouseEvent } from "react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
-import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import { FileText } from "lucide-react";
 import { isExternalRunWorkspaceHref, parseRunWorkspaceFileReference } from "@buildwarden/shared";
@@ -12,22 +15,6 @@ import { Button } from "./button";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import type { BuildWardenClient } from "../../lib/buildwarden-client-core";
 
-const markdownSanitizeSchema = {
-  ...defaultSchema,
-  tagNames: [...new Set([...(defaultSchema.tagNames ?? []), "details", "summary", "sub", "img", "input", "br"])],
-  attributes: {
-    ...defaultSchema.attributes,
-    a: [...(defaultSchema.attributes?.a ?? []), "href", "title"],
-    details: ["open"],
-    img: ["src", "alt", "title", "width", "height"],
-    input: ["type", "checked", "disabled"],
-  },
-  protocols: {
-    ...defaultSchema.protocols,
-    href: ["http", "https", "mailto"],
-    src: ["http", "https"],
-  },
-};
 
 const markdownTableComponents = (compact: boolean): Components => ({
   pre: ({ children, ...props }) => (
@@ -55,27 +42,6 @@ const markdownTableComponents = (compact: boolean): Components => ({
   td: ({ children, ...props }) => <td className="px-2 py-1.5 text-[color:var(--ec-muted)]" {...props}>{children}</td>,
 });
 
-const markdownImage = (buildwarden: BuildWardenClient): NonNullable<Components["img"]> => ({ src, alt, title, ...props }) => {
-  const href = typeof src === "string" ? src : "";
-  const openImage = (event: MouseEvent<HTMLImageElement>) => {
-    if (!href || (!href.startsWith("http://") && !href.startsWith("https://"))) {
-      return;
-    }
-    event.preventDefault();
-    void buildwarden.openExternalUrl(href);
-  };
-  return (
-    <img
-      src={href}
-      alt={alt ?? ""}
-      title={title}
-      className="my-2 max-h-80 max-w-full cursor-zoom-in rounded-md border border-[color:var(--ec-border)] bg-[color:var(--ec-input)] object-contain"
-      loading="lazy"
-      {...props}
-      onClick={openImage}
-    />
-  );
-};
 
 const mdComponents = (
   buildwarden: BuildWardenClient,
@@ -204,7 +170,7 @@ const mdComponents = (
   ),
   br: (props) => <br {...props} />,
   hr: (props) => <hr className="my-3 border-[color:var(--ec-border)]" {...props} />,
-  img: markdownImage(buildwarden),
+  img: ({ src, alt, title }) => <ResponseImage src={typeof src === "string" ? src : undefined} alt={alt} title={title} />,
   input: ({ type, checked, ...props }) => {
     if (type !== "checkbox") {
       return null;
@@ -290,10 +256,11 @@ export const ActivityRichText = ({ content, compact = false, className, onOpenWo
   }
 
   return (
-    <div className={cn(compact ? "text-[13px]" : "text-sm", className)}>
+    <div className={cn("response-markdown", compact ? "text-[13px]" : "text-sm", className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, markdownSanitizeSchema]]}
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, markdownSanitizeSchema], responseMediaLayout]}
+        urlTransform={responseUrlTransform}
         components={mdComponents(buildwarden, compact, onOpenWorkspaceFile)}
       >
         {content}

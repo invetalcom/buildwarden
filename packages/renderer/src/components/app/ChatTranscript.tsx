@@ -57,6 +57,8 @@ export const ChatTranscript = forwardRef<
     items: ChatTranscriptItem[];
     emptyMessage: string;
     readOnly?: boolean;
+    chatId?: string;
+    active?: boolean;
     showLoading?: boolean;
     loadingLabel?: string;
     endRef?: Ref<HTMLDivElement>;
@@ -69,6 +71,8 @@ export const ChatTranscript = forwardRef<
       items,
       emptyMessage,
       readOnly = false,
+      chatId,
+      active = false,
       showLoading = false,
       loadingLabel = "Model is working...",
       endRef,
@@ -121,6 +125,8 @@ export const ChatTranscript = forwardRef<
             item={item}
             metadata={metadata}
             showLoading={showLoading}
+            chatId={chatId}
+            canAnswer={!readOnly && active}
             copied={copiedItemId === item.id}
             onCopy={() => void copyOutput(item.content, item.id)}
           />
