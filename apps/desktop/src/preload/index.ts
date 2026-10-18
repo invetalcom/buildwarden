@@ -195,6 +195,7 @@ const api: DesktopApi = {
   cancelRunVerification: (runId: string) => invoke(IPC_CHANNELS.cancelRunVerification, runId),
   getRunDetail: (runId: string) => invoke(IPC_CHANNELS.getRunDetail, runId),
   getEarlierRunHistory: (runId, request) => invoke(IPC_CHANNELS.getEarlierRunHistory, runId, request),
+  searchRunUserInput: (query: string) => invoke(IPC_CHANNELS.searchRunUserInput, query),
   getOrchestrationDetail: (coordinatorRunId: string) =>
     invoke(IPC_CHANNELS.getOrchestrationDetail, coordinatorRunId),
   getOrchestrationTaskDetail: (taskId: string) =>

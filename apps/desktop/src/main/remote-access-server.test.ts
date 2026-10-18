@@ -133,6 +133,7 @@ describe("remote operation registry", () => {
       | "cancelRunVerification"
       | "getRunDetail"
       | "getEarlierRunHistory"
+      | "searchRunUserInput"
       | "getOrchestrationDetail"
       | "getOrchestrationTaskDetail"
       | "getOrchestrationAdoptionPreview"

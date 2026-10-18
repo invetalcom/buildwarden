@@ -7041,6 +7041,10 @@ export class AppController
     return { ...history, steps: hydrateResponseImageSteps(this.getEffectiveRunWorkspacePath(this.db.getRun(runId)), history.steps) };
   }
 
+  async searchRunUserInput(query: string): Promise<string[]> {
+    return this.db.searchRunUserInput(query);
+  }
+
   async addRunNote(runId: string, input: { content: string }): Promise<RunNoteRecord> {
     return this.db.addRunNote(runId, input.content);
   }

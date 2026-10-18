@@ -125,22 +125,50 @@ describe("run user-input ordering metadata", () => {
 
     expect(loadedFirstRun?.lastUserInputAt).toBe(followUpPrompt.createdAt);
     expect(loadedFirstRun?.pendingUserInputRequest).toBe(true);
-    expect(loadedFirstRun?.userInputSearchText).toContain("Follow-up prompt");
+    expect(db.searchRunUserInput("follow-up PROMPT")).toContain(firstRun.id);
     expect(loadedSecondRun?.lastUserInputAt).toBe(submittedInput.createdAt);
     expect(loadedSecondRun?.pendingUserInputRequest).toBe(false);
-    expect(loadedSecondRun?.userInputSearchText).toContain("Resolved answer");
+    expect(db.searchRunUserInput("resolved answer")).toEqual([secondRun.id]);
+    expect(db.searchRunUserInput("resolved follow-up")).toEqual([]);
+    expect(loadedFirstRun).not.toHaveProperty("userInputSearchText");
+  });
+
+  it("indexes submitted answers that resolve a tracked user-input request", async () => {
+    const db = await makeDb();
+    const run = createRunFixture(db);
+    const request = db.appendRunStep(
+      run.id,
+      "user-input-requested",
+      "Needs input",
+      "Which database?",
+      JSON.stringify({ requestKind: "user-input", requestStatus: "opened" }),
+    );
+    expect(db.searchRunUserInput("postgres")).toEqual([]);
+
+    db.updateRunStep(request.id, {
+      title: "User input submitted",
+      metadataJson: JSON.stringify({
+        requestKind: "user-input",
+        requestStatus: "resolved",
+        userInputAnswers: { database: "Postgres", extras: ["Read replicas"] },
+      }),
+    });
+
+    expect(db.searchRunUserInput("postgres")).toEqual([run.id]);
+    expect(db.searchRunUserInput("read replicas")).toEqual([run.id]);
+    expect(db.searchRunUserInput("which database")).toEqual([run.id]);
   });
 
   it("invalidates derived run metadata after updating run configuration", async () => {
     const db = await makeDb();
     const run = createRunFixture(db);
 
-    expect(db.getRun(run.id).userInputSearchText).not.toContain("Updated goal");
+    expect(db.searchRunUserInput("updated goal")).not.toContain(run.id);
 
     const updated = db.updateRunConfiguration(run.id, { goalText: "Updated goal" });
 
     expect(updated.goalText).toBe("Updated goal");
-    expect(updated.userInputSearchText).toContain("Updated goal");
+    expect(db.searchRunUserInput("updated goal")).toContain(run.id);
   });
 
   it("evicts cached derived run metadata when deleting a project", async () => {

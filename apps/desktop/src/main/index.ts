@@ -473,6 +473,7 @@ const bootstrap = async (): Promise<void> => {
     (runId, request) => controller.getEarlierRunHistory(runId, request),
     validateHistoryPageArgs,
   );
+  remoteOperations.register("searchRunUserInput", (query) => controller.searchRunUserInput(query), validateSingleRemoteStringArg);
   remoteOperations.register(
     "getOrchestrationDetail",
     (coordinatorRunId) => controller.getOrchestrationDetail(coordinatorRunId),
@@ -1571,6 +1572,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.getRunDetail, (_, runId: string) => controller.getRunDetail(runId));
   ipcMain.handle(IPC_CHANNELS.getEarlierRunHistory, (_, runId: string, request: UserAnchoredHistoryPageRequest) =>
     controller.getEarlierRunHistory(runId, request));
+  ipcMain.handle(IPC_CHANNELS.searchRunUserInput, (_, query: string) => controller.searchRunUserInput(query));
   ipcMain.handle(IPC_CHANNELS.getOrchestrationDetail, (_, coordinatorRunId: string) =>
     controller.getOrchestrationDetail(coordinatorRunId));
   ipcMain.handle(IPC_CHANNELS.getOrchestrationTaskDetail, (_, taskId: string) =>
