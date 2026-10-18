@@ -1871,7 +1871,7 @@ export { getResponseSourceText } from "./response-source-text";
 export const RESPONSE_PRESENTATION_INSTRUCTIONS = [
   "BuildWarden renders Markdown headings, tables, images, and structured user-input questions.",
   "When an image-and-text card is useful, write a section heading, then a Markdown image on its own paragraph, then a level-3 heading for the card title, then one short subtitle paragraph. The UI places the image on the left and title/subtitle on the right.",
-  "Only include images you actually have. Use HTTPS image URLs or Markdown references to PNG, JPEG, GIF, or WebP files within the current workspace. Put paths containing spaces in angle brackets. Local images are preserved with the response (up to 5 MiB each).",
+  "Only include images you actually have. Prefer Markdown references to PNG, JPEG, GIF, or WebP files within the current workspace. HTTPS image URLs require the user to click before loading. Put paths containing spaces in angle brackets. Local images are preserved with the response (up to 5 MiB each).",
   "For clickable choices, use buildwarden_ask_user or request_user_input when available. Do not emit HTML forms or pretend a text list is an interactive control.",
   "Show screenshots with Markdown image syntax ![Description](path), not only a Screenshot link. BuildWarden does not execute proprietary visualize tokens or inline HTML artifacts. For an HTML mockup, include a real screenshot image and optionally a Markdown link to the HTML source.",
 ].join("\n");

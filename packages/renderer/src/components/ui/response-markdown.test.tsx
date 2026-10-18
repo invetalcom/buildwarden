@@ -9,6 +9,13 @@ import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-co
 const render = (content: string) => renderToStaticMarkup(<BuildWardenClientProvider client={createElectronBuildWardenClient({} as DesktopApi)}><ActivityRichText content={content} /></BuildWardenClientProvider>);
 
 describe("rich responses", () => {
+  it("does not fetch external images from Markdown or raw HTML without consent", () => {
+    const html = render('![External](https://example.com/image?secret=value)\n\n<img src="https://example.net/image?secret=value" alt="Raw">');
+    expect(html).not.toContain("<img");
+    expect(html).not.toMatch(/(?:src|srcset|href)=/);
+    expect(html).not.toContain("secret=value");
+    expect(html.match(/Load external image/g)).toHaveLength(2);
+  });
   it.each([
     ["tight numbered list", "1. **Rule matrix** — Spot missing rules. ![Preview](IMAGE)\n2. **Bulk editing** — Update together. ![Preview](IMAGE)"],
     ["loose numbered list", "1. **Rule matrix** — Spot missing rules. ![Preview](IMAGE)\n\n2. **Bulk editing** — Update together. ![Preview](IMAGE)"],
@@ -27,7 +34,11 @@ describe("rich responses", () => {
       expect(cards[0]).not.toContain('Bulk editing');
       expect(cards[1]).toContain('Bulk editing');
       expect(cards[1]).toContain('Update together');
-      expect(html.match(/<img /g)).toHaveLength(2);
+      if (source.startsWith("data:")) expect(html.match(/<img /g)).toHaveLength(2);
+      else {
+        expect(html).not.toContain("<img");
+        expect(html.match(/Load external image/g)).toHaveLength(2);
+      }
       expect(html).toMatch(/response-media-image[\s\S]*response-media-text[\s\S]*Rule matrix[\s\S]*Spot missing rules/);
       expect(html).toMatch(/Bulk editing[\s\S]*Update together/);
       expect(html).not.toMatch(/<p[^>]*>\s*<div/);

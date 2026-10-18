@@ -804,6 +804,7 @@ const writeStaticResponse = (
       "default-src 'self'",
       "script-src 'self'",
       "style-src 'self' 'unsafe-inline'",
+      // Network images are rendered only after per-URL user consent in ResponseImage.
       "img-src 'self' https: http: data: blob:",
       "font-src 'self' data:",
       "connect-src 'self'",

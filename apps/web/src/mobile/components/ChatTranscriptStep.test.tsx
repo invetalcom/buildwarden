@@ -14,7 +14,10 @@ it.each<ChatStepRecord["eventType"]>(["tool-call", "tool-result", "tool-progress
 
 it("keeps delivered image answers while hiding inspection previews", () => {
   expect(renderToStaticMarkup(<MobileChatStep step={step("output", { itemType: "imageView" })} />)).toBe("");
-  expect(renderToStaticMarkup(<MobileChatStep step={step("output", { assistantKind: "image" })} />)).toContain("<img");
+  const external = renderToStaticMarkup(<MobileChatStep step={step("output", { assistantKind: "image" })} />);
+  expect(external).toContain("Load external image");
+  expect(external).not.toContain("<img");
+  expect(renderToStaticMarkup(<MobileChatStep step={{ ...step("output"), content: "![Preview](data:image/png;base64,AAAA)" }} />)).toContain("<img");
 });
 
 it("keeps errors visible", () => {

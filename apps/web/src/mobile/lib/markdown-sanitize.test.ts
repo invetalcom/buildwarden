@@ -28,7 +28,9 @@ describe("mobile response rendering", () => {
   ])("uses the shared title-first card layout without provider-specific metadata", (children) => {
     const html = renderToStaticMarkup(createElement(RichText, { children }));
     expect(html.match(/class="response-media-row"/g)).toHaveLength(2);
-    expect(html.match(/<img /g)).toHaveLength(2);
+    expect(html.match(/<img /g)).toHaveLength(1);
+    expect(html).toContain('Load external image from example.com');
+    expect(html).not.toContain('src="https://');
     expect(html).toMatch(/response-media-image[\s\S]*response-media-text[\s\S]*Rule matrix[\s\S]*Spot missing rules/);
     expect(html).toContain('aria-label="Enlarge Preview"');
   });

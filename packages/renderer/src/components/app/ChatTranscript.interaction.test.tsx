@@ -48,7 +48,7 @@ it("keeps working after commentary and tools, shows only the delivered image, an
     expect(container.textContent).not.toContain("Raw tool output");
     expect(container.textContent).not.toContain("Codex update");
     expect(container.querySelectorAll("img")).toHaveLength(0);
-    await render([...progress, step("answer", "output", "![Final mockup](https://example.com/image.png)")], false);
+    await render([...progress, step("answer", "output", "![Final mockup](data:image/png;base64,AAAA)")], false);
     expect(container.querySelectorAll("img")).toHaveLength(1);
     expect(container.querySelector('[role="status"]')).toBeNull();
     await render([...progress, step("error", "error", "Generation failed")], false);

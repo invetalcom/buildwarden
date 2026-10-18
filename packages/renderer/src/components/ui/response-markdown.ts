@@ -15,7 +15,9 @@ export const markdownSanitizeSchema = {
 };
 
 export const safeResponseImageUrl = (url: string): string => {
-  if (/^https?:\/\//i.test(url)) return url;
+  if (/^https?:\/\//i.test(url)) {
+    try { new URL(url); return url; } catch { return ""; }
+  }
   // Raster data only. Never allow HTML, SVG, arbitrary protocols, or browser-relative host paths.
   if (url.length <= 7 * 1024 * 1024 && /^data:image\/(?:png|jpeg|gif|webp);base64,[a-z\d+/]+=*$/i.test(url)) return url;
   return "";
