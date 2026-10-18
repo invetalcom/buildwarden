@@ -64,16 +64,18 @@ describe("Sidebar run layout settings", () => {
     expect(parseSidebarHideActiveRunsSetting(" TRUE ")).toBe(true);
   });
 
-  it("defaults to medium entries and grouped projects", () => {
+  it("defaults to medium entries and a flat project list", () => {
     expect(parseSidebarRunEntrySizeSetting(undefined)).toBe("medium");
     expect(parseSidebarRunEntrySizeSetting("unexpected")).toBe("medium");
-    expect(parseSidebarGroupRunsByProjectSetting(undefined)).toBe(true);
+    expect(parseSidebarGroupRunsByProjectSetting(undefined)).toBe(false);
+    expect(parseSidebarGroupRunsByProjectSetting("unexpected")).toBe(false);
   });
 
-  it("accepts supported sizes and the explicit flat-list setting", () => {
+  it("accepts supported sizes and saved grouping preferences", () => {
     expect(parseSidebarRunEntrySizeSetting("small")).toBe("small");
     expect(parseSidebarRunEntrySizeSetting("large")).toBe("large");
     expect(parseSidebarGroupRunsByProjectSetting(" FALSE ")).toBe(false);
+    expect(parseSidebarGroupRunsByProjectSetting(" TRUE ")).toBe(true);
   });
 
   it("parses and clamps sidebar contrast strength while migrating the legacy toggle", () => {

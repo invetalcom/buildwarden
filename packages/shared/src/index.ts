@@ -4964,7 +4964,7 @@ export const APP_SETTING_KEYS = {
   sidebarContrast: "sidebarContrast",
   /** `"small"` | `"medium"` | `"large"`. Controls the height of Recent Runs entries in the sidebar. */
   sidebarRunEntrySize: "sidebarRunEntrySize",
-  /** `"false"` renders Recent Runs as a flat, project-labelled list. Defaults to grouped. */
+  /** `"true"` groups sidebar runs by project. Defaults to a flat, project-labelled list. */
   sidebarGroupRunsByProject: "sidebarGroupRunsByProject",
   uncategorizedRunSectionColor: "uncategorizedRunSectionColor",
   sidebarHideActiveRuns: "sidebarHideActiveRuns",
@@ -5142,7 +5142,7 @@ export const parseSidebarContrastStrengthSetting = (raw: string | number | undef
   return Math.min(MAX_SIDEBAR_CONTRAST_STRENGTH, Math.max(MIN_SIDEBAR_CONTRAST_STRENGTH, Math.round(parsed)));
 };
 
-export const parseSidebarGroupRunsByProjectSetting = (raw: string | undefined): boolean => raw?.trim().toLowerCase() !== "false";
+export const parseSidebarGroupRunsByProjectSetting = (raw: string | undefined): boolean => raw?.trim().toLowerCase() === "true";
 
 export const parseSidebarHideActiveRunsSetting = (raw: string | undefined): boolean => raw?.trim().toLowerCase() === "true";
 export const parseSidebarUncategorizedFirstSetting = (raw: string | undefined): boolean => raw?.trim().toLowerCase() === "true";
