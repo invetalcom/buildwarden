@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ToolResultImages } from "./ToolResultImages";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { RunTimelineDensity } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
@@ -97,6 +98,7 @@ const ToolBatchMeta = ({ item }: Readonly<{ item: ToolBatchSummarizedRow }>) => 
   <div className="agent-tool-meta">
     <span>{new Date(item.createdAt).toLocaleTimeString()}</span>
     <span>{toolStatusLabel(item.failed, item.shellStreaming)}</span>
+    {item.durationMs !== undefined ? <span>{(item.durationMs / 1000).toFixed(1)}s</span> : null}
     {item.toolCallId ? <span className="truncate">call {item.toolCallId}</span> : null}
   </div>
 );
@@ -135,7 +137,7 @@ const ToolBatchTriggerContent = ({
     <>
       {showChevron ? <ChevronDown className="h-3 w-3 shrink-0 text-[color:var(--ec-faint)] transition group-open:rotate-180" /> : <span className="h-3 w-3 shrink-0" aria-hidden />}
       <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: toolStatusColor(item.failed, item.shellStreaming) }} />
-      <span className="shrink-0 font-semibold text-[color:var(--ec-text)]">{item.toolName}</span>
+      <span className="max-w-[50%] truncate font-semibold text-[color:var(--ec-text)]" title={item.toolName}>{item.displayTitle ?? item.toolName}</span>
       <ToolDetailCell
         item={item}
         canOpenDetailPath={isOpenableToolPath(item.toolName, item.detail)}
@@ -158,7 +160,7 @@ const ToolBatchBody = ({
   density,
   onOpenWorkspaceFile,
 }: Pick<ActivityToolBatchRowProps, "item" | "density" | "onOpenWorkspaceFile">) => {
-  const hasExpandableContent = Boolean(item.preview) || Boolean(item.paths?.length);
+  const hasExpandableContent = Boolean(item.preview) || Boolean(item.paths?.length) || Boolean(item.images);
   let fallback = item.detail ?? "";
   if (!fallback && item.paths?.length) fallback = `${item.paths.length} files`;
 
@@ -179,6 +181,7 @@ const ToolBatchBody = ({
         <ToolBatchTriggerContent item={item} density={density} fallback={fallback} showChevron onOpenWorkspaceFile={onOpenWorkspaceFile} />
       </summary>
       <ToolBatchPaths paths={item.paths} onOpenWorkspaceFile={onOpenWorkspaceFile} />
+      <ToolResultImages images={item.images} />
       {item.preview ? (
         <pre className={cn("agent-pre app-scrollbar mt-1 max-h-[min(70vh,36rem)] overflow-auto whitespace-pre-wrap break-words text-[10px] leading-snug", item.failed ? "border-[color:var(--ec-danger-ring)]" : null)}>
           {item.preview}

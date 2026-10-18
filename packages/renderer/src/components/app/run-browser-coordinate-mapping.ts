@@ -5,6 +5,7 @@ export const mapRunBrowserFramePoint = (
   clientY: number,
   bounds: Pick<DOMRect, "left" | "top" | "width" | "height">,
   frame: Pick<RunBrowserFrame, "width" | "height">,
+  viewport: Pick<RunBrowserFrame, "width" | "height"> = frame,
 ): { x: number; y: number } | null => {
   if (bounds.width < 1 || bounds.height < 1 || frame.width < 1 || frame.height < 1) return null;
   const scale = Math.min(bounds.width / frame.width, bounds.height / frame.height);
@@ -15,7 +16,7 @@ export const mapRunBrowserFramePoint = (
   if (clientX < renderedLeft || clientX > renderedLeft + renderedWidth ||
     clientY < renderedTop || clientY > renderedTop + renderedHeight) return null;
   return {
-    x: Math.max(0, Math.min(frame.width, ((clientX - renderedLeft) / renderedWidth) * frame.width)),
-    y: Math.max(0, Math.min(frame.height, ((clientY - renderedTop) / renderedHeight) * frame.height)),
+    x: Math.max(0, Math.min(viewport.width, ((clientX - renderedLeft) / renderedWidth) * viewport.width)),
+    y: Math.max(0, Math.min(viewport.height, ((clientY - renderedTop) / renderedHeight) * viewport.height)),
   };
 };

@@ -5,6 +5,7 @@ import {
   buildClaudeCanUseTool,
   buildClaudeOrchestrationMcpServer,
   buildClaudePrompt,
+  buildClaudeSdkPrompt,
   buildClaudeResumeDialogHandler,
   ClaudeCodeProviderAdapter,
   ClaudeSubagentTracker,
@@ -18,6 +19,19 @@ import {
 } from "../../../../packages/provider-claude-code/src";
 
 describe("ClaudeCodeProviderAdapter", () => {
+  it("sends browser context and screenshots together as a structured SDK user message", async () => {
+    const prompt = buildClaudeSdkPrompt({
+      runId: "r", cwd: ".", prompt: "Fix this button", modelId: "sonnet", inputMode: "code", signal: new AbortController().signal,
+      previousSessionId: "session-1",
+      attachments: [{ fileName: "element.md", mimeType: "text/markdown", dataBase64: Buffer.from("Selected button: Save").toString("base64") }, { fileName: "element.jpg", mimeType: "image/jpeg", dataBase64: "aGVsbG8=" }],
+    });
+    expect(typeof prompt).not.toBe("string");
+    if (typeof prompt === "string") throw new Error("Expected image input");
+    const messages = [];
+    for await (const message of prompt) messages.push(message);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ session_id: "session-1", message: { role: "user", content: [{ type: "text", text: expect.stringContaining("Selected button: Save") }, { type: "image", source: { type: "base64", media_type: "image/jpeg", data: "aGVsbG8=" } }] } });
+  });
   it("rejects blank binary path overrides", () => {
     const adapter = new ClaudeCodeProviderAdapter();
 
@@ -964,6 +978,12 @@ describe("ClaudeCodeProviderAdapter", () => {
 });
 
 describe("Claude in-process orchestration MCP", () => {
+  it("presents named browser tool calls and image results without dumping base64", () => {
+    const call = parseClaudeCodeStreamEvent({ type: "assistant", message: { content: [{ type: "tool_use", id: "browser-1", name: "mcp__buildwarden__buildwarden_browser", input: { action: "screenshot" } }] } });
+    const result = parseClaudeCodeStreamEvent({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "browser-1", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" } }] }] } });
+    expect(call.chunks[0].metadata).toMatchObject({ callId: "browser-1", isMcpTool: true, toolDisplayTitle: "Browser · screenshot" });
+    expect(result.chunks[0]).toMatchObject({ value: "[Image]", metadata: { callId: "browser-1", ok: true, toolResultImages: [{ mimeType: "image/png", data: "aGVsbG8=" }] } });
+  });
   it("creates a live SDK MCP server only when BuildWarden host tools are present", () => {
     const executeTool = vi.fn();
     const withoutOrchestration: HarnessToolContext = {

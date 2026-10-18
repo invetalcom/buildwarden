@@ -56,6 +56,7 @@ import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
 import { RunComposer } from "./RunComposer";
 import { RunChatPanel } from "./RunChatPanel";
 import { RunEmbeddedBrowser } from "./RunEmbeddedBrowser";
+import { RunBrowserLaunchButton } from "./RunBrowserLaunchButton";
 import { BrowserElementAttachmentPreview } from "./BrowserElementAttachmentPreview";
 import { RunActivityTimeline } from "./RunActivityTimeline";
 import { RunNotesPanel } from "./RunNoteCard";
@@ -719,6 +720,7 @@ export const RunDetailPage = ({
       if (browserElementCaptures.length > 0) {
         void buildwarden.runBrowserAction({ runId: runDetail.run.id, action: "clear-annotations" })
           .then(() => buildwarden.runBrowserAction({ runId: runDetail.run.id, action: "cancel-inspect" }))
+          .then(() => buildwarden.runBrowserAction({ runId: runDetail.run.id, action: "release-control" }))
           .catch(() => undefined);
       }
     } catch {
@@ -1419,6 +1421,10 @@ export const RunDetailPage = ({
             className="relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-[var(--ec-border)]"
             style={activityPaneStyle}
           >
+            <RunBrowserLaunchButton runId={runDetail.run.id} onOpen={() => {
+              if (!showBrowser) onTogglePanel("browser");
+              setActiveSecondaryTab("browser");
+            }} />
             {activityContent}
             {runResultDock}
           </div>

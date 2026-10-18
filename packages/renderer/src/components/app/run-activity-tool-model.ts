@@ -1,5 +1,5 @@
 import { looksLikeGitDiff } from "./git-diff-utils";
-import { describeActivityDetail, type RunActivityRun, type SingleActivityEntry } from "./run-activity-model";
+import { describeActivityDetail, describeToolTarget, type RunActivityRun, type SingleActivityEntry } from "./run-activity-model";
 const TOOL_BATCH_MERGE_BY_PATH = new Set(["read_file"]);
 const FILE_LINK_TOOL_NAMES = new Set(["read_file", "write_file", "edit_file", "delete_file", "list_files", "search_repo"]);
 
@@ -19,6 +19,9 @@ export type ToolBatchSummarizedRow = {
   preview: string | null;
   writeFileDiff: string | null;
   createdAt: string;
+  images?: unknown;
+  displayTitle?: string;
+  durationMs?: number;
 };
 
 export const canCancelToolBatchShell = (
@@ -43,9 +46,13 @@ export const summarizeToolBatchItems = (
     // A file-change call can begin as write_file and resolve as delete_file
     // after Codex compares the before/after snapshots. Prefer the result name.
     const toolName = String(resultMetadata.toolName ?? callMetadata.toolName ?? "tool");
-    const detail = describeActivityDetail(resultMetadata) ?? describeActivityDetail(callMetadata);
+    const displayTitle = firstMetadataString(resultMetadata.toolDisplayTitle, callMetadata.toolDisplayTitle) ?? undefined;
+    const rawDetail = callMetadata.isMcpTool || resultMetadata.isMcpTool
+      ? describeToolTarget(callMetadata, resultMetadata)
+      : describeActivityDetail(resultMetadata) ?? describeActivityDetail(callMetadata);
+    const detail = rawDetail === displayTitle ? null : rawDetail;
     const failed = resultMetadata.ok === false;
-    const shellStreaming = resultMetadata.shellStreaming === true;
+    const shellStreaming = resultMetadata.shellStreaming === true || !item.resultStep;
     const toolCallId = firstMetadataString(resultMetadata.callId, callMetadata.callId);
     const command = firstMetadataString(resultMetadata.command, callMetadata.command);
     const preview = summarizeToolPreview(toolName, failed, item);
@@ -59,6 +66,7 @@ export const summarizeToolBatchItems = (
     const previousRow = rows[rows.length - 1];
     const pathKey = detail?.trim() ?? "";
     const canMergeSamePath =
+      !callMetadata.isMcpTool && !resultMetadata.isMcpTool &&
       toolName !== "write_file" &&
       toolName !== "delete_file" &&
       toolName !== "run_shell" &&
@@ -92,6 +100,9 @@ export const summarizeToolBatchItems = (
 
     rows.push({
       toolName,
+      displayTitle,
+      durationMs: typeof resultMetadata.durationMs === "number" ? resultMetadata.durationMs : undefined,
+      images: resultMetadata.toolResultImages,
       detail: pathKey ? detail : null,
       toolCallId,
       count: 1,
@@ -128,6 +139,10 @@ const summarizeToolPreview = (
   failed: boolean,
   item: Extract<SingleActivityEntry, { kind: "tool" }>,
 ): string | null => {
+  if (item.callMetadata?.isMcpTool || item.resultMetadata?.isMcpTool) {
+    const args = item.callMetadata?.arguments ?? item.resultMetadata?.arguments;
+    return [args ? `Input\n${JSON.stringify(args, null, 2)}` : item.callStep?.content, item.resultStep ? `Output\n${item.resultStep.content}` : "Running…"].filter(Boolean).join("\n\n");
+  }
   if (failed) {
     return item.resultStep?.content ?? item.callStep?.content ?? null;
   }

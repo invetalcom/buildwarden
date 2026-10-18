@@ -74,6 +74,7 @@ const createView = () => {
 };
 
 const createWindow = () => ({
+  setSize: vi.fn(),
   destroyed: false,
   contentView: {
     addChildView: vi.fn(),
@@ -106,6 +107,48 @@ describe("run browser URL and partition policy", () => {
 describe("HostBrowserService", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+  });
+
+  it("shares the agent browser with the run surface, honors takeover, and pins only active runs", async () => {
+    const { view, webContents } = createView();
+    const service = new HostBrowserService({
+      getMainWindow: () => null, resolveRunProjectId: async () => "project-a",
+      createView: () => view, createCompositor: () => createWindow() as unknown as BaseWindow,
+      idleTimeoutMs: 30,
+    });
+    service.setAgentActive("run-a", true);
+    const call = (action: string, args = {}) => service.executeAgentTool("run-a", action, { action, ...args });
+    expect((await call("open", { url: "http://localhost:3000" })).ok).toBe(true);
+    expect((await service.ensure({ runId: "run-a", viewport: { width: 390, height: 600 } })).owner).toBe("agent");
+    expect(webContents.loadURL).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(webContents.closed).toBe(false);
+    await service.action({ runId: "run-a", action: "take-control" });
+    expect((await call("navigate", { url: "https://example.com" })).ok).toBe(false);
+    expect(webContents.loadURL).toHaveBeenCalledTimes(1);
+    const screenshot = await call("screenshot");
+    expect(screenshot.images?.[0].mimeType).toBe("image/jpeg");
+    await service.action({ runId: "run-a", action: "release-control" });
+    expect((await call("navigate", { url: "https://example.com" })).ok).toBe(true);
+    service.setAgentActive("run-a", false);
+    expect((await call("open", { url: "https://example.org" })).ok).toBe(false);
+    await vi.advanceTimersByTimeAsync(31);
+    expect(webContents.closed).toBe(true);
+    service.disposeAll();
+  });
+
+  it("invalidates an in-flight agent action on takeover without reclaiming control", async () => {
+    const { view } = createView();
+    const service = new HostBrowserService({ getMainWindow: () => null, resolveRunProjectId: async () => "p",
+      createView: () => view, createCompositor: () => createWindow() as unknown as BaseWindow });
+    service.setAgentActive("r", true);
+    await service.executeAgentTool("r", "open", { action: "open", url: "https://example.com" });
+    const waiting = service.executeAgentTool("r", "wait", { action: "wait", milliseconds: 100 });
+    await service.action({ runId: "r", action: "take-control" });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await waiting).toMatchObject({ ok: false, content: expect.stringContaining("user has browser control") });
+    expect((await service.executeAgentTool("r", "status", { action: "status" })).content).toContain('"owner":"human"');
+    service.disposeAll();
   });
 
   it("denies permissions and downloads and reparents the native surface", async () => {
@@ -144,13 +187,15 @@ describe("HostBrowserService", () => {
     expect(view.setBounds).toHaveBeenLastCalledWith({ x: 12, y: 21, width: 500, height: 301 });
     expect(view.setVisible).toHaveBeenLastCalledWith(true);
     service.setDesktopWindowVisible(false);
-    expect(view.setVisible).toHaveBeenLastCalledWith(false);
+    expect(compositor.contentView.addChildView).toHaveBeenLastCalledWith(view);
+    expect(view.setVisible).toHaveBeenLastCalledWith(true);
     service.setDesktopWindowVisible(true);
     expect(view.setVisible).toHaveBeenLastCalledWith(true);
     service.detachDesktopSurfaces();
     expect(main.contentView.removeChildView).toHaveBeenCalledWith(view);
     expect(compositor.contentView.addChildView).toHaveBeenLastCalledWith(view);
-    expect(view.setVisible).toHaveBeenLastCalledWith(false);
+    // The compositor window stays hidden; its child keeps painting remotely.
+    expect(view.setVisible).toHaveBeenLastCalledWith(true);
   });
 
   it("shares one session creation across concurrent ensure calls", async () => {

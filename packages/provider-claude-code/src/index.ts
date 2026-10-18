@@ -1,3 +1,4 @@
+import { presentToolResult, toolPresentation } from "@buildwarden/shared";
 import { Buffer } from "node:buffer";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -176,7 +177,7 @@ export const buildClaudeOrchestrationMcpServer = (toolContext: HarnessToolContex
           arguments: args as Record<string, unknown>,
         });
         return {
-          content: [{ type: "text" as const, text: result.content }],
+          content: [{ type: "text" as const, text: result.content }, ...(result.images ?? []).map((image) => ({ type: "image" as const, ...image }))],
           isError: !result.ok,
         };
       },
@@ -783,6 +784,22 @@ const buildAttachmentPrompt = (attachments: ChatAttachmentPayload[]): string => 
   }
   lines.push("</attachments>");
   return lines.join("\n\n");
+};
+
+export const buildClaudeSdkPrompt = (options: ClaudeTurnExecutionOptions): string | AsyncIterable<SDKUserMessage> => {
+  const images = (options.attachments ?? []).flatMap((attachment) => {
+    const mime = attachment.mimeType;
+    if (mime !== "image/png" && mime !== "image/jpeg" && mime !== "image/gif" && mime !== "image/webp") return [];
+    return [{ type: "image", source: { type: "base64", media_type: mime, data: attachment.dataBase64 } } as const];
+  });
+  if (!images.length) return buildClaudePrompt(options);
+  const text = buildClaudePrompt({ ...options, attachments: options.attachments?.filter((attachment) => !["image/png", "image/jpeg", "image/gif", "image/webp"].includes(attachment.mimeType)) });
+  return (async function* (): AsyncGenerator<SDKUserMessage> {
+    yield {
+      type: "user", session_id: options.previousSessionId ?? "", parent_tool_use_id: null,
+      message: { role: "user", content: [{ type: "text", text }, ...images] },
+    };
+  })();
 };
 
 type ClaudeUsageReadOptions = {
@@ -1726,6 +1743,7 @@ const parseClaudeToolUsePart = (
         rawToolName: rawName,
         provider: "claude-code",
         ...toolInput.metadata,
+        ...toolPresentation(rawName, part.input),
       },
     }],
   };
@@ -1747,7 +1765,8 @@ const parseClaudeToolResultPart = (
     });
     return { assistantText: "", chunks: [buildClaudeSubagentChunk(info)] };
   }
-  const result = stringifyValue(part.content ?? part.text ?? part.result);
+  const presentation = presentToolResult(part.content ?? part.text ?? part.result);
+  const result = presentation.text;
   return {
     assistantText: "",
     chunks: [{
@@ -1757,6 +1776,7 @@ const parseClaudeToolResultPart = (
       metadata: {
         callId: toolUseId,
         ok: part.is_error !== true,
+        ...(presentation.images.length ? { toolResultImages: presentation.images } : {}),
         provider: "claude-code",
       },
     }],
@@ -1788,7 +1808,7 @@ const parseClaudeContentPart = (
   if (partType === "tool_use") {
     return parseClaudeToolUsePart(part, tracker, parentToolUseId);
   }
-  if (partType !== "tool_result") return { assistantText: "", chunks: [] };
+  if (partType !== "tool_result" && partType !== "mcp_tool_result") return { assistantText: "", chunks: [] };
   return parseClaudeToolResultPart(part, tracker, parentToolUseId);
 };
 
@@ -2004,7 +2024,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
       permissionMode: sdkOptions.permissionMode,
     });
     claudeQuery = query({
-      prompt: buildClaudePrompt(options),
+      prompt: buildClaudeSdkPrompt(options),
       options: { ...sdkOptions, stderr: (data) => devLogger.log("sdk.stderr", data) },
     });
     for await (const event of claudeQuery) {

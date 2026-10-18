@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ToolResultImages } from "@buildwarden/renderer";
 import {
   extractAttachmentNamesFromMetadata,
   extractAttachmentPayloadsFromMetadata,
@@ -188,13 +189,15 @@ const ToolRow = ({ entry }: { entry: Extract<SingleActivityEntry, { kind: "tool"
         summary={
           <span className="flex min-w-0 items-center gap-1.5">
             {isShell ? <Terminal className="size-3.5 shrink-0 text-[var(--ec-muted)]" /> : <Wrench className="size-3.5 shrink-0 text-[var(--ec-muted)]" />}
-            <span className="shrink-0 text-[11px] font-medium text-[var(--ec-muted)]">{toolName}</span>
+            <span className="max-w-[60%] truncate text-[11px] font-medium text-[var(--ec-muted)]" title={toolName}>{String(result.toolDisplayTitle ?? call.toolDisplayTitle ?? toolName)}</span>
             {target ? <span className="m-mono min-w-0 truncate text-[11px] text-[var(--ec-faint)]">{target}</span> : null}
             {pending ? <Badge tone="accent">running</Badge> : null}
             {failed ? <Badge tone="danger">failed</Badge> : null}
           </span>
         }
       >
+        {call.isMcpTool && call.arguments ? <pre className="m-mono max-h-48 overflow-auto whitespace-pre-wrap break-words text-[11px]">{JSON.stringify(call.arguments, null, 2)}</pre> : null}
+        <ToolResultImages images={result.toolResultImages} />
         {diff ? (
           <InlineDiff diff={diff} />
         ) : output ? (

@@ -1,3 +1,4 @@
+import { presentToolResult, toolPresentation } from "@buildwarden/shared";
 import { RESPONSE_PRESENTATION_INSTRUCTIONS } from "@buildwarden/shared";
 import { Buffer } from "node:buffer";
 import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
@@ -1178,7 +1179,7 @@ class CodexServerRequestHandler {
       type: "tool-call",
       title: `Tool call: ${toolName}`,
       value: JSON.stringify(argumentsRecord),
-      metadata: { toolName, callId, provider: "codex-cli" },
+      metadata: { toolName, callId, provider: "codex-cli", ...toolPresentation(toolName, argumentsRecord) },
     });
     void this.toolContext.executeTool({
       id: callId,
@@ -1189,13 +1190,13 @@ class CodexServerRequestHandler {
         type: "tool-result",
         title: `Tool result: ${toolName}`,
         value: result.content,
-        metadata: { toolName, callId, ok: result.ok, provider: "codex-cli" },
+        metadata: { toolName, callId, ok: result.ok, provider: "codex-cli", ...toolPresentation(toolName, argumentsRecord), ...result.metadata, toolResultImages: result.images },
       });
       this.writeResponse({
         id: request.id,
         result: {
           success: result.ok,
-          contentItems: [{ type: "inputText", text: result.content }],
+          contentItems: [{ type: "inputText", text: result.content }, ...(result.images ?? []).map((image) => ({ type: "inputImage", imageUrl: `data:${image.mimeType};base64,${image.data}` }))],
         },
       });
     }).catch((error) => {
@@ -1938,6 +1939,22 @@ export class CodexAppServerSession {
           title: "Viewed image",
           value: `![Viewed image](<${destination}>)`,
           metadata: { itemType, itemId, assistantKind: "image", ...(itemId ? { streamId: `image:${itemId}`, replace: true } : {}) },
+        });
+        return;
+      }
+      case "mcpToolCall": {
+        const server = asString(item.server) ?? "MCP";
+        const toolName = `${server}.${asString(item.tool) ?? "tool"}`;
+        const output = presentToolResult(item.error ?? item.result);
+        this.emit({
+          type: method === "item/started" ? "tool-call" : "tool-result",
+          title: toolName,
+          value: method === "item/started" ? JSON.stringify(item.arguments ?? {}, null, 2) : output.text || "(no output)",
+          metadata: {
+            toolName, callId: itemId, provider: "codex-cli",
+            ...toolPresentation(asString(item.tool) ?? "tool", item.arguments, server),
+            ...(method === "item/completed" ? { ok: item.status !== "failed" && !item.error && !(isRecord(item.result) && item.result.isError === true), durationMs: item.durationMs, toolResultImages: output.images } : {}),
+          },
         });
         return;
       }

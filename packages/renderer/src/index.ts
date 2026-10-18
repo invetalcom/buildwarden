@@ -23,3 +23,7 @@ export {
 } from "./lib/remote-buildwarden-client";
 
 export { RunVerificationPanel } from "./components/app/RunVerificationPanel";
+export { RunEmbeddedBrowser } from "./components/app/RunEmbeddedBrowser";
+export { BrowserElementAttachmentPreview } from "./components/app/BrowserElementAttachmentPreview";
+export { ToolResultImages } from "./components/app/ToolResultImages";
+export { browserElementPayloadsForProvider, validateBrowserElementCaptureAddition } from "./lib/browser-element-attachments";

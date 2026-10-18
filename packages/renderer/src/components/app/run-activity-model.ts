@@ -192,7 +192,7 @@ export const describeActivityDetail = (metadata: Record<string, unknown> | undef
   if (metadata?.source === "user") {
     return describeUserCommand(metadata);
   }
-  return (metadata?.path ?? metadata?.command ?? metadata?.query ?? metadata?.toolName) as string | null;
+  return (metadata?.path ?? metadata?.command ?? metadata?.query ?? metadata?.toolDisplayTitle ?? metadata?.toolName) as string | null;
 };
 
 const nonEmptyString = (...candidates: unknown[]): string | null => {
@@ -224,7 +224,7 @@ export const describeToolTarget = (
     const args = metadata.arguments;
     if (!args || typeof args !== "object" || Array.isArray(args)) return null;
     const record = args as Record<string, unknown>;
-    return nonEmptyString(record.path, record.file_path, record.command, record.query);
+    return nonEmptyString(record.path, record.file_path, record.command, record.query, record.url, metadata.toolDisplayTitle);
   };
 
   return fromMetadata(callMetadata) ?? fromMetadata(resultMetadata);

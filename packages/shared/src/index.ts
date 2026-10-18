@@ -280,6 +280,7 @@ export type RunEventType =
   | "request"
   | "plan";
 
+export { presentToolResult, toolPresentation, type ToolResultImage } from "./tool-presentation";
 export type RunToolName = "read_file" | "write_file" | "edit_file" | "delete_file" | "list_files" | "search_repo" | "run_shell";
 
 export const ORCHESTRATION_TOOL_NAMES = [
@@ -295,7 +296,7 @@ export const ORCHESTRATION_TOOL_NAMES = [
 ] as const;
 
 export type OrchestrationToolName = (typeof ORCHESTRATION_TOOL_NAMES)[number];
-export type HarnessToolName = RunToolName | OrchestrationToolName | "buildwarden_ask_user";
+export type HarnessToolName = RunToolName | OrchestrationToolName | "buildwarden_ask_user" | "buildwarden_browser";
 
 const TEXT_LIKE_FILE_EXTENSIONS = new Set([
   "c",
@@ -3492,6 +3493,7 @@ export interface RunExecutionRequest {
   networkProxy?: NetworkProxyRuntimeConfig;
   /** Main-process orchestration tools advertised to this coordinator turn. */
   orchestrationTools?: RunToolDefinition[];
+  browserToolsEnabled?: boolean;
   /** Resolved HTTP MCP endpoints; header secrets exist only in worker memory. */
   mcpServers?: McpServerRuntimeConfig[];
 }
@@ -3689,6 +3691,7 @@ export interface RunToolResult {
   name: HarnessToolName;
   ok: boolean;
   content: string;
+  images?: Array<{ mimeType: "image/png" | "image/jpeg"; data: string }>;
   metadata?: Record<string, unknown>;
 }
 
@@ -3833,6 +3836,8 @@ export interface NavigateRunBrowserInput {
 }
 
 export type RunBrowserAction =
+  | "take-control"
+  | "release-control"
   | "back"
   | "forward"
   | "reload"
@@ -3864,6 +3869,8 @@ export interface GetRunBrowserElementCaptureInput {
 }
 
 export interface RunBrowserState {
+  /** Transient host state; absent on older hosts. */
+  owner?: "unclaimed" | "agent" | "human";
   runId: string;
   currentUrl: string;
   title: string;

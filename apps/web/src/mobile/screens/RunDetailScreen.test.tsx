@@ -3,6 +3,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { BuildWardenClient } from "@buildwarden/renderer";
+import { BuildWardenClientProvider } from "@buildwarden/renderer";
+import type { RunBrowserEvent, RunBrowserElementCapture } from "@buildwarden/shared";
 import type { AppSnapshot, ChatDetail, RunDetail, RunRecord } from "@buildwarden/shared";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { MobileAppProvider, type MobileAppValue } from "../data/mobile-app-context";
@@ -127,6 +129,41 @@ afterEach(async () => {
 });
 
 describe("RunDetailScreen run chat", () => {
+  it("opens the shared mobile browser and carries selected elements into a follow-up", async () => {
+    const listeners = new Set<(event: RunBrowserEvent) => void>();
+    const capture: RunBrowserElementCapture = {
+      id: "capture-1", runId: firstRun.id, annotationNumber: 1, accessibleName: "Save", visibleText: "Save", tagName: "button", url: "http://localhost:3000/",
+      locator: { selector: "button", segments: [] },
+      capturedAt: "2026-01-01T00:00:00.000Z", comment: "", pageTitle: "Preview", accessibleRole: "button",
+      sanitizedHtml: "<button>Save</button>", attributes: {}, computedStyles: {}, ancestry: [], frameworkHints: [],
+      bounds: { x: 0, y: 0, width: 80, height: 24 },
+      contextAttachment: { fileName: "element.md", mimeType: "text/markdown", dataBase64: "U2F2ZQ==" },
+      screenshotAttachment: { fileName: "element.png", mimeType: "image/png", dataBase64: "aGVsbG8=" },
+    };
+    const client = {
+      capabilities: { platform: "web", browserControl: true, runMutations: true, chatMutations: false },
+      getRunDetail: vi.fn(async () => runDetail(firstRun)), refreshRunForgeRequest: vi.fn(async () => null),
+      onRunEvent: vi.fn(() => vi.fn()), onRunForgeRequestChanged: vi.fn(() => vi.fn()),
+      onRunBrowserEvent: (listener: (event: RunBrowserEvent) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
+      ensureRunBrowser: vi.fn(async () => ({ runId: firstRun.id, currentUrl: capture.url, title: "Preview", viewport: { width: 390, height: 600 }, owner: "agent", loading: false, inspecting: false, canGoBack: false, canGoForward: false })),
+      setRunBrowserViewport: vi.fn(async () => undefined), runBrowserAction: vi.fn(async () => undefined),
+      getRunBrowserElementCapture: vi.fn(async () => capture), followUpRun: vi.fn(async () => undefined),
+    } as unknown as BuildWardenClient;
+    const value = { client, snapshot, snapshotStore: { loaded: true, refresh: vi.fn(async () => undefined) }, router: { back: vi.fn(), replace: vi.fn() } } as unknown as MobileAppValue;
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container); mountedRoots.push({ root, container });
+    const render = (segment: "browser" | "activity") => root.render(<BuildWardenClientProvider client={client}><MobileAppProvider value={value}><RunDetailScreen runId={firstRun.id} segment={segment} /></MobileAppProvider></BuildWardenClientProvider>);
+    await act(async () => render("browser"));
+    expect(client.ensureRunBrowser).toHaveBeenCalledWith(expect.objectContaining({ runId: firstRun.id }));
+    expect(container.textContent).toContain("Agent · Take control");
+    await act(async () => { listeners.forEach((listener) => listener({ type: "selection-ready", runId: firstRun.id, captureId: capture.id } as RunBrowserEvent)); });
+    expect(container.textContent).toContain("1 element selected");
+    await act(async () => render("activity"));
+    expect(container.textContent).toContain("Save");
+    const send = container.querySelector('button[aria-label="Send"]') as HTMLButtonElement;
+    await act(async () => send.click());
+    expect(client.followUpRun).toHaveBeenCalledWith(firstRun.id, "", { attachments: [capture.contextAttachment, capture.screenshotAttachment] });
+  });
   it("does not show the previous run's transcript while the next run chat loads", async () => {
     const pendingSecondChat = deferred<ChatDetail | null>();
     const getRunChat = vi.fn((runId: string) => runId === firstRun.id

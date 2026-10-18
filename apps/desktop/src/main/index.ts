@@ -364,7 +364,11 @@ const bootstrap = async (): Promise<void> => {
     desktopPlatform,
     hostTerminal,
     hostEvents,
-    { onRunDeleted: (runId) => hostBrowser.disposeRun(runId) },
+    {
+      onRunDeleted: (runId) => hostBrowser.disposeRun(runId),
+      executeBrowserTool: (runId, callId, args) => hostBrowser.executeAgentTool(runId, callId, args),
+      onRunBrowserActive: (runId, active) => hostBrowser.setAgentActive(runId, active),
+    },
   );
   controllerRef.current = controller;
   hostBrowser.onEvent((event) => {
@@ -615,7 +619,7 @@ const bootstrap = async (): Promise<void> => {
   const validateRunBrowserAction = defineRemoteArgsValidator<"runBrowserAction">((args) => {
     if (args.length !== 1 || !isRemoteRecord(args[0]) || typeof args[0].runId !== "string") return false;
     const action = String(args[0].action);
-    if (!["back", "forward", "reload", "stop", "start-inspect", "cancel-inspect", "remove-annotation", "clear-annotations"].includes(action)) {
+    if (!["take-control", "release-control", "back", "forward", "reload", "stop", "start-inspect", "cancel-inspect", "remove-annotation", "clear-annotations"].includes(action)) {
       return false;
     }
     if (action === "remove-annotation") return typeof args[0].captureId === "string";
@@ -1825,6 +1829,9 @@ const createMainWindow = (scheme: DesignScheme): void => {
     logInfo("Main window closed.");
     activeHostBrowser?.detachDesktopSurfaces();
     mainWindow = null;
+    // The hidden browser compositor is not an application window. It must not
+    // keep a closed Windows/Linux app alive or bypass normal shutdown cleanup.
+    if (process.platform !== "darwin") app.quit();
   });
   mainWindow.on("focus", () => activeHostBrowser?.setDesktopWindowVisible(true));
   mainWindow.on("show", () => activeHostBrowser?.setDesktopWindowVisible(true));
@@ -1902,7 +1909,7 @@ app.whenReady().then(async () => {
   }
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    if (!mainWindow || mainWindow.isDestroyed()) {
       logInfo("Recreating main window after activate.");
       createMainWindow(currentDesignScheme);
     }
