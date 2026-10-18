@@ -1791,6 +1791,7 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
 
   .chat-bubble--user {
     border-bottom-right-radius: 0.3rem;
+    padding-right: 2.6rem;
     border-color: color-mix(in srgb, var(--ec-user-input-ring) 72%, var(--ec-border));
     background:
       linear-gradient(180deg, color-mix(in srgb, var(--ec-user-input-soft) 32%, transparent), transparent 14rem),

@@ -28,7 +28,7 @@ const entryKind = (item: ChatTranscriptItem, metadata: Record<string, unknown>):
   return "note";
 };
 
-const UserEntry = ({ item, metadata, timestamp }: EntryViewProps) => {
+const UserEntry = ({ item, metadata, timestamp, copied, onCopy }: EntryViewProps & { copied: boolean; onCopy: () => void }) => {
   const attachmentNames = extractAttachmentNamesFromMetadata(metadata);
   const attachments = extractAttachmentPayloadsFromMetadata(metadata);
   const messageContent = getStoredAttachmentMessageContent(item.content, attachmentNames);
@@ -37,6 +37,9 @@ const UserEntry = ({ item, metadata, timestamp }: EntryViewProps) => {
     <section className="chat-turn chat-turn--user">
       <div className="chat-turn-stack">
         <div className="chat-bubble chat-bubble--user">
+          <button type="button" className="chat-bubble-copy" onClick={onCopy} title={copied ? "Copied" : "Copy prompt"} aria-label={copied ? "Copied" : "Copy prompt"}>
+            {copied ? <Check className="h-3.5 w-3.5 text-[var(--ec-success)]" /> : <Copy className="h-3.5 w-3.5" />}
+          </button>
           <div className="chat-bubble-meta"><span>{metadata.commandType === "follow-up" ? "Follow-up" : "You"}</span><span>{timestamp}</span></div>
           {messageContent ? <ActivityMarkdownOrGitDiff content={messageContent} className="chat-message-body" /> : null}
           <StoredChatAttachments attachments={attachments} fallbackNames={attachmentNames} />
@@ -151,7 +154,7 @@ export const ChatTranscriptEntryView = ({ item, metadata, showLoading, copied, o
   const props = { item, metadata, timestamp };
   const kind = entryKind(item, metadata);
   switch (kind) {
-    case "user": return <UserEntry {...props} />;
+    case "user": return <UserEntry {...props} copied={copied} onCopy={onCopy} />;
     case "reasoning": return <ReasoningEntry {...props} />;
     case "assistant": return <AssistantEntry {...props} copied={copied} onCopy={onCopy} />;
     case "subagent": return <SubagentEntry {...props} showLoading={showLoading} />;
