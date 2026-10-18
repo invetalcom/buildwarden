@@ -9,6 +9,52 @@ import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-co
 const render = (content: string) => renderToStaticMarkup(<BuildWardenClientProvider client={createElectronBuildWardenClient({} as DesktopApi)}><ActivityRichText content={content} /></BuildWardenClientProvider>);
 
 describe("rich responses", () => {
+  it.each([
+    ["tight numbered list", "1. **Rule matrix** — Spot missing rules. ![Preview](IMAGE)\n2. **Bulk editing** — Update together. ![Preview](IMAGE)"],
+    ["loose numbered list", "1. **Rule matrix** — Spot missing rules. ![Preview](IMAGE)\n\n2. **Bulk editing** — Update together. ![Preview](IMAGE)"],
+    ["bulleted list", "- **Rule matrix** — Spot missing rules. ![Preview](IMAGE)\n- **Bulk editing** — Update together. ![Preview](IMAGE)"],
+    ["heading, description, image", "### Rule matrix\n\nSpot missing rules.\n\n![Preview](IMAGE)\n\n### Bulk editing\n\nUpdate together.\n\n![Preview](IMAGE)"],
+    ["heading then inline description/image", "### Rule matrix\n\nSpot missing rules. ![Preview](IMAGE)\n\n### Bulk editing\n\nUpdate together. ![Preview](IMAGE)"],
+    ["bold title then separate image", "**Rule matrix** — Spot missing rules.\n\n![Preview](IMAGE)\n\n**Bulk editing** — Update together.\n\n![Preview](IMAGE)"],
+    ["heading, image, caption", "### Rule matrix\n\n![Preview](IMAGE)\n\nSpot missing rules.\n\n### Bulk editing\n\n![Preview](IMAGE)\n\nUpdate together."],
+  ])("groups provider-independent %s responses into cards", (_name, markdown) => {
+    for (const source of ["https://example.com/preview.png", "data:image/png;base64,iVBORw0KGgo="]) {
+      const html = render(markdown.replaceAll("IMAGE", source));
+      expect(html.match(/class="response-media-row"/g)).toHaveLength(2);
+      const cards = html.split('class="response-media-row"').slice(1);
+      expect(cards[0]).toContain('Rule matrix');
+      expect(cards[0]).toContain('Spot missing rules');
+      expect(cards[0]).not.toContain('Bulk editing');
+      expect(cards[1]).toContain('Bulk editing');
+      expect(cards[1]).toContain('Update together');
+      expect(html.match(/<img /g)).toHaveLength(2);
+      expect(html).toMatch(/response-media-image[\s\S]*response-media-text[\s\S]*Rule matrix[\s\S]*Spot missing rules/);
+      expect(html).toMatch(/Bulk editing[\s\S]*Update together/);
+      expect(html).not.toMatch(/<p[^>]*>\s*<div/);
+    }
+  });
+  it("preserves list numbering, nested lists, links and formatting inside cards", () => {
+    const html = render('3. **Rule matrix** — Inspect [details](https://example.com/docs) and `rules.json`. *Read* [more](https://example.com/more). ![Preview](https://example.com/a.png)\n   - Keep this nested item.\n4. Plain item without an image.');
+    expect(html).toContain('<ol');
+    expect(html).toContain('start="3"');
+    expect(html.match(/class="response-media-row"/g)).toHaveLength(1);
+    expect(html).toContain('href="https://example.com/docs"');
+    expect(html).toMatch(/<code[^>]*>rules.json<\/code>/);
+    expect(html).toMatch(/Read<\/em> <a/);
+    expect(html).toMatch(/<\/div><\/div>\s*<ul/);
+    expect(html).toContain('Plain item without an image.');
+    expect(html).not.toContain('— Inspect');
+  });
+  it.each([
+    '**Gallery**\n\n![One](https://example.com/a.png) ![Two](https://example.com/b.png)',
+    '**Title**\n\n---\n\n![Preview](https://example.com/a.png)',
+    '- **Title**\n- ![Preview](https://example.com/a.png)',
+    '**Linked image** [![Preview](https://example.com/a.png)](https://example.com/docs)',
+    '| Example |\n|---|\n| **Title** ![Preview](https://example.com/a.png) |',
+    'Ordinary prose.\n\n![Preview](https://example.com/a.png)',
+  ])("does not invent associations for ambiguous or unrelated content: %s", (markdown) => {
+    expect(render(markdown)).not.toContain('class="response-media-row"');
+  });
   it("keeps large image payloads out of Markdown parsing and restores exact image sources", () => {
     const image = `data:image/png;base64,${"a".repeat(2_000_000)}=`;
     const content = `![Preview](${image}) **Title**\nDescription`;

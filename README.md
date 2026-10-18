@@ -66,7 +66,14 @@ Responses support Markdown tables, inline images with an enlarged viewer, and co
 Target: manufacturers and industrial suppliers
 ```
 
-The image sits beside the title and subtitle in wide panels, and above them in narrow panels. An image followed by a bold title in the same paragraph also creates a card. Other Markdown keeps its normal layout.
+The image sits beside the title and subtitle in wide panels, and above them in narrow panels. Cards also support title-first responses: a bold title and description with one image in the same paragraph/list item, or a heading/bold title followed by a description and image in adjacent paragraphs. Numbered and bulleted lists retain their numbering and structure. These rules operate on ordinary Markdown for every provider, including Codex, Claude Code, Cursor, and AI SDK providers; no provider-specific card metadata is required. For example:
+
+```md
+1. **Rule matrix** — Spot missing rules quickly. ![Preview](work/rule-matrix.png)
+2. **Bulk editing** — Update configurations together. ![Preview](work/bulk-editing.png)
+```
+
+Each matching item becomes an image-left/title-and-description-right card. Paragraphs containing multiple images, linked images, code, tables, and unrelated paragraphs retain their original layout; cards do not group content across list items or separators.
 
 Agent runs also display completed Codex image-view events and local raster links such as `[Screenshot](work/mockup.png)` as images. Reopening an older run hydrates these links while the workspace images remain available. Proprietary `visualize` references become HTML source-file links; BuildWarden does not execute those HTML files inline.
 

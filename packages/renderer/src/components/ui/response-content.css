@@ -2,6 +2,9 @@
 .response-media-row { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 12px; align-items: start; margin: 8px 0 16px; }
 .response-media-text { min-width: 0; overflow-wrap: anywhere; }
 .response-media-text > :first-child { margin-top: 0; }
+.response-media-text > :last-child { margin-bottom: 0; }
+.response-media-text > p + p { margin-top: 4px; }
+.response-markdown li > .response-media-row { margin-top: 4px; margin-bottom: 10px; }
 .response-image-button { display: inline-block; max-width: 100%; margin: 8px 0; cursor: zoom-in; vertical-align: top; }
 .response-image-button img { display: block; max-height: 320px; max-width: 100%; border: 1px solid var(--ec-border); border-radius: 8px; object-fit: contain; background: var(--ec-input); }
 .response-image-button:focus-visible { outline: 2px solid var(--ec-accent); outline-offset: 3px; }

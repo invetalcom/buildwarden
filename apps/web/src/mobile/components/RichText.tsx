@@ -59,8 +59,8 @@ const components: Components = {
   ul: ({ children }) => (
     <ul className="my-1.5 list-outside list-disc space-y-1 pl-5 marker:text-[var(--ec-accent)]">{children}</ul>
   ),
-  ol: ({ children }) => (
-    <ol className="my-1.5 list-outside list-decimal space-y-1 pl-5 marker:text-[var(--ec-accent)]">{children}</ol>
+  ol: ({ children, start }) => (
+    <ol start={start} className="my-1.5 list-outside list-decimal space-y-1 pl-5 marker:text-[var(--ec-accent)]">{children}</ol>
   ),
   li: ({ children }) => <li className="m-wrap-anywhere leading-6 [&>p]:my-0.5">{children}</li>,
 
