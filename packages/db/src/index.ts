@@ -2424,6 +2424,7 @@ export class BuildWardenDatabase {
         input.displayName,
         input.baseUrlOverride ?? null,
         JSON.stringify(input.config ?? {}),
+        // Keep capability provenance alongside the flags; legacy rows may omit it.
         JSON.stringify(input.capabilities ?? {}),
         input.enabled === false ? 0 : 1,
         createdAt,

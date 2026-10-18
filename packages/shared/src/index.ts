@@ -1643,6 +1643,8 @@ export interface AppSettingRecord {
 export interface ProviderCapabilityMap {
   supportsStreaming: boolean;
   supportsTools: boolean;
+  /** Whether tool support came from model discovery/input or only a provider default. Absent on legacy rows. */
+  supportsToolsSource?: "model" | "provider-default";
   supportsCustomBaseUrl: boolean;
 }
 

@@ -1947,7 +1947,10 @@ const createAiSdkRunTools = (
 export const supportsOptionalChatTools = (input: Pick<RunExecutionRequest, "providerType" | "config" | "modelConfig" | "modelCapabilities">): boolean => {
   // Explicit model overrides also support manually configured compatible servers.
   if (typeof input.modelConfig?.supportsTools === "boolean") return input.modelConfig.supportsTools;
-  if (typeof input.modelCapabilities?.supportsTools === "boolean") return input.modelCapabilities.supportsTools;
+  if (input.modelCapabilities?.supportsTools === false) return false;
+  if (input.modelCapabilities?.supportsTools === true && input.modelCapabilities.supportsToolsSource === "model") return true;
+  // Provider defaults (including unmarked legacy true values) do not establish
+  // that an individual routed/custom model accepts tool definitions.
   // Unknown routed/custom models must continue to work as plain text chats.
   return input.providerType !== "openrouter" && getProviderFamily(input.config) !== "openai-compatible";
 };

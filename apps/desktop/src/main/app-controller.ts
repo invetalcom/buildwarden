@@ -2847,6 +2847,7 @@ export class AppController
       capabilities: {
         ...getDefaultProviderCapabilities(provider.providerType),
         ...input.capabilities,
+        supportsToolsSource: typeof input.capabilities?.supportsTools === "boolean" ? "model" : "provider-default",
       },
       config: input.config,
     });
