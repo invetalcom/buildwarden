@@ -31,6 +31,9 @@ const LONG_PATHS_CONFIG_VALUE = "true";
 const withLongPathSupport = (args: string[]): string[] =>
   process.platform === "win32" ? ["-c", `${LONG_PATHS_CONFIG_KEY}=${LONG_PATHS_CONFIG_VALUE}`, ...args] : args;
 
+/** Passed as `-c` on every simple-git command, so BuildWarden needs no long-path setting in the repository. */
+const LONG_PATH_GIT_CONFIG: string[] = process.platform === "win32" ? [`${LONG_PATHS_CONFIG_KEY}=${LONG_PATHS_CONFIG_VALUE}`] : [];
+
 /**
  * Local commands run inside the per-project branch lock too, so a Git process that hangs, for example
  * on a hook waiting for input or a stuck file system, must not block the project forever. Timeouts count
@@ -41,7 +44,7 @@ const LOCAL_GIT_INACTIVITY_TIMEOUT_MS = 2 * 60_000;
 const LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS = 10 * 60_000;
 
 const createLocalGit = (baseDir: string, inactivityTimeoutMs = LOCAL_GIT_INACTIVITY_TIMEOUT_MS): SimpleGit =>
-  simpleGit({ baseDir, timeout: { block: inactivityTimeoutMs } });
+  simpleGit({ baseDir, config: LONG_PATH_GIT_CONFIG, timeout: { block: inactivityTimeoutMs } });
 
 const toLocalGitTimeoutError = (error: unknown, args: readonly string[]): unknown =>
   error instanceof GitPluginError && error.plugin === "timeout"
@@ -49,7 +52,7 @@ const toLocalGitTimeoutError = (error: unknown, args: readonly string[]): unknow
     : error;
 
 const runGitRaw = (git: SimpleGit, args: string[]): Promise<string> =>
-  git.raw(withLongPathSupport(args)).catch((error: unknown) => {
+  git.raw(args).catch((error: unknown) => {
     throw toLocalGitTimeoutError(error, args);
   });
 
@@ -77,6 +80,7 @@ const buildGuardSafeEnvironment = (): Record<string, string> => {
 const createNetworkGit = (repoPath: string, inactivityTimeoutMs = NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS): SimpleGit =>
   simpleGit({
     baseDir: repoPath,
+    config: LONG_PATH_GIT_CONFIG,
     timeout: { block: inactivityTimeoutMs },
     allowEnvironment: ["GIT_TERMINAL_PROMPT"],
   }).env({ ...buildGuardSafeEnvironment(), GIT_TERMINAL_PROMPT: "0" });
@@ -89,6 +93,7 @@ const createNetworkGit = (repoPath: string, inactivityTimeoutMs = NETWORK_COMMAN
 const createReadOnlyGit = (baseDir: string, inactivityTimeoutMs = LOCAL_GIT_INACTIVITY_TIMEOUT_MS, maxConcurrentProcesses?: number): SimpleGit =>
   simpleGit({
     baseDir,
+    config: LONG_PATH_GIT_CONFIG,
     timeout: { block: inactivityTimeoutMs },
     allowEnvironment: ["GIT_OPTIONAL_LOCKS"],
     ...(maxConcurrentProcesses ? { maxConcurrentProcesses } : {}),
@@ -177,7 +182,7 @@ const fitForgeCliDescription = (body: string): string =>
     ? body
     : `${body.slice(0, MAX_FORGE_CLI_DESCRIPTION_CHARS)}\n\n_(Description shortened to fit the GitLab CLI.)_`;
 
-const detectProjectBaseBranch = async (git: SimpleGit, currentBranch: string, remoteName: string): Promise<string> => {
+const detectProjectBaseBranch = async (git: SimpleGit, repoPath: string, currentBranch: string, remoteName: string): Promise<string> => {
   const remoteRefPrefix = `refs/remotes/${remoteName}/`;
   try {
     const symbolicRef = (await git.raw(["symbolic-ref", "-q", `${remoteRefPrefix}HEAD`])).trim();
@@ -191,11 +196,9 @@ const detectProjectBaseBranch = async (git: SimpleGit, currentBranch: string, re
   }
 
   for (const candidate of ["main", "master", "develop"]) {
-    try {
-      await git.raw(["show-ref", "--verify", "--quiet", `${remoteRefPrefix}${candidate}`]);
+    // A failed `--quiet` probe resolves in simple-git, which used to make every repository detect "main".
+    if (await runGitProbe(repoPath, ["show-ref", "--verify", "--quiet", `${remoteRefPrefix}${candidate}`]).catch(() => false)) {
       return candidate;
-    } catch {
-      // Try the next conventional remote branch.
     }
   }
 
@@ -323,23 +326,30 @@ export const readProjectReleaseHistory = async (repoPath: string, limit = 12): P
   return { totalReleases: tags.length, releases };
 };
 
-// Paths whose repository config already has core.longpaths set this session.
-// Run checkout/release calls this on every run switch; one write per path is enough.
-const longPathSupportConfiguredPaths = new Set<string>();
+// Repositories whose long-path setting was already checked this session.
+const longPathSupportCheckedPaths = new Set<string>();
 
+/**
+ * BuildWarden's own commands pass core.longpaths per command. Agents run their own Git inside run
+ * worktrees, whose paths are longer than the project's, so creating one persists the setting, but only
+ * when the repository has no value of its own; an explicit user choice is never overridden.
+ */
 const ensureGitLongPathSupport = async (git: SimpleGit, gitPath: string): Promise<void> => {
   if (process.platform !== "win32") {
     return;
   }
 
   // Case-preserving: directories can be case-sensitive on Windows, and a
-  // duplicate write for a differently cased spelling is harmless.
+  // duplicate check for a differently cased spelling is harmless.
   const cacheKey = resolve(gitPath);
-  if (longPathSupportConfiguredPaths.has(cacheKey)) {
+  if (longPathSupportCheckedPaths.has(cacheKey)) {
     return;
   }
-  await git.raw(["config", "--local", LONG_PATHS_CONFIG_KEY, LONG_PATHS_CONFIG_VALUE]);
-  longPathSupportConfiguredPaths.add(cacheKey);
+  const configured = (await git.raw(["config", "--local", "--get", LONG_PATHS_CONFIG_KEY]).catch(() => "")).trim();
+  if (!configured) {
+    await git.raw(["config", "--local", LONG_PATHS_CONFIG_KEY, LONG_PATHS_CONFIG_VALUE]);
+  }
+  longPathSupportCheckedPaths.add(cacheKey);
 };
 
 const pathExists = async (p: string): Promise<boolean> => {
@@ -789,7 +799,6 @@ export class GitService {
 
   async checkoutProjectBranch(repoPath: string, branchName: string): Promise<void> {
     const git = createLocalGit(repoPath, LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS);
-    await ensureGitLongPathSupport(git, repoPath);
     if (!branchName.trim()) {
       throw new Error("Select a branch.");
     }
@@ -812,7 +821,6 @@ export class GitService {
 
   async getProjectBranchOverview(repoPath: string, baseBranch: string): Promise<ProjectGitBranchOverview> {
     const git = createLocalGit(repoPath);
-    await ensureGitLongPathSupport(git, repoPath);
 
     let currentBranch = "";
     try {
@@ -942,7 +950,7 @@ export class GitService {
       .split(/\r?\n/)
       .map((line) => line.trim());
 
-    const baseBranch = await detectProjectBaseBranch(git, branchSummary.current, (await this.getDefaultRemote(repoPath)) ?? "origin");
+    const baseBranch = await detectProjectBaseBranch(git, repoPath, branchSummary.current, (await this.getDefaultRemote(repoPath)) ?? "origin");
 
     return {
       repoPath,
@@ -1015,7 +1023,7 @@ export class GitService {
       if (shareDependencies) await ensureWorktreeDependencyLinks(repoPath, worktreePath);
     } catch (error) {
       // A failed checkout can leave a registered worktree and a new branch behind; nothing owns them yet.
-      await this.removeWorktree(repoPath, worktreePath, branchExisted ? undefined : branchName).catch(() => {});
+      await this.removeWorktree(repoPath, worktreePath, branchExisted ? undefined : branchName, configuredWorktreeRoot).catch(() => {});
       throw error;
     }
 
@@ -1051,14 +1059,22 @@ export class GitService {
 
   async listWorktrees(repoPath: string): Promise<WorktreeInfo[]> {
     const git = createLocalGit(repoPath);
-    const raw = await git.raw(["worktree", "list", "--porcelain"]);
-    const chunks = raw
-      .trim()
-      .split("\n\n")
-      .filter(Boolean);
+    // NUL-separated output survives paths with newlines; Git before 2.36 rejects `-z`.
+    let chunks: string[][];
+    try {
+      chunks = (await runGitRaw(git, ["worktree", "list", "--porcelain", "-z"]))
+        .split("\0\0")
+        .map((chunk) => chunk.split("\0").filter(Boolean))
+        .filter((lines) => lines.length > 0);
+    } catch {
+      chunks = (await runGitRaw(git, ["worktree", "list", "--porcelain"]))
+        .trim()
+        .split(/\r?\n\r?\n/)
+        .filter(Boolean)
+        .map((chunk) => chunk.split(/\r?\n/));
+    }
 
-    return chunks.map((chunk) => {
-      const lines = chunk.split("\n");
+    return chunks.map((lines) => {
       const worktreePath = lines[0]?.replace(/^worktree /, "") ?? repoPath;
       const branchLine = lines.find((line) => line.startsWith("branch "));
       const branchName = branchLine?.replace("branch refs/heads/", "") ?? "detached-head";
@@ -1076,7 +1092,6 @@ export class GitService {
 
   async releaseWorktreeBranch(worktreePath: string, branchName: string): Promise<void> {
     const git = createLocalGit(worktreePath, LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS);
-    await ensureGitLongPathSupport(git, worktreePath);
     const currentBranch = (await git.branch(["--show-current"])).current;
 
     if (!currentBranch || currentBranch !== branchName) {
@@ -1088,7 +1103,6 @@ export class GitService {
 
   async checkoutWorktreeBranch(worktreePath: string, branchName: string): Promise<void> {
     const git = createLocalGit(worktreePath, LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS);
-    await ensureGitLongPathSupport(git, worktreePath);
     const trimmedBranchName = assertRefArgument(branchName);
     const currentBranch = (await git.branch(["--show-current"])).current;
 
@@ -1109,9 +1123,11 @@ export class GitService {
   }
 
   async hasLocalBranch(repoPath: string, branchName: string): Promise<boolean> {
-    const git = createLocalGit(repoPath);
-    const branches = await git.branchLocal();
-    return branches.all.includes(branchName);
+    const trimmedBranchName = branchName.trim();
+    if (!trimmedBranchName) {
+      return false;
+    }
+    return runGitProbe(repoPath, ["show-ref", "--verify", "--quiet", `refs/heads/${trimmedBranchName}`]);
   }
 
   /** Whether `<remote>/<branch>` exists locally; defaults to the repository's default remote. */
@@ -1159,13 +1175,11 @@ export class GitService {
   }
 
   async fetchProjectBranches(repoPath: string): Promise<void> {
-    await ensureGitLongPathSupport(createLocalGit(repoPath), repoPath);
     await runNetworkGit(repoPath, ["fetch", "--all", "--prune"]);
   }
 
   async createProjectBranch(repoPath: string, branchName: string, startPoint: string, checkout = true): Promise<void> {
     const git = createLocalGit(repoPath, LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS);
-    await ensureGitLongPathSupport(git, repoPath);
     const trimmedBranchName = branchName.trim();
     const trimmedStartPoint = startPoint.trim();
     if (!trimmedBranchName) {
@@ -1188,7 +1202,6 @@ export class GitService {
 
   async renameProjectBranch(repoPath: string, oldName: string, newName: string): Promise<void> {
     const git = createLocalGit(repoPath);
-    await ensureGitLongPathSupport(git, repoPath);
     const trimmedOldName = oldName.trim();
     const trimmedNewName = newName.trim();
     if (!trimmedOldName || !trimmedNewName) {
@@ -1207,7 +1220,6 @@ export class GitService {
 
   async deleteProjectBranch(repoPath: string, branchName: string, force = false): Promise<void> {
     const git = createLocalGit(repoPath);
-    await ensureGitLongPathSupport(git, repoPath);
     if (!branchName.trim()) {
       throw new Error("Select a branch.");
     }
@@ -1223,13 +1235,10 @@ export class GitService {
   }
 
   async pullProjectBranch(repoPath: string): Promise<void> {
-    await ensureGitLongPathSupport(createLocalGit(repoPath), repoPath);
     await runNetworkGit(repoPath, ["pull", "--ff-only"]);
   }
 
   async pushProjectBranch(repoPath: string, branchName: string, setUpstream = true): Promise<void> {
-    const git = createLocalGit(repoPath);
-    await ensureGitLongPathSupport(git, repoPath);
     if (!branchName.trim()) {
       throw new Error("Select a branch.");
     }
@@ -1251,9 +1260,8 @@ export class GitService {
     }
   }
 
-  async removeWorktree(repoPath: string, worktreePath: string, branchName?: string): Promise<void> {
+  async removeWorktree(repoPath: string, worktreePath: string, branchName?: string, configuredWorktreeRoot?: string | null): Promise<void> {
     const git = createLocalGit(repoPath);
-    await ensureGitLongPathSupport(git, repoPath);
     const cleanupErrors: string[] = [];
     const isRegisteredWorktree = await this.isWorktreeRegistered(repoPath, worktreePath);
 
@@ -1314,8 +1322,9 @@ export class GitService {
       cleanupErrors.push("worktree directory still exists after cleanup");
     }
 
-    const currentWorktreeRoot = this.getWorktreeRoot(repoPath);
-    const managedRoots = new Set<string>([currentWorktreeRoot, this.getLegacyWorktreeRoot(repoPath), dirname(worktreePath)]);
+    // Includes the configured root, so a custom worktree location does not keep empty folders behind.
+    const currentWorktreeRoots = new Set([this.getWorktreeRoot(repoPath), this.getWorktreeRoot(repoPath, configuredWorktreeRoot)]);
+    const managedRoots = new Set<string>([...currentWorktreeRoots, this.getLegacyWorktreeRoot(repoPath), dirname(worktreePath)]);
     for (const rootPath of managedRoots) {
       try {
         const removed = await removeEmptyDirectoryIfPossible(rootPath);
@@ -1323,7 +1332,7 @@ export class GitService {
           continue;
         }
 
-        if (rootPath === currentWorktreeRoot) {
+        if (currentWorktreeRoots.has(rootPath)) {
           await removeEmptyDirectoryIfPossible(dirname(rootPath));
         }
       } catch (error) {
@@ -1460,7 +1469,6 @@ export class GitService {
     options: { expectedHeadSha?: string | null; safetyPatchPath?: string } = {},
   ): Promise<{ safetyPatchPath: string | null }> {
     const git = createLocalGit(worktreePath, LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS);
-    await ensureGitLongPathSupport(git, worktreePath);
     if (options.expectedHeadSha && (await this.getHeadCommitSha(worktreePath)) !== options.expectedHeadSha) {
       throw new Error(
         "The workspace has new commits since the last prompt, so its changes cannot be reverted safely. Revert those commits with Git instead.",
@@ -1492,7 +1500,6 @@ export class GitService {
 
   async commitAllChanges(worktreePath: string, message: string): Promise<{ commitHash: string }> {
     const git = createLocalGit(worktreePath, LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS);
-    await ensureGitLongPathSupport(git, worktreePath);
     const status = await git.status();
 
     if (status.isClean()) {
@@ -1588,7 +1595,6 @@ export class GitService {
   async createPublishBranchFromHead(worktreePath: string, branchName: string): Promise<void> {
     const trimmedBranchName = await this.assertPublishBranchAvailable(worktreePath, branchName);
     const git = createLocalGit(worktreePath);
-    await ensureGitLongPathSupport(git, worktreePath);
     await runGitRaw(git, ["checkout", "-b", trimmedBranchName, "HEAD"]);
   }
 

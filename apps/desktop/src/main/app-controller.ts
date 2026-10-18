@@ -1325,6 +1325,10 @@ export class AppController
     return getFolderSnapshotRoot(this.db.getFilePath());
   }
 
+  private getConfiguredWorktreeRoot(): string | undefined {
+    return this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
+  }
+
   /** Worktrees, branches and runs all operate on the whole repository, so a subfolder cannot be a Git project. */
   private assertProjectFolderIsRepositoryRoot(repoPath: string, validation: GitProjectValidation): void {
     if (!isSameWorktreePath(validation.repoRoot, repoPath)) {
@@ -3256,7 +3260,7 @@ export class AppController
     const workspaceType = input.workspaceType ?? (project.kind === "folder" ? "copy" : "worktree");
     const workspaceVcs: RunWorkspaceVcs = project.kind === "folder" ? "folder" : "git";
     const workspaceSetupProfile = this.getWorkspaceSetupProfile(project.id) ?? null;
-    const configuredWorktreeRoot = this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
+    const configuredWorktreeRoot = this.getConfiguredWorktreeRoot();
     let branchName: string;
     let worktreePath: string;
 
@@ -11057,7 +11061,7 @@ export class AppController
   private async removeRunWorktreeForDeletion(repoPath: string, run: RunRecord, branchName: string | undefined): Promise<void> {
     for (let attempt = 0; ; attempt += 1) {
       try {
-        await this.gitService.removeWorktree(repoPath, run.worktreePath, branchName);
+        await this.gitService.removeWorktree(repoPath, run.worktreePath, branchName, this.getConfiguredWorktreeRoot());
         return;
       } catch (error) {
         const retryDelay = WORKTREE_CLEANUP_RETRY_DELAYS_MS[attempt];
@@ -11077,7 +11081,7 @@ export class AppController
   ): Promise<void> {
     try {
       if (workspace.workspaceType === "worktree") {
-        await this.gitService.removeWorktree(repoPath, workspace.worktreePath, workspace.branchName);
+        await this.gitService.removeWorktree(repoPath, workspace.worktreePath, workspace.branchName, this.getConfiguredWorktreeRoot());
       } else if (workspace.workspaceType === "copy") {
         await removeFolderWorkspaceCopy(workspace.worktreePath);
       }
@@ -11151,7 +11155,7 @@ export class AppController
       );
     }
 
-    await this.gitService.removeWorktree(repoPath, run.worktreePath, options?.deleteReleasedBranchName);
+    await this.gitService.removeWorktree(repoPath, run.worktreePath, options?.deleteReleasedBranchName, this.getConfiguredWorktreeRoot());
     this.db.updateRunWorkspace(run.id, "local", repoPath);
   }
 

@@ -139,6 +139,48 @@ describe("GitService run worktree lifecycle", () => {
   });
 });
 
+describe("GitService maintenance details", () => {
+  it("detects the base branch from origin and cleans up a configured worktree root", async () => {
+    const { root, repoPath, git } = await createRepository();
+    await git.branch(["-m", "main", "master"]);
+    const remotePath = join(root, "remote.git");
+    await simpleGit(root).raw(["init", "--bare", remotePath]);
+    await git.addRemote("origin", remotePath);
+    await git.push(["origin", "master"]);
+    await git.checkout(["-b", "main"]);
+    const service = new GitService();
+
+    // origin has only master, so the local main must not win.
+    expect((await service.validateProject(repoPath)).baseBranch).toBe("master");
+    expect(await service.hasLocalBranch(repoPath, "master")).toBe(true);
+    expect(await service.hasLocalBranch(repoPath, "missing")).toBe(false);
+
+    const configuredRoot = join(root, "custom-root");
+    const workspace = await service.createWorktreeForRun(repoPath, "Project", "run-1", "master", configuredRoot);
+    expect(await service.listWorktrees(repoPath)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ branchName: workspace.branchName, isLocked: false })]),
+    );
+    await service.removeWorktree(repoPath, workspace.worktreePath, workspace.branchName, configuredRoot);
+
+    expect(existsSync(join(configuredRoot, ".buildwarden-worktrees"))).toBe(false);
+  });
+});
+
+describe.runIf(process.platform === "win32")("GitService long path configuration", () => {
+  it("leaves the user's repository config alone except for unset values on worktree creation", async () => {
+    const { root, repoPath, git } = await createRepository();
+    const service = new GitService();
+    const readLongPaths = async () => (await git.raw(["config", "--local", "--get", "core.longpaths"])).trim();
+
+    await service.checkoutProjectBranch(repoPath, "main");
+    expect(await readLongPaths()).toBe("");
+
+    await git.addConfig("core.longpaths", "false");
+    await service.createWorktreeForRun(repoPath, "Project", "run-1", "main", join(root, "worktrees"));
+    expect(await readLongPaths()).toBe("false");
+  });
+});
+
 describe("GitService read-only status", () => {
   it("does not rewrite the index while checking for changes", async () => {
     const { repoPath, git } = await createRepository();

@@ -2050,7 +2050,7 @@ describe("AppController settings and lightweight workflows", () => {
     await controller.deleteRunResources(project.repoPath, run, "run");
 
     expect(removeWorktree).toHaveBeenCalledTimes(2);
-    expect(removeWorktree).toHaveBeenLastCalledWith(project.repoPath, run.worktreePath, run.branchName);
+    expect(removeWorktree).toHaveBeenLastCalledWith(project.repoPath, run.worktreePath, run.branchName, undefined);
   });
 
   it("keeps a user-named run branch and honors preserveBranch during run deletion", async () => {
@@ -2079,8 +2079,8 @@ describe("AppController settings and lightweight workflows", () => {
     await controller.deleteRunResources(project.repoPath, run, "run");
     await controller.deleteRunResources(project.repoPath, { ...run, branchName: "buildwarden-run-1" }, "run", { preserveBranch: true });
 
-    expect(removeWorktree).toHaveBeenNthCalledWith(1, project.repoPath, run.worktreePath, undefined);
-    expect(removeWorktree).toHaveBeenNthCalledWith(2, project.repoPath, run.worktreePath, undefined);
+    expect(removeWorktree).toHaveBeenNthCalledWith(1, project.repoPath, run.worktreePath, undefined, undefined);
+    expect(removeWorktree).toHaveBeenNthCalledWith(2, project.repoPath, run.worktreePath, undefined, undefined);
   });
 
   it("does not expose Git command details when a worktree summary fails", async () => {
