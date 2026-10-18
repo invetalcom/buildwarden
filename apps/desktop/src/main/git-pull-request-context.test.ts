@@ -50,7 +50,7 @@ describe("existing pull and merge request selection", () => {
 });
 
 describe("GitService pull request creation", () => {
-  it("opens a browser draft with the full body when the GitHub CLI is unavailable", async () => {
+  it("opens a browser draft without an oversized body when the GitHub CLI is unavailable", async () => {
     const { path, git } = await createRepository();
     const remotePath = await mkdtemp(join(tmpdir(), "buildwarden-pr-remote-"));
     temporaryRepositories.push(remotePath);
@@ -62,12 +62,19 @@ describe("GitService pull request creation", () => {
     // Only Git's own directory stays on PATH, so `gh` cannot be found.
     process.env.PATH = gitExecPath;
     try {
-      const body = "x".repeat(40_000);
-      const result = await new GitService().createPullRequest(path, "feature/publish-context", "main", "Title", body);
+      const service = new GitService();
+      const shortResult = await service.createPullRequest(path, "feature/publish-context", "main", "Title", "Short body");
+      const longResult = await service.createPullRequest(path, "feature/publish-context", "main", "Title", "x".repeat(40_000));
 
-      expect(result.mode).toBe("browser-draft");
-      expect(result.url).toContain("https://github.com/owner/repo/compare/main...feature%2Fpublish-context");
-      expect(new URL(result.url).searchParams.get("body")).toBe(body);
+      expect(shortResult.mode).toBe("browser-draft");
+      expect(shortResult.url).toContain("https://github.com/owner/repo/compare/main...feature%2Fpublish-context");
+      expect(new URL(shortResult.url).searchParams.get("body")).toBe("Short body");
+      expect(shortResult.descriptionOmitted).toBeUndefined();
+      // GitHub answers 414 URI Too Long for such links, so the body stays out of the URL.
+      expect(longResult.mode).toBe("browser-draft");
+      expect(new URL(longResult.url).searchParams.has("body")).toBe(false);
+      expect(new URL(longResult.url).searchParams.get("title")).toBe("Title");
+      expect(longResult.descriptionOmitted).toBe(true);
     } finally {
       process.env.PATH = previousPath;
     }

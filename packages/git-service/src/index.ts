@@ -219,6 +219,19 @@ export const selectOwnOpenMergeRequestUrl = (mergeRequests: unknown): string | n
   return null;
 };
 
+/**
+ * GitHub answers `414 URI Too Long` for compare links far below browser limits, and GitLab's default
+ * proxies cap request lines at 8 KiB. Longer drafts leave the description out of the link.
+ */
+const MAX_BROWSER_DRAFT_URL_CHARS = 8_000;
+
+type BrowserDraft = { url: string; descriptionOmitted: boolean };
+
+const buildBrowserDraft = (buildUrl: (includeDescription: boolean) => string): BrowserDraft => {
+  const url = buildUrl(true);
+  return url.length <= MAX_BROWSER_DRAFT_URL_CHARS ? { url, descriptionOmitted: false } : { url: buildUrl(false), descriptionOmitted: true };
+};
+
 const MAX_FORGE_CLI_DESCRIPTION_CHARS = 16_000;
 const fitForgeCliDescription = (body: string): string =>
   body.length <= MAX_FORGE_CLI_DESCRIPTION_CHARS
@@ -1650,7 +1663,7 @@ export class GitService {
     targetBranch: string,
     title: string,
     body: string,
-  ): Promise<{ url: string; mode: PublishMode; requestKind: PublishRequestKind }> {
+  ): Promise<{ url: string; mode: PublishMode; requestKind: PublishRequestKind; descriptionOmitted?: boolean }> {
     assertRefArgument(branchName);
     assertRefArgument(targetBranch, "Target branch");
     const baseRemoteName = await this.getDefaultRemote(worktreePath);
@@ -1690,14 +1703,15 @@ export class GitService {
           requestKind: "merge-request",
         };
       } catch (error) {
-        const mergeRequestUrl = isForgeCliUnavailableError(error)
+        const mergeRequestDraft = isForgeCliUnavailableError(error)
           ? this.buildGitlabMergeRequestUrl(remote, branchName, targetBranch, title, body)
           : null;
-        if (mergeRequestUrl) {
+        if (mergeRequestDraft) {
           return {
-            url: mergeRequestUrl,
+            url: mergeRequestDraft.url,
             mode: "browser-draft",
             requestKind: "merge-request",
+            ...(mergeRequestDraft.descriptionOmitted ? { descriptionOmitted: true } : {}),
           };
         }
         if (isTimedOutCommandError(error)) {
@@ -1734,12 +1748,13 @@ export class GitService {
       };
     } catch (error) {
       if (isForgeCliUnavailableError(error)) {
-        const compareUrl = this.buildGithubCompareUrl(remote, headSelector, targetBranch, title, body);
-        if (compareUrl) {
+        const compareDraft = this.buildGithubCompareUrl(remote, headSelector, targetBranch, title, body);
+        if (compareDraft) {
           return {
-            url: compareUrl,
+            url: compareDraft.url,
             mode: "browser-draft",
             requestKind: "pull-request",
+            ...(compareDraft.descriptionOmitted ? { descriptionOmitted: true } : {}),
           };
         }
       }
@@ -1810,18 +1825,15 @@ export class GitService {
     targetBranch: string,
     title: string,
     body: string,
-  ): string | null {
+  ): BrowserDraft | null {
     if (!remote || remote.provider !== "github") {
       return null;
     }
 
-    const params = new URLSearchParams({
-      expand: "1",
-      title,
-      body,
+    return buildBrowserDraft((includeDescription) => {
+      const params = new URLSearchParams({ expand: "1", title, ...(includeDescription ? { body } : {}) });
+      return `${remote.webBaseUrl}/compare/${encodeURIComponent(targetBranch)}...${encodeURIComponent(branchName)}?${params.toString()}`;
     });
-
-    return `${remote.webBaseUrl}/compare/${encodeURIComponent(targetBranch)}...${encodeURIComponent(branchName)}?${params.toString()}`;
   }
 
   private buildGitlabMergeRequestUrl(
@@ -1830,19 +1842,20 @@ export class GitService {
     targetBranch: string,
     title: string,
     body: string,
-  ): string | null {
+  ): BrowserDraft | null {
     if (!remote || remote.provider !== "gitlab") {
       return null;
     }
 
-    const params = new URLSearchParams({
-      "merge_request[source_branch]": branchName,
-      "merge_request[target_branch]": targetBranch,
-      "merge_request[title]": title,
-      "merge_request[description]": body,
+    return buildBrowserDraft((includeDescription) => {
+      const params = new URLSearchParams({
+        "merge_request[source_branch]": branchName,
+        "merge_request[target_branch]": targetBranch,
+        "merge_request[title]": title,
+        ...(includeDescription ? { "merge_request[description]": body } : {}),
+      });
+      return `${remote.webBaseUrl}/-/merge_requests/new?${params.toString()}`;
     });
-
-    return `${remote.webBaseUrl}/-/merge_requests/new?${params.toString()}`;
   }
 
   private async getParsedRemote(worktreePath: string, remoteName: string): Promise<ParsedRemote | null> {

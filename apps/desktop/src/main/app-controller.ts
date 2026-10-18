@@ -6546,6 +6546,13 @@ export class AppController
       },
       createdAt: new Date().toISOString(),
     });
+    if (result.descriptionOmitted === true) {
+      // The draft link left the description out to stay short enough to open; keep it for pasting.
+      await this.appendRunEvent(run.id, "status", `${requestLabel} description to paste`, trimmedDescription, {
+        url,
+        descriptionOmittedFromDraftUrl: true,
+      });
+    }
     this.markLinkedRunTaskInReview(run, url);
     await this.syncRunForgeRequest(run.id, true, true, url);
 
