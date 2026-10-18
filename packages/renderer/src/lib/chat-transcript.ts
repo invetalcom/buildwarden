@@ -1,4 +1,4 @@
-import { normalizeRunSubagentInfo, RUN_CHAT_CONTEXT_SOURCE, type RunEventType } from "@buildwarden/shared";
+import { extractAttachmentPayloadsFromMetadata, normalizeRunSubagentInfo, RUN_CHAT_CONTEXT_SOURCE, type RunEventType } from "@buildwarden/shared";
 
 /** Chat is a conversation, not the execution log. Keep the original events in
  * history, but apply the same presentation rules on desktop and mobile web. */
@@ -16,5 +16,6 @@ export const isVisibleChatStep = (
   // An agent inspecting an image is a tool action, not a delivered image.
   // Actual assistant image answers remain visible, even without any text.
   if (metadata.itemType === "imageView") return false;
+  if (step.eventType === "output" && extractAttachmentPayloadsFromMetadata(metadata).length > 0) return true;
   return ["output", "plan", "plan-updated"].includes(step.eventType) && Boolean(step.content.trim());
 };

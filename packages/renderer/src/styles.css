@@ -1819,6 +1819,21 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
     border-right: 0;
   }
 
+  .chat-turn-stack--media {
+    width: min(78%, 36rem);
+  }
+
+  .chat-bubble--media {
+    padding-right: 0.78rem;
+  }
+
+  .chat-media-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+    align-items: start;
+    gap: 0.5rem;
+  }
+
   .chat-bubble--reasoning {
     border-color: color-mix(in srgb, var(--ec-reasoning-ring) 58%, var(--ec-border));
     background:
