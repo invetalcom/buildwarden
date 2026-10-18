@@ -366,6 +366,16 @@ describe("GitService branch merge checks", () => {
     expect(await service.isBranchMerged(repoPath, "merged")).toBe(true);
     expect(await service.isBranchMerged(repoPath, "unmerged")).toBe(false);
   });
+
+  it("falls back to HEAD when the configured upstream was pruned", async () => {
+    const { repoPath, git } = await createRepository();
+    const service = new GitService();
+    await git.branch(["merged-and-pruned"]);
+    await git.addConfig("branch.merged-and-pruned.remote", "origin");
+    await git.addConfig("branch.merged-and-pruned.merge", "refs/heads/merged-and-pruned");
+
+    expect(await service.isBranchMerged(repoPath, "merged-and-pruned")).toBe(true);
+  });
 });
 
 describe("GitService prompt restore points", () => {

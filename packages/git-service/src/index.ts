@@ -1171,7 +1171,10 @@ export class GitService {
     const upstream = (
       await runGitRaw(createLocalGit(repoPath), ["for-each-ref", "--format=%(upstream)", `refs/heads/${trimmedBranchName}`])
     ).trim();
-    return runGitProbe(repoPath, ["merge-base", "--is-ancestor", `refs/heads/${trimmedBranchName}`, upstream || "HEAD"]);
+    // The upstream stays configured after its remote branch is deleted and pruned, typically after a
+    // merged PR; like `git branch -d`, fall back to HEAD when it no longer resolves.
+    const upstreamExists = upstream ? await runGitProbe(repoPath, ["show-ref", "--verify", "--quiet", upstream]) : false;
+    return runGitProbe(repoPath, ["merge-base", "--is-ancestor", `refs/heads/${trimmedBranchName}`, upstreamExists ? upstream : "HEAD"]);
   }
 
   async fetchProjectBranches(repoPath: string): Promise<void> {
