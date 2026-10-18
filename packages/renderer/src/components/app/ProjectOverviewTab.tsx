@@ -315,7 +315,8 @@ export const ProjectOverviewTab = ({
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
   const runSearchTerms = useMemo(() => parseSearchTerms(runSearchQuery), [runSearchQuery]);
   const hasRunSearch = runSearchTerms.length > 0;
-  const userInputMatches = useRunUserInputSearch(runSearchTerms);
+  const searchableRuns = useMemo(() => [...runs, ...orchestratedRuns], [orchestratedRuns, runs]);
+  const userInputMatches = useRunUserInputSearch(runSearchTerms, searchableRuns);
   const hierarchyRoots = useMemo(
     () => appendUnreachableSubagentRoots(runs, orchestratedRuns, knownPrimaryRuns),
     [knownPrimaryRuns, orchestratedRuns, runs],
@@ -329,9 +330,9 @@ export const ProjectOverviewTab = ({
   );
   const matchingRunCount = useMemo(
     () => hasRunSearch
-      ? [...runs, ...orchestratedRuns].filter((run) => runMatchesSearch(run, runSearchTerms, userInputMatches)).length
+      ? searchableRuns.filter((run) => runMatchesSearch(run, runSearchTerms, userInputMatches)).length
       : runs.length + orchestratedRuns.length,
-    [hasRunSearch, orchestratedRuns, runSearchTerms, runs, userInputMatches],
+    [hasRunSearch, orchestratedRuns, runSearchTerms, runs, searchableRuns, userInputMatches],
   );
   const toggleRunHierarchy = useCallback((runId: string) => {
     setExpandedRunIds((current) => {

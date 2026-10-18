@@ -189,7 +189,7 @@ export const AllRunsPage = ({ projects, providerAccounts = [], onSelectRun, onDe
     isRunDisplayStatusActive(resolveRunDisplayStatus(run.status, run.orchestrationStatus))).length;
   const searchTerms = useMemo(() => parseSearchTerms(searchQuery), [searchQuery]);
   const hasSearch = searchTerms.length > 0;
-  const userInputMatches = useRunUserInputSearch(searchTerms);
+  const userInputMatches = useRunUserInputSearch(searchTerms, sourceRuns);
   const visibleRows = useMemo(
     () => buildRunHierarchyRows(hierarchyRoots, subagentRuns, {
       expandedRunIds,
