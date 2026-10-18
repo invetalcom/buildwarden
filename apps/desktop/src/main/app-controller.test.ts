@@ -2033,7 +2033,8 @@ describe("AppController settings and lightweight workflows", () => {
       projectId: project.id,
       workspaceType: "worktree",
       workspaceVcs: "git",
-      worktreePath: "C:\\managed\\buildwarden-run-1",
+      // Platform separators: run cleanup derives the generated branch name from the worktree folder.
+      worktreePath: join("C:", "managed", "buildwarden-run-1"),
       branchName: "buildwarden-run-1",
     } as RunRecord;
     const removeWorktree = vi.fn()
@@ -2059,7 +2060,7 @@ describe("AppController settings and lightweight workflows", () => {
       projectId: project.id,
       workspaceType: "worktree",
       workspaceVcs: "git",
-      worktreePath: "C:\\managed\\buildwarden-run-1",
+      worktreePath: join("C:", "managed", "buildwarden-run-1"),
       branchName: "feature/published",
     } as RunRecord;
     const removeWorktree = vi.fn().mockResolvedValue(undefined);
