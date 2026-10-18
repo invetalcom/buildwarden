@@ -43,7 +43,7 @@ const NETWORK_COMMAND_TIMEOUT_MINUTES = NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS / 
 // so the explicit environment below only adds GIT_TERMINAL_PROMPT.
 const SIMPLE_GIT_GUARDED_ENV_KEYS = new Set(["editor", "pager", "prefix", "ssh_askpass", "visual"]);
 
-const createNetworkGit = (repoPath: string): SimpleGit => {
+const createNetworkGit = (repoPath: string, inactivityTimeoutMs = NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS): SimpleGit => {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     const normalizedKey = key.toLowerCase().trim();
@@ -53,23 +53,30 @@ const createNetworkGit = (repoPath: string): SimpleGit => {
   }
   return simpleGit({
     baseDir: repoPath,
-    timeout: { block: NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS },
+    timeout: { block: inactivityTimeoutMs },
     allowEnvironment: ["GIT_TERMINAL_PROMPT"],
   }).env({ ...env, GIT_TERMINAL_PROMPT: "0" });
 };
 
-const runNetworkGit = async (repoPath: string, args: string[]): Promise<string> => {
+const runNetworkGit = async (repoPath: string, args: string[], inactivityTimeoutMs = NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS): Promise<string> => {
   try {
-    return await runGitRaw(createNetworkGit(repoPath), args);
+    return await runGitRaw(createNetworkGit(repoPath, inactivityTimeoutMs), args);
   } catch (error) {
     if (error instanceof GitPluginError && error.plugin === "timeout") {
+      const duration =
+        inactivityTimeoutMs >= 60_000
+          ? `${String(Math.round(inactivityTimeoutMs / 60_000))} minutes`
+          : `${String(Math.round(inactivityTimeoutMs / 1000))} seconds`;
       throw new Error(
-        `git ${args[0] ?? ""} made no progress for ${String(NETWORK_COMMAND_TIMEOUT_MINUTES)} minutes and was stopped. Check the network connection and Git credentials, then try again.`,
+        `git ${args[0] ?? ""} made no progress for ${duration} and was stopped. Check the network connection and Git credentials, then try again.`,
       );
     }
     throw error;
   }
 };
+
+/** Run creation waits for this fetch, so a slow or offline remote falls back to the local base quickly. */
+const BASE_BRANCH_REFRESH_TIMEOUT_MS = 20_000;
 
 /** Runs a forge CLI (`gh`, `glab`) without interactive prompts and with a bounded runtime. */
 const execForgeCli = (command: string, args: string[], cwd: string) =>
@@ -902,7 +909,8 @@ export class GitService {
 
     const branchExisted = await this.hasLocalBranch(repoPath, branchName);
     try {
-      await runGitRaw(git, ["worktree", "add", "-b", branchName, "--", worktreePath, startRef]);
+      // `--no-track`: a run branch started from origin/<base> must not adopt the base as its upstream.
+      await runGitRaw(git, ["worktree", "add", "--no-track", "-b", branchName, "--", worktreePath, startRef]);
       if (shareDependencies) await ensureWorktreeDependencyLinks(repoPath, worktreePath);
     } catch (error) {
       // A failed checkout can leave a registered worktree and a new branch behind; nothing owns them yet.
@@ -911,6 +919,29 @@ export class GitService {
     }
 
     return { branchName, worktreePath };
+  }
+
+  /**
+   * Fetches the base branch and returns the newest start point that keeps the user's work: origin's
+   * branch when the local branch is missing or only behind it, otherwise the local branch. Falls back to
+   * the local branch when the fetch fails, for example offline.
+   */
+  async resolveFreshBaseStartPoint(repoPath: string, baseBranch: string): Promise<string> {
+    const base = assertRefArgument(baseBranch, "Base branch");
+    const remoteRef = `refs/remotes/origin/${base}`;
+    try {
+      await runNetworkGit(repoPath, ["fetch", "--quiet", "--no-tags", "origin", `+refs/heads/${base}:${remoteRef}`], BASE_BRANCH_REFRESH_TIMEOUT_MS);
+    } catch {
+      return base;
+    }
+    if (!(await runGitProbe(repoPath, ["show-ref", "--verify", "--quiet", remoteRef]))) {
+      return base;
+    }
+    if (!(await this.hasLocalBranch(repoPath, base))) {
+      return remoteRef;
+    }
+    // A local base with unpushed or diverged commits is kept: the user built on it deliberately.
+    return (await runGitProbe(repoPath, ["merge-base", "--is-ancestor", `refs/heads/${base}`, remoteRef])) ? remoteRef : base;
   }
 
   async listWorktrees(repoPath: string): Promise<WorktreeInfo[]> {

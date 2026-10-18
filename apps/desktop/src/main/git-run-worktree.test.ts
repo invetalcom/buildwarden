@@ -139,6 +139,39 @@ describe("GitService run worktree lifecycle", () => {
   });
 });
 
+describe("GitService fresh base start points", () => {
+  it("starts from origin only when the local base is behind it", async () => {
+    const { root, repoPath, git } = await createRepository();
+    const remotePath = join(root, "remote.git");
+    await simpleGit(root).raw(["init", "--bare", remotePath]);
+    await git.addRemote("origin", remotePath);
+    await git.push(["-u", "origin", "main"]);
+    const otherClonePath = join(root, "other");
+    await simpleGit(root).clone(remotePath, otherClonePath, ["--branch", "main"]);
+    const other = simpleGit(otherClonePath);
+    await other.addConfig("user.name", "Other");
+    await other.addConfig("user.email", "other@example.test");
+    await writeFile(join(otherClonePath, "remote.txt"), "remote\n", "utf8");
+    await other.add(["remote.txt"]);
+    await other.commit("Remote commit");
+    await other.push(["origin", "main"]);
+    const service = new GitService();
+
+    expect(await service.resolveFreshBaseStartPoint(repoPath, "main")).toBe("refs/remotes/origin/main");
+    const workspace = await service.createWorktreeForRun(repoPath, "Project", "run-1", "refs/remotes/origin/main", join(root, "worktrees"));
+    expect(existsSync(join(workspace.worktreePath, "remote.txt"))).toBe(true);
+    expect((await simpleGit(workspace.worktreePath).raw(["config", "--get", `branch.${workspace.branchName}.merge`])).trim()).toBe("");
+
+    await writeFile(join(repoPath, "local.txt"), "local\n", "utf8");
+    await git.add(["local.txt"]);
+    await git.commit("Local commit");
+    expect(await service.resolveFreshBaseStartPoint(repoPath, "main")).toBe("main");
+
+    await git.removeRemote("origin");
+    expect(await service.resolveFreshBaseStartPoint(repoPath, "main")).toBe("main");
+  });
+});
+
 describe("GitService ref arguments", () => {
   it("never reads a branch name as a file path or an option", async () => {
     const { repoPath } = await createRepository();

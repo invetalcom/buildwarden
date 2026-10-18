@@ -4947,6 +4947,8 @@ export const APP_SETTING_KEYS = {
   recentRunDays: "recentRunDays",
   autoCheckoutRunBranchOnOpen: "autoCheckoutRunBranchOnOpen",
   autoReleaseRunBranchOnLeave: "autoReleaseRunBranchOnLeave",
+  /** `"true"` fetches the base branch and starts new run worktrees from origin when the local branch is only behind it. */
+  worktreeStartFromRemoteBase: "worktreeStartFromRemoteBase",
   /** Opt-in startup check for old runs, chats, Project Lab threads, and loops. */
   dataRetentionCleanupEnabled: "dataRetentionCleanupEnabled",
   /** Whole day threshold used by the opt-in startup data-retention check. */

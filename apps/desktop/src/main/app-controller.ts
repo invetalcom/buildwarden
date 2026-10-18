@@ -3273,11 +3273,16 @@ export class AppController
         branchName = await this.gitService.getCurrentBranch(project.repoPath);
         worktreePath = project.repoPath;
       } else {
+        const baseBranch = input.baseBranch?.trim() || project.baseBranch;
+        const startPoint =
+          this.db.getSettings()[APP_SETTING_KEYS.worktreeStartFromRemoteBase] === "true"
+            ? await this.gitService.resolveFreshBaseStartPoint(project.repoPath, baseBranch)
+            : baseBranch;
         const gitWorkspace = await this.gitService.createWorktreeForRun(
           project.repoPath,
           project.name,
           crypto.randomUUID(),
-          input.baseBranch?.trim() || project.baseBranch,
+          startPoint,
           configuredWorktreeRoot,
           workspaceSetupProfile?.dependencies !== "isolated",
         );

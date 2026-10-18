@@ -1570,6 +1570,7 @@ export const App = () => {
 
   const autoCheckoutRunBranchOnOpen = snapshot.settings[APP_SETTING_KEYS.autoCheckoutRunBranchOnOpen] !== "false";
   const autoReleaseRunBranchOnLeave = snapshot.settings[APP_SETTING_KEYS.autoReleaseRunBranchOnLeave] !== "false";
+  const worktreeStartFromRemoteBase = snapshot.settings[APP_SETTING_KEYS.worktreeStartFromRemoteBase] === "true";
   const dataRetentionCleanupEnabled = snapshot.settings[APP_SETTING_KEYS.dataRetentionCleanupEnabled] === "true";
   const dataRetentionCleanupDays = parseDataRetentionCleanupDaysSetting(snapshot.settings[APP_SETTING_KEYS.dataRetentionCleanupDays]);
   const pastedTextAttachmentThreshold = parsePastedTextAttachmentThresholdSetting(
@@ -4000,6 +4001,7 @@ export const App = () => {
               modelBaseUrl={modelBaseUrl}
               autoCheckoutRunBranchOnOpen={autoCheckoutRunBranchOnOpen}
               autoReleaseRunBranchOnLeave={autoReleaseRunBranchOnLeave}
+              worktreeStartFromRemoteBase={worktreeStartFromRemoteBase}
               dataRetentionCleanupEnabled={dataRetentionCleanupEnabled}
               dataRetentionCleanupDays={dataRetentionCleanupDays}
               pastedTextAttachmentThreshold={pastedTextAttachmentThreshold}
@@ -4031,6 +4033,7 @@ export const App = () => {
               onDeleteModel={(modelId) => void deleteModel(modelId)}
               onAutoCheckoutRunBranchOnOpenChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.autoCheckoutRunBranchOnOpen, value)}
               onAutoReleaseRunBranchOnLeaveChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.autoReleaseRunBranchOnLeave, value)}
+              onWorktreeStartFromRemoteBaseChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.worktreeStartFromRemoteBase, value)}
               onDataRetentionCleanupEnabledChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.dataRetentionCleanupEnabled, value)}
               onDataRetentionCleanupDaysChange={(value) =>
                 void handleAction(async () => {
