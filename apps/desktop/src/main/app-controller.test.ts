@@ -740,6 +740,7 @@ describe("AppController settings and lightweight workflows", () => {
         throw new Error("push rejected");
       }),
       hasRemoteBranch: vi.fn(async () => false),
+      getPushRemote: vi.fn(async () => "origin"),
       deleteProjectBranch: vi.fn(async () => undefined),
     };
     const controllerInternals = harness.controller as unknown as {

@@ -121,21 +121,22 @@ const assertRefArgument = (refName: string, label = "Branch"): string => {
 const isTimedOutCommandError = (error: unknown): boolean =>
   typeof error === "object" && error !== null && "killed" in error && (error as { killed?: boolean }).killed === true;
 
-const detectProjectBaseBranch = async (git: SimpleGit, currentBranch: string): Promise<string> => {
+const detectProjectBaseBranch = async (git: SimpleGit, currentBranch: string, remoteName: string): Promise<string> => {
+  const remoteRefPrefix = `refs/remotes/${remoteName}/`;
   try {
-    const symbolicRef = (await git.raw(["symbolic-ref", "-q", "refs/remotes/origin/HEAD"])).trim();
-    const match = /^refs\/remotes\/origin\/(.+)$/.exec(symbolicRef);
-    if (match?.[1]) {
-      await git.raw(["show-ref", "--verify", `refs/remotes/origin/${match[1]}`]);
-      return match[1];
+    const symbolicRef = (await git.raw(["symbolic-ref", "-q", `${remoteRefPrefix}HEAD`])).trim();
+    const branchName = symbolicRef.startsWith(remoteRefPrefix) ? symbolicRef.slice(remoteRefPrefix.length) : "";
+    if (branchName) {
+      await git.raw(["show-ref", "--verify", `${remoteRefPrefix}${branchName}`]);
+      return branchName;
     }
   } catch {
-    // Repositories without a valid origin/HEAD still get deterministic fallbacks below.
+    // Repositories without a valid <remote>/HEAD still get deterministic fallbacks below.
   }
 
   for (const candidate of ["main", "master", "develop"]) {
     try {
-      await git.raw(["show-ref", "--verify", "--quiet", `refs/remotes/origin/${candidate}`]);
+      await git.raw(["show-ref", "--verify", "--quiet", `${remoteRefPrefix}${candidate}`]);
       return candidate;
     } catch {
       // Try the next conventional remote branch.
@@ -706,13 +707,14 @@ export class GitService {
       return;
     }
 
-    if (await this.hasRemoteBranch(repoPath, trimmedBranchName)) {
-      await runGitRaw(git, ["checkout", "--track", "-b", trimmedBranchName, `origin/${trimmedBranchName}`, "--"]);
+    const remoteName = (await this.getDefaultRemote(repoPath)) ?? "origin";
+    if (await this.hasRemoteBranch(repoPath, trimmedBranchName, remoteName)) {
+      await runGitRaw(git, ["checkout", "--track", "-b", trimmedBranchName, `${remoteName}/${trimmedBranchName}`, "--"]);
       return;
     }
 
     // A bare `git checkout <name>` would restore a file with that name and discard its local edits.
-    throw new Error(`Branch "${trimmedBranchName}" was not found locally or on origin.`);
+    throw new Error(`Branch "${trimmedBranchName}" was not found locally or on ${remoteName}.`);
   }
 
   async getProjectBranchOverview(repoPath: string, baseBranch: string): Promise<ProjectGitBranchOverview> {
@@ -729,10 +731,11 @@ export class GitService {
       }
     }
 
+    const remoteName = (await this.getDefaultRemote(repoPath)) ?? "origin";
     let provider: ProjectGitBranchOverview["provider"] = "unknown";
     let webBaseUrl: string | null = null;
     try {
-      const remoteOutput = await git.remote(["get-url", "origin"]);
+      const remoteOutput = await git.remote(["get-url", remoteName]);
       const remote = parseGitRemoteToWebBase(String(remoteOutput ?? ""));
       provider = remote?.provider ?? "unknown";
       webBaseUrl = remote?.webBaseUrl ?? null;
@@ -777,7 +780,7 @@ export class GitService {
       const tracking = parseAheadBehind(track);
       branch.hasLocal = true;
       branch.upstream = upstream || null;
-      branch.hasRemote = branch.hasRemote || upstream.startsWith("origin/");
+      branch.hasRemote = branch.hasRemote || upstream.startsWith(`${remoteName}/`);
       branch.ahead = tracking.ahead;
       branch.behind = tracking.behind;
       branch.commitSha = commitSha || branch.commitSha;
@@ -788,15 +791,16 @@ export class GitService {
     try {
       const remoteRefs = await runGitRaw(git, [
         "for-each-ref",
-        "--format=%(refname:short)%09%(objectname:short)%09%(committerdate:iso8601)%09%(subject)",
-        "refs/remotes/origin",
+        "--format=%(refname)%09%(objectname:short)%09%(committerdate:iso8601)%09%(subject)",
+        `refs/remotes/${remoteName}`,
       ]);
+      const remoteRefPrefix = `refs/remotes/${remoteName}/`;
       for (const line of remoteRefs.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
-        const [remoteName = "", commitSha = "", updatedAt = "", subject = ""] = line.split("\t");
-        if (!remoteName || remoteName === "origin/HEAD") {
+        const [refName = "", commitSha = "", updatedAt = "", subject = ""] = line.split("\t");
+        const name = refName.startsWith(remoteRefPrefix) ? refName.slice(remoteRefPrefix.length) : "";
+        if (!name || name === "HEAD") {
           continue;
         }
-        const name = remoteName.replace(/^origin\//, "");
         const branch = ensureBranch(name);
         branch.hasRemote = true;
         branch.commitSha = branch.commitSha ?? commitSha ?? null;
@@ -842,7 +846,7 @@ export class GitService {
     const revParse = await git.raw(["rev-parse", "--git-common-dir"]);
     const gitDir = revParse.trim();
 
-    const baseBranch = await detectProjectBaseBranch(git, branchSummary.current);
+    const baseBranch = await detectProjectBaseBranch(git, branchSummary.current, (await this.getDefaultRemote(repoPath)) ?? "origin");
 
     return {
       repoPath,
@@ -928,9 +932,13 @@ export class GitService {
    */
   async resolveFreshBaseStartPoint(repoPath: string, baseBranch: string): Promise<string> {
     const base = assertRefArgument(baseBranch, "Base branch");
-    const remoteRef = `refs/remotes/origin/${base}`;
+    const remoteName = await this.getDefaultRemote(repoPath);
+    if (!remoteName) {
+      return base;
+    }
+    const remoteRef = `refs/remotes/${remoteName}/${base}`;
     try {
-      await runNetworkGit(repoPath, ["fetch", "--quiet", "--no-tags", "origin", `+refs/heads/${base}:${remoteRef}`], BASE_BRANCH_REFRESH_TIMEOUT_MS);
+      await runNetworkGit(repoPath, ["fetch", "--quiet", "--no-tags", remoteName, `+refs/heads/${base}:${remoteRef}`], BASE_BRANCH_REFRESH_TIMEOUT_MS);
     } catch {
       return base;
     }
@@ -1009,8 +1017,39 @@ export class GitService {
     return branches.all.includes(branchName);
   }
 
-  async hasRemoteBranch(repoPath: string, branchName: string): Promise<boolean> {
-    return runGitProbe(repoPath, ["show-ref", "--verify", "--quiet", `refs/remotes/origin/${branchName}`]);
+  /** Whether `<remote>/<branch>` exists locally; defaults to the repository's default remote. */
+  async hasRemoteBranch(repoPath: string, branchName: string, remoteName?: string): Promise<boolean> {
+    const remote = remoteName ?? (await this.getDefaultRemote(repoPath));
+    return remote ? runGitProbe(repoPath, ["show-ref", "--verify", "--quiet", `refs/remotes/${remote}/${branchName}`]) : false;
+  }
+
+  /** The remote that hosts base and target branches: `origin` when present, otherwise the first remote. */
+  async getDefaultRemote(repoPath: string): Promise<string | null> {
+    const remotes = (await runGitRaw(simpleGit(repoPath), ["remote"]))
+      .split(/\r?\n/)
+      .map((remote) => remote.trim())
+      .filter(Boolean);
+    return remotes.includes("origin") ? "origin" : (remotes[0] ?? null);
+  }
+
+  /**
+   * Resolves the remote a branch is pushed to like Git does: `branch.<name>.pushRemote`, then
+   * `remote.pushDefault`, then the branch's upstream remote, then the default remote. Fork setups
+   * that push to a personal remote therefore stop pushing to `origin`.
+   */
+  async getPushRemote(repoPath: string, branchName: string): Promise<string> {
+    const git = simpleGit(repoPath);
+    for (const key of [`branch.${branchName}.pushRemote`, "remote.pushDefault", `branch.${branchName}.remote`]) {
+      const value = (await runGitRaw(git, ["config", "--get", key]).catch(() => "")).trim();
+      if (value && value !== ".") {
+        return value;
+      }
+    }
+    const defaultRemote = await this.getDefaultRemote(repoPath);
+    if (!defaultRemote) {
+      throw new Error("This repository has no Git remote to push to.");
+    }
+    return defaultRemote;
   }
 
   /** Mirrors `git branch -d`: a branch is merged when its upstream, or HEAD without one, contains it. */
@@ -1101,7 +1140,8 @@ export class GitService {
     if (!(await this.hasLocalBranch(repoPath, trimmedBranchName))) {
       throw new Error(`Local branch "${trimmedBranchName}" was not found.`);
     }
-    await runNetworkGit(repoPath, setUpstream ? ["push", "-u", "origin", trimmedBranchName] : ["push", "origin", trimmedBranchName]);
+    const remoteName = await this.getPushRemote(repoPath, trimmedBranchName);
+    await runNetworkGit(repoPath, setUpstream ? ["push", "-u", remoteName, trimmedBranchName] : ["push", remoteName, trimmedBranchName]);
   }
 
   private async validateBranchName(repoPath: string, branchName: string): Promise<void> {
@@ -1231,8 +1271,9 @@ export class GitService {
       // Keep local-only and temporarily offline repositories usable with their existing refs.
     }
 
+    const remoteName = (await this.getDefaultRemote(worktreePath)) ?? "origin";
     let targetRef = "";
-    for (const candidate of [`refs/remotes/origin/${trimmedTargetBranch}`, `refs/heads/${trimmedTargetBranch}`]) {
+    for (const candidate of [`refs/remotes/${remoteName}/${trimmedTargetBranch}`, `refs/heads/${trimmedTargetBranch}`]) {
       try {
         const resolvedRef = (await runGitRaw(git, ["rev-parse", "--verify", "--quiet", candidate])).trim();
         if (resolvedRef) {
@@ -1244,7 +1285,7 @@ export class GitService {
       }
     }
     if (!targetRef) {
-      throw new Error(`Target branch "${trimmedTargetBranch}" was not found locally or on origin.`);
+      throw new Error(`Target branch "${trimmedTargetBranch}" was not found locally or on ${remoteName}.`);
     }
 
     const mergeBase = (await runGitRaw(git, ["merge-base", targetRef, "HEAD"])).trim();
@@ -1376,11 +1417,13 @@ export class GitService {
   }
 
   async publishBranch(worktreePath: string, branchName: string): Promise<{ branchName: string; remoteName: string }> {
-    await runNetworkGit(worktreePath, ["push", "-u", "origin", assertRefArgument(branchName)]);
+    const trimmedBranchName = assertRefArgument(branchName);
+    const remoteName = await this.getPushRemote(worktreePath, trimmedBranchName);
+    await runNetworkGit(worktreePath, ["push", "-u", remoteName, trimmedBranchName]);
 
     return {
       branchName,
-      remoteName: "origin",
+      remoteName,
     };
   }
 
@@ -1389,13 +1432,16 @@ export class GitService {
     const branches = new Set<string>();
 
     try {
-      const remoteRefs = await git.raw(["for-each-ref", "--format=%(refname:short)", "refs/remotes/origin"]);
+      const remoteName = (await this.getDefaultRemote(worktreePath)) ?? "origin";
+      const remoteRefPrefix = `refs/remotes/${remoteName}/`;
+      const remoteRefs = await git.raw(["for-each-ref", "--format=%(refname)", `refs/remotes/${remoteName}`]);
       for (const line of remoteRefs.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
-        if (line === "origin/HEAD") {
+        const name = line.startsWith(remoteRefPrefix) ? line.slice(remoteRefPrefix.length) : "";
+        if (!name || name === "HEAD") {
           continue;
         }
 
-        branches.add(line.replace(/^origin\//, ""));
+        branches.add(name);
       }
     } catch {
       // Fall back to local branches below.
@@ -1414,7 +1460,7 @@ export class GitService {
     return (await git.raw(["log", "-1", "--format=%s", assertRefArgument(branchName), "--"])).trim();
   }
 
-  /** Throws unless a new publish branch with this name can be created locally and on origin. */
+  /** Throws unless a new publish branch with this name can be created locally and on its push remote. */
   async assertPublishBranchAvailable(worktreePath: string, branchName: string): Promise<string> {
     const trimmedBranchName = branchName.trim();
     if (!trimmedBranchName) {
@@ -1427,11 +1473,12 @@ export class GitService {
     }
 
     // A bare pattern also matches slash-delimited tails, so `feature` would hit `refs/heads/team/feature`.
+    const remoteName = await this.getPushRemote(worktreePath, trimmedBranchName);
     const remoteHeads = (
-      await runNetworkGit(worktreePath, ["ls-remote", "--heads", "origin", `refs/heads/${trimmedBranchName}`])
+      await runNetworkGit(worktreePath, ["ls-remote", "--heads", remoteName, `refs/heads/${trimmedBranchName}`])
     ).trim();
     if (remoteHeads) {
-      throw new Error(`A remote branch named "${trimmedBranchName}" already exists on origin.`);
+      throw new Error(`A remote branch named "${trimmedBranchName}" already exists on ${remoteName}.`);
     }
 
     return trimmedBranchName;
@@ -1453,8 +1500,11 @@ export class GitService {
   ): Promise<{ url: string; mode: PublishMode; requestKind: PublishRequestKind }> {
     assertRefArgument(branchName);
     assertRefArgument(targetBranch, "Target branch");
-    const remote = await this.getParsedOriginRemote(worktreePath);
-    await runNetworkGit(worktreePath, ["push", "-u", "origin", branchName]);
+    const baseRemoteName = await this.getDefaultRemote(worktreePath);
+    const pushRemoteName = await this.getPushRemote(worktreePath, branchName);
+    const remote = baseRemoteName ? await this.getParsedRemote(worktreePath, baseRemoteName) : null;
+    await runNetworkGit(worktreePath, ["push", "-u", pushRemoteName, branchName]);
+    const headSelector = await this.getForkHeadSelector(worktreePath, branchName, remote, baseRemoteName, pushRemoteName);
 
     if (remote?.provider === "gitlab") {
       try {
@@ -1490,7 +1540,7 @@ export class GitService {
     try {
       const { stdout } = await execForgeCli(
         "gh",
-        ["pr", "create", "--base", targetBranch, "--head", branchName, "--title", title, "--body", body],
+        ["pr", "create", "--base", targetBranch, "--head", headSelector, "--title", title, "--body", body],
         worktreePath,
       );
 
@@ -1501,7 +1551,7 @@ export class GitService {
       };
     } catch (error) {
       if (isCommandMissingError(error)) {
-        const compareUrl = this.buildGithubCompareUrl(remote, branchName, targetBranch, title, body);
+        const compareUrl = this.buildGithubCompareUrl(remote, headSelector, targetBranch, title, body);
         if (compareUrl) {
           return {
             url: compareUrl,
@@ -1578,10 +1628,28 @@ export class GitService {
     return `${remote.webBaseUrl}/-/merge_requests/new?${params.toString()}`;
   }
 
-  private async getParsedOriginRemote(worktreePath: string): Promise<ParsedRemote | null> {
+  private async getParsedRemote(worktreePath: string, remoteName: string): Promise<ParsedRemote | null> {
     const git = simpleGit(worktreePath);
-    const remoteOutput = await git.remote(["get-url", "origin"]);
+    const remoteOutput = await git.remote(["get-url", remoteName]);
     return parseGitRemoteToWebBase(String(remoteOutput ?? ""));
+  }
+
+  /** GitHub needs `owner:branch` when the branch was pushed to a fork rather than the base repository. */
+  private async getForkHeadSelector(
+    worktreePath: string,
+    branchName: string,
+    baseRemote: ParsedRemote | null,
+    baseRemoteName: string | null,
+    pushRemoteName: string,
+  ): Promise<string> {
+    if (!baseRemote || baseRemote.provider !== "github" || !baseRemoteName || pushRemoteName === baseRemoteName) {
+      return branchName;
+    }
+    const pushRemote = await this.getParsedRemote(worktreePath, pushRemoteName).catch(() => null);
+    const githubOwner = (parsed: ParsedRemote | null) =>
+      parsed?.provider === "github" ? (new URL(parsed.webBaseUrl).pathname.split("/")[1] ?? "") : "";
+    const pushOwner = githubOwner(pushRemote);
+    return pushOwner && pushOwner !== githubOwner(baseRemote) ? `${pushOwner}:${branchName}` : branchName;
   }
 
   private getLegacyWorktreeRoot(repoPath: string): string {

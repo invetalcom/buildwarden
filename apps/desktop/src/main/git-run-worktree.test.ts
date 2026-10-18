@@ -139,6 +139,37 @@ describe("GitService run worktree lifecycle", () => {
   });
 });
 
+describe("GitService remote resolution", () => {
+  it("pushes to the configured push remote instead of origin", async () => {
+    const { root, repoPath, git } = await createRepository();
+    for (const name of ["origin", "fork"]) {
+      await simpleGit(root).raw(["init", "--bare", join(root, `${name}.git`)]);
+      await git.addRemote(name, join(root, `${name}.git`));
+    }
+    await git.addConfig("remote.pushDefault", "fork");
+    const service = new GitService();
+
+    expect(await service.getDefaultRemote(repoPath)).toBe("origin");
+    expect(await service.getPushRemote(repoPath, "main")).toBe("fork");
+    await expect(service.publishBranch(repoPath, "main")).resolves.toEqual({ branchName: "main", remoteName: "fork" });
+    expect(await service.hasRemoteBranch(repoPath, "main", "fork")).toBe(true);
+    expect(await service.hasRemoteBranch(repoPath, "main")).toBe(false);
+  });
+
+  it("uses the only remote when it is not named origin", async () => {
+    const { root, repoPath, git } = await createRepository();
+    await simpleGit(root).raw(["init", "--bare", join(root, "upstream.git")]);
+    await git.addRemote("upstream", join(root, "upstream.git"));
+    const service = new GitService();
+
+    await service.pushProjectBranch(repoPath, "main");
+
+    expect(await service.getDefaultRemote(repoPath)).toBe("upstream");
+    expect(await service.hasRemoteBranch(repoPath, "main")).toBe(true);
+    expect(await service.listTargetBranches(repoPath)).toEqual(["main"]);
+  });
+});
+
 describe("GitService fresh base start points", () => {
   it("starts from origin only when the local base is behind it", async () => {
     const { root, repoPath, git } = await createRepository();

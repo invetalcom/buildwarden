@@ -11077,7 +11077,8 @@ export class AppController
     branches: { previousCheckout: string | null; originalRunBranch: string; created: string },
   ): Promise<void> {
     try {
-      if (!branches.previousCheckout || (await this.gitService.hasRemoteBranch(run.worktreePath, branches.created))) {
+      const pushRemote = await this.gitService.getPushRemote(run.worktreePath, branches.created).catch(() => undefined);
+      if (!branches.previousCheckout || (await this.gitService.hasRemoteBranch(run.worktreePath, branches.created, pushRemote))) {
         return;
       }
       if (run.workspaceType === "worktree" && (await this.gitService.getCurrentBranch(repoPath).catch(() => "")) === branches.created) {
