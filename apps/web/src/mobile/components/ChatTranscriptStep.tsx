@@ -38,7 +38,7 @@ export const MobileChatStep = ({ step, active = false }: { step: ChatStepRecord;
   if (isUser) {
     return (
       <div className="flex justify-end px-3 py-1.5">
-        <div className="min-w-0 max-w-[86%] rounded-2xl rounded-br-md border border-[var(--ec-user-input-ring)] bg-[var(--ec-user-input-soft)] px-3 py-2">
+        <div className="min-w-0 w-[86%] rounded-2xl rounded-br-md border border-[var(--ec-user-input-ring)] bg-[var(--ec-user-input-soft)] px-3 py-2">
           {content ? <RichText>{content}</RichText> : null}
           <MobileStoredAttachments attachments={attachments} fallbackNames={attachmentNames} />
         </div>
