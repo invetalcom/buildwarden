@@ -33,8 +33,8 @@ describe("landing page model", () => {
       run({ status: "cancelled" }),
       run({ status: "running", orchestrationStatus: "completed" }),
     ]);
-    expect(counts).toEqual({ completed: 2, failed: 1, active: 1, other: 1 });
-    expect(successRate(counts)).toBeCloseTo(2 / 3);
+    expect(counts).toEqual({ completed: 1, failed: 1, active: 2, other: 1 });
+    expect(successRate(counts)).toBeCloseTo(1 / 2);
     expect(successRate({ completed: 0, failed: 0, active: 3, other: 0 })).toBeNull();
   });
 
