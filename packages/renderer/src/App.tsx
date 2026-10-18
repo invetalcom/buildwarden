@@ -2583,7 +2583,12 @@ export const App = () => {
       if (nextProjectId) {
         setRunProjectId(nextProjectId);
       }
-      setRunDetail(runDetailsByIdRef.current[runId] ?? null);
+      // Panes render from runDetailsById, so seed it too when reopening a closed pane's run.
+      const cachedDetail = getCachedRunDetail(runId);
+      if (cachedDetail) {
+        setRunDetailsById((current) => (current[runId] ? current : { ...current, [runId]: cachedDetail }));
+      }
+      setRunDetail(cachedDetail);
 
       if (!buildwarden) {
         return;
@@ -2596,7 +2601,7 @@ export const App = () => {
       // Outside the queue: the diff summary can be slow and must not hold back later navigation.
       await loadRunDetailForRun(runId);
     },
-    [buildwarden, enqueueNavigationEffects, loadRunDetailForRun, loadSnapshot, snapshot.projects],
+    [buildwarden, enqueueNavigationEffects, getCachedRunDetail, loadRunDetailForRun, loadSnapshot, snapshot.projects],
   );
 
   const focusRunPane = useCallback(
