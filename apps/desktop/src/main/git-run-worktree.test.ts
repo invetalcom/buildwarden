@@ -70,6 +70,22 @@ describe("GitService run worktree lifecycle", () => {
     expect(existsSync(join(root, "worktrees", ".buildwarden-worktrees", "repo", "project-run-1"))).toBe(false);
   });
 
+  it("reuses its own worktree but never a leftover folder at the worktree path", async () => {
+    const { root, repoPath } = await createRepository();
+    const service = new GitService();
+    const worktreeRoot = join(root, "worktrees");
+    const workspace = await service.createWorktreeForRun(repoPath, "Project", "run-1", "main", worktreeRoot);
+
+    await expect(service.createWorktreeForRun(repoPath, "Project", "run-1", "main", worktreeRoot)).resolves.toEqual(workspace);
+
+    const leftoverPath = join(worktreeRoot, ".buildwarden-worktrees", "repo", "project-run-2");
+    await mkdir(leftoverPath, { recursive: true });
+    await writeFile(join(leftoverPath, "stale.txt"), "stale\n", "utf8");
+
+    await expect(service.createWorktreeForRun(repoPath, "Project", "run-2", "main", worktreeRoot)).rejects.toThrow("already exists");
+    expect(await readFile(join(leftoverPath, "stale.txt"), "utf8")).toBe("stale\n");
+  });
+
   it("never commits the shared dependency link of a run worktree", async () => {
     const { root, repoPath } = await createRepository();
     await mkdir(join(repoPath, "node_modules"));

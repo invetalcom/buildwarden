@@ -887,6 +887,15 @@ export class GitService {
     const worktreePath = join(worktreeRoot, branchName);
 
     if (existsSync(worktreePath)) {
+      // Reuse only this run's own registered worktree; a leftover folder is not a usable workspace.
+      const isOwnWorktree =
+        (await this.isWorktreeRegistered(repoPath, worktreePath)) &&
+        (await simpleGit(worktreePath).branch(["--show-current"]).then((summary) => summary.current === branchName, () => false));
+      if (!isOwnWorktree) {
+        throw new Error(
+          `A folder already exists at ${worktreePath} but is not the worktree for branch "${branchName}". Remove the folder and try again.`,
+        );
+      }
       if (shareDependencies) await ensureWorktreeDependencyLinks(repoPath, worktreePath);
       return { branchName, worktreePath };
     }
