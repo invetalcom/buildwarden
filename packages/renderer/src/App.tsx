@@ -550,7 +550,9 @@ export const App = () => {
     }
     snapshotRefreshTimerRef.current = window.setTimeout(() => {
       snapshotRefreshTimerRef.current = null;
-      void loadSnapshot();
+      loadSnapshot().catch((caught: unknown) => {
+        setError(caught instanceof Error ? caught.message : "Unexpected error");
+      });
     }, 300);
   }, [loadSnapshot]);
 
