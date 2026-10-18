@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, MoreHorizontal, Plus, Tag } from "lucide-react";
-import { DEFAULT_RUN_SECTION_COLOR, UNCATEGORIZED_RUN_SECTION_ID, type AppSnapshot, type RunOrganizationSnapshot } from "@buildwarden/shared";
+import { DEFAULT_RUN_SECTION_COLOR, UNCATEGORIZED_RUN_SECTION_ID, type AppSnapshot, type RunOrganizationSnapshot, type SidebarRunEntrySize } from "@buildwarden/shared";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
@@ -14,6 +14,11 @@ import { SidebarRunViewFilter } from "./SidebarRunViewFilter";
 import { SidebarRunFilterMenu } from "./SidebarRunFilterMenu";
 
 const PREFERENCE_KEY = "buildwarden:sidebar-run-sections";
+const SECTION_HEADER_STYLES: Record<SidebarRunEntrySize, { button: string; icon: string; dot: string; count: string }> = {
+  small: { button: "h-6 gap-1 px-1 text-[11px]", icon: "size-3", dot: "size-1.5", count: "text-[9px]" },
+  medium: { button: "h-7 gap-1.5 px-1.5 text-xs", icon: "size-3.5", dot: "size-2", count: "text-[10px]" },
+  large: { button: "h-8 gap-2 px-2 text-[13px]", icon: "size-4", dot: "size-2.5", count: "text-[11px]" },
+};
 type Preferences = { view: SidebarRunView; projectId: string; tag: string; collapsed: string[] };
 const readPreferences = (): Preferences => {
   try {
@@ -37,6 +42,7 @@ export interface SidebarRunSectionsProps {
   groupRunsByProject: boolean;
   uncategorizedFirst?: boolean;
   runRowGapClassName?: string;
+  runEntrySize?: SidebarRunEntrySize;
   onSelectProject?: (projectId: string) => void;
   expandedRunIds: ReadonlySet<string>;
   highlightedRunId: string | null;
@@ -47,7 +53,8 @@ export interface SidebarRunSectionsProps {
 
 export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZATION, onOrganizationChange,
   recentRunDays, hideActiveRuns, groupRunsByProject, runRowGapClassName = "space-y-0.5", onSelectProject, expandedRunIds, highlightedRunId, organizeRunId,
-  onCloseOrganizer, renderRun, uncategorizedFirst = false }: SidebarRunSectionsProps) => {
+  onCloseOrganizer, renderRun, uncategorizedFirst = false, runEntrySize = "medium" }: SidebarRunSectionsProps) => {
+  const headerStyles = SECTION_HEADER_STYLES[runEntrySize];
   const client = useBuildWardenClient();
   const canOrganize = client.capabilities.runListVisibilityMutations && organization !== EMPTY_RUN_ORGANIZATION;
   const [preferences, setPreferences] = useState(readPreferences);
@@ -156,15 +163,15 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
         onDragLeave={(event) => { if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) setDropTarget(null); }}
         onDrop={(event) => dropRun(event, section.id, section.name)}>
         <div className="flex items-center">
-          <button type="button" aria-expanded={!collapsed} className="flex h-7 min-w-0 flex-1 items-center gap-1.5 px-1.5 text-left text-xs text-[var(--ec-text)]"
+          <button type="button" aria-expanded={!collapsed} className={cn("flex min-w-0 flex-1 items-center text-left text-[var(--ec-text)]", headerStyles.button)}
             onClick={() => updatePreferences({ collapsed: collapsed ? preferences.collapsed.filter((id) => id !== section.id) : [...preferences.collapsed, section.id] })}>
-            {collapsed ? <ChevronRight className="size-3 shrink-0" /> : <ChevronDown className="size-3 shrink-0" />}
-            <span aria-hidden="true" data-section-color={section.color} className="size-2 shrink-0 rounded-full ring-1 ring-inset ring-black/15" style={{ backgroundColor: section.color }} />
-            <span className="min-w-0 flex-1 truncate font-semibold">{section.name}</span><span className="font-mono text-[10px] text-[var(--ec-muted)]">{section.count}</span>
+            {collapsed ? <ChevronRight className={cn("shrink-0", headerStyles.icon)} /> : <ChevronDown className={cn("shrink-0", headerStyles.icon)} />}
+            <span aria-hidden="true" data-section-color={section.color} className={cn("shrink-0 rounded-full ring-1 ring-inset ring-black/15", headerStyles.dot)} style={{ backgroundColor: section.color }} />
+            <span className="min-w-0 flex-1 truncate font-semibold">{section.name}</span><span className={cn("font-mono text-[var(--ec-muted)]", headerStyles.count)}>{section.count}</span>
           </button>
           {canOrganize && <button type="button" ref={menu === section.id ? menuAnchor : undefined}
             aria-label={`Manage ${section.name} section`} aria-expanded={menu === section.id} disabled={busy}
-            className="rounded p-1 text-[var(--ec-muted)] hover:bg-[var(--ec-hover)]" onClick={() => setMenu(menu === section.id ? null : section.id)}><MoreHorizontal className="size-3.5" /></button>}
+            className="rounded p-1 text-[var(--ec-muted)] hover:bg-[var(--ec-hover)]" onClick={() => setMenu(menu === section.id ? null : section.id)}><MoreHorizontal className={headerStyles.icon} /></button>}
         </div>
         {!collapsed && (section.count === 0 ? <p className="px-2 py-2 text-[11px] text-[var(--ec-muted)]">
           {preferences.view === "all" && !tag ? hideActiveRuns ? "No inactive runs." : "No runs." : "No matching runs."}

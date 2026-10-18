@@ -724,6 +724,7 @@ const SidebarComponent = ({
         <SidebarRunSections projects={projects} organization={runOrganization} onOrganizationChange={onRunOrganizationChange}
           recentRunDays={recentRunDays} hideActiveRuns={hideActiveRuns} groupRunsByProject={groupRunsByProject}
           uncategorizedFirst={uncategorizedFirst}
+          runEntrySize={runEntrySize}
           runRowGapClassName={runEntryStyles.rowGap} onSelectProject={(projectId) => selectProjectFeature(projectId, "overview")}
           expandedRunIds={expandedRunIds} highlightedRunId={highlightedRunId} organizeRunId={organizeRunId}
           onCloseOrganizer={() => setOrganizeRunId(null)} renderRun={renderRecentRunEntry} />
