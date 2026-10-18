@@ -5,12 +5,15 @@
 .response-media-text > :last-child { margin-bottom: 0; }
 .response-media-text > p + p { margin-top: 4px; }
 .response-markdown li > .response-media-row { margin-top: 4px; margin-bottom: 10px; }
-.response-image-button { display: inline-block; max-width: 100%; margin: 8px 0; cursor: zoom-in; vertical-align: top; }
-.response-image-button img { display: block; max-height: 320px; max-width: 100%; border: 1px solid var(--ec-border); border-radius: 8px; object-fit: contain; background: var(--ec-input); }
+/* Reserve the preview frame before lazy images load and after virtual rows
+   remount. Intrinsic image sizing otherwise changes history height mid-scroll. */
+.response-image-button { display: inline-block; width: 480px; max-width: 100%; aspect-ratio: 3 / 2; max-height: 320px; margin: 8px 0; cursor: zoom-in; vertical-align: top; overflow: hidden; }
+.response-image-button img { display: block; width: 100%; height: 100%; max-height: 320px; max-width: 100%; border: 1px solid var(--ec-border); border-radius: 8px; object-fit: contain; background: var(--ec-input); }
 .response-image-button:focus-visible { outline: 2px solid var(--ec-accent); outline-offset: 3px; }
 .response-media-image .response-image-button { margin: 0; width: 100%; }
 .response-media-image img { width: 100%; max-height: 320px; }
 .response-image-unavailable { display: inline-block; max-width: 100%; padding: 6px; border: 1px solid var(--ec-border); border-radius: 6px; font-size: 12px; color: var(--ec-muted); overflow-wrap: anywhere; }
+.response-image-button.response-image-unavailable { cursor: default; }
 @container (max-width: 640px) {
   .response-media-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .response-media-image { width: 100%; max-width: 480px; }

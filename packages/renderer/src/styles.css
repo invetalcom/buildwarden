@@ -974,6 +974,8 @@ body[data-theme="light"] input[type="checkbox"] {
 }
 
 .agent-worklog--virtualized {
+  /* TanStack owns scroll corrections as measured rows replace estimates. */
+  overflow-anchor: none;
   position: relative;
   contain: layout paint style;
 }

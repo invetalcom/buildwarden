@@ -4,11 +4,32 @@ import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 import type { DesktopApi } from "@buildwarden/shared";
 import { ActivityRichText } from "./activity-rich-text";
+import { ResponseImage } from "./response-image";
 import * as preparation from "./response-markdown-preparation";
 import { BuildWardenClientProvider } from "../../lib/buildwarden-client";
 import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-core";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+
+it("retains the reserved preview frame on failure and recovers when its source changes", async () => {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<ResponseImage src="https://example.com/first.png" alt="Preview" />));
+    await act(async () => container.querySelector("img")?.dispatchEvent(new Event("error")));
+    const fallback = container.querySelector('[role="img"]');
+    expect(fallback?.classList.contains("response-image-button")).toBe(true);
+    expect(fallback?.textContent).toContain("image unavailable");
+    expect(container.querySelector("button")).toBeNull();
+
+    await act(async () => root.render(<ResponseImage src="https://example.com/second.png" alt="Preview" />));
+    expect(container.querySelector("img")?.getAttribute("src")).toBe("https://example.com/second.png");
+    expect(container.querySelector("button.response-image-button")).not.toBeNull();
+    expect(container.querySelector('[role="img"]')).toBeNull();
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
 
 it("does not reparse unchanged image responses on composer updates but renders new output", async () => {
   const prepare = vi.spyOn(preparation, "prepareResponseMarkdown");
