@@ -1614,21 +1614,6 @@ export interface RunStepRecord {
   createdAt: string;
 }
 
-/** Includes streamed steps before the next full detail refresh. */
-export const runHasBrowserActivity = (detail: Pick<RunDetail, "hasBrowserActivity" | "steps">): boolean =>
-  detail.hasBrowserActivity === true || detail.steps.some((step) => {
-    if (step.eventType !== "tool-call" && step.eventType !== "tool-result") return false;
-    try {
-      const metadata: unknown = JSON.parse(step.metadataJson);
-      if (!metadata || typeof metadata !== "object") return false;
-      const { toolName, browserRunId } = metadata as Record<string, unknown>;
-      return browserRunId === step.runId || (typeof toolName === "string" &&
-        (toolName === "buildwarden_browser" || toolName.endsWith("__buildwarden_browser")));
-    } catch {
-      return false;
-    }
-  });
-
 /** Truncated run step for compact consumers such as orchestration coordinators. */
 export interface RunStepPreview {
   eventType: RunEventType;
@@ -1981,8 +1966,6 @@ export interface ProjectSnapshot {
 }
 
 export interface RunDetail {
-  /** Browser tool activity across the full history, including unloaded pages. */
-  hasBrowserActivity?: boolean;
   workspaceSetup?: RunWorkspaceSetup | null;
   run: RunRecord;
   steps: RunStepRecord[];
@@ -3886,6 +3869,10 @@ export interface GetRunBrowserElementCaptureInput {
 }
 
 export interface RunBrowserState {
+  /** Browser work spans tool calls until finish or the executing turn ends. */
+  previewSessionActive?: boolean;
+  /** Set only while a browser tool is executing, independent of browser ownership. */
+  activeAction?: { callId: string; action: string } | null;
   /** Transient host state; absent on older hosts. */
   owner?: "unclaimed" | "agent" | "human";
   runId: string;
@@ -3896,6 +3883,12 @@ export interface RunBrowserState {
   canGoForward: boolean;
   inspecting: boolean;
   viewport: RunBrowserViewport;
+}
+
+export interface RunBrowserPreview {
+  state: RunBrowserState;
+  /** Last successfully captured host-page JPEG; retained while the next frame loads. */
+  thumbnail: { dataBase64: string; mimeType: "image/jpeg" } | null;
 }
 
 export interface RunBrowserLocatorSegment {
@@ -4186,6 +4179,7 @@ export interface DesktopApi {
   /** Open an arbitrary folder (e.g. a project's repo path) in the given IDE (must be configured under {@link APP_SETTING_KEYS.idePaths}). */
   openFolderInIde(folderPath: string, ideKind: SupportedIdeKind): Promise<void>;
   ensureRunBrowser(input: EnsureRunBrowserInput): Promise<RunBrowserState>;
+  getRunBrowserPreview(runId: string): Promise<RunBrowserPreview | null>;
   navigateRunBrowser(input: NavigateRunBrowserInput): Promise<void>;
   runBrowserAction(input: RunBrowserActionInput): Promise<void>;
   setRunBrowserViewport(input: SetRunBrowserViewportInput): Promise<void>;
@@ -4600,6 +4594,7 @@ export type RemoteOperationMap = {
   runTerminalResize: DesktopApi["runTerminalResize"];
   runTerminalKill: DesktopApi["runTerminalKill"];
   ensureRunBrowser: DesktopApi["ensureRunBrowser"];
+  getRunBrowserPreview: DesktopApi["getRunBrowserPreview"];
   navigateRunBrowser: DesktopApi["navigateRunBrowser"];
   runBrowserAction: DesktopApi["runBrowserAction"];
   setRunBrowserViewport: DesktopApi["setRunBrowserViewport"];
@@ -4892,6 +4887,7 @@ export const IPC_CHANNELS = {
   openRunWorktreeInIde: "buildwarden:open-run-worktree-in-ide",
   openFolderInIde: "buildwarden:open-folder-in-ide",
   ensureRunBrowser: "buildwarden:ensure-run-browser",
+  getRunBrowserPreview: "buildwarden:get-run-browser-preview",
   navigateRunBrowser: "buildwarden:navigate-run-browser",
   runBrowserAction: "buildwarden:run-browser-action",
   setRunBrowserViewport: "buildwarden:set-run-browser-viewport",

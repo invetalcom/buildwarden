@@ -1220,6 +1220,7 @@ export class AppController
       | "revokeRemoteAccessSession"
       | "onRunEvent"
       | "ensureRunBrowser"
+      | "getRunBrowserPreview"
       | "navigateRunBrowser"
       | "runBrowserAction"
       | "setRunBrowserViewport"
@@ -7065,7 +7066,6 @@ export class AppController
     return {
       run,
       steps: hydrateResponseImageSteps(workspacePath, history.steps),
-      hasBrowserActivity: this.db.hasRunBrowserActivity(runId),
       historyPage: history.page,
       notes: this.db.listRunNotes(runId),
       workspaceSetup: this.db.getRunWorkspaceSetup(runId),

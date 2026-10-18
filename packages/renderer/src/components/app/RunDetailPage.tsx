@@ -56,7 +56,7 @@ import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
 import { RunComposer } from "./RunComposer";
 import { RunChatPanel } from "./RunChatPanel";
 import { RunEmbeddedBrowser } from "./RunEmbeddedBrowser";
-import { RunBrowserLaunchButton } from "./RunBrowserLaunchButton";
+import { RunBrowserPreviewTile } from "./RunBrowserPreviewTile";
 import { BrowserElementAttachmentPreview } from "./BrowserElementAttachmentPreview";
 import { RunActivityTimeline } from "./RunActivityTimeline";
 import { RunNotesPanel } from "./RunNoteCard";
@@ -1421,11 +1421,11 @@ export const RunDetailPage = ({
             className="relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-[var(--ec-border)]"
             style={activityPaneStyle}
           >
-            <RunBrowserLaunchButton detail={runDetail} onOpen={() => {
+            {activityContent}
+            <RunBrowserPreviewTile key={runDetail.run.id} runId={runDetail.run.id} active={runDetail.run.status === "running"} onOpen={() => {
               if (!showBrowser) onTogglePanel("browser");
               setActiveSecondaryTab("browser");
             }} />
-            {activityContent}
             {runResultDock}
           </div>
         ) : null}

@@ -154,15 +154,10 @@ describe("RunDetailScreen run chat", () => {
     const container = document.createElement("div"); document.body.append(container);
     const root = createRoot(container); mountedRoots.push({ root, container });
     const render = (segment: "browser" | "activity") => root.render(<BuildWardenClientProvider client={client}><MobileAppProvider value={value}><RunDetailScreen runId={firstRun.id} segment={segment} /></MobileAppProvider></BuildWardenClientProvider>);
-    await act(async () => render("browser"));
+    await act(async () => render("activity"));
     expect(client.ensureRunBrowser).not.toHaveBeenCalled();
     expect(container.textContent).not.toContain("Browser");
-    await act(async () => {
-      runListeners.forEach((listener) => listener({
-        runId: firstRun.id, type: "tool-call", title: "Browser: open", content: "{}", createdAt: firstRun.createdAt,
-        step: { id: "browser-call", runId: firstRun.id, eventType: "tool-call", title: "Browser: open", content: "{}", metadataJson: JSON.stringify({ toolName: "buildwarden_browser" }), createdAt: firstRun.createdAt },
-      }));
-    });
+    await act(async () => render("browser"));
     expect(client.ensureRunBrowser).toHaveBeenCalledWith(expect.objectContaining({ runId: firstRun.id }));
     expect(container.textContent).toContain("Agent · Take control");
     await act(async () => { listeners.forEach((listener) => listener({ type: "selection-ready", runId: firstRun.id, captureId: capture.id } as RunBrowserEvent)); });

@@ -8,6 +8,7 @@ import type {
   RunBrowserElementCapture,
   RunBrowserInputEnvelope,
   RunBrowserState,
+  RunBrowserPreview,
   RunBrowserViewport,
   SetRunBrowserDesktopSurfaceInput,
   SetRunBrowserViewportInput,
@@ -44,6 +45,9 @@ type HostBrowserSession = {
   frameSequence: number;
   owner: "unclaimed" | "agent" | "human";
   controlGeneration: number;
+  preview?: { url: string; capturedAt: number; thumbnail: RunBrowserPreview["thumbnail"] };
+  previewCapture?: Promise<void>;
+  previewAttempt?: { url: string; startedAt: number };
 };
 
 export interface HostBrowserServiceOptions {
@@ -110,12 +114,18 @@ export class HostBrowserService {
   private readonly activeAgents = new Set<string>();
   private readonly agentEpochs = new Map<string, number>();
   private readonly agentCalls = new Set<string>();
+  private readonly browserActions = new Map<string, { callId: string; action: string }>();
+  private readonly previewSessions = new Set<string>();
   private readonly agentInputs = new Set<string>();
 
   setAgentActive(runId: string, active: boolean): void {
+    this.previewSessions.delete(runId);
     this.agentEpochs.set(runId, (this.agentEpochs.get(runId) ?? 0) + 1);
     if (active) this.activeAgents.add(runId);
-    else this.activeAgents.delete(runId);
+    else {
+      this.activeAgents.delete(runId);
+      this.browserActions.delete(runId);
+    }
     const session = this.sessions.get(runId);
     if (!session) return;
     if (active) this.cancelIdleDisposal(session);
@@ -145,6 +155,16 @@ export class HostBrowserService {
         const existing = this.sessions.get(runId);
         return result(true, JSON.stringify(existing ? this.stateFor(existing) : { open: false }));
       }
+      if (action === "finish") {
+        this.previewSessions.delete(runId);
+        const session = this.sessions.get(runId);
+        if (session?.owner === "agent") session.owner = "unclaimed";
+        return result(true, "Browser preview session finished. The page remains open for inspection.");
+      }
+      this.previewSessions.add(runId);
+      this.browserActions.set(runId, { callId, action });
+      const existing = this.sessions.get(runId);
+      if (existing) this.emitState(existing);
       if (action === "open" && !this.sessions.has(runId)) {
         if (typeof args.url !== "string") throw new Error("open requires a URL.");
         await this.ensure({ runId, initialUrl: args.url, viewport: { width: 1100, height: 720 } });
@@ -199,7 +219,46 @@ export class HostBrowserService {
       return result(false, error instanceof Error ? error.message : String(error));
     } finally {
       this.agentCalls.delete(runId);
+      this.browserActions.delete(runId);
+      const session = this.sessions.get(runId);
+      if (session) this.emitState(session);
     }
+  }
+
+  /** Read-only: observing activity never creates, navigates, or takes over a browser. */
+  async getPreview(runId: string): Promise<RunBrowserPreview | null> {
+    const session = this.sessions.get(runId);
+    if (!session || !this.hasPreviewSession(session)) return null;
+    const url = session.view.webContents.getURL();
+    if ((!session.previewAttempt || session.previewAttempt.url !== url || Date.now() - session.previewAttempt.startedAt >= 1000) && !session.previewCapture) {
+      session.previewAttempt = { url, startedAt: Date.now() };
+      session.previewCapture = (async () => {
+        try {
+          const source = await this.capturePage(session);
+          const size = source.getSize();
+          if (size.width < 1 || size.height < 1 || session.view.webContents.isDestroyed() || session.view.webContents.getURL() !== url) return;
+          const scale = Math.min(1, 240 / size.width, 160 / size.height);
+          const image = source.resize({ width: Math.max(1, Math.round(size.width * scale)), height: Math.max(1, Math.round(size.height * scale)), quality: "good" });
+          const jpeg = image.toJPEG(55);
+          if (jpeg.length <= 40_000) session.preview = { url, capturedAt: Date.now(), thumbnail: { mimeType: "image/jpeg", dataBase64: jpeg.toString("base64") } };
+        } catch {
+          // Navigation or a failed capture must not replace the last good frame.
+        }
+      })().finally(() => { session.previewCapture = undefined; });
+    }
+    // Return activity immediately; a slow/unpainted page must not block the indicator.
+    // The next poll picks up the independently captured thumbnail.
+    if (this.sessions.get(runId) !== session || !this.hasPreviewSession(session)) return null;
+    return { state: this.stateFor(session), thumbnail: session.preview?.thumbnail ?? null };
+  }
+
+  private hasPreviewSession(session: HostBrowserSession): boolean {
+    return this.activeAgents.has(session.runId) && this.previewSessions.has(session.runId);
+  }
+
+  private activeBrowserAction(session: HostBrowserSession): RunBrowserState["activeAction"] {
+    return this.activeAgents.has(session.runId) && session.owner !== "human"
+      ? this.browserActions.get(session.runId) ?? null : null;
   }
 
   private takeHumanControl(session: HostBrowserSession): void {
@@ -443,6 +502,8 @@ export class HostBrowserService {
   }
 
   disposeRun(runId: string): void {
+    this.previewSessions.delete(runId);
+    this.browserActions.delete(runId);
     this.activeAgents.delete(runId);
     this.agentEpochs.delete(runId);
     this.pendingRemoteSubscribers.delete(runId);
@@ -451,6 +512,8 @@ export class HostBrowserService {
   }
 
   disposeAll(): void {
+    this.previewSessions.clear();
+    this.browserActions.clear();
     this.activeAgents.clear();
     this.agentEpochs.clear();
     for (const session of [...this.sessions.values()]) {
@@ -547,6 +610,8 @@ export class HostBrowserService {
       canGoForward: contents.navigationHistory.canGoForward(),
       inspecting: session.inspecting,
       owner: session.owner,
+      activeAction: this.activeBrowserAction(session),
+      previewSessionActive: this.hasPreviewSession(session),
       viewport: session.viewport,
     };
   }
@@ -732,6 +797,7 @@ export class HostBrowserService {
   }
 
   private disposeSession(session: HostBrowserSession): void {
+    this.previewSessions.delete(session.runId);
     this.cancelIdleDisposal(session);
     this.stopRemoteFrames(session);
     session.inspector?.dispose();
