@@ -122,4 +122,48 @@ describe("project task run actions", () => {
     expect(launchDialog?.querySelector("#launch-task-title")?.textContent).toBe("Second task");
     expect(launchDialog?.querySelector("textarea")?.value).toBe("Full prompt for Second task");
   });
+
+  it("generates from the full task prompt when the launch draft is cleared", async () => {
+    const task: ProjectTaskRecord = {
+      ...inProgressTask, id: "task-c", title: "Long task", prompt: "Full long prompt", attachments: [], status: "open", runId: null,
+    };
+    const generateProjectTaskRunPrompt = vi.fn(async () => "Generated prompt");
+    const client = createElectronBuildWardenClient({
+      getProjectTask: vi.fn(async () => task),
+      generateProjectTaskRunPrompt,
+    } as unknown as DesktopApi);
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => root?.render(
+      <BuildWardenClientProvider client={client}>
+        <ProjectTasksTab
+          projectId="project-1"
+          tasks={[{ ...toTaskSummary(task), prompt: "Preview", promptTruncated: true }]}
+          modelOptions={[{ id: "model-1", label: "GPT-5", modelId: "gpt-5", providerType: "ai-sdk", providerFamily: "openai" }]}
+          defaultTaskModelId="model-1"
+          busy={false}
+          onCreateTask={vi.fn()}
+          onUpdateTask={vi.fn()}
+          onDeleteTask={vi.fn()}
+          onStartTask={vi.fn()}
+          onOpenRun={vi.fn()}
+        />
+      </BuildWardenClientProvider>,
+    ));
+
+    const buttonWithText = (text: string) =>
+      [...(container?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.textContent?.trim() === text);
+    await act(async () => buttonWithText("Start run")?.click());
+    const draft = container.querySelector<HTMLTextAreaElement>('[role="dialog"][aria-labelledby="launch-task-title"] textarea');
+    expect(draft?.value).toBe("Full long prompt");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(draft, "");
+      draft?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => buttonWithText("Generate prompt")?.click());
+
+    expect(generateProjectTaskRunPrompt).toHaveBeenCalledWith(expect.objectContaining({ notes: "Full long prompt" }));
+  });
 });

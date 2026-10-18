@@ -306,6 +306,8 @@ export const ProjectTasksTab = ({
   const [taskModelById, setTaskModelById] = useTaskModelSelections(tasks, modelOptions, defaultTaskModelId);
   const [launchTaskId, setLaunchTaskId] = useState<string | null>(null);
   const [launchPromptDraft, setLaunchPromptDraft] = useState("");
+  // The full prompt loaded for launch; board summaries only carry a preview.
+  const [launchSourcePrompt, setLaunchSourcePrompt] = useState("");
   const launchRequestRef = useRef(0);
   const [launchGenerateBusy, setLaunchGenerateBusy] = useState(false);
   const [launchStartBusy, setLaunchStartBusy] = useState(false);
@@ -550,6 +552,7 @@ export const ProjectTasksTab = ({
     // A later launch click owns the dialog, even if this lookup finishes last.
     if (prompt === undefined || request !== launchRequestRef.current) return;
     setLaunchTaskId(task.id);
+    setLaunchSourcePrompt(prompt);
     setLaunchPromptDraft(prompt);
   };
 
@@ -562,7 +565,7 @@ export const ProjectTasksTab = ({
       setLaunchPromptDraft(await buildwarden.generateProjectTaskRunPrompt({
         projectId,
         title: launchTask.title,
-        notes: launchPromptDraft.trim() || launchTask.prompt,
+        notes: launchPromptDraft.trim() || launchSourcePrompt,
         modelId,
       }));
     } catch (error) {
