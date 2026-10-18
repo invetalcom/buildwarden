@@ -435,6 +435,14 @@ const realpathOfNearestExisting = async (target: string): Promise<string> => {
       if (!isMissingPathError(error) || parent === current) {
         throw error;
       }
+      // realpath also fails with ENOENT for a link whose target is missing; writing would follow it.
+      const entry = await lstat(current).catch((lstatError: unknown) => {
+        if (isMissingPathError(lstatError)) return null;
+        throw lstatError;
+      });
+      if (entry) {
+        throw new Error(`Path goes through a broken link and cannot be verified: ${current}`);
+      }
       missingSegments.push(basename(current));
       current = parent;
     }

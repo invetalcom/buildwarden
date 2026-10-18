@@ -44,6 +44,43 @@ describe("run tool workspace containment", () => {
     await expect(readFile(join(outsidePath, "new.txt"), "utf8")).rejects.toThrow();
   });
 
+  it("refuses to write below a directory link whose target does not exist yet", async () => {
+    const worktreePath = await makeTempDir();
+    const outsidePath = await makeTempDir();
+    const missingTarget = join(outsidePath, "missing");
+    await symlink(missingTarget, join(worktreePath, "dangling-dir"), "junction");
+    const tools = createRunToolContext(worktreePath);
+
+    const writeResult = await tools.executeTool({
+      id: "write-dangling-dir",
+      name: "write_file",
+      arguments: { path: "dangling-dir/new.txt", content: "escaped\n" },
+    });
+
+    expect(writeResult.ok).toBe(false);
+    expect(writeResult.content).toContain("broken link");
+    await expect(readFile(join(missingTarget, "new.txt"), "utf8")).rejects.toThrow();
+  });
+
+  it("refuses to write through a link whose target does not exist yet", async () => {
+    const worktreePath = await makeTempDir();
+    const outsidePath = await makeTempDir();
+    const outsideFile = join(outsidePath, "authorized_keys");
+    try {
+      await symlink(outsideFile, join(worktreePath, "dangling"), "file");
+    } catch (error) {
+      // Windows only allows file symlinks with Developer Mode or elevation; CI on Linux covers this case.
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return;
+      throw error;
+    }
+    const tools = createRunToolContext(worktreePath);
+
+    const writeResult = await tools.executeTool({ id: "write-dangling", name: "write_file", arguments: { path: "dangling", content: "escaped\n" } });
+
+    expect(writeResult.ok).toBe(false);
+    await expect(readFile(outsideFile, "utf8")).rejects.toThrow();
+  });
+
   it("allows reading but not writing through the shared node_modules link", async () => {
     const worktreePath = await makeTempDir();
     const sharedModules = await makeTempDir();
