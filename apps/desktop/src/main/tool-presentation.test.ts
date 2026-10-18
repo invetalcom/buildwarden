@@ -2,6 +2,29 @@ import { describe, expect, it } from "vitest";
 import { presentToolResult, toolPresentation } from "@buildwarden/shared";
 
 describe("MCP presentation", () => {
+  it("preserves ordinary data fields in structured results", () => {
+    const structuredContent = { data: { status: "ready", data: "ordinary text" }, blob: "business field" };
+    expect(JSON.parse(presentToolResult({ content: [], structuredContent }).text)).toEqual(structuredContent);
+  });
+
+  it("omits binary resource, audio and nested image payloads by content shape", () => {
+    const binary = "aGVsbG8=";
+    const result = presentToolResult({ content: [
+      { type: "resource", resource: { uri: "file:///report.pdf", mimeType: "application/pdf", blob: binary } },
+      { type: "audio", mimeType: "audio/wav", data: binary },
+      { type: "resource", resource: { uri: "file:///readme.txt", text: "Readable resource" } },
+    ] });
+    expect(result.text).not.toContain(binary);
+    expect(result.text).toContain("[blob omitted]");
+    expect(result.text).toContain("[data omitted]");
+    expect(result.text).toContain("Readable resource");
+    expect(result.text).toContain("file:///report.pdf");
+    expect(presentToolResult({ structuredContent: { nested: [
+      { type: "image", mimeType: "image/png", data: binary },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: binary } },
+    ] } }).text).not.toContain(binary);
+  });
+
   it("handles MCP, Claude and ACP image blocks without printing base64", () => {
     const result = presentToolResult([{ type: "text", text: "Ready" }, { type: "content", content: { type: "image", source: { media_type: "image/png", data: "aGVsbG8=" } } }]);
     expect(result).toEqual({ text: "Ready\n[Image]", images: [{ mimeType: "image/png", data: "aGVsbG8=" }] });

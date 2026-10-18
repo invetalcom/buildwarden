@@ -1,6 +1,22 @@
 export type ToolResultImage = { mimeType: "image/png" | "image/jpeg" | "image/webp"; data: string };
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
 
+const omitBinaryContent = (_key: string, value: unknown): unknown => {
+  if (!record(value)) return value;
+  if (value.type === "image" || value.type === "audio") {
+    return {
+      ...value,
+      ...(typeof value.data === "string" ? { data: "[data omitted]" } : {}),
+      ...(record(value.source) && typeof value.source.data === "string"
+        ? { source: { ...value.source, data: "[data omitted]" } } : {}),
+    };
+  }
+  if (typeof value.uri === "string" && typeof value.blob === "string") {
+    return { ...value, blob: "[blob omitted]" };
+  }
+  return value;
+};
+
 /** Bounded, provider-neutral content persisted in the existing step metadata JSON. */
 export const presentToolResult = (value: unknown): { text: string; images: ToolResultImage[] } => {
   const images: ToolResultImage[] = [];
@@ -18,7 +34,7 @@ export const presentToolResult = (value: unknown): { text: string; images: ToolR
     } else if (typeof entry.text === "string") visit(entry.text, depth + 1);
     else if (entry.content !== undefined && (!Array.isArray(entry.content) || entry.content.length > 0)) visit(entry.content, depth + 1);
     else if (entry.structuredContent !== undefined) visit(entry.structuredContent, depth + 1);
-    else texts.push(JSON.stringify(entry, (key, item: unknown) => key === "data" ? "[data omitted]" : item, 2).slice(0, 64000));
+    else texts.push(JSON.stringify(entry, omitBinaryContent, 2).slice(0, 64000));
   };
   visit(value, 0);
   return { text: texts.join("\n").slice(0, 64000), images };
