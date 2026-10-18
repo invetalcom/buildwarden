@@ -176,6 +176,49 @@ const isForgeCliUnavailableError = (error: unknown): boolean =>
  * `glab mr create` only accepts the description as an argument, and Windows caps a command line at
  * 32,767 characters, so very long descriptions are shortened for the CLI.
  */
+/** Repository owner from a parsed GitHub remote, such as `owner` for `https://github.com/owner/repo`. */
+const githubOwnerOf = (remote: ParsedGitRemote | null): string =>
+  remote?.provider === "github" ? (new URL(remote.webBaseUrl).pathname.split("/")[1] ?? "") : "";
+
+/**
+ * `gh pr list --head <branch>` matches the branch name in every fork, so another contributor's pull
+ * request from a same-named branch must not count as ours. Returns the first open pull request whose
+ * head repository belongs to `headOwner`.
+ */
+export const selectOwnOpenPullRequestUrl = (pullRequests: unknown, headOwner: string): string | null => {
+  if (!headOwner || !Array.isArray(pullRequests)) {
+    return null;
+  }
+  for (const pullRequest of pullRequests as Array<{ url?: unknown; headRepositoryOwner?: { login?: unknown } | null }>) {
+    const owner = pullRequest?.headRepositoryOwner?.login;
+    if (typeof owner === "string" && owner.toLowerCase() === headOwner.toLowerCase() && typeof pullRequest.url === "string" && pullRequest.url) {
+      return pullRequest.url;
+    }
+  }
+  return null;
+};
+
+/**
+ * Merge request lists include merge requests from forks. Only a merge request whose source project is
+ * the target project counts as ours, which holds when the branch was pushed to the base repository.
+ */
+export const selectOwnOpenMergeRequestUrl = (mergeRequests: unknown): string | null => {
+  if (!Array.isArray(mergeRequests)) {
+    return null;
+  }
+  for (const mergeRequest of mergeRequests as Array<{ web_url?: unknown; source_project_id?: unknown; target_project_id?: unknown }>) {
+    if (
+      mergeRequest?.source_project_id !== undefined &&
+      mergeRequest.source_project_id === mergeRequest.target_project_id &&
+      typeof mergeRequest.web_url === "string" &&
+      mergeRequest.web_url
+    ) {
+      return mergeRequest.web_url;
+    }
+  }
+  return null;
+};
+
 const MAX_FORGE_CLI_DESCRIPTION_CHARS = 16_000;
 const fitForgeCliDescription = (body: string): string =>
   body.length <= MAX_FORGE_CLI_DESCRIPTION_CHARS
@@ -1617,7 +1660,9 @@ export class GitService {
     const headSelector = await this.getForkHeadSelector(worktreePath, branchName, remote, baseRemoteName, pushRemoteName);
 
     if (remote?.provider === "gitlab") {
-      const existingUrl = await this.findOpenMergeRequestUrl(worktreePath, branchName, targetBranch);
+      // A branch pushed to a fork cannot be matched to its merge request reliably, so it is not looked up.
+      const existingUrl =
+        pushRemoteName === baseRemoteName ? await this.findOpenMergeRequestUrl(worktreePath, branchName, targetBranch) : null;
       if (existingUrl) {
         return { url: existingUrl, mode: "existing", requestKind: "merge-request" };
       }
@@ -1666,7 +1711,8 @@ export class GitService {
       }
     }
 
-    const existingUrl = await this.findOpenPullRequestUrl(worktreePath, branchName, targetBranch);
+    const headOwner = headSelector.includes(":") ? headSelector.slice(0, headSelector.indexOf(":")) : githubOwnerOf(remote);
+    const existingUrl = await this.findOpenPullRequestUrl(worktreePath, branchName, targetBranch, headOwner);
     if (existingUrl) {
       return { url: existingUrl, mode: "existing", requestKind: "pull-request" };
     }
@@ -1709,16 +1755,23 @@ export class GitService {
     }
   }
 
-  /** Best effort: an open pull request for this head and base, so publishing again reuses it. */
-  private async findOpenPullRequestUrl(worktreePath: string, branchName: string, targetBranch: string): Promise<string | null> {
+  /** Best effort: the open pull request from `headOwner`'s branch into the base, so publishing again reuses it. */
+  private async findOpenPullRequestUrl(
+    worktreePath: string,
+    branchName: string,
+    targetBranch: string,
+    headOwner: string,
+  ): Promise<string | null> {
+    if (!headOwner) {
+      return null;
+    }
     try {
       const { stdout } = await execForgeCli(
         "gh",
-        ["pr", "list", "--head", branchName, "--base", targetBranch, "--state", "open", "--json", "url", "--limit", "1"],
+        ["pr", "list", "--head", branchName, "--base", targetBranch, "--state", "open", "--json", "url,headRepositoryOwner", "--limit", "20"],
         worktreePath,
       );
-      const [pullRequest] = JSON.parse(stdout) as Array<{ url?: unknown }>;
-      return typeof pullRequest?.url === "string" && pullRequest.url ? pullRequest.url : null;
+      return selectOwnOpenPullRequestUrl(JSON.parse(stdout), headOwner);
     } catch {
       return null;
     }
@@ -1732,8 +1785,7 @@ export class GitService {
         ["mr", "list", "--source-branch", branchName, "--target-branch", targetBranch, "--output", "json"],
         worktreePath,
       );
-      const [mergeRequest] = JSON.parse(stdout) as Array<{ web_url?: unknown }>;
-      return typeof mergeRequest?.web_url === "string" && mergeRequest.web_url ? mergeRequest.web_url : null;
+      return selectOwnOpenMergeRequestUrl(JSON.parse(stdout));
     } catch {
       return null;
     }
@@ -1811,10 +1863,8 @@ export class GitService {
       return branchName;
     }
     const pushRemote = await this.getParsedRemote(worktreePath, pushRemoteName).catch(() => null);
-    const githubOwner = (parsed: ParsedRemote | null) =>
-      parsed?.provider === "github" ? (new URL(parsed.webBaseUrl).pathname.split("/")[1] ?? "") : "";
-    const pushOwner = githubOwner(pushRemote);
-    return pushOwner && pushOwner !== githubOwner(baseRemote) ? `${pushOwner}:${branchName}` : branchName;
+    const pushOwner = githubOwnerOf(pushRemote);
+    return pushOwner && pushOwner !== githubOwnerOf(baseRemote) ? `${pushOwner}:${branchName}` : branchName;
   }
 
   private getLegacyWorktreeRoot(repoPath: string): string {
