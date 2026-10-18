@@ -508,6 +508,13 @@ describe("run activity timeline subagent cancellation", () => {
 });
 
 describe("tool target resolution", () => {
+  it("keeps browser titles separate from targets, including result-side targets", () => {
+    const call = { toolName: "buildwarden_browser", toolDisplayTitle: "Browser · screenshot", arguments: { action: "screenshot" } };
+    expect(describeToolTarget(call, undefined)).toBeNull();
+    expect(describeToolTarget(call, { arguments: { path: "screenshot.png" } })).toBe("screenshot.png");
+    expect(describeToolTarget({ ...call, arguments: { action: "open", url: "http://localhost:4200/" } }, undefined)).toBe("http://localhost:4200/");
+  });
+
   it("reads an ai-sdk path out of the call arguments while the tool is still running", () => {
     // ai-sdk only carries the raw arguments on the call and lifts `path` onto the result, so a
     // pending row has nothing but `arguments` to describe what the tool is touching.

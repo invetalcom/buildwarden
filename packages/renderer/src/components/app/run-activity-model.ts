@@ -224,7 +224,7 @@ export const describeToolTarget = (
     const args = metadata.arguments;
     if (!args || typeof args !== "object" || Array.isArray(args)) return null;
     const record = args as Record<string, unknown>;
-    return nonEmptyString(record.path, record.file_path, record.command, record.query, record.url, metadata.toolDisplayTitle);
+    return nonEmptyString(record.path, record.file_path, record.command, record.query, record.url);
   };
 
   return fromMetadata(callMetadata) ?? fromMetadata(resultMetadata);
