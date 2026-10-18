@@ -11,8 +11,8 @@ import { RunChatPanel } from "./RunChatPanel";
 vi.mock("./ChatAttachmentPicker", () => ({ ChatAttachmentPicker: () => null }));
 vi.mock("./RunComposer", () => ({ RunComposer: () => null }));
 vi.mock("./ChatTranscript", () => ({
-  ChatTranscript: forwardRef<HTMLDivElement, { items: ChatStepRecord[] }>(({ items }, ref) => (
-    <div ref={ref}>{items.map(({ id }) => id).join(",")}</div>
+  ChatTranscript: forwardRef<HTMLDivElement, { items: ChatStepRecord[]; showLoading?: boolean }>(({ items, showLoading }, ref) => (
+    <div ref={ref} data-working={showLoading}>{items.map(({ id }) => id).join(",")}</div>
   )),
 }));
 
@@ -119,5 +119,12 @@ describe("RunChatPanel", () => {
       step: laterStep,
     }));
     expect(container.textContent).toContain("step-1,step-2");
+    expect(container.querySelector('[data-working="true"]')).not.toBeNull();
+    await act(async () => publishChatEvent?.({
+      runId: chat.id, chatId: chat.id, type: "status", title: "Completed", content: "", createdAt: chat.createdAt,
+      chat: { ...chat, status: "completed" },
+      step: { ...laterStep, id: "done", eventType: "status" },
+    }));
+    expect(container.querySelector('[data-working="false"]')).not.toBeNull();
   });
 });

@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { RESPONSE_PRESENTATION_INSTRUCTIONS, USER_INPUT_TOOL_SCHEMA, parseUserInputQuestions, type RunUserInputRequest, type RunUserInputAnswers } from "@buildwarden/shared";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
@@ -55,7 +56,7 @@ import pRetry, { AbortError } from "p-retry";
 import { createDevLogger } from "./dev-logger";
 
 const CHAT_SYSTEM_PROMPT =
-  "You are a helpful AI assistant. Answer the user's questions directly and concisely. You do not have access to any tools or files.";
+  "You are a helpful AI assistant. Answer the user's questions directly and concisely. Only use tools that are explicitly available.";
 
 const CHAT_OPENAI_CODE_INTERPRETER_SYSTEM_PROMPT = [
   "You are a helpful AI assistant. Answer the user's questions directly and concisely.",
@@ -1839,7 +1840,7 @@ const buildAiSdkStartingMessages = (
 
   const messages: Array<Record<string, unknown>> = [{
     role: "system",
-    content: usesOpenAiChatTools ? CHAT_OPENAI_CODE_INTERPRETER_SYSTEM_PROMPT : CHAT_SYSTEM_PROMPT,
+    content: [usesOpenAiChatTools ? CHAT_OPENAI_CODE_INTERPRETER_SYSTEM_PROMPT : CHAT_SYSTEM_PROMPT, RESPONSE_PRESENTATION_INSTRUCTIONS].join("\n\n"),
   }];
   if (Array.isArray(input.priorMessages) && input.priorMessages.length > 0) {
     messages.push(...input.priorMessages.map((message) => hydratePriorMessageAttachments(message, input.providerType)));
@@ -1943,8 +1944,21 @@ const createAiSdkRunTools = (
   return runTools;
 };
 
+export const supportsOptionalChatTools = (input: Pick<RunExecutionRequest, "providerType" | "config" | "modelConfig" | "modelCapabilities">): boolean => {
+  // Explicit model overrides also support manually configured compatible servers.
+  if (typeof input.modelConfig?.supportsTools === "boolean") return input.modelConfig.supportsTools;
+  if (input.modelCapabilities?.supportsTools === false) return false;
+  if (input.modelCapabilities?.supportsTools === true && input.modelCapabilities.supportsToolsSource === "model") return true;
+  // Provider defaults (including unmarked legacy true values) do not establish
+  // that an individual routed/custom model accepts tool definitions.
+  // Unknown routed/custom models must continue to work as plain text chats.
+  return input.providerType !== "openrouter" && getProviderFamily(input.config) !== "openai-compatible";
+};
+
 export class AiSdkHarnessAdapter implements HarnessAdapter {
   readonly harnessType = "ai-sdk" as const;
+
+  constructor(private readonly requestUserInput?: (request: RunUserInputRequest) => Promise<RunUserInputAnswers>) {}
 
   async run(
     input: RunExecutionRequest,
@@ -1955,6 +1969,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
     assertOpenRouterAttachmentCompatibility(input);
     const isChat = input.isChat === true;
     const providerFamily = getProviderFamily(input.config);
+    const chatToolsSupported = supportsOptionalChatTools(input);
     const devLogger = createDevLogger({
       logDirPath: input.devLogging?.logDirPath,
       runId: input.runId,
@@ -1973,7 +1988,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
           input.runId,
         );
     const openAiChatTools =
-      isChat && input.providerType === "ai-sdk" && providerFamily === "openai"
+      isChat && chatToolsSupported && input.providerType === "ai-sdk" && providerFamily === "openai"
         ? {
             code_interpreter: createConfiguredOpenAiProvider(input, devLogger.enabled ? devLogger : undefined).tools.codeInterpreter(),
           }
@@ -1998,7 +2013,18 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
 
     const mutationState = { successfulCalls: 0 };
     const runTools = createAiSdkRunTools(input, toolContext, isChat, onChunk, mutationState);
-    const tools = isChat ? openAiChatTools : runTools;
+    const tools: ToolSet = { ...(isChat ? openAiChatTools : runTools) };
+    if (this.requestUserInput && (!isChat || chatToolsSupported)) {
+      const requestInput = this.requestUserInput;
+      tools.request_user_input = tool({
+        description: "Ask the user one to three questions with clickable choices or a free-text answer. Wait for their answers before continuing.",
+        inputSchema: jsonSchema<{ questions: RunUserInputRequest["questions"] }>(USER_INPUT_TOOL_SCHEMA),
+        execute: async ({ questions }) => {
+          signal.throwIfAborted();
+          return { answers: await requestInput({ questions: parseUserInputQuestions(questions), title: "Question" }) };
+        },
+      });
+    }
 
     let latestResponseId: string | null = null;
     const streamOutId = crypto.randomUUID();
@@ -2011,13 +2037,13 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
       ? buildInstructionsForFamily(providerFamily, promptInstructions)
       : undefined;
     let maxSteps: number = MODE_POLICIES[input.mode].maxToolRounds;
-    if (isChat) maxSteps = openAiChatTools ? 6 : 1;
+    if (isChat) maxSteps = Object.keys(tools).length > 0 ? 6 : 1;
     const result = await withProviderRetry(isChat ? "chat request" : "agent run", signal, onChunk, () =>
       streamText({
         model,
         ...(requestInstructions ? { instructions: requestInstructions as never } : {}),
         messages: promptMessages as never,
-        tools,
+        ...(Object.keys(tools).length > 0 ? { tools } : {}),
         ...(providerOptions ? { providerOptions: providerOptions as never } : {}),
         stopWhen: stepCountIs(maxSteps),
         abortSignal: signal,

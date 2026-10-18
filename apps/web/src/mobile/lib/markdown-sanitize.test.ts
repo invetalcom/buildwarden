@@ -1,65 +1,37 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import {
-  MARKDOWN_EXTRA_TAG_NAMES,
-  MARKDOWN_HREF_PROTOCOLS,
-  MARKDOWN_SRC_PROTOCOLS,
-  markdownSanitizeSchema,
-} from "./markdown-sanitize";
+import { markdownSanitizeSchema } from "./markdown-sanitize";
+import { markdownSanitizeSchema as sharedSchema } from "@buildwarden/renderer/response-content";
+import { RichText } from "../components/RichText";
 
-/**
- * Both UIs render the same untrusted agent output with raw HTML enabled, so their sanitisation
- * allow-lists must not drift apart. The desktop schema is a literal inside a component file, so it
- * is compared as source text rather than imported (importing it would pull the desktop renderer
- * into a node-environment test).
- */
-const DESKTOP_SOURCE = "../../../../../packages/renderer/src/components/ui/activity-rich-text.tsx";
-
-const desktopSchemaSource = (): string => {
-  const source = readFileSync(fileURLToPath(new URL(DESKTOP_SOURCE, import.meta.url)), "utf8");
-  const start = source.indexOf("const markdownSanitizeSchema");
-  expect(start, "desktop markdownSanitizeSchema not found").toBeGreaterThan(-1);
-  const end = source.indexOf("\n};", start);
-  expect(end, "desktop markdownSanitizeSchema is not terminated").toBeGreaterThan(start);
-  return source.slice(start, end);
-};
-
-/**
- * Every allow-list in the desktop schema is declared on one line, so the quoted entries on that
- * line are the additions. Line-based rather than brace-matching: `tagNames` spreads
- * `defaultSchema.tagNames` first, which a naive bracket match would stop inside.
- */
-const listAfter = (source: string, key: string): string[] => {
-  const line = source.split("\n").find((entry) => entry.trim().startsWith(`${key}:`));
-  expect(line, `${key} not found in the desktop schema`).toBeDefined();
-  return [...(line ?? "").matchAll(/"([^"]+)"/g)].map((entry) => entry[1]);
-};
-
-describe("markdown sanitisation", () => {
-  it("blocks javascript: and data: URLs in links and images", () => {
-    expect(markdownSanitizeSchema.protocols.href).not.toContain("javascript");
-    expect(markdownSanitizeSchema.protocols.href).not.toContain("data");
-    expect(markdownSanitizeSchema.protocols.src).not.toContain("javascript");
-    expect(markdownSanitizeSchema.protocols.src).not.toContain("data");
+describe("mobile response rendering", () => {
+  it("uses the same sanitizer as desktop", () => { expect(markdownSanitizeSchema).toBe(sharedSchema); });
+  it("preserves the start number of image lists", () => {
+    const html = renderToStaticMarkup(createElement(RichText, { children: '3. **Preview** — Details. ![Preview](https://example.com/a.png)' }));
+    expect(html).toContain('start="3"');
+    expect(html).toContain('class="response-media-row"');
   });
-
-  it("never allows script or event-handler attributes through", () => {
-    expect(markdownSanitizeSchema.tagNames).not.toContain("script");
-    expect(markdownSanitizeSchema.tagNames).not.toContain("iframe");
-    expect(markdownSanitizeSchema.tagNames).not.toContain("style");
-    const attributes = Object.values(markdownSanitizeSchema.attributes ?? {}).flat();
-    expect(attributes.filter((entry) => typeof entry === "string" && entry.startsWith("on"))).toEqual([]);
+  it("renders tables, media rows and raster data images", () => {
+    const html = renderToStaticMarkup(createElement(RichText, { children: "## Project\n\n![Preview](data:image/png;base64,iVBORw0KGgo=)\n\n### Title\n\nSubtitle\n\n| Goal | Pick |\n|---|---|\n| Learn | App |" }));
+    expect(html).toContain('class="response-media-row"');
+    expect(html).toContain('src="data:image/png;base64,iVBORw0KGgo="');
+    expect(html).toContain('<table');
   });
-
-  it("allows the same href and src protocols as the desktop renderer", () => {
-    const desktop = desktopSchemaSource();
-    expect(listAfter(desktop, "href")).toEqual([...MARKDOWN_HREF_PROTOCOLS]);
-    expect(listAfter(desktop, "src")).toEqual([...MARKDOWN_SRC_PROTOCOLS]);
+  it("blocks active content and non-image data URLs", () => {
+    const html = renderToStaticMarkup(createElement(RichText, { children: '<script>alert(1)</script><img src="data:text/html;base64,PGgxPg==" onerror="alert(1)"><a href="javascript:alert(1)">bad</a><img src="file:///etc/passwd">' }));
+    expect(html).not.toMatch(/<script|onerror=|href="javascript:|src="(?:data:|file:)/);
   });
-
-  it("allows the same extra raw-HTML tags as the desktop renderer", () => {
-    const desktop = desktopSchemaSource();
-    expect(listAfter(desktop, "tagNames")).toEqual([...MARKDOWN_EXTRA_TAG_NAMES]);
+  it.each([
+    '1. **Rule matrix** — Spot missing rules. ![Preview](data:image/png;base64,iVBORw0KGgo=)\n2. **Bulk editing** — Update together. ![Preview](https://example.com/b.png)',
+    '### Rule matrix\n\nSpot missing rules.\n\n![Preview](data:image/png;base64,iVBORw0KGgo=)\n\n### Bulk editing\n\nUpdate together.\n\n![Preview](https://example.com/b.png)',
+  ])("uses the shared title-first card layout without provider-specific metadata", (children) => {
+    const html = renderToStaticMarkup(createElement(RichText, { children }));
+    expect(html.match(/class="response-media-row"/g)).toHaveLength(2);
+    expect(html.match(/<img /g)).toHaveLength(1);
+    expect(html).toContain('Load external image from example.com');
+    expect(html).not.toContain('src="https://');
+    expect(html).toMatch(/response-media-image[\s\S]*response-media-text[\s\S]*Rule matrix[\s\S]*Spot missing rules/);
+    expect(html).toContain('aria-label="Enlarge Preview"');
   });
 });

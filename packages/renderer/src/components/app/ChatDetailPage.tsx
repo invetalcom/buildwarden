@@ -11,6 +11,7 @@ import { Bookmark, BookmarkCheck } from "lucide-react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
 import { buildVisibleConversationHistory } from "../../lib/context-window-estimate";
 import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
+import { isVisibleChatStep } from "../../lib/chat-transcript";
 import { ChatTranscript } from "./ChatTranscript";
 import { RunComposer } from "./RunComposer";
 import { ScrollBoundaryControls } from "./ScrollBoundaryControls";
@@ -128,33 +129,6 @@ export const ChatDetailPage = ({
 
   const isChatActive = ["queued", "preparing", "running"].includes(chat.status);
 
-  /** True after a non-`reasoning` output for this turn (same notion as the green assistant messages below). */
-  const hasMainAssistantOutputAfterLatestUser = useMemo(() => {
-    let lastUserIndex = -1;
-    for (let i = steps.length - 1; i >= 0; i--) {
-      if (safeParseMetadata(steps[i]!.metadataJson).source === "user") {
-        lastUserIndex = i;
-        break;
-      }
-    }
-    if (lastUserIndex < 0) {
-      return false;
-    }
-    for (let j = lastUserIndex + 1; j < steps.length; j++) {
-      const step = steps[j]!;
-      if (step.eventType !== "output" || !step.content.trim()) {
-        continue;
-      }
-      const meta = safeParseMetadata(step.metadataJson);
-      if (meta.assistantKind !== "reasoning") {
-        return true;
-      }
-    }
-    return false;
-  }, [steps]);
-
-  const showPreResponseLoading = isChatActive && !hasMainAssistantOutputAfterLatestUser;
-
   const loadChatDetail = useCallback(async () => {
     if (!buildwarden) return;
     const d = await buildwarden.getChatDetail(chat.id);
@@ -234,13 +208,7 @@ export const ChatDetailPage = ({
         step,
         metadata: safeParseMetadata(step.metadataJson),
       }))
-      .filter(({ step }) => {
-        const isEmpty = !step.content?.trim();
-        const isAgentOutputTitle = step.title === "Agent output";
-        if (isEmpty && (step.eventType === "output" || isAgentOutputTitle)) return false;
-        if (isAgentOutputTitle && step.eventType === "status") return false;
-        return true;
-      });
+      .filter(({ step, metadata }) => isVisibleChatStep(step, metadata));
   }, [steps]);
   const activityScrollKey = useMemo(
     () =>
@@ -264,7 +232,7 @@ export const ChatDetailPage = ({
       return;
     }
     end.scrollIntoView({ block: "end" });
-  }, [activityScrollKey, isChatActive, hasMainAssistantOutputAfterLatestUser, loadingEarlier]);
+  }, [activityScrollKey, isChatActive, loadingEarlier]);
 
   useEffect(() => {
     setSelectedReasoningEffort(latestUserMessageOptions.reasoningEffort);
@@ -322,12 +290,15 @@ export const ChatDetailPage = ({
         ) : null}
         <div className="relative min-h-0 flex-1">
           <ChatTranscript
+            chatId={chat.id}
+            active={["queued", "preparing", "running"].includes(chat.status)}
+            readOnly={readOnly}
             ref={activityContainerRef}
             endRef={activityEndRef}
             className="app-scrollbar h-full min-h-0 overflow-auto py-1 pr-10"
             items={activityEntries.map(({ step }) => step)}
             emptyMessage="No messages yet."
-            showLoading={showPreResponseLoading}
+            showLoading={isChatActive}
           />
           <ScrollBoundaryControls key={chat.id} scrollElementRef={activityContainerRef} />
         </div>

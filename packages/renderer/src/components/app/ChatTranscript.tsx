@@ -1,9 +1,11 @@
 import { forwardRef, useCallback, useMemo, useState, type Ref } from "react";
 import {
   normalizeRunSubagentInfo,
+  getResponseSourceText,
   type RunEventType,
 } from "@buildwarden/shared";
-import { Loader2 } from "lucide-react";
+import { ChatWorkingIndicator } from "../ui/chat-working-indicator";
+import { isVisibleChatStep } from "../../lib/chat-transcript";
 import { ChatTranscriptEntryView } from "./chat-transcript-entry";
 
 export type ChatTranscriptItem = {
@@ -57,6 +59,8 @@ export const ChatTranscript = forwardRef<
     items: ChatTranscriptItem[];
     emptyMessage: string;
     readOnly?: boolean;
+    chatId?: string;
+    active?: boolean;
     showLoading?: boolean;
     loadingLabel?: string;
     endRef?: Ref<HTMLDivElement>;
@@ -69,8 +73,10 @@ export const ChatTranscript = forwardRef<
       items,
       emptyMessage,
       readOnly = false,
+      chatId,
+      active = false,
       showLoading = false,
-      loadingLabel = "Model is working...",
+      loadingLabel = "Agent is working...",
       endRef,
       className,
       onCopyOutput,
@@ -84,15 +90,7 @@ export const ChatTranscript = forwardRef<
         collapseChatSubagentEntries(
           items
             .map((item) => ({ item, metadata: safeParseMetadata(item.metadataJson) }))
-            .filter(({ item, metadata }) => {
-              // Subagent-internal activity stays inside the subagent summary line.
-              if (typeof metadata.subagentId === "string" && metadata.subagentId) return false;
-              const isEmpty = !item.content?.trim();
-              const isAgentOutputTitle = item.title === "Agent output";
-              if (isEmpty && (item.eventType === "output" || isAgentOutputTitle)) return false;
-              if (isAgentOutputTitle && item.eventType === "status") return false;
-              return true;
-            }),
+            .filter(({ item, metadata }) => isVisibleChatStep(item, metadata)),
         ),
       [items],
     );
@@ -114,26 +112,20 @@ export const ChatTranscript = forwardRef<
 
     return (
       <div ref={ref} className={`chat-transcript ${readOnly ? "chat-transcript--readonly" : ""} ${className ?? ""}`}>
-        {entries.length === 0 && !showLoading ? <p className="text-sm text-[color:var(--ec-muted)]">{emptyMessage}</p> : null}
+        {entries.length === 0 && !active && !showLoading ? <p className="text-sm text-[color:var(--ec-muted)]">{emptyMessage}</p> : null}
         {entries.map(({ item, metadata }) => (
           <ChatTranscriptEntryView
             key={item.id}
             item={item}
             metadata={metadata}
-            showLoading={showLoading}
+            showLoading={active || showLoading}
+            chatId={chatId}
+            canAnswer={!readOnly && active}
             copied={copiedItemId === item.id}
-            onCopy={() => void copyOutput(item.content, item.id)}
+            onCopy={() => void copyOutput(getResponseSourceText(item, metadata), item.id)}
           />
         ))}
-        {showLoading ? (
-          <div className="chat-loading">
-            <div className="run-activity-loading-bar mb-2" />
-            <div className="flex items-center gap-2 text-[11px] text-[color:var(--ec-muted)]">
-              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[color:var(--ec-accent)]" aria-hidden />
-              <span className="animate-pulse">{loadingLabel}</span>
-            </div>
-          </div>
-        ) : null}
+        {active || showLoading ? <ChatWorkingIndicator label={loadingLabel} /> : null}
         <div ref={endRef} />
       </div>
     );

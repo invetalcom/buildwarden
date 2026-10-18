@@ -10,17 +10,19 @@ import type { AppControllerDesktopServices } from "./desktop-platform-services";
 import { createFolderWorkspaceCopy } from "./folder-workspace";
 import { HostEventBus } from "./host-events";
 import { getOrchestrationArtifactRoot } from "./orchestration-workspace";
+import * as chatWorkspace from "./chat-workspace";
 
 const temporaryDirectories: string[] = [];
 const databases: BuildWardenDatabase[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const db of databases.splice(0)) await db.close();
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
 describe("mandatory coordinator deletion cascade", () => {
-  it("blocks direct child deletion, removes the complete owned closure, and preserves the original local project", async () => {
+  it.each([null, "EBUSY", "EPERM"])("removes the owned closure and preserves the original project with chat cleanup error %s", async (cleanupError) => {
     const root = await mkdtemp(join(tmpdir(), "buildwarden-orchestration-cascade-"));
     temporaryDirectories.push(root);
     const originalProject = join(root, "original-project");
@@ -133,6 +135,9 @@ describe("mandatory coordinator deletion cascade", () => {
     });
     db.addBookmark(coordinator.id);
     db.addBookmark(child.id);
+    const chats = [coordinator, child].map((run) => db.createChat(provider.id, model.id, "Run chat", run.id));
+    const chatCleanup = vi.spyOn(chatWorkspace, "removeChatWorkspace");
+    if (cleanupError) chatCleanup.mockRejectedValue(Object.assign(new Error("Chat workspace locked"), { code: cleanupError }));
 
     const secrets: SecretStore = {
       readSecret: vi.fn(async () => null),
@@ -165,6 +170,10 @@ describe("mandatory coordinator deletion cascade", () => {
     expect(db.getOrchestrationByCoordinatorRunId(coordinator.id)).toBeNull();
     expect(db.listBookmarks()).toEqual([]);
     expect(db.listPendingOrchestrationCleanupJobs()).toEqual([]);
+    for (const chat of chats) {
+      expect(chatCleanup).toHaveBeenCalledWith(db.getFilePath(), chat.id);
+      expect(() => db.getChat(chat.id)).toThrow("not found");
+    }
     expect(lifecycle.onRunDeleted).toHaveBeenCalledWith(child.id);
     expect(lifecycle.onRunDeleted).toHaveBeenCalledWith(coordinator.id);
   }, 30_000);

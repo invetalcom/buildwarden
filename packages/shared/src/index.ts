@@ -295,7 +295,7 @@ export const ORCHESTRATION_TOOL_NAMES = [
 ] as const;
 
 export type OrchestrationToolName = (typeof ORCHESTRATION_TOOL_NAMES)[number];
-export type HarnessToolName = RunToolName | OrchestrationToolName;
+export type HarnessToolName = RunToolName | OrchestrationToolName | "buildwarden_ask_user";
 
 const TEXT_LIKE_FILE_EXTENSIONS = new Set([
   "c",
@@ -1643,6 +1643,8 @@ export interface AppSettingRecord {
 export interface ProviderCapabilityMap {
   supportsStreaming: boolean;
   supportsTools: boolean;
+  /** Whether tool support came from model discovery/input or only a provider default. Absent on legacy rows. */
+  supportsToolsSource?: "model" | "provider-default";
   supportsCustomBaseUrl: boolean;
 }
 
@@ -1865,12 +1867,73 @@ export interface RunUserInputQuestion {
 export type RunUserInputAnswerValue = string | string[];
 export type RunUserInputAnswers = Record<string, RunUserInputAnswerValue>;
 
+export { normalizeResponseArtifactReferences } from "./response-artifacts";
+export { getResponseSourceText } from "./response-source-text";
+
+export const RESPONSE_PRESENTATION_INSTRUCTIONS = [
+  "BuildWarden renders Markdown headings, tables, images, and structured user-input questions.",
+  "When an image-and-text card is useful, write a section heading, then a Markdown image on its own paragraph, then a level-3 heading for the card title, then one short subtitle paragraph. The UI places the image on the left and title/subtitle on the right.",
+  "Only include images you actually have. Prefer Markdown references to PNG, JPEG, GIF, or WebP files within the current workspace. HTTPS image URLs require the user to click before loading. Put paths containing spaces in angle brackets. Local images are preserved with the response (up to 5 MiB each).",
+  "For clickable choices, use buildwarden_ask_user or request_user_input when available. Do not emit HTML forms or pretend a text list is an interactive control.",
+  "Show screenshots with Markdown image syntax ![Description](path), not only a Screenshot link. BuildWarden does not execute proprietary visualize tokens or inline HTML artifacts. For an HTML mockup, include a real screenshot image and optionally a Markdown link to the HTML source.",
+].join("\n");
+
+export function validateUserInputAnswers(questions: RunUserInputQuestion[], answers: RunUserInputAnswers): void {
+  if (!answers || typeof answers !== "object" || Array.isArray(answers) || Object.keys(answers).some((id) => !questions.some((question) => question.id === id))) {
+    throw new Error("Invalid question answers.");
+  }
+  for (const question of questions) {
+    const answer = answers[question.id];
+    const values = Array.isArray(answer) ? answer : [answer];
+    if (!values.length || (!question.multiSelect && values.length !== 1) || values.length > 100 ||
+      values.some((value) => typeof value !== "string" || !value.trim() || value.length > 20_000)) {
+      throw new Error(`Please answer ${question.header || question.id}.`);
+    }
+    if (question.options.length && !question.allowCustomAnswer &&
+      values.some((value) => !question.options.some((option) => option.label === value))) throw new Error("Select one of the available options.");
+  }
+}
+
 export interface RunUserInputRequest {
   requestId?: string;
   title?: string;
   content?: string;
   questions: RunUserInputQuestion[];
   metadata?: Record<string, unknown>;
+}
+
+export const USER_INPUT_TOOL_SCHEMA = {
+  type: "object", additionalProperties: false, required: ["questions"] as string[], properties: {
+    questions: { type: "array", minItems: 1, maxItems: 3, items: {
+      type: "object", additionalProperties: false, required: ["id", "header", "question", "options", "multiSelect", "allowCustomAnswer"] as string[],
+      properties: {
+        id: { type: "string" }, header: { type: "string" }, question: { type: "string" },
+        options: { type: "array", items: { type: "object", additionalProperties: false, required: ["label", "description"] as string[],
+          properties: { label: { type: "string" }, description: { type: "string" } } } },
+        multiSelect: { type: "boolean" }, allowCustomAnswer: { type: "boolean" },
+      },
+    } },
+  },
+} as const;
+
+export function parseUserInputQuestions(value: unknown): RunUserInputQuestion[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 3) throw new Error("Expected one to three questions.");
+  const ids = new Set<string>();
+  return value.map((question: unknown) => {
+    if (!question || typeof question !== "object") throw new Error("Invalid question.");
+    const q = question as Record<string, unknown>;
+    if (typeof q.id !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/.test(q.id) ||
+      ["__proto__", "constructor", "prototype"].includes(q.id) || ids.has(q.id) ||
+      typeof q.header !== "string" || typeof q.question !== "string" || !q.question.trim() ||
+      !Array.isArray(q.options) || q.options.length > 20) throw new Error("Invalid question fields.");
+    ids.add(q.id);
+    const options = q.options.map((option: unknown) => {
+      if (!option || typeof option !== "object" || !("label" in option) || typeof option.label !== "string" || !option.label.trim()) throw new Error("Invalid question option.");
+      return { label: option.label, ...("description" in option && typeof option.description === "string" ? { description: option.description } : {}) };
+    });
+    if (new Set(options.map((option) => option.label)).size !== options.length) throw new Error("Question options must be unique.");
+    return { id: q.id, header: q.header, question: q.question, options, multiSelect: q.multiSelect === true, allowCustomAnswer: q.allowCustomAnswer !== false };
+  });
 }
 
 export interface RunEvent {
@@ -3397,8 +3460,10 @@ export interface RunExecutionRequest {
   skillContext?: string;
   config?: Record<string, unknown>;
   modelConfig?: Record<string, unknown>;
+  /** Persisted model capabilities, forwarded to the worker for optional chat tools. */
+  modelCapabilities?: Partial<ProviderCapabilityMap>;
   providerOptions?: ProviderExecutionOptions;
-  /** When true, runs as pure chat with no tools or repo context. */
+  /** Conversational mode with optional supported chat tools, without repository tools. */
   isChat?: boolean;
   /** User-attached files for chat turns (main/worker only). */
   attachments?: ChatAttachmentPayload[];
@@ -3474,10 +3539,13 @@ const priorChatMessageFromStep = (step: ChatStepRecord): ChatCompletionHistoryMe
   if (step.eventType === "log" && (metadata.source === "user" || metadata.source === RUN_CHAT_CONTEXT_SOURCE)) {
     return { role: "user", content: step.content };
   }
-  if (step.eventType !== "output" || metadata.assistantKind === "reasoning" || step.title === "Reasoning") {
+  if (step.eventType === "user-input-requested" && metadata.requestStatus === "resolved") {
+    return { role: "user", content: `Answers to the assistant's questions: ${JSON.stringify({ questions: metadata.userInputQuestions, answers: metadata.userInputAnswers })}` };
+  }
+  if (step.eventType !== "output" || metadata.assistantKind === "reasoning" || metadata.assistantKind === "image" || step.title === "Reasoning") {
     return null;
   }
-  return { role: "assistant", content: step.content };
+  return { role: "assistant", content: typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content };
 };
 
 export const buildPriorChatCompletionMessagesFromSteps = (steps: ChatStepRecord[]): ChatCompletionHistoryMessage[] => {
@@ -3500,6 +3568,12 @@ export interface ChatDetail {
   steps: ChatStepRecord[];
   /** User-turn anchored window backing the transcript. */
   historyPage?: UserAnchoredHistoryPageInfo;
+}
+
+/** Text-only chat list/search projection; open a chat to load its full transcript. */
+export interface ChatSearchDetail {
+  chat: ChatRecord;
+  steps: Array<Pick<ChatStepRecord, "title" | "eventType" | "content">>;
 }
 
 export interface UserAnchoredHistoryPageInfo {
@@ -4060,6 +4134,7 @@ export interface DesktopApi {
     options?: ShellApprovalRespondOptions,
   ): Promise<void>;
   respondToRunUserInput(runId: string, requestId: string, answers: RunUserInputAnswers): Promise<void>;
+  respondToChatUserInput(chatId: string, requestId: string, answers: RunUserInputAnswers): Promise<void>;
   cancelRunShell(runId: string, toolCallId: string): Promise<void>;
   cancelRun(runId: string): Promise<void>;
   refreshSnapshot(): Promise<AppSnapshot>;
@@ -4115,7 +4190,7 @@ export interface DesktopApi {
   getEarlierChatHistory(chatId: string, request: UserAnchoredHistoryPageRequest): Promise<ChatHistoryPage>;
   followUpChat(chatId: string, prompt: string, options?: FollowUpChatOptions): Promise<ChatRecord>;
   listChats(): Promise<ChatRecord[]>;
-  listChatsWithSteps(): Promise<ChatDetail[]>;
+  listChatsWithSteps(): Promise<ChatSearchDetail[]>;
   deleteChat(chatId: string): Promise<void>;
   cancelChat(chatId: string): Promise<void>;
   onChatEvent(listener: (event: ChatEvent) => void): () => void;
@@ -4428,6 +4503,7 @@ export type RemoteOperationMap = {
   deleteRunNote: DesktopApi["deleteRunNote"];
   respondToShellApproval: DesktopApi["respondToShellApproval"];
   respondToRunUserInput: DesktopApi["respondToRunUserInput"];
+  respondToChatUserInput: DesktopApi["respondToChatUserInput"];
   createChat: DesktopApi["createChat"];
   createRunChat: DesktopApi["createRunChat"];
   followUpChat: DesktopApi["followUpChat"];
@@ -4798,6 +4874,7 @@ export const IPC_CHANNELS = {
   releaseRun: "buildwarden:release-run",
   respondToShellApproval: "buildwarden:respond-to-shell-approval",
   respondToRunUserInput: "buildwarden:respond-to-run-user-input",
+  respondToChatUserInput: "buildwarden:respond-to-chat-user-input",
   refreshSnapshot: "buildwarden:refresh-snapshot",
   runEvent: "buildwarden:run-event",
   setAppSetting: "buildwarden:set-app-setting",

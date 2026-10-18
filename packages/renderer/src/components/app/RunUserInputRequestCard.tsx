@@ -212,6 +212,7 @@ export function RunUserInputRequestCard({
                       <button
                         key={option.label}
                         type="button"
+                        aria-pressed={selected}
                         disabled={resolved || submitting || disabled}
                         onClick={() => toggleOption(question, option.label)}
                         className={cn(

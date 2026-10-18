@@ -159,8 +159,8 @@ const dedupeFinalSummarySteps = (steps: RunDetail["steps"]) => {
 
   for (const step of steps) {
     const metadata = safeParseMetadata(step.metadataJson);
-    if (step.eventType === "output" && metadata.assistantKind !== "reasoning" && step.title !== "Reasoning") {
-      const normalizedContent = normalizeAssistantOutputText(step.content);
+    if (step.eventType === "output" && metadata.assistantKind !== "reasoning" && metadata.assistantKind !== "image" && step.title !== "Reasoning") {
+      const normalizedContent = normalizeAssistantOutputText(typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content);
       const isDuplicateFinalSummary =
         metadata.assistantKind === "final-summary" &&
         Boolean(previousAssistantContent) &&

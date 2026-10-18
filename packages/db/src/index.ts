@@ -1,3 +1,5 @@
+import { validateUserInputAnswers } from "@buildwarden/shared";
+import { getResponseSourceText, type ChatSearchDetail } from "@buildwarden/shared";
 import type { RunVerificationRecord } from "@buildwarden/shared";
 import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -752,9 +754,21 @@ export class BuildWardenDatabase {
     ).map((row) => this.getChat(row.id));
   }
 
-  listChatsWithSteps(): ChatDetail[] {
+  listChatsWithSteps(): ChatSearchDetail[] {
     const summaries = this.listChats();
-    return summaries.map((s) => this.getChatDetail(s.id));
+    return summaries.map((summary) => ({
+      chat: this.getChat(summary.id),
+      // Select the source in SQLite, before loading multi-megabyte display blobs.
+      // Attachment metadata is also unnecessary for list/search clients.
+      steps: this.all<ChatSearchDetail["steps"][number]>(`
+        select title, event_type as eventType,
+          case when json_valid(metadata_json) then
+            case when json_type(metadata_json, '$.responseSourceText') = 'text'
+              then json_extract(metadata_json, '$.responseSourceText') else content end
+            else content end as content
+        from chat_steps where chat_id = ? order by created_at, rowid
+      `, [summary.id]).map((step) => ({ ...step, content: getResponseSourceText(step) })),
+    }));
   }
 
   addChatBookmark(chatId: string): void {
@@ -2044,6 +2058,31 @@ export class BuildWardenDatabase {
     this.run("delete from chats where id = ?", [chatId]);
   }
 
+  resolveChatUserInput(chatId: string, requestId: string, answers: import("@buildwarden/shared").RunUserInputAnswers): ChatStepRecord {
+    const step = this.getChatSteps(chatId).find((candidate) => {
+      if (candidate.eventType !== "user-input-requested") return false;
+      const metadata = JSON.parse(candidate.metadataJson || "{}") as Record<string, unknown>;
+      return metadata.userInputRequestId === requestId && metadata.requestStatus === "opened";
+    });
+    if (!step) throw new Error("This question is no longer waiting for an answer.");
+    const metadata = JSON.parse(step.metadataJson) as { userInputQuestions: import("@buildwarden/shared").RunUserInputQuestion[] };
+    validateUserInputAnswers(metadata.userInputQuestions, answers);
+    return this.updateChatStep(step.id, {
+      title: "User input submitted",
+      metadataJson: JSON.stringify({ ...JSON.parse(step.metadataJson), requestStatus: "resolved", userInputAnswers: answers }),
+    });
+  }
+
+  closeChatUserInputRequests(chatId: string): void {
+    for (const step of this.getChatSteps(chatId)) {
+      if (step.eventType !== "user-input-requested") continue;
+      const metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
+      if (metadata.requestStatus === "opened") this.updateChatStep(step.id, {
+        metadataJson: JSON.stringify({ ...metadata, requestStatus: "cancelled" }),
+      });
+    }
+  }
+
   addProject(input: ProjectInput & { baseBranch: string; resolvedName: string; kind?: ProjectRecord["kind"] }): ProjectRecord {
     const id = createId();
     const createdAt = nowIso();
@@ -2385,6 +2424,7 @@ export class BuildWardenDatabase {
         input.displayName,
         input.baseUrlOverride ?? null,
         JSON.stringify(input.config ?? {}),
+        // Keep capability provenance alongside the flags; legacy rows may omit it.
         JSON.stringify(input.capabilities ?? {}),
         input.enabled === false ? 0 : 1,
         createdAt,

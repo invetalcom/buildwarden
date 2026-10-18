@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   appendChatAttachmentFiles,
   type ChatAttachmentPayload,
-  type ChatDetail,
+  type ChatSearchDetail,
   type ChatRecord,
   type ModelExecutionProfile,
   type ProviderExecutionOptions,
@@ -13,6 +13,7 @@ import { MessageSquare, Search, Trash2 } from "lucide-react";
 import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
 import { RunComposer } from "./RunComposer";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
+import { chatDetailMatchesSearch } from "../../lib/chat-search";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -20,18 +21,6 @@ import { Input } from "../ui/input";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { buildRunReasoningInput } from "./app-model";
 
-const chatDetailMatchesSearch = (detail: ChatDetail, query: string): boolean => {
-  if (!query.trim()) return true;
-  const q = query.toLowerCase();
-  const { chat, steps } = detail;
-  if (chat.prompt.toLowerCase().includes(q)) return true;
-  return steps.some(
-    (step) =>
-      step.title.toLowerCase().includes(q) ||
-      step.content.toLowerCase().includes(q) ||
-      step.eventType.toLowerCase().includes(q),
-  );
-};
 
 interface ChatPageProps {
   modelOptions: Array<{ id: string; label: string; modelId: string; providerType: ProviderType; providerFamily: UnifiedProviderFamily | null; executionProfile?: ModelExecutionProfile }>;
@@ -70,7 +59,7 @@ export const ChatPage = ({
   onDeleteChat,
 }: ChatPageProps) => {
   const [searchQuery, setSearchQuery] = useState("");
-  const [chatDetails, setChatDetails] = useState<ChatDetail[]>([]);
+  const [chatDetails, setChatDetails] = useState<ChatSearchDetail[]>([]);
   const [loading, setLoading] = useState(true);
   const [newChatPrompt, setNewChatPrompt] = useState("");
   const [newChatFiles, setNewChatFiles] = useState<File[]>([]);

@@ -52,6 +52,35 @@ Open **Attention inbox** from the desktop sidebar or mobile home screen to see a
 - Browse AI-generated project insights and Project Lab implementation/RFC threads.
 - Turn integrated skills on globally or per project.
 
+**Rich responses**
+
+Responses support Markdown tables, inline images with an enlarged viewer, and compact image-and-text cards on desktop and mobile. For a card, use a standalone image followed by a level-three heading and one short subtitle paragraph; a preceding section heading stays full width:
+
+```markdown
+## Product passport infrastructure
+
+![Dashboard](https://example.com/dashboard.png)
+
+### A compliance platform for physical products
+
+Target: manufacturers and industrial suppliers
+```
+
+The image sits beside the title and subtitle in wide panels, and above them in narrow panels. Cards also support title-first responses: a bold title and description with one image in the same paragraph/list item, or a heading/bold title followed by a description and image in adjacent paragraphs. Numbered and bulleted lists retain their numbering and structure. These rules operate on ordinary Markdown for every provider, including Codex, Claude Code, Cursor, and AI SDK providers; no provider-specific card metadata is required. For example:
+
+```md
+1. **Rule matrix** — Spot missing rules quickly. ![Preview](work/rule-matrix.png)
+2. **Bulk editing** — Update configurations together. ![Preview](work/bulk-editing.png)
+```
+
+Each matching item becomes an image-left/title-and-description-right card. Paragraphs containing multiple images, linked images, code, tables, and unrelated paragraphs retain their original layout; cards do not group content across list items or separators.
+
+Agent runs also display completed Codex image-view events and local raster links such as `[Screenshot](work/mockup.png)` as images. Reopening an older run hydrates these links while the workspace images remain available. Proprietary `visualize` references become HTML source-file links; BuildWarden does not execute those HTML files inline.
+
+Local PNG, JPEG, GIF, and WebP images referenced with inline Markdown image syntax are embedded in saved responses before they reach the renderer (5 MiB per image, 15 MiB per worker turn). Paths must remain inside the run workspace or the chat's app-owned workspace; file URLs and workspace-relative `sandbox:/` references follow the same checks. Put paths containing spaces in angle brackets. Unavailable images show a text placeholder. External images show a click-to-load placeholder with the destination host. No request is sent until the user approves that exact URL; changed URLs require approval again. Embedded workspace images load automatically. HTTPS is recommended for remote clients. Raw HTML forms and executable content are not supported.
+
+Codex chats expose `buildwarden_ask_user` for clickable questions, including outside plan mode. Native provider question requests and AI SDK's `request_user_input` use the same answer card. Answers are saved with the question; inactive or read-only conversations cannot submit them. Availability still depends on the provider supporting tool calls. No image-and-text layout or form is inferred from proprietary GUI markup.
+
 **Security and access**
 
 - Provider keys, PR/MR tokens, and proxy passwords are held in Electron's secure storage, not in plain config files.

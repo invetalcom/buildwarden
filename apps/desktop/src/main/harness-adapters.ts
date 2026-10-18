@@ -45,6 +45,6 @@ export const createHarnessAdapter = (providerType: ProviderType, options: Harnes
       return new AzureLegacyHarnessAdapter();
     case "ai-sdk":
     case "openrouter":
-      return new AiSdkHarnessAdapter();
+      return new AiSdkHarnessAdapter(options.requestUserInput);
   }
 };

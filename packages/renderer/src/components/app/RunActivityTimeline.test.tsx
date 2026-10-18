@@ -26,6 +26,37 @@ const step = (
 });
 
 describe("run activity timeline shaping", () => {
+  it("omits legacy image-view placeholders while retaining image output and errors", () => {
+    const markup = renderToStaticMarkup(<RunActivityTimeline
+      steps={[
+        { ...step("old-start", "status", { itemType: "imageView" }, "Image View"), title: "Codex update" },
+        { ...step("old-end", "status", { itemType: "imageView" }, "Image View"), title: "Codex update" },
+        step("image", "output", { assistantKind: "image", itemType: "imageView" }, "![Preview](data:image/png;base64,iVBORw0KGgo=)"),
+        step("failed-image", "error", { itemType: "imageView" }, "Image failed to load"),
+        step("image-status", "status", { itemType: "imageView" }, "Image access denied"),
+        step("other-status", "status", {}, "Image View"),
+      ]}
+      run={{ id: "legacy-images", status: "completed", mode: "code" }}
+    />);
+    expect(markup).not.toContain("Codex update");
+    expect(markup.match(/<img /g)).toHaveLength(1);
+    expect(markup).toContain("Image failed to load");
+    expect(markup).toContain("Image access denied");
+    expect(markup).toContain("other-status");
+  });
+  it("renders persisted viewed-image events and screenshot answers in agent runs", () => {
+    const image = "![Screenshot](data:image/png;base64,iVBORw0KGgo=)";
+    const markup = renderToStaticMarkup(<RunActivityTimeline
+      steps={[
+        step("view", "output", { assistantKind: "image", itemType: "imageView" }, image),
+        step("answer", "output", {}, `1. **Saved versions** — compare configurations. ${image}`),
+      ]}
+      run={{ id: "run-images", status: "completed", mode: "code" }}
+    />);
+    expect(markup.match(/<img /g)).toHaveLength(2);
+    expect(markup).toContain('aria-label="Enlarge Screenshot"');
+    expect(markup).not.toContain("Codex update");
+  });
   it("renders the major workflow event families", () => {
     const steps = [
       step("prompt", "log", { source: "user", mode: "code", attachmentNames: ["spec.md"] }, "Implement the plan"),

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import {
   extractAttachmentNamesFromMetadata,
+  getResponseSourceText,
   extractAttachmentPayloadsFromMetadata,
   type RunEventType,
   type RunMode,
@@ -154,7 +155,7 @@ export const SingleGroupActivityEntry = ({
     );
   }
 
-  const combinedAnswerText = entry.items.map(({ step }) => step.content).join("\n\n");
+  const combinedAnswerText = entry.items.map(({ step, metadata }) => getResponseSourceText(step, metadata)).join("\n\n");
 
   return (
     <AgentLogRow key={groupKey} tone="answer" label="Answer" time={rowTime(timeRange)}>
@@ -163,7 +164,7 @@ export const SingleGroupActivityEntry = ({
           type="button"
           variant="ghost"
           size="sm"
-          className="absolute right-1 top-1 z-10 h-6 w-6 shrink-0 p-0 text-[color:var(--ec-muted)] hover:bg-[color:var(--ec-hover)] hover:text-[color:var(--ec-text)]"
+          className="absolute bottom-1 right-1 z-10 h-6 w-6 shrink-0 p-0 text-[color:var(--ec-muted)] hover:bg-[color:var(--ec-hover)] hover:text-[color:var(--ec-text)]"
           onClick={() => void copyStepContent(combinedAnswerText, groupKey)}
           title={activeCopiedStepId === groupKey ? "Copied" : "Copy response"}
           aria-label="Copy response"
@@ -493,8 +494,8 @@ const AnswerActivityEntry = ({ entry, context }: SingleEntryProps) => {
             type="button"
             variant="ghost"
             size="sm"
-            className="absolute right-1 top-1 z-10 h-6 w-6 shrink-0 p-0 text-[color:var(--ec-muted)] hover:bg-[color:var(--ec-hover)] hover:text-[color:var(--ec-text)]"
-            onClick={() => void context.copyStepContent(entry.step.content, entry.step.id)}
+            className="absolute bottom-1 right-1 z-10 h-6 w-6 shrink-0 p-0 text-[color:var(--ec-muted)] hover:bg-[color:var(--ec-hover)] hover:text-[color:var(--ec-text)]"
+            onClick={() => void context.copyStepContent(getResponseSourceText(entry.step, entry.metadata), entry.step.id)}
             title={context.activeCopiedStepId === entry.step.id ? "Copied" : "Copy response"}
             aria-label="Copy response"
           >

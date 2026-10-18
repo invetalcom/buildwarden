@@ -2,7 +2,6 @@ import { parseWorkspaceSetupSettings } from "@buildwarden/shared";
 import { spawn } from "node:child_process";
 import { createHash, randomInt } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, statSync, type Dirent } from "node:fs";
-import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -18,6 +17,8 @@ import { verifyWorkspaceRevision } from "./revision-verification";
 import { canReviewRunChanges, RUN_VERIFICATION_FAILURE_PREFIX, parseRevisionVerificationPolicy, verificationMatches, type RunVerificationState, type RunVerificationRecord } from "@buildwarden/shared";
 import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
 import { readRunWorkspaceFileForPreview } from "./run-workspace-file";
+import { getChatWorkspacePath, removeChatWorkspace } from "./chat-workspace";
+import { createResponseImageEmbedder, hydrateResponseImageSteps } from "./response-images";
 import { normalizeJsonResponse } from "./json-response";
 import { normalizeSuggestedBranchName } from "./branch-name-suggestion";
 import { generateUtilityText, validateUtilityText, type UtilityTextPurpose } from "./utility-text-generation";
@@ -113,6 +114,7 @@ import {
   type BookmarkRecord,
   type ChatBookmarkRecord,
   type ChatDetail,
+  type ChatSearchDetail,
   type ChatHistoryPage,
   type ChatEvent,
   type ChatAttachmentPayload,
@@ -276,6 +278,7 @@ import {
   buildRunChatFirstTurnPrompt,
   buildRunChatUpdateTurnPrompt,
   providerReplaysChatHistory,
+  runAssistantSourceText,
 } from "./run-chat-context";
 import { isOrchestrationToolName, ORCHESTRATION_TOOL_DEFINITIONS } from "./orchestration-tools";
 import {
@@ -483,7 +486,7 @@ const isDuplicateFinalSummaryStep = (
   if (metadata.assistantKind !== "final-summary") {
     return false;
   }
-  const normalizedContent = normalizeAssistantOutputText(step.content);
+  const normalizedContent = normalizeAssistantOutputText(typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content);
   return Boolean(previousAssistantContent) && normalizedContent.length > 0 && normalizedContent === previousAssistantContent;
 };
 
@@ -573,14 +576,14 @@ export const buildPriorRunMessagesFromSteps = (
     }
 
     if (step.eventType === "output") {
-      if (metadata.assistantKind === "reasoning" || step.title === "Reasoning") {
+      if (metadata.assistantKind === "reasoning" || metadata.assistantKind === "image" || step.title === "Reasoning") {
         continue;
       }
       if (isDuplicateFinalSummaryStep(step, previousAssistantContent)) {
         continue;
       }
-      messages.push({ role: "assistant", content: step.content });
-      previousAssistantContent = normalizeAssistantOutputText(step.content);
+      messages.push({ role: "assistant", content: typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content });
+      previousAssistantContent = normalizeAssistantOutputText(typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content);
     }
   }
   if (messages.length > 0 && messages[messages.length - 1]?.role === "user") {
@@ -1103,13 +1106,14 @@ type WorkerDoneResult = {
 
 type ChatWorkerChunkPayload = {
   type: "chunk";
+  deliveryId?: number;
   chunk: { type: string; value: string; title?: string; metadata?: Record<string, unknown> };
 };
 
-type ChatWorkerPayload = ChatWorkerChunkPayload | { type: "done"; result: WorkerDoneResult } | { type: "error"; error: string };
+type ChatWorkerPayload = ChatWorkerChunkPayload | Extract<RunWorkerPayload, { type: "user-input-request" }> | { type: "done"; result: WorkerDoneResult } | { type: "error"; error: string };
 
 type RunWorkerPayload =
-  | { type: "chunk"; chunk: { type: string; value: string; title?: string; metadata?: Record<string, unknown> } }
+  | { type: "chunk"; deliveryId?: number; chunk: { type: string; value: string; title?: string; metadata?: Record<string, unknown> } }
   | { type: "done"; result: WorkerDoneResult }
   | { type: "shell-approval-request"; requestId: string; command: string }
   | {
@@ -1255,6 +1259,7 @@ export class AppController
   private readonly runShellApprovalStepIds = new Map<string, string>();
   private readonly runUserInputStepIds = new Map<string, string>();
   private readonly chatWorkers = new Map<string, ActiveWorker>();
+  private readonly chatUserInputRequests = new Map<string, Set<string>>();
   /** In-flight run-chat creations by run id; serializes concurrent first sends for the same run. */
   private readonly runChatCreations = new Map<string, Promise<ChatRecord>>();
   /** Serializes Git branch mutations per project while allowing different projects to proceed independently. */
@@ -2019,6 +2024,7 @@ export class AppController
 
     const staleChats = this.db.listChatsWithStatuses(activeStatuses).filter((chat) => !this.chatWorkers.has(chat.id));
     for (const chat of staleChats) {
+      this.db.closeChatUserInputRequests(chat.id);
       this.db.updateChatStatus(chat.id, "cancelled", { finishedAt: new Date().toISOString() });
       await this.appendChatEvent(chat.id, "status", "Session interrupted", SESSION_INTERRUPTED_MESSAGE, {
         sessionInterrupted: true,
@@ -2408,7 +2414,7 @@ export class AppController
     return this.db.listChats().map((s) => this.db.getChat(s.id));
   }
 
-  async listChatsWithSteps(): Promise<ChatDetail[]> {
+  async listChatsWithSteps(): Promise<ChatSearchDetail[]> {
     return this.db.listChatsWithSteps();
   }
 
@@ -2418,13 +2424,24 @@ export class AppController
       active.cancelled = true;
       active.worker.postMessage({ type: "cancel" });
       this.chatWorkers.delete(chatId);
+      this.chatUserInputRequests.delete(chatId);
+      this.db.closeChatUserInputRequests(chatId);
       await active.worker.terminate();
     }
     const isRunChat = Boolean(this.db.getChat(chatId).runId);
+    await this.removeChatWorkspaceBestEffort(chatId);
     this.db.deleteProviderSessionRuntime(chatId, "chat");
     this.db.deleteChat(chatId);
     if (!isRunChat) {
       this.db.deleteSetting(SELECTED_CHAT_KEY);
+    }
+  }
+
+  private async removeChatWorkspaceBestEffort(chatId: string): Promise<void> {
+    try {
+      await removeChatWorkspace(this.db.getFilePath(), chatId);
+    } catch (error) {
+      this.logControllerWarn("Could not remove the chat workspace; continuing deletion.", { chatId, error });
     }
   }
 
@@ -2437,15 +2454,18 @@ export class AppController
       errorMessage: "Chat cancelled by user.",
       finishedAt: new Date().toISOString(),
     });
-    await this.appendChatEvent(chatId, "status", "Chat cancelled", "Cancellation requested.");
+    await this.appendChatEvent(chatId, "status", "Chat cancelled", "Cancellation requested.", { userFacing: true });
     this.emitChatEvent(chatId, {
       runId: chatId,
       type: "status",
       title: "Chat cancelled",
       content: "Cancellation requested.",
+      metadata: { userFacing: true },
       createdAt: new Date().toISOString(),
     });
     this.chatWorkers.delete(chatId);
+    this.chatUserInputRequests.delete(chatId);
+    this.db.closeChatUserInputRequests(chatId);
     await active.worker.terminate();
   }
 
@@ -2831,6 +2851,7 @@ export class AppController
       capabilities: {
         ...getDefaultProviderCapabilities(provider.providerType),
         ...input.capabilities,
+        supportsToolsSource: typeof input.capabilities?.supportsTools === "boolean" ? "model" : "provider-default",
       },
       config: input.config,
     });
@@ -6867,6 +6888,9 @@ export class AppController
 
     const runs = this.db.listRunsForProject(projectId);
     for (const run of runs) {
+      for (const chat of this.db.getChatsForRun(run.id)) {
+        await this.deleteChat(chat.id);
+      }
       this.terminal.killForRunId(run.id);
       this.clearRunCheckpoint(run.id);
       this.clearRunPromptRestorePoint(run.id);
@@ -6993,7 +7017,7 @@ export class AppController
     const recoveryKind = resolveRecoveryKind(true, Boolean(checkpoint), providerSessionAvailable);
     return {
       run,
-      steps: history.steps,
+      steps: hydrateResponseImageSteps(workspacePath, history.steps),
       historyPage: history.page,
       notes: this.db.listRunNotes(runId),
       workspaceSetup: this.db.getRunWorkspaceSetup(runId),
@@ -7026,7 +7050,8 @@ export class AppController
   }
 
   async getEarlierRunHistory(runId: string, request: UserAnchoredHistoryPageRequest): Promise<RunHistoryPage> {
-    return this.db.getEarlierRunHistory(runId, request);
+    const history = this.db.getEarlierRunHistory(runId, request);
+    return { ...history, steps: hydrateResponseImageSteps(this.getEffectiveRunWorkspacePath(this.db.getRun(runId)), history.steps) };
   }
 
   async searchRunUserInput(query: string): Promise<string[]> {
@@ -8507,9 +8532,12 @@ export class AppController
         activeChat.cancelled = true;
         activeChat.worker.postMessage({ type: "cancel" });
         this.chatWorkers.delete(runChat.id);
+        this.chatUserInputRequests.delete(runChat.id);
+        this.db.closeChatUserInputRequests(runChat.id);
         await activeChat.worker.terminate();
       }
       this.db.deleteProviderSessionRuntime(runChat.id, "chat");
+      await this.removeChatWorkspaceBestEffort(runChat.id);
     }
     await this.deleteRunResources(project.repoPath, run, "run");
     this.db.deleteRun(runId);
@@ -8533,6 +8561,8 @@ export class AppController
         activeChat.cancelled = true;
         activeChat.worker.postMessage({ type: "cancel" });
         this.chatWorkers.delete(runChat.id);
+        this.chatUserInputRequests.delete(runChat.id);
+        this.db.closeChatUserInputRequests(runChat.id);
         await activeChat.worker.terminate();
       }
     }
@@ -8576,6 +8606,7 @@ export class AppController
         this.db.deleteProviderSessionRuntime(id, "run");
         for (const runChat of this.db.getChatsForRun(id)) {
           this.db.deleteProviderSessionRuntime(runChat.id, "chat");
+          await this.removeChatWorkspaceBestEffort(runChat.id);
         }
         await this.deleteRunResources(project.repoPath, ownedRun, "run");
         if (
@@ -9437,6 +9468,19 @@ export class AppController
     }
   }
 
+  async respondToChatUserInput(chatId: string, requestId: string, answers: RunUserInputAnswers): Promise<void> {
+    const active = this.chatWorkers.get(chatId);
+    const pending = this.chatUserInputRequests.get(chatId);
+    if (!active || active.cancelled || !pending?.has(requestId)) throw new Error("This question is no longer active.");
+    const step = this.db.resolveChatUserInput(chatId, requestId, answers);
+    pending.delete(requestId);
+    active.worker.postMessage({ type: "user-input-response", requestId, answers });
+    this.emitChatEvent(chatId, {
+      runId: chatId, type: "user-input-requested", title: step.title, content: step.content,
+      metadata: JSON.parse(step.metadataJson) as Record<string, unknown>, createdAt: new Date().toISOString(), step,
+    });
+  }
+
   onRunEvent(listener: (event: RunEvent) => void): () => void {
     return this.events.subscribe("run", listener);
   }
@@ -9795,6 +9839,7 @@ export class AppController
 
     const worker = new Worker(workerPath, {
       workerData: {
+        acknowledgeChunks: true,
         request: {
           ...(workspaceSetup && workspaceSetup.status !== "completed" ? { workspaceSetup: {
             profile: workspaceSetup.profile, sourcePath: this.db.getProject(run.projectId).repoPath,
@@ -9815,6 +9860,7 @@ export class AppController
           ...(options?.skillContext ? { skillContext: options.skillContext } : {}),
           config: JSON.parse(provider.configJson || "{}") as Record<string, unknown>,
           modelConfig: JSON.parse(model.configJson || "{}") as Record<string, unknown>,
+          modelCapabilities: parseMetadataRecord(model.capabilitiesJson),
           providerOptions: options?.providerOptions,
           ...(networkProxy ? { networkProxy } : {}),
           shellAllowlistExtra,
@@ -9904,18 +9950,22 @@ export class AppController
       }
 
       if (payload.type === "chunk") {
-        await this.handleRunWorkerChunk(
-          run,
-          provider,
-          model.modelId,
-          payload,
-          maxRunTokens,
-          exhaustBudget,
-          streamingStepIds,
-          streamingStepKinds,
-          resetNarrationStreams,
-          usageTracker,
-        );
+        try {
+          await this.handleRunWorkerChunk(
+            run,
+            provider,
+            model.modelId,
+            payload,
+            maxRunTokens,
+            exhaustBudget,
+            streamingStepIds,
+            streamingStepKinds,
+            resetNarrationStreams,
+            usageTracker,
+          );
+        } finally {
+          if (payload.deliveryId !== undefined) worker.postMessage({ type: "chunk-ack", deliveryId: payload.deliveryId });
+        }
         return;
       }
 
@@ -9954,9 +10004,10 @@ export class AppController
             } catch {
               /* ignore malformed legacy metadata */
             }
-            return metadata.assistantKind !== "reasoning";
+            return metadata.assistantKind !== "reasoning" && metadata.assistantKind !== "image";
           });
-        const latestAssistantOutputText = latestAssistantOutput ? normalizeAssistantOutputText(latestAssistantOutput.content) : "";
+        const latestAssistantSource = latestAssistantOutput ? parseMetadataRecord(latestAssistantOutput.metadataJson).responseSourceText : undefined;
+        const latestAssistantOutputText = latestAssistantOutput ? normalizeAssistantOutputText(typeof latestAssistantSource === "string" ? latestAssistantSource : latestAssistantOutput.content) : "";
         const shouldAppendFinalSummary =
           !wasCancelled &&
           provider.providerType !== "azure-legacy" &&
@@ -9964,17 +10015,18 @@ export class AppController
           trimmedSummary !== "No output returned from the provider." &&
           normalizeAssistantOutputText(trimmedSummary) !== latestAssistantOutputText;
         if (shouldAppendFinalSummary) {
-          await this.appendRunEvent(run.id, "output", "Final summary", trimmedSummary, {
+          const summaryContent = createResponseImageEmbedder(this.getEffectiveRunWorkspacePath(run))(trimmedSummary);
+          const summaryMetadata = {
             assistantKind: "final-summary",
-          });
+            ...(summaryContent !== trimmedSummary ? { responseSourceText: trimmedSummary } : {}),
+          };
+          await this.appendRunEvent(run.id, "output", "Final summary", summaryContent, summaryMetadata);
           this.emitEvent({
             runId: run.id,
             type: "output",
             title: "Final summary",
-            content: trimmedSummary,
-            metadata: {
-              assistantKind: "final-summary",
-            },
+            content: summaryContent,
+            metadata: summaryMetadata,
             createdAt: new Date().toISOString(),
           });
         }
@@ -10361,10 +10413,11 @@ export class AppController
         return `- ${String(meta.toolName ?? step.title)}: ${step.content}`;
       });
     const recentErrors = recentSteps.filter((step) => step.eventType === "error").slice(-2).map((step) => `- ${step.content}`);
-    const recentOutput = recentSteps
-      .filter((step) => step.eventType === "output")
-      .slice(-1)[0]
-      ?.content.replace(/\s+/g, " ")
+    const recentOutput = steps
+      .map(runAssistantSourceText)
+      .filter(Boolean)
+      .at(-1)
+      ?.replace(/\s+/g, " ")
       .trim()
       .slice(0, 500);
     const checkpoint = this.getRunCheckpoint(runId);
@@ -10446,11 +10499,15 @@ export class AppController
           }];
         }
 
+        if (step.eventType === "user-input-requested" && metadata.requestStatus === "resolved") {
+          return [{ role: "user", content: `Answers to the assistant's questions: ${JSON.stringify({ questions: metadata.userInputQuestions, answers: metadata.userInputAnswers })}` }];
+        }
+
         if (step.eventType === "output") {
-          if (metadata.assistantKind === "reasoning" || step.title === "Reasoning") {
+          if (metadata.assistantKind === "reasoning" || metadata.assistantKind === "image" || step.title === "Reasoning") {
             return [];
           }
-          return [{ role: "assistant", content: step.content }];
+          return [{ role: "assistant", content: typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content }];
         }
 
         return [];
@@ -10761,6 +10818,12 @@ export class AppController
     providerOptions?: ProviderExecutionOptions,
   ): Worker {
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "chat-worker.js");
+    // Only this app-owned directory is eligible for inline local chat images.
+    const chatWorkspace = getChatWorkspacePath(this.db.getFilePath(), chat.id);
+    mkdirSync(chatWorkspace, { recursive: true });
+    this.db.closeChatUserInputRequests(chat.id);
+    const pendingInputs = new Set<string>();
+    this.chatUserInputRequests.set(chat.id, pendingInputs);
     const streamingStepIds = new Map<string, string>();
     const usageTracker = this.initialUsageReportTracker(chat.id, "chat", provider, this.db.getChatSteps(chat.id));
     const settings = this.db.getSettings();
@@ -10770,10 +10833,10 @@ export class AppController
     }
     const worker = new Worker(workerPath, {
       workerData: {
+        acknowledgeChunks: true,
         request: {
           runId: chat.id,
-          // Chats are not bound to a repo; provider harnesses still need a real `cwd` for `spawn`.
-          worktreePath: homedir(),
+          worktreePath: chatWorkspace,
           mode: "ask" as const,
           prompt: promptOverride ?? chat.prompt,
           providerType: provider.providerType,
@@ -10784,6 +10847,7 @@ export class AppController
           providerSessionRuntime: this.db.getProviderSessionRuntime(chat.id, "chat"),
           config: JSON.parse(provider.configJson || "{}") as Record<string, unknown>,
           modelConfig: JSON.parse(model.configJson || "{}") as Record<string, unknown>,
+          modelCapabilities: parseMetadataRecord(model.capabilitiesJson),
           providerOptions,
           ...(networkProxy ? { networkProxy } : {}),
           isChat: true,
@@ -10808,8 +10872,28 @@ export class AppController
     worker.on("message", async (message: unknown) => {
       const payload = message as ChatWorkerPayload;
 
+      if (payload.type === "user-input-request") {
+        if (this.chatWorkers.get(chat.id)?.worker !== worker) return;
+        const metadata = {
+          ...payload.metadata, requestKind: "user-input", requestStatus: "opened",
+          userInputRequestId: payload.requestId, userInputQuestions: payload.questions ?? [],
+        };
+        const step = await this.appendChatEvent(chat.id, "user-input-requested", payload.title || "Question",
+          payload.content || "", metadata);
+        pendingInputs.add(payload.requestId);
+        this.emitChatEvent(chat.id, {
+          runId: chat.id, type: "user-input-requested", title: step.title, content: step.content,
+          metadata, createdAt: step.createdAt, step,
+        });
+        return;
+      }
+
       if (payload.type === "chunk") {
-        await this.handleChatWorkerChunk(chat, provider, model, payload, streamingStepIds, usageTracker);
+        try {
+          await this.handleChatWorkerChunk(chat, provider, model, payload, streamingStepIds, usageTracker);
+        } finally {
+          if (payload.deliveryId !== undefined) worker.postMessage({ type: "chunk-ack", deliveryId: payload.deliveryId });
+        }
         return;
       }
 
@@ -10840,6 +10924,8 @@ export class AppController
           createdAt: new Date().toISOString(),
         });
         this.chatWorkers.delete(chat.id);
+        this.chatUserInputRequests.delete(chat.id);
+        this.db.closeChatUserInputRequests(chat.id);
         await worker.terminate();
         return;
       }
@@ -10864,6 +10950,8 @@ export class AppController
           createdAt: new Date().toISOString(),
         });
         this.chatWorkers.delete(chat.id);
+        this.chatUserInputRequests.delete(chat.id);
+        this.db.closeChatUserInputRequests(chat.id);
         await worker.terminate();
       }
     });
@@ -10873,6 +10961,8 @@ export class AppController
       this.db.updateChatStatus(chat.id, "failed", { errorMessage: error.message, finishedAt: new Date().toISOString() });
       await this.appendChatEvent(chat.id, "error", "Worker error", error.message);
       this.chatWorkers.delete(chat.id);
+      this.chatUserInputRequests.delete(chat.id);
+      this.db.closeChatUserInputRequests(chat.id);
     });
 
     return worker;

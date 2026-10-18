@@ -59,6 +59,21 @@ const makeStep = (overrides: Partial<RunStepRecord>): RunStepRecord => ({
 });
 
 describe("buildRunChatContext", () => {
+  it("keeps source descriptions and earlier outputs instead of spending the budget on image bytes", () => {
+    const image = `![Preview](data:image/png;base64,${"A".repeat(100_000)})`;
+    const context = buildRunChatContext({ run: makeRun(), projectName: "Repo", diff: "", steps: [
+      makeStep({ eventType: "output", content: "Earlier explanation" }),
+      makeStep({ eventType: "output", content: image, metadataJson: JSON.stringify({ responseSourceText: "Final description ![Preview](preview.png)" }) }),
+      makeStep({ eventType: "output", content: image + " Legacy caption", metadataJson: "null" }),
+      makeStep({ eventType: "output", content: "Image inspection", metadataJson: JSON.stringify({ assistantKind: "image" }) }),
+    ] });
+    expect(context).toContain("Earlier explanation");
+    expect(context).toContain("Final description ![Preview](preview.png)");
+    expect(context).toContain("Legacy caption");
+    expect(context).not.toContain("base64");
+    expect(context).not.toContain("Image inspection");
+    expect(context).not.toContain("omitted");
+  });
   it("includes run info, user prompts, agent output, and the diff", () => {
     const context = buildRunChatContext({
       run: makeRun(),

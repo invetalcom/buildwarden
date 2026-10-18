@@ -12,6 +12,23 @@ import {
 } from "@buildwarden/provider-codex-cli";
 
 describe("Codex CLI plan progress", () => {
+  it("emits viewed images once as renderable output instead of generic status rows", async () => {
+    const stdout = new PassThrough();
+    const child = Object.assign(new EventEmitter(), {
+      stdout, stdin: new PassThrough(), stderr: new PassThrough(), killed: true, kill: () => true,
+    }) as unknown as ChildProcessWithoutNullStreams;
+    const chunks: HarnessRunChunk[] = [];
+    new CodexAppServerSession(child, "thread-1", "C:\\repo", undefined, undefined, (chunk) => chunks.push(chunk));
+    const item = { type: "imageView", id: "image-1", path: "C:\\repo\\work\\saved versions.png" };
+    stdout.write(`${JSON.stringify({ method: "item/started", params: { threadId: "thread-1", item } })}\n`);
+    stdout.write(`${JSON.stringify({ method: "item/completed", params: { threadId: "thread-1", item } })}\n`);
+    await vi.waitFor(() => expect(chunks).toHaveLength(1));
+    expect(chunks[0]).toEqual({
+      type: "message", title: "Viewed image", value: "![Viewed image](<C:/repo/work/saved%20versions.png>)",
+      metadata: { itemType: "imageView", itemId: "image-1", assistantKind: "image", streamId: "image:image-1", replace: true },
+    });
+  });
+
   it("maps turn plan updates to replaceable plan-progress chunks", () => {
     const chunk = buildCodexPlanProgressChunk({
       explanation: "Implementing the approved plan.",

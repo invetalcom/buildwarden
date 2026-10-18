@@ -37,6 +37,7 @@ import { HostEventBus } from "./host-events";
 import type { ProjectPrReviewProvider } from "./pr-review/pr-review-types";
 import { advanceReportedTokenUsage } from "./token-usage-accounting";
 import * as utilityTextGeneration from "./utility-text-generation";
+import * as chatWorkspace from "./chat-workspace";
 
 const project = {
   id: "project-1",
@@ -113,6 +114,7 @@ const createHarness = (overrides: DbOverrides = {}) => {
     updateProjectBaseBranch: vi.fn((_projectId: string, baseBranch: string) => ({ ...project, baseBranch })),
   };
   const defaults: DbOverrides = {
+    getFilePath: vi.fn(() => join(logDir, "state.sqlite")),
     getSettings: vi.fn(() => ({ ...settings })),
     getSnapshot: vi.fn(() => ({ projects: [], providerAccounts: [], models: [], runs: [], chats: [], bookmarks: [], chatBookmarks: [], settings: {} })),
     getProject: vi.fn(() => project),
@@ -189,6 +191,41 @@ const tempDirs: string[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
   for (const path of tempDirs.splice(0)) rmSync(path, { recursive: true, force: true });
+});
+
+it("keeps original image references in model history and excludes image-view display events", () => {
+  const source = "1. **Saved versions** [Screenshot](work/versions.png)";
+  const display = "1. **Saved versions** ![Screenshot](data:image/png;base64,iVBORw0KGgo=)";
+  expect(buildPriorRunMessagesFromSteps([
+    { eventType: "output", title: "Viewed image", content: "![Viewed image](data:image/png;base64,iVBORw0KGgo=)", metadataJson: '{"assistantKind":"image"}' },
+    { eventType: "output", title: "Agent output", content: display, metadataJson: JSON.stringify({ responseSourceText: source }) },
+    { eventType: "output", title: "Final summary", content: source, metadataJson: '{"assistantKind":"final-summary"}' },
+  ])).toEqual([{ role: "assistant", content: source }]);
+});
+
+it("hydrates screenshot links when reopening and paging an existing agent run", async () => {
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j0WQAAAAASUVORK5CYII=", "base64");
+  const step = { id: "saved-answer", eventType: "output", title: "Agent output", content: "[Screenshot](versions.png)", metadataJson: "{}", createdAt: "2026-01-01T00:00:00.000Z" };
+  const history = { steps: [step], page: { hasEarlier: false } };
+  const harness = createHarness({
+    getRun: vi.fn(() => ({ id: "run-images", projectId: project.id, modelId: model.id, workspaceType: "local", worktreePath: harness.logDir })),
+    getInitialRunHistory: vi.fn(() => history),
+    getRunSteps: vi.fn(() => history.steps),
+    getEarlierRunHistory: vi.fn(() => history),
+    getRunRecoveryEventTimestamps: vi.fn(() => ({ latestInterruptedAt: null, latestRecoveryAt: null })),
+    listRunNotes: vi.fn(() => []),
+    getRunWorkspaceSetup: vi.fn(() => null),
+    getOrchestrationDetailByCoordinatorRunId: vi.fn(() => null),
+  });
+  tempDirs.push(harness.logDir);
+  writeFileSync(join(harness.logDir, "versions.png"), png);
+  const detail = await harness.controller.getRunDetail("run-images");
+  const earlier = await harness.controller.getEarlierRunHistory("run-images", { beforeCursor: step.id, snapshotRevision: "revision-1" });
+  for (const page of [detail, earlier]) {
+    expect(page.steps[0].content).toContain("![Screenshot](data:image/png;base64,");
+    expect(JSON.parse(page.steps[0].metadataJson).responseSourceText).toBe(step.content);
+  }
+  expect(step.content).toBe("[Screenshot](versions.png)");
 });
 
 const deferred = <T>() => {
@@ -293,6 +330,31 @@ describe("provider usage report baselines", () => {
 });
 
 describe("AppController settings and lightweight workflows", () => {
+  it.each(["EBUSY", "EPERM"])("deletes chat state when workspace cleanup fails with %s", async (code) => {
+    const cleanup = vi.spyOn(chatWorkspace, "removeChatWorkspace").mockRejectedValueOnce(Object.assign(new Error("Workspace locked"), { code }));
+    const deleteChat = vi.fn();
+    const deleteRuntime = vi.fn();
+    const harness = createHarness({ getChat: vi.fn(() => ({ id: "locked-chat", runId: null })), deleteChat, deleteProviderSessionRuntime: deleteRuntime });
+    tempDirs.push(harness.logDir);
+    try {
+      await expect(harness.controller.deleteChat("locked-chat")).resolves.toBeUndefined();
+      expect(deleteRuntime).toHaveBeenCalledWith("locked-chat", "chat");
+      expect(deleteChat).toHaveBeenCalledWith("locked-chat");
+    } finally { cleanup.mockRestore(); }
+  });
+  it("uses the latest descriptive source output for follow-up memory, skipping image inspections", () => {
+    const harness = createHarness({
+      getRun: vi.fn(() => ({ id: "run-1" })),
+      getRunSteps: vi.fn(() => [
+        { eventType: "output", title: "Answer", content: "![Image](data:image/png;base64,AAAA)", metadataJson: JSON.stringify({ responseSourceText: "Descriptive answer ![Image](preview.png)" }) },
+        ...Array.from({ length: 12 }, () => ({ eventType: "output", title: "Viewed image", content: "![Image](data:image/png;base64,BBBB)", metadataJson: JSON.stringify({ assistantKind: "image" }) })),
+      ]),
+    });
+    tempDirs.push(harness.logDir);
+    const memo = (harness.controller as unknown as { buildRunFollowUpMemo(id: string): string }).buildRunFollowUpMemo("run-1");
+    expect(memo).toContain("Latest agent output: Descriptive answer ![Image](preview.png)");
+    expect(memo).not.toContain("base64");
+  });
   it("publishes an automation-started notification after its run is created", async () => {
     const setProjectAutomationError = vi.fn();
     const harness = createHarness({
@@ -2196,6 +2258,34 @@ describe("AppController settings and lightweight workflows", () => {
 
     expect(harness.calls.deleteSetting).toHaveBeenCalledWith("selectedRunId");
     expect(harness.calls.setSetting).toHaveBeenCalledWith("selectedProjectId", project.id);
+  });
+
+  it.each(["EBUSY", "EPERM"])("finishes run resource and state cleanup when a chat workspace fails with %s", async (code) => {
+    const run = { id: "run-1", projectId: project.id } as RunRecord;
+    const cleanup = vi.spyOn(chatWorkspace, "removeChatWorkspace").mockRejectedValue(Object.assign(new Error("Workspace locked"), { code }));
+    const harness = createHarness({
+      getRun: vi.fn(() => run),
+      getChatsForRun: vi.fn(() => [{ id: "chat-1" }, { id: "chat-2" }]),
+      deleteProviderSessionRuntime: vi.fn(),
+      deleteRun: vi.fn(),
+    });
+    tempDirs.push(harness.logDir);
+    const resources = vi.spyOn(harness.controller as unknown as {
+      deleteRunResources: (repoPath: string, run: RunRecord, context: string) => Promise<void>;
+    }, "deleteRunResources").mockResolvedValue();
+    try {
+      await expect(harness.controller.deleteRun(run.id)).resolves.toBeUndefined();
+      expect(cleanup).toHaveBeenCalledTimes(2);
+      expect(resources).toHaveBeenCalledWith(project.repoPath, run, "run");
+      expect(harness.db.deleteProviderSessionRuntime).toHaveBeenCalledWith("chat-1", "chat");
+      expect(harness.db.deleteProviderSessionRuntime).toHaveBeenCalledWith("chat-2", "chat");
+      expect(harness.db.deleteRun).toHaveBeenCalledWith(run.id);
+      expect(harness.lifecycle.onRunDeleted).toHaveBeenCalledWith(run.id);
+      expect(harness.calls.deleteSetting).toHaveBeenCalledWith("selectedRunId");
+    } finally {
+      cleanup.mockRestore();
+      resources.mockRestore();
+    }
   });
 
   it("migrates the former run base into the single project base branch", async () => {

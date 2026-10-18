@@ -355,6 +355,8 @@ const api: DesktopApi = {
     invoke(IPC_CHANNELS.respondToShellApproval, runId, requestId, decision, options),
   respondToRunUserInput: (runId: string, requestId: string, answers: RunUserInputAnswers) =>
     invoke(IPC_CHANNELS.respondToRunUserInput, runId, requestId, answers),
+  respondToChatUserInput: (chatId: string, requestId: string, answers: RunUserInputAnswers) =>
+    invoke(IPC_CHANNELS.respondToChatUserInput, chatId, requestId, answers),
   refreshSnapshot: () => invoke(IPC_CHANNELS.refreshSnapshot),
   setAppSetting: (key: string, value: string) => invoke(IPC_CHANNELS.setAppSetting, key, value),
   setProjectRevisionVerificationPolicy: (projectId: string, enabled: boolean) => invoke(IPC_CHANNELS.setProjectRevisionVerificationPolicy, projectId, enabled),

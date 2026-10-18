@@ -73,7 +73,7 @@ export const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
   "pauseOrchestration", "resumeOrchestration", "cancelOrchestration", "finishOrchestration", "sendOrchestrationTaskMessage",
   "retryOrchestrationTask", "decideOrchestrationAdoption", "refreshOrchestrationTeam", "setRunListVisibility",
   "addBookmark", "removeBookmark", "removeBookmarkById", "addRunNote", "updateRunNote", "deleteRunNote", "createChat",
-  "createRunChat", "followUpChat", "cancelChat", "deleteChat", "addChatBookmark", "removeChatBookmark",
+  "createRunChat", "respondToChatUserInput", "followUpChat", "cancelChat", "deleteChat", "addChatBookmark", "removeChatBookmark",
   "removeChatBookmarkById", "createProjectTask", "updateProjectTask", "deleteProjectTask", "generateProjectTaskRunPrompt",
   "createProjectAutomation", "updateProjectAutomation", "deleteProjectAutomation", "runProjectAutomationNow",
   "generateProjectInsight", "runProjectLab", "deleteProjectLabThread", "createProjectLoop", "cancelProjectLoop",
@@ -99,7 +99,7 @@ export const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAc
   ].map((method) => [method as RemoteApiMethod, ["run:operate"] as const] as const),
   ...["respondToShellApproval", "respondToRunUserInput"]
     .map((method) => [method as RemoteApiMethod, ["approval:respond"] as const] as const),
-  ...["createChat", "createRunChat", "followUpChat", "cancelChat", "deleteChat", "addChatBookmark", "removeChatBookmark", "removeChatBookmarkById"]
+  ...["createChat", "createRunChat", "respondToChatUserInput", "followUpChat", "cancelChat", "deleteChat", "addChatBookmark", "removeChatBookmark", "removeChatBookmarkById"]
     .map((method) => [method as RemoteApiMethod, ["chat:operate"] as const] as const),
   ...[
     "commitRun", "suggestCommitMessage", "createRunLocalBranch", "suggestRunBranchName", "publishRunBranch",

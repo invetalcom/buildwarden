@@ -1,8 +1,11 @@
 @import "tailwindcss";
 @import "./tokens.css";
 
-/* Only the mobile UI is scanned: no desktop renderer classes end up in this bundle. */
+/* Scan mobile UI and the focused shared components used here. */
 @source "../**/*.{ts,tsx}";
+@source "../../../../../packages/renderer/src/components/app/RunUserInputRequestCard.tsx";
+@source "../../../../../packages/renderer/src/components/app/agent-worklog.tsx";
+@source "../../../../../packages/renderer/src/components/ui/{response-image,image-lightbox,agent-working-indicator,chat-working-indicator,badge,textarea}.tsx";
 @source "../../../../../packages/renderer/src/components/app/DesignSchemeEditor.tsx";
 @source "../../../../../packages/renderer/src/components/ui/{button,card,color-input,input}.tsx";
 

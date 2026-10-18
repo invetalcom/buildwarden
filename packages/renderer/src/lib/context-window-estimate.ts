@@ -151,10 +151,12 @@ export const buildVisibleConversationHistory = (
       }
 
       if (step.eventType === "output") {
-        if (metadata.assistantKind === "reasoning" || step.title === "Reasoning") {
+        if (metadata.assistantKind === "reasoning" || metadata.assistantKind === "image" || step.title === "Reasoning") {
           return [];
         }
-        return [step.content];
+        // Image bytes are display payloads, not model-visible conversation text.
+        const source = typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content;
+        return [source.replace(/data:image\/[a-z\d.+-]+;base64,[a-z\d+/]+=*/gi, "[image]")];
       }
 
       return [];

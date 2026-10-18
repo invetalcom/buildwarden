@@ -509,6 +509,10 @@ const createActivityEntries = (
     if (appendSubagentEntry(entries, partition, step)) continue;
 
     const metadata = safeParseMetadata(step.metadataJson);
+    // Older Codex runs persisted both image-view lifecycle events as empty status
+    // placeholders. They contain no image path; the answer's image links hydrate
+    // on read. Keep real image output and any descriptive/error status visible.
+    if (step.eventType === "status" && metadata.itemType === "imageView" && step.content.trim() === "Image View") continue;
     if (appendToolEntry(entries, pendingToolEntries, step, metadata)) continue;
     entries.push({ kind: "single", step, metadata });
   }

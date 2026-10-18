@@ -1,11 +1,9 @@
-import type { AnchorHTMLAttributes } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
-import rehypeRaw from "rehype-raw";
-import rehypeSanitize from "rehype-sanitize";
-import remarkGfm from "remark-gfm";
+import { ResponseImage, ResponseMarkdownBody } from "@buildwarden/renderer/response-content";
+import "@buildwarden/renderer/response-content.css";
+import { memo, type AnchorHTMLAttributes } from "react";
+import type { Components } from "react-markdown";
 import { isExternalRunWorkspaceHref } from "@buildwarden/shared";
 import { cn } from "../lib/cn";
-import { markdownSanitizeSchema } from "../lib/markdown-sanitize";
 
 /**
  * Renders agent and user messages as Markdown, with GFM (tables, task lists, strikethrough) and
@@ -61,8 +59,8 @@ const components: Components = {
   ul: ({ children }) => (
     <ul className="my-1.5 list-outside list-disc space-y-1 pl-5 marker:text-[var(--ec-accent)]">{children}</ul>
   ),
-  ol: ({ children }) => (
-    <ol className="my-1.5 list-outside list-decimal space-y-1 pl-5 marker:text-[var(--ec-accent)]">{children}</ol>
+  ol: ({ children, start }) => (
+    <ol start={start} className="my-1.5 list-outside list-decimal space-y-1 pl-5 marker:text-[var(--ec-accent)]">{children}</ol>
   ),
   li: ({ children }) => <li className="m-wrap-anywhere leading-6 [&>p]:my-0.5">{children}</li>,
 
@@ -105,20 +103,7 @@ const components: Components = {
   th: ({ children }) => <th className="whitespace-nowrap px-2 py-1.5 font-medium">{children}</th>,
   td: ({ children }) => <td className="px-2 py-1.5 align-top text-[var(--ec-muted)]">{children}</td>,
 
-  img: ({ src, alt, title }) => {
-    // Sanitisation strips a disallowed protocol and leaves no src; render nothing rather than a
-    // broken-image placeholder.
-    if (typeof src !== "string" || !src) return null;
-    return (
-      <img
-        src={src}
-        alt={alt ?? ""}
-        title={title}
-        loading="lazy"
-        className="my-2 max-h-72 max-w-full rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] object-contain"
-      />
-    );
-  },
+  img: ({ src, alt, title }) => <ResponseImage src={typeof src === "string" ? src : undefined} alt={alt} title={title} />,
   input: ({ type, checked }) =>
     type === "checkbox" ? (
       <input type="checkbox" checked={Boolean(checked)} readOnly disabled className="mr-1.5 align-[-0.12em] accent-[var(--ec-accent)]" />
@@ -131,19 +116,13 @@ const components: Components = {
   sub: ({ children }) => <sub className="text-[0.82em] text-[var(--ec-muted)]">{children}</sub>,
 };
 
-export const RichText = ({ children, className }: { children: string; className?: string }) => {
+export const RichText = memo(function RichText({ children, className }: { children: string; className?: string }) {
   if (!children.trim()) return null;
 
   return (
     // min-w-0 lets the scrollable code/table boxes shrink inside a flex parent (e.g. chat bubbles).
-    <div className={cn("m-wrap-anywhere min-w-0 text-[13.5px]", className)}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, markdownSanitizeSchema]]}
-        components={components}
-      >
-        {children}
-      </ReactMarkdown>
+    <div className={cn("response-markdown m-wrap-anywhere min-w-0 text-[13.5px]", className)}>
+      <ResponseMarkdownBody content={children} components={components} />
     </div>
   );
-};
+});

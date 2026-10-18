@@ -61,6 +61,58 @@ afterEach(async () => {
 });
 
 describe("run-scoped chats", () => {
+  it("returns source-only search results while retaining display images in the transcript", async () => {
+    const db = await makeDb();
+    const { provider, model } = addRunFixture(db);
+    const chat = db.createChat(provider.id, model.id, "Images");
+    const image = `![Preview](data:image/png;base64,${"ABCD".repeat(50_000)})`;
+    db.appendChatEvent(chat.id, "output", "Answer", image, { responseSourceText: "Description ![Preview](preview.png)", attachments: [{ data: image }] });
+    db.appendChatEvent(chat.id, "output", "Legacy", image + " Legacy description");
+    const result = db.listChatsWithSteps().find((item) => item.chat.id === chat.id)!;
+    expect(result.steps[0].content).toBe("Description ![Preview](preview.png)");
+    expect(result.steps[1].content).toContain("Legacy description");
+    expect(JSON.stringify(result)).not.toContain("base64");
+    expect(JSON.stringify(result).length).toBeLessThan(2000);
+    expect(db.getChatDetail(chat.id).steps[0].content).toBe(image);
+  });
+  it("persists question answers, preserves questions, and rejects duplicate or invalid replies", async () => {
+    const db = await makeDb();
+    const { provider, model } = addRunFixture(db);
+    const chat = db.createChat(provider.id, model.id, "Recommend a project");
+    const questions = [{ id: "goal", header: "Goal", question: "What interests you?", multiSelect: true,
+      options: [{ label: "AI" }, { label: "Web" }], allowCustomAnswer: false }];
+    const step = db.appendChatEvent(chat.id, "user-input-requested", "Question", "", {
+      userInputRequestId: "request-1", userInputQuestions: questions, requestStatus: "opened",
+    });
+    expect(() => db.resolveChatUserInput(chat.id, "request-1", { goal: "Other" })).toThrow("available options");
+    const resolved = db.resolveChatUserInput(chat.id, "request-1", { goal: ["AI", "Web"] });
+    expect(resolved.id).toBe(step.id);
+    expect(JSON.parse(db.getChatSteps(chat.id)[0].metadataJson)).toMatchObject({
+      userInputQuestions: questions, userInputAnswers: { goal: ["AI", "Web"] }, requestStatus: "resolved",
+    });
+    expect(() => db.resolveChatUserInput(chat.id, "request-1", { goal: "AI" })).toThrow("no longer waiting");
+    const filePath = db.getFilePath();
+    await db.close();
+    dbs.splice(dbs.indexOf(db), 1);
+    const reopened = new BuildWardenDatabase(filePath);
+    await reopened.init();
+    dbs.push(reopened);
+    expect(JSON.parse(reopened.getChatSteps(chat.id)[0].metadataJson).userInputAnswers).toEqual({ goal: ["AI", "Web"] });
+  });
+
+  it("expires unanswered questions without discarding the conversation", async () => {
+    const db = await makeDb();
+    const { provider, model } = addRunFixture(db);
+    const chat = db.createChat(provider.id, model.id, "Question");
+    db.appendChatEvent(chat.id, "user-input-requested", "Question", "", {
+      userInputRequestId: "old", userInputQuestions: [], requestStatus: "opened",
+    });
+    db.closeChatUserInputRequests(chat.id);
+    expect(JSON.parse(db.getChatSteps(chat.id)[0].metadataJson).requestStatus).toBe("cancelled");
+    expect(() => db.resolveChatUserInput(chat.id, "old", {})).toThrow("no longer waiting");
+    expect(db.getChat(chat.id).prompt).toBe("Question");
+  });
+
   it("records every reported run delta in the run, project, and daily ledger", async () => {
     const db = await makeDb();
     const { project, run } = addRunFixture(db);

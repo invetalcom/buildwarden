@@ -15,6 +15,8 @@ import {
   runShellActivityStreamId,
 } from "@buildwarden/shared";
 import { createHarnessAdapter } from "./harness-adapters";
+import { createResponseImageEmbedder } from "./response-images";
+import { createResponseChunkStream } from "./response-chunk-stream";
 import { buildInitialRepoContext } from "./initial-repo-context";
 import { logError, logInfo } from "./logger";
 import { PendingHostToolRequests } from "./pending-host-tool-requests";
@@ -23,6 +25,7 @@ import { buildOrchestrationAwarePrompt, isOrchestrationToolName } from "./orches
 
 interface WorkerInput {
   request: RunExecutionRequest;
+  acknowledgeChunks?: boolean;
 }
 
 const port = parentPort;
@@ -31,8 +34,13 @@ if (!port) {
   throw new Error("run-worker requires a parent port.");
 }
 
-const { request } = workerData as WorkerInput;
+const { request, acknowledgeChunks } = workerData as WorkerInput;
 const controller = new AbortController();
+const chunks = createResponseChunkStream(createResponseImageEmbedder(request.worktreePath), (chunk, deliveryId) => {
+  port.postMessage({ type: "chunk", chunk, deliveryId });
+  // A development rebuild can start a new worker from an older, still-open host.
+  if (!acknowledgeChunks) queueMicrotask(() => chunks.acknowledge(deliveryId));
+});
 const pendingShellApprovals = new Map<string, (decision: ShellApprovalDecision) => void>();
 const pendingUserInputs = new Map<string, { resolve: (answers: RunUserInputAnswers) => void; reject: (error: Error) => void }>();
 const approvedShellCommands = new Set<string>();
@@ -43,12 +51,17 @@ port.on(
   "message",
   (
     message:
+      | { type: "chunk-ack"; deliveryId: number }
       | { type: "cancel" }
       | { type: "cancel-shell"; callId: string }
       | { type: "shell-approval-response"; requestId: string; decision: ShellApprovalDecision }
       | { type: "user-input-response"; requestId: string; answers: RunUserInputAnswers }
       | { type: "host-tool-response"; callId: string; result?: RunToolResult; error?: string },
   ) => {
+    if (message.type === "chunk-ack") {
+      chunks.acknowledge(message.deliveryId);
+      return;
+    }
     if (message.type === "cancel") {
       for (const activeShell of activeShellCommands.values()) {
         activeShell.cancel("run-cancelled");
@@ -99,18 +112,15 @@ port.on(
   },
 );
 
-const postChunk = (chunk: HarnessRunChunk) => {
-  port.postMessage({
-    type: "chunk",
-    chunk,
-  });
-};
+const postChunk = (chunk: HarnessRunChunk) => chunks.post(chunk);
 
 const requestShellApproval = async (command: string): Promise<ShellApprovalDecision> => {
   if (approvedShellCommands.has(command)) {
     return "allow-for-run";
   }
 
+  await chunks.drain();
+  controller.signal.throwIfAborted();
   const requestId = randomUUID();
   port.postMessage({
     type: "shell-approval-request",
@@ -130,6 +140,8 @@ const requestShellApproval = async (command: string): Promise<ShellApprovalDecis
 };
 
 const requestUserInput = async (request: RunUserInputRequest): Promise<RunUserInputAnswers> => {
+  await chunks.drain();
+  controller.signal.throwIfAborted();
   const requestId = request.requestId?.trim() || randomUUID();
   port.postMessage({
     type: "user-input-request",
@@ -203,6 +215,8 @@ const run = async () => {
         if (!isOrchestrationToolName(call.name) || !orchestrationToolNames.has(call.name)) {
           return runToolContext.executeTool(call);
         }
+        await chunks.drain();
+        controller.signal.throwIfAborted();
         const response = pendingHostTools.create(call.id);
         port.postMessage({
           type: "host-tool-request",
@@ -233,8 +247,10 @@ const run = async () => {
       postChunk,
       controller.signal,
     );
+    await chunks.drain();
     port.postMessage({ type: "done", result });
   } catch (error) {
+    await chunks.drain();
     logError("Run worker failed.", {
       runId: request.runId,
       providerType: request.providerType,

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { RUN_CHAT_CONTEXT_SOURCE, type ChatAttachmentPayload, type ChatStepRecord } from "@buildwarden/shared";
+import { type ChatAttachmentPayload, type ChatStepRecord } from "@buildwarden/shared";
 import { Bookmark, BookmarkCheck, MoreHorizontal, Trash2 } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
 import { useAction } from "../data/use-action";
@@ -8,14 +8,16 @@ import { firstLine } from "../lib/format";
 import { AppBar } from "../components/AppBar";
 import { Composer } from "../components/Composer";
 import { MobileChatStep } from "../components/ChatTranscriptStep";
+import { isVisibleChatStep } from "@buildwarden/renderer/logic";
+import { ChatWorkingIndicator } from "@buildwarden/renderer/response-content";
 import { parseStepMetadata } from "../lib/chat-steps";
 import { ActionSheet, ConfirmSheet } from "../components/Sheet";
 import { ChatStatusPill } from "../components/StatusPill";
 import { CenteredSpinner, IconButton, InlineError } from "../components/primitives";
 
-/** Drops the hidden run-context seed step the desktop transcript also hides. */
+/** Use the same conversation-only history as desktop. */
 const visibleSteps = (steps: readonly ChatStepRecord[]) =>
-  steps.filter((step) => parseStepMetadata(step.metadataJson).source !== RUN_CHAT_CONTEXT_SOURCE);
+  steps.filter((step) => isVisibleChatStep(step, parseStepMetadata(step.metadataJson)));
 
 export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
   const { client, snapshot, snapshotStore, router } = useMobileApp();
@@ -92,8 +94,9 @@ export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
             </button>
           ) : null}
           {steps.map((step) => (
-            <MobileChatStep key={step.id} step={step} />
+            <MobileChatStep key={step.id} step={step} active={active} />
           ))}
+          {active ? <ChatWorkingIndicator /> : null}
           <div ref={bottomRef} className="h-2" />
         </div>
       )}

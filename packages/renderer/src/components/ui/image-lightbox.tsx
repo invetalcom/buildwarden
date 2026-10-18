@@ -67,7 +67,7 @@ export const ImageLightbox = ({ imageUrl, title, downloadFileName, focusScopeId,
           </div>
         </div>
         <div className="flex max-h-[85vh] items-center justify-center bg-black p-3">
-          <img src={imageUrl} alt={title} className="max-h-[80vh] max-w-full object-contain" />
+          <img src={imageUrl} alt={title} referrerPolicy="no-referrer" className="max-h-[80vh] max-w-full object-contain" />
         </div>
       </div>
     </div>,

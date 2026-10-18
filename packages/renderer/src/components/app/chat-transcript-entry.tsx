@@ -9,6 +9,9 @@ import { ActivityMarkdownOrGitDiff } from "./activity-message-body";
 import { StoredChatAttachments } from "./StoredChatAttachments";
 import { getStoredAttachmentMessageContent } from "./stored-chat-attachment-utils";
 import type { ChatTranscriptItem } from "./ChatTranscript";
+import { RunUserInputRequestCard } from "./RunUserInputRequestCard";
+import { readUserInputAnswers, readUserInputQuestions } from "../../logic";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
 
 type EntryKind = "user" | "assistant" | "reasoning" | "subagent" | "request" | "plan" | "diff" | "status" | "error" | "note";
 
@@ -106,7 +109,7 @@ const panelClassName = (kind: EntryKind): string => {
 };
 
 const PanelEntry = ({ item, metadata, timestamp, kind }: EntryViewProps & { kind: EntryKind }) => {
-  if (kind === "status") return <section className="chat-system-message"><p className="truncate text-xs font-medium text-[color:var(--ec-muted)]">{item.title}</p><span className="chat-message-time">{timestamp}</span></section>;
+  if (kind === "status") return <section className="chat-system-message"><div className="min-w-0"><p className="text-xs font-medium text-[color:var(--ec-muted)]">{item.title}</p>{item.content && item.content !== item.title ? <p className="whitespace-pre-wrap break-words text-xs text-[color:var(--ec-muted)]">{item.content}</p> : null}</div><span className="chat-message-time">{timestamp}</span></section>;
   if (kind === "error") return <section className="chat-inline-panel chat-inline-panel--error"><div className="chat-panel-header"><p className="text-sm font-medium text-[color:var(--ec-danger)]">{item.title}</p><span className="chat-message-time">{timestamp}</span></div><pre className="chat-pre app-scrollbar mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words text-xs">{item.content}</pre></section>;
   const panelClass = panelClassName(kind);
   let icon = null;
@@ -125,14 +128,26 @@ const PanelEntry = ({ item, metadata, timestamp, kind }: EntryViewProps & { kind
   );
 };
 
-export const ChatTranscriptEntryView = ({ item, metadata, showLoading, copied, onCopy }: {
+export const ChatTranscriptEntryView = ({ item, metadata, showLoading, copied, onCopy, chatId, canAnswer = false }: {
   item: ChatTranscriptItem;
   metadata: Record<string, unknown>;
   showLoading: boolean;
   copied: boolean;
   onCopy: () => void;
+  chatId?: string;
+  canAnswer?: boolean;
 }) => {
+  const client = useBuildWardenClient();
   const timestamp = new Date(item.createdAt).toLocaleTimeString();
+  const questions = readUserInputQuestions(metadata);
+  const requestId = metadata.userInputRequestId;
+  if (item.eventType === "user-input-requested" && questions.length && typeof requestId === "string") {
+    return <RunUserInputRequestCard key={requestId} runId={chatId ?? ""} requestId={requestId}
+      title={item.title} content={item.content} timestamp={timestamp} questions={questions}
+      answers={readUserInputAnswers(metadata)} resolved={metadata.requestStatus === "resolved"}
+      disabled={!canAnswer || !chatId || metadata.requestStatus !== "opened" || !client.capabilities.chatMutations}
+      onSubmitAnswers={(answers) => client.respondToChatUserInput(chatId!, requestId, answers)} />;
+  }
   const props = { item, metadata, timestamp };
   const kind = entryKind(item, metadata);
   switch (kind) {

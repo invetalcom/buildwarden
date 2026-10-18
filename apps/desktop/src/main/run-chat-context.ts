@@ -1,4 +1,5 @@
 import type { ProviderType, RunRecord, RunStepRecord } from "@buildwarden/shared";
+import { getResponseSourceText } from "@buildwarden/shared";
 
 /**
  * Providers that rebuild the full conversation from persisted chat steps on every turn
@@ -19,10 +20,18 @@ const TRUNCATION_MARKER = "\n[... truncated ...]";
 
 const safeParseMetadata = (value: string): Record<string, unknown> => {
   try {
-    return JSON.parse(value || "{}") as Record<string, unknown>;
+    const parsed: unknown = JSON.parse(value || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
   } catch {
     return {};
   }
+};
+
+export const runAssistantSourceText = (step: RunStepRecord): string => {
+  const metadata = safeParseMetadata(step.metadataJson);
+  if (step.eventType !== "output" || metadata.subagentId || metadata.assistantKind === "reasoning" ||
+    metadata.assistantKind === "image" || step.title === "Reasoning") return "";
+  return getResponseSourceText(step, metadata).trim();
 };
 
 const truncate = (value: string, budget: number): string => {
@@ -113,14 +122,8 @@ export const buildRunChatContext = (input: RunChatContextInput): string => {
       userPrompts.push(step.content.trim());
       continue;
     }
-    if (
-      step.eventType === "output" &&
-      step.content.trim() &&
-      metadata.assistantKind !== "reasoning" &&
-      step.title !== "Reasoning"
-    ) {
-      assistantOutputs.push(step.content.trim());
-    }
+    const assistantText = runAssistantSourceText(step);
+    if (assistantText) assistantOutputs.push(assistantText);
   }
 
   const promptSection = takeLatestWithinBudget(userPrompts, USER_PROMPTS_BUDGET)

@@ -3,13 +3,15 @@ import {
   extractAttachmentPayloadsFromMetadata,
   type ChatStepRecord,
 } from "@buildwarden/shared";
-import { getStoredAttachmentMessageContent } from "@buildwarden/renderer/logic";
+import { isVisibleChatStep, getStoredAttachmentMessageContent } from "@buildwarden/renderer/logic";
 import { parseStepMetadata } from "../lib/chat-steps";
 import { RichText } from "./RichText";
 import { MobileStoredAttachments } from "./TaskAttachments";
+import { ChatUserInput } from "./ChatUserInput";
 
-export const MobileChatStep = ({ step }: { step: ChatStepRecord }) => {
+export const MobileChatStep = ({ step, active = false }: { step: ChatStepRecord; active?: boolean }) => {
   const metadata = parseStepMetadata(step.metadataJson);
+  if (!isVisibleChatStep(step, metadata)) return null;
   const isUser = metadata.source === "user";
   const isError = step.eventType === "error";
   const isReasoning = step.eventType === "output" && metadata.assistantKind === "reasoning";
@@ -18,6 +20,10 @@ export const MobileChatStep = ({ step }: { step: ChatStepRecord }) => {
   const content = isUser
     ? getStoredAttachmentMessageContent(step.content || step.title, attachmentNames)
     : step.content;
+
+  if (step.eventType === "user-input-requested" && Array.isArray(metadata.userInputQuestions)) {
+    return <ChatUserInput step={step} active={active} />;
+  }
 
   if (isError) {
     return (
@@ -50,7 +56,7 @@ export const MobileChatStep = ({ step }: { step: ChatStepRecord }) => {
   }
 
   if (step.eventType === "status") {
-    return <p className="px-4 py-1 text-[11px] text-[var(--ec-faint)]">{step.title}</p>;
+    return <div className="px-4 py-1 text-[11px] text-[var(--ec-muted)]"><p className="font-medium">{step.title}</p>{content && content !== step.title ? <p className="whitespace-pre-wrap break-words">{content}</p> : null}</div>;
   }
 
   return (
