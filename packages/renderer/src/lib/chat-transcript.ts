@@ -3,11 +3,13 @@ import { normalizeRunSubagentInfo, RUN_CHAT_CONTEXT_SOURCE, type RunEventType } 
 /** Chat is a conversation, not the execution log. Keep the original events in
  * history, but apply the same presentation rules on desktop and mobile web. */
 export const isVisibleChatStep = (
-  step: { eventType: RunEventType; content: string },
+  step: { eventType: RunEventType; content: string; title?: string },
   metadata: Record<string, unknown>,
 ): boolean => {
   if (metadata.source === RUN_CHAT_CONTEXT_SOURCE || metadata.subagentId) return false;
   if (metadata.source === "user") return true;
+  if (step.eventType === "status" && (metadata.sessionInterrupted === true || metadata.userFacing === true ||
+    step.title === "Session interrupted" || step.title === "Chat cancelled")) return true;
   if (["error", "request", "user-input-requested", "approval-requested", "approval-resolved"].includes(step.eventType)) return true;
   if (metadata.silent === true) return false;
   if (normalizeRunSubagentInfo(metadata.subagent)) return true;

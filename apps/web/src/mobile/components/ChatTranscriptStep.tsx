@@ -56,7 +56,7 @@ export const MobileChatStep = ({ step, active = false }: { step: ChatStepRecord;
   }
 
   if (step.eventType === "status") {
-    return <p className="px-4 py-1 text-[11px] text-[var(--ec-faint)]">{step.title}</p>;
+    return <div className="px-4 py-1 text-[11px] text-[var(--ec-muted)]"><p className="font-medium">{step.title}</p>{content && content !== step.title ? <p className="whitespace-pre-wrap break-words">{content}</p> : null}</div>;
   }
 
   return (

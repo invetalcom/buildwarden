@@ -54,6 +54,10 @@ it("keeps working after commentary and tools, shows only the delivered image, an
     await render([...progress, step("error", "error", "Generation failed")], false);
     expect(container.textContent).toContain("Generation failed");
     expect(container.querySelector('[role="status"]')).toBeNull();
+    await render([...progress, { ...step("interrupted", "status", "The previous session stopped."), title: "Session interrupted" }], false);
+    expect(container.textContent).toContain("Session interrupted");
+    expect(container.textContent).toContain("The previous session stopped.");
+    expect(container.textContent).not.toContain("Codex update");
   } finally {
     await act(() => root.unmount());
   }

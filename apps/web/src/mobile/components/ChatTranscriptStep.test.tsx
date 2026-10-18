@@ -23,3 +23,11 @@ it("keeps delivered image answers while hiding inspection previews", () => {
 it("keeps errors visible", () => {
   expect(renderToStaticMarkup(<MobileChatStep step={step("error")} />)).toContain("Internal update");
 });
+
+it("explains interruptions and cancellations without restoring generic status noise", () => {
+  for (const title of ["Session interrupted", "Chat cancelled"]) {
+    const html = renderToStaticMarkup(<MobileChatStep step={{ ...step("status"), title, content: "The previous session stopped." }} />);
+    expect(html).toContain(title);
+    expect(html).toContain("The previous session stopped.");
+  }
+});

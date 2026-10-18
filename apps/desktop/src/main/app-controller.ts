@@ -2450,12 +2450,13 @@ export class AppController
       errorMessage: "Chat cancelled by user.",
       finishedAt: new Date().toISOString(),
     });
-    await this.appendChatEvent(chatId, "status", "Chat cancelled", "Cancellation requested.");
+    await this.appendChatEvent(chatId, "status", "Chat cancelled", "Cancellation requested.", { userFacing: true });
     this.emitChatEvent(chatId, {
       runId: chatId,
       type: "status",
       title: "Chat cancelled",
       content: "Cancellation requested.",
+      metadata: { userFacing: true },
       createdAt: new Date().toISOString(),
     });
     this.chatWorkers.delete(chatId);
