@@ -128,7 +128,7 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
     setBrowserCaptures([]);
     if (captures.length) void client.runBrowserAction({ runId, action: "clear-annotations" })
       .then(() => client.runBrowserAction({ runId, action: "release-control" })).catch(() => undefined);
-    await refreshAll();
+    await action.run(refreshAll, "The follow-up was sent, but the run could not be refreshed.");
   };
 
   const removeCapture = (capture: RunBrowserElementCapture) => {

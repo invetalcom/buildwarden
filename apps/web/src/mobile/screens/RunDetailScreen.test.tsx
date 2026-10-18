@@ -129,6 +129,41 @@ afterEach(async () => {
 });
 
 describe("RunDetailScreen run chat", () => {
+  it.each(["send", "refresh"])("handles a %s failure without offering to resend an accepted follow-up", async (failure) => {
+    const followUpRun = vi.fn(async () => {
+      if (failure === "send") throw new Error("Send failed");
+    });
+    const refresh = vi.fn(async () => { throw new Error("Refresh failed"); });
+    const client = {
+      capabilities: { platform: "web", browserControl: false, runMutations: true, chatMutations: false },
+      getRunDetail: vi.fn(async () => runDetail(firstRun)), refreshRunForgeRequest: vi.fn(async () => null),
+      onRunEvent: vi.fn(() => vi.fn()), onRunForgeRequestChanged: vi.fn(() => vi.fn()), followUpRun,
+    } as unknown as BuildWardenClient;
+    const value = { client, snapshot, snapshotStore: { loaded: true, refresh }, router: { back: vi.fn(), replace: vi.fn() } } as unknown as MobileAppValue;
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container); mountedRoots.push({ root, container });
+    await act(async () => root.render(<BuildWardenClientProvider client={client}><MobileAppProvider value={value}><RunDetailScreen runId={firstRun.id} segment="activity" /></MobileAppProvider></BuildWardenClientProvider>));
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", { configurable: true, value: [new File(["hello"], "follow-up.txt", { type: "text/plain" })] });
+    await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
+    const send = container.querySelector('button[aria-label="Send"]') as HTMLButtonElement;
+    await act(async () => {
+      send.click();
+      await vi.waitFor(() => expect(failure === "send" ? followUpRun : refresh).toHaveBeenCalledTimes(1));
+    });
+    expect(container.textContent).toContain(failure === "send" ? "Send failed" : "Refresh failed");
+    expect(followUpRun).toHaveBeenCalledTimes(1);
+    if (failure === "send") {
+      expect(refresh).not.toHaveBeenCalled();
+      expect(container.textContent).toContain("follow-up.txt");
+      expect(send.disabled).toBe(false);
+    } else {
+      expect(refresh).toHaveBeenCalledTimes(1);
+      expect(container.textContent).not.toContain("follow-up.txt");
+      expect(send.disabled).toBe(true);
+    }
+  });
+
   it("opens the shared mobile browser and carries selected elements into a follow-up", async () => {
     const listeners = new Set<(event: RunBrowserEvent) => void>();
     const runListeners = new Set<(event: RunEvent) => void>();
