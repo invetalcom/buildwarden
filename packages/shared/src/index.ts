@@ -3458,8 +3458,10 @@ export interface RunExecutionRequest {
   skillContext?: string;
   config?: Record<string, unknown>;
   modelConfig?: Record<string, unknown>;
+  /** Persisted model capabilities, forwarded to the worker for optional chat tools. */
+  modelCapabilities?: Partial<ProviderCapabilityMap>;
   providerOptions?: ProviderExecutionOptions;
-  /** When true, runs as pure chat with no tools or repo context. */
+  /** Conversational mode with optional supported chat tools, without repository tools. */
   isChat?: boolean;
   /** User-attached files for chat turns (main/worker only). */
   attachments?: ChatAttachmentPayload[];

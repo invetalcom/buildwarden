@@ -1944,6 +1944,14 @@ const createAiSdkRunTools = (
   return runTools;
 };
 
+export const supportsOptionalChatTools = (input: Pick<RunExecutionRequest, "providerType" | "config" | "modelConfig" | "modelCapabilities">): boolean => {
+  // Explicit model overrides also support manually configured compatible servers.
+  if (typeof input.modelConfig?.supportsTools === "boolean") return input.modelConfig.supportsTools;
+  if (typeof input.modelCapabilities?.supportsTools === "boolean") return input.modelCapabilities.supportsTools;
+  // Unknown routed/custom models must continue to work as plain text chats.
+  return input.providerType !== "openrouter" && getProviderFamily(input.config) !== "openai-compatible";
+};
+
 export class AiSdkHarnessAdapter implements HarnessAdapter {
   readonly harnessType = "ai-sdk" as const;
 
@@ -1958,6 +1966,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
     assertOpenRouterAttachmentCompatibility(input);
     const isChat = input.isChat === true;
     const providerFamily = getProviderFamily(input.config);
+    const chatToolsSupported = supportsOptionalChatTools(input);
     const devLogger = createDevLogger({
       logDirPath: input.devLogging?.logDirPath,
       runId: input.runId,
@@ -1976,7 +1985,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
           input.runId,
         );
     const openAiChatTools =
-      isChat && input.providerType === "ai-sdk" && providerFamily === "openai"
+      isChat && chatToolsSupported && input.providerType === "ai-sdk" && providerFamily === "openai"
         ? {
             code_interpreter: createConfiguredOpenAiProvider(input, devLogger.enabled ? devLogger : undefined).tools.codeInterpreter(),
           }
@@ -2002,7 +2011,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
     const mutationState = { successfulCalls: 0 };
     const runTools = createAiSdkRunTools(input, toolContext, isChat, onChunk, mutationState);
     const tools: ToolSet = { ...(isChat ? openAiChatTools : runTools) };
-    if (this.requestUserInput) {
+    if (this.requestUserInput && (!isChat || chatToolsSupported)) {
       const requestInput = this.requestUserInput;
       tools.request_user_input = tool({
         description: "Ask the user one to three questions with clickable choices or a free-text answer. Wait for their answers before continuing.",
@@ -2025,13 +2034,13 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
       ? buildInstructionsForFamily(providerFamily, promptInstructions)
       : undefined;
     let maxSteps: number = MODE_POLICIES[input.mode].maxToolRounds;
-    if (isChat) maxSteps = openAiChatTools || this.requestUserInput ? 6 : 1;
+    if (isChat) maxSteps = Object.keys(tools).length > 0 ? 6 : 1;
     const result = await withProviderRetry(isChat ? "chat request" : "agent run", signal, onChunk, () =>
       streamText({
         model,
         ...(requestInstructions ? { instructions: requestInstructions as never } : {}),
         messages: promptMessages as never,
-        tools,
+        ...(Object.keys(tools).length > 0 ? { tools } : {}),
         ...(providerOptions ? { providerOptions: providerOptions as never } : {}),
         stopWhen: stepCountIs(maxSteps),
         abortSignal: signal,
