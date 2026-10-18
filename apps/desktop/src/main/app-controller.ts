@@ -9046,11 +9046,14 @@ export class AppController
   }
 
   async undoRunToLastPrompt(runId: string): Promise<void> {
+    const initialRun = this.db.getRun(runId);
+    this.requireGitRun(initialRun, "Undo to last prompt");
+    return this.serializeProjectBranchMutation(initialRun.projectId, () => this.undoRunToLastPromptUnlocked(runId));
+  }
+
+  private async undoRunToLastPromptUnlocked(runId: string): Promise<void> {
     const run = this.db.getRun(runId);
-    this.requireGitRun(run, "Undo to last prompt");
-    if (this.runWorkers.has(runId)) {
-      throw new Error("Wait for the active run to finish before undoing changes.");
-    }
+    this.requireIdleRunWorkspace(run, "undoing changes");
     const restorePoint = this.getRunPromptRestorePoint(runId);
     if (!restorePoint) {
       throw new Error("No prompt restore point is available for this run.");
@@ -9059,17 +9062,23 @@ export class AppController
       await this.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
     }
 
-    await this.gitService.restorePromptRestorePatch(run.worktreePath, restorePoint.patch);
+    const { safetyPatchPath } = await this.gitService.restorePromptRestorePatch(run.worktreePath, restorePoint.patch, {
+      expectedHeadSha: restorePoint.headSha,
+      safetyPatchPath: join(dirname(this.db.getFilePath()), "restore-backups", `${runId}-${Date.now().toString()}.patch`),
+    });
     this.clearRunCheckpoint(runId);
 
-    const description =
+    const description = [
       restorePoint.commandType === "follow-up"
         ? "Restored the run worktree to the state before the latest follow-up prompt."
-        : "Restored the run worktree to the state before the initial prompt.";
+        : "Restored the run worktree to the state before the initial prompt.",
+      ...(safetyPatchPath ? [`The discarded changes were saved to ${safetyPatchPath} and can be reapplied with \`git apply\`.`] : []),
+    ].join(" ");
     await this.appendRunEvent(runId, "status", "Changes undone to last prompt", description, {
       undoneToLastPrompt: true,
       commandType: restorePoint.commandType,
       restorePointCreatedAt: restorePoint.createdAt,
+      ...(safetyPatchPath ? { discardedChangesPatchPath: safetyPatchPath } : {}),
     });
     this.emitEvent({
       runId,
@@ -10559,11 +10568,15 @@ export class AppController
       this.clearRunPromptRestorePoint(runId);
       return;
     }
-    const patch = await this.gitService.createPromptRestorePatch(run.worktreePath);
+    const [patch, headSha] = await Promise.all([
+      this.gitService.createPromptRestorePatch(run.worktreePath),
+      this.gitService.getHeadCommitSha(run.worktreePath).catch(() => null),
+    ]);
     this.setRunPromptRestorePoint(runId, {
       createdAt: new Date().toISOString(),
       commandType,
       patch,
+      headSha,
     });
   }
 

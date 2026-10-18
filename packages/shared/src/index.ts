@@ -3409,6 +3409,8 @@ export interface RunPromptRestorePoint {
   createdAt: string;
   commandType: "initial" | "follow-up";
   patch: string;
+  /** HEAD when the restore point was captured; absent for restore points saved by older versions. */
+  headSha?: string | null;
 }
 
 export type ProviderSessionRuntimeOwnerKind = "run" | "chat";

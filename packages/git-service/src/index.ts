@@ -1218,10 +1218,30 @@ export class GitService {
     }
   }
 
-  async restorePromptRestorePatch(worktreePath: string, targetPatch: string): Promise<void> {
+  /**
+   * Resets the workspace to HEAD and applies `targetPatch`. Refuses when HEAD moved since the restore
+   * point was captured, because the reset would otherwise keep commits made after the prompt. The open
+   * changes that the reset discards are written to `safetyPatchPath` first so they stay recoverable.
+   */
+  async restorePromptRestorePatch(
+    worktreePath: string,
+    targetPatch: string,
+    options: { expectedHeadSha?: string | null; safetyPatchPath?: string } = {},
+  ): Promise<{ safetyPatchPath: string | null }> {
     const git = simpleGit(worktreePath);
     await ensureGitLongPathSupport(git, worktreePath);
+    if (options.expectedHeadSha && (await this.getHeadCommitSha(worktreePath)) !== options.expectedHeadSha) {
+      throw new Error(
+        "The workspace has new commits since the last prompt, so its changes cannot be reverted safely. Revert those commits with Git instead.",
+      );
+    }
     const safetyPatch = await computeWorktreeRestorePatch(worktreePath);
+    let safetyPatchPath: string | null = null;
+    if (options.safetyPatchPath && safetyPatch.trim()) {
+      mkdirSync(dirname(options.safetyPatchPath), { recursive: true });
+      await writeFile(options.safetyPatchPath, safetyPatch, "utf8");
+      safetyPatchPath = options.safetyPatchPath;
+    }
 
     await runGitRaw(git, ["reset", "--hard", "HEAD"]);
     await runGitRaw(git, ["clean", "-fd"]);
@@ -1236,6 +1256,7 @@ export class GitService {
       }
       throw error;
     }
+    return { safetyPatchPath };
   }
 
   async commitAllChanges(worktreePath: string, message: string): Promise<{ commitHash: string }> {

@@ -2503,7 +2503,9 @@ export const App = () => {
     const confirmed = await requestConfirmation({
       title: "Revert run changes",
       message:
-        "Revert repository changes made after the last prompt in this run? This updates the run workspace and cannot be undone from BuildWarden.",
+        run.workspaceType === "local"
+          ? "Revert repository changes made after the last prompt in this run? This run uses the project checkout, so any edits you made there since the prompt are reverted too. Discarded changes are saved as a backup patch."
+          : "Revert repository changes made after the last prompt in this run? This updates the run workspace. Discarded changes are saved as a backup patch.",
       confirmLabel: "Revert changes",
       confirmVariant: "danger",
     });

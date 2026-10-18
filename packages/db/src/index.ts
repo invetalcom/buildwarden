@@ -3760,17 +3760,21 @@ export class BuildWardenDatabase {
   }
 
   getRunPromptRestorePoint(runId: string): RunPromptRestorePoint | null {
-    return this.first<RunPromptRestorePoint>(
-      "select created_at as createdAt, command_type as commandType, patch from run_restore_points where run_id = ?",
+    const row = this.first<Omit<RunPromptRestorePoint, "headSha"> & { headSha: string | null }>(
+      "select created_at as createdAt, command_type as commandType, patch, head_sha as headSha from run_restore_points where run_id = ?",
       [runId],
     );
+    if (!row) return null;
+    const { headSha, ...restorePoint } = row;
+    return headSha ? { ...restorePoint, headSha } : restorePoint;
   }
 
   setRunPromptRestorePoint(runId: string, restorePoint: RunPromptRestorePoint): void {
     this.run(
-      `insert into run_restore_points (run_id, command_type, patch, created_at) values (?, ?, ?, ?)
-       on conflict(run_id) do update set command_type = excluded.command_type, patch = excluded.patch, created_at = excluded.created_at`,
-      [runId, restorePoint.commandType, restorePoint.patch, restorePoint.createdAt],
+      `insert into run_restore_points (run_id, command_type, patch, head_sha, created_at) values (?, ?, ?, ?, ?)
+       on conflict(run_id) do update set command_type = excluded.command_type, patch = excluded.patch,
+         head_sha = excluded.head_sha, created_at = excluded.created_at`,
+      [runId, restorePoint.commandType, restorePoint.patch, restorePoint.headSha ?? null, restorePoint.createdAt],
     );
   }
 
@@ -4942,6 +4946,7 @@ export class BuildWardenDatabase {
         run_id text primary key,
         command_type text not null,
         patch text not null,
+        head_sha text,
         created_at text not null
       );
 
@@ -5424,6 +5429,7 @@ export class BuildWardenDatabase {
     this.ensureColumn("project_loops", "pr_review_policy", "text not null default 'none'");
     this.ensureColumn("project_loop_iterations", "ai_review_posted", "integer not null default 0");
     this.ensureColumn("chats", "run_id", "text");
+    this.ensureColumn("run_restore_points", "head_sha", "text");
     this.run(
       `insert or ignore into app_token_usage (scope, input_tokens, output_tokens)
        select 'standalone-chats', coalesce(sum(input_tokens), 0), coalesce(sum(output_tokens), 0)

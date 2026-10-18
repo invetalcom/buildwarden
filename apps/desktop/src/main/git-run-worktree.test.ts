@@ -122,3 +122,39 @@ describe("GitService run worktree lifecycle", () => {
     expect(await service.hasRemoteBranch(repoPath, "main")).toBe(true);
   });
 });
+
+describe("GitService prompt restore points", () => {
+  it("saves the discarded changes before restoring the captured state", async () => {
+    const { root, repoPath } = await createRepository();
+    const service = new GitService();
+    await writeFile(join(repoPath, "tracked.txt"), "before prompt\n", "utf8");
+    const patch = await service.createPromptRestorePatch(repoPath);
+    const headSha = await service.getHeadCommitSha(repoPath);
+    await writeFile(join(repoPath, "tracked.txt"), "after prompt\n", "utf8");
+    await writeFile(join(repoPath, "new.txt"), "untracked\n", "utf8");
+    const safetyPatchPath = join(root, "backups", "restore.patch");
+
+    const result = await service.restorePromptRestorePatch(repoPath, patch, { expectedHeadSha: headSha, safetyPatchPath });
+
+    expect(result.safetyPatchPath).toBe(safetyPatchPath);
+    expect((await readFile(join(repoPath, "tracked.txt"), "utf8")).replace(/\r\n/g, "\n")).toBe("before prompt\n");
+    expect(existsSync(join(repoPath, "new.txt"))).toBe(false);
+    const backup = await readFile(safetyPatchPath, "utf8");
+    expect(backup).toContain("after prompt");
+    expect(backup).toContain("new.txt");
+  });
+
+  it("refuses to restore when HEAD moved since the restore point", async () => {
+    const { repoPath, git } = await createRepository();
+    const service = new GitService();
+    const patch = await service.createPromptRestorePatch(repoPath);
+    const headSha = await service.getHeadCommitSha(repoPath);
+    await writeFile(join(repoPath, "tracked.txt"), "agent commit\n", "utf8");
+    await git.add(["tracked.txt"]);
+    await git.commit("Agent commit");
+    await writeFile(join(repoPath, "open.txt"), "keep\n", "utf8");
+
+    await expect(service.restorePromptRestorePatch(repoPath, patch, { expectedHeadSha: headSha })).rejects.toThrow("new commits");
+    expect(await readFile(join(repoPath, "open.txt"), "utf8")).toBe("keep\n");
+  });
+});
