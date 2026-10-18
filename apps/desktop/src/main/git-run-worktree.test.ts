@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -136,6 +136,48 @@ describe("GitService run worktree lifecycle", () => {
     }
 
     expect(await service.hasRemoteBranch(repoPath, "main")).toBe(true);
+  });
+});
+
+describe("GitService read-only status", () => {
+  it("does not rewrite the index while checking for changes", async () => {
+    const { repoPath, git } = await createRepository();
+    const service = new GitService();
+    const indexPath = join(repoPath, ".git", "index");
+    const touchTrackedFile = async (seconds: number) => {
+      const time = new Date(Date.now() + seconds * 1000);
+      await utimes(join(repoPath, "tracked.txt"), time, time);
+    };
+
+    await touchTrackedFile(60);
+    const indexBefore = (await stat(indexPath)).mtimeMs;
+    expect(await service.hasChanges(repoPath)).toBe(false);
+    expect((await stat(indexPath)).mtimeMs).toBe(indexBefore);
+    await service.getDiffSummary(repoPath);
+    expect((await stat(indexPath)).mtimeMs).toBe(indexBefore);
+
+    await expect(service.getDiff(repoPath)).resolves.toBe("");
+    expect((await stat(indexPath)).mtimeMs).toBe(indexBefore);
+
+    // A plain status refreshes the changed stat data and saves the index, which needs index.lock.
+    await touchTrackedFile(120);
+    await git.status();
+    expect((await stat(indexPath)).mtimeMs).not.toBe(indexBefore);
+  });
+});
+
+describe("GitService diffs without commits", () => {
+  it("summarizes staged files before the first commit", async () => {
+    const root = await mkdtemp(join(tmpdir(), "buildwarden-unborn-"));
+    temporaryDirectories.push(root);
+    const git = simpleGit(root);
+    await git.init();
+    await writeFile(join(root, "first.txt"), "one\ntwo\n", "utf8");
+    await git.add(["first.txt"]);
+
+    const summary = await new GitService().getDiffSummary(root);
+
+    expect(summary.files).toEqual([{ path: "first.txt", additions: 2, deletions: 0 }]);
   });
 });
 

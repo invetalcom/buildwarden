@@ -60,10 +60,10 @@ const runGitRaw = (git: SimpleGit, args: string[]): Promise<string> =>
 const NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS = 5 * 60_000;
 const NETWORK_COMMAND_TIMEOUT_MINUTES = NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS / 60_000;
 // simple-git strips these ambient variables and rejects them when passed explicitly; mirror its guard
-// so the explicit environment below only adds GIT_TERMINAL_PROMPT.
+// so explicit environments only add the allowed Git variables.
 const SIMPLE_GIT_GUARDED_ENV_KEYS = new Set(["editor", "pager", "prefix", "ssh_askpass", "visual"]);
 
-const createNetworkGit = (repoPath: string, inactivityTimeoutMs = NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS): SimpleGit => {
+const buildGuardSafeEnvironment = (): Record<string, string> => {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     const normalizedKey = key.toLowerCase().trim();
@@ -71,12 +71,28 @@ const createNetworkGit = (repoPath: string, inactivityTimeoutMs = NETWORK_COMMAN
       env[key] = value;
     }
   }
-  return simpleGit({
+  return env;
+};
+
+const createNetworkGit = (repoPath: string, inactivityTimeoutMs = NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS): SimpleGit =>
+  simpleGit({
     baseDir: repoPath,
     timeout: { block: inactivityTimeoutMs },
     allowEnvironment: ["GIT_TERMINAL_PROMPT"],
-  }).env({ ...env, GIT_TERMINAL_PROMPT: "0" });
-};
+  }).env({ ...buildGuardSafeEnvironment(), GIT_TERMINAL_PROMPT: "0" });
+
+/**
+ * For commands that only read the workspace. `git status` and porcelain `git diff` otherwise take
+ * `index.lock` to save a refreshed index, so background status and diff polling could make the agent's
+ * own `git commit` in the same worktree fail with "index.lock exists".
+ */
+const createReadOnlyGit = (baseDir: string, inactivityTimeoutMs = LOCAL_GIT_INACTIVITY_TIMEOUT_MS, maxConcurrentProcesses?: number): SimpleGit =>
+  simpleGit({
+    baseDir,
+    timeout: { block: inactivityTimeoutMs },
+    allowEnvironment: ["GIT_OPTIONAL_LOCKS"],
+    ...(maxConcurrentProcesses ? { maxConcurrentProcesses } : {}),
+  }).env({ ...buildGuardSafeEnvironment(), GIT_OPTIONAL_LOCKS: "0" });
 
 const runNetworkGit = async (repoPath: string, args: string[], inactivityTimeoutMs = NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS): Promise<string> => {
   try {
@@ -458,7 +474,7 @@ const extractCommandOutput = (error: unknown): string => {
 
 /** Human-readable status lines when a patch cannot be built (used by `computeWorktreeDiff`). */
 async function formatGitStatusSummary(worktreePath: string): Promise<string> {
-  const git = createLocalGit(worktreePath);
+  const git = createReadOnlyGit(worktreePath);
   const status = await git.status();
   const lines = [
     `branch: ${status.current}`,
@@ -485,11 +501,7 @@ const mapWithConcurrency = async <T, R>(items: readonly T[], limit: number, mapp
 };
 
 const WORKTREE_DIFF_GIT_TIMEOUT_MS = 60_000;
-const createWorktreeDiffGit = (worktreePath: string): SimpleGit => simpleGit({
-  baseDir: worktreePath,
-  maxConcurrentProcesses: 6,
-  timeout: { block: WORKTREE_DIFF_GIT_TIMEOUT_MS },
-});
+const createWorktreeDiffGit = (worktreePath: string): SimpleGit => createReadOnlyGit(worktreePath, WORKTREE_DIFF_GIT_TIMEOUT_MS, 6);
 
 const renderUntrackedDiffSections = async (git: SimpleGit, filePaths: readonly string[]): Promise<string[]> => {
   const sections = await mapWithConcurrency(filePaths, 4, async (filePath) => {
@@ -506,6 +518,18 @@ const renderUntrackedDiffSections = async (git: SimpleGit, filePaths: readonly s
     }
   });
   return sections.filter((section): section is string => Boolean(section));
+};
+
+/**
+ * Workspace diffs use plumbing: porcelain `git diff` refreshes and rewrites the index even with
+ * GIT_OPTIONAL_LOCKS=0. `diff-files` covers unstaged changes and `diff-index --cached` staged ones.
+ */
+const unstagedDiffArgs = (...options: string[]): string[] => ["diff-files", ...options];
+const stagedDiffArgs = async (git: SimpleGit, ...options: string[]): Promise<string[]> => {
+  const hasHead = Boolean((await runGitRaw(git, ["rev-parse", "--verify", "--quiet", "HEAD"]).catch(() => "")).trim());
+  // A repository without commits compares the index against the empty tree.
+  const base = hasHead ? "HEAD" : (await runGitRaw(git, ["hash-object", "-t", "tree", "/dev/null"])).trim();
+  return ["diff-index", "--cached", ...options, base, "--"];
 };
 
 const parseNumstatValue = (value: string): number | null => (value === "-" ? null : Number.parseInt(value, 10) || 0);
@@ -559,8 +583,8 @@ export async function computeWorktreeDiffSummary(worktreePath: string): Promise<
   const git = createWorktreeDiffGit(worktreePath);
   const [status, unstagedOutput, stagedOutput] = await Promise.all([
     git.status(),
-    runGitRaw(git, ["diff", "--numstat", "-z", "--find-renames"]),
-    runGitRaw(git, ["diff", "--cached", "--numstat", "-z", "--find-renames"]),
+    runGitRaw(git, unstagedDiffArgs("--numstat", "-z", "--find-renames")),
+    stagedDiffArgs(git, "--numstat", "-z", "--find-renames").then((args) => runGitRaw(git, args)),
   ]);
   const untracked = await mapWithConcurrency(status.not_added, 4, async (filePath) => {
     try {
@@ -580,7 +604,11 @@ export async function computeWorktreeDiff(worktreePath: string): Promise<string>
   const git = createWorktreeDiffGit(worktreePath);
   const sections: string[] = [];
 
-  const [status, unstagedOutput, stagedOutput] = await Promise.all([git.status(), git.diff(), git.diff(["--cached"])]);
+  const [status, unstagedOutput, stagedOutput] = await Promise.all([
+    git.status(),
+    runGitRaw(git, unstagedDiffArgs("-p")),
+    stagedDiffArgs(git, "-p").then((args) => runGitRaw(git, args)),
+  ]);
   const unstaged = unstagedOutput.trim();
   if (unstaged) {
     sections.push(unstaged);
@@ -601,7 +629,7 @@ export async function computeWorktreeDiff(worktreePath: string): Promise<string>
 }
 
 async function computeWorktreeRestorePatch(worktreePath: string): Promise<string> {
-  const git = createLocalGit(worktreePath);
+  const git = createReadOnlyGit(worktreePath);
   const status = await git.status();
   const sections: string[] = [];
   const appendPatchSection = (patchText: string) => {
@@ -612,12 +640,12 @@ async function computeWorktreeRestorePatch(worktreePath: string): Promise<string
     sections.push(patchText.endsWith("\n") ? patchText : `${patchText}\n`);
   };
 
-  const unstaged = await git.diff(["--binary"]);
+  const unstaged = await runGitRaw(git, unstagedDiffArgs("-p", "--binary"));
   if (unstaged) {
     appendPatchSection(unstaged);
   }
 
-  const staged = await git.diff(["--cached", "--binary"]);
+  const staged = await runGitRaw(git, await stagedDiffArgs(git, "-p", "--binary"));
   if (staged) {
     appendPatchSection(staged);
   }
@@ -1372,7 +1400,7 @@ export class GitService {
   }
 
   async hasChanges(worktreePath: string): Promise<boolean> {
-    const git = createLocalGit(worktreePath);
+    const git = createReadOnlyGit(worktreePath);
     const status = await git.status();
     return !status.isClean();
   }
