@@ -777,7 +777,7 @@ const SidebarComponent = ({
                     type="button"
                   >
                     <Bot className="size-3.5" />
-                    Continue run
+                    Fork (fresh context)
                   </button>
                 ) : null}
                 {canManageRunBookmarks && bookmarkedRunIds.has(contextMenu.runId) ? (
