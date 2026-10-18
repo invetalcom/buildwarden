@@ -371,8 +371,15 @@ describe("GitService branch merge checks", () => {
     const { repoPath, git } = await createRepository();
     const service = new GitService();
     await git.branch(["merged-and-pruned"]);
+    // Without a fetch refspec Git cannot map the upstream and `%(upstream)` stays empty.
+    await git.addConfig("remote.origin.url", join(repoPath, "missing-remote.git"));
+    await git.addConfig("remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*");
     await git.addConfig("branch.merged-and-pruned.remote", "origin");
     await git.addConfig("branch.merged-and-pruned.merge", "refs/heads/merged-and-pruned");
+    // The upstream is configured, but its remote-tracking ref no longer exists.
+    expect((await git.raw(["for-each-ref", "--format=%(upstream)", "refs/heads/merged-and-pruned"])).trim()).toBe(
+      "refs/remotes/origin/merged-and-pruned",
+    );
 
     expect(await service.isBranchMerged(repoPath, "merged-and-pruned")).toBe(true);
   });
