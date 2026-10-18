@@ -1734,8 +1734,7 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
   }
 
   .chat-turn--user .chat-turn-stack {
-    width: auto;
-    max-width: min(72%, calc(100% - 2.4rem));
+    width: min(72%, calc(100% - 2.4rem));
   }
 
   .chat-avatar {
