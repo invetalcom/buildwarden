@@ -49,6 +49,7 @@ import {
   type ProviderType,
   type RunDetail,
   type RunDeletionImpact,
+  type RunForgeRequestSummary,
   type RunMode,
   type RunModelConfiguration,
   type RunRecord,
@@ -782,6 +783,16 @@ export const App = () => {
     setRunDetail((current) => (current?.run.id === runId ? merger(current) : current));
   }, []);
 
+  // Forge events patch the open detail without reloading it, so a detail load
+  // in flight across an event may carry the older summary. Count events per run
+  // and keep the latest summary for loads that started before it.
+  const forgeRequestEventsRef = useRef<Record<string, { count: number; forgeRequest: RunForgeRequestSummary | null }>>({});
+  const keepForgeRequestEventsSince = useCallback((runId: string, countAtStart: number, detail: RunDetail): RunDetail => {
+    const latest = forgeRequestEventsRef.current[runId];
+    if (!latest || latest.count === countAtStart) return detail;
+    return { ...detail, run: { ...detail.run, forgeRequest: latest.forgeRequest } };
+  }, []);
+
   const loadRunDetailForRun = useCallback(
     async (runId: string) => {
       if (!buildwarden) {
@@ -795,9 +806,10 @@ export const App = () => {
       diffSummaryLoadGenerationRef.current[runId] = summaryGeneration;
       mergeRunDetailForRun(runId, (previous) => ({ ...previous, diffSummaryPending: true }));
 
+      const forgeEventCount = forgeRequestEventsRef.current[runId]?.count ?? 0;
       let fast: RunDetail;
       try {
-        fast = await buildwarden.getRunDetail(runId);
+        fast = keepForgeRequestEventsSince(runId, forgeEventCount, await buildwarden.getRunDetail(runId));
       } catch (caught) {
         if (
           diffSummaryLoadGenerationRef.current[runId] === summaryGeneration
@@ -844,7 +856,7 @@ export const App = () => {
         mergeRunDetailForRun(runId, (previous) => ({ ...previous, diffSummary: undefined, diffSummaryPending: false }));
       }
     },
-    [buildwarden, clearDiffRefreshTimer, mergeRunDetailForRun, replaceRunDetailForRun],
+    [buildwarden, clearDiffRefreshTimer, keepForgeRequestEventsSince, mergeRunDetailForRun, replaceRunDetailForRun],
   );
 
   const loadRunDetail = useCallback(
@@ -951,9 +963,10 @@ export const App = () => {
         mergeRunDetailForRun(eventRunId, (previous) => ({ ...previous, diffSummaryPending: true }));
       }
 
+      const forgeEventCount = forgeRequestEventsRef.current[eventRunId]?.count ?? 0;
       let fast: RunDetail;
       try {
-        fast = await buildwarden.getRunDetail(eventRunId);
+        fast = keepForgeRequestEventsSince(eventRunId, forgeEventCount, await buildwarden.getRunDetail(eventRunId));
       } catch (caught) {
         if (
           summaryGeneration !== undefined
@@ -1017,7 +1030,7 @@ export const App = () => {
         }, 500);
       }
     },
-    [buildwarden, clearDiffRefreshTimer, loadDiffSummaryForOpenRun, mergeRunDetailForRun, replaceRunDetailForRun],
+    [buildwarden, clearDiffRefreshTimer, keepForgeRequestEventsSince, loadDiffSummaryForOpenRun, mergeRunDetailForRun, replaceRunDetailForRun],
   );
 
   /**
@@ -1264,6 +1277,8 @@ export const App = () => {
       // run detail (entire step history) only when the linked request changes.
       const previous = runDetailsByIdRef.current[payload.runId]?.run.forgeRequest ?? null;
       const next = payload.forgeRequest;
+      const eventCount = (forgeRequestEventsRef.current[payload.runId]?.count ?? 0) + 1;
+      forgeRequestEventsRef.current[payload.runId] = { count: eventCount, forgeRequest: next };
       mergeRunDetailForRun(payload.runId, (detail) => ({ ...detail, run: { ...detail.run, forgeRequest: next } }));
       if (previous?.url !== next?.url || previous?.state !== next?.state) {
         void refreshRunDetailForActiveRunEvent(payload.runId, { immediate: true });
