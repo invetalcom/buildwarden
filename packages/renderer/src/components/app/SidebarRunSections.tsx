@@ -206,7 +206,7 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
     </SidebarOrganizerDialog>}
     {organizeRunId && canOrganize && <SidebarOrganizerDialog title="Organize run" onClose={() => !busy && onCloseOrganizer()}>
       <SidebarRunOrganizationForm key={organizeRunId} runId={organizeRunId} organization={organization} busy={busy} onClose={onCloseOrganizer}
-        onSubmit={(sectionId, tags) => void mutate(() => client.updateRunOrganization(organizeRunId, { sectionId, tags }), "Run organization saved.")} />
+        onSubmit={(sectionId, tags) => void mutate(() => client.updateRunOrganization(organizeRunId, { sectionId, tags }), "Run metadata saved.")} />
       {errorContent}
     </SidebarOrganizerDialog>}
   </div>;

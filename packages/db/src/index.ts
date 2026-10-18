@@ -1,5 +1,5 @@
 import { validateUserInputAnswers } from "@buildwarden/shared";
-import { DEFAULT_RUN_SECTION_COLOR, isRunSectionColor, isRunSectionName, isUpdateRunOrganizationInput, UNCATEGORIZED_RUN_SECTION_ID,
+import { DEFAULT_RUN_SECTION_COLOR, isRunSectionColor, isRunSectionName, isUpdateRunOrganizationInput, RUN_TAG_COUNT_LIMIT, RUN_TAG_LIMIT, UNCATEGORIZED_RUN_SECTION_ID,
   type RunSectionRecord, type RunOrganizationRecord, type RunOrganizationSnapshot, type UpdateRunOrganizationInput } from "@buildwarden/shared";
 import { getResponseSourceText, type ChatSearchDetail } from "@buildwarden/shared";
 import type { RunVerificationRecord } from "@buildwarden/shared";
@@ -662,7 +662,7 @@ export class BuildWardenDatabase {
   }
 
   updateRunOrganization(runId: string, input: UpdateRunOrganizationInput): RunOrganizationSnapshot {
-    if (!isUpdateRunOrganizationInput(input)) throw new Error("Invalid run organization. Use up to 20 tags of 1–40 characters.");
+    if (!isUpdateRunOrganizationInput(input)) throw new Error(`Invalid run metadata. Use up to ${RUN_TAG_COUNT_LIMIT} tags of 1–${RUN_TAG_LIMIT} characters.`);
     return this.transaction(() => {
       this.getRun(runId);
       const current = this.first<{ sectionId: string | null; tagsJson: string }>(

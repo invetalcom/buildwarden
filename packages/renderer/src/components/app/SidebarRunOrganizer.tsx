@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { DEFAULT_RUN_SECTION_COLOR, isRunSectionColor, RUN_SECTION_NAME_LIMIT, UNCATEGORIZED_RUN_SECTION_ID, type RunOrganizationSnapshot } from "@buildwarden/shared";
+import { DEFAULT_RUN_SECTION_COLOR, isRunSectionColor, RUN_SECTION_NAME_LIMIT, RUN_TAG_COUNT_LIMIT, RUN_TAG_LIMIT, UNCATEGORIZED_RUN_SECTION_ID, type RunOrganizationSnapshot } from "@buildwarden/shared";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select } from "../ui/select";
@@ -49,15 +49,22 @@ export const SidebarRunOrganizationForm = ({ runId, organization, busy, onSubmit
   const record = organization.runs.find((entry) => entry.runId === runId);
   const [sectionId, setSectionId] = useState(record?.sectionId ?? UNCATEGORIZED_RUN_SECTION_ID);
   const [tags, setTags] = useState(record?.tags.join(", ") ?? "");
+  const tagsHelpId = useId();
+  const tagsErrorId = useId();
+  const parsedTags = tags.split(",").map((tag) => tag.trim()).filter(Boolean);
+  const tagsError = parsedTags.length > RUN_TAG_COUNT_LIMIT ? `Use at most ${RUN_TAG_COUNT_LIMIT} tags per run.`
+    : parsedTags.some((tag) => tag.length > RUN_TAG_LIMIT) ? `Each tag can have at most ${RUN_TAG_LIMIT} characters.` : "";
   return <form className="space-y-3" onSubmit={(event) => {
     event.preventDefault();
-    onSubmit(sectionId === UNCATEGORIZED_RUN_SECTION_ID ? null : sectionId, tags.split(",").map((tag) => tag.trim()).filter(Boolean));
+    if (!busy && !tagsError) onSubmit(sectionId === UNCATEGORIZED_RUN_SECTION_ID ? null : sectionId, parsedTags);
   }}>
     <label className="block space-y-1 text-xs">Section<Select ariaLabel="Run section" value={sectionId} onValueChange={setSectionId}
       options={[{ value: UNCATEGORIZED_RUN_SECTION_ID, label: "Uncategorized" }, ...organization.sections.map((section) => ({ value: section.id, label: section.name }))]} /></label>
-    <label className="block space-y-1 text-xs">Tags<Input aria-label="Run tags" placeholder="auth, bug, release" value={tags} onChange={(event) => setTags(event.target.value)} /></label>
-    <p className="text-xs text-[var(--ec-muted)]">Separate tags with commas. Up to 20 tags, 40 characters each.</p>
+    <label className="block space-y-1 text-xs">Tags<Input aria-label="Run tags" placeholder="auth, bug, release" value={tags} onChange={(event) => setTags(event.target.value)}
+      aria-invalid={Boolean(tagsError)} aria-describedby={tagsError ? `${tagsHelpId} ${tagsErrorId}` : tagsHelpId} /></label>
+    <p id={tagsHelpId} className="text-xs text-[var(--ec-muted)]">Separate tags with commas. Up to {RUN_TAG_COUNT_LIMIT} tags, {RUN_TAG_LIMIT} characters each.</p>
+    {tagsError && <p id={tagsErrorId} role="alert" className="text-xs text-[var(--ec-danger)]">{tagsError}</p>}
     <div className="flex justify-end gap-2"><Button type="button" size="sm" variant="secondary" disabled={busy} onClick={onClose}>Cancel</Button>
-      <Button size="sm" disabled={busy}>Save organization</Button></div>
+      <Button size="sm" disabled={busy || Boolean(tagsError)}>Save run metadata</Button></div>
   </form>;
 };

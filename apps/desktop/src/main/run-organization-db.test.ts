@@ -26,6 +26,15 @@ afterEach(async () => {
 });
 
 describe("sidebar run organization persistence", () => {
+  it("accepts five tags and rejects six without changing saved metadata", async () => {
+    const { db, run } = await fixture();
+    const tags = ["auth", "security", "bug", "release", "review"];
+    const saved = db.updateRunOrganization(run.id, { tags });
+    expect(saved.runs[0]?.tags).toEqual(tags);
+    expect(() => db.updateRunOrganization(run.id, { tags: [...tags, "extra"] })).toThrow("up to 5 tags");
+    expect(db.getRunOrganization()).toEqual(saved);
+  });
+
   it("migrates sections created before colors while keeping assignments", async () => {
     const { db, path, run } = await fixture();
     const section = db.createRunSection("Existing").sections[0]!;

@@ -500,7 +500,7 @@ const SidebarComponent = ({
           )}
         >
           <div className="min-w-0 flex-1">
-            <HoverCard content={<AgentRunHoverCard projectName={project.project.name} run={run} providerType={providerTypeByAccountId.get(run.providerAccountId)} />}>
+            <HoverCard content={<AgentRunHoverCard projectName={project.project.name} run={run} providerType={providerTypeByAccountId.get(run.providerAccountId)} tags={runTags} />}>
               {trigger}
             </HoverCard>
           </div>

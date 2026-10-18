@@ -209,6 +209,24 @@ describe("sidebar run sections", () => {
     expect(section("uncategorized").textContent).toContain(failed.id);
   });
 
+  it("blocks saving more than five tags and accepts the five-tag boundary", async () => {
+    await mount(failed.id);
+    const input = document.querySelector<HTMLInputElement>('[aria-label="Run tags"]')!;
+    const enterTags = async (value: string) => act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await enterTags("one, two, three, four, five, six");
+    expect(button("Save run metadata").disabled).toBe(true);
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    expect(document.querySelector("dialog [role=alert]")?.textContent).toBe("Use at most 5 tags per run.");
+    await act(async () => { document.querySelector("dialog form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    expect(client.updateRunOrganization).not.toHaveBeenCalled();
+    await enterTags("one, two, three, four, five");
+    await click(button("Save run metadata"));
+    expect(client.updateRunOrganization).toHaveBeenCalledWith(failed.id, { sectionId: "work", tags: ["one", "two", "three", "four", "five"] });
+  });
+
   it("creates, renames, reorders and removes sections through their controls", async () => {
     const submitName = async (name: string) => {
       await act(async () => {
