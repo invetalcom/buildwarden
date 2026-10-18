@@ -202,13 +202,18 @@ const chunkValues = <T>(values: readonly T[], size = SQLITE_VARIABLE_BATCH_SIZE)
   return chunks;
 };
 
+/** Snapshot task summaries carry a prompt preview; the full prompt loads with getProjectTask. */
+const PROJECT_TASK_SUMMARY_PROMPT_CHARS = 2000;
+
 type DerivedRunState = {
   parts: Set<string>;
   lastUserInputAt: string;
   pendingUserInputRequest: boolean;
 };
 
-const createDerivedRunState = (run: RunRecord): DerivedRunState => {
+type DerivedRunStateSource = Pick<RunRecord, "id" | "prompt" | "goalText" | "createdAt">;
+
+const createDerivedRunState = (run: DerivedRunStateSource): DerivedRunState => {
   const parts = new Set<string>();
   if (run.prompt.trim()) parts.add(run.prompt.trim());
   if (run.goalText?.trim()) parts.add(run.goalText.trim());
@@ -228,6 +233,13 @@ const applyDerivedRunStep = (
   if ((metadata?.source === "user" || isSubmittedUserInput) && step.content.trim()) {
     derived.parts.add(step.content.trim());
     derived.lastUserInputAt = step.createdAt;
+  }
+  // A tracked request keeps its question as content and records the answers in metadata.
+  const answers = isSubmittedUserInput ? metadata.userInputAnswers : null;
+  if (answers && typeof answers === "object") {
+    for (const value of Object.values(answers as Record<string, unknown>).flat()) {
+      if (typeof value === "string" && value.trim()) derived.parts.add(value.trim());
+    }
   }
 };
 
@@ -991,13 +1003,14 @@ export class BuildWardenDatabase {
   }
 
   listProjectTaskSummaries(projectId: string): ProjectTaskSummary[] {
-    return this.all<ProjectTaskSummary>(
+    return this.all<Omit<ProjectTaskSummary, "promptTruncated"> & { promptTruncated: number }>(
       `
       select
         id,
         project_id as projectId,
         title,
-        prompt,
+        substr(prompt, 1, ${PROJECT_TASK_SUMMARY_PROMPT_CHARS}) as prompt,
+        length(prompt) > ${PROJECT_TASK_SUMMARY_PROMPT_CHARS} as promptTruncated,
         case when json_valid(attachments_json) then json_array_length(attachments_json) else 0 end as attachmentCount,
         status,
         run_id as runId,
@@ -1009,7 +1022,7 @@ export class BuildWardenDatabase {
       order by updated_at desc, created_at desc
       `,
       [projectId],
-    );
+    ).map((task) => ({ ...task, promptTruncated: Boolean(task.promptTruncated) }));
   }
 
   deleteProjectTask(taskId: string): void {
@@ -2668,11 +2681,7 @@ export class BuildWardenDatabase {
     });
   }
 
-  private withDerivedRunStates(runs: RunRecord[]): RunRecord[] {
-    if (runs.length === 0) {
-      return [];
-    }
-
+  private loadDerivedRunStates(runs: DerivedRunStateSource[]): Map<string, DerivedRunState> {
     const derivedByRunId = new Map<string, DerivedRunState>();
     const uncachedRunIds: string[] = [];
     for (const run of runs) {
@@ -2682,23 +2691,6 @@ export class BuildWardenDatabase {
         const derived = createDerivedRunState(run);
         derivedByRunId.set(run.id, derived);
         uncachedRunIds.push(run.id);
-      }
-    }
-
-    const runIds = runs.map((run) => run.id);
-    const forgeByRunId = new Map<string, RunForgeRequestSummary>();
-    for (const batch of chunkValues(runIds)) {
-      const placeholders = batch.map(() => "?").join(", ");
-      const forgeRows = this.all<{ runId: string; summaryJson: string }>(
-        `select l.run_id as runId, f.summary_json as summaryJson
-         from run_forge_links l
-         join forge_requests f on f.id = l.forge_request_id
-         where l.run_id in (${placeholders})`,
-        batch,
-      );
-      for (const row of forgeRows) {
-        const summary = this.parseJsonValue<RunForgeRequestSummary>(row.summaryJson);
-        if (summary) forgeByRunId.set(row.runId, summary);
       }
     }
 
@@ -2739,13 +2731,38 @@ export class BuildWardenDatabase {
       }
     }
 
+    return derivedByRunId;
+  }
+
+  private withDerivedRunStates(runs: RunRecord[]): RunRecord[] {
+    if (runs.length === 0) {
+      return [];
+    }
+
+    const derivedByRunId = this.loadDerivedRunStates(runs);
+    const runIds = runs.map((run) => run.id);
+    const forgeByRunId = new Map<string, RunForgeRequestSummary>();
+    for (const batch of chunkValues(runIds)) {
+      const placeholders = batch.map(() => "?").join(", ");
+      const forgeRows = this.all<{ runId: string; summaryJson: string }>(
+        `select l.run_id as runId, f.summary_json as summaryJson
+         from run_forge_links l
+         join forge_requests f on f.id = l.forge_request_id
+         where l.run_id in (${placeholders})`,
+        batch,
+      );
+      for (const row of forgeRows) {
+        const summary = this.parseJsonValue<RunForgeRequestSummary>(row.summaryJson);
+        if (summary) forgeByRunId.set(row.runId, summary);
+      }
+    }
+
     return runs.map((run) => {
       const derived = derivedByRunId.get(run.id);
       return {
         ...run,
         forgeRequest: forgeByRunId.get(run.id) ?? null,
         pendingUserInputRequest: derived?.pendingUserInputRequest ?? false,
-        userInputSearchText: derived ? [...derived.parts].join("\n") : "",
         lastUserInputAt: derived?.lastUserInputAt ?? run.createdAt,
       };
     });
@@ -2753,6 +2770,30 @@ export class BuildWardenDatabase {
 
   private withDerivedRunState(run: RunRecord): RunRecord {
     return this.withDerivedRunStates([run])[0]!;
+  }
+
+  /**
+   * Ids of runs whose prompt, goal, follow-up prompts, or submitted answers
+   * contain every search term. Kept out of snapshots because the combined
+   * user-input text is large.
+   */
+  searchRunUserInput(query: string): string[] {
+    const terms = query.toLocaleLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) {
+      return [];
+    }
+    const runs = this.all<DerivedRunStateSource>(
+      "select id, prompt, goal_text as goalText, created_at as createdAt from runs",
+    );
+    const derivedByRunId = this.loadDerivedRunStates(runs);
+    return runs
+      .filter((run) => {
+        const derived = derivedByRunId.get(run.id);
+        if (!derived) return false;
+        const searchText = [...derived.parts].join("\n").toLocaleLowerCase();
+        return terms.every((term) => searchText.includes(term));
+      })
+      .map((run) => run.id);
   }
 
   getRun(id: string): RunRecord {

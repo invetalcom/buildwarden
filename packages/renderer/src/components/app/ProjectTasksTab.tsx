@@ -1,6 +1,6 @@
 import { appendChatAttachmentFiles, CHAT_ATTACHMENT_LIMITS, type ChatAttachmentPayload, type ProjectTaskInput, type ProjectTaskRecord, type ProjectTaskStatus, type ProjectTaskSummary, type ProviderType, type UnifiedProviderFamily, type UpdateProjectTaskInput } from "@buildwarden/shared";
 import { Check, ExternalLink, Eye, GripVertical, ListTodo, Loader2, Paperclip, Pencil, Play, Plus, RefreshCw, Trash2, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ClipboardEvent, type DragEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent } from "react";
 import { cn } from "../../lib/cn";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
@@ -306,6 +306,9 @@ export const ProjectTasksTab = ({
   const [taskModelById, setTaskModelById] = useTaskModelSelections(tasks, modelOptions, defaultTaskModelId);
   const [launchTaskId, setLaunchTaskId] = useState<string | null>(null);
   const [launchPromptDraft, setLaunchPromptDraft] = useState("");
+  // The full prompt loaded for launch; board summaries only carry a preview.
+  const [launchSourcePrompt, setLaunchSourcePrompt] = useState("");
+  const launchRequestRef = useRef(0);
   const [launchGenerateBusy, setLaunchGenerateBusy] = useState(false);
   const [launchStartBusy, setLaunchStartBusy] = useState(false);
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
@@ -339,6 +342,7 @@ export const ProjectTasksTab = ({
     setTaskEditStatus("open");
     setTaskExistingAttachments([]);
     setTaskNewAttachmentFiles([]);
+    launchRequestRef.current += 1;
     setLaunchTaskId(null);
     setLaunchPromptDraft("");
     setLaunchGenerateBusy(false);
@@ -541,9 +545,15 @@ export const ProjectTasksTab = ({
     if (task) void moveTask(task, status);
   };
 
-  const openLaunchDialog = (task: Pick<ProjectTaskSummary, "id" | "prompt">) => {
+  const openLaunchDialog = async (task: Pick<ProjectTaskSummary, "id" | "prompt" | "promptTruncated">) => {
+    const request = ++launchRequestRef.current;
+    // Board summaries only carry a prompt preview; launch with the full prompt.
+    const prompt = task.promptTruncated ? (await loadTaskDetail(task.id))?.prompt : task.prompt;
+    // A later launch click owns the dialog, even if this lookup finishes last.
+    if (prompt === undefined || request !== launchRequestRef.current) return;
     setLaunchTaskId(task.id);
-    setLaunchPromptDraft(task.prompt);
+    setLaunchSourcePrompt(prompt);
+    setLaunchPromptDraft(prompt);
   };
 
   const handleGeneratePrompt = async () => {
@@ -555,7 +565,7 @@ export const ProjectTasksTab = ({
       setLaunchPromptDraft(await buildwarden.generateProjectTaskRunPrompt({
         projectId,
         title: launchTask.title,
-        notes: launchPromptDraft.trim() || launchTask.prompt,
+        notes: launchPromptDraft.trim() || launchSourcePrompt,
         modelId,
       }));
     } catch (error) {
@@ -611,7 +621,7 @@ export const ProjectTasksTab = ({
         onView={(taskId) => void openTaskDetail(taskId)}
         onEdit={(task) => void openEditingTask(task)}
         onDelete={onDeleteTask}
-        onLaunch={openLaunchDialog}
+        onLaunch={(task) => void openLaunchDialog(task)}
         onOpenRun={onOpenRun}
         onDraggedTaskChange={setDraggedTaskId}
         onDragOverStatusChange={setDragOverStatus}
@@ -626,7 +636,7 @@ export const ProjectTasksTab = ({
         canStartRuns={canStartRuns}
         onClose={() => setViewingTaskId(null)}
         onEdit={startEditingTask}
-        onLaunch={(task) => { setViewingTaskId(null); openLaunchDialog(task); }}
+        onLaunch={(task) => { setViewingTaskId(null); void openLaunchDialog(task); }}
         onOpenRun={(runId) => { setViewingTaskId(null); onOpenRun(runId); }}
       />
 
