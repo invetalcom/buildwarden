@@ -160,7 +160,8 @@ const ToolBatchBody = ({
   density,
   onOpenWorkspaceFile,
 }: Pick<ActivityToolBatchRowProps, "item" | "density" | "onOpenWorkspaceFile">) => {
-  const hasExpandableContent = Boolean(item.preview) || Boolean(item.paths?.length) || Boolean(item.images);
+  const hasExpandableContent = Boolean(item.preview) || Boolean(item.paths?.length) ||
+    (Array.isArray(item.images) && item.images.length > 0);
   let fallback = item.detail ?? "";
   if (!fallback && item.paths?.length) fallback = `${item.paths.length} files`;
 
