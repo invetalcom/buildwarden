@@ -423,7 +423,16 @@ export const RunEmbeddedBrowser = ({
                 const touch = touchRef.current;
                 if (event.pointerType === "touch" && touch) {
                   if (Math.hypot(event.clientX - touch.x, event.clientY - touch.y) > 8) touch.moved = true;
-                  if (touch.moved && !browserState.inspecting) sendRemoteInput({ type: "wheel", ...point, deltaX: 0, deltaY: touch.lastY - event.clientY });
+                  if (touch.moved && !browserState.inspecting) {
+                    const pending = pendingWheelRef.current;
+                    pendingWheelRef.current = {
+                      ...point,
+                      deltaX: pending?.deltaX ?? 0,
+                      deltaY: (pending?.deltaY ?? 0) + touch.lastY - event.clientY,
+                      modifiers: pending?.modifiers ?? 0,
+                    };
+                    scheduleRemoteInput();
+                  }
                   touch.lastY = event.clientY;
                   return;
                 }
