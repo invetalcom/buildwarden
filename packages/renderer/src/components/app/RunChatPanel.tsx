@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   appendChatAttachmentFiles,
-  RUN_CHAT_CONTEXT_SOURCE,
   type ChatAttachmentPayload,
   type ChatDetail,
   type ChatEvent,
@@ -15,6 +14,7 @@ import { MessagesSquare } from "lucide-react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
 import { buildVisibleConversationHistory } from "../../lib/context-window-estimate";
 import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
+import { isVisibleChatStep } from "../../lib/chat-transcript";
 import { ChatTranscript } from "./ChatTranscript";
 import { RunComposer } from "./RunComposer";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
@@ -160,35 +160,9 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
   }, [latestAnthropicEffort, latestExecutionMode, latestReasoningEffort]);
 
   const visibleSteps = useMemo(
-    () => steps.filter((step) => safeParseMetadata(step.metadataJson).source !== RUN_CHAT_CONTEXT_SOURCE),
+    () => steps.filter((step) => isVisibleChatStep(step, safeParseMetadata(step.metadataJson))),
     [steps],
   );
-
-  /** True after a non-`reasoning` output for this turn (same notion as ChatDetailPage). */
-  const hasMainAssistantOutputAfterLatestUser = useMemo(() => {
-    let lastUserIndex = -1;
-    for (let i = visibleSteps.length - 1; i >= 0; i--) {
-      if (safeParseMetadata(visibleSteps[i]!.metadataJson).source === "user") {
-        lastUserIndex = i;
-        break;
-      }
-    }
-    if (lastUserIndex < 0) {
-      return false;
-    }
-    for (let j = lastUserIndex + 1; j < visibleSteps.length; j++) {
-      const step = visibleSteps[j]!;
-      if (step.eventType !== "output" || !step.content.trim()) {
-        continue;
-      }
-      if (safeParseMetadata(step.metadataJson).assistantKind !== "reasoning") {
-        return true;
-      }
-    }
-    return false;
-  }, [visibleSteps]);
-
-  const showPreResponseLoading = isChatActive && !hasMainAssistantOutputAfterLatestUser;
 
   const transcriptScrollKey = useMemo(
     () =>
@@ -200,7 +174,7 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ block: "end" });
-  }, [transcriptScrollKey, isChatActive, hasMainAssistantOutputAfterLatestUser]);
+  }, [transcriptScrollKey, isChatActive]);
 
   const contextHistoryText = useMemo(() => buildVisibleConversationHistory(steps), [steps]);
 
@@ -255,7 +229,7 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      {visibleSteps.length === 0 && !showPreResponseLoading ? (
+      {visibleSteps.length === 0 && !isChatActive ? (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 py-8 text-center">
           <MessagesSquare className="h-8 w-8 text-[var(--ec-faint)]" aria-hidden />
           <p className="text-sm font-medium text-[var(--ec-muted)]">Ask about this run</p>
@@ -273,7 +247,7 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
           className="app-scrollbar min-h-0 flex-1 overflow-auto px-3 py-2"
           items={visibleSteps}
           emptyMessage="No messages yet."
-          showLoading={showPreResponseLoading}
+          showLoading={isChatActive}
         />
       )}
       <div className="shrink-0 border-t border-[var(--ec-border)] p-2">

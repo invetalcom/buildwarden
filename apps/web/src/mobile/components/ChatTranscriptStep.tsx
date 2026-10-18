@@ -3,7 +3,7 @@ import {
   extractAttachmentPayloadsFromMetadata,
   type ChatStepRecord,
 } from "@buildwarden/shared";
-import { getStoredAttachmentMessageContent } from "@buildwarden/renderer/logic";
+import { isVisibleChatStep, getStoredAttachmentMessageContent } from "@buildwarden/renderer/logic";
 import { parseStepMetadata } from "../lib/chat-steps";
 import { RichText } from "./RichText";
 import { MobileStoredAttachments } from "./TaskAttachments";
@@ -11,6 +11,7 @@ import { ChatUserInput } from "./ChatUserInput";
 
 export const MobileChatStep = ({ step, active = false }: { step: ChatStepRecord; active?: boolean }) => {
   const metadata = parseStepMetadata(step.metadataJson);
+  if (!isVisibleChatStep(step, metadata)) return null;
   const isUser = metadata.source === "user";
   const isError = step.eventType === "error";
   const isReasoning = step.eventType === "output" && metadata.assistantKind === "reasoning";

@@ -1,7 +1,7 @@
 import { RunVerificationPanel } from "@buildwarden/renderer";
 import { useEffect, useMemo, useState } from "react";
-import { RUN_CHAT_CONTEXT_SOURCE, type ChatAttachmentPayload, type ChatDetail } from "@buildwarden/shared";
-import { deriveLatestRunPlanProgress, findProjectRun, isRunContinuable } from "@buildwarden/renderer/logic";
+import type { ChatAttachmentPayload, ChatDetail } from "@buildwarden/shared";
+import { deriveLatestRunPlanProgress, findProjectRun, isVisibleChatStep, isRunContinuable } from "@buildwarden/renderer/logic";
 import {
   Bookmark,
   BookmarkCheck,
@@ -26,6 +26,7 @@ import { ActivityTimeline } from "../components/ActivityTimeline";
 import { AppBar } from "../components/AppBar";
 import { Composer } from "../components/Composer";
 import { MobileChatStep } from "../components/ChatTranscriptStep";
+import { ChatWorkingIndicator } from "@buildwarden/renderer/response-content";
 import { parseStepMetadata } from "../lib/chat-steps";
 import { DiffViewer } from "../components/DiffViewer";
 import { ActionSheet, ConfirmSheet } from "../components/Sheet";
@@ -254,11 +255,12 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
           {runChatStore.error ? <InlineError message={runChatStore.error} onRetry={() => void runChatStore.reload()} /> : null}
           {visibleRunChat ? (
             visibleRunChat.steps
-              .filter((step) => parseStepMetadata(step.metadataJson).source !== RUN_CHAT_CONTEXT_SOURCE)
+              .filter((step) => isVisibleChatStep(step, parseStepMetadata(step.metadataJson)))
               .map((step) => <MobileChatStep key={step.id} step={step} active={["queued", "preparing", "running"].includes(visibleRunChat.chat.status)} />)
           ) : (
             <EmptyState title="No run chat yet" message="Ask a question about this run's output and diff." />
           )}
+          {visibleRunChat && ["queued", "preparing", "running"].includes(visibleRunChat.chat.status) ? <ChatWorkingIndicator /> : null}
         </div>
       ) : null}
 
