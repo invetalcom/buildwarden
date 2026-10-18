@@ -1,5 +1,5 @@
 import { validateUserInputAnswers } from "@buildwarden/shared";
-import { isRunSectionName, isUpdateRunOrganizationInput, UNCATEGORIZED_RUN_SECTION_ID,
+import { DEFAULT_RUN_SECTION_COLOR, isRunSectionColor, isRunSectionName, isUpdateRunOrganizationInput, UNCATEGORIZED_RUN_SECTION_ID,
   type RunSectionRecord, type RunOrganizationRecord, type RunOrganizationSnapshot, type UpdateRunOrganizationInput } from "@buildwarden/shared";
 import { getResponseSourceText, type ChatSearchDetail } from "@buildwarden/shared";
 import type { RunVerificationRecord } from "@buildwarden/shared";
@@ -586,11 +586,12 @@ export class BuildWardenDatabase {
   }
 
   getRunOrganization(): RunOrganizationSnapshot {
-    const sections = this.all<RunSectionRecord>("select id, name, position from run_sections order by position, id");
+    const sections = this.all<RunSectionRecord>("select id, name, position, color from run_sections order by position, id");
     const runs = this.all<{ runId: string; sectionId: string | null; tagsJson: string }>(
       "select run_id as runId, section_id as sectionId, tags_json as tagsJson from run_organization",
     ).map(({ tagsJson, ...record }): RunOrganizationRecord => ({ ...record, tags: JSON.parse(tagsJson) as string[] }));
-    return { sections, runs };
+    const color = this.first<{ value: string }>("select value from app_settings where key = ?", [APP_SETTING_KEYS.uncategorizedRunSectionColor])?.value;
+    return { sections, runs, ...(isRunSectionColor(color) ? { uncategorizedColor: color } : {}) };
   }
 
   private validateRunSectionName(name: string, exceptId?: string): string {
@@ -607,11 +608,12 @@ export class BuildWardenDatabase {
     }
   }
 
-  createRunSection(name: string): RunOrganizationSnapshot {
+  createRunSection(name: string, color = DEFAULT_RUN_SECTION_COLOR): RunOrganizationSnapshot {
+    if (!isRunSectionColor(color)) throw new Error("Use a six-digit hex color, such as #60a5fa.");
     return this.transaction(() => {
       const trimmed = this.validateRunSectionName(name);
       if (this.getRunOrganization().sections.length >= 100) throw new Error("You can create up to 100 run sections.");
-      this.run("insert into run_sections (id, name, position) values (?, ?, (select coalesce(max(position), -1) + 1 from run_sections))", [createId(), trimmed]);
+      this.run("insert into run_sections (id, name, color, position) values (?, ?, ?, (select coalesce(max(position), -1) + 1 from run_sections))", [createId(), trimmed, color.toLowerCase()]);
       return this.getRunOrganization();
     });
   }
@@ -621,6 +623,19 @@ export class BuildWardenDatabase {
       this.requireRunSection(sectionId);
       const trimmed = this.validateRunSectionName(name, sectionId);
       this.run("update run_sections set name = ? where id = ?", [trimmed, sectionId]);
+      return this.getRunOrganization();
+    });
+  }
+
+  setRunSectionColor(sectionId: string, color: string): RunOrganizationSnapshot {
+    if (!isRunSectionColor(color)) throw new Error("Use a six-digit hex color, such as #60a5fa.");
+    return this.transaction(() => {
+      if (sectionId === UNCATEGORIZED_RUN_SECTION_ID) {
+        this.setSetting(APP_SETTING_KEYS.uncategorizedRunSectionColor, color.toLowerCase());
+      } else {
+        this.requireRunSection(sectionId);
+        this.run("update run_sections set color = ? where id = ?", [color.toLowerCase(), sectionId]);
+      }
       return this.getRunOrganization();
     });
   }
@@ -5520,6 +5535,7 @@ export class BuildWardenDatabase {
       );
       create index if not exists idx_run_organization_section on run_organization(section_id);
     `);
+    this.ensureColumn("run_sections", "color", `text not null default '${DEFAULT_RUN_SECTION_COLOR}'`);
     this.ensureColumn("projects", "project_kind", "text not null default 'git'");
     this.ensureColumn("runs", "workspace_vcs", "text not null default 'git'");
     this.ensureColumn("project_loops", "pr_review_policy", "text not null default 'none'");

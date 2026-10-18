@@ -349,7 +349,8 @@ describe("remote BuildWarden client", () => {
     });
     await client.setAppSetting(APP_SETTING_KEYS.shellAllowlistExtra, JSON.stringify(["git status"]));
     await client.setRunListVisibility("run-1", "for-later");
-    await client.createRunSection("This week");
+    await client.createRunSection("This week", "#a78bfa");
+    await client.setRunSectionColor("section-1", "#facc15");
     await client.renameRunSection("section-1", "Current");
     await client.reorderRunSections(["section-1"]);
     await client.updateRunOrganization("run-1", { sectionId: "section-1", tags: ["auth"] });
@@ -362,7 +363,7 @@ describe("remote BuildWarden client", () => {
       "getSnapshot",
       "setAppSetting",
       "setRunListVisibility",
-      "createRunSection", "renameRunSection", "reorderRunSections", "updateRunOrganization", "deleteRunSection",
+      "createRunSection", "setRunSectionColor", "renameRunSection", "reorderRunSections", "updateRunOrganization", "deleteRunSection",
       "addBookmark",
       "addChatBookmark",
       "generateProjectInsight",

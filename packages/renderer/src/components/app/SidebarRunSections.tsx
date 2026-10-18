@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, MoreHorizontal, Plus, X } from "lucide-react";
-import { UNCATEGORIZED_RUN_SECTION_ID, type AppSnapshot, type RunOrganizationSnapshot } from "@buildwarden/shared";
+import { ChevronDown, ChevronRight, MoreHorizontal, Plus, Tag } from "lucide-react";
+import { DEFAULT_RUN_SECTION_COLOR, UNCATEGORIZED_RUN_SECTION_ID, type AppSnapshot, type RunOrganizationSnapshot } from "@buildwarden/shared";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
@@ -9,8 +9,9 @@ import { AnchorDropdownPortal } from "../ui/dropdown-portal";
 import { parseRunDragPayload, RUN_DRAG_MIME_TYPE } from "./app-model";
 import type { RunHierarchyRow } from "./run-hierarchy";
 import { buildSidebarRunSections, EMPTY_RUN_ORGANIZATION, SIDEBAR_RUN_VIEWS, type SidebarRunView } from "./sidebar-run-sections";
-import { SidebarOrganizerDialog, SidebarRunOrganizationForm, SidebarSectionNameForm } from "./SidebarRunOrganizer";
+import { SidebarOrganizerDialog, SidebarRunOrganizationForm, SidebarSectionColorForm, SidebarSectionNameForm } from "./SidebarRunOrganizer";
 import { SidebarRunViewFilter } from "./SidebarRunViewFilter";
+import { SidebarRunFilterMenu } from "./SidebarRunFilterMenu";
 
 const PREFERENCE_KEY = "buildwarden:sidebar-run-sections";
 type Preferences = { view: SidebarRunView; projectId: string; tag: string; collapsed: string[] };
@@ -24,7 +25,8 @@ const readPreferences = (): Preferences => {
   } catch { return { view: "all", projectId: "", tag: "", collapsed: [] }; }
 };
 
-type SectionDialog = { kind: "name"; id?: string; name: string } | { kind: "delete"; id: string; name: string };
+type SectionDialog = { kind: "name"; id?: string; name: string } | { kind: "delete"; id: string; name: string }
+  | { kind: "color"; id: string; name: string; color: string };
 
 export interface SidebarRunSectionsProps {
   projects: AppSnapshot["projects"];
@@ -123,7 +125,7 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
     setMenu(null);
     void mutate(() => client.reorderRunSections(ids), "Section order updated.");
   };
-  const menuSection = organization.sections.find((section) => section.id === menu);
+  const menuSection = sections.find((section) => section.id === menu);
   const errorContent = error ? <p role="alert" className="my-2 text-xs text-[var(--ec-danger)]">{error}</p> : null;
 
   return <div className="space-y-1.5 px-2" aria-busy={busy}>
@@ -136,16 +138,12 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
         options={[{ value: "", label: "All projects" }, ...projects.map((entry) => ({ value: entry.project.id, label: entry.project.name }))]} />
       <SidebarRunViewFilter value={preferences.view} counts={counts} recentRunDays={recentRunDays}
         onChange={(view) => updatePreferences({ view })} />
+      <SidebarRunFilterMenu value={tag} onChange={(nextTag) => updatePreferences({ tag: nextTag })} icon={Tag}
+        label="Filter runs by tag" menuLabel="Run tags" active={Boolean(tag)} width={220}
+        options={[{ id: "", label: "All tags" }, ...allTags.map((value) => ({ id: value, label: `#${value}` }))]} />
       {canOrganize && <Button size="icon" variant="ghost" className="h-6 w-6" aria-label="New run section" disabled={busy}
         onClick={() => { setError(""); setDialog({ kind: "name", name: "" }); }}><Plus className="size-3.5" /></Button>}
     </div>
-    {allTags.length > 0 && <div className="app-scrollbar flex max-h-16 flex-wrap items-center gap-1 overflow-y-auto" aria-label="Filter runs by tag">
-      {allTags.map((value) => <button type="button" key={value} aria-pressed={tag === value}
-        className={cn("max-w-full truncate rounded px-1.5 py-0.5 text-[10px]", tag === value
-          ? "bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]" : "bg-[var(--ec-panel)] text-[var(--ec-muted)] hover:bg-[var(--ec-hover)]")}
-        onClick={() => updatePreferences({ tag: tag === value ? "" : value })}>#{value}</button>)}
-      {tag && <Button variant="ghost" size="icon" className="h-5 w-5" aria-label="Clear tag filter" onClick={() => updatePreferences({ tag: "" })}><X className="size-3" /></Button>}
-    </div>}
     {!dialog && !organizeRunId && errorContent}
     <span role="status" className="sr-only">{announcement}</span>
     {sections.map((section) => {
@@ -160,9 +158,10 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
           <button type="button" aria-expanded={!collapsed} className="flex h-7 min-w-0 flex-1 items-center gap-1.5 px-1.5 text-left text-xs text-[var(--ec-text)]"
             onClick={() => updatePreferences({ collapsed: collapsed ? preferences.collapsed.filter((id) => id !== section.id) : [...preferences.collapsed, section.id] })}>
             {collapsed ? <ChevronRight className="size-3 shrink-0" /> : <ChevronDown className="size-3 shrink-0" />}
+            <span aria-hidden="true" data-section-color={section.color} className="size-2 shrink-0 rounded-full ring-1 ring-inset ring-black/15" style={{ backgroundColor: section.color }} />
             <span className="min-w-0 flex-1 truncate font-semibold">{section.name}</span><span className="font-mono text-[10px] text-[var(--ec-muted)]">{section.count}</span>
           </button>
-          {canOrganize && section.id !== UNCATEGORIZED_RUN_SECTION_ID && <button type="button" ref={menu === section.id ? menuAnchor : undefined}
+          {canOrganize && <button type="button" ref={menu === section.id ? menuAnchor : undefined}
             aria-label={`Manage ${section.name} section`} aria-expanded={menu === section.id} disabled={busy}
             className="rounded p-1 text-[var(--ec-muted)] hover:bg-[var(--ec-hover)]" onClick={() => setMenu(menu === section.id ? null : section.id)}><MoreHorizontal className="size-3.5" /></button>}
         </div>
@@ -186,15 +185,20 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
     })}
     <AnchorDropdownPortal open={Boolean(menuSection)} anchorRef={menuAnchor} onClose={() => setMenu(null)} widthPx={210} className="glass-popover p-1">
       {menuSection && <div className="flex flex-col">
+        <Button variant="ghost" size="xs" onClick={() => { setError(""); setDialog({ kind: "color", id: menuSection.id, name: menuSection.name, color: menuSection.color }); setMenu(null); }}>Change color</Button>
+        {menuSection.id !== UNCATEGORIZED_RUN_SECTION_ID && <>
         <Button variant="ghost" size="xs" onClick={() => { setError(""); setDialog({ kind: "name", id: menuSection.id, name: menuSection.name }); setMenu(null); }}>Rename section</Button>
         <Button variant="ghost" size="xs" disabled={organization.sections[0]?.id === menuSection.id} onClick={() => reorder(menuSection.id, -1)}>Move up</Button>
         <Button variant="ghost" size="xs" disabled={organization.sections.at(-1)?.id === menuSection.id} onClick={() => reorder(menuSection.id, 1)}>Move down</Button>
         <Button variant="ghost" size="xs" onClick={() => { setError(""); setDialog({ kind: "delete", id: menuSection.id, name: menuSection.name }); setMenu(null); }}>Remove section</Button>
+        </>}
       </div>}
     </AnchorDropdownPortal>
-    {dialog && <SidebarOrganizerDialog title={dialog.kind === "delete" ? `Remove ${dialog.name}?` : dialog.id ? "Rename section" : "New run section"} onClose={() => !busy && setDialog(null)}>
-      {dialog.kind === "name" ? <SidebarSectionNameForm name={dialog.name} busy={busy} onClose={() => setDialog(null)}
-        onSubmit={(name) => void mutate(() => dialog.id ? client.renameRunSection(dialog.id, name) : client.createRunSection(name), "Section saved.")} />
+    {dialog && <SidebarOrganizerDialog title={dialog.kind === "color" ? `${dialog.name} color` : dialog.kind === "delete" ? `Remove ${dialog.name}?` : dialog.id ? "Rename section" : "New run section"} onClose={() => !busy && setDialog(null)}>
+      {dialog.kind === "color" ? <SidebarSectionColorForm color={dialog.color} busy={busy} onClose={() => setDialog(null)}
+        onSubmit={(color) => void mutate(() => client.setRunSectionColor(dialog.id, color), "Section color saved.")} />
+        : dialog.kind === "name" ? <SidebarSectionNameForm name={dialog.name} color={dialog.id ? undefined : DEFAULT_RUN_SECTION_COLOR} busy={busy} onClose={() => setDialog(null)}
+        onSubmit={(name, color) => void mutate(() => dialog.id ? client.renameRunSection(dialog.id, name) : client.createRunSection(name, color), "Section saved.")} />
         : <><p className="mb-3 text-xs text-[var(--ec-muted)]">Its runs will return to Uncategorized. Runs, tags, and workspaces will be kept.</p>
           <div className="flex justify-end gap-2"><Button variant="secondary" size="sm" disabled={busy} onClick={() => setDialog(null)}>Cancel</Button>
             <Button size="sm" disabled={busy} onClick={() => void mutate(() => client.deleteRunSection(dialog.id), "Section removed. Runs returned to Uncategorized.")}>Remove section</Button></div></>}

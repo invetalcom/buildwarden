@@ -3,11 +3,16 @@ export const UNCATEGORIZED_RUN_SECTION_ID = "uncategorized";
 export const RUN_SECTION_NAME_LIMIT = 80;
 export const RUN_TAG_LIMIT = 40;
 export const RUN_TAG_COUNT_LIMIT = 20;
+export const DEFAULT_RUN_SECTION_COLOR = "#60a5fa";
+export const DEFAULT_UNCATEGORIZED_COLOR = "#94a3b8";
+export const isRunSectionColor = (value: unknown): value is string => typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
 
 export interface RunSectionRecord {
   id: string;
   name: string;
   position: number;
+  /** Missing on snapshots from hosts predating section colors. */
+  color?: string;
 }
 
 export interface RunOrganizationRecord {
@@ -17,6 +22,7 @@ export interface RunOrganizationRecord {
 }
 
 export interface RunOrganizationSnapshot {
+  uncategorizedColor?: string;
   sections: RunSectionRecord[];
   runs: RunOrganizationRecord[];
 }

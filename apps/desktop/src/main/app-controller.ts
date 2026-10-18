@@ -10772,7 +10772,8 @@ export class AppController
     this.events.publish("runOrganization", { changedAt: new Date().toISOString() });
     return snapshot;
   }
-  async createRunSection(name: string) { return this.publishRunOrganization(this.db.createRunSection(name)); }
+  async createRunSection(name: string, color?: string) { return this.publishRunOrganization(this.db.createRunSection(name, color)); }
+  async setRunSectionColor(sectionId: string, color: string) { return this.publishRunOrganization(this.db.setRunSectionColor(sectionId, color)); }
   async renameRunSection(sectionId: string, name: string) { return this.publishRunOrganization(this.db.renameRunSection(sectionId, name)); }
   async deleteRunSection(sectionId: string) { return this.publishRunOrganization(this.db.deleteRunSection(sectionId)); }
   async reorderRunSections(sectionIds: string[]) { return this.publishRunOrganization(this.db.reorderRunSections(sectionIds)); }

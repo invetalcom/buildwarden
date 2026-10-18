@@ -4126,7 +4126,8 @@ export interface DesktopApi {
   updateRunNote(noteId: string, input: UpdateRunNoteInput): Promise<RunNoteRecord>;
   deleteRunNote(noteId: string): Promise<void>;
   setRunListVisibility(runId: string, visibility: RunListVisibility): Promise<RunRecord>;
-  createRunSection(name: string): Promise<import("./run-organization").RunOrganizationSnapshot>;
+  createRunSection(name: string, color?: string): Promise<import("./run-organization").RunOrganizationSnapshot>;
+  setRunSectionColor(sectionId: string, color: string): Promise<import("./run-organization").RunOrganizationSnapshot>;
   renameRunSection(sectionId: string, name: string): Promise<import("./run-organization").RunOrganizationSnapshot>;
   deleteRunSection(sectionId: string): Promise<import("./run-organization").RunOrganizationSnapshot>;
   reorderRunSections(sectionIds: string[]): Promise<import("./run-organization").RunOrganizationSnapshot>;
@@ -4511,6 +4512,7 @@ export type RemoteOperationMap = {
   refreshOrchestrationTeam: DesktopApi["refreshOrchestrationTeam"];
   setRunListVisibility: DesktopApi["setRunListVisibility"];
   createRunSection: DesktopApi["createRunSection"];
+  setRunSectionColor: DesktopApi["setRunSectionColor"];
   renameRunSection: DesktopApi["renameRunSection"];
   deleteRunSection: DesktopApi["deleteRunSection"];
   reorderRunSections: DesktopApi["reorderRunSections"];
@@ -4841,6 +4843,7 @@ export const IPC_CHANNELS = {
   deleteRunNote: "buildwarden:delete-run-note",
   setRunListVisibility: "buildwarden:set-run-list-visibility",
   createRunSection: "buildwarden:create-run-section",
+  setRunSectionColor: "buildwarden:set-run-section-color",
   renameRunSection: "buildwarden:rename-run-section",
   deleteRunSection: "buildwarden:delete-run-section",
   reorderRunSections: "buildwarden:reorder-run-sections",
@@ -4963,6 +4966,7 @@ export const APP_SETTING_KEYS = {
   sidebarRunEntrySize: "sidebarRunEntrySize",
   /** `"false"` renders Recent Runs as a flat, project-labelled list. Defaults to grouped. */
   sidebarGroupRunsByProject: "sidebarGroupRunsByProject",
+  uncategorizedRunSectionColor: "uncategorizedRunSectionColor",
   sidebarHideActiveRuns: "sidebarHideActiveRuns",
   attentionInbox: "attentionInbox",
   /** Persisted app sidebar width in CSS pixels. */

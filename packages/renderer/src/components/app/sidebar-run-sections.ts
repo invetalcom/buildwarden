@@ -1,4 +1,4 @@
-import { UNCATEGORIZED_RUN_SECTION_ID, type AppSnapshot, type RunOrganizationSnapshot, type RunRecord } from "@buildwarden/shared";
+import { DEFAULT_RUN_SECTION_COLOR, DEFAULT_UNCATEGORIZED_COLOR, isRunSectionColor, UNCATEGORIZED_RUN_SECTION_ID, type AppSnapshot, type RunOrganizationSnapshot, type RunRecord } from "@buildwarden/shared";
 import { buildRunHierarchyRows, findRunHierarchyScopeRoots } from "./run-hierarchy";
 import { recentRunOrderTimestamp } from "./sidebar-run-ordering";
 import { isRunDisplayStatusActive, resolveRunDisplayStatus } from "./run-display-status";
@@ -57,7 +57,8 @@ export const buildSidebarRunSections = ({ projects, organization, view, tag, hid
     };
     return { project, primary: project.runs.filter(visible), children: project.orchestratedRuns.filter((run) => visible(run) && !hasHiddenAncestor(run)) };
   });
-  return [...organization.sections, { id: UNCATEGORIZED_RUN_SECTION_ID, name: "Uncategorized", position: organization.sections.length }].map((section) => {
+  return [...organization.sections, { id: UNCATEGORIZED_RUN_SECTION_ID, name: "Uncategorized", position: organization.sections.length,
+    color: isRunSectionColor(organization.uncategorizedColor) ? organization.uncategorizedColor : DEFAULT_UNCATEGORIZED_COLOR }].map((section) => {
     const groups = availableProjects.flatMap(({ project, primary, children }) => {
       const matches = (run: RunRecord) => (!tag || metadata.get(run.id)?.tags.includes(tag)) &&
         matchesSidebarRunView(run, view, recentDays, now);
@@ -85,6 +86,7 @@ export const buildSidebarRunSections = ({ projects, organization, view, tag, hid
       blocks.at(-1)!.push({ project, row });
     }
     blocks.sort((left, right) => time(right[0]?.row.run) - time(left[0]?.row.run));
-    return { ...section, groups, flatRows: blocks.flat(), count: groups.reduce((sum, group) => sum + group.count, 0) };
+    return { ...section, color: isRunSectionColor(section.color) ? section.color : DEFAULT_RUN_SECTION_COLOR,
+      groups, flatRows: blocks.flat(), count: groups.reduce((sum, group) => sum + group.count, 0) };
   });
 };

@@ -193,6 +193,7 @@ describe("remote operation registry", () => {
       | "refreshOrchestrationTeam"
       | "setRunListVisibility"
       | "createRunSection"
+      | "setRunSectionColor"
       | "renameRunSection"
       | "deleteRunSection"
       | "reorderRunSections"

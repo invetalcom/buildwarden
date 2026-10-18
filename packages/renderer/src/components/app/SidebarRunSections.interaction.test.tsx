@@ -8,7 +8,7 @@ import { RUN_DRAG_MIME_TYPE } from "./app-model";
 import { buildSidebarRunSections } from "./sidebar-run-sections";
 
 const client = { capabilities: { runListVisibilityMutations: true }, updateRunOrganization: vi.fn(), createRunSection: vi.fn(),
-  renameRunSection: vi.fn(), deleteRunSection: vi.fn(), reorderRunSections: vi.fn() };
+  renameRunSection: vi.fn(), deleteRunSection: vi.fn(), reorderRunSections: vi.fn(), setRunSectionColor: vi.fn() };
 vi.mock("../../lib/buildwarden-client", () => ({ useBuildWardenClient: () => client }));
 
 const run = (id: string, status: RunRecord["status"], extra: Partial<RunRecord> = {}) => ({ id, status, projectId: "p1", prompt: id,
@@ -30,8 +30,13 @@ beforeAll(() => {
 beforeEach(() => {
   localStorage.clear(); vi.clearAllMocks(); state = structuredClone(initial);
   client.capabilities.runListVisibilityMutations = true;
-  client.createRunSection.mockImplementation(async (name: string) => {
-    state = { ...state, sections: [...state.sections, { id: "created", name, position: state.sections.length }] };
+  client.createRunSection.mockImplementation(async (name: string, color?: string) => {
+    state = { ...state, sections: [...state.sections, { id: "created", name, color, position: state.sections.length }] };
+    return state;
+  });
+  client.setRunSectionColor.mockImplementation(async (id: string, color: string) => {
+    state = id === "uncategorized" ? { ...state, uncategorizedColor: color }
+      : { ...state, sections: state.sections.map((section) => section.id === id ? { ...section, color } : section) };
     return state;
   });
   client.renameRunSection.mockImplementation(async (id: string, name: string) => {
@@ -110,7 +115,10 @@ describe("sidebar run sections", () => {
     expect(section("uncategorized").textContent).toContain(old.id);
     expect(section("work").textContent).toContain(failed.id);
     expect(section("uncategorized").textContent).not.toContain(failed.id);
-    expect(button("Manage Uncategorized section")).toBeUndefined();
+    await click(button("Manage Uncategorized section"));
+    expect(button("Change color")).toBeDefined();
+    expect(button("Remove section")).toBeUndefined();
+    expect(button("Move up")).toBeUndefined();
   });
 
   it("moves a run onto a collapsed empty section and back without invoking pane drops", async () => {
@@ -175,8 +183,18 @@ describe("sidebar run sections", () => {
     expect(container.querySelectorAll("[data-test-run]")).toHaveLength(1);
     expect(section("uncategorized").textContent).toContain(old.id);
     await click(button("Filter runs"));
-    await click(button("All3")); await click(button("#bug"));
+    await click(button("All3"));
+    expect(button("#bug")).toBeUndefined();
+    await click(button("Filter runs by tag")); await click(button("#bug"));
     expect(container.querySelectorAll("[data-test-run]")).toHaveLength(1);
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(button("Filter runs by tag"));
+    expect(button("Filter runs by tag").title).toBe("Filter runs by tag: #bug");
+    await click(button("Filter runs by tag"));
+    expect(button("#bug").getAttribute("aria-checked")).toBe("true");
+    await click(button("All tags"));
+    expect(container.querySelectorAll("[data-test-run]")).toHaveLength(3);
+    expect(button("Filter runs by tag").title).toBe("Filter runs by tag: All tags");
     expect(client.updateRunOrganization).not.toHaveBeenCalled();
   });
 
@@ -201,7 +219,9 @@ describe("sidebar run sections", () => {
       await click(button("Save section"));
     };
     await mount();
-    await click(button("New run section")); await submitName("Release");
+    await click(button("New run section")); await click(button("Purple section color")); await submitName("Release");
+    expect(client.createRunSection).toHaveBeenCalledWith("Release", "#a78bfa");
+    expect(section("created").querySelector("[data-section-color]")?.getAttribute("data-section-color")).toBe("#a78bfa");
     expect(section("created").textContent).toContain("Release");
     await click(button("Manage This week section")); await click(button("Rename section")); await submitName("Current");
     expect(section("work").textContent).toContain("Current");
@@ -212,6 +232,34 @@ describe("sidebar run sections", () => {
     expect(section("work")).toBeNull();
     expect(section("uncategorized").textContent).toContain(failed.id);
     expect(state.runs.find((run) => run.runId === failed.id)?.tags).toEqual(["bug"]);
+  });
+
+  it("changes section colors from the options menu and validates custom colors", async () => {
+    await mount();
+    await click(button("Manage This week section")); await click(button("Change color"));
+    await click(button("Yellow section color")); await click(button("Save color"));
+    expect(client.setRunSectionColor).toHaveBeenCalledWith("work", "#facc15");
+    expect(section("work").querySelector("[data-section-color]")?.getAttribute("data-section-color")).toBe("#facc15");
+    await click(button("Manage Uncategorized section")); await click(button("Change color"));
+    const enterColor = async (value: string) => act(async () => {
+      const input = document.querySelector<HTMLInputElement>('[aria-label="Custom section color"]')!;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await enterColor("#123");
+    expect(button("Save color").disabled).toBe(true);
+    await enterColor("#123456"); await click(button("Save color"));
+    expect(client.setRunSectionColor).toHaveBeenLastCalledWith("uncategorized", "#123456");
+    expect(section("uncategorized").querySelector("[data-section-color]")?.getAttribute("data-section-color")).toBe("#123456");
+  });
+
+  it("keeps the previous color and the picker open when saving fails", async () => {
+    client.setRunSectionColor.mockRejectedValueOnce(new Error("Save failed"));
+    await mount();
+    await click(button("Manage This week section")); await click(button("Change color"));
+    await click(button("Red section color")); await click(button("Save color"));
+    expect(document.querySelector("dialog [role=alert]")?.textContent).toBe("Save failed");
+    expect(section("work").querySelector("[data-section-color]")?.getAttribute("data-section-color")).toBe("#60a5fa");
   });
 });
 

@@ -1,9 +1,10 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { RUN_SECTION_NAME_LIMIT, UNCATEGORIZED_RUN_SECTION_ID, type RunOrganizationSnapshot } from "@buildwarden/shared";
+import { DEFAULT_RUN_SECTION_COLOR, isRunSectionColor, RUN_SECTION_NAME_LIMIT, UNCATEGORIZED_RUN_SECTION_ID, type RunOrganizationSnapshot } from "@buildwarden/shared";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select } from "../ui/select";
+import { SidebarSectionColorPicker } from "./SidebarSectionColorPicker";
 
 /** Native dialog supplies focus trapping and Escape handling in both shells. */
 export const SidebarOrganizerDialog = ({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) => {
@@ -16,14 +17,28 @@ export const SidebarOrganizerDialog = ({ title, children, onClose }: { title: st
   </dialog>, document.body);
 };
 
-export const SidebarSectionNameForm = ({ name, busy, onSubmit, onClose }: {
-  name: string; busy: boolean; onSubmit: (name: string) => void; onClose: () => void;
+export const SidebarSectionNameForm = ({ name, color, busy, onSubmit, onClose }: {
+  name: string; color?: string; busy: boolean; onSubmit: (name: string, color?: string) => void; onClose: () => void;
 }) => {
   const [value, setValue] = useState(name);
-  return <form onSubmit={(event) => { event.preventDefault(); onSubmit(value); }} className="space-y-3">
+  const [selectedColor, setSelectedColor] = useState(color ?? DEFAULT_RUN_SECTION_COLOR);
+  const valid = color === undefined || isRunSectionColor(selectedColor);
+  return <form onSubmit={(event) => { event.preventDefault(); if (valid && !busy) onSubmit(value, color === undefined ? undefined : selectedColor); }} className="space-y-3">
     <Input aria-label="Section name" value={value} maxLength={RUN_SECTION_NAME_LIMIT} autoFocus required onChange={(event) => setValue(event.target.value)} />
+    {color !== undefined && <SidebarSectionColorPicker value={selectedColor} onChange={setSelectedColor} disabled={busy} />}
     <div className="flex justify-end gap-2"><Button type="button" size="sm" variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
-      <Button size="sm" disabled={busy || !value.trim()}>Save section</Button></div>
+      <Button size="sm" disabled={busy || !value.trim() || !valid}>Save section</Button></div>
+  </form>;
+};
+
+export const SidebarSectionColorForm = ({ color, busy, onSubmit, onClose }: {
+  color: string; busy: boolean; onSubmit: (color: string) => void; onClose: () => void;
+}) => {
+  const [value, setValue] = useState(color);
+  return <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); if (isRunSectionColor(value) && !busy) onSubmit(value); }}>
+    <SidebarSectionColorPicker value={value} onChange={setValue} disabled={busy} />
+    <div className="flex justify-end gap-2"><Button type="button" size="sm" variant="secondary" disabled={busy} onClick={onClose}>Cancel</Button>
+      <Button size="sm" disabled={busy || !isRunSectionColor(value)}>Save color</Button></div>
   </form>;
 };
 

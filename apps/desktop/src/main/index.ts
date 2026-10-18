@@ -19,6 +19,7 @@ import {
   IPC_CHANNELS,
   isAttentionAcknowledgementBatch,
   isRunSectionName,
+  isRunSectionColor,
   isUpdateRunOrganizationInput,
   type UpdateRunOrganizationInput,
   getDefaultDesignScheme,
@@ -946,8 +947,10 @@ const bootstrap = async (): Promise<void> => {
     "run:operate",
     true,
   );
-  remoteOperations.register("createRunSection", (name) => controller.createRunSection(name),
-    defineRemoteArgsValidator<"createRunSection">((args) => args.length === 1 && isRunSectionName(args[0])), "run:operate", true);
+  remoteOperations.register("createRunSection", (name, color) => controller.createRunSection(name, color),
+    defineRemoteArgsValidator<"createRunSection">((args) => (args.length === 1 || args.length === 2 && isRunSectionColor(args[1])) && isRunSectionName(args[0])), "run:operate", true);
+  remoteOperations.register("setRunSectionColor", (id, color) => controller.setRunSectionColor(id, color),
+    defineRemoteArgsValidator<"setRunSectionColor">((args) => args.length === 2 && typeof args[0] === "string" && isRunSectionColor(args[1])), "run:operate", true);
   remoteOperations.register("renameRunSection", (id, name) => controller.renameRunSection(id, name),
     defineRemoteArgsValidator<"renameRunSection">((args) => args.length === 2 && typeof args[0] === "string" && isRunSectionName(args[1])), "run:operate", true);
   remoteOperations.register("deleteRunSection", (id) => controller.deleteRunSection(id), validateSingleRemoteStringArg, "run:operate", true);
@@ -1619,7 +1622,8 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.updateRunNote, (_, noteId: string, input) => controller.updateRunNote(noteId, input));
   ipcMain.handle(IPC_CHANNELS.deleteRunNote, (_, noteId: string) => controller.deleteRunNote(noteId));
   ipcMain.handle(IPC_CHANNELS.setRunListVisibility, (_, runId: string, visibility) => controller.setRunListVisibility(runId, visibility));
-  ipcMain.handle(IPC_CHANNELS.createRunSection, (_, name: string) => controller.createRunSection(name));
+  ipcMain.handle(IPC_CHANNELS.createRunSection, (_, name: string, color?: string) => controller.createRunSection(name, color));
+  ipcMain.handle(IPC_CHANNELS.setRunSectionColor, (_, id: string, color: string) => controller.setRunSectionColor(id, color));
   ipcMain.handle(IPC_CHANNELS.renameRunSection, (_, id: string, name: string) => controller.renameRunSection(id, name));
   ipcMain.handle(IPC_CHANNELS.deleteRunSection, (_, id: string) => controller.deleteRunSection(id));
   ipcMain.handle(IPC_CHANNELS.reorderRunSections, (_, ids: string[]) => controller.reorderRunSections(ids));

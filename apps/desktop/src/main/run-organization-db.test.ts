@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
+import { DEFAULT_RUN_SECTION_COLOR } from "@buildwarden/shared";
 
 const directories: string[] = [];
 const databases: BuildWardenDatabase[] = [];
@@ -25,6 +26,40 @@ afterEach(async () => {
 });
 
 describe("sidebar run organization persistence", () => {
+  it("migrates sections created before colors while keeping assignments", async () => {
+    const { db, path, run } = await fixture();
+    const section = db.createRunSection("Existing").sections[0]!;
+    db.updateRunOrganization(run.id, { sectionId: section.id });
+    await db.close();
+    const legacy = new DatabaseSync(path);
+    legacy.exec("alter table run_sections drop column color");
+    legacy.close();
+    const upgraded = new BuildWardenDatabase(path); await upgraded.init(); databases.push(upgraded);
+    expect(upgraded.getRunOrganization().sections[0]).toEqual({ ...section, color: DEFAULT_RUN_SECTION_COLOR });
+    expect(upgraded.getRunOrganization().runs[0]?.sectionId).toBe(section.id);
+  });
+
+  it("persists custom and Uncategorized colors without altering runs, names, order or tags", async () => {
+    const { db, path, run } = await fixture();
+    const section = db.createRunSection("Auth", "#A78BFA").sections[0]!;
+    expect(section.color).toBe("#a78bfa");
+    db.updateRunOrganization(run.id, { sectionId: section.id, tags: ["auth"] });
+    db.setRunSectionColor(section.id, "#FACC15");
+    db.setRunSectionColor("uncategorized", "#123456");
+    db.renameRunSection(section.id, "Authentication");
+    expect(db.reorderRunSections([section.id]).sections[0]?.color).toBe("#facc15");
+    const before = db.getRunOrganization();
+    expect(() => db.setRunSectionColor(section.id, "red")).toThrow("hex color");
+    expect(() => db.createRunSection("Invalid", "#fff")).toThrow("hex color");
+    expect(() => db.setRunSectionColor("missing", "#123456")).toThrow("not found");
+    expect(db.getRunOrganization()).toEqual(before);
+    expect(db.getRun(run.id)).toEqual(run);
+    await db.close();
+    const reopened = new BuildWardenDatabase(path); await reopened.init(); databases.push(reopened);
+    expect(reopened.getRunOrganization()).toEqual(before);
+    expect(reopened.getRunOrganization().uncategorizedColor).toBe("#123456");
+  });
+
   it("upgrades an existing database without changing its runs or requiring assignments", async () => {
     const { db, path, run } = await fixture();
     await db.close();
