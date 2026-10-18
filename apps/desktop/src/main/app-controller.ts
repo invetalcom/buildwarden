@@ -2429,7 +2429,11 @@ export class AppController
       await active.worker.terminate();
     }
     const isRunChat = Boolean(this.db.getChat(chatId).runId);
-    await removeChatWorkspace(this.db.getFilePath(), chatId);
+    try {
+      await removeChatWorkspace(this.db.getFilePath(), chatId);
+    } catch (error) {
+      this.logControllerWarn("Could not remove the chat workspace; continuing chat deletion.", { chatId, error });
+    }
     this.db.deleteProviderSessionRuntime(chatId, "chat");
     this.db.deleteChat(chatId);
     if (!isRunChat) {

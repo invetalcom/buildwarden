@@ -37,6 +37,7 @@ import { HostEventBus } from "./host-events";
 import type { ProjectPrReviewProvider } from "./pr-review/pr-review-types";
 import { advanceReportedTokenUsage } from "./token-usage-accounting";
 import * as utilityTextGeneration from "./utility-text-generation";
+import * as chatWorkspace from "./chat-workspace";
 
 const project = {
   id: "project-1",
@@ -329,6 +330,18 @@ describe("provider usage report baselines", () => {
 });
 
 describe("AppController settings and lightweight workflows", () => {
+  it.each(["EBUSY", "EPERM"])("deletes chat state when workspace cleanup fails with %s", async (code) => {
+    const cleanup = vi.spyOn(chatWorkspace, "removeChatWorkspace").mockRejectedValueOnce(Object.assign(new Error("Workspace locked"), { code }));
+    const deleteChat = vi.fn();
+    const deleteRuntime = vi.fn();
+    const harness = createHarness({ getChat: vi.fn(() => ({ id: "locked-chat", runId: null })), deleteChat, deleteProviderSessionRuntime: deleteRuntime });
+    tempDirs.push(harness.logDir);
+    try {
+      await expect(harness.controller.deleteChat("locked-chat")).resolves.toBeUndefined();
+      expect(deleteRuntime).toHaveBeenCalledWith("locked-chat", "chat");
+      expect(deleteChat).toHaveBeenCalledWith("locked-chat");
+    } finally { cleanup.mockRestore(); }
+  });
   it("uses the latest descriptive source output for follow-up memory, skipping image inspections", () => {
     const harness = createHarness({
       getRun: vi.fn(() => ({ id: "run-1" })),

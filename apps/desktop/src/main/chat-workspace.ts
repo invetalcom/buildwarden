@@ -13,5 +13,5 @@ export const getChatWorkspacePath = (databasePath: string, chatId: string): stri
 export const removeChatWorkspace = async (databasePath: string, chatId: string): Promise<void> => {
   const workspace = getChatWorkspacePath(databasePath, chatId);
   // Only this validated app-owned child directory is removed, never a project or the provider's old cwd.
-  await rm(workspace, { recursive: true, force: true });
+  await rm(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 };
