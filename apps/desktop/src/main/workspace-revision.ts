@@ -46,11 +46,13 @@ export const captureWorkspaceRevision = async (cwd: string, vcs: "git" | "folder
     try {
       const sourceIndex = resolve(cwd, indexPath);
       const privateIndex = join(temporary, "index");
-      await copyFile(sourceIndex, privateIndex);
       // Git re-hashes "racily clean" entries (file mtime >= index mtime) because a
       // same-size rewrite within the index's timestamp granularity looks unchanged
       // by stat. A fresh copy mtime would hide those entries, so keep the original.
+      // Stat before copying: if git swaps the index in between, the copy keeps an
+      // older mtime (more re-hashing) instead of lending stale entries a newer one.
       const { atime, mtime } = await stat(sourceIndex);
+      await copyFile(sourceIndex, privateIndex);
       await utimes(privateIndex, atime, mtime);
     }
     catch (error) {
