@@ -8,6 +8,15 @@ import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-co
 const render = (content: string) => renderToStaticMarkup(<BuildWardenClientProvider client={createElectronBuildWardenClient({} as DesktopApi)}><ActivityRichText content={content} /></BuildWardenClientProvider>);
 
 describe("rich responses", () => {
+  it("shows a readable HTML source link instead of a host-specific visualization token", () => {
+    const token = '\uE200visualize\uE202{"path":"C:/repo/work/feature concepts.html","mode":"wide"}\uE201';
+    const html = render(`Concept screenshots above.\n\n${token}`);
+    expect(html).toContain('href="/C:/repo/work/feature%20concepts.html"');
+    expect(html).toContain('Visualization source (HTML)');
+    expect(html).not.toContain('\uE200visualize');
+    expect(render(`\`${token}\``)).toContain('\uE200visualize');
+    expect(render('\uE200visualize\uE202{"path":"javascript:alert(1).html"}\uE201')).not.toContain('href=');
+  });
   it("renders a section heading, image on the left, and title/subtitle on the right", () => {
     const html = render('## Project\n\n![Dashboard](https://example.com/dashboard.png)\n\n### A compliance platform\n\nTarget: manufacturers\n\n**The opportunity:** Details');
     expect(html).toMatch(/<h2[^>]*>Project<\/h2>/);

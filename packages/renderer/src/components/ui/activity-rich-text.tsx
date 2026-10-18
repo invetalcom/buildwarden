@@ -8,7 +8,7 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import { FileText } from "lucide-react";
-import { isExternalRunWorkspaceHref, parseRunWorkspaceFileReference } from "@buildwarden/shared";
+import { isExternalRunWorkspaceHref, parseRunWorkspaceFileReference, normalizeResponseArtifactReferences } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
 import { getOpenableInlineCodePath } from "./activity-file-links";
 import { Button } from "./button";
@@ -263,7 +263,7 @@ export const ActivityRichText = ({ content, compact = false, className, onOpenWo
         urlTransform={responseUrlTransform}
         components={mdComponents(buildwarden, compact, onOpenWorkspaceFile)}
       >
-        {content}
+        {normalizeResponseArtifactReferences(content)}
       </ReactMarkdown>
     </div>
   );

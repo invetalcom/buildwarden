@@ -26,6 +26,19 @@ const step = (
 });
 
 describe("run activity timeline shaping", () => {
+  it("renders persisted viewed-image events and screenshot answers in agent runs", () => {
+    const image = "![Screenshot](data:image/png;base64,iVBORw0KGgo=)";
+    const markup = renderToStaticMarkup(<RunActivityTimeline
+      steps={[
+        step("view", "output", { assistantKind: "image", itemType: "imageView" }, image),
+        step("answer", "output", {}, `1. **Saved versions** — compare configurations. ${image}`),
+      ]}
+      run={{ id: "run-images", status: "completed", mode: "code" }}
+    />);
+    expect(markup.match(/<img /g)).toHaveLength(2);
+    expect(markup).toContain('aria-label="Enlarge Screenshot"');
+    expect(markup).not.toContain("Codex update");
+  });
   it("renders the major workflow event families", () => {
     const steps = [
       step("prompt", "log", { source: "user", mode: "code", attachmentNames: ["spec.md"] }, "Implement the plan"),

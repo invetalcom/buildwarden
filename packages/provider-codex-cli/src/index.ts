@@ -1928,6 +1928,19 @@ export class CodexAppServerSession {
       case "fileChange":
         this.handleFileChangeItem(method, item, itemId);
         return;
+      case "imageView": {
+        if (method !== "item/completed") return;
+        const path = asString(item.path);
+        if (!path) return;
+        const destination = path.replace(/\\/g, "/").replace(/[%<>#?\s]/g, (character) => encodeURIComponent(character));
+        this.emit({
+          type: "message",
+          title: "Viewed image",
+          value: `![Viewed image](<${destination}>)`,
+          metadata: { itemType, itemId, assistantKind: "image", ...(itemId ? { streamId: `image:${itemId}`, replace: true } : {}) },
+        });
+        return;
+      }
       case "dynamicToolCall":
         // The matching item/tool/call server request already emits the named
         // tool-call and tool-result chunks. Rendering these lifecycle items as

@@ -18,6 +18,7 @@ import { canReviewRunChanges, RUN_VERIFICATION_FAILURE_PREFIX, parseRevisionVeri
 import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
 import { readRunWorkspaceFileForPreview } from "./run-workspace-file";
 import { getChatWorkspacePath, removeChatWorkspace } from "./chat-workspace";
+import { createResponseImageEmbedder, hydrateResponseImageSteps } from "./response-images";
 import { normalizeJsonResponse } from "./json-response";
 import { normalizeSuggestedBranchName } from "./branch-name-suggestion";
 import { generateUtilityText, validateUtilityText, type UtilityTextPurpose } from "./utility-text-generation";
@@ -483,7 +484,7 @@ const isDuplicateFinalSummaryStep = (
   if (metadata.assistantKind !== "final-summary") {
     return false;
   }
-  const normalizedContent = normalizeAssistantOutputText(step.content);
+  const normalizedContent = normalizeAssistantOutputText(typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content);
   return Boolean(previousAssistantContent) && normalizedContent.length > 0 && normalizedContent === previousAssistantContent;
 };
 
@@ -573,14 +574,14 @@ export const buildPriorRunMessagesFromSteps = (
     }
 
     if (step.eventType === "output") {
-      if (metadata.assistantKind === "reasoning" || step.title === "Reasoning") {
+      if (metadata.assistantKind === "reasoning" || metadata.assistantKind === "image" || step.title === "Reasoning") {
         continue;
       }
       if (isDuplicateFinalSummaryStep(step, previousAssistantContent)) {
         continue;
       }
       messages.push({ role: "assistant", content: typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content });
-      previousAssistantContent = normalizeAssistantOutputText(step.content);
+      previousAssistantContent = normalizeAssistantOutputText(typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content);
     }
   }
   if (messages.length > 0 && messages[messages.length - 1]?.role === "user") {
@@ -7003,7 +7004,7 @@ export class AppController
     const recoveryKind = resolveRecoveryKind(true, Boolean(checkpoint), providerSessionAvailable);
     return {
       run,
-      steps: history.steps,
+      steps: hydrateResponseImageSteps(workspacePath, history.steps),
       historyPage: history.page,
       notes: this.db.listRunNotes(runId),
       workspaceSetup: this.db.getRunWorkspaceSetup(runId),
@@ -7036,7 +7037,8 @@ export class AppController
   }
 
   async getEarlierRunHistory(runId: string, request: UserAnchoredHistoryPageRequest): Promise<RunHistoryPage> {
-    return this.db.getEarlierRunHistory(runId, request);
+    const history = this.db.getEarlierRunHistory(runId, request);
+    return { ...history, steps: hydrateResponseImageSteps(this.getEffectiveRunWorkspacePath(this.db.getRun(runId)), history.steps) };
   }
 
   async addRunNote(runId: string, input: { content: string }): Promise<RunNoteRecord> {
@@ -9979,9 +9981,10 @@ export class AppController
             } catch {
               /* ignore malformed legacy metadata */
             }
-            return metadata.assistantKind !== "reasoning";
+            return metadata.assistantKind !== "reasoning" && metadata.assistantKind !== "image";
           });
-        const latestAssistantOutputText = latestAssistantOutput ? normalizeAssistantOutputText(latestAssistantOutput.content) : "";
+        const latestAssistantSource = latestAssistantOutput ? parseMetadataRecord(latestAssistantOutput.metadataJson).responseSourceText : undefined;
+        const latestAssistantOutputText = latestAssistantOutput ? normalizeAssistantOutputText(typeof latestAssistantSource === "string" ? latestAssistantSource : latestAssistantOutput.content) : "";
         const shouldAppendFinalSummary =
           !wasCancelled &&
           provider.providerType !== "azure-legacy" &&
@@ -9989,17 +9992,18 @@ export class AppController
           trimmedSummary !== "No output returned from the provider." &&
           normalizeAssistantOutputText(trimmedSummary) !== latestAssistantOutputText;
         if (shouldAppendFinalSummary) {
-          await this.appendRunEvent(run.id, "output", "Final summary", trimmedSummary, {
+          const summaryContent = createResponseImageEmbedder(this.getEffectiveRunWorkspacePath(run))(trimmedSummary);
+          const summaryMetadata = {
             assistantKind: "final-summary",
-          });
+            ...(summaryContent !== trimmedSummary ? { responseSourceText: trimmedSummary } : {}),
+          };
+          await this.appendRunEvent(run.id, "output", "Final summary", summaryContent, summaryMetadata);
           this.emitEvent({
             runId: run.id,
             type: "output",
             title: "Final summary",
-            content: trimmedSummary,
-            metadata: {
-              assistantKind: "final-summary",
-            },
+            content: summaryContent,
+            metadata: summaryMetadata,
             createdAt: new Date().toISOString(),
           });
         }
@@ -10476,7 +10480,7 @@ export class AppController
         }
 
         if (step.eventType === "output") {
-          if (metadata.assistantKind === "reasoning" || step.title === "Reasoning") {
+          if (metadata.assistantKind === "reasoning" || metadata.assistantKind === "image" || step.title === "Reasoning") {
             return [];
           }
           return [{ role: "assistant", content: typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content }];

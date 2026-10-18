@@ -1,6 +1,7 @@
 import { closeSync, fstatSync, openSync, readSync, realpathSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { normalizeResponseArtifactReferences } from "@buildwarden/shared";
 import { isPathInsideRoot } from "./run-workspace-file";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -58,13 +59,36 @@ export const createResponseImageEmbedder = (workspacePath: string) => {
       if (handle !== undefined) closeSync(handle);
     }
   };
-  return (content: string): string => content.replace(
-    /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)|(!\[[^\]\n]*\]\()(<[^>\n]+>|[^\s)]+)([^\n)]*\))/g,
+  return (content: string): string => normalizeResponseArtifactReferences(content).replace(
+    /(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*`)|(!?\[[^\]\n]*\]\()(<[^>\n]+>|[^\s)]+)([^\n)]*\))/g,
     (match: string, code: string | undefined, prefix: string, destination: string, suffix: string) => {
       if (code) return match;
       const source = destination.startsWith("<") ? destination.slice(1, -1) : destination;
+      // Codex commonly writes [Screenshot](path.png). Only promote links when
+      // the target is a validated local raster image; ordinary links stay links.
+      const image = prefix.startsWith("!");
+      if (!image && !/\.(?:png|jpe?g|gif|webp)$/i.test(source)) return match;
       const resolved = embed(source);
-      return resolved === source ? match : `${prefix}${resolved}${suffix}`;
+      return resolved === source ? match : `${image ? "" : "!"}${prefix}${resolved}${suffix}`;
     },
   );
+};
+
+/** Hydrate older output on read without modifying history or fetching remote URLs. */
+export const hydrateResponseImageSteps = <T extends { eventType: string; content: string; metadataJson: string }>(
+  workspacePath: string,
+  steps: T[],
+): T[] => {
+  const embed = createResponseImageEmbedder(workspacePath);
+  return steps.map((step) => {
+    if (step.eventType !== "output") return step;
+    const content = embed(step.content);
+    if (content === step.content) return step;
+    let metadata: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = JSON.parse(step.metadataJson || "{}");
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) metadata = parsed as Record<string, unknown>;
+    } catch { /* legacy metadata */ }
+    return { ...step, content, metadataJson: JSON.stringify({ ...metadata, responseSourceText: metadata.responseSourceText ?? step.content }) };
+  });
 };

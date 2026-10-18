@@ -68,6 +68,8 @@ Target: manufacturers and industrial suppliers
 
 The image sits beside the title and subtitle in wide panels, and above them in narrow panels. An image followed by a bold title in the same paragraph also creates a card. Other Markdown keeps its normal layout.
 
+Agent runs also display completed Codex image-view events and local raster links such as `[Screenshot](work/mockup.png)` as images. Reopening an older run hydrates these links while the workspace images remain available. Proprietary `visualize` references become HTML source-file links; BuildWarden does not execute those HTML files inline.
+
 Local PNG, JPEG, GIF, and WebP images referenced with inline Markdown image syntax are embedded in saved responses before they reach the renderer (5 MiB per image, 15 MiB per worker turn). Paths must remain inside the run workspace or the chat's app-owned workspace; file URLs and workspace-relative `sandbox:/` references follow the same checks. Put paths containing spaces in angle brackets. Unavailable images show a text placeholder. External images load directly from their HTTP/HTTPS URLs; HTTPS is recommended for remote clients. Raw HTML forms and executable content are not supported.
 
 Codex chats expose `buildwarden_ask_user` for clickable questions, including outside plan mode. Native provider question requests and AI SDK's `request_user_input` use the same answer card. Answers are saved with the question; inactive or read-only conversations cannot submit them. Availability still depends on the provider supporting tool calls. No image-and-text layout or form is inferred from proprietary GUI markup.

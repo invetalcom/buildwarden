@@ -192,6 +192,41 @@ afterEach(() => {
   for (const path of tempDirs.splice(0)) rmSync(path, { recursive: true, force: true });
 });
 
+it("keeps original image references in model history and excludes image-view display events", () => {
+  const source = "1. **Saved versions** [Screenshot](work/versions.png)";
+  const display = "1. **Saved versions** ![Screenshot](data:image/png;base64,iVBORw0KGgo=)";
+  expect(buildPriorRunMessagesFromSteps([
+    { eventType: "output", title: "Viewed image", content: "![Viewed image](data:image/png;base64,iVBORw0KGgo=)", metadataJson: '{"assistantKind":"image"}' },
+    { eventType: "output", title: "Agent output", content: display, metadataJson: JSON.stringify({ responseSourceText: source }) },
+    { eventType: "output", title: "Final summary", content: source, metadataJson: '{"assistantKind":"final-summary"}' },
+  ])).toEqual([{ role: "assistant", content: source }]);
+});
+
+it("hydrates screenshot links when reopening and paging an existing agent run", async () => {
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j0WQAAAAASUVORK5CYII=", "base64");
+  const step = { id: "saved-answer", eventType: "output", title: "Agent output", content: "[Screenshot](versions.png)", metadataJson: "{}", createdAt: "2026-01-01T00:00:00.000Z" };
+  const history = { steps: [step], page: { hasEarlier: false } };
+  const harness = createHarness({
+    getRun: vi.fn(() => ({ id: "run-images", projectId: project.id, modelId: model.id, workspaceType: "local", worktreePath: harness.logDir })),
+    getInitialRunHistory: vi.fn(() => history),
+    getRunSteps: vi.fn(() => history.steps),
+    getEarlierRunHistory: vi.fn(() => history),
+    getRunRecoveryEventTimestamps: vi.fn(() => ({ latestInterruptedAt: null, latestRecoveryAt: null })),
+    listRunNotes: vi.fn(() => []),
+    getRunWorkspaceSetup: vi.fn(() => null),
+    getOrchestrationDetailByCoordinatorRunId: vi.fn(() => null),
+  });
+  tempDirs.push(harness.logDir);
+  writeFileSync(join(harness.logDir, "versions.png"), png);
+  const detail = await harness.controller.getRunDetail("run-images");
+  const earlier = await harness.controller.getEarlierRunHistory("run-images", { beforeCursor: step.id, snapshotRevision: "revision-1" });
+  for (const page of [detail, earlier]) {
+    expect(page.steps[0].content).toContain("![Screenshot](data:image/png;base64,");
+    expect(JSON.parse(page.steps[0].metadataJson).responseSourceText).toBe(step.content);
+  }
+  expect(step.content).toBe("[Screenshot](versions.png)");
+});
+
 const deferred = <T>() => {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((resolvePromise) => {

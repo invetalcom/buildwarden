@@ -5,7 +5,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
-import { isExternalRunWorkspaceHref } from "@buildwarden/shared";
+import { isExternalRunWorkspaceHref, normalizeResponseArtifactReferences } from "@buildwarden/shared";
 import { cn } from "../lib/cn";
 import { markdownSanitizeSchema } from "../lib/markdown-sanitize";
 
@@ -132,7 +132,7 @@ export const RichText = ({ children, className }: { children: string; className?
         urlTransform={responseUrlTransform}
         components={components}
       >
-        {children}
+        {normalizeResponseArtifactReferences(children)}
       </ReactMarkdown>
     </div>
   );
