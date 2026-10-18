@@ -1569,9 +1569,8 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
 }
 
 .agent-worklog-density--compact .agent-panel.agent-panel--answer > button[aria-label="Copy response"] {
-  top: 50%;
+  bottom: 0.4rem;
   right: 0.4rem;
-  transform: translateY(-50%);
 }
 
 .agent-worklog-density--compact .agent-panel-header {
