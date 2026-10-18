@@ -1421,7 +1421,7 @@ export const RunDetailPage = ({
             className="relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-[var(--ec-border)]"
             style={activityPaneStyle}
           >
-            <RunBrowserLaunchButton runId={runDetail.run.id} onOpen={() => {
+            <RunBrowserLaunchButton detail={runDetail} onOpen={() => {
               if (!showBrowser) onTogglePanel("browser");
               setActiveSecondaryTab("browser");
             }} />

@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { BuildWardenClient } from "@buildwarden/renderer";
 import { BuildWardenClientProvider } from "@buildwarden/renderer";
-import type { RunBrowserEvent, RunBrowserElementCapture } from "@buildwarden/shared";
+import type { RunBrowserEvent, RunBrowserElementCapture, RunEvent } from "@buildwarden/shared";
 import type { AppSnapshot, ChatDetail, RunDetail, RunRecord } from "@buildwarden/shared";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { MobileAppProvider, type MobileAppValue } from "../data/mobile-app-context";
@@ -131,6 +131,7 @@ afterEach(async () => {
 describe("RunDetailScreen run chat", () => {
   it("opens the shared mobile browser and carries selected elements into a follow-up", async () => {
     const listeners = new Set<(event: RunBrowserEvent) => void>();
+    const runListeners = new Set<(event: RunEvent) => void>();
     const capture: RunBrowserElementCapture = {
       id: "capture-1", runId: firstRun.id, annotationNumber: 1, accessibleName: "Save", visibleText: "Save", tagName: "button", url: "http://localhost:3000/",
       locator: { selector: "button", segments: [] },
@@ -143,7 +144,7 @@ describe("RunDetailScreen run chat", () => {
     const client = {
       capabilities: { platform: "web", browserControl: true, runMutations: true, chatMutations: false },
       getRunDetail: vi.fn(async () => runDetail(firstRun)), refreshRunForgeRequest: vi.fn(async () => null),
-      onRunEvent: vi.fn(() => vi.fn()), onRunForgeRequestChanged: vi.fn(() => vi.fn()),
+      onRunEvent: (listener: (event: RunEvent) => void) => { runListeners.add(listener); return () => runListeners.delete(listener); }, onRunForgeRequestChanged: vi.fn(() => vi.fn()),
       onRunBrowserEvent: (listener: (event: RunBrowserEvent) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
       ensureRunBrowser: vi.fn(async () => ({ runId: firstRun.id, currentUrl: capture.url, title: "Preview", viewport: { width: 390, height: 600 }, owner: "agent", loading: false, inspecting: false, canGoBack: false, canGoForward: false })),
       setRunBrowserViewport: vi.fn(async () => undefined), runBrowserAction: vi.fn(async () => undefined),
@@ -154,6 +155,14 @@ describe("RunDetailScreen run chat", () => {
     const root = createRoot(container); mountedRoots.push({ root, container });
     const render = (segment: "browser" | "activity") => root.render(<BuildWardenClientProvider client={client}><MobileAppProvider value={value}><RunDetailScreen runId={firstRun.id} segment={segment} /></MobileAppProvider></BuildWardenClientProvider>);
     await act(async () => render("browser"));
+    expect(client.ensureRunBrowser).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain("Browser");
+    await act(async () => {
+      runListeners.forEach((listener) => listener({
+        runId: firstRun.id, type: "tool-call", title: "Browser: open", content: "{}", createdAt: firstRun.createdAt,
+        step: { id: "browser-call", runId: firstRun.id, eventType: "tool-call", title: "Browser: open", content: "{}", metadataJson: JSON.stringify({ toolName: "buildwarden_browser" }), createdAt: firstRun.createdAt },
+      }));
+    });
     expect(client.ensureRunBrowser).toHaveBeenCalledWith(expect.objectContaining({ runId: firstRun.id }));
     expect(container.textContent).toContain("Agent · Take control");
     await act(async () => { listeners.forEach((listener) => listener({ type: "selection-ready", runId: firstRun.id, captureId: capture.id } as RunBrowserEvent)); });

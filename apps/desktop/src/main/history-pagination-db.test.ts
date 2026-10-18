@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
+import { runHasBrowserActivity } from "@buildwarden/shared";
 
 const tempDirs: string[] = [];
 const dbs: BuildWardenDatabase[] = [];
@@ -56,6 +57,25 @@ afterEach(async () => {
 });
 
 describe("user-anchored history pagination", () => {
+  it("retains browser usage when the tool call is outside the loaded history", async () => {
+    const db = await makeDb();
+    const { run } = makeFixture(db);
+    db.appendRunStep(run.id, "output", "Browser instructions", "Use buildwarden_browser");
+    expect(db.hasRunBrowserActivity(run.id)).toBe(false);
+    expect(runHasBrowserActivity(db.getRunDetail(run.id, ""))).toBe(false);
+    db.appendRunStep(run.id, "tool-call", "Browser: open", "{}", JSON.stringify({ toolName: "buildwarden_browser" }));
+    expect(runHasBrowserActivity({ steps: db.getRunSteps(run.id) })).toBe(true);
+    for (let index = 0; index < 12; index += 1) {
+      await nextTick();
+      db.appendRunStep(run.id, "log", "Follow-up", "Continue", JSON.stringify({ source: "user" }));
+    }
+    const history = db.getInitialRunHistory(run.id);
+    expect(runHasBrowserActivity({ steps: history.steps })).toBe(false);
+    expect(runHasBrowserActivity({ steps: history.steps, hasBrowserActivity: db.hasRunBrowserActivity(run.id) })).toBe(true);
+    expect(db.getRunDetail(run.id, "").hasBrowserActivity).toBe(true);
+    expect(db.hasRunBrowserActivity("another-run")).toBe(false);
+  });
+
   it("keeps complete run turns while paging 10 initial and 20 earlier user messages", async () => {
     const db = await makeDb();
     const { run } = makeFixture(db);

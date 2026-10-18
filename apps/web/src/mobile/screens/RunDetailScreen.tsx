@@ -1,6 +1,6 @@
 import { RunVerificationPanel, RunEmbeddedBrowser, BrowserElementAttachmentPreview, browserElementPayloadsForProvider, validateBrowserElementCaptureAddition } from "@buildwarden/renderer";
 import { useEffect, useMemo, useState } from "react";
-import { validateChatAttachmentPayloads, type ChatAttachmentPayload, type ChatDetail, type RunBrowserElementCapture } from "@buildwarden/shared";
+import { runHasBrowserActivity, validateChatAttachmentPayloads, type ChatAttachmentPayload, type ChatDetail, type RunBrowserElementCapture } from "@buildwarden/shared";
 import { deriveLatestRunPlanProgress, findProjectRun, isVisibleChatStep, isRunContinuable } from "@buildwarden/renderer/logic";
 import {
   Bookmark,
@@ -67,6 +67,7 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
     return { done: progress.steps.filter((step) => step.status === "completed").length, total: progress.steps.length };
   }, [detail]);
   const hasOrchestration = Boolean(detail?.run.delegationEnabled) || detail?.run.kind === "orchestration-task";
+  const hasBrowserActivity = detail ? runHasBrowserActivity(detail) : false;
 
   const segments = useMemo<SegmentOption<RunSegment>[]>(() => {
     const options: SegmentOption<RunSegment>[] = [
@@ -74,13 +75,13 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
       { value: "diff", label: "Diff" },
       { value: "files", label: "Files" },
     ];
-    if (client.capabilities.browserControl) options.splice(1, 0, { value: "browser", label: "Browser" });
+    if (client.capabilities.browserControl && hasBrowserActivity) options.splice(1, 0, { value: "browser", label: "Browser" });
     if (hasOrchestration && client.capabilities.orchestrationRead) options.push({ value: "agents", label: "Agents" });
     if (detail?.run.forgeRequest) options.push({ value: "pull-request", label: detail.run.forgeRequest.provider === "github" ? "PR" : "MR" });
     options.push({ value: "notes", label: "Notes", ...(detail?.notes.length ? { badge: detail.notes.length } : {}) });
     if (client.capabilities.chatMutations) options.push({ value: "chat", label: "Chat" });
     return options;
-  }, [client.capabilities.browserControl, client.capabilities.chatMutations, client.capabilities.orchestrationRead, detail?.notes.length, detail?.run.forgeRequest, hasOrchestration]);
+  }, [client.capabilities.browserControl, client.capabilities.chatMutations, client.capabilities.orchestrationRead, detail?.notes.length, detail?.run.forgeRequest, hasOrchestration, hasBrowserActivity]);
 
   // A segment can disappear (agents/chat depend on capabilities); fall back rather than blank out.
   const activeSegment = segments.some((option) => option.value === segment) ? segment : "activity";

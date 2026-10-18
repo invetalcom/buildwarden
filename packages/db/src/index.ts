@@ -4754,9 +4754,23 @@ export class BuildWardenDatabase {
     }
   }
 
+  hasRunBrowserActivity(runId: string): boolean {
+    return Boolean(this.first<{ used: number }>(
+      `select 1 as used from run_steps
+       where run_id = ? and event_type in ('tool-call', 'tool-result')
+         and json_valid(metadata_json)
+         and (json_extract(metadata_json, '$.toolName') = 'buildwarden_browser'
+           or json_extract(metadata_json, '$.toolName') glob '*__buildwarden_browser'
+           or json_extract(metadata_json, '$.browserRunId') = run_id)
+       limit 1`,
+      [runId],
+    ));
+  }
+
   getRunDetail(runId: string, diff: string): RunDetail {
     return {
       run: this.getRun(runId),
+      hasBrowserActivity: this.hasRunBrowserActivity(runId),
       steps: this.getRunSteps(runId),
       notes: this.listRunNotes(runId),
       diff,

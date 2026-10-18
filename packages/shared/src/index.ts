@@ -1614,6 +1614,21 @@ export interface RunStepRecord {
   createdAt: string;
 }
 
+/** Includes streamed steps before the next full detail refresh. */
+export const runHasBrowserActivity = (detail: Pick<RunDetail, "hasBrowserActivity" | "steps">): boolean =>
+  detail.hasBrowserActivity === true || detail.steps.some((step) => {
+    if (step.eventType !== "tool-call" && step.eventType !== "tool-result") return false;
+    try {
+      const metadata: unknown = JSON.parse(step.metadataJson);
+      if (!metadata || typeof metadata !== "object") return false;
+      const { toolName, browserRunId } = metadata as Record<string, unknown>;
+      return browserRunId === step.runId || (typeof toolName === "string" &&
+        (toolName === "buildwarden_browser" || toolName.endsWith("__buildwarden_browser")));
+    } catch {
+      return false;
+    }
+  });
+
 /** Truncated run step for compact consumers such as orchestration coordinators. */
 export interface RunStepPreview {
   eventType: RunEventType;
@@ -1966,6 +1981,8 @@ export interface ProjectSnapshot {
 }
 
 export interface RunDetail {
+  /** Browser tool activity across the full history, including unloaded pages. */
+  hasBrowserActivity?: boolean;
   workspaceSetup?: RunWorkspaceSetup | null;
   run: RunRecord;
   steps: RunStepRecord[];
