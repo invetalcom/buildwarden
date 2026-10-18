@@ -16,7 +16,11 @@ export const createDevLogger = (input: {
   return {
     log: (event: string, data: unknown) => {
       if (!filePath) return;
-      appendFileSync(filePath, JSON.stringify({ ts: new Date().toISOString(), event, data }) + "\n", "utf8");
+      try {
+        appendFileSync(filePath, JSON.stringify({ ts: new Date().toISOString(), event, data }) + "\n", "utf8");
+      } catch {
+        // Diagnostic logging must not interrupt a turn or mask its original error.
+      }
     },
   };
 };

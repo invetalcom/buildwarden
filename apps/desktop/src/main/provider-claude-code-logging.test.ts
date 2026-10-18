@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -63,6 +63,23 @@ describe("Claude dev logging", () => {
     respond();
     await run();
     expect(existsSync(logDirPath)).toBe(false);
+  });
+
+  it.each([false, true])("completes the turn even when the log file cannot be written (chat=%s)", async (isChat) => {
+    const { logDirPath, run } = setup(isChat);
+    mkdirSync(join(logDirPath, `${isChat ? "chat" : "run"}-session-1-claude-code-sonnet.jsonl`), { recursive: true });
+    respond();
+    await expect(run()).resolves.toMatchObject({ summary: "Hello back", responseId: "claude-session" });
+    expect(sdk.close).toHaveBeenCalledOnce();
+  });
+
+  it("preserves the original SDK error when diagnostic writes also fail", async () => {
+    const { logDirPath, run } = setup();
+    mkdirSync(join(logDirPath, "run-session-1-claude-code-sonnet.jsonl"), { recursive: true });
+    const error = new Error("Claude SDK failed");
+    sdk.query.mockImplementation(() => { throw error; });
+    await expect(run()).rejects.toBe(error);
+    expect(sdk.query).toHaveBeenCalledOnce();
   });
 
   it("records SDK startup errors and still rejects the run", async () => {
