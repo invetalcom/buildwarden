@@ -121,6 +121,26 @@ const assertRefArgument = (refName: string, label = "Branch"): string => {
 const isTimedOutCommandError = (error: unknown): boolean =>
   typeof error === "object" && error !== null && "killed" in error && (error as { killed?: boolean }).killed === true;
 
+const readCommandStderr = (error: unknown): string =>
+  typeof error === "object" && error !== null && "stderr" in error ? String((error as { stderr?: unknown }).stderr ?? "").trim() : "";
+
+/** Forge CLI failures that a browser draft can work around: the CLI is missing or not signed in. */
+const isForgeCliUnavailableError = (error: unknown): boolean =>
+  isCommandMissingError(error) ||
+  /\b(?:auth login|not logged in|authenticat\w*|unauthori[sz]ed|401|no token|token is not valid)\b/i.test(
+    `${readCommandStderr(error)}\n${error instanceof Error ? error.message : ""}`,
+  );
+
+/**
+ * `glab mr create` only accepts the description as an argument, and Windows caps a command line at
+ * 32,767 characters, so very long descriptions are shortened for the CLI.
+ */
+const MAX_FORGE_CLI_DESCRIPTION_CHARS = 16_000;
+const fitForgeCliDescription = (body: string): string =>
+  body.length <= MAX_FORGE_CLI_DESCRIPTION_CHARS
+    ? body
+    : `${body.slice(0, MAX_FORGE_CLI_DESCRIPTION_CHARS)}\n\n_(Description shortened to fit the GitLab CLI.)_`;
+
 const detectProjectBaseBranch = async (git: SimpleGit, currentBranch: string, remoteName: string): Promise<string> => {
   const remoteRefPrefix = `refs/remotes/${remoteName}/`;
   try {
@@ -367,7 +387,7 @@ const toComparablePath = (value: string): string => {
  */
 export const isSameWorktreePath = (left: string, right: string): boolean => toComparablePath(left) === toComparablePath(right);
 
-type PublishMode = "created" | "browser-draft";
+type PublishMode = "created" | "existing" | "browser-draft";
 type PublishRequestKind = "pull-request" | "merge-request";
 
 type ParsedRemote = ParsedGitRemote;
@@ -1507,10 +1527,25 @@ export class GitService {
     const headSelector = await this.getForkHeadSelector(worktreePath, branchName, remote, baseRemoteName, pushRemoteName);
 
     if (remote?.provider === "gitlab") {
+      const existingUrl = await this.findOpenMergeRequestUrl(worktreePath, branchName, targetBranch);
+      if (existingUrl) {
+        return { url: existingUrl, mode: "existing", requestKind: "merge-request" };
+      }
       try {
         const { stdout } = await execForgeCli(
           "glab",
-          ["mr", "create", "--source-branch", branchName, "--target-branch", targetBranch, "--title", title, "--description", body],
+          [
+            "mr",
+            "create",
+            "--source-branch",
+            branchName,
+            "--target-branch",
+            targetBranch,
+            "--title",
+            title,
+            "--description",
+            fitForgeCliDescription(body),
+          ],
           worktreePath,
         );
 
@@ -1520,7 +1555,9 @@ export class GitService {
           requestKind: "merge-request",
         };
       } catch (error) {
-        const mergeRequestUrl = this.buildGitlabMergeRequestUrl(remote, branchName, targetBranch, title, body);
+        const mergeRequestUrl = isForgeCliUnavailableError(error)
+          ? this.buildGitlabMergeRequestUrl(remote, branchName, targetBranch, title, body)
+          : null;
         if (mergeRequestUrl) {
           return {
             url: mergeRequestUrl,
@@ -1528,19 +1565,29 @@ export class GitService {
             requestKind: "merge-request",
           };
         }
-
-          let message = error instanceof Error ? error.message : String(error);
-          if (typeof error === "object" && error && "stderr" in error) {
-            message = String((error as { stderr?: string }).stderr ?? "").trim();
-          }
-        throw new Error(message || "Failed to create merge request for this GitLab repository.");
+        if (isTimedOutCommandError(error)) {
+          throw new Error(
+            `GitLab CLI did not finish within ${String(NETWORK_COMMAND_TIMEOUT_MINUTES)} minutes. The branch was pushed; check \`glab auth status\` and create the merge request again.`,
+          );
+        }
+        throw new Error(
+          readCommandStderr(error) || (error instanceof Error ? error.message : "") || "Failed to create merge request for this GitLab repository.",
+        );
       }
     }
 
+    const existingUrl = await this.findOpenPullRequestUrl(worktreePath, branchName, targetBranch);
+    if (existingUrl) {
+      return { url: existingUrl, mode: "existing", requestKind: "pull-request" };
+    }
+
+    // The body goes through a file: the command line is capped at 32,767 characters on Windows.
+    const bodyFilePath = join(tmpdir(), `buildwarden-pr-body-${crypto.randomUUID()}.md`);
+    await writeFile(bodyFilePath, body, "utf8");
     try {
       const { stdout } = await execForgeCli(
         "gh",
-        ["pr", "create", "--base", targetBranch, "--head", headSelector, "--title", title, "--body", body],
+        ["pr", "create", "--base", targetBranch, "--head", headSelector, "--title", title, "--body-file", bodyFilePath],
         worktreePath,
       );
 
@@ -1550,7 +1597,7 @@ export class GitService {
         requestKind: "pull-request",
       };
     } catch (error) {
-      if (isCommandMissingError(error)) {
+      if (isForgeCliUnavailableError(error)) {
         const compareUrl = this.buildGithubCompareUrl(remote, headSelector, targetBranch, title, body);
         if (compareUrl) {
           return {
@@ -1566,11 +1613,39 @@ export class GitService {
         );
       }
 
-      let message = error instanceof Error ? error.message : String(error);
-      if (typeof error === "object" && error && "stderr" in error) {
-        message = String((error as { stderr?: string }).stderr ?? "").trim();
-      }
-      throw new Error(message || "Failed to create pull request with GitHub CLI.");
+      throw new Error(readCommandStderr(error) || (error instanceof Error ? error.message : "") || "Failed to create pull request with GitHub CLI.");
+    } finally {
+      await unlink(bodyFilePath).catch(() => {});
+    }
+  }
+
+  /** Best effort: an open pull request for this head and base, so publishing again reuses it. */
+  private async findOpenPullRequestUrl(worktreePath: string, branchName: string, targetBranch: string): Promise<string | null> {
+    try {
+      const { stdout } = await execForgeCli(
+        "gh",
+        ["pr", "list", "--head", branchName, "--base", targetBranch, "--state", "open", "--json", "url", "--limit", "1"],
+        worktreePath,
+      );
+      const [pullRequest] = JSON.parse(stdout) as Array<{ url?: unknown }>;
+      return typeof pullRequest?.url === "string" && pullRequest.url ? pullRequest.url : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Best effort: an open merge request for this source and target, so publishing again reuses it. */
+  private async findOpenMergeRequestUrl(worktreePath: string, branchName: string, targetBranch: string): Promise<string | null> {
+    try {
+      const { stdout } = await execForgeCli(
+        "glab",
+        ["mr", "list", "--source-branch", branchName, "--target-branch", targetBranch, "--output", "json"],
+        worktreePath,
+      );
+      const [mergeRequest] = JSON.parse(stdout) as Array<{ web_url?: unknown }>;
+      return typeof mergeRequest?.web_url === "string" && mergeRequest.web_url ? mergeRequest.web_url : null;
+    } catch {
+      return null;
     }
   }
 

@@ -26,6 +26,31 @@ afterEach(async () => {
   await Promise.all(temporaryRepositories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
+describe("GitService pull request creation", () => {
+  it("opens a browser draft with the full body when the GitHub CLI is unavailable", async () => {
+    const { path, git } = await createRepository();
+    const remotePath = await mkdtemp(join(tmpdir(), "buildwarden-pr-remote-"));
+    temporaryRepositories.push(remotePath);
+    await simpleGit(remotePath).init(true);
+    await git.addRemote("origin", "https://github.com/owner/repo.git");
+    await git.addConfig("remote.origin.pushurl", remotePath);
+    const gitExecPath = (await git.raw(["--exec-path"])).trim();
+    const previousPath = process.env.PATH;
+    // Only Git's own directory stays on PATH, so `gh` cannot be found.
+    process.env.PATH = gitExecPath;
+    try {
+      const body = "x".repeat(40_000);
+      const result = await new GitService().createPullRequest(path, "feature/publish-context", "main", "Title", body);
+
+      expect(result.mode).toBe("browser-draft");
+      expect(result.url).toContain("https://github.com/owner/repo/compare/main...feature%2Fpublish-context");
+      expect(new URL(result.url).searchParams.get("body")).toBe(body);
+    } finally {
+      process.env.PATH = previousPath;
+    }
+  });
+});
+
 describe("GitService pull request context", () => {
   it("describes committed branch changes when the worktree is clean", async () => {
     const { path, git } = await createRepository();

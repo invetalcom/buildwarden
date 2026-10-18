@@ -6492,7 +6492,12 @@ export class AppController
     }
     const url = result.url;
     const requestLabel = result.requestKind === "merge-request" ? "Merge request" : "Pull request";
-    const eventTitle = result.mode === "created" ? `${requestLabel} created` : `${requestLabel} draft opened`;
+    const eventTitle =
+      result.mode === "created"
+        ? `${requestLabel} created`
+        : result.mode === "existing"
+          ? `${requestLabel} already open`
+          : `${requestLabel} draft opened`;
 
     await this.appendRunEvent(run.id, "status", eventTitle, url, {
       targetBranch: trimmedTargetBranch,
