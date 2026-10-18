@@ -176,7 +176,7 @@ const SIDEBAR_RUN_ENTRY_SIZE_STYLES: Record<
     meta: "mt-0.5 text-[9px] leading-3",
     alert: "size-3",
     groupGap: "space-y-1",
-    rowGap: "space-y-px",
+    rowGap: "space-y-1.5",
   },
   medium: {
     button: "px-2 py-1.5",
@@ -185,7 +185,7 @@ const SIDEBAR_RUN_ENTRY_SIZE_STYLES: Record<
     meta: "mt-1 text-[10px] leading-3",
     alert: "size-3.5",
     groupGap: "space-y-1.5",
-    rowGap: "space-y-0.5",
+    rowGap: "space-y-1.5",
   },
   large: {
     button: "px-2.5 py-2",
@@ -194,7 +194,7 @@ const SIDEBAR_RUN_ENTRY_SIZE_STYLES: Record<
     meta: "mt-1.5 text-[10px] leading-[0.875rem]",
     alert: "size-4",
     groupGap: "space-y-2",
-    rowGap: "space-y-1",
+    rowGap: "space-y-2",
   },
 };
 
@@ -472,12 +472,10 @@ const SidebarComponent = ({
         <div
           data-run-hierarchy-run={run.id}
           className={cn(
-            "relative flex w-full min-w-0 items-center overflow-hidden rounded-md border transition",
+            "relative flex w-full min-w-0 items-center overflow-hidden rounded-md transition",
             highlighted
-              ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)]"
-              : showProjectLabel
-                ? "border-[var(--ec-border)] bg-[var(--ec-panel-soft)] shadow-[var(--ec-panel-shadow)] hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-control)]"
-                : "border-transparent bg-[var(--ec-panel)] hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-control)]",
+              ? "bg-[var(--ec-accent-soft)]"
+              : "bg-transparent hover:bg-[var(--ec-control)]",
           )}
         >
           <div className="min-w-0 flex-1">
