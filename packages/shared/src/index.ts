@@ -1866,6 +1866,7 @@ export type RunUserInputAnswerValue = string | string[];
 export type RunUserInputAnswers = Record<string, RunUserInputAnswerValue>;
 
 export { normalizeResponseArtifactReferences } from "./response-artifacts";
+export { getResponseSourceText } from "./response-source-text";
 
 export const RESPONSE_PRESENTATION_INSTRUCTIONS = [
   "BuildWarden renders Markdown headings, tables, images, and structured user-input questions.",

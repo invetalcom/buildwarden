@@ -329,6 +329,19 @@ describe("provider usage report baselines", () => {
 });
 
 describe("AppController settings and lightweight workflows", () => {
+  it("uses the latest descriptive source output for follow-up memory, skipping image inspections", () => {
+    const harness = createHarness({
+      getRun: vi.fn(() => ({ id: "run-1" })),
+      getRunSteps: vi.fn(() => [
+        { eventType: "output", title: "Answer", content: "![Image](data:image/png;base64,AAAA)", metadataJson: JSON.stringify({ responseSourceText: "Descriptive answer ![Image](preview.png)" }) },
+        ...Array.from({ length: 12 }, () => ({ eventType: "output", title: "Viewed image", content: "![Image](data:image/png;base64,BBBB)", metadataJson: JSON.stringify({ assistantKind: "image" }) })),
+      ]),
+    });
+    tempDirs.push(harness.logDir);
+    const memo = (harness.controller as unknown as { buildRunFollowUpMemo(id: string): string }).buildRunFollowUpMemo("run-1");
+    expect(memo).toContain("Latest agent output: Descriptive answer ![Image](preview.png)");
+    expect(memo).not.toContain("base64");
+  });
   it("publishes an automation-started notification after its run is created", async () => {
     const setProjectAutomationError = vi.fn();
     const harness = createHarness({

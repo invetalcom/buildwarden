@@ -277,6 +277,7 @@ import {
   buildRunChatFirstTurnPrompt,
   buildRunChatUpdateTurnPrompt,
   providerReplaysChatHistory,
+  runAssistantSourceText,
 } from "./run-chat-context";
 import { isOrchestrationToolName, ORCHESTRATION_TOOL_DEFINITIONS } from "./orchestration-tools";
 import {
@@ -10400,10 +10401,11 @@ export class AppController
         return `- ${String(meta.toolName ?? step.title)}: ${step.content}`;
       });
     const recentErrors = recentSteps.filter((step) => step.eventType === "error").slice(-2).map((step) => `- ${step.content}`);
-    const recentOutput = recentSteps
-      .filter((step) => step.eventType === "output")
-      .slice(-1)[0]
-      ?.content.replace(/\s+/g, " ")
+    const recentOutput = steps
+      .map(runAssistantSourceText)
+      .filter(Boolean)
+      .at(-1)
+      ?.replace(/\s+/g, " ")
       .trim()
       .slice(0, 500);
     const checkpoint = this.getRunCheckpoint(runId);
