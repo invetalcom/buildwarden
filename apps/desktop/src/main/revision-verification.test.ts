@@ -231,6 +231,8 @@ describe("revision verification", () => {
   }, 20_000);
   it("detects a same-size rewrite that the real index still treats as racily clean", async () => {
     const { cwd, git } = await fixture();
+    // A rewrite changes ctime, which git would otherwise use to catch the edit.
+    await git("config", "core.trustctime", "false");
     // Pin the tracked file and the index to the same whole second: git must
     // re-hash the entry, because size and mtime alone cannot prove it unchanged.
     const racyTime = new Date(1_700_000_000_000);
