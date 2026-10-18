@@ -4968,6 +4968,8 @@ export const APP_SETTING_KEYS = {
   sidebarGroupRunsByProject: "sidebarGroupRunsByProject",
   uncategorizedRunSectionColor: "uncategorizedRunSectionColor",
   sidebarHideActiveRuns: "sidebarHideActiveRuns",
+  /** Place Uncategorized above custom run sections. Defaults to false (below). */
+  sidebarUncategorizedFirst: "sidebarUncategorizedFirst",
   attentionInbox: "attentionInbox",
   /** Persisted app sidebar width in CSS pixels. */
   sidebarWidth: "sidebarWidth",
@@ -5143,6 +5145,7 @@ export const parseSidebarContrastStrengthSetting = (raw: string | number | undef
 export const parseSidebarGroupRunsByProjectSetting = (raw: string | undefined): boolean => raw?.trim().toLowerCase() !== "false";
 
 export const parseSidebarHideActiveRunsSetting = (raw: string | undefined): boolean => raw?.trim().toLowerCase() === "true";
+export const parseSidebarUncategorizedFirstSetting = (raw: string | undefined): boolean => raw?.trim().toLowerCase() === "true";
 
 export const parseRecentRunDaysSetting = (raw: string | number | undefined | null): number => {
   const parsed = Number(raw);

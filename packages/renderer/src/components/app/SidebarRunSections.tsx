@@ -35,6 +35,7 @@ export interface SidebarRunSectionsProps {
   recentRunDays: number;
   hideActiveRuns: boolean;
   groupRunsByProject: boolean;
+  uncategorizedFirst?: boolean;
   runRowGapClassName?: string;
   onSelectProject?: (projectId: string) => void;
   expandedRunIds: ReadonlySet<string>;
@@ -46,7 +47,7 @@ export interface SidebarRunSectionsProps {
 
 export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZATION, onOrganizationChange,
   recentRunDays, hideActiveRuns, groupRunsByProject, runRowGapClassName = "space-y-0.5", onSelectProject, expandedRunIds, highlightedRunId, organizeRunId,
-  onCloseOrganizer, renderRun }: SidebarRunSectionsProps) => {
+  onCloseOrganizer, renderRun, uncategorizedFirst = false }: SidebarRunSectionsProps) => {
   const client = useBuildWardenClient();
   const canOrganize = client.capabilities.runListVisibilityMutations && organization !== EMPTY_RUN_ORGANIZATION;
   const [preferences, setPreferences] = useState(readPreferences);
@@ -64,8 +65,8 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
   const allTags = useMemo(() => [...new Set(organization.runs.flatMap((run) => run.tags))].sort(), [organization]);
   const tag = allTags.includes(preferences.tag) ? preferences.tag : "";
   const sections = useMemo(() => buildSidebarRunSections({ projects: filteredProjects, organization, view: preferences.view,
-    tag, hideActiveRuns, recentDays: recentRunDays, expandedRunIds }),
-  [filteredProjects, organization, preferences.view, tag, hideActiveRuns, recentRunDays, expandedRunIds]);
+    tag, hideActiveRuns, recentDays: recentRunDays, expandedRunIds, uncategorizedFirst }),
+  [filteredProjects, organization, preferences.view, tag, hideActiveRuns, recentRunDays, expandedRunIds, uncategorizedFirst]);
   const counts = useMemo(() => Object.fromEntries(SIDEBAR_RUN_VIEWS.map(({ id }) => [id,
     buildSidebarRunSections({ projects: filteredProjects, organization, view: id, tag, hideActiveRuns, recentDays: recentRunDays,
       expandedRunIds: new Set() }).reduce((count, section) => count + section.count, 0)])),

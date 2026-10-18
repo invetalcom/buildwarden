@@ -20,7 +20,7 @@ export const matchesSidebarRunView = (run: RunRecord, view: SidebarRunView, rece
   return true;
 };
 
-export const buildSidebarRunSections = ({ projects, organization, view, tag, hideActiveRuns, recentDays, expandedRunIds, now = Date.now() }: {
+export const buildSidebarRunSections = ({ projects, organization, view, tag, hideActiveRuns, recentDays, expandedRunIds, uncategorizedFirst = false, now = Date.now() }: {
   projects: AppSnapshot["projects"];
   organization: RunOrganizationSnapshot;
   view: SidebarRunView;
@@ -28,6 +28,7 @@ export const buildSidebarRunSections = ({ projects, organization, view, tag, hid
   hideActiveRuns: boolean;
   recentDays: number;
   expandedRunIds: ReadonlySet<string>;
+  uncategorizedFirst?: boolean;
   now?: number;
 }) => {
   const metadata = new Map(organization.runs.map((record) => [record.runId, record]));
@@ -57,8 +58,10 @@ export const buildSidebarRunSections = ({ projects, organization, view, tag, hid
     };
     return { project, primary: project.runs.filter(visible), children: project.orchestratedRuns.filter((run) => visible(run) && !hasHiddenAncestor(run)) };
   });
-  return [...organization.sections, { id: UNCATEGORIZED_RUN_SECTION_ID, name: "Uncategorized", position: organization.sections.length,
-    color: isRunSectionColor(organization.uncategorizedColor) ? organization.uncategorizedColor : DEFAULT_UNCATEGORIZED_COLOR }].map((section) => {
+  const uncategorized = { id: UNCATEGORIZED_RUN_SECTION_ID, name: "Uncategorized", position: organization.sections.length,
+    color: isRunSectionColor(organization.uncategorizedColor) ? organization.uncategorizedColor : DEFAULT_UNCATEGORIZED_COLOR };
+  const orderedSections = uncategorizedFirst ? [uncategorized, ...organization.sections] : [...organization.sections, uncategorized];
+  return orderedSections.map((section) => {
     const groups = availableProjects.flatMap(({ project, primary, children }) => {
       const matches = (run: RunRecord) => (!tag || metadata.get(run.id)?.tags.includes(tag)) &&
         matchesSidebarRunView(run, view, recentDays, now);

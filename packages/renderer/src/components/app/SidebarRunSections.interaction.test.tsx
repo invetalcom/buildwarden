@@ -282,6 +282,15 @@ describe("sidebar run sections", () => {
 });
 
 describe("section hierarchy", () => {
+  it("places Uncategorized above or below custom sections without changing their order or run assignments", () => {
+    const options = { projects, organization: initial, view: "all" as const, tag: "", hideActiveRuns: false,
+      recentDays: 2, expandedRunIds: new Set<string>() };
+    const below = buildSidebarRunSections(options);
+    const above = buildSidebarRunSections({ ...options, uncategorizedFirst: true });
+    expect(below.map((section) => section.id)).toEqual([...initial.sections.map((section) => section.id), "uncategorized"]);
+    expect(above).toEqual([below.at(-1), ...below.slice(0, -1)]);
+    expect(buildSidebarRunSections({ ...options, uncategorizedFirst: false })).toEqual(below);
+  });
   const build = (entries: AppSnapshot["projects"], organization = initial) => buildSidebarRunSections({ projects: entries, organization, view: "all", tag: "",
     hideActiveRuns: false, recentDays: 2, expandedRunIds: new Set([running.id]) });
   it("keeps a moved subagent reachable without duplicating it or altering its lineage", () => {

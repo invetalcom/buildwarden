@@ -234,6 +234,7 @@ export type UserSettingsTabProps = {
   sidebarRunEntrySize: SidebarRunEntrySize;
   sidebarGroupRunsByProject: boolean;
   sidebarHideActiveRuns: boolean;
+  sidebarUncategorizedFirst: boolean;
   attentionInboxSettings: AttentionInboxSettings;
   onAttentionInboxSettingsChange: (value: AttentionInboxSettings) => void;
   recentRunDaysDraft: string;
@@ -254,6 +255,7 @@ export type UserSettingsTabProps = {
   onSidebarRunEntrySizeChange: (value: SidebarRunEntrySize) => void;
   onSidebarGroupRunsByProjectChange: (value: boolean) => void;
   onSidebarHideActiveRunsChange: (value: boolean) => void;
+  onSidebarUncategorizedFirstChange: (value: boolean) => void;
   onRecentRunDaysDraftChange: (value: string) => void;
   onEnableDevModeChange: (value: boolean) => void;
   onKeyboardShortcutChange: (id: KeyboardShortcutId, value: string) => void;
@@ -276,6 +278,7 @@ export const UserSettingsTab = ({
   sidebarRunEntrySize,
   sidebarGroupRunsByProject,
   sidebarHideActiveRuns,
+  sidebarUncategorizedFirst,
   attentionInboxSettings,
   onAttentionInboxSettingsChange,
   recentRunDaysDraft,
@@ -296,6 +299,7 @@ export const UserSettingsTab = ({
   onSidebarRunEntrySizeChange,
   onSidebarGroupRunsByProjectChange,
   onSidebarHideActiveRunsChange,
+  onSidebarUncategorizedFirstChange,
   onRecentRunDaysDraftChange,
   onEnableDevModeChange,
   onKeyboardShortcutChange,
@@ -396,6 +400,20 @@ export const UserSettingsTab = ({
             onCheckedChange={onSidebarHideActiveRunsChange}
             disabled={busy}
             aria-label="Hide active runs from sidebar"
+          />
+        </div>
+      </SettingsRow>
+      <SettingsRow
+        title="Uncategorized position"
+        description="Place Uncategorized above or below your custom run sections."
+      >
+        <div className={`${rowControlClass} flex items-center justify-end gap-3`}>
+          <span className="text-xs font-medium text-[var(--ec-muted)]">{sidebarUncategorizedFirst ? "Above" : "Below"}</span>
+          <Switch
+            checked={sidebarUncategorizedFirst}
+            onCheckedChange={onSidebarUncategorizedFirstChange}
+            disabled={busy}
+            aria-label="Show Uncategorized above custom sections"
           />
         </div>
       </SettingsRow>

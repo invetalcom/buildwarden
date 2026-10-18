@@ -83,6 +83,7 @@ interface SidebarProps {
   runEntrySize: SidebarRunEntrySize;
   groupRunsByProject: boolean;
   hideActiveRuns?: boolean;
+  uncategorizedFirst?: boolean;
   bookmarksCount: number;
   chatsCount: number;
   bookmarkedRunIds: Set<string>;
@@ -218,6 +219,7 @@ const SidebarComponent = ({
   recentRunDays,
   runEntrySize,
   groupRunsByProject,
+  uncategorizedFirst = false,
   hideActiveRuns = false,
   bookmarksCount,
   chatsCount,
@@ -721,6 +723,7 @@ const SidebarComponent = ({
       <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto py-1.5">
         <SidebarRunSections projects={projects} organization={runOrganization} onOrganizationChange={onRunOrganizationChange}
           recentRunDays={recentRunDays} hideActiveRuns={hideActiveRuns} groupRunsByProject={groupRunsByProject}
+          uncategorizedFirst={uncategorizedFirst}
           runRowGapClassName={runEntryStyles.rowGap} onSelectProject={(projectId) => selectProjectFeature(projectId, "overview")}
           expandedRunIds={expandedRunIds} highlightedRunId={highlightedRunId} organizeRunId={organizeRunId}
           onCloseOrganizer={() => setOrganizeRunId(null)} renderRun={renderRecentRunEntry} />
