@@ -1080,10 +1080,20 @@ export class GitService {
     const cleanupErrors: string[] = [];
     const isRegisteredWorktree = await this.isWorktreeRegistered(repoPath, worktreePath);
 
+    // The recursive removals below must never run while a link into the project repository remains, or
+    // a link that is followed would delete the project's shared dependencies.
     try {
       await removeWorktreeDependencyLinks(worktreePath);
     } catch (error) {
-      cleanupErrors.push(`dependency link removal failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `dependency link removal failed, so the worktree was kept to protect the project's shared dependencies: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    const remainingLinks = await listWorktreeDependencyLinks(worktreePath);
+    if (remainingLinks.length > 0) {
+      throw new Error(
+        `dependency links still exist in the worktree (${remainingLinks.join(", ")}), so it was kept to protect the project's shared dependencies.`,
+      );
     }
 
     if (isRegisteredWorktree) {
