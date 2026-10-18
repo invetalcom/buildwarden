@@ -81,4 +81,45 @@ describe("project task run actions", () => {
     expect(onOpenRun).toHaveBeenCalledOnce();
     expect(onOpenRun).toHaveBeenCalledWith("run-2");
   });
+
+  it("keeps the latest launch when an earlier full-prompt lookup finishes last", async () => {
+    const openTask = (id: string, title: string): ProjectTaskRecord => ({
+      ...inProgressTask, id, title, prompt: `Full prompt for ${title}`, attachments: [], status: "open", runId: null,
+    });
+    const first = openTask("task-a", "First task");
+    const second = openTask("task-b", "Second task");
+    const lookups = new Map<string, (task: ProjectTaskRecord) => void>();
+    const getProjectTask = vi.fn((taskId: string) => new Promise<ProjectTaskRecord>((resolve) => lookups.set(taskId, resolve)));
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => root?.render(
+      <BuildWardenClientProvider client={createElectronBuildWardenClient({ getProjectTask } as unknown as DesktopApi)}>
+        <ProjectTasksTab
+          projectId="project-1"
+          tasks={[first, second].map((task) => ({ ...toTaskSummary(task), prompt: "Preview", promptTruncated: true }))}
+          modelOptions={[{ id: "model-1", label: "GPT-5", modelId: "gpt-5", providerType: "ai-sdk", providerFamily: "openai" }]}
+          defaultTaskModelId="model-1"
+          busy={false}
+          onCreateTask={vi.fn()}
+          onUpdateTask={vi.fn()}
+          onDeleteTask={vi.fn()}
+          onStartTask={vi.fn()}
+          onOpenRun={vi.fn()}
+        />
+      </BuildWardenClientProvider>,
+    ));
+
+    const startButtons = [...container.querySelectorAll<HTMLButtonElement>("button")].filter((button) => button.textContent?.trim() === "Start run");
+    expect(startButtons).toHaveLength(2);
+    await act(async () => startButtons[0]?.click());
+    await act(async () => startButtons[1]?.click());
+    await act(async () => lookups.get("task-b")?.(second));
+    await act(async () => lookups.get("task-a")?.(first));
+
+    const launchDialog = container.querySelector<HTMLElement>('[role="dialog"][aria-labelledby="launch-task-title"]');
+    expect(launchDialog?.querySelector("#launch-task-title")?.textContent).toBe("Second task");
+    expect(launchDialog?.querySelector("textarea")?.value).toBe("Full prompt for Second task");
+  });
 });
