@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -110,6 +111,22 @@ describe("run tool workspace containment", () => {
       expect(result.ok).toBe(false);
     }
     expect(await readFile(join(worktreePath, ".git"), "utf8")).toBe("gitdir: elsewhere\n");
+  });
+
+  it("protects the .git entry behind its 8.3 short name", async () => {
+    const worktreePath = await makeTempDir();
+    await mkdir(join(worktreePath, ".git"));
+    await writeFile(join(worktreePath, ".git", "config"), "[core]\n", "utf8");
+    // Only volumes with 8.3 name generation (common on Windows system drives) create the alias.
+    if (!existsSync(join(worktreePath, "GIT~1"))) return;
+    const tools = createRunToolContext(worktreePath);
+
+    const writeResult = await tools.executeTool({ id: "write-alias", name: "write_file", arguments: { path: "GIT~1/config", content: "x\n" } });
+    const deleteResult = await tools.executeTool({ id: "delete-alias", name: "delete_file", arguments: { path: "GIT~1/config" } });
+
+    expect(writeResult.ok).toBe(false);
+    expect(deleteResult.ok).toBe(false);
+    expect(await readFile(join(worktreePath, ".git", "config"), "utf8")).toBe("[core]\n");
   });
 });
 

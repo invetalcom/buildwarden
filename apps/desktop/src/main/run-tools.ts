@@ -420,8 +420,22 @@ const resolveWorktreePath = (root: string, inputPath: string) => {
   return target;
 };
 
-/** The worktree's `.git` entry (a file in linked worktrees) and everything below it, in any letter case. */
-const isGitInternalPath = (relativePosixPath: string): boolean => relativePosixPath.split("/")[0]?.toLowerCase() === ".git";
+/**
+ * The worktree's `.git` entry (a file in linked worktrees) and everything below it, in any letter case.
+ * Names that only the file system maps to `.git`, such as the 8.3 short name `GIT~1` on Windows, are
+ * caught by comparing file identity with the real `.git` entry.
+ */
+const isGitInternalEntry = async (root: string, relativePosixPath: string): Promise<boolean> => {
+  const firstSegment = relativePosixPath.split("/")[0] ?? "";
+  if (firstSegment.toLowerCase() === ".git") {
+    return true;
+  }
+  const [entry, gitEntry] = await Promise.all([
+    lstat(join(root, firstSegment), { bigint: true }).catch(() => null),
+    lstat(join(root, ".git"), { bigint: true }).catch(() => null),
+  ]);
+  return Boolean(entry && gitEntry && entry.ino !== 0n && entry.ino === gitEntry.ino && entry.dev === gitEntry.dev);
+};
 
 /** Real path of `target`, resolved through its nearest existing ancestor when it does not exist yet. */
 const realpathOfNearestExisting = async (target: string): Promise<string> => {
@@ -1068,7 +1082,7 @@ class RunToolExecutor {
   private async executeWriteFile(call: RunToolCall): Promise<RunToolResult> {
     const target = await resolveContainedWorktreePath(this.worktreePath, String(call.arguments.path ?? ""), "write");
     const rel = toPosix(relative(this.worktreePath, target));
-    if (!rel || rel === "." || isGitInternalPath(rel)) {
+    if (!rel || rel === "." || (await isGitInternalEntry(this.worktreePath, rel))) {
       throw new Error("write_file cannot target the repository root or .git internals.");
     }
     let previousContent: string | null = null;
@@ -1134,7 +1148,7 @@ class RunToolExecutor {
   private async executeEditFile(call: RunToolCall): Promise<RunToolResult> {
     const target = await resolveContainedWorktreePath(this.worktreePath, String(call.arguments.file_path ?? ""), "write");
     const rel = toPosix(relative(this.worktreePath, target));
-    if (!rel || rel === "." || isGitInternalPath(rel)) {
+    if (!rel || rel === "." || (await isGitInternalEntry(this.worktreePath, rel))) {
       throw new Error("edit_file cannot target the repository root or .git internals.");
     }
 
@@ -1247,7 +1261,7 @@ class RunToolExecutor {
     const inputPath = String(call.arguments.path ?? "");
     const target = await resolveContainedWorktreePath(this.worktreePath, inputPath, "write");
     const rel = toPosix(relative(this.worktreePath, target));
-    if (!rel || rel === "." || isGitInternalPath(rel)) {
+    if (!rel || rel === "." || (await isGitInternalEntry(this.worktreePath, rel))) {
       throw new Error("delete_file cannot remove the repository root or .git internals.");
     }
     try {
