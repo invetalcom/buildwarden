@@ -11,8 +11,13 @@ export const createDevLogger = (input: {
   const fileName = [input.sessionType, input.runId, "claude-code", input.modelId]
     .map((part) => encodeURIComponent(part).replace(/\*/g, "%2A"))
     .join("-") + ".jsonl";
-  if (directory) mkdirSync(directory, { recursive: true });
-  const filePath = directory ? join(directory, fileName) : null;
+  let filePath = directory ? join(directory, fileName) : null;
+  try {
+    if (directory) mkdirSync(directory, { recursive: true });
+  } catch {
+    // An unavailable diagnostics directory must not prevent the SDK from starting.
+    filePath = null;
+  }
   return {
     log: (event: string, data: unknown) => {
       if (!filePath) return;

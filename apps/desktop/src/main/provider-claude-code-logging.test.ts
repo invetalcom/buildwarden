@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -80,6 +80,23 @@ describe("Claude dev logging", () => {
     sdk.query.mockImplementation(() => { throw error; });
     await expect(run()).rejects.toBe(error);
     expect(sdk.query).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])("completes the turn when the log directory cannot be created (chat=%s)", async (isChat) => {
+    const { logDirPath, run } = setup(isChat);
+    writeFileSync(logDirPath, "Existing file blocks directory creation", "utf8");
+    respond();
+    await expect(run()).resolves.toMatchObject({ summary: "Hello back", responseId: "claude-session" });
+    expect(sdk.close).toHaveBeenCalledOnce();
+    expect(readFileSync(logDirPath, "utf8")).toBe("Existing file blocks directory creation");
+  });
+
+  it("treats a whitespace-only log directory as disabled", async () => {
+    const { input, logDirPath, run } = setup();
+    input.devLogging = { logDirPath: "   " };
+    respond();
+    await expect(run()).resolves.toMatchObject({ summary: "Hello back" });
+    expect(existsSync(logDirPath)).toBe(false);
   });
 
   it("records SDK startup errors and still rejects the run", async () => {
