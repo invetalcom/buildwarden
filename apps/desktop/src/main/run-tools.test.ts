@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -19,6 +19,61 @@ const makeTempDir = async () => {
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+});
+
+describe("run tool workspace containment", () => {
+  it("refuses to modify files through links that leave the workspace", async () => {
+    const worktreePath = await makeTempDir();
+    const outsidePath = await makeTempDir();
+    await writeFile(join(outsidePath, "secret.txt"), "outside\n", "utf8");
+    await symlink(outsidePath, join(worktreePath, "linked"), "junction");
+    const tools = createRunToolContext(worktreePath);
+
+    const writeResult = await tools.executeTool({
+      id: "write-link",
+      name: "write_file",
+      arguments: { path: "linked/new.txt", content: "escaped\n" },
+    });
+    const deleteResult = await tools.executeTool({ id: "delete-link", name: "delete_file", arguments: { path: "linked/secret.txt" } });
+    const readResult = await tools.executeTool({ id: "read-link", name: "read_file", arguments: { path: "linked/secret.txt" } });
+
+    expect(writeResult.ok).toBe(false);
+    expect(deleteResult.ok).toBe(false);
+    expect(readResult.ok).toBe(false);
+    expect(await readFile(join(outsidePath, "secret.txt"), "utf8")).toBe("outside\n");
+    await expect(readFile(join(outsidePath, "new.txt"), "utf8")).rejects.toThrow();
+  });
+
+  it("allows reading but not writing through the shared node_modules link", async () => {
+    const worktreePath = await makeTempDir();
+    const sharedModules = await makeTempDir();
+    await writeFile(join(sharedModules, "package.json"), "{}\n", "utf8");
+    await symlink(sharedModules, join(worktreePath, "node_modules"), "junction");
+    const tools = createRunToolContext(worktreePath);
+
+    const readResult = await tools.executeTool({ id: "read-modules", name: "read_file", arguments: { path: "node_modules/package.json" } });
+    const writeResult = await tools.executeTool({
+      id: "write-modules",
+      name: "write_file",
+      arguments: { path: "node_modules/package.json", content: "changed\n" },
+    });
+
+    expect(readResult.ok).toBe(true);
+    expect(writeResult.ok).toBe(false);
+    expect(await readFile(join(sharedModules, "package.json"), "utf8")).toBe("{}\n");
+  });
+
+  it("protects the .git entry in any letter case", async () => {
+    const worktreePath = await makeTempDir();
+    await writeFile(join(worktreePath, ".git"), "gitdir: elsewhere\n", "utf8");
+    const tools = createRunToolContext(worktreePath);
+
+    for (const path of [".git", ".GIT/config"]) {
+      const result = await tools.executeTool({ id: `write-${path}`, name: "write_file", arguments: { path, content: "x\n" } });
+      expect(result.ok).toBe(false);
+    }
+    expect(await readFile(join(worktreePath, ".git"), "utf8")).toBe("gitdir: elsewhere\n");
+  });
 });
 
 describe("run tool context", () => {

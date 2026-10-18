@@ -1,5 +1,5 @@
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { lstat, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { createTwoFilesPatch, FILE_HEADERS_ONLY } from "diff";
 import { isTextLikeFileName, type HarnessToolContext, type RunMode, type RunToolCall, type RunToolDefinition, type RunToolName, type RunToolResult, type ShellApprovalDecision } from "@buildwarden/shared";
@@ -409,13 +409,64 @@ const formatNumberedLines = (content: string, lineNumberOffset = 0) =>
 
 const isWithinRoot = (root: string, target: string) => {
   const rel = relative(root, target);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  return rel === "" || (rel.split(/[\\/]/)[0] !== ".." && !isAbsolute(rel));
 };
 
 const resolveWorktreePath = (root: string, inputPath: string) => {
   const target = resolve(root, inputPath || ".");
   if (!isWithinRoot(root, target)) {
     throw new Error(`Path escapes the run workspace: ${inputPath}`);
+  }
+  return target;
+};
+
+/** The worktree's `.git` entry (a file in linked worktrees) and everything below it, in any letter case. */
+const isGitInternalPath = (relativePosixPath: string): boolean => relativePosixPath.split("/")[0]?.toLowerCase() === ".git";
+
+/** Real path of `target`, resolved through its nearest existing ancestor when it does not exist yet. */
+const realpathOfNearestExisting = async (target: string): Promise<string> => {
+  const missingSegments: string[] = [];
+  let current = target;
+  for (;;) {
+    try {
+      return join(await realpath(current), ...missingSegments.reverse());
+    } catch (error) {
+      const parent = dirname(current);
+      if (!isMissingPathError(error) || parent === current) {
+        throw error;
+      }
+      missingSegments.push(basename(current));
+      current = parent;
+    }
+  }
+};
+
+/** Dependency directories that BuildWarden links into worktrees from the project repository. */
+const SHARED_DEPENDENCY_LINK_NAMES = ["node_modules"] as const;
+
+/**
+ * Lexical containment misses symbolic links and junctions, which can point anywhere. Writes must stay
+ * inside the real workspace, which also keeps them out of the project's shared `node_modules`. Reads may
+ * additionally follow the shared dependency links so the agent can inspect installed packages.
+ */
+const resolveContainedWorktreePath = async (root: string, inputPath: string, access: "read" | "write"): Promise<string> => {
+  const target = resolveWorktreePath(root, inputPath);
+  const allowedRoots = [await realpath(root)];
+  if (access === "read") {
+    for (const linkName of SHARED_DEPENDENCY_LINK_NAMES) {
+      const linkPath = join(root, linkName);
+      try {
+        if ((await lstat(linkPath)).isSymbolicLink()) {
+          allowedRoots.push(await realpath(linkPath));
+        }
+      } catch {
+        // No shared dependency link in this workspace.
+      }
+    }
+  }
+  const realTarget = await realpathOfNearestExisting(target);
+  if (!allowedRoots.some((allowedRoot) => isWithinRoot(allowedRoot, realTarget))) {
+    throw new Error(`Path resolves outside the run workspace through a link: ${inputPath}`);
   }
   return target;
 };
@@ -972,7 +1023,7 @@ class RunToolExecutor {
     const inputPath = String(call.arguments.path ?? "");
     const startLine = normalizeLineBound(call.arguments.startLine);
     const endLine = normalizeLineBound(call.arguments.endLine);
-    const target = resolveWorktreePath(this.worktreePath, inputPath);
+    const target = await resolveContainedWorktreePath(this.worktreePath, inputPath, "read");
     let fileStat;
     try {
       fileStat = await stat(target);
@@ -1007,9 +1058,9 @@ class RunToolExecutor {
   }
 
   private async executeWriteFile(call: RunToolCall): Promise<RunToolResult> {
-    const target = resolveWorktreePath(this.worktreePath, String(call.arguments.path ?? ""));
+    const target = await resolveContainedWorktreePath(this.worktreePath, String(call.arguments.path ?? ""), "write");
     const rel = toPosix(relative(this.worktreePath, target));
-    if (!rel || rel === "." || rel.startsWith(".git/")) {
+    if (!rel || rel === "." || isGitInternalPath(rel)) {
       throw new Error("write_file cannot target the repository root or .git internals.");
     }
     let previousContent: string | null = null;
@@ -1073,9 +1124,9 @@ class RunToolExecutor {
   }
 
   private async executeEditFile(call: RunToolCall): Promise<RunToolResult> {
-    const target = resolveWorktreePath(this.worktreePath, String(call.arguments.file_path ?? ""));
+    const target = await resolveContainedWorktreePath(this.worktreePath, String(call.arguments.file_path ?? ""), "write");
     const rel = toPosix(relative(this.worktreePath, target));
-    if (!rel || rel === "." || rel.startsWith(".git/")) {
+    if (!rel || rel === "." || isGitInternalPath(rel)) {
       throw new Error("edit_file cannot target the repository root or .git internals.");
     }
 
@@ -1186,9 +1237,9 @@ class RunToolExecutor {
 
   private async executeDeleteFile(call: RunToolCall): Promise<RunToolResult> {
     const inputPath = String(call.arguments.path ?? "");
-    const target = resolveWorktreePath(this.worktreePath, inputPath);
+    const target = await resolveContainedWorktreePath(this.worktreePath, inputPath, "write");
     const rel = toPosix(relative(this.worktreePath, target));
-    if (!rel || rel === "." || rel === ".." || rel.startsWith(".git/")) {
+    if (!rel || rel === "." || isGitInternalPath(rel)) {
       throw new Error("delete_file cannot remove the repository root or .git internals.");
     }
     try {
@@ -1213,7 +1264,7 @@ class RunToolExecutor {
 
   private async executeListFiles(call: RunToolCall): Promise<RunToolResult> {
     const inputPath = String(call.arguments.path ?? ".");
-    const target = resolveWorktreePath(this.worktreePath, inputPath);
+    const target = await resolveContainedWorktreePath(this.worktreePath, inputPath, "read");
     let directoryStat;
     try {
       directoryStat = await stat(target);
@@ -1243,7 +1294,7 @@ class RunToolExecutor {
 
   private async executeSearchRepo(call: RunToolCall): Promise<RunToolResult> {
     const inputPath = String(call.arguments.path ?? ".");
-    const target = resolveWorktreePath(this.worktreePath, inputPath);
+    const target = await resolveContainedWorktreePath(this.worktreePath, inputPath, "read");
     const query = String(call.arguments.query ?? "").trim();
     if (!query) {
       throw new Error("search_repo requires a non-empty query.");
