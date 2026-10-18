@@ -225,6 +225,13 @@ const applyDerivedRunStep = (
     derived.parts.add(step.content.trim());
     derived.lastUserInputAt = step.createdAt;
   }
+  // A tracked request keeps its question as content and records the answers in metadata.
+  const answers = isSubmittedUserInput ? metadata.userInputAnswers : null;
+  if (answers && typeof answers === "object") {
+    for (const value of Object.values(answers as Record<string, unknown>).flat()) {
+      if (typeof value === "string" && value.trim()) derived.parts.add(value.trim());
+    }
+  }
 };
 
 export class BuildWardenDatabase {

@@ -133,6 +133,32 @@ describe("run user-input ordering metadata", () => {
     expect(loadedFirstRun).not.toHaveProperty("userInputSearchText");
   });
 
+  it("indexes submitted answers that resolve a tracked user-input request", async () => {
+    const db = await makeDb();
+    const run = createRunFixture(db);
+    const request = db.appendRunStep(
+      run.id,
+      "user-input-requested",
+      "Needs input",
+      "Which database?",
+      JSON.stringify({ requestKind: "user-input", requestStatus: "opened" }),
+    );
+    expect(db.searchRunUserInput("postgres")).toEqual([]);
+
+    db.updateRunStep(request.id, {
+      title: "User input submitted",
+      metadataJson: JSON.stringify({
+        requestKind: "user-input",
+        requestStatus: "resolved",
+        userInputAnswers: { database: "Postgres", extras: ["Read replicas"] },
+      }),
+    });
+
+    expect(db.searchRunUserInput("postgres")).toEqual([run.id]);
+    expect(db.searchRunUserInput("read replicas")).toEqual([run.id]);
+    expect(db.searchRunUserInput("which database")).toEqual([run.id]);
+  });
+
   it("invalidates derived run metadata after updating run configuration", async () => {
     const db = await makeDb();
     const run = createRunFixture(db);
