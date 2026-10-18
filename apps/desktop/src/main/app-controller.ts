@@ -30,6 +30,7 @@ import {
   summarizeFolderAgainstSnapshot,
 } from "./folder-diff";
 import { createFolderWorkspaceCopy, removeFolderWorkspaceCopy } from "./folder-workspace";
+import { MANAGED_WORKSPACE_DIR } from "./folder-workspace-constants";
 import { getHarnessTypeForProvider } from "./harness-adapters";
 import { nextAutomationRunAt, parseAutomationCron, validateAutomationTimeZone } from "./automation-schedule";
 import { createProjectPrReviewProvider } from "./pr-review/pr-review-provider-factory";
@@ -47,6 +48,7 @@ import { BuildWardenDatabase, type ModelDeletionTargets } from "@buildwarden/db"
 import {
   computePrMrDiffViaFetch,
   GitService,
+  isSameWorktreePath,
   readProjectActivityLog,
   readProjectReleaseHistory,
   readRecentCommitLog,
@@ -132,6 +134,7 @@ import {
   type FetchProjectPrMrDiffInput,
   type FollowUpChatOptions,
   type GetProjectForgeRequestDetailsInput,
+  type GitProjectValidation,
   type ListProjectForgeRequestsInput,
   type ListAvailableProviderModelsInput,
   type ListAvailableProviderModelsResult,
@@ -1320,6 +1323,13 @@ export class AppController
 
   private getFolderSnapshotRoot(): string {
     return getFolderSnapshotRoot(this.db.getFilePath());
+  }
+
+  /** Worktrees, branches and runs all operate on the whole repository, so a subfolder cannot be a Git project. */
+  private assertProjectFolderIsRepositoryRoot(repoPath: string, validation: GitProjectValidation): void {
+    if (!isSameWorktreePath(validation.repoRoot, repoPath)) {
+      throw new Error(`This folder is inside the Git repository at ${validation.repoRoot}. Add the repository root as the project instead.`);
+    }
   }
 
   private requireGitProject(project: ProjectRecord, featureLabel: string): void {
@@ -2633,6 +2643,7 @@ export class AppController
     if (!validation.isGitRepo) {
       throw new Error("This project folder is not a Git repository yet.");
     }
+    this.assertProjectFolderIsRepositoryRoot(project.repoPath, validation);
     const converted = this.db.updateProjectKind(project.id, "git", validation.baseBranch);
     this.db.touchProject(converted.id);
     return converted;
@@ -2813,7 +2824,14 @@ export class AppController
     if (!existsSync(repoPath) || !statSync(repoPath).isDirectory()) {
       throw new Error("The selected path is not a folder.");
     }
+    // A run workspace added as a project would be cleaned up underneath it, or vice versa.
+    if (resolve(repoPath).split(/[\\/]+/).some((segment) => segment.toLowerCase() === MANAGED_WORKSPACE_DIR)) {
+      throw new Error("This folder is a workspace that BuildWarden created for a run. Add the original project folder instead.");
+    }
     const validation = await this.gitService.validateProject(repoPath);
+    if (validation.isGitRepo) {
+      this.assertProjectFolderIsRepositoryRoot(repoPath, validation);
+    }
     const kind: ProjectRecord["kind"] = validation.isGitRepo ? "git" : "folder";
 
     const project = this.db.addProject({

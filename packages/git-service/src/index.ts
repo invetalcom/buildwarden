@@ -903,6 +903,7 @@ export class GitService {
     if (!isRepo) {
       return {
         repoPath,
+        repoRoot: repoPath,
         repoName: basename(repoPath),
         baseBranch: "main",
         isGitRepo: false,
@@ -912,18 +913,21 @@ export class GitService {
     }
 
     const branchSummary = await git.branch(["--show-current"]);
-    const status = await git.status();
-    const revParse = await git.raw(["rev-parse", "--git-common-dir"]);
-    const gitDir = revParse.trim();
+    const status = await createReadOnlyGit(repoPath).status();
+    // `--git-common-dir` alone is relative to the selected folder, so a subfolder looked like a worktree.
+    const [topLevel, gitDir, commonDir] = (await git.raw(["rev-parse", "--show-toplevel", "--git-dir", "--git-common-dir"]))
+      .split(/\r?\n/)
+      .map((line) => line.trim());
 
     const baseBranch = await detectProjectBaseBranch(git, branchSummary.current, (await this.getDefaultRemote(repoPath)) ?? "origin");
 
     return {
       repoPath,
+      repoRoot: topLevel ? resolve(topLevel) : repoPath,
       repoName: basename(repoPath),
       baseBranch,
       isGitRepo: true,
-      isWorktree: gitDir !== ".git",
+      isWorktree: Boolean(gitDir && commonDir) && !isSameWorktreePath(resolve(repoPath, gitDir!), resolve(repoPath, commonDir!)),
       isDirty: !status.isClean(),
     };
   }

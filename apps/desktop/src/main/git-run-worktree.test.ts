@@ -166,6 +166,27 @@ describe("GitService read-only status", () => {
   });
 });
 
+describe("GitService project validation", () => {
+  it("reports the repository root and only flags real linked worktrees", async () => {
+    const { root, repoPath } = await createRepository();
+    const service = new GitService();
+    const subfolder = join(repoPath, "packages", "app");
+    await mkdir(subfolder, { recursive: true });
+    const workspace = await service.createWorktreeForRun(repoPath, "Project", "run-1", "main", join(root, "worktrees"));
+
+    const rootValidation = await service.validateProject(repoPath);
+    const subfolderValidation = await service.validateProject(subfolder);
+    const worktreeValidation = await service.validateProject(workspace.worktreePath);
+
+    expect(isSameWorktreePath(rootValidation.repoRoot, repoPath)).toBe(true);
+    expect(rootValidation.isWorktree).toBe(false);
+    expect(isSameWorktreePath(subfolderValidation.repoRoot, repoPath)).toBe(true);
+    expect(subfolderValidation.isWorktree).toBe(false);
+    expect(isSameWorktreePath(worktreeValidation.repoRoot, workspace.worktreePath)).toBe(true);
+    expect(worktreeValidation.isWorktree).toBe(true);
+  });
+});
+
 describe("GitService diffs without commits", () => {
   it("summarizes staged files before the first commit", async () => {
     const root = await mkdtemp(join(tmpdir(), "buildwarden-unborn-"));

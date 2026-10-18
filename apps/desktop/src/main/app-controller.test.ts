@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BuildWardenDatabase } from "@buildwarden/db";
@@ -2001,6 +2001,30 @@ describe("AppController settings and lightweight workflows", () => {
     expect(adoptionTask.adoptionStatus).toBe("rejected");
     expect(updateOrchestrationTask).toHaveBeenCalledTimes(1);
     expect(appendOrchestrationEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses repository subfolders and BuildWarden run workspaces as projects", async () => {
+    const harness = createHarness();
+    tempDirs.push(harness.logDir);
+    const root = mkdtempSync(join(tmpdir(), "buildwarden-add-project-"));
+    tempDirs.push(root);
+    const managedWorkspace = join(root, ".buildwarden-worktrees", "repo", "project-run-1");
+    mkdirSync(managedWorkspace, { recursive: true });
+    const subfolder = join(root, "repo", "packages");
+    mkdirSync(subfolder, { recursive: true });
+    const controller = harness.controller as unknown as { gitService: { validateProject: (path: string) => Promise<unknown> } };
+    controller.gitService.validateProject = vi.fn(async (path: string) => ({
+      repoPath: path,
+      repoRoot: join(root, "repo"),
+      repoName: "packages",
+      baseBranch: "main",
+      isGitRepo: true,
+      isWorktree: false,
+      isDirty: false,
+    }));
+
+    await expect(harness.controller.addProject({ repoPath: managedWorkspace })).rejects.toThrow("BuildWarden created for a run");
+    await expect(harness.controller.addProject({ repoPath: subfolder })).rejects.toThrow("inside the Git repository");
   });
 
   it("retries transient Windows worktree locks during run deletion", async () => {

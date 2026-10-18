@@ -3136,6 +3136,8 @@ export const shouldBypassNetworkProxyForUrl = (url: string, config: NetworkProxy
 
 export interface GitProjectValidation {
   repoPath: string;
+  /** Top-level folder of the repository containing `repoPath`; equals `repoPath` outside Git. */
+  repoRoot: string;
   repoName: string;
   baseBranch: string;
   isGitRepo: boolean;
