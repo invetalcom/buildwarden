@@ -1,3 +1,4 @@
+import { presentToolResult, toolPresentation } from "@buildwarden/shared";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { runTextGenerationProcess } from "@buildwarden/agent-runtime";
 import { appendFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
@@ -95,6 +96,7 @@ export type CursorToolState = {
   detail?: string;
   toolName?: string;
   rawOutput?: Record<string, unknown>;
+  resultImages?: ReturnType<typeof presentToolResult>["images"];
   raw?: unknown;
 };
 
@@ -271,7 +273,7 @@ export const startCursorOrchestrationMcp = async (
           jsonrpc: "2.0",
           id,
           result: {
-            content: [{ type: "text", text: result.content }],
+            content: [{ type: "text", text: result.content }, ...(result.images ?? []).map((image) => ({ type: "image", ...image }))],
             isError: !result.ok,
           },
         });
@@ -1410,6 +1412,7 @@ export const parseCursorToolState = (params: unknown): CursorToolState | null =>
     ...(detail ? { detail } : {}),
     ...(toolName ? { toolName } : {}),
     ...(rawOutput ? { rawOutput } : {}),
+    resultImages: presentToolResult(update.rawOutput ?? update.content).images,
     raw: sanitizeMetadataValue(compactCursorDiffPayloads(params)),
   };
 };
@@ -1470,6 +1473,7 @@ const mergeCursorToolState = (left: CursorToolState | undefined, right: CursorTo
   detail: right.detail ?? left?.detail,
   toolName: right.toolName ?? left?.toolName,
   rawOutput: right.rawOutput ?? left?.rawOutput,
+  resultImages: right.resultImages?.length ? right.resultImages : left?.resultImages,
   raw: right.raw ?? left?.raw,
 });
 
@@ -1546,12 +1550,16 @@ export const buildCursorToolChunkForState = (tool: CursorToolState): HarnessRunC
   let fallbackTitle = "Cursor tool";
   if (kindToolName === "run_shell") fallbackTitle = "Shell command";
   const title = genericTitle ? toolName ?? fallbackTitle : tool.title!;
-  const value = tool.diff ?? tool.command ?? tool.path ?? tool.query ?? tool.detail ?? title;
+  const rawUpdate = isRecord(tool.raw) && isRecord(tool.raw.update) ? tool.raw.update : tool.raw;
+  const output = presentToolResult(tool.rawOutput ?? (isRecord(rawUpdate) ? rawUpdate.content : undefined));
+  const value = tool.diff ?? tool.command ?? tool.path ?? tool.query ?? (output.text || tool.detail || title);
   const metadata = {
     provider: PROVIDER,
     ...(toolName ? { toolName } : {}),
     callId: tool.id,
     cursorToolKind: tool.kind,
+    ...toolPresentation(toolName ?? title, tool.arguments, /^mcp[:_]/i.test(title) ? "MCP" : undefined),
+    toolResultImages: tool.resultImages ?? output.images,
     arguments: tool.arguments,
     command: tool.command,
     path: tool.path,
@@ -1573,7 +1581,7 @@ export const buildCursorToolChunkForState = (tool: CursorToolState): HarnessRunC
       value,
       metadata: {
         ...metadata,
-        ok: tool.status === "completed",
+        ok: tool.status === "completed" && tool.rawOutput?.isError !== true,
       },
     };
   }

@@ -1,6 +1,6 @@
-import { RunVerificationPanel } from "@buildwarden/renderer";
+import { RunVerificationPanel, RunEmbeddedBrowser, RunBrowserPreviewTile, BrowserElementAttachmentPreview, browserElementPayloadsForProvider, validateBrowserElementCaptureAddition } from "@buildwarden/renderer";
 import { useEffect, useMemo, useState } from "react";
-import type { ChatAttachmentPayload, ChatDetail } from "@buildwarden/shared";
+import { validateChatAttachmentPayloads, type ChatAttachmentPayload, type ChatDetail, type RunBrowserElementCapture } from "@buildwarden/shared";
 import { deriveLatestRunPlanProgress, findProjectRun, isVisibleChatStep, isRunContinuable } from "@buildwarden/renderer/logic";
 import {
   Bookmark,
@@ -41,6 +41,7 @@ import { RunForgePanel } from "./run/RunForgePanel";
 import { mobileForgeColor } from "../lib/forge";
 
 type PendingConfirm = "delete" | "undo" | "cancel" | null;
+const EMPTY_BROWSER_SESSION = { draftUrl: "about:blank", currentUrl: "about:blank", history: ["about:blank"], historyIndex: 0, reloadKey: 0 };
 
 export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: RunSegment }) => {
   const { client, snapshot, snapshotStore, router } = useMobileApp();
@@ -52,6 +53,9 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
   const [runChat, setRunChat] = useState<ChatDetail | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [browserSession, setBrowserSession] = useState({ runId, session: EMPTY_BROWSER_SESSION });
+  const [browserCaptures, setBrowserCaptures] = useState<RunBrowserElementCapture[]>([]);
+  const captures = browserCaptures.filter((capture) => capture.runId === runId);
 
   const detail = store.detail;
   const entry = useMemo(() => findProjectRun(snapshot.projects, runId), [runId, snapshot.projects]);
@@ -70,12 +74,13 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
       { value: "diff", label: "Diff" },
       { value: "files", label: "Files" },
     ];
+    if (client.capabilities.browserControl && segment === "browser") options.splice(1, 0, { value: "browser", label: "Browser" });
     if (hasOrchestration && client.capabilities.orchestrationRead) options.push({ value: "agents", label: "Agents" });
     if (detail?.run.forgeRequest) options.push({ value: "pull-request", label: detail.run.forgeRequest.provider === "github" ? "PR" : "MR" });
     options.push({ value: "notes", label: "Notes", ...(detail?.notes.length ? { badge: detail.notes.length } : {}) });
     if (client.capabilities.chatMutations) options.push({ value: "chat", label: "Chat" });
     return options;
-  }, [client.capabilities.chatMutations, client.capabilities.orchestrationRead, detail?.notes.length, detail?.run.forgeRequest, hasOrchestration]);
+  }, [client.capabilities.browserControl, client.capabilities.chatMutations, client.capabilities.orchestrationRead, detail?.notes.length, detail?.run.forgeRequest, hasOrchestration, segment]);
 
   // A segment can disappear (agents/chat depend on capabilities); fall back rather than blank out.
   const activeSegment = segments.some((option) => option.value === segment) ? segment : "activity";
@@ -116,11 +121,19 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
   const visibleRunChat = matchingLiveRunChat ?? matchingRunChat;
 
   const followUp = async (prompt: string, attachments: ChatAttachmentPayload[]) => {
-    await action.run(
-      () => client.followUpRun(runId, prompt, attachments.length ? { attachments } : undefined),
-      "The follow-up did not send.",
-    );
-    await refreshAll();
+    const provider = snapshot.providerAccounts.find((account) => account.id === detail?.run.providerAccountId)?.providerType;
+    const combined = [...attachments, ...browserElementPayloadsForProvider(captures, provider)];
+    validateChatAttachmentPayloads(combined);
+    await client.followUpRun(runId, prompt, combined.length ? { attachments: combined } : undefined);
+    setBrowserCaptures([]);
+    if (captures.length) void client.runBrowserAction({ runId, action: "clear-annotations" })
+      .then(() => client.runBrowserAction({ runId, action: "release-control" })).catch(() => undefined);
+    await action.run(refreshAll, "The follow-up was sent, but the run could not be refreshed.");
+  };
+
+  const removeCapture = (capture: RunBrowserElementCapture) => {
+    setBrowserCaptures((current) => current.filter((item) => item.id !== capture.id));
+    void client.runBrowserAction({ runId, action: "remove-annotation", captureId: capture.id }).catch(() => undefined);
   };
 
   const sendRunChat = async (prompt: string, attachments: ChatAttachmentPayload[]) => {
@@ -224,6 +237,19 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
         />
       ) : null}
 
+      {activeSegment === "browser" ? <RunEmbeddedBrowser key={runId} runId={runId} session={browserSession.runId === runId ? browserSession.session : EMPTY_BROWSER_SESSION}
+        onSessionChange={(session) => setBrowserSession({ runId, session })} className="min-h-0" nextAnnotationNumber={captures.reduce((max, capture) => Math.max(max, capture.annotationNumber), 0) + 1}
+        onElementSelected={(capture) => {
+          if (captures.some((item) => item.id === capture.id)) return;
+          const error = validateBrowserElementCaptureAddition([], captures, capture);
+          if (error) { setNotice(error); removeCapture(capture); return; }
+          setBrowserCaptures((current) => [...current.filter((item) => item.runId === runId), capture]);
+        }} /> : null}
+      {activeSegment === "browser" && captures.length > 0 ? <div className="flex shrink-0 items-center gap-2 border-t border-[var(--ec-border)] px-3 py-2">
+        <span className="text-xs text-[var(--ec-muted)]">{captures.length} element{captures.length === 1 ? "" : "s"} selected</span>
+        <button type="button" className="m-tap ml-auto text-xs text-[var(--ec-accent)]" onClick={() => router.replace({ name: "run", runId, segment: "activity" })}>Use in follow-up</button>
+      </div> : null}
+
       {activeSegment === "diff" ? (
         store.diffLoading && !store.diff ? (
           <CenteredSpinner label="Loading diff" />
@@ -266,8 +292,13 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
 
       {activeSegment === "activity" ? <RunUserInputCard detail={detail} onAnswered={refreshAll} /> : null}
 
+      {activeSegment === "activity" ? <RunBrowserPreviewTile key={runId} runId={runId} active={detail.run.status === "running"}
+        onOpen={() => router.replace({ name: "run", runId, segment: "browser" })} /> : null}
+
       {activeSegment === "activity" || activeSegment === "chat" ? (
         <Composer
+          hasExternalAttachments={activeSegment === "activity" && captures.length > 0}
+          accessory={activeSegment === "activity" ? captures.map((capture) => <BrowserElementAttachmentPreview key={capture.id} capture={capture} onRemove={() => removeCapture(capture)} />) : undefined}
           placeholder={activeSegment === "chat" ? "Ask about this run" : active ? "Queue a follow-up" : "Send a follow-up"}
           busy={action.busy}
           disabled={activeSegment === "chat" ? !client.capabilities.chatMutations : !client.capabilities.runMutations}

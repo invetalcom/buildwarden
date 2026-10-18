@@ -4,7 +4,6 @@ import { randomUUID } from "node:crypto";
 import {
   type HarnessRunChunk,
   type HarnessToolContext,
-  type OrchestrationToolName,
   type RunExecutionRequest,
   type RunToolCall,
   type RunToolResult,
@@ -21,7 +20,8 @@ import { buildInitialRepoContext } from "./initial-repo-context";
 import { logError, logInfo } from "./logger";
 import { PendingHostToolRequests } from "./pending-host-tool-requests";
 import { createRunToolContext } from "./run-tools";
-import { buildOrchestrationAwarePrompt, isOrchestrationToolName } from "./orchestration-tools";
+import { buildOrchestrationAwarePrompt } from "./orchestration-tools";
+import { BROWSER_TOOL, BROWSER_PROMPT } from "./browser-tools";
 
 interface WorkerInput {
   request: RunExecutionRequest;
@@ -208,11 +208,12 @@ const run = async () => {
       { yoloMode: request.yoloMode === true },
     );
     const orchestrationTools = request.orchestrationTools ?? [];
-    const orchestrationToolNames = new Set(orchestrationTools.map((tool) => tool.name));
+    const hostTools = [...orchestrationTools, ...(request.browserToolsEnabled ? [BROWSER_TOOL] : [])];
+    const hostToolNames = new Set(hostTools.map((tool) => tool.name));
     const toolContext: HarnessToolContext = {
-      tools: [...runToolContext.tools, ...orchestrationTools],
+      tools: [...runToolContext.tools, ...hostTools],
       executeTool: async (call: RunToolCall): Promise<RunToolResult> => {
-        if (!isOrchestrationToolName(call.name) || !orchestrationToolNames.has(call.name)) {
+        if (!hostToolNames.has(call.name)) {
           return runToolContext.executeTool(call);
         }
         await chunks.drain();
@@ -221,7 +222,7 @@ const run = async () => {
         port.postMessage({
           type: "host-tool-request",
           callId: call.id,
-          toolName: call.name satisfies OrchestrationToolName,
+          toolName: call.name,
           arguments: call.arguments,
         });
         return response;
@@ -231,7 +232,7 @@ const run = async () => {
       {
         ...request,
         prompt: buildOrchestrationAwarePrompt(request.prompt, orchestrationTools.length > 0),
-        repoContext: request.repoContext ?? [
+        repoContext: [request.browserToolsEnabled ? BROWSER_PROMPT : "", request.repoContext ?? [
           request.skillContext?.trim(),
           await buildInitialRepoContext(request.worktreePath, {
             mode: request.mode,
@@ -241,7 +242,7 @@ const run = async () => {
           }),
         ]
           .filter((part): part is string => Boolean(part && part.trim()))
-          .join("\n\n"),
+          .join("\n\n")].filter(Boolean).join("\n\n"),
       },
       toolContext,
       postChunk,

@@ -74,6 +74,7 @@ const createView = () => {
 };
 
 const createWindow = () => ({
+  setSize: vi.fn(),
   destroyed: false,
   contentView: {
     addChildView: vi.fn(),
@@ -106,6 +107,140 @@ describe("run browser URL and partition policy", () => {
 describe("HostBrowserService", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+  });
+
+  it("keeps a bounded thumbnail session between actions until finish or turn completion", async () => {
+    const { view, webContents } = createView();
+    const create = vi.fn(() => view);
+    const service = new HostBrowserService({ getMainWindow: () => null, resolveRunProjectId: async () => "p",
+      createView: create, createCompositor: () => createWindow() as unknown as BaseWindow });
+    expect(await service.getPreview("r")).toBeNull();
+    service.setAgentActive("r", true);
+    expect(await service.getPreview("r")).toBeNull();
+    expect(create).not.toHaveBeenCalled();
+    await service.executeAgentTool("r", "open", { action: "open", url: "https://example.com" });
+    expect(await service.getPreview("r")).toMatchObject({ state: { previewSessionActive: true, activeAction: null } });
+    const waiting = service.executeAgentTool("r", "wait", { action: "wait", milliseconds: 2000 });
+    await service.getPreview("r");
+    await vi.advanceTimersByTimeAsync(0);
+    const preview = await service.getPreview("r");
+    expect(preview).toMatchObject({ state: { activeAction: { callId: "wait", action: "wait" }, currentUrl: "https://example.com/", owner: "agent" }, thumbnail: { mimeType: "image/jpeg", dataBase64: Buffer.from("unchanged-frame").toString("base64") } });
+    await service.getPreview("r");
+    expect(webContents.capturePage).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    await service.getPreview("r");
+    expect(webContents.capturePage).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1000);
+    await waiting;
+    expect(await service.getPreview("r")).toMatchObject({ state: { previewSessionActive: true, activeAction: null } });
+    const cancelled = service.executeAgentTool("r", "wait-again", { action: "wait", milliseconds: 100 });
+    await service.action({ runId: "r", action: "take-control" });
+    expect(await service.getPreview("r")).toMatchObject({ state: { owner: "human", activeAction: null, previewSessionActive: true } });
+    await vi.advanceTimersByTimeAsync(100);
+    await cancelled;
+    expect((await service.executeAgentTool("r", "finish", { action: "finish" })).ok).toBe(true);
+    expect(await service.getPreview("r")).toBeNull();
+    expect(webContents.closed).toBe(false);
+    await service.executeAgentTool("r", "status", { action: "status" });
+    expect(await service.getPreview("r")).toBeNull();
+    await service.action({ runId: "r", action: "release-control" });
+    await service.executeAgentTool("r", "another-action", { action: "screenshot" });
+    expect(await service.getPreview("r")).not.toBeNull();
+    service.setAgentActive("r", false);
+    expect(await service.getPreview("r")).toBeNull();
+    expect(webContents.loadURL).toHaveBeenCalledTimes(1);
+    service.disposeAll();
+  });
+
+  it("discards previews after cancellation and resets the session for a new turn", async () => {
+    const { view, webContents } = createView();
+    const service = new HostBrowserService({ getMainWindow: () => null, resolveRunProjectId: async () => "p",
+      createView: () => view, createCompositor: () => createWindow() as unknown as BaseWindow });
+    service.setAgentActive("r", true);
+    await service.executeAgentTool("r", "open", { action: "open", url: "https://example.com" });
+    let resolveCapture!: (image: FakeNativeImage) => void;
+    webContents.capturePage.mockImplementationOnce(() => new Promise((resolve) => { resolveCapture = resolve; }));
+    const waiting = service.executeAgentTool("r", "wait", { action: "wait", milliseconds: 100 });
+    await service.getPreview("r");
+    service.setAgentActive("r", false);
+    resolveCapture(new FakeNativeImage(Buffer.from("stale"), 800, 600));
+    expect(await service.getPreview("r")).toBeNull();
+    await vi.advanceTimersByTimeAsync(100);
+    await waiting;
+    service.setAgentActive("r", true);
+    expect(await service.getPreview("r")).toBeNull();
+    expect((await service.executeAgentTool("r", "bad", { action: "click" })).ok).toBe(false);
+    expect(await service.getPreview("r")).toMatchObject({ state: { activeAction: null, previewSessionActive: true } });
+    await service.executeAgentTool("r", "finish", { action: "finish" });
+    expect(await service.getPreview("r")).toBeNull();
+    service.disposeAll();
+  });
+
+  it("retains the previous thumbnail during navigation, failed capture, and pending replacement", async () => {
+    const { view, webContents } = createView();
+    const service = new HostBrowserService({ getMainWindow: () => null, resolveRunProjectId: async () => "p",
+      createView: () => view, createCompositor: () => createWindow() as unknown as BaseWindow });
+    service.setAgentActive("r", true);
+    await service.executeAgentTool("r", "open", { action: "open", url: "https://example.com" });
+    await service.getPreview("r");
+    await vi.advanceTimersByTimeAsync(0);
+    const original = (await service.getPreview("r"))!.thumbnail;
+    expect(original).not.toBeNull();
+    await service.executeAgentTool("r", "navigate", { action: "navigate", url: "https://example.org" });
+    webContents.capturePage.mockRejectedValueOnce(new Error("Not painted"));
+    expect((await service.getPreview("r"))!.thumbnail).toEqual(original);
+    await vi.advanceTimersByTimeAsync(0);
+    expect((await service.getPreview("r"))!.thumbnail).toEqual(original);
+    let resolveCapture!: (image: FakeNativeImage) => void;
+    webContents.capturePage.mockImplementationOnce(() => new Promise((resolve) => { resolveCapture = resolve; }));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect((await service.getPreview("r"))!.thumbnail).toEqual(original);
+    resolveCapture(new FakeNativeImage(Buffer.from("next-frame"), 1000, 700));
+    await vi.advanceTimersByTimeAsync(0);
+    expect((await service.getPreview("r"))!.thumbnail?.dataBase64).toBe(Buffer.from("next-frame").toString("base64"));
+    service.disposeAll();
+  });
+
+  it("shares the agent browser with the run surface, honors takeover, and pins only active runs", async () => {
+    const { view, webContents } = createView();
+    const service = new HostBrowserService({
+      getMainWindow: () => null, resolveRunProjectId: async () => "project-a",
+      createView: () => view, createCompositor: () => createWindow() as unknown as BaseWindow,
+      idleTimeoutMs: 30,
+    });
+    service.setAgentActive("run-a", true);
+    const call = (action: string, args = {}) => service.executeAgentTool("run-a", action, { action, ...args });
+    expect((await call("open", { url: "http://localhost:3000" })).ok).toBe(true);
+    expect((await service.ensure({ runId: "run-a", viewport: { width: 390, height: 600 } })).owner).toBe("agent");
+    expect(webContents.loadURL).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(webContents.closed).toBe(false);
+    await service.action({ runId: "run-a", action: "take-control" });
+    expect((await call("navigate", { url: "https://example.com" })).ok).toBe(false);
+    expect(webContents.loadURL).toHaveBeenCalledTimes(1);
+    const screenshot = await call("screenshot");
+    expect(screenshot.images?.[0].mimeType).toBe("image/jpeg");
+    await service.action({ runId: "run-a", action: "release-control" });
+    expect((await call("navigate", { url: "https://example.com" })).ok).toBe(true);
+    service.setAgentActive("run-a", false);
+    expect((await call("open", { url: "https://example.org" })).ok).toBe(false);
+    await vi.advanceTimersByTimeAsync(31);
+    expect(webContents.closed).toBe(true);
+    service.disposeAll();
+  });
+
+  it("invalidates an in-flight agent action on takeover without reclaiming control", async () => {
+    const { view } = createView();
+    const service = new HostBrowserService({ getMainWindow: () => null, resolveRunProjectId: async () => "p",
+      createView: () => view, createCompositor: () => createWindow() as unknown as BaseWindow });
+    service.setAgentActive("r", true);
+    await service.executeAgentTool("r", "open", { action: "open", url: "https://example.com" });
+    const waiting = service.executeAgentTool("r", "wait", { action: "wait", milliseconds: 100 });
+    await service.action({ runId: "r", action: "take-control" });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await waiting).toMatchObject({ ok: false, content: expect.stringContaining("user has browser control") });
+    expect((await service.executeAgentTool("r", "status", { action: "status" })).content).toContain('"owner":"human"');
+    service.disposeAll();
   });
 
   it("denies permissions and downloads and reparents the native surface", async () => {
@@ -144,13 +279,15 @@ describe("HostBrowserService", () => {
     expect(view.setBounds).toHaveBeenLastCalledWith({ x: 12, y: 21, width: 500, height: 301 });
     expect(view.setVisible).toHaveBeenLastCalledWith(true);
     service.setDesktopWindowVisible(false);
-    expect(view.setVisible).toHaveBeenLastCalledWith(false);
+    expect(compositor.contentView.addChildView).toHaveBeenLastCalledWith(view);
+    expect(view.setVisible).toHaveBeenLastCalledWith(true);
     service.setDesktopWindowVisible(true);
     expect(view.setVisible).toHaveBeenLastCalledWith(true);
     service.detachDesktopSurfaces();
     expect(main.contentView.removeChildView).toHaveBeenCalledWith(view);
     expect(compositor.contentView.addChildView).toHaveBeenLastCalledWith(view);
-    expect(view.setVisible).toHaveBeenLastCalledWith(false);
+    // The compositor window stays hidden; its child keeps painting remotely.
+    expect(view.setVisible).toHaveBeenLastCalledWith(true);
   });
 
   it("shares one session creation across concurrent ensure calls", async () => {

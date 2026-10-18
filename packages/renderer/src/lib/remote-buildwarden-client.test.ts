@@ -591,6 +591,7 @@ describe("remote BuildWarden client", () => {
       input: { type: "wheel", x: 20, y: 30, deltaX: 0, deltaY: 120 },
     });
     await client.ensureRunBrowser({ runId: "run-1", initialUrl: "about:blank", viewport: { width: 800, height: 600 } });
+    await client.getRunBrowserPreview("run-1");
     const additionalUnsubscribes = Array.from({ length: 7 }, (_, index) =>
       client.onRunBrowserEvent(vi.fn(), [`run-${String(index + 2)}`]));
     expect(() => client.onRunBrowserEvent(vi.fn(), ["run-9"]))
@@ -605,6 +606,7 @@ describe("remote BuildWarden client", () => {
       scopes: ["state:read"],
     });
     expect(readOnlyClient.capabilities.browserControl).toBe(false);
+    await expect(readOnlyClient.getRunBrowserPreview("run-1")).rejects.toThrow("Re-pair the device");
     await expect(readOnlyClient.sendRunBrowserInput({
       runId: "run-1",
       input: { type: "text", text: "blocked" },

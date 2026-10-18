@@ -364,7 +364,11 @@ const bootstrap = async (): Promise<void> => {
     desktopPlatform,
     hostTerminal,
     hostEvents,
-    { onRunDeleted: (runId) => hostBrowser.disposeRun(runId) },
+    {
+      onRunDeleted: (runId) => hostBrowser.disposeRun(runId),
+      executeBrowserTool: (runId, callId, args) => hostBrowser.executeAgentTool(runId, callId, args),
+      onRunBrowserActive: (runId, active) => hostBrowser.setAgentActive(runId, active),
+    },
   );
   controllerRef.current = controller;
   hostBrowser.onEvent((event) => {
@@ -425,6 +429,7 @@ const bootstrap = async (): Promise<void> => {
   const remoteOperations = new RemoteOperationRegistry(({ method, requestId, error }) => {
     if ([
       "ensureRunBrowser",
+      "getRunBrowserPreview",
       "navigateRunBrowser",
       "runBrowserAction",
       "setRunBrowserViewport",
@@ -615,7 +620,7 @@ const bootstrap = async (): Promise<void> => {
   const validateRunBrowserAction = defineRemoteArgsValidator<"runBrowserAction">((args) => {
     if (args.length !== 1 || !isRemoteRecord(args[0]) || typeof args[0].runId !== "string") return false;
     const action = String(args[0].action);
-    if (!["back", "forward", "reload", "stop", "start-inspect", "cancel-inspect", "remove-annotation", "clear-annotations"].includes(action)) {
+    if (!["take-control", "release-control", "back", "forward", "reload", "stop", "start-inspect", "cancel-inspect", "remove-annotation", "clear-annotations"].includes(action)) {
       return false;
     }
     if (action === "remove-annotation") return typeof args[0].captureId === "string";
@@ -1166,6 +1171,7 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("runTerminalResize", async (input) => hostTerminal.resize(input), validateTerminalResize, "terminal:operate", true);
   remoteOperations.register("runTerminalKill", async (sessionId) => hostTerminal.kill(sessionId), validateSingleRemoteStringArg, "terminal:operate", true);
   remoteOperations.register("ensureRunBrowser", (input) => hostBrowser.ensure(input), validateRunBrowserEnsure, "browser:operate");
+  remoteOperations.register("getRunBrowserPreview", (runId) => hostBrowser.getPreview(runId), validateSingleRemoteStringArg, "browser:operate");
   remoteOperations.register("navigateRunBrowser", (input) => hostBrowser.navigate(input), validateRunBrowserNavigate, "browser:operate");
   remoteOperations.register("runBrowserAction", (input) => hostBrowser.action(input), validateRunBrowserAction, "browser:operate");
   remoteOperations.register("setRunBrowserViewport", async (input) => hostBrowser.setViewport(input), validateRunBrowserViewport, "browser:operate");
@@ -1617,6 +1623,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.openPathInFileManager, (_, path: string) => controller.openPathInFileManager(path));
   ipcMain.handle(IPC_CHANNELS.openExternalUrl, (_, url: string) => desktopPlatform.openExternalUrl(url));
   ipcMain.handle(IPC_CHANNELS.ensureRunBrowser, (_, input) => hostBrowser.ensure(input));
+  ipcMain.handle(IPC_CHANNELS.getRunBrowserPreview, (_, runId: string) => hostBrowser.getPreview(runId));
   ipcMain.handle(IPC_CHANNELS.navigateRunBrowser, (_, input) => hostBrowser.navigate(input));
   ipcMain.handle(IPC_CHANNELS.runBrowserAction, (_, input) => hostBrowser.action(input));
   ipcMain.handle(IPC_CHANNELS.setRunBrowserViewport, (_, input) => hostBrowser.setViewport(input));
@@ -1825,6 +1832,9 @@ const createMainWindow = (scheme: DesignScheme): void => {
     logInfo("Main window closed.");
     activeHostBrowser?.detachDesktopSurfaces();
     mainWindow = null;
+    // The hidden browser compositor is not an application window. It must not
+    // keep a closed Windows/Linux app alive or bypass normal shutdown cleanup.
+    if (process.platform !== "darwin") app.quit();
   });
   mainWindow.on("focus", () => activeHostBrowser?.setDesktopWindowVisible(true));
   mainWindow.on("show", () => activeHostBrowser?.setDesktopWindowVisible(true));
@@ -1902,7 +1912,7 @@ app.whenReady().then(async () => {
   }
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    if (!mainWindow || mainWindow.isDestroyed()) {
       logInfo("Recreating main window after activate.");
       createMainWindow(currentDesignScheme);
     }

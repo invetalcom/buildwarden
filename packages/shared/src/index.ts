@@ -280,6 +280,7 @@ export type RunEventType =
   | "request"
   | "plan";
 
+export { presentToolResult, toolPresentation, type ToolResultImage } from "./tool-presentation";
 export type RunToolName = "read_file" | "write_file" | "edit_file" | "delete_file" | "list_files" | "search_repo" | "run_shell";
 
 export const ORCHESTRATION_TOOL_NAMES = [
@@ -295,7 +296,7 @@ export const ORCHESTRATION_TOOL_NAMES = [
 ] as const;
 
 export type OrchestrationToolName = (typeof ORCHESTRATION_TOOL_NAMES)[number];
-export type HarnessToolName = RunToolName | OrchestrationToolName | "buildwarden_ask_user";
+export type HarnessToolName = RunToolName | OrchestrationToolName | "buildwarden_ask_user" | "buildwarden_browser";
 
 const TEXT_LIKE_FILE_EXTENSIONS = new Set([
   "c",
@@ -3492,6 +3493,7 @@ export interface RunExecutionRequest {
   networkProxy?: NetworkProxyRuntimeConfig;
   /** Main-process orchestration tools advertised to this coordinator turn. */
   orchestrationTools?: RunToolDefinition[];
+  browserToolsEnabled?: boolean;
   /** Resolved HTTP MCP endpoints; header secrets exist only in worker memory. */
   mcpServers?: McpServerRuntimeConfig[];
 }
@@ -3689,6 +3691,7 @@ export interface RunToolResult {
   name: HarnessToolName;
   ok: boolean;
   content: string;
+  images?: Array<{ mimeType: "image/png" | "image/jpeg"; data: string }>;
   metadata?: Record<string, unknown>;
 }
 
@@ -3833,6 +3836,8 @@ export interface NavigateRunBrowserInput {
 }
 
 export type RunBrowserAction =
+  | "take-control"
+  | "release-control"
   | "back"
   | "forward"
   | "reload"
@@ -3864,6 +3869,12 @@ export interface GetRunBrowserElementCaptureInput {
 }
 
 export interface RunBrowserState {
+  /** Browser work spans tool calls until finish or the executing turn ends. */
+  previewSessionActive?: boolean;
+  /** Set only while a browser tool is executing, independent of browser ownership. */
+  activeAction?: { callId: string; action: string } | null;
+  /** Transient host state; absent on older hosts. */
+  owner?: "unclaimed" | "agent" | "human";
   runId: string;
   currentUrl: string;
   title: string;
@@ -3872,6 +3883,12 @@ export interface RunBrowserState {
   canGoForward: boolean;
   inspecting: boolean;
   viewport: RunBrowserViewport;
+}
+
+export interface RunBrowserPreview {
+  state: RunBrowserState;
+  /** Last successfully captured host-page JPEG; retained while the next frame loads. */
+  thumbnail: { dataBase64: string; mimeType: "image/jpeg" } | null;
 }
 
 export interface RunBrowserLocatorSegment {
@@ -4162,6 +4179,7 @@ export interface DesktopApi {
   /** Open an arbitrary folder (e.g. a project's repo path) in the given IDE (must be configured under {@link APP_SETTING_KEYS.idePaths}). */
   openFolderInIde(folderPath: string, ideKind: SupportedIdeKind): Promise<void>;
   ensureRunBrowser(input: EnsureRunBrowserInput): Promise<RunBrowserState>;
+  getRunBrowserPreview(runId: string): Promise<RunBrowserPreview | null>;
   navigateRunBrowser(input: NavigateRunBrowserInput): Promise<void>;
   runBrowserAction(input: RunBrowserActionInput): Promise<void>;
   setRunBrowserViewport(input: SetRunBrowserViewportInput): Promise<void>;
@@ -4576,6 +4594,7 @@ export type RemoteOperationMap = {
   runTerminalResize: DesktopApi["runTerminalResize"];
   runTerminalKill: DesktopApi["runTerminalKill"];
   ensureRunBrowser: DesktopApi["ensureRunBrowser"];
+  getRunBrowserPreview: DesktopApi["getRunBrowserPreview"];
   navigateRunBrowser: DesktopApi["navigateRunBrowser"];
   runBrowserAction: DesktopApi["runBrowserAction"];
   setRunBrowserViewport: DesktopApi["setRunBrowserViewport"];
@@ -4868,6 +4887,7 @@ export const IPC_CHANNELS = {
   openRunWorktreeInIde: "buildwarden:open-run-worktree-in-ide",
   openFolderInIde: "buildwarden:open-folder-in-ide",
   ensureRunBrowser: "buildwarden:ensure-run-browser",
+  getRunBrowserPreview: "buildwarden:get-run-browser-preview",
   navigateRunBrowser: "buildwarden:navigate-run-browser",
   runBrowserAction: "buildwarden:run-browser-action",
   setRunBrowserViewport: "buildwarden:set-run-browser-viewport",

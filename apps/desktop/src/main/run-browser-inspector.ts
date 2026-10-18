@@ -52,12 +52,60 @@ export class RunBrowserInspector {
   private readonly annotationTargets = new Map<string, AnnotationTarget>();
   private readonly annotationBindingName = `__buildwardenAnnotation_${randomUUID().replaceAll("-", "")}`;
   private attached = false;
+  private attachmentPromise: Promise<void> | null = null;
   private inspecting = false;
   private captureInFlight = false;
   private openingSelection = false;
   private pendingSelection: AnnotationTarget | null = null;
   private nextAnnotationNumber = 1;
   private documentGeneration = 0;
+  private agentSnapshotId = "";
+  private readonly agentNodes = new Set<number>();
+
+  async screenshot(): Promise<NativeImage> {
+    await this.ensureAttached();
+    const result = await this.command("Page.captureScreenshot", { format: "jpeg", quality: 75, captureBeyondViewport: false }) as { data: string };
+    return nativeImage.createFromBuffer(Buffer.from(result.data, "base64"));
+  }
+
+  async agentSnapshot(): Promise<unknown> {
+    await this.ensureAttached();
+    const generation = this.documentGeneration;
+    const tree = await this.command("Accessibility.getFullAXTree") as {
+      nodes?: Array<CdpAxNode & { ignored?: boolean; backendDOMNodeId?: number }>;
+    };
+    if (generation !== this.documentGeneration) throw new Error("Page changed. Take a new snapshot.");
+    this.agentSnapshotId = randomUUID();
+    this.agentNodes.clear();
+    const nodes = (tree.nodes ?? []).filter((node) => !node.ignored).slice(0, 600).map((node) => {
+      if (node.backendDOMNodeId) this.agentNodes.add(node.backendDOMNodeId);
+      return { nodeId: node.backendDOMNodeId, role: valueFromAx(node.role), name: valueFromAx(node.name).slice(0, 500) };
+    });
+    return { snapshotId: this.agentSnapshotId, nodes, truncated: (tree.nodes?.length ?? 0) > 600 };
+  }
+
+  async agentTarget(nodeId: number, snapshotId: string, assertControl: () => void): Promise<{ x: number; y: number }> {
+    if (snapshotId !== this.agentSnapshotId || !this.agentNodes.has(nodeId)) {
+      throw new Error("Unknown or stale node. Take a new snapshot before interacting.");
+    }
+    await this.ensureAttached();
+    const resolved = await this.command("DOM.resolveNode", { backendNodeId: nodeId }) as CdpResolveNodeResult;
+    const objectId = resolved.object?.objectId;
+    if (!objectId) throw new Error("Element no longer exists. Take a new snapshot.");
+    try {
+      assertControl();
+      const result = await this.command("Runtime.callFunctionOn", {
+        objectId,
+        functionDeclaration: "function() { if (!this.isConnected || !this.getBoundingClientRect) return null; this.scrollIntoView({block:'center',inline:'center'}); const r=this.getBoundingClientRect(); return r.width && r.height ? {x:r.x+r.width/2,y:r.y+r.height/2} : null; }",
+        returnByValue: true,
+      }) as CdpValueResult<{ x: number; y: number } | null>;
+      assertControl();
+      if (snapshotId !== this.agentSnapshotId || !result.result?.value) throw new Error("Element changed or is not visible. Take a new snapshot.");
+      return result.result.value;
+    } finally {
+      await this.command("Runtime.releaseObject", { objectId }).catch(() => undefined);
+    }
+  }
 
   constructor(private readonly options: RunBrowserInspectorOptions) {
     options.webContents.debugger.on("message", this.handleDebuggerMessage);
@@ -86,8 +134,9 @@ export class RunBrowserInspector {
     }
   }
 
-  async dispatchInput(input: RunBrowserInput): Promise<void> {
+  async dispatchInput(input: RunBrowserInput, assertControl?: () => void): Promise<void> {
     await this.ensureAttached();
+    assertControl?.();
     if (input.type === "mouse") {
       await this.command("Input.dispatchMouseEvent", {
         type: input.eventType,
@@ -146,6 +195,8 @@ export class RunBrowserInspector {
   }
 
   handleNavigationReplacement(): void {
+    this.agentSnapshotId = "";
+    this.agentNodes.clear();
     this.documentGeneration += 1;
     this.captures.clear();
     this.frameTargets.clear();
@@ -270,13 +321,18 @@ export class RunBrowserInspector {
   };
 
   private async ensureAttached(): Promise<void> {
+    if (this.attachmentPromise) return this.attachmentPromise;
     if (this.attached && this.options.webContents.debugger.isAttached()) return;
-    if (!this.options.webContents.debugger.isAttached()) {
-      this.options.webContents.debugger.attach(INSPECTOR_PROTOCOL_VERSION);
-    }
-    this.attached = true;
-    await this.enableDomains();
-    await this.setAutoAttach();
+    this.attachmentPromise = (async () => {
+      if (!this.options.webContents.debugger.isAttached()) {
+        this.options.webContents.debugger.attach(INSPECTOR_PROTOCOL_VERSION);
+      }
+      await this.enableDomains();
+      await this.setAutoAttach();
+      this.attached = true;
+    })();
+    try { await this.attachmentPromise; }
+    finally { this.attachmentPromise = null; }
   }
 
   private setAutoAttach(sessionId?: string): Promise<unknown> {
@@ -292,6 +348,7 @@ export class RunBrowserInspector {
       await this.command(`${domain}.enable`, {}, sessionId);
     }
     await this.command("Runtime.addBinding", { name: this.annotationBindingName }, sessionId);
+    if (!sessionId) await this.command("Emulation.setFocusEmulationEnabled", { enabled: true });
   }
 
   private async setInspectMode(mode: "searchForNode" | "none", ignoreErrors = false): Promise<void> {

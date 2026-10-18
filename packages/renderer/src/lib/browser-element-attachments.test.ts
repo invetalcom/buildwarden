@@ -58,6 +58,7 @@ describe("browser element composer attachments", () => {
     "ai-sdk",
     "azure-legacy",
     "codex-cli",
+    "claude-code",
     "cursor-agent",
   ] satisfies ProviderType[])("sends Markdown and JPEG to the vision-capable %s provider", (providerType) => {
     const selected = [capture("one")];
@@ -67,10 +68,11 @@ describe("browser element composer attachments", () => {
     ]);
   });
 
-  it("sends Markdown without JPEG to the text-only Claude Code transport", () => {
+  it("retains both context and screenshot for Claude's structured SDK input", () => {
     const selected = [capture("one")];
     expect(browserElementPayloadsForProvider(selected, "claude-code").map(({ mimeType }) => mimeType)).toEqual([
       "text/markdown",
+      "image/jpeg",
     ]);
   });
 });

@@ -72,6 +72,8 @@ class FakeDebugger extends EventEmitter {
         return { result: { value: PAGE_DATA } };
       case "Accessibility.getPartialAXTree":
         return { nodes: [{ role: { value: "button" }, name: { value: "Save changes" } }] };
+      case "Accessibility.getFullAXTree":
+        return { nodes: [{ backendDOMNodeId: 42, role: { value: "button" }, name: { value: "Save changes" } }] };
       case "Page.captureScreenshot":
         return { data: Buffer.from("source-jpeg").toString("base64") };
       case "Page.getLayoutMetrics":
@@ -119,6 +121,15 @@ const commitPendingAnnotation = async (cdp: FakeDebugger, sessionId?: string, co
 };
 
 describe("browser inspector redaction", () => {
+  it("rejects snapshot targets after navigation and checks control before input dispatch", async () => {
+    const { inspector, cdp } = createInspector();
+    const snapshot = await inspector.agentSnapshot() as { snapshotId: string };
+    inspector.handleNavigationReplacement();
+    await expect(inspector.agentTarget(42, snapshot.snapshotId, () => undefined)).rejects.toThrow("stale node");
+    await expect(inspector.dispatchInput({ type: "text", text: "blocked" }, () => { throw new Error("human owns it"); })).rejects.toThrow("human owns it");
+    expect(cdp.commands.some((entry) => entry.method === "Input.insertText")).toBe(false);
+    inspector.dispose();
+  });
   it("ships syntactically valid isolated annotation functions", () => {
     expect(() => new Script(`(${SHOW_RUN_BROWSER_ANNOTATION_EDITOR_SOURCE})`)).not.toThrow();
     expect(() => new Script(`(${CALL_RUN_BROWSER_ANNOTATION_MANAGER_SOURCE})`)).not.toThrow();

@@ -21,6 +21,7 @@ export const Composer = ({
   onSubmit,
   onCancel,
   accessory,
+  hasExternalAttachments = false,
 }: {
   placeholder: string;
   busy?: boolean;
@@ -30,6 +31,7 @@ export const Composer = ({
   /** Shown instead of send while the run/chat is active. */
   onCancel?: () => void;
   accessory?: React.ReactNode;
+  hasExternalAttachments?: boolean;
 }) => {
   const [value, setValue] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -47,7 +49,7 @@ export const Composer = ({
 
   const submit = async () => {
     const trimmed = value.trim();
-    if ((!trimmed && files.length === 0) || busy || disabled || readingFiles) return;
+    if ((!trimmed && files.length === 0 && !hasExternalAttachments) || busy || disabled || readingFiles) return;
     setReadingFiles(true);
     setAttachmentError(null);
     try {
@@ -62,7 +64,7 @@ export const Composer = ({
     }
   };
 
-  const hasInput = Boolean(value.trim() || files.length);
+  const hasInput = Boolean(value.trim() || files.length || hasExternalAttachments);
 
   if (disabled) {
     return (

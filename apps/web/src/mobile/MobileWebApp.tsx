@@ -9,8 +9,8 @@ import "./styles/mobile.css";
  * Mobile entry point.
  *
  * Shares the pairing/session state machine and the remote transport with the desktop shell, and
- * shares nothing else: no desktop component, stylesheet or layout is imported here. The
- * stylesheet import lives in this module so the mobile CSS ships with the mobile chunk only.
+ * keeps its own shell and layout. Focused shared surfaces, including the run browser,
+ * use the mobile stylesheet's explicit Tailwind sources; the desktop stylesheet is not loaded.
  */
 const MobileWebApp = () => {
   const { state, client, pairingHint, pair, disconnect } = useRemoteSession();
