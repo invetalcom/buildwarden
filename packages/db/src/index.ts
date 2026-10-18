@@ -2797,6 +2797,7 @@ export class BuildWardenDatabase {
         input_tokens as inputTokens,
         output_tokens as outputTokens,
         list_visibility as listVisibility,
+        sidebar_section_id as sidebarSectionId,
         run_kind as kind,
         lab_thread_id as labThreadId,
         parent_run_id as parentRunId,
@@ -3120,6 +3121,7 @@ export class BuildWardenDatabase {
         input_tokens as inputTokens,
         output_tokens as outputTokens,
         list_visibility as listVisibility,
+        sidebar_section_id as sidebarSectionId,
         run_kind as kind,
         lab_thread_id as labThreadId,
         parent_run_id as parentRunId,
@@ -3172,6 +3174,7 @@ export class BuildWardenDatabase {
             input_tokens as inputTokens,
             output_tokens as outputTokens,
             list_visibility as listVisibility,
+            sidebar_section_id as sidebarSectionId,
             run_kind as kind,
             lab_thread_id as labThreadId,
             parent_run_id as parentRunId,
@@ -3223,6 +3226,7 @@ export class BuildWardenDatabase {
         input_tokens as inputTokens,
         output_tokens as outputTokens,
         list_visibility as listVisibility,
+        sidebar_section_id as sidebarSectionId,
         run_kind as kind,
         lab_thread_id as labThreadId,
         parent_run_id as parentRunId,
@@ -3487,6 +3491,25 @@ export class BuildWardenDatabase {
       [visibility, timestamp, runId],
     );
     return this.getRun(runId);
+  }
+
+  /** Section moves are organizational only, so `updated_at` stays untouched and run ordering does not change. */
+  updateRunSidebarSection(runId: string, sectionId: string | null): RunRecord {
+    this.getRun(runId);
+    this.run("update runs set sidebar_section_id = ? where id = ?", [sectionId, runId]);
+    return this.getRun(runId);
+  }
+
+  /** Returns runs from deleted sections to Uncategorized. */
+  clearRunSidebarSectionsExcept(sectionIds: readonly string[]): void {
+    if (sectionIds.length === 0) {
+      this.run("update runs set sidebar_section_id = null where sidebar_section_id is not null");
+      return;
+    }
+    this.run(
+      `update runs set sidebar_section_id = null where sidebar_section_id is not null and sidebar_section_id not in (${sectionIds.map(() => "?").join(", ")})`,
+      [...sectionIds],
+    );
   }
 
   appendRunStep(runId: string, eventType: string, title: string, content: string, metadataJson = "{}"): RunStepRecord {
@@ -4825,6 +4848,7 @@ export class BuildWardenDatabase {
         input_tokens integer not null default 0,
         output_tokens integer not null default 0,
         list_visibility text not null default 'default',
+        sidebar_section_id text,
         run_kind text not null default 'standard',
         lab_thread_id text,
         parent_run_id text,
@@ -5479,6 +5503,7 @@ export class BuildWardenDatabase {
        where workspace_type = 'local'`,
     );
     this.ensureColumn("runs", "delegation_enabled", "integer not null default 0");
+    this.ensureColumn("runs", "sidebar_section_id", "text");
     // Inbox metadata stays fixed for the entire attention episode, including event-only updates.
     this.ensureColumn("orchestrations", "attention_started_at", "text");
     // Older databases only have updated_at; preserve their current notice identity on upgrade.

@@ -146,6 +146,13 @@ describe("data-retention cleanup planning", () => {
     expect(result.chatIds).toEqual(["other-old-chat"]);
   });
 
+  it("never selects a run the user moved into a sidebar section", () => {
+    const result = plan({ runs: [runRecord("sectioned", { sidebarSectionId: "section-1" })] });
+
+    expect(result.runIds).toEqual([]);
+    expect(result.deletionRootRunIds).toEqual([]);
+  });
+
   it("blocks an entire orchestration when any child is newer than the threshold", () => {
     const coordinator = runRecord("coordinator");
     const child = runRecord("child", { kind: "orchestration-task", updatedAt: NEW });

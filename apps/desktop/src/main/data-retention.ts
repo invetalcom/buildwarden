@@ -68,7 +68,7 @@ export const buildDataRetentionCleanupPlan = ({
   const bookmarkedChatIds = new Set(chatBookmarks.map((bookmark) => bookmark.originalChatId));
   const protectedRunIds = new Set(
     runs
-      .filter((run) => run.listVisibility === "for-later" || bookmarkedRunIds.has(run.id))
+      .filter((run) => run.listVisibility === "for-later" || Boolean(run.sidebarSectionId) || bookmarkedRunIds.has(run.id))
       .map((run) => run.id),
   );
   const protectedRootRunIds = new Set(

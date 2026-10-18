@@ -37,7 +37,6 @@ describe("UserSettingsTab", () => {
         designScheme={getDesignSchemePreset("midnight-blue")!}
         sidebarContrastStrength={0}
         sidebarRunEntrySize="medium"
-        sidebarGroupRunsByProject={false}
         sidebarHideActiveRuns={hideActiveRuns}
         attentionInboxSettings={attention}
         onAttentionInboxSettingsChange={(next) => { onAttentionChange(next); setAttention(next); }}
@@ -57,7 +56,6 @@ describe("UserSettingsTab", () => {
         onSidebarContrastStrengthChange={vi.fn()}
         onSidebarContrastStrengthCommit={vi.fn()}
         onSidebarRunEntrySizeChange={vi.fn()}
-        onSidebarGroupRunsByProjectChange={vi.fn()}
         onSidebarHideActiveRunsChange={(next) => { onHideActiveRunsChange(next); setHideActiveRuns(next); }}
         onRecentRunDaysDraftChange={vi.fn()}
         onEnableDevModeChange={vi.fn()}
@@ -84,7 +82,6 @@ describe("UserSettingsTab", () => {
     expect(sections.indexOf("Attention inbox")).toBe(sections.indexOf("Sidebar") + 1);
     const hideActiveRuns = container.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Hide active runs from sidebar"]')!;
     expect(hideActiveRuns.getAttribute("aria-checked")).toBe("false");
-    expect(container.textContent!.indexOf("Hide active runs")).toBeGreaterThan(container.textContent!.indexOf("Grouping"));
     expect(container.textContent!.indexOf("Hide active runs")).toBeLessThan(container.textContent!.indexOf("Recent runs window"));
     await act(async () => hideActiveRuns.click());
     expect(onHideActiveRunsChange).toHaveBeenLastCalledWith(true);

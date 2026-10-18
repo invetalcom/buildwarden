@@ -82,7 +82,6 @@ interface SettingsPageProps {
   designScheme: DesignScheme;
   sidebarContrastStrength: number;
   sidebarRunEntrySize: SidebarRunEntrySize;
-  sidebarGroupRunsByProject: boolean;
   sidebarHideActiveRuns: boolean;
   attentionInboxSettings: AttentionInboxSettings;
   onAttentionInboxSettingsChange: (value: AttentionInboxSettings) => void;
@@ -118,7 +117,6 @@ interface SettingsPageProps {
   onSidebarContrastStrengthChange: (value: number) => void;
   onSidebarContrastStrengthCommit: (value: number) => void;
   onSidebarRunEntrySizeChange: (value: SidebarRunEntrySize) => void;
-  onSidebarGroupRunsByProjectChange: (value: boolean) => void;
   onSidebarHideActiveRunsChange: (value: boolean) => void;
   onSaveWorktreeRootOverride: (value: string) => void | Promise<void>;
   onEnableDevModeChange: (value: boolean) => void;
@@ -212,7 +210,6 @@ export const SettingsPage = ({
   designScheme,
   sidebarContrastStrength,
   sidebarRunEntrySize,
-  sidebarGroupRunsByProject,
   sidebarHideActiveRuns,
   attentionInboxSettings,
   onAttentionInboxSettingsChange,
@@ -248,7 +245,6 @@ export const SettingsPage = ({
   onSidebarContrastStrengthChange,
   onSidebarContrastStrengthCommit,
   onSidebarRunEntrySizeChange,
-  onSidebarGroupRunsByProjectChange,
   onSidebarHideActiveRunsChange,
   onSaveWorktreeRootOverride,
   onEnableDevModeChange,
@@ -599,7 +595,6 @@ export const SettingsPage = ({
           designScheme={designScheme}
           sidebarContrastStrength={sidebarContrastStrength}
           sidebarRunEntrySize={sidebarRunEntrySize}
-          sidebarGroupRunsByProject={sidebarGroupRunsByProject}
           sidebarHideActiveRuns={sidebarHideActiveRuns}
           attentionInboxSettings={attentionInboxSettings}
           onAttentionInboxSettingsChange={onAttentionInboxSettingsChange}
@@ -619,7 +614,6 @@ export const SettingsPage = ({
           onSidebarContrastStrengthChange={onSidebarContrastStrengthChange}
           onSidebarContrastStrengthCommit={onSidebarContrastStrengthCommit}
           onSidebarRunEntrySizeChange={onSidebarRunEntrySizeChange}
-          onSidebarGroupRunsByProjectChange={onSidebarGroupRunsByProjectChange}
           onSidebarHideActiveRunsChange={onSidebarHideActiveRunsChange}
           onRecentRunDaysDraftChange={setRecentRunDaysDraft}
           onEnableDevModeChange={onEnableDevModeChange}

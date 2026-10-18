@@ -231,6 +231,7 @@ const api: DesktopApi = {
   updateRunNote: (noteId: string, input) => invoke(IPC_CHANNELS.updateRunNote, noteId, input),
   deleteRunNote: (noteId: string) => invoke(IPC_CHANNELS.deleteRunNote, noteId),
   setRunListVisibility: (runId: string, visibility) => invoke(IPC_CHANNELS.setRunListVisibility, runId, visibility),
+  setRunSidebarSection: (runId: string, sectionId: string | null) => invoke(IPC_CHANNELS.setRunSidebarSection, runId, sectionId),
   getRunWorkspaceFile: (input) => invoke(IPC_CHANNELS.getRunWorkspaceFile, input),
   getRunWorktreeDiff: (runId: string) => invoke(IPC_CHANNELS.getRunWorktreeDiff, runId),
   getRunWorktreeDiffSummary: (runId: string) => invoke(IPC_CHANNELS.getRunWorktreeDiffSummary, runId),

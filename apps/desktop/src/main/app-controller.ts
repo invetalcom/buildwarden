@@ -97,6 +97,8 @@ import {
   getDefaultProviderCapabilities,
   IDE_KIND_LABELS,
   parseNetworkProxySettings,
+  parseSidebarRunSectionsSetting,
+  serializeSidebarRunSectionsSetting,
   parseIdePathConfig,
   parseIntegratedSkillsDisabledSetting,
   MAX_DATA_RETENTION_CLEANUP_DAYS,
@@ -6916,6 +6918,12 @@ export class AppController
       this.db.setSetting(key, trimmed);
       return;
     }
+    if (key === APP_SETTING_KEYS.sidebarRunSections) {
+      const config = parseSidebarRunSectionsSetting(value);
+      this.db.setSetting(key, serializeSidebarRunSectionsSetting(config));
+      this.db.clearRunSidebarSectionsExcept(config.sections.map((section) => section.id));
+      return;
+    }
     this.db.setSetting(key, value);
   }
 
@@ -10772,6 +10780,16 @@ export class AppController
       throw new Error("Unsupported run visibility.");
     }
     return this.db.updateRunListVisibility(runId, visibility);
+  }
+
+  async setRunSidebarSection(runId: string, sectionId: string | null): Promise<RunRecord> {
+    if (sectionId !== null) {
+      const { sections } = parseSidebarRunSectionsSetting(this.db.getSettings()[APP_SETTING_KEYS.sidebarRunSections]);
+      if (!sections.some((section) => section.id === sectionId)) {
+        throw new Error("That sidebar section no longer exists.");
+      }
+    }
+    return this.db.updateRunSidebarSection(runId, sectionId);
   }
 
   private async resolveNetworkProxyRuntimeConfig(): Promise<NetworkProxyRuntimeConfig | undefined> {

@@ -810,6 +810,8 @@ export interface RunRecord {
   inputTokens: number;
   outputTokens: number;
   listVisibility: RunListVisibility;
+  /** User-defined sidebar section; `null`/missing means Uncategorized. Optional for older snapshots. */
+  sidebarSectionId?: string | null;
   /** Derived at read time from unresolved user-input request steps; not stored in the runs table. */
   pendingUserInputRequest?: boolean | number;
   /** Derived for snapshots from the coordinator's durable orchestration; not stored in the runs table. */
@@ -4122,6 +4124,8 @@ export interface DesktopApi {
   updateRunNote(noteId: string, input: UpdateRunNoteInput): Promise<RunNoteRecord>;
   deleteRunNote(noteId: string): Promise<void>;
   setRunListVisibility(runId: string, visibility: RunListVisibility): Promise<RunRecord>;
+  /** Moves a run into a sidebar section; `null` returns it to Uncategorized. */
+  setRunSidebarSection(runId: string, sectionId: string | null): Promise<RunRecord>;
   /** Read one text file inside the run's effective workspace for the sidebar file viewer. */
   getRunWorkspaceFile(input: RunWorkspaceFileInput): Promise<RunWorkspaceFileResult>;
   /** Worktree git diff only; can be slow on large repos. Call after {@link getRunDetail} for progressive loading. */
@@ -4499,6 +4503,7 @@ export type RemoteOperationMap = {
   decideOrchestrationAdoption: DesktopApi["decideOrchestrationAdoption"];
   refreshOrchestrationTeam: DesktopApi["refreshOrchestrationTeam"];
   setRunListVisibility: DesktopApi["setRunListVisibility"];
+  setRunSidebarSection: DesktopApi["setRunSidebarSection"];
   addBookmark: DesktopApi["addBookmark"];
   removeBookmark: DesktopApi["removeBookmark"];
   removeBookmarkById: DesktopApi["removeBookmarkById"];
@@ -4823,6 +4828,7 @@ export const IPC_CHANNELS = {
   updateRunNote: "buildwarden:update-run-note",
   deleteRunNote: "buildwarden:delete-run-note",
   setRunListVisibility: "buildwarden:set-run-list-visibility",
+  setRunSidebarSection: "buildwarden:set-run-sidebar-section",
   getRunWorkspaceFile: "buildwarden:get-run-workspace-file",
   getRunWorktreeDiff: "buildwarden:get-run-worktree-diff",
   getRunWorktreeDiffSummary: "buildwarden:get-run-worktree-diff-summary",
@@ -4939,13 +4945,19 @@ export const APP_SETTING_KEYS = {
   sidebarContrast: "sidebarContrast",
   /** `"small"` | `"medium"` | `"large"`. Controls the height of Recent Runs entries in the sidebar. */
   sidebarRunEntrySize: "sidebarRunEntrySize",
-  /** `"false"` renders Recent Runs as a flat, project-labelled list. Defaults to grouped. */
+  /** Legacy project grouping toggle; the sidebar now groups runs by {@link APP_SETTING_KEYS.sidebarRunSections}. */
   sidebarGroupRunsByProject: "sidebarGroupRunsByProject",
+  /** JSON encoded {@link SidebarRunSectionsConfig}: user-defined sidebar sections that runs can be dragged into. */
+  sidebarRunSections: "sidebarRunSections",
+  /** Project id that limits the sidebar run list; empty shows runs from all projects. */
+  sidebarRunProjectScope: "sidebarRunProjectScope",
+  /** {@link SidebarRunView} status filter applied to the sidebar run list. */
+  sidebarRunView: "sidebarRunView",
   sidebarHideActiveRuns: "sidebarHideActiveRuns",
   attentionInbox: "attentionInbox",
   /** Persisted app sidebar width in CSS pixels. */
   sidebarWidth: "sidebarWidth",
-  /** Number of days shown in the sidebar Recent Runs section. */
+  /** Number of days runs stay in the sidebar's Uncategorized section; runs moved into a section stay visible. */
   recentRunDays: "recentRunDays",
   autoCheckoutRunBranchOnOpen: "autoCheckoutRunBranchOnOpen",
   autoReleaseRunBranchOnLeave: "autoReleaseRunBranchOnLeave",
@@ -5115,6 +5127,63 @@ export const parseSidebarContrastStrengthSetting = (raw: string | number | undef
 };
 
 export const parseSidebarGroupRunsByProjectSetting = (raw: string | undefined): boolean => raw?.trim().toLowerCase() !== "false";
+
+export const SIDEBAR_RUN_SECTION_COLORS = ["accent", "secondary", "success", "warning", "danger", "neutral"] as const;
+export type SidebarRunSectionColor = (typeof SIDEBAR_RUN_SECTION_COLORS)[number];
+
+export interface SidebarRunSection {
+  id: string;
+  name: string;
+  color: SidebarRunSectionColor;
+  collapsed: boolean;
+}
+
+/** Ordered user sections; runs without a valid section land in the built-in Uncategorized section. */
+export interface SidebarRunSectionsConfig {
+  sections: SidebarRunSection[];
+  uncategorizedCollapsed: boolean;
+}
+
+export const SIDEBAR_RUN_SECTION_NAME_MAX_LENGTH = 60;
+export const MAX_SIDEBAR_RUN_SECTIONS = 50;
+
+export const parseSidebarRunSectionsSetting = (raw: string | undefined): SidebarRunSectionsConfig => {
+  const empty: SidebarRunSectionsConfig = { sections: [], uncategorizedCollapsed: false };
+  if (!raw?.trim()) return empty;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return empty;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return empty;
+  const record = parsed as { sections?: unknown; uncategorizedCollapsed?: unknown };
+  const seenIds = new Set<string>();
+  const sections: SidebarRunSection[] = [];
+  for (const entry of Array.isArray(record.sections) ? record.sections : []) {
+    if (!entry || typeof entry !== "object") continue;
+    const { id, name, color, collapsed } = entry as Record<string, unknown>;
+    if (typeof id !== "string" || !id.trim() || seenIds.has(id)) continue;
+    if (typeof name !== "string" || !name.trim()) continue;
+    seenIds.add(id);
+    sections.push({
+      id,
+      name: name.trim().slice(0, SIDEBAR_RUN_SECTION_NAME_MAX_LENGTH),
+      color: SIDEBAR_RUN_SECTION_COLORS.includes(color as SidebarRunSectionColor) ? (color as SidebarRunSectionColor) : "accent",
+      collapsed: collapsed === true,
+    });
+    if (sections.length >= MAX_SIDEBAR_RUN_SECTIONS) break;
+  }
+  return { sections, uncategorizedCollapsed: record.uncategorizedCollapsed === true };
+};
+
+export const serializeSidebarRunSectionsSetting = (config: SidebarRunSectionsConfig): string => JSON.stringify(config);
+
+export const SIDEBAR_RUN_VIEWS = ["all", "active", "done", "failed"] as const;
+export type SidebarRunView = (typeof SIDEBAR_RUN_VIEWS)[number];
+
+export const parseSidebarRunViewSetting = (raw: string | undefined): SidebarRunView =>
+  SIDEBAR_RUN_VIEWS.includes(raw as SidebarRunView) ? (raw as SidebarRunView) : "all";
 
 export const parseSidebarHideActiveRunsSetting = (raw: string | undefined): boolean => raw?.trim().toLowerCase() === "true";
 

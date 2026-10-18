@@ -943,6 +943,14 @@ const bootstrap = async (): Promise<void> => {
     "run:operate",
     true,
   );
+  remoteOperations.register(
+    "setRunSidebarSection",
+    (runId, sectionId) => controller.setRunSidebarSection(runId, sectionId),
+    defineRemoteArgsValidator<"setRunSidebarSection">((args) =>
+      args.length === 2 && typeof args[0] === "string" && (args[1] === null || (typeof args[1] === "string" && args[1].length <= 200))),
+    "run:operate",
+    true,
+  );
   for (const method of ["addBookmark", "removeBookmark", "removeBookmarkById"] as const) {
     remoteOperations.register(method, (id) => controller[method](id), validateSingleRemoteStringArg, "run:operate", true);
   }
@@ -1604,6 +1612,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.updateRunNote, (_, noteId: string, input) => controller.updateRunNote(noteId, input));
   ipcMain.handle(IPC_CHANNELS.deleteRunNote, (_, noteId: string) => controller.deleteRunNote(noteId));
   ipcMain.handle(IPC_CHANNELS.setRunListVisibility, (_, runId: string, visibility) => controller.setRunListVisibility(runId, visibility));
+  ipcMain.handle(IPC_CHANNELS.setRunSidebarSection, (_, runId: string, sectionId: string | null) => controller.setRunSidebarSection(runId, sectionId));
   ipcMain.handle(IPC_CHANNELS.getRunWorkspaceFile, (_, input) => controller.getRunWorkspaceFile(input));
   ipcMain.handle(IPC_CHANNELS.getRunWorktreeDiff, (_, runId: string) => controller.getRunWorktreeDiff(runId));
   ipcMain.handle(IPC_CHANNELS.getRunWorktreeDiffSummary, (_, runId: string) => controller.getRunWorktreeDiffSummary(runId));

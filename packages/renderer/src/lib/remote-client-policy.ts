@@ -72,7 +72,7 @@ export const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
   "cancelRun", "resumeRunFromCheckpoint", "recoverInterruptedRun", "undoRunToLastPrompt", "deleteRun",
   "pauseOrchestration", "resumeOrchestration", "cancelOrchestration", "finishOrchestration", "sendOrchestrationTaskMessage",
   "retryOrchestrationTask", "decideOrchestrationAdoption", "refreshOrchestrationTeam", "setRunListVisibility",
-  "addBookmark", "removeBookmark", "removeBookmarkById", "addRunNote", "updateRunNote", "deleteRunNote", "createChat",
+  "setRunSidebarSection", "addBookmark", "removeBookmark", "removeBookmarkById", "addRunNote", "updateRunNote", "deleteRunNote", "createChat",
   "createRunChat", "respondToChatUserInput", "followUpChat", "cancelChat", "deleteChat", "addChatBookmark", "removeChatBookmark",
   "removeChatBookmarkById", "createProjectTask", "updateProjectTask", "deleteProjectTask", "generateProjectTaskRunPrompt",
   "createProjectAutomation", "updateProjectAutomation", "deleteProjectAutomation", "runProjectAutomationNow",
@@ -93,7 +93,7 @@ export const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
 export const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAccessScope[]>([
   ...[
     "acknowledgeAttentionItem", "acknowledgeAttentionItems", "createRun", "continueRun", "followUpRun", "cancelRunShell", "cancelRun", "resumeRunFromCheckpoint",
-    "recoverInterruptedRun", "undoRunToLastPrompt", "deleteRun", "setRunListVisibility", "addBookmark", "removeBookmark",
+    "recoverInterruptedRun", "undoRunToLastPrompt", "deleteRun", "setRunListVisibility", "setRunSidebarSection", "addBookmark", "removeBookmark",
     "removeBookmarkById", "addRunNote", "updateRunNote", "deleteRunNote", "pauseOrchestration", "resumeOrchestration",
     "cancelOrchestration", "finishOrchestration", "sendOrchestrationTaskMessage", "retryOrchestrationTask",
   ].map((method) => [method as RemoteApiMethod, ["run:operate"] as const] as const),

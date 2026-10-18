@@ -16,7 +16,7 @@ import {
   parseRunTimelineDensitySetting,
   parseSidebarContrastStrengthSetting,
   parseAttentionInboxSettings,
-  parseSidebarGroupRunsByProjectSetting,
+  parseSidebarRunViewSetting,
   parseSidebarHideActiveRunsSetting,
   parseSidebarRunEntrySizeSetting,
   parseDesignScheme,
@@ -1587,7 +1587,7 @@ export const App = () => {
   useEffect(() => setSidebarContrastStrength(persistedSidebarContrastStrength), [persistedSidebarContrastStrength]);
   const sidebarRunEntrySize = parseSidebarRunEntrySizeSetting(snapshot.settings[APP_SETTING_KEYS.sidebarRunEntrySize]);
   const sidebarHideActiveRuns = parseSidebarHideActiveRunsSetting(snapshot.settings[APP_SETTING_KEYS.sidebarHideActiveRuns]);
-  const sidebarGroupRunsByProject = parseSidebarGroupRunsByProjectSetting(snapshot.settings[APP_SETTING_KEYS.sidebarGroupRunsByProject]);
+  const sidebarRunView = parseSidebarRunViewSetting(snapshot.settings[APP_SETTING_KEYS.sidebarRunView]);
   const runTimelineDensity = parseRunTimelineDensitySetting(snapshot.settings[APP_SETTING_KEYS.runTimelineDensity]);
   const updateRunTimelineDensity = useCallback(
     (density: RunTimelineDensity) => {
@@ -2418,6 +2418,31 @@ export const App = () => {
         clearRunSelectionState(null);
       }
     });
+  };
+
+  // Sidebar organization saves skip handleAction so they do not flip the app-wide busy state.
+  const moveRunToSidebarSection = async (runId: string, sectionId: string | null) => {
+    try {
+      if (!buildwarden) {
+        throw new Error("The Electron desktop bridge is unavailable.");
+      }
+      await buildwarden.setRunSidebarSection(runId, sectionId);
+      await loadSnapshot();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not move the run.");
+    }
+  };
+
+  const updateSidebarSetting = async (key: string, value: string) => {
+    try {
+      if (!buildwarden) {
+        throw new Error("The Electron desktop bridge is unavailable.");
+      }
+      await buildwarden.setAppSetting(key, value);
+      await loadSnapshot();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not save the sidebar setting.");
+    }
   };
 
   const restoreRunFromForLater = async (runId: string) => {
@@ -3962,6 +3987,8 @@ export const App = () => {
     }
   });
   const sidebarOnSetRunForLater = useStableCallback((_: string, runId: string) => void setRunForLater(runId));
+  const sidebarOnMoveRunToSection = useStableCallback((runId: string, sectionId: string | null) => moveRunToSidebarSection(runId, sectionId));
+  const sidebarOnSettingChange = useStableCallback((key: string, value: string) => updateSidebarSetting(key, value));
   const sidebarOnOpenSettings = useStableCallback(() => openSettingsPage());
   const sidebarOnWidthCommit = useStableCallback((width: number) => persistSidebarWidth(width));
   const sidebarOnToggleCollapsed = useStableCallback(() => setSidebarCollapsed((current) => !current));
@@ -4010,7 +4037,6 @@ export const App = () => {
               designScheme={designScheme}
               sidebarContrastStrength={sidebarContrastStrength}
               sidebarRunEntrySize={sidebarRunEntrySize}
-              sidebarGroupRunsByProject={sidebarGroupRunsByProject}
               sidebarHideActiveRuns={sidebarHideActiveRuns}
               enableDevMode={snapshot.settings[APP_SETTING_KEYS.enableDevMode] === "true"}
               appLogDirPath={appLogDirPath}
@@ -4114,7 +4140,6 @@ export const App = () => {
                 await buildwarden.setAppSetting(APP_SETTING_KEYS.attentionInbox, JSON.stringify(value));
                 await loadSnapshot();
               })}
-              onSidebarGroupRunsByProjectChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.sidebarGroupRunsByProject, value)}
               onSidebarHideActiveRunsChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.sidebarHideActiveRuns, value)}
               worktreeRootOverrideSettingValue={snapshot.settings[APP_SETTING_KEYS.worktreeRootOverride] ?? ""}
               onSaveWorktreeRootOverride={(value) =>
@@ -4724,7 +4749,9 @@ export const App = () => {
         width={sidebarWidth}
         recentRunDays={recentRunDays}
         runEntrySize={sidebarRunEntrySize}
-        groupRunsByProject={sidebarGroupRunsByProject}
+        runSectionsSetting={snapshot.settings[APP_SETTING_KEYS.sidebarRunSections]}
+        runView={sidebarRunView}
+        runProjectScope={snapshot.settings[APP_SETTING_KEYS.sidebarRunProjectScope] ?? ""}
         hideActiveRuns={sidebarHideActiveRuns}
         attentionInboxSetting={snapshot.settings[APP_SETTING_KEYS.attentionInbox]}
         bookmarksCount={snapshot.bookmarks.length + snapshot.chatBookmarks.length}
@@ -4744,6 +4771,8 @@ export const App = () => {
         onContinueRun={sidebarOnContinueRun}
         onDeleteRun={sidebarOnDeleteRun}
         onSetRunForLater={sidebarOnSetRunForLater}
+        onMoveRunToSection={sidebarOnMoveRunToSection}
+        onSidebarSettingChange={sidebarOnSettingChange}
         pendingDeleteRunIds={pendingDeleteRunIds}
         onOpenSettings={sidebarOnOpenSettings}
         onWidthCommit={sidebarOnWidthCommit}

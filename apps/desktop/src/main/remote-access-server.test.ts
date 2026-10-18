@@ -192,6 +192,7 @@ describe("remote operation registry", () => {
       | "decideOrchestrationAdoption"
       | "refreshOrchestrationTeam"
       | "setRunListVisibility"
+      | "setRunSidebarSection"
       | "addBookmark"
       | "removeBookmark"
       | "removeBookmarkById"

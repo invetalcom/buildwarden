@@ -232,7 +232,6 @@ export type UserSettingsTabProps = {
   designScheme: DesignScheme;
   sidebarContrastStrength: number;
   sidebarRunEntrySize: SidebarRunEntrySize;
-  sidebarGroupRunsByProject: boolean;
   sidebarHideActiveRuns: boolean;
   attentionInboxSettings: AttentionInboxSettings;
   onAttentionInboxSettingsChange: (value: AttentionInboxSettings) => void;
@@ -252,7 +251,6 @@ export type UserSettingsTabProps = {
   onSidebarContrastStrengthChange: (value: number) => void;
   onSidebarContrastStrengthCommit: (value: number) => void;
   onSidebarRunEntrySizeChange: (value: SidebarRunEntrySize) => void;
-  onSidebarGroupRunsByProjectChange: (value: boolean) => void;
   onSidebarHideActiveRunsChange: (value: boolean) => void;
   onRecentRunDaysDraftChange: (value: string) => void;
   onEnableDevModeChange: (value: boolean) => void;
@@ -274,7 +272,6 @@ export const UserSettingsTab = ({
   designScheme,
   sidebarContrastStrength,
   sidebarRunEntrySize,
-  sidebarGroupRunsByProject,
   sidebarHideActiveRuns,
   attentionInboxSettings,
   onAttentionInboxSettingsChange,
@@ -294,7 +291,6 @@ export const UserSettingsTab = ({
   onSidebarContrastStrengthChange,
   onSidebarContrastStrengthCommit,
   onSidebarRunEntrySizeChange,
-  onSidebarGroupRunsByProjectChange,
   onSidebarHideActiveRunsChange,
   onRecentRunDaysDraftChange,
   onEnableDevModeChange,
@@ -373,20 +369,6 @@ export const UserSettingsTab = ({
         </div>
       </SettingsRow>
       <SettingsRow
-        title="Grouping"
-        description="Show collapsible project groups. When off, runs are sorted together and each entry displays its project name."
-      >
-        <div className={`${rowControlClass} flex items-center justify-end gap-3`}>
-          <span className="text-xs font-medium text-[var(--ec-muted)]">{sidebarGroupRunsByProject ? "Grouped" : "Flat list"}</span>
-          <Switch
-            checked={sidebarGroupRunsByProject}
-            onCheckedChange={onSidebarGroupRunsByProjectChange}
-            disabled={busy}
-            aria-label="Group sidebar runs by project"
-          />
-        </div>
-      </SettingsRow>
-      <SettingsRow
         title="Hide active runs"
         description="Hide queued, preparing, and running runs from the sidebar. They remain visible in project run lists and All Runs. Off by default."
       >
@@ -401,7 +383,7 @@ export const UserSettingsTab = ({
       </SettingsRow>
       <SettingsRow
         title="Recent runs window"
-        description={`Controls how many days appear in the sidebar Recent Runs group. Default is ${recentRunDaysDefault} days.`}
+        description={`How long runs stay in the sidebar's Uncategorized section. Runs you move into a section stay visible. Default is ${recentRunDaysDefault} days.`}
       >
         <div className={`${rowControlClass} space-y-2`}>
           <div className="flex flex-wrap items-center justify-start gap-2 md:justify-end">

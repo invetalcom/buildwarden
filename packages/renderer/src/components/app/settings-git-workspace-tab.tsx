@@ -461,7 +461,7 @@ export const GitWorkspaceSettingsTab = ({
         </SettingsRow>
         <SettingsRow
           title="Delete old data at startup"
-          description="At startup, offer to remove runs, chats, Project Lab threads, and loops not updated within the threshold. Bookmarked and For later data stays protected."
+          description="At startup, offer to remove runs, chats, Project Lab threads, and loops not updated within the threshold. Bookmarked, For later, and runs moved into a sidebar section stay protected."
         >
           <DataRetentionSettingsControl
             busy={busy}

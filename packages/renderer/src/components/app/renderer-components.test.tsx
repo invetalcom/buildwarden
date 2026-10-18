@@ -1085,7 +1085,8 @@ describe("renderer component states", () => {
       width: 312,
       recentRunDays: 2,
       runEntrySize: "medium",
-      groupRunsByProject: true,
+      runView: "all",
+      runProjectScope: "",
       bookmarksCount: 0,
       chatsCount: 0,
       bookmarkedRunIds: new Set<string>(),
@@ -1103,6 +1104,8 @@ describe("renderer component states", () => {
       onContinueRun: vi.fn(),
       onDeleteRun: vi.fn(),
       onSetRunForLater: vi.fn(),
+      onMoveRunToSection: vi.fn(async () => {}),
+      onSidebarSettingChange: vi.fn(async () => {}),
       pendingDeleteRunIds: {},
       onOpenSettings: vi.fn(),
       onWidthCommit: vi.fn(),
@@ -1131,8 +1134,8 @@ describe("renderer component states", () => {
         runRecord({ id: orchestrationStatus, prompt: `Orchestration ${orchestrationStatus}`, status: "running", orchestrationStatus, createdAt: now })),
     ];
     const visibilityProject = { ...projectSnapshot, runs: visibilityRuns, orchestratedRuns: [] };
-    const renderVisibility = (hideActiveRuns: boolean, groupRunsByProject = false, runs = visibilityRuns) => renderToStaticMarkup(
-      <Sidebar {...sidebarProps} projects={[{ ...visibilityProject, runs }]} hideActiveRuns={hideActiveRuns} groupRunsByProject={groupRunsByProject} />,
+    const renderVisibility = (hideActiveRuns: boolean, runs = visibilityRuns) => renderToStaticMarkup(
+      <Sidebar {...sidebarProps} projects={[{ ...visibilityProject, runs }]} hideActiveRuns={hideActiveRuns} />,
     );
     const shown = renderVisibility(false);
     const hidden = renderVisibility(true);
@@ -1143,11 +1146,9 @@ describe("renderer component states", () => {
     expect(hidden).not.toContain("Orchestration active");
     for (const status of ["completed", "failed", "cancelled"]) expect(hidden).toContain(`Visibility ${status}`);
     for (const status of ["attention", "paused", "waiting"]) expect(hidden).toContain(`Orchestration ${status}`);
-    for (const grouped of [false, true]) {
-      expect(renderVisibility(true, grouped, [visibilityRuns[2]!])).toContain("No inactive runs");
-      expect(renderVisibility(true, grouped, [visibilityRuns[2]!])).not.toContain("data-sidebar-run-group");
-      expect(renderVisibility(false, grouped, [visibilityRuns[2]!])).not.toContain("No inactive runs");
-    }
+    expect(renderVisibility(true, [visibilityRuns[2]!])).toContain("No inactive runs");
+    expect(renderVisibility(true, [visibilityRuns[2]!])).not.toContain("data-sidebar-run-section");
+    expect(renderVisibility(false, [visibilityRuns[2]!])).not.toContain("No inactive runs");
     expect(visibilityProject.runs).toBe(visibilityRuns);
     expect(visibilityProject.runs.filter((entry) => entry.status === "running")).toHaveLength(5);
     const hierarchyParent = runRecord({ id: "visibility-parent", prompt: "Visibility parent", createdAt: now });
@@ -1156,7 +1157,7 @@ describe("renderer component states", () => {
       parentRunId: hierarchyParent.id, rootRunId: hierarchyParent.id, createdAt: now,
     });
     const renderHierarchyVisibility = (parentStatus: RunRecord["status"], childStatus: RunRecord["status"]) => renderToStaticMarkup(
-      <Sidebar {...sidebarProps} hideActiveRuns groupRunsByProject={false} projects={[{
+      <Sidebar {...sidebarProps} hideActiveRuns projects={[{
         ...projectSnapshot,
         runs: [{ ...hierarchyParent, status: parentStatus }],
         orchestratedRuns: [{ ...hierarchyChild, status: childStatus }],
@@ -1171,7 +1172,7 @@ describe("renderer component states", () => {
     expect(completedChildVisible).toContain("Visibility child");
     expect(renderHierarchyVisibility("running", "running")).toContain("No inactive runs");
     // A new status snapshot makes the same run visible again.
-    expect(renderVisibility(true, false, [{ ...visibilityRuns[2]!, status: "completed" }])).toContain("Visibility running");
+    expect(renderVisibility(true, [{ ...visibilityRuns[2]!, status: "completed" }])).toContain("Visibility running");
 
     for (const collapsed of [false, true]) {
       const disabledInbox = renderToStaticMarkup(
@@ -1192,10 +1193,12 @@ describe("renderer component states", () => {
     const flatSidebarMarkup = renderToStaticMarkup(
       <Sidebar
         {...sidebarProps}
-        projects={[{ ...projectSnapshot, orchestratedRuns: [sidebarSubagent] }]}
+        projects={[
+          { ...projectSnapshot, orchestratedRuns: [sidebarSubagent] },
+          { ...projectSnapshot, project: { ...projectSnapshot.project, id: "project-2", name: "Second project" }, runs: [], orchestratedRuns: [] },
+        ]}
         recentRunDays={10_000}
         runEntrySize="small"
-        groupRunsByProject={false}
       />,
       {} as DesktopApi,
       remoteRunCapabilities,
@@ -1206,7 +1209,7 @@ describe("renderer component states", () => {
     expect(flatSidebarMarkup).toContain('data-run-hierarchy-toggle="run-1"');
     expect(flatSidebarMarkup).toContain('aria-expanded="false"');
     expect(flatSidebarMarkup).not.toContain("Inspect the sidebar hierarchy");
-    expect(flatSidebarMarkup).not.toContain("data-sidebar-run-group");
+    expect(flatSidebarMarkup).toContain('data-sidebar-run-section="uncategorized"');
 
     const recentTimestamp = new Date().toISOString();
     const oldTimestamp = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -1237,7 +1240,6 @@ describe("renderer component states", () => {
           orchestratedRuns: [recentSidebarChild],
         }]}
         recentRunDays={2}
-        groupRunsByProject={false}
       />,
       {} as DesktopApi,
       remoteRunCapabilities,
