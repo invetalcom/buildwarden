@@ -1,4 +1,5 @@
 export * from "./workspace-setup";
+export * from "./run-organization";
 import type { RunWorkspaceSetup, WorkspaceSetupProfile } from "./workspace-setup";
 export * from "./provider-metadata";
 export * from "./model-execution-profiles";
@@ -2973,6 +2974,8 @@ export interface ChatSummary {
 }
 
 export interface AppSnapshot {
+  /** Optional for snapshots from older hosts. Missing records are Uncategorized. */
+  runOrganization?: import("./run-organization").RunOrganizationSnapshot;
   projects: ProjectSnapshot[];
   providerAccounts: ProviderAccountRecord[];
   models: ModelRecord[];
@@ -4018,6 +4021,7 @@ export interface DesktopApi {
   resolveStartupAutomationCatchUp(automationIds: string[]): Promise<RunRecord[]>;
   onAutomationStarted(listener: (payload: AutomationStartedNotificationPayload) => void): () => void;
   onProjectTaskChanged(listener: (payload: ProjectTaskChangedPayload) => void): () => void;
+  onRunOrganizationChanged(listener: () => void): () => void;
   runProjectLab(input: RunProjectLabInput): Promise<ProjectLabThreadRecord[]>;
   deleteProjectLabThread(threadId: string): Promise<void>;
   createProjectLoop(input: CreateProjectLoopInput): Promise<ProjectLoopRecord>;
@@ -4122,6 +4126,11 @@ export interface DesktopApi {
   updateRunNote(noteId: string, input: UpdateRunNoteInput): Promise<RunNoteRecord>;
   deleteRunNote(noteId: string): Promise<void>;
   setRunListVisibility(runId: string, visibility: RunListVisibility): Promise<RunRecord>;
+  createRunSection(name: string): Promise<import("./run-organization").RunOrganizationSnapshot>;
+  renameRunSection(sectionId: string, name: string): Promise<import("./run-organization").RunOrganizationSnapshot>;
+  deleteRunSection(sectionId: string): Promise<import("./run-organization").RunOrganizationSnapshot>;
+  reorderRunSections(sectionIds: string[]): Promise<import("./run-organization").RunOrganizationSnapshot>;
+  updateRunOrganization(runId: string, input: import("./run-organization").UpdateRunOrganizationInput): Promise<import("./run-organization").RunOrganizationSnapshot>;
   /** Read one text file inside the run's effective workspace for the sidebar file viewer. */
   getRunWorkspaceFile(input: RunWorkspaceFileInput): Promise<RunWorkspaceFileResult>;
   /** Worktree git diff only; can be slow on large repos. Call after {@link getRunDetail} for progressive loading. */
@@ -4278,6 +4287,7 @@ export const REMOTE_ACCESS_SERVER_CAPABILITIES = [
 
 export type RemoteAccessServerCapability = (typeof REMOTE_ACCESS_SERVER_CAPABILITIES)[number];
 export type RemoteStreamEventType =
+  | "run-organization"
   | "run"
   | "chat"
   | "warning"
@@ -4290,6 +4300,7 @@ export type RemoteStreamEventType =
   | "forge";
 
 export interface RemoteStreamEventPayloadMap {
+  "run-organization": { changedAt: string };
   run: RunEvent;
   chat: ChatEvent;
   warning: AppWarning;
@@ -4499,6 +4510,11 @@ export type RemoteOperationMap = {
   decideOrchestrationAdoption: DesktopApi["decideOrchestrationAdoption"];
   refreshOrchestrationTeam: DesktopApi["refreshOrchestrationTeam"];
   setRunListVisibility: DesktopApi["setRunListVisibility"];
+  createRunSection: DesktopApi["createRunSection"];
+  renameRunSection: DesktopApi["renameRunSection"];
+  deleteRunSection: DesktopApi["deleteRunSection"];
+  reorderRunSections: DesktopApi["reorderRunSections"];
+  updateRunOrganization: DesktopApi["updateRunOrganization"];
   addBookmark: DesktopApi["addBookmark"];
   removeBookmark: DesktopApi["removeBookmark"];
   removeBookmarkById: DesktopApi["removeBookmarkById"];
@@ -4741,6 +4757,7 @@ export const IPC_CHANNELS = {
   resolveStartupAutomationCatchUp: "buildwarden:resolve-startup-automation-catch-up",
   automationStarted: "buildwarden:automation-started",
   projectTaskChanged: "buildwarden:project-task-changed",
+  runOrganizationChanged: "buildwarden:run-organization-changed",
   runProjectLab: "buildwarden:run-project-lab",
   deleteProjectLabThread: "buildwarden:delete-project-lab-thread",
   createProjectLoop: "buildwarden:create-project-loop",
@@ -4823,6 +4840,11 @@ export const IPC_CHANNELS = {
   updateRunNote: "buildwarden:update-run-note",
   deleteRunNote: "buildwarden:delete-run-note",
   setRunListVisibility: "buildwarden:set-run-list-visibility",
+  createRunSection: "buildwarden:create-run-section",
+  renameRunSection: "buildwarden:rename-run-section",
+  deleteRunSection: "buildwarden:delete-run-section",
+  reorderRunSections: "buildwarden:reorder-run-sections",
+  updateRunOrganization: "buildwarden:update-run-organization",
   getRunWorkspaceFile: "buildwarden:get-run-workspace-file",
   getRunWorktreeDiff: "buildwarden:get-run-worktree-diff",
   getRunWorktreeDiffSummary: "buildwarden:get-run-worktree-diff-summary",

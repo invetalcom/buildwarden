@@ -32,7 +32,6 @@ import {
 import type { ProjectPageTab } from "./project-page-tabs";
 import { ProviderBrandIcon } from "./provider-brand-icons";
 import { projectSidebarContext } from "./sidebar-project-context";
-import { recentRunOrderTimestamp } from "./sidebar-run-ordering";
 import { clampSidebarWidth } from "./sidebar-width";
 import {
   resolveRunDisplayStatus,
@@ -47,7 +46,8 @@ import { runForgeReadinessColor, runForgeReadinessLabel } from "./run-forge-ui";
 import { AgentRunHoverCard } from "./AgentRunHoverCard";
 import { HoverCard } from "../ui/hover-card";
 import { formatRunDuration, formatRunRelativeTime } from "./run-summary-format";
-import { buildRunHierarchyRows, findRunHierarchyScopeRoots, runHierarchyLabel, type RunHierarchyRow } from "./run-hierarchy";
+import { runHierarchyLabel, type RunHierarchyRow } from "./run-hierarchy";
+import { SidebarRunSections } from "./SidebarRunSections";
 import { RunHierarchyIndent, RunHierarchyToggle } from "./RunHierarchy";
 
 const ACTIVE_RUN_STATUSES = new Set(["queued", "preparing", "running"]);
@@ -63,6 +63,8 @@ type RunContextMenuState = {
 
 interface SidebarProps {
   projects: AppSnapshot["projects"];
+  runOrganization?: AppSnapshot["runOrganization"];
+  onRunOrganizationChange?: (organization: NonNullable<AppSnapshot["runOrganization"]>) => void;
   providerAccounts?: AppSnapshot["providerAccounts"];
   landingSelected: boolean;
   allRunsSelected: boolean;
@@ -144,8 +146,6 @@ const projectToolVisible = (
   return tab !== "branches" && tab !== "reviews";
 };
 
-const formatRecentRunWindowLabel = (days: number) => `${days} ${days === 1 ? "day" : "days"}`;
-const compareRecentRuns = (left: SidebarRun, right: SidebarRun) => recentRunOrderTimestamp(right) - recentRunOrderTimestamp(left);
 
 const runDotClassName = (status: RunDisplayStatus) => {
   if (status === "completed") return "bg-[var(--ec-success)]";
@@ -214,6 +214,8 @@ const SIDEBAR_RUN_ENTRY_SIZE_STYLES: Record<
 
 const SidebarComponent = ({
   projects,
+  runOrganization,
+  onRunOrganizationChange,
   providerAccounts = [],
   landingSelected,
   allRunsSelected,
@@ -262,7 +264,7 @@ const SidebarComponent = ({
   const canOpenRunContextMenu = canStartRuns || canManageRunBookmarks || canMoveRunsForLater;
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [projectToolsExpanded, setProjectToolsExpanded] = useState(true);
-  const [expandedRecentProjectIds, setExpandedRecentProjectIds] = useState<Record<string, boolean>>({});
+  const [organizeRunId, setOrganizeRunId] = useState<string | null>(null);
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<RunContextMenuState | null>(null);
   const [isResizing, setIsResizing] = useState(false);
@@ -280,8 +282,6 @@ const SidebarComponent = ({
     currentProjectBranchStatus,
   );
   const totalActiveRuns = projects.reduce((sum, project) => sum + project.activeRuns.length, 0);
-  const recentRunWindowMs = recentRunDays * 24 * 60 * 60 * 1000;
-  const recentRunWindowLabel = formatRecentRunWindowLabel(recentRunDays);
   const sortedProjectsForDropdown = useMemo(
     () =>
       [...projects].sort((left, right) =>
@@ -293,77 +293,7 @@ const SidebarComponent = ({
     () => new Map(providerAccounts.map((provider) => [provider.id, provider.providerType])),
     [providerAccounts],
   );
-
-  // Filter only sidebar collections, retaining attention/paused states and the
-  // original snapshot used by project navigation and the other run lists.
-  const recentRunProjects = useMemo(() => {
-    if (!hideActiveRuns) return projects;
-    const visible = (run: SidebarRun) => !ACTIVE_RUN_STATUSES.has(resolveRunDisplayStatus(run.status, run.orchestrationStatus));
-    return projects.map((entry) => ({
-      ...entry,
-      runs: entry.runs.filter(visible),
-      orchestratedRuns: entry.orchestratedRuns.filter(visible),
-    }));
-  }, [hideActiveRuns, projects]);
-
-  const recentRunsByProject = useMemo(() => {
-    const now = Date.now();
-    return recentRunProjects
-      .map((entry) => {
-        const recentActivityById = new Map<string, SidebarRun>();
-        for (const run of [...entry.runs, ...entry.orchestratedRuns]) {
-          const timestamp = recentRunOrderTimestamp(run);
-          if (Number.isFinite(timestamp) && now - timestamp <= recentRunWindowMs) {
-            recentActivityById.set(run.id, run);
-          }
-        }
-        const recentActivityRuns = [...recentActivityById.values()]
-          .sort((a, b) => recentRunOrderTimestamp(b) - recentRunOrderTimestamp(a));
-        const runs = findRunHierarchyScopeRoots(
-          recentActivityRuns,
-          entry.runs,
-          entry.orchestratedRuns,
-          [...entry.runs, ...entry.forLaterRuns],
-        );
-        return {
-          project: entry,
-          runs,
-          newestActivityAt: recentActivityRuns[0] ? recentRunOrderTimestamp(recentActivityRuns[0]) : 0,
-        };
-      })
-      .filter((entry) => entry.runs.length > 0)
-      .sort((a, b) => b.newestActivityAt - a.newestActivityAt);
-  }, [recentRunProjects, recentRunWindowMs]);
-
-  const recentRuns = useMemo(
-    () =>
-      recentRunsByProject
-        .flatMap(({ project, runs }) => runs.map((run) => ({ project, run })))
-        .sort((left, right) => recentRunOrderTimestamp(right.run) - recentRunOrderTimestamp(left.run)),
-    [recentRunsByProject],
-  );
-
-  const recentRunTreeRows = useMemo(() => {
-    const projectById = new Map(projects.map((entry) => [entry.project.id, entry]));
-    return buildRunHierarchyRows(
-      recentRuns.map(({ run }) => run),
-      recentRunProjects.flatMap((entry) => entry.orchestratedRuns),
-      { expandedRunIds, compareRuns: compareRecentRuns },
-    ).flatMap((row) => {
-      const project = projectById.get(row.run.projectId);
-      return project ? [{ project, row }] : [];
-    });
-  }, [expandedRunIds, projects, recentRunProjects, recentRuns]);
-
-  useEffect(() => {
-    const firstProjectId = recentRunsByProject[0]?.project.project.id;
-    const currentProjectId = selectedProject?.project.id;
-    setExpandedRecentProjectIds((current) => ({
-      ...current,
-      ...(firstProjectId && current[firstProjectId] === undefined ? { [firstProjectId]: true } : {}),
-      ...(currentProjectId && current[currentProjectId] === undefined ? { [currentProjectId]: true } : {}),
-    }));
-  }, [recentRunsByProject, selectedProject?.project.id]);
+  const tagsByRunId = useMemo(() => new Map(runOrganization?.runs.map((run) => [run.runId, run.tags])), [runOrganization]);
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
@@ -443,10 +373,6 @@ const SidebarComponent = ({
     setIsResizing(true);
   };
 
-  const toggleRecentProject = (projectId: string) => {
-    setExpandedRecentProjectIds((current) => ({ ...current, [projectId]: !(current[projectId] ?? false) }));
-  };
-
   const toggleRunHierarchy = useCallback((runId: string) => {
     setExpandedRunIds((current) => {
       const next = new Set(current);
@@ -483,6 +409,7 @@ const SidebarComponent = ({
     showProjectName: boolean,
   ) => {
     const { run, depth, descendantCount, expanded } = row;
+    const runTags = tagsByRunId.get(run.id) ?? [];
     const highlighted = highlightedRunId === run.id;
     const waitingForInput = run.pendingUserInputRequest === true || run.pendingUserInputRequest === 1;
     const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
@@ -545,6 +472,9 @@ const SidebarComponent = ({
           <span className="truncate">{formatRunRelativeTime(run.finishedAt ?? run.updatedAt)}</span>
           <span className="size-1 shrink-0 rounded-full bg-[var(--ec-faint)]" />
           <span className="shrink-0">{formatRunDuration(run)}</span>
+          {runTags.length > 0 ? <span className="min-w-0 truncate font-sans text-[var(--ec-accent)]" title={runTags.join(", ")}>
+            {runTags.map((tag) => "#" + tag).join(" ")}
+          </span> : null}
           </span>
         </span>
         <span
@@ -810,57 +740,11 @@ const SidebarComponent = ({
       <Separator />
 
       <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto py-1.5">
-        <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--ec-faint)]">
-          Recent Runs ({recentRunWindowLabel})
-        </div>
-        {recentRunsByProject.length === 0 ? (
-          <div className="px-3 py-2 text-xs text-[var(--ec-muted)]">{hideActiveRuns ? "No inactive runs" : "No runs"} in the last {recentRunWindowLabel}.</div>
-        ) : groupRunsByProject ? (
-          <div className={cn("px-2", runEntryStyles.groupGap)}>
-            {recentRunsByProject.map(({ project, runs }) => {
-              const expanded = expandedRecentProjectIds[project.project.id] ?? false;
-              const runTreeRows = buildRunHierarchyRows(runs, project.orchestratedRuns, {
-                expandedRunIds,
-                compareRuns: compareRecentRuns,
-              });
-              return (
-                <div
-                  key={project.project.id}
-                  data-sidebar-run-group={project.project.id}
-                  className="overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-0.5 shadow-[var(--ec-panel-shadow)]"
-                >
-                  <button
-                    type="button"
-                    className="flex h-7 w-full min-w-0 items-center gap-1.5 rounded-md px-2 text-left text-xs text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
-                    onClick={() => toggleRecentProject(project.project.id)}
-                    onDoubleClick={() => selectProjectFeature(project.project.id, "overview")}
-                  >
-                    {expanded ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />}
-                    <span
-                      className={cn(
-                        "size-2 shrink-0 rounded-full ring-2 ring-[var(--ec-panel-soft)]",
-                        project.activeRuns.length > 0 ? "bg-[var(--ec-accent)] shadow-[0_0_0_3px_var(--ec-accent-soft)]" : "bg-[var(--ec-faint)]",
-                      )}
-                    />
-                    <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--ec-text)]">{project.project.name}</span>
-                    <span className="rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel)] px-1.5 py-0.5 font-mono text-[10px] leading-none text-[var(--ec-muted)]">
-                      {runs.length}
-                    </span>
-                  </button>
-                  {expanded ? (
-                    <div className={cn("px-0.5 pb-0.5", runEntryStyles.rowGap)}>
-                      {runTreeRows.map((row) => renderRecentRunEntry(project, row, false))}
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className={cn("px-2", runEntryStyles.rowGap)}>
-            {recentRunTreeRows.map(({ project, row }) => renderRecentRunEntry(project, row, true))}
-          </div>
-        )}
+        <SidebarRunSections projects={projects} organization={runOrganization} onOrganizationChange={onRunOrganizationChange}
+          recentRunDays={recentRunDays} hideActiveRuns={hideActiveRuns} groupRunsByProject={groupRunsByProject}
+          runRowGapClassName={runEntryStyles.rowGap} onSelectProject={(projectId) => selectProjectFeature(projectId, "overview")}
+          expandedRunIds={expandedRunIds} highlightedRunId={highlightedRunId} organizeRunId={organizeRunId}
+          onCloseOrganizer={() => setOrganizeRunId(null)} renderRun={renderRecentRunEntry} />
       </div>
 
       <div className="shrink-0 border-t border-[var(--ec-border)] px-2 py-1.5">
@@ -891,6 +775,12 @@ const SidebarComponent = ({
                 className="fixed z-[30001] min-w-[11rem] glass-popover py-1"
                 style={{ left: contextMenu.x, top: contextMenu.y }}
               >
+                {canMoveRunsForLater && runOrganization !== undefined ? (
+                  <button type="button" className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--ec-text)] hover:bg-[var(--ec-hover)]"
+                    onClick={() => { setOrganizeRunId(contextMenu.runId); setContextMenu(null); }}>
+                    <FolderGit2 className="size-3.5" />Move to section / edit tags
+                  </button>
+                ) : null}
                 {canStartRuns ? (
                   <button
                     className={cn(

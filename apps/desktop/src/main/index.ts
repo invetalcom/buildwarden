@@ -18,6 +18,9 @@ import {
   DESIGN_SCHEME_PRESETS,
   IPC_CHANNELS,
   isAttentionAcknowledgementBatch,
+  isRunSectionName,
+  isUpdateRunOrganizationInput,
+  type UpdateRunOrganizationInput,
   getDefaultDesignScheme,
   isUiTheme,
   parseSupportedIdeKind,
@@ -943,6 +946,17 @@ const bootstrap = async (): Promise<void> => {
     "run:operate",
     true,
   );
+  remoteOperations.register("createRunSection", (name) => controller.createRunSection(name),
+    defineRemoteArgsValidator<"createRunSection">((args) => args.length === 1 && isRunSectionName(args[0])), "run:operate", true);
+  remoteOperations.register("renameRunSection", (id, name) => controller.renameRunSection(id, name),
+    defineRemoteArgsValidator<"renameRunSection">((args) => args.length === 2 && typeof args[0] === "string" && isRunSectionName(args[1])), "run:operate", true);
+  remoteOperations.register("deleteRunSection", (id) => controller.deleteRunSection(id), validateSingleRemoteStringArg, "run:operate", true);
+  remoteOperations.register("reorderRunSections", (ids) => controller.reorderRunSections(ids),
+    defineRemoteArgsValidator<"reorderRunSections">((args) => args.length === 1 && Array.isArray(args[0]) &&
+      args[0].length <= 100 && args[0].every((id) => typeof id === "string")), "run:operate", true);
+  remoteOperations.register("updateRunOrganization", (id, input) => controller.updateRunOrganization(id, input),
+    defineRemoteArgsValidator<"updateRunOrganization">((args) => args.length === 2 && typeof args[0] === "string" &&
+      isUpdateRunOrganizationInput(args[1])), "run:operate", true);
   for (const method of ["addBookmark", "removeBookmark", "removeBookmarkById"] as const) {
     remoteOperations.register(method, (id) => controller[method](id), validateSingleRemoteStringArg, "run:operate", true);
   }
@@ -1179,6 +1193,7 @@ const bootstrap = async (): Promise<void> => {
         hostEvents.subscribe("warning", (payload) => listener({ event: "warning", payload })),
         hostEvents.subscribe("loop", (payload) => listener({ event: "loop", payload })),
         hostEvents.subscribe("task", (payload) => listener({ event: "task", payload })),
+        hostEvents.subscribe("runOrganization", (payload) => listener({ event: "run-organization", payload })),
         hostEvents.subscribe("orchestration", (payload) => listener({ event: "orchestration", payload })),
         hostEvents.subscribe("forge", (payload) => listener({ event: "forge", payload })),
         hostTerminal.onData((payload) => listener({ event: "terminal-data", payload })),
@@ -1604,6 +1619,11 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.updateRunNote, (_, noteId: string, input) => controller.updateRunNote(noteId, input));
   ipcMain.handle(IPC_CHANNELS.deleteRunNote, (_, noteId: string) => controller.deleteRunNote(noteId));
   ipcMain.handle(IPC_CHANNELS.setRunListVisibility, (_, runId: string, visibility) => controller.setRunListVisibility(runId, visibility));
+  ipcMain.handle(IPC_CHANNELS.createRunSection, (_, name: string) => controller.createRunSection(name));
+  ipcMain.handle(IPC_CHANNELS.renameRunSection, (_, id: string, name: string) => controller.renameRunSection(id, name));
+  ipcMain.handle(IPC_CHANNELS.deleteRunSection, (_, id: string) => controller.deleteRunSection(id));
+  ipcMain.handle(IPC_CHANNELS.reorderRunSections, (_, ids: string[]) => controller.reorderRunSections(ids));
+  ipcMain.handle(IPC_CHANNELS.updateRunOrganization, (_, id: string, input: UpdateRunOrganizationInput) => controller.updateRunOrganization(id, input));
   ipcMain.handle(IPC_CHANNELS.getRunWorkspaceFile, (_, input) => controller.getRunWorkspaceFile(input));
   ipcMain.handle(IPC_CHANNELS.getRunWorktreeDiff, (_, runId: string) => controller.getRunWorktreeDiff(runId));
   ipcMain.handle(IPC_CHANNELS.getRunWorktreeDiffSummary, (_, runId: string) => controller.getRunWorktreeDiffSummary(runId));

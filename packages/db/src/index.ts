@@ -1,4 +1,6 @@
 import { validateUserInputAnswers } from "@buildwarden/shared";
+import { isRunSectionName, isUpdateRunOrganizationInput, UNCATEGORIZED_RUN_SECTION_ID,
+  type RunSectionRecord, type RunOrganizationRecord, type RunOrganizationSnapshot, type UpdateRunOrganizationInput } from "@buildwarden/shared";
 import { getResponseSourceText, type ChatSearchDetail } from "@buildwarden/shared";
 import type { RunVerificationRecord } from "@buildwarden/shared";
 import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
@@ -566,6 +568,7 @@ export class BuildWardenDatabase {
     todayStart.setHours(0, 0, 0, 0);
     return {
       projects,
+      runOrganization: this.getRunOrganization(),
       providerAccounts: this.listProviderAccounts(),
       models: this.listModels(),
       selectedProjectId,
@@ -580,6 +583,85 @@ export class BuildWardenDatabase {
         today: this.getTokenUsageSince(todayStart.toISOString()),
       },
     };
+  }
+
+  getRunOrganization(): RunOrganizationSnapshot {
+    const sections = this.all<RunSectionRecord>("select id, name, position from run_sections order by position, id");
+    const runs = this.all<{ runId: string; sectionId: string | null; tagsJson: string }>(
+      "select run_id as runId, section_id as sectionId, tags_json as tagsJson from run_organization",
+    ).map(({ tagsJson, ...record }): RunOrganizationRecord => ({ ...record, tags: JSON.parse(tagsJson) as string[] }));
+    return { sections, runs };
+  }
+
+  private validateRunSectionName(name: string, exceptId?: string): string {
+    if (!isRunSectionName(name)) throw new Error("Use a section name of 1–80 characters other than Uncategorized.");
+    const trimmed = name.trim();
+    if (this.getRunOrganization().sections.some((section) => section.id !== exceptId &&
+      section.name.toLowerCase() === trimmed.toLowerCase())) throw new Error("A section with this name already exists.");
+    return trimmed;
+  }
+
+  private requireRunSection(sectionId: string): void {
+    if (typeof sectionId !== "string" || !this.first("select id from run_sections where id = ?", [sectionId])) {
+      throw new Error("Run section not found.");
+    }
+  }
+
+  createRunSection(name: string): RunOrganizationSnapshot {
+    return this.transaction(() => {
+      const trimmed = this.validateRunSectionName(name);
+      if (this.getRunOrganization().sections.length >= 100) throw new Error("You can create up to 100 run sections.");
+      this.run("insert into run_sections (id, name, position) values (?, ?, (select coalesce(max(position), -1) + 1 from run_sections))", [createId(), trimmed]);
+      return this.getRunOrganization();
+    });
+  }
+
+  renameRunSection(sectionId: string, name: string): RunOrganizationSnapshot {
+    return this.transaction(() => {
+      this.requireRunSection(sectionId);
+      const trimmed = this.validateRunSectionName(name, sectionId);
+      this.run("update run_sections set name = ? where id = ?", [trimmed, sectionId]);
+      return this.getRunOrganization();
+    });
+  }
+
+  deleteRunSection(sectionId: string): RunOrganizationSnapshot {
+    return this.transaction(() => {
+      this.requireRunSection(sectionId);
+      this.run("update run_organization set section_id = null where section_id = ?", [sectionId]);
+      this.run("delete from run_sections where id = ?", [sectionId]);
+      return this.getRunOrganization();
+    });
+  }
+
+  reorderRunSections(sectionIds: string[]): RunOrganizationSnapshot {
+    return this.transaction(() => {
+      const current = this.getRunOrganization().sections;
+      if (!Array.isArray(sectionIds) || sectionIds.length !== current.length ||
+        new Set(sectionIds).size !== current.length || current.some((section) => !sectionIds.includes(section.id))) {
+        throw new Error("Section order must contain every custom section exactly once.");
+      }
+      sectionIds.forEach((id, position) => this.run("update run_sections set position = ? where id = ?", [position, id]));
+      return this.getRunOrganization();
+    });
+  }
+
+  updateRunOrganization(runId: string, input: UpdateRunOrganizationInput): RunOrganizationSnapshot {
+    if (!isUpdateRunOrganizationInput(input)) throw new Error("Invalid run organization. Use up to 20 tags of 1–40 characters.");
+    return this.transaction(() => {
+      this.getRun(runId);
+      const current = this.first<{ sectionId: string | null; tagsJson: string }>(
+        "select section_id as sectionId, tags_json as tagsJson from run_organization where run_id = ?", [runId],
+      );
+      const requestedSection = input.sectionId === UNCATEGORIZED_RUN_SECTION_ID ? null : input.sectionId;
+      const sectionId = requestedSection === undefined ? current?.sectionId ?? null : requestedSection;
+      if (sectionId !== null) this.requireRunSection(sectionId);
+      const tagsJson = input.tags === undefined ? current?.tagsJson ?? "[]" :
+        JSON.stringify([...new Set(input.tags.map((tag) => tag.trim().toLowerCase()))]);
+      this.run(`insert into run_organization (run_id, section_id, tags_json) values (?, ?, ?)
+        on conflict(run_id) do update set section_id = excluded.section_id, tags_json = excluded.tags_json`, [runId, sectionId, tagsJson]);
+      return this.getRunOrganization();
+    });
   }
 
   listBookmarks(): BookmarkSummary[] {
@@ -2325,6 +2407,7 @@ export class BuildWardenDatabase {
     this.run("delete from run_restore_points where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from chats where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from run_workspace_setup where run_id in (select id from runs where project_id = ?)", [projectId]);
+    this.run("delete from run_organization where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from runs where project_id = ?", [projectId]);
     this.run("delete from project_lab_events where thread_id in (select id from project_lab_threads where project_id = ?)", [projectId]);
     this.run("delete from project_lab_threads where project_id = ?", [projectId]);
@@ -2840,6 +2923,7 @@ export class BuildWardenDatabase {
   }
 
   deleteRun(runId: string): void {
+    this.run("delete from run_organization where run_id = ?", [runId]);
     this.derivedRunStateCache.delete(runId);
     this.run("update project_tasks set run_id = null, updated_at = ? where run_id = ?", [nowIso(), runId]);
     this.run("delete from attention_acknowledgements where run_id = ?", [runId]);
@@ -5424,6 +5508,18 @@ export class BuildWardenDatabase {
   }
 
   private applySchemaMigrations(): void {
+    // Additive migration: existing runs need no rows and remain Uncategorized.
+    this.exec(`
+      create table if not exists run_sections (
+        id text primary key, name text not null, position integer not null
+      );
+      create table if not exists run_organization (
+        run_id text primary key references runs(id) on delete cascade,
+        section_id text references run_sections(id) on delete set null,
+        tags_json text not null default '[]'
+      );
+      create index if not exists idx_run_organization_section on run_organization(section_id);
+    `);
     this.ensureColumn("projects", "project_kind", "text not null default 'git'");
     this.ensureColumn("runs", "workspace_vcs", "text not null default 'git'");
     this.ensureColumn("project_loops", "pr_review_policy", "text not null default 'none'");

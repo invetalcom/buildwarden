@@ -84,6 +84,11 @@ const api: DesktopApi = {
     ipcRenderer.on(IPC_CHANNELS.automationStarted, wrapped);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.automationStarted, wrapped);
   },
+  onRunOrganizationChanged: (listener) => {
+    const wrapped = () => listener();
+    ipcRenderer.on(IPC_CHANNELS.runOrganizationChanged, wrapped);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.runOrganizationChanged, wrapped);
+  },
   onProjectTaskChanged: (listener: (payload: ProjectTaskChangedPayload) => void) => {
     const wrapped = (_event: Electron.IpcRendererEvent, payload: ProjectTaskChangedPayload) => listener(payload);
     ipcRenderer.on(IPC_CHANNELS.projectTaskChanged, wrapped);
@@ -231,6 +236,11 @@ const api: DesktopApi = {
   updateRunNote: (noteId: string, input) => invoke(IPC_CHANNELS.updateRunNote, noteId, input),
   deleteRunNote: (noteId: string) => invoke(IPC_CHANNELS.deleteRunNote, noteId),
   setRunListVisibility: (runId: string, visibility) => invoke(IPC_CHANNELS.setRunListVisibility, runId, visibility),
+  createRunSection: (name) => invoke(IPC_CHANNELS.createRunSection, name),
+  renameRunSection: (sectionId, name) => invoke(IPC_CHANNELS.renameRunSection, sectionId, name),
+  deleteRunSection: (sectionId) => invoke(IPC_CHANNELS.deleteRunSection, sectionId),
+  reorderRunSections: (sectionIds) => invoke(IPC_CHANNELS.reorderRunSections, sectionIds),
+  updateRunOrganization: (runId, input) => invoke(IPC_CHANNELS.updateRunOrganization, runId, input),
   getRunWorkspaceFile: (input) => invoke(IPC_CHANNELS.getRunWorkspaceFile, input),
   getRunWorktreeDiff: (runId: string) => invoke(IPC_CHANNELS.getRunWorktreeDiff, runId),
   getRunWorktreeDiffSummary: (runId: string) => invoke(IPC_CHANNELS.getRunWorktreeDiffSummary, runId),

@@ -1,4 +1,4 @@
-import { parseWorkspaceSetupSettings } from "@buildwarden/shared";
+import { parseWorkspaceSetupSettings, type RunOrganizationSnapshot, type UpdateRunOrganizationInput } from "@buildwarden/shared";
 import { spawn } from "node:child_process";
 import { createHash, randomInt } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, statSync, type Dirent } from "node:fs";
@@ -1237,6 +1237,7 @@ export class AppController
       | "onProjectForgeRequestNotification"
       | "onRunForgeRequestChanged"
       | "onProjectTaskChanged"
+      | "onRunOrganizationChanged"
       | "onOrchestrationChanged"
       | "showAppMenu"
       | "openSystemTerminalAtPath"
@@ -10765,6 +10766,18 @@ export class AppController
       attachmentNames: attachments.map((attachment) => attachment.fileName),
       attachments,
     };
+  }
+
+  private publishRunOrganization(snapshot: RunOrganizationSnapshot): RunOrganizationSnapshot {
+    this.events.publish("runOrganization", { changedAt: new Date().toISOString() });
+    return snapshot;
+  }
+  async createRunSection(name: string) { return this.publishRunOrganization(this.db.createRunSection(name)); }
+  async renameRunSection(sectionId: string, name: string) { return this.publishRunOrganization(this.db.renameRunSection(sectionId, name)); }
+  async deleteRunSection(sectionId: string) { return this.publishRunOrganization(this.db.deleteRunSection(sectionId)); }
+  async reorderRunSections(sectionIds: string[]) { return this.publishRunOrganization(this.db.reorderRunSections(sectionIds)); }
+  async updateRunOrganization(runId: string, input: UpdateRunOrganizationInput) {
+    return this.publishRunOrganization(this.db.updateRunOrganization(runId, input));
   }
 
   async setRunListVisibility(runId: string, visibility: RunListVisibility): Promise<RunRecord> {

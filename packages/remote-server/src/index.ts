@@ -63,6 +63,7 @@ const PAIRING_RATE_LIMIT_WINDOW_MS = 60_000;
 const PAIRING_RATE_LIMIT_ATTEMPTS = 5;
 const DEFAULT_WEBSOCKET_AUTHENTICATION_TIMEOUT_MS = 5_000;
 const REMOTE_STREAM_EVENTS = [
+  "run-organization",
   "run",
   "chat",
   "warning",
@@ -953,6 +954,7 @@ const isOrchestrationEventPayload = (value: unknown): boolean =>
   (value.deletedRunIds === undefined || (Array.isArray(value.deletedRunIds) && value.deletedRunIds.every((runId) => typeof runId === "string")));
 
 const isRemoteEventPayload = (event: RemoteStreamEventType, payload: unknown): boolean => {
+  if (event === "run-organization") return isPlainObject(payload) && typeof payload.changedAt === "string";
   if (event === "run") return isRunEventPayload(payload);
   if (event === "chat") return isRunEventPayload(payload) && isPlainObject(payload) && typeof payload.chatId === "string";
   if (event === "warning") {

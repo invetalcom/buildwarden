@@ -94,6 +94,7 @@ export interface RemoteBuildWardenClientOptions {
 }
 
 const REMOTE_EVENT_TYPES = new Set<RemoteStreamEventType>([
+  "run-organization",
   "run",
   "chat",
   "warning",
@@ -111,6 +112,7 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 
 const isRemoteEventPayload = (event: RemoteStreamEventType, payload: unknown): boolean => {
   if (!isObject(payload)) return false;
+  if (event === "run-organization") return typeof payload.changedAt === "string";
   if (event === "run") {
     return typeof payload.runId === "string" && typeof payload.type === "string" &&
       typeof payload.title === "string" && typeof payload.content === "string" && typeof payload.createdAt === "string";
@@ -413,6 +415,7 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     onAppWarning: (listener) => subscribe("warning", listener),
     onProjectLoopChanged: (listener) => subscribe("loop", listener),
     onProjectTaskChanged: (listener) => subscribe("task", listener),
+    onRunOrganizationChanged: (listener) => subscribe("run-organization", listener),
     onOrchestrationChanged: (listener) => subscribe("orchestration", listener),
     onRunForgeRequestChanged: (listener) => subscribe("forge", listener),
     onRunTerminalData: (listener) => subscribe("terminal-data", listener),

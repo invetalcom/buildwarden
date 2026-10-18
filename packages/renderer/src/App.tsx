@@ -3192,7 +3192,7 @@ export const App = () => {
   const handleRunDragStart = useCallback((event: ReactDragEvent<HTMLButtonElement>, projectId: string, runId: string) => {
     const payload: RunDragPayload = { type: "buildwarden/run", projectId, runId };
     const serialized = JSON.stringify(payload);
-    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.effectAllowed = "copyMove";
     event.dataTransfer.setData(RUN_DRAG_MIME_TYPE, serialized);
     event.dataTransfer.setData("text/plain", serialized);
   }, []);
@@ -3932,6 +3932,17 @@ export const App = () => {
   // Stable-identity props for the memoized Sidebar: without these, inline
   // closures would change identity every render and defeat the memo.
   const sidebarBookmarkedRunIds = useMemo(() => new Set(snapshot.bookmarks.map((b) => b.originalRunId)), [snapshot.bookmarks]);
+  const runOrganizationAvailable = snapshot.runOrganization !== undefined;
+  useEffect(() => {
+    // Older remote hosts reject subscriptions containing unknown event types.
+    if (!runOrganizationAvailable) return;
+    return buildwarden.onRunOrganizationChanged?.(() => {
+      void loadSnapshot().catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "Could not refresh run sections."));
+    });
+  }, [buildwarden, loadSnapshot, runOrganizationAvailable]);
+  const sidebarOnRunOrganizationChange = useStableCallback((organization: NonNullable<AppSnapshot["runOrganization"]>) => {
+    setSnapshot((current) => ({ ...current, runOrganization: organization }));
+  });
   const sidebarOnSelectLanding = useStableCallback(() => void handleLandingSelect());
   const sidebarOnSelectAllRuns = useStableCallback(() => void handleAllRunsSelect());
   const sidebarOnSelectBookmarks = useStableCallback(() => handleBookmarksSelect());
@@ -4724,6 +4735,8 @@ export const App = () => {
         width={sidebarWidth}
         recentRunDays={recentRunDays}
         runEntrySize={sidebarRunEntrySize}
+        runOrganization={snapshot.runOrganization}
+        onRunOrganizationChange={sidebarOnRunOrganizationChange}
         groupRunsByProject={sidebarGroupRunsByProject}
         hideActiveRuns={sidebarHideActiveRuns}
         attentionInboxSetting={snapshot.settings[APP_SETTING_KEYS.attentionInbox]}
