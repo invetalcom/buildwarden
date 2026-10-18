@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BuildWardenDatabase } from "@buildwarden/db";
@@ -740,6 +740,7 @@ describe("AppController settings and lightweight workflows", () => {
         throw new Error("push rejected");
       }),
       hasRemoteBranch: vi.fn(async () => false),
+      getPushRemote: vi.fn(async () => "origin"),
       deleteProjectBranch: vi.fn(async () => undefined),
     };
     const controllerInternals = harness.controller as unknown as {
@@ -2002,13 +2003,38 @@ describe("AppController settings and lightweight workflows", () => {
     expect(appendOrchestrationEvent).toHaveBeenCalledTimes(1);
   });
 
+  it("refuses repository subfolders and BuildWarden run workspaces as projects", async () => {
+    const harness = createHarness();
+    tempDirs.push(harness.logDir);
+    const root = mkdtempSync(join(tmpdir(), "buildwarden-add-project-"));
+    tempDirs.push(root);
+    const managedWorkspace = join(root, ".buildwarden-worktrees", "repo", "project-run-1");
+    mkdirSync(managedWorkspace, { recursive: true });
+    const subfolder = join(root, "repo", "packages");
+    mkdirSync(subfolder, { recursive: true });
+    const controller = harness.controller as unknown as { gitService: { validateProject: (path: string) => Promise<unknown> } };
+    controller.gitService.validateProject = vi.fn(async (path: string) => ({
+      repoPath: path,
+      repoRoot: join(root, "repo"),
+      repoName: "packages",
+      baseBranch: "main",
+      isGitRepo: true,
+      isWorktree: false,
+      isDirty: false,
+    }));
+
+    await expect(harness.controller.addProject({ repoPath: managedWorkspace })).rejects.toThrow("BuildWarden created for a run");
+    await expect(harness.controller.addProject({ repoPath: subfolder })).rejects.toThrow("inside the Git repository");
+  });
+
   it("retries transient Windows worktree locks during run deletion", async () => {
     const run = {
       id: "run-1",
       projectId: project.id,
       workspaceType: "worktree",
       workspaceVcs: "git",
-      worktreePath: "C:\\managed\\run-1",
+      // Platform separators: run cleanup derives the generated branch name from the worktree folder.
+      worktreePath: join("C:", "managed", "buildwarden-run-1"),
       branchName: "buildwarden-run-1",
     } as RunRecord;
     const removeWorktree = vi.fn()
@@ -2025,7 +2051,37 @@ describe("AppController settings and lightweight workflows", () => {
     await controller.deleteRunResources(project.repoPath, run, "run");
 
     expect(removeWorktree).toHaveBeenCalledTimes(2);
-    expect(removeWorktree).toHaveBeenLastCalledWith(project.repoPath, run.worktreePath, run.branchName);
+    expect(removeWorktree).toHaveBeenLastCalledWith(project.repoPath, run.worktreePath, run.branchName, undefined);
+  });
+
+  it("keeps a user-named run branch and honors preserveBranch during run deletion", async () => {
+    const run = {
+      id: "run-1",
+      projectId: project.id,
+      workspaceType: "worktree",
+      workspaceVcs: "git",
+      worktreePath: join("C:", "managed", "buildwarden-run-1"),
+      branchName: "feature/published",
+    } as RunRecord;
+    const removeWorktree = vi.fn().mockResolvedValue(undefined);
+    const harness = createHarness();
+    tempDirs.push(harness.logDir);
+    const controller = harness.controller as unknown as {
+      gitService: { removeWorktree: typeof removeWorktree };
+      deleteRunResources: (
+        repoPath: string,
+        run: RunRecord,
+        context: "run" | "project",
+        options?: { preserveBranch?: boolean },
+      ) => Promise<void>;
+    };
+    controller.gitService.removeWorktree = removeWorktree;
+
+    await controller.deleteRunResources(project.repoPath, run, "run");
+    await controller.deleteRunResources(project.repoPath, { ...run, branchName: "buildwarden-run-1" }, "run", { preserveBranch: true });
+
+    expect(removeWorktree).toHaveBeenNthCalledWith(1, project.repoPath, run.worktreePath, undefined, undefined);
+    expect(removeWorktree).toHaveBeenNthCalledWith(2, project.repoPath, run.worktreePath, undefined, undefined);
   });
 
   it("does not expose Git command details when a worktree summary fails", async () => {
@@ -2276,7 +2332,7 @@ describe("AppController settings and lightweight workflows", () => {
     try {
       await expect(harness.controller.deleteRun(run.id)).resolves.toBeUndefined();
       expect(cleanup).toHaveBeenCalledTimes(2);
-      expect(resources).toHaveBeenCalledWith(project.repoPath, run, "run");
+      expect(resources).toHaveBeenCalledWith(project.repoPath, run, "run", {});
       expect(harness.db.deleteProviderSessionRuntime).toHaveBeenCalledWith("chat-1", "chat");
       expect(harness.db.deleteProviderSessionRuntime).toHaveBeenCalledWith("chat-2", "chat");
       expect(harness.db.deleteRun).toHaveBeenCalledWith(run.id);

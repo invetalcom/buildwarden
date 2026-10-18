@@ -30,6 +30,7 @@ import {
   summarizeFolderAgainstSnapshot,
 } from "./folder-diff";
 import { createFolderWorkspaceCopy, removeFolderWorkspaceCopy } from "./folder-workspace";
+import { MANAGED_WORKSPACE_DIR } from "./folder-workspace-constants";
 import { getHarnessTypeForProvider } from "./harness-adapters";
 import { nextAutomationRunAt, parseAutomationCron, validateAutomationTimeZone } from "./automation-schedule";
 import { createProjectPrReviewProvider } from "./pr-review/pr-review-provider-factory";
@@ -47,6 +48,7 @@ import { BuildWardenDatabase, type ModelDeletionTargets } from "@buildwarden/db"
 import {
   computePrMrDiffViaFetch,
   GitService,
+  isSameWorktreePath,
   readProjectActivityLog,
   readProjectReleaseHistory,
   readRecentCommitLog,
@@ -132,6 +134,7 @@ import {
   type FetchProjectPrMrDiffInput,
   type FollowUpChatOptions,
   type GetProjectForgeRequestDetailsInput,
+  type GitProjectValidation,
   type ListProjectForgeRequestsInput,
   type ListAvailableProviderModelsInput,
   type ListAvailableProviderModelsResult,
@@ -1320,6 +1323,17 @@ export class AppController
 
   private getFolderSnapshotRoot(): string {
     return getFolderSnapshotRoot(this.db.getFilePath());
+  }
+
+  private getConfiguredWorktreeRoot(): string | undefined {
+    return this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
+  }
+
+  /** Worktrees, branches and runs all operate on the whole repository, so a subfolder cannot be a Git project. */
+  private assertProjectFolderIsRepositoryRoot(repoPath: string, validation: GitProjectValidation): void {
+    if (!isSameWorktreePath(validation.repoRoot, repoPath)) {
+      throw new Error(`This folder is inside the Git repository at ${validation.repoRoot}. Add the repository root as the project instead.`);
+    }
   }
 
   private requireGitProject(project: ProjectRecord, featureLabel: string): void {
@@ -2633,6 +2647,7 @@ export class AppController
     if (!validation.isGitRepo) {
       throw new Error("This project folder is not a Git repository yet.");
     }
+    this.assertProjectFolderIsRepositoryRoot(project.repoPath, validation);
     const converted = this.db.updateProjectKind(project.id, "git", validation.baseBranch);
     this.db.touchProject(converted.id);
     return converted;
@@ -2749,13 +2764,19 @@ export class AppController
       if (branchName === currentBranch) {
         throw new Error("You cannot delete the currently checked out branch.");
       }
+      const hasLocalBranch = await this.gitService.hasLocalBranch(project.repoPath, branchName);
+      // Decide before deleting linked runs: their history must survive a refused deletion.
+      if (hasLocalBranch && input.force !== true && !(await this.gitService.isBranchMerged(project.repoPath, branchName))) {
+        throw new Error(`The branch "${branchName}" is not fully merged. Force delete it to discard its unmerged commits.`);
+      }
 
       const linkedRuns = this.listRunsLinkedToProjectBranch(projectId, branchName);
       for (const run of linkedRuns) {
-        await this.deleteRun(run.id);
+        // Run cleanup would force-delete the branch; the deletion below honors the user's choice instead.
+        await this.deleteRun(run.id, { preserveBranch: true });
       }
 
-      if (await this.gitService.hasLocalBranch(project.repoPath, branchName)) {
+      if (hasLocalBranch && (await this.gitService.hasLocalBranch(project.repoPath, branchName))) {
         await this.gitService.deleteProjectBranch(project.repoPath, branchName, input.force === true);
       }
       return this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
@@ -2807,7 +2828,14 @@ export class AppController
     if (!existsSync(repoPath) || !statSync(repoPath).isDirectory()) {
       throw new Error("The selected path is not a folder.");
     }
+    // A run workspace added as a project would be cleaned up underneath it, or vice versa.
+    if (resolve(repoPath).split(/[\\/]+/).some((segment) => segment.toLowerCase() === MANAGED_WORKSPACE_DIR)) {
+      throw new Error("This folder is a workspace that BuildWarden created for a run. Add the original project folder instead.");
+    }
     const validation = await this.gitService.validateProject(repoPath);
+    if (validation.isGitRepo) {
+      this.assertProjectFolderIsRepositoryRoot(repoPath, validation);
+    }
     const kind: ProjectRecord["kind"] = validation.isGitRepo ? "git" : "folder";
 
     const project = this.db.addProject({
@@ -3232,7 +3260,7 @@ export class AppController
     const workspaceType = input.workspaceType ?? (project.kind === "folder" ? "copy" : "worktree");
     const workspaceVcs: RunWorkspaceVcs = project.kind === "folder" ? "folder" : "git";
     const workspaceSetupProfile = this.getWorkspaceSetupProfile(project.id) ?? null;
-    const configuredWorktreeRoot = this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
+    const configuredWorktreeRoot = this.getConfiguredWorktreeRoot();
     let branchName: string;
     let worktreePath: string;
 
@@ -3267,11 +3295,16 @@ export class AppController
         branchName = await this.gitService.getCurrentBranch(project.repoPath);
         worktreePath = project.repoPath;
       } else {
+        const baseBranch = input.baseBranch?.trim() || project.baseBranch;
+        const startPoint =
+          this.db.getSettings()[APP_SETTING_KEYS.worktreeStartFromRemoteBase] === "true"
+            ? await this.gitService.resolveFreshBaseStartPoint(project.repoPath, baseBranch)
+            : baseBranch;
         const gitWorkspace = await this.gitService.createWorktreeForRun(
           project.repoPath,
           project.name,
           crypto.randomUUID(),
-          input.baseBranch?.trim() || project.baseBranch,
+          startPoint,
           configuredWorktreeRoot,
           workspaceSetupProfile?.dependencies !== "isolated",
         );
@@ -6481,7 +6514,12 @@ export class AppController
     }
     const url = result.url;
     const requestLabel = result.requestKind === "merge-request" ? "Merge request" : "Pull request";
-    const eventTitle = result.mode === "created" ? `${requestLabel} created` : `${requestLabel} draft opened`;
+    const eventTitle =
+      result.mode === "created"
+        ? `${requestLabel} created`
+        : result.mode === "existing"
+          ? `${requestLabel} already open`
+          : `${requestLabel} draft opened`;
 
     await this.appendRunEvent(run.id, "status", eventTitle, url, {
       targetBranch: trimmedTargetBranch,
@@ -6508,6 +6546,13 @@ export class AppController
       },
       createdAt: new Date().toISOString(),
     });
+    if (result.descriptionOmitted === true) {
+      // The draft link left the description out to stay short enough to open; keep it for pasting.
+      await this.appendRunEvent(run.id, "status", `${requestLabel} description to paste`, trimmedDescription, {
+        url,
+        descriptionOmittedFromDraftUrl: true,
+      });
+    }
     this.markLinkedRunTaskInReview(run, url);
     await this.syncRunForgeRequest(run.id, true, true, url);
 
@@ -8501,7 +8546,7 @@ export class AppController
     }
   }
 
-  async deleteRun(runId: string): Promise<void> {
+  async deleteRun(runId: string, options: { preserveBranch?: boolean } = {}): Promise<void> {
     const run = this.db.getRun(runId);
     const ownedTask = this.db.getOrchestrationTaskByChildRunId(runId);
     if (ownedTask) {
@@ -8539,7 +8584,7 @@ export class AppController
       this.db.deleteProviderSessionRuntime(runChat.id, "chat");
       await this.removeChatWorkspaceBestEffort(runChat.id);
     }
-    await this.deleteRunResources(project.repoPath, run, "run");
+    await this.deleteRunResources(project.repoPath, run, "run", options);
     this.db.deleteRun(runId);
     this.notifyRunDeleted(runId);
     this.db.deleteSetting(SELECTED_RUN_KEY);
@@ -9046,11 +9091,14 @@ export class AppController
   }
 
   async undoRunToLastPrompt(runId: string): Promise<void> {
+    const initialRun = this.db.getRun(runId);
+    this.requireGitRun(initialRun, "Undo to last prompt");
+    return this.serializeProjectBranchMutation(initialRun.projectId, () => this.undoRunToLastPromptUnlocked(runId));
+  }
+
+  private async undoRunToLastPromptUnlocked(runId: string): Promise<void> {
     const run = this.db.getRun(runId);
-    this.requireGitRun(run, "Undo to last prompt");
-    if (this.runWorkers.has(runId)) {
-      throw new Error("Wait for the active run to finish before undoing changes.");
-    }
+    this.requireIdleRunWorkspace(run, "undoing changes");
     const restorePoint = this.getRunPromptRestorePoint(runId);
     if (!restorePoint) {
       throw new Error("No prompt restore point is available for this run.");
@@ -9059,17 +9107,23 @@ export class AppController
       await this.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
     }
 
-    await this.gitService.restorePromptRestorePatch(run.worktreePath, restorePoint.patch);
+    const { safetyPatchPath } = await this.gitService.restorePromptRestorePatch(run.worktreePath, restorePoint.patch, {
+      expectedHeadSha: restorePoint.headSha,
+      safetyPatchPath: join(dirname(this.db.getFilePath()), "restore-backups", `${runId}-${Date.now().toString()}.patch`),
+    });
     this.clearRunCheckpoint(runId);
 
-    const description =
+    const description = [
       restorePoint.commandType === "follow-up"
         ? "Restored the run worktree to the state before the latest follow-up prompt."
-        : "Restored the run worktree to the state before the initial prompt.";
+        : "Restored the run worktree to the state before the initial prompt.",
+      ...(safetyPatchPath ? [`The discarded changes were saved to ${safetyPatchPath} and can be reapplied with \`git apply\`.`] : []),
+    ].join(" ");
     await this.appendRunEvent(runId, "status", "Changes undone to last prompt", description, {
       undoneToLastPrompt: true,
       commandType: restorePoint.commandType,
       restorePointCreatedAt: restorePoint.createdAt,
+      ...(safetyPatchPath ? { discardedChangesPatchPath: safetyPatchPath } : {}),
     });
     this.emitEvent({
       runId,
@@ -10559,11 +10613,15 @@ export class AppController
       this.clearRunPromptRestorePoint(runId);
       return;
     }
-    const patch = await this.gitService.createPromptRestorePatch(run.worktreePath);
+    const [patch, headSha] = await Promise.all([
+      this.gitService.createPromptRestorePatch(run.worktreePath),
+      this.gitService.getHeadCommitSha(run.worktreePath).catch(() => null),
+    ]);
     this.setRunPromptRestorePoint(runId, {
       createdAt: new Date().toISOString(),
       commandType,
       patch,
+      headSha,
     });
   }
 
@@ -10996,10 +11054,21 @@ export class AppController
       });
   }
 
-  private async removeRunWorktreeForDeletion(repoPath: string, run: RunRecord): Promise<void> {
+  /**
+   * Run cleanup force-deletes only the branch BuildWarden generated for the worktree (named like its
+   * folder). A branch the user named, for example when publishing, may hold unpushed work and is kept.
+   */
+  private getOwnedRunBranchForDeletion(run: RunRecord, options: { preserveBranch?: boolean }): string | undefined {
+    if (options.preserveBranch === true || run.branchName !== basename(run.worktreePath)) {
+      return undefined;
+    }
+    return run.branchName;
+  }
+
+  private async removeRunWorktreeForDeletion(repoPath: string, run: RunRecord, branchName: string | undefined): Promise<void> {
     for (let attempt = 0; ; attempt += 1) {
       try {
-        await this.gitService.removeWorktree(repoPath, run.worktreePath, run.branchName);
+        await this.gitService.removeWorktree(repoPath, run.worktreePath, branchName, this.getConfiguredWorktreeRoot());
         return;
       } catch (error) {
         const retryDelay = WORKTREE_CLEANUP_RETRY_DELAYS_MS[attempt];
@@ -11019,7 +11088,7 @@ export class AppController
   ): Promise<void> {
     try {
       if (workspace.workspaceType === "worktree") {
-        await this.gitService.removeWorktree(repoPath, workspace.worktreePath, workspace.branchName);
+        await this.gitService.removeWorktree(repoPath, workspace.worktreePath, workspace.branchName, this.getConfiguredWorktreeRoot());
       } else if (workspace.workspaceType === "copy") {
         await removeFolderWorkspaceCopy(workspace.worktreePath);
       }
@@ -11042,7 +11111,8 @@ export class AppController
     branches: { previousCheckout: string | null; originalRunBranch: string; created: string },
   ): Promise<void> {
     try {
-      if (!branches.previousCheckout || (await this.gitService.hasRemoteBranch(run.worktreePath, branches.created))) {
+      const pushRemote = await this.gitService.getPushRemote(run.worktreePath, branches.created).catch(() => undefined);
+      if (!branches.previousCheckout || (await this.gitService.hasRemoteBranch(run.worktreePath, branches.created, pushRemote))) {
         return;
       }
       if (run.workspaceType === "worktree" && (await this.gitService.getCurrentBranch(repoPath).catch(() => "")) === branches.created) {
@@ -11071,14 +11141,14 @@ export class AppController
       return;
     }
 
-    const openChangesPatch =
-      options?.transferOpenChanges === true ? await this.gitService.createPromptRestorePatch(run.worktreePath) : "";
+    const transferOpenChanges = options?.transferOpenChanges === true && (await this.gitService.hasChanges(run.worktreePath));
 
     await this.gitService.releaseWorktreeBranch(run.worktreePath, branchName);
     try {
       await this.gitService.checkoutProjectBranch(repoPath, branchName);
-      if (openChangesPatch.trim()) {
-        await this.gitService.cloneWorkspaceChanges(run.worktreePath, repoPath);
+      if (transferOpenChanges) {
+        // The target is the user's own checkout: never overwrite changes they made there.
+        await this.gitService.cloneWorkspaceChanges(run.worktreePath, repoPath, { protectTargetChanges: true });
       }
     } catch (error) {
       await this.gitService.checkoutWorktreeBranch(run.worktreePath, branchName).catch(() => {});
@@ -11092,11 +11162,16 @@ export class AppController
       );
     }
 
-    await this.gitService.removeWorktree(repoPath, run.worktreePath, options?.deleteReleasedBranchName);
+    await this.gitService.removeWorktree(repoPath, run.worktreePath, options?.deleteReleasedBranchName, this.getConfiguredWorktreeRoot());
     this.db.updateRunWorkspace(run.id, "local", repoPath);
   }
 
-  private async deleteRunResources(repoPath: string, run: RunRecord, context: "run" | "project"): Promise<void> {
+  private async deleteRunResources(
+    repoPath: string,
+    run: RunRecord,
+    context: "run" | "project",
+    options: { preserveBranch?: boolean } = {},
+  ): Promise<void> {
     const active = this.runWorkers.get(run.id);
     const cleanupErrors: string[] = [];
 
@@ -11112,13 +11187,14 @@ export class AppController
     }
 
     if (run.workspaceType === "worktree") {
+      const ownedBranch = this.getOwnedRunBranchForDeletion(run, options);
       try {
-        await this.removeRunWorktreeForDeletion(repoPath, run);
+        await this.removeRunWorktreeForDeletion(repoPath, run, ownedBranch);
       } catch (error) {
         const [worktreeRegistered, gitMetadataPresent, branchPresent] = await Promise.all([
           this.gitService.isWorktreeRegistered(repoPath, run.worktreePath).catch(() => true),
           this.gitService.hasWorktreeGitMetadata(run.worktreePath).catch(() => true),
-          this.gitService.hasLocalBranch(repoPath, run.branchName).catch(() => true),
+          ownedBranch ? this.gitService.hasLocalBranch(repoPath, ownedBranch).catch(() => true) : Promise.resolve(false),
         ]);
         if (!worktreeRegistered && !gitMetadataPresent && !branchPresent) {
           const message = [

@@ -1,11 +1,13 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildInitialRepoContext } from "./initial-repo-context";
 import { createRunToolContext } from "./run-tools";
+import { GitService } from "@buildwarden/git-service";
 import { compileShellAllowlistRegExes } from "./shell-allowlist";
 
 const tempDirs: string[] = [];
@@ -19,6 +21,182 @@ const makeTempDir = async () => {
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+});
+
+describe("run tool workspace containment", () => {
+  it("refuses to modify files through links that leave the workspace", async () => {
+    const worktreePath = await makeTempDir();
+    const outsidePath = await makeTempDir();
+    await writeFile(join(outsidePath, "secret.txt"), "outside\n", "utf8");
+    await symlink(outsidePath, join(worktreePath, "linked"), "junction");
+    const tools = createRunToolContext(worktreePath);
+
+    const writeResult = await tools.executeTool({
+      id: "write-link",
+      name: "write_file",
+      arguments: { path: "linked/new.txt", content: "escaped\n" },
+    });
+    const deleteResult = await tools.executeTool({ id: "delete-link", name: "delete_file", arguments: { path: "linked/secret.txt" } });
+    const readResult = await tools.executeTool({ id: "read-link", name: "read_file", arguments: { path: "linked/secret.txt" } });
+
+    expect(writeResult.ok).toBe(false);
+    expect(deleteResult.ok).toBe(false);
+    expect(readResult.ok).toBe(false);
+    expect(await readFile(join(outsidePath, "secret.txt"), "utf8")).toBe("outside\n");
+    await expect(readFile(join(outsidePath, "new.txt"), "utf8")).rejects.toThrow();
+  });
+
+  it("refuses to write below a directory link whose target does not exist yet", async () => {
+    const worktreePath = await makeTempDir();
+    const outsidePath = await makeTempDir();
+    const missingTarget = join(outsidePath, "missing");
+    await symlink(missingTarget, join(worktreePath, "dangling-dir"), "junction");
+    const tools = createRunToolContext(worktreePath);
+
+    const writeResult = await tools.executeTool({
+      id: "write-dangling-dir",
+      name: "write_file",
+      arguments: { path: "dangling-dir/new.txt", content: "escaped\n" },
+    });
+
+    expect(writeResult.ok).toBe(false);
+    expect(writeResult.content).toContain("broken link");
+    await expect(readFile(join(missingTarget, "new.txt"), "utf8")).rejects.toThrow();
+  });
+
+  it("refuses to write through a link whose target does not exist yet", async () => {
+    const worktreePath = await makeTempDir();
+    const outsidePath = await makeTempDir();
+    const outsideFile = join(outsidePath, "authorized_keys");
+    try {
+      await symlink(outsideFile, join(worktreePath, "dangling"), "file");
+    } catch (error) {
+      // Windows only allows file symlinks with Developer Mode or elevation; CI on Linux covers this case.
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return;
+      throw error;
+    }
+    const tools = createRunToolContext(worktreePath);
+
+    const writeResult = await tools.executeTool({ id: "write-dangling", name: "write_file", arguments: { path: "dangling", content: "escaped\n" } });
+
+    expect(writeResult.ok).toBe(false);
+    await expect(readFile(outsideFile, "utf8")).rejects.toThrow();
+  });
+
+  /** Lays out a project repository and a linked worktree the way `git worktree add` does. */
+  const createLinkedWorktreeLayout = async () => {
+    const repoPath = await makeTempDir();
+    const worktreePath = await makeTempDir();
+    const worktreeGitDir = join(repoPath, ".git", "worktrees", "run");
+    await mkdir(worktreeGitDir, { recursive: true });
+    await writeFile(join(worktreeGitDir, "commondir"), "../..\n", "utf8");
+    await writeFile(join(worktreePath, ".git"), `gitdir: ${worktreeGitDir}\n`, "utf8");
+    await mkdir(join(repoPath, "node_modules"));
+    return { repoPath, worktreePath };
+  };
+
+  it("allows reading but not writing through the shared node_modules link", async () => {
+    const { repoPath, worktreePath } = await createLinkedWorktreeLayout();
+    const sharedModules = join(repoPath, "node_modules");
+    await writeFile(join(sharedModules, "package.json"), "{}\n", "utf8");
+    await symlink(sharedModules, join(worktreePath, "node_modules"), "junction");
+    const tools = createRunToolContext(worktreePath);
+
+    const readResult = await tools.executeTool({ id: "read-modules", name: "read_file", arguments: { path: "node_modules/package.json" } });
+    const writeResult = await tools.executeTool({
+      id: "write-modules",
+      name: "write_file",
+      arguments: { path: "node_modules/package.json", content: "changed\n" },
+    });
+
+    expect(readResult.ok).toBe(true);
+    expect(writeResult.ok).toBe(false);
+    expect(await readFile(join(sharedModules, "package.json"), "utf8")).toBe("{}\n");
+  });
+
+  it("reads through the dependency link of a real run worktree", async () => {
+    const root = await makeTempDir();
+    const repoPath = join(root, "repo");
+    await mkdir(join(repoPath, "node_modules", "pkg"), { recursive: true });
+    await writeFile(join(repoPath, "node_modules", "pkg", "index.js"), "module.exports = 1;\n", "utf8");
+    await writeFile(join(repoPath, "README.md"), "repo\n", "utf8");
+    const git = (...args: string[]) => execFileAsync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.test", ...args], { cwd: repoPath });
+    await git("init", "-b", "main");
+    await git("add", "README.md");
+    await git("commit", "-m", "Base");
+    const workspace = await new GitService().createWorktreeForRun(repoPath, "Project", "run-1", "main", join(root, "worktrees"));
+    const tools = createRunToolContext(workspace.worktreePath);
+
+    const readResult = await tools.executeTool({ id: "read-real-link", name: "read_file", arguments: { path: "node_modules/pkg/index.js" } });
+
+    expect(readResult.ok).toBe(true);
+  });
+
+  it("does not trust a node_modules link that points anywhere but the project's dependencies", async () => {
+    const { worktreePath } = await createLinkedWorktreeLayout();
+    const homeLike = await makeTempDir();
+    await writeFile(join(homeLike, "id_rsa"), "secret\n", "utf8");
+    await symlink(homeLike, join(worktreePath, "node_modules"), "junction");
+    const plainWorkspace = await makeTempDir();
+    await symlink(homeLike, join(plainWorkspace, "node_modules"), "junction");
+
+    for (const root of [worktreePath, plainWorkspace]) {
+      const tools = createRunToolContext(root);
+      const readResult = await tools.executeTool({ id: "read-home", name: "read_file", arguments: { path: "node_modules/id_rsa" } });
+      const listResult = await tools.executeTool({ id: "list-home", name: "list_files", arguments: { path: "node_modules" } });
+      expect(readResult.ok).toBe(false);
+      expect(listResult.ok).toBe(false);
+    }
+  });
+
+  it("protects the .git entry in any letter case", async () => {
+    const worktreePath = await makeTempDir();
+    await writeFile(join(worktreePath, ".git"), "gitdir: elsewhere\n", "utf8");
+    const tools = createRunToolContext(worktreePath);
+
+    for (const path of [".git", ".GIT/config"]) {
+      const result = await tools.executeTool({ id: `write-${path}`, name: "write_file", arguments: { path, content: "x\n" } });
+      expect(result.ok).toBe(false);
+    }
+    expect(await readFile(join(worktreePath, ".git"), "utf8")).toBe("gitdir: elsewhere\n");
+  });
+
+  it("protects .git from links inside the workspace that point at it", async () => {
+    const worktreePath = await makeTempDir();
+    await mkdir(join(worktreePath, ".git"));
+    await writeFile(join(worktreePath, ".git", "config"), "[core]\n", "utf8");
+    await symlink(join(worktreePath, ".git"), join(worktreePath, "alias"), "junction");
+    const tools = createRunToolContext(worktreePath);
+
+    const writeResult = await tools.executeTool({ id: "write-alias-link", name: "write_file", arguments: { path: "alias/config", content: "x\n" } });
+    const newFileResult = await tools.executeTool({ id: "write-alias-new", name: "write_file", arguments: { path: "alias/hooks/pre-commit", content: "x\n" } });
+    const editResult = await tools.executeTool({
+      id: "edit-alias-link",
+      name: "edit_file",
+      arguments: { file_path: "alias/config", old_string: "[core]", new_string: "[core]\n\thooksPath = /tmp" },
+    });
+    const deleteResult = await tools.executeTool({ id: "delete-alias-link", name: "delete_file", arguments: { path: "alias/config" } });
+
+    expect([writeResult.ok, newFileResult.ok, editResult.ok, deleteResult.ok]).toEqual([false, false, false, false]);
+    expect(await readFile(join(worktreePath, ".git", "config"), "utf8")).toBe("[core]\n");
+    expect(existsSync(join(worktreePath, ".git", "hooks", "pre-commit"))).toBe(false);
+  });
+
+  it("protects the .git entry behind its 8.3 short name", async () => {
+    const worktreePath = await makeTempDir();
+    await mkdir(join(worktreePath, ".git"));
+    await writeFile(join(worktreePath, ".git", "config"), "[core]\n", "utf8");
+    // Only volumes with 8.3 name generation (common on Windows system drives) create the alias.
+    if (!existsSync(join(worktreePath, "GIT~1"))) return;
+    const tools = createRunToolContext(worktreePath);
+
+    const writeResult = await tools.executeTool({ id: "write-alias", name: "write_file", arguments: { path: "GIT~1/config", content: "x\n" } });
+    const deleteResult = await tools.executeTool({ id: "delete-alias", name: "delete_file", arguments: { path: "GIT~1/config" } });
+
+    expect(writeResult.ok).toBe(false);
+    expect(deleteResult.ok).toBe(false);
+    expect(await readFile(join(worktreePath, ".git", "config"), "utf8")).toBe("[core]\n");
+  });
 });
 
 describe("run tool context", () => {

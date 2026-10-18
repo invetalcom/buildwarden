@@ -3136,6 +3136,8 @@ export const shouldBypassNetworkProxyForUrl = (url: string, config: NetworkProxy
 
 export interface GitProjectValidation {
   repoPath: string;
+  /** Top-level folder of the repository containing `repoPath`; equals `repoPath` outside Git. */
+  repoRoot: string;
   repoName: string;
   baseBranch: string;
   isGitRepo: boolean;
@@ -3409,6 +3411,8 @@ export interface RunPromptRestorePoint {
   createdAt: string;
   commandType: "initial" | "follow-up";
   patch: string;
+  /** HEAD when the restore point was captured; absent for restore points saved by older versions. */
+  headSha?: string | null;
 }
 
 export type ProviderSessionRuntimeOwnerKind = "run" | "chat";
@@ -4945,6 +4949,8 @@ export const APP_SETTING_KEYS = {
   recentRunDays: "recentRunDays",
   autoCheckoutRunBranchOnOpen: "autoCheckoutRunBranchOnOpen",
   autoReleaseRunBranchOnLeave: "autoReleaseRunBranchOnLeave",
+  /** `"true"` fetches the base branch and starts new run worktrees from origin when the local branch is only behind it. */
+  worktreeStartFromRemoteBase: "worktreeStartFromRemoteBase",
   /** Opt-in startup check for old runs, chats, Project Lab threads, and loops. */
   dataRetentionCleanupEnabled: "dataRetentionCleanupEnabled",
   /** Whole day threshold used by the opt-in startup data-retention check. */

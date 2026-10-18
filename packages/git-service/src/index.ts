@@ -3,7 +3,7 @@ import { access, copyFile, lstat, readdir, rm, stat, symlink, unlink, writeFile 
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { GitPluginError, simpleGit, type SimpleGit } from "simple-git";
+import { GitPluginError, simpleGit, type SimpleGit, type StatusResult } from "simple-git";
 import { promisify } from "node:util";
 import {
   GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE,
@@ -31,7 +31,30 @@ const LONG_PATHS_CONFIG_VALUE = "true";
 const withLongPathSupport = (args: string[]): string[] =>
   process.platform === "win32" ? ["-c", `${LONG_PATHS_CONFIG_KEY}=${LONG_PATHS_CONFIG_VALUE}`, ...args] : args;
 
-const runGitRaw = (git: SimpleGit, args: string[]): Promise<string> => git.raw(withLongPathSupport(args));
+/** Passed as `-c` on every simple-git command, so BuildWarden needs no long-path setting in the repository. */
+const LONG_PATH_GIT_CONFIG: string[] = process.platform === "win32" ? [`${LONG_PATHS_CONFIG_KEY}=${LONG_PATHS_CONFIG_VALUE}`] : [];
+
+/**
+ * Local commands run inside the per-project branch lock too, so a Git process that hangs, for example
+ * on a hook waiting for input or a stuck file system, must not block the project forever. Timeouts count
+ * inactivity (no output), not total duration.
+ */
+const LOCAL_GIT_INACTIVITY_TIMEOUT_MS = 2 * 60_000;
+/** Checkouts and commit hooks can stay silent for a long time without being stuck. */
+const LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS = 10 * 60_000;
+
+const createLocalGit = (baseDir: string, inactivityTimeoutMs = LOCAL_GIT_INACTIVITY_TIMEOUT_MS): SimpleGit =>
+  simpleGit({ baseDir, config: LONG_PATH_GIT_CONFIG, timeout: { block: inactivityTimeoutMs } });
+
+const toLocalGitTimeoutError = (error: unknown, args: readonly string[]): unknown =>
+  error instanceof GitPluginError && error.plugin === "timeout"
+    ? new Error(`git ${args.find((arg) => !arg.startsWith("-") && !arg.includes("=")) ?? ""} made no progress and was stopped.`)
+    : error;
+
+const runGitRaw = (git: SimpleGit, args: string[]): Promise<string> =>
+  git.raw(args).catch((error: unknown) => {
+    throw toLocalGitTimeoutError(error, args);
+  });
 
 /**
  * Remote operations run inside the per-project branch lock, so a stalled network or credential prompt
@@ -40,10 +63,10 @@ const runGitRaw = (git: SimpleGit, args: string[]): Promise<string> => git.raw(w
 const NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS = 5 * 60_000;
 const NETWORK_COMMAND_TIMEOUT_MINUTES = NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS / 60_000;
 // simple-git strips these ambient variables and rejects them when passed explicitly; mirror its guard
-// so the explicit environment below only adds GIT_TERMINAL_PROMPT.
+// so explicit environments only add the allowed Git variables.
 const SIMPLE_GIT_GUARDED_ENV_KEYS = new Set(["editor", "pager", "prefix", "ssh_askpass", "visual"]);
 
-const createNetworkGit = (repoPath: string): SimpleGit => {
+const buildGuardSafeEnvironment = (): Record<string, string> => {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     const normalizedKey = key.toLowerCase().trim();
@@ -51,25 +74,50 @@ const createNetworkGit = (repoPath: string): SimpleGit => {
       env[key] = value;
     }
   }
-  return simpleGit({
-    baseDir: repoPath,
-    timeout: { block: NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS },
-    allowEnvironment: ["GIT_TERMINAL_PROMPT"],
-  }).env({ ...env, GIT_TERMINAL_PROMPT: "0" });
+  return env;
 };
 
-const runNetworkGit = async (repoPath: string, args: string[]): Promise<string> => {
+const createNetworkGit = (repoPath: string, inactivityTimeoutMs = NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS): SimpleGit =>
+  simpleGit({
+    baseDir: repoPath,
+    config: LONG_PATH_GIT_CONFIG,
+    timeout: { block: inactivityTimeoutMs },
+    allowEnvironment: ["GIT_TERMINAL_PROMPT"],
+  }).env({ ...buildGuardSafeEnvironment(), GIT_TERMINAL_PROMPT: "0" });
+
+/**
+ * For commands that only read the workspace. `git status` and porcelain `git diff` otherwise take
+ * `index.lock` to save a refreshed index, so background status and diff polling could make the agent's
+ * own `git commit` in the same worktree fail with "index.lock exists".
+ */
+const createReadOnlyGit = (baseDir: string, inactivityTimeoutMs = LOCAL_GIT_INACTIVITY_TIMEOUT_MS, maxConcurrentProcesses?: number): SimpleGit =>
+  simpleGit({
+    baseDir,
+    config: LONG_PATH_GIT_CONFIG,
+    timeout: { block: inactivityTimeoutMs },
+    allowEnvironment: ["GIT_OPTIONAL_LOCKS"],
+    ...(maxConcurrentProcesses ? { maxConcurrentProcesses } : {}),
+  }).env({ ...buildGuardSafeEnvironment(), GIT_OPTIONAL_LOCKS: "0" });
+
+const runNetworkGit = async (repoPath: string, args: string[], inactivityTimeoutMs = NETWORK_COMMAND_INACTIVITY_TIMEOUT_MS): Promise<string> => {
   try {
-    return await runGitRaw(createNetworkGit(repoPath), args);
+    return await runGitRaw(createNetworkGit(repoPath, inactivityTimeoutMs), args);
   } catch (error) {
     if (error instanceof GitPluginError && error.plugin === "timeout") {
+      const duration =
+        inactivityTimeoutMs >= 60_000
+          ? `${String(Math.round(inactivityTimeoutMs / 60_000))} minutes`
+          : `${String(Math.round(inactivityTimeoutMs / 1000))} seconds`;
       throw new Error(
-        `git ${args[0] ?? ""} made no progress for ${String(NETWORK_COMMAND_TIMEOUT_MINUTES)} minutes and was stopped. Check the network connection and Git credentials, then try again.`,
+        `git ${args[0] ?? ""} made no progress for ${duration} and was stopped. Check the network connection and Git credentials, then try again.`,
       );
     }
     throw error;
   }
 };
+
+/** Run creation waits for this fetch, so a slow or offline remote falls back to the local base quickly. */
+const BASE_BRANCH_REFRESH_TIMEOUT_MS = 20_000;
 
 /** Runs a forge CLI (`gh`, `glab`) without interactive prompts and with a bounded runtime. */
 const execForgeCli = (command: string, args: string[], cwd: string) =>
@@ -80,27 +128,133 @@ const execForgeCli = (command: string, args: string[], cwd: string) =>
     env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GH_PROMPT_DISABLED: "1" },
   });
 
+/**
+ * simple-git resolves when Git exits non-zero without writing to stderr, which is exactly how `--quiet`
+ * probes report "no". Probes therefore run Git directly and read the exit code.
+ */
+const runGitProbe = async (cwd: string, args: string[]): Promise<boolean> => {
+  try {
+    await execFileAsync("git", withLongPathSupport(args), { cwd, timeout: LOCAL_GIT_INACTIVITY_TIMEOUT_MS });
+    return true;
+  } catch (error) {
+    if (typeof error === "object" && error !== null && typeof (error as { code?: unknown }).code === "number") {
+      return false;
+    }
+    throw error;
+  }
+};
+
+/**
+ * Git reads a leading `-` as an option, so ref names from the UI or the agent must never start with one.
+ * Callers also end ref arguments with `--`, so a name that matches a file is never read as a path.
+ */
+const assertRefArgument = (refName: string, label = "Branch"): string => {
+  const trimmed = refName.trim();
+  if (!trimmed) {
+    throw new Error(`${label} name is required.`);
+  }
+  if (trimmed.startsWith("-")) {
+    throw new Error(`${label} names cannot start with "-".`);
+  }
+  return trimmed;
+};
+
 const isTimedOutCommandError = (error: unknown): boolean =>
   typeof error === "object" && error !== null && "killed" in error && (error as { killed?: boolean }).killed === true;
 
-const detectProjectBaseBranch = async (git: SimpleGit, currentBranch: string): Promise<string> => {
+const readCommandStderr = (error: unknown): string =>
+  typeof error === "object" && error !== null && "stderr" in error ? String((error as { stderr?: unknown }).stderr ?? "").trim() : "";
+
+/** Forge CLI failures that a browser draft can work around: the CLI is missing or not signed in. */
+const isForgeCliUnavailableError = (error: unknown): boolean =>
+  isCommandMissingError(error) ||
+  /\b(?:auth login|not logged in|authenticat\w*|unauthori[sz]ed|401|no token|token is not valid)\b/i.test(
+    `${readCommandStderr(error)}\n${error instanceof Error ? error.message : ""}`,
+  );
+
+/**
+ * `glab mr create` only accepts the description as an argument, and Windows caps a command line at
+ * 32,767 characters, so very long descriptions are shortened for the CLI.
+ */
+/** Repository owner from a parsed GitHub remote, such as `owner` for `https://github.com/owner/repo`. */
+const githubOwnerOf = (remote: ParsedGitRemote | null): string =>
+  remote?.provider === "github" ? (new URL(remote.webBaseUrl).pathname.split("/")[1] ?? "") : "";
+
+/**
+ * `gh pr list --head <branch>` matches the branch name in every fork, so another contributor's pull
+ * request from a same-named branch must not count as ours. Returns the first open pull request whose
+ * head repository belongs to `headOwner`.
+ */
+export const selectOwnOpenPullRequestUrl = (pullRequests: unknown, headOwner: string): string | null => {
+  if (!headOwner || !Array.isArray(pullRequests)) {
+    return null;
+  }
+  for (const pullRequest of pullRequests as Array<{ url?: unknown; headRepositoryOwner?: { login?: unknown } | null }>) {
+    const owner = pullRequest?.headRepositoryOwner?.login;
+    if (typeof owner === "string" && owner.toLowerCase() === headOwner.toLowerCase() && typeof pullRequest.url === "string" && pullRequest.url) {
+      return pullRequest.url;
+    }
+  }
+  return null;
+};
+
+/**
+ * Merge request lists include merge requests from forks. Only a merge request whose source project is
+ * the target project counts as ours, which holds when the branch was pushed to the base repository.
+ */
+export const selectOwnOpenMergeRequestUrl = (mergeRequests: unknown): string | null => {
+  if (!Array.isArray(mergeRequests)) {
+    return null;
+  }
+  for (const mergeRequest of mergeRequests as Array<{ web_url?: unknown; source_project_id?: unknown; target_project_id?: unknown }>) {
+    if (
+      mergeRequest?.source_project_id !== undefined &&
+      mergeRequest.source_project_id === mergeRequest.target_project_id &&
+      typeof mergeRequest.web_url === "string" &&
+      mergeRequest.web_url
+    ) {
+      return mergeRequest.web_url;
+    }
+  }
+  return null;
+};
+
+/**
+ * GitHub answers `414 URI Too Long` for compare links far below browser limits, and GitLab's default
+ * proxies cap request lines at 8 KiB. Longer drafts leave the description out of the link.
+ */
+const MAX_BROWSER_DRAFT_URL_CHARS = 8_000;
+
+type BrowserDraft = { url: string; descriptionOmitted: boolean };
+
+const buildBrowserDraft = (buildUrl: (includeDescription: boolean) => string): BrowserDraft => {
+  const url = buildUrl(true);
+  return url.length <= MAX_BROWSER_DRAFT_URL_CHARS ? { url, descriptionOmitted: false } : { url: buildUrl(false), descriptionOmitted: true };
+};
+
+const MAX_FORGE_CLI_DESCRIPTION_CHARS = 16_000;
+const fitForgeCliDescription = (body: string): string =>
+  body.length <= MAX_FORGE_CLI_DESCRIPTION_CHARS
+    ? body
+    : `${body.slice(0, MAX_FORGE_CLI_DESCRIPTION_CHARS)}\n\n_(Description shortened to fit the GitLab CLI.)_`;
+
+const detectProjectBaseBranch = async (git: SimpleGit, repoPath: string, currentBranch: string, remoteName: string): Promise<string> => {
+  const remoteRefPrefix = `refs/remotes/${remoteName}/`;
   try {
-    const symbolicRef = (await git.raw(["symbolic-ref", "-q", "refs/remotes/origin/HEAD"])).trim();
-    const match = /^refs\/remotes\/origin\/(.+)$/.exec(symbolicRef);
-    if (match?.[1]) {
-      await git.raw(["show-ref", "--verify", `refs/remotes/origin/${match[1]}`]);
-      return match[1];
+    const symbolicRef = (await git.raw(["symbolic-ref", "-q", `${remoteRefPrefix}HEAD`])).trim();
+    const branchName = symbolicRef.startsWith(remoteRefPrefix) ? symbolicRef.slice(remoteRefPrefix.length) : "";
+    if (branchName) {
+      await git.raw(["show-ref", "--verify", `${remoteRefPrefix}${branchName}`]);
+      return branchName;
     }
   } catch {
-    // Repositories without a valid origin/HEAD still get deterministic fallbacks below.
+    // Repositories without a valid <remote>/HEAD still get deterministic fallbacks below.
   }
 
   for (const candidate of ["main", "master", "develop"]) {
-    try {
-      await git.raw(["show-ref", "--verify", "--quiet", `refs/remotes/origin/${candidate}`]);
+    // A failed `--quiet` probe resolves in simple-git, which used to make every repository detect "main".
+    if (await runGitProbe(repoPath, ["show-ref", "--verify", "--quiet", `${remoteRefPrefix}${candidate}`]).catch(() => false)) {
       return candidate;
-    } catch {
-      // Try the next conventional remote branch.
     }
   }
 
@@ -116,7 +270,7 @@ const detectProjectBaseBranch = async (git: SimpleGit, currentBranch: string): P
 
 export const readRecentCommitLog = async (repoPath: string, limit: number): Promise<string> => {
   const normalizedLimit = Math.max(1, Math.floor(limit));
-  return runGitRaw(simpleGit(repoPath), [
+  return runGitRaw(createLocalGit(repoPath), [
     "log",
     `-n${String(normalizedLimit)}`,
     "--date=short",
@@ -127,7 +281,7 @@ export const readRecentCommitLog = async (repoPath: string, limit: number): Prom
 };
 
 export const readProjectActivityLog = async (repoPath: string): Promise<string> =>
-  runGitRaw(simpleGit(repoPath), [
+  runGitRaw(createLocalGit(repoPath), [
     "log",
     "--all",
     "--date-order",
@@ -141,7 +295,7 @@ export const readProjectActivityLog = async (repoPath: string): Promise<string> 
   ]);
 
 export const readTrackedProjectFiles = async (repoPath: string): Promise<string[]> => {
-  const output = await runGitRaw(simpleGit(repoPath), ["ls-files", "-z"]);
+  const output = await runGitRaw(createLocalGit(repoPath), ["ls-files", "-z"]);
   return output
     .split("\0")
     .filter((filePath) => filePath.length > 0)
@@ -195,7 +349,7 @@ const parseReleaseRangeStats = (output: string): Pick<GitProjectReleaseStat, "co
 };
 
 export const readProjectReleaseHistory = async (repoPath: string, limit = 12): Promise<GitProjectReleaseHistory> => {
-  const git = simpleGit(repoPath);
+  const git = createLocalGit(repoPath);
   const tagOutput = await runGitRaw(git, [
     "for-each-ref",
     "--sort=creatordate",
@@ -228,23 +382,30 @@ export const readProjectReleaseHistory = async (repoPath: string, limit = 12): P
   return { totalReleases: tags.length, releases };
 };
 
-// Paths whose repository config already has core.longpaths set this session.
-// Run checkout/release calls this on every run switch; one write per path is enough.
-const longPathSupportConfiguredPaths = new Set<string>();
+// Repositories whose long-path setting was already checked this session.
+const longPathSupportCheckedPaths = new Set<string>();
 
+/**
+ * BuildWarden's own commands pass core.longpaths per command. Agents run their own Git inside run
+ * worktrees, whose paths are longer than the project's, so creating one persists the setting, but only
+ * when the repository has no value of its own; an explicit user choice is never overridden.
+ */
 const ensureGitLongPathSupport = async (git: SimpleGit, gitPath: string): Promise<void> => {
   if (process.platform !== "win32") {
     return;
   }
 
   // Case-preserving: directories can be case-sensitive on Windows, and a
-  // duplicate write for a differently cased spelling is harmless.
+  // duplicate check for a differently cased spelling is harmless.
   const cacheKey = resolve(gitPath);
-  if (longPathSupportConfiguredPaths.has(cacheKey)) {
+  if (longPathSupportCheckedPaths.has(cacheKey)) {
     return;
   }
-  await git.raw(["config", "--local", LONG_PATHS_CONFIG_KEY, LONG_PATHS_CONFIG_VALUE]);
-  longPathSupportConfiguredPaths.add(cacheKey);
+  const configured = (await git.raw(["config", "--local", "--get", LONG_PATHS_CONFIG_KEY]).catch(() => "")).trim();
+  if (!configured) {
+    await git.raw(["config", "--local", LONG_PATHS_CONFIG_KEY, LONG_PATHS_CONFIG_VALUE]);
+  }
+  longPathSupportCheckedPaths.add(cacheKey);
 };
 
 const pathExists = async (p: string): Promise<boolean> => {
@@ -328,7 +489,7 @@ const toComparablePath = (value: string): string => {
  */
 export const isSameWorktreePath = (left: string, right: string): boolean => toComparablePath(left) === toComparablePath(right);
 
-type PublishMode = "created" | "browser-draft";
+type PublishMode = "created" | "existing" | "browser-draft";
 type PublishRequestKind = "pull-request" | "merge-request";
 
 type ParsedRemote = ParsedGitRemote;
@@ -379,7 +540,7 @@ const extractCommandOutput = (error: unknown): string => {
 
 /** Human-readable status lines when a patch cannot be built (used by `computeWorktreeDiff`). */
 async function formatGitStatusSummary(worktreePath: string): Promise<string> {
-  const git = simpleGit(worktreePath);
+  const git = createReadOnlyGit(worktreePath);
   const status = await git.status();
   const lines = [
     `branch: ${status.current}`,
@@ -406,11 +567,7 @@ const mapWithConcurrency = async <T, R>(items: readonly T[], limit: number, mapp
 };
 
 const WORKTREE_DIFF_GIT_TIMEOUT_MS = 60_000;
-const createWorktreeDiffGit = (worktreePath: string): SimpleGit => simpleGit({
-  baseDir: worktreePath,
-  maxConcurrentProcesses: 6,
-  timeout: { block: WORKTREE_DIFF_GIT_TIMEOUT_MS },
-});
+const createWorktreeDiffGit = (worktreePath: string): SimpleGit => createReadOnlyGit(worktreePath, WORKTREE_DIFF_GIT_TIMEOUT_MS, 6);
 
 const renderUntrackedDiffSections = async (git: SimpleGit, filePaths: readonly string[]): Promise<string[]> => {
   const sections = await mapWithConcurrency(filePaths, 4, async (filePath) => {
@@ -427,6 +584,18 @@ const renderUntrackedDiffSections = async (git: SimpleGit, filePaths: readonly s
     }
   });
   return sections.filter((section): section is string => Boolean(section));
+};
+
+/**
+ * Workspace diffs use plumbing: porcelain `git diff` refreshes and rewrites the index even with
+ * GIT_OPTIONAL_LOCKS=0. `diff-files` covers unstaged changes and `diff-index --cached` staged ones.
+ */
+const unstagedDiffArgs = (...options: string[]): string[] => ["diff-files", ...options];
+const stagedDiffArgs = async (git: SimpleGit, ...options: string[]): Promise<string[]> => {
+  const hasHead = Boolean((await runGitRaw(git, ["rev-parse", "--verify", "--quiet", "HEAD"]).catch(() => "")).trim());
+  // A repository without commits compares the index against the empty tree.
+  const base = hasHead ? "HEAD" : (await runGitRaw(git, ["hash-object", "-t", "tree", "/dev/null"])).trim();
+  return ["diff-index", "--cached", ...options, base, "--"];
 };
 
 const parseNumstatValue = (value: string): number | null => (value === "-" ? null : Number.parseInt(value, 10) || 0);
@@ -480,8 +649,8 @@ export async function computeWorktreeDiffSummary(worktreePath: string): Promise<
   const git = createWorktreeDiffGit(worktreePath);
   const [status, unstagedOutput, stagedOutput] = await Promise.all([
     git.status(),
-    runGitRaw(git, ["diff", "--numstat", "-z", "--find-renames"]),
-    runGitRaw(git, ["diff", "--cached", "--numstat", "-z", "--find-renames"]),
+    runGitRaw(git, unstagedDiffArgs("--numstat", "-z", "--find-renames")),
+    stagedDiffArgs(git, "--numstat", "-z", "--find-renames").then((args) => runGitRaw(git, args)),
   ]);
   const untracked = await mapWithConcurrency(status.not_added, 4, async (filePath) => {
     try {
@@ -501,7 +670,11 @@ export async function computeWorktreeDiff(worktreePath: string): Promise<string>
   const git = createWorktreeDiffGit(worktreePath);
   const sections: string[] = [];
 
-  const [status, unstagedOutput, stagedOutput] = await Promise.all([git.status(), git.diff(), git.diff(["--cached"])]);
+  const [status, unstagedOutput, stagedOutput] = await Promise.all([
+    git.status(),
+    runGitRaw(git, unstagedDiffArgs("-p")),
+    stagedDiffArgs(git, "-p").then((args) => runGitRaw(git, args)),
+  ]);
   const unstaged = unstagedOutput.trim();
   if (unstaged) {
     sections.push(unstaged);
@@ -522,7 +695,7 @@ export async function computeWorktreeDiff(worktreePath: string): Promise<string>
 }
 
 async function computeWorktreeRestorePatch(worktreePath: string): Promise<string> {
-  const git = simpleGit(worktreePath);
+  const git = createReadOnlyGit(worktreePath);
   const status = await git.status();
   const sections: string[] = [];
   const appendPatchSection = (patchText: string) => {
@@ -533,12 +706,12 @@ async function computeWorktreeRestorePatch(worktreePath: string): Promise<string
     sections.push(patchText.endsWith("\n") ? patchText : `${patchText}\n`);
   };
 
-  const unstaged = await git.diff(["--binary"]);
+  const unstaged = await runGitRaw(git, unstagedDiffArgs("-p", "--binary"));
   if (unstaged) {
     appendPatchSection(unstaged);
   }
 
-  const staged = await git.diff(["--cached", "--binary"]);
+  const staged = await runGitRaw(git, await stagedDiffArgs(git, "-p", "--binary"));
   if (staged) {
     appendPatchSection(staged);
   }
@@ -570,6 +743,7 @@ async function applyWorktreePatch(worktreePath: string, patchText: string, optio
     try {
       await execFileAsync("git", withLongPathSupport(["apply", "--binary", "--whitespace=nowarn", tempPatchPath]), {
         cwd: worktreePath,
+        timeout: LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS,
       });
     } catch (error) {
       if (options?.threeWayFallback !== true) {
@@ -578,8 +752,9 @@ async function applyWorktreePatch(worktreePath: string, patchText: string, optio
       const threeWayArgs = ["apply", "--3way", "--binary", "--whitespace=nowarn", tempPatchPath];
       await execFileAsync("git", withLongPathSupport(["apply", "--check", "--3way", "--binary", "--whitespace=nowarn", tempPatchPath]), {
         cwd: worktreePath,
+        timeout: LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS,
       });
-      await execFileAsync("git", withLongPathSupport(threeWayArgs), { cwd: worktreePath });
+      await execFileAsync("git", withLongPathSupport(threeWayArgs), { cwd: worktreePath, timeout: LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS });
     }
   } finally {
     await unlink(tempPatchPath).catch(() => {});
@@ -603,16 +778,39 @@ async function copyPathFromWorktree(sourceRoot: string, targetRoot: string, rela
   await copyFile(sourcePath, targetPath);
 }
 
-async function syncChangedFilesFromWorktree(sourceWorktreePath: string, targetWorktreePath: string): Promise<void> {
-  const git = simpleGit(sourceWorktreePath);
-  const status = await git.status();
+const listChangedPaths = (status: StatusResult): Set<string> => {
   const changedPaths = new Set<string>();
-
   for (const file of status.files) {
     changedPaths.add(file.path);
+    // The old side of a rename no longer exists in the source, so it is removed from the target too.
+    if (file.from) changedPaths.add(file.from);
   }
   for (const filePath of status.not_added) {
     changedPaths.add(filePath);
+  }
+  return changedPaths;
+};
+
+/**
+ * Copies changed files when the patch does not apply. With `protectTargetChanges`, refuses to touch
+ * any file the target has changed itself, so a user's own edits are never overwritten.
+ */
+async function syncChangedFilesFromWorktree(
+  sourceWorktreePath: string,
+  targetWorktreePath: string,
+  options: { protectTargetChanges?: boolean } = {},
+): Promise<void> {
+  const changedPaths = listChangedPaths(await createReadOnlyGit(sourceWorktreePath).status());
+
+  if (options.protectTargetChanges === true) {
+    const targetChanges = listChangedPaths(await createReadOnlyGit(targetWorktreePath).status());
+    const conflicts = [...changedPaths].filter((filePath) => targetChanges.has(filePath));
+    if (conflicts.length > 0) {
+      const shown = conflicts.slice(0, 5).join(", ");
+      throw new Error(
+        `The target checkout has its own changes to ${shown}${conflicts.length > 5 ? `, and ${String(conflicts.length - 5)} more` : ""}, so they were not overwritten.`,
+      );
+    }
   }
 
   for (const filePath of changedPaths) {
@@ -636,17 +834,16 @@ export interface GitPullRequestContext {
 
 export class GitService {
   async getHeadCommitSha(repoPath: string): Promise<string> {
-    return (await simpleGit(repoPath).revparse(["HEAD"])).trim();
+    return (await createLocalGit(repoPath).revparse(["HEAD"])).trim();
   }
 
   async getBranchCommitSha(repoPath: string, branchName: string): Promise<string> {
-    const trimmedBranchName = branchName.trim();
-    if (!trimmedBranchName) throw new Error("A branch name is required to resolve its commit.");
-    return (await simpleGit(repoPath).revparse(["--verify", `refs/heads/${trimmedBranchName}^{commit}`])).trim();
+    const trimmedBranchName = assertRefArgument(branchName);
+    return (await createLocalGit(repoPath).revparse(["--verify", `refs/heads/${trimmedBranchName}^{commit}`])).trim();
   }
 
   async getCurrentBranch(repoPath: string): Promise<string> {
-    const git = simpleGit(repoPath);
+    const git = createLocalGit(repoPath);
     const branchName = (await git.branch(["--show-current"])).current?.trim();
 
     if (!branchName) {
@@ -657,29 +854,29 @@ export class GitService {
   }
 
   async checkoutProjectBranch(repoPath: string, branchName: string): Promise<void> {
-    const git = simpleGit(repoPath);
-    await ensureGitLongPathSupport(git, repoPath);
-    const trimmedBranchName = branchName.trim();
-    if (!trimmedBranchName) {
+    const git = createLocalGit(repoPath, LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS);
+    if (!branchName.trim()) {
       throw new Error("Select a branch.");
     }
+    const trimmedBranchName = assertRefArgument(branchName);
 
     if (await this.hasLocalBranch(repoPath, trimmedBranchName)) {
-      await git.checkout(trimmedBranchName);
+      await runGitRaw(git, ["checkout", trimmedBranchName, "--"]);
       return;
     }
 
-    if (await this.hasRemoteBranch(repoPath, trimmedBranchName)) {
-      await runGitRaw(git, ["checkout", "--track", "-b", trimmedBranchName, `origin/${trimmedBranchName}`]);
+    const remoteName = (await this.getDefaultRemote(repoPath)) ?? "origin";
+    if (await this.hasRemoteBranch(repoPath, trimmedBranchName, remoteName)) {
+      await runGitRaw(git, ["checkout", "--track", "-b", trimmedBranchName, `${remoteName}/${trimmedBranchName}`, "--"]);
       return;
     }
 
-    await git.checkout(trimmedBranchName);
+    // A bare `git checkout <name>` would restore a file with that name and discard its local edits.
+    throw new Error(`Branch "${trimmedBranchName}" was not found locally or on ${remoteName}.`);
   }
 
   async getProjectBranchOverview(repoPath: string, baseBranch: string): Promise<ProjectGitBranchOverview> {
-    const git = simpleGit(repoPath);
-    await ensureGitLongPathSupport(git, repoPath);
+    const git = createLocalGit(repoPath);
 
     let currentBranch = "";
     try {
@@ -691,10 +888,11 @@ export class GitService {
       }
     }
 
+    const remoteName = (await this.getDefaultRemote(repoPath)) ?? "origin";
     let provider: ProjectGitBranchOverview["provider"] = "unknown";
     let webBaseUrl: string | null = null;
     try {
-      const remoteOutput = await git.remote(["get-url", "origin"]);
+      const remoteOutput = await git.remote(["get-url", remoteName]);
       const remote = parseGitRemoteToWebBase(String(remoteOutput ?? ""));
       provider = remote?.provider ?? "unknown";
       webBaseUrl = remote?.webBaseUrl ?? null;
@@ -739,7 +937,7 @@ export class GitService {
       const tracking = parseAheadBehind(track);
       branch.hasLocal = true;
       branch.upstream = upstream || null;
-      branch.hasRemote = branch.hasRemote || upstream.startsWith("origin/");
+      branch.hasRemote = branch.hasRemote || upstream.startsWith(`${remoteName}/`);
       branch.ahead = tracking.ahead;
       branch.behind = tracking.behind;
       branch.commitSha = commitSha || branch.commitSha;
@@ -750,15 +948,16 @@ export class GitService {
     try {
       const remoteRefs = await runGitRaw(git, [
         "for-each-ref",
-        "--format=%(refname:short)%09%(objectname:short)%09%(committerdate:iso8601)%09%(subject)",
-        "refs/remotes/origin",
+        "--format=%(refname)%09%(objectname:short)%09%(committerdate:iso8601)%09%(subject)",
+        `refs/remotes/${remoteName}`,
       ]);
+      const remoteRefPrefix = `refs/remotes/${remoteName}/`;
       for (const line of remoteRefs.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
-        const [remoteName = "", commitSha = "", updatedAt = "", subject = ""] = line.split("\t");
-        if (!remoteName || remoteName === "origin/HEAD") {
+        const [refName = "", commitSha = "", updatedAt = "", subject = ""] = line.split("\t");
+        const name = refName.startsWith(remoteRefPrefix) ? refName.slice(remoteRefPrefix.length) : "";
+        if (!name || name === "HEAD") {
           continue;
         }
-        const name = remoteName.replace(/^origin\//, "");
         const branch = ensureBranch(name);
         branch.hasRemote = true;
         branch.commitSha = branch.commitSha ?? commitSha ?? null;
@@ -785,12 +984,13 @@ export class GitService {
   }
 
   async validateProject(repoPath: string): Promise<GitProjectValidation> {
-    const git = simpleGit(repoPath);
+    const git = createLocalGit(repoPath);
     const isRepo = await git.checkIsRepo();
 
     if (!isRepo) {
       return {
         repoPath,
+        repoRoot: repoPath,
         repoName: basename(repoPath),
         baseBranch: "main",
         isGitRepo: false,
@@ -800,18 +1000,21 @@ export class GitService {
     }
 
     const branchSummary = await git.branch(["--show-current"]);
-    const status = await git.status();
-    const revParse = await git.raw(["rev-parse", "--git-common-dir"]);
-    const gitDir = revParse.trim();
+    const status = await createReadOnlyGit(repoPath).status();
+    // `--git-common-dir` alone is relative to the selected folder, so a subfolder looked like a worktree.
+    const [topLevel, gitDir, commonDir] = (await git.raw(["rev-parse", "--show-toplevel", "--git-dir", "--git-common-dir"]))
+      .split(/\r?\n/)
+      .map((line) => line.trim());
 
-    const baseBranch = await detectProjectBaseBranch(git, branchSummary.current);
+    const baseBranch = await detectProjectBaseBranch(git, repoPath, branchSummary.current, (await this.getDefaultRemote(repoPath)) ?? "origin");
 
     return {
       repoPath,
+      repoRoot: topLevel ? resolve(topLevel) : repoPath,
       repoName: basename(repoPath),
       baseBranch,
       isGitRepo: true,
-      isWorktree: gitDir !== ".git",
+      isWorktree: Boolean(gitDir && commonDir) && !isSameWorktreePath(resolve(repoPath, gitDir!), resolve(repoPath, commonDir!)),
       isDirty: !status.isClean(),
     };
   }
@@ -846,8 +1049,9 @@ export class GitService {
     configuredWorktreeRoot: string | null | undefined,
     shareDependencies: boolean,
   ): Promise<{ branchName: string; worktreePath: string }> {
-    const git = simpleGit(repoPath);
+    const git = createLocalGit(repoPath, LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS);
     await ensureGitLongPathSupport(git, repoPath);
+    const startRef = assertRefArgument(startPoint, "Start point");
     const worktreeRoot = this.getWorktreeRoot(repoPath, configuredWorktreeRoot);
     mkdirSync(worktreeRoot, { recursive: true });
 
@@ -855,33 +1059,78 @@ export class GitService {
     const worktreePath = join(worktreeRoot, branchName);
 
     if (existsSync(worktreePath)) {
+      // Reuse only this run's own registered worktree; a leftover folder is not a usable workspace.
+      const isOwnWorktree =
+        (await this.isWorktreeRegistered(repoPath, worktreePath)) &&
+        (await createLocalGit(worktreePath).branch(["--show-current"]).then((summary) => summary.current === branchName, () => false));
+      if (!isOwnWorktree) {
+        throw new Error(
+          `A folder already exists at ${worktreePath} but is not the worktree for branch "${branchName}". Remove the folder and try again.`,
+        );
+      }
       if (shareDependencies) await ensureWorktreeDependencyLinks(repoPath, worktreePath);
       return { branchName, worktreePath };
     }
 
     const branchExisted = await this.hasLocalBranch(repoPath, branchName);
     try {
-      await runGitRaw(git, ["worktree", "add", "-b", branchName, worktreePath, startPoint]);
+      // `--no-track`: a run branch started from origin/<base> must not adopt the base as its upstream.
+      await runGitRaw(git, ["worktree", "add", "--no-track", "-b", branchName, "--", worktreePath, startRef]);
       if (shareDependencies) await ensureWorktreeDependencyLinks(repoPath, worktreePath);
     } catch (error) {
       // A failed checkout can leave a registered worktree and a new branch behind; nothing owns them yet.
-      await this.removeWorktree(repoPath, worktreePath, branchExisted ? undefined : branchName).catch(() => {});
+      await this.removeWorktree(repoPath, worktreePath, branchExisted ? undefined : branchName, configuredWorktreeRoot).catch(() => {});
       throw error;
     }
 
     return { branchName, worktreePath };
   }
 
-  async listWorktrees(repoPath: string): Promise<WorktreeInfo[]> {
-    const git = simpleGit(repoPath);
-    const raw = await git.raw(["worktree", "list", "--porcelain"]);
-    const chunks = raw
-      .trim()
-      .split("\n\n")
-      .filter(Boolean);
+  /**
+   * Fetches the base branch and returns the newest start point that keeps the user's work: origin's
+   * branch when the local branch is missing or only behind it, otherwise the local branch. Falls back to
+   * the local branch when the fetch fails, for example offline.
+   */
+  async resolveFreshBaseStartPoint(repoPath: string, baseBranch: string): Promise<string> {
+    const base = assertRefArgument(baseBranch, "Base branch");
+    const remoteName = await this.getDefaultRemote(repoPath);
+    if (!remoteName) {
+      return base;
+    }
+    const remoteRef = `refs/remotes/${remoteName}/${base}`;
+    try {
+      await runNetworkGit(repoPath, ["fetch", "--quiet", "--no-tags", remoteName, `+refs/heads/${base}:${remoteRef}`], BASE_BRANCH_REFRESH_TIMEOUT_MS);
+    } catch {
+      return base;
+    }
+    if (!(await runGitProbe(repoPath, ["show-ref", "--verify", "--quiet", remoteRef]))) {
+      return base;
+    }
+    if (!(await this.hasLocalBranch(repoPath, base))) {
+      return remoteRef;
+    }
+    // A local base with unpushed or diverged commits is kept: the user built on it deliberately.
+    return (await runGitProbe(repoPath, ["merge-base", "--is-ancestor", `refs/heads/${base}`, remoteRef])) ? remoteRef : base;
+  }
 
-    return chunks.map((chunk) => {
-      const lines = chunk.split("\n");
+  async listWorktrees(repoPath: string): Promise<WorktreeInfo[]> {
+    const git = createLocalGit(repoPath);
+    // NUL-separated output survives paths with newlines; Git before 2.36 rejects `-z`.
+    let chunks: string[][];
+    try {
+      chunks = (await runGitRaw(git, ["worktree", "list", "--porcelain", "-z"]))
+        .split("\0\0")
+        .map((chunk) => chunk.split("\0").filter(Boolean))
+        .filter((lines) => lines.length > 0);
+    } catch {
+      chunks = (await runGitRaw(git, ["worktree", "list", "--porcelain"]))
+        .trim()
+        .split(/\r?\n\r?\n/)
+        .filter(Boolean)
+        .map((chunk) => chunk.split(/\r?\n/));
+    }
+
+    return chunks.map((lines) => {
       const worktreePath = lines[0]?.replace(/^worktree /, "") ?? repoPath;
       const branchLine = lines.find((line) => line.startsWith("branch "));
       const branchName = branchLine?.replace("branch refs/heads/", "") ?? "detached-head";
@@ -898,8 +1147,7 @@ export class GitService {
   }
 
   async releaseWorktreeBranch(worktreePath: string, branchName: string): Promise<void> {
-    const git = simpleGit(worktreePath);
-    await ensureGitLongPathSupport(git, worktreePath);
+    const git = createLocalGit(worktreePath, LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS);
     const currentBranch = (await git.branch(["--show-current"])).current;
 
     if (!currentBranch || currentBranch !== branchName) {
@@ -910,15 +1158,15 @@ export class GitService {
   }
 
   async checkoutWorktreeBranch(worktreePath: string, branchName: string): Promise<void> {
-    const git = simpleGit(worktreePath);
-    await ensureGitLongPathSupport(git, worktreePath);
+    const git = createLocalGit(worktreePath, LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS);
+    const trimmedBranchName = assertRefArgument(branchName);
     const currentBranch = (await git.branch(["--show-current"])).current;
 
-    if (currentBranch === branchName) {
+    if (currentBranch === trimmedBranchName) {
       return;
     }
 
-    await runGitRaw(git, ["checkout", branchName]);
+    await runGitRaw(git, ["checkout", trimmedBranchName, "--"]);
   }
 
   async hasWorktreeGitMetadata(worktreePath: string): Promise<boolean> {
@@ -931,29 +1179,66 @@ export class GitService {
   }
 
   async hasLocalBranch(repoPath: string, branchName: string): Promise<boolean> {
-    const git = simpleGit(repoPath);
-    const branches = await git.branchLocal();
-    return branches.all.includes(branchName);
-  }
-
-  async hasRemoteBranch(repoPath: string, branchName: string): Promise<boolean> {
-    const git = simpleGit(repoPath);
-    try {
-      await runGitRaw(git, ["show-ref", "--verify", "--quiet", `refs/remotes/origin/${branchName}`]);
-      return true;
-    } catch {
+    const trimmedBranchName = branchName.trim();
+    if (!trimmedBranchName) {
       return false;
     }
+    return runGitProbe(repoPath, ["show-ref", "--verify", "--quiet", `refs/heads/${trimmedBranchName}`]);
+  }
+
+  /** Whether `<remote>/<branch>` exists locally; defaults to the repository's default remote. */
+  async hasRemoteBranch(repoPath: string, branchName: string, remoteName?: string): Promise<boolean> {
+    const remote = remoteName ?? (await this.getDefaultRemote(repoPath));
+    return remote ? runGitProbe(repoPath, ["show-ref", "--verify", "--quiet", `refs/remotes/${remote}/${branchName}`]) : false;
+  }
+
+  /** The remote that hosts base and target branches: `origin` when present, otherwise the first remote. */
+  async getDefaultRemote(repoPath: string): Promise<string | null> {
+    const remotes = (await runGitRaw(createLocalGit(repoPath), ["remote"]))
+      .split(/\r?\n/)
+      .map((remote) => remote.trim())
+      .filter(Boolean);
+    return remotes.includes("origin") ? "origin" : (remotes[0] ?? null);
+  }
+
+  /**
+   * Resolves the remote a branch is pushed to like Git does: `branch.<name>.pushRemote`, then
+   * `remote.pushDefault`, then the branch's upstream remote, then the default remote. Fork setups
+   * that push to a personal remote therefore stop pushing to `origin`.
+   */
+  async getPushRemote(repoPath: string, branchName: string): Promise<string> {
+    const git = createLocalGit(repoPath);
+    for (const key of [`branch.${branchName}.pushRemote`, "remote.pushDefault", `branch.${branchName}.remote`]) {
+      const value = (await runGitRaw(git, ["config", "--get", key]).catch(() => "")).trim();
+      if (value && value !== ".") {
+        return value;
+      }
+    }
+    const defaultRemote = await this.getDefaultRemote(repoPath);
+    if (!defaultRemote) {
+      throw new Error("This repository has no Git remote to push to.");
+    }
+    return defaultRemote;
+  }
+
+  /** Mirrors `git branch -d`: a branch is merged when its upstream, or HEAD without one, contains it. */
+  async isBranchMerged(repoPath: string, branchName: string): Promise<boolean> {
+    const trimmedBranchName = branchName.trim();
+    const upstream = (
+      await runGitRaw(createLocalGit(repoPath), ["for-each-ref", "--format=%(upstream)", `refs/heads/${trimmedBranchName}`])
+    ).trim();
+    // The upstream stays configured after its remote branch is deleted and pruned, typically after a
+    // merged PR; like `git branch -d`, fall back to HEAD when it no longer resolves.
+    const upstreamExists = upstream ? await runGitProbe(repoPath, ["show-ref", "--verify", "--quiet", upstream]) : false;
+    return runGitProbe(repoPath, ["merge-base", "--is-ancestor", `refs/heads/${trimmedBranchName}`, upstreamExists ? upstream : "HEAD"]);
   }
 
   async fetchProjectBranches(repoPath: string): Promise<void> {
-    await ensureGitLongPathSupport(simpleGit(repoPath), repoPath);
     await runNetworkGit(repoPath, ["fetch", "--all", "--prune"]);
   }
 
   async createProjectBranch(repoPath: string, branchName: string, startPoint: string, checkout = true): Promise<void> {
-    const git = simpleGit(repoPath);
-    await ensureGitLongPathSupport(git, repoPath);
+    const git = createLocalGit(repoPath, LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS);
     const trimmedBranchName = branchName.trim();
     const trimmedStartPoint = startPoint.trim();
     if (!trimmedBranchName) {
@@ -962,25 +1247,26 @@ export class GitService {
     if (!trimmedStartPoint) {
       throw new Error("Select a source branch.");
     }
+    assertRefArgument(trimmedStartPoint, "Source branch");
     await this.validateBranchName(repoPath, trimmedBranchName);
     if (await this.hasLocalBranch(repoPath, trimmedBranchName)) {
       throw new Error(`A local branch named "${trimmedBranchName}" already exists.`);
     }
     if (checkout) {
-      await runGitRaw(git, ["checkout", "-b", trimmedBranchName, trimmedStartPoint]);
+      await runGitRaw(git, ["checkout", "-b", trimmedBranchName, trimmedStartPoint, "--"]);
     } else {
       await runGitRaw(git, ["branch", trimmedBranchName, trimmedStartPoint]);
     }
   }
 
   async renameProjectBranch(repoPath: string, oldName: string, newName: string): Promise<void> {
-    const git = simpleGit(repoPath);
-    await ensureGitLongPathSupport(git, repoPath);
+    const git = createLocalGit(repoPath);
     const trimmedOldName = oldName.trim();
     const trimmedNewName = newName.trim();
     if (!trimmedOldName || !trimmedNewName) {
       throw new Error("Enter both the current and new branch names.");
     }
+    assertRefArgument(trimmedOldName);
     if (!(await this.hasLocalBranch(repoPath, trimmedOldName))) {
       throw new Error(`Local branch "${trimmedOldName}" was not found.`);
     }
@@ -992,12 +1278,11 @@ export class GitService {
   }
 
   async deleteProjectBranch(repoPath: string, branchName: string, force = false): Promise<void> {
-    const git = simpleGit(repoPath);
-    await ensureGitLongPathSupport(git, repoPath);
-    const trimmedBranchName = branchName.trim();
-    if (!trimmedBranchName) {
+    const git = createLocalGit(repoPath);
+    if (!branchName.trim()) {
       throw new Error("Select a branch.");
     }
+    const trimmedBranchName = assertRefArgument(branchName);
     const currentBranch = await this.getCurrentBranch(repoPath).catch(() => "");
     if (trimmedBranchName === currentBranch) {
       throw new Error("You cannot delete the currently checked out branch.");
@@ -1009,25 +1294,24 @@ export class GitService {
   }
 
   async pullProjectBranch(repoPath: string): Promise<void> {
-    await ensureGitLongPathSupport(simpleGit(repoPath), repoPath);
     await runNetworkGit(repoPath, ["pull", "--ff-only"]);
   }
 
   async pushProjectBranch(repoPath: string, branchName: string, setUpstream = true): Promise<void> {
-    const git = simpleGit(repoPath);
-    await ensureGitLongPathSupport(git, repoPath);
-    const trimmedBranchName = branchName.trim();
-    if (!trimmedBranchName) {
+    if (!branchName.trim()) {
       throw new Error("Select a branch.");
     }
+    const trimmedBranchName = assertRefArgument(branchName);
     if (!(await this.hasLocalBranch(repoPath, trimmedBranchName))) {
       throw new Error(`Local branch "${trimmedBranchName}" was not found.`);
     }
-    await runNetworkGit(repoPath, setUpstream ? ["push", "-u", "origin", trimmedBranchName] : ["push", "origin", trimmedBranchName]);
+    const remoteName = await this.getPushRemote(repoPath, trimmedBranchName);
+    await runNetworkGit(repoPath, setUpstream ? ["push", "-u", remoteName, trimmedBranchName] : ["push", remoteName, trimmedBranchName]);
   }
 
   private async validateBranchName(repoPath: string, branchName: string): Promise<void> {
-    const git = simpleGit(repoPath);
+    assertRefArgument(branchName);
+    const git = createLocalGit(repoPath);
     try {
       await runGitRaw(git, ["check-ref-format", "--branch", branchName]);
     } catch (error) {
@@ -1035,16 +1319,25 @@ export class GitService {
     }
   }
 
-  async removeWorktree(repoPath: string, worktreePath: string, branchName?: string): Promise<void> {
-    const git = simpleGit(repoPath);
-    await ensureGitLongPathSupport(git, repoPath);
+  async removeWorktree(repoPath: string, worktreePath: string, branchName?: string, configuredWorktreeRoot?: string | null): Promise<void> {
+    const git = createLocalGit(repoPath);
     const cleanupErrors: string[] = [];
     const isRegisteredWorktree = await this.isWorktreeRegistered(repoPath, worktreePath);
 
+    // The recursive removals below must never run while a link into the project repository remains, or
+    // a link that is followed would delete the project's shared dependencies.
     try {
       await removeWorktreeDependencyLinks(worktreePath);
     } catch (error) {
-      cleanupErrors.push(`dependency link removal failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `dependency link removal failed, so the worktree was kept to protect the project's shared dependencies: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    const remainingLinks = await listWorktreeDependencyLinks(worktreePath);
+    if (remainingLinks.length > 0) {
+      throw new Error(
+        `dependency links still exist in the worktree (${remainingLinks.join(", ")}), so it was kept to protect the project's shared dependencies.`,
+      );
     }
 
     if (isRegisteredWorktree) {
@@ -1088,8 +1381,9 @@ export class GitService {
       cleanupErrors.push("worktree directory still exists after cleanup");
     }
 
-    const currentWorktreeRoot = this.getWorktreeRoot(repoPath);
-    const managedRoots = new Set<string>([currentWorktreeRoot, this.getLegacyWorktreeRoot(repoPath), dirname(worktreePath)]);
+    // Includes the configured root, so a custom worktree location does not keep empty folders behind.
+    const currentWorktreeRoots = new Set([this.getWorktreeRoot(repoPath), this.getWorktreeRoot(repoPath, configuredWorktreeRoot)]);
+    const managedRoots = new Set<string>([...currentWorktreeRoots, this.getLegacyWorktreeRoot(repoPath), dirname(worktreePath)]);
     for (const rootPath of managedRoots) {
       try {
         const removed = await removeEmptyDirectoryIfPossible(rootPath);
@@ -1097,7 +1391,7 @@ export class GitService {
           continue;
         }
 
-        if (rootPath === currentWorktreeRoot) {
+        if (currentWorktreeRoots.has(rootPath)) {
           await removeEmptyDirectoryIfPossible(dirname(rootPath));
         }
       } catch (error) {
@@ -1142,8 +1436,9 @@ export class GitService {
       // Keep local-only and temporarily offline repositories usable with their existing refs.
     }
 
+    const remoteName = (await this.getDefaultRemote(worktreePath)) ?? "origin";
     let targetRef = "";
-    for (const candidate of [`refs/remotes/origin/${trimmedTargetBranch}`, `refs/heads/${trimmedTargetBranch}`]) {
+    for (const candidate of [`refs/remotes/${remoteName}/${trimmedTargetBranch}`, `refs/heads/${trimmedTargetBranch}`]) {
       try {
         const resolvedRef = (await runGitRaw(git, ["rev-parse", "--verify", "--quiet", candidate])).trim();
         if (resolvedRef) {
@@ -1155,7 +1450,7 @@ export class GitService {
       }
     }
     if (!targetRef) {
-      throw new Error(`Target branch "${trimmedTargetBranch}" was not found locally or on origin.`);
+      throw new Error(`Target branch "${trimmedTargetBranch}" was not found locally or on ${remoteName}.`);
     }
 
     const mergeBase = (await runGitRaw(git, ["merge-base", targetRef, "HEAD"])).trim();
@@ -1200,7 +1495,7 @@ export class GitService {
   }
 
   async hasChanges(worktreePath: string): Promise<boolean> {
-    const git = simpleGit(worktreePath);
+    const git = createReadOnlyGit(worktreePath);
     const status = await git.status();
     return !status.isClean();
   }
@@ -1209,19 +1504,42 @@ export class GitService {
     return computeWorktreeRestorePatch(worktreePath);
   }
 
-  async cloneWorkspaceChanges(sourceWorktreePath: string, targetWorktreePath: string): Promise<void> {
+  async cloneWorkspaceChanges(
+    sourceWorktreePath: string,
+    targetWorktreePath: string,
+    options: { protectTargetChanges?: boolean } = {},
+  ): Promise<void> {
     const patch = await computeWorktreeRestorePatch(sourceWorktreePath);
     try {
       await applyWorktreePatch(targetWorktreePath, patch, { threeWayFallback: true });
     } catch {
-      await syncChangedFilesFromWorktree(sourceWorktreePath, targetWorktreePath);
+      await syncChangedFilesFromWorktree(sourceWorktreePath, targetWorktreePath, options);
     }
   }
 
-  async restorePromptRestorePatch(worktreePath: string, targetPatch: string): Promise<void> {
-    const git = simpleGit(worktreePath);
-    await ensureGitLongPathSupport(git, worktreePath);
+  /**
+   * Resets the workspace to HEAD and applies `targetPatch`. Refuses when HEAD moved since the restore
+   * point was captured, because the reset would otherwise keep commits made after the prompt. The open
+   * changes that the reset discards are written to `safetyPatchPath` first so they stay recoverable.
+   */
+  async restorePromptRestorePatch(
+    worktreePath: string,
+    targetPatch: string,
+    options: { expectedHeadSha?: string | null; safetyPatchPath?: string } = {},
+  ): Promise<{ safetyPatchPath: string | null }> {
+    const git = createLocalGit(worktreePath, LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS);
+    if (options.expectedHeadSha && (await this.getHeadCommitSha(worktreePath)) !== options.expectedHeadSha) {
+      throw new Error(
+        "The workspace has new commits since the last prompt, so its changes cannot be reverted safely. Revert those commits with Git instead.",
+      );
+    }
     const safetyPatch = await computeWorktreeRestorePatch(worktreePath);
+    let safetyPatchPath: string | null = null;
+    if (options.safetyPatchPath && safetyPatch.trim()) {
+      mkdirSync(dirname(options.safetyPatchPath), { recursive: true });
+      await writeFile(options.safetyPatchPath, safetyPatch, "utf8");
+      safetyPatchPath = options.safetyPatchPath;
+    }
 
     await runGitRaw(git, ["reset", "--hard", "HEAD"]);
     await runGitRaw(git, ["clean", "-fd"]);
@@ -1236,11 +1554,11 @@ export class GitService {
       }
       throw error;
     }
+    return { safetyPatchPath };
   }
 
   async commitAllChanges(worktreePath: string, message: string): Promise<{ commitHash: string }> {
-    const git = simpleGit(worktreePath);
-    await ensureGitLongPathSupport(git, worktreePath);
+    const git = createLocalGit(worktreePath, LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS);
     const status = await git.status();
 
     if (status.isClean()) {
@@ -1266,26 +1584,31 @@ export class GitService {
   }
 
   async publishBranch(worktreePath: string, branchName: string): Promise<{ branchName: string; remoteName: string }> {
-    await runNetworkGit(worktreePath, ["push", "-u", "origin", branchName]);
+    const trimmedBranchName = assertRefArgument(branchName);
+    const remoteName = await this.getPushRemote(worktreePath, trimmedBranchName);
+    await runNetworkGit(worktreePath, ["push", "-u", remoteName, trimmedBranchName]);
 
     return {
       branchName,
-      remoteName: "origin",
+      remoteName,
     };
   }
 
   async listTargetBranches(worktreePath: string): Promise<string[]> {
-    const git = simpleGit(worktreePath);
+    const git = createLocalGit(worktreePath);
     const branches = new Set<string>();
 
     try {
-      const remoteRefs = await git.raw(["for-each-ref", "--format=%(refname:short)", "refs/remotes/origin"]);
+      const remoteName = (await this.getDefaultRemote(worktreePath)) ?? "origin";
+      const remoteRefPrefix = `refs/remotes/${remoteName}/`;
+      const remoteRefs = await git.raw(["for-each-ref", "--format=%(refname)", `refs/remotes/${remoteName}`]);
       for (const line of remoteRefs.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
-        if (line === "origin/HEAD") {
+        const name = line.startsWith(remoteRefPrefix) ? line.slice(remoteRefPrefix.length) : "";
+        if (!name || name === "HEAD") {
           continue;
         }
 
-        branches.add(line.replace(/^origin\//, ""));
+        branches.add(name);
       }
     } catch {
       // Fall back to local branches below.
@@ -1300,11 +1623,11 @@ export class GitService {
   }
 
   async getLatestCommitMessage(worktreePath: string, branchName: string): Promise<string> {
-    const git = simpleGit(worktreePath);
-    return (await git.raw(["log", "-1", "--format=%s", branchName])).trim();
+    const git = createLocalGit(worktreePath);
+    return (await git.raw(["log", "-1", "--format=%s", assertRefArgument(branchName), "--"])).trim();
   }
 
-  /** Throws unless a new publish branch with this name can be created locally and on origin. */
+  /** Throws unless a new publish branch with this name can be created locally and on its push remote. */
   async assertPublishBranchAvailable(worktreePath: string, branchName: string): Promise<string> {
     const trimmedBranchName = branchName.trim();
     if (!trimmedBranchName) {
@@ -1317,11 +1640,12 @@ export class GitService {
     }
 
     // A bare pattern also matches slash-delimited tails, so `feature` would hit `refs/heads/team/feature`.
+    const remoteName = await this.getPushRemote(worktreePath, trimmedBranchName);
     const remoteHeads = (
-      await runNetworkGit(worktreePath, ["ls-remote", "--heads", "origin", `refs/heads/${trimmedBranchName}`])
+      await runNetworkGit(worktreePath, ["ls-remote", "--heads", remoteName, `refs/heads/${trimmedBranchName}`])
     ).trim();
     if (remoteHeads) {
-      throw new Error(`A remote branch named "${trimmedBranchName}" already exists on origin.`);
+      throw new Error(`A remote branch named "${trimmedBranchName}" already exists on ${remoteName}.`);
     }
 
     return trimmedBranchName;
@@ -1329,8 +1653,7 @@ export class GitService {
 
   async createPublishBranchFromHead(worktreePath: string, branchName: string): Promise<void> {
     const trimmedBranchName = await this.assertPublishBranchAvailable(worktreePath, branchName);
-    const git = simpleGit(worktreePath);
-    await ensureGitLongPathSupport(git, worktreePath);
+    const git = createLocalGit(worktreePath);
     await runGitRaw(git, ["checkout", "-b", trimmedBranchName, "HEAD"]);
   }
 
@@ -1340,15 +1663,37 @@ export class GitService {
     targetBranch: string,
     title: string,
     body: string,
-  ): Promise<{ url: string; mode: PublishMode; requestKind: PublishRequestKind }> {
-    const remote = await this.getParsedOriginRemote(worktreePath);
-    await runNetworkGit(worktreePath, ["push", "-u", "origin", branchName]);
+  ): Promise<{ url: string; mode: PublishMode; requestKind: PublishRequestKind; descriptionOmitted?: boolean }> {
+    assertRefArgument(branchName);
+    assertRefArgument(targetBranch, "Target branch");
+    const baseRemoteName = await this.getDefaultRemote(worktreePath);
+    const pushRemoteName = await this.getPushRemote(worktreePath, branchName);
+    const remote = baseRemoteName ? await this.getParsedRemote(worktreePath, baseRemoteName) : null;
+    await runNetworkGit(worktreePath, ["push", "-u", pushRemoteName, branchName]);
+    const headSelector = await this.getForkHeadSelector(worktreePath, branchName, remote, baseRemoteName, pushRemoteName);
 
     if (remote?.provider === "gitlab") {
+      // A branch pushed to a fork cannot be matched to its merge request reliably, so it is not looked up.
+      const existingUrl =
+        pushRemoteName === baseRemoteName ? await this.findOpenMergeRequestUrl(worktreePath, branchName, targetBranch) : null;
+      if (existingUrl) {
+        return { url: existingUrl, mode: "existing", requestKind: "merge-request" };
+      }
       try {
         const { stdout } = await execForgeCli(
           "glab",
-          ["mr", "create", "--source-branch", branchName, "--target-branch", targetBranch, "--title", title, "--description", body],
+          [
+            "mr",
+            "create",
+            "--source-branch",
+            branchName,
+            "--target-branch",
+            targetBranch,
+            "--title",
+            title,
+            "--description",
+            fitForgeCliDescription(body),
+          ],
           worktreePath,
         );
 
@@ -1358,27 +1703,41 @@ export class GitService {
           requestKind: "merge-request",
         };
       } catch (error) {
-        const mergeRequestUrl = this.buildGitlabMergeRequestUrl(remote, branchName, targetBranch, title, body);
-        if (mergeRequestUrl) {
+        const mergeRequestDraft = isForgeCliUnavailableError(error)
+          ? this.buildGitlabMergeRequestUrl(remote, branchName, targetBranch, title, body)
+          : null;
+        if (mergeRequestDraft) {
           return {
-            url: mergeRequestUrl,
+            url: mergeRequestDraft.url,
             mode: "browser-draft",
             requestKind: "merge-request",
+            ...(mergeRequestDraft.descriptionOmitted ? { descriptionOmitted: true } : {}),
           };
         }
-
-          let message = error instanceof Error ? error.message : String(error);
-          if (typeof error === "object" && error && "stderr" in error) {
-            message = String((error as { stderr?: string }).stderr ?? "").trim();
-          }
-        throw new Error(message || "Failed to create merge request for this GitLab repository.");
+        if (isTimedOutCommandError(error)) {
+          throw new Error(
+            `GitLab CLI did not finish within ${String(NETWORK_COMMAND_TIMEOUT_MINUTES)} minutes. The branch was pushed; check \`glab auth status\` and create the merge request again.`,
+          );
+        }
+        throw new Error(
+          readCommandStderr(error) || (error instanceof Error ? error.message : "") || "Failed to create merge request for this GitLab repository.",
+        );
       }
     }
 
+    const headOwner = headSelector.includes(":") ? headSelector.slice(0, headSelector.indexOf(":")) : githubOwnerOf(remote);
+    const existingUrl = await this.findOpenPullRequestUrl(worktreePath, branchName, targetBranch, headOwner);
+    if (existingUrl) {
+      return { url: existingUrl, mode: "existing", requestKind: "pull-request" };
+    }
+
+    // The body goes through a file: the command line is capped at 32,767 characters on Windows.
+    const bodyFilePath = join(tmpdir(), `buildwarden-pr-body-${crypto.randomUUID()}.md`);
+    await writeFile(bodyFilePath, body, "utf8");
     try {
       const { stdout } = await execForgeCli(
         "gh",
-        ["pr", "create", "--base", targetBranch, "--head", branchName, "--title", title, "--body", body],
+        ["pr", "create", "--base", targetBranch, "--head", headSelector, "--title", title, "--body-file", bodyFilePath],
         worktreePath,
       );
 
@@ -1388,13 +1747,14 @@ export class GitService {
         requestKind: "pull-request",
       };
     } catch (error) {
-      if (isCommandMissingError(error)) {
-        const compareUrl = this.buildGithubCompareUrl(remote, branchName, targetBranch, title, body);
-        if (compareUrl) {
+      if (isForgeCliUnavailableError(error)) {
+        const compareDraft = this.buildGithubCompareUrl(remote, headSelector, targetBranch, title, body);
+        if (compareDraft) {
           return {
-            url: compareUrl,
+            url: compareDraft.url,
             mode: "browser-draft",
             requestKind: "pull-request",
+            ...(compareDraft.descriptionOmitted ? { descriptionOmitted: true } : {}),
           };
         }
       }
@@ -1404,16 +1764,50 @@ export class GitService {
         );
       }
 
-      let message = error instanceof Error ? error.message : String(error);
-      if (typeof error === "object" && error && "stderr" in error) {
-        message = String((error as { stderr?: string }).stderr ?? "").trim();
-      }
-      throw new Error(message || "Failed to create pull request with GitHub CLI.");
+      throw new Error(readCommandStderr(error) || (error instanceof Error ? error.message : "") || "Failed to create pull request with GitHub CLI.");
+    } finally {
+      await unlink(bodyFilePath).catch(() => {});
+    }
+  }
+
+  /** Best effort: the open pull request from `headOwner`'s branch into the base, so publishing again reuses it. */
+  private async findOpenPullRequestUrl(
+    worktreePath: string,
+    branchName: string,
+    targetBranch: string,
+    headOwner: string,
+  ): Promise<string | null> {
+    if (!headOwner) {
+      return null;
+    }
+    try {
+      const { stdout } = await execForgeCli(
+        "gh",
+        ["pr", "list", "--head", branchName, "--base", targetBranch, "--state", "open", "--json", "url,headRepositoryOwner", "--limit", "20"],
+        worktreePath,
+      );
+      return selectOwnOpenPullRequestUrl(JSON.parse(stdout), headOwner);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Best effort: an open merge request for this source and target, so publishing again reuses it. */
+  private async findOpenMergeRequestUrl(worktreePath: string, branchName: string, targetBranch: string): Promise<string | null> {
+    try {
+      const { stdout } = await execForgeCli(
+        "glab",
+        ["mr", "list", "--source-branch", branchName, "--target-branch", targetBranch, "--output", "json"],
+        worktreePath,
+      );
+      return selectOwnOpenMergeRequestUrl(JSON.parse(stdout));
+    } catch {
+      return null;
     }
   }
 
   async ensureRepoReady(repoPath: string): Promise<void> {
-    const git = simpleGit(repoPath);
+    const git = createLocalGit(repoPath);
     const isRepo = await git.checkIsRepo();
 
     if (!isRepo) {
@@ -1422,7 +1816,7 @@ export class GitService {
   }
 
   createGitClient(repoPath: string): SimpleGit {
-    return simpleGit(repoPath);
+    return createLocalGit(repoPath);
   }
 
   private buildGithubCompareUrl(
@@ -1431,18 +1825,15 @@ export class GitService {
     targetBranch: string,
     title: string,
     body: string,
-  ): string | null {
+  ): BrowserDraft | null {
     if (!remote || remote.provider !== "github") {
       return null;
     }
 
-    const params = new URLSearchParams({
-      expand: "1",
-      title,
-      body,
+    return buildBrowserDraft((includeDescription) => {
+      const params = new URLSearchParams({ expand: "1", title, ...(includeDescription ? { body } : {}) });
+      return `${remote.webBaseUrl}/compare/${encodeURIComponent(targetBranch)}...${encodeURIComponent(branchName)}?${params.toString()}`;
     });
-
-    return `${remote.webBaseUrl}/compare/${encodeURIComponent(targetBranch)}...${encodeURIComponent(branchName)}?${params.toString()}`;
   }
 
   private buildGitlabMergeRequestUrl(
@@ -1451,25 +1842,42 @@ export class GitService {
     targetBranch: string,
     title: string,
     body: string,
-  ): string | null {
+  ): BrowserDraft | null {
     if (!remote || remote.provider !== "gitlab") {
       return null;
     }
 
-    const params = new URLSearchParams({
-      "merge_request[source_branch]": branchName,
-      "merge_request[target_branch]": targetBranch,
-      "merge_request[title]": title,
-      "merge_request[description]": body,
+    return buildBrowserDraft((includeDescription) => {
+      const params = new URLSearchParams({
+        "merge_request[source_branch]": branchName,
+        "merge_request[target_branch]": targetBranch,
+        "merge_request[title]": title,
+        ...(includeDescription ? { "merge_request[description]": body } : {}),
+      });
+      return `${remote.webBaseUrl}/-/merge_requests/new?${params.toString()}`;
     });
-
-    return `${remote.webBaseUrl}/-/merge_requests/new?${params.toString()}`;
   }
 
-  private async getParsedOriginRemote(worktreePath: string): Promise<ParsedRemote | null> {
-    const git = simpleGit(worktreePath);
-    const remoteOutput = await git.remote(["get-url", "origin"]);
+  private async getParsedRemote(worktreePath: string, remoteName: string): Promise<ParsedRemote | null> {
+    const git = createLocalGit(worktreePath);
+    const remoteOutput = await git.remote(["get-url", remoteName]);
     return parseGitRemoteToWebBase(String(remoteOutput ?? ""));
+  }
+
+  /** GitHub needs `owner:branch` when the branch was pushed to a fork rather than the base repository. */
+  private async getForkHeadSelector(
+    worktreePath: string,
+    branchName: string,
+    baseRemote: ParsedRemote | null,
+    baseRemoteName: string | null,
+    pushRemoteName: string,
+  ): Promise<string> {
+    if (!baseRemote || baseRemote.provider !== "github" || !baseRemoteName || pushRemoteName === baseRemoteName) {
+      return branchName;
+    }
+    const pushRemote = await this.getParsedRemote(worktreePath, pushRemoteName).catch(() => null);
+    const pushOwner = githubOwnerOf(pushRemote);
+    return pushOwner && pushOwner !== githubOwnerOf(baseRemote) ? `${pushOwner}:${branchName}` : branchName;
   }
 
   private getLegacyWorktreeRoot(repoPath: string): string {

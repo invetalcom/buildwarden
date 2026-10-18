@@ -73,6 +73,7 @@ interface SettingsPageProps {
   modelBaseUrl: string;
   autoCheckoutRunBranchOnOpen: boolean;
   autoReleaseRunBranchOnLeave: boolean;
+  worktreeStartFromRemoteBase: boolean;
   dataRetentionCleanupEnabled: boolean;
   dataRetentionCleanupDays: number;
   pastedTextAttachmentThreshold: number;
@@ -107,6 +108,7 @@ interface SettingsPageProps {
   onDeleteModel: (modelId: string) => void;
   onAutoCheckoutRunBranchOnOpenChange: (value: boolean) => void;
   onAutoReleaseRunBranchOnLeaveChange: (value: boolean) => void;
+  onWorktreeStartFromRemoteBaseChange: (value: boolean) => void;
   onDataRetentionCleanupEnabledChange: (value: boolean) => void;
   onDataRetentionCleanupDaysChange: (value: number) => void | Promise<void>;
   onPastedTextAttachmentThresholdChange: (value: number) => void | Promise<void>;
@@ -201,6 +203,7 @@ export const SettingsPage = ({
   modelBaseUrl,
   autoCheckoutRunBranchOnOpen,
   autoReleaseRunBranchOnLeave,
+  worktreeStartFromRemoteBase,
   dataRetentionCleanupEnabled,
   dataRetentionCleanupDays,
   pastedTextAttachmentThreshold,
@@ -235,6 +238,7 @@ export const SettingsPage = ({
   onDeleteModel,
   onAutoCheckoutRunBranchOnOpenChange,
   onAutoReleaseRunBranchOnLeaveChange,
+  onWorktreeStartFromRemoteBaseChange,
   onDataRetentionCleanupEnabledChange,
   onDataRetentionCleanupDaysChange,
   onPastedTextAttachmentThresholdChange,
@@ -538,6 +542,7 @@ export const SettingsPage = ({
           projectFolderGitWarning={projectFolderGitWarning}
           autoCheckoutRunBranchOnOpen={autoCheckoutRunBranchOnOpen}
           autoReleaseRunBranchOnLeave={autoReleaseRunBranchOnLeave}
+          worktreeStartFromRemoteBase={worktreeStartFromRemoteBase}
           dataRetentionCleanupEnabled={dataRetentionCleanupEnabled}
           dataRetentionCleanupDays={dataRetentionCleanupDays}
           pastedTextAttachmentThreshold={pastedTextAttachmentThreshold}
@@ -556,6 +561,7 @@ export const SettingsPage = ({
           onDeleteProject={onDeleteProject}
           onAutoCheckoutRunBranchOnOpenChange={onAutoCheckoutRunBranchOnOpenChange}
           onAutoReleaseRunBranchOnLeaveChange={onAutoReleaseRunBranchOnLeaveChange}
+          onWorktreeStartFromRemoteBaseChange={onWorktreeStartFromRemoteBaseChange}
           onDataRetentionCleanupEnabledChange={onDataRetentionCleanupEnabledChange}
           onDataRetentionCleanupDaysChange={onDataRetentionCleanupDaysChange}
           onPastedTextAttachmentThresholdChange={onPastedTextAttachmentThresholdChange}

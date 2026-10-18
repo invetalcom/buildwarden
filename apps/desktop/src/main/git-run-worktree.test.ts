@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -70,6 +70,22 @@ describe("GitService run worktree lifecycle", () => {
     expect(existsSync(join(root, "worktrees", ".buildwarden-worktrees", "repo", "project-run-1"))).toBe(false);
   });
 
+  it("reuses its own worktree but never a leftover folder at the worktree path", async () => {
+    const { root, repoPath } = await createRepository();
+    const service = new GitService();
+    const worktreeRoot = join(root, "worktrees");
+    const workspace = await service.createWorktreeForRun(repoPath, "Project", "run-1", "main", worktreeRoot);
+
+    await expect(service.createWorktreeForRun(repoPath, "Project", "run-1", "main", worktreeRoot)).resolves.toEqual(workspace);
+
+    const leftoverPath = join(worktreeRoot, ".buildwarden-worktrees", "repo", "project-run-2");
+    await mkdir(leftoverPath, { recursive: true });
+    await writeFile(join(leftoverPath, "stale.txt"), "stale\n", "utf8");
+
+    await expect(service.createWorktreeForRun(repoPath, "Project", "run-2", "main", worktreeRoot)).rejects.toThrow("already exists");
+    expect(await readFile(join(leftoverPath, "stale.txt"), "utf8")).toBe("stale\n");
+  });
+
   it("never commits the shared dependency link of a run worktree", async () => {
     const { root, repoPath } = await createRepository();
     await mkdir(join(repoPath, "node_modules"));
@@ -120,5 +136,287 @@ describe("GitService run worktree lifecycle", () => {
     }
 
     expect(await service.hasRemoteBranch(repoPath, "main")).toBe(true);
+  });
+});
+
+describe("GitService maintenance details", () => {
+  it("detects the base branch from origin and cleans up a configured worktree root", async () => {
+    const { root, repoPath, git } = await createRepository();
+    await git.branch(["-m", "main", "master"]);
+    const remotePath = join(root, "remote.git");
+    await simpleGit(root).raw(["init", "--bare", remotePath]);
+    await git.addRemote("origin", remotePath);
+    await git.push(["origin", "master"]);
+    await git.checkout(["-b", "main"]);
+    const service = new GitService();
+
+    // origin has only master, so the local main must not win.
+    expect((await service.validateProject(repoPath)).baseBranch).toBe("master");
+    expect(await service.hasLocalBranch(repoPath, "master")).toBe(true);
+    expect(await service.hasLocalBranch(repoPath, "missing")).toBe(false);
+
+    const configuredRoot = join(root, "custom-root");
+    const workspace = await service.createWorktreeForRun(repoPath, "Project", "run-1", "master", configuredRoot);
+    expect(await service.listWorktrees(repoPath)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ branchName: workspace.branchName, isLocked: false })]),
+    );
+    await service.removeWorktree(repoPath, workspace.worktreePath, workspace.branchName, configuredRoot);
+
+    expect(existsSync(join(configuredRoot, ".buildwarden-worktrees"))).toBe(false);
+  });
+});
+
+describe.runIf(process.platform === "win32")("GitService long path configuration", () => {
+  it("leaves the user's repository config alone except for unset values on worktree creation", async () => {
+    const { root, repoPath, git } = await createRepository();
+    const service = new GitService();
+    const readLongPaths = async () => (await git.raw(["config", "--local", "--get", "core.longpaths"])).trim();
+
+    await service.checkoutProjectBranch(repoPath, "main");
+    expect(await readLongPaths()).toBe("");
+
+    await git.addConfig("core.longpaths", "false");
+    await service.createWorktreeForRun(repoPath, "Project", "run-1", "main", join(root, "worktrees"));
+    expect(await readLongPaths()).toBe("false");
+  });
+});
+
+describe("GitService read-only status", () => {
+  it("does not rewrite the index while checking for changes", async () => {
+    const { repoPath, git } = await createRepository();
+    const service = new GitService();
+    const indexPath = join(repoPath, ".git", "index");
+    const touchTrackedFile = async (seconds: number) => {
+      const time = new Date(Date.now() + seconds * 1000);
+      await utimes(join(repoPath, "tracked.txt"), time, time);
+    };
+
+    await touchTrackedFile(60);
+    const indexBefore = (await stat(indexPath)).mtimeMs;
+    expect(await service.hasChanges(repoPath)).toBe(false);
+    expect((await stat(indexPath)).mtimeMs).toBe(indexBefore);
+    await service.getDiffSummary(repoPath);
+    expect((await stat(indexPath)).mtimeMs).toBe(indexBefore);
+
+    await expect(service.getDiff(repoPath)).resolves.toBe("");
+    expect((await stat(indexPath)).mtimeMs).toBe(indexBefore);
+
+    // A plain status refreshes the changed stat data and saves the index, which needs index.lock.
+    await touchTrackedFile(120);
+    await git.status();
+    expect((await stat(indexPath)).mtimeMs).not.toBe(indexBefore);
+  });
+});
+
+describe("GitService workspace change transfer", () => {
+  it("never overwrites changes the target checkout made itself", async () => {
+    const { root, repoPath } = await createRepository();
+    const service = new GitService();
+    const workspace = await service.createWorktreeForRun(repoPath, "Project", "run-1", "main", join(root, "worktrees"));
+    await writeFile(join(workspace.worktreePath, "tracked.txt"), "from run\n", "utf8");
+    await writeFile(join(repoPath, "tracked.txt"), "user edit\n", "utf8");
+
+    await expect(service.cloneWorkspaceChanges(workspace.worktreePath, repoPath, { protectTargetChanges: true })).rejects.toThrow(
+      "were not overwritten",
+    );
+    expect(await readFile(join(repoPath, "tracked.txt"), "utf8")).toBe("user edit\n");
+  });
+
+  it("removes the old side of a rename when copying changes", async () => {
+    const { root, repoPath } = await createRepository();
+    const service = new GitService();
+    const source = await service.createWorktreeForRun(repoPath, "Project", "run-1", "main", join(root, "worktrees"));
+    const target = await service.createWorktreeForRun(repoPath, "Project", "run-2", "main", join(root, "worktrees"));
+    await simpleGit(source.worktreePath).mv("tracked.txt", "renamed.txt");
+    // An untracked file at the rename target makes the patch fail, so the copy fallback runs.
+    await writeFile(join(target.worktreePath, "renamed.txt"), "stale\n", "utf8");
+
+    await service.cloneWorkspaceChanges(source.worktreePath, target.worktreePath);
+
+    expect(existsSync(join(target.worktreePath, "tracked.txt"))).toBe(false);
+    expect((await readFile(join(target.worktreePath, "renamed.txt"), "utf8")).replace(/\r\n/g, "\n")).toBe("base\n");
+  });
+});
+
+describe("GitService project validation", () => {
+  it("reports the repository root and only flags real linked worktrees", async () => {
+    const { root, repoPath } = await createRepository();
+    const service = new GitService();
+    const subfolder = join(repoPath, "packages", "app");
+    await mkdir(subfolder, { recursive: true });
+    const workspace = await service.createWorktreeForRun(repoPath, "Project", "run-1", "main", join(root, "worktrees"));
+
+    const rootValidation = await service.validateProject(repoPath);
+    const subfolderValidation = await service.validateProject(subfolder);
+    const worktreeValidation = await service.validateProject(workspace.worktreePath);
+
+    expect(isSameWorktreePath(rootValidation.repoRoot, repoPath)).toBe(true);
+    expect(rootValidation.isWorktree).toBe(false);
+    expect(isSameWorktreePath(subfolderValidation.repoRoot, repoPath)).toBe(true);
+    expect(subfolderValidation.isWorktree).toBe(false);
+    expect(isSameWorktreePath(worktreeValidation.repoRoot, workspace.worktreePath)).toBe(true);
+    expect(worktreeValidation.isWorktree).toBe(true);
+  });
+});
+
+describe("GitService diffs without commits", () => {
+  it("summarizes staged files before the first commit", async () => {
+    const root = await mkdtemp(join(tmpdir(), "buildwarden-unborn-"));
+    temporaryDirectories.push(root);
+    const git = simpleGit(root);
+    await git.init();
+    await writeFile(join(root, "first.txt"), "one\ntwo\n", "utf8");
+    await git.add(["first.txt"]);
+
+    const summary = await new GitService().getDiffSummary(root);
+
+    expect(summary.files).toEqual([{ path: "first.txt", additions: 2, deletions: 0 }]);
+  });
+});
+
+describe("GitService remote resolution", () => {
+  it("pushes to the configured push remote instead of origin", async () => {
+    const { root, repoPath, git } = await createRepository();
+    for (const name of ["origin", "fork"]) {
+      await simpleGit(root).raw(["init", "--bare", join(root, `${name}.git`)]);
+      await git.addRemote(name, join(root, `${name}.git`));
+    }
+    await git.addConfig("remote.pushDefault", "fork");
+    const service = new GitService();
+
+    expect(await service.getDefaultRemote(repoPath)).toBe("origin");
+    expect(await service.getPushRemote(repoPath, "main")).toBe("fork");
+    await expect(service.publishBranch(repoPath, "main")).resolves.toEqual({ branchName: "main", remoteName: "fork" });
+    expect(await service.hasRemoteBranch(repoPath, "main", "fork")).toBe(true);
+    expect(await service.hasRemoteBranch(repoPath, "main")).toBe(false);
+  });
+
+  it("uses the only remote when it is not named origin", async () => {
+    const { root, repoPath, git } = await createRepository();
+    await simpleGit(root).raw(["init", "--bare", join(root, "upstream.git")]);
+    await git.addRemote("upstream", join(root, "upstream.git"));
+    const service = new GitService();
+
+    await service.pushProjectBranch(repoPath, "main");
+
+    expect(await service.getDefaultRemote(repoPath)).toBe("upstream");
+    expect(await service.hasRemoteBranch(repoPath, "main")).toBe(true);
+    expect(await service.listTargetBranches(repoPath)).toEqual(["main"]);
+  });
+});
+
+describe("GitService fresh base start points", () => {
+  it("starts from origin only when the local base is behind it", async () => {
+    const { root, repoPath, git } = await createRepository();
+    const remotePath = join(root, "remote.git");
+    await simpleGit(root).raw(["init", "--bare", remotePath]);
+    await git.addRemote("origin", remotePath);
+    await git.push(["-u", "origin", "main"]);
+    const otherClonePath = join(root, "other");
+    await simpleGit(root).clone(remotePath, otherClonePath, ["--branch", "main"]);
+    const other = simpleGit(otherClonePath);
+    await other.addConfig("user.name", "Other");
+    await other.addConfig("user.email", "other@example.test");
+    await writeFile(join(otherClonePath, "remote.txt"), "remote\n", "utf8");
+    await other.add(["remote.txt"]);
+    await other.commit("Remote commit");
+    await other.push(["origin", "main"]);
+    const service = new GitService();
+
+    expect(await service.resolveFreshBaseStartPoint(repoPath, "main")).toBe("refs/remotes/origin/main");
+    const workspace = await service.createWorktreeForRun(repoPath, "Project", "run-1", "refs/remotes/origin/main", join(root, "worktrees"));
+    expect(existsSync(join(workspace.worktreePath, "remote.txt"))).toBe(true);
+    expect((await simpleGit(workspace.worktreePath).raw(["config", "--get", `branch.${workspace.branchName}.merge`])).trim()).toBe("");
+
+    await writeFile(join(repoPath, "local.txt"), "local\n", "utf8");
+    await git.add(["local.txt"]);
+    await git.commit("Local commit");
+    expect(await service.resolveFreshBaseStartPoint(repoPath, "main")).toBe("main");
+
+    await git.removeRemote("origin");
+    expect(await service.resolveFreshBaseStartPoint(repoPath, "main")).toBe("main");
+  });
+});
+
+describe("GitService ref arguments", () => {
+  it("never reads a branch name as a file path or an option", async () => {
+    const { repoPath } = await createRepository();
+    const service = new GitService();
+    await writeFile(join(repoPath, "tracked.txt"), "local edit\n", "utf8");
+
+    await expect(service.checkoutProjectBranch(repoPath, "tracked.txt")).rejects.toThrow("was not found");
+    await expect(service.checkoutProjectBranch(repoPath, "--orphan")).rejects.toThrow('cannot start with "-"');
+    await expect(service.checkoutWorktreeBranch(repoPath, "tracked.txt")).rejects.toThrow();
+
+    expect(await readFile(join(repoPath, "tracked.txt"), "utf8")).toBe("local edit\n");
+  });
+});
+
+describe("GitService branch merge checks", () => {
+  it("reports unmerged branches like git branch -d", async () => {
+    const { repoPath, git } = await createRepository();
+    const service = new GitService();
+    await git.branch(["merged"]);
+    await git.checkout(["-b", "unmerged"]);
+    await writeFile(join(repoPath, "tracked.txt"), "unmerged\n", "utf8");
+    await git.add(["tracked.txt"]);
+    await git.commit("Unmerged commit");
+    await git.checkout(["main"]);
+
+    expect(await service.isBranchMerged(repoPath, "merged")).toBe(true);
+    expect(await service.isBranchMerged(repoPath, "unmerged")).toBe(false);
+  });
+
+  it("falls back to HEAD when the configured upstream was pruned", async () => {
+    const { repoPath, git } = await createRepository();
+    const service = new GitService();
+    await git.branch(["merged-and-pruned"]);
+    // Without a fetch refspec Git cannot map the upstream and `%(upstream)` stays empty.
+    await git.addConfig("remote.origin.url", join(repoPath, "missing-remote.git"));
+    await git.addConfig("remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*");
+    await git.addConfig("branch.merged-and-pruned.remote", "origin");
+    await git.addConfig("branch.merged-and-pruned.merge", "refs/heads/merged-and-pruned");
+    // The upstream is configured, but its remote-tracking ref no longer exists.
+    expect((await git.raw(["for-each-ref", "--format=%(upstream)", "refs/heads/merged-and-pruned"])).trim()).toBe(
+      "refs/remotes/origin/merged-and-pruned",
+    );
+
+    expect(await service.isBranchMerged(repoPath, "merged-and-pruned")).toBe(true);
+  });
+});
+
+describe("GitService prompt restore points", () => {
+  it("saves the discarded changes before restoring the captured state", async () => {
+    const { root, repoPath } = await createRepository();
+    const service = new GitService();
+    await writeFile(join(repoPath, "tracked.txt"), "before prompt\n", "utf8");
+    const patch = await service.createPromptRestorePatch(repoPath);
+    const headSha = await service.getHeadCommitSha(repoPath);
+    await writeFile(join(repoPath, "tracked.txt"), "after prompt\n", "utf8");
+    await writeFile(join(repoPath, "new.txt"), "untracked\n", "utf8");
+    const safetyPatchPath = join(root, "backups", "restore.patch");
+
+    const result = await service.restorePromptRestorePatch(repoPath, patch, { expectedHeadSha: headSha, safetyPatchPath });
+
+    expect(result.safetyPatchPath).toBe(safetyPatchPath);
+    expect((await readFile(join(repoPath, "tracked.txt"), "utf8")).replace(/\r\n/g, "\n")).toBe("before prompt\n");
+    expect(existsSync(join(repoPath, "new.txt"))).toBe(false);
+    const backup = await readFile(safetyPatchPath, "utf8");
+    expect(backup).toContain("after prompt");
+    expect(backup).toContain("new.txt");
+  });
+
+  it("refuses to restore when HEAD moved since the restore point", async () => {
+    const { repoPath, git } = await createRepository();
+    const service = new GitService();
+    const patch = await service.createPromptRestorePatch(repoPath);
+    const headSha = await service.getHeadCommitSha(repoPath);
+    await writeFile(join(repoPath, "tracked.txt"), "agent commit\n", "utf8");
+    await git.add(["tracked.txt"]);
+    await git.commit("Agent commit");
+    await writeFile(join(repoPath, "open.txt"), "keep\n", "utf8");
+
+    await expect(service.restorePromptRestorePatch(repoPath, patch, { expectedHeadSha: headSha })).rejects.toThrow("new commits");
+    expect(await readFile(join(repoPath, "open.txt"), "utf8")).toBe("keep\n");
   });
 });

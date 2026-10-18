@@ -1570,6 +1570,7 @@ export const App = () => {
 
   const autoCheckoutRunBranchOnOpen = snapshot.settings[APP_SETTING_KEYS.autoCheckoutRunBranchOnOpen] !== "false";
   const autoReleaseRunBranchOnLeave = snapshot.settings[APP_SETTING_KEYS.autoReleaseRunBranchOnLeave] !== "false";
+  const worktreeStartFromRemoteBase = snapshot.settings[APP_SETTING_KEYS.worktreeStartFromRemoteBase] === "true";
   const dataRetentionCleanupEnabled = snapshot.settings[APP_SETTING_KEYS.dataRetentionCleanupEnabled] === "true";
   const dataRetentionCleanupDays = parseDataRetentionCleanupDaysSetting(snapshot.settings[APP_SETTING_KEYS.dataRetentionCleanupDays]);
   const pastedTextAttachmentThreshold = parsePastedTextAttachmentThresholdSetting(
@@ -2503,7 +2504,9 @@ export const App = () => {
     const confirmed = await requestConfirmation({
       title: "Revert run changes",
       message:
-        "Revert repository changes made after the last prompt in this run? This updates the run workspace and cannot be undone from BuildWarden.",
+        run.workspaceType === "local"
+          ? "Revert repository changes made after the last prompt in this run? This run uses the project checkout, so any edits you made there since the prompt are reverted too. Discarded changes are saved as a backup patch."
+          : "Revert repository changes made after the last prompt in this run? This updates the run workspace. Discarded changes are saved as a backup patch.",
       confirmLabel: "Revert changes",
       confirmVariant: "danger",
     });
@@ -3998,6 +4001,7 @@ export const App = () => {
               modelBaseUrl={modelBaseUrl}
               autoCheckoutRunBranchOnOpen={autoCheckoutRunBranchOnOpen}
               autoReleaseRunBranchOnLeave={autoReleaseRunBranchOnLeave}
+              worktreeStartFromRemoteBase={worktreeStartFromRemoteBase}
               dataRetentionCleanupEnabled={dataRetentionCleanupEnabled}
               dataRetentionCleanupDays={dataRetentionCleanupDays}
               pastedTextAttachmentThreshold={pastedTextAttachmentThreshold}
@@ -4029,6 +4033,7 @@ export const App = () => {
               onDeleteModel={(modelId) => void deleteModel(modelId)}
               onAutoCheckoutRunBranchOnOpenChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.autoCheckoutRunBranchOnOpen, value)}
               onAutoReleaseRunBranchOnLeaveChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.autoReleaseRunBranchOnLeave, value)}
+              onWorktreeStartFromRemoteBaseChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.worktreeStartFromRemoteBase, value)}
               onDataRetentionCleanupEnabledChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.dataRetentionCleanupEnabled, value)}
               onDataRetentionCleanupDaysChange={(value) =>
                 void handleAction(async () => {

@@ -24,6 +24,7 @@ export type GitWorkspaceSettingsTabProps = {
   projectFolderGitWarning: string | null;
   autoCheckoutRunBranchOnOpen: boolean;
   autoReleaseRunBranchOnLeave: boolean;
+  worktreeStartFromRemoteBase: boolean;
   dataRetentionCleanupEnabled: boolean;
   dataRetentionCleanupDays: number;
   pastedTextAttachmentThreshold: number;
@@ -42,6 +43,7 @@ export type GitWorkspaceSettingsTabProps = {
   onDeleteProject: (projectId: string) => void;
   onAutoCheckoutRunBranchOnOpenChange: (value: boolean) => void;
   onAutoReleaseRunBranchOnLeaveChange: (value: boolean) => void;
+  onWorktreeStartFromRemoteBaseChange: (value: boolean) => void;
   onDataRetentionCleanupEnabledChange: (value: boolean) => void;
   onDataRetentionCleanupDaysChange: (value: number) => void | Promise<void>;
   onPastedTextAttachmentThresholdChange: (value: number) => void | Promise<void>;
@@ -337,6 +339,7 @@ export const GitWorkspaceSettingsTab = ({
   projectFolderGitWarning,
   autoCheckoutRunBranchOnOpen,
   autoReleaseRunBranchOnLeave,
+  worktreeStartFromRemoteBase,
   dataRetentionCleanupEnabled,
   dataRetentionCleanupDays,
   pastedTextAttachmentThreshold,
@@ -355,6 +358,7 @@ export const GitWorkspaceSettingsTab = ({
   onDeleteProject,
   onAutoCheckoutRunBranchOnOpenChange,
   onAutoReleaseRunBranchOnLeaveChange,
+  onWorktreeStartFromRemoteBaseChange,
   onDataRetentionCleanupEnabledChange,
   onDataRetentionCleanupDaysChange,
   onPastedTextAttachmentThresholdChange,
@@ -440,6 +444,18 @@ export const GitWorkspaceSettingsTab = ({
               checked={autoReleaseRunBranchOnLeave}
               onCheckedChange={onAutoReleaseRunBranchOnLeaveChange}
               aria-label="Auto release idle run branch on leave"
+            />
+          </div>
+        </SettingsRow>
+        <SettingsRow
+          title="Start worktrees from origin"
+          description="Git-only. Fetches the base branch before creating a run worktree and starts from origin when your local branch is only behind it. Local commits that are not on origin are kept."
+        >
+          <div className={`${rowControlClass} flex justify-start md:justify-end`}>
+            <Switch
+              checked={worktreeStartFromRemoteBase}
+              onCheckedChange={onWorktreeStartFromRemoteBaseChange}
+              aria-label="Start run worktrees from the origin base branch"
             />
           </div>
         </SettingsRow>

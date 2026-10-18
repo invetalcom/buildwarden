@@ -1,5 +1,5 @@
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { lstat, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { createTwoFilesPatch, FILE_HEADERS_ONLY } from "diff";
 import { isTextLikeFileName, type HarnessToolContext, type RunMode, type RunToolCall, type RunToolDefinition, type RunToolName, type RunToolResult, type ShellApprovalDecision } from "@buildwarden/shared";
@@ -409,13 +409,135 @@ const formatNumberedLines = (content: string, lineNumberOffset = 0) =>
 
 const isWithinRoot = (root: string, target: string) => {
   const rel = relative(root, target);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  return rel === "" || (rel.split(/[\\/]/)[0] !== ".." && !isAbsolute(rel));
 };
 
 const resolveWorktreePath = (root: string, inputPath: string) => {
   const target = resolve(root, inputPath || ".");
   if (!isWithinRoot(root, target)) {
     throw new Error(`Path escapes the run workspace: ${inputPath}`);
+  }
+  return target;
+};
+
+/**
+ * The worktree's `.git` entry (a file in linked worktrees) and everything below it, in any letter case.
+ * Names that only the file system maps to `.git`, such as the 8.3 short name `GIT~1` on Windows, are
+ * caught by comparing file identity with the real `.git` entry.
+ */
+const isGitInternalEntry = async (root: string, relativePosixPath: string): Promise<boolean> => {
+  const firstSegment = relativePosixPath.split("/")[0] ?? "";
+  if (firstSegment.toLowerCase() === ".git") {
+    return true;
+  }
+  const [entry, gitEntry] = await Promise.all([
+    lstat(join(root, firstSegment), { bigint: true }).catch(() => null),
+    lstat(join(root, ".git"), { bigint: true }).catch(() => null),
+  ]);
+  return Boolean(entry && gitEntry && entry.ino !== 0n && entry.ino === gitEntry.ino && entry.dev === gitEntry.dev);
+};
+
+/** Real path of `target`, resolved through its nearest existing ancestor when it does not exist yet. */
+const realpathOfNearestExisting = async (target: string): Promise<string> => {
+  const missingSegments: string[] = [];
+  let current = target;
+  for (;;) {
+    try {
+      return join(await realpath(current), ...missingSegments.reverse());
+    } catch (error) {
+      const parent = dirname(current);
+      if (!isMissingPathError(error) || parent === current) {
+        throw error;
+      }
+      // realpath also fails with ENOENT for a link whose target is missing; writing would follow it.
+      const entry = await lstat(current).catch((lstatError: unknown) => {
+        if (isMissingPathError(lstatError)) return null;
+        throw lstatError;
+      });
+      if (entry) {
+        throw new Error(`Path goes through a broken link and cannot be verified: ${current}`);
+      }
+      missingSegments.push(basename(current));
+      current = parent;
+    }
+  }
+};
+
+/**
+ * Like {@link isGitInternalEntry}, and also blocks links inside the workspace such as `alias -> .git`:
+ * containment accepts them because `.git` is inside the workspace, so the real target is checked too.
+ */
+const isGitInternalTarget = async (root: string, relativePosixPath: string, target: string): Promise<boolean> => {
+  if (await isGitInternalEntry(root, relativePosixPath)) {
+    return true;
+  }
+  const realRelativePath = toPosix(relative(await realpath(root), await realpathOfNearestExisting(target)));
+  return realRelativePath.split("/")[0]?.toLowerCase() === ".git";
+};
+
+/** Dependency directories that BuildWarden links into worktrees from the project repository. */
+const SHARED_DEPENDENCY_LINK_NAMES = ["node_modules"] as const;
+
+/**
+ * Project repository of a linked worktree, read from the worktree's `.git` file and the `commondir`
+ * file Git keeps for it. Null for a regular checkout, whose `.git` is a directory.
+ */
+const readLinkedWorktreeRepositoryRoot = async (worktreeRoot: string): Promise<string | null> => {
+  try {
+    const gitDirLine = /^gitdir:\s*(.+)$/m.exec(await readFile(join(worktreeRoot, ".git"), "utf8"))?.[1]?.trim();
+    if (!gitDirLine) {
+      return null;
+    }
+    const gitDir = resolve(worktreeRoot, gitDirLine);
+    const commonDir = resolve(gitDir, (await readFile(join(gitDir, "commondir"), "utf8")).trim());
+    return dirname(commonDir);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Real targets of the dependency links BuildWarden created: a link counts only when this is a linked
+ * worktree and the link points at the same directory in its project repository. A link the repository
+ * or agent created, such as `node_modules -> ~`, must not widen what reads can reach.
+ */
+const listTrustedDependencyLinkTargets = async (root: string): Promise<string[]> => {
+  const repositoryRoot = await readLinkedWorktreeRepositoryRoot(root);
+  if (!repositoryRoot) {
+    return [];
+  }
+  const targets: string[] = [];
+  for (const linkName of SHARED_DEPENDENCY_LINK_NAMES) {
+    try {
+      const linkPath = join(root, linkName);
+      if (!(await lstat(linkPath)).isSymbolicLink()) {
+        continue;
+      }
+      const [linkTarget, expectedTarget] = await Promise.all([realpath(linkPath), realpath(join(repositoryRoot, linkName))]);
+      if (relative(expectedTarget, linkTarget) === "") {
+        targets.push(linkTarget);
+      }
+    } catch {
+      // No shared dependency link in this workspace.
+    }
+  }
+  return targets;
+};
+
+/**
+ * Lexical containment misses symbolic links and junctions, which can point anywhere. Writes must stay
+ * inside the real workspace, which also keeps them out of the project's shared `node_modules`. Reads may
+ * additionally follow BuildWarden's shared dependency links so the agent can inspect installed packages.
+ */
+const resolveContainedWorktreePath = async (root: string, inputPath: string, access: "read" | "write"): Promise<string> => {
+  const target = resolveWorktreePath(root, inputPath);
+  const allowedRoots = [await realpath(root)];
+  if (access === "read") {
+    allowedRoots.push(...(await listTrustedDependencyLinkTargets(root)));
+  }
+  const realTarget = await realpathOfNearestExisting(target);
+  if (!allowedRoots.some((allowedRoot) => isWithinRoot(allowedRoot, realTarget))) {
+    throw new Error(`Path resolves outside the run workspace through a link: ${inputPath}`);
   }
   return target;
 };
@@ -972,7 +1094,7 @@ class RunToolExecutor {
     const inputPath = String(call.arguments.path ?? "");
     const startLine = normalizeLineBound(call.arguments.startLine);
     const endLine = normalizeLineBound(call.arguments.endLine);
-    const target = resolveWorktreePath(this.worktreePath, inputPath);
+    const target = await resolveContainedWorktreePath(this.worktreePath, inputPath, "read");
     let fileStat;
     try {
       fileStat = await stat(target);
@@ -1007,9 +1129,9 @@ class RunToolExecutor {
   }
 
   private async executeWriteFile(call: RunToolCall): Promise<RunToolResult> {
-    const target = resolveWorktreePath(this.worktreePath, String(call.arguments.path ?? ""));
+    const target = await resolveContainedWorktreePath(this.worktreePath, String(call.arguments.path ?? ""), "write");
     const rel = toPosix(relative(this.worktreePath, target));
-    if (!rel || rel === "." || rel.startsWith(".git/")) {
+    if (!rel || rel === "." || (await isGitInternalTarget(this.worktreePath, rel, target))) {
       throw new Error("write_file cannot target the repository root or .git internals.");
     }
     let previousContent: string | null = null;
@@ -1073,9 +1195,9 @@ class RunToolExecutor {
   }
 
   private async executeEditFile(call: RunToolCall): Promise<RunToolResult> {
-    const target = resolveWorktreePath(this.worktreePath, String(call.arguments.file_path ?? ""));
+    const target = await resolveContainedWorktreePath(this.worktreePath, String(call.arguments.file_path ?? ""), "write");
     const rel = toPosix(relative(this.worktreePath, target));
-    if (!rel || rel === "." || rel.startsWith(".git/")) {
+    if (!rel || rel === "." || (await isGitInternalTarget(this.worktreePath, rel, target))) {
       throw new Error("edit_file cannot target the repository root or .git internals.");
     }
 
@@ -1186,9 +1308,9 @@ class RunToolExecutor {
 
   private async executeDeleteFile(call: RunToolCall): Promise<RunToolResult> {
     const inputPath = String(call.arguments.path ?? "");
-    const target = resolveWorktreePath(this.worktreePath, inputPath);
+    const target = await resolveContainedWorktreePath(this.worktreePath, inputPath, "write");
     const rel = toPosix(relative(this.worktreePath, target));
-    if (!rel || rel === "." || rel === ".." || rel.startsWith(".git/")) {
+    if (!rel || rel === "." || (await isGitInternalTarget(this.worktreePath, rel, target))) {
       throw new Error("delete_file cannot remove the repository root or .git internals.");
     }
     try {
@@ -1213,7 +1335,7 @@ class RunToolExecutor {
 
   private async executeListFiles(call: RunToolCall): Promise<RunToolResult> {
     const inputPath = String(call.arguments.path ?? ".");
-    const target = resolveWorktreePath(this.worktreePath, inputPath);
+    const target = await resolveContainedWorktreePath(this.worktreePath, inputPath, "read");
     let directoryStat;
     try {
       directoryStat = await stat(target);
@@ -1243,7 +1365,7 @@ class RunToolExecutor {
 
   private async executeSearchRepo(call: RunToolCall): Promise<RunToolResult> {
     const inputPath = String(call.arguments.path ?? ".");
-    const target = resolveWorktreePath(this.worktreePath, inputPath);
+    const target = await resolveContainedWorktreePath(this.worktreePath, inputPath, "read");
     const query = String(call.arguments.query ?? "").trim();
     if (!query) {
       throw new Error("search_repo requires a non-empty query.");
