@@ -24,6 +24,11 @@ describe("chat conversation visibility", () => {
     const image = { eventType: "output" as const, content: "![Image](https://example.com/image.png)" };
     expect(isVisibleChatStep(image, { assistantKind: "image" })).toBe(true);
     expect(isVisibleChatStep(image, { assistantKind: "image", itemType: "imageView" })).toBe(false);
+    const mediaOnly = { eventType: "output" as const, content: "" };
+    const attachments = [{ fileName: "image.png", mimeType: "image/png", dataBase64: "AAAA" }];
+    expect(isVisibleChatStep(mediaOnly, { attachments })).toBe(true);
+    expect(isVisibleChatStep(mediaOnly, { attachments, itemType: "imageView" })).toBe(false);
+    expect(isVisibleChatStep(mediaOnly, { attachments, silent: true })).toBe(false);
   });
 
   it("keeps subagent summaries but hides their internal events and context seeds", () => {

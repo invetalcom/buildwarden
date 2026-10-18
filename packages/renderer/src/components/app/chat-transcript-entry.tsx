@@ -7,7 +7,7 @@ import {
 import { Bot, BrainCircuit, Check, ChevronDown, Copy, Loader2, MessageSquareText, ShieldCheck } from "lucide-react";
 import { ActivityMarkdownOrGitDiff } from "./activity-message-body";
 import { StoredChatAttachments } from "./StoredChatAttachments";
-import { getStoredAttachmentMessageContent } from "./stored-chat-attachment-utils";
+import { getStoredAttachmentMessageContent, getStoredAttachmentRenderMode } from "./stored-chat-attachment-utils";
 import type { ChatTranscriptItem } from "./ChatTranscript";
 import { RunUserInputRequestCard } from "./RunUserInputRequestCard";
 import { readUserInputAnswers, readUserInputQuestions } from "../../logic";
@@ -28,7 +28,7 @@ const entryKind = (item: ChatTranscriptItem, metadata: Record<string, unknown>):
   return "note";
 };
 
-const UserEntry = ({ item, metadata, timestamp }: EntryViewProps) => {
+const UserEntry = ({ item, metadata, timestamp, copied, onCopy }: EntryViewProps & { copied: boolean; onCopy: () => void }) => {
   const attachmentNames = extractAttachmentNamesFromMetadata(metadata);
   const attachments = extractAttachmentPayloadsFromMetadata(metadata);
   const messageContent = getStoredAttachmentMessageContent(item.content, attachmentNames);
@@ -37,6 +37,9 @@ const UserEntry = ({ item, metadata, timestamp }: EntryViewProps) => {
     <section className="chat-turn chat-turn--user">
       <div className="chat-turn-stack">
         <div className="chat-bubble chat-bubble--user">
+          <button type="button" className="chat-bubble-copy" onClick={onCopy} title={copied ? "Copied" : "Copy prompt"} aria-label={copied ? "Copied" : "Copy prompt"}>
+            {copied ? <Check className="h-3.5 w-3.5 text-[var(--ec-success)]" /> : <Copy className="h-3.5 w-3.5" />}
+          </button>
           <div className="chat-bubble-meta"><span>{metadata.commandType === "follow-up" ? "Follow-up" : "You"}</span><span>{timestamp}</span></div>
           {messageContent ? <ActivityMarkdownOrGitDiff content={messageContent} className="chat-message-body" /> : null}
           <StoredChatAttachments attachments={attachments} fallbackNames={attachmentNames} />
@@ -64,21 +67,29 @@ const ReasoningEntry = ({ item, timestamp }: EntryViewProps) => (
 
 type EntryViewProps = { item: ChatTranscriptItem; metadata: Record<string, unknown>; timestamp: string };
 
-const AssistantEntry = ({ item, metadata, timestamp, copied, onCopy }: EntryViewProps & { copied: boolean; onCopy: () => void }) => (
-  <section className="chat-turn chat-turn--assistant">
-    <div className="chat-avatar chat-avatar--assistant" aria-hidden>AI</div>
-    <div className="chat-turn-stack">
-      <div className="chat-bubble chat-bubble--assistant">
-        <button type="button" className="chat-bubble-copy" onClick={onCopy} title={copied ? "Copied" : "Copy output"}>
-          {copied ? <Check className="h-3.5 w-3.5 text-[var(--ec-success)]" /> : <Copy className="h-3.5 w-3.5" />}
-        </button>
-        <div className="chat-bubble-meta"><span>Assistant</span><span>{timestamp}</span></div>
-        <StoredChatAttachments attachments={extractAttachmentPayloadsFromMetadata(metadata)} fallbackNames={extractAttachmentNamesFromMetadata(metadata)} />
-        <ActivityMarkdownOrGitDiff content={item.content} className="chat-message-body chat-message-body--assistant" />
+const AssistantEntry = ({ item, metadata, timestamp, copied, onCopy }: EntryViewProps & { copied: boolean; onCopy: () => void }) => {
+  const attachments = extractAttachmentPayloadsFromMetadata(metadata);
+  const generatedFileLabel = `Generated ${attachments.length} file${attachments.length === 1 ? "" : "s"}.`;
+  const mediaOnly = attachments.length > 0 &&
+    attachments.every((attachment) => ["image", "audio", "video"].includes(getStoredAttachmentRenderMode(attachment))) &&
+    (!item.content.trim() || (metadata.assistantKind === "files" && item.content.trim() === generatedFileLabel));
+
+  return (
+    <section className="chat-turn chat-turn--assistant">
+      <div className="chat-avatar chat-avatar--assistant" aria-hidden>AI</div>
+      <div className={`chat-turn-stack${mediaOnly ? " chat-turn-stack--media" : ""}`}>
+        <div className={`chat-bubble chat-bubble--assistant${mediaOnly ? " chat-bubble--media" : ""}`}>
+          {!mediaOnly && <button type="button" className="chat-bubble-copy" onClick={onCopy} title={copied ? "Copied" : "Copy output"}>
+            {copied ? <Check className="h-3.5 w-3.5 text-[var(--ec-success)]" /> : <Copy className="h-3.5 w-3.5" />}
+          </button>}
+          <div className="chat-bubble-meta"><span>Assistant</span><span>{timestamp}</span></div>
+          <StoredChatAttachments attachments={attachments} fallbackNames={extractAttachmentNamesFromMetadata(metadata)} prominentMedia={mediaOnly} />
+          {!mediaOnly && <ActivityMarkdownOrGitDiff content={item.content} className="chat-message-body chat-message-body--assistant" />}
+        </div>
       </div>
-    </div>
-  </section>
-);
+    </section>
+  );
+};
 
 const SubagentEntry = ({ metadata, timestamp, showLoading }: Omit<EntryViewProps, "item"> & { showLoading: boolean }) => {
   const raw = normalizeRunSubagentInfo(metadata.subagent)!;
@@ -151,7 +162,7 @@ export const ChatTranscriptEntryView = ({ item, metadata, showLoading, copied, o
   const props = { item, metadata, timestamp };
   const kind = entryKind(item, metadata);
   switch (kind) {
-    case "user": return <UserEntry {...props} />;
+    case "user": return <UserEntry {...props} copied={copied} onCopy={onCopy} />;
     case "reasoning": return <ReasoningEntry {...props} />;
     case "assistant": return <AssistantEntry {...props} copied={copied} onCopy={onCopy} />;
     case "subagent": return <SubagentEntry {...props} showLoading={showLoading} />;

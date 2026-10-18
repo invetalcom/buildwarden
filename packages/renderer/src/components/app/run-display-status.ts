@@ -31,8 +31,14 @@ export const RUN_DISPLAY_STATUS_LABELS: Record<RunDisplayStatus, string> = {
 export const resolveRunDisplayStatus = (
   runStatus: RunStatus,
   orchestrationStatus?: OrchestrationStatus | null,
-): RunDisplayStatus =>
-  orchestrationStatus ? ORCHESTRATION_DISPLAY_STATUSES[orchestrationStatus] : runStatus;
+): RunDisplayStatus => {
+  // A follow-up can be active after the previous orchestration has finished.
+  if (["queued", "preparing", "running"].includes(runStatus) &&
+      orchestrationStatus && ["completed", "failed", "cancelled"].includes(orchestrationStatus)) {
+    return runStatus;
+  }
+  return orchestrationStatus ? ORCHESTRATION_DISPLAY_STATUSES[orchestrationStatus] : runStatus;
+};
 
 export const runDisplayStatusTone = (
   status: RunDisplayStatus,

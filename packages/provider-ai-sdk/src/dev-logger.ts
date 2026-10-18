@@ -62,7 +62,11 @@ const bodyToString = (body: BodyInit | null | undefined): string | undefined => 
 
 export const createDevLogger = ({ logDirPath, runId, providerType, modelId, sessionType }: DevLoggerInput) => {
   const enabled = Boolean(logDirPath?.trim());
-  const filePath = enabled ? join(logDirPath!.trim(), `${sessionType}-${runId}-${providerType}-${modelId}.jsonl`) : "";
+  // Model IDs can contain path separators and Windows-reserved filename characters.
+  const fileName = [sessionType, runId, providerType, modelId]
+    .map((part) => encodeURIComponent(part).replace(/\*/g, "%2A"))
+    .join("-") + ".jsonl";
+  const filePath = enabled ? join(logDirPath!.trim(), fileName) : "";
 
   if (enabled) {
     mkdirSync(logDirPath!.trim(), { recursive: true });

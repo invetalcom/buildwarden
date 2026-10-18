@@ -17,6 +17,7 @@ import {
   type SlashCommand,
 } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
+import { createDevLogger } from "./dev-logger";
 import type {
   ChatAttachmentPayload,
   HarnessAdapter,
@@ -114,6 +115,7 @@ type ClaudeTurnExecutionOptions = {
   requestUserInput?: (request: RunUserInputRequest) => Promise<RunUserInputAnswers>;
   toolContext?: HarnessToolContext;
   mcpServers?: RunExecutionRequest["mcpServers"];
+  devLogging?: RunExecutionRequest["devLogging"];
   onChunk?: (chunk: HarnessRunChunk) => void;
 };
 
@@ -1913,8 +1915,19 @@ export const buildClaudeResumeDialogHandler = (
   return { behavior: "completed", result: { action } };
 };
 
+/**
+ * Executes a Claude SDK turn, streaming activity and tracking resumable session usage.
+ * Request/event diagnostics are opt-in and best-effort. Cancellation returns the
+ * available output; SDK failures and timeouts reject, with query resources cleaned up.
+ */
 async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<ClaudeTurnExecutionResult> {
   const { binaryPath, launchArgs, autoCompactWindow } = resolveClaudeCodeConfig(options.config);
+  const devLogger = createDevLogger({
+    logDirPath: options.devLogging?.logDirPath,
+    runId: options.runId,
+    modelId: options.modelId || CLAUDE_DEFAULT_MODEL,
+    sessionType: options.isChat ? "chat" : "run",
+  });
   let assistantText = "";
   let latestAssistantText = "";
   let sessionId: string | null = null;
@@ -1981,13 +1994,21 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
   if (orchestrationMcpServer) {
     sdkOptions.mcpServers = { ...sdkOptions.mcpServers, buildwarden: orchestrationMcpServer };
   }
-  const claudeQuery = query({
-    prompt: buildClaudePrompt(options),
-    options: sdkOptions,
-  });
-
+  let claudeQuery: ReturnType<typeof query> | undefined;
   try {
+    devLogger.log("sdk.request", {
+      prompt: options.prompt,
+      cwd: options.cwd,
+      modelId: sdkOptions.model,
+      resume: sdkOptions.resume,
+      permissionMode: sdkOptions.permissionMode,
+    });
+    claudeQuery = query({
+      prompt: buildClaudePrompt(options),
+      options: { ...sdkOptions, stderr: (data) => devLogger.log("sdk.stderr", data) },
+    });
     for await (const event of claudeQuery) {
+      devLogger.log("sdk.event", event);
       const parsed = parseClaudeCodeStreamEvent(event, subagentTracker);
       if (parsed.sessionId && parsed.sessionId !== sessionId) {
         sessionId = parsed.sessionId;
@@ -2043,6 +2064,9 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
       }
     }
   } catch (error) {
+    devLogger.log(options.signal.aborted ? "sdk.cancelled" : "sdk.error", {
+      message: timedOut ? "Claude Code request timed out." : error instanceof Error ? error.message : String(error),
+    });
     if (timedOut) {
       throw new Error("Claude Code request timed out.");
     }
@@ -2063,9 +2087,10 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
   } finally {
     clearTimeout(timeout);
     options.signal.removeEventListener("abort", abort);
-    claudeQuery.close();
+    claudeQuery?.close();
   }
 
+  devLogger.log("sdk.completed", { sessionId, usage });
   return {
     summary: latestAssistantText.trim() || assistantText.trim() || "Claude Code run completed.",
     sessionId,
@@ -2150,6 +2175,7 @@ export class ClaudeCodeHarnessAdapter implements HarnessAdapter {
       requestUserInput: this.requestUserInput,
       toolContext,
       mcpServers: input.mcpServers,
+      devLogging: input.devLogging,
       onChunk,
     });
     return {

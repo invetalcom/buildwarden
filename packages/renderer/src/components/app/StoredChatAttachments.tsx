@@ -189,31 +189,33 @@ const IconAttachmentCard = ({ attachment, compact }: { attachment: ChatAttachmen
 const ImageAttachmentCard = ({
   attachment,
   compact,
+  prominent,
   onOpen,
 }: {
   attachment: ChatAttachmentPayload;
   compact: boolean;
+  prominent: boolean;
   onOpen: () => void;
 }) => (
   <div
     className={`group overflow-hidden rounded-lg border border-[var(--ec-accent-ring)] bg-[var(--ec-panel)] shadow-sm transition hover:border-[var(--ec-accent-ring)] ${
-      compact ? "w-32" : "w-40"
+      prominent ? "w-full min-w-0" : compact ? "w-32" : "w-40"
     }`}
   >
     <button type="button" className="block w-full bg-black/40 text-left" title={`Open ${attachment.fileName}`} onClick={onOpen}>
       <img
         src={toDataUrl(attachment)}
         alt={attachment.fileName}
-        className={`${compact ? "h-24" : "h-28"} w-full object-cover transition group-hover:scale-[1.02]`}
+        className={prominent ? "max-h-[26rem] w-full object-contain" : `${compact ? "h-24" : "h-28"} w-full object-cover transition group-hover:scale-[1.02]`}
       />
     </button>
     <AttachmentFooter attachment={attachment} />
   </div>
 );
 
-const AudioAttachmentCard = ({ attachment, compact }: { attachment: ChatAttachmentPayload; compact: boolean }) => (
+const AudioAttachmentCard = ({ attachment, compact, prominent }: { attachment: ChatAttachmentPayload; compact: boolean; prominent: boolean }) => (
   <div
-    className={`overflow-hidden rounded-lg border border-[var(--ec-secondary-ring)] bg-[var(--ec-panel)] shadow-sm ${compact ? "w-52" : "w-64"}`}
+    className={`overflow-hidden rounded-lg border border-[var(--ec-secondary-ring)] bg-[var(--ec-panel)] shadow-sm ${prominent ? "w-full min-w-0" : compact ? "w-52" : "w-64"}`}
     title={attachment.fileName}
   >
     <div className="flex min-h-16 items-center gap-2 bg-[var(--ec-secondary-soft)] px-2.5 py-2">
@@ -224,16 +226,16 @@ const AudioAttachmentCard = ({ attachment, compact }: { attachment: ChatAttachme
   </div>
 );
 
-const VideoAttachmentCard = ({ attachment, compact }: { attachment: ChatAttachmentPayload; compact: boolean }) => (
+const VideoAttachmentCard = ({ attachment, compact, prominent }: { attachment: ChatAttachmentPayload; compact: boolean; prominent: boolean }) => (
   <div
-    className={`overflow-hidden rounded-lg border border-[var(--ec-danger-ring)] bg-[var(--ec-panel)] shadow-sm ${compact ? "w-52" : "w-72"}`}
+    className={`overflow-hidden rounded-lg border border-[var(--ec-danger-ring)] bg-[var(--ec-panel)] shadow-sm ${prominent ? "w-full min-w-0" : compact ? "w-52" : "w-72"}`}
     title={attachment.fileName}
   >
     <video
       controls
       preload="metadata"
       src={toDataUrl(attachment)}
-      className={`${compact ? "h-28" : "h-36"} w-full bg-black object-contain`}
+      className={`${prominent ? "max-h-[26rem]" : compact ? "h-28" : "h-36"} w-full bg-black object-contain`}
       aria-label={attachment.fileName}
     />
     <AttachmentFooter attachment={attachment} />
@@ -401,12 +403,14 @@ interface StoredChatAttachmentsProps {
   attachments: ChatAttachmentPayload[];
   fallbackNames?: string[];
   compact?: boolean;
+  prominentMedia?: boolean;
 }
 
 export const StoredChatAttachments = ({
   attachments,
   fallbackNames = [],
   compact = false,
+  prominentMedia = false,
 }: StoredChatAttachmentsProps) => {
   const [expandedImage, setExpandedImage] = useState<ChatAttachmentPayload | null>(null);
   const [expandedPdf, setExpandedPdf] = useState<ChatAttachmentPayload | null>(null);
@@ -448,7 +452,7 @@ export const StoredChatAttachments = ({
             ))}
           </section>
         ) : null}
-        {fileItems.length > 0 || namesOnly.length > 0 ? <div className="flex flex-wrap gap-2">
+        {fileItems.length > 0 || namesOnly.length > 0 ? <div className={prominentMedia ? "chat-media-grid" : "flex flex-wrap gap-2"}>
           {fileItems.map((item, index) => {
             const { attachment } = item;
             const renderMode = getStoredAttachmentRenderMode(attachment);
@@ -461,6 +465,7 @@ export const StoredChatAttachments = ({
                   key={key}
                   attachment={attachment}
                   compact={compact}
+                  prominent={prominentMedia}
                   onOpen={() => setExpandedImage(attachment)}
                 />
               );
@@ -478,11 +483,11 @@ export const StoredChatAttachments = ({
             }
 
             if (renderMode === "audio") {
-              return <AudioAttachmentCard key={key} attachment={attachment} compact={compact} />;
+              return <AudioAttachmentCard key={key} attachment={attachment} compact={compact} prominent={prominentMedia} />;
             }
 
             if (renderMode === "video") {
-              return <VideoAttachmentCard key={key} attachment={attachment} compact={compact} />;
+              return <VideoAttachmentCard key={key} attachment={attachment} compact={compact} prominent={prominentMedia} />;
             }
 
             if (textPreview) {

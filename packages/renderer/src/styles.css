@@ -1730,12 +1730,11 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
 
   .chat-turn-stack {
     min-width: 0;
-    width: min(78%, calc(100% - 2.4rem));
+    width: min(88%, calc(100% - 2.4rem));
   }
 
   .chat-turn--user .chat-turn-stack {
-    width: auto;
-    max-width: min(72%, calc(100% - 2.4rem));
+    width: min(82%, calc(100% - 2.4rem));
   }
 
   .chat-avatar {
@@ -1792,6 +1791,7 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
 
   .chat-bubble--user {
     border-bottom-right-radius: 0.3rem;
+    padding-right: 2.6rem;
     border-color: color-mix(in srgb, var(--ec-user-input-ring) 72%, var(--ec-border));
     background:
       linear-gradient(180deg, color-mix(in srgb, var(--ec-user-input-soft) 32%, transparent), transparent 14rem),
@@ -1817,6 +1817,21 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
     left: -0.22rem;
     border-top: 0;
     border-right: 0;
+  }
+
+  .chat-turn-stack--media {
+    width: min(88%, 40rem, calc(100% - 2.4rem));
+  }
+
+  .chat-bubble--media {
+    padding-right: 0.78rem;
+  }
+
+  .chat-media-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+    align-items: start;
+    gap: 0.5rem;
   }
 
   .chat-bubble--reasoning {
