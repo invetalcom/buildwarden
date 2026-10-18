@@ -1730,11 +1730,11 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
 
   .chat-turn-stack {
     min-width: 0;
-    width: min(78%, calc(100% - 2.4rem));
+    width: min(88%, calc(100% - 2.4rem));
   }
 
   .chat-turn--user .chat-turn-stack {
-    width: min(72%, calc(100% - 2.4rem));
+    width: min(82%, calc(100% - 2.4rem));
   }
 
   .chat-avatar {
@@ -1820,7 +1820,7 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
   }
 
   .chat-turn-stack--media {
-    width: min(78%, 36rem);
+    width: min(88%, 40rem, calc(100% - 2.4rem));
   }
 
   .chat-bubble--media {
