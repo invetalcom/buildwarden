@@ -166,6 +166,36 @@ describe("GitService read-only status", () => {
   });
 });
 
+describe("GitService workspace change transfer", () => {
+  it("never overwrites changes the target checkout made itself", async () => {
+    const { root, repoPath } = await createRepository();
+    const service = new GitService();
+    const workspace = await service.createWorktreeForRun(repoPath, "Project", "run-1", "main", join(root, "worktrees"));
+    await writeFile(join(workspace.worktreePath, "tracked.txt"), "from run\n", "utf8");
+    await writeFile(join(repoPath, "tracked.txt"), "user edit\n", "utf8");
+
+    await expect(service.cloneWorkspaceChanges(workspace.worktreePath, repoPath, { protectTargetChanges: true })).rejects.toThrow(
+      "were not overwritten",
+    );
+    expect(await readFile(join(repoPath, "tracked.txt"), "utf8")).toBe("user edit\n");
+  });
+
+  it("removes the old side of a rename when copying changes", async () => {
+    const { root, repoPath } = await createRepository();
+    const service = new GitService();
+    const source = await service.createWorktreeForRun(repoPath, "Project", "run-1", "main", join(root, "worktrees"));
+    const target = await service.createWorktreeForRun(repoPath, "Project", "run-2", "main", join(root, "worktrees"));
+    await simpleGit(source.worktreePath).mv("tracked.txt", "renamed.txt");
+    // An untracked file at the rename target makes the patch fail, so the copy fallback runs.
+    await writeFile(join(target.worktreePath, "renamed.txt"), "stale\n", "utf8");
+
+    await service.cloneWorkspaceChanges(source.worktreePath, target.worktreePath);
+
+    expect(existsSync(join(target.worktreePath, "tracked.txt"))).toBe(false);
+    expect((await readFile(join(target.worktreePath, "renamed.txt"), "utf8")).replace(/\r\n/g, "\n")).toBe("base\n");
+  });
+});
+
 describe("GitService project validation", () => {
   it("reports the repository root and only flags real linked worktrees", async () => {
     const { root, repoPath } = await createRepository();

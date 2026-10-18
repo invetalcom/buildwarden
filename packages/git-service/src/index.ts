@@ -3,7 +3,7 @@ import { access, copyFile, lstat, readdir, rm, stat, symlink, unlink, writeFile 
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { GitPluginError, simpleGit, type SimpleGit } from "simple-git";
+import { GitPluginError, simpleGit, type SimpleGit, type StatusResult } from "simple-git";
 import { promisify } from "node:util";
 import {
   GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE,
@@ -712,16 +712,39 @@ async function copyPathFromWorktree(sourceRoot: string, targetRoot: string, rela
   await copyFile(sourcePath, targetPath);
 }
 
-async function syncChangedFilesFromWorktree(sourceWorktreePath: string, targetWorktreePath: string): Promise<void> {
-  const git = createLocalGit(sourceWorktreePath);
-  const status = await git.status();
+const listChangedPaths = (status: StatusResult): Set<string> => {
   const changedPaths = new Set<string>();
-
   for (const file of status.files) {
     changedPaths.add(file.path);
+    // The old side of a rename no longer exists in the source, so it is removed from the target too.
+    if (file.from) changedPaths.add(file.from);
   }
   for (const filePath of status.not_added) {
     changedPaths.add(filePath);
+  }
+  return changedPaths;
+};
+
+/**
+ * Copies changed files when the patch does not apply. With `protectTargetChanges`, refuses to touch
+ * any file the target has changed itself, so a user's own edits are never overwritten.
+ */
+async function syncChangedFilesFromWorktree(
+  sourceWorktreePath: string,
+  targetWorktreePath: string,
+  options: { protectTargetChanges?: boolean } = {},
+): Promise<void> {
+  const changedPaths = listChangedPaths(await createReadOnlyGit(sourceWorktreePath).status());
+
+  if (options.protectTargetChanges === true) {
+    const targetChanges = listChangedPaths(await createReadOnlyGit(targetWorktreePath).status());
+    const conflicts = [...changedPaths].filter((filePath) => targetChanges.has(filePath));
+    if (conflicts.length > 0) {
+      const shown = conflicts.slice(0, 5).join(", ");
+      throw new Error(
+        `The target checkout has its own changes to ${shown}${conflicts.length > 5 ? `, and ${String(conflicts.length - 5)} more` : ""}, so they were not overwritten.`,
+      );
+    }
   }
 
   for (const filePath of changedPaths) {
@@ -1413,12 +1436,16 @@ export class GitService {
     return computeWorktreeRestorePatch(worktreePath);
   }
 
-  async cloneWorkspaceChanges(sourceWorktreePath: string, targetWorktreePath: string): Promise<void> {
+  async cloneWorkspaceChanges(
+    sourceWorktreePath: string,
+    targetWorktreePath: string,
+    options: { protectTargetChanges?: boolean } = {},
+  ): Promise<void> {
     const patch = await computeWorktreeRestorePatch(sourceWorktreePath);
     try {
       await applyWorktreePatch(targetWorktreePath, patch, { threeWayFallback: true });
     } catch {
-      await syncChangedFilesFromWorktree(sourceWorktreePath, targetWorktreePath);
+      await syncChangedFilesFromWorktree(sourceWorktreePath, targetWorktreePath, options);
     }
   }
 

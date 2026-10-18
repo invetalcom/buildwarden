@@ -11130,14 +11130,14 @@ export class AppController
       return;
     }
 
-    const openChangesPatch =
-      options?.transferOpenChanges === true ? await this.gitService.createPromptRestorePatch(run.worktreePath) : "";
+    const transferOpenChanges = options?.transferOpenChanges === true && (await this.gitService.hasChanges(run.worktreePath));
 
     await this.gitService.releaseWorktreeBranch(run.worktreePath, branchName);
     try {
       await this.gitService.checkoutProjectBranch(repoPath, branchName);
-      if (openChangesPatch.trim()) {
-        await this.gitService.cloneWorkspaceChanges(run.worktreePath, repoPath);
+      if (transferOpenChanges) {
+        // The target is the user's own checkout: never overwrite changes they made there.
+        await this.gitService.cloneWorkspaceChanges(run.worktreePath, repoPath, { protectTargetChanges: true });
       }
     } catch (error) {
       await this.gitService.checkoutWorktreeBranch(run.worktreePath, branchName).catch(() => {});
