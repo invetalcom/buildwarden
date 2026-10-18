@@ -6,6 +6,7 @@ import {
   type RunUserInputAnswers,
 } from "@buildwarden/shared";
 import { Loader2 } from "lucide-react";
+import { AgentWorkingIndicator } from "../ui/agent-working-indicator";
 import { cn } from "../../lib/cn";
 import { AgentLogRow, AgentWorklog } from "./agent-worklog";
 import { RunPlanDecisionCard } from "./RunPlanDecisionCard";
@@ -286,13 +287,7 @@ const TimelineItemView = ({ item, context }: Readonly<{ item: TimelineRenderItem
 
   if (item.kind === "loading") {
     return (
-      <div key={item.key} className="agent-loading">
-        <div className="run-activity-loading-bar mb-2" />
-        <div className="flex items-center gap-2 text-[11px] text-[var(--ec-muted)]">
-          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[color:var(--ec-accent)]" aria-hidden />
-          <span className="animate-pulse">Agent is working...</span>
-        </div>
-      </div>
+      <AgentWorkingIndicator key={item.key} />
     );
   }
 

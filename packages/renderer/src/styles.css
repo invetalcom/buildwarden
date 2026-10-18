@@ -608,30 +608,6 @@ body[data-theme="light"] .diff-viewer diffs-container {
   --diffs-light-deletion-color: var(--ec-danger);
 }
 
-@keyframes run-activity-shimmer {
-  0% {
-    background-position: 200% 0;
-  }
-  100% {
-    background-position: -200% 0;
-  }
-}
-
-.run-activity-loading-bar {
-  height: 2px;
-  border-radius: 9999px;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    color-mix(in srgb, var(--ec-accent) 45%, transparent),
-    color-mix(in srgb, var(--ec-accent) 85%, transparent),
-    color-mix(in srgb, var(--ec-accent) 45%, transparent),
-    transparent
-  );
-  background-size: 200% 100%;
-  animation: run-activity-shimmer 1.4s ease-in-out infinite;
-}
-
 @keyframes app-soft-pulse {
   0%,
   100% {
@@ -2017,14 +1993,6 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
     font-size: 0.68rem;
     line-height: 1.45;
   }
-
-.agent-loading {
-  margin: 0.55rem 0.75rem;
-  border: 1px solid var(--ec-border);
-  border-radius: 0.7rem;
-  background: var(--ec-panel-soft);
-  padding: 0.7rem 0.8rem;
-}
 
 @media (max-width: 760px) {
   .agent-log-row {

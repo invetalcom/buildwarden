@@ -75,7 +75,7 @@ export const ChatTranscript = forwardRef<
       chatId,
       active = false,
       showLoading = false,
-      loadingLabel = "Working...",
+      loadingLabel = "Agent is working...",
       endRef,
       className,
       onCopyOutput,

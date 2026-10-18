@@ -18,4 +18,4 @@
   .response-media-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .response-media-image { width: 100%; max-width: 480px; }
 }
-.chat-working-indicator { position: sticky; bottom: 0; z-index: 10; display: flex; flex-shrink: 0; align-items: center; gap: 8px; align-self: flex-start; width: fit-content; margin: 8px 14px; padding: 6px 10px; border: 1px solid var(--ec-border); border-radius: 8px; background: var(--ec-dialog-bg); color: var(--ec-muted); font-size: 12px; }
+.chat-working-indicator { position: sticky; bottom: 0; z-index: 10; flex-shrink: 0; align-self: stretch; }

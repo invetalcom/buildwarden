@@ -1,8 +1,5 @@
-import { Loader2 } from "lucide-react";
+import { AgentWorkingIndicator } from "./agent-working-indicator";
 
-export const ChatWorkingIndicator = ({ label = "Working..." }: { label?: string }) => (
-  <div className="chat-working-indicator" role="status" aria-live="polite">
-    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-    <span>{label}</span>
-  </div>
+export const ChatWorkingIndicator = ({ label }: { label?: string }) => (
+  <AgentWorkingIndicator className="chat-working-indicator" label={label} />
 );

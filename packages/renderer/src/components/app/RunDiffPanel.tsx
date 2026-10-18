@@ -1,3 +1,4 @@
+import "../ui/agent-working-indicator.css";
 import { useRef, useState, type ReactNode } from "react";
 import { Bot, ChevronsDownUp, ChevronsUpDown, ListFilter, Loader2, ScanSearch, Search, Space, X } from "lucide-react";
 import type { RunWorktreeDiffSummary } from "@buildwarden/shared";

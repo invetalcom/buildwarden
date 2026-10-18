@@ -28,9 +28,9 @@ it("keeps working after commentary and tools, shows only the delivered image, an
   };
   try {
     await render(initial, true);
-    expect(container.querySelector('[role="status"]')?.textContent).toBe("Working...");
+    expect(container.querySelector('[role="status"]')?.textContent).toBe("Agent is working...");
     await render(progress, true);
-    expect(container.querySelector('[role="status"]')?.textContent).toBe("Working...");
+    expect(container.querySelector('[role="status"]')?.textContent).toBe("Agent is working...");
     expect(container.textContent).toContain("I am preparing the mockup.");
     expect(container.textContent).not.toContain("Raw tool output");
     expect(container.textContent).not.toContain("Codex update");
