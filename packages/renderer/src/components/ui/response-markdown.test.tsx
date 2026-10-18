@@ -2,12 +2,28 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { DesktopApi } from "@buildwarden/shared";
 import { ActivityRichText } from "./activity-rich-text";
+import { prepareResponseMarkdown } from "./response-markdown-preparation";
 import { BuildWardenClientProvider } from "../../lib/buildwarden-client";
 import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-core";
 
 const render = (content: string) => renderToStaticMarkup(<BuildWardenClientProvider client={createElectronBuildWardenClient({} as DesktopApi)}><ActivityRichText content={content} /></BuildWardenClientProvider>);
 
 describe("rich responses", () => {
+  it("keeps large image payloads out of Markdown parsing and restores exact image sources", () => {
+    const image = `data:image/png;base64,${"a".repeat(2_000_000)}=`;
+    const content = `![Preview](${image}) **Title**\nDescription`;
+    expect(prepareResponseMarkdown(content).markdown.length).toBeLessThan(100);
+    expect(render(content)).toContain(`src="${image}"`);
+  });
+  it("preserves reference images, raw HTML images and literal data URL examples", () => {
+    const image = "data:image/png;base64,iVBORw0KGgo=";
+    const html = render(`![Reference][preview]\n\n[preview]: ${image}\n\n<img src="${image}" alt="HTML">\n\n\`${image}\`\n\nbuildwarden-embedded-image-0-end`);
+    expect(html.match(/<img /g)).toHaveLength(2);
+    expect(html.split(`src="${image}"`)).toHaveLength(3);
+    expect(html).toContain(`${image}</code>`);
+    expect(html).toContain("buildwarden-embedded-image-0-end");
+    expect(render(`[Unsafe link](${image})`)).not.toContain(`href="${image}"`);
+  });
   it("shows a readable HTML source link instead of a host-specific visualization token", () => {
     const token = '\uE200visualize\uE202{"path":"C:/repo/work/feature concepts.html","mode":"wide"}\uE201';
     const html = render(`Concept screenshots above.\n\n${token}`);

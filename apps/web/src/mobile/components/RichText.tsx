@@ -1,13 +1,9 @@
-import { ResponseImage, responseMediaLayout, responseUrlTransform } from "@buildwarden/renderer/response-content";
+import { ResponseImage, ResponseMarkdownBody } from "@buildwarden/renderer/response-content";
 import "@buildwarden/renderer/response-content.css";
-import type { AnchorHTMLAttributes } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
-import rehypeRaw from "rehype-raw";
-import rehypeSanitize from "rehype-sanitize";
-import remarkGfm from "remark-gfm";
-import { isExternalRunWorkspaceHref, normalizeResponseArtifactReferences } from "@buildwarden/shared";
+import { memo, type AnchorHTMLAttributes } from "react";
+import type { Components } from "react-markdown";
+import { isExternalRunWorkspaceHref } from "@buildwarden/shared";
 import { cn } from "../lib/cn";
-import { markdownSanitizeSchema } from "../lib/markdown-sanitize";
 
 /**
  * Renders agent and user messages as Markdown, with GFM (tables, task lists, strikethrough) and
@@ -120,20 +116,13 @@ const components: Components = {
   sub: ({ children }) => <sub className="text-[0.82em] text-[var(--ec-muted)]">{children}</sub>,
 };
 
-export const RichText = ({ children, className }: { children: string; className?: string }) => {
+export const RichText = memo(function RichText({ children, className }: { children: string; className?: string }) {
   if (!children.trim()) return null;
 
   return (
     // min-w-0 lets the scrollable code/table boxes shrink inside a flex parent (e.g. chat bubbles).
     <div className={cn("response-markdown m-wrap-anywhere min-w-0 text-[13.5px]", className)}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, markdownSanitizeSchema], responseMediaLayout]}
-        urlTransform={responseUrlTransform}
-        components={components}
-      >
-        {normalizeResponseArtifactReferences(children)}
-      </ReactMarkdown>
+      <ResponseMarkdownBody content={children} components={components} />
     </div>
   );
-};
+});

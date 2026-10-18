@@ -1,14 +1,10 @@
-import { markdownSanitizeSchema, responseMediaLayout, responseUrlTransform } from "./response-markdown";
+import { ResponseMarkdownBody } from "./response-markdown-body";
 import { ResponseImage } from "./response-image";
 import "./response-content.css";
-import type { MouseEvent } from "react";
+import { memo, useMemo, type MouseEvent } from "react";
 import type { Components } from "react-markdown";
-import ReactMarkdown from "react-markdown";
-import rehypeRaw from "rehype-raw";
-import rehypeSanitize from "rehype-sanitize";
-import remarkGfm from "remark-gfm";
 import { FileText } from "lucide-react";
-import { isExternalRunWorkspaceHref, parseRunWorkspaceFileReference, normalizeResponseArtifactReferences } from "@buildwarden/shared";
+import { isExternalRunWorkspaceHref, parseRunWorkspaceFileReference } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
 import { getOpenableInlineCodePath } from "./activity-file-links";
 import { Button } from "./button";
@@ -249,22 +245,16 @@ export interface ActivityRichTextProps {
  * Renders agent/user messages as Markdown (lists, code, tables via GFM).
  * Do not pass git diffs here — handle those separately.
  */
-export const ActivityRichText = ({ content, compact = false, className, onOpenWorkspaceFile }: ActivityRichTextProps) => {
+export const ActivityRichText = memo(function ActivityRichText({ content, compact = false, className, onOpenWorkspaceFile }: ActivityRichTextProps) {
   const buildwarden = useBuildWardenClient();
+  const components = useMemo(() => mdComponents(buildwarden, compact, onOpenWorkspaceFile), [buildwarden, compact, onOpenWorkspaceFile]);
   if (!content.trim()) {
     return null;
   }
 
   return (
     <div className={cn("response-markdown", compact ? "text-[13px]" : "text-sm", className)}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, markdownSanitizeSchema], responseMediaLayout]}
-        urlTransform={responseUrlTransform}
-        components={mdComponents(buildwarden, compact, onOpenWorkspaceFile)}
-      >
-        {normalizeResponseArtifactReferences(content)}
-      </ReactMarkdown>
+      <ResponseMarkdownBody content={content} components={components} />
     </div>
   );
-};
+});
