@@ -1104,13 +1104,14 @@ type WorkerDoneResult = {
 
 type ChatWorkerChunkPayload = {
   type: "chunk";
+  deliveryId?: number;
   chunk: { type: string; value: string; title?: string; metadata?: Record<string, unknown> };
 };
 
 type ChatWorkerPayload = ChatWorkerChunkPayload | Extract<RunWorkerPayload, { type: "user-input-request" }> | { type: "done"; result: WorkerDoneResult } | { type: "error"; error: string };
 
 type RunWorkerPayload =
-  | { type: "chunk"; chunk: { type: string; value: string; title?: string; metadata?: Record<string, unknown> } }
+  | { type: "chunk"; deliveryId?: number; chunk: { type: string; value: string; title?: string; metadata?: Record<string, unknown> } }
   | { type: "done"; result: WorkerDoneResult }
   | { type: "shell-approval-request"; requestId: string; command: string }
   | {
@@ -9826,6 +9827,7 @@ export class AppController
 
     const worker = new Worker(workerPath, {
       workerData: {
+        acknowledgeChunks: true,
         request: {
           ...(workspaceSetup && workspaceSetup.status !== "completed" ? { workspaceSetup: {
             profile: workspaceSetup.profile, sourcePath: this.db.getProject(run.projectId).repoPath,
@@ -9935,18 +9937,22 @@ export class AppController
       }
 
       if (payload.type === "chunk") {
-        await this.handleRunWorkerChunk(
-          run,
-          provider,
-          model.modelId,
-          payload,
-          maxRunTokens,
-          exhaustBudget,
-          streamingStepIds,
-          streamingStepKinds,
-          resetNarrationStreams,
-          usageTracker,
-        );
+        try {
+          await this.handleRunWorkerChunk(
+            run,
+            provider,
+            model.modelId,
+            payload,
+            maxRunTokens,
+            exhaustBudget,
+            streamingStepIds,
+            streamingStepKinds,
+            resetNarrationStreams,
+            usageTracker,
+          );
+        } finally {
+          if (payload.deliveryId !== undefined) worker.postMessage({ type: "chunk-ack", deliveryId: payload.deliveryId });
+        }
         return;
       }
 
@@ -10813,6 +10819,7 @@ export class AppController
     }
     const worker = new Worker(workerPath, {
       workerData: {
+        acknowledgeChunks: true,
         request: {
           runId: chat.id,
           worktreePath: chatWorkspace,
@@ -10867,7 +10874,11 @@ export class AppController
       }
 
       if (payload.type === "chunk") {
-        await this.handleChatWorkerChunk(chat, provider, model, payload, streamingStepIds, usageTracker);
+        try {
+          await this.handleChatWorkerChunk(chat, provider, model, payload, streamingStepIds, usageTracker);
+        } finally {
+          if (payload.deliveryId !== undefined) worker.postMessage({ type: "chunk-ack", deliveryId: payload.deliveryId });
+        }
         return;
       }
 

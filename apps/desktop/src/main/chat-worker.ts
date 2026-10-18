@@ -5,9 +5,11 @@ import { parseUserInputQuestions, USER_INPUT_TOOL_SCHEMA } from "@buildwarden/sh
 import { createHarnessAdapter } from "./harness-adapters";
 import { logError, logInfo } from "./logger";
 import { createResponseImageEmbedder } from "./response-images";
+import { createResponseChunkStream } from "./response-chunk-stream";
 
 interface ChatWorkerInput {
   request: RunExecutionRequest;
+  acknowledgeChunks?: boolean;
 }
 
 const port = parentPort;
@@ -16,13 +18,19 @@ if (!port) {
   throw new Error("chat-worker requires a parent port.");
 }
 
-const { request } = workerData as ChatWorkerInput;
+const { request, acknowledgeChunks } = workerData as ChatWorkerInput;
 const controller = new AbortController();
-const embedImages = createResponseImageEmbedder(request.worktreePath);
+const chunks = createResponseChunkStream(createResponseImageEmbedder(request.worktreePath), (chunk, deliveryId) => {
+  port.postMessage({ type: "chunk", chunk, deliveryId });
+  // A development rebuild can start a new worker from an older, still-open host.
+  if (!acknowledgeChunks) queueMicrotask(() => chunks.acknowledge(deliveryId));
+});
 const pendingInputs = new Map<string, { resolve: (answers: RunUserInputAnswers) => void; reject: (error: Error) => void }>();
 
-port.on("message", (message: { type: "cancel" } | { type: "user-input-response"; requestId: string; answers: RunUserInputAnswers }) => {
-  if (message.type === "cancel") {
+port.on("message", (message: { type: "chunk-ack"; deliveryId: number } | { type: "cancel" } | { type: "user-input-response"; requestId: string; answers: RunUserInputAnswers }) => {
+  if (message.type === "chunk-ack") {
+    chunks.acknowledge(message.deliveryId);
+  } else if (message.type === "cancel") {
     controller.abort();
     for (const pending of pendingInputs.values()) pending.reject(new Error("Chat cancelled."));
     pendingInputs.clear();
@@ -33,7 +41,8 @@ port.on("message", (message: { type: "cancel" } | { type: "user-input-response";
   }
 });
 
-const requestUserInput = (request: RunUserInputRequest): Promise<RunUserInputAnswers> => {
+const requestUserInput = async (request: RunUserInputRequest): Promise<RunUserInputAnswers> => {
+  await chunks.drain();
   controller.signal.throwIfAborted();
   const requestId = randomUUID();
   return new Promise((resolve, reject) => {
@@ -42,13 +51,7 @@ const requestUserInput = (request: RunUserInputRequest): Promise<RunUserInputAns
   });
 };
 
-const postChunk = (chunk: HarnessRunChunk) => {
-  const value = chunk.type === "message" ? embedImages(chunk.value) : chunk.value;
-  port.postMessage({
-    type: "chunk",
-    chunk: value === chunk.value ? chunk : { ...chunk, value, metadata: { ...chunk.metadata, responseSourceText: chunk.value } },
-  });
-};
+const postChunk = (chunk: HarnessRunChunk) => chunks.post(chunk);
 
 const chatToolContext: HarnessToolContext = {
   tools: [{ name: "buildwarden_ask_user", description: "Ask one to three questions with clickable choices or free text, and wait for the user's answers.", inputSchema: USER_INPUT_TOOL_SCHEMA }],
@@ -76,8 +79,10 @@ const run = async () => {
       postChunk,
       controller.signal,
     );
+    await chunks.drain();
     port.postMessage({ type: "done", result });
   } catch (error) {
+    await chunks.drain();
     logError("Chat worker failed.", {
       runId: request.runId,
       providerType: request.providerType,
