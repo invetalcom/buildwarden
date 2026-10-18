@@ -1915,6 +1915,11 @@ export const buildClaudeResumeDialogHandler = (
   return { behavior: "completed", result: { action } };
 };
 
+/**
+ * Executes a Claude SDK turn, streaming activity and tracking resumable session usage.
+ * Request/event diagnostics are opt-in and best-effort. Cancellation returns the
+ * available output; SDK failures and timeouts reject, with query resources cleaned up.
+ */
 async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<ClaudeTurnExecutionResult> {
   const { binaryPath, launchArgs, autoCompactWindow } = resolveClaudeCodeConfig(options.config);
   const devLogger = createDevLogger({
