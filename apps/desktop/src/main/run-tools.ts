@@ -479,24 +479,61 @@ const isGitInternalTarget = async (root: string, relativePosixPath: string, targ
 const SHARED_DEPENDENCY_LINK_NAMES = ["node_modules"] as const;
 
 /**
+ * Project repository of a linked worktree, read from the worktree's `.git` file and the `commondir`
+ * file Git keeps for it. Null for a regular checkout, whose `.git` is a directory.
+ */
+const readLinkedWorktreeRepositoryRoot = async (worktreeRoot: string): Promise<string | null> => {
+  try {
+    const gitDirLine = /^gitdir:\s*(.+)$/m.exec(await readFile(join(worktreeRoot, ".git"), "utf8"))?.[1]?.trim();
+    if (!gitDirLine) {
+      return null;
+    }
+    const gitDir = resolve(worktreeRoot, gitDirLine);
+    const commonDir = resolve(gitDir, (await readFile(join(gitDir, "commondir"), "utf8")).trim());
+    return dirname(commonDir);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Real targets of the dependency links BuildWarden created: a link counts only when this is a linked
+ * worktree and the link points at the same directory in its project repository. A link the repository
+ * or agent created, such as `node_modules -> ~`, must not widen what reads can reach.
+ */
+const listTrustedDependencyLinkTargets = async (root: string): Promise<string[]> => {
+  const repositoryRoot = await readLinkedWorktreeRepositoryRoot(root);
+  if (!repositoryRoot) {
+    return [];
+  }
+  const targets: string[] = [];
+  for (const linkName of SHARED_DEPENDENCY_LINK_NAMES) {
+    try {
+      const linkPath = join(root, linkName);
+      if (!(await lstat(linkPath)).isSymbolicLink()) {
+        continue;
+      }
+      const [linkTarget, expectedTarget] = await Promise.all([realpath(linkPath), realpath(join(repositoryRoot, linkName))]);
+      if (relative(expectedTarget, linkTarget) === "") {
+        targets.push(linkTarget);
+      }
+    } catch {
+      // No shared dependency link in this workspace.
+    }
+  }
+  return targets;
+};
+
+/**
  * Lexical containment misses symbolic links and junctions, which can point anywhere. Writes must stay
  * inside the real workspace, which also keeps them out of the project's shared `node_modules`. Reads may
- * additionally follow the shared dependency links so the agent can inspect installed packages.
+ * additionally follow BuildWarden's shared dependency links so the agent can inspect installed packages.
  */
 const resolveContainedWorktreePath = async (root: string, inputPath: string, access: "read" | "write"): Promise<string> => {
   const target = resolveWorktreePath(root, inputPath);
   const allowedRoots = [await realpath(root)];
   if (access === "read") {
-    for (const linkName of SHARED_DEPENDENCY_LINK_NAMES) {
-      const linkPath = join(root, linkName);
-      try {
-        if ((await lstat(linkPath)).isSymbolicLink()) {
-          allowedRoots.push(await realpath(linkPath));
-        }
-      } catch {
-        // No shared dependency link in this workspace.
-      }
-    }
+    allowedRoots.push(...(await listTrustedDependencyLinkTargets(root)));
   }
   const realTarget = await realpathOfNearestExisting(target);
   if (!allowedRoots.some((allowedRoot) => isWithinRoot(allowedRoot, realTarget))) {

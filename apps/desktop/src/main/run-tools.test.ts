@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildInitialRepoContext } from "./initial-repo-context";
 import { createRunToolContext } from "./run-tools";
+import { GitService } from "@buildwarden/git-service";
 import { compileShellAllowlistRegExes } from "./shell-allowlist";
 
 const tempDirs: string[] = [];
@@ -82,9 +83,21 @@ describe("run tool workspace containment", () => {
     await expect(readFile(outsideFile, "utf8")).rejects.toThrow();
   });
 
-  it("allows reading but not writing through the shared node_modules link", async () => {
+  /** Lays out a project repository and a linked worktree the way `git worktree add` does. */
+  const createLinkedWorktreeLayout = async () => {
+    const repoPath = await makeTempDir();
     const worktreePath = await makeTempDir();
-    const sharedModules = await makeTempDir();
+    const worktreeGitDir = join(repoPath, ".git", "worktrees", "run");
+    await mkdir(worktreeGitDir, { recursive: true });
+    await writeFile(join(worktreeGitDir, "commondir"), "../..\n", "utf8");
+    await writeFile(join(worktreePath, ".git"), `gitdir: ${worktreeGitDir}\n`, "utf8");
+    await mkdir(join(repoPath, "node_modules"));
+    return { repoPath, worktreePath };
+  };
+
+  it("allows reading but not writing through the shared node_modules link", async () => {
+    const { repoPath, worktreePath } = await createLinkedWorktreeLayout();
+    const sharedModules = join(repoPath, "node_modules");
     await writeFile(join(sharedModules, "package.json"), "{}\n", "utf8");
     await symlink(sharedModules, join(worktreePath, "node_modules"), "junction");
     const tools = createRunToolContext(worktreePath);
@@ -99,6 +112,41 @@ describe("run tool workspace containment", () => {
     expect(readResult.ok).toBe(true);
     expect(writeResult.ok).toBe(false);
     expect(await readFile(join(sharedModules, "package.json"), "utf8")).toBe("{}\n");
+  });
+
+  it("reads through the dependency link of a real run worktree", async () => {
+    const root = await makeTempDir();
+    const repoPath = join(root, "repo");
+    await mkdir(join(repoPath, "node_modules", "pkg"), { recursive: true });
+    await writeFile(join(repoPath, "node_modules", "pkg", "index.js"), "module.exports = 1;\n", "utf8");
+    await writeFile(join(repoPath, "README.md"), "repo\n", "utf8");
+    const git = (...args: string[]) => execFileAsync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.test", ...args], { cwd: repoPath });
+    await git("init", "-b", "main");
+    await git("add", "README.md");
+    await git("commit", "-m", "Base");
+    const workspace = await new GitService().createWorktreeForRun(repoPath, "Project", "run-1", "main", join(root, "worktrees"));
+    const tools = createRunToolContext(workspace.worktreePath);
+
+    const readResult = await tools.executeTool({ id: "read-real-link", name: "read_file", arguments: { path: "node_modules/pkg/index.js" } });
+
+    expect(readResult.ok).toBe(true);
+  });
+
+  it("does not trust a node_modules link that points anywhere but the project's dependencies", async () => {
+    const { worktreePath } = await createLinkedWorktreeLayout();
+    const homeLike = await makeTempDir();
+    await writeFile(join(homeLike, "id_rsa"), "secret\n", "utf8");
+    await symlink(homeLike, join(worktreePath, "node_modules"), "junction");
+    const plainWorkspace = await makeTempDir();
+    await symlink(homeLike, join(plainWorkspace, "node_modules"), "junction");
+
+    for (const root of [worktreePath, plainWorkspace]) {
+      const tools = createRunToolContext(root);
+      const readResult = await tools.executeTool({ id: "read-home", name: "read_file", arguments: { path: "node_modules/id_rsa" } });
+      const listResult = await tools.executeTool({ id: "list-home", name: "list_files", arguments: { path: "node_modules" } });
+      expect(readResult.ok).toBe(false);
+      expect(listResult.ok).toBe(false);
+    }
   });
 
   it("protects the .git entry in any letter case", async () => {
