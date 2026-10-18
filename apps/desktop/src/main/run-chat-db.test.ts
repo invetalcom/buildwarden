@@ -61,6 +61,20 @@ afterEach(async () => {
 });
 
 describe("run-scoped chats", () => {
+  it("returns source-only search results while retaining display images in the transcript", async () => {
+    const db = await makeDb();
+    const { provider, model } = addRunFixture(db);
+    const chat = db.createChat(provider.id, model.id, "Images");
+    const image = `![Preview](data:image/png;base64,${"ABCD".repeat(50_000)})`;
+    db.appendChatEvent(chat.id, "output", "Answer", image, { responseSourceText: "Description ![Preview](preview.png)", attachments: [{ data: image }] });
+    db.appendChatEvent(chat.id, "output", "Legacy", image + " Legacy description");
+    const result = db.listChatsWithSteps().find((item) => item.chat.id === chat.id)!;
+    expect(result.steps[0].content).toBe("Description ![Preview](preview.png)");
+    expect(result.steps[1].content).toContain("Legacy description");
+    expect(JSON.stringify(result)).not.toContain("base64");
+    expect(JSON.stringify(result).length).toBeLessThan(2000);
+    expect(db.getChatDetail(chat.id).steps[0].content).toBe(image);
+  });
   it("persists question answers, preserves questions, and rejects duplicate or invalid replies", async () => {
     const db = await makeDb();
     const { provider, model } = addRunFixture(db);

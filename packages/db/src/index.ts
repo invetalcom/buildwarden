@@ -1,4 +1,5 @@
 import { validateUserInputAnswers } from "@buildwarden/shared";
+import { getResponseSourceText, type ChatSearchDetail } from "@buildwarden/shared";
 import type { RunVerificationRecord } from "@buildwarden/shared";
 import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -753,9 +754,21 @@ export class BuildWardenDatabase {
     ).map((row) => this.getChat(row.id));
   }
 
-  listChatsWithSteps(): ChatDetail[] {
+  listChatsWithSteps(): ChatSearchDetail[] {
     const summaries = this.listChats();
-    return summaries.map((s) => this.getChatDetail(s.id));
+    return summaries.map((summary) => ({
+      chat: this.getChat(summary.id),
+      // Select the source in SQLite, before loading multi-megabyte display blobs.
+      // Attachment metadata is also unnecessary for list/search clients.
+      steps: this.all<ChatSearchDetail["steps"][number]>(`
+        select title, event_type as eventType,
+          case when json_valid(metadata_json) then
+            case when json_type(metadata_json, '$.responseSourceText') = 'text'
+              then json_extract(metadata_json, '$.responseSourceText') else content end
+            else content end as content
+        from chat_steps where chat_id = ? order by created_at, rowid
+      `, [summary.id]).map((step) => ({ ...step, content: getResponseSourceText(step) })),
+    }));
   }
 
   addChatBookmark(chatId: string): void {

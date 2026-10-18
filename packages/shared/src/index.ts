@@ -3566,6 +3566,12 @@ export interface ChatDetail {
   historyPage?: UserAnchoredHistoryPageInfo;
 }
 
+/** Text-only chat list/search projection; open a chat to load its full transcript. */
+export interface ChatSearchDetail {
+  chat: ChatRecord;
+  steps: Array<Pick<ChatStepRecord, "title" | "eventType" | "content">>;
+}
+
 export interface UserAnchoredHistoryPageInfo {
   /** Opaque keyset cursor for the oldest user turn in this window. */
   beforeCursor: string | null;
@@ -4180,7 +4186,7 @@ export interface DesktopApi {
   getEarlierChatHistory(chatId: string, request: UserAnchoredHistoryPageRequest): Promise<ChatHistoryPage>;
   followUpChat(chatId: string, prompt: string, options?: FollowUpChatOptions): Promise<ChatRecord>;
   listChats(): Promise<ChatRecord[]>;
-  listChatsWithSteps(): Promise<ChatDetail[]>;
+  listChatsWithSteps(): Promise<ChatSearchDetail[]>;
   deleteChat(chatId: string): Promise<void>;
   cancelChat(chatId: string): Promise<void>;
   onChatEvent(listener: (event: ChatEvent) => void): () => void;

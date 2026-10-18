@@ -114,6 +114,7 @@ import {
   type BookmarkRecord,
   type ChatBookmarkRecord,
   type ChatDetail,
+  type ChatSearchDetail,
   type ChatHistoryPage,
   type ChatEvent,
   type ChatAttachmentPayload,
@@ -2413,7 +2414,7 @@ export class AppController
     return this.db.listChats().map((s) => this.db.getChat(s.id));
   }
 
-  async listChatsWithSteps(): Promise<ChatDetail[]> {
+  async listChatsWithSteps(): Promise<ChatSearchDetail[]> {
     return this.db.listChatsWithSteps();
   }
 

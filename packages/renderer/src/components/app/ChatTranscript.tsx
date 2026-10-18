@@ -1,6 +1,7 @@
 import { forwardRef, useCallback, useMemo, useState, type Ref } from "react";
 import {
   normalizeRunSubagentInfo,
+  getResponseSourceText,
   type RunEventType,
 } from "@buildwarden/shared";
 import { ChatWorkingIndicator } from "../ui/chat-working-indicator";
@@ -121,7 +122,7 @@ export const ChatTranscript = forwardRef<
             chatId={chatId}
             canAnswer={!readOnly && active}
             copied={copiedItemId === item.id}
-            onCopy={() => void copyOutput(item.content, item.id)}
+            onCopy={() => void copyOutput(getResponseSourceText(item, metadata), item.id)}
           />
         ))}
         {active || showLoading ? <ChatWorkingIndicator label={loadingLabel} /> : null}
