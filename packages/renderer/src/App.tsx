@@ -19,6 +19,7 @@ import {
   parseSidebarRunViewSetting,
   parseSidebarHideActiveRunsSetting,
   parseSidebarUncategorizedLastSetting,
+  parseSidebarUncategorizedSectionSetting,
   parseSidebarRunEntrySizeSetting,
   parseDesignScheme,
   serializeDesignScheme,
@@ -1589,6 +1590,7 @@ export const App = () => {
   const sidebarRunEntrySize = parseSidebarRunEntrySizeSetting(snapshot.settings[APP_SETTING_KEYS.sidebarRunEntrySize]);
   const sidebarHideActiveRuns = parseSidebarHideActiveRunsSetting(snapshot.settings[APP_SETTING_KEYS.sidebarHideActiveRuns]);
   const sidebarUncategorizedLast = parseSidebarUncategorizedLastSetting(snapshot.settings[APP_SETTING_KEYS.sidebarUncategorizedLast]);
+  const sidebarUncategorizedSection = parseSidebarUncategorizedSectionSetting(snapshot.settings[APP_SETTING_KEYS.sidebarUncategorizedSection]);
   const sidebarRunView = parseSidebarRunViewSetting(snapshot.settings[APP_SETTING_KEYS.sidebarRunView]);
   const runTimelineDensity = parseRunTimelineDensitySetting(snapshot.settings[APP_SETTING_KEYS.runTimelineDensity]);
   const updateRunTimelineDensity = useCallback(
@@ -4041,6 +4043,7 @@ export const App = () => {
               sidebarRunEntrySize={sidebarRunEntrySize}
               sidebarHideActiveRuns={sidebarHideActiveRuns}
               sidebarUncategorizedLast={sidebarUncategorizedLast}
+              sidebarUncategorizedSection={sidebarUncategorizedSection}
               enableDevMode={snapshot.settings[APP_SETTING_KEYS.enableDevMode] === "true"}
               appLogDirPath={appLogDirPath}
               appLogDirectorySize={appLogDirectorySize}
@@ -4145,6 +4148,7 @@ export const App = () => {
               })}
               onSidebarHideActiveRunsChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.sidebarHideActiveRuns, value)}
               onSidebarUncategorizedLastChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.sidebarUncategorizedLast, value)}
+              onSidebarUncategorizedSectionChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.sidebarUncategorizedSection, value)}
               worktreeRootOverrideSettingValue={snapshot.settings[APP_SETTING_KEYS.worktreeRootOverride] ?? ""}
               onSaveWorktreeRootOverride={(value) =>
                 void handleAction(async () => {
@@ -4758,6 +4762,7 @@ export const App = () => {
         runProjectScope={snapshot.settings[APP_SETTING_KEYS.sidebarRunProjectScope] ?? ""}
         hideActiveRuns={sidebarHideActiveRuns}
         uncategorizedLast={sidebarUncategorizedLast}
+        uncategorizedAsSection={sidebarUncategorizedSection}
         attentionInboxSetting={snapshot.settings[APP_SETTING_KEYS.attentionInbox]}
         bookmarksCount={snapshot.bookmarks.length + snapshot.chatBookmarks.length}
         chatsCount={snapshot.chats.length}

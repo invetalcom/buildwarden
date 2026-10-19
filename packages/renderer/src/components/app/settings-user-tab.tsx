@@ -234,6 +234,7 @@ export type UserSettingsTabProps = {
   sidebarRunEntrySize: SidebarRunEntrySize;
   sidebarHideActiveRuns: boolean;
   sidebarUncategorizedLast: boolean;
+  sidebarUncategorizedSection: boolean;
   attentionInboxSettings: AttentionInboxSettings;
   onAttentionInboxSettingsChange: (value: AttentionInboxSettings) => void;
   recentRunDaysDraft: string;
@@ -254,6 +255,7 @@ export type UserSettingsTabProps = {
   onSidebarRunEntrySizeChange: (value: SidebarRunEntrySize) => void;
   onSidebarHideActiveRunsChange: (value: boolean) => void;
   onSidebarUncategorizedLastChange: (value: boolean) => void;
+  onSidebarUncategorizedSectionChange: (value: boolean) => void;
   onRecentRunDaysDraftChange: (value: string) => void;
   onEnableDevModeChange: (value: boolean) => void;
   onKeyboardShortcutChange: (id: KeyboardShortcutId, value: string) => void;
@@ -276,6 +278,7 @@ export const UserSettingsTab = ({
   sidebarRunEntrySize,
   sidebarHideActiveRuns,
   sidebarUncategorizedLast,
+  sidebarUncategorizedSection,
   attentionInboxSettings,
   onAttentionInboxSettingsChange,
   recentRunDaysDraft,
@@ -296,6 +299,7 @@ export const UserSettingsTab = ({
   onSidebarRunEntrySizeChange,
   onSidebarHideActiveRunsChange,
   onSidebarUncategorizedLastChange,
+  onSidebarUncategorizedSectionChange,
   onRecentRunDaysDraftChange,
   onEnableDevModeChange,
   onKeyboardShortcutChange,
@@ -382,6 +386,19 @@ export const UserSettingsTab = ({
             onCheckedChange={onSidebarHideActiveRunsChange}
             disabled={busy}
             aria-label="Hide active runs from sidebar"
+          />
+        </div>
+      </SettingsRow>
+      <SettingsRow
+        title="Uncategorized as a section"
+        description="Group runs that are not in a custom section under a collapsible Uncategorized header. Turn off to list them directly in the sidebar. On by default."
+      >
+        <div className={`${rowControlClass} flex items-center justify-end gap-3`}>
+          <Switch
+            checked={sidebarUncategorizedSection}
+            onCheckedChange={onSidebarUncategorizedSectionChange}
+            disabled={busy}
+            aria-label="Show Uncategorized runs as a section"
           />
         </div>
       </SettingsRow>

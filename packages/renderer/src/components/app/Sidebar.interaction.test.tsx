@@ -209,6 +209,14 @@ describe("Sidebar run sections", () => {
     expect(sectionOrder().at(-1)).toBe("uncategorized");
   });
 
+  it("lists Uncategorized runs without a section header when configured", async () => {
+    await renderSidebar({ uncategorizedAsSection: false });
+
+    expect(section("uncategorized").contains(runRow("recent-run"))).toBe(true);
+    expect(section("uncategorized").textContent).not.toContain("Uncategorized");
+    expect(section("uncategorized").querySelector("[aria-expanded]")).toBeNull();
+  });
+
   it("moves a run into a section by drag and drop before the save settles", async () => {
     let finishSave: () => void = () => {};
     const onMoveRunToSection = vi.fn(() => new Promise<void>((resolve) => {

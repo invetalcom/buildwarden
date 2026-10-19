@@ -107,6 +107,8 @@ interface SidebarProps {
   hideActiveRuns?: boolean;
   /** Lists Uncategorized below the custom sections instead of above them. */
   uncategorizedLast?: boolean;
+  /** `false` lists Uncategorized runs without the collapsible Uncategorized header. */
+  uncategorizedAsSection?: boolean;
   bookmarksCount: number;
   chatsCount: number;
   bookmarkedRunIds: Set<string>;
@@ -248,6 +250,7 @@ const SidebarComponent = ({
   runProjectScope,
   hideActiveRuns = false,
   uncategorizedLast = false,
+  uncategorizedAsSection = true,
   bookmarksCount,
   chatsCount,
   bookmarkedRunIds,
@@ -866,6 +869,7 @@ const SidebarComponent = ({
           viewCounts={runViewCounts}
           config={runSections}
           groups={sidebarRunSectionGroups}
+          uncategorizedAsSection={uncategorizedAsSection}
           recentRunWindowLabel={`last ${recentRunWindowLabel}`}
           emptyMessage={`${hideActiveRuns ? "No inactive runs" : "No runs"} in the last ${recentRunWindowLabel}.`}
           canEditSections={canEditRunSections}

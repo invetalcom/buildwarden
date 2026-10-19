@@ -37,6 +37,8 @@ interface SidebarRunSectionsProps {
   viewCounts: Record<SidebarRunView, number>;
   config: SidebarRunSectionsConfig;
   groups: SidebarRunSectionGroup[];
+  /** `false` renders Uncategorized runs without a header so they read as plain sidebar entries. */
+  uncategorizedAsSection: boolean;
   recentRunWindowLabel: string;
   emptyMessage: string;
   canEditSections: boolean;
@@ -100,6 +102,7 @@ export const SidebarRunSections = ({
   viewCounts,
   config,
   groups,
+  uncategorizedAsSection,
   recentRunWindowLabel,
   emptyMessage,
   canEditSections,
@@ -296,6 +299,31 @@ export const SidebarRunSections = ({
             if (rootCount === 0 && view !== "all" && !dragActive) return null;
             const dropTarget = dropTargetKey === key;
             const renaming = section !== null && renamingSectionId === section.id;
+            if (!section && !uncategorizedAsSection) {
+              // Headerless Uncategorized: the runs stay a drop target, and an empty list only shows up mid-drag.
+              if (rows.length === 0 && !dragActive) return null;
+              return (
+                <div
+                  key={key}
+                  data-sidebar-run-section={key}
+                  className={cn("rounded-lg border p-0.5 transition-colors", dropTarget ? "border-[var(--ec-accent)] bg-[var(--ec-accent-soft)]" : "border-transparent")}
+                  {...dropHandlers(key, null)}
+                >
+                  {rows.length > 0 ? (
+                    <div className={cn("px-0.5", rowGapClassName)}>{rows}</div>
+                  ) : (
+                    <div
+                      className={cn(
+                        "mx-0.5 flex h-7 items-center justify-center rounded-md border border-dashed text-[10px]",
+                        dropTarget ? "border-[var(--ec-accent)] text-[var(--ec-accent)]" : "border-[var(--ec-border)] text-[var(--ec-faint)]",
+                      )}
+                    >
+                      Drop here to remove from its section
+                    </div>
+                  )}
+                </div>
+              );
+            }
             return (
               <div
                 key={key}

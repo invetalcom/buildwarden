@@ -4956,6 +4956,8 @@ export const APP_SETTING_KEYS = {
   sidebarHideActiveRuns: "sidebarHideActiveRuns",
   /** `"true"` lists the sidebar's Uncategorized section below the custom sections instead of above them. */
   sidebarUncategorizedLast: "sidebarUncategorizedLast",
+  /** `"false"` lists Uncategorized runs directly in the sidebar instead of under a collapsible Uncategorized section. */
+  sidebarUncategorizedSection: "sidebarUncategorizedSection",
   attentionInbox: "attentionInbox",
   /** Persisted app sidebar width in CSS pixels. */
   sidebarWidth: "sidebarWidth",
@@ -5190,6 +5192,8 @@ export const parseSidebarRunViewSetting = (raw: string | undefined): SidebarRunV
 export const parseSidebarHideActiveRunsSetting = (raw: string | undefined): boolean => raw?.trim().toLowerCase() === "true";
 
 export const parseSidebarUncategorizedLastSetting = (raw: string | undefined): boolean => raw?.trim().toLowerCase() === "true";
+
+export const parseSidebarUncategorizedSectionSetting = (raw: string | undefined): boolean => raw?.trim().toLowerCase() !== "false";
 
 export const parseRecentRunDaysSetting = (raw: string | number | undefined | null): number => {
   const parsed = Number(raw);
