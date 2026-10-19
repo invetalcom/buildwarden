@@ -1,5 +1,5 @@
 import type { ProviderType, RunForgeReadiness, RunRecord } from "@buildwarden/shared";
-import { Bot, CircleAlert, Clock3, FolderGit2, GitBranch, GitPullRequest, ListChecks } from "lucide-react";
+import { Bot, CircleAlert, Clock3, FolderGit2, GitBranch, GitPullRequest, ListChecks, Tag } from "lucide-react";
 import { Badge, type BadgeProps } from "../ui/badge";
 import { ProviderBrandIcon } from "./provider-brand-icons";
 import { PROVIDER_BRAND_LABELS } from "./provider-brand-metadata";
@@ -20,7 +20,9 @@ const FORGE_READINESS_BADGE_TONE: Record<RunForgeReadiness, NonNullable<BadgePro
   unavailable: "neutral",
 };
 
-export const AgentRunHoverCard = ({ projectName, run, providerType }: { projectName: string; run: RunRecord; providerType?: ProviderType | null }) => {
+export const AgentRunHoverCard = ({ projectName, run, providerType, tags = [] }: {
+  projectName: string; run: RunRecord; providerType?: ProviderType | null; tags?: readonly string[];
+}) => {
   const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
   const waitingForInput = run.pendingUserInputRequest === true || run.pendingUserInputRequest === 1;
   const providerLabel = PROVIDER_BRAND_LABELS[providerType === "openrouter" ? "openrouter" : run.harnessType];
@@ -52,6 +54,14 @@ export const AgentRunHoverCard = ({ projectName, run, providerType }: { projectN
             <span className="truncate font-mono" title={run.branchName}>{run.branchName}</span>
           </span>
         ) : null}
+        {tags.length > 0 && <div className="flex min-w-0 items-start gap-2">
+          <Tag className="mt-0.5 size-3.5 shrink-0 text-[var(--ec-faint)]" aria-hidden />
+          <ul aria-label="Run tags" className="flex min-w-0 flex-wrap gap-1">
+            {tags.map((tag) => <li key={tag} className="max-w-full break-all rounded bg-[var(--ec-accent-soft)] px-1.5 py-0.5 text-[10px] leading-3 text-[var(--ec-accent)]">
+              #{tag}
+            </li>)}
+          </ul>
+        </div>}
       </div>
 
       {run.forgeRequest ? (

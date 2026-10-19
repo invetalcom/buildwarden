@@ -13,6 +13,7 @@ import type {
 } from "@buildwarden/shared";
 
 export interface HostEventMap {
+  runOrganization: { changedAt: string };
   run: RunEvent;
   chat: ChatEvent;
   warning: AppWarning;

@@ -282,6 +282,7 @@ describe("renderer component states", () => {
           branchName: "feat/run-hover-card",
           harnessType: "codex-app-server",
         })}
+        tags={["auth", "security"]}
       />,
     );
 
@@ -293,6 +294,9 @@ describe("renderer component states", () => {
     expect(markup).toContain("line-clamp-6");
     expect(markup).toContain("var(--ec-text)");
     expect(markup).not.toContain("data-agent-run-forge-request");
+    expect(markup).toContain('aria-label="Run tags"');
+    expect(markup).toContain("#auth");
+    expect(markup).toContain("#security");
 
     const pullRequestMarkup = renderToStaticMarkup(
       <AgentRunHoverCard
@@ -326,6 +330,7 @@ describe("renderer component states", () => {
     );
 
     expect(pullRequestMarkup).toContain("data-agent-run-forge-request");
+    expect(pullRequestMarkup).not.toContain('aria-label="Run tags"');
     expect(pullRequestMarkup).toContain("Pull request #42");
     expect(pullRequestMarkup).toContain("Show pull request context in the sidebar hover card");
     expect(pullRequestMarkup).toContain("Waiting");

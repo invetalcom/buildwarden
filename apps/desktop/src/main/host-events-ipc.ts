@@ -3,6 +3,7 @@ import { IPC_CHANNELS } from "@buildwarden/shared";
 import type { HostEventBus, HostEventMap } from "./host-events";
 
 const IPC_EVENT_CHANNELS = {
+  runOrganization: IPC_CHANNELS.runOrganizationChanged,
   run: IPC_CHANNELS.runEvent,
   chat: IPC_CHANNELS.chatEvent,
   warning: IPC_CHANNELS.appWarning,

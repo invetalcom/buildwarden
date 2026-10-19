@@ -28,9 +28,13 @@ describe("UserSettingsTab", () => {
 
     const onAttentionChange = vi.fn();
     const onHideActiveRunsChange = vi.fn();
+    const onUncategorizedFirstChange = vi.fn();
+    const onUncategorizedSectionChange = vi.fn();
     const TestSettings = () => {
       const [attention, setAttention] = useState(parseAttentionInboxSettings);
       const [hideActiveRuns, setHideActiveRuns] = useState(false);
+      const [uncategorizedFirst, setUncategorizedFirst] = useState(false);
+      const [uncategorizedSection, setUncategorizedSection] = useState(true);
       return (
       <UserSettingsTab
         busy={false}
@@ -39,6 +43,8 @@ describe("UserSettingsTab", () => {
         sidebarRunEntrySize="medium"
         sidebarGroupRunsByProject={false}
         sidebarHideActiveRuns={hideActiveRuns}
+        sidebarUncategorizedFirst={uncategorizedFirst}
+        sidebarUncategorizedSection={uncategorizedSection}
         attentionInboxSettings={attention}
         onAttentionInboxSettingsChange={(next) => { onAttentionChange(next); setAttention(next); }}
         recentRunDaysDraft="10"
@@ -59,6 +65,8 @@ describe("UserSettingsTab", () => {
         onSidebarRunEntrySizeChange={vi.fn()}
         onSidebarGroupRunsByProjectChange={vi.fn()}
         onSidebarHideActiveRunsChange={(next) => { onHideActiveRunsChange(next); setHideActiveRuns(next); }}
+        onSidebarUncategorizedFirstChange={(next) => { onUncategorizedFirstChange(next); setUncategorizedFirst(next); }}
+        onSidebarUncategorizedSectionChange={(next) => { onUncategorizedSectionChange(next); setUncategorizedSection(next); }}
         onRecentRunDaysDraftChange={vi.fn()}
         onEnableDevModeChange={vi.fn()}
         onKeyboardShortcutChange={vi.fn()}
@@ -84,13 +92,27 @@ describe("UserSettingsTab", () => {
     expect(sections.indexOf("Attention inbox")).toBe(sections.indexOf("Sidebar") + 1);
     const hideActiveRuns = container.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Hide active runs from sidebar"]')!;
     expect(hideActiveRuns.getAttribute("aria-checked")).toBe("false");
-    expect(container.textContent!.indexOf("Hide active runs")).toBeGreaterThan(container.textContent!.indexOf("Grouping"));
-    expect(container.textContent!.indexOf("Hide active runs")).toBeLessThan(container.textContent!.indexOf("Recent runs window"));
+    expect(container.textContent!.indexOf("Hide active runs")).toBeGreaterThan(container.textContent!.indexOf("Group entries by project"));
+    expect(container.textContent!.indexOf("Hide active runs")).toBeLessThan(container.textContent!.indexOf("Uncategorized runs window"));
     await act(async () => hideActiveRuns.click());
     expect(onHideActiveRunsChange).toHaveBeenLastCalledWith(true);
     expect(hideActiveRuns.getAttribute("aria-checked")).toBe("true");
     await act(async () => hideActiveRuns.click());
     expect(onHideActiveRunsChange).toHaveBeenLastCalledWith(false);
+    const uncategorizedToggle = container.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Show Uncategorized above custom sections"]')!;
+    const sectionToggle = container.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Show Uncategorized as a section"]')!;
+    expect(sectionToggle.getAttribute("aria-checked")).toBe("true");
+    await act(async () => sectionToggle.click());
+    expect(onUncategorizedSectionChange).toHaveBeenLastCalledWith(false);
+    expect(sectionToggle.getAttribute("aria-checked")).toBe("false");
+    await act(async () => sectionToggle.click());
+    expect(onUncategorizedSectionChange).toHaveBeenLastCalledWith(true);
+    expect(uncategorizedToggle.getAttribute("aria-checked")).toBe("false");
+    await act(async () => uncategorizedToggle.click());
+    expect(onUncategorizedFirstChange).toHaveBeenLastCalledWith(true);
+    expect(uncategorizedToggle.getAttribute("aria-checked")).toBe("true");
+    await act(async () => uncategorizedToggle.click());
+    expect(onUncategorizedFirstChange).toHaveBeenLastCalledWith(false);
     const question = container.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Question"]')!;
     await act(async () => question.click());
     expect(onAttentionChange.mock.lastCall?.[0].kinds.input).toBe(false);

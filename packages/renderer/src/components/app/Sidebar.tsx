@@ -1,7 +1,7 @@
 import { parseAttentionInboxSettings } from "@buildwarden/shared";
 import { AttentionInbox } from "./AttentionInbox";
 import { SidebarUtilityButton } from "./SidebarUtilityButton";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
 import type { AppSnapshot, RunRecord, SidebarRunEntrySize } from "@buildwarden/shared";
 import {
@@ -32,7 +32,6 @@ import {
 import type { ProjectPageTab } from "./project-page-tabs";
 import { ProviderBrandIcon } from "./provider-brand-icons";
 import { projectSidebarContext } from "./sidebar-project-context";
-import { recentRunOrderTimestamp } from "./sidebar-run-ordering";
 import { clampSidebarWidth } from "./sidebar-width";
 import {
   resolveRunDisplayStatus,
@@ -47,7 +46,8 @@ import { runForgeReadinessColor, runForgeReadinessLabel } from "./run-forge-ui";
 import { AgentRunHoverCard } from "./AgentRunHoverCard";
 import { HoverCard } from "../ui/hover-card";
 import { formatRunDuration, formatRunRelativeTime } from "./run-summary-format";
-import { buildRunHierarchyRows, findRunHierarchyScopeRoots, runHierarchyLabel, type RunHierarchyRow } from "./run-hierarchy";
+import { runHierarchyLabel, type RunHierarchyRow } from "./run-hierarchy";
+import { SidebarRunSections } from "./SidebarRunSections";
 import { RunHierarchyIndent, RunHierarchyToggle } from "./RunHierarchy";
 
 const ACTIVE_RUN_STATUSES = new Set(["queued", "preparing", "running"]);
@@ -57,12 +57,15 @@ type RunContextMenuState = {
   projectId: string;
   runId: string;
   runStatus: SidebarRun["status"];
+  trigger: HTMLButtonElement;
   x: number;
   y: number;
 };
 
 interface SidebarProps {
   projects: AppSnapshot["projects"];
+  runOrganization?: AppSnapshot["runOrganization"];
+  onRunOrganizationChange?: (organization: NonNullable<AppSnapshot["runOrganization"]>) => void;
   providerAccounts?: AppSnapshot["providerAccounts"];
   landingSelected: boolean;
   allRunsSelected: boolean;
@@ -81,6 +84,8 @@ interface SidebarProps {
   runEntrySize: SidebarRunEntrySize;
   groupRunsByProject: boolean;
   hideActiveRuns?: boolean;
+  uncategorizedFirst?: boolean;
+  uncategorizedSection?: boolean;
   bookmarksCount: number;
   chatsCount: number;
   bookmarkedRunIds: Set<string>;
@@ -144,8 +149,6 @@ const projectToolVisible = (
   return tab !== "branches" && tab !== "reviews";
 };
 
-const formatRecentRunWindowLabel = (days: number) => `${days} ${days === 1 ? "day" : "days"}`;
-const compareRecentRuns = (left: SidebarRun, right: SidebarRun) => recentRunOrderTimestamp(right) - recentRunOrderTimestamp(left);
 
 const runDotClassName = (status: RunDisplayStatus) => {
   if (status === "completed") return "bg-[var(--ec-success)]";
@@ -156,17 +159,6 @@ const runDotClassName = (status: RunDisplayStatus) => {
   return "bg-[var(--ec-warning)]";
 };
 
-const runStatusPillClassName = (status: RunDisplayStatus) => {
-  if (status === "completed") return "border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] text-[var(--ec-success)]";
-  if (status === "failed" || status === "attention" || status === "deletion-failed") {
-    return "border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] text-[var(--ec-danger)]";
-  }
-  if (status === "cancelled") return "border-[var(--ec-border)] bg-[var(--ec-muted-soft)] text-[var(--ec-muted)]";
-  if (status === "preparing" || status === "deleting") return "border-[var(--ec-info-ring)] bg-[var(--ec-info-soft)] text-[var(--ec-info)]";
-  if (status === "running") return "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]";
-  return "border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] text-[var(--ec-warning)]";
-};
-
 const SIDEBAR_RUN_ENTRY_SIZE_STYLES: Record<
   SidebarRunEntrySize,
   {
@@ -174,7 +166,6 @@ const SIDEBAR_RUN_ENTRY_SIZE_STYLES: Record<
     indicator: string;
     title: string;
     meta: string;
-    status: string;
     alert: string;
     groupGap: string;
     rowGap: string;
@@ -185,35 +176,34 @@ const SIDEBAR_RUN_ENTRY_SIZE_STYLES: Record<
     indicator: "bottom-1.5 top-1.5",
     title: "text-[11px] leading-[0.875rem]",
     meta: "mt-0.5 text-[9px] leading-3",
-    status: "px-1 py-px text-[8px]",
     alert: "size-3",
     groupGap: "space-y-1",
-    rowGap: "space-y-px",
+    rowGap: "space-y-1.5",
   },
   medium: {
     button: "px-2 py-1.5",
     indicator: "bottom-2 top-2",
     title: "text-[12px] leading-4",
     meta: "mt-1 text-[10px] leading-3",
-    status: "px-1.5 py-0.5 text-[9px]",
     alert: "size-3.5",
     groupGap: "space-y-1.5",
-    rowGap: "space-y-0.5",
+    rowGap: "space-y-1.5",
   },
   large: {
     button: "px-2.5 py-2",
     indicator: "bottom-2.5 top-2.5",
     title: "text-[13px] leading-[1.125rem]",
     meta: "mt-1.5 text-[10px] leading-[0.875rem]",
-    status: "px-1.5 py-0.5 text-[9px]",
     alert: "size-4",
     groupGap: "space-y-2",
-    rowGap: "space-y-1",
+    rowGap: "space-y-2",
   },
 };
 
 const SidebarComponent = ({
   projects,
+  runOrganization,
+  onRunOrganizationChange,
   providerAccounts = [],
   landingSelected,
   allRunsSelected,
@@ -231,6 +221,8 @@ const SidebarComponent = ({
   recentRunDays,
   runEntrySize,
   groupRunsByProject,
+  uncategorizedFirst = false,
+  uncategorizedSection = true,
   hideActiveRuns = false,
   bookmarksCount,
   chatsCount,
@@ -262,9 +254,10 @@ const SidebarComponent = ({
   const canOpenRunContextMenu = canStartRuns || canManageRunBookmarks || canMoveRunsForLater;
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [projectToolsExpanded, setProjectToolsExpanded] = useState(true);
-  const [expandedRecentProjectIds, setExpandedRecentProjectIds] = useState<Record<string, boolean>>({});
+  const [organizeRun, setOrganizeRun] = useState<{ id: string; trigger: HTMLButtonElement } | null>(null);
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<RunContextMenuState | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
   const [isResizing, setIsResizing] = useState(false);
   const projectMenuRef = useRef<HTMLDivElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
@@ -273,6 +266,21 @@ const SidebarComponent = ({
   const resizePendingWidthRef = useRef(width);
   const resizeFrameRef = useRef<number | null>(null);
 
+  useLayoutEffect(() => {
+    if (!contextMenu || !canOpenRunContextMenu) return;
+    const updatePosition = () => {
+      const menu = contextMenuRef.current;
+      if (!menu) return;
+      const { width, height } = menu.getBoundingClientRect();
+      const padding = 8;
+      menu.style.left = `${Math.max(padding, Math.min(contextMenu.x, window.innerWidth - width - padding))}px`;
+      menu.style.top = `${Math.max(padding, Math.min(contextMenu.y, window.innerHeight - height - padding))}px`;
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    return () => window.removeEventListener("resize", updatePosition);
+  }, [contextMenu, canOpenRunContextMenu, canStartRuns, canManageRunBookmarks, canMoveRunsForLater, runOrganization, bookmarkedRunIds]);
+
   const selectedProject = projects.find((entry) => entry.project.id === selectedProjectId) ?? projects[0] ?? null;
   const selectedProjectContext = projectSidebarContext(
     selectedProject?.project ?? null,
@@ -280,8 +288,6 @@ const SidebarComponent = ({
     currentProjectBranchStatus,
   );
   const totalActiveRuns = projects.reduce((sum, project) => sum + project.activeRuns.length, 0);
-  const recentRunWindowMs = recentRunDays * 24 * 60 * 60 * 1000;
-  const recentRunWindowLabel = formatRecentRunWindowLabel(recentRunDays);
   const sortedProjectsForDropdown = useMemo(
     () =>
       [...projects].sort((left, right) =>
@@ -293,77 +299,7 @@ const SidebarComponent = ({
     () => new Map(providerAccounts.map((provider) => [provider.id, provider.providerType])),
     [providerAccounts],
   );
-
-  // Filter only sidebar collections, retaining attention/paused states and the
-  // original snapshot used by project navigation and the other run lists.
-  const recentRunProjects = useMemo(() => {
-    if (!hideActiveRuns) return projects;
-    const visible = (run: SidebarRun) => !ACTIVE_RUN_STATUSES.has(resolveRunDisplayStatus(run.status, run.orchestrationStatus));
-    return projects.map((entry) => ({
-      ...entry,
-      runs: entry.runs.filter(visible),
-      orchestratedRuns: entry.orchestratedRuns.filter(visible),
-    }));
-  }, [hideActiveRuns, projects]);
-
-  const recentRunsByProject = useMemo(() => {
-    const now = Date.now();
-    return recentRunProjects
-      .map((entry) => {
-        const recentActivityById = new Map<string, SidebarRun>();
-        for (const run of [...entry.runs, ...entry.orchestratedRuns]) {
-          const timestamp = recentRunOrderTimestamp(run);
-          if (Number.isFinite(timestamp) && now - timestamp <= recentRunWindowMs) {
-            recentActivityById.set(run.id, run);
-          }
-        }
-        const recentActivityRuns = [...recentActivityById.values()]
-          .sort((a, b) => recentRunOrderTimestamp(b) - recentRunOrderTimestamp(a));
-        const runs = findRunHierarchyScopeRoots(
-          recentActivityRuns,
-          entry.runs,
-          entry.orchestratedRuns,
-          [...entry.runs, ...entry.forLaterRuns],
-        );
-        return {
-          project: entry,
-          runs,
-          newestActivityAt: recentActivityRuns[0] ? recentRunOrderTimestamp(recentActivityRuns[0]) : 0,
-        };
-      })
-      .filter((entry) => entry.runs.length > 0)
-      .sort((a, b) => b.newestActivityAt - a.newestActivityAt);
-  }, [recentRunProjects, recentRunWindowMs]);
-
-  const recentRuns = useMemo(
-    () =>
-      recentRunsByProject
-        .flatMap(({ project, runs }) => runs.map((run) => ({ project, run })))
-        .sort((left, right) => recentRunOrderTimestamp(right.run) - recentRunOrderTimestamp(left.run)),
-    [recentRunsByProject],
-  );
-
-  const recentRunTreeRows = useMemo(() => {
-    const projectById = new Map(projects.map((entry) => [entry.project.id, entry]));
-    return buildRunHierarchyRows(
-      recentRuns.map(({ run }) => run),
-      recentRunProjects.flatMap((entry) => entry.orchestratedRuns),
-      { expandedRunIds, compareRuns: compareRecentRuns },
-    ).flatMap((row) => {
-      const project = projectById.get(row.run.projectId);
-      return project ? [{ project, row }] : [];
-    });
-  }, [expandedRunIds, projects, recentRunProjects, recentRuns]);
-
-  useEffect(() => {
-    const firstProjectId = recentRunsByProject[0]?.project.project.id;
-    const currentProjectId = selectedProject?.project.id;
-    setExpandedRecentProjectIds((current) => ({
-      ...current,
-      ...(firstProjectId && current[firstProjectId] === undefined ? { [firstProjectId]: true } : {}),
-      ...(currentProjectId && current[currentProjectId] === undefined ? { [currentProjectId]: true } : {}),
-    }));
-  }, [recentRunsByProject, selectedProject?.project.id]);
+  const tagsByRunId = useMemo(() => new Map(runOrganization?.runs.map((run) => [run.runId, run.tags])), [runOrganization]);
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
@@ -443,10 +379,6 @@ const SidebarComponent = ({
     setIsResizing(true);
   };
 
-  const toggleRecentProject = (projectId: string) => {
-    setExpandedRecentProjectIds((current) => ({ ...current, [projectId]: !(current[projectId] ?? false) }));
-  };
-
   const toggleRunHierarchy = useCallback((runId: string) => {
     setExpandedRunIds((current) => {
       const next = new Set(current);
@@ -483,6 +415,7 @@ const SidebarComponent = ({
     showProjectName: boolean,
   ) => {
     const { run, depth, descendantCount, expanded } = row;
+    const runTags = tagsByRunId.get(run.id) ?? [];
     const highlighted = highlightedRunId === run.id;
     const waitingForInput = run.pendingUserInputRequest === true || run.pendingUserInputRequest === 1;
     const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
@@ -504,6 +437,7 @@ const SidebarComponent = ({
             projectId: project.project.id,
             runId: run.id,
             runStatus: run.status,
+            trigger: event.currentTarget,
             x: event.clientX,
             y: event.clientY,
           });
@@ -545,15 +479,12 @@ const SidebarComponent = ({
           <span className="truncate">{formatRunRelativeTime(run.finishedAt ?? run.updatedAt)}</span>
           <span className="size-1 shrink-0 rounded-full bg-[var(--ec-faint)]" />
           <span className="shrink-0">{formatRunDuration(run)}</span>
+          {runTags.length > 0 ? <span className="min-w-0 truncate font-sans text-[var(--ec-accent)]" title={runTags.join(", ")}>
+            {runTags.map((tag) => "#" + tag).join(" ")}
+          </span> : null}
           </span>
         </span>
-        <span
-          data-sidebar-run-status
-          className={cn("shrink-0 rounded-full border font-semibold leading-none", runEntryStyles.status, runStatusPillClassName(displayStatus))}
-          title={displayStatus === "waiting" ? "Coordinator turn completed; waiting for orchestrated tasks." : undefined}
-        >
-          {RUN_DISPLAY_STATUS_LABELS[displayStatus]}
-        </span>
+        <span className="sr-only">Status: {RUN_DISPLAY_STATUS_LABELS[displayStatus]}</span>
       </button>
     );
     return (
@@ -561,16 +492,14 @@ const SidebarComponent = ({
         <div
           data-run-hierarchy-run={run.id}
           className={cn(
-            "relative flex w-full min-w-0 items-center overflow-hidden rounded-md border transition",
+            "relative flex w-full min-w-0 items-center overflow-hidden rounded-md transition",
             highlighted
-              ? "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)]"
-              : showProjectLabel
-                ? "border-[var(--ec-border)] bg-[var(--ec-panel-soft)] shadow-[var(--ec-panel-shadow)] hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-control)]"
-                : "border-transparent bg-[var(--ec-panel)] hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-control)]",
+              ? "bg-[var(--ec-accent-soft)]"
+              : "bg-[var(--ec-panel-soft)] hover:bg-[var(--ec-control)]",
           )}
         >
           <div className="min-w-0 flex-1">
-            <HoverCard content={<AgentRunHoverCard projectName={project.project.name} run={run} providerType={providerTypeByAccountId.get(run.providerAccountId)} />}>
+            <HoverCard content={<AgentRunHoverCard projectName={project.project.name} run={run} providerType={providerTypeByAccountId.get(run.providerAccountId)} tags={runTags} />}>
               {trigger}
             </HoverCard>
           </div>
@@ -810,57 +739,14 @@ const SidebarComponent = ({
       <Separator />
 
       <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto py-1.5">
-        <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--ec-faint)]">
-          Recent Runs ({recentRunWindowLabel})
-        </div>
-        {recentRunsByProject.length === 0 ? (
-          <div className="px-3 py-2 text-xs text-[var(--ec-muted)]">{hideActiveRuns ? "No inactive runs" : "No runs"} in the last {recentRunWindowLabel}.</div>
-        ) : groupRunsByProject ? (
-          <div className={cn("px-2", runEntryStyles.groupGap)}>
-            {recentRunsByProject.map(({ project, runs }) => {
-              const expanded = expandedRecentProjectIds[project.project.id] ?? false;
-              const runTreeRows = buildRunHierarchyRows(runs, project.orchestratedRuns, {
-                expandedRunIds,
-                compareRuns: compareRecentRuns,
-              });
-              return (
-                <div
-                  key={project.project.id}
-                  data-sidebar-run-group={project.project.id}
-                  className="overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-0.5 shadow-[var(--ec-panel-shadow)]"
-                >
-                  <button
-                    type="button"
-                    className="flex h-7 w-full min-w-0 items-center gap-1.5 rounded-md px-2 text-left text-xs text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
-                    onClick={() => toggleRecentProject(project.project.id)}
-                    onDoubleClick={() => selectProjectFeature(project.project.id, "overview")}
-                  >
-                    {expanded ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />}
-                    <span
-                      className={cn(
-                        "size-2 shrink-0 rounded-full ring-2 ring-[var(--ec-panel-soft)]",
-                        project.activeRuns.length > 0 ? "bg-[var(--ec-accent)] shadow-[0_0_0_3px_var(--ec-accent-soft)]" : "bg-[var(--ec-faint)]",
-                      )}
-                    />
-                    <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--ec-text)]">{project.project.name}</span>
-                    <span className="rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel)] px-1.5 py-0.5 font-mono text-[10px] leading-none text-[var(--ec-muted)]">
-                      {runs.length}
-                    </span>
-                  </button>
-                  {expanded ? (
-                    <div className={cn("px-0.5 pb-0.5", runEntryStyles.rowGap)}>
-                      {runTreeRows.map((row) => renderRecentRunEntry(project, row, false))}
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className={cn("px-2", runEntryStyles.rowGap)}>
-            {recentRunTreeRows.map(({ project, row }) => renderRecentRunEntry(project, row, true))}
-          </div>
-        )}
+        <SidebarRunSections projects={projects} organization={runOrganization} onOrganizationChange={onRunOrganizationChange}
+          recentRunDays={recentRunDays} hideActiveRuns={hideActiveRuns} groupRunsByProject={groupRunsByProject}
+          uncategorizedFirst={uncategorizedFirst}
+          uncategorizedSection={uncategorizedSection}
+          runEntrySize={runEntrySize}
+          runRowGapClassName={runEntryStyles.rowGap} onSelectProject={(projectId) => selectProjectFeature(projectId, "overview")}
+          expandedRunIds={expandedRunIds} highlightedRunId={highlightedRunId} organizeRunId={organizeRun?.id ?? null}
+          organizerReturnFocusTo={organizeRun?.trigger} onCloseOrganizer={() => setOrganizeRun(null)} renderRun={renderRecentRunEntry} />
       </div>
 
       <div className="shrink-0 border-t border-[var(--ec-border)] px-2 py-1.5">
@@ -888,9 +774,16 @@ const SidebarComponent = ({
                 role="presentation"
               />
               <div
-                className="fixed z-[30001] min-w-[11rem] glass-popover py-1"
+                ref={contextMenuRef}
+                className="fixed z-[30001] w-max min-w-[min(11rem,calc(100vw-16px))] max-w-[calc(100vw-16px)] max-h-[calc(100vh-16px)] overflow-y-auto glass-popover py-1"
                 style={{ left: contextMenu.x, top: contextMenu.y }}
               >
+                {canMoveRunsForLater && runOrganization !== undefined ? (
+                  <button type="button" className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--ec-text)] hover:bg-[var(--ec-hover)]"
+                    onClick={() => { setOrganizeRun({ id: contextMenu.runId, trigger: contextMenu.trigger }); setContextMenu(null); }}>
+                    <FolderGit2 className="size-3.5" />Move to section / edit tags
+                  </button>
+                ) : null}
                 {canStartRuns ? (
                   <button
                     className={cn(
@@ -905,7 +798,7 @@ const SidebarComponent = ({
                     type="button"
                   >
                     <Bot className="size-3.5" />
-                    Continue run
+                    Fork (fresh context)
                   </button>
                 ) : null}
                 {canManageRunBookmarks && bookmarkedRunIds.has(contextMenu.runId) ? (

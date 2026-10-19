@@ -193,6 +193,23 @@ afterEach(() => {
   for (const path of tempDirs.splice(0)) rmSync(path, { recursive: true, force: true });
 });
 
+it("notifies connected clients only after run organization is saved", async () => {
+  const organization = { sections: [{ id: "work", name: "Current", position: 0 }], runs: [] };
+  const createRunSection = vi.fn(() => organization);
+  const updateRunOrganization = vi.fn(() => organization);
+  const harness = createHarness({ createRunSection, updateRunOrganization });
+  tempDirs.push(harness.logDir);
+  const changed = vi.fn();
+  harness.events.subscribe("runOrganization", changed);
+  await expect(harness.controller.createRunSection("Current")).resolves.toEqual(organization);
+  await expect(harness.controller.updateRunOrganization("run-1", { sectionId: "work" })).resolves.toEqual(organization);
+  expect(changed).toHaveBeenCalledTimes(2);
+  expect(changed).toHaveBeenLastCalledWith({ changedAt: expect.any(String) });
+  updateRunOrganization.mockImplementation(() => { throw new Error("Save failed"); });
+  await expect(harness.controller.updateRunOrganization("run-1", { sectionId: null })).rejects.toThrow("Save failed");
+  expect(changed).toHaveBeenCalledTimes(2);
+});
+
 it("keeps original image references in model history and excludes image-view display events", () => {
   const source = "1. **Saved versions** [Screenshot](work/versions.png)";
   const display = "1. **Saved versions** ![Screenshot](data:image/png;base64,iVBORw0KGgo=)";

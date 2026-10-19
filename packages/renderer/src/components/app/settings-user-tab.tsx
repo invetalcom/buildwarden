@@ -234,6 +234,8 @@ export type UserSettingsTabProps = {
   sidebarRunEntrySize: SidebarRunEntrySize;
   sidebarGroupRunsByProject: boolean;
   sidebarHideActiveRuns: boolean;
+  sidebarUncategorizedFirst: boolean;
+  sidebarUncategorizedSection: boolean;
   attentionInboxSettings: AttentionInboxSettings;
   onAttentionInboxSettingsChange: (value: AttentionInboxSettings) => void;
   recentRunDaysDraft: string;
@@ -254,6 +256,8 @@ export type UserSettingsTabProps = {
   onSidebarRunEntrySizeChange: (value: SidebarRunEntrySize) => void;
   onSidebarGroupRunsByProjectChange: (value: boolean) => void;
   onSidebarHideActiveRunsChange: (value: boolean) => void;
+  onSidebarUncategorizedFirstChange: (value: boolean) => void;
+  onSidebarUncategorizedSectionChange: (value: boolean) => void;
   onRecentRunDaysDraftChange: (value: string) => void;
   onEnableDevModeChange: (value: boolean) => void;
   onKeyboardShortcutChange: (id: KeyboardShortcutId, value: string) => void;
@@ -276,6 +280,8 @@ export const UserSettingsTab = ({
   sidebarRunEntrySize,
   sidebarGroupRunsByProject,
   sidebarHideActiveRuns,
+  sidebarUncategorizedFirst,
+  sidebarUncategorizedSection,
   attentionInboxSettings,
   onAttentionInboxSettingsChange,
   recentRunDaysDraft,
@@ -296,6 +302,8 @@ export const UserSettingsTab = ({
   onSidebarRunEntrySizeChange,
   onSidebarGroupRunsByProjectChange,
   onSidebarHideActiveRunsChange,
+  onSidebarUncategorizedFirstChange,
+  onSidebarUncategorizedSectionChange,
   onRecentRunDaysDraftChange,
   onEnableDevModeChange,
   onKeyboardShortcutChange,
@@ -373,7 +381,7 @@ export const UserSettingsTab = ({
         </div>
       </SettingsRow>
       <SettingsRow
-        title="Grouping"
+        title="Group entries by project"
         description="Show collapsible project groups. When off, runs are sorted together and each entry displays its project name."
       >
         <div className={`${rowControlClass} flex items-center justify-end gap-3`}>
@@ -400,8 +408,35 @@ export const UserSettingsTab = ({
         </div>
       </SettingsRow>
       <SettingsRow
-        title="Recent runs window"
-        description={`Controls how many days appear in the sidebar Recent Runs group. Default is ${recentRunDaysDefault} days.`}
+        title="Show Uncategorized as a section"
+        description="Use a collapsible section for uncategorized runs. When off, these runs appear directly in the sidebar."
+      >
+        <div className={`${rowControlClass} flex items-center justify-end gap-3`}>
+          <Switch
+            checked={sidebarUncategorizedSection}
+            onCheckedChange={onSidebarUncategorizedSectionChange}
+            disabled={busy}
+            aria-label="Show Uncategorized as a section"
+          />
+        </div>
+      </SettingsRow>
+      <SettingsRow
+        title="Uncategorized position"
+        description="Place uncategorized runs above or below your custom run sections."
+      >
+        <div className={`${rowControlClass} flex items-center justify-end gap-3`}>
+          <span className="text-xs font-medium text-[var(--ec-muted)]">{sidebarUncategorizedFirst ? "Above" : "Below"}</span>
+          <Switch
+            checked={sidebarUncategorizedFirst}
+            onCheckedChange={onSidebarUncategorizedFirstChange}
+            disabled={busy}
+            aria-label="Show Uncategorized above custom sections"
+          />
+        </div>
+      </SettingsRow>
+      <SettingsRow
+        title="Uncategorized runs window"
+        description={`Show uncategorized runs with user input within this many days. Active runs and runs in custom sections stay visible regardless of age. Older runs are hidden, never deleted. Default is ${recentRunDaysDefault} days.`}
       >
         <div className={`${rowControlClass} space-y-2`}>
           <div className="flex flex-wrap items-center justify-start gap-2 md:justify-end">
@@ -414,7 +449,7 @@ export const UserSettingsTab = ({
                 step={1}
                 value={recentRunDaysDraft}
                 onChange={(event) => onRecentRunDaysDraftChange(event.target.value)}
-                aria-label="Recent runs days"
+                aria-label="Uncategorized runs days"
               />
               <span className="inline-flex h-full items-center border-l border-[var(--ec-border)] px-2 text-[11px] text-[var(--ec-muted)]">
                 days

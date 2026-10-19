@@ -4,6 +4,7 @@ import {
   parseSidebarHideActiveRunsSetting,
   parseSidebarContrastStrengthSetting,
   parseSidebarRunEntrySizeSetting,
+  parseSidebarUncategorizedSectionSetting,
   type ProjectRecord,
 } from "@buildwarden/shared";
 import { projectSidebarContext } from "./sidebar-project-context";
@@ -57,6 +58,12 @@ describe("Sidebar recent run ordering", () => {
 });
 
 describe("Sidebar run layout settings", () => {
+  it("keeps the Uncategorized section enabled unless explicitly disabled", () => {
+    expect(parseSidebarUncategorizedSectionSetting(undefined)).toBe(true);
+    expect(parseSidebarUncategorizedSectionSetting("unexpected")).toBe(true);
+    expect(parseSidebarUncategorizedSectionSetting("true")).toBe(true);
+    expect(parseSidebarUncategorizedSectionSetting(" FALSE ")).toBe(false);
+  });
   it("only hides active runs when explicitly enabled", () => {
     expect(parseSidebarHideActiveRunsSetting(undefined)).toBe(false);
     expect(parseSidebarHideActiveRunsSetting("unexpected")).toBe(false);
@@ -64,16 +71,18 @@ describe("Sidebar run layout settings", () => {
     expect(parseSidebarHideActiveRunsSetting(" TRUE ")).toBe(true);
   });
 
-  it("defaults to medium entries and grouped projects", () => {
+  it("defaults to medium entries and a flat project list", () => {
     expect(parseSidebarRunEntrySizeSetting(undefined)).toBe("medium");
     expect(parseSidebarRunEntrySizeSetting("unexpected")).toBe("medium");
-    expect(parseSidebarGroupRunsByProjectSetting(undefined)).toBe(true);
+    expect(parseSidebarGroupRunsByProjectSetting(undefined)).toBe(false);
+    expect(parseSidebarGroupRunsByProjectSetting("unexpected")).toBe(false);
   });
 
-  it("accepts supported sizes and the explicit flat-list setting", () => {
+  it("accepts supported sizes and saved grouping preferences", () => {
     expect(parseSidebarRunEntrySizeSetting("small")).toBe("small");
     expect(parseSidebarRunEntrySizeSetting("large")).toBe("large");
     expect(parseSidebarGroupRunsByProjectSetting(" FALSE ")).toBe(false);
+    expect(parseSidebarGroupRunsByProjectSetting(" TRUE ")).toBe(true);
   });
 
   it("parses and clamps sidebar contrast strength while migrating the legacy toggle", () => {

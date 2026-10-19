@@ -147,15 +147,18 @@ describe("remote BuildWarden client", () => {
     await client.activateRun("run-1");
     await client.setAppSetting(APP_SETTING_KEYS.darkMode, "true");
     await client.setAppSetting(APP_SETTING_KEYS.sidebarHideActiveRuns, "true");
+    await client.setAppSetting(APP_SETTING_KEYS.sidebarUncategorizedSection, "false");
     const loaded = await client.refreshSnapshot();
 
     expect(loaded.selectedProjectId).toBe("project-1");
     expect(loaded.selectedRunId).toBe("run-1");
     expect(loaded.settings[APP_SETTING_KEYS.darkMode]).toBe("true");
     expect(loaded.settings[APP_SETTING_KEYS.sidebarHideActiveRuns]).toBe("true");
+    expect(loaded.settings[APP_SETTING_KEYS.sidebarUncategorizedSection]).toBe("false");
     expect(fetcher).toHaveBeenCalledOnce();
     const reopened = createRemoteBuildWardenClient({ fetch: fetcher as typeof fetch });
     expect((await reopened.refreshSnapshot()).settings[APP_SETTING_KEYS.sidebarHideActiveRuns]).toBe("true");
+    expect((await reopened.refreshSnapshot()).settings[APP_SETTING_KEYS.sidebarUncategorizedSection]).toBe("false");
   });
 
   it("omits trailing undefined optional arguments from RPC requests", async () => {
@@ -349,6 +352,12 @@ describe("remote BuildWarden client", () => {
     });
     await client.setAppSetting(APP_SETTING_KEYS.shellAllowlistExtra, JSON.stringify(["git status"]));
     await client.setRunListVisibility("run-1", "for-later");
+    await client.createRunSection("This week", "#a78bfa");
+    await client.setRunSectionColor("section-1", "#facc15");
+    await client.renameRunSection("section-1", "Current");
+    await client.reorderRunSections(["section-1"]);
+    await client.updateRunOrganization("run-1", { sectionId: "section-1", tags: ["auth"] });
+    await client.deleteRunSection("section-1");
     await client.addBookmark("run-1");
     await client.addChatBookmark("chat-1");
     await client.generateProjectInsight({ projectId: "project-1", kind: "architecture-graph" });
@@ -357,6 +366,7 @@ describe("remote BuildWarden client", () => {
       "getSnapshot",
       "setAppSetting",
       "setRunListVisibility",
+      "createRunSection", "setRunSectionColor", "renameRunSection", "reorderRunSections", "updateRunOrganization", "deleteRunSection",
       "addBookmark",
       "addChatBookmark",
       "generateProjectInsight",
@@ -441,10 +451,12 @@ describe("remote BuildWarden client", () => {
     });
     const onRunEvent = vi.fn();
     const unsubscribe = client.onRunEvent(onRunEvent);
+    const onOrganizationChanged = vi.fn();
+    const unsubscribeOrganization = client.onRunOrganizationChanged(onOrganizationChanged);
 
     socket.readyState = 1;
     emit("open");
-    expect(JSON.parse(sent[0] ?? "{}")).toMatchObject({ type: "subscribe", events: ["run"] });
+    expect(JSON.parse(sent[0] ?? "{}")).toMatchObject({ type: "subscribe", events: ["run", "run-organization"] });
 
     emit("message", { data: JSON.stringify({
       protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
@@ -456,7 +468,13 @@ describe("remote BuildWarden client", () => {
     emit("message", { data: JSON.stringify({ protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION, type: "event", sequence: 2, event: "run", payload: {} }) });
 
     expect(onRunEvent).toHaveBeenCalledOnce();
+    emit("message", { data: JSON.stringify({ protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION, type: "event", sequence: 3,
+      event: "run-organization", payload: { changedAt: new Date().toISOString() } }) });
+    emit("message", { data: JSON.stringify({ protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION, type: "event", sequence: 4,
+      event: "run-organization", payload: { changedAt: 42 } }) });
+    expect(onOrganizationChanged).toHaveBeenCalledOnce();
     unsubscribe();
+    unsubscribeOrganization();
     expect(socket.close).toHaveBeenCalledWith(1000, "No active subscriptions");
   });
 

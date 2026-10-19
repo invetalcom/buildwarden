@@ -18,6 +18,8 @@ import {
   parseAttentionInboxSettings,
   parseSidebarGroupRunsByProjectSetting,
   parseSidebarHideActiveRunsSetting,
+  parseSidebarUncategorizedFirstSetting,
+  parseSidebarUncategorizedSectionSetting,
   parseSidebarRunEntrySizeSetting,
   parseDesignScheme,
   serializeDesignScheme,
@@ -1587,6 +1589,8 @@ export const App = () => {
   useEffect(() => setSidebarContrastStrength(persistedSidebarContrastStrength), [persistedSidebarContrastStrength]);
   const sidebarRunEntrySize = parseSidebarRunEntrySizeSetting(snapshot.settings[APP_SETTING_KEYS.sidebarRunEntrySize]);
   const sidebarHideActiveRuns = parseSidebarHideActiveRunsSetting(snapshot.settings[APP_SETTING_KEYS.sidebarHideActiveRuns]);
+  const sidebarUncategorizedFirst = parseSidebarUncategorizedFirstSetting(snapshot.settings[APP_SETTING_KEYS.sidebarUncategorizedFirst]);
+  const sidebarUncategorizedSection = parseSidebarUncategorizedSectionSetting(snapshot.settings[APP_SETTING_KEYS.sidebarUncategorizedSection]);
   const sidebarGroupRunsByProject = parseSidebarGroupRunsByProjectSetting(snapshot.settings[APP_SETTING_KEYS.sidebarGroupRunsByProject]);
   const runTimelineDensity = parseRunTimelineDensitySetting(snapshot.settings[APP_SETTING_KEYS.runTimelineDensity]);
   const updateRunTimelineDensity = useCallback(
@@ -3192,7 +3196,7 @@ export const App = () => {
   const handleRunDragStart = useCallback((event: ReactDragEvent<HTMLButtonElement>, projectId: string, runId: string) => {
     const payload: RunDragPayload = { type: "buildwarden/run", projectId, runId };
     const serialized = JSON.stringify(payload);
-    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.effectAllowed = "copyMove";
     event.dataTransfer.setData(RUN_DRAG_MIME_TYPE, serialized);
     event.dataTransfer.setData("text/plain", serialized);
   }, []);
@@ -3932,6 +3936,17 @@ export const App = () => {
   // Stable-identity props for the memoized Sidebar: without these, inline
   // closures would change identity every render and defeat the memo.
   const sidebarBookmarkedRunIds = useMemo(() => new Set(snapshot.bookmarks.map((b) => b.originalRunId)), [snapshot.bookmarks]);
+  const runOrganizationAvailable = snapshot.runOrganization !== undefined;
+  useEffect(() => {
+    // Older remote hosts reject subscriptions containing unknown event types.
+    if (!runOrganizationAvailable) return;
+    return buildwarden.onRunOrganizationChanged?.(() => {
+      void loadSnapshot().catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "Could not refresh run sections."));
+    });
+  }, [buildwarden, loadSnapshot, runOrganizationAvailable]);
+  const sidebarOnRunOrganizationChange = useStableCallback((organization: NonNullable<AppSnapshot["runOrganization"]>) => {
+    setSnapshot((current) => ({ ...current, runOrganization: organization }));
+  });
   const sidebarOnSelectLanding = useStableCallback(() => void handleLandingSelect());
   const sidebarOnSelectAllRuns = useStableCallback(() => void handleAllRunsSelect());
   const sidebarOnSelectBookmarks = useStableCallback(() => handleBookmarksSelect());
@@ -4012,6 +4027,8 @@ export const App = () => {
               sidebarRunEntrySize={sidebarRunEntrySize}
               sidebarGroupRunsByProject={sidebarGroupRunsByProject}
               sidebarHideActiveRuns={sidebarHideActiveRuns}
+              sidebarUncategorizedFirst={sidebarUncategorizedFirst}
+              sidebarUncategorizedSection={sidebarUncategorizedSection}
               enableDevMode={snapshot.settings[APP_SETTING_KEYS.enableDevMode] === "true"}
               appLogDirPath={appLogDirPath}
               appLogDirectorySize={appLogDirectorySize}
@@ -4116,6 +4133,8 @@ export const App = () => {
               })}
               onSidebarGroupRunsByProjectChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.sidebarGroupRunsByProject, value)}
               onSidebarHideActiveRunsChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.sidebarHideActiveRuns, value)}
+              onSidebarUncategorizedFirstChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.sidebarUncategorizedFirst, value)}
+              onSidebarUncategorizedSectionChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.sidebarUncategorizedSection, value)}
               worktreeRootOverrideSettingValue={snapshot.settings[APP_SETTING_KEYS.worktreeRootOverride] ?? ""}
               onSaveWorktreeRootOverride={(value) =>
                 void handleAction(async () => {
@@ -4724,8 +4743,12 @@ export const App = () => {
         width={sidebarWidth}
         recentRunDays={recentRunDays}
         runEntrySize={sidebarRunEntrySize}
+        runOrganization={snapshot.runOrganization}
+        onRunOrganizationChange={sidebarOnRunOrganizationChange}
         groupRunsByProject={sidebarGroupRunsByProject}
         hideActiveRuns={sidebarHideActiveRuns}
+        uncategorizedFirst={sidebarUncategorizedFirst}
+        uncategorizedSection={sidebarUncategorizedSection}
         attentionInboxSetting={snapshot.settings[APP_SETTING_KEYS.attentionInbox]}
         bookmarksCount={snapshot.bookmarks.length + snapshot.chatBookmarks.length}
         chatsCount={snapshot.chats.length}

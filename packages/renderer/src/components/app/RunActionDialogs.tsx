@@ -279,7 +279,7 @@ export const RunActionDialogs = ({
         }}
       >
         <Card className="shadow-[var(--ec-popover-shadow)] w-full max-w-xl p-5">
-          <p className="text-xs uppercase tracking-[0.25em] text-[var(--ec-muted)]">Continue run</p>
+          <p className="text-xs uppercase tracking-[0.25em] text-[var(--ec-muted)]">Fork (fresh context)</p>
           <h3 className="mt-2 text-xl font-semibold">{continueDialogRun.prompt}</h3>
           <p className="mt-1 text-sm text-[var(--ec-muted)]">
             {continueDialogRun.workspaceVcs === "folder" ? (
@@ -292,7 +292,7 @@ export const RunActionDialogs = ({
           </p>
           <div className="mt-4 space-y-3">
             <label className="block text-sm">
-              <span className="mb-1 block text-[var(--ec-text)]">Continuation prompt</span>
+              <span className="mb-1 block text-[var(--ec-text)]">Fork prompt</span>
               <Textarea
                 value={continuePrompt}
                 onChange={(event) => onContinuePromptChange(event.target.value)}
@@ -324,7 +324,7 @@ export const RunActionDialogs = ({
               Cancel
             </Button>
             <Button onClick={onSubmitContinueRun} disabled={busy || !continuePrompt.trim() || !continueModelId}>
-              Start continuation
+              Start fork
             </Button>
           </div>
         </Card>
