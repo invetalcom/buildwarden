@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderWithBuildWardenClient as renderToStaticMarkup } from "../../lib/buildwarden-client-test-utils";
 import { RunActivityTimeline } from "./RunActivityTimeline";
+import { ActivityToolBatchRow } from "./run-activity-tool-rows";
 import { RunToolCallCollapseThresholdProvider } from "../../lib/run-tool-call-collapse-settings";
 import {
   buildActivityEntries,
@@ -26,6 +27,20 @@ const step = (
 });
 
 describe("run activity timeline shaping", () => {
+  it("only expands image results when there are images, while preserving text and file results", () => {
+    const renderRow = (extra: { images?: unknown; preview?: string | null; paths?: string[] }) => renderToStaticMarkup(
+      <ActivityToolBatchRow item={{ toolName: "mcp__browser__screenshot", detail: null, count: 1, failed: false, preview: null, writeFileDiff: null, createdAt: "2026-10-18T12:00:00Z", ...extra }}
+        itemIndex={0} run={{ id: "r", status: "completed", mode: "code" }} density="compact" busy={false} readOnly />,
+    );
+    expect(renderRow({ images: [] })).not.toContain("<details");
+    expect(renderRow({ images: {} })).not.toContain("<details");
+    const imageMarkup = renderRow({ images: [{ mimeType: "image/png", data: "aGVsbG8=" }] });
+    expect(imageMarkup).toContain("<details");
+    expect(imageMarkup).toContain('alt="Tool screenshot 1"');
+    expect(renderRow({ images: [], preview: "Ready" })).toContain("<details");
+    expect(renderRow({ images: [], paths: ["screenshot.png"] })).toContain("<details");
+  });
+
   it("omits legacy image-view placeholders while retaining image output and errors", () => {
     const markup = renderToStaticMarkup(<RunActivityTimeline
       steps={[
@@ -508,6 +523,13 @@ describe("run activity timeline subagent cancellation", () => {
 });
 
 describe("tool target resolution", () => {
+  it("keeps browser titles separate from targets, including result-side targets", () => {
+    const call = { toolName: "buildwarden_browser", toolDisplayTitle: "Browser · screenshot", arguments: { action: "screenshot" } };
+    expect(describeToolTarget(call, undefined)).toBeNull();
+    expect(describeToolTarget(call, { arguments: { path: "screenshot.png" } })).toBe("screenshot.png");
+    expect(describeToolTarget({ ...call, arguments: { action: "open", url: "http://localhost:4200/" } }, undefined)).toBe("http://localhost:4200/");
+  });
+
   it("reads an ai-sdk path out of the call arguments while the tool is still running", () => {
     // ai-sdk only carries the raw arguments on the call and lifts `path` onto the result, so a
     // pending row has nothing but `arguments` to describe what the tool is touching.

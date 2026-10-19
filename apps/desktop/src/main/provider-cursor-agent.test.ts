@@ -1028,6 +1028,17 @@ describe("Cursor Agent subagents", () => {
 });
 
 describe("Cursor private per-turn orchestration MCP", () => {
+  it("returns screenshot image blocks through the authenticated browser tool bridge", async () => {
+    const bridge = await startCursorOrchestrationMcp({
+      tools: [{ name: "buildwarden_browser", description: "Shared browser", inputSchema: { type: "object", properties: { action: { type: "string" } } } }],
+      executeTool: async (call) => ({ toolCallId: call.id, name: call.name, ok: true, content: "Preview", images: [{ mimeType: "image/png", data: "aGVsbG8=" }] }),
+    });
+    const config = bridge!.config as { url: string; headers: Array<{ name: string; value: string }> };
+    try {
+      const response = await fetch(config.url, { method: "POST", headers: Object.fromEntries(config.headers.map((header) => [header.name, header.value])), body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "buildwarden_browser", arguments: { action: "screenshot" } } }) }).then((res) => res.json());
+      expect(response).toMatchObject({ result: { content: [{ type: "text", text: "Preview" }, { type: "image", mimeType: "image/png", data: "aGVsbG8=" }], isError: false } });
+    } finally { await bridge!.close(); }
+  });
   it("binds to loopback, requires the bearer token, exposes only BuildWarden tools, and closes cleanly", async () => {
     const executeTool = vi.fn(async () => ({
       toolCallId: "call-1",

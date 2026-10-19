@@ -62,6 +62,7 @@ export const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
 ]);
 
 export const REMOTE_BROWSER_METHODS = new Set<RemoteApiMethod>([
+  "getRunBrowserPreview",
   "ensureRunBrowser", "navigateRunBrowser", "runBrowserAction", "setRunBrowserViewport", "getRunBrowserElementCapture",
 ]);
 

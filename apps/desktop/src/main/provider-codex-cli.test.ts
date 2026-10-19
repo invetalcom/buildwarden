@@ -263,6 +263,16 @@ describe("Codex CLI subagents", () => {
     return { session, chunks, notify };
   };
 
+  it("pairs MCP lifecycle items, preserves titles and errors, and extracts screenshots", async () => {
+    const { chunks, notify } = createSession();
+    const item = { id: "mcp-1", type: "mcpToolCall", server: "cua_repl", tool: "js", arguments: { title: "Check cards", code: "snapshot()" } };
+    await notify("item/started", { threadId: "parent-thread", item: { ...item, status: "inProgress" } });
+    await notify("item/completed", { threadId: "parent-thread", item: { ...item, status: "failed", durationMs: 42, result: { content: [{ type: "text", text: "Browser unavailable" }, { type: "image", mimeType: "image/png", data: "aGVsbG8=" }] } } });
+    expect(chunks.map((chunk) => chunk.type)).toEqual(["tool-call", "tool-result"]);
+    expect(chunks[0].metadata).toMatchObject({ callId: "mcp-1", toolName: "cua_repl.js", toolDisplayTitle: "Check cards", isMcpTool: true });
+    expect(chunks[1]).toMatchObject({ value: "Browser unavailable\n[Image]", metadata: { callId: "mcp-1", ok: false, durationMs: 42, toolResultImages: [{ mimeType: "image/png", data: "aGVsbG8=" }] } });
+  });
+
   it("maps collab tool-call items to subagent lifecycle chunks", async () => {
     const { chunks, notify } = createSession();
     await notify("thread/started", { thread: { id: "parent-thread" } });
@@ -431,7 +441,7 @@ describe("Codex CLI subagents", () => {
 });
 
 describe("Codex app-server dynamic BuildWarden tools", () => {
-  it("executes item/tool/call requests through the in-app host context and returns the app-server response shape", async () => {
+  it.each(["text", "image"])("executes item/tool/call requests and returns app-server %s content", async (format) => {
     const stdout = new PassThrough();
     const stdin = new PassThrough();
     const responses: string[] = [];
@@ -448,6 +458,7 @@ describe("Codex app-server dynamic BuildWarden tools", () => {
       name: "buildwarden_tasks_list" as const,
       ok: true,
       content: JSON.stringify([{ id: "task-1", status: "running" }]),
+      ...(format === "image" ? { images: [{ mimeType: "image/png" as const, data: "aGVsbG8=" }] } : {}),
     }));
     const toolContext: HarnessToolContext = {
       tools: [{
@@ -511,6 +522,7 @@ describe("Codex app-server dynamic BuildWarden tools", () => {
     });
     expect(responses.join("")).toContain('"success":true');
     expect(responses.join("")).toContain('"type":"inputText"');
+    if (format === "image") expect(responses.join("")).toContain('"imageUrl":"data:image/png;base64,aGVsbG8="');
     expect(chunks.map((chunk) => chunk.type)).toEqual(expect.arrayContaining(["tool-call", "tool-result"]));
     expect(chunks).not.toContainEqual(expect.objectContaining({ title: "Codex update", value: "Dynamic Tool Call" }));
   });

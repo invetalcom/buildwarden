@@ -1130,7 +1130,7 @@ type RunWorkerPayload =
   | {
       type: "host-tool-request";
       callId: string;
-      toolName: OrchestrationToolName;
+      toolName: OrchestrationToolName | "buildwarden_browser";
       arguments: Record<string, unknown>;
     }
   | { type: "error"; error: string };
@@ -1205,6 +1205,8 @@ const parseProjectOrderSetting = (raw: string | undefined): string[] => {
 
 type AppControllerLifecycle = {
   onRunDeleted?: (runId: string) => void;
+  executeBrowserTool?: (runId: string, callId: string, args: Record<string, unknown>) => Promise<RunToolResult>;
+  onRunBrowserActive?: (runId: string, active: boolean) => void;
 };
 
 export class AppController
@@ -1218,6 +1220,7 @@ export class AppController
       | "revokeRemoteAccessSession"
       | "onRunEvent"
       | "ensureRunBrowser"
+      | "getRunBrowserPreview"
       | "navigateRunBrowser"
       | "runBrowserAction"
       | "setRunBrowserViewport"
@@ -7282,6 +7285,9 @@ export class AppController
 
   private requestRunWorkerStop(active: ActiveWorker): void {
     active.cancelled = true;
+    for (const [runId, entry] of this.runWorkers) {
+      if (entry === active) this.lifecycle.onRunBrowserActive?.(runId, false);
+    }
     active.verificationAbortController?.abort();
     active.worker.postMessage({ type: "cancel" });
   }
@@ -9554,7 +9560,12 @@ export class AppController
     payload: Extract<RunWorkerPayload, { type: "host-tool-request" }>,
   ): Promise<void> {
     try {
-      const result = await this.executeOrchestrationTool(
+      if (this.runWorkers.get(runId)?.worker !== worker || this.runWorkers.get(runId)?.cancelled) {
+        throw new Error("This run is no longer active.");
+      }
+      const result = payload.toolName === "buildwarden_browser"
+        ? await this.lifecycle.executeBrowserTool?.(runId, payload.callId, payload.arguments)
+        : await this.executeOrchestrationTool(
         runId,
         payload.callId,
         payload.toolName,
@@ -9901,6 +9912,7 @@ export class AppController
           } } : {}),
           runId: run.id,
           worktreePath: run.worktreePath,
+          browserToolsEnabled: Boolean(this.lifecycle.executeBrowserTool),
           workspaceVcs: run.workspaceVcs,
           mode: run.mode,
           yoloMode: options?.yoloMode === true,
@@ -9930,10 +9942,17 @@ export class AppController
       },
     });
 
+    this.lifecycle.onRunBrowserActive?.(run.id, true);
+    worker.once("exit", () => {
+      if (!this.runWorkers.has(run.id) || this.runWorkers.get(run.id)?.worker === worker) {
+        this.lifecycle.onRunBrowserActive?.(run.id, false);
+      }
+    });
     const exhaustBudget = (exhaustion: RunBudgetExhaustion) => {
       const active = this.runWorkers.get(run.id);
       if (!active || active.worker !== worker || active.cancelled || active.budgetExhaustion) return;
       active.budgetExhaustion = exhaustion;
+      this.lifecycle.onRunBrowserActive?.(run.id, false);
       worker.postMessage({ type: "cancel" });
       const metadata = {
         autonomyBudget: true,

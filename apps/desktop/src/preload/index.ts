@@ -274,6 +274,7 @@ const api: DesktopApi = {
   openFolderInIde: (folderPath: string, ideKind: SupportedIdeKind) =>
     invoke(IPC_CHANNELS.openFolderInIde, folderPath, ideKind),
   ensureRunBrowser: (input) => invoke(IPC_CHANNELS.ensureRunBrowser, input),
+  getRunBrowserPreview: (runId) => invoke(IPC_CHANNELS.getRunBrowserPreview, runId),
   navigateRunBrowser: (input) => invoke(IPC_CHANNELS.navigateRunBrowser, input),
   runBrowserAction: (input) => invoke(IPC_CHANNELS.runBrowserAction, input),
   setRunBrowserViewport: (input) => invoke(IPC_CHANNELS.setRunBrowserViewport, input),

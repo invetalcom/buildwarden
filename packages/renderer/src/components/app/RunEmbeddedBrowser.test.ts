@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { mapRunBrowserFramePoint } from "./run-browser-coordinate-mapping";
 
 describe("remote run browser coordinate mapping", () => {
+  it("maps a resized stream image back to the host CSS viewport", () => {
+    expect(mapRunBrowserFramePoint(200, 100, { left: 0, top: 0, width: 400, height: 200 }, { width: 1600, height: 800 }, { width: 2400, height: 1200 })).toEqual({ x: 1200, y: 600 });
+  });
   it("maps the rendered JPEG to source-frame coordinates", () => {
     expect(mapRunBrowserFramePoint(
       330,

@@ -275,6 +275,7 @@ describe("remote operation registry", () => {
       | "runTerminalResize"
       | "runTerminalKill"
       | "ensureRunBrowser"
+      | "getRunBrowserPreview"
       | "navigateRunBrowser"
       | "runBrowserAction"
       | "setRunBrowserViewport"

@@ -19,6 +19,20 @@ afterEach(async () => {
 });
 
 describe("mobile composer attachments", () => {
+  it("allows selected browser context without typed text and retains it on a failed send", async () => {
+    const onSubmit = vi.fn(async () => { throw new Error("Host disconnected"); });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push({ root, container });
+    await act(async () => root.render(<Composer placeholder="Message" onSubmit={onSubmit} hasExternalAttachments accessory={<span>Selected button</span>} />));
+    const send = container.querySelector('button[aria-label="Send"]') as HTMLButtonElement;
+    expect(send.disabled).toBe(false);
+    await act(async () => send.click());
+    expect(onSubmit).toHaveBeenCalledWith("", []);
+    expect(container.textContent).toContain("Host disconnected");
+    expect(container.textContent).toContain("Selected button");
+  });
   it("submits an attachment-only prompt as a base64 payload", async () => {
     let resolveSubmitted!: () => void;
     const submitted = new Promise<void>((resolve) => { resolveSubmitted = resolve; });
