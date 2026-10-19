@@ -1,14 +1,20 @@
 import { APP_VERSION } from "@buildwarden/renderer/logic";
-import { Bookmark, FolderGit2, LogOut, Monitor, RefreshCw, Settings, Wifi, WifiOff } from "lucide-react";
+import { isUsageCostTrackingEnabled } from "@buildwarden/shared";
+import { Bookmark, CircleDollarSign, FolderGit2, LogOut, Monitor, RefreshCw, Settings, Wifi, WifiOff } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
 import { switchShell } from "../../shell/select-shell";
 import { HOSTED_MODE } from "../../session/use-remote-session";
 import { AppBar } from "../components/AppBar";
 import { Divider, ListRow, SectionLabel } from "../components/primitives";
+import { compactNumber } from "../lib/format";
 
 export const MoreScreen = () => {
   const { snapshot, snapshotStore, router, client, disconnect } = useMobileApp();
   const bookmarkCount = snapshot.bookmarks.length + snapshot.chatBookmarks.length;
+  const usageEnabled = isUsageCostTrackingEnabled(snapshot);
+  const today = snapshot.tokenUsage?.today;
+  // Read-only sessions cannot turn tracking on, so the entry only appears for them once it is on.
+  const showUsage = usageEnabled || client.capabilities.settings;
 
   return (
     <>
@@ -30,6 +36,21 @@ export const MoreScreen = () => {
           onClick={() => router.push({ name: "bookmarks" })}
         />
         <Divider />
+        {showUsage ? (
+          <>
+            <ListRow
+              leading={<CircleDollarSign className="size-5" />}
+              title="Usage & cost"
+              subtitle={!usageEnabled
+                ? "Off · turn on in Settings → Network"
+                : today
+                  ? `Today: ${compactNumber(today.inputTokens + today.outputTokens)} tokens`
+                  : "Estimated API cost"}
+              onClick={() => router.push({ name: "usage" })}
+            />
+            <Divider />
+          </>
+        ) : null}
         <ListRow leading={<Settings className="size-5" />} title="Settings" onClick={() => router.push({ name: "settings" })} />
 
         <SectionLabel>Connection</SectionLabel>

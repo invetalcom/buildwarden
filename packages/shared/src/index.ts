@@ -2991,6 +2991,11 @@ export interface AppSnapshot {
   tokenUsage?: {
     standaloneChats: TokenUsageTotals;
     today: TokenUsageTotals;
+    /**
+     * Mirrors {@link APP_SETTING_KEYS.usageCostTrackingEnabled}. Remote sessions without the admin
+     * scope never receive host settings, so this is how they learn whether the dashboard is on.
+     */
+    costTrackingEnabled?: boolean;
   };
 }
 
@@ -2998,6 +3003,173 @@ export interface TokenUsageTotals {
   inputTokens: number;
   outputTokens: number;
 }
+
+/**
+ * Provider/model attribution and token-category deltas stored alongside a usage event.
+ * Input deltas stay "processed" input (cache reads and writes included); the cache
+ * fields break that input down so cost can be estimated per category.
+ */
+export interface TokenUsageAttribution {
+  providerType: string;
+  modelId: string;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+}
+
+export interface UsageCostReportInput {
+  /** Whole days including today; `null` reports all recorded history. */
+  rangeDays: number | null;
+  /** Force a price-list refresh (rate limited by the main process). */
+  refreshPricing?: boolean;
+}
+
+export type UsagePricingStatus = "fresh" | "cached" | "unavailable";
+
+export interface UsagePricingInfo {
+  status: UsagePricingStatus;
+  source: string;
+  fetchedAt: string | null;
+  knownModels: number;
+  error?: string;
+}
+
+export interface UsageTokenBreakdown {
+  /** Processed input, including cache reads and writes. */
+  inputTokens: number;
+  uncachedInputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+}
+
+/** Estimated USD cost per token category. */
+export interface UsageCategoryCost {
+  input: number;
+  cacheRead: number;
+  cacheWrite: number;
+  output: number;
+}
+
+/** USD per one million tokens. */
+export interface UsageModelRates {
+  inputPerMillion: number;
+  outputPerMillion: number;
+  cacheReadPerMillion: number;
+  cacheWritePerMillion: number;
+}
+
+export type UsagePriceSource = "litellm" | "override";
+
+export interface UsageModelCostRow {
+  providerType: string;
+  modelId: string;
+  tokens: UsageTokenBreakdown;
+  /** `null` when no price is known for the model. */
+  costUsd: number | null;
+  cost: UsageCategoryCost | null;
+  rates: UsageModelRates | null;
+  priceSource: UsagePriceSource | null;
+  /** Price-list key the model resolved to, for transparency. */
+  matchedKey: string | null;
+  cacheSavingsUsd: number;
+}
+
+export interface UsageProjectCostRow {
+  /** `null` groups standalone chats. */
+  projectId: string | null;
+  name: string;
+  tokens: UsageTokenBreakdown;
+  costUsd: number;
+  unpricedTokens: number;
+}
+
+export interface UsageDailyCostRow {
+  /** Local calendar day, `YYYY-MM-DD`. */
+  day: string;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export interface UsageCostReport {
+  generatedAt: string;
+  rangeDays: number | null;
+  since: string | null;
+  pricing: UsagePricingInfo;
+  totals: {
+    tokens: UsageTokenBreakdown;
+    costUsd: number;
+    cost: UsageCategoryCost;
+    cacheSavingsUsd: number;
+    /** Attributed tokens whose model has no known price. */
+    unpricedTokens: number;
+  };
+  models: UsageModelCostRow[];
+  projects: UsageProjectCostRow[];
+  daily: UsageDailyCostRow[];
+  /** Usage recorded before model attribution existed; counted but never priced. */
+  unattributed: TokenUsageTotals;
+}
+
+/** User-entered model price, in USD per one million tokens. Cache rates fall back to the input rate. */
+export interface ModelPriceOverride {
+  inputPerMillion: number;
+  outputPerMillion: number;
+  cacheReadPerMillion?: number;
+  cacheWritePerMillion?: number;
+}
+
+export const normalizeModelPriceOverrideKey = (modelId: string): string => modelId.trim().toLowerCase();
+
+const parsePriceRate = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+
+const parseModelPriceOverride = (value: unknown): ModelPriceOverride | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const inputPerMillion = parsePriceRate(record.inputPerMillion);
+  const outputPerMillion = parsePriceRate(record.outputPerMillion);
+  if (inputPerMillion === undefined || outputPerMillion === undefined) return null;
+  const cacheReadPerMillion = parsePriceRate(record.cacheReadPerMillion);
+  const cacheWritePerMillion = parsePriceRate(record.cacheWritePerMillion);
+  return {
+    inputPerMillion,
+    outputPerMillion,
+    ...(cacheReadPerMillion !== undefined ? { cacheReadPerMillion } : {}),
+    ...(cacheWritePerMillion !== undefined ? { cacheWritePerMillion } : {}),
+  };
+};
+
+/** Parsed {@link APP_SETTING_KEYS.modelPriceOverrides}; invalid entries are dropped. */
+export const parseModelPriceOverridesSetting = (raw: string | undefined | null): Record<string, ModelPriceOverride> => {
+  if (!raw?.trim()) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const overrides: Record<string, ModelPriceOverride> = {};
+    for (const [modelId, value] of Object.entries(parsed as Record<string, unknown>)) {
+      const key = normalizeModelPriceOverrideKey(modelId);
+      const override = parseModelPriceOverride(value);
+      if (key && override) overrides[key] = override;
+    }
+    return overrides;
+  } catch {
+    return {};
+  }
+};
+
+export const serializeModelPriceOverridesSetting = (overrides: Record<string, ModelPriceOverride>): string =>
+  JSON.stringify(parseModelPriceOverridesSetting(JSON.stringify(overrides)));
+
+/** Usage cost tracking is opt-in because enabling it downloads a public price list. */
+export const parseUsageCostTrackingEnabledSetting = (raw: string | undefined | null): boolean => raw === "true";
+
+/** Whether the host has usage cost tracking on, for any client regardless of its settings access. */
+export const isUsageCostTrackingEnabled = (snapshot: Pick<AppSnapshot, "settings" | "tokenUsage">): boolean =>
+  snapshot.tokenUsage?.costTrackingEnabled ??
+  parseUsageCostTrackingEnabledSetting(snapshot.settings[APP_SETTING_KEYS.usageCostTrackingEnabled]);
 
 export interface RunProjectLabInput {
   projectId: string;
@@ -4002,6 +4174,8 @@ export interface DesktopApi {
   listRemoteAccessSessions(): Promise<RemoteAccessSession[]>;
   revokeRemoteAccessSession(sessionId: string): Promise<void>;
   getNetworkProxySettings(): Promise<NetworkProxySettingsSnapshot>;
+  /** Estimated API-equivalent cost of recorded usage. Rejects when usage cost tracking is disabled. */
+  getUsageCostReport(input: UsageCostReportInput): Promise<UsageCostReport>;
   selectProject(projectId: string): Promise<void>;
   reorderProjects(projectIds: string[]): Promise<void>;
   getProjectBranches(projectId: string): Promise<string[]>;
@@ -4461,6 +4635,7 @@ export type RemoteOperationMap = {
   getSnapshot: DesktopApi["getSnapshot"];
   refreshSnapshot: DesktopApi["refreshSnapshot"];
   getNetworkProxySettings: DesktopApi["getNetworkProxySettings"];
+  getUsageCostReport: DesktopApi["getUsageCostReport"];
   getProjectBranches: DesktopApi["getProjectBranches"];
   getProjectCurrentBranch: DesktopApi["getProjectCurrentBranch"];
   queryProjectActivity: DesktopApi["queryProjectActivity"];
@@ -4896,6 +5071,7 @@ export const IPC_CHANNELS = {
   listRemoteAccessSessions: "buildwarden:list-remote-access-sessions",
   revokeRemoteAccessSession: "buildwarden:revoke-remote-access-session",
   getNetworkProxySettings: "buildwarden:get-network-proxy-settings",
+  getUsageCostReport: "buildwarden:get-usage-cost-report",
   selectProject: "buildwarden:select-project",
   reorderProjects: "buildwarden:reorder-projects",
   pickProjectDirectory: "buildwarden:pick-project-directory",
@@ -5040,6 +5216,10 @@ export const APP_SETTING_KEYS = {
   orchestrationTeam: "orchestrationTeam",
   /** JSON object with app-wide outbound proxy host/port/user settings (password stored in secure storage). */
   networkProxyConfig: "networkProxyConfig",
+  /** `"true"` downloads the public model price list and enables the Usage cost dashboard. Off by default. */
+  usageCostTrackingEnabled: "usageCostTracking.enabled",
+  /** JSON object keyed by lowercased model id with {@link ModelPriceOverride} values. */
+  modelPriceOverrides: "usageCostTracking.priceOverrides",
   /** Optional remote-access host. Absent or any value other than `"true"` keeps it disabled. */
   remoteAccessEnabled: "remoteAccess.enabled",
   /** User opt-in for a BuildWarden-owned Tailscale Serve root handler. */

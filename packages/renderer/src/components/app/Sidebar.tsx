@@ -15,6 +15,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   CircleAlert,
+  CircleDollarSign,
   Clock3,
   FolderGit2,
   GitBranch,
@@ -105,6 +106,8 @@ interface SidebarProps {
   onSetRunForLater: (projectId: string, runId: string) => void;
   pendingDeleteRunIds: Record<string, boolean>;
   onOpenSettings: () => void;
+  /** Present only while usage cost tracking is enabled; opens the usage cost dashboard. */
+  onOpenUsage?: () => void;
   onWidthCommit: (width: number) => void;
   onToggleCollapsed: () => void;
   /** Project ids where Loops are available (Git project + saved forge token). Controls the Loops nav entry. */
@@ -242,6 +245,7 @@ const SidebarComponent = ({
   onSetRunForLater,
   pendingDeleteRunIds,
   onOpenSettings,
+  onOpenUsage,
   onWidthCommit,
   onToggleCollapsed,
   loopEnabledProjectIds,
@@ -397,6 +401,7 @@ const SidebarComponent = ({
     { label: "All Runs", icon: Clock3, selected: allRunsSelected, onClick: onSelectAllRuns, count: totalActiveRuns > 0 ? `${totalActiveRuns}` : "" },
     { label: "Chats", icon: MessageSquare, selected: chatsSelected, onClick: onSelectChats, count: chatsCount ? `${chatsCount}` : "" },
     { label: "Bookmarks", icon: Bookmark, selected: bookmarksSelected, onClick: onSelectBookmarks, count: bookmarksCount ? `${bookmarksCount}` : "" },
+    ...(onOpenUsage ? [{ label: "Usage & cost", icon: CircleDollarSign, selected: false, onClick: onOpenUsage, count: "" }] : []),
   ];
   const visibleProjectTools = projectTools.filter((tool) => {
     if (isWeb) {

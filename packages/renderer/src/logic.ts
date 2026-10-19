@@ -25,6 +25,18 @@ export {
 } from "./components/app/app-model";
 
 export {
+  COST_CATEGORIES,
+  USAGE_RANGE_OPTIONS,
+  formatRate,
+  formatTokenCount,
+  formatUsd,
+  parsePriceOverrideDraft,
+  priceOverrideDraftFor,
+  providerTypeLabel,
+  type PriceOverrideDraft,
+} from "./components/app/usage-dashboard-model";
+
+export {
   RUN_DISPLAY_STATUS_LABELS,
   isRunDisplayStatusActive,
   resolveRunDisplayStatus,

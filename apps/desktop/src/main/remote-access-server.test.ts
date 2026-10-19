@@ -124,6 +124,7 @@ describe("remote operation registry", () => {
       | "getSnapshot"
       | "refreshSnapshot"
       | "getNetworkProxySettings"
+      | "getUsageCostReport"
       | "getProjectBranches"
       | "getProjectCurrentBranch"
       | "queryProjectActivity"

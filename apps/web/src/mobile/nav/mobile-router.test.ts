@@ -16,6 +16,7 @@ const ROUND_TRIP: MobileRoute[] = [
   { name: "more" },
   { name: "projects" },
   { name: "bookmarks" },
+  { name: "usage" },
   { name: "search" },
   { name: "run", runId: "run-1", segment: "diff" },
   { name: "run", runId: "run-1", segment: "pull-request" },
@@ -68,6 +69,7 @@ describe("tabForRoute", () => {
     expect(tabForRoute({ name: "new-run" })).toBe("home");
     expect(tabForRoute({ name: "project", projectId: "p", tab: "overview" })).toBe("more");
     expect(tabForRoute({ name: "settings" })).toBe("more");
+    expect(tabForRoute({ name: "usage" })).toBe("more");
   });
 });
 

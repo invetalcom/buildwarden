@@ -13,6 +13,10 @@ import {
   parsePastedTextAttachmentThresholdSetting,
   parseRecentRunDaysSetting,
   parseRemoteAccessEnabledSetting,
+  isUsageCostTrackingEnabled,
+  parseModelPriceOverridesSetting,
+  serializeModelPriceOverridesSetting,
+  type ModelPriceOverride,
   parseRunTimelineDensitySetting,
   parseSidebarContrastStrengthSetting,
   parseAttentionInboxSettings,
@@ -81,6 +85,7 @@ import {
 const AllRunsPage = lazy(() => import("./components/app/AllRunsPage").then((m) => ({ default: m.AllRunsPage })));
 const BookmarkDetailPage = lazy(() => import("./components/app/BookmarkDetailPage").then((m) => ({ default: m.BookmarkDetailPage })));
 import { AppTitleBar } from "./components/app/AppTitleBar";
+const UsageDashboardDialog = lazy(() => import("./components/app/UsageDashboardDialog").then((m) => ({ default: m.UsageDashboardDialog })));
 const BookmarksPage = lazy(() => import("./components/app/BookmarksPage").then((m) => ({ default: m.BookmarksPage })));
 import { type BookmarkItem } from "./components/app/BookmarksPage";
 const ChatBookmarkDetailPage = lazy(() => import("./components/app/ChatBookmarkDetailPage").then((m) => ({ default: m.ChatBookmarkDetailPage })));
@@ -335,6 +340,7 @@ export const App = () => {
   const diffSummaryLoadGenerationRef = useRef<Record<string, number>>({});
   const [landingSelected, setLandingSelected] = useState(true);
   const [allRunsSelected, setAllRunsSelected] = useState(false);
+  const [usageDashboardOpen, setUsageDashboardOpen] = useState(false);
   const [bookmarksSelected, setBookmarksSelected] = useState(false);
   const [chatsSelected, setChatsSelected] = useState(false);
   const [selectedBookmark, setSelectedBookmark] = useState<BookmarkItem | null>(null);
@@ -3936,6 +3942,16 @@ export const App = () => {
   // Stable-identity props for the memoized Sidebar: without these, inline
   // closures would change identity every render and defeat the memo.
   const sidebarBookmarkedRunIds = useMemo(() => new Set(snapshot.bookmarks.map((b) => b.originalRunId)), [snapshot.bookmarks]);
+  // The price list is only downloaded while this opt-in host setting is on. Any session may view the
+  // report; only settings-capable sessions may toggle it or edit prices.
+  const usageCostTrackingEnabled = isUsageCostTrackingEnabled(snapshot);
+  const priceOverridesSetting = snapshot.settings[APP_SETTING_KEYS.modelPriceOverrides];
+  const priceOverrides = useMemo(() => parseModelPriceOverridesSetting(priceOverridesSetting), [priceOverridesSetting]);
+  const sidebarOnOpenUsage = useStableCallback(() => setUsageDashboardOpen(true));
+  const handlePriceOverridesChange = useStableCallback(async (next: Record<string, ModelPriceOverride>) => {
+    await buildwarden.setAppSetting(APP_SETTING_KEYS.modelPriceOverrides, serializeModelPriceOverridesSetting(next));
+    await loadSnapshot();
+  });
   const runOrganizationAvailable = snapshot.runOrganization !== undefined;
   useEffect(() => {
     // Older remote hosts reject subscriptions containing unknown event types.
@@ -4034,6 +4050,7 @@ export const App = () => {
               appLogDirectorySize={appLogDirectorySize}
               networkProxySettings={networkProxySettings}
               remoteAccessEnabled={parseRemoteAccessEnabledSetting(snapshot.settings[APP_SETTING_KEYS.remoteAccessEnabled])}
+              usageCostTrackingEnabled={usageCostTrackingEnabled}
               providerAccounts={snapshot.providerAccounts}
               models={snapshot.models}
               orchestrationTeamSetting={snapshot.settings[APP_SETTING_KEYS.orchestrationTeam] ?? ""}
@@ -4198,6 +4215,11 @@ export const App = () => {
                   throw new Error("The Electron desktop bridge is unavailable.");
                 }
                 await buildwarden.setAppSetting(APP_SETTING_KEYS.remoteAccessEnabled, String(enabled));
+                await loadSnapshot();
+              }}
+              onUsageCostTrackingEnabledChange={async (enabled) => {
+                await buildwarden.setAppSetting(APP_SETTING_KEYS.usageCostTrackingEnabled, String(enabled));
+                if (!enabled) setUsageDashboardOpen(false);
                 await loadSnapshot();
               }}
               onCreateRemoteAccessPairing={(input) => {
@@ -4724,6 +4746,16 @@ export const App = () => {
           items={commandPaletteItems}
           onClose={() => setCommandPaletteOpen(false)}
         />
+        {usageDashboardOpen && usageCostTrackingEnabled ? (
+          <Suspense fallback={null}>
+            <UsageDashboardDialog
+              canEditPrices={buildwarden.capabilities.settings}
+              priceOverrides={priceOverrides}
+              onPriceOverridesChange={handlePriceOverridesChange}
+              onClose={() => setUsageDashboardOpen(false)}
+            />
+          </Suspense>
+        ) : null}
         <Sidebar
         projects={snapshot.projects}
         providerAccounts={snapshot.providerAccounts}
@@ -4769,6 +4801,7 @@ export const App = () => {
         onSetRunForLater={sidebarOnSetRunForLater}
         pendingDeleteRunIds={pendingDeleteRunIds}
         onOpenSettings={sidebarOnOpenSettings}
+        onOpenUsage={usageCostTrackingEnabled ? sidebarOnOpenUsage : undefined}
         onWidthCommit={sidebarOnWidthCommit}
         onToggleCollapsed={sidebarOnToggleCollapsed}
         loopEnabledProjectIds={loopEnabledProjectIds}

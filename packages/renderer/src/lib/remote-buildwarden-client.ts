@@ -386,6 +386,7 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     getNetworkProxySettings: () => capabilities.settings
       ? invoke("getNetworkProxySettings", [])
       : Promise.resolve({ ...DEFAULT_NETWORK_PROXY_SETTINGS, hasPassword: false }),
+    getUsageCostReport: (input) => invoke("getUsageCostReport", [input]),
     getAppPaths: () => capabilities.settings
       ? invoke("getAppPaths", [])
       : Promise.resolve({ logDirPath: "", logDirectorySize: { totalBytes: 0, fileCount: 0, unreadableEntryCount: 0 } }),

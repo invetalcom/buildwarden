@@ -47,7 +47,7 @@ export const webCapabilities = (scopes: readonly RemoteAccessScope[]): Readonly<
 
 export const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
   "getAttentionInbox",
-  "getSnapshot", "refreshSnapshot", "getNetworkProxySettings", "getProjectBranches", "getProjectCurrentBranch",
+  "getSnapshot", "refreshSnapshot", "getNetworkProxySettings", "getUsageCostReport", "getProjectBranches", "getProjectCurrentBranch",
   "getRunVerification", "queryProjectActivity", "checkProjectFolderGitStatus", "getRunDetail", "getOrchestrationDetail",
   "getOrchestrationTaskDetail", "getOrchestrationAdoptionPreview", "getRunDeletionImpact", "getModelDeletionImpact",
   "getRunWorktreeDiff", "getRunWorktreeDiffSummary", "getRunWorkspaceFile", "getProjectLoopUiReviewImage",

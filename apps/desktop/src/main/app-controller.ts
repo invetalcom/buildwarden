@@ -57,8 +57,11 @@ import {
 import {
   AiSdkProviderAdapter,
   OpenRouterProviderAdapter,
+  createProxyAwareFetch,
   generateAskTextResultWithAiSdk,
 } from "@buildwarden/provider-ai-sdk";
+import { ModelPriceList } from "./model-price-list";
+import { buildUsageCostReport, usageRangeStart } from "./usage-cost-report";
 import {
   ClaudeCodeProviderAdapter,
   assertClaudeCodeAvailable,
@@ -97,6 +100,10 @@ import {
   getDefaultProviderCapabilities,
   IDE_KIND_LABELS,
   parseNetworkProxySettings,
+  parseModelPriceOverridesSetting,
+  parseUsageCostTrackingEnabledSetting,
+  type UsageCostReport,
+  type UsageCostReportInput,
   parseIdePathConfig,
   parseIntegratedSkillsDisabledSetting,
   MAX_DATA_RETENTION_CLEANUP_DAYS,
@@ -246,6 +253,8 @@ import {
   type UpdateProjectAutomationInput,
   type UpdateRunNoteInput,
   type RunTokenUsage,
+  type TokenUsageAttribution,
+  type TokenUsageTotals,
   type RunToolResult,
   type RunUserInputAnswers,
   type RunUserInputQuestion,
@@ -270,7 +279,14 @@ import {
   type RunBudgetExhaustion,
 } from "./run-autonomy-budget";
 import { resolveMcpServerRuntimeConfigs } from "./mcp-server-registry";
-import { advanceReportedTokenUsage } from "./token-usage-accounting";
+import {
+  advanceReportedTokenUsage,
+  EMPTY_REPORTED_TOKEN_USAGE,
+  readReportedTokenUsage,
+  startsFreshUsageBaseline,
+  type ReportedTokenUsage,
+  type ReportedTokenUsageAdvance,
+} from "./token-usage-accounting";
 
 type IntegratedSkillsCatalogModule = typeof import("@buildwarden/shared/integrated-skills-catalog");
 let integratedSkillsCatalogPromise: Promise<IntegratedSkillsCatalogModule> | null = null;
@@ -1092,8 +1108,26 @@ interface ActiveWorker {
 }
 
 interface UsageReportTracker {
-  reportedUsage: { inputTokens: number; outputTokens: number };
+  reportedUsage: TokenUsageTotals & Partial<ReportedTokenUsage>;
+  /** Provider/model the worker runs with; stored on each usage event for cost estimates. */
+  attribution?: { providerType: string; modelId: string };
 }
+
+const usageAttributionFromAdvance = (
+  tracker: UsageReportTracker,
+  advance: ReportedTokenUsageAdvance,
+): TokenUsageAttribution | undefined => tracker.attribution
+  ? {
+      ...tracker.attribution,
+      cacheReadTokens: advance.cacheReadTokensDelta,
+      cacheWriteTokens: advance.cacheWriteTokensDelta,
+      reasoningTokens: advance.reasoningTokensDelta,
+    }
+  : undefined;
+
+const resetUsageBaselineForFreshSession = (tracker: UsageReportTracker, metadata: Record<string, unknown> | undefined): void => {
+  if (startsFreshUsageBaseline(metadata)) tracker.reportedUsage = { ...EMPTY_REPORTED_TOKEN_USAGE };
+};
 
 type WorkerDoneResult = {
   summary: string;
@@ -1251,6 +1285,8 @@ export class AppController
     >
 {
   private readonly gitService = new GitService();
+  /** Created on first use so no price list is read or downloaded while cost tracking is off. */
+  private modelPriceList: ModelPriceList | null = null;
   private readonly providerAdapters: Record<ProviderAccountInput["providerType"], ProviderAdapter> = {
     "ai-sdk": new AiSdkProviderAdapter(),
     openrouter: new OpenRouterProviderAdapter(),
@@ -2510,6 +2546,29 @@ export class AppController
       settings[SELECTED_RUN_KEY] ?? null,
       settings[SELECTED_CHAT_KEY] ?? null,
     ));
+  }
+
+  async getUsageCostReport(input: UsageCostReportInput): Promise<UsageCostReport> {
+    const settings = this.db.getSettings();
+    if (!parseUsageCostTrackingEnabledSetting(settings[APP_SETTING_KEYS.usageCostTrackingEnabled])) {
+      throw new Error("Usage cost tracking is turned off. Enable it in Settings -> Network.");
+    }
+    const rangeDays = input.rangeDays === null ? null : Math.min(3_650, Math.max(1, Math.floor(input.rangeDays)));
+    this.modelPriceList ??= new ModelPriceList({
+      cacheFilePath: join(dirname(this.db.getFilePath()), "model-prices.json"),
+      resolveFetch: async () => createProxyAwareFetch(await this.resolveNetworkProxyRuntimeConfig()) ?? fetch,
+    });
+    const { table, pricing } = await this.modelPriceList.load(input.refreshPricing === true);
+    const now = new Date();
+    const since = usageRangeStart(rangeDays, now);
+    return buildUsageCostReport({
+      rows: this.db.listTokenUsageCostRows(since?.toISOString() ?? null),
+      table,
+      overrides: parseModelPriceOverridesSetting(settings[APP_SETTING_KEYS.modelPriceOverrides]),
+      pricing,
+      rangeDays,
+      now,
+    });
   }
 
   async getNetworkProxySettings(): Promise<NetworkProxySettingsSnapshot> {
@@ -5691,7 +5750,7 @@ export class AppController
       devLogging,
     });
     // Account for a completed model call even when its output fails validation.
-    this.recordStandaloneModelUsage(input.usageProjectId, result.usage);
+    this.recordStandaloneModelUsage(input.usageProjectId, provider, model, result.usage);
     return validateUtilityText(result.text, input.purpose);
   }
 
@@ -5729,7 +5788,7 @@ export class AppController
         networkProxy,
         devLogging,
       });
-      this.recordStandaloneModelUsage(input.usageProjectId, result.usage);
+      this.recordStandaloneModelUsage(input.usageProjectId, provider, model, result.usage);
       return result.text.trim();
     }
 
@@ -5741,7 +5800,7 @@ export class AppController
         config: providerConfig,
         networkProxy,
       });
-      this.recordStandaloneModelUsage(input.usageProjectId, result.usage);
+      this.recordStandaloneModelUsage(input.usageProjectId, provider, model, result.usage);
       return result.text.trim();
     }
 
@@ -5754,7 +5813,7 @@ export class AppController
         modelConfig,
         devLogging,
       });
-      this.recordStandaloneModelUsage(input.usageProjectId, result.usage);
+      this.recordStandaloneModelUsage(input.usageProjectId, provider, model, result.usage);
       return result.text.trim();
     }
 
@@ -5793,7 +5852,7 @@ export class AppController
           "Azure Legacy returned an empty response after exhausting the completion token budget. Try a smaller diff or a model with lower reasoning effort.",
         );
       }
-      this.recordStandaloneModelUsage(input.usageProjectId, usageFromChatCompletion(completion.usage));
+      this.recordStandaloneModelUsage(input.usageProjectId, provider, model, usageFromChatCompletion(completion.usage));
       return text;
     }
 
@@ -5809,15 +5868,27 @@ export class AppController
       networkProxy,
       devLogging,
     });
-    this.recordStandaloneModelUsage(input.usageProjectId, result.usage);
+    this.recordStandaloneModelUsage(input.usageProjectId, provider, model, result.usage);
     return result.text.trim();
   }
 
-  private recordStandaloneModelUsage(projectId: string | undefined, usage: RunTokenUsage): void {
+  private recordStandaloneModelUsage(
+    projectId: string | undefined,
+    provider: Pick<ProviderAccountRecord, "providerType">,
+    model: Pick<ModelRecord, "modelId">,
+    usage: RunTokenUsage,
+  ): void {
     if (!projectId || (usage.inputTokens === 0 && usage.outputTokens === 0)) {
       return;
     }
-    this.db.recordProjectTokenUsage(projectId, "model-call", crypto.randomUUID(), usage.inputTokens, usage.outputTokens);
+    const counters = readReportedTokenUsage(usage);
+    this.db.recordProjectTokenUsage(projectId, "model-call", crypto.randomUUID(), usage.inputTokens, usage.outputTokens, {
+      providerType: provider.providerType,
+      modelId: model.modelId,
+      cacheReadTokens: counters.cacheReadTokens,
+      cacheWriteTokens: counters.cacheWriteTokens,
+      reasoningTokens: counters.reasoningTokens,
+    });
   }
 
   private readDependencyGraphSnapshot(repoPath: string): DependencyGraphSnapshot {
@@ -9680,30 +9751,25 @@ export class AppController
     ownerKind: "run" | "chat",
     provider: ProviderAccountRecord,
     steps: ReadonlyArray<{ metadataJson: string }>,
+    model?: Pick<ModelRecord, "modelId">,
   ): UsageReportTracker {
+    const attribution = model ? { providerType: provider.providerType, modelId: model.modelId } : undefined;
+    const fresh = (): UsageReportTracker => ({ reportedUsage: { ...EMPTY_REPORTED_TOKEN_USAGE }, ...(attribution ? { attribution } : {}) });
     const runtime = this.db.getProviderSessionRuntime(ownerId, ownerKind);
     if (provider.providerType !== "codex-cli" || runtime?.providerType !== provider.providerType) {
-      return { reportedUsage: { inputTokens: 0, outputTokens: 0 } };
+      return fresh();
     }
     for (const step of [...steps].reverse()) {
       try {
         const metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
         const usage = metadata.usageTotals;
         if (!usage || typeof usage !== "object" || Array.isArray(usage)) continue;
-        const record = usage as Record<string, unknown>;
-        const inputTokens = Number(record.inputTokens ?? 0);
-        const outputTokens = Number(record.outputTokens ?? 0);
-        return {
-          reportedUsage: {
-            inputTokens: Number.isFinite(inputTokens) ? Math.max(0, inputTokens) : 0,
-            outputTokens: Number.isFinite(outputTokens) ? Math.max(0, outputTokens) : 0,
-          },
-        };
+        return { ...fresh(), reportedUsage: readReportedTokenUsage(usage as Partial<RunTokenUsage>) };
       } catch {
         // Continue to the previous durable event when legacy metadata is malformed.
       }
     }
-    return { reportedUsage: { inputTokens: 0, outputTokens: 0 } };
+    return fresh();
   }
 
   private applyRunWorkerUsageUpdate(
@@ -9723,7 +9789,12 @@ export class AppController
       usageTotals,
     );
     tracker.reportedUsage = advance.nextReportedUsage;
-    const updatedRun = this.db.recordRunTokenUsage(run.id, advance.inputTokensDelta, advance.outputTokensDelta);
+    const updatedRun = this.db.recordRunTokenUsage(
+      run.id,
+      advance.inputTokensDelta,
+      advance.outputTokensDelta,
+      usageAttributionFromAdvance(tracker, advance),
+    );
     const exhaustion = tokenBudgetExhaustion(maxRunTokens, usageTotals);
     if (exhaustion) {
       exhaustBudget(exhaustion);
@@ -9753,6 +9824,7 @@ export class AppController
       typeof payload.chunk.metadata?.usageTotals === "object" && payload.chunk.metadata.usageTotals
         ? (payload.chunk.metadata.usageTotals as Partial<RunTokenUsage>)
         : null;
+    resetUsageBaselineForFreshSession(usageTracker, payload.chunk.metadata);
     this.applyRunWorkerUsageUpdate(run, usageTotals, maxRunTokens, exhaustBudget, usageTracker);
 
     if (payload.chunk.metadata?.providerSessionRuntime) {
@@ -9880,7 +9952,7 @@ export class AppController
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "worker.js");
     const streamingStepIds = new Map<string, string>();
     const streamingStepKinds = new Map<string, "assistant" | "reasoning" | "tool-result" | "tool-progress">();
-    const usageTracker = this.initialUsageReportTracker(run.id, "run", provider, this.db.getRunSteps(run.id));
+    const usageTracker = this.initialUsageReportTracker(run.id, "run", provider, this.db.getRunSteps(run.id), model);
     if (this.manualVerifications.has(run.id)) throw new Error("Wait for verification to finish or cancel it first.");
     const resetNarrationStreams = () => {
       for (const [streamId, kind] of streamingStepKinds.entries()) {
@@ -10826,6 +10898,7 @@ export class AppController
       typeof payload.chunk.metadata?.usageTotals === "object" && payload.chunk.metadata.usageTotals
         ? (payload.chunk.metadata.usageTotals as Partial<RunTokenUsage>)
         : null;
+    resetUsageBaselineForFreshSession(usageTracker, payload.chunk.metadata);
     this.applyChatWorkerUsageUpdate(chat, usageTotals, usageTracker);
     if (payload.chunk.metadata?.providerSessionRuntime) {
       this.upsertProviderSessionRuntime(
@@ -10895,6 +10968,7 @@ export class AppController
       projectId,
       advance.inputTokensDelta,
       advance.outputTokensDelta,
+      usageAttributionFromAdvance(tracker, advance),
     );
   }
 
@@ -10916,7 +10990,7 @@ export class AppController
     const pendingInputs = new Set<string>();
     this.chatUserInputRequests.set(chat.id, pendingInputs);
     const streamingStepIds = new Map<string, string>();
-    const usageTracker = this.initialUsageReportTracker(chat.id, "chat", provider, this.db.getChatSteps(chat.id));
+    const usageTracker = this.initialUsageReportTracker(chat.id, "chat", provider, this.db.getChatSteps(chat.id), model);
     const settings = this.db.getSettings();
     const devModeEnabled = settings[APP_SETTING_KEYS.enableDevMode] === "true";
     if (devModeEnabled) {

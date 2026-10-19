@@ -2,11 +2,11 @@ import { validateUserInputAnswers } from "@buildwarden/shared";
 import { DEFAULT_RUN_SECTION_COLOR, isRunSectionColor, isRunSectionName, isUpdateRunOrganizationInput, RUN_TAG_COUNT_LIMIT, RUN_TAG_LIMIT, UNCATEGORIZED_RUN_SECTION_ID,
   type RunSectionRecord, type RunOrganizationRecord, type RunOrganizationSnapshot, type UpdateRunOrganizationInput } from "@buildwarden/shared";
 import { getResponseSourceText, type ChatSearchDetail } from "@buildwarden/shared";
-import type { RunVerificationRecord } from "@buildwarden/shared";
+import type { RunVerificationRecord, TokenUsageAttribution } from "@buildwarden/shared";
 import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { APP_SETTING_KEYS, ATTENTION_KIND_LABELS, parseAttentionInboxSettings, parseWorkspaceSetupSettings, parseRevisionVerificationPolicy, REMOTE_ACCESS_SCOPES, type AttentionKind } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, ATTENTION_KIND_LABELS, parseAttentionInboxSettings, parseUsageCostTrackingEnabledSetting, parseWorkspaceSetupSettings, parseRevisionVerificationPolicy, REMOTE_ACCESS_SCOPES, type AttentionKind } from "@buildwarden/shared";
 import type {
   AppSettingRecord,
   RunWorkspaceSetup,
@@ -173,6 +173,20 @@ export interface RunForgeRequestCacheRecord {
   lastModified: string | null;
   errorCount: number;
   retryAfterAt: string | null;
+}
+
+/** One aggregate row of {@link BuildWardenDatabase.listTokenUsageCostRows}. */
+export interface TokenUsageCostRow {
+  day: string;
+  projectId: string | null;
+  projectName: string | null;
+  providerType: string | null;
+  modelId: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reasoningTokens: number;
 }
 
 export interface ModelDeletionTargets {
@@ -566,6 +580,7 @@ export class BuildWardenDatabase {
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
+    const settings = this.getSettings();
     return {
       projects,
       runOrganization: this.getRunOrganization(),
@@ -574,13 +589,14 @@ export class BuildWardenDatabase {
       selectedProjectId,
       selectedRunId,
       selectedChatId,
-      settings: this.getSettings(),
+      settings,
       bookmarks: this.listBookmarks(),
       chatBookmarks: this.listChatBookmarks(),
       chats: this.listChats(),
       tokenUsage: {
         standaloneChats: this.getStandaloneChatTokenUsage(),
         today: this.getTokenUsageSince(todayStart.toISOString()),
+        costTrackingEnabled: parseUsageCostTrackingEnabledSetting(settings[APP_SETTING_KEYS.usageCostTrackingEnabled]),
       },
     };
   }
@@ -2301,11 +2317,12 @@ export class BuildWardenDatabase {
     ownerId: string,
     inputTokensDelta: number,
     outputTokensDelta: number,
+    attribution?: TokenUsageAttribution,
   ): ProjectRecord {
     if (inputTokensDelta === 0 && outputTokensDelta === 0) return this.getProject(projectId);
     return this.transaction(() => {
       const project = this.incrementProjectTokenUsage(projectId, inputTokensDelta, outputTokensDelta);
-      this.insertTokenUsageEvent(projectId, ownerKind, ownerId, inputTokensDelta, outputTokensDelta);
+      this.insertTokenUsageEvent(projectId, ownerKind, ownerId, inputTokensDelta, outputTokensDelta, attribution);
       return project;
     });
   }
@@ -2315,6 +2332,7 @@ export class BuildWardenDatabase {
     projectId: string | null,
     inputTokensDelta: number,
     outputTokensDelta: number,
+    attribution?: TokenUsageAttribution,
   ): ChatRecord {
     if (inputTokensDelta === 0 && outputTokensDelta === 0) return this.getChat(chatId);
     return this.transaction(() => {
@@ -2334,12 +2352,17 @@ export class BuildWardenDatabase {
           [inputTokensDelta, outputTokensDelta],
         );
       }
-      this.insertTokenUsageEvent(projectId, "chat", chatId, inputTokensDelta, outputTokensDelta);
+      this.insertTokenUsageEvent(projectId, "chat", chatId, inputTokensDelta, outputTokensDelta, attribution);
       return this.getChat(chatId);
     });
   }
 
-  recordRunTokenUsage(runId: string, inputTokensDelta: number, outputTokensDelta: number): RunRecord {
+  recordRunTokenUsage(
+    runId: string,
+    inputTokensDelta: number,
+    outputTokensDelta: number,
+    attribution?: TokenUsageAttribution,
+  ): RunRecord {
     const existing = this.getRun(runId);
     if (inputTokensDelta === 0 && outputTokensDelta === 0) return existing;
     return this.transaction(() => {
@@ -2350,7 +2373,7 @@ export class BuildWardenDatabase {
         [inputTokensDelta, outputTokensDelta, nowIso(), runId],
       );
       this.incrementProjectTokenUsage(existing.projectId, inputTokensDelta, outputTokensDelta);
-      this.insertTokenUsageEvent(existing.projectId, "run", runId, inputTokensDelta, outputTokensDelta);
+      this.insertTokenUsageEvent(existing.projectId, "run", runId, inputTokensDelta, outputTokensDelta, attribution);
       return this.getRun(runId);
     });
   }
@@ -2371,18 +2394,59 @@ export class BuildWardenDatabase {
     ) ?? { inputTokens: 0, outputTokens: 0 };
   }
 
+  /**
+   * Usage grouped by local day, project, provider, and model. Events recorded before
+   * attribution existed have a null `modelId`.
+   */
+  listTokenUsageCostRows(since: string | null): TokenUsageCostRow[] {
+    return this.all<TokenUsageCostRow>(
+      `select date(e.created_at, 'localtime') as day,
+              e.project_id as projectId,
+              p.name as projectName,
+              e.provider_type as providerType,
+              e.model_id as modelId,
+              coalesce(sum(e.input_tokens), 0) as inputTokens,
+              coalesce(sum(e.output_tokens), 0) as outputTokens,
+              coalesce(sum(e.cache_read_tokens), 0) as cacheReadTokens,
+              coalesce(sum(e.cache_write_tokens), 0) as cacheWriteTokens,
+              coalesce(sum(e.reasoning_tokens), 0) as reasoningTokens
+       from token_usage_events e
+       left join projects p on p.id = e.project_id
+       where (? is null or e.created_at >= ?)
+       group by day, e.project_id, e.provider_type, e.model_id
+       order by day`,
+      [since, since],
+    );
+  }
+
   private insertTokenUsageEvent(
     projectId: string | null,
     ownerKind: string,
     ownerId: string,
     inputTokens: number,
     outputTokens: number,
+    attribution?: TokenUsageAttribution,
   ): void {
+    const nonNegative = (value: number | undefined) => Math.max(0, Number.isFinite(value) ? value ?? 0 : 0);
     this.run(
       `insert into token_usage_events
-       (id, project_id, owner_kind, owner_id, input_tokens, output_tokens, created_at)
-       values (?, ?, ?, ?, ?, ?, ?)`,
-      [createId(), projectId, ownerKind, ownerId, inputTokens, outputTokens, nowIso()],
+       (id, project_id, owner_kind, owner_id, input_tokens, output_tokens, provider_type, model_id,
+        cache_read_tokens, cache_write_tokens, reasoning_tokens, created_at)
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        createId(),
+        projectId,
+        ownerKind,
+        ownerId,
+        inputTokens,
+        outputTokens,
+        attribution?.providerType ?? null,
+        attribution?.modelId ?? null,
+        nonNegative(attribution?.cacheReadTokens),
+        nonNegative(attribution?.cacheWriteTokens),
+        nonNegative(attribution?.reasoningTokens),
+        nowIso(),
+      ],
     );
   }
 
@@ -5601,6 +5665,11 @@ export class BuildWardenDatabase {
     this.ensureColumn("project_tasks", "attachments_json", "text not null default '[]'");
     this.ensureColumn("remote_pairing_grants", "client_origin", "text");
     this.ensureColumn("remote_access_sessions", "client_origin", "text");
+    this.ensureColumn("token_usage_events", "provider_type", "text");
+    this.ensureColumn("token_usage_events", "model_id", "text");
+    this.ensureColumn("token_usage_events", "cache_read_tokens", "integer not null default 0");
+    this.ensureColumn("token_usage_events", "cache_write_tokens", "integer not null default 0");
+    this.ensureColumn("token_usage_events", "reasoning_tokens", "integer not null default 0");
     this.migrateRunPromptRestorePointsFromSettings();
   }
 

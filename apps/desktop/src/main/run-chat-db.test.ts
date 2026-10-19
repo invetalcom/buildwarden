@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
 
@@ -148,6 +149,55 @@ describe("run-scoped chats", () => {
     expect(db.getTokenUsageSince("2000-01-01T00:00:00.000Z")).toEqual({ inputTokens: 75, outputTokens: 25 });
     db.deleteChat(standalone.id);
     expect(db.getStandaloneChatTokenUsage()).toEqual({ inputTokens: 75, outputTokens: 25 });
+  });
+
+  it("stores provider, model, and token-category attribution for cost estimates", async () => {
+    const db = await makeDb();
+    const { project, provider, model, run } = addRunFixture(db);
+    const standalone = db.createChat(provider.id, model.id, "Standalone question");
+    const attribution = { providerType: "claude-code", modelId: "claude-sonnet-4-5" };
+
+    db.recordRunTokenUsage(run.id, 1_000, 100, { ...attribution, cacheReadTokens: 800, cacheWriteTokens: 150, reasoningTokens: 40 });
+    db.recordRunTokenUsage(run.id, 500, 50, { ...attribution, cacheReadTokens: 450 });
+    db.recordChatTokenUsage(standalone.id, null, 300, 30, { providerType: "codex-cli", modelId: "gpt-5", cacheReadTokens: 200 });
+    db.recordProjectTokenUsage(project.id, "model-call", "call-1", 70, 7);
+
+    const rows = db.listTokenUsageCostRows("2000-01-01T00:00:00.000Z");
+    expect(rows).toHaveLength(3);
+    expect(rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        projectId: project.id, projectName: "Repo", providerType: "claude-code", modelId: "claude-sonnet-4-5",
+        inputTokens: 1_500, outputTokens: 150, cacheReadTokens: 1_250, cacheWriteTokens: 150, reasoningTokens: 40,
+      }),
+      expect.objectContaining({ projectId: null, providerType: "codex-cli", modelId: "gpt-5", inputTokens: 300, cacheReadTokens: 200 }),
+      expect.objectContaining({ projectId: project.id, providerType: null, modelId: null, inputTokens: 70, outputTokens: 7 }),
+    ]));
+    expect(rows[0]?.day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(db.listTokenUsageCostRows("2999-01-01T00:00:00.000Z")).toEqual([]);
+    expect(db.listTokenUsageCostRows(null)).toHaveLength(3);
+    // Existing counters keep using processed input totals.
+    expect(db.getRun(run.id)).toMatchObject({ inputTokens: 1_500, outputTokens: 150 });
+  });
+
+  it("adds attribution columns to a pre-existing usage ledger without losing its rows", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "buildwarden-usage-ledger-"));
+    tempDirs.push(dir);
+    const filePath = join(dir, "buildwarden.sqlite");
+    const legacy = new DatabaseSync(filePath);
+    legacy.exec(`create table token_usage_events (
+      id text primary key, project_id text, owner_kind text not null, owner_id text not null,
+      input_tokens integer not null, output_tokens integer not null, created_at text not null
+    );
+    insert into token_usage_events values ('legacy-1', null, 'chat', 'chat-1', 40, 4, '2026-01-02T10:00:00.000Z');`);
+    legacy.close();
+
+    const db = new BuildWardenDatabase(filePath);
+    await db.init();
+    dbs.push(db);
+
+    expect(db.listTokenUsageCostRows(null)).toEqual([expect.objectContaining({
+      modelId: null, providerType: null, inputTokens: 40, outputTokens: 4, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0,
+    })]);
   });
 
   it("keeps run chats out of the standalone chat list", async () => {

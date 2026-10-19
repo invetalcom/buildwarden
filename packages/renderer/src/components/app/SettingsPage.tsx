@@ -94,6 +94,7 @@ interface SettingsPageProps {
   appLogDirectorySize: AppLogDirectorySizeInfo;
   networkProxySettings: NetworkProxySettingsSnapshot;
   remoteAccessEnabled: boolean;
+  usageCostTrackingEnabled: boolean;
   providerAccounts: AppSnapshot["providerAccounts"];
   models: AppSnapshot["models"];
   orchestrationTeamSetting: string;
@@ -154,6 +155,7 @@ interface SettingsPageProps {
   onResetDatabase: () => void | Promise<void>;
   onSaveNetworkProxySettings: (input: NetworkProxySettingsInput) => Promise<NetworkProxySettingsSnapshot>;
   onRemoteAccessEnabledChange: (enabled: boolean) => Promise<void>;
+  onUsageCostTrackingEnabledChange: (enabled: boolean) => Promise<void>;
   onCreateRemoteAccessPairing: (input?: RemoteAccessPairingInput) => Promise<RemoteAccessPairingGrant>;
   onListRemoteAccessSessions: () => Promise<RemoteAccessSession[]>;
   onRevokeRemoteAccessSession: (sessionId: string) => Promise<void>;
@@ -228,6 +230,7 @@ export const SettingsPage = ({
   appLogDirectorySize,
   networkProxySettings,
   remoteAccessEnabled,
+  usageCostTrackingEnabled,
   providerAccounts,
   models,
   orchestrationTeamSetting,
@@ -288,6 +291,7 @@ export const SettingsPage = ({
   onResetDatabase,
   onSaveNetworkProxySettings,
   onRemoteAccessEnabledChange,
+  onUsageCostTrackingEnabledChange,
   onCreateRemoteAccessPairing,
   onListRemoteAccessSessions,
   onRevokeRemoteAccessSession,
@@ -704,6 +708,8 @@ export const SettingsPage = ({
           onListRemoteAccessSessions={onListRemoteAccessSessions}
           onRevokeRemoteAccessSession={onRevokeRemoteAccessSession}
           showRemoteAccess={nativeActions}
+          usageCostTrackingEnabled={usageCostTrackingEnabled}
+          onUsageCostTrackingEnabledChange={onUsageCostTrackingEnabledChange}
         />
       ) : null}
 

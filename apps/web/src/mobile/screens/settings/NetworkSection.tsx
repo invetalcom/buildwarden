@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  APP_SETTING_KEYS,
   DEFAULT_NETWORK_PROXY_SETTINGS,
+  isUsageCostTrackingEnabled,
   type NetworkProxyProtocol,
   type NetworkProxySettingsSnapshot,
 } from "@buildwarden/shared";
 import { useMobileApp } from "../../data/mobile-app-context";
 import { useAction } from "../../data/use-action";
+import { useAppSettings } from "../../data/use-app-settings";
 import { errorMessage } from "../../lib/format";
 import { SelectRow, SettingGroup, TextRow, ToggleRow } from "../../components/SettingControls";
-import { Button, CenteredSpinner, InlineError, Input } from "../../components/primitives";
+import { Button, CenteredSpinner, InlineError, Input, ListRow } from "../../components/primitives";
 
 const PROTOCOLS: ReadonlyArray<{ value: NetworkProxyProtocol; label: string }> = [
   { value: "http", label: "HTTP proxy" },
@@ -22,8 +25,10 @@ const PROTOCOLS: ReadonlyArray<{ value: NetworkProxyProtocol; label: string }> =
  * returns it, so the field stays blank and an empty value leaves the saved password alone.
  */
 export const NetworkSection = () => {
-  const { client } = useMobileApp();
+  const { client, snapshot: appSnapshot, router } = useMobileApp();
   const action = useAction();
+  const appSettings = useAppSettings();
+  const usageEnabled = isUsageCostTrackingEnabled(appSnapshot);
   const [snapshot, setSnapshot] = useState<NetworkProxySettingsSnapshot | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [password, setPassword] = useState("");
@@ -160,6 +165,21 @@ export const NetworkSection = () => {
           </div>
         </div>
       </SettingGroup>
+
+      <SettingGroup
+        title="Model pricing"
+        hint="Downloads LiteLLM's public price list on the host (through the proxy above, cached for a day) to estimate API costs. Nothing is downloaded while this is off."
+      >
+        <ToggleRow
+          title="Estimate usage costs"
+          description="Adds Usage & cost to More."
+          checked={usageEnabled}
+          disabled={!appSettings.canWrite || appSettings.saving}
+          onChange={(next) => void appSettings.write(APP_SETTING_KEYS.usageCostTrackingEnabled, String(next))}
+        />
+        {usageEnabled ? <ListRow title="Open usage & cost" onClick={() => router.push({ name: "usage" })} /> : null}
+      </SettingGroup>
+      {appSettings.error ? <InlineError message={appSettings.error} onRetry={appSettings.clearError} /> : null}
 
       <SettingGroup title="Remote access">
         <p className="px-4 py-3 text-[11px] leading-4 text-[var(--ec-muted)]">

@@ -256,6 +256,7 @@ const api: DesktopApi = {
   listRemoteAccessSessions: () => invoke(IPC_CHANNELS.listRemoteAccessSessions),
   revokeRemoteAccessSession: (sessionId: string) => invoke(IPC_CHANNELS.revokeRemoteAccessSession, sessionId),
   getNetworkProxySettings: () => invoke(IPC_CHANNELS.getNetworkProxySettings),
+  getUsageCostReport: (input) => invoke(IPC_CHANNELS.getUsageCostReport, input),
   selectProject: (projectId: string) => invoke(IPC_CHANNELS.selectProject, projectId),
   reorderProjects: (projectIds: string[]) => invoke(IPC_CHANNELS.reorderProjects, projectIds),
   getAppPaths: () => invoke(IPC_CHANNELS.getAppPaths),
