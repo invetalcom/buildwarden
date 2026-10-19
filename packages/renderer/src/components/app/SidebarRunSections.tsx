@@ -222,11 +222,11 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
           const key = `${section.id}:${project.project.id}`;
           const projectExpanded = !collapsedProjects.has(key);
           return <div key={key} data-sidebar-run-group={project.project.id}>
-            <button type="button" aria-expanded={projectExpanded} className="flex h-6 w-full min-w-0 items-center gap-1 px-2 text-left text-[11px] font-medium text-[var(--ec-muted)]"
+            <button type="button" aria-expanded={projectExpanded} className="flex h-6 w-full min-w-0 items-center gap-1 px-2 text-left text-[var(--ec-muted)]"
               onDoubleClick={() => onSelectProject?.(project.project.id)}
               onClick={() => setCollapsedProjects((current) => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; })}>
               {projectExpanded ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />}
-              <span className="min-w-0 flex-1 truncate">{project.project.name}</span><span className="font-mono text-[10px]">{count}</span>
+              <span className={cn("min-w-0 flex-1 truncate font-medium", headerStyles.title)}>{project.project.name}</span><span className="font-mono text-[10px]">{count}</span>
             </button>
             {projectExpanded && <div className={runRowGapClassName}>{rows.map((row) => renderRun(project, row, false))}</div>}
           </div>;
