@@ -1,7 +1,7 @@
 import { parseAttentionInboxSettings } from "@buildwarden/shared";
 import { AttentionInbox } from "./AttentionInbox";
 import { SidebarUtilityButton } from "./SidebarUtilityButton";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
 import type { AppSnapshot, RunRecord, SidebarRunEntrySize } from "@buildwarden/shared";
 import {
@@ -255,6 +255,7 @@ const SidebarComponent = ({
   const [organizeRun, setOrganizeRun] = useState<{ id: string; trigger: HTMLButtonElement } | null>(null);
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<RunContextMenuState | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
   const [isResizing, setIsResizing] = useState(false);
   const projectMenuRef = useRef<HTMLDivElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
@@ -262,6 +263,21 @@ const SidebarComponent = ({
   const resizeWidthRef = useRef(width);
   const resizePendingWidthRef = useRef(width);
   const resizeFrameRef = useRef<number | null>(null);
+
+  useLayoutEffect(() => {
+    if (!contextMenu || !canOpenRunContextMenu) return;
+    const updatePosition = () => {
+      const menu = contextMenuRef.current;
+      if (!menu) return;
+      const { width, height } = menu.getBoundingClientRect();
+      const padding = 8;
+      menu.style.left = `${Math.max(padding, Math.min(contextMenu.x, window.innerWidth - width - padding))}px`;
+      menu.style.top = `${Math.max(padding, Math.min(contextMenu.y, window.innerHeight - height - padding))}px`;
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    return () => window.removeEventListener("resize", updatePosition);
+  }, [contextMenu, canOpenRunContextMenu, canStartRuns, canManageRunBookmarks, canMoveRunsForLater, runOrganization, bookmarkedRunIds]);
 
   const selectedProject = projects.find((entry) => entry.project.id === selectedProjectId) ?? projects[0] ?? null;
   const selectedProjectContext = projectSidebarContext(
@@ -755,7 +771,8 @@ const SidebarComponent = ({
                 role="presentation"
               />
               <div
-                className="fixed z-[30001] min-w-[11rem] glass-popover py-1"
+                ref={contextMenuRef}
+                className="fixed z-[30001] w-max min-w-[min(11rem,calc(100vw-16px))] max-w-[calc(100vw-16px)] max-h-[calc(100vh-16px)] overflow-y-auto glass-popover py-1"
                 style={{ left: contextMenu.x, top: contextMenu.y }}
               >
                 {canMoveRunsForLater && runOrganization !== undefined ? (

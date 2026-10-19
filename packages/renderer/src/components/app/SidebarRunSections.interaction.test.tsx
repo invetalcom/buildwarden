@@ -220,7 +220,18 @@ describe("sidebar run sections", () => {
     expect(document.activeElement).toBe(button("New run section"));
   });
 
-  it("returns focus to the run after its context-menu metadata editor closes", async () => {
+  it.each([
+    { x: 100, y: 100, left: 100, top: 100 },
+    { x: 790, y: 590, left: 552, top: 392 },
+    { x: 0, y: 0, left: 8, top: 8 },
+  ])("keeps the run context menu in the viewport at ($x, $y) and restores editor focus", async ({ x, y, left, top }) => {
+    vi.spyOn(window, "innerWidth", "get").mockReturnValue(800);
+    const viewportHeight = vi.spyOn(window, "innerHeight", "get").mockReturnValue(600);
+    const getRect = HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return this === button("Move to section / edit tags")?.parentElement
+        ? new DOMRect(0, 0, 240, 200) : getRect.call(this);
+    });
     const entries = projects.map((entry) => ({ ...entry, activeRuns: [], tasks: [], labThreads: [], loops: [] }));
     await act(async () => root.render(<Sidebar projects={entries} runOrganization={state}
       landingSelected={false} allRunsSelected={false} bookmarksSelected={false} chatsSelected={false} settingsSelected={false}
@@ -234,7 +245,13 @@ describe("sidebar run sections", () => {
       onSetRunForLater={vi.fn()} onOpenSettings={vi.fn()} onWidthCommit={vi.fn()} onToggleCollapsed={vi.fn()} />));
     const trigger = container.querySelector<HTMLButtonElement>(`[data-run-hierarchy-run="${failed.id}"] button[draggable]`)!;
     trigger.focus();
-    await act(async () => { trigger.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })); });
+    await act(async () => { trigger.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: x, clientY: y })); });
+    const menu = button("Move to section / edit tags").parentElement!;
+    expect(menu.style.left).toBe(`${left}px`);
+    expect(menu.style.top).toBe(`${top}px`);
+    viewportHeight.mockReturnValue(250);
+    await act(async () => { window.dispatchEvent(new Event("resize")); });
+    expect(menu.style.top).toBe(`${Math.max(8, Math.min(y, 42))}px`);
     const menuItem = button("Move to section / edit tags"); menuItem.focus(); await click(menuItem);
     expect(menuItem.isConnected).toBe(false);
     button("Cancel").focus(); await click(button("Cancel"));
