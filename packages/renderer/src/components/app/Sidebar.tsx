@@ -854,7 +854,7 @@ const SidebarComponent = ({
 
       <Separator />
 
-      <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto py-1.5">
+      <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto py-1.5 [scrollbar-gutter:stable]">
         <SidebarRunSections
           projects={sortedProjectsForDropdown.map((entry) => ({ id: entry.project.id, name: entry.project.name }))}
           projectScopeId={scopedProjectId}

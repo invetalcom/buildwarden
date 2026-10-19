@@ -204,7 +204,7 @@ export const SidebarRunSections = ({
       <div ref={headerMenuRef} className="relative mb-1 flex h-6 min-w-0 items-center gap-1 px-3">
         <button
           type="button"
-          className="flex min-w-0 items-center gap-0.5 rounded px-1 text-[11px] text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+          className="mr-1 flex h-5 min-w-0 flex-1 items-center justify-between gap-1 rounded px-1 text-[11px] text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
           onClick={() => setHeaderMenu((current) => (current === "scope" ? null : "scope"))}
           aria-expanded={headerMenu === "scope"}
           aria-label="Filter sidebar runs by project"
@@ -213,7 +213,6 @@ export const SidebarRunSections = ({
           <span className="truncate">{scopeProject?.name ?? "all projects"}</span>
           <ChevronDown className={cn("size-3 shrink-0 transition", headerMenu === "scope" && "rotate-180")} />
         </button>
-        <span className="min-w-0 flex-1" />
         <button
           type="button"
           className={cn(
