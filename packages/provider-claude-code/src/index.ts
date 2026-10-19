@@ -1,7 +1,7 @@
 import { presentToolResult, toolPresentation } from "@buildwarden/shared";
 import { Buffer } from "node:buffer";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -279,6 +279,20 @@ const resolveClaudeCodeConfig = (config: Record<string, unknown> | undefined): C
     launchArgs: splitLaunchArgs(rawLaunchArgs),
     autoCompactWindow: Math.max(20_000, Math.round(configuredAutoCompactWindow ?? DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW)),
   };
+};
+
+/**
+ * Release channel `claude update` follows: `autoUpdatesChannel` in Claude's user settings
+ * (`CLAUDE_CONFIG_DIR` overrides `~/.claude`). Anything other than `stable` means `latest`.
+ */
+export const readClaudeCodeReleaseChannel = (env: NodeJS.ProcessEnv = process.env, home = homedir()): "latest" | "stable" => {
+  const configDir = env.CLAUDE_CONFIG_DIR?.trim() || join(home, ".claude");
+  try {
+    const settings = JSON.parse(readFileSync(join(configDir, "settings.json"), "utf8")) as { autoUpdatesChannel?: unknown };
+    return settings.autoUpdatesChannel === "stable" ? "stable" : "latest";
+  } catch {
+    return "latest";
+  }
 };
 
 /** The executable runs launch: the configured path, the Windows native installer, or `claude` on PATH. */

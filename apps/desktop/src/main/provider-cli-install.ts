@@ -1,5 +1,5 @@
 import { posix, win32 } from "node:path";
-import type { ProviderCliInstallMethod, ProviderCliUpdateProviderType } from "@buildwarden/shared";
+import type { ProviderCliInstallMethod, ProviderCliReleaseChannel, ProviderCliUpdateProviderType } from "@buildwarden/shared";
 
 /**
  * Pure install-ownership rules for provider CLI updates. A package manager is used
@@ -12,26 +12,29 @@ export interface ProviderCliDefinition {
   npmPackage: string | null;
   /** Arguments for the CLI's built-in self-updater. */
   selfUpdateArgs: string[];
-  /** Release feed that reports the newest version. */
-  latestVersionUrl: string;
+  /** Release feed that reports the newest version on a channel. */
+  latestVersionUrl(channel: ProviderCliReleaseChannel): string;
 }
+
+const npmDistTagUrl = (npmPackage: string) => (channel: ProviderCliReleaseChannel) =>
+  `https://registry.npmjs.org/${npmPackage}/${channel}`;
 
 export const PROVIDER_CLI_DEFINITIONS: Record<ProviderCliUpdateProviderType, ProviderCliDefinition> = {
   "claude-code": {
     npmPackage: "@anthropic-ai/claude-code",
     selfUpdateArgs: ["update"],
-    latestVersionUrl: "https://registry.npmjs.org/@anthropic-ai/claude-code/latest",
+    latestVersionUrl: npmDistTagUrl("@anthropic-ai/claude-code"),
   },
   "codex-cli": {
     npmPackage: "@openai/codex",
     selfUpdateArgs: ["update"],
-    latestVersionUrl: "https://registry.npmjs.org/@openai/codex/latest",
+    latestVersionUrl: npmDistTagUrl("@openai/codex"),
   },
   "cursor-agent": {
     npmPackage: null,
     selfUpdateArgs: ["update"],
-    // Cursor publishes no version API; its installer script pins the current build.
-    latestVersionUrl: "https://cursor.com/install",
+    // Cursor publishes no version API or channels; its installer script pins the current build.
+    latestVersionUrl: () => "https://cursor.com/install",
   },
 };
 
@@ -47,6 +50,8 @@ export interface ProviderCliFileProbe {
 
 export interface ProviderCliInstallInput {
   providerType: ProviderCliUpdateProviderType;
+  /** npm dist-tag package managers install; defaults to `latest`. */
+  releaseChannel?: ProviderCliReleaseChannel;
   /** Absolute executable path after PATH lookup. */
   commandPath: string;
   /** `commandPath` with symlinks followed. */
@@ -148,7 +153,7 @@ export const resolveProviderCliInstallPlan = (input: ProviderCliInstallInput): P
 
   const npmPackage = definition.npmPackage;
   if (npmPackage) {
-    const spec = `${npmPackage}@latest`;
+    const spec = `${npmPackage}@${input.releaseChannel ?? "latest"}`;
     const globalRootIndex = real.search(/\/node_modules\//i);
     const ownsPackage = new RegExp(`/node_modules/${escapeRegExp(npmPackage)}(/|$)`, "i").test(real);
     const globalRoot = ownsPackage && globalRootIndex >= 0 ? real.slice(0, globalRootIndex) : null;

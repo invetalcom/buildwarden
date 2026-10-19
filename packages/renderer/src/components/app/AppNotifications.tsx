@@ -368,7 +368,7 @@ export const AppNotifications = ({
                       ? toast.manualReason ?? "Update it manually on the host."
                       : toast.inUse
                         ? "In use by an active run or chat. Update once they finish."
-                        : "The update runs on the BuildWarden host."}
+                        : "Update now, or later from the attention inbox or Settings › Network."}
                   </p>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     {toast.canAutoUpdate && onUpdateProviderCli ? (

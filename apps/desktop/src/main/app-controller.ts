@@ -82,6 +82,7 @@ import {
   assertClaudeCodeAvailable,
   generateAskTextResultWithClaudeCode,
   listClaudeCodeSlashCommands,
+  readClaudeCodeReleaseChannel,
   resolveClaudeCodeBinaryPath,
 } from "@buildwarden/provider-claude-code";
 import { CodexCliProviderAdapter, assertCodexCliAvailable, generateAskTextResultWithCodexCli, resolveCodexCliExecutable } from "@buildwarden/provider-codex-cli";
@@ -2615,7 +2616,7 @@ export class AppController
       const config = parseProviderConfigJson(provider.configJson);
       switch (providerType) {
         case "claude-code":
-          return [{ providerType, binaryPath: resolveClaudeCodeBinaryPath(config) }];
+          return [{ providerType, binaryPath: resolveClaudeCodeBinaryPath(config), releaseChannel: readClaudeCodeReleaseChannel() }];
         case "codex-cli": {
           const { binaryPath, homePath } = resolveCodexCliExecutable(config);
           return [{ providerType, binaryPath, ...(homePath ? { env: { CODEX_HOME: homePath } } : {}) }];

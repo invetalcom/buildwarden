@@ -1,6 +1,11 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { readClaudeCodeReleaseChannel } from "@buildwarden/provider-claude-code";
 import { describe, expect, it } from "vitest";
 import { compareProviderCliVersions, parseAttentionInboxSettings, parseProviderCliUpdateSettings, serializeProviderCliUpdateSettings } from "@buildwarden/shared";
 import {
+  PROVIDER_CLI_DEFINITIONS,
   formatProviderCliCommand,
   parseLatestProviderCliVersion,
   parseProviderCliVersion,
@@ -216,5 +221,41 @@ describe("provider CLI update settings and versions", () => {
   it("enables the update inbox kind by default", () => {
     expect(parseAttentionInboxSettings("{}").kinds.update).toBe(true);
     expect(parseAttentionInboxSettings('{"kinds":{"update":false}}').kinds.update).toBe(false);
+  });
+});
+
+describe("provider CLI release channels", () => {
+  it("installs the configured npm dist-tag", () => {
+    const result = plan({
+      releaseChannel: "stable",
+      commandPath: "/home/dev/.nvm/versions/node/v22.1.0/bin/claude",
+      realPath: "/home/dev/.nvm/versions/node/v22.1.0/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+      probe: probe(["/home/dev/.nvm/versions/node/v22.1.0/bin/npm"]),
+    });
+    expect(result.command?.args).toContain("@anthropic-ai/claude-code@stable");
+  });
+
+  it("reads the release feed for the channel", () => {
+    expect(PROVIDER_CLI_DEFINITIONS["claude-code"].latestVersionUrl("stable")).toBe("https://registry.npmjs.org/@anthropic-ai/claude-code/stable");
+    expect(PROVIDER_CLI_DEFINITIONS["codex-cli"].latestVersionUrl("latest")).toBe("https://registry.npmjs.org/@openai/codex/latest");
+    expect(PROVIDER_CLI_DEFINITIONS["cursor-agent"].latestVersionUrl("stable")).toBe("https://cursor.com/install");
+  });
+
+  it("follows Claude Code's autoUpdatesChannel setting", () => {
+    const home = mkdtempSync(join(tmpdir(), "buildwarden-claude-channel-"));
+    try {
+      expect(readClaudeCodeReleaseChannel({}, home)).toBe("latest");
+      mkdirSync(join(home, ".claude"));
+      writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ autoUpdatesChannel: "stable" }));
+      expect(readClaudeCodeReleaseChannel({}, home)).toBe("stable");
+      writeFileSync(join(home, ".claude", "settings.json"), "{ not json");
+      expect(readClaudeCodeReleaseChannel({}, home)).toBe("latest");
+      const configDir = join(home, "custom-config");
+      mkdirSync(configDir);
+      writeFileSync(join(configDir, "settings.json"), JSON.stringify({ autoUpdatesChannel: "stable" }));
+      expect(readClaudeCodeReleaseChannel({ CLAUDE_CONFIG_DIR: configDir }, join(home, "elsewhere"))).toBe("stable");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

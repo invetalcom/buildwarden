@@ -1222,6 +1222,55 @@ describe("remote access authentication", () => {
     expect(projectRemoteStreamEvent(terminalEvent)).toBe(terminalEvent);
   });
 
+  it("delivers provider CLI update status to admin sessions", async () => {
+    const onServerError = vi.fn();
+    const { auth, info, publishEvent } = await startServer(undefined, undefined, undefined, undefined, { onServerError });
+    const { cookie } = await pair(info.baseUrl, auth, { scopes: ["state:read", "admin"] });
+    const socket = new WebSocket(
+      `${info.baseUrl.replace("http://", "ws://")}${REMOTE_ACCESS_WEBSOCKET_PATH}?protocolVersion=${String(REMOTE_ACCESS_PROTOCOL_VERSION)}`,
+      { headers: { Cookie: cookie } },
+    );
+    const nextMessage = () => new Promise<Record<string, unknown>>((resolve, reject) => {
+      socket.addEventListener("message", (event) => resolve(JSON.parse(String(event.data)) as Record<string, unknown>), { once: true });
+      socket.addEventListener("error", () => reject(new Error("WebSocket connection failed.")), { once: true });
+    });
+    const hello = nextMessage();
+    await new Promise<void>((resolve, reject) => {
+      socket.addEventListener("open", () => resolve(), { once: true });
+      socket.addEventListener("error", () => reject(new Error("WebSocket connection failed.")), { once: true });
+    });
+    await expect(hello).resolves.toMatchObject({ type: "hello" });
+    const subscribed = nextMessage();
+    socket.send(JSON.stringify({
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "subscribe",
+      requestId: "provider-updates",
+      events: ["provider-cli-updates"],
+    }));
+    await expect(subscribed).resolves.toMatchObject({ type: "subscribed", events: ["provider-cli-updates"] });
+
+    const delivered = nextMessage();
+    publishEvent({
+      event: "provider-cli-updates",
+      payload: {
+        enabled: true, notify: true, checking: false, lastCheckedAt: "2026-10-19T08:00:00Z",
+        providers: [{
+          providerType: "claude-code", label: "Claude Code", binaryPath: "/home/dev/.local/bin/claude",
+          installedVersion: "2.1.302", latestVersion: "2.1.303", releaseChannel: "latest", state: "update-available",
+          installMethod: "native", updateCommand: "/home/dev/.local/bin/claude update", canAutoUpdate: true,
+          manualReason: null, inUse: false, dismissed: false, announced: true, message: null, checkedAt: "2026-10-19T08:00:00Z",
+        }],
+      },
+    });
+    await expect(delivered).resolves.toMatchObject({
+      type: "event",
+      event: "provider-cli-updates",
+      payload: { enabled: true, providers: [{ providerType: "claude-code", state: "update-available" }] },
+    });
+    expect(onServerError).not.toHaveBeenCalled();
+    socket.close();
+  });
+
   it("filters browser events by run and validates scoped browser input", async () => {
     let releaseFirstInput!: () => void;
     const firstInput = new Promise<void>((resolve) => {

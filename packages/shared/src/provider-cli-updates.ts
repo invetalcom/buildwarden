@@ -20,7 +20,7 @@ export const isProviderCliUpdateProviderType = (value: unknown): value is Provid
  */
 export interface ProviderCliUpdateSettings {
   enabled: boolean;
-  /** Show a desktop notification once per newly published version. */
+  /** Notify (desktop notification and in-app toast) when a background check finds a new version. */
   notify: boolean;
 }
 
@@ -46,6 +46,12 @@ export const PROVIDER_CLI_INSTALL_METHOD_LABELS: Record<ProviderCliInstallMethod
   "self-updater": "CLI updater", mise: "mise", winget: "winget", unknown: "Unknown",
 };
 
+/**
+ * npm dist-tag the CLI updates from. Claude Code users can pick `stable`, which trails
+ * `latest`; `claude update` follows that choice, so checks must compare against it.
+ */
+export type ProviderCliReleaseChannel = "latest" | "stable";
+
 export type ProviderCliUpdateState =
   | "checking" | "current" | "update-available" | "updating" | "not-installed" | "unknown" | "error";
 
@@ -55,6 +61,7 @@ export interface ProviderCliUpdateStatus {
   binaryPath: string | null;
   installedVersion: string | null;
   latestVersion: string | null;
+  releaseChannel: ProviderCliReleaseChannel;
   state: ProviderCliUpdateState;
   installMethod: ProviderCliInstallMethod;
   /** Command BuildWarden runs, or that the user can run in a terminal when updates are manual. */
@@ -66,6 +73,8 @@ export interface ProviderCliUpdateStatus {
   inUse: boolean;
   /** The inbox notice for `latestVersion` was dismissed. */
   dismissed: boolean;
+  /** A background check announced `latestVersion` with notifications on; clients show a toast once. */
+  announced: boolean;
   message: string | null;
   checkedAt: string | null;
 }

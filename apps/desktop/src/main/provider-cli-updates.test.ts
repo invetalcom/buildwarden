@@ -9,17 +9,28 @@ import {
 
 const CLAUDE = "/home/dev/.local/bin/claude";
 
-const createHarness = (options: { enabled?: boolean; notify?: boolean; installed?: string; latest?: string } = {}) => {
+const createHarness = (options: {
+  state?: string;
+  enabled?: boolean;
+  notify?: boolean;
+  installed?: string;
+  latest?: string;
+  stable?: string;
+  releaseChannel?: "latest" | "stable";
+} = {}) => {
   let settings = { enabled: options.enabled ?? false, notify: options.notify ?? true };
-  let state: string | undefined;
+  let state: string | undefined = options.state;
   let installed = options.installed ?? "2.1.302";
   let latest = options.latest ?? "2.1.303";
+  const stable = options.stable ?? "2.1.292";
+  const channel = options.releaseChannel ?? "latest";
   let inUse = false;
   const fetchText = vi.fn(async (url: string) =>
-    url.includes("registry.npmjs.org") ? JSON.stringify({ version: latest }) : "");
+    url.includes("registry.npmjs.org") ? JSON.stringify({ version: url.endsWith("/stable") ? stable : latest }) : "");
   const runProcess = vi.fn(async (command: { file: string; args: string[] }): Promise<ProviderCliProcessResult> => {
     if (command.args[0] === "--version") return { code: 0, output: `${installed} (Claude Code)`, timedOut: false };
-    installed = latest;
+    // Like `claude update`, the updater installs the newest build on the configured channel.
+    installed = channel === "stable" ? stable : latest;
     return { code: 0, output: "Updated", timedOut: false };
   });
   const onUpdateAvailable = vi.fn<(status: ProviderCliUpdateStatus) => void>();
@@ -29,7 +40,7 @@ const createHarness = (options: { enabled?: boolean; notify?: boolean; installed
     readSettings: () => settings,
     readState: () => state,
     writeState: (value) => { state = value; },
-    listTargets: () => [{ providerType: "claude-code", binaryPath: CLAUDE }],
+    listTargets: () => [{ providerType: "claude-code", binaryPath: CLAUDE, ...(options.releaseChannel ? { releaseChannel: options.releaseChannel } : {}) }],
     isProviderInUse: () => inUse,
     fetchText,
     resolveUpdateEnv: async () => ({ PATH: "/usr/bin" }),
@@ -93,21 +104,70 @@ describe("provider CLI update service", () => {
 
   it("respects the notification toggle without losing the inbox notice", async () => {
     const harness = createHarness({ enabled: true, notify: false });
+    await harness.service.check("background");
+    expect(harness.onUpdateAvailable).not.toHaveBeenCalled();
+    expect(harness.service.getSnapshot().providers[0].announced).toBe(false);
+    expect(harness.service.attentionItems()).toHaveLength(1);
+  });
+
+  it("announces a version found while notifications were off once they are turned on", async () => {
+    const harness = createHarness({ enabled: true, notify: false });
+    await harness.service.check("background");
+    harness.setSettings({ notify: true });
+    await harness.service.check("background");
+    expect(harness.onUpdateAvailable).toHaveBeenCalledTimes(1);
+    expect(harness.service.getSnapshot().providers[0].announced).toBe(true);
+  });
+
+  it("does not notify for manual checks, but the next background check still announces the version", async () => {
+    const harness = createHarness({ enabled: true });
     await harness.service.check();
     expect(harness.onUpdateAvailable).not.toHaveBeenCalled();
+    expect(harness.service.getSnapshot().providers[0].announced).toBe(false);
     expect(harness.service.attentionItems()).toHaveLength(1);
+    await harness.service.check("background");
+    expect(harness.onUpdateAvailable).toHaveBeenCalledTimes(1);
+    expect(harness.service.getSnapshot().providers[0].announced).toBe(true);
+    await harness.service.check("background");
+    expect(harness.onUpdateAvailable).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores the notified list stored by older builds", async () => {
+    const harness = createHarness({ enabled: true, state: JSON.stringify({ dismissed: [], notified: ["provider-update:claude-code:2.1.303"] }) });
+    await harness.service.check("background");
+    expect(harness.onUpdateAvailable).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a manual request that joins a running background check as manual", async () => {
+    const harness = createHarness({ enabled: true });
+    const background = harness.service.check("background");
+    const manual = harness.service.check();
+    await Promise.all([background, manual]);
+    expect(harness.onUpdateAvailable).not.toHaveBeenCalled();
+  });
+
+  it("does not notify for the check that runs right after turning the feature on", async () => {
+    const harness = createHarness();
+    harness.service.start();
+    harness.setSettings({ enabled: true });
+    harness.service.applySettings();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(harness.service.getSnapshot().providers[0].state).toBe("update-available");
+    expect(harness.onUpdateAvailable).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1_000);
+    expect(harness.onUpdateAvailable).toHaveBeenCalledTimes(1);
   });
 
   it("hides a dismissed version but shows the next release", async () => {
     const harness = createHarness({ enabled: true });
-    await harness.service.check();
+    await harness.service.check("background");
     expect(harness.service.dismiss(["provider-update:claude-code:2.1.303", "run:abc"])).toEqual(["run:abc"]);
     expect(harness.service.attentionItems()).toEqual([]);
     expect(harness.service.getSnapshot().providers[0].dismissed).toBe(true);
-    await harness.service.check();
+    await harness.service.check("background");
     expect(harness.service.attentionItems()).toEqual([]);
     harness.setLatest("2.1.304");
-    await harness.service.check();
+    await harness.service.check("background");
     expect(harness.service.attentionItems().map((item) => item.id)).toEqual(["provider-update:claude-code:2.1.304"]);
     expect(harness.onUpdateAvailable).toHaveBeenCalledTimes(2);
   });
@@ -170,6 +230,31 @@ describe("provider CLI update service", () => {
     finish({ code: 0, output: "Updated", timedOut: false });
     await pending;
     expect(harness.service.isUpdating("claude-code")).toBe(false);
+  });
+
+  it("compares stable-channel installs against the stable release and updates to it", async () => {
+    const harness = createHarness({ enabled: true, releaseChannel: "stable", installed: "2.1.290" });
+    await harness.service.check();
+    expect(harness.fetchText).toHaveBeenCalledWith("https://registry.npmjs.org/@anthropic-ai/claude-code/stable", expect.any(AbortSignal));
+    expect(harness.service.getSnapshot().providers[0]).toMatchObject({ state: "update-available", latestVersion: "2.1.292", releaseChannel: "stable" });
+    const snapshot = await harness.service.update("claude-code");
+    expect(snapshot.providers[0]).toMatchObject({ state: "current", installedVersion: "2.1.292", message: "Updated to v2.1.292." });
+  });
+
+  it("treats a stable-channel install as current even when latest is newer", async () => {
+    const harness = createHarness({ enabled: true, releaseChannel: "stable", installed: "2.1.292" });
+    await harness.service.check();
+    expect(harness.service.getSnapshot().providers[0]).toMatchObject({ state: "current", latestVersion: "2.1.292" });
+    expect(harness.service.attentionItems()).toEqual([]);
+  });
+
+  it("puts the CLI folder on PATH for the version check so npm-style CLIs find their Node", async () => {
+    const harness = createHarness({ enabled: true });
+    await harness.service.check();
+    expect(harness.runProcess).toHaveBeenCalledWith(
+      { file: CLAUDE, args: ["--version"] },
+      expect.objectContaining({ env: expect.objectContaining({ PATH: "/home/dev/.local/bin:/usr/bin" }) }),
+    );
   });
 
   it("runs the owning updater, verifies the new version, and clears the notice", async () => {

@@ -73,6 +73,11 @@ const ProviderRow = ({
           {status.installMethod !== "unknown" ? (
             <span className="text-[11px] text-[var(--ec-faint)]">{PROVIDER_CLI_INSTALL_METHOD_LABELS[status.installMethod]}</span>
           ) : null}
+          {status.releaseChannel !== "latest" ? (
+            <span className="text-[11px] text-[var(--ec-faint)]" title="The version is compared against this release channel.">
+              {status.releaseChannel} channel
+            </span>
+          ) : null}
         </div>
         {note ? <p className="mt-0.5 text-[11px] leading-4 text-[var(--ec-muted)]">{note}</p> : null}
         {status.binaryPath ? <p className="mt-0.5 truncate font-mono text-[10px] text-[var(--ec-faint)]" title={status.binaryPath}>{status.binaryPath}</p> : null}
@@ -195,7 +200,10 @@ export const ProviderCliUpdatesSettings = () => {
       {enabled ? (
         <div className="mt-3 border-t border-[var(--ec-border)] pt-2">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <label className="flex items-center gap-2 text-xs text-[var(--ec-text)]">
+            <label
+              className="flex items-center gap-2 text-xs text-[var(--ec-text)]"
+              title="Shows a desktop notification and an in-app toast. &quot;Check now&quot; shows its result here instead."
+            >
               <input
                 className="size-3.5 accent-[var(--ec-accent)]"
                 type="checkbox"
@@ -203,7 +211,7 @@ export const ProviderCliUpdatesSettings = () => {
                 disabled={working !== null}
                 onChange={(event) => saveSettings({ enabled, notify: event.target.checked })}
               />
-              Notify about new versions
+              Notify when a background check finds an update
             </label>
             <span className="text-[11px] text-[var(--ec-muted)]">
               {snapshot?.lastCheckedAt ? `Last checked ${formatTimestamp(snapshot.lastCheckedAt)}` : "Not checked yet"}

@@ -15,9 +15,9 @@ afterEach(async () => { await act(async () => root?.unmount()); container?.remov
 
 const status: ProviderCliUpdateStatus = {
   providerType: "claude-code", label: "Claude Code", binaryPath: "/home/dev/.local/bin/claude",
-  installedVersion: "2.1.302", latestVersion: "2.1.303", state: "update-available", installMethod: "native",
+  installedVersion: "2.1.302", latestVersion: "2.1.303", releaseChannel: "latest", state: "update-available", installMethod: "native",
   updateCommand: "/home/dev/.local/bin/claude update", canAutoUpdate: true, manualReason: null, inUse: false,
-  dismissed: false, message: null, checkedAt: "2026-10-19T08:00:00Z",
+  dismissed: false, announced: true, message: null, checkedAt: "2026-10-19T08:00:00Z",
 };
 
 const snapshotWith = (...providers: ProviderCliUpdateStatus[]): ProviderCliUpdateSnapshot =>
@@ -121,11 +121,20 @@ describe("provider CLI update toasts", () => {
     expect(container.textContent).not.toContain("CLI update available");
   });
 
-  it("does not duplicate the desktop OS notification and skips sessions without settings access", async () => {
-    const desktop = await render(snapshotWith(status), { platform: "electron" });
-    expect(desktop.getProviderCliUpdates).not.toHaveBeenCalled();
-    expect(desktop.subscribe).not.toHaveBeenCalled();
-    await unmount();
+  it("shows the in-app toast in the desktop app too", async () => {
+    await render(snapshotWith(status), { platform: "electron" });
+    expect(container.textContent).toContain("CLI update available");
+  });
+
+  it("only toasts versions a background check announced", async () => {
+    const { emit } = await render(snapshotWith({ ...status, announced: false }));
+    expect(container.textContent).not.toContain("CLI update available");
+    expect(window.localStorage.getItem(PROVIDER_CLI_UPDATE_TOASTS_STORAGE_KEY)).toBeNull();
+    await emit(snapshotWith(status));
+    expect(container.textContent).toContain("CLI update available");
+  });
+
+  it("skips sessions without settings access", async () => {
     const readOnly = await render(snapshotWith(status), { settings: false });
     expect(readOnly.getProviderCliUpdates).not.toHaveBeenCalled();
     expect(container.textContent).not.toContain("CLI update available");

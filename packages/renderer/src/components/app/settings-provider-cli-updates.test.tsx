@@ -20,9 +20,9 @@ afterEach(async () => { await act(async () => root?.unmount()); container?.remov
 
 const claude: ProviderCliUpdateStatus = {
   providerType: "claude-code", label: "Claude Code", binaryPath: "/home/dev/.local/bin/claude",
-  installedVersion: "2.1.302", latestVersion: "2.1.303", state: "update-available", installMethod: "native",
+  installedVersion: "2.1.302", latestVersion: "2.1.303", releaseChannel: "latest", state: "update-available", installMethod: "native",
   updateCommand: "/home/dev/.local/bin/claude update", canAutoUpdate: true, manualReason: null, inUse: false,
-  dismissed: false, message: null, checkedAt: "2026-10-19T08:00:00Z",
+  dismissed: false, announced: true, message: null, checkedAt: "2026-10-19T08:00:00Z",
 };
 
 const render = async (
@@ -70,6 +70,14 @@ describe("provider CLI update settings", () => {
     await act(async () => button("Update")!.click());
     expect(runProviderCliUpdate).toHaveBeenCalledWith("claude-code");
     expect(container.textContent).toContain("Up to date");
+  });
+
+  it("labels non-default release channels", async () => {
+    await render({ enabled: true, notify: true, checking: false, lastCheckedAt: null, providers: [
+      { ...claude, releaseChannel: "stable", latestVersion: "2.1.292", installedVersion: "2.1.290" },
+    ] });
+    expect(container.textContent).toContain("stable channel");
+    expect(container.textContent).toContain("v2.1.290 → v2.1.292");
   });
 
   it("explains manual-only installs and blocks updates while the CLI is in use", async () => {

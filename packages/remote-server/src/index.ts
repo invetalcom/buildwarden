@@ -956,6 +956,13 @@ const isOrchestrationEventPayload = (value: unknown): boolean =>
   Number.isSafeInteger(value.sequence) && Number(value.sequence) >= 0 &&
   (value.deletedRunIds === undefined || (Array.isArray(value.deletedRunIds) && value.deletedRunIds.every((runId) => typeof runId === "string")));
 
+const isProviderCliUpdatesEventPayload = (value: unknown): boolean =>
+  isPlainObject(value) && typeof value.enabled === "boolean" && typeof value.notify === "boolean" &&
+  typeof value.checking === "boolean" && (value.lastCheckedAt === null || typeof value.lastCheckedAt === "string") &&
+  Array.isArray(value.providers) && value.providers.every((provider) =>
+    isPlainObject(provider) && typeof provider.providerType === "string" && typeof provider.label === "string" &&
+    typeof provider.state === "string" && typeof provider.canAutoUpdate === "boolean" && typeof provider.inUse === "boolean");
+
 const isRemoteEventPayload = (event: RemoteStreamEventType, payload: unknown): boolean => {
   if (event === "run-organization") return isPlainObject(payload) && typeof payload.changedAt === "string";
   if (event === "run") return isRunEventPayload(payload);
@@ -979,6 +986,7 @@ const isRemoteEventPayload = (event: RemoteStreamEventType, payload: unknown): b
   }
   if (event === "forge") return isForgeEventPayload(payload);
   if (event === "orchestration") return isOrchestrationEventPayload(payload);
+  if (event === "provider-cli-updates") return isProviderCliUpdatesEventPayload(payload);
   return isPlainObject(payload) && typeof payload.projectId === "string" && typeof payload.taskId === "string" &&
     (payload.status === "open" || payload.status === "in_progress" || payload.status === "in_review" || payload.status === "done");
 };

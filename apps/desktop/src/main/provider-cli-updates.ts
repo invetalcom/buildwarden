@@ -8,6 +8,7 @@ import {
   isProviderCliUpdateAttentionId,
   providerCliUpdateAttentionId,
   type AttentionItem,
+  type ProviderCliReleaseChannel,
   type ProviderCliUpdateProviderType,
   type ProviderCliUpdateSettings,
   type ProviderCliUpdateSnapshot,
@@ -40,6 +41,8 @@ export interface ProviderCliTarget {
   binaryPath: string;
   /** Extra environment the CLI runs with (for example `CODEX_HOME`). */
   env?: NodeJS.ProcessEnv;
+  /** npm dist-tag to compare against and install; defaults to `latest`. */
+  releaseChannel?: ProviderCliReleaseChannel;
 }
 
 export interface ProviderCliProcessResult {
@@ -71,9 +74,13 @@ export interface ProviderCliUpdateServiceDeps {
   warn(message: string, metadata?: Record<string, unknown>): void;
 }
 
+/** Background checks may notify; manual checks show their result where the user is already looking. */
+export type ProviderCliCheckSource = "background" | "manual";
+
 interface PersistedState {
   dismissed: string[];
-  notified: string[];
+  /** Versions a background check announced with notifications on. */
+  announced: string[];
 }
 
 interface ResolvedTarget {
@@ -106,6 +113,7 @@ export class ProviderCliUpdateService {
   private started = false;
   private wasEnabled = false;
   private lastUsage = "";
+  private checkSource: ProviderCliCheckSource = "manual";
 
   constructor(private readonly deps: ProviderCliUpdateServiceDeps) {}
 
@@ -113,7 +121,7 @@ export class ProviderCliUpdateService {
   start(): void {
     this.started = true;
     this.wasEnabled = this.settings().enabled;
-    this.syncSchedule(FIRST_CHECK_DELAY_MS);
+    this.syncSchedule(FIRST_CHECK_DELAY_MS, false, "background");
   }
 
   /** Re-reads the toggle after the setting changed. */
@@ -127,7 +135,10 @@ export class ProviderCliUpdateService {
       this.plans.clear();
       this.lastCheckedAt = null;
     }
-    if (this.started) this.syncSchedule(turnedOn ? ENABLE_CHECK_DELAY_MS : FIRST_CHECK_DELAY_MS, turnedOn);
+    // The check right after enabling shows its result in the open settings card, so it counts as manual.
+    if (this.started) {
+      this.syncSchedule(turnedOn ? ENABLE_CHECK_DELAY_MS : FIRST_CHECK_DELAY_MS, turnedOn, turnedOn ? "manual" : "background");
+    }
     this.emit();
   }
 
@@ -142,7 +153,9 @@ export class ProviderCliUpdateService {
     if (!settings.enabled) {
       return { enabled: false, notify: settings.notify, checking: false, lastCheckedAt: null, providers: [] };
     }
-    const dismissed = new Set(this.readState().dismissed);
+    const state = this.readState();
+    const dismissed = new Set(state.dismissed);
+    const announced = new Set(state.announced);
     return {
       enabled: true,
       notify: settings.notify,
@@ -152,6 +165,7 @@ export class ProviderCliUpdateService {
         ...status,
         inUse: this.deps.isProviderInUse(status.providerType),
         dismissed: status.latestVersion !== null && dismissed.has(providerCliUpdateAttentionId(status.providerType, status.latestVersion)),
+        announced: status.latestVersion !== null && announced.has(providerCliUpdateAttentionId(status.providerType, status.latestVersion)),
       })),
     };
   }
@@ -169,15 +183,21 @@ export class ProviderCliUpdateService {
     this.emit();
   }
 
-  check(): Promise<ProviderCliUpdateSnapshot> {
+  check(source: ProviderCliCheckSource = "manual"): Promise<ProviderCliUpdateSnapshot> {
     if (!this.settings().enabled) {
       return Promise.reject(new Error("Provider CLI update checks are turned off in Settings › Network."));
     }
-    this.checking ??= this.runCheck().finally(() => {
-      this.checking = null;
-      this.checkAbort = null;
-      this.emit();
-    });
+    if (this.checking) {
+      // A manual request joining a background check means the user is watching the result.
+      if (source === "manual") this.checkSource = "manual";
+    } else {
+      this.checkSource = source;
+      this.checking = this.runCheck().finally(() => {
+        this.checking = null;
+        this.checkAbort = null;
+        this.emit();
+      });
+    }
     this.emit();
     return this.checking;
   }
@@ -314,7 +334,7 @@ export class ProviderCliUpdateService {
 
     if (abort.signal.aborted || !this.settings().enabled) return this.getSnapshot();
     this.lastCheckedAt = this.deps.now().toISOString();
-    this.notifyNewVersions();
+    this.announceNewVersions(this.checkSource);
     return this.getSnapshot();
   }
 
@@ -330,13 +350,14 @@ export class ProviderCliUpdateService {
     const withPlan: ProviderCliUpdateStatus = {
       ...base,
       binaryPath: resolved.commandPath,
+      releaseChannel: target.releaseChannel ?? "latest",
       installMethod: plan.method,
       updateCommand: plan.displayCommand,
       canAutoUpdate: plan.command !== null,
       manualReason: plan.manualReason,
       checkedAt,
     };
-    const [installed, latest] = await Promise.allSettled([this.probeVersion(resolved), this.fetchLatestVersion(target.providerType, signal)]);
+    const [installed, latest] = await Promise.allSettled([this.probeVersion(resolved), this.fetchLatestVersion(target, signal)]);
     const installedVersion = installed.status === "fulfilled" ? installed.value : null;
     const latestVersion = latest.status === "fulfilled" ? latest.value : null;
     if (installed.status === "rejected" || latest.status === "rejected") {
@@ -369,6 +390,7 @@ export class ProviderCliUpdateService {
     }
     const plan = resolveProviderCliInstallPlan({
       providerType: target.providerType,
+      releaseChannel: target.releaseChannel,
       commandPath,
       realPath,
       platform: this.deps.platform,
@@ -394,18 +416,21 @@ export class ProviderCliUpdateService {
 
   private async probeVersion(resolved: ResolvedTarget): Promise<string | null> {
     if (!resolved.commandPath) return null;
-    const env = { ...this.deps.env, ...resolved.target.env };
+    // Desktop launches on macOS and Linux get a minimal PATH; npm-style CLIs (`#!/usr/bin/env node`)
+    // need the Node that sits beside them, exactly as the updater does.
+    const env = withExecutableDirOnPath({ ...this.deps.env, ...resolved.target.env }, resolved.commandPath, this.deps.platform);
     const result = await this.deps.runProcess({ file: resolved.commandPath, args: ["--version"] }, { env, timeoutMs: VERSION_PROBE_TIMEOUT_MS });
     if (result.timedOut) throw new Error("The version check timed out.");
     if (result.code !== 0) throw new Error(lastOutputLine(result.output) || `--version exited with code ${String(result.code)}.`);
     return parseProviderCliVersion(resolved.target.providerType, result.output);
   }
 
-  private async fetchLatestVersion(providerType: ProviderCliUpdateProviderType, signal: AbortSignal): Promise<string | null> {
+  private async fetchLatestVersion(target: ProviderCliTarget, signal: AbortSignal): Promise<string | null> {
+    const { providerType } = target;
     const timeout = AbortSignal.timeout(LATEST_VERSION_TIMEOUT_MS);
     const combined = AbortSignal.any([signal, timeout]);
     try {
-      const body = await this.deps.fetchText(PROVIDER_CLI_DEFINITIONS[providerType].latestVersionUrl, combined);
+      const body = await this.deps.fetchText(PROVIDER_CLI_DEFINITIONS[providerType].latestVersionUrl(target.releaseChannel ?? "latest"), combined);
       return parseLatestProviderCliVersion(providerType, body);
     } catch (error) {
       if (timeout.aborted) throw new Error("The release feed did not respond in time.", { cause: error });
@@ -413,28 +438,31 @@ export class ProviderCliUpdateService {
     }
   }
 
-  private notifyNewVersions(): void {
-    const settings = this.settings();
+  /**
+   * Each version is announced once, by the first background check that finds it while
+   * notifications are on. Manual checks never announce or mark anything, so a version
+   * first seen through "Check now" is still announced by the next background check.
+   */
+  private announceNewVersions(source: ProviderCliCheckSource): void {
+    if (source !== "background" || !this.settings().notify) return;
     const state = this.readState();
     const dismissed = new Set(state.dismissed);
-    let notified = state.notified;
+    let announced = state.announced;
     for (const status of this.statuses.values()) {
       if (status.state !== "update-available" || !status.latestVersion) continue;
       const id = providerCliUpdateAttentionId(status.providerType, status.latestVersion);
-      if (notified.includes(id) || dismissed.has(id)) continue;
-      notified = remember(notified, id);
-      if (settings.notify) {
-        try {
-          this.deps.onUpdateAvailable(status);
-        } catch (error) {
-          this.deps.warn("Could not show the provider CLI update notification.", { providerType: status.providerType, error });
-        }
+      if (announced.includes(id) || dismissed.has(id)) continue;
+      announced = remember(announced, id);
+      try {
+        this.deps.onUpdateAvailable(status);
+      } catch (error) {
+        this.deps.warn("Could not show the provider CLI update notification.", { providerType: status.providerType, error });
       }
     }
-    if (notified !== state.notified) this.writeState({ ...state, notified });
+    if (announced !== state.announced) this.writeState({ ...state, announced });
   }
 
-  private syncSchedule(firstDelayMs: number, restartFirstCheck = false): void {
+  private syncSchedule(firstDelayMs: number, restartFirstCheck: boolean, firstCheckSource: ProviderCliCheckSource): void {
     if (!this.settings().enabled) {
       this.clearTimers();
       return;
@@ -446,16 +474,16 @@ export class ProviderCliUpdateService {
     if (!this.firstCheckTimer && (restartFirstCheck || !this.intervalTimer)) {
       this.firstCheckTimer = setTimeout(() => {
         this.firstCheckTimer = null;
-        void this.backgroundCheck();
+        void this.scheduledCheck(firstCheckSource);
       }, firstDelayMs);
     }
-    this.intervalTimer ??= setInterval(() => void this.backgroundCheck(), CHECK_INTERVAL_MS);
+    this.intervalTimer ??= setInterval(() => void this.scheduledCheck("background"), CHECK_INTERVAL_MS);
   }
 
-  private async backgroundCheck(): Promise<void> {
+  private async scheduledCheck(source: ProviderCliCheckSource): Promise<void> {
     if (!this.settings().enabled) return;
     try {
-      await this.check();
+      await this.check(source);
     } catch (error) {
       this.deps.warn("Background provider CLI update check failed.", { error });
     }
@@ -475,6 +503,7 @@ export class ProviderCliUpdateService {
       binaryPath: null,
       installedVersion: null,
       latestVersion: null,
+      releaseChannel: "latest",
       state,
       installMethod: "unknown",
       updateCommand: null,
@@ -482,6 +511,7 @@ export class ProviderCliUpdateService {
       manualReason: null,
       inUse: false,
       dismissed: false,
+      announced: false,
       message: null,
       checkedAt: null,
     };
@@ -508,9 +538,10 @@ export class ProviderCliUpdateService {
     try {
       const parsed = JSON.parse(this.deps.readState() ?? "{}") as Partial<PersistedState>;
       const strings = (value: unknown) => (Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : []);
-      return { dismissed: strings(parsed.dismissed), notified: strings(parsed.notified) };
+      // Older builds stored a `notified` list; it is ignored so pending versions still get announced.
+      return { dismissed: strings(parsed.dismissed), announced: strings(parsed.announced) };
     } catch {
-      return { dismissed: [], notified: [] };
+      return { dismissed: [], announced: [] };
     }
   }
 

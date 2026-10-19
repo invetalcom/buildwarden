@@ -32,12 +32,13 @@ const writeShownKeys = (keys: string[]): void => {
 };
 
 const isAnnounceable = (snapshot: ProviderCliUpdateSnapshot, status: ProviderCliUpdateStatus): boolean =>
-  snapshot.enabled && snapshot.notify && !status.dismissed && (status.state === "update-available" || status.state === "updating");
+  snapshot.enabled && snapshot.notify && status.announced && !status.dismissed &&
+  (status.state === "update-available" || status.state === "updating");
 
 /**
- * In-app "update available" toasts for the web client, driven by the host's live update
- * status. Each version is announced once per browser, including releases found while the
- * page was closed. The desktop app shows an OS notification instead, so it gets no toast.
+ * In-app "update available" toasts for versions a background check announced, driven by the
+ * host's live update status. Each version shows once per client (desktop app or browser),
+ * including releases announced while that client was closed. Manual checks never toast.
  */
 export const useProviderCliUpdateToasts = (
   client: BuildWardenClient | null | undefined,
@@ -46,7 +47,7 @@ export const useProviderCliUpdateToasts = (
   const [snapshot, setSnapshot] = useState<ProviderCliUpdateSnapshot | null>(null);
   const [visibleKeys, setVisibleKeys] = useState<string[]>([]);
   const [updatingType, setUpdatingType] = useState<ProviderCliUpdateProviderType | null>(null);
-  const active = Boolean(client && client.capabilities.platform === "web" && client.capabilities.settings);
+  const active = Boolean(client && client.capabilities.settings);
 
   useEffect(() => {
     if (!client || !active) return;
