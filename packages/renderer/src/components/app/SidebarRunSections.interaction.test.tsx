@@ -112,6 +112,42 @@ describe("sidebar run sections", () => {
     expect(container.querySelectorAll("[data-test-run]")).toHaveLength(3);
   });
 
+  it.each([true, false])("changes view preferences only when a pending drop succeeds (success: %s)", async (succeeds) => {
+    const key = "buildwarden:sidebar-run-sections";
+    const stored = JSON.stringify({ view: "failed", tag: "bug", projectId: "p1", collapsed: ["later"] });
+    localStorage.setItem(key, stored);
+    let resolve!: (value: RunOrganizationSnapshot) => void;
+    let reject!: (reason: Error) => void;
+    client.updateRunOrganization.mockImplementationOnce(() => new Promise<RunOrganizationSnapshot>((done, fail) => {
+      resolve = done; reject = fail;
+    }));
+    await mount();
+    const save = vi.spyOn(localStorage, "setItem");
+    const expectOriginalView = () => {
+      expect(localStorage.getItem(key)).toBe(stored);
+      expect(save).not.toHaveBeenCalled();
+      expect(button("Filter runs").title).toBe("Filter runs: Failed");
+      expect(button("Filter runs by tag").title).toContain("#bug");
+      expect(button("Filter runs by project").textContent).toBe("Project");
+      expect(section("later").querySelector("button")!.getAttribute("aria-expanded")).toBe("false");
+      expect(section("work").querySelector(`[data-test-run="${failed.id}"]`)).not.toBeNull();
+    };
+    await drop("later", failed.id);
+    expectOriginalView();
+    await act(async () => {
+      if (succeeds) resolve({ ...state, runs: state.runs.map((entry) => ({ ...entry, sectionId: "later" })) });
+      else reject(new Error("Move failed"));
+    });
+    if (succeeds) {
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ view: "all", tag: "", projectId: "p1", collapsed: [] });
+      expect(section("later").querySelector(`[data-test-run="${failed.id}"]`)).not.toBeNull();
+    } else {
+      expectOriginalView();
+      expect(container.querySelector('[role="alert"]')?.textContent).toBe("Move failed");
+    }
+  });
+
   it("restores focus after cancelling or escaping a dialog opened from the add button", async () => {
     await mount();
     const trigger = button("New run section");

@@ -104,12 +104,13 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
     });
   }, [highlightedRunId, highlightedSectionId, highlightedProjectId]);
 
-  const mutate = async (operation: () => Promise<RunOrganizationSnapshot>, message: string) => {
+  const mutate = async (operation: () => Promise<RunOrganizationSnapshot>, message: string, onSuccess?: () => void) => {
     if (!canOrganize || busyRef.current) return;
     busyRef.current = true; setBusy(true); setError("");
     try {
       const next = await operation();
       onOrganizationChange?.(next);
+      onSuccess?.();
       setDialog(null); onCloseOrganizer(); setAnnouncement(message);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not update run organization."); }
     finally { busyRef.current = false; setBusy(false); }
@@ -126,10 +127,11 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
     }
     const target = sectionId === UNCATEGORIZED_RUN_SECTION_ID ? null : sectionId;
     if ((organization.runs.find((run) => run.runId === payload.runId)?.sectionId ?? null) === target) return;
-    // Clear local filters so a successful move cannot appear to lose the run.
-    updatePreferences({ collapsed: preferences.collapsed.filter((id) => id !== sectionId),
-      view: "all", tag: "", projectId: projectId && projectId !== payload.projectId ? "" : projectId });
-    void mutate(() => client.updateRunOrganization(payload.runId, { sectionId: target }), `Run moved to ${name}.`);
+    void mutate(() => client.updateRunOrganization(payload.runId, { sectionId: target }), `Run moved to ${name}.`, () => {
+      // Reveal the destination only after the move is saved; failed moves keep the user's view.
+      updatePreferences({ collapsed: preferences.collapsed.filter((id) => id !== sectionId),
+        view: "all", tag: "", projectId: projectId && projectId !== payload.projectId ? "" : projectId });
+    });
   };
   const reorder = (id: string, offset: number) => {
     const ids = organization.sections.map((section) => section.id);
