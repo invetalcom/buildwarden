@@ -210,7 +210,7 @@ export const SidebarRunSections = ({
           aria-label="Filter sidebar runs by project"
           title="Show runs from one project or all projects"
         >
-          <span className="truncate">{scopeProject?.name ?? "all projects"}</span>
+          <span className="truncate">{scopeProject?.name ?? "All projects"}</span>
           <ChevronDown className={cn("size-3 shrink-0 transition", headerMenu === "scope" && "rotate-180")} />
         </button>
         <button
