@@ -1,4 +1,10 @@
+/** @vitest-environment happy-dom */
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderWithBuildWardenClient as renderToStaticMarkup } from "../../lib/buildwarden-client-test-utils";
+import { BuildWardenClientProvider } from "../../lib/buildwarden-client";
+import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-core";
+import type { DesktopApi } from "@buildwarden/shared";
 import type { KeyboardShortcutId, OrchestrationDetail, RunDetail, RunRecord, RunWorkspacePanelId } from "@buildwarden/shared";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { RunDetailPage, type RunDetailPageProps } from "./RunDetailPage";
@@ -6,14 +12,7 @@ import { RunNotesPanel } from "./RunNoteCard";
 import { OrchestrationAgentsPanel } from "./OrchestrationAgentsPanel";
 
 beforeAll(() => {
-  Object.defineProperty(globalThis, "window", {
-    configurable: true,
-    value: {
-      buildwarden: new Proxy({}, { get: () => vi.fn(async () => null) }),
-      setTimeout,
-      clearTimeout,
-    },
-  });
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 });
 
 const run = (overrides: Partial<RunRecord> = {}): RunRecord => ({
@@ -195,6 +194,40 @@ describe("OrchestrationAgentsPanel", () => {
 });
 
 describe("RunDetailPage workflows", () => {
+  it("replaces the previous transcript when switching directly between cached runs", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const electronClient = createElectronBuildWardenClient({
+      getRunVerification: vi.fn(async () => null),
+      onRunEvent: () => () => undefined,
+      onRunForgeRequestChanged: () => () => undefined,
+    } as unknown as DesktopApi);
+    const client = {
+      ...electronClient,
+      capabilities: { ...electronClient.capabilities, runMutations: false },
+    };
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      for (const id of ["run-1", "run-2", "run-3", "run-1", "run-2"]) {
+        const nextDetail = detail({ run: run({ id }), steps: [], notes: [] });
+        await act(async () => root.render(
+          <BuildWardenClientProvider client={client}>
+            <RunDetailPage {...baseProps(nextDetail)} />
+          </BuildWardenClientProvider>,
+        ));
+        expect(container.querySelectorAll(".agent-worklog")).toHaveLength(1);
+      }
+      expect(consoleError.mock.calls.filter((args) => args.some((arg) =>
+        typeof arg === "string" && arg.includes("same key"),
+      ))).toEqual([]);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      consoleError.mockRestore();
+    }
+  });
+
   it("renders open, closed, and editing run-note workflows", () => {
     const openNote = detail().notes[0]!;
     const closedNote = { ...openNote, id: "note-2", status: "closed" as const, closedAt: "2026-01-01T00:03:00.000Z" };
