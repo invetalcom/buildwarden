@@ -148,6 +148,43 @@ describe("sidebar run sections", () => {
     }
   });
 
+  it("preserves filters and unrelated section changes made while a drop is pending", async () => {
+    const key = "buildwarden:sidebar-run-sections";
+    localStorage.setItem(key, JSON.stringify({ view: "failed", tag: "bug", projectId: "p1", collapsed: ["later"] }));
+    const other = run("other-run", "completed", { projectId: "p2" });
+    const entries = [...projects, { ...projects[0]!, project: { ...projects[0]!.project, id: "p2", name: "Other project" }, runs: [other] }];
+    state = { ...state, runs: [...state.runs, { runId: other.id, sectionId: null, tags: ["feature"] }] };
+    let resolve!: (value: RunOrganizationSnapshot) => void;
+    client.updateRunOrganization.mockImplementationOnce(() => new Promise<RunOrganizationSnapshot>((done) => { resolve = done; }));
+    await mount(null, entries);
+    await drop("later", failed.id);
+    await click(button("Filter runs by project")); await click(button("Other project"));
+    await click(button("Filter runs by tag")); await click(button("#feature"));
+    await click(button("Filter runs")); await click(button("Done1"));
+    await click(section("work").querySelector("button")!);
+    const save = vi.spyOn(localStorage, "setItem");
+    await act(async () => resolve({ ...state, runs: state.runs.map((entry) => entry.runId === failed.id ? { ...entry, sectionId: "later" } : entry) }));
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ view: "done", tag: "feature", projectId: "p2", collapsed: ["work"] });
+    expect(button("Filter runs by project").textContent).toBe("Other project");
+    expect(button("Filter runs by tag").title).toContain("#feature");
+    expect(button("Filter runs").title).toBe("Filter runs: Done");
+    expect(section("work").querySelector("button")!.getAttribute("aria-expanded")).toBe("false");
+    expect(section("later").querySelector("button")!.getAttribute("aria-expanded")).toBe("true");
+    expect(container.querySelectorAll("[data-test-run]")).toHaveLength(1);
+  });
+
+  it("keeps a destination collapsed if the user collapses it during a pending drop", async () => {
+    let resolve!: (value: RunOrganizationSnapshot) => void;
+    client.updateRunOrganization.mockImplementationOnce(() => new Promise<RunOrganizationSnapshot>((done) => { resolve = done; }));
+    await mount();
+    await drop("later", failed.id);
+    await click(section("later").querySelector("button")!);
+    await act(async () => resolve({ ...state, runs: state.runs.map((entry) => ({ ...entry, sectionId: "later" })) }));
+    expect(section("later").querySelector("button")!.getAttribute("aria-expanded")).toBe("false");
+    expect(JSON.parse(localStorage.getItem("buildwarden:sidebar-run-sections")!).collapsed).toContain("later");
+  });
+
   it("restores focus after cancelling or escaping a dialog opened from the add button", async () => {
     await mount();
     const trigger = button("New run section");

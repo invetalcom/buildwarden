@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, MoreHorizontal, Plus, Tag } from "lucide-react";
 import { DEFAULT_RUN_SECTION_COLOR, UNCATEGORIZED_RUN_SECTION_ID, type AppSnapshot, type RunOrganizationSnapshot, type SidebarRunEntrySize } from "@buildwarden/shared";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
@@ -59,6 +59,9 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
   const client = useBuildWardenClient();
   const canOrganize = client.capabilities.runListVisibilityMutations && organization !== EMPTY_RUN_ORGANIZATION;
   const [preferences, setPreferences] = useState(readPreferences);
+  const preferencesRef = useRef(preferences);
+  // Async completions need the latest committed view, including transient expansion.
+  useLayoutEffect(() => { preferencesRef.current = preferences; }, [preferences]);
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [dialog, setDialog] = useState<SectionDialog | null>(null);
@@ -83,8 +86,10 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
     buildSidebarRunSections({ projects: filteredProjects, organization, view: id, tag, hideActiveRuns, recentDays: recentRunDays,
       expandedRunIds: new Set() }).reduce((count, section) => count + section.count, 0)])),
   [filteredProjects, organization, tag, hideActiveRuns, recentRunDays]);
-  const updatePreferences = (patch: Partial<Preferences>) => {
-    const next = { ...preferences, ...patch };
+  const updatePreferences = (patch: Partial<Preferences> | ((current: Preferences) => Partial<Preferences>)) => {
+    const current = preferencesRef.current;
+    const next = { ...current, ...(typeof patch === "function" ? patch(current) : patch) };
+    preferencesRef.current = next;
     setPreferences(next);
     // Persist manual changes only; highlighted-run expansion below is transient.
     try { localStorage.setItem(PREFERENCE_KEY, JSON.stringify(next)); } catch { /* Storage may be disabled. */ }
@@ -127,10 +132,16 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
     }
     const target = sectionId === UNCATEGORIZED_RUN_SECTION_ID ? null : sectionId;
     if ((organization.runs.find((run) => run.runId === payload.runId)?.sectionId ?? null) === target) return;
+    const preferencesAtDrop = preferencesRef.current;
     void mutate(() => client.updateRunOrganization(payload.runId, { sectionId: target }), `Run moved to ${name}.`, () => {
-      // Reveal the destination only after the move is saved; failed moves keep the user's view.
-      updatePreferences({ collapsed: preferences.collapsed.filter((id) => id !== sectionId),
-        view: "all", tag: "", projectId: projectId && projectId !== payload.projectId ? "" : projectId });
+      // Reveal the saved move without undoing choices made while it was pending.
+      updatePreferences((current) => ({
+        collapsed: current.collapsed.includes(sectionId) === preferencesAtDrop.collapsed.includes(sectionId)
+          ? current.collapsed.filter((id) => id !== sectionId) : current.collapsed,
+        view: current.view === preferencesAtDrop.view ? "all" : current.view,
+        tag: current.tag === preferencesAtDrop.tag ? "" : current.tag,
+        projectId: current.projectId === preferencesAtDrop.projectId && current.projectId !== payload.projectId ? "" : current.projectId,
+      }));
     });
   };
   const reorder = (id: string, offset: number) => {
