@@ -88,7 +88,7 @@ describe("UserSettingsTab", () => {
     expect(sections.indexOf("Attention inbox")).toBe(sections.indexOf("Sidebar") + 1);
     const hideActiveRuns = container.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Hide active runs from sidebar"]')!;
     expect(hideActiveRuns.getAttribute("aria-checked")).toBe("false");
-    expect(container.textContent!.indexOf("Hide active runs")).toBeGreaterThan(container.textContent!.indexOf("Grouping"));
+    expect(container.textContent!.indexOf("Hide active runs")).toBeGreaterThan(container.textContent!.indexOf("Group entries by project"));
     expect(container.textContent!.indexOf("Hide active runs")).toBeLessThan(container.textContent!.indexOf("Uncategorized runs window"));
     await act(async () => hideActiveRuns.click());
     expect(onHideActiveRunsChange).toHaveBeenLastCalledWith(true);

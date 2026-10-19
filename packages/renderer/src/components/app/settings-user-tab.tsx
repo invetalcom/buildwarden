@@ -377,7 +377,7 @@ export const UserSettingsTab = ({
         </div>
       </SettingsRow>
       <SettingsRow
-        title="Grouping"
+        title="Group entries by project"
         description="Show collapsible project groups. When off, runs are sorted together and each entry displays its project name."
       >
         <div className={`${rowControlClass} flex items-center justify-end gap-3`}>

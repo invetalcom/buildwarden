@@ -5094,7 +5094,7 @@ export const serializeRemoteAccessWebOriginsSetting = (origins: Iterable<string>
     return origin ? [origin] : [];
   }))));
 
-export const DEFAULT_RECENT_RUN_DAYS = 2;
+export const DEFAULT_RECENT_RUN_DAYS = 10;
 export const MIN_RECENT_RUN_DAYS = 1;
 export const MAX_RECENT_RUN_DAYS = 365;
 export const DEFAULT_DATA_RETENTION_CLEANUP_DAYS = 30;
